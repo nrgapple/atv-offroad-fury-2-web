@@ -47,8 +47,8 @@ try {
     visited.add(await page.locator('#frontend').getAttribute('data-track'));
     await pad(15);
   }
-  assert.deepEqual([...visited].sort(), ['env01','env02','env03','env05','env06','env07','env08']);
-  for (let index = 0; index < 7 && await page.locator('#frontend').getAttribute('data-track') !== 'env02'; index++) await pad(15);
+  assert.deepEqual([...visited].sort(), ['env01','env02','env03','env04','env05','env06','env07','env08']);
+  for (let index = 0; index < 8 && await page.locator('#frontend').getAttribute('data-track') !== 'env02'; index++) await pad(15);
   assert.equal(await page.locator('#frontend').getAttribute('data-track'),'env02');
   if (process.env.ATV_UI_SCREENSHOTS) await page.screenshot({path:`${process.env.ATV_UI_SCREENSHOTS}-tioga-selection.png`});
   await pad(0);
@@ -71,7 +71,7 @@ try {
   await page.setViewportSize({width:390,height:844});
   await page.getByRole('button',{name:'Single Player',exact:true}).tap(); await screen('single');
   await page.getByRole('button',{name:'Freestyle',exact:true}).tap(); await screen('tracks');
-  for (let index = 0; index < 7 && await page.locator('#frontend').getAttribute('data-track') !== 'env01'; index++) await page.getByRole('button',{name:'Previous environment',exact:true}).tap();
+  for (let index = 0; index < 8 && await page.locator('#frontend').getAttribute('data-track') !== 'env01'; index++) await page.getByRole('button',{name:'Previous environment',exact:true}).tap();
   assert.equal(await page.locator('#frontend').getAttribute('data-track'),'env01');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth),390);
   if (process.env.ATV_UI_SCREENSHOTS) await page.screenshot({path:`${process.env.ATV_UI_SCREENSHOTS}-mobile.png`});

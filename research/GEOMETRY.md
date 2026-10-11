@@ -39,3 +39,57 @@ This is supported by exact extents, valid node indices, declared vertex-count ag
 PSM files in the quad archives are plaintext shader/material configuration, not meshes. ATV01 base/dirt texture bindings and mipmapped PST decoding have been validated privately. Unit tests cover signed coordinates, rigid-node selection, strip restart/winding and column-major point transforms.
 
 `Mesh::bind_bounds` reproduces the loaded hierarchy aggregation in `0x001b3ed0`, `0x00167600` and `0x00167730`. AABB extents stay half-extents. The sphere branch retains its initial center and expands radius using maximum absolute axis displacement plus each authored radius, matching the VU `vmaxy`/`vmaxz` instructions. Vehicle initialization `0x001e3b80` selects this sphere branch for inertia and uses the radius in all three mass/12 terms. The Rust initializer preserves that behavior instead of substituting a conventional cuboid inertia. All 26 original quad hierarchies were audited; ATV01 radius is 3.7050302, with aggregate AABB half-extents approximately [2.095283, 1.808427, 3.066544].
+
+## Freeport Harbor and shared terrain borders (2026-10-11)
+
+ENV04 was excluded by a reconstruction-only consistency guard, not by compressed
+or missing terrain. Its finest grid is 1025 by 1281 vertices at 4.5-foot spacing.
+Two copies of a shared tile border differ by approximately 0.032619 and 0.027959
+feet (seven and six quantization units). A dense grid cannot retain both copies;
+it now chooses the tile owning the cell at that coordinate, consistently with
+`Terrain::contact`, retaining the outer world edges. It does not average heights
+or change the original per-tile positions/contact data. Sparse, overlapping and
+nonfinite grids still fail. A synthetic test checks ownership, reversed leaf
+ordering, outer borders and holes.
+
+Rechecking the original 40 named terrain resources now passes all 40, including
+ENV04, FREE04, FREE05 and NAT01, previously rejected by that guard. This establishes
+decoding coverage, not 40 playable maps. Private evidence is
+`private/reports/terrain-recheck.json`.
+
+Freeport's SCN omits its default start direction. Its freestyle TOY contains the
+mode's position/direction. The separate mode start reader observed at `002fa3c0`
+loads these and replaces defaults with the first authored numbered start when
+present. The browser now sends both documents to Rust, using freestyle starts
+while keeping SCN render/collision metadata. No guessed direction is inserted.
+
+The host browser regression passed all eight ENV01–ENV08 scenes, driving steps,
+original detail textures, batched vegetation and finite vehicle states without
+JavaScript/WebGL errors. Freeport reports 356 scenery instances and 13,816
+vegetation placements in nine visible batches, with no unsupported PSG meshes.
+The eight-map frontend/controller selector, pause and 390px touch regression also
+passed. An inspected screenshot is recorded in the dev log. Publication is verified
+separately; this paragraph records the host test.
+
+## Arlington train recovery in progress (2026-10-11)
+
+Arlington Stream is ENV08. Its freestyle archive already contains the original
+locomotive, tender, coal cars, flatbeds, mail car, wheel animation and smoke data.
+The mode TOY defines eleven train-body instances plus smoke and wheel animation.
+These are animated objects, so the static scenery loader does not display them.
+The train is **not yet connected to the public renderer or dynamic collisions**.
+
+Exact-build observations locate VUE loading at `0011c0b0`, Hermite position sampling
+at `0011d8a0`/`0011de20`, ten-substep segment-length estimation at `0011c5e0`, and
+lag-distance lookup at `0011d5d0`. Cars share a looping route but have individual
+lag distances, allowing them to turn independently around bends. VUE translation
+is converted from authoring Z-up to runtime Y-up; its rotation keys are not the
+procedural heading. Update `0011c840` derives horizontal heading from displacement
+and uses constructor `0011b660`'s 0.5 smoothing coefficient after initialization.
+The TOY parser `0023be10` routes LagDistance through integer reader `001421b0` /
+`00141fc0`; decimal-looking authoring values therefore require the original integer
+conversion, not blind float parsing. PathIsLevel and DriveOnSoultrees default true,
+while NumberOfTires defaults zero. Height/contact handling, complete transform
+initialization, wheel attachments, moving collision response and train audio must
+be validated before calling this a working original train. These are direct PS2
+Ghidra observations, not REA Evidence or an original-hardware replay comparison.

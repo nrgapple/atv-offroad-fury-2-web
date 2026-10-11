@@ -1,6 +1,6 @@
 {
-  "status": "The public Worker now runs the seven-map Rust/WebAssembly reconstruction, with 281 verified runtime, manifest and gallery objects served from R2 and all 21 music tracks retained. The game remains incomplete: original modes, race flow, stunt/crash systems and exact terrain LOD are not finished.",
-  "working_on": "Verify the GitHub-to-Worker automatic deployment path on a real post-token run. Continue restoring original game modes, race flow, stunt behavior and terrain LOD without presenting partial reconstruction as the complete game.",
+  "status": "This build connects eight environments with original vegetation and terrain detail. Freeport Harbor now loads and drives after correcting a sub-half-inch shared-border tolerance; all eight host map checks and the frontend regression pass. The build is pending public deployment. Full game flow, the Arlington train, stunt scoring, crash poses and exact terrain LOD remain unfinished.",
+  "working_on": "Verify the eight-map build after public deployment. Continue recovering full game flow, the Arlington train, original terrain projected-coverage/LOD behavior and stunt/crash systems without overstating partial results.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -534,7 +534,24 @@
       "limitation": "This remains an incomplete reconstruction: original menu/game modes, race flow, scoring, stunt/crash coverage and terrain LOD fidelity are unfinished. GitHub automatic deployment to the Worker has not yet been verified.",
       "image": "/devlog-images/seven-maps-move-to-a-worker-with-music-and-assets-kept-c9e850e9.png",
       "caption": "Cloudflare-hosted ENV03 (Sonora Dunes) with recovered terrain detail and vegetation."
+    },
+    {
+      "id": "a-half-inch-seam-had-hidden-freeport-harbor-fc44799c",
+      "timestamp": "2026-10-11T23:33:32.043699+00:00",
+      "recorded_at": "2026-10-11T23:34:58.297051+00:00",
+      "kind": "discovery",
+      "title": "A half-inch seam had hidden Freeport Harbor",
+      "summary": "Freeport\u2019s terrain was not corrupt; our seam check was too strict. Two vertices on a shared border differ by only 0.03262 feet, less than half an inch. The dense heightfield now gives border contact to its owning tile instead of rejecting the map.",
+      "details": [
+        "The recovered ENV04 grid is 1,025 \u00d7 1,281 samples at 4.5-foot spacing. Its local scene loads 356 placements and 13,816 ecosystem items in nine vegetation batches, with no unsupported meshes.",
+        "The scene file omits the freestyle starting direction, so the route now uses the original TOY start settings recovered from native routine 0x002fa3c0.",
+        "The host browser passed load-and-drive checks for all eight environments, with no JavaScript or WebGL errors. The menu/controller selector, pause and 390px touch regression also passed.",
+        "Separate Arlington research recovered a locomotive and ten cars on one looping VUE path with per-car distance offsets; the train is not rendered or connected yet."
+      ],
+      "limitation": "This eight-map checkpoint is host-verified and still pending public deployment. It is a partial reconstruction, and the recovered Arlington train has not been added to the scene.",
+      "image": "/devlog-images/a-half-inch-seam-had-hidden-freeport-harbor-fc44799c.png",
+      "caption": "Host-verified Freeport Harbor spawn on the original dirt road, with recovered vegetation and terrain."
     }
   ],
-  "updated_at": "2026-10-11T23:22:58.068427+00:00"
+  "updated_at": "2026-10-11T23:34:58.297051+00:00"
 }

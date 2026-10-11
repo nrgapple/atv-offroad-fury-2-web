@@ -6,7 +6,7 @@ const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODUL
 const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4173';
 const browser = await chromium.launch({ headless: true });
 try {
-  for (const environment of ['env01','env02','env03','env05','env06','env07','env08']) {
+  for (const environment of (process.env.ATV_TEST_MAPS?.split(',') ?? ['env01','env02','env03','env04','env05','env06','env07','env08'])) {
     const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -16,7 +16,7 @@ try {
       const loaded = await page.evaluate(() => window.atvTerrainStatus);
       assert(loaded.ready, await page.locator('#status').textContent());
       assert.match(loaded.source, new RegExp(`${environment}\\.tr2$`));
-      assert.deepEqual(loaded.terrainGrid, [1281,1281]);
+      assert.deepEqual(loaded.terrainGrid, environment === 'env04' ? [1025,1281] : [1281,1281]);
       assert.deepEqual(loaded.terrainTextureResolution, [256,256]);
       assert.equal(loaded.terrainSampleSpacing, 4.5);
       assert.deepEqual(loaded.terrainDetailTexture, [64,64], 'Original detail texture is decoded separately from the base color');
@@ -43,5 +43,5 @@ try {
       console.log(JSON.stringify({ environment, ready: state.ready, terrainTriangles: state.triangles, terrainUpdates: state.terrainDetailUpdates, vegetation: state.vegetationPlacements, draws: state.vegetationDraws, sceneInstances: state.sceneInstances, unsupportedMeshes: state.unsupportedSceneMeshes, glError: state.glError }));
     } finally { await page.close(); }
   }
-  console.log('PASS: all seven original environments load and drive, vegetation is batched, full-sample terrain follows the ATV, no browser/GL errors.');
+  console.log('PASS: all requested original environments load and drive, vegetation is batched, full-sample terrain follows the ATV, no browser/GL errors.');
 } finally { await browser.close(); }

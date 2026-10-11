@@ -212,6 +212,10 @@ pub fn collision_placement_matrix(
     ])
 }
 pub fn parse(data: &[u8]) -> Result<Scene> {
+    parse_with_start(data, None)
+}
+
+fn document(data: &[u8]) -> Result<PhysicsData> {
     if data.len() > 1024 * 1024 || data.contains(&0) {
         return Err("invalid scene text extent".into());
     }
@@ -221,15 +225,26 @@ pub fn parse(data: &[u8]) -> Result<Scene> {
         .map(scene_line)
         .collect::<Vec<_>>()
         .join("\n");
-    let data = PhysicsData::parse(clean.as_bytes())?;
+    PhysicsData::parse(clean.as_bytes())
+}
+
+/// Freestyle TOY SceneInfo supplies the mode's start, independently of the
+/// SCN render/collision metadata (002fa3c0's start-position reader).
+pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
+    let data = document(data)?;
+    let mode = mode.map(document).transpose()?;
+    let start = mode
+        .as_ref()
+        .filter(|mode| value(mode, "SceneInfo", "DefaultStartPosition").is_some())
+        .unwrap_or(&data);
     let start_position = vector(
-        value(&data, "SceneInfo", "Start1")
-            .or_else(|| value(&data, "SceneInfo", "DefaultStartPosition"))
+        value(start, "SceneInfo", "Start1")
+            .or_else(|| value(start, "SceneInfo", "DefaultStartPosition"))
             .ok_or("missing scene start")?,
     )?;
     let start_direction = vector(
-        value(&data, "SceneInfo", "Direction1")
-            .or_else(|| value(&data, "SceneInfo", "DefaultStartDirection"))
+        value(start, "SceneInfo", "Direction1")
+            .or_else(|| value(start, "SceneInfo", "DefaultStartDirection"))
             .ok_or("missing scene start direction")?,
     )?;
     let cube_file = value(&data, "Environment", "CubeFile")
@@ -361,6 +376,32 @@ mod tests {
         assert_eq!(scene.lights[0].color, [20., 30., 40.]);
         assert_eq!(scene.collision_models[0].name, "sample");
         assert_eq!(scene.collision_models[0].material, 0);
+    }
+    #[test]
+    fn freestyle_start_is_separate_from_render_scene() {
+        let source = SOURCE.replace("DefaultStartDirection=0,0,1\n", "");
+        let mode = b"[SceneInfo]\nDefaultStartPosition=7,8,9\nDefaultStartDirection=1,0,0\n";
+        assert!(parse(source.as_bytes()).is_err());
+        let scene = parse_with_start(source.as_bytes(), Some(mode)).unwrap();
+        assert_eq!(scene.start_position, [7., 8., 9.]);
+        assert_eq!(scene.start_direction, [1., 0., 0.]);
+        assert_eq!(scene.models[0].name, "sample");
+        assert_eq!(
+            parse_with_start(
+                SOURCE.as_bytes(),
+                Some(b"[Animations]\nNumberOfAnimations=0")
+            )
+            .unwrap()
+            .start_position,
+            [4., 5., 6.]
+        );
+        assert!(
+            parse_with_start(
+                SOURCE.as_bytes(),
+                Some(b"[SceneInfo]\nDefaultStartPosition=NaN,0,0")
+            )
+            .is_err()
+        );
     }
     #[test]
     fn invalid_extents_vectors_and_models_fail() {

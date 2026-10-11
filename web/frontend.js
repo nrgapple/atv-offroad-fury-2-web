@@ -115,7 +115,7 @@ export class Frontend {
       this.globals = await this.document('gwidgets.dat');
       const tracks = await this.document('tracks.dat');
       // Only environments verified by this reconstruction are offered for driving.
-      this.tracks = [...tracks.entries()].filter(([s, f]) => /^unspnat\d+$/.test(s) && ['env01', 'env02', 'env03', 'env05', 'env06', 'env07', 'env08'].includes(f.scn))
+      this.tracks = [...tracks.entries()].filter(([s, f]) => /^unspnat\d+$/.test(s) && ['env01', 'env02', 'env03', 'env04', 'env05', 'env06', 'env07', 'env08'].includes(f.scn))
         .map(([, f]) => ({ id: f.scn, name: unquote(f.name), image: f.image }));
       this.track = this.tracks.findIndex(t => t.id === 'env01');
       await this.font(fontName); await this.image('title'); if (showTitle) await this.show('title');

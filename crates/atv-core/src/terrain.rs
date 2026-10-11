@@ -528,15 +528,18 @@ impl Terrain {
                 if x >= width || z >= depth {
                     return Err("TR2 tile lies outside heightfield".into());
                 }
+                // A dense grid cannot retain both copies of a shared edge.
+                // Use the tile owning the cell at this coordinate, as contact()
+                // does, retaining the last tile at the outer world boundary.
+                // Original borders are not necessarily identical (ENV04 differs
+                // by seven quantization units at one vertex).
+                if (i % 17 == 16 && x + 1 < width) || (i / 17 == 16 && z + 1 < depth) {
+                    continue;
+                }
                 let height = self.vertex_height(leaf, i);
                 let target = &mut heights[z * width + x];
-                // Adjacent original tiles may differ by one quantization unit.
-                if target.is_finite()
-                    && (*target - height).abs()
-                        > leaf.height_scale * self.spacing * leaf.height_morph.abs().max(1.) * 1.1
-                            + 0.0001
-                {
-                    return Err("TR2 neighboring tile heights disagree".into());
+                if target.is_finite() {
+                    return Err("TR2 overlapping finest-level tiles".into());
                 }
                 *target = height;
             }
@@ -662,6 +665,39 @@ mod tests {
         assert_eq!(terrain.positions(&terrain.leaves[0])[0][1], 115.);
         assert_eq!(terrain.heightfield().unwrap()[0], 115.);
         assert_eq!(terrain.contact(0., 0.).unwrap().unwrap().height, 115.);
+    }
+
+    #[test]
+    fn dense_shared_edges_use_contact_owner_independent_of_leaf_order() {
+        let mut terrain = decode_tr2(&sample()).unwrap();
+        terrain.width_cells = 32;
+        terrain.tiles[0].heights.fill(10);
+        terrain.tiles[0]
+            .attributes
+            .fill(u32::from_le_bytes([0, 127, 0, 0]));
+        terrain.tiles.push(TerrainTile {
+            tag: 0,
+            heights: [17; 289],
+            attributes: [u32::from_le_bytes([0, 127, 0, 0]); 289],
+        });
+        terrain.leaves.push(TerrainLeaf {
+            x: 16,
+            z: 0,
+            tile: 1,
+            height_morph: 1.,
+            height_scale: 0.5,
+            minimum_height: 0.,
+            maximum_height: 100.,
+        });
+        let grid = terrain.heightfield().unwrap();
+        assert_eq!(grid[15], 10.);
+        assert_eq!(grid[16], 17.);
+        assert_eq!(grid[32], 17.);
+        assert_eq!(grid[16], terrain.contact(32., 0.).unwrap().unwrap().height);
+        terrain.leaves.reverse();
+        assert_eq!(terrain.heightfield().unwrap(), grid);
+        terrain.leaves.pop();
+        assert!(terrain.heightfield().unwrap_err().contains("holes"));
     }
 
     #[test]

@@ -613,6 +613,20 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         return simulation(input, op);
     }
     let json = match op {
+        60 => {
+            let request: serde_json::Value =
+                serde_json::from_slice(input).map_err(|e| e.to_string())?;
+            let scene = request
+                .get("scene")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("missing scene text")?;
+            let mode = match request.get("mode") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(serde_json::Value::String(mode)) => Some(mode.as_bytes()),
+                _ => return Err("invalid mode text".into()),
+            };
+            serde_json::to_vec(&atv_core::scene::parse_with_start(scene.as_bytes(), mode)?)
+        }
         54 => serde_json::to_vec(&atv_core::ui::Document::parse(input)?),
         55 => serde_json::to_vec(&atv_core::ui::Font::decode(input)?),
         56 => {

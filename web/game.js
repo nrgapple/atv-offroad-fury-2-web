@@ -83,7 +83,7 @@ async function discTerrain(file, token) {
   return terrainFromContent(file, files, token);
 }
 async function terrainFromContent(file, files, token, environment = "env01") {
-  if (!["env01", "env02", "env03", "env05", "env06", "env07", "env08"].includes(environment)) throw new Error("Environment is not connected yet.");
+  if (!["env01", "env02", "env03", "env04", "env05", "env06", "env07", "env08"].includes(environment)) throw new Error("Environment is not connected yet.");
   const number = environment.slice(-2);
   const memberNamed = (entry, name) => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name;
   status('Loading original engine sounds…');
@@ -97,7 +97,9 @@ async function terrainFromContent(file, files, token, environment = "env01") {
   if (index < 0) throw new Error('Original terrain is missing from the archive.');
   const sceneIndex = entries.findIndex(entry => memberNamed(entry, `${environment}fr.scn`));
   if (sceneIndex < 0) throw new Error('Original start position is missing.');
-  const sceneMetadata = await json(37, await codec(3, resource, sceneIndex));
+  const modeIndex = entries.findIndex(entry => memberNamed(entry, `${environment}fr.toy`));
+  const mode = modeIndex < 0 ? null : decoder.decode(await codec(3, resource, modeIndex));
+  const sceneMetadata = await command(60, { scene: decoder.decode(await codec(3, resource, sceneIndex)), mode });
   const cameraIndex = entries.findIndex(entry => entry.name.split(/[\\/]/).at(-1).toLowerCase() === 'followcampresets.pb');
   if (cameraIndex < 0) throw new Error('Original camera presets are missing.');
   const cameraPresets = await codec(3, resource, cameraIndex);

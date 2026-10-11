@@ -1,5 +1,7 @@
 # Implementation handoff
 
+Latest host checkpoint: Freeport Harbor (ENV04) joins the seven connected environments after correcting dense terrain border ownership and reading freestyle starts from the mode TOY. All eight map/driving and frontend/mobile regressions pass locally; the release must still pass public verification. All 40 named terrains now decode, which does not mean 40 playable maps. Arlington’s original train resources and procedural route are recovered but its animated train is not yet connected. See [geometry evidence](research/GEOMETRY.md).
+
 ## Current scope
 
 The setup-only session is historical. On 2026-10-11 the user authorized implementation of ATV Offroad Fury 2 in Rust for browser play. Preserve the original as the baseline, including music and sound; follow with optional modern graphics, genuine 16:9 presentation, animations, and more realistic physics retaining arcade accessibility.
