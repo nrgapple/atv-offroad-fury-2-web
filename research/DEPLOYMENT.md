@@ -67,42 +67,48 @@ commits and leaves the prior public build active while CI is pending or failing.
 There is up to one polling interval of deployment delay. The automation needs the
 Mac/local Codex executor available; public Site visitors do not need this Mac online.
 
-The CI-artifact-to-public-Site path was verified for main commit
-`76f276315650e29841cb122095654239a03cbbed`; public `/deployment.json` returns
-that exact SHA. Native Sites deployment `appgdep_6acbffb0631c81918bc9d2fae48ae6e3`
-succeeded at 2026-10-11 21:30:26 UTC. Public v4 was tested from a fresh browser
-session without selecting or uploading a disc: the Site manifest loaded 68 terrain
-textures, 64 sky tiles, 174 scene instances, the ATV/rider, 21 engine samples and
-the 21-song catalog. The regression exercised driving, throttle/brake/reset, camera
-cycling, controller/focus, touch/cancel and graphics-context recovery. Music played
-with zero underruns; there were no JavaScript/WebGL errors. At 390px the mobile
-layout had no horizontal overflow and the disc picker was absent. App content used
-the same-origin Site manifest and content blobs. Public v4 still uses the sampled
-seated rider pose; the newer local normal-riding blend is not in that release.
+The CI-artifact-to-public-Site path is verified for main commit
+`0dc5c09890df6bbf8f942309558ad168b7a8857b`; public `/deployment.json` returns
+that SHA. Native Sites deployment `appgdep_6acc01ca684081918ec76849748bc642`
+succeeded at 2026-10-11 21:38:33 UTC. Public v5 starts without disc selection and
+includes the recovered normal rider-animation connection. The full public renderer
+regression confirmed 18 animated rider nodes, responsive node matrices, turn/turn/
+reverse modes, and no JavaScript errors. The reverse-pose capture shows the distinct
+reverse path in the public build. The separate native Rust animator probe produced
+1,200 finite poses; that probe was not a browser test.
+
+The no-disc runtime-content path was previously verified on public v4, commit
+`76f276315650e29841cb122095654239a03cbbed`. That fresh-browser run loaded 68 terrain
+textures, 64 sky tiles, 174 scene instances, ATV/rider resources, 21 engine samples
+and the 21-song catalog from the same-origin Site manifest. It exercised driving,
+throttle/brake/reset, camera cycling, controller/focus, touch/cancel and graphics-
+context recovery. Music played with zero underruns; diagnostics had no JavaScript/
+WebGL errors. Its 390px mobile layout had no horizontal overflow and no disc picker.
+Public v5 retains that no-disc path. Its public log served 15 entries and 13
+screenshot images; a Playwright browser fetched every image successfully with HTTP
+200 and `image/png`. The newer UI-recovery and v5 rider checkpoints are in the
+working log for a subsequent source-backed Site update.
+
+Only ENV01 (Caribou Peak) is currently connected as a driving scene. Public v5 does
+not contain the original title/menu navigation, map selection, race HUD or other
+playable tracks. The title-screen/background artwork, archive layout records, fonts,
+menu animation data and track names are recovery evidence, not a running UI.
 
 The previous public version on commit
 `3c9f7bdc72810c23afc2aa461810e911a998f01c` received devlog-only verification; its
-autostart and manifest requests were not tested. The preceding version
+autostart and manifest requests were not tested. The preceding release
 `5d160a747e9730c9e07f35afda9bac941c15f062` passed a real-disc browser run for
 terrain, sky, props, ATV/rider, engine sample scheduling, chassis, throttle/brake/
 reset, controller/focus, touch/cancel and graphics-context recovery. That older
 check required selecting the ISO and is not the basis for the no-disc result.
 
-The first local autoload checkpoint was verified on the development host before
-v4 was published. Desktop and 390px mobile captures showed original terrain, ATV,
-rider, engine samples and streaming music loaded through a same-origin manifest,
-with no JavaScript/WebGL errors, no music underruns and no mobile overflow. The
-public v4 test now independently verifies the same no-disc flow on the deployed
-Site.
+The first local autoload checkpoint was verified before public v4: desktop and
+390px mobile captures showed original runtime resources loaded through the manifest,
+with no JavaScript/WebGL errors, music underruns or mobile overflow. The deployed
+v4 and v5 tests independently verified the no-disc flow publicly.
 
-At public v4 verification, `/devlog.json` served 13 entries with 11 screenshot
-images; every screenshot returned HTTP 200 with `image/png`. Later local rider and
-public-autoload entries are prepared in the working tree for the next source-backed
-Site update.
-
-The heartbeat `publish-atv-web-builds` has run once at 2026-10-11 21:12 UTC and
-skipped because main was unchanged. That confirms a scheduled check ran, not an
-automated deployment: the v4 publication was completed through the native Sites
+The heartbeat `publish-atv-web-builds` ran once at 2026-10-11 21:12 UTC and skipped
+because main was unchanged. V4 and v5 were published through the native Sites
 workflow. A successful unattended publish is still unverified.
 
 ## Release commands

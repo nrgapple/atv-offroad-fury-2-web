@@ -774,6 +774,7 @@ mod tests {
             vertices: vec![[-10., -10., 0.], [0., 10., 0.], [10., -10., 0.]],
             vertex_normals: None,
             triangles: vec![Triangle {
+                invalid_plane_bits: None,
                 indices: [0, 1, 2],
                 normal: [0., 0., -1.],
                 distance: 0.,

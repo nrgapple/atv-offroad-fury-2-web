@@ -13,3 +13,14 @@ input[type=file] { position: absolute; inset: 0; width: 100%; opacity: 0; cursor
 #help { bottom: max(12px, env(safe-area-inset-bottom)); left: max(14px, env(safe-area-inset-left)); color: #b7c8e3; font-size: 11px; }
 #status.error { color: #ffc4b9; }
 @media (max-width: 600px) { #help { max-width: 340px; font-size: 10px; } #status { bottom: max(56px, calc(env(safe-area-inset-bottom) + 46px)); } button, .button { padding: 9px; } }
+
+#frontend { position: fixed; inset: 0; z-index: 2; background: #080606; display: grid; place-items: center; }
+#frontend[hidden] { display: none; }
+#menu-stage { position: relative; width: min(100vw, calc(100dvh * 640 / 448)); aspect-ratio: 640 / 448; }
+#menu-canvas { width: 100%; height: 100%; display: block; }
+#menu-buttons { position: absolute; inset: 0; }
+#menu-buttons button { position: absolute; padding: 0; background: transparent; border: 0; color: transparent; touch-action: manipulation; }
+#menu-buttons button:focus-visible { outline: 2px solid #ffe375; outline-offset: -2px; }
+#menu-notice { position: absolute; bottom: max(8px, env(safe-area-inset-bottom)); left: 10px; right: 10px; text-align: center; font-size: 14px; background: #080606dc; margin: 0; }
+#menu-notice:empty { display: none; }
+body.menu-open #toolbar, body.menu-open #status, body.menu-open #help { visibility: hidden; }

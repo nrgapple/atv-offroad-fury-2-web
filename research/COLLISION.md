@@ -40,6 +40,12 @@ The returned mesh now feeds the recovered static ray-bundle query and vehicle co
 
 The PSG rigid-mesh and TR2 terrain readers now exist; see [geometry evidence](GEOMETRY.md). Collision-response behavior remains separate from successful mesh recovery.
 
+## Tioga Valley degenerate faces
+
+The `ruins.col` prop collision mesh on Tioga Valley (ENV02) contains four triangle-plane records with NaN values: faces 3, 66, 70, and 84. Their referenced vertices have duplicate coordinates, so each face has zero area and no valid plane. The parser preserves the original broad-phase tree, triangle ordering, indices, and stored plane words, but omits only these four degenerate faces from query geometry. Non-finite vertex coordinates and other invalid faces are still rejected. This allows the local Freestyle route to load and drive Tioga without normalizing or rewriting the source records.
+
+The frontend end-to-end test drove Tioga and then switched back to Caribou; the full renderer regression passed on Caribou. This is targeted malformed-input handling; it does not prove all Tioga collision behavior matches the original game or PS2 hardware. Other collision variants and ordering limitations remain as described in [obstacle behavior](OBSTACLES.md).
+
 ## Type-2 ray trees and chassis contacts
 
 `decode_ray_tree` now reads type-2 COL files using the exact-build loader at `0032a480`. The sixteen floats at offset16 form the stored matrix. Offset80 holds the query capacity,84 the node count N, and88 the ray count R. Beginning at92, each32-byte node holds one bound scalar, XYZ center, XYZ half-extents, and two u16 child references. The following R records hold start/end XYZ pairs,24 bytes per ray. Exact extent is `92 + 32N + 24R`.

@@ -81,6 +81,61 @@ pub fn decode_pst(data: &[u8]) -> Result<Texture> {
     })
 }
 
+/// Observed frontend ATM: version, frame count, zero flags, then complete
+/// indexed PST images concatenated without a per-image length prefix.
+/// Validate every frame before returning one, including the exact final extent.
+pub fn decode_atm(data: &[u8], frame: usize) -> Result<(usize, Texture)> {
+    let count = u32le(data, 4)? as usize;
+    if u32le(data, 0)? != 1
+        || u32le(data, 8)? != 0
+        || count == 0
+        || count > 512
+        || frame >= count
+        || data.len() > 128 * 1024 * 1024
+    {
+        return Err("unsupported ATM header/frame".into());
+    }
+    let mut at = 12;
+    let mut selected = None;
+    for i in 0..count {
+        let start = at;
+        let bits = match u32le(data, at + 4)? {
+            0 => 4,
+            1 => 8,
+            _ => return Err("unsupported ATM pixel format".into()),
+        };
+        let levels = u32le(data, at + 8)?;
+        if u32le(data, at)? != 1 || levels == 0 || levels > 16 {
+            return Err("invalid ATM PST header".into());
+        }
+        at += 12 + if bits == 8 { 1024 } else { 64 };
+        for _ in 0..levels {
+            let height = u32le(data, at)? as usize;
+            let width = u32le(data, at + 4)? as usize;
+            if width == 0
+                || height == 0
+                || width > 4096
+                || height > 4096
+                || u32le(data, at + 8)? != 0
+                || u32le(data, at + 12)? != 0
+            {
+                return Err("invalid ATM frame dimensions/flags".into());
+            }
+            at += 16;
+            let length = (width * height * bits).div_ceil(8);
+            slice(data, at, length)?;
+            at += length;
+        }
+        if i == frame {
+            selected = Some(decode_pst(&data[start..at])?);
+        }
+    }
+    if at != data.len() {
+        return Err("ATM payload size mismatch".into());
+    }
+    Ok((count, selected.ok_or("ATM frame missing")?))
+}
+
 // Observed format2 omits the palette and length-prefixes each IPUM image after
 // the same height/width/flags header used by the indexed variant.
 fn decode_ipum_levels(data: &[u8], levels: u32) -> Result<Texture> {
@@ -124,6 +179,31 @@ fn decode_ipum_levels(data: &[u8], levels: u32) -> Result<Texture> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn atm_validates_all_frames_and_exact_extent() {
+        let mut frame = Vec::new();
+        for n in [1u32, 0, 1] {
+            frame.extend(n.to_le_bytes());
+        }
+        frame.extend([255u8; 64]);
+        for n in [1u32, 1, 0, 0] {
+            frame.extend(n.to_le_bytes());
+        }
+        frame.push(0);
+        let mut data = Vec::new();
+        for n in [1u32, 2, 0] {
+            data.extend(n.to_le_bytes());
+        }
+        data.extend(&frame);
+        data.extend(&frame);
+        let (count, image) = decode_atm(&data, 1).unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(image.rgba, [255; 4]);
+        assert!(decode_atm(&data, 2).is_err());
+        assert!(decode_atm(&data[..data.len() - 1], 0).is_err());
+        data.push(0);
+        assert!(decode_atm(&data, 0).is_err());
+    }
     #[test]
     fn compressed_image_checks_outer_dimensions_and_extents() {
         // Authored neutral16x16 MPEG intra macroblock, not a game asset.

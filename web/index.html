@@ -9,7 +9,12 @@
 </head>
 <body>
   <canvas id="game" aria-label="Original terrain and ATV reconstruction" tabindex="0"></canvas>
+  <section id="frontend" aria-label="Game menu">
+    <div id="menu-stage"><canvas id="menu-canvas" width="640" height="448" aria-hidden="true"></canvas><div id="menu-buttons"></div></div>
+    <p id="menu-notice" role="status">Loading original menus…</p>
+  </section>
   <div id="toolbar">
+    <button id="menu" type="button">Menu</button>
     <input id="disc" type="file" accept=".iso,.tr2" hidden>
     <button id="fullscreen" type="button">Fullscreen</button>
     <button id="reset" type="button" disabled>Reset view</button>

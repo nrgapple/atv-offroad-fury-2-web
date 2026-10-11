@@ -6,6 +6,9 @@ use serde::Serialize;
 #[derive(Debug, Serialize)]
 pub struct Triangle {
     pub indices: [u16; 3],
+    /// Preserve invalid source-plane words on duplicate-vertex, zero-area faces.
+    /// These retain their tree indices but cannot produce a surface contact.
+    pub invalid_plane_bits: Option<[u32; 4]>,
     /// Plane equation: dot(normal, vertex) + distance = 0.
     pub normal: [f32; 3],
     pub distance: f32,
@@ -116,10 +119,29 @@ pub fn decode_col(data: &[u8]) -> Result<CollisionMesh> {
         {
             return Err(format!("COL triangle {i} references missing vertex"));
         }
+        let plane_bits = [
+            u32le(data, at)?,
+            u32le(data, at + 4)?,
+            u32le(data, at + 8)?,
+            u32le(data, at + 12)?,
+        ];
+        let plane = plane_bits.map(f32::from_bits);
+        let invalid = plane.iter().any(|v| !v.is_finite());
+        let [a, b, c] = indices.map(|i| vertices[i as usize]);
+        // ENV02 ruins contains four NaN planes whose vertices coincide exactly.
+        // Do not relax finite-coordinate checks for real surfaces or tree bounds.
+        if invalid && a != b && b != c && a != c {
+            return Err(format!("nonfinite COL plane on nondegenerate triangle {i}"));
+        }
         triangles.push(Triangle {
             indices,
-            normal: vector(data, at + 4)?,
-            distance: float(data, at)?,
+            invalid_plane_bits: invalid.then_some(plane_bits),
+            normal: if invalid {
+                [0.; 3]
+            } else {
+                [plane[1], plane[2], plane[3]]
+            },
+            distance: if invalid { 0. } else { plane[0] },
         });
     }
     Ok(CollisionMesh {
@@ -136,6 +158,21 @@ pub fn decode_col(data: &[u8]) -> Result<CollisionMesh> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn nan_planes_only_allowed_for_duplicate_vertex_faces() {
+        let mut data = triangle();
+        data[124..128].copy_from_slice(&f32::NAN.to_bits().to_le_bytes());
+        assert!(decode_col(&data).is_err());
+        let first = data[84..96].to_vec();
+        data[96..108].copy_from_slice(&first);
+        let mesh = decode_col(&data).unwrap();
+        assert_eq!(mesh.triangles.len(), 1);
+        assert!(mesh.triangles[0].invalid_plane_bits.is_some());
+        assert_eq!(mesh.triangles[0].indices, [0, 1, 2]);
+        assert_eq!(mesh.query_normal(0).unwrap(), [0.; 3]);
+        data[84..88].copy_from_slice(&f32::NAN.to_bits().to_le_bytes());
+        assert!(decode_col(&data).is_err());
+    }
     fn triangle() -> Vec<u8> {
         let mut data = vec![0; 88 + 3 * 12 + 22];
         for (offset, value) in [(0, 1234u32), (8, 1), (68, 3), (76, 1)] {

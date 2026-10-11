@@ -45,4 +45,5 @@ pub mod wheel;
 
 pub mod dynamics;
 
+pub mod ui;
 pub mod vehicle;

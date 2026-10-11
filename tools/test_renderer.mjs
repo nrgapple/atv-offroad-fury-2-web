@@ -34,6 +34,7 @@ try {
   page.on('request', request => requests.push({ url: request.url(), method: request.method(), resourceType: request.resourceType(), postDataLength: request.postDataBuffer()?.byteLength ?? 0 }));
   const startUrl = new URL(base);
   if (!bundled) startUrl.searchParams.set('source', 'disc');
+  else startUrl.searchParams.set('drive', '1');
   await page.goto(startUrl.href);
   if (!bundled) await page.locator('#disc').setInputFiles(iso);
   try {

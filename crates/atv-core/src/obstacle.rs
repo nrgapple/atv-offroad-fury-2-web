@@ -288,6 +288,9 @@ pub fn query_bundle(
             }
             (Some(a), None) => {
                 let triangle = mesh.triangles.get(mi).ok_or("invalid mesh leaf")?;
+                if triangle.invalid_plane_bits.is_some() {
+                    continue;
+                }
                 let vertices = triangle
                     .indices
                     .map(|i| transform_point(mesh_to_ray, mesh.vertices[i as usize]));
@@ -311,6 +314,9 @@ pub fn query_bundle(
             (None, None) => {
                 let ray = rays.rays.get(ri).ok_or("invalid ray leaf")?;
                 let triangle = mesh.triangles.get(mi).ok_or("invalid mesh leaf")?;
+                if triangle.invalid_plane_bits.is_some() {
+                    continue;
+                }
                 let start = transform_point(ray_to_mesh, ray.start);
                 let end = transform_point(ray_to_mesh, ray.end);
                 let segment = sub(end, start);
@@ -433,11 +439,13 @@ mod query_tests {
             ],
             triangles: vec![
                 Triangle {
+                    invalid_plane_bits: None,
                     indices: [0, 1, 2],
                     normal: [0., 0., 1.],
                     distance: 1.,
                 },
                 Triangle {
+                    invalid_plane_bits: None,
                     indices: [3, 4, 5],
                     normal: [0., 0., 1.],
                     distance: -1.,

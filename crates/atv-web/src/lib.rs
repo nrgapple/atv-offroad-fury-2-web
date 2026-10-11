@@ -558,6 +558,15 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         return simulation(input, op);
     }
     let json = match op {
+        54 => serde_json::to_vec(&atv_core::ui::Document::parse(input)?),
+        55 => serde_json::to_vec(&atv_core::ui::Font::decode(input)?),
+        56 => {
+            let (frames, texture) = texture::decode_atm(input, index)?;
+            serde_json::to_vec(
+                &serde_json::json!({"frames":frames,"width":texture.info.width,"height":texture.info.height}),
+            )
+        }
+        57 => return Ok(texture::decode_atm(input, index)?.1.rgba),
         0 => serde_json::to_vec(&iso::root(input)?),
         1 => serde_json::to_vec(&iso::directory(input)?),
         2 => serde_json::to_vec(&Resource::parse(input)?.members),

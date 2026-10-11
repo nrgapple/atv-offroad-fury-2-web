@@ -1,6 +1,6 @@
 {
-  "status": "Public v4 now starts without a disc-selection step; public desktop and mobile checks passed on commit 76f2763. The local build has newer normal rider-animation blends. This remains a partial game reconstruction.",
-  "working_on": "Original menu flow and map selection, alongside the next rider-animation release. Original title/menu screens and race HUD are not implemented yet.",
+  "status": "The host build now follows the recovered title \u2192 Main Menu \u2192 Single Player \u2192 Freestyle route and can drive in Caribou Peak (ENV01) or Tioga Valley (ENV02). Public v5 still opens directly on Caribou Peak; the recovered route and second map await the next release. Other modes, race HUD and full original game flow remain unfinished.",
+  "working_on": "Complete original menu callbacks and broaden map coverage; keep validating the browser route and collision behavior against recovered data.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -230,7 +230,124 @@
       "limitation": "This release is still a partial driving reconstruction. The public v4 rider still uses the seated sample pose; the normal riding animation connection is a newer local checkpoint awaiting its release. Tricks, rider IK, crashes, full races and progression remain unfinished.",
       "image": "/devlog-images/the-public-game-now-opens-directly-on-the-track-e55d97c9.png",
       "caption": "Public v4 opens straight into the original ENV01 scene without a disc-selection step; public mobile layout was checked separately."
+    },
+    {
+      "id": "we-found-the-title-art-and-the-menu-data-87d47187",
+      "timestamp": "2026-10-11T21:37:44.721241+00:00",
+      "recorded_at": "2026-10-11T21:40:29.397134+00:00",
+      "kind": "discovery",
+      "title": "We found the title art and the menu data",
+      "summary": "A decoded title image explains what is missing from the current drive-first build: the original screens have not vanished, but recovering their files is only the first step toward rebuilding the menus.",
+      "details": [
+        "The Rust PST decoder opens the original 640\u00d7448 title screen, and the main-menu background is identified as bk_mainmenu.pst. Inventory of the 59-page UI archive reveals text layouts, widget positions and control groups, with original CEL fonts and animated-menu ATM data.",
+        "The original track catalog calls ENV01 \u201cCaribou Peak.\u201d That gives the map-selection recovery a concrete starting point, but the browser currently connects only ENV01 as a driving scene."
+      ],
+      "limitation": "This image is recovered source artwork, not a screenshot of a working menu. Title/menu navigation, map selection, race HUD and the other maps are not implemented. We have identified and decoded source assets and layout records; browser UI behavior is still the next work.",
+      "image": "/devlog-images/we-found-the-title-art-and-the-menu-data-87d47187.png",
+      "caption": "Original 640\u00d7448 title-screen art decoded from PST; the port does not yet display a working title screen."
+    },
+    {
+      "id": "the-public-rider-now-leans-into-the-ride-d44d41f8",
+      "timestamp": "2026-10-11T21:39:03.066735+00:00",
+      "recorded_at": "2026-10-11T21:40:33.148368+00:00",
+      "kind": "verification",
+      "title": "The public rider now leans into the ride",
+      "summary": "Public v5 replaces the fixed seated sample with recovered normal riding motions. Steering, lean, air and reverse now select rider poses in the browser build.",
+      "details": [
+        "A useful detail in the original controller: the normal clips are sampled from filtered steering and lean inputs, not simply played on a timer. Reverse follows a separate clip path with a different controller order. The authored Rust port now blends 14 normal clips using ordered quaternion channels, transition snapshots and the Head-only look overlay.",
+        "On public commit 0dc5c09890df6bbf8f942309558ad168b7a8857b, the browser diagnostics recorded 18 animated rider nodes and turn/turn/reverse modes; node matrices changed with controls and the renderer regression passed with no JavaScript errors. Separately, a native Rust animator probe produced 1,200 finite poses across turn, reverse, lean and air cases."
+      ],
+      "limitation": "This is still partial animation recovery. Crouch and look inputs use constructor defaults; hand/foot IK, tricks, crash poses, race animation and the full event system remain unfinished. The public game still has no original title/menu flow or map selector; ENV01 is the only connected driving scene.",
+      "image": "/devlog-images/the-public-rider-now-leans-into-the-ride-d44d41f8.png",
+      "caption": "Public v5 in reverse: the rider pose changes with the recovered reverse motion."
+    },
+    {
+      "id": "the-title-screen-is-now-part-of-the-local-route-efc7fbb4",
+      "timestamp": "2026-10-11T21:55:12.571524+00:00",
+      "recorded_at": "2026-10-11T21:55:20.746576+00:00",
+      "kind": "build",
+      "title": "The title screen is now part of the local route",
+      "summary": "The original title screen is now the first rendered screen in a connected browser route, with the Start prompt clearly placed between the logo and legal text.",
+      "details": [
+        "The prompt now has clear space above the copyright lines. Pressing Start enters the recovered Main Menu in the host-only build."
+      ],
+      "limitation": "This capture documents the local route only. Other original title behavior, menu callbacks and game modes remain unfinished.",
+      "image": "/devlog-images/the-title-screen-is-now-part-of-the-local-route-efc7fbb4.png",
+      "caption": "Host-only capture: the original title logo and clearly placed Start prompt."
+    },
+    {
+      "id": "single-player-becomes-a-real-menu-choice-8a059bcc",
+      "timestamp": "2026-10-11T21:48:31.276420+00:00",
+      "recorded_at": "2026-10-11T21:50:03.919840+00:00",
+      "kind": "build",
+      "title": "Single Player becomes a real menu choice",
+      "summary": "The reconstructed title route now reaches the Main Menu, where Single Player is highlighted and selectable.",
+      "details": [
+        "This page is assembled from original layout, widget and font data rather than a screenshot placed over the renderer. It lists Single Player, Multiplayer, Training Course, Profile Editor, Hall of Fame and Options."
+      ],
+      "limitation": "Only the Single Player route is currently wired onward; the other visible options are not implemented game modes. This is a host-only checkpoint and preliminary input coverage, not a complete menu-system verification.",
+      "image": "/devlog-images/single-player-becomes-a-real-menu-choice-8a059bcc.png",
+      "caption": "Host-only local UI: Main Menu assembled from recovered layouts and UI assets."
+    },
+    {
+      "id": "freestyle-is-now-reachable-from-single-player-75bb671d",
+      "timestamp": "2026-10-11T21:48:31.855821+00:00",
+      "recorded_at": "2026-10-11T21:50:06.619386+00:00",
+      "kind": "build",
+      "title": "Freestyle is now reachable from Single Player",
+      "summary": "The local menu route continues into the recovered Single Player page, with Freestyle leading to the environment picker.",
+      "details": [
+        "The page presents Race, Freestyle, Championships and Waypoint Editor using the original text, layout positions and UI styling. The browser currently follows only the Freestyle branch."
+      ],
+      "limitation": "Race, championships, waypoint editing, race HUD and progression are not implemented. This is the host-only reconstruction route; it does not claim the full original single-player flow.",
+      "image": "/devlog-images/freestyle-is-now-reachable-from-single-player-75bb671d.png",
+      "caption": "Host-only local UI: recovered Single Player options, with the Freestyle route connected."
+    },
+    {
+      "id": "freestyle-reaches-caribou-peak-38db3d23",
+      "timestamp": "2026-10-11T21:48:32.437339+00:00",
+      "recorded_at": "2026-10-11T21:50:09.826204+00:00",
+      "kind": "verification",
+      "title": "Freestyle reaches Caribou Peak",
+      "summary": "Freestyle now opens the environment picker, shows the Caribou Peak preview and connects that choice to the existing ENV01 scene.",
+      "details": [
+        "This is the first local route from the recovered title screen through Single Player into a named environment. The track catalog identifies ENV01 as Caribou Peak.",
+        "We attempted Tioga next, but its original collision data contains a non-finite triangle coordinate and currently blocks that route. The failing source triangle is under investigation."
+      ],
+      "limitation": "Only Caribou Peak/ENV01 currently connects to driving. Other tracks and modes remain unverified or unfinished, and this browser checkpoint is host-only. Formal menu-input regression is still pending.",
+      "image": "/devlog-images/freestyle-reaches-caribou-peak-38db3d23.png",
+      "caption": "Host-only local UI: Freestyle environment picker with the Caribou Peak scene preview."
+    },
+    {
+      "id": "freestyle-now-connects-two-original-environments-cfd6b170",
+      "timestamp": "2026-10-11T21:51:59.564434+00:00",
+      "recorded_at": "2026-10-11T21:53:08.948107+00:00",
+      "kind": "verification",
+      "title": "Freestyle now connects two original environments",
+      "summary": "The reconstructed title route now reaches the original Freestyle environment picker, and both Caribou Peak (ENV01) and Tioga Valley (ENV02) enter a driving scene in the local browser build.",
+      "details": [
+        "The full frontend check passed title \u2192 Main Menu \u2192 Single Player \u2192 Freestyle using keyboard and synthetic controller input. Start returns to the menu and pauses the Rust frame; on a 390-pixel touch viewport, selecting Caribou loads the scene and Escape returns without overflow or JavaScript errors.",
+        "The page uses decoded original menu layouts, fonts and artwork. Its map choice now changes between Caribou Peak (ENV01) and Tioga Valley (ENV02)."
+      ],
+      "limitation": "Host-only checkpoint; public v5 still starts directly on Caribou Peak. Only two environments and the Freestyle route are connected. Other modes, original menu callbacks, race HUD and full game flow remain unfinished; this is not whole-game PS2 equivalence.",
+      "image": "/devlog-images/freestyle-now-connects-two-original-environments-cfd6b170.png",
+      "caption": "Host-only capture of the recovered Freestyle environment picker on Tioga Valley."
+    },
+    {
+      "id": "four-degenerate-tioga-faces-no-longer-stop-the-map-5baa3ade",
+      "timestamp": "2026-10-11T21:49:55.341002+00:00",
+      "recorded_at": "2026-10-11T21:53:08.984356+00:00",
+      "kind": "discovery",
+      "title": "Four degenerate Tioga faces no longer stop the map",
+      "summary": "Tioga Valley (ENV02)'s `ruins.col` prop collision mesh contained four NaN plane records on triangles whose vertices collapse to duplicate coordinates. Preserving the original index/tree data while skipping only those zero-area faces lets the local browser load and drive the map.",
+      "details": [
+        "The affected faces are 3, 66, 70 and 84 in ruins.col. Their stored plane words and tree/triangle indices are retained; other non-finite vertices and invalid real faces continue to be rejected.",
+        "The verified route can select Tioga from the original environment picker and start driving. The frontend test also covers returning to the menu and a narrow touch layout."
+      ],
+      "limitation": "This is a targeted malformed-geometry recovery, not proof of complete collision equivalence or a PS2-hardware match. Public v5 does not yet include Tioga or the reconstructed menu; race flow and other environments remain incomplete.",
+      "image": "/devlog-images/four-degenerate-tioga-faces-no-longer-stop-the-map-5baa3ade.png",
+      "caption": "Local Tioga Valley driving scene after the targeted degenerate-face handling."
     }
   ],
-  "updated_at": "2026-10-11T21:32:27.265051+00:00"
+  "updated_at": "2026-10-11T21:53:08.984356+00:00"
 }
