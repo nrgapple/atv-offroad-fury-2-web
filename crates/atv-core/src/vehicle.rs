@@ -36,12 +36,16 @@ pub struct VehicleFrame {
     pub orientation: [f32; 4],
     pub speed: f32,
     pub speed_magnitude: f32,
+    pub linear_velocity: Vec3,
+    pub local_angular_velocity: Vec3,
+    pub steering_angle: f32,
     pub rpm: f32,
     pub gear: usize,
     pub wheel_angles: [f32; 4],
     pub wheel_compression: [f32; 4],
     pub grounded: [bool; 4],
     pub chassis_contact_count: usize,
+    pub obstacle_contact_count: usize,
 }
 pub struct Vehicle {
     body: BodyState,
@@ -57,6 +61,7 @@ pub struct Vehicle {
     materials: Option<[TerrainMaterial; 8]>,
     tire_friction: f32,
     steering_reduction: f32,
+    steering_angle: f32,
     steer_speed: [f32; 2],
     steer_scale: [f32; 2],
     airborne_gravity: f32,
@@ -73,6 +78,9 @@ pub struct Vehicle {
     chassis_points: Vec<Vec3>,
     chassis_contact_count: usize,
     chassis_config: ContactConfig,
+    obstacle_rays: Option<std::rc::Rc<crate::collision::CollisionRayTree>>,
+    obstacles: Vec<crate::obstacle::StaticObstacle>,
+    obstacle_contact_count: usize,
 }
 impl Vehicle {
     pub fn new(mesh: &Mesh, data: &PhysicsData, origin: Vec3, yaw: f32) -> Result<Self> {
@@ -168,6 +176,7 @@ impl Vehicle {
             materials: None,
             tire_friction: data.first_scalar("Tires", "TireFriction")?,
             steering_reduction: data.first_scalar("Steering", "SteeringReduction")?,
+            steering_angle: 0.0,
             steer_speed: [
                 data.first_scalar("Steering", "SteerSpeed1")?,
                 data.first_scalar("Steering", "SteerSpeed2")?,
@@ -195,6 +204,9 @@ impl Vehicle {
             chassis_points: Vec::new(),
             chassis_contact_count: 0,
             chassis_config: ContactConfig::from_physics(data)?,
+            obstacle_rays: None,
+            obstacles: Vec::new(),
+            obstacle_contact_count: 0,
         })
     }
     ///002d87c0 copies this rider field without MPH conversion.
@@ -219,6 +231,36 @@ impl Vehicle {
         }
         Ok(())
     }
+    pub fn set_obstacles(
+        &mut self,
+        rays: std::rc::Rc<crate::collision::CollisionRayTree>,
+        obstacles: Vec<crate::obstacle::StaticObstacle>,
+    ) -> Result<()> {
+        rays.chassis_points()?;
+        let identity = [
+            1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+        ];
+        if rays.transform != identity
+            || obstacles
+                .iter()
+                .any(|o| o.mesh.transform != [1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0.])
+        {
+            return Err("nonidentity COL header transforms are not yet supported".into());
+        }
+        if obstacles.len() > 4096
+            || obstacles
+                .iter()
+                .any(|o| o.mesh.nodes.is_empty() || !o.world_matrix.iter().all(|v| v.is_finite()))
+        {
+            return Err("unsupported obstacle list or nonfinite placement".into());
+        }
+        for obstacle in &obstacles {
+            obstacle.mesh.validate_tree()?;
+        }
+        self.obstacle_rays = Some(rays);
+        self.obstacles = obstacles;
+        Ok(())
+    }
     pub fn set_materials(&mut self, materials: [TerrainMaterial; 8]) {
         self.materials = Some(materials);
     }
@@ -237,11 +279,15 @@ impl Vehicle {
                 }
             },
             rpm: self.engine.state.rpm,
+            linear_velocity: self.body.linear_velocity,
+            local_angular_velocity: self.body.local_angular_velocity,
+            steering_angle: self.steering_angle,
             gear: self.engine.state.gear,
             wheel_angles: self.wheels.map(|w| w.angle),
             wheel_compression: self.suspension.map(|s| s.compression),
             grounded: self.contacts.map(|c| c.grounded),
             chassis_contact_count: self.chassis_contact_count,
+            obstacle_contact_count: self.obstacle_contact_count,
         }
     }
     pub fn step(
@@ -302,6 +348,7 @@ impl Vehicle {
                 )
         };
         let steering = ((self.smoothed_axes[0] * 30.0) * f32::from_bits(0x3c8efa34)) * steer_scale;
+        self.steering_angle = steering;
         let driven = std::array::from_fn::<_, 2, _>(|i| DrivenWheel {
             angular_speed: self.wheels[i + 2].angular_speed,
             brake,
@@ -396,6 +443,17 @@ impl Vehicle {
                 ));
             }
         }
+        let b = self.body.basis();
+        let origin = self.body.origin(&self.body_config);
+        let ray_world = [
+            b[0][0], b[0][1], b[0][2], 0., b[1][0], b[1][1], b[1][2], 0., b[2][0], b[2][1],
+            b[2][2], 0., origin[0], origin[1], origin[2], 1.,
+        ];
+        let obstacle_contacts = if let Some(rays) = &self.obstacle_rays {
+            crate::obstacle::query_static_scene(rays, &ray_world, &self.obstacles)?
+        } else {
+            Vec::new()
+        };
         let mut elapsed = 0.0;
         while elapsed < dt {
             let step = (dt - elapsed).min(f32::from_bits(0x3c888889));
@@ -547,6 +605,26 @@ impl Vehicle {
                     )?;
                 }
             }
+            self.obstacle_contact_count = 0;
+            for c in &obstacle_contacts {
+                let vertex = add(origin, transform(b, c.local_end));
+                let penetration = dot(sub(c.world_point, vertex), c.world_normal);
+                if penetration > 0.0 {
+                    self.obstacle_contact_count += 1;
+                    contact::resolve_static(
+                        &mut self.body,
+                        &self.body_config,
+                        self.chassis_config,
+                        StaticContact {
+                            point: add(vertex, scale(c.world_normal, penetration)),
+                            normal: c.world_normal,
+                            penetration,
+                            material_grip: materials[0].grip,
+                        },
+                        &mut corrections,
+                    )?;
+                }
+            }
             self.body.step(&self.body_config, step)?;
             self.body.center = add(self.body.center, corrections.translation);
             elapsed += step;
@@ -647,6 +725,66 @@ mod tests {
         };
         (v, t)
     }
+    #[test]
+    fn obstacle_ray_contact_rejects_wall_penetration() {
+        use crate::collision::{
+            CollisionMesh, CollisionRay, CollisionRayTree, RayTreeNode, Triangle,
+        };
+        use std::rc::Rc;
+        let (mut vehicle, terrain) = fixture();
+        let identity = [
+            1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+        ];
+        let node = || RayTreeNode {
+            bound_measure: 10.,
+            center: [0.; 3],
+            half_extents: [10.; 3],
+            children: [0x8000, 0x8000],
+        };
+        let rays = Rc::new(CollisionRayTree {
+            transform: identity,
+            query_capacity: 1,
+            nodes: vec![node()],
+            rays: vec![CollisionRay {
+                start: [0., 0., -1.],
+                end: [0., 0., 1.],
+            }],
+        });
+        let mesh = Rc::new(CollisionMesh {
+            transform: [1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0.],
+            vertices: vec![[-10., -10., 0.], [0., 10., 0.], [10., -10., 0.]],
+            vertex_normals: None,
+            triangles: vec![Triangle {
+                indices: [0, 1, 2],
+                normal: [0., 0., -1.],
+                distance: 0.,
+            }],
+            broad_phase_nodes: 1,
+            nodes: vec![node()],
+            flags: 0,
+        });
+        let mut placement = identity;
+        placement[12] = 500.;
+        placement[13] = 1.;
+        placement[14] = 500.;
+        vehicle
+            .set_obstacles(
+                rays,
+                vec![crate::obstacle::StaticObstacle {
+                    mesh,
+                    world_matrix: placement,
+                }],
+            )
+            .unwrap();
+        vehicle.body.linear_velocity = [0., 0., 10.];
+        let frame = vehicle
+            .step(&terrain, VehicleInput::default(), 1. / 60.)
+            .unwrap();
+        assert_eq!(frame.obstacle_contact_count, 1);
+        assert!(frame.linear_velocity[2] < 1.);
+        assert!(frame.origin[2] < 500.);
+    }
+
     #[test]
     fn chassis_contacts_hold_body_when_wheels_cannot_reach() {
         let (mut vehicle, terrain) = fixture();

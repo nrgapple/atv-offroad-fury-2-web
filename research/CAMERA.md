@@ -1,0 +1,19 @@
+# Follow camera recovery
+
+The browser follow camera now runs in Rust from the local disc's `FollowCamPresets.pb`. The exact USA v2.00 loader `003029a0`, constructor `001f2d20`, follow update `00319e10`, look target `0031a5e0`, camera position `0031aa70`, terrain lift/clamp `00319d50` / `00319c30`, and filters `00302600` establish this implementation. No original preset file is included in the repository or deployment.
+
+The loader preserves the seven constructor defaults, converts authored heading/elevation angles from degrees, and chooses the original single, horizontal split, vertical split or quarter-screen sections. All 28 entries were decoded privately. The browser starts with the single-screen chase preset. The Camera button, C key and controller north face button cycle through the original eligible presets.
+
+Recovered behavior includes speed-dependent elevation, reverse distance/target changes, yaw-rate camera swing, forward prediction, falling look-ahead, terrain clearance and independent position/target filters. The original actor-binding call establishes a 70 MPH speed reference, converted with its original constant. Wheel contact for reverse detection comes from the actor's any-wheel-grounded flag. A final terrain clamp affects the rendered camera without feeding back into the filter's stored history.
+
+## Validation and limits
+
+A private finite-binary32 instruction interpreter ran the original executable bytes, including branch delay slots and selected VU operations:
+
+- 600 filter cases, 120,000 original instructions: all eight output float bit patterns match.
+- 600 initial follow-camera frames spanning all seven presets, reverse motion, falling and orbit: maximum absolute difference below 0.000028 across position, target and field of view.
+- 1,260 sequential frames across seven presets with a sloping floor, changing velocity, yaw and contact: 1,575,771 original instructions; maximum absolute difference below 0.0000053 across the same outputs.
+
+These are component checks, not PS2 hardware or full-game replay equivalence. Scene/body access is supplied by explicit hooks. Trigonometry still uses host sine/cosine instead of the original lookup table, and VU exceptional arithmetic is not fully emulated. Terrain queries are integrated; the optional camera clearance query against objects remains incomplete. Browser controller/touch orbit scaling is provisional. Projection recovery (`0011b070` → `0013bdb0` → `00325e80`) establishes horizontal field of view. The browser uses the recovered FOV at a 4:3 reference aspect and preserves its vertical framing while extending the horizontal view for widescreen. This widescreen framing is a browser adaptation. Original render-distance/LOD policies remain incomplete.
+
+Private reproduction scripts and results live under `work/physics/camera_*` and `private/reports/`; extracted presets and decompiler output remain ignored.

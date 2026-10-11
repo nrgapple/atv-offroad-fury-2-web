@@ -156,6 +156,13 @@ fn run() -> Result<()> {
             let b=fs::read(&a[1]).map_err(|e|e.to_string())?; let audio=audio::decode_vag(&b)?;
             write(&a[2],&audio.wav())?;println!("{}",serde_json::to_string_pretty(&audio.info).unwrap());
         }
+        Some("camera-presets") if a.len()==4 => {
+            let bytes=fs::read(&a[1]).map_err(|e|e.to_string())?;
+            let layout=a[2].parse().map_err(|_|"invalid viewport layout")?;
+            let presets=atv_core::camera::presets(&bytes,layout)?;
+            write(&a[3],&serde_json::to_vec_pretty(&presets).unwrap())?;
+            println!("{} original camera presets",presets.len());
+        }
         Some("engine-audio") if a.len()==4 => {
             let b=fs::read(&a[1]).map_err(|e|e.to_string())?;
             let config=atv_core::engine_audio::EngineAudioConfig::parse(&b,a[2].parse().map_err(|_|"invalid quad id")?)?;

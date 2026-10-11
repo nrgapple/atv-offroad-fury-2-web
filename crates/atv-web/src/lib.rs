@@ -30,6 +30,11 @@ struct Simulation {
     rider_mesh: Option<mesh::Mesh>,
     rider_animation: Option<animation::Animation>,
     chassis_points: Option<Vec<[f32; 3]>>,
+    quad_pose: Option<atv_core::quad_pose::QuadPose>,
+    obstacle_rays: Option<std::rc::Rc<atv_core::collision::CollisionRayTree>>,
+    obstacle_meshes: Vec<std::rc::Rc<atv_core::collision::CollisionMesh>>,
+    obstacles: Option<Vec<atv_core::obstacle::StaticObstacle>>,
+    camera: Option<atv_core::camera::FollowCamera>,
 }
 thread_local! { static SIMULATION: RefCell<Simulation> = RefCell::default(); }
 
@@ -128,6 +133,22 @@ fn json_number(value: &serde_json::Value, key: &str) -> Result<f32> {
     Ok(number)
 }
 
+fn simulation_frame(sim: &Simulation, frame: &atv_core::vehicle::VehicleFrame) -> Result<Vec<u8>> {
+    let matrices = sim
+        .quad_pose
+        .as_ref()
+        .ok_or("load original quad linkage first")?
+        .sample(
+            frame.steering_angle,
+            frame.wheel_angles,
+            frame.wheel_compression,
+        )?;
+    let mut value = serde_json::to_value(frame).map_err(|error| error.to_string())?;
+    value["quad_node_matrices"] =
+        serde_json::to_value(matrices).map_err(|error| error.to_string())?;
+    serde_json::to_vec(&value).map_err(|error| error.to_string())
+}
+
 fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
     SIMULATION.with_borrow_mut(|sim| {
         match op {
@@ -135,6 +156,9 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 let terrain = terrain::decode_tr2(input)?;
                 sim.terrain = Some(terrain);
                 sim.vehicle = None;
+                sim.obstacle_rays = None;
+                sim.obstacle_meshes.clear();
+                sim.obstacles = None;
             }
             21 => {
                 let physics = PhysicsData::parse(input)?;
@@ -143,6 +167,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
             }
             22 => {
                 let mesh = mesh::decode_psg(input)?;
+                sim.quad_pose = Some(atv_core::quad_pose::QuadPose::new(&mesh)?);
                 sim.mesh = Some(mesh);
                 sim.chassis_points = None;
                 sim.vehicle = None;
@@ -179,8 +204,17 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         .as_ref()
                         .ok_or("load original chassis collision first")?,
                 )?;
-                let result =
-                    serde_json::to_vec(&vehicle.frame()).map_err(|error| error.to_string())?;
+                vehicle.set_obstacles(
+                    sim.obstacle_rays
+                        .as_ref()
+                        .ok_or("load original actor collision rays first")?
+                        .clone(),
+                    sim.obstacles
+                        .as_ref()
+                        .ok_or("load original scene collision first")?
+                        .clone(),
+                )?;
+                let result = simulation_frame(sim, &vehicle.frame())?;
                 sim.vehicle = Some(vehicle);
                 return Ok(result);
             }
@@ -204,7 +238,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     input,
                     json_number(&value, "dt")?,
                 )?;
-                return serde_json::to_vec(&frame).map_err(|error| error.to_string());
+                return simulation_frame(sim, &frame);
             }
             26 => {
                 let materials = materials::terrain_materials(input)?;
@@ -251,6 +285,71 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 sim.vehicle = None;
                 return Ok(result);
             }
+            45 => {
+                let presets = atv_core::camera::presets(input, 0)?;
+                let result = serde_json::to_vec(&presets).map_err(|e| e.to_string())?;
+                //00319c10 ->003007b0 supplies70MPH and the original ft/s conversion.
+                sim.camera = Some(atv_core::camera::FollowCamera::new(
+                    presets,
+                    70. * f32::from_bits(0x3fbbbb84),
+                )?);
+                return Ok(result);
+            }
+            46 => {
+                let value: serde_json::Value =
+                    serde_json::from_slice(input).map_err(|e| e.to_string())?;
+                let vehicle = sim
+                    .vehicle
+                    .as_ref()
+                    .ok_or("start simulation first")?
+                    .frame();
+                let basis = atv_core::dynamics::basis(vehicle.orientation);
+                let velocity = vehicle.linear_velocity;
+                let local = atv_core::dynamics::inverse_transform(basis, velocity);
+                let terrain = sim.terrain.as_ref().ok_or("load original terrain first")?;
+                let frame = sim
+                    .camera
+                    .as_mut()
+                    .ok_or("load original camera presets first")?
+                    .step(
+                        atv_core::camera::FollowInput {
+                            origin: vehicle.origin,
+                            forward: basis[2],
+                            velocity,
+                            speed: ((velocity[0] * velocity[0] + velocity[1] * velocity[1])
+                                + velocity[2] * velocity[2])
+                                .sqrt(),
+                            local_forward_speed: local[2],
+                            yaw_rate: vehicle.local_angular_velocity[1],
+                            wheel_contact: vehicle.grounded.iter().any(|v| *v),
+                            orbit: json_number(&value, "orbit")?,
+                        },
+                        json_number(&value, "dt")?,
+                        |point| {
+                            Ok(terrain
+                                .contact(point[0], point[2])?
+                                .map_or(point[1], |contact| contact.height))
+                        },
+                    )?;
+                return serde_json::to_vec(&frame).map_err(|e| e.to_string());
+            }
+            47 => {
+                let value: serde_json::Value =
+                    serde_json::from_slice(input).map_err(|e| e.to_string())?;
+                let camera = sim
+                    .camera
+                    .as_mut()
+                    .ok_or("load original camera presets first")?;
+                if value
+                    .get("cycle")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    camera.cycle();
+                } else {
+                    camera.reset();
+                }
+            }
             _ => return Err("unknown simulation operation".into()),
         }
         Ok(b"{}".to_vec())
@@ -280,14 +379,62 @@ pub extern "C" fn output_len() -> usize {
     BUFFERS.with_borrow(|b| b.output.len())
 }
 
+fn obstacle_input(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
+    SIMULATION.with_borrow_mut(|sim| {
+        if op == 48 {
+            if index == 0 {
+                let rays = atv_core::collision::decode_ray_tree(input)?;
+                let identity = [1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.];
+                if rays.transform != identity { return Err("unsupported actor collision header transform".into()); }
+                let result = serde_json::json!({"rays":rays.rays.len()});
+                sim.obstacle_rays = Some(std::rc::Rc::new(rays));
+                sim.vehicle = None;
+                return serde_json::to_vec(&result).map_err(|e| e.to_string());
+            }
+            if sim.obstacle_meshes.len() >= 4096 { return Err("too many collision meshes".into()); }
+            let mesh = atv_core::collision::decode_col(input)?;
+            if mesh.transform != [1.,0.,0.,0.,1.,0.,0.,0.,1.,0.,0.,0.] {
+                return Err("unsupported static collision header transform".into());
+            }
+            let result = serde_json::json!({"mesh":sim.obstacle_meshes.len(),"triangles":mesh.triangles.len()});
+            sim.obstacle_meshes.push(std::rc::Rc::new(mesh));
+            sim.vehicle = None;
+            return serde_json::to_vec(&result).map_err(|e| e.to_string());
+        }
+        let source: serde_json::Value = serde_json::from_slice(input).map_err(|e| e.to_string())?;
+        let placements = source.as_array().ok_or("collision placements need an array")?;
+        if placements.len() > 4096 { return Err("too many collision placements".into()); }
+        let mut obstacles = Vec::with_capacity(placements.len());
+        for placement in placements {
+            let index = placement.get("mesh").and_then(serde_json::Value::as_u64).ok_or("missing collision mesh index")?;
+            let mesh = sim.obstacle_meshes.get(usize::try_from(index).map_err(|_| "invalid collision mesh index")?).ok_or("collision mesh index out of bounds")?.clone();
+            let values = placement.get("world_matrix").and_then(serde_json::Value::as_array).ok_or("missing collision matrix")?;
+            if values.len() != 16 { return Err("collision matrix needs 16 elements".into()); }
+            let mut world_matrix = [0.;16];
+            for (output, value) in world_matrix.iter_mut().zip(values) {
+                *output = value.as_f64().ok_or("invalid collision matrix element")? as f32;
+                if !output.is_finite() { return Err("nonfinite collision matrix".into()); }
+            }
+            obstacles.push(atv_core::obstacle::StaticObstacle { mesh, world_matrix });
+        }
+        let result = serde_json::json!({"instances":obstacles.len(),"meshes":sim.obstacle_meshes.len()});
+        sim.obstacles = Some(obstacles);
+        sim.vehicle = None;
+        serde_json::to_vec(&result).map_err(|e| e.to_string())
+    })
+}
+
 fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
+    if (48..=49).contains(&op) {
+        return obstacle_input(input, op, index);
+    }
     if (40..=43).contains(&op) {
         return music(input, op, index);
     }
     if (32..=34).contains(&op) {
         return engine_audio(input, op, index);
     }
-    if (20..=29).contains(&op) || op == 44 {
+    if (20..=29).contains(&op) || (44..=47).contains(&op) {
         return simulation(input, op);
     }
     let json = match op {

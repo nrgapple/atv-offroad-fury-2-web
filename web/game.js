@@ -10,7 +10,7 @@ const worker = new Worker('worker.js', { type: 'module' });
 const pending = new Map();
 let requestId = 0, generation = 0, terrain, vehicle, program, uniforms, chunks = [], vehicleChunks = [], gpuTextures = [], fallbackTexture, terrainAtlas, terrainTextureMap, frame = 0, lastTime = 0, lost = false;
 let focused = document.hasFocus(), gamepadsAvailable = true;
-let simReady = false, simBusy = false, simAccumulator = 0, simFrame, simStart, simGeneration = 0, orbit = 0;
+let simReady = false, simBusy = false, simAccumulator = 0, simFrame, simStart, simGeneration = 0, orbit = 0, cameraFrame, cameraCycle = false, cameraButtonHeld = false;
 let sceneChunks = [], sceneDraws = [], skyChunks = [];
 const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const camera = { x: 0, y: 0, z: 0, yaw: 0, pitch: -.35 };
@@ -38,7 +38,7 @@ function codec(op, bytes, index = 0) {
     worker.postMessage({ id, op, index, bytes });
   });
 }
-async function json(op, bytes) { return JSON.parse(decoder.decode(await codec(op, bytes))); }
+async function json(op, bytes, index = 0) { return JSON.parse(decoder.decode(await codec(op, bytes, index))); }
 async function command(op, value) { return json(op, encoder.encode(JSON.stringify(value))); }
 async function read(file, offset, count) {
   if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(count) || offset < 0 || count < 0 || count > 128 * 1048576 || offset + count > file.size) throw new Error('Invalid disc file extent.');
@@ -81,6 +81,9 @@ async function discTerrain(file, token) {
   const sceneIndex = entries.findIndex(entry => /(^|[\\/])env01fr\.scn$/i.test(entry.name));
   if (sceneIndex < 0) throw new Error('Original start position is missing.');
   const sceneMetadata = await json(37, await codec(3, resource, sceneIndex));
+  const cameraIndex = entries.findIndex(entry => entry.name.split(/[\\/]/).at(-1).toLowerCase() === 'followcampresets.pb');
+  if (cameraIndex < 0) throw new Error('Original camera presets are missing.');
+  const cameraPresets = await codec(3, resource, cameraIndex);
   const scene = { position: sceneMetadata.start_position, yaw: Math.atan2(sceneMetadata.start_direction[0], sceneMetadata.start_direction[2]) };
   const quadFile = files.find(entry => entry.path === '/QUAD/BIKESA/ATV01.RES');
   if (!quadFile) throw new Error('Original ATV archive is missing.');
@@ -96,6 +99,9 @@ async function discTerrain(file, token) {
   const chassisIndex = quadEntries.findIndex(entry => /(^|[\\/])atv01ao\.col$/i.test(entry.name));
   if (chassisIndex < 0) throw new Error('Original chassis collision is missing.');
   const chassis = await codec(3, quadArchive, chassisIndex);
+  const actorIndex = quadEntries.findIndex(entry => /(^|[\\/])atv01ar\.col$/i.test(entry.name));
+  if (actorIndex < 0) throw new Error('Original actor collision rays are missing.');
+  const actorRays = await codec(3, quadArchive, actorIndex);
   let toyIndex = entries.findIndex(entry => /(^|[\\/])env01\.toy$/i.test(entry.name)), toy;
   if (toyIndex >= 0) toy = await codec(3, resource, toyIndex);
   else {
@@ -156,7 +162,18 @@ async function discTerrain(file, token) {
       sceneMeshes.set(name, model);
     } catch (error) { unsupported.push({ name, error: error.message }); }
   }
-  return { bytes, name: entries[index].name, scene, mesh, meshBytes, physics, chassis, toy, textures, sky, terrainTextures: { layout, images }, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
+  status('Reading original scene collisions…');
+  const collisionMeshes = new Map(), collisionPlacements = [];
+  for (const placement of sceneMetadata.collision_models) {
+    if (token !== generation) throw new Error('Opening cancelled.');
+    const name = placement.name.toLowerCase();
+    const collisionIndex = entries.findIndex(entry => entry.name.replaceAll('\\', '/').toLowerCase() === `geometry/${name}.col`);
+    //00206e90 ignores missing COL files; authored non-solid overlays have none.
+    if (collisionIndex < 0) continue;
+    if (!collisionMeshes.has(name)) collisionMeshes.set(name, await codec(3, resource, collisionIndex));
+    collisionPlacements.push({ ...placement, name });
+  }
+  return { bytes, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, toy, textures, sky, terrainTextures: { layout, images }, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
 }
 async function baseTextures(mesh, materialArchive, materialEntries, cache = new Map()) {
   const findMaterial = name => materialEntries.findIndex(entry => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase());
@@ -201,10 +218,13 @@ precision highp float;
 layout(location=0) in vec3 position;
 layout(location=1) in vec3 normal;
 layout(location=2) in vec2 uv;
+layout(location=3) in float quadNode;
 uniform mat4 viewProjection;
 uniform mat4 model;
 uniform vec3 eye;
 uniform bool skyPass;
+uniform bool useQuadPose;
+uniform mat4 quadBones[32];
 out vec3 surfaceNormal;
 out float distanceToEye;
 out float worldHeight;
@@ -212,9 +232,10 @@ out vec2 texcoord;
 out vec2 worldXZ;
 void main() {
   texcoord = uv;
-  vec4 worldPosition = model * vec4(position, 1.0);
+  mat4 localPose = useQuadPose ? quadBones[int(quadNode)] : mat4(1.0);
+  vec4 worldPosition = model * localPose * vec4(position, 1.0);
   worldXZ = worldPosition.xz;
-  surfaceNormal = mat3(model) * normal;
+  surfaceNormal = mat3(model) * mat3(localPose) * normal;
   worldHeight = worldPosition.y;
   distanceToEye = length(worldPosition.xyz - eye);
   gl_Position = viewProjection * worldPosition;
@@ -275,6 +296,8 @@ function initializeGl() {
   gl.deleteShader(vertex); gl.deleteShader(fragment);
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
   uniforms = Object.fromEntries(['viewProjection', 'model', 'eye', 'heights', 'fogDistance', 'surfaceColor', 'baseTexture', 'useTexture', 'useTerrainTexture', 'terrainColors', 'terrainMapping', 'terrainSpacing', 'ambientLight', 'sunlightColor', 'sunlightDirection', 'fogColor', 'unlit', 'skyPass'].map(name => [name, gl.getUniformLocation(program, name)]));
+  uniforms.useQuadPose = gl.getUniformLocation(program, 'useQuadPose');
+  uniforms.quadBones = gl.getUniformLocation(program, 'quadBones[0]');
   fallbackTexture = texture({ width: 1, height: 1, rgba: new Uint8Array([255, 255, 255, 255]) });
   terrainAtlas = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D_ARRAY, terrainAtlas);
   gl.texImage3D(gl.TEXTURE_2D_ARRAY, 0, gl.RGBA8, 1, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
@@ -331,13 +354,14 @@ function uploadTerrainTextures() {
   gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
   diagnostics.terrainTextures = images.length;
 }
-function upload(vertices, indices, hasUv = false) {
+function upload(vertices, indices, hasUv = false, hasNodes = false) {
   const chunk = { vao: gl.createVertexArray(), vertices: gl.createBuffer(), indices: gl.createBuffer(), count: indices.length };
   gl.bindVertexArray(chunk.vao); gl.bindBuffer(gl.ARRAY_BUFFER, chunk.vertices); gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
-  const stride = hasUv ? 32 : 24;
+  const stride = hasNodes ? 36 : hasUv ? 32 : 24;
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, stride, 0);
   gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, stride, 12);
   if (hasUv) { gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, stride, 24); }
+  if (hasNodes) { gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 1, gl.FLOAT, false, stride, 32); }
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, chunk.indices); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
   return chunk;
 }
@@ -360,7 +384,8 @@ function setVehicle(source) {
   if (position[0] < 0 || position[2] < 0 || position[0] > terrain.sizeX || position[2] > terrain.sizeZ) throw new Error('Scene start lies outside the recovered terrain.');
   // Keep the original scene spawn height unless its bind-pose bounds intersect ground.
   position[1] = Math.max(position[1], terrainHeight(position[0], position[2]) - min[1]);
-  vehicle = { groups, position, yaw: source.scene.yaw, length: max[2] - min[2], height: max[1] - min[1], materials: source.mesh.materials, textures: source.textures, rider: source.rider };
+  if (source.mesh.nodes.length > 32) throw new Error('Quad node count exceeds supported GPU pose capacity.');
+  vehicle = { groups, nodes: source.mesh.nodes, nodeMatrices: new Float32Array(source.mesh.nodes.flatMap(node => node.world_matrix)), position, yaw: source.scene.yaw, length: max[2] - min[2], height: max[1] - min[1], materials: source.mesh.materials, textures: source.textures, rider: source.rider };
 }
 function transform(matrix, value, point = false) {
   return [0, 1, 2].map(row => matrix[row] * value[0] + matrix[4 + row] * value[1] + matrix[8 + row] * value[2] + (point ? matrix[12 + row] : 0));
@@ -428,11 +453,14 @@ function buildMesh() {
   if (vehicle) for (const [name, decoded] of vehicle.textures) { if (!decoded.rgba) continue; const gpu = texture(decoded); materialTextures.set(name, gpu); gpuTextures.push(gpu); }
   if (vehicle) for (const group of vehicle.groups) {
     if (group.vertices.length > 65536) throw new Error('ATV mesh group exceeds index bounds.');
-    const vertices = new Float32Array(group.vertices.length * 8);
-    group.vertices.forEach(({ position: p, normal: n, uv }, index) => {
-      vertices.set([...p, ...n, ...uv], index * 8);
+    const vertices = new Float32Array(group.vertices.length * 9);
+    group.vertices.forEach((vertex, index) => {
+      const node = vehicle.nodes[vertex.node];
+      if (!node) throw new Error('Quad vertex node is missing.');
+      vertices.set([...vertex.local_position, ...inverseDirection(node.world_matrix, vertex.normal), ...vertex.uv, vertex.node], index * 9);
     });
-    const chunk = upload(vertices, new Uint16Array(group.indices), true);
+    const chunk = upload(vertices, new Uint16Array(group.indices), true, true);
+    chunk.quad = true;
     chunk.texture = materialTextures.get(vehicle.materials[group.material]);
     vehicleChunks.push(chunk);
   }
@@ -498,6 +526,7 @@ function buildMesh() {
   Object.assign(diagnostics, { vertices: vertexCount, triangles: triangleCount, chunks: chunks.length, vehicleVertices: vehicle?.groups.reduce((sum, group) => sum + group.vertices.length, 0) ?? 0, vehicleTriangles: vehicle?.groups.reduce((sum, group) => sum + group.indices.length / 3, 0) ?? 0, vehicleTextures: materialTextures.size, riderTriangles, riderTextures: riderTextureCount, vehiclePosition: vehicle?.position, finePatch: patch, sceneInstances, sceneTriangles, skippedSceneGroups, unsupportedSceneMeshes: terrain.world?.unsupported ?? [] });
 }
 function resetCamera() {
+  if (cameraFrame && simReady) { acceptCameraFrame(cameraFrame); canvas.focus({ preventScroll: true }); return; }
   if (!terrain) return;
   const span = Math.max(terrain.sizeX, terrain.sizeZ);
   camera.x = terrain.sizeX * .5; camera.z = terrain.sizeZ * .88; camera.y = terrain.max + span * .13;
@@ -528,7 +557,10 @@ function matrix() {
   const right = [-Math.cos(yaw), 0, Math.sin(yaw)];
   const up = [-Math.sin(yaw) * Math.sin(pitch), Math.cos(pitch), -Math.cos(yaw) * Math.sin(pitch)];
   const view = new Float32Array([right[0], up[0], -forward[0], 0, right[1], up[1], -forward[1], 0, right[2], up[2], -forward[2], 0, -(right[0] * x + right[2] * z), -(up[0] * x + up[1] * y + up[2] * z), forward[0] * x + forward[1] * y + forward[2] * z, 1]);
-  const near = .5, far = Math.max(terrain.sizeX, terrain.sizeZ) * 5, f = 1 / Math.tan(Math.PI / 6);
+  // Original00325e80 uses horizontal FOV. Preserve the4:3 vertical framing
+  // while extending the view horizontally on widescreen displays.
+  const near = 1, far = Math.max(terrain.sizeX, terrain.sizeZ) * 5;
+  const f = cameraFrame ? (4 / 3) / Math.tan(cameraFrame.fov * Math.PI / 360) : 1 / Math.tan(Math.PI / 6);
   const projection = new Float32Array([f / (canvas.width / canvas.height), 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) / (near - far), -1, 0, 0, 2 * far * near / (near - far), 0]);
   const result = new Float32Array(16);
   for (let column = 0; column < 4; column++) for (let row = 0; row < 4; row++) for (let k = 0; k < 4; k++) result[column * 4 + row] += projection[k * 4 + row] * view[column * 4 + k];
@@ -570,15 +602,25 @@ function acceptFrame(frame) {
   if (!frame?.origin?.every(Number.isFinite) || frame.origin.length !== 3 || !frame.orientation?.every(Number.isFinite) || frame.orientation.length !== 4 || !Number.isFinite(frame.speed) || !Number.isFinite(frame.rpm)) throw new Error('Simulation returned a nonfinite pose.');
   simFrame = frame;
   vehicle.position = frame.origin.slice();
+  if (frame.quad_node_matrices?.length !== vehicle.nodes.length || frame.quad_node_matrices.some(matrix => matrix.length !== 16 || !matrix.every(Number.isFinite))) throw new Error('Simulation returned an invalid quad linkage pose.');
+  vehicle.nodeMatrices = new Float32Array(frame.quad_node_matrices.flat());
+  diagnostics.animatedQuadNodes = frame.quad_node_matrices.length;
 }
 async function startSimulation(source) {
-  simReady = false; simFrame = undefined; simAccumulator = 0; simGeneration++;
+  diagnostics.simulationSteps = 0;
+  simReady = false; simFrame = undefined; cameraFrame = undefined; simAccumulator = 0; simGeneration++;
   if (!source.physics) return;
   await codec(20, source.bytes); await codec(21, source.physics); await codec(22, source.meshBytes); await codec(26, source.toy);
   diagnostics.chassis = await json(44, source.chassis);
+  const actor = await json(48, source.actorRays, 0), collisionIds = new Map();
+  for (const [name, bytes] of source.collisions.meshes) collisionIds.set(name, (await json(48, bytes, 1)).mesh);
+  const obstacles = await command(49, source.collisions.placements.map(placement => ({ mesh: collisionIds.get(placement.name), world_matrix: placement.world_matrix })));
+  diagnostics.obstacles = { ...obstacles, rays: actor.rays };
   simStart = { origin: source.scene.position, yaw: source.scene.yaw };
   acceptFrame(await command(23, simStart));
-  simReady = true; orbit = 0;
+  diagnostics.cameraPresets = (await json(45, source.cameraPresets)).map(preset => preset.name);
+  orbit = 0; acceptCameraFrame(await command(46, { dt: 1 / 60, orbit }));
+  simReady = true;
 }
 async function pumpSimulation() {
   if (simBusy || !simReady || !focused || document.hidden || lost) return;
@@ -587,27 +629,36 @@ async function pumpSimulation() {
   try {
     for (let count = 0; count < 4 && simAccumulator >= 1 / 60 && focused && !document.hidden && !lost; count++) {
       simAccumulator -= 1 / 60;
+      if (cameraCycle) { cameraCycle = false; orbit = 0; await command(47, { cycle: true }); }
       const input = drivingInput(); diagnostics.input = input;
       const frame = await command(24, { dt: 1 / 60, input });
       if (token !== simGeneration) return;
       acceptFrame(frame);
+      diagnostics.simulationSteps++;
+      const cameraResult = await command(46, { dt: 1 / 60, orbit });
+      if (token !== simGeneration) return;
+      acceptCameraFrame(cameraResult);
       void audio.update(1 / 60, input, frame);
     }
   } catch (error) {
     if (token === simGeneration) { simReady = false; status(`Simulation stopped: ${error.message}`, true); }
   } finally { simBusy = false; }
 }
+function acceptCameraFrame(frame) {
+  if (frame?.position?.length !== 3 || frame?.target?.length !== 3 || ![...frame.position, ...frame.target, frame.fov].every(Number.isFinite)) throw new Error('Simulation returned an invalid camera pose.');
+  cameraFrame = frame;
+  [camera.x, camera.y, camera.z] = frame.position;
+  const offset = frame.target.map((value, i) => value - frame.position[i]);
+  camera.yaw = Math.atan2(offset[0], offset[2]);
+  camera.pitch = Math.atan2(offset[1], Math.hypot(offset[0], offset[2]));
+  diagnostics.followCamera = { ...frame, presetName: diagnostics.cameraPresets?.[frame.preset] };
+}
 function followCamera(dt) {
   const pad = focused ? gamepad() : null;
   orbit -= deadzone(pad?.axes[2]) * dt * 1.7;
-  const matrix = vehicleMatrix(), heading = Math.atan2(matrix[8], matrix[10]) + orbit, distance = vehicle.length * 2.2;
-  const target = [vehicle.position[0], vehicle.position[1] + vehicle.height * .55, vehicle.position[2]];
-  const desiredX = target[0] - Math.sin(heading) * distance, desiredZ = target[2] - Math.cos(heading) * distance;
-  const desiredY = Math.max(vehicle.position[1] + vehicle.height * 1.9, terrainHeight(desiredX, desiredZ) + vehicle.height);
-  const smoothing = Math.min(1, dt * 10);
-  camera.x += (desiredX - camera.x) * smoothing; camera.y += (desiredY - camera.y) * smoothing; camera.z += (desiredZ - camera.z) * smoothing;
-  camera.yaw = Math.atan2(target[0] - camera.x, target[2] - camera.z);
-  camera.pitch = Math.atan2(target[1] - camera.y, Math.hypot(target[0] - camera.x, target[2] - camera.z));
+  const pressed = Boolean(pad?.buttons[3]?.pressed);
+  if (pressed && !cameraButtonHeld) cameraCycle = true;
+  cameraButtonHeld = pressed;
 }
 function updateCamera(dt) {
   if (simReady) { followCamera(dt); return; }
@@ -645,6 +696,7 @@ function render(time) {
     if (patch && (x < patch.x0 + 12 || x > patch.x1 - 12 || z < patch.z0 + 12 || z > patch.z1 - 12) && x >= 32 && z >= 32 && x <= terrain.width - 33 && z <= terrain.depth - 33) buildMesh();
   }
   gl.viewport(0, 0, width, height); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.useProgram(program);
+  gl.uniform1i(uniforms.useQuadPose, false);
   gl.uniformMatrix4fv(uniforms.viewProjection, false, matrix()); gl.uniform3f(uniforms.eye, camera.x, camera.y, camera.z);
   gl.uniform2f(uniforms.heights, terrain.min, terrain.max); gl.uniform1f(uniforms.fogDistance, Math.max(terrain.sizeX, terrain.sizeZ) * .85);
   const lights = terrain.world?.metadata.lights;
@@ -683,7 +735,9 @@ function render(time) {
   }
   gl.uniform1i(uniforms.unlit, false);
   if (vehicle) gl.uniformMatrix4fv(uniforms.model, false, vehicleMatrix());
+  if (vehicle) gl.uniformMatrix4fv(uniforms.quadBones, false, vehicle.nodeMatrices);
   for (const chunk of vehicleChunks) {
+    gl.uniform1i(uniforms.useQuadPose, Boolean(chunk.quad));
     gl.uniform1i(uniforms.useTexture, chunk.texture ? 1 : 0); gl.bindTexture(gl.TEXTURE_2D, chunk.texture ?? fallbackTexture);
     gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
   }
@@ -713,9 +767,9 @@ $('disc').addEventListener('change', async event => {
     uploadTerrainTextures();
     setVehicle(source); buildMesh(); await startSimulation(source); resetCamera();
     Object.assign(diagnostics, { ready: true, source: source.name, width, depth, min, max, frames: 0 });
-    $('reset').disabled = false; $('help').hidden = false;
+    $('reset').disabled = false; $('camera').disabled = !simReady; $('help').hidden = false;
     $('reset').textContent = simReady ? 'Reset ATV' : 'Reset view';
-    $('help').textContent = simReady ? 'WASD / arrows: drive · R: reverse · triggers / left stick: controller · left touch: drive' : 'Free camera · drag to look · WASD to move · Q/E up/down';
+    $('help').textContent = simReady ? 'WASD / arrows: drive · R: reverse · C / △ / Y: camera · triggers / left stick: controller · left touch: drive' : 'Free camera · drag to look · WASD to move · Q/E up/down';
     status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain. Open the disc to load the ATV.');
   } catch (error) { if (token === generation) status(error.message, true); }
   finally { if (token === generation) $('disc').disabled = false; }
@@ -723,9 +777,10 @@ $('disc').addEventListener('change', async event => {
 $('reset').onclick = async () => {
   if (!simStart || !vehicle) { resetCamera(); return; }
   simGeneration++; simReady = false; simAccumulator = 0; clearInput();
-  try { await audio.reset(); acceptFrame(await command(23, simStart)); simReady = true; orbit = 0; buildMesh(); resetCamera(); }
+  try { await audio.reset(); acceptFrame(await command(23, simStart)); await command(47, {}); orbit = 0; acceptCameraFrame(await command(46, { dt: 1 / 60, orbit })); simReady = true; buildMesh(); resetCamera(); }
   catch (error) { status(error.message, true); }
 };
+$('camera').onclick = () => { if (simReady) cameraCycle = true; canvas.focus({ preventScroll: true }); };
 $('fullscreen').onclick = async () => {
   try { document.fullscreenElement ? await document.exitFullscreen() : await document.documentElement.requestFullscreen(); }
   catch { status('Fullscreen is unavailable in this browser; the view already fills the window.'); }
@@ -747,10 +802,11 @@ canvas.addEventListener('pointermove', event => {
 for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(name, event => pointers.delete(event.pointerId));
 window.addEventListener('keydown', event => {
   if (document.activeElement !== canvas) return;
+  if (event.code === 'KeyC' && !event.repeat && simReady) { event.preventDefault(); cameraCycle = true; }
   if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyR', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ShiftLeft'].includes(event.code)) { event.preventDefault(); keys.add(event.code); }
 });
 window.addEventListener('keyup', event => keys.delete(event.code));
-const clearInput = () => { keys.clear(); pointers.clear(); simAccumulator = 0; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
+const clearInput = () => { keys.clear(); pointers.clear(); simAccumulator = 0; cameraCycle = false; cameraButtonHeld = false; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
 const syncAudio = () => { void audio.setActive(focused && !document.hidden && !lost).catch(error => { diagnostics.audioError = error.message; }); };
 window.addEventListener('blur', () => { focused = false; clearInput(); syncAudio(); });
 window.addEventListener('focus', () => { focused = true; syncAudio(); });

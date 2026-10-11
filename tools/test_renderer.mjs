@@ -17,16 +17,27 @@ const finite = state => {
   assert(state.frame.orientation.every(Number.isFinite));
   assert(Math.abs(Math.hypot(...state.frame.orientation) - 1) < .001);
   assert(Number.isFinite(state.frame.speed) && Number.isFinite(state.frame.rpm));
+  assert(state.frame.quad_node_matrices.every(matrix => matrix.length === 16 && matrix.every(Number.isFinite)));
+  assert(state.followCamera.position.every(Number.isFinite) && state.followCamera.target.every(Number.isFinite));
+  assert(state.followCamera.fov >= 80 && state.followCamera.fov <= 95);
   assert.equal(state.glError, 0);
 };
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, hasTouch: true });
   const read = () => page.evaluate(() => window.atvTerrainStatus);
+  const steps = async count => {
+    const start = (await read()).simulationSteps;
+    await page.waitForFunction(target => window.atvTerrainStatus.simulationSteps >= target, start + count, { timeout: 30000 });
+  };
   page.on('pageerror', error => errors.push(error.message));
   page.on('request', request => requests.push({ url: request.url(), method: request.method(), resourceType: request.resourceType(), postDataLength: request.postDataBuffer()?.byteLength ?? 0 }));
   await page.goto(base);
   await page.locator('#disc').setInputFiles(iso);
-  await page.waitForFunction(() => window.atvTerrainStatus?.ready && window.atvTerrainStatus.simulation && window.atvTerrainStatus.frames > 3, null, { timeout: 30000 });
+  try {
+    await page.waitForFunction(() => window.atvTerrainStatus?.ready && window.atvTerrainStatus.simulation && window.atvTerrainStatus.frames > 3, null, { timeout: 30000 });
+  } catch (error) {
+    throw new Error(`Disc load failed: ${await page.locator('#status').textContent()}; browser errors: ${JSON.stringify(errors)}`, { cause: error });
+  }
   await page.locator('#game').click({ position: { x: 640, y: 300 } });
   await page.waitForFunction(() => window.atvTerrainStatus.audio?.context === 'running' && window.atvTerrainStatus.audio.commands > 0);
   await page.waitForTimeout(1000);
@@ -38,22 +49,34 @@ try {
   assert(loaded.sceneInstances > 0 && loaded.sceneTriangles > 0);
   assert(loaded.skyTiles > 0);
   assert(loaded.chassis.points > 0 && loaded.chassis.rays > 0);
+  assert(loaded.animatedQuadNodes > 4);
+  assert.equal(loaded.cameraPresets.length, 7);
+  assert.equal(loaded.followCamera.fov, 85);
+  assert(loaded.obstacles.instances > 0 && loaded.obstacles.meshes > 0 && loaded.obstacles.rays > 0);
   assert(loaded.audio.ready && loaded.audio.samples > 0 && !loaded.audioError);
   finite(loaded);
   assert(loaded.frame.grounded.some(Boolean), 'Vehicle settles onto original terrain');
   await page.keyboard.down('KeyW');
-  await page.waitForTimeout(1500);
+  await steps(90);
   const driven = await read();
   await page.keyboard.up('KeyW');
   finite(driven);
   assert.equal(driven.input.throttle, 1);
-  assert(distance(driven.frame.origin, loaded.frame.origin) > 3, 'Throttle must move the actual Rust body');
+  assert(distance(driven.frame.origin, loaded.frame.origin) > 3, `Throttle must move the actual Rust body: ${JSON.stringify({ before: loaded.frame.origin, after: driven.frame.origin, speed: driven.frame.speed, obstacleContacts: driven.frame.obstacle_contact_count })}`);
   assert(driven.frame.speed > loaded.frame.speed + 1);
-  await page.keyboard.down('KeyS'); await page.waitForTimeout(1800); await page.keyboard.up('KeyS');
+  assert.notDeepEqual(driven.frame.quad_node_matrices, loaded.frame.quad_node_matrices, 'Recovered quad linkage must animate with the simulation');
+  await page.keyboard.down('KeyS'); await steps(108); await page.keyboard.up('KeyS');
   const braked = await read(); finite(braked);
   assert(braked.frame.speed < driven.frame.speed, 'Original brakes must reduce speed');
   await page.locator('#reset').click(); await page.waitForTimeout(800);
   assert(distance((await read()).frame.origin, loaded.frame.origin) < 2, 'Reset returns the body to the original scene start');
+  for (const preset of [1, 2, 3, 4, 0]) {
+    await page.locator('#camera').click();
+    await page.waitForFunction(preset => window.atvTerrainStatus.followCamera.preset === preset, preset);
+    finite(await read());
+  }
+  await page.keyboard.press('KeyC');
+  await page.waitForFunction(() => window.atvTerrainStatus.followCamera.preset === 1);
   await page.evaluate(() => {
     window.testPad = { connected: true, axes: [.6, 0, 0, 0], buttons: Array.from({ length: 8 }, (_, index) => ({ value: index === 7 ? 1 : 0, pressed: index === 7 })) };
     Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [window.testPad] });
@@ -62,6 +85,10 @@ try {
   await page.waitForTimeout(600);
   const gamepad = await read(); finite(gamepad);
   assert.equal(gamepad.input.throttle, 1); assert(gamepad.input.steer < 0, 'Right input converts to original left-positive steering scalar');
+  await page.evaluate(() => { window.testPad.buttons[3] = { value: 1, pressed: true }; });
+  await page.waitForFunction(() => window.atvTerrainStatus.followCamera.preset === 2);
+  await steps(15);
+  assert.equal((await read()).followCamera.preset, 2, 'Held controller camera button cycles only once');
   await page.evaluate(() => window.dispatchEvent(new Event('blur')));
   await page.waitForTimeout(100);
   const blurred = await read();
@@ -112,5 +139,5 @@ try {
   const platformRequests = requests.filter(request => request.method === 'POST' && request.resourceType === 'xhr' && new URL(request.url).origin === origin && new URL(request.url).pathname.startsWith('/cdn-cgi/challenge-platform/h/g/jsd/oneshot/'));
   const unexpectedRequests = requests.filter(request => !platformRequests.includes(request) && (request.method !== 'GET' || new URL(request.url).origin !== origin));
   assert.deepEqual(unexpectedRequests, [], `Unexpected request metadata (no body data): ${JSON.stringify(unexpectedRequests)}`);
-  console.log(`PASS: original terrain/sky/props/ATV/rider, engine sample scheduling, Rust chassis/throttle/brakes/reset, gamepad/focus, touch/cancellation, GL recovery, no game uploads; ${platformRequests.length} known Cloudflare challenge requests.`);
+  console.log(`PASS: original terrain/sky/props/ATV/rider, animated quad linkage, static obstacle loading, recovered camera/cycling, engine sample scheduling, Rust chassis/throttle/brakes/reset, gamepad/focus, touch/cancellation, GL recovery, no game uploads; ${platformRequests.length} known Cloudflare challenge requests.`);
 } finally { await browser.close(); }

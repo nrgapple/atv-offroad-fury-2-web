@@ -23,7 +23,7 @@ All integer and IEEE float fields are little endian. No game bytes are embedded 
 | 84 | V packed XYZ f32 vectors |
 | 84 + 12V | u32 vertex-normal presence P (zero or one) |
 | 88 + 12V | V XYZ f32 normals when P is one |
-| 88 + 12V(1+P) | N records of 32 bytes, broad-phase representation not yet interpreted |
+| 88 + 12V(1+P) | N records of32 bytes: bound scalar, center XYZ, half-extents XYZ, two u16 children |
 | following nodes | T triangle records, each 22 bytes: distance f32, normal XYZ f32, three u16 vertex indices |
 
 Expected file length: `88 + 12V(1+P) + 32N + 22T`. A triangle's stored plane obeys `dot(normal, vertex) + distance = 0`.
@@ -34,7 +34,7 @@ The reader verifies exact extents, counts, finite floating-point fields, and ind
 cargo run --release -p atv-tools -- collision private/extracted/example.col private/reports/example-mesh.json
 ```
 
-The returned local mesh supports later contact and ray-query implementation. It does not reproduce the original broad-phase traversal, collision response, suspension, material friction, or physics solver. Scene instance transforms must still be applied correctly.
+The returned mesh now feeds the recovered static ray-bundle query and vehicle contact response. See [obstacle behavior and validation](OBSTACLES.md) for implemented stages and remaining scene-ordering limitations.
 
 ## Related geometry
 

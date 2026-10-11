@@ -1,6 +1,7 @@
 //! Exact-build format recovery. No game data or executable code is embedded.
 pub mod animation;
 pub mod audio;
+pub mod camera;
 pub mod collision;
 pub mod contact;
 pub mod drivetrain;
@@ -12,7 +13,9 @@ pub mod iso;
 pub mod materials;
 pub mod mesh;
 pub mod music;
+pub mod obstacle;
 pub mod physics_data;
+pub mod quad_pose;
 pub mod resource;
 pub mod rider_control;
 pub mod scene;

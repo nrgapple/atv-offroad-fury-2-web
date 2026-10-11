@@ -1,6 +1,6 @@
 {
-  "status": "The original ATV can be driven on ENV01 in the browser. This is an incomplete reconstruction; it is not the full game yet.",
-  "working_on": "Original obstacle queries, wheel animation and CI-to-Sites release verification.",
+  "status": "The browser reconstruction now combines recovered ATV linkage motion, the single-player chase camera and static obstacle contacts. The full game, rider animation, crash behavior and race systems remain unfinished.",
+  "working_on": "Original obstacle candidate ordering, rider animation and race-flow recovery.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -151,7 +151,38 @@
       "limitation": "Track-object contact generation and crashes remain incomplete. Wheels still render in their bind pose; rider blending, race systems and progression are not finished.",
       "image": "/devlog-images/original-chassis-hull-connected-970f5b48.png",
       "caption": "Original hull connected to the Rust terrain-contact solver, with original sky and scene textures visible."
+    },
+    {
+      "id": "original-atv-suspension-moves-with-driving-9a7447c1",
+      "timestamp": "2026-10-11T20:55:08.178216+00:00",
+      "recorded_at": "2026-10-11T20:57:46.074977+00:00",
+      "kind": "build",
+      "title": "Original ATV suspension moves with driving",
+      "summary": "The original ATV model now reflects recovered steering and suspension motion as it drives over ENV01.",
+      "details": [
+        "Recovered the visual update order and original wheel-linkage transforms, then connected them to the Rust vehicle simulation; 27 mechanical nodes now move with steering, suspension compression and wheel rotation.",
+        "An original-instruction interpreter compared 100 deterministic poses across all 27 node matrices, with maximum absolute difference below 0.00000056. The public-browser regression passed with four wheels grounded and no JavaScript or WebGL errors."
+      ],
+      "limitation": "The instruction comparison is a finite-f32 interpreter, not PS2 hardware validation; host trigonometry differs slightly. The rider still uses a sampled seated pose, and original camera behavior, track-object collisions, crash behavior and race flow remain unfinished.",
+      "image": "/devlog-images/original-atv-suspension-moves-with-driving-9a7447c1.png",
+      "caption": "Recovered ATV steering and suspension parts move during a real-disc browser driving run; the rider remains in a seated pose."
+    },
+    {
+      "id": "original-chase-camera-and-static-obstacle-contacts-b913938c",
+      "timestamp": "2026-10-11T21:05:18.521533+00:00",
+      "recorded_at": "2026-10-11T21:06:12.344291+00:00",
+      "kind": "build",
+      "title": "Original chase camera and static obstacle contacts",
+      "summary": "The browser now follows the recovered single-player chase camera and loads original static track collision meshes into the vehicle contact path.",
+      "details": [
+        "The original follow-camera preset data and update behavior run in Rust. Camera button, C key and controller input cycle camera views; the combined real-disc regression exercised five views and recovered widescreen framing.",
+        "Static type-0 obstacle geometry is connected to the recovered ray-bundle query path: the browser loaded 176 collision placements, 31 meshes and 41 actor rays. Instruction-interpreter comparisons and a synthetic wall response test validate component contact behavior.",
+        "The same browser run retained the moving 27-node ATV linkage, original track scene, soundtrack and engine samples, with no WebGL or JavaScript errors and no off-origin game-data requests."
+      ],
+      "limitation": "Obstacle ordering still follows authored placement order; moving and compound collision types, crash/wreck behavior and camera clearance against objects remain incomplete. The rider remains a sampled seated pose. Races and full-game replay equivalence are unverified.",
+      "image": "/devlog-images/original-chase-camera-and-static-obstacle-contacts-b913938c.png",
+      "caption": "Recovered single-player chase camera, original ENV01 scene, and animated ATV linkages in the real-disc browser build."
     }
   ],
-  "updated_at": "2026-10-11T20:41:43.970276+00:00"
+  "updated_at": "2026-10-11T21:06:12.344291+00:00"
 }

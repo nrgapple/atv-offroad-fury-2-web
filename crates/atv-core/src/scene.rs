@@ -23,6 +23,12 @@ pub struct Light {
     pub look: Option<[f32; 3]>,
 }
 #[derive(Debug, Serialize)]
+pub struct CollisionModel {
+    pub name: String,
+    pub world_matrix: [f32; 16],
+    pub material: u8,
+}
+#[derive(Debug, Serialize)]
 pub struct Scene {
     pub start_position: [f32; 3],
     pub start_direction: [f32; 3],
@@ -30,6 +36,7 @@ pub struct Scene {
     pub lights: Vec<Light>,
     pub fog_color: [f32; 3],
     pub models: Vec<StaticModel>,
+    pub collision_models: Vec<CollisionModel>,
 }
 fn value<'a>(data: &'a PhysicsData, section: &str, key: &str) -> Option<&'a str> {
     data.entries
@@ -134,6 +141,49 @@ pub fn placement_matrix(position: [f32; 3], look: [f32; 3], up: [f32; 3]) -> Res
         1.,
     ])
 }
+/// 00206e90 normalizes up and look separately, then crosses them. It does
+/// not use the visual model's up-preserving orthogonalization.
+pub fn collision_placement_matrix(
+    position: [f32; 3],
+    look: [f32; 3],
+    up: [f32; 3],
+) -> Result<[f32; 16]> {
+    fn unit(v: [f32; 3]) -> Result<[f32; 3]> {
+        let length = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if !length.is_finite() || length < 1e-12 {
+            return Err("degenerate collision orientation".into());
+        }
+        Ok(v.map(|x| x / length))
+    }
+    if !position.iter().all(|v| v.is_finite()) {
+        return Err("nonfinite collision position".into());
+    }
+    let look = unit(look)?;
+    let up = unit(up)?;
+    let right = [
+        up[1] * look[2] - up[2] * look[1],
+        up[2] * look[0] - up[0] * look[2],
+        up[0] * look[1] - up[1] * look[0],
+    ];
+    Ok([
+        right[0],
+        right[1],
+        right[2],
+        0.,
+        up[0],
+        up[1],
+        up[2],
+        0.,
+        look[0],
+        look[1],
+        look[2],
+        0.,
+        position[0],
+        position[1],
+        position[2],
+        1.,
+    ])
+}
 pub fn parse(data: &[u8]) -> Result<Scene> {
     if data.len() > 1024 * 1024 || data.contains(&0) {
         return Err("invalid scene text extent".into());
@@ -199,6 +249,53 @@ pub fn parse(data: &[u8]) -> Result<Scene> {
             look: optional_vector(&data, &section, "LookVector")?,
         });
     }
+    // 00201f60/00207a10: absent/-1 collision count reuses Model%d in
+    // authored order. An explicit override uses Object%d instead.
+    let override_count = value(&data, "CollisionObjects", "NumberOfCollisionObjects")
+        .map(|text| text.parse::<i32>().map_err(|_| "invalid collision count"))
+        .transpose()?;
+    let override_count = match override_count {
+        None | Some(-1) => None,
+        Some(n) if (0..=4096).contains(&n) => Some(n as usize),
+        _ => return Err("collision count exceeds limit".into()),
+    };
+    let mut collision_models = Vec::new();
+    for index in 1..=override_count.unwrap_or(models.len()) {
+        let section = format!(
+            "{}{index}",
+            if override_count.is_some() {
+                "Object"
+            } else {
+                "Model"
+            }
+        );
+        if value(&data, &section, "StaticType").is_some_and(|value| value != "Standard") {
+            return Err("unsupported scene collision type".into());
+        }
+        let name = value(&data, &section, "COL")
+            .or_else(|| value(&data, &section, "SLT"))
+            .ok_or("missing scene collision name")?
+            .split('.')
+            .next()
+            .unwrap_or("");
+        if name.is_empty() {
+            continue;
+        }
+        if name.len() > 50 || name.contains(['/', '\\', ':']) {
+            return Err("unsupported scene collision name".into());
+        }
+        collision_models.push(CollisionModel {
+            name: name.to_owned(),
+            world_matrix: collision_placement_matrix(
+                optional_vector(&data, &section, "Position")?.unwrap_or([0.; 3]),
+                optional_vector(&data, &section, "LookVector")?.unwrap_or([0., 0., 1.]),
+                optional_vector(&data, &section, "UpVector")?.unwrap_or([0., 1., 0.]),
+            )?,
+            // 00206900 initializes the collision material to zero;
+            // the Standard reader00206940 does not override it.
+            material: 0,
+        });
+    }
     Ok(Scene {
         start_position,
         start_direction,
@@ -206,6 +303,7 @@ pub fn parse(data: &[u8]) -> Result<Scene> {
         lights,
         fog_color: color(&data, "Fog")?,
         models,
+        collision_models,
     })
 }
 #[cfg(test)]
@@ -221,6 +319,8 @@ mod tests {
         assert!(!scene.models[0].dynamic_lighting);
         assert!(scene.models[0].up.is_none());
         assert_eq!(scene.lights[0].color, [20., 30., 40.]);
+        assert_eq!(scene.collision_models[0].name, "sample");
+        assert_eq!(scene.collision_models[0].material, 0);
     }
     #[test]
     fn invalid_extents_vectors_and_models_fail() {
@@ -244,5 +344,43 @@ mod tests {
             ]
         );
         assert!(placement_matrix([0.; 3], [0., 1., 0.], [0., 1., 0.]).is_err());
+    }
+    #[test]
+    fn collision_override_order_and_separate_orientation() {
+        let source = format!(
+            "{SOURCE}\n[CollisionObjects]\nNumberOfCollisionObjects=2\n[Object1]\nCOL=first.col\nSLT=unused.psg\nPosition=1,2,3\nLookVector=0,2,2\nUpVector=0,3,0\n[Object2]\nSLT=second.psg\n"
+        );
+        let scene = parse(source.as_bytes()).unwrap();
+        assert_eq!(
+            scene
+                .collision_models
+                .iter()
+                .map(|m| m.name.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second"]
+        );
+        let first = &scene.collision_models[0].world_matrix;
+        assert_eq!(&first[12..15], &[1., 2., 3.]);
+        assert!((first[9] - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-6);
+        assert_eq!(&first[4..7], &[0., 1., 0.]);
+        assert_ne!(
+            first,
+            &placement_matrix([1., 2., 3.], [0., 2., 2.], [0., 3., 0.]).unwrap()
+        );
+        assert!(
+            parse(
+                format!("{SOURCE}\n[CollisionObjects]\nNumberOfCollisionObjects=-2\n").as_bytes()
+            )
+            .is_err()
+        );
+        assert_eq!(
+            parse(
+                format!("{SOURCE}\n[CollisionObjects]\nNumberOfCollisionObjects=-1\n").as_bytes()
+            )
+            .unwrap()
+            .collision_models[0]
+                .name,
+            "sample"
+        );
     }
 }

@@ -14,6 +14,7 @@
 
 ## Ongoing progress and delivery
 
+- Always delegate screenshot/dev-log maintenance to a separate lighter-model agent so it does not block game implementation. The user explicitly requested this ongoing division of work. Keep the main implementation agents focused on the port; send verified checkpoints and images to the blogging agent.
 - The user requests a continuously updated screenshot dev log alongside the game on public Sites hosting. At meaningful checkpoints, use `tools/update_devlog.py` to record what changed, discoveries, verification, and limitations. Inspect screenshots before publishing them. Keep working on the game while maintaining the log.
 - Screenshot files belong under ignored `private/reports/devlog-images/`, never in the project GitHub repository. The user explicitly authorized public Sites hosting of the game build and selected checkpoint screenshots. This does not authorize publishing disc images, source assets, BIOS files, or reverse-engineering artifacts. Disc data stays in the visitor's browser.
 - The log is `/devlog.html`; metadata is `research/devlog.json`. The game remains the main fullscreen view.

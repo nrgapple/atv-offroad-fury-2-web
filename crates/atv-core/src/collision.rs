@@ -19,6 +19,7 @@ pub struct CollisionMesh {
     pub vertex_normals: Option<Vec<[f32; 3]>>,
     pub triangles: Vec<Triangle>,
     pub broad_phase_nodes: u32,
+    pub nodes: Vec<RayTreeNode>,
     pub flags: u32,
 }
 
@@ -91,6 +92,16 @@ pub fn decode_col(data: &[u8]) -> Result<CollisionMesh> {
     } else {
         None
     };
+    let mut nodes = Vec::with_capacity(broad_phase_nodes as usize);
+    for i in 0..broad_phase_nodes as usize {
+        let at = nodes_at + i * 32;
+        nodes.push(RayTreeNode {
+            bound_measure: float(data, at)?,
+            center: vector(data, at + 4)?,
+            half_extents: vector(data, at + 16)?,
+            children: [u16le(data, at + 28)?, u16le(data, at + 30)?],
+        });
+    }
     let mut triangles = Vec::with_capacity(triangles_count);
     for i in 0..triangles_count {
         let at = triangles_at + i * 22;
@@ -117,6 +128,7 @@ pub fn decode_col(data: &[u8]) -> Result<CollisionMesh> {
         vertex_normals,
         triangles,
         broad_phase_nodes,
+        nodes,
         flags,
     })
 }
@@ -306,5 +318,55 @@ mod ray_tests {
         let mut cyclic = b;
         cyclic[120..122].copy_from_slice(&0u16.to_le_bytes());
         assert!(decode_ray_tree(&cyclic).is_err());
+    }
+}
+
+impl CollisionMesh {
+    /// Validate the original root-zero hierarchy once before retaining it for simulation.
+    pub fn validate_tree(&self) -> Result<()> {
+        let mut stack = vec![0_u16];
+        let mut seen = vec![false; self.nodes.len()];
+        while let Some(child) = stack.pop() {
+            if child & 0x8000 != 0 {
+                let face = self
+                    .triangles
+                    .get((child & 0x7fff) as usize)
+                    .ok_or("COL triangle leaf outside table")?;
+                if face
+                    .indices
+                    .iter()
+                    .any(|&i| i as usize >= self.vertices.len())
+                {
+                    return Err("COL triangle references missing vertex".into());
+                }
+            } else {
+                let i = child as usize;
+                let node = self
+                    .nodes
+                    .get(i)
+                    .ok_or("COL triangle child outside node table")?;
+                if seen[i] {
+                    return Err("COL triangle hierarchy is not a tree".into());
+                }
+                seen[i] = true;
+                if node.half_extents.iter().any(|v| !v.is_finite() || *v < 0.0)
+                    || !node.bound_measure.is_finite()
+                    || !node.center.iter().all(|v| v.is_finite())
+                {
+                    return Err("invalid COL triangle node bounds".into());
+                }
+                stack.extend(node.children);
+            }
+        }
+        Ok(())
+    }
+    /// Runtime face normals are packed by00330850, including its asymmetric
+    /// +0.5 then truncation for negative components, and unpacked by0010adc0.
+    pub fn query_normal(&self, triangle: usize) -> Result<[f32; 3]> {
+        let face = self.triangles.get(triangle).ok_or("missing COL triangle")?;
+        Ok(face.normal.map(|x| {
+            let packed = ((x * 32767.0 + 0.5) as i32) as i16;
+            f32::from(packed) * (1.0_f32 / 32767.0)
+        }))
     }
 }
