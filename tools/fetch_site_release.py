@@ -7,7 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from package_release import validate_release
 
@@ -38,7 +38,9 @@ def fetch(repository, site_url=None):
         raise ValueError('unexpected main commit identifier')
     if site_url:
         try:
-            with urlopen(site_url.rstrip('/') + '/deployment.json', timeout=15) as response:
+            request = Request(site_url.rstrip('/') + '/deployment.json',
+                              headers={'User-Agent': 'ATV-Offroad-Fury-2-release-check/1.0'})
+            with urlopen(request, timeout=15) as response:
                 published = json.load(response)
             if published.get('commit') == commit:
                 return {'status': 'unchanged', 'commit': commit}

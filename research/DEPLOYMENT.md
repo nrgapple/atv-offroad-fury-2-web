@@ -43,11 +43,20 @@ commits and leaves the prior public build active while CI is pending or failing.
 There is up to one polling interval of deployment delay. The automation needs the
 Mac/local Codex executor available; public Site visitors do not need this Mac online.
 
-The first public Site publication and source/artifact access were verified. The
-first scheduled heartbeat execution has **not yet been observed**; creation proves
-the schedule is saved, not that an unattended deployment has run. The publisher
-must verify the complete CI-artifact-to-public-Site path separately before claiming
-that automatic publication has succeeded.
+The CI-artifact-to-public-Site path has now been verified end to end for main
+commit `5d160a747e9730c9e07f35afda9bac941c15f062`: the successful GitHub artifact
+was staged, saved and deployed through native Sites, and the public
+`/deployment.json` identifies that exact commit. The deployed development log
+contains 10 entries and serves all 8 approved screenshots. A real-disc Playwright
+run against the public HTTPS site passed terrain, sky, props, ATV/rider, engine
+sample scheduling, chassis/throttle/brake/reset, controller/focus, touch/cancel,
+graphics-context recovery, and no-game-upload checks. The selected ISO remained
+in the local test browser.
+
+The first scheduled heartbeat execution has **not yet been observed**; creation
+proves the schedule is saved, not that an unattended deployment has run. The
+publisher still needs a separate unattended-run check before automatic publication
+can be claimed as verified.
 
 ## Release commands
 
