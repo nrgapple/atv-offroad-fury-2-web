@@ -35,6 +35,8 @@ try {
   assert(loaded.vehicleVertices > 1000 && loaded.vehicleTriangles > 1000 && loaded.vehicleTextures > 0);
   assert(loaded.riderTriangles > 1000 && loaded.riderTextures > 0);
   assert(loaded.terrainTextures > 0);
+  assert(loaded.sceneInstances > 0 && loaded.sceneTriangles > 0);
+  assert(loaded.skyTiles > 0);
   assert(loaded.audio.ready && loaded.audio.samples > 0 && !loaded.audioError);
   finite(loaded);
   assert(loaded.frame.grounded.some(Boolean), 'Vehicle settles onto original terrain');
@@ -80,6 +82,8 @@ try {
   assert.equal(restored.vehicleTextures, loaded.vehicleTextures);
   assert.equal(restored.riderTextures, loaded.riderTextures);
   assert.equal(restored.terrainTextures, loaded.terrainTextures);
+  assert.equal(restored.skyTiles, loaded.skyTiles);
+  assert.equal(restored.sceneInstances, loaded.sceneInstances);
   await page.evaluate(() => Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => { throw new DOMException('blocked', 'SecurityError'); } }));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.locator('#reset').click(); await page.waitForTimeout(300);

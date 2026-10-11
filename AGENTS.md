@@ -14,8 +14,8 @@
 
 ## Ongoing progress and delivery
 
-- The user requests a continuously updated screenshot dev log on the existing private hosted site. At meaningful checkpoints, use `tools/update_devlog.py` to record what changed, discoveries, verification, and limitations. Inspect screenshots before publishing them. Keep working on the game while maintaining the log.
-- Screenshot files belong under ignored `private/reports/devlog-images/`, never in Git. The user explicitly authorized displaying these checkpoint screenshots through the existing private site. This does not authorize publishing source assets or opening a public route.
+- The user requests a continuously updated screenshot dev log alongside the game on public Sites hosting. At meaningful checkpoints, use `tools/update_devlog.py` to record what changed, discoveries, verification, and limitations. Inspect screenshots before publishing them. Keep working on the game while maintaining the log.
+- Screenshot files belong under ignored `private/reports/devlog-images/`, never in the project GitHub repository. The user explicitly authorized public Sites hosting of the game build and selected checkpoint screenshots. This does not authorize publishing disc images, source assets, BIOS files, or reverse-engineering artifacts. Disc data stays in the visitor's browser.
 - The log is `/devlog.html`; metadata is `research/devlog.json`. The game remains the main fullscreen view.
-- The user authorizes pushing project code to a private GitHub repository, merging to main, and automatic deployment through the existing private access path without repeated confirmation. Check that game data, reference repositories, generated analysis, screenshots, secrets, and build outputs are excluded before each push.
+- The user authorizes pushing project code to a private GitHub repository, merging to main, and automatic public Sites deployment without repeated confirmation. Check that game data, reference repositories, generated analysis, screenshots, secrets, and build outputs are excluded before each GitHub push. Tailscale is optional host verification, not the user-facing production path.
 

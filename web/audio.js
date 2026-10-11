@@ -62,6 +62,7 @@ export class GameAudio {
     }
     if (!isCurrent() || this.closed) return;
     await this.music.load({ file, files, read, isCurrent });
+    if (!isCurrent() || this.closed) return;
     this.ready = true;
   }
   async decode() {

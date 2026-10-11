@@ -1,62 +1,60 @@
-# Private GitHub and automatic deployment
+# Private source repository and public Sites hosting
 
-Repository: https://github.com/nrgapple/atv-offroad-fury-2-web (private).
-The existing **private remote** URL is https://nrgapples-mac-mini.tail96c48c.ts.net:8443/.
-Authorized Tailscale access and this Mac being awake are required. The service remains
-bound to host loopback because the existing Tailscale Serve proxy supplies remote access.
-No new public endpoint, tunnel, DNS record, or Pages deployment is created.
+Source repository: https://github.com/nrgapple/atv-offroad-fury-2-web (private).
+The user selected **public HTTPS Sites hosting**, matching the Game Boy project.
+Tailscale is a development verification path, not the production handoff.
+The proposed Mac deployment supervisor was removed before it was ever started.
 
-## Deployment flow
+## GitHub build pipeline
 
 Every push to `main` runs `.github/workflows/ci.yml` on a GitHub-hosted Ubuntu runner.
 Pull requests receive the same checks. The workflow checks tracked-file hygiene,
-Rust formatting/tests/Clippy, input tests, Python syntax, and deployment rejection/
-rollback tests. It builds the browser WASM and packages an explicit file allowlist.
-There is no disc, BIOS, extracted game content, reference checkout, or screenshot in
-the repository or artifact. `make verify` remains a host check because its evidence
-requires the local private disc and reference checkouts.
+Rust formatting/tests/Clippy, input tests, Python syntax, and release rejection tests.
+It builds the browser WASM and uploads a `web-release` artifact with an explicit
+static-file allowlist, complete commit metadata, and SHA-256 checksums.
 
-A macOS user LaunchAgent checks GitHub every 60 seconds using the already-authenticated
-`gh` CLI. Only a successful `ci.yml` run for the **current main commit**, triggered by
-push or manual dispatch, qualifies. The supervisor downloads its `web-release`
-artifact, checks the file allowlist, SHA-256 checksums, WASM header, and commit metadata,
-then starts the new server and requires its health response to report that commit.
-If server startup fails, it restores the previous release. Failed/pending CI leaves
-the current release running. Pull-request artifacts are never deployed.
+The GitHub repository and CI artifact contain no disc, BIOS, extracted game content,
+reference checkout, generated game pseudocode, or screenshots. CI's development log
+contains authored text; screenshot references are omitted because screenshots remain
+outside GitHub. An authorized Sites gallery can be retained in the Site's separate
+hosting checkout. `make verify` remains a host check because it requires the local
+private disc and reference checkouts. Artifacts are retained for 14 days.
 
-The server and supervisor persist across Codex turns. launchd restarts the supervisor
-when needed and starts it at user login. The most recent successful release also
-starts when GitHub is temporarily unavailable. This is a user-session service; an
-unlogged-in Mac or an absent External SSD cannot serve it.
+## Sites publication
 
-The dynamic development log and its screenshot gallery keep using the original
-project's `research/devlog.json` and ignored `private/reports/devlog-images/` directory.
-Automatic deployment does not reset ongoing development work or overwrite that data.
+Public Sites publishing uses the native Sites tools with a fresh source-write
+credential kept only in session memory. The Sites source helper pushes the exact
+hosting source and packages the static archive, then native tools save and deploy
+that version. The Site's source commit is separate from the private GitHub source
+commit; `/deployment.json` in the built artifact identifies the latter.
 
-## Operations
+The current Sites integration does not expose a durable public GitHub push-to-deploy
+hook or a reusable public deployment credential. Its optional publish-on-push
+credential applies only to temporary owner-private publication windows. Do not
+store these short-lived credentials in GitHub secrets or an on-disk deploy service.
 
-Install or update the supervisor on this Mac after changing deployment tooling:
+Unattended publication can instead run in a linked Sites schedule or a local Codex
+heartbeat that has source access and uses native Sites tools to obtain a fresh
+credential per run. Only deploy a successful build for the current `main` commit,
+and skip when that commit is already public. Source access and actual unattended
+publication must be verified independently of creating a schedule. A polling schedule
+introduces its polling interval as deployment delay; GitHub CI alone is not proof
+that public automatic deployment has been configured.
+
+## Release commands
 
 ```sh
-python3 tools/install_deploy_service.py --start
+make check
+make web
+python3 tools/package_release.py --commit "$(git rev-parse HEAD)"
+python3 -m unittest discover -s tools -p 'test_release*.py'
 ```
 
-Stop any foreground `make serve` before first installation: both use port 4173.
-Subsequent `main` pushes deploy automatically without rerunning this command.
-There is no self-hosted GitHub runner and no GitHub secret to configure.
-
-Host service: `com.nrgapple.atv-offroad-fury-2.deploy`.
-Installed supervisor/config/logs: `~/.local/share/atv-offroad-fury-2/`.
-User LaunchAgent: `~/Library/LaunchAgents/com.nrgapple.atv-offroad-fury-2.deploy.plist`.
-Artifacts/state: `/Volumes/External SSD/Developer/Builds/atv-offroad-fury-2-web/deploy/`.
-`current` is an atomic symlink to the active commit release; `status.json` records its
-workflow URL and activation time. `/deployment.json` reports the active commit over
-the existing private HTTPS route. Screenshots remain excluded from Git.
-
-Re-run CI from the repository's Actions page if a release artifact has expired before
-the host could download it. Artifacts are retained for 14 days; downloaded releases
-remain on the SSD. GitHub authentication must remain available to this user's service.
+`work/release/static/` is the asset-free static output for hosting, and
+`work/release/release.json` contains commit and file hashes. The packager validates
+the release before returning. Do not change a release after its Sites source has
+been pushed and its archive packaged.
 
 GitHub's [artifact download documentation](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)
-and [GitHub CLI command documentation](https://cli.github.com/manual/gh_run_download)
-describe the authenticated artifact mechanism used here.
+and [GitHub CLI documentation](https://cli.github.com/manual/gh_run_download)
+describe the authenticated CI artifact retrieval used by an updater.

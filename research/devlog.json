@@ -1,6 +1,6 @@
 {
   "status": "The original ATV can be driven on ENV01 in the browser. This is an incomplete reconstruction; it is not the full game yet.",
-  "working_on": "Original music streaming, track objects and collision response, sky rendering, and private GitHub deployment.",
+  "working_on": "Chassis collision integration, original animation behavior, and public Sites deployment.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -104,7 +104,23 @@
       "limitation": "Some prop materials still use neutral rendering. Reflective ice and one unsupported tower mesh are omitted. Sky, obstacle response, full animation and music are still being connected.",
       "image": "/devlog-images/track-objects-and-engine-sound-in-the-browser-8c97da69.png",
       "caption": "Current browser checkpoint: original terrain, placed track objects, ATV and rider. Engine audio was active in the same run."
+    },
+    {
+      "id": "original-sky-and-streaming-soundtrack-fc817659",
+      "timestamp": "2026-10-11T20:37:53.722926+00:00",
+      "recorded_at": "2026-10-11T20:38:04.970977+00:00",
+      "kind": "build",
+      "title": "Original sky and streaming soundtrack",
+      "summary": "The recovered sky renders above ENV01, and original music streams directly from the locally opened disc.",
+      "details": [
+        "The 21-song catalog is decoded in Rust; browser verification streamed What\u2019s Golden with no underruns during the checkpoint run.",
+        "Stereo ADPCM decoding preserves predictors between chunks. A complete track matched the existing full-file decoder sample for sample.",
+        "Music uses small scheduled buffers rather than decoding an entire track into memory."
+      ],
+      "limitation": "Music selection uses the recovered shuffle routine with a provisional random seed. Original mixer levels and every playback transition are not yet verified; race systems and full rider animation remain incomplete.",
+      "image": "/devlog-images/original-sky-and-streaming-soundtrack-fc817659.png",
+      "caption": "Browser checkpoint with the original sky, track, ATV and rider; original music was streaming during this capture."
     }
   ],
-  "updated_at": "2026-10-11T20:30:17.653893+00:00"
+  "updated_at": "2026-10-11T20:38:04.970977+00:00"
 }

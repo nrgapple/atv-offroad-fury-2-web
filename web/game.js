@@ -171,8 +171,12 @@ async function baseTextures(mesh, materialArchive, materialEntries, cache = new 
     const textureIndex = findMaterial(`${binding}.pst`);
     if (textureIndex < 0) { if (materialIndex < 0) continue; throw new Error(`Original material texture is missing: ${binding}`); }
     const pst = await codec(3, materialArchive, textureIndex);
-    const info = await json(7, pst), rgba = await codec(8, pst);
-    const image = { ...info, rgba, shader }; textures.set(material, image); cache.set(material, image);
+    let image;
+    try {
+      const info = await json(7, pst), rgba = await codec(8, pst);
+      image = { ...info, rgba, shader };
+    } catch (error) { image = { shader, error: error.message }; }
+    textures.set(material, image); cache.set(material, image);
   }
   return textures;
 }
@@ -418,7 +422,7 @@ function buildMesh() {
     grid(fineX, fineZ, true);
   }
   const materialTextures = new Map();
-  if (vehicle) for (const [name, decoded] of vehicle.textures) { const gpu = texture(decoded); materialTextures.set(name, gpu); gpuTextures.push(gpu); }
+  if (vehicle) for (const [name, decoded] of vehicle.textures) { if (!decoded.rgba) continue; const gpu = texture(decoded); materialTextures.set(name, gpu); gpuTextures.push(gpu); }
   if (vehicle) for (const group of vehicle.groups) {
     if (group.vertices.length > 65536) throw new Error('ATV mesh group exceeds index bounds.');
     const vertices = new Float32Array(group.vertices.length * 8);
@@ -432,7 +436,7 @@ function buildMesh() {
   let riderTriangles = 0, riderTextureCount = 0;
   if (vehicle?.rider) {
     const rider = vehicle.rider, riderTextures = new Map();
-    for (const [name, decoded] of rider.textures) { const gpu = texture(decoded); riderTextures.set(name, gpu); gpuTextures.push(gpu); }
+    for (const [name, decoded] of rider.textures) { if (!decoded.rgba) continue; const gpu = texture(decoded); riderTextures.set(name, gpu); gpuTextures.push(gpu); }
     riderTextureCount = riderTextures.size;
     for (const group of rider.mesh.lods[0].groups) {
       if (group.vertices.length > 65536) throw new Error('Rider mesh group exceeds index bounds.');
@@ -450,6 +454,17 @@ function buildMesh() {
     }
   }
   let sceneTriangles = 0, sceneInstances = 0, skippedSceneGroups = 0;
+  if (terrain.sky) for (const tile of terrain.sky.tiles) {
+    // 00125960 and 00125570 emit local UVs spanning .03125..96875.
+    const uv = [[.03125, .03125], [.96875, .03125], [.03125, .96875], [.96875, .96875]];
+    const vertices = new Float32Array(32);
+    tile.positions.forEach((position, index) => vertices.set([...position, 0, 1, 0, ...uv[index]], index * 8));
+    const chunk = upload(vertices, new Uint16Array([0, 2, 1, 1, 2, 3]), true);
+    chunk.texture = texture({ width: tile.size, height: tile.size, rgba: tile.rgba });
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    skyChunks.push(chunk); gpuTextures.push(chunk.texture);
+  }
   if (terrain.world) {
     const world = terrain.world, textures = new Map(), geometry = new Map();
     for (const [name, decoded] of world.textures) { if (!decoded.rgba) continue; const gpu = texture(decoded); textures.set(name, gpu); gpuTextures.push(gpu); }
@@ -475,6 +490,8 @@ function buildMesh() {
     }
   }
   gl.bindVertexArray(null);
+  diagnostics.skyTiles = skyChunks.length;
+  diagnostics.unsupportedSceneTextures = [...(terrain.world?.textures ?? [])].filter(([, texture]) => texture.error).map(([name, texture]) => ({ name, error: texture.error }));
   Object.assign(diagnostics, { vertices: vertexCount, triangles: triangleCount, chunks: chunks.length, vehicleVertices: vehicle?.groups.reduce((sum, group) => sum + group.vertices.length, 0) ?? 0, vehicleTriangles: vehicle?.groups.reduce((sum, group) => sum + group.indices.length / 3, 0) ?? 0, vehicleTextures: materialTextures.size, riderTriangles, riderTextures: riderTextureCount, vehiclePosition: vehicle?.position, finePatch: patch, sceneInstances, sceneTriangles, skippedSceneGroups, unsupportedSceneMeshes: terrain.world?.unsupported ?? [] });
 }
 function resetCamera() {
@@ -638,7 +655,20 @@ function render(time) {
   gl.activeTexture(gl.TEXTURE0); gl.uniform1i(uniforms.baseTexture, 0); gl.uniform1i(uniforms.useTexture, 0); gl.bindTexture(gl.TEXTURE_2D, fallbackTexture);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D_ARRAY, terrainAtlas); gl.uniform1i(uniforms.terrainColors, 1);
   gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, terrainTextureMap); gl.uniform1i(uniforms.terrainMapping, 2);
-  gl.uniform1f(uniforms.terrainSpacing, terrain.spacing); gl.uniform1i(uniforms.useTerrainTexture, Boolean(terrain.textures));
+  gl.uniform1f(uniforms.terrainSpacing, terrain.spacing); gl.uniform1i(uniforms.useTerrainTexture, false);
+  if (terrain.sky) {
+    const skyMatrix = new Float32Array(identity); skyMatrix.set(terrain.sky.origin, 12);
+    gl.uniformMatrix4fv(uniforms.model, false, skyMatrix);
+    gl.uniform1i(uniforms.skyPass, true); gl.uniform1i(uniforms.useTexture, true);
+    gl.activeTexture(gl.TEXTURE0); gl.depthMask(false); gl.disable(gl.DEPTH_TEST);
+    for (const chunk of skyChunks) {
+      gl.bindTexture(gl.TEXTURE_2D, chunk.texture); gl.bindVertexArray(chunk.vao);
+      gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
+    }
+    gl.depthMask(true); gl.enable(gl.DEPTH_TEST);
+  }
+  gl.uniformMatrix4fv(uniforms.model, false, identity); gl.uniform1i(uniforms.skyPass, false); gl.uniform1i(uniforms.useTexture, false);
+  gl.uniform1i(uniforms.useTerrainTexture, Boolean(terrain.textures));
   for (const chunk of chunks) { gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0); }
   gl.uniform1i(uniforms.useTerrainTexture, false); gl.activeTexture(gl.TEXTURE0);
   gl.uniform3f(uniforms.surfaceColor, .68, .70, .73);

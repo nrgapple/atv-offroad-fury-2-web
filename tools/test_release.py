@@ -1,12 +1,11 @@
-"""Deployment checks target corrupted artifacts and preservation of prior releases."""
+"""Release checks reject damaged artifacts and accidental private-content inclusion."""
 import hashlib
 import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock
 
-from deploy_watch import Deployer, EXPECTED_FILES, validate_release
+from package_release import EXPECTED_FILES, validate_release
 
 COMMIT = 'a' * 40
 
@@ -22,7 +21,7 @@ def fixture(root):
     (root / 'release.json').write_text(json.dumps({'commit': COMMIT, 'sha256': hashes}))
 
 
-class DeploymentTests(unittest.TestCase):
+class ReleaseTests(unittest.TestCase):
     def test_rejects_corrupted_wasm(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -55,20 +54,15 @@ class DeploymentTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'commit does not match'):
                 validate_release(root, 'b' * 40)
 
-    def test_failed_server_restores_previous_release(self):
+    def test_rejects_missing_checksum(self):
         with tempfile.TemporaryDirectory() as directory:
-            storage = Path(directory)
-            previous = (storage / 'releases' / COMMIT).resolve()
-            previous.mkdir(parents=True)
-            (storage / 'current').symlink_to(previous, target_is_directory=True)
-            deployer = Deployer({'storage': directory})
-            deployer.stop_server = Mock()
-            deployer.start_server = Mock(side_effect=[RuntimeError('bad server'), None])
-            candidate = storage / 'releases' / ('b' * 40)
-            with self.assertRaisesRegex(RuntimeError, 'bad server'):
-                deployer.activate(candidate, {})
-            self.assertEqual((storage / 'current').resolve(), previous)
-            self.assertEqual(deployer.start_server.call_args.args, (previous,))
+            root = Path(directory)
+            fixture(root)
+            manifest = json.loads((root / 'release.json').read_text())
+            del manifest['sha256']['static/game.js']
+            (root / 'release.json').write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, 'checksum list mismatch'):
+                validate_release(root, COMMIT)
 
 
 if __name__ == '__main__':

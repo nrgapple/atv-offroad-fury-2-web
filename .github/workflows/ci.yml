@@ -30,7 +30,7 @@ jobs:
         run: |
           python3 tools/verify_repository.py
           make check CARGO="$(which cargo)"
-          python3 -m unittest discover -s tools -p 'test_deploy*.py'
+          python3 -m unittest discover -s tools -p 'test_release*.py'
       - name: Build browser release
         run: |
           make web

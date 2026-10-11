@@ -4,6 +4,7 @@
 //! original math tables, and original runtime validation remain outstanding.
 use crate::{
     Result,
+    contact::{self, ContactConfig, ContactCorrections, StaticContact},
     drivetrain::{
         DriveDirection, DrivenWheel, Drivetrain, EngineConfig, EngineInput, EngineModifiers,
     },
@@ -68,6 +69,8 @@ pub struct Vehicle {
     base_center: Vec3,
     center_range: Vec3,
     rider_stand_up_speed: f32,
+    chassis_points: Vec<Vec3>,
+    chassis_config: ContactConfig,
 }
 impl Vehicle {
     pub fn new(mesh: &Mesh, data: &PhysicsData, origin: Vec3, yaw: f32) -> Result<Self> {
@@ -187,11 +190,30 @@ impl Vehicle {
             ],
             //002d5dd0 constructor default, also authored by both supplied riders.
             rider_stand_up_speed: f32::from_bits(0x41200000),
+            chassis_points: Vec::new(),
+            chassis_config: ContactConfig::from_physics(data)?,
         })
     }
     ///002d87c0 copies this rider field without MPH conversion.
     pub fn set_rider_physics(&mut self, data: &PhysicsData) -> Result<()> {
         self.rider_stand_up_speed = data.first_scalar("Rider Properties", "RiderStandUpSpeed")?;
+        Ok(())
+    }
+    /// Chassis points in the original ray-tree traversal order.001943d0 keeps
+    /// the first coincident point and the main solver has a sixty-point capacity.
+    pub fn set_chassis_points(&mut self, points: &[Vec3]) -> Result<()> {
+        if points.len() > 65536 || points.iter().flatten().any(|x| !x.is_finite()) {
+            return Err("invalid chassis point list".into());
+        }
+        self.chassis_points.clear();
+        for &point in points {
+            if !self.chassis_points.contains(&point) {
+                self.chassis_points.push(point);
+                if self.chassis_points.len() == 60 {
+                    break;
+                }
+            }
+        }
         Ok(())
     }
     pub fn set_materials(&mut self, materials: [TerrainMaterial; 8]) {
@@ -350,6 +372,26 @@ impl Vehicle {
             }
         }
         average_normal = scale(average_normal, 0.25);
+        //00193b40 samples chassis terrain planes at the outer-frame cadence;
+        //00194930 reprojects the moving vertices against those planes each substep.
+        let mut chassis_planes = Vec::with_capacity(self.chassis_points.len());
+        for &local in &self.chassis_points {
+            let world = add(
+                self.body.origin(&self.body_config),
+                transform(self.body.basis(), local),
+            );
+            if let Some(hit) = terrain.contact(world[0], world[2])? {
+                let material = materials
+                    .get(hit.surface as usize)
+                    .ok_or("unsupported chassis surface")?;
+                chassis_planes.push((
+                    local,
+                    [world[0], hit.height, world[2]],
+                    hit.normal,
+                    material.grip,
+                ));
+            }
+        }
         let mut elapsed = 0.0;
         while elapsed < dt {
             let step = (dt - elapsed).min(f32::from_bits(0x3c888889));
@@ -480,7 +522,27 @@ impl Vehicle {
                 );
                 self.body.local_torque[0] += d.airborne_brake_torque;
             }
+            let mut corrections = ContactCorrections::default();
+            for &(local, ground, normal, grip) in &chassis_planes {
+                let vertex = add(origin, transform(b, local));
+                let penetration = dot(sub(ground, vertex), normal);
+                if penetration > 0.0 {
+                    contact::resolve_static(
+                        &mut self.body,
+                        &self.body_config,
+                        self.chassis_config,
+                        StaticContact {
+                            point: add(vertex, scale(normal, penetration)),
+                            normal,
+                            penetration,
+                            material_grip: grip,
+                        },
+                        &mut corrections,
+                    )?;
+                }
+            }
             self.body.step(&self.body_config, step)?;
+            self.body.center = add(self.body.center, corrections.translation);
             elapsed += step;
         }
         for i in 0..4 {
@@ -503,7 +565,7 @@ mod tests {
         terrain::{TerrainLeaf, TerrainTile},
     };
     fn fixture() -> (Vehicle, Terrain) {
-        let text=b"[Physical Properties]\nWeight=600\nCofGX=0\nCofGY=0.2\nCofGZ=0\nCofGRangeX=0.8\nCofGRangeY=0\nCofGRangeZ=1\nPitchInertiaScale=1\nYawInertiaScale=1\nRollInertiaScale=1\nAirborneGravity=1\n[Suspension]\nCompression=1\nDecompressionRate=4\nSpring=0.7\nShock=0.2\n[Tires]\nBrakeFriction=0.2\nBearingFriction=0.05\nBrakeConfiguration=3\nTireFriction=1.5\nStictionSpeed=5\n[Steering]\nSteerSpeed1=1\nSteerSpeed2=80\nSteerScale1=1\nSteerScale2=0.3\nSteeringReduction=0.1\n[Engine]\nNumberOfRPMPoints=3\nRPM1=1000\nHP1=10\nRPM2=5000\nHP2=40\nRPM3=8000\nHP3=20\nNumberOfGears=3\nGearRatio1=2\nGearRatio2=1.5\nGearRatio3=1\nFinalGearRatio=6\nTransmissionLoss=0.8\nRampUpFilter=0.1\nRampDownFilter=0.2\nRampDownSpeed=45\nTopSpeed=60\n[Aerodynamics]\nAeroForce=10\nAeroMoment=40\nAeroDamping=-80\nAeroMomentScaleX=-1\nAeroMomentScaleY=1\nAeroMomentScaleZ=-1\nUnrollGain=2\nMaxWheelieAngle=45\nWheelieGain=2\nTopWheelieSpeed=100\nMaxPreload=100\nPreloadMinAxisRate=1\nPreloadMaxAxisRate=80\n[Joystick]\nXAxisRateLimit=4\nYAxisRateLimit=4\nStuntXAxisRateLimit=2.5\nStuntYAxisRateLimit=2.5\nXAxisDeadZone=0\n";
+        let text=b"[Physical Properties]\nWeight=600\nCofGX=0\nCofGY=0.2\nCofGZ=0\nCofGRangeX=0.8\nCofGRangeY=0\nCofGRangeZ=1\nPitchInertiaScale=1\nYawInertiaScale=1\nRollInertiaScale=1\nAirborneGravity=1\n[Suspension]\nCompression=1\nDecompressionRate=4\nSpring=0.7\nShock=0.2\n[Tires]\nBrakeFriction=0.2\nBearingFriction=0.05\nBrakeConfiguration=3\nTireFriction=1.5\nStictionSpeed=5\n[Steering]\nSteerSpeed1=1\nSteerSpeed2=80\nSteerScale1=1\nSteerScale2=0.3\nSteeringReduction=0.1\n[Engine]\nNumberOfRPMPoints=3\nRPM1=1000\nHP1=10\nRPM2=5000\nHP2=40\nRPM3=8000\nHP3=20\nNumberOfGears=3\nGearRatio1=2\nGearRatio2=1.5\nGearRatio3=1\nFinalGearRatio=6\nTransmissionLoss=0.8\nRampUpFilter=0.1\nRampDownFilter=0.2\nRampDownSpeed=45\nTopSpeed=60\n[Aerodynamics]\nAeroForce=10\nAeroMoment=40\nAeroDamping=-80\nAeroMomentScaleX=-1\nAeroMomentScaleY=1\nAeroMomentScaleZ=-1\nUnrollGain=2\nMaxWheelieAngle=45\nWheelieGain=2\nTopWheelieSpeed=100\nMaxPreload=100\nPreloadMinAxisRate=1\nPreloadMaxAxisRate=80\n[Joystick]\nXAxisRateLimit=4\nYAxisRateLimit=4\nStuntXAxisRateLimit=2.5\nStuntYAxisRateLimit=2.5\nXAxisDeadZone=0\n[Collisions]\nObstacleReflection=0.002\nDefaultAngularImpulseScale=0\nDefaultFriction=0.3\nDefaultFrictionTorqueScale=0.1\n";
         let mut nodes = Vec::new();
         for (name, p) in [
             ("body", [0.; 3]),
