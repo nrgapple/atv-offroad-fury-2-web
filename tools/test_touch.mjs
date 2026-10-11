@@ -14,7 +14,7 @@ try {
       return post.call(this, data, ...rest);
     };
   });
-  await page.goto(process.env.ATV_TEST_URL || 'http://127.0.0.1:4173');
+  await page.goto(new URL('/play.html', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173').href);
   await page.waitForFunction(() => document.querySelector('#frontend').dataset.page === 'title', null, { timeout: 90000 });
   await page.keyboard.press('Enter');
   await page.getByRole('button', { name: 'Single Player', exact: true }).tap();

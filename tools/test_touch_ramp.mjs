@@ -8,7 +8,7 @@ const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   const errors = []; page.on('pageerror', e => errors.push(e.message));
-  const url = new URL(process.env.ATV_TEST_URL || 'http://127.0.0.1:4173');
+  const url = new URL('/play.html', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173');
   url.searchParams.set('drive', '1'); url.searchParams.set('environment', 'env01');
   await page.goto(url.href);
   await page.waitForFunction(() => window.atvTerrainStatus?.simulation && !document.querySelector('#touch-controls').hidden, null, { timeout: 90000 });

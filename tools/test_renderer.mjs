@@ -32,7 +32,7 @@ try {
   };
   page.on('pageerror', error => errors.push(error.message));
   page.on('request', request => requests.push({ url: request.url(), method: request.method(), resourceType: request.resourceType(), postDataLength: request.postDataBuffer()?.byteLength ?? 0 }));
-  const startUrl = new URL(base);
+  const startUrl = new URL('/play.html', base);
   if (!bundled) startUrl.searchParams.set('source', 'disc');
   else startUrl.searchParams.set('drive', '1');
   await page.goto(startUrl.href);
@@ -79,7 +79,7 @@ try {
   await page.keyboard.down('KeyS'); await steps(108); await page.keyboard.up('KeyS');
   const braked = await read(); finite(braked);
   assert(braked.frame.speed < driven.frame.speed, 'Original brakes must reduce speed');
-  await page.locator('#menu').click(); await page.getByRole('button', {name:'Reset ATV', exact:true}).click(); await page.waitForTimeout(800);
+  if (bundled) { await page.locator('#menu').click(); await page.getByRole('button', {name:'Reset ATV', exact:true}).click(); } else await page.evaluate(() => document.querySelector('#reset').onclick()); await page.waitForTimeout(800);
   assert(distance((await read()).frame.origin, loaded.frame.origin) < 2, 'Reset returns the body to the original scene start');
   for (const preset of [1, 2, 3, 4, 0]) {
     await page.locator('#camera').click();
@@ -126,7 +126,7 @@ try {
   assert.equal(restored.sceneInstances, loaded.sceneInstances);
   await page.evaluate(() => Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => { throw new DOMException('blocked', 'SecurityError'); } }));
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.locator('#menu').click(); await page.getByRole('button', {name:'Reset ATV', exact:true}).click(); await page.waitForTimeout(300);
+  if (bundled) { await page.locator('#menu').click(); await page.getByRole('button', {name:'Reset ATV', exact:true}).click(); } else await page.evaluate(() => document.querySelector('#reset').onclick()); await page.waitForTimeout(300);
   const cdp = await page.context().newCDPSession(page);
   const point = (id, x, y) => ({ id, x, y, radiusX: 1, radiusY: 1, force: 1 });
   const before = await read();

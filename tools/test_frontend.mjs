@@ -21,10 +21,16 @@ try {
       Object.defineProperty(navigator,'getGamepads',{configurable:true,value:()=>[window.menuPad]});
     }, button);
     await page.waitForTimeout(120);
-    await page.evaluate(()=>{window.menuPad.buttons=window.menuPad.buttons.map(()=>({pressed:false,value:0}));});
+    await page.evaluate(()=>{if(window.menuPad) window.menuPad.buttons=window.menuPad.buttons.map(()=>({pressed:false,value:0}));});
     await page.waitForTimeout(100);
   };
   await page.goto(base);
+  assert.equal(await page.locator('nav a').count(), 2);
+  assert.equal(await page.evaluate(() => typeof window.atvTerrainStatus), 'undefined', 'Landing page does not boot the game');
+  if (process.env.ATV_UI_SCREENSHOTS) await page.screenshot({path:`${process.env.ATV_UI_SCREENSHOTS}-landing.png`});
+  await pad(13); assert.equal(await page.evaluate(()=>document.activeElement.textContent.trim()),'Dev log↗');
+  await pad(12); assert.equal(await page.evaluate(()=>document.activeElement.textContent.trim()),'Play▸');
+  await pad(0);
   await screen('title');
   assert.equal(await page.locator('#disc').isHidden(), true);
   assert.equal((await page.evaluate(()=>window.atvTerrainStatus)).simulation, false);
@@ -78,6 +84,12 @@ try {
   await page.waitForFunction(()=>document.querySelector('#frontend').hidden);
   assert(await page.getByRole('button',{name:'Pause',exact:true}).isVisible());
   assert(await page.getByRole('button',{name:'Camera',exact:true}).isVisible());
+  await page.goto(base);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth),390);
+  if (process.env.ATV_UI_SCREENSHOTS) await page.screenshot({path:`${process.env.ATV_UI_SCREENSHOTS}-landing-mobile.png`});
+  await page.getByRole('link',{name:'Dev log',exact:true}).tap();
+  await page.getByRole('heading',{name:'Development log',exact:true}).waitFor();
+  await page.getByRole('link',{name:'Play current build'}).tap(); await screen('title');
   assert.deepEqual(errors,[]);
   console.log('PASS: original title/menu/track resources, keyboard and controller navigation, truthful unavailable modes, Tioga drive, paused simulation, mobile touch selection, Caribou reload, no disc prompt or browser errors.');
 } finally { await browser.close(); }

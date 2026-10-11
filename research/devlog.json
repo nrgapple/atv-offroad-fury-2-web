@@ -1,6 +1,6 @@
 {
-  "status": "Public v6 includes the recovered title/menu/Freestyle route and Caribou Peak (ENV01) plus Tioga Valley (ENV02). The local build now adds a pause panel using recovered overlay art and a tested mobile hold/lean/release control surface; one real touch-driven Caribou ramp run activated native preload and lifted all four wheels. These changes await a later public release; most original menus, modes, race HUD, stunts and progression remain incomplete.",
-  "working_on": "Prepare and verify the next release with the tested pause panel and touch controls, then continue original menu, map, stunt and race-flow recovery.",
+  "status": "This build presents a brief Play / Dev log landing page, then opens the Rust/WebAssembly reconstruction at /play.html. The game includes the recovered title-to-Freestyle route, Caribou and Tioga, pause panel, revised touch controls, and a verified Caribou ramp-preload jump. It is a partial reconstruction; race flow, most menus, other environments, and stunt/scoring systems remain incomplete.",
+  "working_on": "Recover more original menu and map behavior, then race flow, HUD, and stunt systems; validate each connected component in the browser.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -394,7 +394,39 @@
       "limitation": "This is a web-authored pause panel using recovered game art, not the original pause callback implementation. Other pages and original game modes remain unfinished; this local panel is not in public v6.",
       "image": "/devlog-images/a-real-pause-panel-now-sits-over-the-ride-33765b28.png",
       "caption": "Local pause panel using recovered overlay art and selection texture over the frozen scene."
+    },
+    {
+      "id": "the-pause-panel-and-touch-controls-reach-the-public-bu-e2164de6",
+      "timestamp": "2026-10-11T22:19:37.316002+00:00",
+      "recorded_at": "2026-10-11T22:23:14.361716+00:00",
+      "kind": "verification",
+      "title": "The pause panel and touch controls reach the public build",
+      "summary": "Public v7 now includes the recovered-art pause panel and the redesigned touch surface alongside the title-to-Freestyle route and two environments.",
+      "details": [
+        "Public commit 114e074d7b12045a02a56aac8a64be515fa54e1f passed browser checks for the original routes, Tioga and Caribou, pause/Resume/Controls, and the 390-pixel layout. The pause image uses original overlay art; its web actions are still adaptations.",
+        "The public touch test passed right-half hold/lean/release, cancel, multitouch, braking before direction changes, pause/focus, and game-only selection suppression. A separate real-input ramp test activated native preload and cleared all four wheels without injecting forces or vehicle state.",
+        "The ramp trace measured 9.29 ft/s at arming and 25.26 ft/s during the active interval. The ramp slope and other forces also affect this trajectory; it is not an isolated preload comparison."
+      ],
+      "limitation": "This remains a partial reconstruction: other menus/modes, stunt modifiers/scoring, race flow and many environments are unfinished. Physical iOS and Bluetooth-controller behavior are unverified.",
+      "image": "/devlog-images/the-pause-panel-and-touch-controls-reach-the-public-bu-e2164de6.png",
+      "caption": "Public v7 pause panel over the running scene, using recovered overlay artwork."
+    },
+    {
+      "id": "a-short-landing-page-separates-play-from-the-dev-log-fb722a97",
+      "timestamp": "2026-10-11T22:21:31.557800+00:00",
+      "recorded_at": "2026-10-11T22:23:14.397455+00:00",
+      "kind": "verification",
+      "title": "A short landing page separates Play from the dev log",
+      "summary": "The local v8 homepage has two choices: Play opens the unchanged game at /play.html, while Dev log opens the progress journal. Plain copy explains that the game code is rebuilt in Rust instead of emulating a PlayStation 2.",
+      "details": [
+        "The page contains only Play and Dev log. A small landing script supports controller navigation between the links and gamepad A to open the selected item.",
+        "The host integration check passed landing \u2192 Play \u2192 original title/menu \u2192 Tioga and pause, then landing \u2192 Dev log \u2192 Play \u2192 title; it also checked Caribou selection at 390 pixels.",
+        "Before Play, the landing route loads no WASM, game runtime or original content. Its layout fits a 390-pixel viewport."
+      ],
+      "limitation": "Captured and verified on the host before publication. This entry records the local v8 checkpoint; no public landing-page route test is claimed here.",
+      "image": "/devlog-images/a-short-landing-page-separates-play-from-the-dev-log-fb722a97.png",
+      "caption": "Local v8 landing page on a narrow screen, with only Play and Dev log."
     }
   ],
-  "updated_at": "2026-10-11T22:13:18.316681+00:00"
+  "updated_at": "2026-10-11T22:23:14.397455+00:00"
 }

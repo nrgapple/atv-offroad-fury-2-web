@@ -92,6 +92,42 @@ route. It does not include the newer local pause overlay or the revised hold/lea
 release touch surface described in [touch riding controls](TOUCH.md); those changes
 are pending a later release.
 
+Sites accepted and deployed v7 from source commit
+`3a22ed545546c4b25e02df78d83800a66f50b8d1`, app version
+`appgver_940dd3fd318c8191a27ddf8a8be8d5f6`, at
+`appgdep_6acc0b368b988191b46fdc745f8c3f0e` on 2026-10-11 22:18:43 UTC. Its CI
+source commit is `114e074d7b12045a02a56aac8a64be515fa54e1f` (workflow run
+`38179702052`). Fresh public verification has now completed:
+
+- Frontend test run `2919` passed original menu routes through Caribou and Tioga,
+  plus pause, Resume, Controls, and a 390px layout.
+- Touch test run `24045` passed right-half hold/lean/release, cancellation,
+  simultaneous input, brake/reverse/forward transitions, pause/focus, and game-only
+  selection suppression while leaving the development log selectable.
+- Ramp test run `67228` activated native preload and cleared all four wheel contacts
+  without injecting state or force. The observed upward velocity changed from 9.29
+  feet/second at arming to 25.26 during the active interval. This is one trajectory,
+  not a controlled comparison isolating preload from the ramp and other forces.
+- Gallery check `98683` confirmed `/deployment.json` identifies commit
+  `114e074d7b12045a02a56aac8a64be515fa54e1f`; all 26 entries and 24 PNGs loaded,
+  with every screenshot returning HTTP 200 and `image/png`.
+
+The pause-panel screenshot was visually inspected. A separate public ramp screenshot
+shows the airborne scene after the marker had expired; it does not show the transient
+preload indicator. The local test capture illustrates that indicator. This release
+does not establish physical iOS behavior or full original stunt/scoring support.
+
+The local v8 candidate adds a brief `/` landing page with only Play and Dev log; its
+plain text explains that the game is rebuilt in Rust rather than emulated. Play
+opens the unchanged game at `/play.html`, and the Dev log's Play link returns there.
+A small script supports controller navigation between the two links and gamepad A
+to activate one. Before Play, the landing loads no WASM, game runtime, or original
+content. Final frontend integration test `8826` passed D-pad navigation and gamepad A
+activation, landing → Play → title/menu → Tioga/pause, 390px Caribou selection,
+and landing → Dev log → Play → title. The landing fits the 390px viewport.
+These are host checks only: public v7 still opens the game directly at `/`, and the
+v8 landing page is not yet published.
+
 The no-disc runtime-content path was previously verified on public v4, commit
 `76f276315650e29841cb122095654239a03cbbed`. That fresh-browser run loaded 68 terrain
 textures, 64 sky tiles, 174 scene instances, ATV/rider resources, 21 engine samples
