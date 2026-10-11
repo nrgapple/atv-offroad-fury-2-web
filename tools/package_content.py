@@ -125,7 +125,7 @@ def pack_resource(members):
         directory.extend(struct.pack('<I', len(encoded)) + encoded + struct.pack('<II', len(plain), len(data)))
         plain.extend(data)
     if not plain:
-        raise ValueError('empty compact audio archive')
+        raise ValueError('empty compact archive')
     plain.extend(bytes((-len(plain)) % BLOCK))
     blocks = [zlib.compress(plain[i:i + BLOCK], 9) for i in range(0, len(plain), BLOCK)]
     if any(not 1 <= len(block) <= 65536 for block in blocks):
@@ -172,6 +172,61 @@ def selected_engine_names(table):
     if len(names) != 21:
         raise ValueError(f'exact-build ATV01 expected 21 unique engine samples, got {len(names)}')
     return names
+
+
+def mesh_material_names(data):
+    """Read the bounded PSG v3 material table, as in atv-core's mesh reader."""
+    if take(data, 0, 4) != b'psg\0' or u32(data, 4) != 3:
+        raise ValueError('unsupported PSG signature/version')
+    nodes = u32(data, 8)
+    if not 1 <= nodes <= 256:
+        raise ValueError('unsupported PSG node count')
+    at = 12 + nodes * 224
+    count = u32(data, at)
+    if not 1 <= count <= 4096:
+        raise ValueError('unsupported PSG material count')
+    return {take(data, at + 4 + i * 64, 64).split(b'\0', 1)[0].decode('utf-8').lower()
+            for i in range(count)}
+
+
+def compact_rider_materials(mesh_archive, material_archive):
+    """Keep every material/pass texture referenced by the packaged rider meshes."""
+    meshes, materials = Resource(mesh_archive), Resource(material_archive)
+    names = set()
+    for i, (name, _, _) in enumerate(meshes.members):
+        if name.lower().endswith('.psg'):
+            names.update(mesh_material_names(meshes.extract(i)))
+    indices = {}
+    for i, (name, _, _) in enumerate(materials.members):
+        basename = name.lower().split('/')[-1]
+        if basename in indices:
+            raise ValueError('ambiguous rider material member')
+        indices[basename] = i
+    selected = set()
+    for name in names:
+        psm = indices.get(f'{name}.psm')
+        if psm is None:
+            textures = {name}
+        else:
+            selected.add(psm)
+            textures = {value.lower() for section in config(materials.extract(psm)).values()
+                        for key, value in section.items() if key.startswith('texturemap_') and value}
+        for texture in textures:
+            if f'{texture}.pst' not in indices:
+                raise ValueError(f'missing referenced rider texture: {texture}')
+            selected.add(indices[f'{texture}.pst'])
+    return pack_resource([(materials.members[i][0], materials.extract(i)) for i in sorted(selected)])
+
+
+def compact_map_placements(data, environment):
+    """ENDL supplies only the common placement TOY; FR owns map rendering data."""
+    resource = Resource(data)
+    matches = [i for i, (name, _, _) in enumerate(resource.members)
+               if name.lower().split('/')[-1] == f'{environment.lower()}.toy']
+    if len(matches) != 1:
+        raise ValueError('expected one common map placement member')
+    index = matches[0]
+    return pack_resource([(resource.members[index][0], resource.extract(index))])
 
 
 def validated_content(directory):
@@ -251,7 +306,14 @@ def main():
         for path in STARTUP:
             data = source(path)
             originals[path] = data
-            records.append({'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': False, **blob(data)})
+            if path.endswith('_ENDL.RES'):
+                data = compact_map_placements(data, path.split('/')[-2])
+            elif path == '/RIDER/RIDER_MT.RES':
+                data = compact_rider_materials(originals['/RIDER/MRIDER.RES'], data)
+            record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': False, **blob(data)}
+            if data != originals[path]:
+                record.update(repacked=True, member_count=len(Resource(data).members))
+            records.append(record)
         names = selected_engine_names(Resource(originals['/AUDIOTBL.RES']).named('vehicle.aud'))
         audio = Resource(source('/AUDIO/AUDIO.RES'))
         samples = [(name, audio.extract(i)) for i, (name, _, _) in enumerate(audio.members) if name.lower().removeprefix('audio/') in names]

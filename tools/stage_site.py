@@ -79,7 +79,10 @@ def main():
             raise ValueError('Only inspected PNG checkpoint images are supported')
         shutil.copy2(source, images / source.name)
         count += 1
-    print(f'Staged {len(STATIC_FILES)} authored build files, {len(log["entries"])} checkpoints, {count} screenshots')
+    expanded_bytes = manifest.stat().st_size + sum(path.stat().st_size for path in dist.rglob('*') if path.is_file())
+    if expanded_bytes > 256 * 1024 * 1024:
+        raise ValueError(f'Sites expanded package exceeds 256 MiB: {expanded_bytes} bytes')
+    print(f'Staged {len(STATIC_FILES)} authored build files, {len(log["entries"])} checkpoints, {count} screenshots; {expanded_bytes} expanded bytes')
 
 
 if __name__ == '__main__':

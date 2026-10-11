@@ -113,7 +113,7 @@
       "title": "Original sky and streaming soundtrack",
       "summary": "The recovered sky renders above ENV01, and original music streams directly from the locally opened disc.",
       "details": [
-        "The 21-song catalog is decoded in Rust; browser verification streamed What’s Golden with no underruns during the checkpoint run.",
+        "The 21-song catalog is decoded in Rust; browser verification streamed What\u2019s Golden with no underruns during the checkpoint run.",
         "Stereo ADPCM decoding preserves predictors between chunks. A complete track matched the existing full-file decoder sample for sample.",
         "Music uses small scheduled buffers rather than decoding an entire track into memory."
       ],
@@ -239,12 +239,12 @@
       "title": "We found the title art and the menu data",
       "summary": "A decoded title image explains what is missing from the current drive-first build: the original screens have not vanished, but recovering their files is only the first step toward rebuilding the menus.",
       "details": [
-        "The Rust PST decoder opens the original 640×448 title screen, and the main-menu background is identified as bk_mainmenu.pst. Inventory of the 59-page UI archive reveals text layouts, widget positions and control groups, with original CEL fonts and animated-menu ATM data.",
-        "The original track catalog calls ENV01 “Caribou Peak.” That gives the map-selection recovery a concrete starting point, but the browser currently connects only ENV01 as a driving scene."
+        "The Rust PST decoder opens the original 640\u00d7448 title screen, and the main-menu background is identified as bk_mainmenu.pst. Inventory of the 59-page UI archive reveals text layouts, widget positions and control groups, with original CEL fonts and animated-menu ATM data.",
+        "The original track catalog calls ENV01 \u201cCaribou Peak.\u201d That gives the map-selection recovery a concrete starting point, but the browser currently connects only ENV01 as a driving scene."
       ],
       "limitation": "This image is recovered source artwork, not a screenshot of a working menu. Title/menu navigation, map selection, race HUD and the other maps are not implemented. We have identified and decoded source assets and layout records; browser UI behavior is still the next work.",
       "image": "/devlog-images/we-found-the-title-art-and-the-menu-data-87d47187.png",
-      "caption": "Original 640×448 title-screen art decoded from PST; the port does not yet display a working title screen."
+      "caption": "Original 640\u00d7448 title-screen art decoded from PST; the port does not yet display a working title screen."
     },
     {
       "id": "the-public-rider-now-leans-into-the-ride-d44d41f8",
@@ -326,7 +326,7 @@
       "title": "Freestyle now connects two original environments",
       "summary": "The reconstructed title route now reaches the original Freestyle environment picker, and both Caribou Peak (ENV01) and Tioga Valley (ENV02) enter a driving scene in the local browser build.",
       "details": [
-        "The full frontend check passed title → Main Menu → Single Player → Freestyle using keyboard and synthetic controller input. Start returns to the menu and pauses the Rust frame; on a 390-pixel touch viewport, selecting Caribou loads the scene and Escape returns without overflow or JavaScript errors.",
+        "The full frontend check passed title \u2192 Main Menu \u2192 Single Player \u2192 Freestyle using keyboard and synthetic controller input. Start returns to the menu and pauses the Rust frame; on a 390-pixel touch viewport, selecting Caribou loads the scene and Escape returns without overflow or JavaScript errors.",
         "The page uses decoded original menu layouts, fonts and artwork. Its map choice now changes between Caribou Peak (ENV01) and Tioga Valley (ENV02)."
       ],
       "limitation": "Host-only checkpoint; public v5 still starts directly on Caribou Peak. Only two environments and the Freestyle route are connected. Other modes, original menu callbacks, race HUD and full game flow remain unfinished; this is not whole-game PS2 equivalence.",
@@ -420,7 +420,7 @@
       "summary": "The local v8 homepage has two choices: Play opens the unchanged game at /play.html, while Dev log opens the progress journal. Plain copy explains that the game code is rebuilt in Rust instead of emulating a PlayStation 2.",
       "details": [
         "The page contains only Play and Dev log. A small landing script supports controller navigation between the links and gamepad A to open the selected item.",
-        "The host integration check passed landing → Play → original title/menu → Tioga and pause, then landing → Dev log → Play → title; it also checked Caribou selection at 390 pixels.",
+        "The host integration check passed landing \u2192 Play \u2192 original title/menu \u2192 Tioga and pause, then landing \u2192 Dev log \u2192 Play \u2192 title; it also checked Caribou selection at 390 pixels.",
         "Before Play, the landing route loads no WASM, game runtime or original content. Its layout fits a 390-pixel viewport."
       ],
       "limitation": "Captured and verified on the host before publication. This entry records the local v8 checkpoint; no public landing-page route test is claimed here.",
@@ -451,7 +451,7 @@
       "title": "Original trees now appear across six local environments",
       "summary": "Fixing one filename rule made original ecosystem records usable: the resource parser now removes spaces from unquoted fields, and missing material UVs default to zero. The host build can enter and drive ENV01, ENV02, ENV03, ENV05, ENV06 and ENV07 with original trees and bushes visible.",
       "details": [
-        "The six original ESB placement lists contain 37,948, 39,641, 26,530, 14,883, 38,968 and 6,617 entries respectively. The renderer currently selects up to 1,500 nearest placements and batches them into 7–24 draw calls per map.",
+        "The six original ESB placement lists contain 37,948, 39,641, 26,530, 14,883, 38,968 and 6,617 entries respectively. The renderer currently selects up to 1,500 nearest placements and batches them into 7\u201324 draw calls per map.",
         "All six local map runs completed without JavaScript or WebGL errors. This adds four host-only routes beyond the two environments in the public build."
       ],
       "limitation": "Visibility is provisional and does not reproduce the PS2 level-of-detail rules; this does not mean every ecosystem placement is drawn at once. ENV08 was still blocked at this six-map checkpoint; a later local checkpoint records its decoder recovery. These map changes were not yet published.",
@@ -496,15 +496,29 @@
       "title": "The terrain detail was already stored in an alpha channel",
       "summary": "The answer to the close-up terrain question was not a larger model or an upscaled texture. The original scene stores a separate _d.pst detail layer; its alpha carries the snow and dirt grain. That layer now blends into the local renderer near the ATV.",
       "details": [
-        "The ENV01 height grid is 1,281 × 1,281 samples at 4.5-foot spacing. Its largest stored macrotexture is 256 × 256 pixels, with 240 useful texels across 288 feet; no finer stored terrain model was found.",
+        "The ENV01 height grid is 1,281 \u00d7 1,281 samples at 4.5-foot spacing. Its largest stored macrotexture is 256 \u00d7 256 pixels, with 240 useful texels across 288 feet; no finer stored terrain model was found.",
         "The browser now uses the original detail texture with recovered world scale and near-pass modulation. Correct UV gradients also keep tile wrapping from choosing tiny mip levels at seams.",
         "The comparison capture shows grain in close snow that was absent in the preceding local frame. No artificial texture upscale or replacement high-resolution model was used.",
-        "The completed local detail build passed the seven-map regression with original 64×64 detail textures, moving full-sample terrain patches and batched vegetation. The 390px renderer checks passed gamepad input, touch cancellation, audio-engine startup and graphics-context restoration. Menu navigation passed immediately before the terrain-only shader changes."
+        "The completed local detail build passed the seven-map regression with original 64\u00d764 detail textures, moving full-sample terrain patches and batched vegetation. The 390px renderer checks passed gamepad input, touch cancellation, audio-engine startup and graphics-context restoration. Menu navigation passed immediately before the terrain-only shader changes."
       ],
       "limitation": "This is a local screenshot. Original projected-coverage pass selection, distant mip behavior, fog, and geometry rounding are still not matched; this is not a full PS2 terrain LOD result.",
       "image": "/devlog-images/the-terrain-detail-was-already-stored-in-an-alpha-chan-7b6fafd6.png",
       "caption": "Local ENV01 after connecting the original detail layer; fine snow grain appears in the near terrain."
+    },
+    {
+      "id": "unused-archive-records-pushed-the-package-over-the-hos-0303f7d4",
+      "timestamp": "2026-10-11T23:13:00.853562+00:00",
+      "recorded_at": "2026-10-11T23:13:00.853562+00:00",
+      "kind": "discovery",
+      "title": "Unused archive records pushed the package over the hosting limit",
+      "summary": "Sites refused the expanded package at its 256 MiB ceiling. The browser only needed selected map placements and rider materials, so the runtime package now keeps those referenced records instead of whole unused archives.",
+      "details": [
+        "Trimming ENDL and RIDER_MT reduced startup content from 77,826,915 to 33,954,399 bytes: 43,872,516 bytes (41.84 MiB) saved. All 21 music tracks and engine-manifest records are byte-for-byte unchanged; all seven full FR map archives are also unchanged.",
+        "RIDER_MT is reduced from 681 members to the 21 material/pass textures referenced by the current meshes. Each ENDL retains its common map-placement TOY. The staged package, including 31 screenshots, is 262,602,755 bytes (about 250.44 MiB).",
+        "All seven map load/driving tests passed with the compact content, along with renderer, graphics-context restore, audio, controller and touch checks."
+      ],
+      "limitation": "This is a validated local package pending public deployment. No public release or public verification is claimed."
     }
   ],
-  "updated_at": "2026-10-11T23:01:52.897183+00:00"
+  "updated_at": "2026-10-11T23:13:00.853562+00:00"
 }
