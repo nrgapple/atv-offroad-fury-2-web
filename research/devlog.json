@@ -1,6 +1,6 @@
 {
-  "status": "Local no-disc startup through a runtime-content manifest is verified on the development host. Public autoload remains unverified, and this is still an incomplete game reconstruction.",
-  "working_on": "Public runtime-content delivery verification, rider animation blending and race-flow recovery.",
+  "status": "Public v4 now starts without a disc-selection step; public desktop and mobile checks passed on commit 76f2763. The local build has newer normal rider-animation blends. This remains a partial game reconstruction.",
+  "working_on": "Original menu flow and map selection, alongside the next rider-animation release. Original title/menu screens and race HUD are not implemented yet.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -198,7 +198,39 @@
       "limitation": "Host-only checkpoint: the public Site still needs a release and verification of no-disc startup plus manifest requests. The browser runs authored Rust/WebAssembly, not an emulator or the disc executable. This remains a partial driving reconstruction; the rider is still a sampled seated pose, while dynamic collision, crashes and race systems remain unfinished.",
       "image": "/devlog-images/local-no-disc-autoload-from-the-runtime-manifest-97c15263.png",
       "caption": "Local development build starts on ENV01 from the runtime manifest; no disc-selection screen appears."
+    },
+    {
+      "id": "the-rider-responds-to-steering-lean-and-reverse-0afc62c5",
+      "timestamp": "2026-10-11T21:30:49.655653+00:00",
+      "recorded_at": "2026-10-11T21:31:48.747740+00:00",
+      "kind": "build",
+      "title": "The rider responds to steering, lean and reverse",
+      "summary": "The local build now blends recovered rider motions with the ride instead of holding one seated pose. Fourteen normal riding clips are selected from filtered steering, lean and airborne state, and the rider transitions between them through pose snapshots.",
+      "details": [
+        "The original controller does not simply play a riding clip on a timer: turn and lean clips are sampled from filtered inputs. Reverse follows a separate clip path and a different controller order, so it is sampled on its own.",
+        "Rust now connects the original selector to quaternion pose blending, transition snapshots/crossfades and a Head-only look overlay. A native Rust animator probe produced 1,200 finite poses across reverse, turn, lean and air states. Separately, browser diagnostics confirmed all 18 rider nodes animate in turn/turn/reverse modes with changing matrices; the full local browser regression passed.",
+        "The captures show distinct turn/lean and reverse poses in the original ENV01 scene. Crouch and look values still use constructor defaults."
+      ],
+      "limitation": "Local-build checkpoint; this is partial animation recovery, not full-game or PS2-hardware equivalence. Hand/foot IK, tricks, crash poses and the full event system are unfinished. Public v4 predates this rider connection, so it should not be described as available on the Site until a later release includes it.",
+      "image": "/devlog-images/the-rider-responds-to-steering-lean-and-reverse-0afc62c5.png",
+      "caption": "Local build: the separately selected reverse motion changes the rider pose on the original ATV."
+    },
+    {
+      "id": "the-public-game-now-opens-directly-on-the-track-e55d97c9",
+      "timestamp": "2026-10-11T21:31:13.088287+00:00",
+      "recorded_at": "2026-10-11T21:32:27.265051+00:00",
+      "kind": "verification",
+      "title": "The public game now opens directly on the track",
+      "summary": "Public v4 no longer asks visitors to choose a disc image. The authored Rust/WebAssembly build reads its approved runtime files from the Site manifest, then renders ENV01 in the page.",
+      "details": [
+        "This fixes the first-run gap: visitors can open the public URL and get to the driving scene without supplying an ISO. In a fresh public-browser run, the same-origin manifest loaded 68 terrain textures, 64 sky tiles, 174 scene props, the ATV and rider, 21 engine samples and the 21-song catalog.",
+        "The public regression exercised throttle, braking, reset, camera cycling, controller and focus behavior, touch/cancel input and graphics-context recovery. Music played with zero underruns; diagnostics recorded no JavaScript/WebGL errors. The 390px mobile view has no disc picker and no horizontal overflow.",
+        "The public deployment record identifies main commit 76f276315650e29841cb122095654239a03cbbed. The runtime manifest and content blobs are served by the Site; the game itself is our authored WASM port."
+      ],
+      "limitation": "This release is still a partial driving reconstruction. The public v4 rider still uses the seated sample pose; the normal riding animation connection is a newer local checkpoint awaiting its release. Tricks, rider IK, crashes, full races and progression remain unfinished.",
+      "image": "/devlog-images/the-public-game-now-opens-directly-on-the-track-e55d97c9.png",
+      "caption": "Public v4 opens straight into the original ENV01 scene without a disc-selection step; public mobile layout was checked separately."
     }
   ],
-  "updated_at": "2026-10-11T21:21:58.523450+00:00"
+  "updated_at": "2026-10-11T21:32:27.265051+00:00"
 }

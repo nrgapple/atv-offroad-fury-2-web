@@ -3,7 +3,8 @@
 //! selection remain separate gameplay state machines.
 use crate::Result;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 #[repr(u8)]
 pub enum Mode {
     Reverse,
@@ -31,6 +32,22 @@ pub enum Clip {
     LookLr,
 }
 impl Clip {
+    pub const ALL: [Self; 14] = [
+        Self::TurnFwd,
+        Self::TurnMid,
+        Self::TurnBck,
+        Self::LeanFwd,
+        Self::LeanMid,
+        Self::LeanBck,
+        Self::LeanFwdD,
+        Self::LeanMidD,
+        Self::LeanBckD,
+        Self::CrosFwd,
+        Self::CrosMid,
+        Self::CrosBck,
+        Self::Reverse,
+        Self::LookLr,
+    ];
     /// Catalog suffix; its original rider-specific M_/F_ prefix is separate.
     pub fn suffix(self) -> &'static str {
         match self {
@@ -50,6 +67,192 @@ impl Clip {
             Self::LookLr => "Look_LR",
         }
     }
+}
+
+/// Original normal-riding controller evaluation. Tricks, IK, look-target
+/// acquisition and the crouch signal are intentionally supplied separately.
+pub struct Motion {
+    pub animation: crate::animation::Animation,
+    pub sampling: crate::animation::Sampling,
+}
+pub struct Animator {
+    motions: Vec<Motion>,
+    state: State,
+    current: crate::animation::Channels,
+    saved: crate::animation::Channels,
+    head: usize,
+}
+impl Animator {
+    /// Motions must follow Clip::ALL. Reject controller layouts that the original
+    /// indexed pair/four-clip blend cannot safely combine.
+    pub fn new(motions: Vec<Motion>, nodes: &[crate::mesh::Node]) -> Result<Self> {
+        if motions.len() != Clip::ALL.len() {
+            return Err("normal riding requires fourteen original motions".into());
+        }
+        let layout = |motion: &Motion| -> Result<(Vec<usize>, Vec<usize>)> {
+            let a = &motion.animation;
+            Ok((
+                a.translations
+                    .iter()
+                    .map(|t| a.model_bone(t.bone, nodes))
+                    .collect::<Result<_>>()?,
+                a.rotations
+                    .iter()
+                    .map(|t| a.model_bone(t.bone, nodes))
+                    .collect::<Result<_>>()?,
+            ))
+        };
+        let expected = layout(&motions[0])?;
+        for indices in [&expected.0, &expected.1] {
+            if indices
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != indices.len()
+            {
+                return Err("duplicate normal riding controllers".into());
+            }
+        }
+        // Reverse is sampled alone and may use a different controller order.
+        for motion in &motions[..12] {
+            if layout(motion)? != expected {
+                return Err("incompatible normal riding controller order".into());
+            }
+        }
+        let initial = &motions[Clip::TurnMid as usize];
+        let current = initial.animation.sample_channels(
+            nodes,
+            initial.animation.duration * 0.5,
+            initial.sampling,
+        )?;
+        let head = nodes
+            .iter()
+            .position(|node| node.name.eq_ignore_ascii_case("Head"))
+            .ok_or("rider Head node is missing")?;
+        Ok(Self {
+            motions,
+            state: State::default(),
+            saved: current.clone(),
+            current,
+            head,
+        })
+    }
+    pub fn pose(&self, nodes: &[crate::mesh::Node]) -> Result<crate::animation::Pose> {
+        self.current.pose(nodes)
+    }
+    pub fn reset(&mut self, nodes: &[crate::mesh::Node]) -> Result<()> {
+        let initial = &self.motions[Clip::TurnMid as usize];
+        self.current = initial.animation.sample_channels(
+            nodes,
+            initial.animation.duration * 0.5,
+            initial.sampling,
+        )?;
+        self.saved = self.current.clone();
+        self.state = State::default();
+        Ok(())
+    }
+    pub fn step(
+        &mut self,
+        nodes: &[crate::mesh::Node],
+        input: Input,
+        dt: f32,
+    ) -> Result<(Plan, crate::animation::Pose)> {
+        let plan = self.state.step(input, dt)?;
+        if plan.snapshot {
+            self.saved = self.current.clone();
+        }
+        let first = plan.blend.clips()[0];
+        let samples = plan.samples(self.motions[first as usize].animation.duration)?;
+        let mut sampled = Vec::new();
+        for sample in samples {
+            let motion = &self.motions[sample.clip as usize];
+            sampled.push(
+                motion
+                    .animation
+                    .sample_channels(nodes, sample.time, motion.sampling)?,
+            );
+        }
+        let target = match plan.blend {
+            Blend::Single(_) => sampled.remove(0),
+            Blend::Pair { first_weight, .. } => pair(&sampled[0], &sampled[1], first_weight)?,
+            Blend::Four {
+                first_weight,
+                pair_weight,
+                ..
+            } => pair(
+                &pair(&sampled[0], &sampled[1], first_weight)?,
+                &pair(&sampled[2], &sampled[3], first_weight)?,
+                pair_weight,
+            )?,
+        };
+        self.apply(&target, plan.snapshot_weight, None)?;
+        if let Some(phase) = plan.head_look_phase {
+            let motion = &self.motions[Clip::LookLr as usize];
+            let look = motion.animation.sample_channels(
+                nodes,
+                phase * motion.animation.duration,
+                motion.sampling,
+            )?;
+            self.apply(&look, plan.snapshot_weight, Some(self.head))?;
+        }
+        Ok((plan, self.pose(nodes)?))
+    }
+    fn apply(
+        &mut self,
+        target: &crate::animation::Channels,
+        weight: f32,
+        only: Option<usize>,
+    ) -> Result<()> {
+        for index in 0..self.current.translations.len() {
+            if only.is_some_and(|node| node != index) {
+                continue;
+            }
+            if let Some(new) = target.translations[index] {
+                let old = self.saved.translations[index]
+                    .ok_or("rider snapshot translation is missing")?;
+                self.current.translations[index] = Some(if weight > 0. {
+                    std::array::from_fn(|i| new[i] + weight * (old[i] - new[i]))
+                } else {
+                    new
+                });
+            }
+            if let Some(new) = target.rotations[index] {
+                let old =
+                    self.saved.rotations[index].ok_or("rider snapshot rotation is missing")?;
+                self.current.rotations[index] = Some(if weight > 0. {
+                    crate::animation::blend_rotation(new, old, weight)
+                } else {
+                    new
+                });
+            }
+        }
+        Ok(())
+    }
+}
+fn pair(
+    a: &crate::animation::Channels,
+    b: &crate::animation::Channels,
+    weight: f32,
+) -> Result<crate::animation::Channels> {
+    if a.translations.len() != b.translations.len() || a.rotations.len() != b.rotations.len() {
+        return Err("rider blend channel count mismatch".into());
+    }
+    let mut result = a.clone();
+    for (index, channel) in result.translations.iter_mut().enumerate() {
+        if let Some(first) = *channel {
+            let second = b.translations[index].ok_or("rider blend translation is missing")?;
+            *channel = Some(std::array::from_fn(|i| {
+                second[i] - weight * (second[i] - first[i])
+            }));
+        }
+    }
+    for (index, channel) in result.rotations.iter_mut().enumerate() {
+        if let Some(first) = *channel {
+            let second = b.rotations[index].ok_or("rider blend rotation is missing")?;
+            *channel = Some(crate::animation::blend_rotation(second, first, weight));
+        }
+    }
+    Ok(result)
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Blend {
@@ -236,6 +439,95 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn fixture() -> (Vec<Motion>, Vec<crate::mesh::Node>) {
+        use crate::animation::{Animation, RotationKey, Sampling, Track, TranslationKey};
+        let identity = [
+            1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+        ];
+        let nodes = ["Root", "Head", "Hand"]
+            .iter()
+            .enumerate()
+            .map(|(i, name)| crate::mesh::Node {
+                name: (*name).into(),
+                parent: if i == 0 { -1 } else { 0 },
+                local_matrix: identity,
+                world_matrix: identity,
+                bounds: [0.; 7],
+            })
+            .collect();
+        let motions = Clip::ALL
+            .iter()
+            .map(|clip| Motion {
+                sampling: Sampling::default(),
+                animation: Animation {
+                    version: 2,
+                    frame_count: 2,
+                    duration: 1.,
+                    bone_names: vec![],
+                    translation_kind: 0,
+                    translations: if *clip == Clip::LookLr {
+                        vec![]
+                    } else {
+                        vec![Track {
+                            bone: 0,
+                            keys: vec![TranslationKey {
+                                time: 0.,
+                                value: [0.; 3],
+                                tangents: None,
+                            }],
+                        }]
+                    },
+                    rotations: (0..3)
+                        .filter(|bone| *clip != Clip::LookLr || *bone == 1)
+                        .map(|bone| Track {
+                            bone,
+                            keys: vec![RotationKey {
+                                time: 0.,
+                                packed_angle: if *clip == Clip::LookLr { 1024 } else { 0 },
+                                packed_axis: [0, 32767, 0],
+                            }],
+                        })
+                        .collect(),
+                },
+            })
+            .collect();
+        (motions, nodes)
+    }
+    #[test]
+    fn head_overlay_is_masked_and_reset_restores_initial_pose() {
+        let (motions, nodes) = fixture();
+        let mut animator = Animator::new(motions, &nodes).unwrap();
+        let initial = animator.pose(&nodes).unwrap();
+        let (_, first) = animator.step(&nodes, input(), 1. / 60.).unwrap();
+        assert_eq!(
+            first.local_matrices, initial.local_matrices,
+            "mode change snapshots before applying look"
+        );
+        let (_, next) = animator.step(&nodes, input(), 0.3).unwrap();
+        assert_eq!(next.local_matrices[0], initial.local_matrices[0]);
+        assert_eq!(next.local_matrices[2], initial.local_matrices[2]);
+        assert!(next.local_matrices[1][0].abs() < 0.00001);
+        animator.reset(&nodes).unwrap();
+        assert_eq!(
+            animator.pose(&nodes).unwrap().local_matrices,
+            initial.local_matrices
+        );
+    }
+    #[test]
+    fn indexed_blends_reject_reordered_controllers_but_single_reverse_allows_them() {
+        let (mut motions, nodes) = fixture();
+        motions[Clip::Reverse as usize]
+            .animation
+            .rotations
+            .swap(0, 1);
+        assert!(Animator::new(motions, &nodes).is_ok());
+        let (mut motions, nodes) = fixture();
+        motions[Clip::LeanFwd as usize]
+            .animation
+            .rotations
+            .swap(0, 1);
+        assert!(Animator::new(motions, &nodes).is_err());
+    }
     fn input() -> Input {
         Input {
             axes: [0.0; 2],

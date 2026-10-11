@@ -257,7 +257,7 @@ fn sine_polynomial(angle: f32) -> f32 {
     let c2 = f32::from_bits(0x3e2aaaad);
     angle * (1. + square * (-c2 + square * (c1 - square * c0)))
 }
-fn interpolate_rotation(a: [f32; 4], b: [f32; 4], weight: f32) -> [f32; 4] {
+pub(crate) fn blend_rotation(a: [f32; 4], b: [f32; 4], weight: f32) -> [f32; 4] {
     let cosine = dot(a, b);
     // Exact-build 0x002f8650 uses this sine polynomial and |dot| < 1 guard.
     let mut q = a;
@@ -265,9 +265,13 @@ fn interpolate_rotation(a: [f32; 4], b: [f32; 4], weight: f32) -> [f32; 4] {
         let theta = cosine.abs().acos();
         let left = sine_polynomial(theta - weight * theta);
         let right = sine_polynomial(weight * theta) * if cosine < 0. { -1. } else { 1. };
-        let denominator = sine_polynomial(theta);
-        q = std::array::from_fn(|i| (a[i] * left + b[i] * right) / denominator);
+        let reciprocal = 1. / sine_polynomial(theta);
+        q = std::array::from_fn(|i| (a[i] * left + b[i] * right) * reciprocal);
     }
+    q
+}
+fn interpolate_rotation(a: [f32; 4], b: [f32; 4], weight: f32) -> [f32; 4] {
+    let mut q = blend_rotation(a, b, weight);
     if dot(q, b) < 0. {
         q = q.map(|v| -v);
     }
@@ -312,7 +316,7 @@ fn matrix_rotation(q: [f32; 4], matrix: &mut [f32; 16]) {
 }
 
 impl Animation {
-    fn model_bone(&self, index: u32, nodes: &[crate::mesh::Node]) -> Result<usize> {
+    pub(crate) fn model_bone(&self, index: u32, nodes: &[crate::mesh::Node]) -> Result<usize> {
         if self.bone_names.is_empty() {
             if index as usize >= nodes.len() {
                 return Err("MOT references missing model bone".into());
@@ -490,6 +494,11 @@ mod tests {
     }
     #[test]
     fn short_axis_quarter_turn_and_shortest_arc() {
+        assert_eq!(
+            blend_rotation([1., 0., 0., 0.], [-1., 0., 0., 0.], 0.8),
+            [1., 0., 0., 0.],
+            "raw blend retains first quaternion at the absolute-dot guard"
+        );
         let q = RotationKey {
             time: 0.,
             packed_angle: 1024,

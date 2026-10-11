@@ -135,8 +135,12 @@ async function terrainFromContent(file, files, token) {
   }
   const riderArchive = await archiveAt('/RIDER/MRIDER.RES'), motions = await archiveAt('/ANIMSRDR.RES');
   const riderMesh = await json(27, await member(riderArchive, '/mrider.psg'));
-  await codec(28, await member(motions, '/m_turnm.mot'));
-  const pose = await command(29, { time: .8 });
+  const riding = await json(51, await member(riderArchive, '/mrider.mcf'));
+  for (let index = 0; index < riding.length; index++) {
+    if (token !== generation) throw new Error('Opening cancelled.');
+    await codec(52, await member(motions, '/' + riding[index].path.split('/').at(-1)), index);
+  }
+  const pose = await codec(53, new Uint8Array()).then(bytes => JSON.parse(decoder.decode(bytes)));
   const riderMaterials = await archiveAt('/RIDER/RIDER_MT.RES');
   const riderTextures = await baseTextures(riderMesh, riderMaterials.bytes, riderMaterials.entries);
   status('Decoding original terrain textures…');
@@ -476,15 +480,14 @@ function buildMesh() {
     riderTextureCount = riderTextures.size;
     for (const group of rider.mesh.lods[0].groups) {
       if (group.vertices.length > 65536) throw new Error('Rider mesh group exceeds index bounds.');
-      const vertices = new Float32Array(group.vertices.length * 8);
+      const vertices = new Float32Array(group.vertices.length * 9);
       group.vertices.forEach((vertex, index) => {
         const bone = rider.mesh.nodes[vertex.node], pose = rider.pose.world_matrices[vertex.node];
         if (!bone || !pose) throw new Error('Rider animation node is missing.');
-        const position = transform(pose, vertex.local_position, true);
-        const normal = transform(pose, inverseDirection(bone.world_matrix, vertex.normal));
-        vertices.set([...position, ...normal, ...vertex.uv], index * 8);
+        vertices.set([...vertex.local_position, ...inverseDirection(bone.world_matrix, vertex.normal), ...vertex.uv, vertex.node], index * 9);
       });
-      const chunk = upload(vertices, new Uint16Array(group.indices), true);
+      const chunk = upload(vertices, new Uint16Array(group.indices), true, true);
+      chunk.rider = true;
       chunk.texture = riderTextures.get(rider.mesh.materials[group.material]);
       vehicleChunks.push(chunk); riderTriangles += group.indices.length / 3;
     }
@@ -610,6 +613,12 @@ function acceptFrame(frame) {
   if (frame.quad_node_matrices?.length !== vehicle.nodes.length || frame.quad_node_matrices.some(matrix => matrix.length !== 16 || !matrix.every(Number.isFinite))) throw new Error('Simulation returned an invalid quad linkage pose.');
   vehicle.nodeMatrices = new Float32Array(frame.quad_node_matrices.flat());
   diagnostics.animatedQuadNodes = frame.quad_node_matrices.length;
+  if (vehicle.rider) {
+    if (frame.rider_node_matrices?.length !== vehicle.rider.mesh.nodes.length || frame.rider_node_matrices.some(matrix => matrix.length !== 16 || !matrix.every(Number.isFinite))) throw new Error('Simulation returned an invalid rider pose.');
+    vehicle.rider.pose.world_matrices = frame.rider_node_matrices;
+    diagnostics.animatedRiderNodes = frame.rider_node_matrices.length;
+    diagnostics.riderMode = frame.rider_mode;
+  }
 }
 async function startSimulation(source) {
   diagnostics.simulationSteps = 0;
@@ -743,7 +752,9 @@ function render(time) {
   if (vehicle) gl.uniformMatrix4fv(uniforms.model, false, vehicleMatrix());
   if (vehicle) gl.uniformMatrix4fv(uniforms.quadBones, false, vehicle.nodeMatrices);
   for (const chunk of vehicleChunks) {
-    gl.uniform1i(uniforms.useQuadPose, Boolean(chunk.quad));
+    gl.uniform1i(uniforms.useQuadPose, Boolean(chunk.quad || chunk.rider));
+    if (chunk.quad) gl.uniformMatrix4fv(uniforms.quadBones, false, vehicle.nodeMatrices);
+    if (chunk.rider) gl.uniformMatrix4fv(uniforms.quadBones, false, new Float32Array(vehicle.rider.pose.world_matrices.flat()));
     gl.uniform1i(uniforms.useTexture, chunk.texture ? 1 : 0); gl.bindTexture(gl.TEXTURE_2D, chunk.texture ?? fallbackTexture);
     gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
   }

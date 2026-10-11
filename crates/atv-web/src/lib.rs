@@ -29,6 +29,10 @@ struct Simulation {
     vehicle: Option<Vehicle>,
     rider_mesh: Option<mesh::Mesh>,
     rider_animation: Option<animation::Animation>,
+    rider_catalog: Vec<atv_core::motion_catalog::Motion>,
+    rider_motions: Vec<atv_core::rider_pose::Motion>,
+    rider_animator: Option<atv_core::rider_pose::Animator>,
+    rider_mode: Option<atv_core::rider_pose::Mode>,
     chassis_points: Option<Vec<[f32; 3]>>,
     quad_pose: Option<atv_core::quad_pose::QuadPose>,
     obstacle_rays: Option<std::rc::Rc<atv_core::collision::CollisionRayTree>>,
@@ -146,6 +150,13 @@ fn simulation_frame(sim: &Simulation, frame: &atv_core::vehicle::VehicleFrame) -
     let mut value = serde_json::to_value(frame).map_err(|error| error.to_string())?;
     value["quad_node_matrices"] =
         serde_json::to_value(matrices).map_err(|error| error.to_string())?;
+    if let Some(animator) = &sim.rider_animator {
+        let mesh = sim.rider_mesh.as_ref().ok_or("rider mesh missing")?;
+        value["rider_node_matrices"] =
+            serde_json::to_value(animator.pose(&mesh.nodes)?.world_matrices)
+                .map_err(|e| e.to_string())?;
+        value["rider_mode"] = serde_json::to_value(sim.rider_mode).map_err(|e| e.to_string())?;
+    }
     serde_json::to_vec(&value).map_err(|error| error.to_string())
 }
 
@@ -214,6 +225,10 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         .ok_or("load original scene collision first")?
                         .clone(),
                 )?;
+                if let Some(animator) = &mut sim.rider_animator {
+                    animator.reset(&sim.rider_mesh.as_ref().ok_or("rider mesh missing")?.nodes)?;
+                }
+                sim.rider_mode = None;
                 let result = simulation_frame(sim, &vehicle.frame())?;
                 sim.vehicle = Some(vehicle);
                 return Ok(result);
@@ -238,6 +253,16 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     input,
                     json_number(&value, "dt")?,
                 )?;
+                if let Some(animator) = &mut sim.rider_animator {
+                    let nodes = &sim.rider_mesh.as_ref().ok_or("rider mesh missing")?.nodes;
+                    let input = sim
+                        .vehicle
+                        .as_ref()
+                        .ok_or("vehicle missing")?
+                        .rider_pose_input();
+                    let (plan, _) = animator.step(nodes, input, json_number(&value, "dt")?)?;
+                    sim.rider_mode = Some(plan.mode);
+                }
                 return simulation_frame(sim, &frame);
             }
             26 => {
@@ -250,6 +275,9 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 let result = serde_json::to_vec(&mesh).map_err(|error| error.to_string())?;
                 sim.rider_mesh = Some(mesh);
                 sim.rider_animation = None;
+                sim.rider_animator = None;
+                sim.rider_catalog.clear();
+                sim.rider_motions.clear();
                 return Ok(result);
             }
             28 => {
@@ -273,6 +301,41 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     animation::Sampling::default(),
                 )?;
                 return serde_json::to_vec(&pose).map_err(|error| error.to_string());
+            }
+            51 => {
+                let catalog = atv_core::motion_catalog::MotionCatalog::parse(input)?;
+                let selected = atv_core::rider_pose::Clip::ALL
+                    .iter()
+                    .map(|clip| {
+                        let name = format!("M_{}", clip.suffix());
+                        catalog
+                            .motions
+                            .iter()
+                            .find(|motion| motion.name.eq_ignore_ascii_case(&name))
+                            .cloned()
+                            .ok_or_else(|| format!("missing rider motion {name}"))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let output = serde_json::to_vec(&selected).map_err(|e| e.to_string())?;
+                sim.rider_catalog = selected;
+                sim.rider_motions.clear();
+                sim.rider_animator = None;
+                return Ok(output);
+            }
+            53 => {
+                let nodes = &sim
+                    .rider_mesh
+                    .as_ref()
+                    .ok_or("load rider mesh first")?
+                    .nodes;
+                let animator = atv_core::rider_pose::Animator::new(
+                    std::mem::take(&mut sim.rider_motions),
+                    nodes,
+                )?;
+                let output =
+                    serde_json::to_vec(&animator.pose(nodes)?).map_err(|e| e.to_string())?;
+                sim.rider_animator = Some(animator);
+                return Ok(output);
             }
             44 => {
                 let tree = atv_core::collision::decode_ray_tree(input)?;
@@ -459,6 +522,26 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
+    if op == 52 {
+        return SIMULATION.with_borrow_mut(|sim| {
+            if index != sim.rider_motions.len() {
+                return Err("load rider clips in catalog order".into());
+            }
+            let definition = sim
+                .rider_catalog
+                .get(index)
+                .ok_or("rider motion index out of range")?;
+            let motion = atv_core::rider_pose::Motion {
+                animation: animation::decode_mot(input)?,
+                sampling: animation::Sampling {
+                    translation_interpolation: definition.interpolate_position,
+                    rotation_interpolation: definition.interpolate_rotation,
+                },
+            };
+            sim.rider_motions.push(motion);
+            Ok(b"null".to_vec())
+        });
+    }
     if op == 50 {
         return simulation_batch(input);
     }
@@ -471,7 +554,7 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
     if (32..=34).contains(&op) {
         return engine_audio(input, op, index);
     }
-    if (20..=29).contains(&op) || (44..=47).contains(&op) {
+    if (20..=29).contains(&op) || (44..=47).contains(&op) || op == 51 || op == 53 {
         return simulation(input, op);
     }
     let json = match op {

@@ -290,6 +290,25 @@ impl Vehicle {
             obstacle_contact_count: self.obstacle_contact_count,
         }
     }
+    /// Recovered normal-riding inputs. Crouch and look-target behavior are not
+    /// recovered here; keep their original constructor values until connected.
+    pub fn rider_pose_input(&self) -> crate::rider_pose::Input {
+        crate::rider_pose::Input {
+            axes: self.smoothed_axes,
+            local_forward_speed: inverse_transform(self.body.basis(), self.body.linear_velocity)[2],
+            stand_up_speed: self.rider_stand_up_speed,
+            wheel_contact: self.contacts.iter().any(|contact| contact.grounded),
+            reverse_gear: matches!(
+                self.engine.state.previous_direction,
+                DriveDirection::Reverse
+            ),
+            reverse_override: false,
+            crouch: 0.5,
+            look_phase: 0.5,
+            force_snapshot: false,
+            suppress_snapshot: false,
+        }
+    }
     pub fn step(
         &mut self,
         terrain: &Terrain,

@@ -53,6 +53,7 @@ try {
   assert(loaded.skyTiles > 0);
   assert(loaded.chassis.points > 0 && loaded.chassis.rays > 0);
   assert(loaded.animatedQuadNodes > 4);
+  assert.equal(loaded.animatedRiderNodes, 18);
   assert.equal(loaded.cameraPresets.length, 7);
   assert.equal(loaded.followCamera.fov, 85);
   assert(loaded.obstacles.instances > 0 && loaded.obstacles.meshes > 0 && loaded.obstacles.rays > 0);
@@ -93,6 +94,7 @@ try {
   });
   await page.waitForTimeout(600);
   const gamepad = await read(); finite(gamepad);
+  assert.notDeepEqual(gamepad.frame.rider_node_matrices, loaded.frame.rider_node_matrices, 'Original rider controllers must respond to driving input');
   assert.equal(gamepad.input.throttle, 1); assert(gamepad.input.steer < 0, 'Right input converts to original left-positive steering scalar');
   await page.evaluate(() => { window.testPad.buttons[3] = { value: 1, pressed: true }; });
   await page.waitForFunction(() => window.atvTerrainStatus.followCamera.preset === 2);

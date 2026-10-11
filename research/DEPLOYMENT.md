@@ -67,31 +67,43 @@ commits and leaves the prior public build active while CI is pending or failing.
 There is up to one polling interval of deployment delay. The automation needs the
 Mac/local Codex executor available; public Site visitors do not need this Mac online.
 
-The CI-artifact-to-public-Site path has been verified for main commit
-`3c9f7bdc72810c23afc2aa461810e911a998f01c`; the public `/deployment.json` identifies
-that commit. The public development log serves 12 entries and all 10 approved
-screenshots. This latest release received devlog-only public verification while
-runtime-content autoload was being added; its automatic startup and manifest-backed
-asset requests have not yet been verified. The preceding release
-`5d160a747e9730c9e07f35afda9bac941c15f062` passed a real-disc Playwright run for
-terrain, sky, props, ATV/rider, engine sample scheduling, chassis/throttle/brake/
-reset, controller/focus, touch/cancel, graphics-context recovery, and no game-data
-uploads. That earlier check selected the ISO in the local test browser and is not
-evidence that no-disc autoload works.
+The CI-artifact-to-public-Site path was verified for main commit
+`76f276315650e29841cb122095654239a03cbbed`; public `/deployment.json` returns
+that exact SHA. Native Sites deployment `appgdep_6acbffb0631c81918bc9d2fae48ae6e3`
+succeeded at 2026-10-11 21:30:26 UTC. Public v4 was tested from a fresh browser
+session without selecting or uploading a disc: the Site manifest loaded 68 terrain
+textures, 64 sky tiles, 174 scene instances, the ATV/rider, 21 engine samples and
+the 21-song catalog. The regression exercised driving, throttle/brake/reset, camera
+cycling, controller/focus, touch/cancel and graphics-context recovery. Music played
+with zero underruns; there were no JavaScript/WebGL errors. At 390px the mobile
+layout had no horizontal overflow and the disc picker was absent. App content used
+the same-origin Site manifest and content blobs. Public v4 still uses the sampled
+seated rider pose; the newer local normal-riding blend is not in that release.
 
-The local automatic-startup checkpoint is verified on the development host: the
-browser loads original runtime resources from a same-origin content manifest with
-no disc-selection step. Desktop and 390-pixel mobile captures show the authored
-WASM game running with original terrain, ATV/rider, engine samples and streaming
-music; diagnostics recorded no JavaScript errors or audio underruns, and mobile
-layout had no horizontal overflow. This is host-only evidence. The public Site is
-still on the prior disc-selection release, so no-disc startup and its asset requests
-must be checked against the next public deployment before calling it complete.
+The previous public version on commit
+`3c9f7bdc72810c23afc2aa461810e911a998f01c` received devlog-only verification; its
+autostart and manifest requests were not tested. The preceding version
+`5d160a747e9730c9e07f35afda9bac941c15f062` passed a real-disc browser run for
+terrain, sky, props, ATV/rider, engine sample scheduling, chassis, throttle/brake/
+reset, controller/focus, touch/cancel and graphics-context recovery. That older
+check required selecting the ISO and is not the basis for the no-disc result.
 
-The first scheduled heartbeat execution has **not yet been observed**; creation
-proves the schedule is saved, not that an unattended deployment has run. The
-publisher still needs a separate unattended-run check before automatic publication
-can be claimed as verified.
+The first local autoload checkpoint was verified on the development host before
+v4 was published. Desktop and 390px mobile captures showed original terrain, ATV,
+rider, engine samples and streaming music loaded through a same-origin manifest,
+with no JavaScript/WebGL errors, no music underruns and no mobile overflow. The
+public v4 test now independently verifies the same no-disc flow on the deployed
+Site.
+
+At public v4 verification, `/devlog.json` served 13 entries with 11 screenshot
+images; every screenshot returned HTTP 200 with `image/png`. Later local rider and
+public-autoload entries are prepared in the working tree for the next source-backed
+Site update.
+
+The heartbeat `publish-atv-web-builds` has run once at 2026-10-11 21:12 UTC and
+skipped because main was unchanged. That confirms a scheduled check ran, not an
+automated deployment: the v4 publication was completed through the native Sites
+workflow. A successful unattended publish is still unverified.
 
 ## Release commands
 
