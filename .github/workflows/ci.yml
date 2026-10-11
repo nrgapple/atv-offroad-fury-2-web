@@ -1,0 +1,44 @@
+name: Check and build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy --target wasm32-unknown-unknown
+      - name: Check repository and implementation
+        run: |
+          python3 tools/verify_repository.py
+          make check CARGO="$(which cargo)"
+          python3 -m unittest discover -s tools -p 'test_deploy*.py'
+      - name: Build browser release
+        run: |
+          make web
+          python3 tools/package_release.py --commit "$GITHUB_SHA"
+      - name: Upload asset-free release
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: web-release
+          path: work/release/
+          if-no-files-found: error
+          retention-days: 14

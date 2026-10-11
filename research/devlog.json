@@ -1,0 +1,110 @@
+{
+  "status": "The original ATV can be driven on ENV01 in the browser. This is an incomplete reconstruction; it is not the full game yet.",
+  "working_on": "Original music streaming, track objects and collision response, sky rendering, and private GitHub deployment.",
+  "entries": [
+    {
+      "id": "original-terrain-recovered-49e7a65b",
+      "timestamp": "2026-10-11T19:42:15.822040+00:00",
+      "recorded_at": "2026-10-11T20:28:35.886953+00:00",
+      "kind": "build",
+      "title": "Original terrain recovered",
+      "summary": "ENV01 terrain renders directly from the locally opened game disc.",
+      "details": [
+        "Recovered the tile hierarchy and elevation data in Rust."
+      ],
+      "limitation": "At this checkpoint the terrain used temporary colors, and there was no riding simulation.",
+      "image": "/devlog-images/original-terrain-recovered-49e7a65b.png",
+      "caption": "Earlier build: recovered ENV01 terrain with temporary colors."
+    },
+    {
+      "id": "original-atv-and-textures-f110b6c8",
+      "timestamp": "2026-10-11T19:48:34.957903+00:00",
+      "recorded_at": "2026-10-11T20:28:35.979779+00:00",
+      "kind": "build",
+      "title": "Original ATV and textures",
+      "summary": "The original ATV mesh and its base textures are visible on the original terrain.",
+      "details": [
+        "Recovered mesh packets, node transforms, texture palettes and material references."
+      ],
+      "limitation": "This was a static model checkpoint. Terrain materials, the rider and gameplay were still missing.",
+      "image": "/devlog-images/original-atv-and-textures-f110b6c8.png",
+      "caption": "Earlier build: the original ATV, before driving and rider integration."
+    },
+    {
+      "id": "first-driving-simulation-2c08dec5",
+      "timestamp": "2026-10-11T20:06:08.001498+00:00",
+      "recorded_at": "2026-10-11T20:28:36.064903+00:00",
+      "kind": "build",
+      "title": "First driving simulation",
+      "summary": "The ATV now moves through Rust vehicle simulation compiled to WebAssembly.",
+      "details": [
+        "Connected recovered drivetrain, wheel rotation, suspension, terrain contact and body integration.",
+        "Browser checks confirmed acceleration, steering and braking."
+      ],
+      "limitation": "This is a partial reconstruction. Track obstacles, crashes, races and original camera behavior remain incomplete.",
+      "image": "/devlog-images/first-driving-simulation-2c08dec5.png",
+      "caption": "First browser driving checkpoint, before the original rider was added."
+    },
+    {
+      "id": "original-rider-seated-on-the-atv-b83c4b63",
+      "timestamp": "2026-10-11T20:09:35.916018+00:00",
+      "recorded_at": "2026-10-11T20:28:36.149034+00:00",
+      "kind": "build",
+      "title": "Original rider seated on the ATV",
+      "summary": "The original rider mesh, textures and a sampled original animation pose now move with the vehicle.",
+      "details": [
+        "All 146 original MOT animation files decoded and sampled successfully."
+      ],
+      "limitation": "The visible rider currently uses a sampled seated pose. Gameplay animation selection, blending and hand/foot constraints are not finished.",
+      "image": "/devlog-images/original-rider-seated-on-the-atv-b83c4b63.png",
+      "caption": "Original rider at the seated-pose integration checkpoint."
+    },
+    {
+      "id": "original-terrain-textures-decoded-14243f14",
+      "timestamp": "2026-10-11T20:23:32.596668+00:00",
+      "recorded_at": "2026-10-11T20:28:36.230923+00:00",
+      "kind": "discovery",
+      "title": "Original terrain textures decoded",
+      "summary": "Snow and rock textures now come from the game instead of temporary terrain colors.",
+      "details": [
+        "The textures use PS2 IPUM compression. A new Rust decoder processes the original payloads in the browser.",
+        "596 terrain and sky mip images decoded. Ten YUV comparisons against an independent decoder differed by at most one level.",
+        "All 68 ENV01 base textures are mapped through the authored terrain hierarchy."
+      ],
+      "limitation": "Original detail layers, lighting, sky placement and texture seams still need fidelity checks.",
+      "image": "/devlog-images/original-terrain-textures-decoded-14243f14.png",
+      "caption": "Narrow-screen browser capture: original ATV, rider and decoded ENV01 snow textures."
+    },
+    {
+      "id": "engine-audio-and-handling-checks-8739c5f8",
+      "timestamp": "2026-10-11T20:28:36.317717+00:00",
+      "recorded_at": "2026-10-11T20:28:36.317717+00:00",
+      "kind": "verification",
+      "title": "Engine audio and handling checks",
+      "summary": "Original engine samples are connected, and more recovered handling behavior is running in the vehicle simulation.",
+      "details": [
+        "Engine sound transitions matched 1,200 scenarios executed through an instruction interpreter of the original routine.",
+        "Wheelie, jump preload, air control, steering slew and dynamic center of mass have been connected.",
+        "Browser checks cover driving, braking, reset, controller mapping, simultaneous touch, focus pause and graphics-context recovery."
+      ],
+      "limitation": "These checks do not establish a full match to PS2 gameplay. The original sound mixer, full animation behavior, obstacle response and race systems remain incomplete."
+    },
+    {
+      "id": "track-objects-and-engine-sound-in-the-browser-8c97da69",
+      "timestamp": "2026-10-11T20:29:34.268898+00:00",
+      "recorded_at": "2026-10-11T20:30:17.653893+00:00",
+      "kind": "build",
+      "title": "Track objects and engine sound in the browser",
+      "summary": "The scene now includes original track objects at their recovered positions, with original engine samples playing during driving.",
+      "details": [
+        "174 prop instances, 68 terrain textures and 21 engine samples loaded from the disc.",
+        "Verified through the private HTTPS site: driving, braking, reset, controller mapping, touch input, focus pause and graphics-context recovery.",
+        "No JavaScript or WebGL errors were recorded in the checkpoint run."
+      ],
+      "limitation": "Some prop materials still use neutral rendering. Reflective ice and one unsupported tower mesh are omitted. Sky, obstacle response, full animation and music are still being connected.",
+      "image": "/devlog-images/track-objects-and-engine-sound-in-the-browser-8c97da69.png",
+      "caption": "Current browser checkpoint: original terrain, placed track objects, ATV and rider. Engine audio was active in the same run."
+    }
+  ],
+  "updated_at": "2026-10-11T20:30:17.653893+00:00"
+}

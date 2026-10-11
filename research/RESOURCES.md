@@ -2,7 +2,7 @@
 
 ## Local source material
 
-All source material is on MML under this project's `private/` directory. The full disc is available; individual assets can be extracted on demand with `tools/extract_file.py` rather than duplicating the entire image.
+All source material is on MML under this project's `private/` directory. The full disc is available; individual files can be extracted on demand with `tools/extract_file.py` or the Rust `atv-tools disc-extract` command rather than duplicating the entire image. [FORMATS.md](FORMATS.md) records recovered layouts and validation limits; [IMPLEMENTATION.md](IMPLEMENTATION.md) records the chosen incremental Rust reconstruction strategy.
 
 ## Local reference checkouts
 
@@ -19,14 +19,18 @@ Useful files already present locally:
 - PS2Recomp `ps2xRecomp/tools/ghidra/`: function-export scripts and supporting reverse-engineering tools.
 - Quadzilla reference `README.md`: findings and debugging log for the first game.
 
+## REA
+
+The user explicitly requested [Reverse Engineer Anything (REA)](https://github.com/morluto/rea). The published 6.4.0 CLI was actually tested on the exact boot ELF and rejected its machine-specific MIPS architecture before analysis. MCP uses the same provider and does not resolve that compatibility issue. See [REA integration evidence and next compatibility gate](REA.md). No pseudocode or verified REA function map was produced. Its own instructions and MIT license were read; an unmodified ignored checkout is available under `references/rea/`.
+
 ## Documentation entry points
 
-- [Ghidra](https://github.com/NationalSecurityAgency/ghidra): reverse-engineering framework; not installed yet.
+- [Ghidra](https://github.com/NationalSecurityAgency/ghidra): reverse-engineering framework for REA's native backend; verify installed version and R5900 processor support before trusting analysis.
 - [Rust WebAssembly target](https://doc.rust-lang.org/rustc/platform-support/wasm32-unknown-unknown.html): the browser target is already installed on MML.
-- [WebGPU specification](https://www.w3.org/TR/webgpu/): potential graphics target; no renderer selected yet.
+- [WebGPU specification](https://www.w3.org/TR/webgpu/): potential later graphics target; the current reconstruction renderer uses WebGL2.
 - [wgpu](https://github.com/gfx-rs/wgpu): potential Rust graphics library; not added as a dependency.
-- [PCSX2](https://github.com/PCSX2/pcsx2): possible original-behavior/reference implementation; not installed or copied during setup.
+- [PCSX2](https://github.com/PCSX2/pcsx2): possible original-execution and SPU2 behavior reference; no gameplay trace/reference execution environment is established yet.
 - [PS Rewired](https://psrewired.com/): lists support for original ATV Offroad Fury 2 online multiplayer. Multiplayer integration is not an agreed initial milestone.
 
-These are research resources and candidates, not a prescribed stack beyond the user's Rust/browser target.
+REA is user-selected analysis tooling. The other listed references remain research inputs or candidates unless explicitly adopted in the implementation strategy. None establishes a ready Rust browser runtime for this game.
 

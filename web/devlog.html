@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#080e26">
+  <title>ATV Offroad Fury 2 · Development log</title>
+  <link rel="stylesheet" href="devlog.css">
+  <script type="module" src="devlog.js"></script>
+</head>
+<body>
+  <header>
+    <div><p class="game-name">ATV OFFROAD FURY 2</p><h1>Development log</h1></div>
+    <a class="game-link" href="/">Play current build <span aria-hidden="true">↗</span></a>
+  </header>
+  <main>
+    <section class="current" aria-labelledby="current-title">
+      <div class="section-label">CURRENT BUILD</div>
+      <h2 id="current-title">Faithful Rust / WebAssembly port</h2>
+      <p id="build-state">Loading progress…</p>
+      <p id="working-on"></p>
+      <div class="refresh"><span class="light" aria-hidden="true"></span><span id="updated" role="status">Checking for updates</span></div>
+    </section>
+    <div class="timeline-heading"><h2>Checkpoints</h2><span id="count"></span></div>
+    <div id="entries"></div>
+    <noscript>This log needs JavaScript. <a href="devlog.json">Read the checkpoint data.</a></noscript>
+  </main>
+  <footer>Screenshots are captured from the build at each checkpoint. Older screenshots show earlier states. The port is not complete.</footer>
+</body>
+</html>

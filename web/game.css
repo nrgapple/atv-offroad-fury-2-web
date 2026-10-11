@@ -1,0 +1,15 @@
+:root { color-scheme: dark; font: 13px/1.45 system-ui, sans-serif; background: #07122a; color: #e4edff; }
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+#game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+#toolbar { position: fixed; top: max(14px, env(safe-area-inset-top)); left: max(14px, env(safe-area-inset-left)); display: flex; gap: 8px; }
+button, .button { appearance: none; color: inherit; font: inherit; padding: 8px 12px; border: 1px solid #7c9fc270; border-radius: 2px; background: #07122ac7; cursor: pointer; }
+button:focus-visible, .button:focus-within { outline: 2px solid #84d3ff; outline-offset: 3px; }
+button:disabled { opacity: .4; cursor: default; }
+.button { position: relative; overflow: hidden; text-decoration: none; }
+input[type=file] { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+#status, #help { position: fixed; margin: 0; padding: 8px 12px; background: #07122ac7; max-width: calc(100vw - 28px); pointer-events: none; }
+#status { bottom: max(42px, calc(env(safe-area-inset-bottom) + 32px)); left: max(14px, env(safe-area-inset-left)); }
+#help { bottom: max(12px, env(safe-area-inset-bottom)); left: max(14px, env(safe-area-inset-left)); color: #b7c8e3; font-size: 11px; }
+#status.error { color: #ffc4b9; }
+@media (max-width: 600px) { #help { max-width: 340px; font-size: 10px; } #status { bottom: max(56px, calc(env(safe-area-inset-bottom) + 46px)); } button, .button { padding: 9px; } }

@@ -2,8 +2,8 @@
 
 - Read `README.md`, `HANDOFF.md`, and `research/RESOURCES.md` before making implementation choices.
 - The user's long-term target is ATV Offroad Fury 2 in a browser using Rust, followed by optimization, modern graphics, and optional more realistic physics.
-- This initial session was explicitly limited to setup and handoff. Future implementation follows the user's instructions to the next model.
-- Do not describe this setup as a playable game, completed decompilation, or working recompilation.
+- The initial session was limited to setup. The user has since authorized full implementation of an almost exact port, followed by optional enhancements. Continue real game work rather than stopping at setup or rendering checkpoints.
+- Describe component progress precisely. A partial driving reconstruction is not a completed decompilation or full playable port.
 - The available source is USA v2.00, `SCUS_972.11`. Its symbol table is empty. Addresses and named functions from the first game's reference project are not verified for this build.
 - Preserve the source files under `private/`. Do not commit or publish game binaries, assets, BIOS files, generated source containing game code/data, or the reference repositories.
 - Keep original behavior as the baseline. Put graphics and physics enhancements behind explicit options once a baseline exists.
@@ -11,4 +11,11 @@
 - Read each reference repository's own instructions and license before modifying or incorporating it. References are research inputs, not project dependencies yet.
 - Keep intermediate work under `work/`; persistent analysis under `private/reports/`; shareable notes under `research/`.
 - Use `make verify` for setup validation. Add relevant build, formatting, linting, and tests when real code is introduced.
+
+## Ongoing progress and delivery
+
+- The user requests a continuously updated screenshot dev log on the existing private hosted site. At meaningful checkpoints, use `tools/update_devlog.py` to record what changed, discoveries, verification, and limitations. Inspect screenshots before publishing them. Keep working on the game while maintaining the log.
+- Screenshot files belong under ignored `private/reports/devlog-images/`, never in Git. The user explicitly authorized displaying these checkpoint screenshots through the existing private site. This does not authorize publishing source assets or opening a public route.
+- The log is `/devlog.html`; metadata is `research/devlog.json`. The game remains the main fullscreen view.
+- The user authorizes pushing project code to a private GitHub repository, merging to main, and automatic deployment through the existing private access path without repeated confirmation. Check that game data, reference repositories, generated analysis, screenshots, secrets, and build outputs are excluded before each push.
 

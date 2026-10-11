@@ -1,0 +1,9 @@
+[package]
+name = "atv-core"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+miniz_oxide.workspace = true

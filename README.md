@@ -1,56 +1,74 @@
 # ATV Offroad Fury 2 — Rust browser project
 
-Project home: `/Users/nrgapple/Projects/atv-offroad-fury-2-web` on the MML Mac mini (`ssh mac-mini`).
+Recover ATV Offroad Fury 2 USA v2.00 in Rust/WebAssembly, preserving original gameplay, music, sound, animation, and progression before optional graphics and physics enhancements.
 
-## Goal
-
-Reverse engineer the user's ATV Offroad Fury 2 game and develop a Rust-based version playable in a browser. Establish working original gameplay first, optimize it for browser performance, then add optional modern graphics and more realistic physics.
-
-The user requested **project setup and a resource handoff in this session**. A different model will determine the implementation approach. No game port, graphics overhaul, physics changes, or working browser game has been implemented.
+The browser opens directly into a **full-screen reconstruction renderer, not yet a playable game**. A locally selected disc supplies the original ENV01 terrain and ATV01 model. Riding physics, rider animation, race logic, and in-game audio are unfinished. No game assets are bundled or uploaded. The content inspector remains at `/workbench.html` for development.
 
 ## Start here
 
-Read [HANDOFF.md](HANDOFF.md) for the exact source build, available files, environment, and next steps. Read [research/RESOURCES.md](research/RESOURCES.md) for the local reference repositories and documentation links.
+- [Implementation strategy](research/IMPLEMENTATION.md): chosen approach and acceptance gates.
+- [Handoff](HANDOFF.md): exact source build, environment, verified results, and remaining work.
+- [Recovered formats](research/FORMATS.md): observed layouts and limits of the evidence.
+- [Geometry](research/GEOMETRY.md) and [collision](research/COLLISION.md): original terrain and vehicle recovery.
+- [Resources](research/RESOURCES.md): references and reverse-engineering tools.
+- [REA integration](research/REA.md): actual CLI probe and current R5900 compatibility blocker.
 
-## Contents
+## Current capabilities
+
+Rust readers share the same implementation between native tools and WebAssembly. The exact disc audit validated all 487 RES/LSI archives, 58,598 member entries, and 91,522 compressed blocks. All 192 standalone VAG files, 798 packed VAG entries, and 934 loading-screen PST entries decoded. Entries are not necessarily unique assets; successful decoding does not establish original rendering or sound fidelity.
+
+Original geometry is now usable: all 26 in-race quad meshes decode, 36 of 40 named terrains pass dense-heightfield checks, and 597 distinct collision meshes pass finite-coordinate validation. The renderer places the static quad at the disc's scene start and uses a free camera. Its terrain shading and level-of-detail selection are provisional. Four terrain seam cases and unsupported mesh variants remain explicit errors.
+
+All 28 physics configuration files parse with original ordering preserved. Exact-build executable analysis located the physics loader and established first-match duplicate-key behavior, units conversions, and spring/damping helpers. This is preparation for the original simulation, not a working vehicle solver.
+
+The workbench supports file filtering, nested archives, supported image previews with aspect-preserving fullscreen, audio previews, text/hex inspection, and an ELF call-target candidate report. The control test supports browser-exposed gamepads, remapping, keyboard input, a floating left driving pad, right-side directional trick swipes, and simultaneous touches. These inputs are not connected to riding physics yet. Real Bluetooth hardware and iOS Safari remain unverified.
+
+## Run and verify
+
+Requires Rust with `wasm32-unknown-unknown`, rustfmt, Clippy, Python 3, and Node. Cargo uses the configured SSD build storage. The existing `target/`, `web/dist/`, and `work/verification/` SSD symlinks must be preserved.
+
+```sh
+make verify       # Source identity, inventory, reference revisions, Git exclusions
+make check        # Rust format/tests/Clippy, input unit tests, Python syntax
+make web          # Build asset-free renderer and development workbench
+make serve        # Host-only server, port 4173; keep running for access
+make audit        # Audit private disc content into private/reports/content-audit.json
+make code-map     # Candidate direct-call targets, not verified functions
+make native-analyze # Reuse the private PS2 Ghidra database; requires local toolchain
+make verify-full  # Also rehash the complete ISO
+```
+
+`CARGO`, `NODE`, `ISO`, `ELF`, `BIND`, and `PORT` are overridable Make variables. `BIND=0.0.0.0` is appropriate only with an approved access path; it does not itself provide remote access.
+
+Browser checks require Playwright and its Chromium browser plus a running server:
+
+```sh
+PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-check
+# Optional real-source checks; this file stays local to the test browser:
+ATV_TEST_ISO="$PWD/private/source/ATV Offroad Fury 2 (USA) (v2.00).iso" \
+  PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-check
+```
+
+`ATV_TEST_URL` selects a server; its default is host-only `http://127.0.0.1:4173`. Tests cover actual WASM extraction, texture pixels, an advancing audio playback clock, malformed input, private-path isolation, synthetic gamepad input, focus loss, narrow layout, simultaneous touch gestures, and cancellation. A browser playback clock is not a listening test or proof of accurate PS2 audio mixing.
+
+## Access
+
+**Private remote:** the user's existing Tailscale route is [the reconstruction renderer on MML](https://nrgapples-mac-mini.tail96c48c.ts.net:8443/). It requires authorized tailnet access, a locally selected ISO, and the host server running on port 4173. The full ISO-to-renderer browser flow has passed through HTTPS from the host; separate-device access has not been demonstrated. No new public tunnel or deployment was created. Local `make serve` alone provides only host access.
+
+## Project contents
 
 | Path | Purpose |
 | --- | --- |
-| `private/source/` | Original ZIP and extracted full ISO |
-| `private/extracted/` | Boot executable and `SYSTEM.CNF` |
-| `private/reports/` | Disc manifest, ELF layout, hashes, and import results |
-| `references/PS2Recomp/` | Local copy of the PS2 static recompiler project |
-| `references/ATV-Quadzilla-Recomp/` | Local copy of the related first-game recomp project |
-| `tools/` | Reproducible import, file extraction, and validation commands |
-| `research/` | Goals, source-build facts, and resource index |
-| `crates/` | Reserved for future Rust code; currently empty |
-| `web/` | Reserved for the future browser app; currently empty |
-| `work/` | Ignored scratch files and logs |
+| `crates/atv-core/` | Resource, ISO, audio, texture, terrain, mesh, collision, physics-data, and ELF readers |
+| `crates/atv-tools/` | Native private-disc audit and extraction CLI |
+| `crates/atv-web/` | WebAssembly interface to the shared Rust readers |
+| `web/` | Full-screen reconstruction renderer and separate development inspector |
+| `tools/` | Import, validation, web build/server, and browser tests |
+| `research/` | Shareable strategy, evidence summaries, and references |
+| `private/source/` | Preserved original ZIP and ISO, ignored by Git |
+| `private/extracted/` | Selected original files, ignored by Git |
+| `private/reports/` | Persistent private analysis, ignored by Git |
+| `references/` | Reference checkouts, ignored by Git |
+| `work/` | Intermediate outputs and verification artifacts, ignored by Git |
 
-Game files, generated analysis, and reference checkouts are excluded from this repository's Git history. The original download on the user's computer was left intact. No remote repository was created or published.
-
-## Commands
-
-```sh
-cd /Users/nrgapple/Projects/atv-offroad-fury-2-web
-make verify
-make inventory
-make import
-# Optional complete source hash verification:
-make verify-full
-# Extract an individual file from the disc, using its manifest path:
-python3 tools/extract_file.py /MODULES/PADMAN.IRX
-```
-
-The example file path should be checked against `private/reports/disc-files.json` before extraction. Tools use Python's standard library and require no package installation.
-
-## Intended progression
-
-1. Recover the code and asset formats for this exact game build.
-2. Deliver a playable Rust/WebAssembly browser baseline with original behavior.
-3. Optimize startup, memory use, asset streaming, and frame time against measured browser results.
-4. Add modern lighting, materials, shadows, and other graphics improvements as optional layers.
-5. Explore optional physics changes for suspension, tire grip, weight transfer, jumping, and landing, with comparisons to original behavior.
-
-These are project goals, not completed milestones or a settled technical design.
-
+Source files, recovered content, and reference repositories must not be committed or published. No remote Git repository is configured. The next gameplay gate is the original vehicle/contact solver, input mapping, camera, and animation running together on the recovered terrain. Static rendering does not satisfy that gate. Race systems and original audio mixing remain unfinished.

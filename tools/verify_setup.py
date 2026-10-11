@@ -56,7 +56,7 @@ def main():
         for e in entries:
             if not e['directory']:
                 print(f'{e["bytes"]:12d}  {e["path"]}')
-    print('Game implementation has not started; these checks validate project resources only.')
+    print('These checks validate project resources only. Use make check and make browser-check for workbench validation; playable gameplay remains unimplemented.')
 
 if __name__ == '__main__':
     main()

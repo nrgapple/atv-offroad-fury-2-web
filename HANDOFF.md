@@ -1,38 +1,43 @@
-# Handoff to the implementation model
+# Implementation handoff
 
-## User request
+## Current scope
 
-Use the MML Mac mini as the project machine. Start from the ATV Offroad Fury 2 archive in the user's Downloads. Reverse engineer/decompile the game and migrate it to Rust for browser play. Optimize browser performance, then layer on better modern graphics and potentially more realistic physics.
+The setup-only session is historical. On 2026-10-11 the user authorized implementation of ATV Offroad Fury 2 in Rust for browser play. Preserve the original as the baseline, including music and sound; follow with optional modern graphics, genuine 16:9 presentation, animations, and more realistic physics retaining arcade accessibility.
 
-The user clarified: "Just get the project set up. Don't go too deep into the how. I'm gonna have a different model on my computer figuring that out. I just want to have all the resources over there and what our goal is."
+All authored UI should evoke the PlayStation 2 era. Support browser-exposed controllers plus intuitive iOS touch driving/trick gestures. The user explicitly selected Reverse Engineer Anything (REA) as an analysis tool, with CLI versus MCP left to engineering judgment. The latest steering prioritizes the actual fullscreen game and reverse engineering over more workbench or website presentation. See [strategy](research/IMPLEMENTATION.md) and [resources](research/RESOURCES.md).
+
+## Current result
+
+A Rust workspace and full-screen original-terrain/static-quad renderer exist. **There is no playable game, recovered game loop, or completed decompilation.** Native and browser readers load original files without bundling or uploading them. The development content browser and control test surface are separate at `/workbench.html`.
+
+| Capability | Evidence and limits |
+| --- | --- |
+| RES/LSI directory and payload recovery | 487 archives, 58,598 member entries, 91,522 zlib blocks; zero archive failures |
+| VAG preview decoding | 192 standalone files (162 mono, 30 stereo), 798 packed entries decoded; SPU2 mixer/resampler/reverb and game scheduling not implemented |
+| PST preview decoding | All 934 loading archive PST entries and 13 ATV01 material textures decoded; indexed 4/8-bit mip chains validated |
+| Fullscreen renderer | Original ENV01 terrain, ATV01 geometry, scene spawn/direction, and five PSM-selected base textures; static reconstruction with provisional terrain shading |
+| ELF reconnaissance | 5,599 direct-call target candidates; mixed code/data means these are not verified function identities or boundaries |
+| Browser integration | Actual WASM, image pixels, audio playback clock, malformed input, private path isolation, synthetic gamepad, keyboard/focus, narrow layout, simultaneous touch/cancellation tested |
+| Real content in browser | Exact boot ELF hash, selected original loading image, and original stereo music playback clock tested |
+| Original fidelity | No PS2 execution trace comparison, original mixer comparison, original controller mapping verification, or gameplay replay validation yet |
+
+The numerical audit covers entries, not unique assets. Binary decoding and an advancing audio clock do not prove visual/audio fidelity. A stereo reference comparison against FFmpeg differs by up to 70/68 PCM units (left/right); it is not a bit-exact pass. See [format notes](research/FORMATS.md).
 
 ## Project and access
 
-- SSH host: `mac-mini`; the user's interactive alias is `mml`.
-- Remote project: `/Users/nrgapple/Projects/atv-offroad-fury-2-web`.
-- Host: Apple Silicon arm64, macOS 27.0.
-- Local original: `/Users/adamgeiger/Downloads/ATV Offroad Fury 2 (USA) (v2.00).zip`.
+- Project: `/Users/nrgapple/Projects/atv-offroad-fury-2-web` on MML (`ssh mac-mini`, user alias `mml`).
+- Host: Apple Silicon arm64, macOS 27.0; local Git repository without a remote.
 - Applicable parent instructions: `/Users/nrgapple/Projects/AGENTS.md`.
-- Git initialized locally on MML; no remote configured.
+- Original download was preserved at `/Users/adamgeiger/Downloads/ATV Offroad Fury 2 (USA) (v2.00).zip` during setup.
+- Private remote route: `https://nrgapples-mac-mini.tail96c48c.ts.net:8443/`, an existing authenticated Tailscale route to host port 4173. It requires tailnet access and a running `make serve`; host HTTPS verification does not prove access from a separate device. No new public exposure was created.
+- `make serve` is a foreground development process, not a persistent service. The server serves an explicit static-file allowlist, never `private/`, `references/`, or the repository root.
 
-## Completed setup
-
-- Copied the original archive to `private/source/` on MML.
-- Extracted its full ISO there, retaining both ZIP and ISO.
-- Read the ISO9660 filesystem and extracted the boot executable and configuration.
-- Recorded the full file inventory and ELF metadata.
-- Hashed the ISO and ELF to identify this exact build.
-- Copied two related reference repositories locally and recorded their revisions.
-- Added reusable import/extraction/validation tools, project instructions, and this handoff.
-- Reserved `crates/` and `web/` for future implementation.
-
-## Observed build facts
+## Exact source build
 
 | Item | Observed value |
 | --- | --- |
 | Disc boot file | `SCUS_972.11` |
-| `SYSTEM.CNF` version | `2.00` |
-| Video mode | `NTSC` |
+| `SYSTEM.CNF` version / video mode | `2.00` / `NTSC` |
 | ISO bytes | `4,487,446,528` |
 | ELF bytes | `3,543,492` |
 | Architecture | ELF32 little-endian MIPS |
@@ -45,27 +50,43 @@ ISO SHA-256: `fb710837bbb1852f53706df6086476b507b63cc9e522777bf91446ef04cf708c`
 
 ELF SHA-256: `11b80faea827c5550df607d24c8c4f38a9e44cf55e3ecac9e1daeb3aca9d7c49`
 
-Asset extensions observed: 368 `.RES`, 192 `.VAG`, 119 `.LSI`, 29 `.IRX`, 10 `.PSS`, plus auxiliary files. Major directories include `/AUDIO`, `/GEOMETRY`, `/MODULES`, `/NETCONF`, `/QUAD`, `/RIDER`, `/TRACKS`, and `/UI`. Their formats have not been reverse engineered here.
+Disc inventory: 368 `.RES`, 119 `.LSI`, 192 `.VAG`, 29 `.IRX`, 10 `.PSS`, plus auxiliary files. The original ZIP and ISO remain under `private/source/`. Extract selected files on demand instead of duplicating the entire disc.
 
-Reports are in `private/reports/import.json`, `disc-files.json`, and `elf.json`. `elf.json` includes sections and load segments, not a recovered function map.
+## Reproducible commands and evidence
 
-## Available tools
+See [README](README.md) for `make verify`, `check`, `web`, `serve`, `audit`, `code-map`, and `browser-check`. Native extraction commands:
 
-- Rust `1.99.0`; use `~/.cargo/bin/cargo`, `~/.cargo/bin/rustc`, and `~/.cargo/bin/rustup`, since `.cargo/bin` was absent from the noninteractive PATH.
-- Installed Rust targets: `aarch64-apple-darwin`, `wasm32-unknown-unknown`.
-- Python 3, Git, Node `v25.8.1`, uv, Homebrew, Xcode clang, FFmpeg, and the native Capstone library are present.
-- Ghidra was checked through Homebrew but **not installed**. PS2Recomp was copied but **not built**. No new compiler/tool packages were installed during setup.
-- No Rust workspace, renderer, runtime, emulator, physics code, or browser app has been authored.
+```sh
+~/.cargo/bin/cargo run --locked --release -p atv-tools -- disc-extract \
+  "private/source/ATV Offroad Fury 2 (USA) (v2.00).iso" /MODULES/PADMAN.IRX private/extracted/MODULES/PADMAN.IRX
+~/.cargo/bin/cargo run --locked --release -p atv-tools -- list path/to/file.res
+~/.cargo/bin/cargo run --locked --release -p atv-tools -- extract path/to/file.res 0 private/extracted/member.bin
+~/.cargo/bin/cargo run --locked --release -p atv-tools -- wav path/to/file.vag work/verification/preview.wav
+```
 
-## Reference caveats and decisions left open
+Persistent reports (ignored by Git):
 
-The related Quadzilla project targets the first ATV Offroad Fury game and its README documents a build with named symbols. Our second-game v2.00 executable has no named symbols. Treat any transfer of function identities, addresses, or asset knowledge as a hypothesis requiring verification.
+- `private/reports/import.json`, `disc-files.json`, `elf.json`: source identity and layout.
+- `private/reports/content-audit.json`: all archive members, decode statuses, dimensions, and audio metadata.
+- `private/reports/code-candidates.json`: provisional call-site/target reconnaissance.
+- `private/reports/audio-oracle.json`: measured FFmpeg comparison differences.
 
-PS2Recomp currently generates C++ with a console runtime; it is a potential research/tooling input, not an existing Rust browser port. Decide whether to use it for analysis, adapt a recompilation route, or progressively reconstruct selected engine systems in Rust. That choice was intentionally left to the implementation model.
+Screenshots and temporary audio comparisons live under `work/verification/`. All bulk build/test outputs use the mounted SSD; preserve the existing symlinks.
 
-Browser rendering, console services, audio, input, disc assets, and execution fidelity remain unresolved. Graphics and physics work should follow a working original baseline so changes can be evaluated independently.
+## Environment
 
-## Suggested next action
+- Rust `1.99.0`, Cargo at `~/.cargo/bin/cargo`; targets `aarch64-apple-darwin` and `wasm32-unknown-unknown`, rustfmt and Clippy installed.
+- Python 3, Git, system Node `v25.8.1`, FFmpeg, Xcode clang, uv, Homebrew, and native Capstone available.
+- Bundled Node `v24.19.0`: `/Users/nrgapple/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node`; use this supported major for REA rather than system Node 25.
+- Bundled Playwright module: `/Users/nrgapple/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright`; Chromium installed for browser checks.
+- OpenJDK `26.0.2.1` available. REA 6.4.0 CLI rejected the exact ELF's machine-specific MIPS architecture. Direct Ghidra 12.1.4 with Emotion Engine: Reloaded 2.1.38 now imports and decompiles selected routines using `r5900:LE:32:default`; all original load bytes match. See [REA and native analysis evidence](research/REA.md). REA integration remains unresolved; MCP does not fix its processor admission.
+- Rust dependencies are `serde`, `serde_json`, and `miniz_oxide`; browser code needs no npm build dependencies. Playwright is only a test dependency.
+- PS2Recomp and the first-game reference are research inputs, not project dependencies. Their source has not been incorporated or built as this runtime.
 
-Run `make verify`, review the private reports and local references, then choose and document a feasible first implementation milestone. The eventual success criterion is actual game content and controllable riding in a browser, with measured performance and an original-behavior baseline before enhancements.
+## Next work
 
+The browser root now renders original ENV01 terrain and the static ATV01 model from a selected disc; `/workbench.html` retains inspection tools. See `research/GEOMETRY.md` for the 26-quad/40-terrain audit and `research/COLLISION.md` for collision coverage. Physics data and exact-build loader evidence are in `private/reports/physics-*.json`; selected pseudocode and instruction bytes are in `private/reports/ghidra/`. Reuse the database through `tools/analyze_ps2.py`; do not repeat imports or mistake observed functions for verified semantics.
+
+Next recover update order, contact interpolation, suspension/drivetrain, rider balance, camera, and animation state. Connect them into controllable riding before expanding the interface. Validate against original execution before claiming fidelity. REA still needs an explicit R5900 provider profile; direct PS2 Ghidra observations are not REA Evidence.
+
+Keep enhancements behind explicit options after the baseline. The current full-screen renderer uses a perspective free camera, provisional terrain shading/LOD and static geometry; it does not implement the original game camera or animation. Input mappings are proposals until verified against the original game. Gamepad compatibility depends on browser/OS exposure; actual Bluetooth controllers and iOS Safari have not yet been tested. Audio remains a one-pass sample preview in the inspector, not an original soundtrack/engine mixing system.

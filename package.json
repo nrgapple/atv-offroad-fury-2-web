@@ -1,0 +1,9 @@
+{
+  "name": "atv-offroad-fury-2-workbench",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test web/input.test.mjs",
+    "test:browser": "node tools/test_browser.mjs"
+  }
+}

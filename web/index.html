@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07122a">
+  <title>ATV Offroad Fury 2</title>
+  <link rel="stylesheet" href="game.css">
+</head>
+<body>
+  <canvas id="game" aria-label="Original terrain and ATV reconstruction" tabindex="0"></canvas>
+  <div id="toolbar">
+    <label class="button">Open disc<input id="disc" type="file" accept=".iso,.tr2"></label>
+    <button id="fullscreen" type="button">Fullscreen</button>
+    <button id="reset" type="button" disabled>Reset view</button>
+    <a class="button" href="devlog.html">Dev log</a>
+  </div>
+  <p id="status" role="status">Open your USA v2.00 disc to load the original terrain.</p>
+  <p id="help" hidden>Free camera · drag to look · WASD to move · Q/E up/down · controller sticks or touch</p>
+  <script type="module" src="game.js"></script>
+</body>
+</html>
