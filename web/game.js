@@ -1,5 +1,6 @@
 // Original content and vehicle component simulation run in the Rust worker.
 import { GameAudio } from './audio.js';
+import { openHostedContent } from './content.js';
 const $ = id => document.getElementById(id);
 const canvas = $('game');
 const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, powerPreference: 'high-performance' });
@@ -42,6 +43,7 @@ async function json(op, bytes, index = 0) { return JSON.parse(decoder.decode(awa
 async function command(op, value) { return json(op, encoder.encode(JSON.stringify(value))); }
 async function read(file, offset, count) {
   if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(count) || offset < 0 || count < 0 || count > 128 * 1048576 || offset + count > file.size) throw new Error('Invalid disc file extent.');
+  if (file.readRange) return file.readRange(offset, count);
   return new Uint8Array(await file.slice(offset, offset + count).arrayBuffer());
 }
 async function discTerrain(file, token) {
@@ -69,7 +71,10 @@ async function discTerrain(file, token) {
   if (!boot) throw new Error('This requires the USA v2.00 disc.');
   const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await read(file, boot.lba * 2048, boot.bytes)))].map(n => n.toString(16).padStart(2, '0')).join('');
   if (hash !== '11b80faea827c5550df607d24c8c4f38a9e44cf55e3ecac9e1daeb3aca9d7c49') throw new Error('Disc executable does not match USA v2.00.');
-  status('Reading original engine sounds…');
+  return terrainFromContent(file, files, token);
+}
+async function terrainFromContent(file, files, token) {
+  status('Loading original engine sounds…');
   await audio.load({ file, files, read, isCurrent: () => token === generation });
   const archive = files.find(entry => entry.path === '/TRACKS/TRACKSA/ENV01/E01_FR.RES');
   if (!archive) throw new Error('Original ENV01 terrain archive is missing.');
@@ -624,19 +629,20 @@ async function startSimulation(source) {
 }
 async function pumpSimulation() {
   if (simBusy || !simReady || !focused || document.hidden || lost) return;
+  const count = Math.min(4, Math.floor(simAccumulator * 60));
+  if (count < 1) return;
   simBusy = true;
   const token = simGeneration;
   try {
-    for (let count = 0; count < 4 && simAccumulator >= 1 / 60 && focused && !document.hidden && !lost; count++) {
-      simAccumulator -= 1 / 60;
-      if (cameraCycle) { cameraCycle = false; orbit = 0; await command(47, { cycle: true }); }
-      const input = drivingInput(); diagnostics.input = input;
-      const frame = await command(24, { dt: 1 / 60, input });
-      if (token !== simGeneration) return;
+    for (let step = 0; step < count; step++) simAccumulator -= 1 / 60;
+    const input = drivingInput(); diagnostics.input = input;
+    const cycle = cameraCycle; cameraCycle = false;
+    if (cycle) orbit = 0;
+    const frames = await command(50, { count, input, orbit, cycle });
+    if (token !== simGeneration) return;
+    for (const { frame, camera: cameraResult } of frames) {
       acceptFrame(frame);
       diagnostics.simulationSteps++;
-      const cameraResult = await command(46, { dt: 1 / 60, orbit });
-      if (token !== simGeneration) return;
       acceptCameraFrame(cameraResult);
       void audio.update(1 / 60, input, frame);
     }
@@ -747,14 +753,21 @@ function render(time) {
     if (diagnostics.glError) status(`Graphics error ${diagnostics.glError}.`, true);
   }
 }
-$('disc').addEventListener('change', async event => {
-  const file = event.target.files[0]; if (!file || !gl || lost) return;
+async function loadGame(file = null) {
+  if (!gl || lost) return;
   const token = ++generation; status('Opening terrain…'); diagnostics.ready = false;
   audio.close(); audio = new GameAudio(codec, message => { diagnostics.audioError = message; status(`Audio: ${message}`, true); });
   delete diagnostics.audioError; void audio.resume().catch(error => { diagnostics.audioError = error.message; });
   simReady = false; simGeneration++; simAccumulator = 0; simFrame = undefined; $('disc').disabled = true;
   try {
-    const source = file.name.toLowerCase().endsWith('.iso') ? await discTerrain(file, token) : { bytes: await read(file, 0, file.size), name: file.name };
+    let source;
+    if (file) source = file.name.toLowerCase().endsWith('.iso') ? await discTerrain(file, token) : { bytes: await read(file, 0, file.size), name: file.name };
+    else {
+      const content = await openHostedContent();
+      if (token !== generation) return;
+      source = await terrainFromContent(content.file, content.files, token);
+    }
+    diagnostics.contentSource = file ? 'local-file' : 'hosted-original';
     const info = await json(9, source.bytes), raw = await codec(10, source.bytes);
     if (token !== generation) return;
     const width = info.width_cells + 1, depth = info.depth_cells + 1;
@@ -773,7 +786,8 @@ $('disc').addEventListener('change', async event => {
     status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain. Open the disc to load the ATV.');
   } catch (error) { if (token === generation) status(error.message, true); }
   finally { if (token === generation) $('disc').disabled = false; }
-});
+}
+$('disc').addEventListener('change', event => { const file = event.target.files[0]; if (file) void loadGame(file); });
 $('reset').onclick = async () => {
   if (!simStart || !vehicle) { resetCamera(); return; }
   simGeneration++; simReady = false; simAccumulator = 0; clearInput();
@@ -814,5 +828,5 @@ document.addEventListener('visibilitychange', () => { clearInput(); syncAudio();
 canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; diagnostics.ready = false; clearInput(); syncAudio(); status('Graphics context lost; waiting for recovery.'); });
 canvas.addEventListener('webglcontextrestored', () => { try { lost = false; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
 window.addEventListener('pagehide', () => { cancelAnimationFrame(frame); audio.close(); worker.terminate(); clearInput(); });
-try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); initializeGl(); frame = requestAnimationFrame(render); }
+try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); initializeGl(); frame = requestAnimationFrame(render); if (new URLSearchParams(location.search).get('source') !== 'disc') void loadGame(); }
 catch (error) { status(error.message, true); }

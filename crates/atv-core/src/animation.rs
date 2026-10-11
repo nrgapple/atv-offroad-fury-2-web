@@ -223,6 +223,14 @@ pub struct Pose {
     pub world_matrices: Vec<[f32; 16]>,
 }
 
+/// Local controller values before hierarchy composition. Missing channels keep
+/// the corresponding model bind transform; they are not identity overrides.
+#[derive(Debug, Clone)]
+pub struct Channels {
+    pub translations: Vec<Option<[f32; 3]>>,
+    pub rotations: Vec<Option<[f32; 4]>>,
+}
+
 impl RotationKey {
     /// Scalar-first quaternion [w,x,y,z]. The original uses a precomputed table;
     /// these constants and operations match its initializer, with host sin/cos.
@@ -323,19 +331,22 @@ impl Animation {
     /// Sample the original local animation and compose the model hierarchy.
     /// Duplicate controllers apply in file order. Does not add game-side IK,
     /// cross-fades, event timing, rider physics, or dynamic female hair.
-    pub fn sample_pose(
+    pub fn sample_channels(
         &self,
         nodes: &[crate::mesh::Node],
         time: f32,
         sampling: Sampling,
-    ) -> Result<Pose> {
+    ) -> Result<Channels> {
         if !time.is_finite() || time < 0. || time > self.duration {
             return Err("MOT sample time outside clip".into());
         }
         if nodes.is_empty() || nodes.len() > 256 {
             return Err("invalid animation model node count".into());
         }
-        let mut local_matrices: Vec<_> = nodes.iter().map(|node| node.local_matrix).collect();
+        let mut channels = Channels {
+            translations: vec![None; nodes.len()],
+            rotations: vec![None; nodes.len()],
+        };
         for track in &self.translations {
             if track.keys.is_empty() {
                 return Err("MOT translation controller has no keys".into());
@@ -383,7 +394,7 @@ impl Animation {
                         + first.value[i] * start
                 })
             };
-            local_matrices[bone][12..15].copy_from_slice(&value);
+            channels.translations[bone] = Some(value);
         }
         for track in &self.rotations {
             if track.keys.is_empty() {
@@ -402,7 +413,37 @@ impl Animation {
             } else {
                 interpolate_rotation(first, track.keys[b].quaternion(), t)
             };
-            matrix_rotation(q, &mut local_matrices[bone]);
+            channels.rotations[bone] = Some(q);
+        }
+        Ok(channels)
+    }
+    pub fn sample_pose(
+        &self,
+        nodes: &[crate::mesh::Node],
+        time: f32,
+        sampling: Sampling,
+    ) -> Result<Pose> {
+        self.sample_channels(nodes, time, sampling)?.pose(nodes)
+    }
+}
+
+impl Channels {
+    pub fn pose(&self, nodes: &[crate::mesh::Node]) -> Result<Pose> {
+        if nodes.is_empty()
+            || nodes.len() > 256
+            || self.translations.len() != nodes.len()
+            || self.rotations.len() != nodes.len()
+        {
+            return Err("animation channel/model size mismatch".into());
+        }
+        let mut local_matrices: Vec<_> = nodes.iter().map(|node| node.local_matrix).collect();
+        for (index, matrix) in local_matrices.iter_mut().enumerate() {
+            if let Some(value) = self.translations[index] {
+                matrix[12..15].copy_from_slice(&value);
+            }
+            if let Some(value) = self.rotations[index] {
+                matrix_rotation(value, matrix);
+            }
         }
         let mut world_matrices: Vec<[f32; 16]> = Vec::with_capacity(nodes.len());
         for (index, node) in nodes.iter().enumerate() {

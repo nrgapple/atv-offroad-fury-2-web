@@ -12,4 +12,10 @@ All 146 extracted rider/arm MOT streams decode and sample at 101 times each, yie
 
 A representative seated pose is `/ANIMSRDR.RES` → `Anim/Rider/m_turnm.mot`, time 0.8 seconds, applied to `/RIDER/MRIDER.RES` → `anim/rider/mrider.psg`. Original materials/textures reside in `/RIDER/RIDER_MT.RES`. A private render confirms the rider sits on the recovered quad with hands and feet near the original handle/foot nodes.
 
-This does not establish original game-side clip selection, MCF time scaling, cross-fades, rider forces, hand/foot IK, events or female hair simulation. MCF FPS fields must not replace MOT key times by assumption. Those runtime behaviors remain porting work, and the sample pose is not evidence that they work.
+## Normal riding selection
+
+`motion_catalog` recovers the MCF loader's motion paths, interpolation flags and pre-load transition defaults. Both 78-motion rider catalogs and the separate arm catalogs parse. MCF FPS does not rescale MOT key times.
+
+`rider_pose` recovers the normal reverse, slow-turn, ground-lean and airborne clip selection from `0x002d8ba0`/`0x002d8e50`. It preserves pair/four-clip ordering, shared absolute sample time, pose snapshots and the Head-only look overlay. An instruction-interpreter comparison covered 1,000 cases and 216,406 original instructions with no selector, weight or clip-argument mismatches. Private evidence is in `work/physics/rider-pose-*`.
+
+The browser still uses the seated sample pose. The recovered selection planner is not yet connected to the renderer, and runtime channel blending, crouch/look signals, hand/foot IK, events and female hair remain unfinished. This is component evidence, not a full animation-system match.

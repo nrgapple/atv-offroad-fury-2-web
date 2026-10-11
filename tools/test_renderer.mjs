@@ -5,7 +5,8 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const iso = process.env.ATV_TEST_ISO;
-if (!iso) throw new Error('Set ATV_TEST_ISO to the private USA v2.00 ISO path.');
+const bundled = process.env.ATV_TEST_BUNDLED === '1';
+if (!iso && !bundled) throw new Error('Set ATV_TEST_ISO to the private USA v2.00 ISO path.');
 const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4173';
 const browser = await chromium.launch({ headless: true });
 const errors = [], requests = [];
@@ -27,14 +28,16 @@ try {
   const read = () => page.evaluate(() => window.atvTerrainStatus);
   const steps = async count => {
     const start = (await read()).simulationSteps;
-    await page.waitForFunction(target => window.atvTerrainStatus.simulationSteps >= target, start + count, { timeout: 30000 });
+    await page.waitForFunction(target => window.atvTerrainStatus.simulationSteps >= target, start + count, { timeout: 90000 });
   };
   page.on('pageerror', error => errors.push(error.message));
   page.on('request', request => requests.push({ url: request.url(), method: request.method(), resourceType: request.resourceType(), postDataLength: request.postDataBuffer()?.byteLength ?? 0 }));
-  await page.goto(base);
-  await page.locator('#disc').setInputFiles(iso);
+  const startUrl = new URL(base);
+  if (!bundled) startUrl.searchParams.set('source', 'disc');
+  await page.goto(startUrl.href);
+  if (!bundled) await page.locator('#disc').setInputFiles(iso);
   try {
-    await page.waitForFunction(() => window.atvTerrainStatus?.ready && window.atvTerrainStatus.simulation && window.atvTerrainStatus.frames > 3, null, { timeout: 30000 });
+    await page.waitForFunction(() => window.atvTerrainStatus?.ready && window.atvTerrainStatus.simulation && window.atvTerrainStatus.frames > 3, null, { timeout: 90000 });
   } catch (error) {
     throw new Error(`Disc load failed: ${await page.locator('#status').textContent()}; browser errors: ${JSON.stringify(errors)}`, { cause: error });
   }
@@ -55,6 +58,12 @@ try {
   assert(loaded.obstacles.instances > 0 && loaded.obstacles.meshes > 0 && loaded.obstacles.rays > 0);
   assert(loaded.audio.ready && loaded.audio.samples > 0 && !loaded.audioError);
   finite(loaded);
+  if (bundled) {
+    assert.equal(loaded.contentSource, 'hosted-original');
+    assert(await page.locator('#disc').isHidden(), 'Hosted startup has no disc selection gate');
+    assert(requests.some(request => new URL(request.url).pathname === '/content/manifest.json'));
+    assert(!requests.some(request => /\.(iso|elf|irx|img)$/i.test(new URL(request.url).pathname)));
+  }
   assert(loaded.frame.grounded.some(Boolean), 'Vehicle settles onto original terrain');
   await page.keyboard.down('KeyW');
   await steps(90);

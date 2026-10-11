@@ -1,6 +1,6 @@
 {
-  "status": "The browser reconstruction now combines recovered ATV linkage motion, the single-player chase camera and static obstacle contacts. The full game, rider animation, crash behavior and race systems remain unfinished.",
-  "working_on": "Original obstacle candidate ordering, rider animation and race-flow recovery.",
+  "status": "Local no-disc startup through a runtime-content manifest is verified on the development host. Public autoload remains unverified, and this is still an incomplete game reconstruction.",
+  "working_on": "Public runtime-content delivery verification, rider animation blending and race-flow recovery.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -182,7 +182,23 @@
       "limitation": "Obstacle ordering still follows authored placement order; moving and compound collision types, crash/wreck behavior and camera clearance against objects remain incomplete. The rider remains a sampled seated pose. Races and full-game replay equivalence are unverified.",
       "image": "/devlog-images/original-chase-camera-and-static-obstacle-contacts-b913938c.png",
       "caption": "Recovered single-player chase camera, original ENV01 scene, and animated ATV linkages in the real-disc browser build."
+    },
+    {
+      "id": "local-no-disc-autoload-from-the-runtime-manifest-97c15263",
+      "timestamp": "2026-10-11T21:18:07.576408+00:00",
+      "recorded_at": "2026-10-11T21:21:58.523450+00:00",
+      "kind": "verification",
+      "title": "The local build no longer starts at a disc picker",
+      "summary": "A same-origin runtime manifest now takes the local build straight into the recovered ENV01 scene. The game logic remains our Rust/WebAssembly port; the manifest supplies only the original runtime files it needs.",
+      "details": [
+        "The old first step asked visitors to provide a disc image before anything happened. Separating the authored port from its runtime data lets this development build start directly in the scene. The desktop and 390px mobile captures show terrain, sky, props, ATV and rider loaded without a picker.",
+        "The audio archive is much larger than the runtime set: packaging selects 21 engine samples into roughly 400 KB from a 29 MB source archive. The 21-song catalog streams in 1 MiB chunks instead of placing a full track in memory.",
+        "Local browser diagnostics recorded no JavaScript or WebGL errors; the desktop run streamed music with zero underruns, and mobile layout stayed within 390px. Runtime requests were same-origin manifest/content requests."
+      ],
+      "limitation": "Host-only checkpoint: the public Site still needs a release and verification of no-disc startup plus manifest requests. The browser runs authored Rust/WebAssembly, not an emulator or the disc executable. This remains a partial driving reconstruction; the rider is still a sampled seated pose, while dynamic collision, crashes and race systems remain unfinished.",
+      "image": "/devlog-images/local-no-disc-autoload-from-the-runtime-manifest-97c15263.png",
+      "caption": "Local development build starts on ENV01 from the runtime manifest; no disc-selection screen appears."
     }
   ],
-  "updated_at": "2026-10-11T21:06:12.344291+00:00"
+  "updated_at": "2026-10-11T21:21:58.523450+00:00"
 }

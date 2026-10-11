@@ -424,7 +424,44 @@ fn obstacle_input(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
     })
 }
 
+/// Bounded transport batch. Each step still runs the original vehicle operation,
+/// then the original camera operation, with the same fixed 1/60 second input.
+/// Retain intermediate frames so consumers such as audio see every step.
+fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
+    let value: serde_json::Value = serde_json::from_slice(input).map_err(|e| e.to_string())?;
+    let count = value
+        .get("count")
+        .and_then(serde_json::Value::as_u64)
+        .filter(|count| (1..=4).contains(count))
+        .ok_or("simulation batch count must be 1 through 4")?;
+    let driving = value.get("input").ok_or("missing simulation input")?;
+    let orbit = json_number(&value, "orbit")?;
+    let step = serde_json::to_vec(&serde_json::json!({"dt":1.0/60.0,"input":driving}))
+        .map_err(|e| e.to_string())?;
+    let camera = serde_json::to_vec(&serde_json::json!({"dt":1.0/60.0,"orbit":orbit}))
+        .map_err(|e| e.to_string())?;
+    if value
+        .get("cycle")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        simulation(br#"{"cycle":true}"#, 47)?;
+    }
+    let mut frames = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let frame: serde_json::Value =
+            serde_json::from_slice(&simulation(&step, 24)?).map_err(|e| e.to_string())?;
+        let camera: serde_json::Value =
+            serde_json::from_slice(&simulation(&camera, 46)?).map_err(|e| e.to_string())?;
+        frames.push(serde_json::json!({"frame":frame,"camera":camera}));
+    }
+    serde_json::to_vec(&frames).map_err(|e| e.to_string())
+}
+
 fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
+    if op == 50 {
+        return simulation_batch(input);
+    }
     if (48..=49).contains(&op) {
         return obstacle_input(input, op, index);
     }
@@ -493,4 +530,19 @@ pub extern "C" fn run(op: u32, index: usize) -> u32 {
             0
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn batch_rejects_unbounded_or_fractional_step_counts_before_simulation() {
+        for count in ["0", "5", "1.5", "-1", "18446744073709551615"] {
+            let input = format!("{{\"count\":{count}}}");
+            assert_eq!(
+                simulation_batch(input.as_bytes()).unwrap_err(),
+                "simulation batch count must be 1 through 4"
+            );
+        }
+    }
 }

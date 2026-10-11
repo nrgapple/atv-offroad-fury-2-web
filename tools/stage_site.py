@@ -11,6 +11,7 @@ import re
 import shutil
 
 from package_release import STATIC_FILES, validate_release
+from package_content import validated_content
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKOUT = ROOT / 'work/sites/atv-port'
@@ -25,6 +26,9 @@ def main():
         parser.error('--release requires --commit')
     if args.release:
         validate_release(args.release, args.commit)
+    build = args.release / 'static' if args.release else ROOT / 'web/dist'
+    content_files = (validated_content(ROOT / 'private/reports/hosted-content')
+                     if (build / 'content.js').is_file() else set())
     manifest = CHECKOUT / '.openai/hosting.json'
     hosting = json.loads(manifest.read_text())
     if not hosting.get('project_id'):
@@ -37,7 +41,6 @@ def main():
     if dist.exists():
         shutil.rmtree(dist)
     dist.mkdir()
-    build = args.release / 'static' if args.release else ROOT / 'web/dist'
     for name in sorted(STATIC_FILES):
         source = build / name
         if source.is_symlink():
@@ -57,6 +60,10 @@ def main():
         shutil.copy2(build / 'deployment.json', dist / 'deployment.json')
     else:
         log = local_log
+    if content_files:
+        (dist / 'content').mkdir()
+        for source in content_files:
+            shutil.copy2(source, dist / 'content' / source.name)
     (dist / 'devlog.json').write_text(json.dumps(log, indent=2) + '\n')
     images = dist / 'devlog-images'
     images.mkdir()

@@ -2,7 +2,7 @@
 
 Recover ATV Offroad Fury 2 USA v2.00 in Rust/WebAssembly, preserving original gameplay, music, sound, animation, and progression before optional graphics and physics enhancements.
 
-The browser opens directly into a **fullscreen driving reconstruction, not yet the complete game**. A locally selected disc supplies ENV01 terrain, sky, track objects, ATV01 and the rider. Recovered Rust physics, original engine samples and streaming music are connected. ATV steering, suspension and wheel linkages now animate, the single-player chase camera follows recovered presets, and static type-0 obstacle contacts are connected. Full rider animation, dynamic obstacle variants and crash behavior, race logic and progression remain unfinished. No game assets are bundled or uploaded. The content inspector remains at `/workbench.html` for development.
+The browser opens directly into a **fullscreen driving reconstruction, not yet the complete game**. The local development build loads extracted runtime content through a same-origin manifest, without asking for a disc image; the currently published Site still uses the earlier disc-selection flow. Recovered Rust physics, original engine samples and streaming music are connected. ATV steering, suspension and wheel linkages animate, the single-player chase camera follows recovered presets, and static type-0 obstacle contacts are connected. Full rider animation, dynamic obstacle variants and crash behavior, race logic and progression remain unfinished. The browser runs the authored Rust/WebAssembly port, not PS2 emulation. Game content stays out of GitHub source and CI; the content inspector remains at `/workbench.html` for development.
 
 ## Start here
 
@@ -53,7 +53,7 @@ ATV_TEST_ISO="$PWD/private/source/ATV Offroad Fury 2 (USA) (v2.00).iso" \
 
 ## Access
 
-**Public HTTPS:** [browser game build](https://atv-offroad-fury-2.nrgapple.chatgpt.site/) and [screenshot development log](https://atv-offroad-fury-2.nrgapple.chatgpt.site/devlog.html). Tailscale and a running host server are not required. Select your local USA v2.00 disc image; game data stays in the browser. This remains an incomplete port.
+**Public HTTPS:** [browser game build](https://atv-offroad-fury-2.nrgapple.chatgpt.site/) and [screenshot development log](https://atv-offroad-fury-2.nrgapple.chatgpt.site/devlog.html). Tailscale and a running host server are not required. The current public release still requires selecting a local USA v2.00 disc image. Local manifest-backed autoload has passed host checks; the next public release must pass its no-disc startup and asset-request checks before that behavior is claimed for the Site. The browser port remains incomplete.
 
 [Private GitHub source](https://github.com/nrgapple/atv-offroad-fury-2-web) has automated checks and WASM release builds on main. See [deployment](research/DEPLOYMENT.md) for public Sites publishing and its automation status. `make serve` is only a host development server.
 

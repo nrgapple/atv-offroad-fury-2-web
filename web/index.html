@@ -10,13 +10,13 @@
 <body>
   <canvas id="game" aria-label="Original terrain and ATV reconstruction" tabindex="0"></canvas>
   <div id="toolbar">
-    <label class="button">Open disc<input id="disc" type="file" accept=".iso,.tr2"></label>
+    <input id="disc" type="file" accept=".iso,.tr2" hidden>
     <button id="fullscreen" type="button">Fullscreen</button>
     <button id="reset" type="button" disabled>Reset view</button>
     <button id="camera" type="button" disabled>Camera</button>
     <a class="button" href="devlog.html">Dev log</a>
   </div>
-  <p id="status" role="status">Open your USA v2.00 disc to load the original terrain.</p>
+  <p id="status" role="status">Loading original terrain…</p>
   <p id="help" hidden>Free camera · drag to look · WASD to move · Q/E up/down · controller sticks or touch</p>
   <script type="module" src="game.js"></script>
 </body>

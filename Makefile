@@ -23,7 +23,7 @@ check:
 	$(CARGO) fmt --all -- --check
 	$(CARGO) test --locked --workspace
 	$(CARGO) clippy --locked --workspace --all-targets -- -D warnings
-	$(NODE) --test web/input.test.mjs
+	$(NODE) --test web/input.test.mjs web/content.test.mjs
 	python3 -m py_compile tools/*.py
 
 web:

@@ -163,6 +163,12 @@ fn run() -> Result<()> {
             write(&a[3],&serde_json::to_vec_pretty(&presets).unwrap())?;
             println!("{} original camera presets",presets.len());
         }
+        Some("motion-catalog") if a.len()==3 => {
+            let bytes=fs::read(&a[1]).map_err(|e|e.to_string())?;
+            let catalog=atv_core::motion_catalog::MotionCatalog::parse(&bytes)?;
+            write(&a[2],&serde_json::to_vec_pretty(&catalog).unwrap())?;
+            println!("{} original motion definitions",catalog.motions.len());
+        }
         Some("engine-audio") if a.len()==4 => {
             let b=fs::read(&a[1]).map_err(|e|e.to_string())?;
             let config=atv_core::engine_audio::EngineAudioConfig::parse(&b,a[2].parse().map_err(|_|"invalid quad id")?)?;

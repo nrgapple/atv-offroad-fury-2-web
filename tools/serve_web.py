@@ -8,7 +8,7 @@ from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1] / 'web/dist'
 PROJECT = Path(__file__).resolve().parents[1]
-ALLOWED = {'index.html', 'game.css', 'game.js', 'audio.js', 'music.js', 'deployment.json', 'devlog.html', 'devlog.css', 'devlog.js', 'devlog.json', 'workbench.html', 'style.css', 'app.js', 'worker.js', 'input.js', 'controls.js', 'atv_web.wasm'}
+ALLOWED = {'index.html', 'game.css', 'game.js', 'content.js', 'audio.js', 'music.js', 'deployment.json', 'devlog.html', 'devlog.css', 'devlog.js', 'devlog.json', 'workbench.html', 'style.css', 'app.js', 'worker.js', 'input.js', 'controls.js', 'atv_web.wasm'}
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -18,7 +18,8 @@ class Handler(SimpleHTTPRequestHandler):
         path = unquote(urlsplit(self.path).path)
         if path == '/': path = '/index.html'
         image = re.fullmatch(r'/devlog-images/[a-z0-9-]+\.png', path)
-        if (path.removeprefix('/') not in ALLOWED and not image) or not path.startswith('/'):
+        content = re.fullmatch(r'/content/(?:manifest\.json|[a-f0-9]{64}\.bin)', path)
+        if (path.removeprefix('/') not in ALLOWED and not image and not content) or not path.startswith('/'):
             self.send_error(404)
             return None
         self.path = path
@@ -27,6 +28,8 @@ class Handler(SimpleHTTPRequestHandler):
     def translate_path(self, path):
         # Only the explicitly requested log and PNG checkpoint gallery are
         # exposed outside dist. Source media and other reports stay inaccessible.
+        if re.fullmatch(r'/content/(?:manifest\.json|[a-f0-9]{64}\.bin)', path):
+            return str(PROJECT / 'private/reports/hosted-content' / path.rsplit('/', 1)[1])
         if path == '/devlog.json':
             return str(PROJECT / 'research/devlog.json')
         if re.fullmatch(r'/devlog-images/[a-z0-9-]+\.png', path):
