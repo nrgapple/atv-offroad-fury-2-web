@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package explicitly authorized original content for the hosted ENV01 slice.
+"""Package explicitly authorized runtime content for the connected browser maps.
 
 Generated files belong only in ignored private storage and the authorized content
 hosting destination. Never add these outputs, the source disc or executable to Git.
@@ -23,6 +23,11 @@ STARTUP = (
     '/RIDER/MRIDER.RES', '/RIDER/RIDER_MT.RES', '/ANIMSRDR.RES',
     '/AUDIOTBL.RES', '/STARTAPP.RES', '/STARTEVT.RES', '/OVERLAYS.RES',
     '/TRACKS/TRACKSA/ENV02/E02_FR.RES', '/TRACKS/TRACKSA/ENV02/E02_ENDL.RES',
+    '/TRACKS/TRACKSA/ENV03/E03_FR.RES', '/TRACKS/TRACKSA/ENV03/E03_ENDL.RES',
+    '/TRACKS/TRACKSA/ENV05/E05_FR.RES', '/TRACKS/TRACKSA/ENV05/E05_ENDL.RES',
+    '/TRACKS/TRACKSA/ENV06/E06_FR.RES', '/TRACKS/TRACKSA/ENV06/E06_ENDL.RES',
+    '/TRACKS/TRACKSA/ENV07/E07_FR.RES', '/TRACKS/TRACKSA/ENV07/E07_ENDL.RES',
+    '/TRACKS/TRACKSA/ENV08/E08_FR.RES', '/TRACKS/TRACKSA/ENV08/E08_ENDL.RES',
     '/UI/RESOURCE/TP/TP_ANAT.RES',
     '/UI/RESOURCE/TITLE.RES', '/UI/RESOURCE/PAGEA/PAGE01.RES',
     '/UI/RESOURCE/PAGEA/PAGE02.RES', '/UI/RESOURCE/PAGEA/PAGE06.RES',

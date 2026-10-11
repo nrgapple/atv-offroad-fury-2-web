@@ -115,7 +115,7 @@ export class Frontend {
       this.globals = await this.document('gwidgets.dat');
       const tracks = await this.document('tracks.dat');
       // Only environments verified by this reconstruction are offered for driving.
-      this.tracks = [...tracks.entries()].filter(([s, f]) => /^unspnat\d+$/.test(s) && ['env01', 'env02'].includes(f.scn))
+      this.tracks = [...tracks.entries()].filter(([s, f]) => /^unspnat\d+$/.test(s) && ['env01', 'env02', 'env03', 'env05', 'env06', 'env07', 'env08'].includes(f.scn))
         .map(([, f]) => ({ id: f.scn, name: unquote(f.name), image: f.image }));
       this.track = this.tracks.findIndex(t => t.id === 'env01');
       await this.font(fontName); await this.image('title'); if (showTitle) await this.show('title');
@@ -197,8 +197,8 @@ export class Frontend {
         this.text(item.label,0,0,chosen?unquote(p.selectedfont):fontName,chosen?p.selectedcolor:p.unselectedcolor,chosen?num(p.selectedalpha):num(p.unselectedalpha)); this.ctx.restore();
       });
     } else {
-      const lines = ['TOUCH', 'Left: slide forward to accelerate.', 'Pull back to brake, then reverse.', 'Right: hold to preload; drag to lean.', 'Lift your finger to release preload.', '', 'CONTROLLER', 'Left stick: steer. Triggers: drive / brake.', 'Left stick up / down: lean.', 'Y / triangle: camera. Start: pause.', '', 'KEYBOARD', 'WASD / arrows: drive. R: reverse.', 'Q / E: lean. C: camera. Esc: pause.'];
-      lines.forEach((line,i) => { this.ctx.save(); this.ctx.translate(95,125+i*(portrait?31:17)); if (!portrait) this.ctx.scale(.75,.75); this.text(line,0,0,fontName,'220,220,220'); this.ctx.restore(); });
+      const lines = ['TOUCH', 'Left: drive / brake / reverse.', 'In air: left thumb controls pitch / turn.', 'Right: hold / lean / release on a ramp.', 'In air: right swipe; hold to extend stunt.', 'Up: Nac Nac. Down: No Footed Can Can.', 'Left: Suicide No Hander. Right: Bar Hop.', '', 'CONTROLLER', 'Stick: steer / lean. Triggers: drive / brake.', 'Bottom + left face buttons: reverse.', 'Circle / Triangle / L1 + stick: stunts.', 'R3: camera. Start: pause.', '', 'KEYBOARD', 'WASD: drive. Q / E: lean. R: reverse.', 'J / K / L + arrows: stunts.', 'C: camera. Esc: pause.'];
+      lines.forEach((line,i) => { this.ctx.save(); this.ctx.translate(95,125+i*(portrait?26:13)); if (!portrait) this.ctx.scale(.75,.75); this.text(line,0,0,fontName,'220,220,220'); this.ctx.restore(); });
     }
     this.text(this.page === 'controls'?'Back':'Select',317,365+stretch,fontName);
   }

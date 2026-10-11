@@ -425,7 +425,7 @@ mod query_tests {
         };
         let mesh = CollisionMesh {
             transform: [0.; 12],
-            vertex_normals: None,
+            vertex_normal_bits: None,
             flags: 0,
             broad_phase_nodes: 1,
             nodes: vec![node(2., [0x8000, 0x8001])],

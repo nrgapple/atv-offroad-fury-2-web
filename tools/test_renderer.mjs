@@ -97,7 +97,7 @@ try {
   const gamepad = await read(); finite(gamepad);
   assert.notDeepEqual(gamepad.frame.rider_node_matrices, loaded.frame.rider_node_matrices, 'Original rider controllers must respond to driving input');
   assert.equal(gamepad.input.throttle, 1); assert(gamepad.input.steer < 0, 'Right input converts to original left-positive steering scalar');
-  await page.evaluate(() => { window.testPad.buttons[3] = { value: 1, pressed: true }; });
+  await page.evaluate(() => { window.testPad.buttons[11] = { value: 1, pressed: true }; });
   await page.waitForFunction(() => window.atvTerrainStatus.followCamera.preset === 2);
   await steps(15);
   assert.equal((await read()).followCamera.preset, 2, 'Held controller camera button cycles only once');

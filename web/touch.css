@@ -12,3 +12,4 @@ html, body, #game, #toolbar, #toolbar *, #touch-controls, #status, #help { user-
 #touch-controls[data-preload=active] .touch-rider-marker { border-color: #a3ecc3; background: #285d4f80; }
 body.touch-driving #help, body.touch-driving #status:not(.error) { display: none; }
 body.touch-driving #status.error { top: max(84px, calc(env(safe-area-inset-top) + 74px)); bottom: auto; }
+#touch-controls[data-preload=available] .touch-rider-marker { border-color: #8bd2ff; background: #28456e70; }

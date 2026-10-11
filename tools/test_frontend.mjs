@@ -15,11 +15,12 @@ try {
     assert.equal(await page.locator('#frontend').getAttribute('data-error'), null, await page.locator('#menu-notice').textContent());
     if (process.env.ATV_UI_SCREENSHOTS) { await page.waitForTimeout(350); await page.screenshot({ path: `${process.env.ATV_UI_SCREENSHOTS}-${name}.png` }); }
   };
-  const pad = async button => {
+  const pad = async (button, navigation = false) => {
     await page.evaluate(button => {
       window.menuPad = { connected:true, axes:[0,0,0,0], buttons:Array.from({length:17},(_,i)=>({pressed:i===button,value:i===button?1:0})) };
       Object.defineProperty(navigator,'getGamepads',{configurable:true,value:()=>[window.menuPad]});
     }, button);
+    if (navigation) { await page.waitForURL(url => ['/play','/play.html'].includes(url.pathname)); return; }
     await page.waitForTimeout(120);
     await page.evaluate(()=>{if(window.menuPad) window.menuPad.buttons=window.menuPad.buttons.map(()=>({pressed:false,value:0}));});
     await page.waitForTimeout(100);
@@ -30,7 +31,7 @@ try {
   if (process.env.ATV_UI_SCREENSHOTS) await page.screenshot({path:`${process.env.ATV_UI_SCREENSHOTS}-landing.png`});
   await pad(13); assert.equal(await page.evaluate(()=>document.activeElement.textContent.trim()),'Dev log↗');
   await pad(12); assert.equal(await page.evaluate(()=>document.activeElement.textContent.trim()),'Play▸');
-  await pad(0);
+  await pad(0, true);
   await screen('title');
   assert.equal(await page.locator('#disc').isHidden(), true);
   assert.equal((await page.evaluate(()=>window.atvTerrainStatus)).simulation, false);
@@ -41,7 +42,14 @@ try {
   await pad(13); assert.equal(await page.locator('#frontend').getAttribute('data-selection'),'1');
   await pad(0); await screen('tracks');
   assert.equal(await page.locator('#frontend').getAttribute('data-track'),'env01');
-  await pad(15); assert.equal(await page.locator('#frontend').getAttribute('data-track'),'env02');
+  const visited = new Set();
+  for (let index = 0; index < 8; index++) {
+    visited.add(await page.locator('#frontend').getAttribute('data-track'));
+    await pad(15);
+  }
+  assert.deepEqual([...visited].sort(), ['env01','env02','env03','env05','env06','env07','env08']);
+  for (let index = 0; index < 7 && await page.locator('#frontend').getAttribute('data-track') !== 'env02'; index++) await pad(15);
+  assert.equal(await page.locator('#frontend').getAttribute('data-track'),'env02');
   if (process.env.ATV_UI_SCREENSHOTS) await page.screenshot({path:`${process.env.ATV_UI_SCREENSHOTS}-tioga-selection.png`});
   await pad(0);
   console.log("Starting Tioga", await page.locator("#menu-notice").textContent());
@@ -63,7 +71,7 @@ try {
   await page.setViewportSize({width:390,height:844});
   await page.getByRole('button',{name:'Single Player',exact:true}).tap(); await screen('single');
   await page.getByRole('button',{name:'Freestyle',exact:true}).tap(); await screen('tracks');
-  await page.getByRole('button',{name:'Previous environment',exact:true}).tap();
+  for (let index = 0; index < 7 && await page.locator('#frontend').getAttribute('data-track') !== 'env01'; index++) await page.getByRole('button',{name:'Previous environment',exact:true}).tap();
   assert.equal(await page.locator('#frontend').getAttribute('data-track'),'env01');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth),390);
   if (process.env.ATV_UI_SCREENSHOTS) await page.screenshot({path:`${process.env.ATV_UI_SCREENSHOTS}-mobile.png`});

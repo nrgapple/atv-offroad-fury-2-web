@@ -30,6 +30,7 @@ try {
   assert.equal(await page.locator('#touch-controls button').count(), 0, 'No separate action buttons');
   assert.equal(await page.evaluate(() => getComputedStyle(document.body).webkitUserSelect), 'none');
   for (const position of [{ x: 250, y: 240 }, { x: 340, y: 640 }, { x: 387, y: 420 }]) {
+    await page.waitForFunction(() => window.atvTerrainStatus.frame.grounded.some(Boolean), null, { timeout: 10000 });
     const right = { id: 1, ...position };
     await resetSamples(); await touch('touchStart', [right]); await steps(3);
     assert.equal((await read()).input.preload_axis, 1); assert.equal((await read()).input.lean, 0);

@@ -19,7 +19,9 @@ pub struct CollisionMesh {
     /// Stored 3x3 basis followed by translation. Kept in original file order.
     pub transform: [f32; 12],
     pub vertices: Vec<[f32; 3]>,
-    pub vertex_normals: Option<Vec<[f32; 3]>>,
+    /// Optional authored shading normals, retained as raw bits. Several original
+    /// meshes contain NaNs here; these are not geometry or contact planes.
+    pub vertex_normal_bits: Option<Vec<[u32; 3]>>,
     pub triangles: Vec<Triangle>,
     pub broad_phase_nodes: u32,
     pub nodes: Vec<RayTreeNode>,
@@ -36,6 +38,10 @@ fn float(data: &[u8], at: usize) -> Result<f32> {
 
 fn vector(data: &[u8], at: usize) -> Result<[f32; 3]> {
     Ok([float(data, at)?, float(data, at + 4)?, float(data, at + 8)?])
+}
+
+fn packed_coordinate(bits: u16) -> f32 {
+    (32767.0 * f32::from(bits as i16)) * f32::from_bits(0x38000100)
 }
 
 pub fn decode_col(data: &[u8]) -> Result<CollisionMesh> {
@@ -59,7 +65,7 @@ pub fn decode_col(data: &[u8]) -> Result<CollisionMesh> {
     let broad_phase_nodes = u32le(data, 72)?;
     let triangles_count = u32le(data, 76)? as usize;
     let flags = u32le(data, 80)?;
-    if flags != 0 {
+    if flags > 1 {
         return Err("unsupported COL packed vertex flags".into());
     }
     if vertices_count == 0
@@ -69,12 +75,16 @@ pub fn decode_col(data: &[u8]) -> Result<CollisionMesh> {
     {
         return Err("COL counts exceed supported indexed mesh bounds".into());
     }
-    let normals_at = 84 + vertices_count * 12;
+    // 00330850 stores flag-1 vertices/normals as signed 16-bit triples;
+    // 0010b800 multiplies by global32767 then its binary32 reciprocal.
+    // Preserve that operation order, including its rounding.
+    let vertex_stride = if flags == 0 { 12 } else { 6 };
+    let normals_at = 84 + vertices_count * vertex_stride;
     let normals_present = u32le(data, normals_at)?;
     if normals_present > 1 {
         return Err("unsupported COL vertex-normal marker".into());
     }
-    let nodes_at = normals_at + 4 + vertices_count * 12 * normals_present as usize;
+    let nodes_at = normals_at + 4 + vertices_count * vertex_stride * normals_present as usize;
     let triangles_at = nodes_at + broad_phase_nodes as usize * 32;
     let expected = triangles_at + triangles_count * 22;
     if expected != data.len() {
@@ -84,12 +94,34 @@ pub fn decode_col(data: &[u8]) -> Result<CollisionMesh> {
         ));
     }
     let vertices = (0..vertices_count)
-        .map(|i| vector(data, 84 + i * 12))
+        .map(|i| {
+            let at = 84 + i * vertex_stride;
+            if flags == 0 {
+                vector(data, at)
+            } else {
+                Ok([
+                    packed_coordinate(u16le(data, at)?),
+                    packed_coordinate(u16le(data, at + 2)?),
+                    packed_coordinate(u16le(data, at + 4)?),
+                ])
+            }
+        })
         .collect::<Result<Vec<_>>>()?;
-    let vertex_normals = if normals_present == 1 {
+    let vertex_normal_bits = if normals_present == 1 {
         Some(
             (0..vertices_count)
-                .map(|i| vector(data, normals_at + 4 + i * 12))
+                .map(|i| {
+                    let at = normals_at + 4 + i * vertex_stride;
+                    if flags == 0 {
+                        Ok([u32le(data, at)?, u32le(data, at + 4)?, u32le(data, at + 8)?])
+                    } else {
+                        Ok([
+                            u16le(data, at)? as u32,
+                            u16le(data, at + 2)? as u32,
+                            u16le(data, at + 4)? as u32,
+                        ])
+                    }
+                })
                 .collect::<Result<Vec<_>>>()?,
         )
     } else {
@@ -128,9 +160,15 @@ pub fn decode_col(data: &[u8]) -> Result<CollisionMesh> {
         let plane = plane_bits.map(f32::from_bits);
         let invalid = plane.iter().any(|v| !v.is_finite());
         let [a, b, c] = indices.map(|i| vertices[i as usize]);
-        // ENV02 ruins contains four NaN planes whose vertices coincide exactly.
-        // Do not relax finite-coordinate checks for real surfaces or tree bounds.
-        if invalid && a != b && b != c && a != c {
+        // ENV02 ruins has duplicate vertices; ENV08 distillery also has distinct
+        // collinear vertices. Only exactly zero-area faces may lack a plane.
+        // Evaluate in f64 so small valid faces do not underflow into this exception.
+        let ab = std::array::from_fn::<_, 3, _>(|j| f64::from(b[j]) - f64::from(a[j]));
+        let ac = std::array::from_fn::<_, 3, _>(|j| f64::from(c[j]) - f64::from(a[j]));
+        let zero_area = ab[1] * ac[2] == ab[2] * ac[1]
+            && ab[2] * ac[0] == ab[0] * ac[2]
+            && ab[0] * ac[1] == ab[1] * ac[0];
+        if invalid && !zero_area {
             return Err(format!("nonfinite COL plane on nondegenerate triangle {i}"));
         }
         triangles.push(Triangle {
@@ -147,7 +185,7 @@ pub fn decode_col(data: &[u8]) -> Result<CollisionMesh> {
     Ok(CollisionMesh {
         transform,
         vertices,
-        vertex_normals,
+        vertex_normal_bits,
         triangles,
         broad_phase_nodes,
         nodes,
@@ -158,6 +196,36 @@ pub fn decode_col(data: &[u8]) -> Result<CollisionMesh> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn packed_signed_vertices_use_original_expansion_without_changing_planes() {
+        let mut data = triangle();
+        data[80..84].copy_from_slice(&1u32.to_le_bytes());
+        let packed = [0i16, 0, 0, -1, 0, 0, 0, 0, 1]
+            .into_iter()
+            .flat_map(i16::to_le_bytes);
+        data.splice(84..120, packed);
+        let mesh = decode_col(&data).unwrap();
+        assert_eq!(
+            mesh.vertices[1],
+            [packed_coordinate((-1i16) as u16), 0., 0.]
+        );
+        assert_eq!(mesh.triangles[0].normal, [0., 1., 0.]);
+        assert_eq!(mesh.triangles[0].indices, [0, 1, 2]);
+    }
+    #[test]
+    fn optional_shading_normals_preserve_nan_bits_without_changing_contacts() {
+        let mut data = triangle();
+        data[120..124].copy_from_slice(&1u32.to_le_bytes());
+        let normals = [0xffc00000u32; 9].into_iter().flat_map(u32::to_le_bytes);
+        data.splice(124..124, normals);
+        let mesh = decode_col(&data).unwrap();
+        assert_eq!(
+            mesh.vertex_normal_bits.as_ref().unwrap()[0],
+            [0xffc00000; 3]
+        );
+        assert_eq!(mesh.triangles[0].normal, [0., 1., 0.]);
+        assert_eq!(mesh.query_normal(0).unwrap(), [0., 1., 0.]);
+    }
     #[test]
     fn nan_planes_only_allowed_for_duplicate_vertex_faces() {
         let mut data = triangle();
@@ -172,6 +240,17 @@ mod tests {
         assert_eq!(mesh.query_normal(0).unwrap(), [0.; 3]);
         data[84..88].copy_from_slice(&f32::NAN.to_bits().to_le_bytes());
         assert!(decode_col(&data).is_err());
+    }
+    #[test]
+    fn collinear_nan_face_keeps_tree_index_but_has_no_contact_normal() {
+        let mut data = triangle();
+        data[108..112].copy_from_slice(&2f32.to_le_bytes());
+        data[116..120].copy_from_slice(&0f32.to_le_bytes());
+        data[124..128].copy_from_slice(&f32::NAN.to_le_bytes());
+        let mesh = decode_col(&data).unwrap();
+        assert_eq!(mesh.triangles[0].indices, [0, 1, 2]);
+        assert!(mesh.triangles[0].invalid_plane_bits.is_some());
+        assert_eq!(mesh.query_normal(0).unwrap(), [0.; 3]);
     }
     fn triangle() -> Vec<u8> {
         let mut data = vec![0; 88 + 3 * 12 + 22];

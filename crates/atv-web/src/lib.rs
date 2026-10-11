@@ -156,6 +156,7 @@ fn simulation_frame(sim: &Simulation, frame: &atv_core::vehicle::VehicleFrame) -
             serde_json::to_value(animator.pose(&mesh.nodes)?.world_matrices)
                 .map_err(|e| e.to_string())?;
         value["rider_mode"] = serde_json::to_value(sim.rider_mode).map_err(|e| e.to_string())?;
+        value["stunt"] = serde_json::to_value(animator.stunt_frame()).map_err(|e| e.to_string())?;
     }
     serde_json::to_vec(&value).map_err(|error| error.to_string())
 }
@@ -265,8 +266,36 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         .as_ref()
                         .ok_or("vehicle missing")?
                         .rider_pose_input();
-                    let (plan, _) = animator.step(nodes, input, json_number(&value, "dt")?)?;
-                    sim.rider_mode = Some(plan.mode);
+                    let modifiers = raw
+                        .get("stunt_modifiers")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0);
+                    if modifiers > 7 {
+                        return Err("invalid stunt modifiers".into());
+                    }
+                    let axis = |key| {
+                        raw.get(key)
+                            .filter(|v| !v.is_null())
+                            .map(|_| json_number(raw, key))
+                            .transpose()
+                            .map(|v| v.unwrap_or(0.))
+                    };
+                    let stunt = atv_core::stunt::Input {
+                        modifiers: modifiers as u8,
+                        axes: [axis("stunt_x")?, axis("stunt_y")?],
+                        grounded: frame.grounded.iter().any(|x| *x),
+                        horizontal_speed_squared: frame.linear_velocity[0]
+                            * frame.linear_velocity[0]
+                            + frame.linear_velocity[2] * frame.linear_velocity[2],
+                        crashed: false,
+                        disabled: false,
+                    };
+                    sim.rider_mode = Some(animator.step_controls(
+                        nodes,
+                        input,
+                        stunt,
+                        json_number(&value, "dt")?,
+                    )?);
                 }
                 return simulation_frame(sim, &frame);
             }
@@ -309,7 +338,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
             }
             51 => {
                 let catalog = atv_core::motion_catalog::MotionCatalog::parse(input)?;
-                let selected = atv_core::rider_pose::Clip::ALL
+                let mut selected = atv_core::rider_pose::Clip::ALL
                     .iter()
                     .map(|clip| {
                         let name = format!("M_{}", clip.suffix());
@@ -321,6 +350,19 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                             .ok_or_else(|| format!("missing rider motion {name}"))
                     })
                     .collect::<Result<Vec<_>>>()?;
+                for prefix in ["Stunt", "Hold"] {
+                    for suffix in atv_core::stunt::SUFFIXES {
+                        let name = format!("M_{prefix}{suffix}");
+                        selected.push(
+                            catalog
+                                .motions
+                                .iter()
+                                .find(|motion| motion.name.eq_ignore_ascii_case(&name))
+                                .cloned()
+                                .ok_or_else(|| format!("missing rider motion {name}"))?,
+                        );
+                    }
+                }
                 let output = serde_json::to_vec(&selected).map_err(|e| e.to_string())?;
                 sim.rider_catalog = selected;
                 sim.rider_motions.clear();
@@ -333,9 +375,17 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     .as_ref()
                     .ok_or("load rider mesh first")?
                     .nodes;
-                let animator = atv_core::rider_pose::Animator::new(
+                if sim.rider_motions.len() != 62 {
+                    return Err("load all normal and stunt motions first".into());
+                }
+                let stunts = sim.rider_motions.split_off(14);
+                let mut animator = atv_core::rider_pose::Animator::new(
                     std::mem::take(&mut sim.rider_motions),
                     nodes,
+                )?;
+                animator.set_stunts(
+                    stunts,
+                    sim.rider_catalog[14..].iter().map(|m| m.looping).collect(),
                 )?;
                 let output =
                     serde_json::to_vec(&animator.pose(nodes)?).map_err(|e| e.to_string())?;
@@ -572,6 +622,11 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             )
         }
         57 => return Ok(texture::decode_atm(input, index)?.1.rgba),
+        58 => serde_json::to_vec(&atv_core::ecosystem::decode(input)?),
+        59 => {
+            let mesh = mesh::decode_psg(input)?;
+            serde_json::to_vec(&serde_json::json!({"bounds": mesh.bind_bounds()?, "mesh": mesh}))
+        }
         0 => serde_json::to_vec(&iso::root(input)?),
         1 => serde_json::to_vec(&iso::directory(input)?),
         2 => serde_json::to_vec(&Resource::parse(input)?.members),

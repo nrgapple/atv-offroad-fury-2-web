@@ -11,11 +11,11 @@ const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 const worker = new Worker('worker.js', { type: 'module' });
 const pending = new Map();
-let requestId = 0, generation = 0, terrain, vehicle, program, uniforms, chunks = [], vehicleChunks = [], gpuTextures = [], fallbackTexture, terrainAtlas, terrainTextureMap, frame = 0, lastTime = 0, lost = false;
+let requestId = 0, generation = 0, terrain, vehicle, program, uniforms, chunks = [], vehicleChunks = [], gpuTextures = [], fallbackTexture, terrainAtlas, terrainTextureMap, terrainDetailMap, frame = 0, lastTime = 0, lost = false;
 let focused = document.hasFocus(), gamepadsAvailable = true, menuOpen = true;
 let frontend, hostedContent;
 let simReady = false, simBusy = false, simAccumulator = 0, simFrame, simStart, simGeneration = 0, orbit = 0, cameraFrame, cameraCycle = false, cameraButtonHeld = false;
-let sceneChunks = [], sceneDraws = [], skyChunks = [];
+let sceneChunks = [], sceneDraws = [], skyChunks = [], ecoGroups = [];
 const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const camera = { x: 0, y: 0, z: 0, yaw: 0, pitch: -.35 };
 const keys = new Set(), pointers = new Map();
@@ -83,7 +83,7 @@ async function discTerrain(file, token) {
   return terrainFromContent(file, files, token);
 }
 async function terrainFromContent(file, files, token, environment = "env01") {
-  if (!["env01", "env02"].includes(environment)) throw new Error("Environment is not connected yet.");
+  if (!["env01", "env02", "env03", "env05", "env06", "env07", "env08"].includes(environment)) throw new Error("Environment is not connected yet.");
   const number = environment.slice(-2);
   const memberNamed = (entry, name) => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name;
   status('Loading original engine sounds…');
@@ -163,6 +163,11 @@ async function terrainFromContent(file, files, token, environment = "env01") {
     const rgba = await codec(35, bytes.slice(mip.offset, mip.offset + mip.bytes));
     images.push({ width: record.width, height: record.height, rgba });
   }
+  // 002098b0 derives the original detail resource from the terrain basename.
+  const detailIndex = entries.findIndex(entry => memberNamed(entry, `${environment}_d.pst`));
+  if (detailIndex < 0) throw new Error('Original ground detail texture is missing.');
+  const detailBytes = await codec(3, resource, detailIndex);
+  const detail = { ...await json(7, detailBytes), rgba: await codec(8, detailBytes) };
   status('Decoding original sky…');
   const skyIndex = entries.findIndex(entry => entry.name.split(/[\\/]/).at(-1).toLowerCase() === sceneMetadata.cube_file.toLowerCase());
   if (skyIndex < 0) throw new Error('Original scene sky is missing.');
@@ -183,6 +188,21 @@ async function terrainFromContent(file, files, token, environment = "env01") {
       sceneMeshes.set(name, model);
     } catch (error) { unsupported.push({ name, error: error.message }); }
   }
+  status('Reading original vegetation…');
+  const ecoIndex = entries.findIndex(entry => memberNamed(entry, `${environment}.esb`));
+  let ecosystem;
+  if (ecoIndex >= 0) {
+    const data = await json(58, await codec(3, resource, ecoIndex)), models = new Map(), textures = new Map();
+    for (const species of data.species) {
+      if (token !== generation) throw new Error('Opening cancelled.');
+      const member = entries.findIndex(entry => entry.name.replaceAll('\\', '/').toLowerCase() === `eco/${species.model}.psg`.toLowerCase());
+      if (member < 0) throw new Error(`Original vegetation mesh is missing: ${species.model}`);
+      const decoded = await json(59, await codec(3, resource, member));
+      models.set(species.slot, decoded);
+      for (const [name, image] of await baseTextures(decoded.mesh, resource, entries, textures)) textures.set(name, image);
+    }
+    ecosystem = { ...data, models, textures };
+  }
   status('Reading original scene collisions…');
   const collisionMeshes = new Map(), collisionPlacements = [];
   for (const placement of sceneMetadata.collision_models) {
@@ -194,7 +214,7 @@ async function terrainFromContent(file, files, token, environment = "env01") {
     if (!collisionMeshes.has(name)) collisionMeshes.set(name, await codec(3, resource, collisionIndex));
     collisionPlacements.push({ ...placement, name });
   }
-  return { bytes, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, toy, textures, sky, terrainTextures: { layout, images }, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
+  return { bytes, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
 }
 async function baseTextures(mesh, materialArchive, materialEntries, cache = new Map()) {
   const findMaterial = name => materialEntries.findIndex(entry => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase());
@@ -215,14 +235,15 @@ async function baseTextures(mesh, materialArchive, materialEntries, cache = new 
     let image;
     try {
       const info = await json(7, pst), rgba = await codec(8, pst);
-      image = { ...info, rgba, shader };
+      const alphaMatch = materialText.match(/alphaReferenceValue\s*=\s*(\d+)/i);
+      image = { ...info, rgba, shader, alphaTest: /alphaTestOnOff\s*=\s*0/i.test(materialText) ? 0 : Number(alphaMatch?.[1] ?? 0) / 255 };
     } catch (error) { image = { shader, error: error.message }; }
     textures.set(material, image); cache.set(material, image);
   }
   return textures;
 }
 function textureBinding(text) {
-  let inBase = false, texture, coordinates;
+  let inBase = false, texture, coordinates = 0;
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.split(';')[0].trim();
     if (line.startsWith('[')) { inBase = line.toLowerCase() === '[shaderpass_1]'; continue; }
@@ -240,6 +261,10 @@ layout(location=0) in vec3 position;
 layout(location=1) in vec3 normal;
 layout(location=2) in vec2 uv;
 layout(location=3) in float quadNode;
+layout(location=4) in vec3 ecoPosition;
+layout(location=5) in vec2 ecoScale;
+uniform bool useEcosystem;
+uniform vec2 ecoRotation;
 uniform mat4 viewProjection;
 uniform mat4 model;
 uniform vec3 eye;
@@ -255,6 +280,10 @@ void main() {
   texcoord = uv;
   mat4 localPose = useQuadPose ? quadBones[int(quadNode)] : mat4(1.0);
   vec4 worldPosition = model * localPose * vec4(position, 1.0);
+  if (useEcosystem) {
+    vec3 scaled = position * vec3(ecoScale.x, ecoScale.y, ecoScale.x);
+    worldPosition = vec4(ecoPosition + vec3(ecoRotation.x * scaled.x - ecoRotation.y * scaled.z, scaled.y, ecoRotation.y * scaled.x + ecoRotation.x * scaled.z), 1.0);
+  }
   worldXZ = worldPosition.xz;
   surfaceNormal = mat3(model) * mat3(localPose) * normal;
   worldHeight = worldPosition.y;
@@ -274,10 +303,13 @@ uniform float fogDistance;
 uniform vec3 surfaceColor;
 uniform sampler2D baseTexture;
 uniform bool useTexture;
+uniform float alphaCutoff;
 uniform bool useTerrainTexture;
 uniform highp sampler2DArray terrainColors;
 uniform highp usampler2D terrainMapping;
+uniform sampler2D terrainDetail;
 uniform float terrainSpacing;
+uniform vec2 terrainDetailScale;
 uniform vec3 ambientLight;
 uniform vec3 sunlightColor;
 uniform vec3 sunlightDirection;
@@ -291,14 +323,24 @@ void main() {
   vec3 base = mix(vec3(.29,.32,.22), vec3(.60,.54,.41), altitude);
   base = mix(base, vec3(.40,.38,.34), smoothstep(.14,.65,1.0-n.y));
   if (surfaceColor.x >= 0.0) base = surfaceColor;
-  if (useTexture) base = texture(baseTexture, texcoord).rgb;
+  if (useTexture) { vec4 sampled = texture(baseTexture, texcoord); if (sampled.a < alphaCutoff) discard; base = sampled.rgb; }
   if (useTerrainTexture) {
     vec2 grid = worldXZ / (terrainSpacing * 64.0);
     ivec2 tile = clamp(ivec2(floor(grid)), ivec2(0), textureSize(terrainMapping, 0) - 1);
     uint layer = texelFetch(terrainMapping, tile, 0).r;
     // 001325c0 selects the 64-cell subtexture; 00131790 submits its 8px border.
     vec2 coord = fract(grid) * .9375 + .03125;
-    base = texture(terrainColors, vec3(coord, float(layer))).rgb;
+    // Derivatives must precede fract(): its discontinuity otherwise selects
+    // tiny mip levels at each 64-cell boundary and produces blurry strips.
+    base = textureGrad(terrainColors, vec3(coord, float(layer)), dFdx(grid) * .9375, dFdy(grid) * .9375).rgb;
+    // Single-player detail coordinates: param9=8 at 00209b0c,
+    // 00168490 computes (8*256/textureWidth)/64 per terrain cell.
+    vec4 detail = texture(terrainDetail, worldXZ / terrainSpacing * terrainDetailScale);
+    // Near terrain VU RGB=127, A=64; GS MODULATE divides by 128.
+    // ALPHA=0x44 is (Cs-Cd)*As+Cd. PST alpha stays in source units.
+    // Original projected-coverage pass selection is still pending; WebGL
+    // mip filtering currently averages this detail continuously at distance.
+    base = mix(base, detail.rgb, detail.a * (255.0 / 256.0)) * (127.0 / 128.0);
   }
   float sunlight = max(dot(n, normalize(sunlightDirection)),0.0);
   vec3 lit = unlit ? base : base * (ambientLight + sunlightColor * sunlight);
@@ -316,7 +358,10 @@ function initializeGl() {
   program = gl.createProgram(); gl.attachShader(program, vertex); gl.attachShader(program, fragment); gl.linkProgram(program);
   gl.deleteShader(vertex); gl.deleteShader(fragment);
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
-  uniforms = Object.fromEntries(['viewProjection', 'model', 'eye', 'heights', 'fogDistance', 'surfaceColor', 'baseTexture', 'useTexture', 'useTerrainTexture', 'terrainColors', 'terrainMapping', 'terrainSpacing', 'ambientLight', 'sunlightColor', 'sunlightDirection', 'fogColor', 'unlit', 'skyPass'].map(name => [name, gl.getUniformLocation(program, name)]));
+  uniforms = Object.fromEntries(['viewProjection', 'model', 'eye', 'heights', 'fogDistance', 'surfaceColor', 'baseTexture', 'useTexture', 'useTerrainTexture', 'terrainColors', 'terrainMapping', 'terrainDetail', 'terrainDetailScale', 'terrainSpacing', 'ambientLight', 'sunlightColor', 'sunlightDirection', 'fogColor', 'unlit', 'skyPass'].map(name => [name, gl.getUniformLocation(program, name)]));
+  uniforms.useEcosystem = gl.getUniformLocation(program, 'useEcosystem');
+  uniforms.ecoRotation = gl.getUniformLocation(program, 'ecoRotation');
+  uniforms.alphaCutoff = gl.getUniformLocation(program, 'alphaCutoff');
   uniforms.useQuadPose = gl.getUniformLocation(program, 'useQuadPose');
   uniforms.quadBones = gl.getUniformLocation(program, 'quadBones[0]');
   fallbackTexture = texture({ width: 1, height: 1, rgba: new Uint8Array([255, 255, 255, 255]) });
@@ -328,11 +373,14 @@ function initializeGl() {
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16UI, 1, 1, 0, gl.RED_INTEGER, gl.UNSIGNED_SHORT, new Uint16Array([0]));
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  terrainDetailMap = texture({ width: 1, height: 1, rgba: new Uint8Array([255, 255, 255, 0]) });
   gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE); gl.clearColor(.34, .43, .53, 1);
 }
 function clearMesh() {
   for (const chunk of [...chunks, ...vehicleChunks, ...sceneChunks, ...skyChunks]) { gl.deleteVertexArray(chunk.vao); gl.deleteBuffer(chunk.vertices); gl.deleteBuffer(chunk.indices); }
   for (const texture of gpuTextures) gl.deleteTexture(texture);
+  for (const group of ecoGroups) { gl.deleteBuffer(group.instances); for (const chunk of group.chunks) { gl.deleteVertexArray(chunk.vao); gl.deleteBuffer(chunk.vertices); gl.deleteBuffer(chunk.indices); } }
+  ecoGroups = [];
   gpuTextures = [];
   chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = [];
 }
@@ -348,7 +396,7 @@ function texture({ width, height, rgba }) {
 function uploadTerrainTextures() {
   const source = terrain?.textures;
   if (!source) return;
-  const { layout, images } = source;
+  const { layout, images, detail } = source;
   if (images.length !== layout.records.length || images.length > gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS)) throw new Error('Terrain texture layer count is unsupported.');
   const width = Math.ceil((terrain.width - 1) / 64), height = Math.ceil((terrain.depth - 1) / 64), mapping = new Uint16Array(width * height).fill(65535);
   for (const region of layout.regions) {
@@ -373,7 +421,14 @@ function uploadTerrainTextures() {
   gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
   gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
+  if (detail.rgba.length !== detail.width * detail.height * 4) throw new Error('Invalid terrain detail texture.');
+  gl.bindTexture(gl.TEXTURE_2D, terrainDetailMap);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, detail.width, detail.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, detail.rgba);
+  gl.generateMipmap(gl.TEXTURE_2D);
   diagnostics.terrainTextures = images.length;
+  diagnostics.terrainTextureResolution = [256, 256];
+  diagnostics.terrainDetailTexture = [detail.width, detail.height];
+  diagnostics.terrainLighting = 'original base/detail blend; projected pass selection pending';
 }
 function upload(vertices, indices, hasUv = false, hasNodes = false) {
   const chunk = { vao: gl.createVertexArray(), vertices: gl.createBuffer(), indices: gl.createBuffer(), count: indices.length };
@@ -419,10 +474,78 @@ function inverseDirection(matrix, value) {
   if (Math.abs(determinant) < 1e-10) throw new Error('Rider bind matrix is singular.');
   return [cross(b, c), cross(c, a), cross(a, b)].map(row => dot(row, value) / determinant);
 }
-function buildMesh() {
-  clearMesh();
+function buildEcosystem() {
+  const eco = terrain.ecosystem;
+  diagnostics.vegetationPlacements = eco?.placements.length ?? 0;
+  if (!eco) return;
+  const scale = Math.max(terrain.sizeX, terrain.sizeZ) / 65536, textures = new Map();
+  for (const [name, decoded] of eco.textures) {
+    if (!decoded.rgba) continue;
+    const gpu = texture(decoded); textures.set(name, gpu); gpuTextures.push(gpu);
+  }
+  for (const species of eco.species) {
+    const { mesh, bounds } = eco.models.get(species.slot);
+    if (!(bounds.half_extents[0] > 0 && bounds.half_extents[1] > 0)) throw new Error('Invalid vegetation mesh bounds.');
+    const placements = eco.placements.filter(p => p.slot === species.slot).map(p => {
+      const position = p.coordinates.map(c => c * scale);
+      // 00129b70 quantizes an explicitly resampled height back to u16.
+      if (p.resample_height) position[1] = (Math.trunc(terrainHeight(position[0], position[2]) / scale) & 65535) * scale;
+      return { position, scale: [p.radius / bounds.half_extents[0], p.height * .5 / bounds.half_extents[1]], radius: Math.max(p.radius, p.height) };
+    });
+    const group = { placements, chunks: [], instances: gl.createBuffer(), visible: new Float32Array(Math.min(1500, placements.length) * 5), count: 0 };
+    gl.bindBuffer(gl.ARRAY_BUFFER, group.instances); gl.bufferData(gl.ARRAY_BUFFER, group.visible.byteLength, gl.DYNAMIC_DRAW);
+    for (const source of mesh.lods[0].groups) {
+      if (source.vertices.length > 65536) throw new Error('Vegetation mesh exceeds index bounds.');
+      const vertices = new Float32Array(source.vertices.length * 8);
+      source.vertices.forEach((v, i) => vertices.set([...v.position, ...v.normal, ...v.uv], i * 8));
+      const chunk = upload(vertices, new Uint16Array(source.indices), true);
+      const material = mesh.materials[source.material], decoded = eco.textures.get(material);
+      chunk.texture = textures.get(material); chunk.alphaCutoff = decoded?.alphaTest ?? 0;
+      gl.bindVertexArray(chunk.vao); gl.bindBuffer(gl.ARRAY_BUFFER, group.instances);
+      gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 3, gl.FLOAT, false, 20, 0); gl.vertexAttribDivisor(4, 1);
+      gl.enableVertexAttribArray(5); gl.vertexAttribPointer(5, 2, gl.FLOAT, false, 20, 12); gl.vertexAttribDivisor(5, 1);
+      group.chunks.push(chunk);
+    }
+    ecoGroups.push(group);
+  }
+}
+function drawEcosystem() {
+  if (!ecoGroups.length) return;
+  // Original placement, dimensions and model normalization; browser visibility
+  // selection is provisional. Batch repeated original meshes, not thousands of draws.
+  const forwardX = Math.sin(camera.yaw), forwardZ = Math.cos(camera.yaw), candidates = [];
+  for (const group of ecoGroups) {
+    group.count = 0;
+    for (const p of group.placements) {
+      const dx = p.position[0] - camera.x, dz = p.position[2] - camera.z, distance = dx * dx + dz * dz;
+      if (distance < 1800 * 1800 && dx * forwardX + dz * forwardZ > -p.radius) candidates.push({ group, p, distance });
+    }
+  }
+  candidates.sort((a, b) => a.distance - b.distance);
+  for (const { group, p } of candidates.slice(0, 1500)) group.visible.set([...p.position, ...p.scale], group.count++ * 5);
+  gl.uniform1i(uniforms.useEcosystem, true); gl.uniform1i(uniforms.unlit, true); gl.uniform1i(uniforms.useQuadPose, false);
+  gl.uniformMatrix4fv(uniforms.model, false, identity);
+  // 002fe710 rotates the vegetation models about Y using the view basis.
+  gl.uniform2f(uniforms.ecoRotation, -Math.cos(camera.yaw), Math.sin(camera.yaw));
+  let draws = 0;
+  for (const group of ecoGroups) {
+    if (!group.count) continue;
+    gl.bindBuffer(gl.ARRAY_BUFFER, group.instances); gl.bufferSubData(gl.ARRAY_BUFFER, 0, group.visible.subarray(0, group.count * 5));
+    for (const chunk of group.chunks) {
+      gl.uniform1f(uniforms.alphaCutoff, chunk.alphaCutoff); gl.uniform1i(uniforms.useTexture, Boolean(chunk.texture));
+      gl.bindTexture(gl.TEXTURE_2D, chunk.texture ?? fallbackTexture); gl.bindVertexArray(chunk.vao);
+      gl.drawElementsInstanced(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0, group.count); draws++;
+    }
+  }
+  diagnostics.vegetationVisible = Math.min(candidates.length, 1500); diagnostics.vegetationDraws = draws;
+  gl.uniform1i(uniforms.useEcosystem, false); gl.uniform1f(uniforms.alphaCutoff, 0);
+}
+function buildTerrainMesh() {
+  for (const chunk of chunks) { gl.deleteVertexArray(chunk.vao); gl.deleteBuffer(chunk.vertices); gl.deleteBuffer(chunk.indices); }
+  chunks = [];
   const { width, depth, spacing, heights } = terrain;
-  // Cap the first renderer at roughly 200k triangles; original samples are retained.
+  // Retain original samples near the rider and a bounded coarse far field.
+  // This browser LOD is provisional; it does not alter terrain contacts.
   const step = Math.max(1, Math.ceil(Math.sqrt((width - 1) * (depth - 1) / 100000)));
   const xs = [], zs = [];
   for (let x = 0; x < width - 1; x += step) xs.push(x);
@@ -432,10 +555,10 @@ function buildMesh() {
   const centerX = vehicle ? Math.max(0, Math.min(width - 1, vehicle.position[0] / spacing)) : 0;
   const centerZ = vehicle ? Math.max(0, Math.min(depth - 1, vehicle.position[2] / spacing)) : 0;
   const patch = vehicle ? {
-    x0: Math.max(0, Math.floor((centerX - 32) / step) * step),
-    x1: Math.min(width - 1, Math.ceil((centerX + 32) / step) * step),
-    z0: Math.max(0, Math.floor((centerZ - 32) / step) * step),
-    z1: Math.min(depth - 1, Math.ceil((centerZ + 32) / step) * step),
+    x0: Math.max(0, Math.floor((centerX - 96) / step) * step),
+    x1: Math.min(width - 1, Math.ceil((centerX + 96) / step) * step),
+    z0: Math.max(0, Math.floor((centerZ - 96) / step) * step),
+    z1: Math.min(depth - 1, Math.ceil((centerZ + 96) / step) * step),
   } : null;
   let vertexCount = 0, triangleCount = 0;
   function grid(gridX, gridZ, fine = false) {
@@ -468,8 +591,13 @@ function buildMesh() {
   for (let z0 = 0; z0 < zs.length - 1; z0 += 64) for (let x0 = 0; x0 < xs.length - 1; x0 += 64) grid(xs.slice(x0, x0 + 65), zs.slice(z0, z0 + 65));
   if (patch) {
     const fineX = Array.from({ length: patch.x1 - patch.x0 + 1 }, (_, i) => patch.x0 + i), fineZ = Array.from({ length: patch.z1 - patch.z0 + 1 }, (_, i) => patch.z0 + i);
-    grid(fineX, fineZ, true);
+    for (let z0 = 0; z0 < fineZ.length - 1; z0 += 64) for (let x0 = 0; x0 < fineX.length - 1; x0 += 64) grid(fineX.slice(x0,x0+65),fineZ.slice(z0,z0+65),true);
   }
+  gl.bindVertexArray(null);
+  Object.assign(diagnostics, { vertices: vertexCount, triangles: triangleCount, chunks: chunks.length, finePatch: patch, terrainGrid: [width,depth], terrainSampleSpacing: spacing, terrainFarStep: step, terrainLod: 'full stored samples nearby; provisional far grid', terrainDetailCenter: [centerX,centerZ], terrainDetailUpdates: (diagnostics.terrainDetailUpdates ?? 0)+1 });
+}
+function buildMesh() {
+  clearMesh(); buildTerrainMesh(); buildEcosystem();
   const materialTextures = new Map();
   if (vehicle) for (const [name, decoded] of vehicle.textures) { if (!decoded.rgba) continue; const gpu = texture(decoded); materialTextures.set(name, gpu); gpuTextures.push(gpu); }
   if (vehicle) for (const group of vehicle.groups) {
@@ -543,7 +671,7 @@ function buildMesh() {
   gl.bindVertexArray(null);
   diagnostics.skyTiles = skyChunks.length;
   diagnostics.unsupportedSceneTextures = [...(terrain.world?.textures ?? [])].filter(([, texture]) => texture.error).map(([name, texture]) => ({ name, error: texture.error }));
-  Object.assign(diagnostics, { vertices: vertexCount, triangles: triangleCount, chunks: chunks.length, vehicleVertices: vehicle?.groups.reduce((sum, group) => sum + group.vertices.length, 0) ?? 0, vehicleTriangles: vehicle?.groups.reduce((sum, group) => sum + group.indices.length / 3, 0) ?? 0, vehicleTextures: materialTextures.size, riderTriangles, riderTextures: riderTextureCount, vehiclePosition: vehicle?.position, finePatch: patch, sceneInstances, sceneTriangles, skippedSceneGroups, unsupportedSceneMeshes: terrain.world?.unsupported ?? [] });
+  Object.assign(diagnostics, { vehicleVertices: vehicle?.groups.reduce((sum, group) => sum + group.vertices.length, 0) ?? 0, vehicleTriangles: vehicle?.groups.reduce((sum, group) => sum + group.indices.length / 3, 0) ?? 0, vehicleTextures: materialTextures.size, riderTriangles, riderTextures: riderTextureCount, vehiclePosition: vehicle?.position, sceneInstances, sceneTriangles, skippedSceneGroups, unsupportedSceneMeshes: terrain.world?.unsupported ?? [] });
 }
 function resetCamera() {
   if (cameraFrame && simReady) { acceptCameraFrame(cameraFrame); canvas.focus({ preventScroll: true }); return; }
@@ -599,28 +727,43 @@ function drivingInput() {
   const empty = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false };
   if (!focused || document.hidden || menuOpen) return empty;
   const pad = gamepad(), clamp = value => Math.max(-1, Math.min(1, value));
+  const faceReverse = Boolean(pad?.buttons[0]?.pressed && pad?.buttons[2]?.pressed);
+  const padX = clamp(deadzone(pad?.axes[0]) + Number(Boolean(pad?.buttons[15]?.pressed)) - Number(Boolean(pad?.buttons[14]?.pressed)));
+  const padY = clamp(deadzone(pad?.axes[1]) + Number(Boolean(pad?.buttons[13]?.pressed)) - Number(Boolean(pad?.buttons[12]?.pressed)));
   const input = {
-    throttle: Math.max(Number(keys.has('KeyW') || keys.has('ArrowUp')), pad?.buttons[7]?.value ?? 0),
-    brake: Math.max(Number(keys.has('KeyS') || keys.has('ArrowDown')), pad?.buttons[6]?.value ?? 0),
-    steer: Number(keys.has('KeyD') || keys.has('ArrowRight')) - Number(keys.has('KeyA') || keys.has('ArrowLeft')) + deadzone(pad?.axes[0]),
-    lean: Number(keys.has('KeyE')) - Number(keys.has('KeyQ')) - deadzone(pad?.axes[1]),
-    reverse: keys.has('KeyR') || Boolean(pad?.buttons[1]?.pressed),
+    throttle: Math.max(Number(keys.has('KeyW') || keys.has('ArrowUp')), pad?.buttons[7]?.value ?? 0, pad?.buttons[0]?.value ?? 0),
+    brake: Math.max(Number(keys.has('KeyS') || keys.has('ArrowDown')), pad?.buttons[6]?.value ?? 0, faceReverse ? 0 : (pad?.buttons[2]?.value ?? 0)),
+    steer: Number(keys.has('KeyD') || keys.has('ArrowRight')) - Number(keys.has('KeyA') || keys.has('ArrowLeft')) + padX,
+    lean: Number(keys.has('KeyE')) - Number(keys.has('KeyQ')) + padY,
+    reverse: keys.has('KeyR') || faceReverse,
+    stunt_modifiers: (Number(keys.has('KeyJ') || pad?.buttons[1]?.pressed) | (Number(keys.has('KeyK') || pad?.buttons[3]?.pressed) << 1) | (Number(keys.has('KeyL') || pad?.buttons[4]?.pressed) << 2)),
+    stunt_x: Number(keys.has('ArrowRight')) - Number(keys.has('ArrowLeft')) + padX,
+    stunt_y: Number(keys.has('ArrowDown')) - Number(keys.has('ArrowUp')) + padY,
   };
-  let leftAxis = 0, leftHeld = false;
+  let leftAxis = 0, leftHeld = false, leftAirLean = 0;
+  const airborne = Boolean(simFrame?.grounded?.every(contact => !contact));
   for (const pointer of pointers.values()) {
     if (pointer.move) {
       input.steer += pointer.dx / 70;
       leftAxis = -pointer.dy / 70; leftHeld = true;
+      if (airborne) {
+        // Recenter on takeoff: the held accelerator position must not become
+        // an immediate full-pitch command as wheel contact disappears.
+        pointer.airOriginY ??= pointer.y;
+        leftAirLean = clamp((pointer.y - pointer.airOriginY) / 70);
+      } else delete pointer.airOriginY;
     }
   }
   if (leftHeld || (touchDrive.engaged && input.throttle === 0 && input.brake === 0 && !input.reverse)) {
-    const drive = touchDrive.sample(leftAxis, simFrame?.speed ?? 0);
+    const drive = airborne && leftHeld ? touchDrive.airSample(leftAirLean) : touchDrive.sample(leftAxis, simFrame?.speed ?? 0);
+    input.lean += drive.lean ?? 0;
     input.throttle = Math.max(input.throttle, drive.throttle);
     input.brake = Math.max(input.brake, drive.brake);
     input.reverse ||= drive.reverse;
   }
   const touch = touchControls.sample();
   input.lean += touch.lean;
+  if (touch.stunt_modifiers) Object.assign(input, { stunt_modifiers: touch.stunt_modifiers, stunt_x: touch.stunt_x, stunt_y: touch.stunt_y });
   if (touch.preload_axis !== null) input.preload_axis = touch.preload_axis;
   input.throttle = Math.max(0, clamp(input.throttle)); input.brake = Math.max(0, clamp(input.brake));
   // Browser axes point right; the recovered steering scalar points left.
@@ -695,7 +838,7 @@ function acceptCameraFrame(frame) {
 function followCamera(dt) {
   const pad = focused ? gamepad() : null;
   orbit -= deadzone(pad?.axes[2]) * dt * 1.7;
-  const pressed = Boolean(pad?.buttons[3]?.pressed);
+  const pressed = Boolean(pad?.buttons[11]?.pressed);
   if (pressed && !cameraButtonHeld) cameraCycle = true;
   cameraButtonHeld = pressed;
 }
@@ -732,11 +875,12 @@ function render(time) {
   if (!menuOpen) updateCamera(dt);
   if (simReady && focused && !menuOpen) {
     simAccumulator = Math.min(.1, simAccumulator + dt); void pumpSimulation();
-    const patch = diagnostics.finePatch, x = vehicle.position[0] / terrain.spacing, z = vehicle.position[2] / terrain.spacing;
-    if (patch && (x < patch.x0 + 12 || x > patch.x1 - 12 || z < patch.z0 + 12 || z > patch.z1 - 12) && x >= 32 && z >= 32 && x <= terrain.width - 33 && z <= terrain.depth - 33) buildMesh();
+    const center = diagnostics.terrainDetailCenter;
+    const x = Math.max(0,Math.min(terrain.width-1,vehicle.position[0]/terrain.spacing)), z = Math.max(0,Math.min(terrain.depth-1,vehicle.position[2]/terrain.spacing));
+    if (center && (Math.abs(x-center[0]) > 48 || Math.abs(z-center[1]) > 48)) buildTerrainMesh();
   }
   gl.viewport(0, 0, width, height); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.useProgram(program);
-  gl.uniform1i(uniforms.useQuadPose, false);
+  gl.uniform1i(uniforms.useQuadPose, false); gl.uniform1i(uniforms.useEcosystem, false); gl.uniform1f(uniforms.alphaCutoff, 0);
   gl.uniformMatrix4fv(uniforms.viewProjection, false, matrix()); gl.uniform3f(uniforms.eye, camera.x, camera.y, camera.z);
   gl.uniform2f(uniforms.heights, terrain.min, terrain.max); gl.uniform1f(uniforms.fogDistance, Math.max(terrain.sizeX, terrain.sizeZ) * .85);
   const lights = terrain.world?.metadata.lights;
@@ -751,6 +895,9 @@ function render(time) {
   gl.activeTexture(gl.TEXTURE0); gl.uniform1i(uniforms.baseTexture, 0); gl.uniform1i(uniforms.useTexture, 0); gl.bindTexture(gl.TEXTURE_2D, fallbackTexture);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D_ARRAY, terrainAtlas); gl.uniform1i(uniforms.terrainColors, 1);
   gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, terrainTextureMap); gl.uniform1i(uniforms.terrainMapping, 2);
+  gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, terrainDetailMap); gl.uniform1i(uniforms.terrainDetail, 3);
+  const detail = terrain.textures?.detail;
+  gl.uniform2f(uniforms.terrainDetailScale, detail ? 32 / detail.width : 0, detail ? 32 / detail.height : 0);
   gl.uniform1f(uniforms.terrainSpacing, terrain.spacing); gl.uniform1i(uniforms.useTerrainTexture, false);
   if (terrain.sky) {
     const skyMatrix = new Float32Array(identity); skyMatrix.set(terrain.sky.origin, 12);
@@ -765,14 +912,19 @@ function render(time) {
   }
   gl.uniformMatrix4fv(uniforms.model, false, identity); gl.uniform1i(uniforms.skyPass, false); gl.uniform1i(uniforms.useTexture, false);
   gl.uniform1i(uniforms.useTerrainTexture, Boolean(terrain.textures));
+  // The original single-player terrain VU program supplies constant RGB,
+  // not a normal-based sun pass. Keep authored base colors free of our
+  // provisional prop/vehicle lighting.
+  gl.uniform1i(uniforms.unlit, Boolean(terrain.textures));
   for (const chunk of chunks) { gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0); }
-  gl.uniform1i(uniforms.useTerrainTexture, false); gl.activeTexture(gl.TEXTURE0);
+  gl.uniform1i(uniforms.useTerrainTexture, false); gl.uniform1i(uniforms.unlit, false); gl.activeTexture(gl.TEXTURE0);
   gl.uniform3f(uniforms.surfaceColor, .68, .70, .73);
   for (const { chunk, matrix, unlit } of sceneDraws) {
     gl.uniformMatrix4fv(uniforms.model, false, matrix); gl.uniform1i(uniforms.unlit, unlit);
     gl.uniform1i(uniforms.useTexture, Boolean(chunk.texture)); gl.bindTexture(gl.TEXTURE_2D, chunk.texture ?? fallbackTexture);
     gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
   }
+  drawEcosystem();
   gl.uniform1i(uniforms.unlit, false);
   if (vehicle) gl.uniformMatrix4fv(uniforms.model, false, vehicleMatrix());
   if (vehicle) gl.uniformMatrix4fv(uniforms.quadBones, false, vehicle.nodeMatrices);
@@ -811,7 +963,7 @@ async function loadGame(file = null, environment = "env01") {
     const heights = new Float32Array(width * depth), view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
     let min = Infinity, max = -Infinity;
     for (let i = 0; i < heights.length; i++) { const value = view.getFloat32(i * 4, true); if (!Number.isFinite(value)) throw new Error('Nonfinite terrain height.'); heights[i] = value; min = Math.min(min, value); max = Math.max(max, value); }
-    terrain = { width, depth, spacing: info.spacing, heights, min, max, sizeX: (width - 1) * info.spacing, sizeZ: (depth - 1) * info.spacing, textures: source.terrainTextures, world: source.world, sky: source.sky };
+    terrain = { width, depth, spacing: info.spacing, heights, min, max, sizeX: (width - 1) * info.spacing, sizeZ: (depth - 1) * info.spacing, textures: source.terrainTextures, world: source.world, sky: source.sky, ecosystem: source.ecosystem };
     diagnostics.terrainTextures = 0;
     uploadTerrainTextures();
     setVehicle(source); buildMesh(); await startSimulation(source); resetCamera();

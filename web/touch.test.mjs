@@ -43,3 +43,23 @@ test('forward input brakes backward motion before selecting forward; reset is ne
   assert.deepEqual(drive.sample(.5, -.99), { throttle: .5, brake: 0, reverse: false });
   drive.clear(); assert.equal(drive.engaged, false); assert.deepEqual(drive.sample(0, 0), { throttle: 0, brake: 0, reverse: false });
 });
+
+test('airborne thumb pitch keeps takeoff throttle and gear without invented forces', () => {
+  const drive = new TouchDrive(); drive.sample(.8, 40);
+  assert.deepEqual(drive.airSample(0), { throttle: .8, brake: 0, reverse: false, lean: 0 });
+  assert.deepEqual(drive.airSample(1), { throttle: .8, brake: 0, reverse: false, lean: 1 });
+  assert.deepEqual(drive.airSample(-1), { throttle: .8, brake: 0, reverse: false, lean: -1 });
+  assert.deepEqual(drive.sample(-1, 30), { throttle: 0, brake: 1, reverse: false });
+  drive.clear(); assert.deepEqual(drive.airSample(1), { throttle: 0, brake: 0, reverse: false, lean: 1 });
+});
+
+test('airborne right swipes hold original Circle directions and never emit preload release', () => {
+  for (const [dx,dy,x,y] of [[0,-70,0,-1],[0,70,0,1],[-70,0,-1,0],[70,0,1,0]]) {
+    const touch = new TouchInput(); touch.begin(1,300,500,true);
+    assert.equal(touch.sample().stunt_modifiers,0);
+    touch.move(1,300+dx,500+dy);
+    assert.deepEqual(touch.sample(), { lean:0,preload_axis:null,stunt_modifiers:1,stunt_x:x,stunt_y:y });
+    touch.move(1,300-dx,500-dy); assert.equal(touch.sample().stunt_x,x);
+    touch.end(1); assert.deepEqual(touch.sample(), { lean:0,preload_axis:null });
+  }
+});

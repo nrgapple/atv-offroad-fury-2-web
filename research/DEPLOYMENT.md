@@ -125,8 +125,54 @@ to activate one. Before Play, the landing loads no WASM, game runtime, or origin
 content. Final frontend integration test `8826` passed D-pad navigation and gamepad A
 activation, landing → Play → title/menu → Tioga/pause, 390px Caribou selection,
 and landing → Dev log → Play → title. The landing fits the 390px viewport.
-These are host checks only: public v7 still opens the game directly at `/`, and the
-v8 landing page is not yet published.
+Those test results are the pre-publication host checkpoint; the later public v8
+verification is recorded below.
+
+Public v8 is deployed at the Site root. GitHub main commit
+`b1e815162c9cc769091ee5933f2e49e4823a5e24` passed CI run `38180312529`; a live
+request to `/deployment.json` returned the same commit. Native Sites deployment
+succeeded at 2026-10-11 22:28:28 UTC. Public frontend integration passed, and the
+public gallery served 28 entries with 26 PNG screenshots, each returning HTTP 200.
+The inspected desktop and 390px mobile captures show the short Play/Dev log landing;
+Play opens the game at `/play.html`. The small controller-navigation script remains
+on the landing page, and the game runtime/content load only after Play. This proves
+the landing route and gallery are live; it does not expand the two playable
+settlements or imply that the rest of the game is complete.
+
+A local checkpoint added original ecosystem placements to ENV01, ENV02, ENV03,
+ENV05, ENV06 and ENV07. The corresponding original ESB placement lists contain 37,948, 39,641, 26,530,
+14,883, 38,968 and 6,617 records. Local browser runs entered and drove each map
+without JavaScript or WebGL errors. The renderer selects up to 1,500 nearest
+placements per scene and batches them into 7–24 draws; this visibility rule is
+provisional and is not the PS2 level-of-detail policy. The added ENV03/05/06/07 routes
+were local-only and have not been published. At that checkpoint ENV08 was blocked by its packed
+`trussbridge.col` collision resource; a later decoder recovery is documented below. The terrain detail patch follows the player; current range work expands terrain sampling
+from 300 to 864 feet, not all scenery. The browser now blends the original `_d.pst`
+RGB+alpha detail layer at recovered world scale with near-pass modulation. Original
+projected-coverage pass selection is still pending, and distant WebGL mips average away
+fine detail; this is not a complete PS2 LOD match.
+
+ENV08 (Arlington) now loads and drives locally after recovering the packed
+`trussbridge.col` decoder from the original signed-16-bit expansion path. The local
+renderer therefore has seven maps; only ENV01 and ENV02 are in public v8. A fresh
+capture shows original vegetation and jump obstacles in Arlington. This does not
+establish original terrain LOD or visibility fidelity; projected-coverage pass selection
+and vegetation visibility remain under study.
+
+The completed prepublication detail build passed the seven-map regression with
+original 64×64 detail textures, moving full-sample terrain patches and batched
+vegetation. The 390px renderer checks passed gamepad input, touch cancellation,
+audio-engine startup and graphics-context restoration. Menu navigation passed
+immediately before the terrain-only shader changes. These are local checks; no public
+verification is claimed for this build. Original projected-coverage selection,
+distant mip behavior, fog, geometry rounding and exact vegetation visibility remain
+unmatched.
+
+A separate local touch capture reached Caribou ramp takeoff without injected vehicle
+state or forces and exercised the Nac Nac gesture after rear-wheel contact. The trace
+had no JavaScript errors. The Nac Nac leg-crossing animation is visible in the air and its held extension persists
+through rear-wheel contact. This does not establish trick scoring, chaining, or a
+public-build stunt feature.
 
 The no-disc runtime-content path was previously verified on public v4, commit
 `76f276315650e29841cb122095654239a03cbbed`. That fresh-browser run loaded 68 terrain
@@ -160,7 +206,7 @@ with no JavaScript/WebGL errors, music underruns or mobile overflow. The deploye
 v4 and v5 tests independently verified the no-disc flow publicly.
 
 The heartbeat `publish-atv-web-builds` ran once at 2026-10-11 21:12 UTC and skipped
-because main was unchanged. V4 and v5 were published through the native Sites
+because main was unchanged; this predates v8. V4 through v8 were published through the native Sites
 workflow. A successful unattended publish is still unverified.
 
 ## Release commands

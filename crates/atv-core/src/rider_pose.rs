@@ -1,6 +1,6 @@
-//! Normal riding animation selection from USA v2.00 routines 0x002d8ba0/8e50.
-//! This plans original clips and blend order; tricks, wrecks, events and look-target
-//! selection remain separate gameplay state machines.
+//! Riding and stunt animation selection from USA v2.00 routines 0x002d8ba0/8e50.
+//! Original clips, blend order and stunt main/hold clocks are reconstructed.
+//! Wrecks, scoring, events and look-target selection remain separate systems.
 use crate::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -11,6 +11,8 @@ pub enum Mode {
     Turn,
     Lean,
     Air,
+    Stunt,
+    Hold,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +83,11 @@ pub struct Animator {
     current: crate::animation::Channels,
     saved: crate::animation::Channels,
     head: usize,
+    stunt_motions: Vec<Motion>,
+    stunt_looping: Vec<bool>,
+    stunt_state: crate::stunt::State,
+    stunt_frame: Option<crate::stunt::Frame>,
+    hold_noise: crate::stunt::HoldNoise,
 }
 impl Animator {
     /// Motions must follow Clip::ALL. Reject controller layouts that the original
@@ -135,6 +142,13 @@ impl Animator {
             saved: current.clone(),
             current,
             head,
+            stunt_motions: Vec::new(),
+            stunt_looping: Vec::new(),
+            stunt_state: crate::stunt::State::default(),
+            stunt_frame: None,
+            hold_noise: crate::stunt::HoldNoise::new(
+                &mut crate::engine_audio::OriginalRandom::with_seed(1),
+            ),
         })
     }
     pub fn pose(&self, nodes: &[crate::mesh::Node]) -> Result<crate::animation::Pose> {
@@ -149,7 +163,73 @@ impl Animator {
         )?;
         self.saved = self.current.clone();
         self.state = State::default();
+        self.stunt_state.reset();
+        self.stunt_frame = None;
         Ok(())
+    }
+    /// Original 24 main clips followed by their 24 held extensions.
+    pub fn set_stunts(&mut self, motions: Vec<Motion>, looping: Vec<bool>) -> Result<()> {
+        if motions.len() != 48
+            || looping.len() != 48
+            || motions
+                .iter()
+                .any(|m| !m.animation.duration.is_finite() || m.animation.duration <= 0.)
+        {
+            return Err("stunts require 24 original main and hold motions".into());
+        }
+        self.stunt_motions = motions;
+        self.stunt_looping = looping;
+        Ok(())
+    }
+    pub fn stunt_frame(&self) -> Option<crate::stunt::Frame> {
+        self.stunt_frame
+    }
+    pub fn stunt_landing_safe(&self) -> bool {
+        self.stunt_frame
+            .is_none_or(|frame| frame.landing_safe(self.stunt_motions[frame.id].animation.duration))
+    }
+    pub fn step_controls(
+        &mut self,
+        nodes: &[crate::mesh::Node],
+        input: Input,
+        stunt: crate::stunt::Input,
+        dt: f32,
+    ) -> Result<Mode> {
+        if self.stunt_motions.is_empty() {
+            return Ok(self.step(nodes, input, dt)?.0.mode);
+        }
+        let durations = std::array::from_fn(|i| self.stunt_motions[i].animation.duration);
+        self.stunt_frame = self.stunt_state.step(stunt, dt, &durations)?;
+        let Some(frame) = self.stunt_frame else {
+            return Ok(self.step(nodes, input, dt)?.0.mode);
+        };
+        let mode = if frame.holding {
+            Mode::Hold
+        } else {
+            Mode::Stunt
+        };
+        self.state.snapshot_weight = (self.state.snapshot_weight - dt * 4.).clamp(0., 1.);
+        let snapshot = mode != self.state.previous_mode || frame.started;
+        if snapshot {
+            self.saved = self.current.clone();
+            self.state.snapshot_weight = 1.;
+            self.state.previous_mode = mode;
+        }
+        let index = frame.id + if frame.holding { 24 } else { 0 };
+        let motion = &self.stunt_motions[index];
+        let phase = frame.phase(
+            motion.animation.duration,
+            self.stunt_looping[index],
+            snapshot,
+            self.hold_noise.sample(1.25 * frame.hold_time),
+        );
+        let target = motion.animation.sample_channels(
+            nodes,
+            phase.clamp(0., 1.) * motion.animation.duration,
+            motion.sampling,
+        )?;
+        self.apply(&target, self.state.snapshot_weight, None)?;
+        Ok(mode)
     }
     pub fn step(
         &mut self,
@@ -394,6 +474,9 @@ impl State {
         });
         use Clip::*;
         let blend = match mode {
+            Mode::Stunt | Mode::Hold => {
+                unreachable!("stunts use their own original single-clip path")
+            }
             Mode::Reverse => Blend::Single(Reverse),
             Mode::Turn => Blend::Pair {
                 clips: if back {

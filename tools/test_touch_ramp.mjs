@@ -36,6 +36,14 @@ try {
   await page.waitForFunction(() => window.rampFrames.some(s => s.frame.preload_active), null, { timeout: 5000, polling: 'raf' });
   if (process.env.ATV_TOUCH_RAMP_SCREENSHOT) await page.screenshot({ path: process.env.ATV_TOUCH_RAMP_SCREENSHOT });
   await page.waitForFunction(() => window.rampFrames.some(s => s.frame.preload_active && !s.frame.grounded.some(Boolean)), null, { timeout: 5000, polling: 'raf' });
+  if (process.env.ATV_TOUCH_AIR_AXES === '1') {
+    const before = await page.evaluate(() => window.atvTerrainStatus.frame);
+    await touch('touchMove', [{ ...drive, x: 95, y: 525 }]);
+    await page.waitForFunction(() => window.rampFrames.some(s => !s.frame.grounded.some(Boolean) && s.input.lean > .4 && s.input.steer < -.4 && s.input.throttle === 1), null, { timeout: 5000, polling: 'raf' });
+    const controlled = await page.evaluate(() => window.rampFrames.filter(s => !s.frame.grounded.some(Boolean) && s.input.lean > .4).at(-1));
+    assert(controlled.frame.local_angular_velocity[0] < -.01, `Original ATV01 AeroMomentScaleX=-2 produces negative pitch rate for backward lean: ${JSON.stringify({ before:before.local_angular_velocity, after:controlled.frame.local_angular_velocity })}`);
+    assert.notDeepEqual(controlled.frame.orientation, before.orientation, 'Native body orientation responds; no pose injection');
+  }
   await touch('touchCancel');
   const frames = await page.evaluate(() => window.rampFrames);
   const active = frames.filter(s => s.frame.preload_active);

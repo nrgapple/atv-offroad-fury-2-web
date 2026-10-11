@@ -12,7 +12,19 @@ Recovered world height is `u16_height * node_height_scale * spacing`. ENV01 has 
 
 The first native scan covered all 40 differently named original terrains. All tile and hierarchy payloads parsed; 36 dense outputs passed the initial seam guard, while ENV04, FREE04, FREE05 and NAT01 were rejected for larger seam differences pending investigation. Current results are in `private/reports/terrain-audit.json`; these are not asset fixtures in Git. Bounds/cycle/truncation tests and a synthetic tile-to-world-coordinate test accompany the reader.
 
-Compressed tile payloads, original texture rendering, original adaptive LOD, per-cell triangle selection, and collision contact rules remain unimplemented. Stored per-vertex attribute bits remain opaque.
+Original per-cell triangle selection, packed contact normals and surface indices now feed the vehicle contacts; see [collision evidence](COLLISION.md). Compressed tile payloads and the four seam cases remain unsupported. Original adaptive rendering LOD remains unreconstructed.
+
+### Terrain quality investigation, October 11
+
+The browser selects the finest hierarchy leaves for its dense heightfield. ENV01's nearby mesh uses those original samples, not a lower-resolution stored model. Its embedded color-texture chains end at 256 by 256 pixels; the reader selects that largest level. Each texture covers 64 terrain cells with an eight-pixel border, leaving 240 useful texels over 288 world units. That base color layer alone has limited close-up detail. This is an asset/render-path finding, not a diagnosis of a visitor's device.
+
+The browser's far-field grid is still an authored approximation. The moving full-sample patch has been extended from roughly 300 to 864 world units across, and rebuilding it now leaves scene/vehicle GPU resources intact. It is not the original adaptive LOD algorithm. Renderer diagnostics expose the source grid, spacing, far step, finest patch and largest texture level so future quality/performance comparisons can distinguish source resolution from display choices.
+
+The original scene loader at `0x002098b0` also requests a separate `_d` detail texture. For ENV01 it is a 64-by-64 PST: RGB is constant, while alpha carries the grain. The loader at `0x00168490` and terrain packet setup establish a separate detail scale and blend; `0x001325c0`/`0x00131790` select it using projected texture coverage, not a simple distance cutoff. The browser now loads that original resource and reproduces the recovered single-player near-pass coordinate scale and RGB/alpha blend. Repeating its RGB alone would not restore the intended detail. The original projected-coverage pass selection is still pending: WebGL mip filtering currently averages the detail at distance, rather than reproducing the original transition to its separate far-color modulation.
+
+Inspection of the single-player terrain VU packet referenced at `0x003b5d40` shows constant terrain RGB rather than the extra normal-based sun lighting previously applied by the browser. That extra lighting has been removed from textured terrain; the prop/vehicle lighting stays separate. The near detail blend is connected, but original far-color modulation, projected pass selection, GS quantization and fog remain to be matched; this is not complete PS2 shading fidelity. The browser also now supplies texture gradients before wrapping each subtexture's UVs, preventing discontinuities at tile boundaries from incorrectly selecting tiny mip levels.
+
+Private evidence: the exact-build Ghidra exports, `terrain-vu-disassembly.txt`, terrain audit and browser screenshots. A private inspection script uses opcode-table names from the GPL-3.0+ PCSX2 disassembler solely as a research aid; no PCSX2 code or game microcode is included in this project's runtime or GitHub source.
 
 ## PSG rigid meshes
 

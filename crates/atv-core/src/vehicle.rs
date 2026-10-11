@@ -48,6 +48,7 @@ pub struct VehicleFrame {
     pub grounded: [bool; 4],
     pub chassis_contact_count: usize,
     pub obstacle_contact_count: usize,
+    pub preload_available: bool,
     pub preload_armed: bool,
     pub preload_active: bool,
     pub preload_strength: f32,
@@ -294,6 +295,7 @@ impl Vehicle {
             grounded: self.contacts.map(|c| c.grounded),
             chassis_contact_count: self.chassis_contact_count,
             obstacle_contact_count: self.obstacle_contact_count,
+            preload_available: self.rider_state.preload_status,
             preload_armed: self.rider_state.preload_armed,
             preload_active: self.rider_state.preload_active,
             preload_strength: self.rider_state.preload_strength,
@@ -793,7 +795,7 @@ mod tests {
         let mesh = Rc::new(CollisionMesh {
             transform: [1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0.],
             vertices: vec![[-10., -10., 0.], [0., 10., 0.], [10., -10., 0.]],
-            vertex_normals: None,
+            vertex_normal_bits: None,
             triangles: vec![Triangle {
                 invalid_plane_bits: None,
                 indices: [0, 1, 2],

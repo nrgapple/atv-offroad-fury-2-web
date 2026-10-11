@@ -93,6 +93,33 @@ fn color(data: &PhysicsData, section: &str) -> Result<[f32; 3]> {
     Ok(color)
 }
 
+/// Indexed scene-parser preprocessing, 00142540: unquoted whitespace is
+/// discarded outside section brackets. Thus authored `stone dock.slt` names
+/// the `stonedock` asset; whitespace inside quoted values remains meaningful.
+fn scene_line(line: &str) -> String {
+    let mut quoted = false;
+    let mut brackets = 0i32;
+    line.chars()
+        .take_while(|&c| c != ';')
+        .filter(|&c| match c {
+            '"' => {
+                quoted = !quoted;
+                false
+            }
+            '[' => {
+                brackets += 1;
+                true
+            }
+            ']' => {
+                brackets -= 1;
+                true
+            }
+            ' ' | '\t' | '\r' => quoted || brackets > 0,
+            _ => true,
+        })
+        .collect()
+}
+
 /// 00164dd0 with orthogonalize=1, preserve-look=0. The original 0044f120
 /// initializer supplies +Y up and +Z look; host sqrt differs from VU VRSQRT.
 pub fn placement_matrix(position: [f32; 3], look: [f32; 3], up: [f32; 3]) -> Result<[f32; 16]> {
@@ -191,7 +218,7 @@ pub fn parse(data: &[u8]) -> Result<Scene> {
     let source = std::str::from_utf8(data).map_err(|_| "scene text is not UTF-8")?;
     let clean = source
         .lines()
-        .map(|line| line.split(';').next().unwrap_or(""))
+        .map(scene_line)
         .collect::<Vec<_>>()
         .join("\n");
     let data = PhysicsData::parse(clean.as_bytes())?;
@@ -309,6 +336,19 @@ pub fn parse(data: &[u8]) -> Result<Scene> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn original_scene_whitespace_rules_resolve_visual_and_collision_names() {
+        for (authored, expected) in [
+            ("stone dock.slt", "stonedock"),
+            ("bike4\t.slt", "bike4"),
+            ("\"two words.slt\"", "two words"),
+        ] {
+            let scene = parse(SOURCE.replace("sample.slt", authored).as_bytes()).unwrap();
+            assert_eq!(scene.models[0].name, expected);
+            assert_eq!(scene.collision_models[0].name, expected);
+        }
+        assert_eq!(scene_line("[A section]"), "[A section]");
+    }
     const SOURCE: &str = "[SceneInfo]\nDefaultStartPosition=1,2,3\nDefaultStartDirection=0,0,1\nStart1=4,5,6 ; authored override\n[Environment]\nCubeFile=sample.cub\n[Lights]\nNumberOfLights=1\n[Light1]\nType=Ambient\nColorRGB=20,30,40\n[Fog]\nColorRGB=80,90,100\n[StaticModels]\nNumberOfStaticModels=1\n[Model1]\nSLT=sample.slt\nPosition=3,4,5\nLookVector=0,0,-1\n";
     #[test]
     fn authored_overrides_names_and_flags() {

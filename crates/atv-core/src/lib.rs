@@ -5,6 +5,7 @@ pub mod camera;
 pub mod collision;
 pub mod contact;
 pub mod drivetrain;
+pub mod ecosystem;
 pub mod elf;
 pub mod engine_audio;
 pub mod grip;
@@ -22,6 +23,7 @@ pub mod rider_control;
 pub mod rider_pose;
 pub mod scene;
 pub mod sky;
+pub mod stunt;
 pub mod terrain;
 pub mod texture;
 

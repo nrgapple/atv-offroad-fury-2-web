@@ -1,6 +1,6 @@
 {
-  "status": "This build presents a brief Play / Dev log landing page, then opens the Rust/WebAssembly reconstruction at /play.html. The game includes the recovered title-to-Freestyle route, Caribou and Tioga, pause panel, revised touch controls, and a verified Caribou ramp-preload jump. It is a partial reconstruction; race flow, most menus, other environments, and stunt/scoring systems remain incomplete.",
-  "working_on": "Recover more original menu and map behavior, then race flow, HUD, and stunt systems; validate each connected component in the browser.",
+  "status": "This build connects seven environments with original vegetation and the recovered _d.pst RGB+alpha terrain-detail layer, and a Caribou ramp run with a touch-driven airborne Nac Nac pose. The seven-map detail regression and 390px mobile renderer checks pass, including gamepad, touch cancellation, audio engine and graphics-context restore. Projected-coverage selection, distant terrain behavior, fog, geometry rounding, crash poses, trick scoring and the full game remain incomplete.",
+  "working_on": "Recover the original terrain projected-coverage selection and distant LOD/fog/GS rounding behavior, then validate against the source renderer. Keep vegetation visibility and Nac Nac scoring claims within the evidence.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -113,7 +113,7 @@
       "title": "Original sky and streaming soundtrack",
       "summary": "The recovered sky renders above ENV01, and original music streams directly from the locally opened disc.",
       "details": [
-        "The 21-song catalog is decoded in Rust; browser verification streamed What\u2019s Golden with no underruns during the checkpoint run.",
+        "The 21-song catalog is decoded in Rust; browser verification streamed What’s Golden with no underruns during the checkpoint run.",
         "Stereo ADPCM decoding preserves predictors between chunks. A complete track matched the existing full-file decoder sample for sample.",
         "Music uses small scheduled buffers rather than decoding an entire track into memory."
       ],
@@ -239,12 +239,12 @@
       "title": "We found the title art and the menu data",
       "summary": "A decoded title image explains what is missing from the current drive-first build: the original screens have not vanished, but recovering their files is only the first step toward rebuilding the menus.",
       "details": [
-        "The Rust PST decoder opens the original 640\u00d7448 title screen, and the main-menu background is identified as bk_mainmenu.pst. Inventory of the 59-page UI archive reveals text layouts, widget positions and control groups, with original CEL fonts and animated-menu ATM data.",
-        "The original track catalog calls ENV01 \u201cCaribou Peak.\u201d That gives the map-selection recovery a concrete starting point, but the browser currently connects only ENV01 as a driving scene."
+        "The Rust PST decoder opens the original 640×448 title screen, and the main-menu background is identified as bk_mainmenu.pst. Inventory of the 59-page UI archive reveals text layouts, widget positions and control groups, with original CEL fonts and animated-menu ATM data.",
+        "The original track catalog calls ENV01 “Caribou Peak.” That gives the map-selection recovery a concrete starting point, but the browser currently connects only ENV01 as a driving scene."
       ],
       "limitation": "This image is recovered source artwork, not a screenshot of a working menu. Title/menu navigation, map selection, race HUD and the other maps are not implemented. We have identified and decoded source assets and layout records; browser UI behavior is still the next work.",
       "image": "/devlog-images/we-found-the-title-art-and-the-menu-data-87d47187.png",
-      "caption": "Original 640\u00d7448 title-screen art decoded from PST; the port does not yet display a working title screen."
+      "caption": "Original 640×448 title-screen art decoded from PST; the port does not yet display a working title screen."
     },
     {
       "id": "the-public-rider-now-leans-into-the-ride-d44d41f8",
@@ -326,7 +326,7 @@
       "title": "Freestyle now connects two original environments",
       "summary": "The reconstructed title route now reaches the original Freestyle environment picker, and both Caribou Peak (ENV01) and Tioga Valley (ENV02) enter a driving scene in the local browser build.",
       "details": [
-        "The full frontend check passed title \u2192 Main Menu \u2192 Single Player \u2192 Freestyle using keyboard and synthetic controller input. Start returns to the menu and pauses the Rust frame; on a 390-pixel touch viewport, selecting Caribou loads the scene and Escape returns without overflow or JavaScript errors.",
+        "The full frontend check passed title → Main Menu → Single Player → Freestyle using keyboard and synthetic controller input. Start returns to the menu and pauses the Rust frame; on a 390-pixel touch viewport, selecting Caribou loads the scene and Escape returns without overflow or JavaScript errors.",
         "The page uses decoded original menu layouts, fonts and artwork. Its map choice now changes between Caribou Peak (ENV01) and Tioga Valley (ENV02)."
       ],
       "limitation": "Host-only checkpoint; public v5 still starts directly on Caribou Peak. Only two environments and the Freestyle route are connected. Other modes, original menu callbacks, race HUD and full game flow remain unfinished; this is not whole-game PS2 equivalence.",
@@ -420,13 +420,91 @@
       "summary": "The local v8 homepage has two choices: Play opens the unchanged game at /play.html, while Dev log opens the progress journal. Plain copy explains that the game code is rebuilt in Rust instead of emulating a PlayStation 2.",
       "details": [
         "The page contains only Play and Dev log. A small landing script supports controller navigation between the links and gamepad A to open the selected item.",
-        "The host integration check passed landing \u2192 Play \u2192 original title/menu \u2192 Tioga and pause, then landing \u2192 Dev log \u2192 Play \u2192 title; it also checked Caribou selection at 390 pixels.",
+        "The host integration check passed landing → Play → original title/menu → Tioga and pause, then landing → Dev log → Play → title; it also checked Caribou selection at 390 pixels.",
         "Before Play, the landing route loads no WASM, game runtime or original content. Its layout fits a 390-pixel viewport."
       ],
       "limitation": "Captured and verified on the host before publication. This entry records the local v8 checkpoint; no public landing-page route test is claimed here.",
       "image": "/devlog-images/a-short-landing-page-separates-play-from-the-dev-log-fb722a97.png",
       "caption": "Local v8 landing page on a narrow screen, with only Play and Dev log."
+    },
+    {
+      "id": "a-short-front-door-now-leads-into-the-browser-port-cd47797b",
+      "timestamp": "2026-10-11T22:28:28Z",
+      "recorded_at": "2026-10-11T22:34:33.154293+00:00",
+      "kind": "verification",
+      "title": "A short front door now leads into the browser port",
+      "summary": "The public site opens with two clear choices: Play enters the game at /play.html, while Dev log opens the progress journal. The landing page explains that the game is rebuilt as Rust/WebAssembly code rather than run in an emulator.",
+      "details": [
+        "Public v8 deployed at 2026-10-11 22:28:28 UTC from main commit b1e815162c9cc769091ee5933f2e49e4823a5e24 after CI run 38180312529. A direct request to /deployment.json returned the same commit.",
+        "The public frontend integration passed, and the public gallery served 28 entries with 26 screenshots; all images returned HTTP 200. The live gallery included the new landing captures.",
+        "The landing fits the 390-pixel mobile view and contains only Play and Dev log. Its small script supports gamepad navigation; game code and original runtime content load only after choosing Play."
+      ],
+      "limitation": "Only Caribou Peak and Tioga Valley are connected. Other candidate environments are blocked by unresolved asset-name and collision issues; broader maps, race flow and the full original game remain unfinished.",
+      "image": "/devlog-images/a-short-front-door-now-leads-into-the-browser-port-cd47797b.png",
+      "caption": "Public landing page at mobile width, with Play and Dev log as the only choices."
+    },
+    {
+      "id": "original-trees-now-appear-across-six-local-environment-12f0912d",
+      "timestamp": "2026-10-11T22:43:09.538702+00:00",
+      "recorded_at": "2026-10-11T22:44:39.575797+00:00",
+      "kind": "verification",
+      "title": "Original trees now appear across six local environments",
+      "summary": "Fixing one filename rule made original ecosystem records usable: the resource parser now removes spaces from unquoted fields, and missing material UVs default to zero. The host build can enter and drive ENV01, ENV02, ENV03, ENV05, ENV06 and ENV07 with original trees and bushes visible.",
+      "details": [
+        "The six original ESB placement lists contain 37,948, 39,641, 26,530, 14,883, 38,968 and 6,617 entries respectively. The renderer currently selects up to 1,500 nearest placements and batches them into 7–24 draw calls per map.",
+        "All six local map runs completed without JavaScript or WebGL errors. This adds four host-only routes beyond the two environments in the public build."
+      ],
+      "limitation": "Visibility is provisional and does not reproduce the PS2 level-of-detail rules; this does not mean every ecosystem placement is drawn at once. ENV08 was still blocked at this six-map checkpoint; a later local checkpoint records its decoder recovery. These map changes were not yet published.",
+      "image": "/devlog-images/original-trees-now-appear-across-six-local-environment-12f0912d.png",
+      "caption": "Local ENV06 run with original trees and bushes visible around the course."
+    },
+    {
+      "id": "a-touch-stunt-gesture-now-accompanies-a-real-ramp-run-b85f9bbf",
+      "timestamp": "2026-10-11T22:43:55.897129+00:00",
+      "recorded_at": "2026-10-11T22:44:43.917746+00:00",
+      "kind": "verification",
+      "title": "A touch stunt gesture now accompanies a real ramp run",
+      "summary": "The Nac Nac animation shows the rider crossing a leg during a touch-driven Caribou ramp session.",
+      "details": [
+        "The local session reached ramp takeoff without injecting vehicle state or forces; the captured browser trace has no JavaScript errors.",
+        "The Nac Nac pose animates in the air, and its held extension persists through rear-wheel ground contact. This demonstrates the gesture/animation timing in this run, not original trick scoring or chaining."
+      ],
+      "limitation": "This is a local control and animation check, not a complete stunt system or a public-build feature. Original scoring, trick chaining and full stunt behavior remain unfinished.",
+      "image": "/devlog-images/a-touch-stunt-gesture-now-accompanies-a-real-ramp-run-b85f9bbf.png",
+      "caption": "Local touch session: the Nac Nac gesture control during a Caribou ramp run."
+    },
+    {
+      "id": "arlington-becomes-the-seventh-local-environment-41fc5327",
+      "timestamp": "2026-10-11T22:47:39.869675+00:00",
+      "recorded_at": "2026-10-11T22:52:31.498371+00:00",
+      "kind": "verification",
+      "title": "Arlington becomes the seventh local environment",
+      "summary": "ENV08 (Arlington) now loads and drives locally. The packed trussbridge.col collision decoder was recovered from the original signed-16-bit expansion path, removing the blocker that had kept this track out.",
+      "details": [
+        "A local driving capture shows the ATV on Arlington among its original trees, shrubs and two jumps. The local route list now includes ENV01, ENV02, ENV03, ENV05, ENV06, ENV07 and ENV08.",
+        "The public build remains v8, with only Caribou Peak and Tioga Valley connected. No new environment has been published."
+      ],
+      "limitation": "This verifies a local map route, not PS2 rendering fidelity. Vegetation visibility is still provisional, and terrain detail/LOD quality is under investigation.",
+      "image": "/devlog-images/arlington-becomes-the-seventh-local-environment-41fc5327.png",
+      "caption": "Local Arlington run through the recovered trail vegetation and jump obstacles."
+    },
+    {
+      "id": "the-terrain-detail-was-already-stored-in-an-alpha-chan-7b6fafd6",
+      "timestamp": "2026-10-11T23:00:47.149690+00:00",
+      "recorded_at": "2026-10-11T23:01:52.897183+00:00",
+      "kind": "discovery",
+      "title": "The terrain detail was already stored in an alpha channel",
+      "summary": "The answer to the close-up terrain question was not a larger model or an upscaled texture. The original scene stores a separate _d.pst detail layer; its alpha carries the snow and dirt grain. That layer now blends into the local renderer near the ATV.",
+      "details": [
+        "The ENV01 height grid is 1,281 × 1,281 samples at 4.5-foot spacing. Its largest stored macrotexture is 256 × 256 pixels, with 240 useful texels across 288 feet; no finer stored terrain model was found.",
+        "The browser now uses the original detail texture with recovered world scale and near-pass modulation. Correct UV gradients also keep tile wrapping from choosing tiny mip levels at seams.",
+        "The comparison capture shows grain in close snow that was absent in the preceding local frame. No artificial texture upscale or replacement high-resolution model was used.",
+        "The completed local detail build passed the seven-map regression with original 64×64 detail textures, moving full-sample terrain patches and batched vegetation. The 390px renderer checks passed gamepad input, touch cancellation, audio-engine startup and graphics-context restoration. Menu navigation passed immediately before the terrain-only shader changes."
+      ],
+      "limitation": "This is a local screenshot. Original projected-coverage pass selection, distant mip behavior, fog, and geometry rounding are still not matched; this is not a full PS2 terrain LOD result.",
+      "image": "/devlog-images/the-terrain-detail-was-already-stored-in-an-alpha-chan-7b6fafd6.png",
+      "caption": "Local ENV01 after connecting the original detail layer; fine snow grain appears in the near terrain."
     }
   ],
-  "updated_at": "2026-10-11T22:23:14.397455+00:00"
+  "updated_at": "2026-10-11T23:01:52.897183+00:00"
 }
