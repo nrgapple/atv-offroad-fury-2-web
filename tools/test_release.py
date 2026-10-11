@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from package_release import EXPECTED_FILES, validate_release
+from fetch_site_release import eligible_run
 
 COMMIT = 'a' * 40
 
@@ -22,6 +23,20 @@ def fixture(root):
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_valid_release_is_accepted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture(root)
+            self.assertEqual(validate_release(root, COMMIT)['commit'], COMMIT)
+
+    def test_publication_gate_rejects_pull_request_and_stale_commit(self):
+        base = {'head_sha': COMMIT, 'head_branch': 'main', 'status': 'completed',
+                'conclusion': 'success', 'event': 'push'}
+        self.assertIsNone(eligible_run([{**base, 'event': 'pull_request'}], COMMIT))
+        self.assertIsNone(eligible_run([{**base, 'head_sha': 'b' * 40}], COMMIT))
+        self.assertIsNone(eligible_run([{**base, 'conclusion': 'failure'}], COMMIT))
+        self.assertEqual(eligible_run([base], COMMIT), base)
+
     def test_rejects_corrupted_wasm(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

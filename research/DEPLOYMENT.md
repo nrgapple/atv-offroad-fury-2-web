@@ -2,6 +2,7 @@
 
 Source repository: https://github.com/nrgapple/atv-offroad-fury-2-web (private).
 The user selected **public HTTPS Sites hosting**, matching the Game Boy project.
+Site project ID: `appgprj_6acbf33be01c81919ba8edc04fbcc3d0`.
 Tailscale is a development verification path, not the production handoff.
 The proposed Mac deployment supervisor was removed before it was ever started.
 
@@ -49,6 +50,16 @@ make web
 python3 tools/package_release.py --commit "$(git rev-parse HEAD)"
 python3 -m unittest discover -s tools -p 'test_release*.py'
 ```
+
+An unattended publisher first runs `python3 tools/fetch_site_release.py --site-url
+<literal-verified-Site-URL>`. It returns JSON with `ready`, `unchanged`, or a waiting
+state. On `ready`, use the returned paths and SHA with `python3 tools/stage_site.py
+--release <release> --commit <commit>`, then the Sites skill's fresh-credential
+source-helper/save/deploy workflow. The fetcher verifies current-main CI success,
+artifact hashes and exclusions, and that main did not change during retrieval.
+Staging uses the CI development log revision; it overlays approved local screenshot
+references only for entry IDs whose authored metadata exactly matches that revision.
+Uncommitted local application changes and log edits cannot enter this CI-based publish.
 
 `work/release/static/` is the asset-free static output for hosting, and
 `work/release/release.json` contains commit and file hashes. The packager validates

@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Retrieve only a successful current-main release for the native Sites publisher."""
+import argparse
+import json
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import tempfile
+from urllib.request import urlopen
+
+from package_release import validate_release
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def eligible_run(runs, commit):
+    return next((run for run in runs if run['head_sha'] == commit
+                 and run['head_branch'] == 'main'
+                 and run['status'] == 'completed' and run['conclusion'] == 'success'
+                 and run['event'] in ('push', 'workflow_dispatch')), None)
+
+
+def gh_json(gh, endpoint):
+    result = subprocess.run([gh, 'api', endpoint], check=True, capture_output=True,
+                            text=True, timeout=40)
+    return json.loads(result.stdout)
+
+
+def fetch(repository, site_url=None):
+    gh = shutil.which('gh')
+    if not gh:
+        raise RuntimeError('GitHub CLI is required')
+    if not gh_json(gh, f'repos/{repository}')['private']:
+        raise ValueError('source repository must remain private')
+    commit = gh_json(gh, f'repos/{repository}/commits/main')['sha']
+    if not re.fullmatch(r'[0-9a-f]{40}', commit):
+        raise ValueError('unexpected main commit identifier')
+    if site_url:
+        try:
+            with urlopen(site_url.rstrip('/') + '/deployment.json', timeout=15) as response:
+                published = json.load(response)
+            if published.get('commit') == commit:
+                return {'status': 'unchanged', 'commit': commit}
+        except (OSError, ValueError):
+            pass  # First publication may not contain deployment metadata yet.
+    runs = gh_json(gh, f'repos/{repository}/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=20')
+    run = eligible_run(runs['workflow_runs'], commit)
+    if not run:
+        return {'status': 'waiting_for_ci', 'commit': commit}
+    storage = ROOT / 'work/github-releases'
+    storage.mkdir(parents=True, exist_ok=True)
+    release = storage / commit
+    if not release.exists():
+        with tempfile.TemporaryDirectory(prefix='download-', dir=storage) as temporary:
+            stage = Path(temporary)
+            subprocess.run([gh, 'run', 'download', str(run['id']), '--repo', repository,
+                            '--name', 'web-release', '--dir', str(stage)],
+                           check=True, timeout=120, capture_output=True, text=True)
+            validate_release(stage, commit)
+            stage.rename(release)
+    validate_release(release, commit)
+    if gh_json(gh, f'repos/{repository}/commits/main')['sha'] != commit:
+        return {'status': 'main_changed_during_download', 'commit': commit}
+    return {'status': 'ready', 'commit': commit, 'release': str(release), 'run_url': run['html_url']}
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--repository', default='nrgapple/atv-offroad-fury-2-web')
+    parser.add_argument('--site-url', help='Literal verified public Site URL; used to skip unchanged releases')
+    args = parser.parse_args()
+    print(json.dumps(fetch(args.repository, args.site_url)))
+
+
+if __name__ == '__main__':
+    main()
