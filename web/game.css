@@ -24,3 +24,9 @@ input[type=file] { position: absolute; inset: 0; width: 100%; opacity: 0; cursor
 #menu-notice { position: absolute; bottom: max(8px, env(safe-area-inset-bottom)); left: 10px; right: 10px; text-align: center; font-size: 14px; background: #080606dc; margin: 0; }
 #menu-notice:empty { display: none; }
 body.menu-open #toolbar, body.menu-open #status, body.menu-open #help { visibility: hidden; }
+/* The gameplay surface is an input device, including on long-press Safari. */
+body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+#toolbar { z-index: 1; }
+#menu { min-width: 44px; min-height: 44px; }
+body:not(.menu-open) #help, body:not(.menu-open) #status:not(.error) { display: none; }
+#frontend[data-page=pause], #frontend[data-page=controls] { background: #0005; }

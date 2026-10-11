@@ -45,9 +45,15 @@ try {
   await page.keyboard.down('KeyW'); await page.waitForTimeout(1200); await page.keyboard.up('KeyW');
   state = await page.evaluate(()=>window.atvTerrainStatus); assert(state.frame.speed > 0); assert.equal(state.glError,0);
   if (process.env.ATV_UI_SCREENSHOTS) await page.screenshot({path:`${process.env.ATV_UI_SCREENSHOTS}-tioga-driving.png`});
-  await pad(9); await screen('main');
+  await pad(9); await screen('pause');
   await page.waitForTimeout(100); const paused = await page.evaluate(()=>window.atvTerrainStatus.frame);
   await page.waitForTimeout(150); assert.deepEqual(await page.evaluate(()=>window.atvTerrainStatus.frame),paused,'Menus pause the Rust vehicle');
+  await page.getByRole('button',{name:'Controls',exact:true}).click(); await screen('controls');
+  await page.keyboard.press('Escape'); await screen('pause');
+  await page.getByRole('button',{name:'Resume',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('#frontend').hidden);
+  await page.keyboard.press('Escape'); await screen('pause');
+  await page.getByRole('button',{name:'Quit to Main Menu',exact:true}).click(); await screen('main');
   await page.setViewportSize({width:390,height:844});
   await page.getByRole('button',{name:'Single Player',exact:true}).tap(); await screen('single');
   await page.getByRole('button',{name:'Freestyle',exact:true}).tap(); await screen('tracks');
@@ -59,7 +65,19 @@ try {
   await page.waitForFunction(()=>document.querySelector('#frontend').hidden&&window.atvTerrainStatus.ready,null,{timeout:90000});
   state = await page.evaluate(()=>window.atvTerrainStatus);
   assert.match(state.source,/env01/); assert(state.frame.origin.every(Number.isFinite)); assert.equal(state.glError,0);
-  await page.keyboard.press('Escape'); await screen('main');
+  await page.keyboard.press('Escape'); await screen('pause');
+  assert.equal(await page.locator('#fullscreen').isHidden(),true);
+  assert.equal(await page.locator('#reset').isHidden(),true);
+  assert.equal(await page.locator('#help').isVisible(),false);
+  assert.equal(await page.evaluate(()=>getComputedStyle(document.body).userSelect),'none');
+  const resumeBounds = await page.getByRole('button',{name:'Resume',exact:true}).boundingBox();
+  assert(resumeBounds.height >= 43, 'Portrait pause targets remain finger-sized');
+  await page.getByRole('button',{name:'Controls',exact:true}).tap(); await screen('controls');
+  await page.getByRole('button',{name:'Back',exact:true}).tap(); await screen('pause');
+  await page.getByRole('button',{name:'Resume',exact:true}).tap();
+  await page.waitForFunction(()=>document.querySelector('#frontend').hidden);
+  assert(await page.getByRole('button',{name:'Pause',exact:true}).isVisible());
+  assert(await page.getByRole('button',{name:'Camera',exact:true}).isVisible());
   assert.deepEqual(errors,[]);
   console.log('PASS: original title/menu/track resources, keyboard and controller navigation, truthful unavailable modes, Tioga drive, paused simulation, mobile touch selection, Caribou reload, no disc prompt or browser errors.');
 } finally { await browser.close(); }

@@ -1,5 +1,6 @@
 // Original content and vehicle component simulation run in the Rust worker.
 import { Frontend } from './frontend.js';
+import { mountTouchControls, TouchDrive } from './touch.js';
 import { GameAudio } from './audio.js';
 import { openHostedContent } from './content.js';
 const $ = id => document.getElementById(id);
@@ -18,6 +19,12 @@ let sceneChunks = [], sceneDraws = [], skyChunks = [];
 const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const camera = { x: 0, y: 0, z: 0, yaw: 0, pitch: -.35 };
 const keys = new Set(), pointers = new Map();
+const touchDrive = new TouchDrive();
+const touchControls = mountTouchControls({
+  surface: canvas,
+  active: () => simReady && focused && !document.hidden && !menuOpen && !lost,
+  focus: () => canvas.focus({ preventScroll: true }),
+});
 const diagnostics = { ready: false, frames: 0, vertices: 0, triangles: 0, chunks: 0, glError: 0, camera: [], source: null };
 let audio = new GameAudio(codec, message => { diagnostics.audioError = message; status(`Audio: ${message}`, true); });
 // Read-only snapshot for verification; does not expose the locally opened file.
@@ -599,13 +606,22 @@ function drivingInput() {
     lean: Number(keys.has('KeyE')) - Number(keys.has('KeyQ')) - deadzone(pad?.axes[1]),
     reverse: keys.has('KeyR') || Boolean(pad?.buttons[1]?.pressed),
   };
+  let leftAxis = 0, leftHeld = false;
   for (const pointer of pointers.values()) {
     if (pointer.move) {
       input.steer += pointer.dx / 70;
-      input.throttle = Math.max(input.throttle, -pointer.dy / 70);
-      input.brake = Math.max(input.brake, pointer.dy / 70);
-    } else if (pointer.touch) input.lean -= pointer.dy / 70;
+      leftAxis = -pointer.dy / 70; leftHeld = true;
+    }
   }
+  if (leftHeld || (touchDrive.engaged && input.throttle === 0 && input.brake === 0 && !input.reverse)) {
+    const drive = touchDrive.sample(leftAxis, simFrame?.speed ?? 0);
+    input.throttle = Math.max(input.throttle, drive.throttle);
+    input.brake = Math.max(input.brake, drive.brake);
+    input.reverse ||= drive.reverse;
+  }
+  const touch = touchControls.sample();
+  input.lean += touch.lean;
+  if (touch.preload_axis !== null) input.preload_axis = touch.preload_axis;
   input.throttle = Math.max(0, clamp(input.throttle)); input.brake = Math.max(0, clamp(input.brake));
   // Browser axes point right; the recovered steering scalar points left.
   input.steer = -clamp(input.steer); input.lean = clamp(input.lean);
@@ -614,6 +630,7 @@ function drivingInput() {
 function acceptFrame(frame) {
   if (!frame?.origin?.every(Number.isFinite) || frame.origin.length !== 3 || !frame.orientation?.every(Number.isFinite) || frame.orientation.length !== 4 || !Number.isFinite(frame.speed) || !Number.isFinite(frame.rpm)) throw new Error('Simulation returned a nonfinite pose.');
   simFrame = frame;
+  touchControls.feedback(frame);
   vehicle.position = frame.origin.slice();
   if (frame.quad_node_matrices?.length !== vehicle.nodes.length || frame.quad_node_matrices.some(matrix => matrix.length !== 16 || !matrix.every(Number.isFinite))) throw new Error('Simulation returned an invalid quad linkage pose.');
   vehicle.nodeMatrices = new Float32Array(frame.quad_node_matrices.flat());
@@ -707,6 +724,7 @@ function updateCamera(dt) {
 }
 function render(time) {
   frame = requestAnimationFrame(render);
+  touchControls.refresh();
   if (lost || !gl || !terrain || document.hidden || menuOpen) { lastTime = time; return; }
   const dt = Math.min(.05, Math.max(0, (time - (lastTime || time)) / 1000)); lastTime = time;
   const ratio = Math.min(devicePixelRatio || 1, 1.5), width = Math.max(1, Math.round(innerWidth * ratio)), height = Math.max(1, Math.round(innerHeight * ratio));
@@ -800,7 +818,7 @@ async function loadGame(file = null, environment = "env01") {
     Object.assign(diagnostics, { ready: true, source: source.name, width, depth, min, max, frames: 0 });
     $('reset').disabled = false; $('camera').disabled = !simReady; $('help').hidden = false;
     $('reset').textContent = simReady ? 'Reset ATV' : 'Reset view';
-    $('help').textContent = simReady ? 'WASD / arrows: drive · R: reverse · C / △ / Y: camera · triggers / left stick: controller · left touch: drive' : 'Free camera · drag to look · WASD to move · Q/E up/down';
+    $('help').textContent = simReady ? 'WASD / arrows: drive · R: reverse · C / △ / Y: camera · triggers / left stick: controller · left touch: drive · right: hold, drag to lean, release to preload' : 'Free camera · drag to look · WASD to move · Q/E up/down';
     status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain. Open the disc to load the ATV.');
   } catch (error) { if (token === generation) status(error.message, true); throw error; }
   finally { if (token === generation) $('disc').disabled = false; }
@@ -812,7 +830,7 @@ $('reset').onclick = async () => {
   try { await audio.reset(); acceptFrame(await command(23, simStart)); await command(47, {}); orbit = 0; acceptCameraFrame(await command(46, { dt: 1 / 60, orbit })); simReady = true; buildMesh(); resetCamera(); }
   catch (error) { status(error.message, true); }
 };
-$('menu').onclick = () => { void frontend?.show('main'); };
+$('menu').onclick = () => { void frontend?.show('pause'); };
 $('camera').onclick = () => { if (simReady) cameraCycle = true; canvas.focus({ preventScroll: true }); };
 $('fullscreen').onclick = async () => {
   try { document.fullscreenElement ? await document.exitFullscreen() : await document.documentElement.requestFullscreen(); }
@@ -820,6 +838,7 @@ $('fullscreen').onclick = async () => {
 };
 canvas.addEventListener('pointerdown', event => {
   if (!terrain) return;
+  event.preventDefault();
   canvas.focus({ preventScroll: true }); canvas.setPointerCapture(event.pointerId);
   pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, dx: 0, dy: 0, touch: event.pointerType === 'touch', move: event.pointerType === 'touch' && event.clientX < innerWidth / 2 });
 });
@@ -839,7 +858,7 @@ window.addEventListener('keydown', event => {
   if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyR', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ShiftLeft'].includes(event.code)) { event.preventDefault(); keys.add(event.code); }
 });
 window.addEventListener('keyup', event => keys.delete(event.code));
-const clearInput = () => { keys.clear(); pointers.clear(); simAccumulator = 0; cameraCycle = false; cameraButtonHeld = false; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
+const clearInput = () => { keys.clear(); pointers.clear(); touchControls.clear(); touchDrive.clear(); simAccumulator = 0; cameraCycle = false; cameraButtonHeld = false; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
 const syncAudio = () => { void audio.setActive(focused && !document.hidden && !lost && !menuOpen).catch(error => { diagnostics.audioError = error.message; }); };
 window.addEventListener('blur', () => { focused = false; clearInput(); syncAudio(); });
 window.addEventListener('focus', () => { focused = true; syncAudio(); });
@@ -848,10 +867,13 @@ canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); l
 canvas.addEventListener('webglcontextrestored', () => { try { lost = false; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
 window.addEventListener('pagehide', () => { cancelAnimationFrame(frame); audio.close(); worker.terminate(); clearInput(); });
 try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); initializeGl(); frame = requestAnimationFrame(render); const params = new URLSearchParams(location.search);
-  if (params.get('source') === 'disc' || params.get('drive') === '1') { menuOpen = false; $('frontend').hidden = true; if (params.get('drive') === '1') void loadGame(null, params.get('environment') ?? 'env01').catch(error => status(error.message, true)); }
+  if (params.get('source') === 'disc') { menuOpen = false; $('frontend').hidden = true; }
   else {
     hostedContent = openHostedContent();
     frontend = new Frontend({codec, json, content: hostedContent, read, start: environment => loadGame(null, environment), active: open => { menuOpen = open; clearInput(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
-    document.body.classList.add('menu-open'); void frontend.init();
+    if (params.get('drive') === '1') {
+      menuOpen = false; $('frontend').hidden = true;
+      void frontend.init(false).then(() => loadGame(null, params.get('environment') ?? 'env01')).catch(error => status(error.message, true));
+    } else { document.body.classList.add('menu-open'); void frontend.init(); }
   } }
 catch (error) { status(error.message, true); $('menu-notice').textContent = error.message; }

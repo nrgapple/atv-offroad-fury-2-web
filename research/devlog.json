@@ -1,6 +1,6 @@
 {
-  "status": "The host build now follows the recovered title \u2192 Main Menu \u2192 Single Player \u2192 Freestyle route and can drive in Caribou Peak (ENV01) or Tioga Valley (ENV02). Public v5 still opens directly on Caribou Peak; the recovered route and second map await the next release. Other modes, race HUD and full original game flow remain unfinished.",
-  "working_on": "Complete original menu callbacks and broaden map coverage; keep validating the browser route and collision behavior against recovered data.",
+  "status": "Public v6 includes the recovered title/menu/Freestyle route and Caribou Peak (ENV01) plus Tioga Valley (ENV02). The local build now adds a pause panel using recovered overlay art and a tested mobile hold/lean/release control surface; one real touch-driven Caribou ramp run activated native preload and lifted all four wheels. These changes await a later public release; most original menus, modes, race HUD, stunts and progression remain incomplete.",
+  "working_on": "Prepare and verify the next release with the tested pause panel and touch controls, then continue original menu, map, stunt and race-flow recovery.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -347,7 +347,54 @@
       "limitation": "This is a targeted malformed-geometry recovery, not proof of complete collision equivalence or a PS2-hardware match. Public v5 does not yet include Tioga or the reconstructed menu; race flow and other environments remain incomplete.",
       "image": "/devlog-images/four-degenerate-tioga-faces-no-longer-stop-the-map-5baa3ade.png",
       "caption": "Local Tioga Valley driving scene after the targeted degenerate-face handling."
+    },
+    {
+      "id": "the-recovered-menus-and-tioga-valley-are-now-public-cfe7c40e",
+      "timestamp": "2026-10-11T22:01:19.680736+00:00",
+      "recorded_at": "2026-10-11T22:05:41.614466+00:00",
+      "kind": "verification",
+      "title": "The recovered menus and Tioga Valley are now public",
+      "summary": "Public v6 starts at the recovered title screen, follows the original Single Player/Freestyle route, and lets visitors drive both Caribou Peak and Tioga Valley.",
+      "details": [
+        "The deployed CI build is commit 989214801f4f9a3f33971d3d0c65f91c4f6d816a. A fresh public browser run passed the menu route through Tioga driving, controller input, Caribou selection on a 390-pixel viewport, and menu pause/return without JavaScript errors.",
+        "The browser runs the authored Rust/WebAssembly port and autoloads approved runtime content from the Site manifest; it does not run a disc image or emulator."
+      ],
+      "limitation": "This release connects the title-to-Freestyle path and two environments. Most menu callbacks, modes, maps, race HUD and the full game remain unfinished.",
+      "image": "/devlog-images/the-recovered-menus-and-tioga-valley-are-now-public-cfe7c40e.png",
+      "caption": "Public v6 Tioga Valley scene reached through the recovered title and Freestyle menus."
+    },
+    {
+      "id": "a-touchscreen-release-follows-the-original-preload-gat-de0f97a3",
+      "timestamp": "2026-10-11T22:13:14.183440+00:00",
+      "recorded_at": "2026-10-11T22:13:14.214064+00:00",
+      "kind": "verification",
+      "title": "A touchscreen release can trigger the original preload",
+      "summary": "The revised mobile layout maps a right-side hold/release gesture to the original lean preload. On a real Caribou ramp run, the Rust simulation armed the preload, activated it on release, and lifted all four wheels.",
+      "details": [
+        "The driving toolbar keeps Pause and Camera visible. The right half of the game view is a hold/lean/release surface: hold to prepare preload, drag independently to lean, and release when the native arming flag appears. The left pad brakes on pullback, then reverses near a stop; switching forward also brakes first.",
+        "The revised Chromium test passed right-half gestures at multiple points, continuous lean while holding preload, cancellation, simultaneous left/right input, brake-to-reverse-to-forward transitions, focus/menu pause, narrow layout, and text-selection suppression on the game surface while keeping the dev log selectable.",
+        "A real WASM ramp run used browser touches without injecting vehicle state or force. Native preload became active at strength 1 after release; upward velocity measured 9.28 feet/second at arming and 25.02 feet/second during the active interval, with all four wheel contacts clear.",
+        "That measured trajectory also reflects the ramp slope and other forces; it does not isolate the preload contribution."
+      ],
+      "limitation": "One Caribou ramp run is verified in host Chromium; it does not establish repeatability on other terrain. Physical iOS behavior, original trick modifiers, stunt scoring, IK and crash animation remain unverified or incomplete. The pause and touch updates are not in public v6.",
+      "image": "/devlog-images/a-touchscreen-release-follows-the-original-preload-gat-de0f97a3.png",
+      "caption": "Local mobile capture: PRELOADED feedback appears after release as the quad clears the Caribou ramp."
+    },
+    {
+      "id": "a-real-pause-panel-now-sits-over-the-ride-33765b28",
+      "timestamp": "2026-10-11T22:11:50.293140+00:00",
+      "recorded_at": "2026-10-11T22:13:18.316681+00:00",
+      "kind": "build",
+      "title": "The pause menu now uses recovered overlay art",
+      "summary": "The local build now draws a pause menu from the game's original overlay resources instead of leaving the driving toolbar as the only way back to game controls.",
+      "details": [
+        "The recovered [Main Menu] overlay contributes 14 panel/navigation icons and three selection stretches, with original fonts and track textures. The authored panel offers Resume, Reset ATV, Controls, Fullscreen, Dev log and Quit to Main Menu.",
+        "The local frontend check confirmed the Rust simulation freezes while paused on desktop and 390-pixel layouts with 44-pixel targets. Resume, Controls/back and Quit were tested; only Pause and Camera stay on the driving toolbar."
+      ],
+      "limitation": "This is a web-authored pause panel using recovered game art, not the original pause callback implementation. Other pages and original game modes remain unfinished; this local panel is not in public v6.",
+      "image": "/devlog-images/a-real-pause-panel-now-sits-over-the-ride-33765b28.png",
+      "caption": "Local pause panel using recovered overlay art and selection texture over the frozen scene."
     }
   ],
-  "updated_at": "2026-10-11T21:53:08.984356+00:00"
+  "updated_at": "2026-10-11T22:13:18.316681+00:00"
 }

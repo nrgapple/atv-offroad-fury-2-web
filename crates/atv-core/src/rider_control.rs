@@ -65,6 +65,8 @@ pub struct RiderInput {
     pub half_air_control: bool,
     pub lateral_axis: f32,
     pub lean_axis: f32,
+    /// Optional browser gesture channel; None is the original shared axis.
+    pub preload_axis: Option<f32>,
     pub lean_axis_rate: f32,
     pub pitch: f32,
     pub roll: f32,
@@ -234,6 +236,7 @@ pub fn step(
         input.lateral_axis,
         input.lean_axis,
         input.lean_axis_rate,
+        input.preload_axis.unwrap_or(input.lean_axis),
         input.pitch,
         input.roll,
         input.local_forward_speed,
@@ -319,12 +322,12 @@ pub fn step(
             state.preload_status = false;
         } else {
             state.preload_status = true;
-            if input.lean_axis > f32::from_bits(0x3f4ccccd) {
+            if input.preload_axis.unwrap_or(input.lean_axis) > f32::from_bits(0x3f4ccccd) {
                 state.preload_armed = true;
                 state.timer = 0.25;
             }
             if state.preload_armed
-                && input.lean_axis < f32::from_bits(0xbe4ccccd)
+                && input.preload_axis.unwrap_or(input.lean_axis) < f32::from_bits(0xbe4ccccd)
                 && input.lean_axis_rate < -config.preload_min_rate
             {
                 state.preload_active = true;
@@ -407,6 +410,135 @@ mod tests {
         assert!(!state.preload_active);
         assert_eq!(f[1], 100.);
         assert_eq!(state.preload_strength, 1.); // cleared on the following call
+    }
+    #[test]
+    fn held_then_released_lean_uses_native_ramp_gates_not_hold_duration() {
+        let dt = 1.0 / 60.0;
+        for (grounded, speed, vertical, allowed) in [
+            (true, 40.0, 6.0, true),
+            (true, 40.0, 0.0, false),
+            (true, 30.0, 6.0, false),
+            (true, 40.0, 5.0, false),
+            (false, 40.0, 6.0, false),
+        ] {
+            let mut state = RiderState::default();
+            let mut gesture = LeanGesture::default();
+            let mut input = RiderInput {
+                grounded,
+                local_forward_speed: speed,
+                world_vertical_speed: vertical,
+                lean_axis: 1.0,
+                preload_world_direction: [0.0, 1.0, 0.0],
+                ..Default::default()
+            };
+            // Holding back refreshes the native timing sample and arming window;
+            // it is not a cumulative charge, even after several seconds.
+            for frame in 1..=300 {
+                input.lean_axis_rate = gesture.sample(1.0, frame as f32 * 1000.0 * dt).unwrap();
+                step(
+                    config(),
+                    &mut state,
+                    input,
+                    dt,
+                    &mut [0.0; 3],
+                    &mut [0.0; 3],
+                )
+                .unwrap();
+            }
+            assert_eq!(state.preload_armed, allowed);
+            assert_eq!(state.preload_strength, 0.0);
+            input.lean_axis = -1.0;
+            input.lean_axis_rate = gesture.sample(-1.0, 301.0 * 1000.0 * dt).unwrap();
+            let mut force = [0.0; 3];
+            step(config(), &mut state, input, dt, &mut force, &mut [0.0; 3]).unwrap();
+            assert_eq!(state.preload_active, allowed);
+            assert_eq!(force[1], if allowed { 100.0 } else { 0.0 });
+        }
+    }
+    #[test]
+    fn separate_touch_preload_does_not_fire_when_physical_lean_changes() {
+        let mut state = RiderState::default();
+        let mut gesture = LeanGesture::default();
+        let mut input = RiderInput {
+            grounded: true,
+            local_forward_speed: 40.0,
+            world_vertical_speed: 6.0,
+            preload_axis: Some(1.0),
+            preload_world_direction: [0.0, 1.0, 0.0],
+            ..Default::default()
+        };
+        for (i, lean) in [0.0, 1.0, -1.0, 0.5, -0.5].into_iter().enumerate() {
+            input.lean_axis = lean;
+            input.lean_axis_rate = gesture.sample(1.0, 100.0 + i as f32 * 16.0).unwrap();
+            let mut force = [0.0; 3];
+            step(
+                config(),
+                &mut state,
+                input,
+                0.016,
+                &mut force,
+                &mut [0.0; 3],
+            )
+            .unwrap();
+            assert!(state.preload_armed);
+            assert!(!state.preload_active);
+            assert_eq!(force[1], 0.0);
+        }
+        input.lean_axis = 0.0;
+        input.preload_axis = Some(-1.0);
+        input.lean_axis_rate = gesture.sample(-1.0, 180.0).unwrap();
+        let mut force = [0.0; 3];
+        step(
+            config(),
+            &mut state,
+            input,
+            0.016,
+            &mut force,
+            &mut [0.0; 3],
+        )
+        .unwrap();
+        assert!(state.preload_active);
+        assert_eq!(force[1], 100.0);
+    }
+    #[test]
+    fn returning_to_neutral_does_not_release_preload() {
+        let mut state = RiderState::default();
+        let mut gesture = LeanGesture::default();
+        let mut input = RiderInput {
+            grounded: true,
+            local_forward_speed: 40.0,
+            world_vertical_speed: 6.0,
+            lean_axis: 1.0,
+            preload_world_direction: [0.0, 1.0, 0.0],
+            ..Default::default()
+        };
+        input.lean_axis_rate = gesture.sample(1.0, 100.0).unwrap();
+        step(
+            config(),
+            &mut state,
+            input,
+            0.016,
+            &mut [0.0; 3],
+            &mut [0.0; 3],
+        )
+        .unwrap();
+        input.lean_axis = 0.0;
+        for frame in 1..=30 {
+            input.lean_axis_rate = gesture.sample(0.0, 100.0 + frame as f32 * 16.0).unwrap();
+            let mut force = [0.0; 3];
+            step(
+                config(),
+                &mut state,
+                input,
+                0.016,
+                &mut force,
+                &mut [0.0; 3],
+            )
+            .unwrap();
+            assert!(!state.preload_active);
+            assert_eq!(force, [0.0; 3]);
+        }
+        assert!(!state.preload_armed);
     }
     #[test]
     fn flick_rate_measures_only_original_threshold_crossing() {

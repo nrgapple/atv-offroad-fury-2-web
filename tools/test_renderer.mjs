@@ -79,7 +79,7 @@ try {
   await page.keyboard.down('KeyS'); await steps(108); await page.keyboard.up('KeyS');
   const braked = await read(); finite(braked);
   assert(braked.frame.speed < driven.frame.speed, 'Original brakes must reduce speed');
-  await page.locator('#reset').click(); await page.waitForTimeout(800);
+  await page.locator('#menu').click(); await page.getByRole('button', {name:'Reset ATV', exact:true}).click(); await page.waitForTimeout(800);
   assert(distance((await read()).frame.origin, loaded.frame.origin) < 2, 'Reset returns the body to the original scene start');
   for (const preset of [1, 2, 3, 4, 0]) {
     await page.locator('#camera').click();
@@ -126,7 +126,7 @@ try {
   assert.equal(restored.sceneInstances, loaded.sceneInstances);
   await page.evaluate(() => Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => { throw new DOMException('blocked', 'SecurityError'); } }));
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.locator('#reset').click(); await page.waitForTimeout(300);
+  await page.locator('#menu').click(); await page.getByRole('button', {name:'Reset ATV', exact:true}).click(); await page.waitForTimeout(300);
   const cdp = await page.context().newCDPSession(page);
   const point = (id, x, y) => ({ id, x, y, radiusX: 1, radiusY: 1, force: 1 });
   const before = await read();
@@ -136,7 +136,7 @@ try {
   await page.waitForTimeout(500);
   const during = await read(); finite(during);
   assert(during.input.throttle > .5 && during.input.steer < 0);
-  assert.notEqual(during.camera[3], before.camera[3]);
+  assert.equal(during.input.preload_axis, 1, 'Right touch holds preload without orbiting the camera');
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
   await page.waitForTimeout(100);
   const cancelled = await read();

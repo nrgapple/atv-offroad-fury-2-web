@@ -17,7 +17,7 @@ export class Frontend {
     this.loaded = new Set(); this.page = 'loading'; this.selection = 0; this.track = 0; this.busy = false; this.lastPad = new Set(); this.alive = true;
     window.addEventListener('keydown', e => {
       if (e.repeat || this.busy) return;
-      if (this.root.hidden) { if (e.code === 'Escape') { e.preventDefault(); void this.show('main'); } return; }
+      if (this.root.hidden) { if (e.code === 'Escape') { e.preventDefault(); void this.show('pause'); } return; }
       const action = ({ ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'accept', Space: 'accept', Escape: 'back', Backspace: 'back' })[e.code];
       if (action) { e.preventDefault(); void this.action(action); }
     });
@@ -28,7 +28,8 @@ export class Frontend {
         let pads = []; try { pads = [...navigator.getGamepads()].filter(Boolean); } catch { /* browser without gamepad permission */ }
         const held = new Set();
         for (const p of pads) {
-          if (p.buttons[0]?.pressed || p.buttons[9]?.pressed) held.add('accept');
+          if (p.buttons[0]?.pressed) held.add('accept');
+          if (p.buttons[9]?.pressed) held.add('pause');
           if (p.buttons[1]?.pressed || p.buttons[3]?.pressed) held.add('back');
           if (p.buttons[12]?.pressed || p.axes[1] < -.55) held.add('up');
           if (p.buttons[13]?.pressed || p.axes[1] > .55) held.add('down');
@@ -36,8 +37,11 @@ export class Frontend {
           if (p.buttons[15]?.pressed || p.axes[0] > .55) held.add('right');
         }
         if (this.root.hidden) {
-          if (pads.some(p => p.buttons[9]?.pressed) && !this.lastPad.has('accept')) void this.show('main');
-        } else for (const action of held) if (!this.lastPad.has(action)) void this.action(action);
+          if (held.has('pause') && !this.lastPad.has('pause')) void this.show('pause');
+        } else for (const action of held) if (!this.lastPad.has(action)) {
+          if (action === 'pause' && ['pause','controls'].includes(this.page) && !this.busy) this.resume();
+          else void this.action(action === 'pause' ? 'accept' : action);
+        }
         this.lastPad = held;
         if (!this.root.hidden && !this.busy && this.page !== 'loading') this.draw();
       } else this.lastPad.clear();
@@ -62,7 +66,18 @@ export class Frontend {
     if (!item) throw new Error(`Original UI member missing: ${name}`);
     return this.codec(3, item.bytes, item.i);
   }
-  async document(name) { return sections(await this.json(54, await this.data(name))); }
+  async document(name, section) {
+    let bytes = await this.data(name);
+    if (section) {
+      // Overlays.pb has a stray un-commented authoring note outside the pause
+      // section. Decode only the requested section, retaining its original bytes.
+      const text = new TextDecoder('latin1').decode(bytes), headers = [...text.matchAll(/^\[([^\]\r\n]+)\][^\S\r\n]*\r?$/gm)];
+      const index = headers.findIndex(m => m[1].toLowerCase() === section.toLowerCase());
+      if (index < 0) throw new Error(`Original UI section missing: ${section}`);
+      bytes = bytes.slice(headers[index].index, headers[index+1]?.index ?? bytes.length);
+    }
+    return sections(await this.json(54, bytes));
+  }
   async image(name) {
     name = base(name).replace(/\.(tga|pst)$/, '');
     if (this.images.has(name)) return this.images.get(name);
@@ -94,7 +109,7 @@ export class Frontend {
       this.animations.set(texture, frames);
     }
   }
-  async init() {
+  async init(showTitle = true) {
     try {
       await this.archive('/STARTAPP.RES'); await this.archive('/UI/RESOURCE/TITLE.RES');
       this.globals = await this.document('gwidgets.dat');
@@ -103,15 +118,98 @@ export class Frontend {
       this.tracks = [...tracks.entries()].filter(([s, f]) => /^unspnat\d+$/.test(s) && ['env01', 'env02'].includes(f.scn))
         .map(([, f]) => ({ id: f.scn, name: unquote(f.name), image: f.image }));
       this.track = this.tracks.findIndex(t => t.id === 'env01');
-      await this.font(fontName); await this.image('title'); await this.show('title');
+      await this.font(fontName); await this.image('title'); if (showTitle) await this.show('title');
     } catch (error) { this.fail(error); }
   }
   fail(error) { this.notice.textContent = error.message; this.busy = false; this.root.dataset.error = 'true'; }
+  resume() { this.root.hidden = true; this.active(false); }
+  async loadPause() {
+    if (this.pauseItems) return;
+    await this.archive('/STARTAPP.RES'); await this.archive('/STARTEVT.RES'); await this.archive('/OVERLAYS.RES');
+    await this.archive('/TRACKS/TRACKSA/ENV01/E01_FR.RES');
+    const pauseLayout = (await this.document('overlays.pb', 'Main Menu')).get('main menu');
+    this.pauseLayout = pauseLayout;
+    if (!this.pauseLayout) throw new Error('Original pause layout is missing.');
+    const p = this.pauseLayout;
+    for (let i = 1; i <= num(p.numicons); i++) await this.image(unquote(p[`icon${i}texture`]));
+    for (let i = 1; i <= num(p.numselectedicons); i++) await this.image(unquote(p[`selectedicon${i}texture`]));
+    for (const name of [fontName, unquote(p.selectedfont), unquote(p.text12font)]) await this.font(name);
+    // Browser commands use the original pause graphics; these callbacks are port-specific.
+    this.pauseItems = [
+      { label: 'Resume', run: () => this.resume() },
+      { label: 'Reset ATV', run: async () => { await document.getElementById('reset').onclick(); this.resume(); } },
+      { label: 'Controls', run: () => this.show('controls') },
+      { label: 'Fullscreen', run: async () => {
+        if (!document.fullscreenEnabled) { this.notice.textContent = 'This browser already uses the available game view. Use landscape for a wider view.'; return; }
+        if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen();
+      } },
+      { label: 'Dev log', run: () => { location.href = 'devlog.html'; } },
+      { label: 'Quit to Main Menu', run: () => this.show('main') },
+    ];
+  }
+  pausePosition(index) {
+    const [x,y] = this.pauseLayout.text1offset.split(',').map(Number);
+    return [x, y + index * (this.portraitPause ? 72 : 35)];
+  }
+  pauseIcon(prefix, offset = [0,0], extraHeight = 0) {
+    const p = this.pauseLayout, name = base(unquote(p[`${prefix}texture`]));
+    let image = this.images.get(name);
+    if (!image) return;
+    const color = p[`${prefix}color`];
+    if (color) {
+      const key = `${name}:${color}`;
+      if (!this.images.has(key)) {
+        const tinted = document.createElement('canvas'); tinted.width = image.width; tinted.height = image.height;
+        const ctx = tinted.getContext('2d'); ctx.drawImage(image,0,0);
+        const pixels = ctx.getImageData(0,0,image.width,image.height), tint = color.split(',').map(Number);
+        for (let i = 0; i < pixels.data.length; i += 4) for (let channel = 0; channel < 3; channel++) pixels.data[i+channel] = pixels.data[i+channel] * tint[channel] / 255;
+        ctx.putImageData(pixels,0,0); this.images.set(key,tinted);
+      }
+      image = this.images.get(key);
+    }
+    const [x,y] = p[`${prefix}offset`].split(',').map(Number);
+    const [u1,u2,v1,v2] = p[`${prefix}uvs`].split(',').map(Number);
+    const width = num(p[`${prefix}width`], Math.abs(u2-u1)+1), height = num(p[`${prefix}height`], Math.abs(v2-v1)+1) + extraHeight;
+    const c = this.ctx; c.save(); c.globalAlpha = num(p[`${prefix}alpha`],255)/255;
+    c.translate(x+offset[0]+(u2<u1?width:0),y+offset[1]+(v2<v1?height:0)); c.scale(u2<u1?-1:1,v2<v1?-1:1);
+    // Inclusive texel bounds also support one-pixel stretched panel strips.
+    c.drawImage(image,Math.min(u1,u2),Math.min(v1,v2),Math.min(image.width-Math.min(u1,u2),Math.abs(u2-u1)+1),Math.min(image.height-Math.min(v1,v2),Math.abs(v2-v1)+1),0,0,width,height); c.restore();
+  }
+  drawPause() {
+    const p = this.pauseLayout; if (!p) return;
+    const portrait = innerWidth < 600 && innerHeight > innerWidth;
+    if (this.portraitPause !== portrait || this.canvas.height !== (portrait ? 760 : 448)) {
+      this.portraitPause = portrait; this.canvas.height = portrait ? 760 : 448;
+      this.canvas.parentElement.style.aspectRatio = `640 / ${this.canvas.height}`;
+      this.rebuildButtons();
+    }
+    const stretch = portrait ? 250 : 0;
+    for (let i = 1; i <= num(p.numicons); i++) this.pauseIcon(`icon${i}`, [0,[3,6,9,11,12,13,14].includes(i)?stretch:0], [2,5,8].includes(i)?stretch:0);
+    const title = this.page === 'controls' ? 'Controls' : unquote(p.text12text);
+    const titlePos = p.text12offset.split(',').map(Number);
+    this.text(title,...titlePos,unquote(p.text12font));
+    if (this.page === 'pause') {
+      const pos = this.pausePosition(this.selection);
+      for (let i = 1; i <= num(p.numselectedicons); i++) this.pauseIcon(`selectedicon${i}`, pos);
+      this.pauseItems.forEach((item,i) => {
+        const [x,y] = this.pausePosition(i), chosen = i === this.selection;
+        this.ctx.save(); this.ctx.translate(x,y); if (portrait) this.ctx.scale(1.25,1.25);
+        this.text(item.label,0,0,chosen?unquote(p.selectedfont):fontName,chosen?p.selectedcolor:p.unselectedcolor,chosen?num(p.selectedalpha):num(p.unselectedalpha)); this.ctx.restore();
+      });
+    } else {
+      const lines = ['TOUCH', 'Left: slide forward to accelerate.', 'Pull back to brake, then reverse.', 'Right: hold to preload; drag to lean.', 'Lift your finger to release preload.', '', 'CONTROLLER', 'Left stick: steer. Triggers: drive / brake.', 'Left stick up / down: lean.', 'Y / triangle: camera. Start: pause.', '', 'KEYBOARD', 'WASD / arrows: drive. R: reverse.', 'Q / E: lean. C: camera. Esc: pause.'];
+      lines.forEach((line,i) => { this.ctx.save(); this.ctx.translate(95,125+i*(portrait?31:17)); if (!portrait) this.ctx.scale(.75,.75); this.text(line,0,0,fontName,'220,220,220'); this.ctx.restore(); });
+    }
+    this.text(this.page === 'controls'?'Back':'Select',317,365+stretch,fontName);
+  }
   async show(page) {
     delete this.root.dataset.error;
     this.busy = true; this.root.hidden = false; this.active(true); this.notice.textContent = ''; this.buttons.replaceChildren();
+    this.canvas.height = 448; this.canvas.parentElement.style.aspectRatio = '640 / 448';
     try {
-      if (page !== 'title') {
+      if (page === 'pause' || page === 'controls') {
+        await this.loadPause();
+      } else if (page !== 'title') {
         const number = { main: '01', single: '02', tracks: '06' }[page];
         // widgets.dat has the same basename in each archive: explicitly replace this page's member.
         await this.archive(`/UI/RESOURCE/PAGEA/PAGE${number}.RES`);
@@ -151,13 +249,20 @@ export class Frontend {
   label(id) { return unquote(this.control(id).find(w => w.type === 'Overlay_Text' && w.text)?.text); }
   button(label, x, y, width, height, action, selected = false) {
     const b = document.createElement('button'); b.type = 'button'; b.textContent = label; b.setAttribute('aria-label', label);
-    b.style.left = `${x / 6.4}%`; b.style.top = `${y / 4.48}%`; b.style.width = `${width / 6.4}%`; b.style.height = `${height / 4.48}%`;
+    b.style.left = `${x / 6.4}%`; b.style.top = `${y / this.canvas.height * 100}%`; b.style.width = `${width / 6.4}%`; b.style.height = `${height / this.canvas.height * 100}%`;
     b.setAttribute('aria-current', String(selected)); b.onclick = () => void action(); this.buttons.append(b);
   }
   rebuildButtons() {
     this.buttons.replaceChildren();
     if (this.page === 'title') this.button('Start', 0, 0, 640, 448, () => this.action('accept'));
-    else if (this.page === 'tracks') {
+    else if (this.page === 'pause') {
+      this.pauseItems.forEach((item, i) => {
+        const [x,y] = this.pausePosition(i);
+        this.button(item.label, x - 42, y - 1, 457, this.portraitPause ? 72 : 35, () => { this.selection = i; return this.action('accept'); }, i === this.selection);
+      });
+    } else if (this.page === 'controls') {
+      this.button('Back', 275, this.portraitPause ? 610 : 360, 290, this.portraitPause ? 72 : 40, () => this.show('pause'));
+    } else if (this.page === 'tracks') {
       this.button('Previous environment', 15, 125, 40, 80, () => this.action('left'));
       this.button('Next environment', 245, 125, 50, 80, () => this.action('right'));
       this.button(`Ride ${this.tracks[this.track].name}`, 350, 380, 86, 50, () => this.action('accept'));
@@ -166,13 +271,24 @@ export class Frontend {
       for (let i = 0; i < count; i++) this.button(this.label(i + 1), 18, 70 + i * 30, 270, 30, () => { this.selection = i; return this.action('accept'); }, i === this.selection);
       this.button('Next', 350, 380, 86, 50, () => this.action('accept'));
     }
-    if (this.page !== 'title') this.button('Back', 440, 380, 95, 50, () => this.action('back'));
+    if (!['title','pause','controls'].includes(this.page)) this.button('Back', 440, 380, 95, 50, () => this.action('back'));
     this.root.dataset.page = this.page; this.root.dataset.selection = String(this.selection);
     this.root.dataset.track = this.tracks[this.track]?.id ?? '';
   }
   async action(action) {
     if (this.busy || this.root.hidden) return;
     this.notice.textContent = '';
+    if (this.page === 'pause') {
+      if (action === 'back') return this.resume();
+      if (action === 'up' || action === 'down') {
+        this.selection = (this.selection + (action === 'up' ? -1 : 1) + this.pauseItems.length) % this.pauseItems.length;
+        this.rebuildButtons();
+      } else if (action === 'accept') {
+        try { await this.pauseItems[this.selection].run(); } catch (error) { this.fail(error); }
+      }
+      this.draw(); return;
+    }
+    if (this.page === 'controls') { if (action === 'back' || action === 'accept') return this.show('pause'); return; }
     if (action === 'back') return this.show(({ main: 'title', single: 'main', tracks: 'single' })[this.page] ?? 'title');
     if (this.page === 'title') { if (action === 'accept') return this.show('main'); return; }
     if (this.page === 'tracks') {
@@ -239,6 +355,7 @@ export class Frontend {
   }
   draw() {
     const c = this.ctx; c.clearRect(0,0,640,448);
+    if (this.page === 'pause' || this.page === 'controls') { this.drawPause(); return; }
     if (this.page === 'title') { c.drawImage(this.images.get('title'),0,0); this.text('Press START',320,298,fontName,'255,255,255',255,'CenterHorizontal'); return; }
     if (!this.background) return;
     c.drawImage(this.background,0,0);

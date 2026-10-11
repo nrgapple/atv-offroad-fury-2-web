@@ -242,6 +242,11 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     brake: json_number(raw, "brake")?,
                     steer: json_number(raw, "steer")?,
                     lean: json_number(raw, "lean")?,
+                    preload_axis: raw
+                        .get("preload_axis")
+                        .filter(|v| !v.is_null())
+                        .map(|_| json_number(raw, "preload_axis"))
+                        .transpose()?,
                     reverse: raw
                         .get("reverse")
                         .and_then(serde_json::Value::as_bool)

@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#07122a">
   <title>ATV Offroad Fury 2</title>
   <link rel="stylesheet" href="game.css">
+  <link rel="stylesheet" href="touch.css">
 </head>
 <body>
   <canvas id="game" aria-label="Original terrain and ATV reconstruction" tabindex="0"></canvas>
@@ -14,12 +15,13 @@
     <p id="menu-notice" role="status">Loading original menus…</p>
   </section>
   <div id="toolbar">
-    <button id="menu" type="button">Menu</button>
+    <button id="menu" type="button" aria-label="Pause">Ⅱ</button>
+    <button id="camera" type="button" disabled>Camera</button>
+  </div>
+  <div hidden>
     <input id="disc" type="file" accept=".iso,.tr2" hidden>
     <button id="fullscreen" type="button">Fullscreen</button>
     <button id="reset" type="button" disabled>Reset view</button>
-    <button id="camera" type="button" disabled>Camera</button>
-    <a class="button" href="devlog.html">Dev log</a>
   </div>
   <p id="status" role="status">Loading original terrain…</p>
   <p id="help" hidden>Free camera · drag to look · WASD to move · Q/E up/down · controller sticks or touch</p>

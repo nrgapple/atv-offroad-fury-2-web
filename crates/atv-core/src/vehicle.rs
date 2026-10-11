@@ -28,6 +28,8 @@ pub struct VehicleInput {
     pub brake: f32,
     pub steer: f32,
     pub lean: f32,
+    /// Browser gesture adaptation; absent retains the original shared lean axis.
+    pub preload_axis: Option<f32>,
     pub reverse: bool,
 }
 #[derive(Debug, Serialize)]
@@ -46,6 +48,10 @@ pub struct VehicleFrame {
     pub grounded: [bool; 4],
     pub chassis_contact_count: usize,
     pub obstacle_contact_count: usize,
+    pub preload_armed: bool,
+    pub preload_active: bool,
+    pub preload_strength: f32,
+    pub wheelie_active: bool,
 }
 pub struct Vehicle {
     body: BodyState,
@@ -288,6 +294,10 @@ impl Vehicle {
             grounded: self.contacts.map(|c| c.grounded),
             chassis_contact_count: self.chassis_contact_count,
             obstacle_contact_count: self.obstacle_contact_count,
+            preload_armed: self.rider_state.preload_armed,
+            preload_active: self.rider_state.preload_active,
+            preload_strength: self.rider_state.preload_strength,
+            wheelie_active: self.rider_state.wheelie_active,
         }
     }
     /// Recovered normal-riding inputs. Crouch and look-target behavior are not
@@ -315,9 +325,16 @@ impl Vehicle {
         input: VehicleInput,
         dt: f32,
     ) -> Result<VehicleFrame> {
-        if ![dt, input.throttle, input.brake, input.steer, input.lean]
-            .iter()
-            .all(|x| x.is_finite())
+        if ![
+            dt,
+            input.throttle,
+            input.brake,
+            input.steer,
+            input.lean,
+            input.preload_axis.unwrap_or(0.0),
+        ]
+        .iter()
+        .all(|x| x.is_finite())
             || dt <= 0.0
             || dt > 0.1
         {
@@ -429,7 +446,10 @@ impl Vehicle {
         }
         self.clock_ms += dt * 1000.0;
         let lean = raw_axes[1];
-        let lean_rate = self.lean_gesture.sample(lean, self.clock_ms)?;
+        let lean_rate = self.lean_gesture.sample(
+            input.preload_axis.unwrap_or(lean).clamp(-1.0, 1.0),
+            self.clock_ms,
+        )?;
         //00146850 updates these at the outer update cadence. Host atan2 remains
         // a provisional backend until the original lookup table is loaded.
         let angles = rider_control::body_angles(self.body.orientation, f32::atan2);
@@ -547,6 +567,7 @@ impl Vehicle {
                     half_air_control: false,
                     lateral_axis: raw_axes[0],
                     lean_axis: lean,
+                    preload_axis: input.preload_axis.map(|axis| axis.clamp(-1.0, 1.0)),
                     lean_axis_rate: lean_rate,
                     pitch: angles[0],
                     roll: angles[2],

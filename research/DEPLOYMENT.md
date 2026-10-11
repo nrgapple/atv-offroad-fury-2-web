@@ -77,6 +77,21 @@ reverse modes, and no JavaScript errors. The reverse-pose capture shows the dist
 reverse path in the public build. The separate native Rust animator probe produced
 1,200 finite poses; that probe was not a browser test.
 
+Public v6 is now deployed at
+`https://atv-offroad-fury-2.nrgapple.chatgpt.site/`. The exact CI source commit is
+`989214801f4f9a3f33971d3d0c65f91c4f6d816a` (workflow run `38178360227`); its Sites
+source commit is `5f2ab1052ff251d2db925ab8286ff156e5ae4328`, app version
+`appgver_6279dc34d99c81918ce8d3d609794c73`, and successful deployment
+`appgdep_6acc06f11fb881919d5664a2d9472514` at 2026-10-11 22:00:44 UTC. Public
+`/deployment.json` was checked against the exact CI commit. The public frontend test
+passed the title → menu → Freestyle → Tioga driving route, controller input, Caribou
+selection from a 390-pixel touch viewport, pause behavior, and zero JavaScript
+errors. The log served 23 entries and 21 PNG screenshots; every image returned
+HTTP 200 with `image/png`. V6 includes both connected maps and the recovered menu
+route. It does not include the newer local pause overlay or the revised hold/lean/
+release touch surface described in [touch riding controls](TOUCH.md); those changes
+are pending a later release.
+
 The no-disc runtime-content path was previously verified on public v4, commit
 `76f276315650e29841cb122095654239a03cbbed`. That fresh-browser run loaded 68 terrain
 textures, 64 sky tiles, 174 scene instances, ATV/rider resources, 21 engine samples
@@ -84,15 +99,16 @@ and the 21-song catalog from the same-origin Site manifest. It exercised driving
 throttle/brake/reset, camera cycling, controller/focus, touch/cancel and graphics-
 context recovery. Music played with zero underruns; diagnostics had no JavaScript/
 WebGL errors. Its 390px mobile layout had no horizontal overflow and no disc picker.
-Public v5 retains that no-disc path. Its public log served 15 entries and 13
+Public v5 retained that no-disc path, and v6 continues to autoload without disc
+selection. V5's public log served 15 entries and 13
 screenshot images; a Playwright browser fetched every image successfully with HTTP
-200 and `image/png`. The newer UI-recovery and v5 rider checkpoints are in the
-working log for a subsequent source-backed Site update.
+200 and `image/png`. V6's public gallery was separately checked as described above.
 
-Only ENV01 (Caribou Peak) is currently connected as a driving scene. Public v5 does
-not contain the original title/menu navigation, map selection, race HUD or other
-playable tracks. The title-screen/background artwork, archive layout records, fonts,
-menu animation data and track names are recovery evidence, not a running UI.
+Public v5 had only ENV01 (Caribou Peak) and did not contain the original title/menu
+navigation or map selection. Public v6 now connects the title-to-Freestyle route and
+Caribou Peak plus Tioga Valley (ENV02). Other menu callbacks, game modes, race HUD,
+and additional playable tracks remain unfinished; the UI inventory and recovered
+assets do not imply that every page or game mode is implemented.
 
 The previous public version on commit
 `3c9f7bdc72810c23afc2aa461810e911a998f01c` received devlog-only verification; its
