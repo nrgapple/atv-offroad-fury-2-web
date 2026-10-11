@@ -93,6 +93,9 @@ async function discTerrain(file, token) {
   const physicsIndex = quadEntries.findIndex(entry => /(^|[\\/])atv01s01\.phy$/i.test(entry.name));
   if (physicsIndex < 0) throw new Error('Original ATV physics is missing.');
   const physics = await codec(3, quadArchive, physicsIndex);
+  const chassisIndex = quadEntries.findIndex(entry => /(^|[\\/])atv01ao\.col$/i.test(entry.name));
+  if (chassisIndex < 0) throw new Error('Original chassis collision is missing.');
+  const chassis = await codec(3, quadArchive, chassisIndex);
   let toyIndex = entries.findIndex(entry => /(^|[\\/])env01\.toy$/i.test(entry.name)), toy;
   if (toyIndex >= 0) toy = await codec(3, resource, toyIndex);
   else {
@@ -153,7 +156,7 @@ async function discTerrain(file, token) {
       sceneMeshes.set(name, model);
     } catch (error) { unsupported.push({ name, error: error.message }); }
   }
-  return { bytes, name: entries[index].name, scene, mesh, meshBytes, physics, toy, textures, sky, terrainTextures: { layout, images }, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
+  return { bytes, name: entries[index].name, scene, mesh, meshBytes, physics, chassis, toy, textures, sky, terrainTextures: { layout, images }, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
 }
 async function baseTextures(mesh, materialArchive, materialEntries, cache = new Map()) {
   const findMaterial = name => materialEntries.findIndex(entry => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase());
@@ -572,6 +575,7 @@ async function startSimulation(source) {
   simReady = false; simFrame = undefined; simAccumulator = 0; simGeneration++;
   if (!source.physics) return;
   await codec(20, source.bytes); await codec(21, source.physics); await codec(22, source.meshBytes); await codec(26, source.toy);
+  diagnostics.chassis = await json(44, source.chassis);
   simStart = { origin: source.scene.position, yaw: source.scene.yaw };
   acceptFrame(await command(23, simStart));
   simReady = true; orbit = 0;

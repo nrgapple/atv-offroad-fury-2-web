@@ -29,6 +29,7 @@ struct Simulation {
     vehicle: Option<Vehicle>,
     rider_mesh: Option<mesh::Mesh>,
     rider_animation: Option<animation::Animation>,
+    chassis_points: Option<Vec<[f32; 3]>>,
 }
 thread_local! { static SIMULATION: RefCell<Simulation> = RefCell::default(); }
 
@@ -143,6 +144,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
             22 => {
                 let mesh = mesh::decode_psg(input)?;
                 sim.mesh = Some(mesh);
+                sim.chassis_points = None;
                 sim.vehicle = None;
             }
             23 => {
@@ -172,6 +174,11 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     sim.materials
                         .ok_or("load original terrain materials first")?,
                 );
+                vehicle.set_chassis_points(
+                    sim.chassis_points
+                        .as_ref()
+                        .ok_or("load original chassis collision first")?,
+                )?;
                 let result =
                     serde_json::to_vec(&vehicle.frame()).map_err(|error| error.to_string())?;
                 sim.vehicle = Some(vehicle);
@@ -233,6 +240,17 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 )?;
                 return serde_json::to_vec(&pose).map_err(|error| error.to_string());
             }
+            44 => {
+                let tree = atv_core::collision::decode_ray_tree(input)?;
+                let points = tree.chassis_points()?;
+                let result = serde_json::to_vec(
+                    &serde_json::json!({"rays": tree.rays.len(), "points": points.len()}),
+                )
+                .map_err(|error| error.to_string())?;
+                sim.chassis_points = Some(points);
+                sim.vehicle = None;
+                return Ok(result);
+            }
             _ => return Err("unknown simulation operation".into()),
         }
         Ok(b"{}".to_vec())
@@ -269,7 +287,7 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
     if (32..=34).contains(&op) {
         return engine_audio(input, op, index);
     }
-    if (20..=29).contains(&op) {
+    if (20..=29).contains(&op) || op == 44 {
         return simulation(input, op);
     }
     let json = match op {

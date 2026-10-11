@@ -2,7 +2,7 @@
 
 Recover ATV Offroad Fury 2 USA v2.00 in Rust/WebAssembly, preserving original gameplay, music, sound, animation, and progression before optional graphics and physics enhancements.
 
-The browser opens directly into a **full-screen reconstruction renderer, not yet a playable game**. A locally selected disc supplies the original ENV01 terrain and ATV01 model. Riding physics, rider animation, race logic, and in-game audio are unfinished. No game assets are bundled or uploaded. The content inspector remains at `/workbench.html` for development.
+The browser opens directly into a **fullscreen driving reconstruction, not yet the complete game**. A locally selected disc supplies ENV01 terrain, sky, track objects, ATV01 and the rider. Recovered Rust physics, original engine samples and streaming music are connected. Full animation, obstacle/crash behavior, race logic and progression remain unfinished. No game assets are bundled or uploaded. The content inspector remains at `/workbench.html` for development.
 
 ## Start here
 
@@ -17,11 +17,11 @@ The browser opens directly into a **full-screen reconstruction renderer, not yet
 
 Rust readers share the same implementation between native tools and WebAssembly. The exact disc audit validated all 487 RES/LSI archives, 58,598 member entries, and 91,522 compressed blocks. All 192 standalone VAG files, 798 packed VAG entries, and 934 loading-screen PST entries decoded. Entries are not necessarily unique assets; successful decoding does not establish original rendering or sound fidelity.
 
-Original geometry is now usable: all 26 in-race quad meshes decode, 36 of 40 named terrains pass dense-heightfield checks, and 597 distinct collision meshes pass finite-coordinate validation. The renderer places the static quad at the disc's scene start and uses a free camera. Its terrain shading and level-of-detail selection are provisional. Four terrain seam cases and unsupported mesh variants remain explicit errors.
+Original geometry is now usable: all 26 in-race quad meshes decode, 36 of 40 named terrains pass dense-heightfield checks, and 597 distinct collision meshes pass finite-coordinate validation. The renderer drives the quad from the disc's scene start with a follow camera. Original terrain and sky textures decode through the Rust IPUM decoder; 174 placed track objects are visible. Lighting and level-of-detail selection remain provisional. Four terrain seam cases and unsupported mesh variants remain explicit errors.
 
-All 28 physics configuration files parse with original ordering preserved. Exact-build executable analysis located the physics loader and established first-match duplicate-key behavior, units conversions, and spring/damping helpers. This is preparation for the original simulation, not a working vehicle solver.
+All 28 physics configuration files parse with original ordering preserved. Exact-build executable analysis located the physics loader and established first-match duplicate-key behavior, units conversions, and spring/damping helpers. The vehicle solver now connects recovered drivetrain, suspension, lateral grip, rigid-body integration, rider preload/air control and dynamic center of mass. Component instruction-oracle tests validate recovered routines; full PS2 gameplay replay equivalence remains unverified.
 
-The workbench supports file filtering, nested archives, supported image previews with aspect-preserving fullscreen, audio previews, text/hex inspection, and an ELF call-target candidate report. The control test supports browser-exposed gamepads, remapping, keyboard input, a floating left driving pad, right-side directional trick swipes, and simultaneous touches. These inputs are not connected to riding physics yet. Real Bluetooth hardware and iOS Safari remain unverified.
+The workbench supports file filtering, nested archives, supported image previews with aspect-preserving fullscreen, audio previews, text/hex inspection, and an ELF call-target candidate report. The control test supports browser-exposed gamepads, remapping, keyboard input, a floating left driving pad, right-side directional trick swipes, and simultaneous touches. Driving controls are connected to the Rust simulation; full trick and animation state machines remain incomplete. Real Bluetooth hardware and iOS Safari remain unverified.
 
 ## Run and verify
 
@@ -53,7 +53,9 @@ ATV_TEST_ISO="$PWD/private/source/ATV Offroad Fury 2 (USA) (v2.00).iso" \
 
 ## Access
 
-**Private remote:** the user's existing Tailscale route is [the reconstruction renderer on MML](https://nrgapples-mac-mini.tail96c48c.ts.net:8443/). It requires authorized tailnet access, a locally selected ISO, and the host server running on port 4173. The full ISO-to-renderer browser flow has passed through HTTPS from the host; separate-device access has not been demonstrated. No new public tunnel or deployment was created. Local `make serve` alone provides only host access.
+**Public HTTPS:** [browser game build](https://atv-offroad-fury-2.nrgapple.chatgpt.site/) and [screenshot development log](https://atv-offroad-fury-2.nrgapple.chatgpt.site/devlog.html). Tailscale and a running host server are not required. Select your local USA v2.00 disc image; game data stays in the browser. This remains an incomplete port.
+
+[Private GitHub source](https://github.com/nrgapple/atv-offroad-fury-2-web) has automated checks and WASM release builds on main. See [deployment](research/DEPLOYMENT.md) for public Sites publishing and its automation status. `make serve` is only a host development server.
 
 ## Project contents
 
@@ -71,4 +73,4 @@ ATV_TEST_ISO="$PWD/private/source/ATV Offroad Fury 2 (USA) (v2.00).iso" \
 | `references/` | Reference checkouts, ignored by Git |
 | `work/` | Intermediate outputs and verification artifacts, ignored by Git |
 
-Source files, recovered content, and reference repositories must not be committed or published. No remote Git repository is configured. The next gameplay gate is the original vehicle/contact solver, input mapping, camera, and animation running together on the recovered terrain. Static rendering does not satisfy that gate. Race systems and original audio mixing remain unfinished.
+Source files, recovered content, and reference repositories must not be committed or published. The private GitHub remote is configured. The next gameplay gates include original chassis/obstacle response, wheel and rider animation, camera fidelity, racing and progression. Component reconstruction does not establish a full-game match; original audio mixing also remains unfinished.

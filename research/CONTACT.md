@@ -1,6 +1,6 @@
 # Chassis contact reconstruction
 
-The USA v2.00 executable supplies a callable Rust static-contact response in `crates/atv-core/src/contact.rs`. This covers normal riding against stationary surfaces. Moving-body response, obstacle contact generation, wreck transitions, and the complete collision system remain separate work.
+The USA v2.00 executable supplies a callable Rust static-contact response in `crates/atv-core/src/contact.rs`. This covers normal riding against stationary surfaces. The vehicle now caches original chassis terrain planes once per outer update, solves their contacts after suspension and before each body integration, then applies deferred correction. Moving-body response, obstacle contact generation, wreck transitions, and the complete collision system remain separate work.
 
 ## Recovered behavior
 
@@ -22,6 +22,6 @@ A private bounded R5900/VU instruction interpreter executes the original ELF ins
 - 500 static-response cases: 577,606 instructions, all 15 output scalars match bit for bit.
 - 500 cases with rotated/transformed bodies and original point-velocity evaluation: 672,836 instructions, all 15 output scalars match bit for bit.
 - 400 combinations of existing/incoming position corrections: 43,600 instructions, all three output scalars match bit for bit.
-- Focused synthetic Rust tests cover inward impact and overlapping corrections. Core Clippy passes.
+- Focused synthetic Rust tests cover inward impact, overlapping corrections, and a chassis resting on terrain while its wheels cannot reach. Core Clippy passes.
 
 Inputs, original instruction listings, interpreter scripts, and detailed comparisons stay in ignored work/private paths. These results validate component arithmetic against the stated interpreter model, not complete driving behavior or original PS2 hardware fidelity.

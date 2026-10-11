@@ -1,6 +1,6 @@
 //! Integration of recovered drivetrain, wheel, terrain and rigid-body components.
 //! This is an incomplete reconstruction, not the complete original vehicle:
-//! obstacle impulses, rider gameplay gates, wreck transitions, moving surfaces,
+//! obstacle queries, rider gameplay gates, wreck transitions, moving surfaces,
 //! original math tables, and original runtime validation remain outstanding.
 use crate::{
     Result,
@@ -41,6 +41,7 @@ pub struct VehicleFrame {
     pub wheel_angles: [f32; 4],
     pub wheel_compression: [f32; 4],
     pub grounded: [bool; 4],
+    pub chassis_contact_count: usize,
 }
 pub struct Vehicle {
     body: BodyState,
@@ -70,6 +71,7 @@ pub struct Vehicle {
     center_range: Vec3,
     rider_stand_up_speed: f32,
     chassis_points: Vec<Vec3>,
+    chassis_contact_count: usize,
     chassis_config: ContactConfig,
 }
 impl Vehicle {
@@ -191,6 +193,7 @@ impl Vehicle {
             //002d5dd0 constructor default, also authored by both supplied riders.
             rider_stand_up_speed: f32::from_bits(0x41200000),
             chassis_points: Vec::new(),
+            chassis_contact_count: 0,
             chassis_config: ContactConfig::from_physics(data)?,
         })
     }
@@ -238,6 +241,7 @@ impl Vehicle {
             wheel_angles: self.wheels.map(|w| w.angle),
             wheel_compression: self.suspension.map(|s| s.compression),
             grounded: self.contacts.map(|c| c.grounded),
+            chassis_contact_count: self.chassis_contact_count,
         }
     }
     pub fn step(
@@ -523,10 +527,12 @@ impl Vehicle {
                 self.body.local_torque[0] += d.airborne_brake_torque;
             }
             let mut corrections = ContactCorrections::default();
+            self.chassis_contact_count = 0;
             for &(local, ground, normal, grip) in &chassis_planes {
                 let vertex = add(origin, transform(b, local));
                 let penetration = dot(sub(ground, vertex), normal);
                 if penetration > 0.0 {
+                    self.chassis_contact_count += 1;
                     contact::resolve_static(
                         &mut self.body,
                         &self.body_config,
@@ -640,6 +646,23 @@ mod tests {
             depth_cells: 128,
         };
         (v, t)
+    }
+    #[test]
+    fn chassis_contacts_hold_body_when_wheels_cannot_reach() {
+        let (mut vehicle, terrain) = fixture();
+        vehicle
+            .set_chassis_points(&[[0., -2., 0.], [0., -2., 0.]])
+            .unwrap();
+        assert_eq!(vehicle.chassis_points.len(), 1);
+        for _ in 0..180 {
+            vehicle
+                .step(&terrain, VehicleInput::default(), 1. / 60.)
+                .unwrap();
+        }
+        let frame = vehicle.frame();
+        assert!(frame.origin[1] > 1.8 && frame.origin[1] < 2.1, "{frame:?}");
+        assert!(frame.grounded.iter().all(|x| !x));
+        assert_eq!(frame.chassis_contact_count, 1);
     }
     #[test]
     fn recovered_components_drive_brake_and_remain_finite() {

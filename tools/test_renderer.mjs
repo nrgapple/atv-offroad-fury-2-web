@@ -23,7 +23,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, hasTouch: true });
   const read = () => page.evaluate(() => window.atvTerrainStatus);
   page.on('pageerror', error => errors.push(error.message));
-  page.on('request', request => requests.push({ url: request.url(), method: request.method() }));
+  page.on('request', request => requests.push({ url: request.url(), method: request.method(), resourceType: request.resourceType(), postDataLength: request.postDataBuffer()?.byteLength ?? 0 }));
   await page.goto(base);
   await page.locator('#disc').setInputFiles(iso);
   await page.waitForFunction(() => window.atvTerrainStatus?.ready && window.atvTerrainStatus.simulation && window.atvTerrainStatus.frames > 3, null, { timeout: 30000 });
@@ -37,6 +37,7 @@ try {
   assert(loaded.terrainTextures > 0);
   assert(loaded.sceneInstances > 0 && loaded.sceneTriangles > 0);
   assert(loaded.skyTiles > 0);
+  assert(loaded.chassis.points > 0 && loaded.chassis.rays > 0);
   assert(loaded.audio.ready && loaded.audio.samples > 0 && !loaded.audioError);
   finite(loaded);
   assert(loaded.frame.grounded.some(Boolean), 'Vehicle settles onto original terrain');
@@ -105,6 +106,11 @@ try {
   finite(cancelled);
   if (process.env.ATV_TEST_SCREENSHOT) await page.screenshot({ path: process.env.ATV_TEST_SCREENSHOT });
   assert.deepEqual(errors, []);
-  assert(requests.every(request => request.method === 'GET' && new URL(request.url).origin === new URL(base).origin));
-  console.log('PASS: original terrain textures/ATV/rider, original engine sample scheduling, Rust throttle/brakes/reset, gamepad/focus, simultaneous touch/cancellation, GL recovery, no uploads.');
+  // Sites injects this Cloudflare challenge before a disc is selected. Keep its
+  // known platform POST separate; game code has no upload path.
+  const origin = new URL(base).origin;
+  const platformRequests = requests.filter(request => request.method === 'POST' && request.resourceType === 'xhr' && new URL(request.url).origin === origin && new URL(request.url).pathname.startsWith('/cdn-cgi/challenge-platform/h/g/jsd/oneshot/'));
+  const unexpectedRequests = requests.filter(request => !platformRequests.includes(request) && (request.method !== 'GET' || new URL(request.url).origin !== origin));
+  assert.deepEqual(unexpectedRequests, [], `Unexpected request metadata (no body data): ${JSON.stringify(unexpectedRequests)}`);
+  console.log(`PASS: original terrain/sky/props/ATV/rider, engine sample scheduling, Rust chassis/throttle/brakes/reset, gamepad/focus, touch/cancellation, GL recovery, no game uploads; ${platformRequests.length} known Cloudflare challenge requests.`);
 } finally { await browser.close(); }

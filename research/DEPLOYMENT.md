@@ -3,6 +3,7 @@
 Source repository: https://github.com/nrgapple/atv-offroad-fury-2-web (private).
 The user selected **public HTTPS Sites hosting**, matching the Game Boy project.
 Site project ID: `appgprj_6acbf33be01c81919ba8edc04fbcc3d0`.
+Live public URL: https://atv-offroad-fury-2.nrgapple.chatgpt.site/.
 Tailscale is a development verification path, not the production handoff.
 The proposed Mac deployment supervisor was removed before it was ever started.
 
@@ -34,13 +35,19 @@ hook or a reusable public deployment credential. Its optional publish-on-push
 credential applies only to temporary owner-private publication windows. Do not
 store these short-lived credentials in GitHub secrets or an on-disk deploy service.
 
-Unattended publication can instead run in a linked Sites schedule or a local Codex
-heartbeat that has source access and uses native Sites tools to obtain a fresh
-credential per run. Only deploy a successful build for the current `main` commit,
-and skip when that commit is already public. Source access and actual unattended
-publication must be verified independently of creating a schedule. A polling schedule
-introduces its polling interval as deployment delay; GitHub CI alone is not proof
-that public automatic deployment has been configured.
+The local Codex heartbeat `publish-atv-web-builds` is configured **ACTIVE every 15
+minutes** in this thread. It checks successful current-main CI through
+`fetch_site_release.py`, stages the verified artifact through `stage_site.py`, and
+uses native Sites tools with a fresh credential to publish. It skips unchanged
+commits and leaves the prior public build active while CI is pending or failing.
+There is up to one polling interval of deployment delay. The automation needs the
+Mac/local Codex executor available; public Site visitors do not need this Mac online.
+
+The first public Site publication and source/artifact access were verified. The
+first scheduled heartbeat execution has **not yet been observed**; creation proves
+the schedule is saved, not that an unattended deployment has run. The publisher
+must verify the complete CI-artifact-to-public-Site path separately before claiming
+that automatic publication has succeeded.
 
 ## Release commands
 

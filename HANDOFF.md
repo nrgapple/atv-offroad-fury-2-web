@@ -8,7 +8,7 @@ All authored UI should evoke the PlayStation 2 era. Support browser-exposed cont
 
 ## Current result
 
-A Rust workspace and full-screen original-terrain/static-quad renderer exist. **There is no playable game, recovered game loop, or completed decompilation.** Native and browser readers load original files without bundling or uploading them. The development content browser and control test surface are separate at `/workbench.html`.
+A Rust workspace and fullscreen browser driving reconstruction exist. **This is not the full game or a completed decompilation.** Original terrain textures, sky, scene props, ATV and a sampled rider pose render. Recovered vehicle routines run in WASM; original engine samples and chunked stereo music play through Web Audio. Full collision/crash behavior, animation state machines, racing and progression are unfinished. See the live dev log and newer component notes for current evidence; the audit rows below record earlier format-recovery milestones. Native and browser readers load original files without bundling or uploading them. The development content browser and control test surface are separate at `/workbench.html`.
 
 | Capability | Evidence and limits |
 | --- | --- |
@@ -26,10 +26,10 @@ The numerical audit covers entries, not unique assets. Binary decoding and an ad
 ## Project and access
 
 - Project: `/Users/nrgapple/Projects/atv-offroad-fury-2-web` on MML (`ssh mac-mini`, user alias `mml`).
-- Host: Apple Silicon arm64, macOS 27.0; local Git repository without a remote.
+- Host: Apple Silicon arm64, macOS 27.0; private GitHub remote https://github.com/nrgapple/atv-offroad-fury-2-web with main CI checks and WASM builds.
 - Applicable parent instructions: `/Users/nrgapple/Projects/AGENTS.md`.
 - Original download was preserved at `/Users/adamgeiger/Downloads/ATV Offroad Fury 2 (USA) (v2.00).zip` during setup.
-- Private remote route: `https://nrgapples-mac-mini.tail96c48c.ts.net:8443/`, an existing authenticated Tailscale route to host port 4173. It requires tailnet access and a running `make serve`; host HTTPS verification does not prove access from a separate device. No new public exposure was created.
+- Public production: `https://atv-offroad-fury-2.nrgapple.chatgpt.site/`; screenshot log at `/devlog.html`. Sites hosts a sanitized static snapshot. The user explicitly authorized public game/log hosting, private GitHub pushes, main merges and automatic deployment. No Tailscale connection or awake host is required to view the published build. The selected game disc stays local to the visitor. See `research/DEPLOYMENT.md` for automation details.
 - `make serve` is a foreground development process, not a persistent service. The server serves an explicit static-file allowlist, never `private/`, `references/`, or the repository root.
 
 ## Exact source build

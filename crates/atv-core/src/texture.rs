@@ -1,4 +1,4 @@
-//! Observed 4/8-bit indexed PST layouts with a shared palette and mip levels.
+//! Observed 4/8-bit indexed and IPUM-compressed PST layouts with mip levels.
 //! Decodes the largest stored level; unknown variants fail explicitly.
 use crate::{Result, slice, u32le};
 use serde::Serialize;
@@ -20,6 +20,9 @@ pub fn decode_pst(data: &[u8]) -> Result<Texture> {
     }
     if data.len() > 128 * 1024 * 1024 {
         return Err("PST exceeds 128 MiB limit".into());
+    }
+    if u32le(data, 4)? == 2 {
+        return decode_ipum_levels(data, levels);
     }
     let indexed8 = match u32le(data, 4)? {
         0 => false,
@@ -78,9 +81,87 @@ pub fn decode_pst(data: &[u8]) -> Result<Texture> {
     })
 }
 
+// Observed format2 omits the palette and length-prefixes each IPUM image after
+// the same height/width/flags header used by the indexed variant.
+fn decode_ipum_levels(data: &[u8], levels: u32) -> Result<Texture> {
+    let mut at = 12;
+    let mut selected: Option<Texture> = None;
+    for _ in 0..levels {
+        let height = u32le(data, at)?;
+        let width = u32le(data, at + 4)?;
+        if width == 0
+            || height == 0
+            || width > 2048
+            || height > 2048
+            || u32le(data, at + 8)? != 0
+            || u32le(data, at + 12)? != 0
+        {
+            return Err("unsupported compressed PST dimensions/flags".into());
+        }
+        let bytes = u32le(data, at + 16)? as usize;
+        at += 20;
+        let image = crate::ipu::decode_ipum(slice(data, at, bytes)?)?;
+        if image.info.width != width || image.info.height != height {
+            return Err("compressed PST/IPUM dimension mismatch".into());
+        }
+        if selected
+            .as_ref()
+            .is_none_or(|v| v.info.width * v.info.height < width * height)
+        {
+            selected = Some(Texture {
+                info: TextureInfo { width, height },
+                rgba: image.rgba,
+            });
+        }
+        at += bytes;
+    }
+    if at != data.len() {
+        return Err("compressed PST payload size mismatch".into());
+    }
+    selected.ok_or_else(|| "compressed PST has no image".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn compressed_image_checks_outer_dimensions_and_extents() {
+        // Authored neutral16x16 MPEG intra macroblock, not a game asset.
+        let bits = format!("000000001{}{}000", "10010".repeat(4), "0010".repeat(2));
+        let payload: Vec<u8> = bits
+            .as_bytes()
+            .chunks(8)
+            .map(|b| b.iter().fold(0, |v, &c| (v << 1) | (c - b'0')))
+            .collect();
+        let mut image = b"ipum".to_vec();
+        image.extend(((payload.len() + 16) as u32).to_le_bytes());
+        image.extend(16u16.to_le_bytes());
+        image.extend(16u16.to_le_bytes());
+        image.extend(1u32.to_le_bytes());
+        image.extend(payload);
+        image.extend([0, 0, 1, 0xb0, 0, 0, 1, 0xb1]);
+        let mut data = Vec::new();
+        for word in [1u32, 2, 1, 16, 16, 0, 0, image.len() as u32] {
+            data.extend(word.to_le_bytes());
+        }
+        data.extend(image);
+        let texture = decode_pst(&data).unwrap();
+        assert_eq!((texture.info.width, texture.info.height), (16, 16));
+        assert_eq!(&texture.rgba[..4], &[130, 130, 130, 255]);
+        for end in 0..data.len() {
+            assert!(decode_pst(&data[..end]).is_err());
+        }
+        data[12] = 32;
+        assert!(
+            decode_pst(&data)
+                .err()
+                .unwrap()
+                .contains("dimension mismatch")
+        );
+        data[12] = 16;
+        data.push(0);
+        assert!(decode_pst(&data).err().unwrap().contains("payload size"));
+    }
     #[test]
     fn palette_order_and_bounds() {
         let mut b = vec![0; 1054];

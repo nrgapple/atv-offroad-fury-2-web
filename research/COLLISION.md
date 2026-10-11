@@ -39,3 +39,11 @@ The returned local mesh supports later contact and ray-query implementation. It 
 ## Related geometry
 
 The PSG rigid-mesh and TR2 terrain readers now exist; see [geometry evidence](GEOMETRY.md). Collision-response behavior remains separate from successful mesh recovery.
+
+## Type-2 ray trees and chassis contacts
+
+`decode_ray_tree` now reads type-2 COL files using the exact-build loader at `0032a480`. The sixteen floats at offset16 form the stored matrix. Offset80 holds the query capacity,84 the node count N, and88 the ray count R. Beginning at92, each32-byte node holds one bound scalar, XYZ center, XYZ half-extents, and two u16 child references. The following R records hold start/end XYZ pairs,24 bytes per ray. Exact extent is `92 + 32N + 24R`.
+
+The root is node0. A child with bit15 set selects ray `child & 0x7fff`; otherwise it selects another node. `00194590` visits first child then second and emits each leaf endpoint. The bounded parser validates finite fields, exact extents, child ranges, and an acyclic tree. It preserves traversal order and coincident endpoints; `Vehicle::set_chassis_points` subsequently applies the original first-occurrence deduplication and sixty-point capacity.
+
+All38 distinct type-2 files in the original disc pass the new Rust reader. The selected quad's34 chassis endpoints also match all binary32 coordinates emitted by2,311 interpreted original traversal instructions. Its terrain chassis contacts now feed the recovered static-contact solver; see [contact behavior and validation](CONTACT.md). Type1 and the packed type0 variant remain unsupported. Ray/triangle obstacle intersection, moving-object response, and wreck behavior are not implied by loading a ray tree.

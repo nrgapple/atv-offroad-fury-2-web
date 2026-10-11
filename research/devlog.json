@@ -1,6 +1,6 @@
 {
   "status": "The original ATV can be driven on ENV01 in the browser. This is an incomplete reconstruction; it is not the full game yet.",
-  "working_on": "Chassis collision integration, original animation behavior, and public Sites deployment.",
+  "working_on": "Original obstacle queries, wheel animation and CI-to-Sites release verification.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -120,7 +120,38 @@
       "limitation": "Music selection uses the recovered shuffle routine with a provisional random seed. Original mixer levels and every playback transition are not yet verified; race systems and full rider animation remain incomplete.",
       "image": "/devlog-images/original-sky-and-streaming-soundtrack-fc817659.png",
       "caption": "Browser checkpoint with the original sky, track, ATV and rider; original music was streaming during this capture."
+    },
+    {
+      "id": "public-browser-build-and-collision-recovery-c434721b",
+      "timestamp": "2026-10-11T20:41:18.066532+00:00",
+      "recorded_at": "2026-10-11T20:41:18.066532+00:00",
+      "kind": "verification",
+      "title": "Public browser build and collision recovery",
+      "summary": "The game build and screenshot log are now available on public Sites; Tailscale is no longer required.",
+      "details": [
+        "Public HTTPS checks loaded all eight existing log entries and seven screenshots, and streamed original music with no underruns.",
+        "Private GitHub Actions now builds the Rust/WASM release and checks code on main. A scheduled publisher is configured to check successful builds every 15 minutes; its first unattended run has not yet been observed.",
+        "The recovered chassis contact solver matched 1,400 instruction-interpreter cases; integration with the original collision hull is being verified in the browser."
+      ],
+      "limitation": "The browser build remains incomplete. Original obstacle contact generation, crash behavior, full animations, races and progression are still under reconstruction."
+    },
+    {
+      "id": "original-chassis-hull-connected-970f5b48",
+      "timestamp": "2026-10-11T20:41:10.578829+00:00",
+      "recorded_at": "2026-10-11T20:41:43.970276+00:00",
+      "kind": "build",
+      "title": "Original chassis hull connected",
+      "summary": "The vehicle now uses its original 34-point chassis hull for terrain contact, alongside the wheel suspension.",
+      "details": [
+        "The ray-tree loader decoded all 38 distinct original type-2 collision files. ATV01 hull traversal matched the original endpoint order bit for bit.",
+        "Impact and friction routines matched 1,400 instruction-interpreter cases before browser integration.",
+        "Both compressed scene texture containers now decode, removing the remaining unsupported scene-texture fallback.",
+        "Real-disc browser checks passed for chassis loading, driving, braking, reset, music, engine sound, controller mapping, simultaneous touch and graphics-context recovery."
+      ],
+      "limitation": "Track-object contact generation and crashes remain incomplete. Wheels still render in their bind pose; rider blending, race systems and progression are not finished.",
+      "image": "/devlog-images/original-chassis-hull-connected-970f5b48.png",
+      "caption": "Original hull connected to the Rust terrain-contact solver, with original sky and scene textures visible."
     }
   ],
-  "updated_at": "2026-10-11T20:38:04.970977+00:00"
+  "updated_at": "2026-10-11T20:41:43.970276+00:00"
 }
