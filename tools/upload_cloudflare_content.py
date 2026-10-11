@@ -27,10 +27,13 @@ def upload(release, commit, force=False):
     validate_release(release, commit)
     if not re.fullmatch(r'[a-f0-9]{40}', commit):
         raise ValueError('expected complete commit SHA')
-    current = subprocess.run(['gh', 'api', 'repos/nrgapple/atv-offroad-fury-2-web/commits/main', '--jq', '.sha'],
-                             check=True, capture_output=True, text=True).stdout.strip()
-    if current != commit:
-        raise ValueError('only the validated current-main release may update R2')
+    def require_current_main():
+        current = subprocess.run(['gh', 'api', 'repos/nrgapple/atv-offroad-fury-2-web/commits/main', '--jq', '.sha'],
+                                 check=True, capture_output=True, text=True).stdout.strip()
+        if current != commit:
+            raise ValueError('only the validated current-main release may update R2')
+
+    require_current_main()
     committed = subprocess.run(['git', 'show', f'{commit}:research/devlog.json'], cwd=ROOT,
                                check=True, capture_output=True, text=True)
     log = json.loads(committed.stdout)
@@ -88,10 +91,11 @@ def upload(release, commit, force=False):
         for result in executor.map(put, uploads):
             report.append(result)
             if len(report) % 25 == 0:
-                print(f'Uploaded {len(report)}/{len(uploads)} blobs/screenshots', flush=True)
+                print(f'Checked {len(report)}/{len(uploads)} blobs/screenshots', flush=True)
     # Publish pointers last; partial blob upload must never expose a new manifest.
     if (ROOT / 'private/reports/hosted-content/manifest.json').read_bytes() != manifest_bytes:
         raise ValueError('manifest changed during upload; pointers were not published')
+    require_current_main()
     report.append(put(('content/manifest.json', manifest_bytes)))
     report.append(put(('devlog-gallery.json', json.dumps(log).encode())))
     destination.write_text(json.dumps({'bucket': BUCKET, 'commit': commit, 'objects': report}, indent=2) + '\n')

@@ -24,7 +24,9 @@ The public seven-map regression also passed ENV01/02/03/05/06/07/08 loading
 and vehicle movement with terrain detail and vegetation, with no JavaScript or
 WebGL errors. The prior Sites v8 remains available as a historical release.
 
-The separate local R2 upload contains 282 approved objects, 261,696,979 bytes.
+The initial separate R2 upload contained 282 approved objects, 261,696,979 bytes.
+After committing the Cloudflare checkpoint, incremental publication uploaded only
+the new PNG and gallery metadata: 283 objects, 262,140,223 bytes total.
 Its manifest describes 50 runtime resources including all 21 music tracks; only
 249 referenced content blobs were uploaded, excluding stale private blobs.
 `tools/upload_cloudflare_content.py` validates every runtime blob with the existing
@@ -39,8 +41,16 @@ GitHub CI continues to check and package only authored code/WASM and devlog text
 The main-only deployment step uses the scoped `CLOUDFLARE_API_TOKEN` repository
 secret, configured on 2026-10-11 after user approval. Its permissions are Individual
 Worker Editor for this game Worker and Account Settings Read, with a one-year
-expiry. It fails clearly if the secret is absent. A successful unattended deployment
-is still pending. Original resources and screenshots never
+expiry. It fails clearly if the secret is absent. The first automatic deployment
+passed for main `2b2e6ec901e9825edf0073718b6d4a6b6071d909`, CI run
+[`38184194254`](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38184194254),
+at 2026-10-11 23:26 UTC. Cloudflare Worker version
+`2976a4db-182e-420b-ba58-8d6f76c6da36` serves that commit. Public verification
+matched all 23 unchanged authored/static file hashes, the CI devlog metadata,
+and all 282 served runtime/manifest/PNG objects. The gallery now contains 35
+entries and 32 approved screenshots. This verifies the GitHub push-to-Cloudflare
+path; the migrated heartbeat has been configured but an unattended scheduled
+R2 maintenance run remains unverified. Original resources and screenshots never
 enter GitHub or CI; CI attaches the existing R2 binding without uploading its data.
 `/devlog.json` merges screenshot references from the separately uploaded gallery
 only when each checkpoint's authored metadata exactly matches the CI revision.
@@ -60,9 +70,11 @@ npx --yes wrangler@4.149.0 deploy
 python3 tools/verify_cloudflare.py --url https://atv-offroad-fury-2.champtoday.workers.dev --commit <commit>
 ```
 
-The verification command fetches every uploaded runtime object and screenshot from
-the public HTTPS app and checks size, SHA-256 and MIME type, plus deployment commit,
-landing route and gallery references. It does not replace the browser no-disc startup
+The verification command uses the checksum-validated release cached by
+`fetch_site_release.py`, verifies all public authored/static hashes and committed
+devlog metadata, then fetches every uploaded runtime object and screenshot over
+HTTPS to check size, SHA-256 and MIME type, deployment commit, landing route and
+gallery references. It does not replace the browser no-disc startup
 and actual gameplay regression. The R2 Worker serves GET/HEAD only; content-addressed
 blobs use immutable browser caching and manifests/gallery use revalidation. Do not
 claim a Cloudflare CDN edge-cache hit on the workers.dev hostname: the Workers Cache

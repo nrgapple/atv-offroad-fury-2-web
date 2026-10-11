@@ -7,9 +7,12 @@ import json
 from urllib.request import Request, urlopen
 
 from package_content import ROOT
+from package_release import validate_release
 
 
 def verify(base, commit):
+    release = ROOT / 'work/github-releases' / commit
+    metadata = validate_release(release, commit)
     def get(path):
         request = Request(base.rstrip('/') + '/' + path.lstrip('/'), headers={'User-Agent': 'ATV-release-verifier/1.0'})
         with urlopen(request, timeout=90) as response:
@@ -21,6 +24,14 @@ def verify(base, commit):
     landing, mime = get('/')
     if mime != 'text/html' or b'play.html' not in landing:
         raise ValueError('public landing page failed')
+    static_files = 0
+    for name, digest in metadata['sha256'].items():
+        if name == 'static/devlog.json':
+            continue  # The authorized R2 overlay adds approved image references.
+        body, _ = get(name.removeprefix('static/'))
+        if hashlib.sha256(body).hexdigest() != digest:
+            raise ValueError(f'public authored asset differs: {name}')
+        static_files += 1
     report = json.loads((ROOT / 'private/reports/cloudflare-upload.json').read_text())
     expected = [item for item in report['objects'] if item['key'] != 'devlog-gallery.json']
 
@@ -37,11 +48,17 @@ def verify(base, commit):
         checked = list(executor.map(check, expected))
     data, _ = get('/devlog.json')
     log = json.loads(data)
+    authored = json.loads(json.dumps(log))
+    for entry in authored['entries']:
+        entry.pop('image', None)
+        entry.pop('caption', None)
+    if authored != json.loads((release / 'static/devlog.json').read_text()):
+        raise ValueError('public authored devlog differs from validated CI revision')
     for entry in log['entries']:
         if entry.get('image') and entry['image'].lstrip('/') not in checked:
             raise ValueError('public gallery references an unverified screenshot')
     result = {'url': base, 'commit': commit, 'verified_objects': len(checked), 'log_entries': len(log['entries']),
-              'screenshots': sum(bool(entry.get('image')) for entry in log['entries'])}
+              'screenshots': sum(bool(entry.get('image')) for entry in log['entries']), 'verified_static_files': static_files}
     (ROOT / 'private/reports/cloudflare-verification.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result))
 
