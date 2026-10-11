@@ -1,6 +1,6 @@
 {
-  "status": "This build connects seven environments with original vegetation and the recovered _d.pst RGB+alpha terrain-detail layer, and a Caribou ramp run with a touch-driven airborne Nac Nac pose. The seven-map detail regression and 390px mobile renderer checks pass, including gamepad, touch cancellation, audio engine and graphics-context restore. Projected-coverage selection, distant terrain behavior, fog, geometry rounding, crash poses, trick scoring and the full game remain incomplete.",
-  "working_on": "Recover the original terrain projected-coverage selection and distant LOD/fog/GS rounding behavior, then validate against the source renderer. Keep vegetation visibility and Nac Nac scoring claims within the evidence.",
+  "status": "The public Worker now runs the seven-map Rust/WebAssembly reconstruction, with 281 verified runtime, manifest and gallery objects served from R2 and all 21 music tracks retained. The game remains incomplete: original modes, race flow, stunt/crash systems and exact terrain LOD are not finished.",
+  "working_on": "Verify the GitHub-to-Worker automatic deployment path on a real post-token run. Continue restoring original game modes, race flow, stunt behavior and terrain LOD without presenting partial reconstruction as the complete game.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -518,7 +518,23 @@
         "All seven map load/driving tests passed with the compact content, along with renderer, graphics-context restore, audio, controller and touch checks."
       ],
       "limitation": "This is a validated local package pending public deployment. No public release or public verification is claimed."
+    },
+    {
+      "id": "seven-maps-move-to-a-worker-with-music-and-assets-kept-c9e850e9",
+      "timestamp": "2026-10-11T23:18:54.382519+00:00",
+      "recorded_at": "2026-10-11T23:22:58.068427+00:00",
+      "kind": "verification",
+      "title": "Seven maps move to a Worker with music and assets kept in R2",
+      "summary": "The public build now separates its small Rust/WebAssembly game app from original runtime content streamed through R2. That keeps maps and music out of the app deploy bundle and avoids a database for the current browser-only game.",
+      "details": [
+        "Public Play: https://atv-offroad-fury-2.champtoday.workers.dev/ \u2014 dev log: https://atv-offroad-fury-2.champtoday.workers.dev/devlog.html. The Worker serves main commit ad605e1b589720bd9b093ae84c25a753ea65a0fc; a live /deployment.json request confirmed the same SHA. Worker version: 63ff7d3b-1f10-4976-8673-c409cd758a6e.",
+        "R2 verification checked 281 runtime, manifest and gallery objects for exact size, SHA-256 and MIME type. All 21 music tracks remain present. The currently served gallery has 34 entries and 31 PNGs.",
+        "Public seven-map test 4299 passed. Frontend test 78959 passed the landing/controller route, title/menu, map selection, Tioga driving/pause, and 390px Caribou touch flow with no JS errors or ROM prompt."
+      ],
+      "limitation": "This remains an incomplete reconstruction: original menu/game modes, race flow, scoring, stunt/crash coverage and terrain LOD fidelity are unfinished. GitHub automatic deployment to the Worker has not yet been verified.",
+      "image": "/devlog-images/seven-maps-move-to-a-worker-with-music-and-assets-kept-c9e850e9.png",
+      "caption": "Cloudflare-hosted ENV03 (Sonora Dunes) with recovered terrain detail and vegetation."
     }
   ],
-  "updated_at": "2026-10-11T23:13:00.853562+00:00"
+  "updated_at": "2026-10-11T23:22:58.068427+00:00"
 }

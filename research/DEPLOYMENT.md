@@ -1,4 +1,76 @@
-# Private source repository and public Sites hosting
+# Private source repository and public Cloudflare hosting
+
+## Cloudflare migration (2026-10-11)
+
+The user authorized moving production hosting to their existing Cloudflare account.
+The authored browser app is now deployed as a dedicated Workers static-assets app:
+**public HTTPS** https://atv-offroad-fury-2.champtoday.workers.dev/.
+Its dedicated R2 bucket is `atv-offroad-fury-2-content`; the Worker binding serves
+only `/content/manifest.json`, SHA-256 named `/content/*.bin` files and approved
+`/devlog-images/*.png` paths. R2 itself has no public bucket URL. This application
+needs no database. No tax-portal or other shared resources are reused.
+
+Account ID: `92b7e16fd24d5fb585f866f5832a032b`. Wrangler uses the user's existing
+local OAuth authentication. The first Cloudflare app deployment uses the successful
+current-main CI release at commit `ad605e1b589720bd9b093ae84c25a753ea65a0fc`
+(run `38183457495`). Worker version `f1f520a7-f2d1-428d-837d-731935cbf18f`
+adds explicit `/` landing routing and gallery HEAD support. Public HTTPS verification passed all 281 served
+objects (runtime blobs, manifest and 31 PNG screenshots), checking size, SHA-256 and
+MIME type. The public log returned 34 entries with 31 screenshots; deployment
+metadata matched the CI commit. The public frontend regression passed the landing
+and controller Play flow, original title/menu routes, the seven-map selector, Tioga
+driving, pause/Controls and a 390px Caribou touch session with no JavaScript errors.
+The public seven-map regression also passed ENV01/02/03/05/06/07/08 loading
+and vehicle movement with terrain detail and vegetation, with no JavaScript or
+WebGL errors. The prior Sites v8 remains available as a historical release.
+
+The separate local R2 upload contains 282 approved objects, 261,696,979 bytes.
+Its manifest describes 50 runtime resources including all 21 music tracks; only
+249 referenced content blobs were uploaded, excluding stale private blobs.
+`tools/upload_cloudflare_content.py` validates every runtime blob with the existing
+manifest allowlist and SHA-256 checks, uploads only referenced PNG checkpoints,
+and publishes the manifest/gallery pointers after all blobs succeed. Credentials
+remain in memory and are never printed or included in source or CI. Objects and
+upload/verification reports stay under ignored private storage. Disc images, BIOS,
+raw executable, reverse-engineering output and reference repositories are excluded.
+
+GitHub CI continues to check and package only authored code/WASM and devlog text.
+`tools/stage_cloudflare.py` stages that verified artifact for `wrangler deploy`.
+The main-only deployment step uses the scoped `CLOUDFLARE_API_TOKEN` repository
+secret, configured on 2026-10-11 after user approval. Its permissions are Individual
+Worker Editor for this game Worker and Account Settings Read, with a one-year
+expiry. It fails clearly if the secret is absent. A successful unattended deployment
+is still pending. Original resources and screenshots never
+enter GitHub or CI; CI attaches the existing R2 binding without uploading its data.
+`/devlog.json` merges screenshot references from the separately uploaded gallery
+only when each checkpoint's authored metadata exactly matches the CI revision.
+New or edited checkpoint screenshots require another authorized local R2 upload.
+The uploader reads checkpoint metadata from the validated current-main commit,
+rejects other revisions and skips byte-identical objects recorded by its previous
+local upload report. `--force-upload` repairs remote drift; public hash verification
+remains required after each content/gallery update.
+
+Host publication commands after successful current-main CI:
+
+```sh
+python3 tools/fetch_site_release.py --site-url https://atv-offroad-fury-2.champtoday.workers.dev
+python3 tools/stage_cloudflare.py --release <validated-release> --commit <commit>
+python3 tools/upload_cloudflare_content.py --release <validated-release> --commit <commit>
+npx --yes wrangler@4.149.0 deploy
+python3 tools/verify_cloudflare.py --url https://atv-offroad-fury-2.champtoday.workers.dev --commit <commit>
+```
+
+The verification command fetches every uploaded runtime object and screenshot from
+the public HTTPS app and checks size, SHA-256 and MIME type, plus deployment commit,
+landing route and gallery references. It does not replace the browser no-disc startup
+and actual gameplay regression. The R2 Worker serves GET/HEAD only; content-addressed
+blobs use immutable browser caching and manifests/gallery use revalidation. Do not
+claim a Cloudflare CDN edge-cache hit on the workers.dev hostname: the Workers Cache
+API is not effective there ([Cloudflare R2 cache documentation](https://developers.cloudflare.com/r2/examples/cache-api/)).
+Static application assets use Workers' managed asset storage.
+
+## Historical Sites hosting
+
 
 Source repository: https://github.com/nrgapple/atv-offroad-fury-2-web (private).
 The user selected **public HTTPS Sites hosting**, matching the Game Boy project.
@@ -59,13 +131,14 @@ and fresh session credential for the Site-only package. Do not claim autoload is
 complete until the published build starts without a file-selection step and public
 requests are verified against the approved manifest.
 
-The local Codex heartbeat `publish-atv-web-builds` is configured **ACTIVE every 15
-minutes** in this thread. It checks successful current-main CI through
-`fetch_site_release.py`, stages the verified artifact through `stage_site.py`, and
-uses native Sites tools with a fresh credential to publish. It skips unchanged
-commits and leaves the prior public build active while CI is pending or failing.
-There is up to one polling interval of deployment delay. The automation needs the
-Mac/local Codex executor available; public Site visitors do not need this Mac online.
+The local Codex heartbeat `publish-atv-web-builds` remains **ACTIVE every 15
+minutes** in this thread, migrated to Cloudflare verification and validated R2
+content/gallery maintenance. GitHub deploys authored application assets on passing
+main builds; the heartbeat no longer publishes Sites versions. It skips commits
+waiting for CI and never publishes uncommitted devlog metadata. R2 maintenance
+needs the Mac/local Codex executor available; public Cloudflare visitors and GitHub
+application deployment do not need this Mac online. Screenshot updates can have
+up to one polling interval of delay.
 
 The CI-artifact-to-public-Site path is verified for main commit
 `0dc5c09890df6bbf8f942309558ad168b7a8857b`; public `/deployment.json` returns

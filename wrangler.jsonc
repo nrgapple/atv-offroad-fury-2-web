@@ -1,0 +1,17 @@
+{
+  "$schema": "https://unpkg.com/wrangler@4.149.0/config-schema.json",
+  "name": "atv-offroad-fury-2",
+  "main": "cloudflare/worker.mjs",
+  "compatibility_date": "2026-10-01",
+  "account_id": "92b7e16fd24d5fb585f866f5832a032b",
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "work/cloudflare/static",
+    "html_handling": "none",
+    "not_found_handling": "none",
+    "run_worker_first": ["/", "/content/*", "/devlog-images/*", "/devlog.json"]
+  },
+  "r2_buckets": [{ "binding": "CONTENT", "bucket_name": "atv-offroad-fury-2-content" }]
+}

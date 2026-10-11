@@ -6,4 +6,8 @@
 .DS_Store
 __pycache__/
 *.pyc
+/.wrangler/
+/node_modules/
+/.dev.vars*
+/.env*
 
