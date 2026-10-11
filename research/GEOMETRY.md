@@ -68,8 +68,9 @@ original detail textures, batched vegetation and finite vehicle states without
 JavaScript/WebGL errors. Freeport reports 356 scenery instances and 13,816
 vegetation placements in nine visible batches, with no unsupported PSG meshes.
 The eight-map frontend/controller selector, pause and 390px touch regression also
-passed. An inspected screenshot is recorded in the dev log. Publication is verified
-separately; this paragraph records the host test.
+passed. An inspected screenshot is recorded in the dev log. The same eight-map and frontend checks subsequently passed on public Cloudflare
+main `e19ec6b4c7f515e6ea3ed7c7aa97810357109f13` after successful CI deployment
+and R2 content publication.
 
 ## Arlington train recovery in progress (2026-10-11)
 

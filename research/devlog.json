@@ -1,6 +1,6 @@
 {
-  "status": "This build connects eight environments with original vegetation and terrain detail. Freeport Harbor now loads and drives after correcting a sub-half-inch shared-border tolerance; all eight host map checks and the frontend regression pass. The build is pending public deployment. Full game flow, the Arlington train, stunt scoring, crash poses and exact terrain LOD remain unfinished.",
-  "working_on": "Verify the eight-map build after public deployment. Continue recovering full game flow, the Arlington train, original terrain projected-coverage/LOD behavior and stunt/crash systems without overstating partial results.",
+  "status": "The public Cloudflare build connects all eight environments, with original terrain, vegetation, music and the recovered menu/drive routes. Commit e19ec6b4c7f515e6ea3ed7c7aa97810357109f13 passed the eight-map public checks and automatic CI-to-Worker deployment. The project remains incomplete: the Arlington train is not connected, and race flow, original terrain LOD, stunt scoring and crash poses remain unfinished.",
+  "working_on": "Connect the recovered Arlington locomotive and ten-car VUE route to the runtime, and continue recovering original race flow, projected terrain coverage/LOD, stunt scoring and crash behavior.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -541,17 +541,18 @@
       "recorded_at": "2026-10-11T23:34:58.297051+00:00",
       "kind": "discovery",
       "title": "A half-inch seam had hidden Freeport Harbor",
-      "summary": "Freeport\u2019s terrain was not corrupt; our seam check was too strict. Two vertices on a shared border differ by only 0.03262 feet, less than half an inch. The dense heightfield now gives border contact to its owning tile instead of rejecting the map.",
+      "summary": "Freeport\u2019s terrain was not corrupt; our seam check was too strict. Two vertices on a shared border differ by only 0.03262 feet, less than half an inch. The renderer\u2019s dense grid now chooses the height from the tile that owns each cell, while preserving the source per-tile geometry and collision data.",
       "details": [
-        "The recovered ENV04 grid is 1,025 \u00d7 1,281 samples at 4.5-foot spacing. Its local scene loads 356 placements and 13,816 ecosystem items in nine vegetation batches, with no unsupported meshes.",
-        "The scene file omits the freestyle starting direction, so the route now uses the original TOY start settings recovered from native routine 0x002fa3c0.",
-        "The host browser passed load-and-drive checks for all eight environments, with no JavaScript or WebGL errors. The menu/controller selector, pause and 390px touch regression also passed.",
-        "Separate Arlington research recovered a locomotive and ten cars on one looping VUE path with per-car distance offsets; the train is not rendered or connected yet."
+        "Freeport ENV04 uses a 1,025 \u00d7 1,281 grid at 4.5-foot spacing. Its scene has 356 instances and 13,816 ecosystem placements in nine batches, with 235,870 terrain triangles and no unsupported meshes.",
+        "The scene file omits the freestyle starting direction, so the route uses original TOY start settings recovered from native routine 0x002fa3c0.",
+        "The public Cloudflare build from main commit e19ec6b4c7f515e6ea3ed7c7aa97810357109f13 passed CI run 38184851978. The automatic CI-to-Worker publish completed for this release.",
+        "Public checks passed load-and-drive for all eight maps, plus the controller/menu selector, pause, and 390px touch route without a disc prompt or JavaScript/WebGL errors. Checks also matched 23 static-app hashes and 285 runtime, manifest and PNG objects by hash and MIME; the 21-song catalog remains present.",
+        "The approved screenshot was captured on the host and shows the Freeport dirt-road spawn; it is not a public-browser capture."
       ],
-      "limitation": "This eight-map checkpoint is host-verified and still pending public deployment. It is a partial reconstruction, and the recovered Arlington train has not been added to the scene.",
+      "limitation": "The eight-map build is publicly verified, but this remains a partial reconstruction. The Arlington locomotive and ten-car looping path have been recovered in research but are not rendered or connected to the game. Full race flow and original terrain LOD behavior remain unfinished.",
       "image": "/devlog-images/a-half-inch-seam-had-hidden-freeport-harbor-fc44799c.png",
       "caption": "Host-verified Freeport Harbor spawn on the original dirt road, with recovered vegetation and terrain."
     }
   ],
-  "updated_at": "2026-10-11T23:34:58.297051+00:00"
+  "updated_at": "2026-10-11T23:40:30.526079+00:00"
 }

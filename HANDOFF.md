@@ -1,6 +1,6 @@
 # Implementation handoff
 
-Latest host checkpoint: Freeport Harbor (ENV04) joins the seven connected environments after correcting dense terrain border ownership and reading freestyle starts from the mode TOY. All eight map/driving and frontend/mobile regressions pass locally; the release must still pass public verification. All 40 named terrains now decode, which does not mean 40 playable maps. Arlington’s original train resources and procedural route are recovered but its animated train is not yet connected. See [geometry evidence](research/GEOMETRY.md).
+Latest public checkpoint: all eight environments ENV01–ENV08, including Freeport Harbor and Arlington Stream, pass browser loading and driving on Cloudflare. Main `e19ec6b4c7f515e6ea3ed7c7aa97810357109f13` deployed automatically through CI `38184851978`; all eight-map, controller/menu, pause and 390px touch checks passed without a disc picker or JavaScript/WebGL errors. All 40 named terrains decode, which does not mean 40 playable maps. Arlington’s original train resources and procedural route are recovered but its animated train is not yet connected. See [geometry evidence](research/GEOMETRY.md).
 
 ## Current scope
 

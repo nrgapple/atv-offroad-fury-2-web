@@ -81,6 +81,22 @@ claim a Cloudflare CDN edge-cache hit on the workers.dev hostname: the Workers C
 API is not effective there ([Cloudflare R2 cache documentation](https://developers.cloudflare.com/r2/examples/cache-api/)).
 Static application assets use Workers' managed asset storage.
 
+## Eight-environment release (2026-10-11)
+
+Main `e19ec6b4c7f515e6ea3ed7c7aa97810357109f13` deployed automatically via
+successful CI `38184851978`. Incremental R2 publication uploaded five changed
+objects: Freeport FR/ENDL resources, the approved screenshot, manifest and gallery.
+The bucket now has 286 allowlisted objects, 267,330,103 bytes, including its internal
+gallery metadata. Public verification matched 23 authored/static hashes, committed
+devlog metadata and all 285 served runtime/manifest/PNG objects. The gallery has
+36 entries and 33 screenshots; all 21 songs remain available.
+
+The public browser passed all eight ENV01–ENV08 map loads and driving checks,
+plus the original menu/controller selector, pause/Controls and 390px touch flow,
+without a disc picker or JavaScript/WebGL errors. Freeport reports 356 scenery
+instances, 13,816 ecosystem placements in nine batches and no unsupported meshes.
+The Arlington environment is available; its animated train remains unfinished.
+
 ## Historical Sites hosting
 
 
