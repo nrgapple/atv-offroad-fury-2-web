@@ -1,0 +1,9 @@
+/private/
+/references/
+/work/
+/target/
+/web/dist/
+.DS_Store
+__pycache__/
+*.pyc
+

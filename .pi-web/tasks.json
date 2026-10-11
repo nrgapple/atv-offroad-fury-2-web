@@ -1,0 +1,8 @@
+{
+  "tasks": [
+    { "name": "Verify project resources", "command": "make verify" },
+    { "name": "Show disc inventory", "command": "make inventory" },
+    { "name": "Verify complete source hashes", "command": "make verify-full" },
+    { "name": "Reimport source disc", "command": "make import" }
+  ]
+}
