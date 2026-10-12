@@ -741,6 +741,22 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     vehicle.step_with_scene(terrain, input, dt, sim.water.as_ref(), || {
                         wreck.boundary_random_words()
                     })?;
+                //Deep water can invoke001e35d0 before physics independently
+                //of advance_wreck. Reset attached presentation/camera state too.
+                if frame.reset_count != current.reset_count {
+                    wreck.reset();
+                    wreck.set_boundary_flight(false);
+                    sim.rider_animator
+                        .as_mut()
+                        .ok_or("rider animator missing")?
+                        .reset(&sim.rider_mesh.as_ref().ok_or("rider mesh missing")?.nodes)?;
+                    if let Some(camera) = &mut sim.camera {
+                        camera.reset();
+                    }
+                    sim.wreck_camera = None;
+                    sim.rider_mode = None;
+                    sim.touch_drive.reset();
+                }
                 //001e7600 publishes actor+290 before rider physics only while
                 //Riding/Attached; detached audio retains the last actor point.
                 if frame.wreck.phase == atv_core::wreck::Phase::Riding

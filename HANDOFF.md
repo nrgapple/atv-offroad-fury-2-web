@@ -1,5 +1,22 @@
 # Implementation handoff
 
+## Water and Caribou collision checkpoint (host verified)
+
+Branch `feature/water-snow-collisions` in a separate managed worktree connects
+the original five-second deep-water reset, using the previous cached surface
+and retained checkpoint. Rider buoyancy/Swim/recovery passes actual water-only
+routes on all four wet maps; ENV04/05/07 demonstrate drowning and dry-bank reset,
+while ENV08's shallower route clears the countdown through the source wave/depth
+gates. Caribou's ramp and all five ski placements pass 776 per-face tree rays
+and 24 desktop/390px wheel/body approaches, including clean ramp launch/landing.
+Existing authored collision geometry needed no changes or offsets.
+
+302 core + 2 WASM tests, 47 JS tests, strict Clippy/fmt, setup, 13 release/4 Worker
+checks, normal clean landing/wreck recovery and uninterrupted eight-map driving
+pass. Screenshot/native/generated resources remain private. See
+[water/snow evidence and limits](research/WATER_SNOW_GATE.md). This is a host gate,
+not a claim that the branch is public or every map/system matches original play.
+
 ## Latest verified public rail checkpoint
 
 `841f11c5d619cac92bc6033fe01e1e2d09cbdcc4` is public, CI 38287671823 success.
