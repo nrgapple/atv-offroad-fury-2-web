@@ -97,6 +97,26 @@ without a disc picker or JavaScript/WebGL errors. Freeport reports 356 scenery
 instances, 13,816 ecosystem placements in nine batches and no unsupported meshes.
 The Arlington environment is available; its animated train remains unfinished.
 
+## Settings, soundtrack and menu thumbnail release (2026-10-12)
+
+Main `0906822adbc585f58e4a7309322f63f4cc3f7b6a` passed GitHub CI
+[`38194430965`](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38194430965)
+and deployed to the public Worker. Verification matched all 24 authored/static
+hashes and all 298 served runtime, manifest and screenshot objects by size,
+SHA-256 and MIME. The public gallery contains 50 entries and 45 PNG screenshots.
+
+The public browser verified keyboard and controller binding capture for keys,
+buttons and signed axes, actual-WASM driving, persistence after reload, reverse
+chords, stunt axes, once-only commands, cancellation on blur/disconnect and the
+Resume→Escape path. The 33-step stale-preload cancellation regression passed.
+All 21 songs decoded and played through WASM with reads bounded at 65,536 bytes
+and zero underruns; paused preview, music off/on and focus handling passed. The
+frontend route covered title/menu navigation, keyboard/controller input, Tioga
+driving, pause and a 390px Caribou reload. The Main Menu includes the recovered
+256×128 ATV thumbnail. These browser checks do not establish physical controller
+or iOS compatibility, listening fidelity, full menu-art restoration, full flips
+or whole-game parity.
+
 ## Historical Sites hosting
 
 
