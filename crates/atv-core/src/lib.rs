@@ -1,6 +1,7 @@
 //! Exact-build format recovery. No game data or executable code is embedded.
 pub mod animation;
 pub mod audio;
+pub mod browser_input;
 pub mod camera;
 pub mod collision;
 pub mod contact;

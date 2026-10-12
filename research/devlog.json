@@ -1,6 +1,6 @@
 {
-  "status": "The eight-map baseline 1e5c4fd remains the reference for map, terrain and earlier touch evidence. Public commit 52534bbb (CI 38187838559) separately verifies one actual-content wreck/reset route and a clean preload landing. Public commit 667f24bc707f5240d6927c49c65cdf6583728ad5 (CI 38188315671) verifies the start-screen Dev log link. New main-trick air-control, visual steering and animated-bounds center-of-gravity work remains host-tested candidate work; full handling, stunt and crash behavior remain partial.",
-  "working_on": "Verify the host-tested handling, trick-control and animated-bounds center-of-gravity candidate in the next public CI/deployment checks. Then broaden fixed-input comparisons and continue native wreck-camera, rider-versus-prop/water, trick-transition and crash-state work.",
+  "status": "Latest verified public release c3c18677bff40f0731c05b1b6406d80a983ed413 (CI 38189067629) passed the board, stunt-subset, wreck and clean-landing checks. The public Dev log start link remains separately verified on 667f24bc707f5240d6927c49c65cdf6583728ad5. New per-physics-step touch mapping, focus recovery and the 361-sample orientation sweep are host-tested candidate work, not public proof. Full flips, original wreck-mode exceptions and overall handling parity remain unresolved.",
+  "working_on": "Verify the host per-physics-step touch mapping and focus recovery in a public release; continue original handling, airborne controls and trick-transition comparisons. Investigate native crash-camera/body coupling, original wreck-mode exceptions and rider-prop/water contacts; physical iOS behavior remains unverified.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -663,14 +663,31 @@
         "The host candidate derives the crashed rider center of gravity from animated 13-point world bounds rather than a fixed pelvis. Five hundred synthetic cases matched the original instruction behavior; 1,694 original-pose samples and five detach/ground/reset cases passed. The final integrated host browser checks passed with this center-of-gravity update: real-touch Nac Nac \u2192 vertical wreck \u2192 separation/ground clip \u2192 terrain contact \u2192 automatic reset \u2192 drive; a separate clean landing stayed in Riding state."
       ],
       "limitation": "The integrated real-touch wreck/recovery and clean-landing browser checks now pass on the host after the visual-steering change. These mechanics additions are still host-only, not public proof or full PS2 gameplay parity. Broader trick transitions, native wreck camera, rider-versus-prop/water contacts, and wider fixed-input replay comparisons remain unfinished."
+    },
+    {
+      "id": "touch-input-now-follows-physics-steps-through-takeoff--10fe86e7",
+      "timestamp": "2026-10-12T00:59:38.701799+00:00",
+      "recorded_at": "2026-10-12T01:05:03.525020+00:00",
+      "kind": "verification",
+      "title": "Right-thumb preload stays out of camera orbit after focus loss",
+      "summary": "After focus returns, a right-thumb touch now reacquires the ATV preload control instead of leaving stale camera orbit. Separately, left-thumb pullback switches from braking to backward lean immediately after takeoff. Both changes passed host regressions; the exact physical-iOS sequence and the cause of the user\u2019s original camera symptom remain unconfirmed.",
+      "details": [
+        "In a 68-frame WASM comparison, four-step shifted batches matched sequential Rust calls at every native-f32 value. A takeoff at step 55 produced air-lean 1 and brake 0 at step 56; landing at 66 produced ground-brake 1 at 67. Cancel generation cleared the following four steps.",
+        "A synthetic blur \u2192 right-touch \u2192 focus \u2192 drag test changed from stale orbit -0.2 rad with preload missing to orbit 0 with preload 1 while still Riding. The permanent regression also verifies that right-touch reacquires focus without a synthetic focus event.",
+        "The original coupled-pitch sweep matched Rust wreck decisions across 361 samples, with maximum angle error 2.38e-7 rad and the first rear wreck near 85 degrees. This does not show full flips are fixed; original global wreck-enable mode exceptions remain unknown.",
+        "Host make check passed 131 core, 1 web and 11 JavaScript tests, with actual touch and ramp regressions passing."
+      ],
+      "limitation": "The per-step touch mapping and focus-recovery changes are host-only. Public c3 includes the tested main-trick control gate and animated-bounds center of gravity, but neither release establishes full flips or overall PS2 gameplay parity. Physical iOS behavior, original wreck-mode exceptions and the reported camera symptom\u2019s exact cause remain unresolved.",
+      "image": "/devlog-images/touch-input-now-follows-physics-steps-through-takeoff--10fe86e7.png",
+      "caption": "Host mobile capture after focus recovery, with the right-side PRELOAD gesture visible. The still illustrates the touch control; the orbit and per-step behavior are established by browser tests."
     }
   ],
-  "updated_at": "2026-10-12T00:40:32.698466+00:00",
+  "updated_at": "2026-10-12T01:05:03.525020+00:00",
   "port_status": {
-    "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The eight-map baseline and the separately recorded public wreck-loop check name their own commits and tests; neither implies a complete game or complete decompilation. Host-only candidates are labeled separately from public checks.",
+    "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
-      "commit": "1e5c4fd255a4979148bdda648e010e2fbb68221b",
-      "ci_run": "38186584449",
+      "commit": "c3c18677bff40f0731c05b1b6406d80a983ed413",
+      "ci_run": "38189067629",
       "url": "https://atv-offroad-fury-2.champtoday.workers.dev/"
     },
     "next_priorities": [
@@ -848,8 +865,8 @@
         "title": "Wrecks, rider separation and recovery",
         "status": "PARTIAL",
         "scope": "PUBLIC VERIFIED \u00b7 TESTED LOOP",
-        "summary": "Public commit 52534bbb verified an actual-content Caribou preload hop into Nac Nac, vertical wreck, rider separation, terrain contact, automatic reset and driving again; a separate clean landing kept every rider frame in Riding state. A newer host candidate makes the rider center of gravity follow animated 13-point world bounds.",
-        "validation": "Public tools/test_wreck.mjs and tools/test_clean_landing.mjs passed on commit 52534bbb955277a31dfda30b5be65863d4388453 (CI 38187838559); both reported no JavaScript errors. The wreck loop reset once, while the clean landing did not reset.",
+        "summary": "Public commit 52534bbb verified an actual-content Caribou preload hop into Nac Nac, vertical wreck, rider separation, terrain contact, automatic reset and driving again; a separate clean landing kept every rider frame in Riding state. Public c3 also includes the tested animated-bounds center of gravity, which follows 13 rider points rather than a fixed pelvis.",
+        "validation": "Public tools/test_wreck.mjs and tools/test_clean_landing.mjs passed on commit 52534bbb955277a31dfda30b5be65863d4388453 (CI 38187838559); the newer public c3 regression also passed wreck, clean-landing and stunt checks. These released checks cover only their tested routes; host-only orientation and per-step input refinements are separate.",
         "evidence": "research/WRECK.md \u2014 recovered rules, public browser tests and remaining camera/contact limits.",
         "next_step": "Continue native wreck-camera behavior and rider-versus-prop/water contacts; compare the animated-bounds center of gravity across more original crash and recovery states.",
         "release_verification": {
@@ -861,10 +878,10 @@
             "tools/test_clean_landing.mjs: clean landing, all rider frames Riding, reset count 0"
           ]
         },
-        "limitation": "The public check covers one actual-content wreck/reset route and a separate clean landing, not the full stunt or crash system. Host candidate center-of-gravity checks are not public proof. Native wreck-camera behavior, rider-versus-prop and water contacts, and broader crash-state coverage remain incomplete.",
+        "limitation": "Public tests cover one actual-content wreck/reset route and a clean landing, not the full stunt or crash system. Host orientation and per-step input refinements are not public proof. Native wreck-camera behavior, rider-versus-prop and water contacts, original mode exceptions, and broader crash-state coverage remain incomplete.",
         "host_candidate": {
-          "scope": "HOST COMPONENT CHECKS \u00b7 NOT PUBLICLY VERIFIED",
-          "validation": "500 synthetic center-of-gravity cases matched original instruction behavior using point-transform hooks; 1,694 original pose samples and five detach/ground/reset cases passed. Final host actual-content browser checks passed: real-touch Nac Nac \u2192 vertical wreck \u2192 rider separation/ground clip \u2192 terrain contact \u2192 automatic reset \u2192 drive, with animated center-of-gravity assertions; a separate clean jump stayed in Riding state. These candidate changes remain host-only.",
+          "scope": "PUBLIC IMPLEMENTATION \u00b7 HOST COMPONENT COMPARISONS",
+          "validation": "The animated-bounds center-of-gravity implementation is included in public c3; its 500 synthetic instruction comparisons matched using point-transform hooks. Additionally, 1,694 original pose samples and five detach/ground/reset cases passed. Host actual-content tests passed real-touch wreck recovery and a separate clean landing with CoG assertions. The newer per-step touch/focus changes remain host-only.",
           "evidence": "research/WRECK.md; research/ANIMATION.md"
         }
       },
@@ -875,20 +892,28 @@
         "status": "PARTIAL",
         "scope": "PUBLIC + HOST TESTS",
         "summary": "Public touch hold/release changes rider pose without granting force on flat ground. Host ramp tests show native takeoff lean/pitch behavior and a separate clean four-wheel landing, but not a completed flip or full stunt system.",
-        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 host-only ramp/landing traces",
+        "validation": "Public c3c18677bff40f0731c05b1b6406d80a983ed413 \u00b7 CI 38189067629 passed the released touch/stunt regression subset. Host candidate additionally matched sequential native-f32 updates across 68 WASM frames with takeoff and landing transitions occurring on adjacent physics steps; physical iOS and full-flip behavior are not established.",
         "evidence": "research/TOUCH.md \u2014 preload, takeoff continuity and touch verification.",
-        "next_step": "Finish native stunt/crash transitions and verify ramp, landing and recovery together on actual browser input."
+        "next_step": "Verify the per-step adapter on physical iOS and compare original takeoff, landing, cancellation and recovery sequences across more fixed inputs."
       },
       {
         "id": "stunt-actions",
         "category": "Vehicle",
         "title": "Stunt actions and trick animations",
         "status": "PARTIAL",
-        "scope": "HOST CANDIDATE \u00b7 PARTLY CONNECTED",
-        "summary": "Host candidate connects the original main-trick control gate: stunt-axis rates and half-strength input angular moment apply in main mode, while held and ordinary-air modes keep their existing response. Full gesture combinations, cancel/landing transitions and scoring remain incomplete.",
-        "validation": "Host original-instruction comparison: 60 varied force/state cases bit-identical; the former gate differed on 20 main-mode samples and the other 40 were unchanged. Final host tools/test_wreck.mjs and tools/test_clean_landing.mjs passed with real touch and the integrated candidate; no public stunt parity is claimed.",
-        "evidence": "research/TOUCH.md \u2014 airborne stunts; research/ANIMATION.md \u2014 rider animation recovery.",
-        "next_step": "Cover all original modifier/direction paths, then compare trick entry, hold/release, landing and cancel traces against fixed-input reference runs."
+        "scope": "PUBLIC SUBSET + HOST CANDIDATE",
+        "summary": "Public c3 connects the original main-trick control gate for the tested stunt subset. Host instruction comparisons match its original stunt-axis rates and half-strength input angular moment; not all gesture families, cancel/landing transitions or full flips are established.",
+        "validation": "Public stunt regression subset passed on c3c18677bff40f0731c05b1b6406d80a983ed413 \u00b7 CI 38189067629. Host original-instruction comparison: 60 varied force/state cases bit-identical; the former gate differed on 20 main-mode samples and the other 40 were unchanged. The 361-sample original pitch/crash sweep matched Rust wreck decisions with maximum angle error 2.38e-7 rad; the first rear wreck occurred near 85 degrees. This does not show a full flip is fixed; original global wreck-enable mode exceptions remain unknown.",
+        "evidence": "research/TOUCH.md \u2014 airborne stunts; research/ANIMATION.md \u2014 rider animation recovery; research/WRECK.md \u2014 coupled pitch and wreck sweep.",
+        "next_step": "Cover every original modifier/direction path and determine the source global wreck-enable mode exceptions; compare trick entry, hold/release, landing and cancel traces against fixed-input references. Do not claim full flips.",
+        "release_verification": {
+          "commit": "c3c18677bff40f0731c05b1b6406d80a983ed413",
+          "ci_run": "38189067629",
+          "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+          "checks": [
+            "Public stunt regression subset passed; this does not claim all gestures or full flips."
+          ]
+        }
       },
       {
         "id": "stunt-scoring",
@@ -919,9 +944,9 @@
         "status": "LIVE",
         "scope": "PUBLIC",
         "summary": "The recovered landscape chase camera and preset cycling work. Portrait adds a bounded framing adjustment and restores the native landscape pose/FOV after rotation.",
-        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449 \u00b7 portrait\u2192landscape restore test",
+        "validation": "Public landscape/portrait framing checks remain tied to 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449. A separate host synthetic blur\u2192touch\u2192focus\u2192drag regression verifies stale touch orbit returns from -0.2 rad to 0 when focus is reacquired; this is input-focus recovery, not proof that original crash-coupled camera behavior is complete.",
         "evidence": "research/CAMERA.md \u2014 camera recovery and portrait presentation.",
-        "next_step": "Connect object clearance and continue checking framing on the remaining terrain profiles."
+        "next_step": "Compare camera/body coupling through original stunt and wreck sequences; keep touch focus recovery distinct from unresolved native wreck-camera behavior."
       },
       {
         "id": "missing-scene-meshes",
@@ -950,11 +975,11 @@
         "category": "Platform",
         "title": "Keyboard, controller and touch input",
         "status": "PARTIAL",
-        "scope": "PUBLIC",
-        "summary": "Tested keyboard/controller menu routes, browser gamepad driving, multitouch, cancellation, mobile pause and a small set of native riding gestures. Full remapping and physical iOS/Bluetooth compatibility are not established.",
-        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449 \u00b7 mobile browser checks; no physical iOS Safari claim",
+        "scope": "PUBLIC BASELINE + HOST CANDIDATE",
+        "summary": "Public browser checks cover keyboard/controller menus, driving, multitouch, cancellation and mobile pause. A host candidate now resolves raw touch intent on every Rust physics step, including batched catch-up steps, so takeoff/landing transitions no longer wait for the next render batch. A separate synthetic blur/touch/focus test also recovers the touch orbit/preload state.",
+        "validation": "Public checks: c3c18677bff40f0731c05b1b6406d80a983ed413 \u00b7 CI 38189067629. Host WASM: 68-frame shifted-batch vs sequential execution matched native f32 state; takeoff 55\u219256 mapped to air-lean 1/brake 0, landing 66\u219267 to ground-brake 1, and cancel generation cleared the following four steps. Synthetic blur\u2192right-touch\u2192focus\u2192drag changed stale orbit -0.2 rad/no preload to orbit 0/preload 1 while Riding; a permanent test confirms right-touch focus reacquisition without a synthetic focus event. Physical iOS behavior remains unverified. Host make check passed 131 core, 1 web and 11 JavaScript tests; actual touch and ramp regressions passed.",
         "evidence": "research/TOUCH.md \u2014 browser adapter limits; research/IMPLEMENTATION.md \u2014 input requirements.",
-        "next_step": "Validate with physical iOS and controller hardware, then implement/verify original remapping and remaining controls."
+        "next_step": "Verify per-step mapping and focus recovery on physical iOS/browser input; complete original remapping and remaining controls."
       },
       {
         "id": "audio",

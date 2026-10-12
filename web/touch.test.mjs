@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TouchInput, TouchDrive } from './touch.js';
+import { TouchInput, TouchDriveIntent } from './touch.js';
 
 test('whole-right gesture separates physical lean from hold/release preload', () => {
   const touch = new TouchInput(); touch.begin(1, 300, 400);
@@ -27,32 +27,27 @@ test('second right finger cannot steal gesture or cause premature release', () =
   touch.begin(3); assert.equal(touch.sample().preload_axis, 1);
 });
 
-test('backward left input brakes forward motion and reverses only near standstill', () => {
-  const drive = new TouchDrive();
-  assert.deepEqual(drive.sample(-1, 30), { throttle: 0, brake: 1, reverse: false });
-  assert.deepEqual(drive.airSample(1), { throttle: 0, brake: 0, reverse: false, lean: 1 }, 'Ramp pullback becomes pitch without retaining its ground brake');
-  assert.deepEqual(drive.sample(-1, 25), { throttle: 0, brake: 1, reverse: false }, 'The same held pullback brakes again after landing');
-  assert.deepEqual(drive.sample(-.5, 1.01), { throttle: 0, brake: .5, reverse: false });
-  assert.deepEqual(drive.sample(-.5, .99), { throttle: .5, brake: 0, reverse: true });
-  assert.deepEqual(drive.sample(-1, -10), { throttle: 1, brake: 0, reverse: true });
-  assert.deepEqual(drive.sample(0, -10), { throttle: 0, brake: 0, reverse: true });
+test('left touch sends raw intent and preserves center while a second finger cannot steal it', () => {
+  const left = new TouchDriveIntent(); const initial = left.sample();
+  assert.deepEqual(initial, { generation: 1, held: false, axis: 0 });
+  assert(left.begin(1, 60, 500)); assert(!left.begin(2, 70, 510));
+  left.move(1, 130, 570); assert.equal(left.steer, 1);
+  assert.deepEqual(left.sample(), { generation: 1, held: true, axis: -1 });
+  left.move(2, 0, 0); left.end(2, true);
+  assert.equal(left.sample().axis, -1); assert.equal(left.sample().generation, 1);
+  left.move(1, 60, 430); assert.equal(left.sample().axis, 1);
+  left.end(1); assert.deepEqual(left.sample(), initial);
+  assert(left.begin(3, 60, 500));
 });
 
-test('forward input brakes backward motion before selecting forward; reset is neutral', () => {
-  const drive = new TouchDrive();
-  assert.deepEqual(drive.sample(1, -10), { throttle: 0, brake: 1, reverse: true });
-  assert.deepEqual(drive.sample(.5, -1.01), { throttle: 0, brake: .5, reverse: true });
-  assert.deepEqual(drive.sample(.5, -.99), { throttle: .5, brake: 0, reverse: false });
-  drive.clear(); assert.equal(drive.engaged, false); assert.deepEqual(drive.sample(0, 0), { throttle: 0, brake: 0, reverse: false });
-});
-
-test('airborne thumb pitch keeps takeoff throttle and gear without invented forces', () => {
-  const drive = new TouchDrive(); drive.sample(.8, 40);
-  assert.deepEqual(drive.airSample(0), { throttle: .8, brake: 0, reverse: false, lean: 0 });
-  assert.deepEqual(drive.airSample(1), { throttle: .8, brake: 0, reverse: false, lean: 1 });
-  assert.deepEqual(drive.airSample(-1), { throttle: .8, brake: 0, reverse: false, lean: -1 });
-  assert.deepEqual(drive.sample(-1, 30), { throttle: 0, brake: 1, reverse: false });
-  drive.clear(); assert.deepEqual(drive.airSample(1), { throttle: 0, brake: 0, reverse: false, lean: 1 });
+test('left cancel and clear advance generation to invalidate queued takeoff memory', () => {
+  const left = new TouchDriveIntent(); left.begin(1, 50, 500); left.move(1, 50, 430);
+  const queued = left.sample(); left.end(1, true);
+  assert.equal(queued.axis, 1); assert.equal(left.sample().axis, 0);
+  assert.equal(left.sample().generation, queued.generation + 1);
+  left.begin(2, 50, 500); left.clear();
+  assert.equal(left.sample().generation, queued.generation + 2);
+  assert.equal(left.sample().held, false); assert.equal(left.steer, 0);
 });
 
 test('airborne right swipes hold original Circle directions and never emit preload release', () => {

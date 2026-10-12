@@ -32,32 +32,26 @@ export class TouchInput {
   }
 }
 
-// Browser convenience, not recovered controller behavior. Direction changes
-// brake first and select the other gear only near standstill (1 ft/s).
-export class TouchDrive {
-  constructor() { this.clear(); }
-  clear() { this.reverse = false; this.engaged = false; this.ground = { throttle: 0, brake: 0, reverse: false }; }
-  sample(axis, speed) {
-    axis = clamp(axis); speed = Number.isFinite(speed) ? speed : 0;
-    const strength = Math.abs(axis);
-    if (strength <= .08) this.ground = { throttle: 0, brake: 0, reverse: this.reverse };
-    else {
-      this.engaged = true;
-      const wantedReverse = axis < 0;
-      if ((wantedReverse && speed > 1) || (!wantedReverse && speed < -1)) {
-        this.reverse = speed < 0;
-        this.ground = { throttle: 0, brake: strength, reverse: this.reverse };
-      } else {
-        this.reverse = wantedReverse;
-        this.ground = { throttle: strength, brake: 0, reverse: this.reverse };
-      }
-    }
-    return { ...this.ground };
+// Raw left-thumb intent only. Rust resolves drive/brake/air lean against each
+// fixed physics step, so a transport batch cannot keep the old grounded mode.
+export class TouchDriveIntent {
+  constructor() { this.generation = 0; this.clear(); }
+  clear() { this.generation++; this.pointer = null; }
+  begin(id, x, y) {
+    if (this.pointer) return false;
+    this.pointer = { id, x, y, dx: 0, dy: 0 }; return true;
   }
-  // Keep takeoff throttle/gear, but pullback now means pitch, not wheel brake.
-  // Independent controller/keyboard brakes remain handled by the input mixer.
-  airSample(lean) { return { ...this.ground, brake: 0, lean: clamp(lean) }; }
-
+  move(id, x, y) {
+    if (this.pointer?.id !== id) return;
+    this.pointer.dx = clamp((x - this.pointer.x) / 70);
+    this.pointer.dy = clamp((y - this.pointer.y) / 70);
+  }
+  end(id, cancelled = false) {
+    if (this.pointer?.id !== id) return;
+    if (cancelled) this.clear(); else this.pointer = null;
+  }
+  sample() { return { generation: this.generation, held: Boolean(this.pointer), axis: this.pointer ? -this.pointer.dy : 0 }; }
+  get steer() { return this.pointer?.dx ?? 0; }
 }
 
 export function mountTouchControls({ active, focus, surface, parent = document.body }) {
@@ -73,10 +67,12 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
   };
   const clear = () => { input.clear(); root.classList.remove('held'); root.dataset.preload = 'idle'; refresh(); };
   const down = event => {
-    if (event.pointerType !== 'touch' || event.clientX < innerWidth / 2 || !active()) return;
+    if (event.pointerType !== 'touch' || event.clientX < innerWidth / 2) return;
+    focus?.();
+    if (!active()) return;
     event.preventDefault(); event.stopImmediatePropagation(); touched = true;
     if (!input.begin(event.pointerId, event.clientX, event.clientY, airborne)) return;
-    focus?.(); surface.setPointerCapture(event.pointerId); root.classList.add('held');
+    surface.setPointerCapture(event.pointerId); root.classList.add('held');
     marker.style.left = `${event.clientX}px`; marker.style.top = `${event.clientY}px`; marker.style.setProperty('--lean', '0px');
     label.textContent = airborne ? 'SWIPE' : 'PRELOAD'; refresh();
   };

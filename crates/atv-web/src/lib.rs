@@ -27,6 +27,8 @@ struct Simulation {
     mesh: Option<mesh::Mesh>,
     materials: Option<[TerrainMaterial; 8]>,
     vehicle: Option<Vehicle>,
+    touch_drive: atv_core::browser_input::TouchDrive,
+    resolved_input: Option<serde_json::Value>,
     rider_mesh: Option<mesh::Mesh>,
     rider_animation: Option<animation::Animation>,
     rider_catalog: Vec<atv_core::motion_catalog::Motion>,
@@ -159,6 +161,10 @@ fn simulation_frame(sim: &Simulation, frame: &atv_core::vehicle::VehicleFrame) -
             frame.wheel_compression,
         )?;
     let mut value = serde_json::to_value(frame).map_err(|error| error.to_string())?;
+    value["applied_input"] = sim
+        .resolved_input
+        .clone()
+        .unwrap_or(serde_json::Value::Null);
     value["quad_node_matrices"] =
         serde_json::to_value(matrices).map_err(|error| error.to_string())?;
     if let Some(animator) = &sim.rider_animator {
@@ -266,6 +272,8 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     animator.reset(&sim.rider_mesh.as_ref().ok_or("rider mesh missing")?.nodes)?;
                 }
                 sim.rider_mode = None;
+                sim.touch_drive.reset();
+                sim.resolved_input = None;
                 let result = simulation_frame(sim, &vehicle.frame())?;
                 sim.vehicle = Some(vehicle);
                 return Ok(result);
@@ -291,6 +299,36 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 };
                 let terrain = sim.terrain.as_ref().ok_or("load original terrain first")?;
                 let dt = json_number(&value, "dt")?;
+                let intent = raw
+                    .get("touch_drive")
+                    .filter(|v| !v.is_null())
+                    .map(|v| {
+                        serde_json::from_value(v.clone())
+                            .map_err(|e| format!("invalid touch intent: {e}"))
+                    })
+                    .transpose()?;
+                let current = sim
+                    .vehicle
+                    .as_ref()
+                    .ok_or("start simulation first")?
+                    .frame();
+                let input = sim.touch_drive.resolve(
+                    input,
+                    intent,
+                    current.grounded.iter().any(|c| *c),
+                    current.speed,
+                )?;
+                let mut resolved = raw.clone();
+                for (key, number) in [
+                    ("throttle", input.throttle),
+                    ("brake", input.brake),
+                    ("steer", input.steer),
+                    ("lean", input.lean),
+                ] {
+                    resolved[key] = serde_json::json!(number);
+                }
+                resolved["reverse"] = serde_json::json!(input.reverse);
+                sim.resolved_input = Some(resolved);
                 let safe = sim
                     .rider_animator
                     .as_ref()
@@ -300,6 +338,8 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 vehicle.set_rider_mode(sim.rider_mode);
                 let frame = vehicle.step(terrain, input, dt)?;
                 if frame.wreck.phase != atv_core::wreck::Phase::Riding {
+                    // Never carry takeoff throttle/direction through recovery.
+                    sim.touch_drive.reset();
                     let nodes = &sim.rider_mesh.as_ref().ok_or("rider mesh missing")?.nodes;
                     let wreck = sim
                         .wreck_animator

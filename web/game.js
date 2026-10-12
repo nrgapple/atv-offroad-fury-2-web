@@ -1,6 +1,6 @@
 // Original content and vehicle component simulation run in the Rust worker.
 import { Frontend } from './frontend.js';
-import { mountTouchControls, TouchDrive } from './touch.js';
+import { mountTouchControls, TouchDriveIntent } from './touch.js';
 import { GameAudio } from './audio.js';
 import { openHostedContent } from './content.js';
 const $ = id => document.getElementById(id);
@@ -19,11 +19,11 @@ let sceneChunks = [], sceneDraws = [], skyChunks = [], ecoGroups = [];
 const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const camera = { x: 0, y: 0, z: 0, yaw: 0, pitch: -.35 };
 const keys = new Set(), pointers = new Map();
-const touchDrive = new TouchDrive();
+const touchDrive = new TouchDriveIntent();
 const touchControls = mountTouchControls({
   surface: canvas,
   active: () => simReady && focused && !document.hidden && !menuOpen && !lost,
-  focus: () => canvas.focus({ preventScroll: true }),
+  focus: () => { focused = true; canvas.focus({ preventScroll: true }); syncAudio(); },
 });
 const diagnostics = { ready: false, frames: 0, vertices: 0, triangles: 0, chunks: 0, glError: 0, camera: [], source: null };
 let audio = new GameAudio(codec, message => { diagnostics.audioError = message; status(`Audio: ${message}`, true); });
@@ -743,36 +743,23 @@ function drivingInput() {
     stunt_x: Number(keys.has('ArrowRight')) - Number(keys.has('ArrowLeft')) + padX,
     stunt_y: Number(keys.has('ArrowDown')) - Number(keys.has('ArrowUp')) + padY,
   };
-  let leftAxis = 0, leftHeld = false, leftAirLean = 0;
-  const airborne = Boolean(simFrame?.grounded?.every(contact => !contact));
-  for (const pointer of pointers.values()) {
-    if (pointer.move) {
-      input.steer += pointer.dx / 70;
-      leftAxis = -pointer.dy / 70; leftHeld = true;
-      // Keep the thumb's original center across takeoff. A pullback already
-      // held on the ramp must immediately become the original backward lean.
-      leftAirLean = pointer.dy / 70;
-    }
-  }
-  if (leftHeld || (touchDrive.engaged && input.throttle === 0 && input.brake === 0 && !input.reverse)) {
-    const drive = airborne && leftHeld ? touchDrive.airSample(leftAirLean) : touchDrive.sample(leftAxis, simFrame?.speed ?? 0);
-    input.lean += drive.lean ?? 0;
-    input.throttle = Math.max(input.throttle, drive.throttle);
-    input.brake = Math.max(input.brake, drive.brake);
-    input.reverse ||= drive.reverse;
-  }
+  input.steer += touchDrive.steer;
+  input.touch_drive = touchDrive.sample();
   const touch = touchControls.sample();
   input.lean += touch.lean;
   if (touch.stunt_modifiers) Object.assign(input, { stunt_modifiers: touch.stunt_modifiers, stunt_x: touch.stunt_x, stunt_y: touch.stunt_y });
   if (touch.preload_axis !== null) input.preload_axis = touch.preload_axis;
   input.throttle = Math.max(0, clamp(input.throttle)); input.brake = Math.max(0, clamp(input.brake));
   // Browser axes point right; the recovered steering scalar points left.
-  input.steer = -clamp(input.steer); input.lean = clamp(input.lean);
+  input.steer = -clamp(input.steer); // Rust clamps lean after adding per-step touch pitch.
   return input;
 }
 function acceptFrame(frame) {
   if (!frame?.origin?.every(Number.isFinite) || frame.origin.length !== 3 || !frame.orientation?.every(Number.isFinite) || frame.orientation.length !== 4 || !Number.isFinite(frame.speed) || !Number.isFinite(frame.rpm)) throw new Error('Simulation returned a nonfinite pose.');
   simFrame = frame;
+  // A completed old batch may arrive after pause/blur/cancel. Keep its physical
+  // frame, but do not overwrite cleared controls with the old touch generation.
+  if (frame.applied_input && frame.applied_input.touch_drive?.generation === touchDrive.generation) diagnostics.input = frame.applied_input;
   touchControls.feedback(frame);
   vehicle.position = frame.origin.slice();
   if (frame.quad_node_matrices?.length !== vehicle.nodes.length || frame.quad_node_matrices.some(matrix => matrix.length !== 16 || !matrix.every(Number.isFinite))) throw new Error('Simulation returned an invalid quad linkage pose.');
@@ -813,7 +800,7 @@ async function pumpSimulation() {
   const token = simGeneration;
   try {
     for (let step = 0; step < count; step++) simAccumulator -= 1 / 60;
-    const input = drivingInput(); diagnostics.input = input;
+    const input = drivingInput();
     const cycle = cameraCycle; cameraCycle = false;
     if (cycle) orbit = 0;
     const frames = await command(50, { count, input, orbit, cycle });
@@ -822,7 +809,7 @@ async function pumpSimulation() {
       acceptFrame(frame);
       diagnostics.simulationSteps++;
       acceptCameraFrame(cameraResult);
-      void audio.update(1 / 60, input, frame);
+      void audio.update(1 / 60, frame.applied_input ?? input, frame);
     }
   } catch (error) {
     if (token === simGeneration) { simReady = false; status(`Simulation stopped: ${error.message}`, true); }
@@ -1007,20 +994,26 @@ $('fullscreen').onclick = async () => {
 };
 canvas.addEventListener('pointerdown', event => {
   if (!terrain) return;
+  if (simReady && (menuOpen || document.hidden || lost)) return;
   event.preventDefault();
-  canvas.focus({ preventScroll: true }); canvas.setPointerCapture(event.pointerId);
+  const left = event.pointerType === 'touch' && event.clientX < innerWidth / 2;
+  // An unclaimed right gameplay touch must never fall through to mouse orbit.
+  if (simReady && event.pointerType === 'touch' && !left) return;
+  if (left && !touchDrive.begin(event.pointerId, event.clientX, event.clientY)) return;
+  focused = true; canvas.focus({ preventScroll: true }); syncAudio(); canvas.setPointerCapture(event.pointerId);
   pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, dx: 0, dy: 0, touch: event.pointerType === 'touch', move: event.pointerType === 'touch' && event.clientX < innerWidth / 2 });
 });
 canvas.addEventListener('pointermove', event => {
   const pointer = pointers.get(event.pointerId); if (!pointer) return;
+  if (pointer.move) touchDrive.move(event.pointerId, event.clientX, event.clientY);
   pointer.dx = Math.max(-70, Math.min(70, event.clientX - pointer.startX)); pointer.dy = Math.max(-70, Math.min(70, event.clientY - pointer.startY));
   if (!pointer.move) {
-    if (simReady) orbit -= (event.clientX - pointer.x) * .004;
+    if (simReady) { if (!pointer.touch) orbit -= (event.clientX - pointer.x) * .004; }
     else { camera.yaw -= (event.clientX - pointer.x) * .004; camera.pitch -= (event.clientY - pointer.y) * .004; }
   }
   pointer.x = event.clientX; pointer.y = event.clientY;
 });
-for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(name, event => pointers.delete(event.pointerId));
+for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(name, event => { touchDrive.end(event.pointerId, name !== 'pointerup'); pointers.delete(event.pointerId); });
 window.addEventListener('keydown', event => {
   if (document.activeElement !== canvas) return;
   if (event.code === 'KeyC' && !event.repeat && simReady) { event.preventDefault(); cameraCycle = true; }

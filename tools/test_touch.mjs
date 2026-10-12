@@ -7,10 +7,24 @@ try {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.addInitScript(() => {
-    window.touchSamples = [];
+    window.touchSamples = []; window.touchResolved = [];
+    const watched = new WeakSet(), requests = new Map();
     const post = Worker.prototype.postMessage;
     Worker.prototype.postMessage = function(data, ...rest) {
-      if (data.op === 50) window.touchSamples.push({ input: JSON.parse(new TextDecoder().decode(data.bytes)).input, speed: window.atvTerrainStatus?.frame?.speed });
+      if (!watched.has(this)) {
+        watched.add(this); this.addEventListener('message', ({data}) => {
+          if (!requests.has(data.id)) return;
+          let speed = requests.get(data.id); requests.delete(data.id);
+          if (data.error) return;
+          for (const {frame} of JSON.parse(new TextDecoder().decode(data.bytes))) {
+            window.touchResolved.push({input:frame.applied_input,speed}); speed=frame.speed;
+          }
+        });
+      }
+      if (data.op === 50) {
+        requests.set(data.id, window.atvTerrainStatus?.frame?.speed);
+        window.touchSamples.push({ input: JSON.parse(new TextDecoder().decode(data.bytes)).input, speed: window.atvTerrainStatus?.frame?.speed });
+      }
       return post.call(this, data, ...rest);
     };
   });
@@ -24,7 +38,7 @@ try {
   const read = () => page.evaluate(() => window.atvTerrainStatus);
   const steps = async count => { const target = (await read()).simulationSteps + count; await page.waitForFunction(target => window.atvTerrainStatus.simulationSteps >= target, target, { timeout: 90000 }); };
   const samples = () => page.evaluate(() => window.touchSamples);
-  const resetSamples = () => page.evaluate(() => { window.touchSamples = []; });
+  const resetSamples = () => page.evaluate(() => { window.touchSamples = []; window.touchResolved = []; });
   const cdp = await page.context().newCDPSession(page);
   const touch = (type, points = []) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(p => ({ radiusX: 6, radiusY: 6, force: 1, ...p })) });
   assert.equal(await page.locator('#touch-controls button').count(), 0, 'No separate action buttons');
@@ -58,12 +72,12 @@ try {
   await page.waitForFunction(() => window.atvTerrainStatus.input.brake > .9, null, { timeout: 10000 });
   assert.equal((await read()).input.reverse, false);
   await page.waitForFunction(() => window.atvTerrainStatus.input.reverse && window.atvTerrainStatus.frame.speed < -2, null, { timeout: 45000 });
-  { const log = await samples(), start = log.findIndex(s => s.input.brake > .9); assert(start >= 0); assert(log.slice(start).filter(s => s.speed > 1).every(s => !s.input.reverse && s.input.throttle === 0), JSON.stringify(log)); }
+  { const log = await page.evaluate(() => window.touchResolved), start = log.findIndex(s => s.input.brake > .9); assert(start >= 0); assert(log.slice(start).filter(s => s.speed > 1).every(s => !s.input.reverse && s.input.throttle === 0), JSON.stringify(log)); }
   await resetSamples(); await touch('touchMove', [forward]);
   await page.waitForFunction(() => window.atvTerrainStatus.input.brake > .9, null, { timeout: 10000 });
   assert.equal((await read()).input.reverse, true);
   await page.waitForFunction(() => !window.atvTerrainStatus.input.reverse && window.atvTerrainStatus.frame.speed > 2, null, { timeout: 45000 });
-  { const log = await samples(), start = log.findIndex(s => s.input.brake > .9); assert(start >= 0); assert(log.slice(start).filter(s => s.speed < -1).every(s => s.input.reverse && s.input.throttle === 0), JSON.stringify(log)); }
+  { const log = await page.evaluate(() => window.touchResolved), start = log.findIndex(s => s.input.brake > .9); assert(start >= 0); assert(log.slice(start).filter(s => s.speed < -1).every(s => s.input.reverse && s.input.throttle === 0), JSON.stringify(log)); }
   await touch('touchCancel'); await steps(3);
   console.log('Left back brakes before reverse, and forward brakes reverse motion before changing gear.');
   await touch('touchStart', [right]); await steps(2); await resetSamples();

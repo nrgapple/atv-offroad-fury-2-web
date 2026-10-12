@@ -98,3 +98,23 @@ are disabled in that comparison. The original-content probe still passes all
 the bounds kernel and integration invariants, not complete original crash parity.
 The current follow camera can crop the detached rider while the quad rolls; the
 original wreck camera remains pending.
+
+## Full-rotation investigation
+
+The report that touch pullback cannot complete a flip is not resolved by the
+component comparisons above. A separate 361-orientation pitch sweep ran the
+original `00146850` orientation extraction followed by `001e8690` with ATV01's
+actual angle settings, no wheel/body contact, no impact, and safe stunt state.
+Its crash decisions agree with the Rust path for every sampled degree. Backward
+pitch first requests a rear separation at approximately 85 degrees. Angle error
+is at most 0.000000239 radians; the native atan2 call uses a host-math hook, so this
+is not an end-to-end original-game replay. The private interpreter probe explicitly
+uses the R5900 SQRT.S source field (`ft`). Evidence is retained under
+`private/reports/wreck/flip-angle-probe.json` and `work/flip-angle-probe/`.
+
+This establishes a full-flip barrier in the currently connected normal crash
+rules; it does not establish all original mode/cheat bypasses. `001e8a20` additionally
+checks the global wreck-enable flag (or boundary override), and that mode policy
+is not yet reconstructed. Do not describe unlimited flips, or the overall driving
+mechanics, as verified original parity. A permissive full-flip mode would need to
+be labeled as an explicit gameplay option, separate from these recovered rules.
