@@ -1,80 +1,169 @@
-# ATV Offroad Fury 2 — Rust browser project
+# ATV Offroad Fury 2 — from PS2 dust to browser dirt 🏁
 
-Latest verified public checkpoint: main `0906822adbc585f58e4a7309322f63f4cc3f7b6a`, CI `38194430965`. Public checks now cover remappable keyboard/controller settings, all 21 songs with paused preview, and a recovered ATV thumbnail in the Main Menu, along with the previously verified touch and eight-map routes. Full flips, physical-device behavior and whole-game handling parity remain incomplete.
+We're bringing **ATV Offroad Fury 2** into the browser as a Rust game: the original trails, quads, music, and wonderfully reckless arcade riding, rebuilt one system at a time with AI-assisted reverse engineering.
 
-Recover ATV Offroad Fury 2 USA v2.00 in Rust/WebAssembly, preserving original gameplay, music, sound, animation, and progression before optional graphics and physics enhancements.
+**[Play the current build](https://atv-offroad-fury-2.champtoday.workers.dev/) · [Follow the screenshot dev log](https://atv-offroad-fury-2.champtoday.workers.dev/devlog.html)**
 
-The public Cloudflare app opens at the title screen, with Dev log available before riding; Main Menu, Single Player and Freestyle lead into a **fullscreen driving reconstruction, not yet the complete game**. Eight environments are connected: ENV01/02/03/04/05/06/07/08, including Caribou Peak, Tioga Valley and Arlington. Public checks passed all eight map loads and driving movement with terrain detail and vegetation, plus controller navigation, pause/Controls and 390px Caribou touch input, with no JavaScript or WebGL errors. The browser autoloads original runtime content from a same-origin manifest without a disc picker. Authored game logic runs as Rust/WebAssembly; the runtime files, all 21 songs and approved screenshots live separately in R2 and remain outside GitHub source and CI. Original menu callbacks/modes, racing, progression, race HUD, rider IK, full stunts/crashes and rendering fidelity remain incomplete. The development inspector remains at `/workbench.html`.
+Both links are **public HTTPS**, accessible away from the development Mac. The game loads its required original resources automatically; you don't need to select a disc file.
 
-## Start here
+There is already a rideable browser reconstruction with eight environments. **This is still a work in progress, not the complete game or a finished decompilation.** The goal is to recover the original experience first, then offer optional graphics and physics upgrades.
 
-- [Implementation strategy](research/IMPLEMENTATION.md): chosen approach and acceptance gates.
-- [Handoff](HANDOFF.md): exact source build, environment, verified results, and remaining work.
-- [Recovered formats](research/FORMATS.md): observed layouts and limits of the evidence.
-- [Geometry](research/GEOMETRY.md) and [collision](research/COLLISION.md): original terrain and vehicle recovery.
-- [Resources](research/RESOURCES.md): references and reverse-engineering tools.
-- [REA integration](research/REA.md): actual CLI probe and current R5900 compatibility blocker.
+![ATV crossing a sunlit course with hills, vegetation, and utility towers.](https://atv-offroad-fury-2.champtoday.workers.dev/devlog-images/the-recovered-menus-and-tioga-valley-are-now-public-cfe7c40e.png)
 
-## Current capabilities
+*An earlier public course capture. The screenshots here show real development checkpoints, rather than a promise of finished-game fidelity.*
 
-Rust readers share the same implementation between native tools and WebAssembly. The exact disc audit validated all 487 RES/LSI archives, 58,598 member entries, and 91,522 compressed blocks. All 192 standalone VAG files, 798 packed VAG entries, and 934 loading-screen PST entries decoded. Entries are not necessarily unique assets; successful decoding does not establish original rendering or sound fidelity.
+## How do you turn a PS2 game into Rust?
 
-Original geometry is now usable: all 26 in-race quad meshes decode, all 40 named terrains pass dense-heightfield checks, and 597 distinct collision meshes pass the baseline finite-coordinate validation. Those decode counts are not playable-map coverage: the public Cloudflare app connects eight environments, ENV01/02/03/04/05/06/07/08, selected from the recovered menu route. Tioga's `ruins.col` prop collision mesh has four zero-area faces with NaN plane records; the targeted handling skips those faces while preserving source indices and rejecting other invalid geometry. See [UI recovery](research/UI.md) and [collision evidence](research/COLLISION.md). The scenes use the recovered single-player chase camera. The original ATV linkage update animates 27 mesh nodes with steering, suspension and wheel motion. Original terrain and sky textures decode through the Rust IPUM decoder; 174 placed track objects are visible. The static obstacle query loads 176 collision placements, 31 meshes and 41 actor rays. The public renderer now blends the original `_d.pst` detail texture using recovered world scale and near-pass modulation. Its projected-coverage pass selection is still pending; distant WebGL mip levels average away this detail, so this is not a full LOD match. The original VU path uses constant terrain RGB, and the browser-only extra sun lighting has been removed. The four terrain seam cases now decode; unsupported mesh variants remain explicit errors. The eight-map build loads original ecosystem placements and draws up to 1,500 nearest instances per map in batches; its visibility policy is provisional and is not the PS2 level-of-detail system. The public Cloudflare detail build passed eight-map tests with original 64×64 detail textures and moving full-sample terrain patches. Mobile renderer checks passed at 390px, including gamepad, touch cancellation, audio-engine startup and graphics-context restoration. The Cloudflare release also passed public frontend and eight-map regression checks. Its original `_d.pst` detail layer now blends RGB and alpha at recovered world scale; projected-coverage selection remains to be recovered, and distant mip filtering loses fine detail. ENV08 (Arlington) now loads after recovering the packed `trussbridge.col` signed-16-bit expansion path.
+Think of it as archaeology with a throttle. We have the original USA v2.00 game disc, but not its source code. Its executable contains the machine instructions the PS2 ran, with the original function names stripped away. There is no convenient `make_it_rust` button.
 
-All 28 physics configuration files parse with original ordering preserved. Exact-build executable analysis located the physics loader and established first-match duplicate-key behavior, units conversions, and spring/damping helpers. The vehicle solver connects recovered drivetrain, suspension, lateral grip, rigid-body integration, rider preload/air control, dynamic center of mass and static type-0 obstacle contacts. Component instruction-interpreter comparisons validate selected vehicle, camera and collision routines; full PS2 gameplay replay equivalence remains unverified.
+We work along two trails:
 
-The workbench supports file filtering, nested archives, supported image previews with aspect-preserving fullscreen, audio previews, text/hex inspection, and an ELF call-target candidate report. The driving test supports browser-exposed gamepads, remapping, keyboard input and simultaneous touches. The gameplay page keeps Pause and Camera on the toolbar. Touch uses the left thumb for steering and forward/back lean at all times; the right thumb accelerates when pushed up, brakes when pulled down, then reverses near standstill. Keeping the right finger down prepares preload, and lifting it releases both throttle and preload. Original ramp conditions still govern jump force. An extra right-side finger can swipe for the four connected Circle-family stunts while airborne; the primary right thumb keeps its driving role. There are no separate preload, brake or reverse buttons. These browser adaptations do not establish complete flips or original stunt parity. Driving controls and normal rider pose blends are connected to the Rust simulation; most original menu callbacks and modes and the race HUD are still unimplemented. Original stunt and crash clips are connected, with partial crash/contact/recovery behavior; see [crash evidence](research/WRECK.md). Physical iOS Safari and Bluetooth controllers remain unverified.
+- **Recover what the game uses:** unpack its terrain, vehicles, textures, animations, tuning, and sound.
+- **Recover what the game does:** study its instructions to understand suspension, grip, jumps, camera movement, tricks, crashes, and eventually race rules.
 
-Pause → Controls now remaps keyboard keys, controller buttons, signed analog axes and combinations, with per-device defaults and browser persistence. Public tests exercised capture, actual-WASM driving, reload persistence and cancellation. Original controller preload remains a quick backward-to-forward lean at a jump; Space hold/release is a browser adaptation. Pause → Music lists all 21 songs, preserves shuffle/history across map changes, streams bounded chunks and previews while the vehicle stays paused. The Main Menu also includes a recovered 256×128 ATV thumbnail. These checks cover browser behavior, not physical-device compatibility, listening fidelity, full menu art or whole-game parity. See [controls audit](research/CONTROLS.md), [music](research/AUDIO.md) and [menu art](research/MENU_ART.md).
+Then we write those systems in Rust and connect them to the recovered resources.
 
-## Run and verify
-
-Requires Rust with `wasm32-unknown-unknown`, rustfmt, Clippy, Python 3, and Node. Cargo uses the configured SSD build storage. The existing `target/`, `web/dist/`, and `work/verification/` SSD symlinks must be preserved.
-
-```sh
-make verify       # Source identity, inventory, reference revisions, Git exclusions
-make check        # Rust format/tests/Clippy, input unit tests, Python syntax
-make web          # Build asset-free renderer and development workbench
-make serve        # Host-only server, port 4173; keep running for access
-make audit        # Audit private disc content into private/reports/content-audit.json
-make code-map     # Candidate direct-call targets, not verified functions
-make native-analyze # Reuse the private PS2 Ghidra database; requires local toolchain
-make verify-full  # Also rehash the complete ISO
+```mermaid
+flowchart TB
+    disc["Original PS2 disc<br/>preserved privately"]
+    disc --> assets["Recover the ingredients<br/>tracks, quads, animation, sound"]
+    disc --> code["Study the original instructions<br/>how the game behaves"]
+    code --> ai["AI-assisted investigation<br/>explain, reconstruct, test"]
+    ai --> rust["Authored Rust game systems"]
+    rust --> wasm["WebAssembly<br/>Rust running in your browser"]
+    assets --> content["Selected runtime resources<br/>separate Cloudflare R2 storage"]
+    wasm --> ride["Browser game<br/>rendering, sound, controls"]
+    content --> ride
 ```
 
-`CARGO`, `NODE`, `ISO`, `ELF`, `BIND`, and `PORT` are overridable Make variables. `BIND=0.0.0.0` is appropriate only with an approved access path; it does not itself provide remote access.
+**AI is our research and coding partner.** It helps trace unfamiliar routines, propose readable explanations, implement Rust equivalents, and build comparisons. A plausible explanation is a starting point; the original instructions and test results decide whether it holds up.
 
-Browser checks require Playwright and its Chromium browser plus a running server:
+Specialist reverse-engineering tools help turn the PS2 instructions into more readable code. Reference projects provide leads too, but a finding from the first ATV game must be checked against this exact sequel build. The [research notes](research/RESOURCES.md) explain the tools and their limits.
+
+**The browser runs the Rust reconstruction.** It does not run the PS2 executable or a PS2 emulator. Rust compiles to WebAssembly—the browser's way of running this compiled game code—and the web layer handles graphics, audio playback, menus, and input.
+
+## How we keep it feeling like the original
+
+A quad that moves isn't automatically *this* quad. Update order, wheel contacts, rider weight, and tiny timing rules can change how a landing feels. We recover and check small pieces before trusting the combined ride.
+
+```mermaid
+flowchart TB
+    question["Pick a behavior<br/>for example: landing after a jump"]
+    question --> inspect["Inspect original code and data"]
+    inspect --> rebuild["Rebuild the behavior in Rust"]
+    rebuild --> compare["Compare selected routines<br/>against original instructions"]
+    compare --> browser["Exercise the combined browser game<br/>ride, jump, land, wreck, recover"]
+    browser --> gate{"Does this checkpoint pass?"}
+    gate -- "Needs work" --> inspect
+    gate -- "Yes" --> checkpoint["Record evidence and limits<br/>commit, deploy, verify publicly"]
+```
+
+These comparisons already cover selected vehicle, camera, animation, and collision routines. They are useful evidence, but **we haven't demonstrated whole-game replay equivalence to the PS2 original**. A component can match while the systems around it still need work.
+
+## Where we are on the trail
+
+The milestones overlap: finding an animation doesn't finish the trick system, and decoding a track doesn't make it a playable race.
+
+```mermaid
+flowchart TB
+    recovered["FOUND THE PIECES<br/>resource formats, terrain, quads, sound"]
+    recovered --> riding["RIDING NOW<br/>eight environments, driving, menus, music"]
+    riding --> rebuilding["CURRENT WORK<br/>handling, tricks, wrecks, animation, HUD"]
+    rebuilding --> fullgame["STILL AHEAD<br/>races, progression, saves, full fidelity"]
+    fullgame --> extras["AFTER THE BASELINE<br/>optional modern graphics and physics"]
+    classDef established fill:#dcefe5,stroke:#28734d,color:#153c2a;
+    classDef active fill:#fff0ca,stroke:#996800,color:#563b00;
+    classDef future fill:#e8edf6,stroke:#586d91,color:#253753;
+    class recovered,riding established;
+    class rebuilding active;
+    class fullgame,extras future;
+```
+
+| Part of the adventure | What works, and what remains |
+| --- | --- |
+| **Recovering the disc** | All 487 resource archives audited; 26 in-race quad meshes and 40 named terrains decode. These are recovery counts, not 40 playable maps. |
+| **Getting out on the trails** | Eight environments load and drive in the public build, including Caribou Peak, Tioga Valley, and Arlington. Original terrain, sky, props, and vegetation are connected; visibility and distant detail still need work. |
+| **Making the quad feel right** | Recovered drivetrain, suspension, grip, rider lean, and static obstacle contacts are connected. Landing fixes have reduced tire burial, but some overlap remains. |
+| **Rider, tricks, and wipeouts** | ATV linkage, rider animation, stunt clips, and partial scoring/wreck/recovery behavior are connected. A failed Nac Nac through rider separation and recovery has passed public checks. Full flips, trick fidelity, and rider hand/foot placement remain unfinished. |
+| **Menus, sound, and controls** | Title → Main Menu → Single Player → Freestyle works, with pause settings, remapping, engine audio, and all 21 songs. More modes, HUD behavior, and original sound mixing remain to recover. |
+| **The complete game** | Full racing, progression, saves, remaining collision/water behavior, and original rendering fidelity are still ahead. Physical phones and Bluetooth controllers also need hands-on validation. |
+
+**Public evidence snapshot:** verified gameplay checkpoint [`0f074b4`](https://github.com/nrgapple/atv-offroad-fury-2-web/commit/0f074b4558f864ea4e4a8103b017b60e102c6690), October 12, 2026. Its public checks cover performance/debug settings, immediate touch throttle, and a clean jump/landing. Eight-map and wreck/recovery checks come from the preceding public checkpoint. New local work, including boundary launch and further water integration, is not part of that verified release. The [handoff](HANDOFF.md) and [deployment record](research/DEPLOYMENT.md) hold the detailed evidence.
+
+## Yes, you can ride from your phone 📱
+
+The browser build has a portrait layout and touch controls. Open the [public game](https://atv-offroad-fury-2.champtoday.workers.dev/), enter **Single Player → Freestyle**, and pick a map.
+
+- **Left thumb:** drag left/right to steer and up/down to lean. Lean stays available in the air.
+- **Right thumb:** press and hold to accelerate immediately. Drag down to brake, then reverse after slowing. Lift to stop applying throttle/brake.
+- **Jump preparation:** the right hold also braces the rider; release at a suitable ramp to request preload. The recovered speed and ramp rules still apply—there's no free jump on flat ground.
+- **Tricks:** while airborne with the right thumb held, use an extra finger on the right to swipe up, down, left, or right. These select Nac Nac, No Footed Can Can, Suicide No Hander, or Bar Hop. Hold that finger to extend the trick; release to finish.
+- **Pause and Camera:** use the on-screen buttons.
+
+Touch is a browser adaptation of the PS2 controls. Portrait and gesture checks pass in automated browsers; physical iOS Safari and Bluetooth-controller behavior remain unverified. The full original stunt system is still being rebuilt.
+
+<img src="https://atv-offroad-fury-2.champtoday.workers.dev/devlog-images/the-suspension-stop-and-obstruction-camera-are-verifie-3f22c762.png" width="300" alt="Portrait browser view of the ATV during the publicly verified suspension and landing checkpoint.">
+
+*Portrait play during the preceding public landing/wreck checkpoint. Touch controls use the two halves of the screen.*
+
+<img src="https://atv-offroad-fury-2.champtoday.workers.dev/devlog-images/a-failed-nac-nac-now-follows-the-recovered-wreck-route-d0427758.png" width="300" alt="ATV and rider during a failed Nac Nac, with the trick name and failure-colored score visible.">
+
+*A host Chromium test capture of an unfinished Nac Nac. The recovered wreck/recovery sequence was subsequently checked publicly; this particular image comes from the host test.*
+
+Keyboard and controllers work too. **Pause → Controls** lets you remap keyboard keys, controller buttons, analog directions, and button combinations; settings are saved in your browser.
+
+| Action | Keyboard default | Controller default |
+| --- | --- | --- |
+| Accelerate / brake | W / S | Bottom face button or right trigger / left face button or left trigger |
+| Steer | A / D or left/right arrows | Left stick horizontal or D-pad |
+| Lean forward / back | Q / E or up/down arrows | Left stick vertical or D-pad |
+| Reverse | R | Bottom + left face buttons together |
+| Prepare a jump | Space hold/release, or quick back-to-forward lean | Quick back-to-forward lean at a jump |
+| Stunt modifiers | J / K / L with a direction | Right face / top face / left shoulder with a direction |
+| Pause / camera / reset | Escape / C / Backspace | Start / right stick click / both shoulder buttons |
+
+Controller labels follow the browser's standard layout. For the complete mappings and original-control evidence, see [controls](research/CONTROLS.md) and [touch riding](research/TOUCH.md).
+
+## Follow the rebuild
+
+The [screenshot dev log](https://atv-offroad-fury-2.champtoday.workers.dev/devlog.html) records discoveries, improvements, bugs, and the evidence behind each checkpoint. Screenshots above come from selected development checkpoints; their captions distinguish public captures from host test captures.
+
+Want to explore deeper? Start with the [implementation strategy](research/IMPLEMENTATION.md), [resource research](research/RESOURCES.md), and [recovered file formats](research/FORMATS.md). For a particular system, follow [movement](research/MOVEMENT.md), [collision](research/COLLISION.md), [wrecks](research/WRECK.md), or [audio](research/AUDIO.md).
+
+## Working on the project
+
+<details>
+<summary>Developer setup, checks, and repository map</summary>
+
+You need Rust with the `wasm32-unknown-unknown` target, rustfmt, Clippy, Python 3, and Node. Original-source audits also require the private local disc files. Preserve the existing SSD-backed `target/`, `web/dist/`, and `work/verification/` symlinks.
+
+```sh
+make verify  # Check source identity, reference revisions, and Git exclusions
+make check   # Rust formatting, tests, Clippy, input tests, Python syntax
+make web     # Build the authored browser app and development workbench
+make serve   # Run the host-only development server on port 4173
+```
+
+`make serve` is **host-only access**, not a remote handoff. `BIND` and `PORT` can be overridden; binding to `0.0.0.0` alone doesn't make the service remotely reachable. Use the public HTTPS build for remote play.
+
+Browser checks require Playwright, Chromium, and a running server:
 
 ```sh
 PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-check
-# Optional real-source checks; this file stays local to the test browser:
-ATV_TEST_ISO="$PWD/private/source/ATV Offroad Fury 2 (USA) (v2.00).iso" \
-  PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-check
 ```
 
-`ATV_TEST_URL` selects a server; its default is host-only `http://127.0.0.1:4173`. Tests cover actual WASM extraction, texture pixels, an advancing audio playback clock, malformed input, private-path isolation, synthetic gamepad input, focus loss, narrow layout, simultaneous touch gestures, and cancellation. A browser playback clock is not a listening test or proof of accurate PS2 audio mixing.
+`ATV_TEST_URL` selects the test server. Optional `ATV_TEST_ISO` selects a private local disc for source-content checks. `make audit`, `make code-map`, and `make native-analyze` support deeper recovery work; see [HANDOFF.md](HANDOFF.md) for the local toolchain and commands.
 
-## Access
-
-**Public HTTPS:** [game start menu](https://atv-offroad-fury-2.champtoday.workers.dev/) and [screenshot development log](https://atv-offroad-fury-2.champtoday.workers.dev/devlog.html). Latest verified main is `0906822adbc585f58e4a7309322f63f4cc3f7b6a` from CI run `38194430965`; public checks cover remapping, song selection/preview, frontend routes and mobile layout. All 24 authored/static hashes and 298 served runtime, manifest and screenshot objects passed size, SHA-256 and MIME verification. See [deployment evidence](research/DEPLOYMENT.md) for the release record.
-
-[Private GitHub source](https://github.com/nrgapple/atv-offroad-fury-2-web) has automated checks, WASM release builds and main deployment to Cloudflare. Original content and screenshots are uploaded separately from the private host to the dedicated R2 bucket. `make serve` is only a host development server. The previous Sites v8 remains a historical two-map release.
-
-## Project contents
-
-| Path | Purpose |
+| Folder | What's inside |
 | --- | --- |
-| `crates/atv-core/` | Resource, ISO, audio, texture, terrain, mesh, collision, physics-data, and ELF readers |
-| `crates/atv-tools/` | Native private-disc audit and extraction CLI |
-| `crates/atv-web/` | WebAssembly interface to the shared Rust readers |
-| `web/` | Full-screen reconstruction renderer and separate development inspector |
-| `tools/` | Import, validation, web build/server, and browser tests |
-| `research/` | Shareable strategy, evidence summaries, and references |
-| `private/source/` | Preserved original ZIP and ISO, ignored by Git |
-| `private/extracted/` | Selected original files, ignored by Git |
-| `private/reports/` | Persistent private analysis, ignored by Git |
-| `references/` | Reference checkouts, ignored by Git |
-| `work/` | Intermediate outputs and verification artifacts, ignored by Git |
+| `crates/atv-core/` | Shared Rust resource readers and game simulation |
+| `crates/atv-web/` | Rust/WebAssembly bridge for the browser |
+| `crates/atv-tools/` | Native tools for private-disc inspection and extraction |
+| `web/` | Fullscreen game presentation and a separate `/workbench.html` inspector |
+| `tools/` | Build, analysis, verification, and deployment helpers |
+| `research/` | Shareable discoveries, evidence, and dev-log metadata |
+| `private/`, `references/`, `work/` | Original source, analysis, references, and intermediate outputs; ignored by Git |
 
-Recovered runtime resources use the authorized Cloudflare R2 manifest and stay out of GitHub source and CI. The ISO, BIOS, raw executable, reverse-engineering outputs and reference repositories remain private. Continue original menu/map recovery, race HUD/progression, dynamic and compound collisions, rider IK/stunts/crashes, camera clearance and original render-distance behavior. The public renderer uses up to 1,500 nearest vegetation placements per map and moving terrain detail patches; these provisional policies do not establish the original visibility or LOD system. Physical iOS behavior, Bluetooth controllers, original stunt scoring and full game-wide audio mixing remain unverified or incomplete.
+</details>
+
+GitHub holds authored code and shareable notes. Required recovered runtime resources and approved screenshots live separately in Cloudflare R2. The disc image, BIOS, raw executable, reverse-engineering outputs, and reference checkouts stay private and outside GitHub/CI. GitHub Actions checks the authored build and deploys it to the public Cloudflare app; content uploads follow their own validation path.
