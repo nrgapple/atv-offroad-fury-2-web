@@ -783,6 +783,8 @@ function acceptFrame(frame) {
     vehicle.rider.pose.world_matrices = frame.rider_node_matrices;
     diagnostics.animatedRiderNodes = frame.rider_node_matrices.length;
     diagnostics.riderMode = frame.rider_mode;
+    if (frame.rider_world_matrix && (frame.rider_world_matrix.length !== 16 || !frame.rider_world_matrix.every(Number.isFinite))) throw new Error('Simulation returned an invalid detached rider transform.');
+    diagnostics.riderWreck = frame.rider_wreck ?? null;
   }
 }
 async function startSimulation(source) {
@@ -943,6 +945,7 @@ function render(time) {
   if (vehicle) gl.uniformMatrix4fv(uniforms.model, false, vehicleMatrix());
   if (vehicle) gl.uniformMatrix4fv(uniforms.quadBones, false, vehicle.nodeMatrices);
   for (const chunk of vehicleChunks) {
+    gl.uniformMatrix4fv(uniforms.model, false, chunk.rider && simFrame?.rider_world_matrix ? new Float32Array(simFrame.rider_world_matrix) : vehicleMatrix());
     gl.uniform1i(uniforms.useQuadPose, Boolean(chunk.quad || chunk.rider));
     if (chunk.quad) gl.uniformMatrix4fv(uniforms.quadBones, false, vehicle.nodeMatrices);
     if (chunk.rider) gl.uniformMatrix4fv(uniforms.quadBones, false, new Float32Array(vehicle.rider.pose.world_matrices.flat()));
@@ -1031,7 +1034,9 @@ window.addEventListener('blur', () => { focused = false; clearInput(); syncAudio
 window.addEventListener('focus', () => { focused = true; syncAudio(); });
 document.addEventListener('visibilitychange', () => { clearInput(); syncAudio(); });
 canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; diagnostics.ready = false; clearInput(); syncAudio(); status('Graphics context lost; waiting for recovery.'); });
-canvas.addEventListener('webglcontextrestored', () => { try { lost = false; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
+// Every old GPU handle belongs to the lost context, including vegetation instances.
+// Discard those references before buildMesh runs its normal resource cleanup.
+canvas.addEventListener('webglcontextrestored', () => { try { lost = false; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
 window.addEventListener('pagehide', event => {
   cancelAnimationFrame(frame); frame = 0; clearInput();
   if (event.persisted) {

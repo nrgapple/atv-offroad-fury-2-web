@@ -44,9 +44,12 @@ pub(crate) fn u16le(data: &[u8], at: usize) -> Result<u16> {
 }
 
 pub mod wheel;
+pub mod wreck;
 
 pub mod dynamics;
 
 pub mod ui;
 pub mod ui_menu;
 pub mod vehicle;
+
+pub mod wreck_animation;

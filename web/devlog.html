@@ -21,6 +21,38 @@
       <p id="working-on"></p>
       <div class="refresh"><span class="light" aria-hidden="true"></span><span id="updated" role="status">Checking for updates</span></div>
     </section>
+    <section id="port-status" class="port-status" aria-labelledby="port-status-title">
+      <div class="port-status-heading">
+        <div>
+          <div class="section-label">FEATURE BOARD</div>
+          <h2 id="port-status-title">What is connected, and what is still missing</h2>
+          <p id="port-status-note">Loading the current feature map…</p>
+        </div>
+        <p id="port-release" class="port-release"></p>
+      </div>
+      <div id="status-summary" class="status-summary" aria-label="Count of feature areas by status"></div>
+      <p class="status-count-note">Counts describe feature areas, not percent of the game completed.</p>
+      <div class="next-priorities">
+        <h3>Next priorities</h3>
+        <ol id="port-priorities"></ol>
+      </div>
+      <div class="status-filters" aria-label="Filter feature board">
+        <label>Category
+          <select id="feature-category"><option value="">All categories</option></select>
+        </label>
+        <label>Status
+          <select id="feature-status">
+            <option value="">All statuses</option>
+            <option value="LIVE">Live</option>
+            <option value="PARTIAL">Partial</option>
+            <option value="RECOVERED NOT CONNECTED">Recovered, not connected</option>
+            <option value="NEEDS RESEARCH">Needs research</option>
+          </select>
+        </label>
+        <span id="feature-count" role="status" aria-live="polite"></span>
+      </div>
+      <div id="feature-board" class="feature-board" aria-live="polite"></div>
+    </section>
     <div class="timeline-heading"><h2>Checkpoints</h2><span id="count"></span></div>
     <div id="entries"></div>
     <noscript>This log needs JavaScript. <a href="devlog.json">Read the checkpoint data.</a></noscript>

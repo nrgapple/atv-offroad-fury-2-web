@@ -119,6 +119,7 @@ try {
   await page.waitForFunction(() => window.atvTerrainStatus.ready);
   await page.waitForTimeout(100);
   const restored = await read(); finite(restored);
+  assert.equal(await page.evaluate(() => document.querySelector('#game').getContext('webgl2').getError()), 0, 'Context restoration must discard every previous GPU handle, including vegetation');
   assert.equal(restored.vehicleTextures, loaded.vehicleTextures);
   assert.equal(restored.riderTextures, loaded.riderTextures);
   assert.equal(restored.terrainTextures, loaded.terrainTextures);

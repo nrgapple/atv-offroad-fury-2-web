@@ -1,6 +1,6 @@
 {
-  "status": "The public Cloudflare build connects all eight environments, with original terrain, vegetation, music and the recovered menu/drive routes. Commit e19ec6b4c7f515e6ea3ed7c7aa97810357109f13 passed the eight-map public checks and automatic CI-to-Worker deployment. The project remains incomplete: the Arlington train is not connected, and race flow, original terrain LOD, stunt scoring and crash poses remain unfinished.",
-  "working_on": "Connect the recovered Arlington locomotive and ten-car VUE route to the runtime, and continue recovering original race flow, projected terrain coverage/LOD, stunt scoring and crash behavior.",
+  "status": "Public baseline 1e5c4fd connects eight Freestyle environments, recovered terrain and vegetation, music, responsive Rust-drawn menus, touch rider input and portrait camera framing. CI 38186584449 and public browser checks passed for that baseline. A newer host candidate passes an actual-content wreck/reset loop and a separate clean touch-ramp landing; its release-specific public check is pending. Crash behavior remains partial, and the train, full race flow, original terrain LOD, and stunt scoring are unfinished.",
+  "working_on": "Verify the host-tested crash candidate against its exact release and continue native wreck-camera and rider-versus-prop/water work. Then connect the recovered Arlington train and ten-car route.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -561,7 +561,8 @@
       "title": "A phone-sized map menu now works",
       "summary": "The port now has a responsive Rust-drawn menu route from Single Player to Freestyle, with all eight environment choices and touch-sized controls.",
       "details": [
-        "The menu uses recovered original fonts and map imagery, while Rust now handles layout, focus, drawing, and hit testing. Keyboard, controller, and touch navigation passed the host frontend regression; the portrait picker has 44-pixel-or-larger targets."
+        "The menu uses recovered original fonts and map imagery, while Rust handles layout, focus, drawing, and hit testing. Keyboard, controller, and touch navigation passed the host frontend regression; the portrait picker has 44-pixel-or-larger targets.",
+        "Public Cloudflare verification on commit 1e5c4fd255a4979148bdda648e010e2fbb68221b (CI 38186584449) passed the title/menu flow, keyboard and controller navigation, mobile layout, and pause. The public test reported no disc prompt or JavaScript/WebGL errors."
       ],
       "limitation": "This is an original-style reconstruction, not a pixel-exact copy: scenic menu backdrops, animated highlights, some original callbacks, other modes, and the race HUD are still unfinished.",
       "image": "/devlog-images/a-phone-sized-map-menu-now-works-9f2e1444.png",
@@ -575,26 +576,345 @@
       "title": "The camera now makes room for portrait play",
       "summary": "Portrait mode uses a longer chase view and a slightly higher, wider sightline, then restores the exact landscape camera pose and field of view when the screen rotates back.",
       "details": [
-        "The host camera test passed with 35% more chase distance and a 0.12-radian upward sightline in portrait. The adjustment stays scoped to portrait instead of changing the recovered landscape view."
+        "The host camera test passed with 35% more chase distance and a 0.12-radian upward sightline in portrait. The adjustment stays scoped to portrait instead of changing the recovered landscape view.",
+        "Public Cloudflare verification on commit 1e5c4fd255a4979148bdda648e010e2fbb68221b (CI 38186584449) confirmed the portrait framing and restoration of the native landscape camera pose and field of view after rotation."
       ],
-      "limitation": "This camera regression and screenshot were captured on the host; they do not establish behavior on a public deployment. Crash recovery and the remaining race behavior are separate unfinished work.",
+      "limitation": "The adjustment changes camera framing only in portrait. Crash recovery and the remaining race behavior are unfinished.",
       "image": "/devlog-images/the-camera-now-makes-room-for-portrait-play-3a61e706.png",
-      "caption": "Host-verified portrait chase view, with more of the snowy course visible ahead of the ATV."
+      "caption": "Public Cloudflare capture: portrait chase framing shows more of the snowy course ahead of the ATV."
     },
     {
       "id": "a-held-pullback-now-reaches-the-airborne-rider-pose-2b752c1d",
       "timestamp": "2026-10-12T00:01:13.950840+00:00",
       "recorded_at": "2026-10-12T00:02:53.969580+00:00",
       "kind": "verification",
-      "title": "A held pullback now reaches the airborne rider pose",
-      "summary": "On a real Caribou ramp, touch pullback now reaches the recovered airborne lean and native pitch response without an added torque boost; a separate ramp run landed on all four wheels and drove on.",
+      "title": "Touch pullback now drives the native rider pose",
+      "summary": "Touch hold/release now maps to the recovered rider preload pose, and the public build changes rider matrices without applying jump force on flat ground.",
       "details": [
-        "The final trace showed the first airborne frame with lean input active and ground braking cleared. The browser lifecycle regression also passed in WebKit and Chromium with persisted pagehide/pageshow events, then resumed driving and pause controls without JavaScript or WebGL errors."
+        "Public Cloudflare verification on commit 1e5c4fd255a4979148bdda648e010e2fbb68221b (CI 38186584449) passed touch hold/release and rider-matrix changes, with no preload force on flat ground.",
+        "A separate host Caribou ramp trace followed held pullback through takeoff: the first observed airborne frame retained lean after ground braking cleared, with the original pitch response and no added torque. Another ramp run landed on all four wheels and resumed driving.",
+        "The persisted-page regression passed in WebKit and Chromium with synthetic pagehide/pageshow events, then resumed driving and pause controls without JavaScript or WebGL errors. Natural navigation reloaded locally, so this does not identify the cause of the earlier hover report."
       ],
-      "limitation": "A full flip, stunt scoring, and crash recovery are not implemented. The user's earlier hover report is not explained by the lifecycle test: natural navigation reloaded locally, so its cause remains unconfirmed.",
+      "limitation": "The held-pose screenshot is stationary and does not show a completed jump. Full flips, stunt scoring, and crash recovery remain unfinished; the earlier hover report is still unexplained.",
       "image": "/devlog-images/a-held-pullback-now-reaches-the-airborne-rider-pose-2b752c1d.png",
-      "caption": "Host-verified touch-driven Caribou ramp run used to check pullback through takeoff; the screenshot is not proof of a completed flip."
+      "caption": "Host capture of the crouched preload pose and touch marker; this stationary check does not depict a jump."
+    },
+    {
+      "id": "a-status-board-separates-recovered-work-from-live-feat-fb2690d8",
+      "timestamp": "2026-10-12T00:18:40.743124+00:00",
+      "recorded_at": "2026-10-12T00:19:16.921444+00:00",
+      "kind": "verification",
+      "title": "A status board separates recovered work from live features",
+      "summary": "The development log now compares verified public behavior with source recovery and host-only candidates. Filters and per-feature next steps make the unfinished parts easier to sort and pick up.",
+      "details": [
+        "The board covers 26 feature areas with four states: Live, Partial, Recovered Not Connected, and Needs Research. The count tiles are feature-area counts, not a game-completion percentage; expandable cards show source notes, test scope and a concrete next step.",
+        "The eight-map public baseline is identified by its full commit and CI run. The crash row records the newer host-tested candidate separately, including its remaining camera and prop/water gaps."
+      ],
+      "limitation": "A recovered file format or routine is not a complete decompilation or a connected feature. Crash behavior remains partial; the train, original race HUD and flow, saves, AI and terrain LOD are unfinished.",
+      "image": "/devlog-images/a-status-board-separates-recovered-work-from-live-feat-fb2690d8.png",
+      "caption": "Host capture of the desktop feature board. Its count tiles summarize feature areas rather than percent complete; the host crash candidate is separate from the verified public baseline."
     }
   ],
-  "updated_at": "2026-10-12T00:02:53.969580+00:00"
+  "updated_at": "2026-10-12T00:20:08.265609+00:00",
+  "port_status": {
+    "note": "Counts describe feature areas, not percent completion. Recovered means source/data behavior has evidence; it does not mean the full game is decompiled or connected. Public labels refer to the stated released baseline. Host candidate work and its separate test scope are called out explicitly.",
+    "public_release": {
+      "commit": "1e5c4fd255a4979148bdda648e010e2fbb68221b",
+      "ci_run": "38186584449",
+      "url": "https://atv-offroad-fury-2.champtoday.workers.dev/"
+    },
+    "next_priorities": [
+      "Verify the host-tested wreck candidate against its exact release; continue camera and rider-versus-prop/water work without conflating host tests with public results.",
+      "Connect Arlington\u2019s recovered locomotive and ten-car route to movement, terrain contact and collisions.",
+      "Recover original race HUD, event flow, rivals, vehicle selection and save/progression behavior."
+    ],
+    "features": [
+      {
+        "id": "environments",
+        "category": "World",
+        "title": "Eight environments",
+        "status": "LIVE",
+        "scope": "PUBLIC",
+        "summary": "ENV01\u2013ENV08 appear in the Freestyle picker and load into drivable scenes. Public checks exercised movement on all eight; this does not mean every original race course or game mode is recovered.",
+        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449",
+        "evidence": "research/GEOMETRY.md \u2014 Freeport Harbor; research/DEPLOYMENT.md \u2014 eight-environment release.",
+        "next_step": "Connect the recovered Arlington train and audit remaining map-specific scene behavior."
+      },
+      {
+        "id": "vegetation",
+        "category": "World",
+        "title": "Original vegetation placements",
+        "status": "PARTIAL",
+        "scope": "PUBLIC \u00b7 SELECTION APPROXIMATION",
+        "summary": "Recovered ecosystem placements render across the eight environments in batched draws, but the current nearest-placement selection is provisional and does not reproduce original vegetation visibility/LOD.",
+        "validation": "Public \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 eight-map renderer test",
+        "evidence": "research/GEOMETRY.md \u2014 terrain quality investigation and Freeport ecosystem batches.",
+        "next_step": "Recover original per-map culling/LOD and compare visible placements at measured camera distances."
+      },
+      {
+        "id": "terrain-detail-lod",
+        "category": "World",
+        "title": "Terrain detail and distance LOD",
+        "status": "PARTIAL",
+        "scope": "PUBLIC + HOST RESEARCH",
+        "summary": "The full stored 4.5-foot near grid, base textures and near-pass detail blend are connected. Original projected terrain LOD, fog and vegetation visibility remain unmatched.",
+        "validation": "Public maps show recovered terrain; host research documents the near detail pass and remaining differences.",
+        "evidence": "research/GEOMETRY.md \u2014 terrain quality investigation.",
+        "next_step": "Recover projected-coverage selection, far-color modulation, fog and GS quantization behavior."
+      },
+      {
+        "id": "arlington-train",
+        "category": "World",
+        "title": "Arlington locomotive and train",
+        "status": "RECOVERED NOT CONNECTED",
+        "scope": "RESEARCH",
+        "summary": "The Arlington archive and route data identify a locomotive, ten following cars, wheel/smoke animation and a shared looping VUE path with per-car offsets. Nothing renders or moves in the public scene yet.",
+        "validation": "Format and executable-path observations; no connected runtime test.",
+        "evidence": "research/GEOMETRY.md \u2014 Arlington train recovery in progress.",
+        "next_step": "Connect path sampling, per-car transforms, terrain contact and moving-object collision, then verify on ENV08."
+      },
+      {
+        "id": "menus",
+        "category": "Front end",
+        "title": "Title, menus and map selection",
+        "status": "PARTIAL",
+        "scope": "PUBLIC",
+        "summary": "A Rust-drawn responsive route reaches Single Player \u2192 Freestyle \u2192 all eight environments. Recovered fonts and map imagery support original-style screens; this is not a pixel-exact recreation of every original page or callback.",
+        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449 \u00b7 title/menu, keyboard, controller and mobile checks",
+        "evidence": "research/UI.md \u2014 connected route and page-layout evidence.",
+        "next_step": "Recover remaining original pages and callbacks, then replace authored panel geometry and missing menu art."
+      },
+      {
+        "id": "pause-controls",
+        "category": "Front end",
+        "title": "Pause and control screens",
+        "status": "PARTIAL",
+        "scope": "PUBLIC",
+        "summary": "Rust draw commands and recovered font atlas now build the responsive pause/Controls panels. Pause/resume, reset, Fullscreen, Dev log and return-to-menu actions work; these are authored web callbacks, not the original callback code or recovered pause panel art.",
+        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449 \u00b7 pause/resume and mobile frontend checks",
+        "evidence": "research/UI.md \u2014 pause overlay and callback limits.",
+        "next_step": "Compare pause navigation and focus behavior against the original page handlers."
+      },
+      {
+        "id": "race-hud",
+        "category": "Front end",
+        "title": "In-race HUD",
+        "status": "NEEDS RESEARCH",
+        "scope": "RESEARCH",
+        "summary": "The game has simple Pause and Camera controls, but its original race HUD, timing/lap panels and race-state display are not connected.",
+        "validation": "No original race HUD implementation or public HUD test.",
+        "evidence": "research/UI.md \u2014 race HUD remains unimplemented.",
+        "next_step": "Inventory the original HUD pages, update routines and mode-specific fields before drawing a replacement."
+      },
+      {
+        "id": "modes-raceflow",
+        "category": "Game systems",
+        "title": "Game modes and race flow",
+        "status": "PARTIAL",
+        "scope": "PUBLIC",
+        "summary": "Freestyle is the one connected start-to-drive path. Race starts, finishes, laps, event transitions and mode-specific rules are not implemented as a full flow.",
+        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449 \u00b7 Freestyle route and driving only",
+        "evidence": "research/UI.md \u2014 supported menu route; research/IMPLEMENTATION.md \u2014 acceptance gates.",
+        "next_step": "Recover the original mode/state transitions and validate a complete event from start to results."
+      },
+      {
+        "id": "opponents-ai",
+        "category": "Game systems",
+        "title": "Rivals and race AI",
+        "status": "NEEDS RESEARCH",
+        "scope": "RESEARCH",
+        "summary": "No opponent spawning, racing behavior, passing logic or opponent collision behavior is connected.",
+        "validation": "No AI or rival browser test is claimed.",
+        "evidence": "research/IMPLEMENTATION.md \u2014 race-system acceptance gates.",
+        "next_step": "Locate opponent update routines and race-specific tuning, then identify a small testable behavior slice."
+      },
+      {
+        "id": "progression",
+        "category": "Game systems",
+        "title": "Profiles, championships and unlocks",
+        "status": "NEEDS RESEARCH",
+        "scope": "RESEARCH",
+        "summary": "Profile creation, championship structure, unlock conditions and persistent career progression are not connected.",
+        "validation": "No progression path is available from the current menu.",
+        "evidence": "research/UI.md \u2014 profiles and championships remain unimplemented; research/IMPLEMENTATION.md.",
+        "next_step": "Map the original profile and event state transitions before adding progression screens."
+      },
+      {
+        "id": "save-data",
+        "category": "Game systems",
+        "title": "Save data and records",
+        "status": "NEEDS RESEARCH",
+        "scope": "RESEARCH",
+        "summary": "The browser port does not yet save profiles, settings, records or unlock state.",
+        "validation": "Save format and write behavior have not been validated.",
+        "evidence": "research/IMPLEMENTATION.md \u2014 verify menus, progression and saves.",
+        "next_step": "Find and document the original save structures and update rules before choosing browser storage."
+      },
+      {
+        "id": "vehicle-selection",
+        "category": "Vehicle",
+        "title": "ATV selection and customization",
+        "status": "NEEDS RESEARCH",
+        "scope": "RESEARCH",
+        "summary": "One recovered ATV is connected for driving. The original vehicle roster, selection flow, tuning/customization screens and saved setup are not connected.",
+        "validation": "Current Freestyle route loads the implemented ATV; no roster/customization test.",
+        "evidence": "research/UI.md \u2014 supported menu route; research/GEOMETRY.md \u2014 ATV mesh recovery.",
+        "next_step": "Inventory original vehicle pages, model/tuning records and setup persistence before adding selection controls."
+      },
+      {
+        "id": "handling",
+        "category": "Vehicle",
+        "title": "ATV handling and suspension",
+        "status": "PARTIAL",
+        "scope": "PUBLIC + HOST COMPONENT CHECKS",
+        "summary": "The Rust simulation drives, steers, brakes and animates suspension. Several contact and controller routines have component comparisons, but a full original-game replay match is not established.",
+        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449 \u00b7 component instruction comparisons are host checks, not PS2 hardware tests",
+        "evidence": "research/CONTACT.md; research/TOUCH.md; research/IMPLEMENTATION.md.",
+        "next_step": "Compare fixed-input position, speed, contact, jump and landing traces against an original execution."
+      },
+      {
+        "id": "static-collision",
+        "category": "Vehicle",
+        "title": "Terrain and static-object collisions",
+        "status": "PARTIAL",
+        "scope": "PUBLIC + HOST COMPONENT CHECKS",
+        "summary": "Terrain chassis contact and the selected static-obstacle query/response path are connected publicly. Unsupported collision variants, scene-ordering gaps, rider-vs-prop/water contact and full collision-system parity remain open.",
+        "validation": "Public \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 connected static contact path; host component comparisons do not prove full collision parity.",
+        "evidence": "research/COLLISION.md; research/CONTACT.md; research/OBSTACLES.md.",
+        "next_step": "Cover remaining supported mesh/query cases and validate object contacts, ordering and dynamic response across maps."
+      },
+      {
+        "id": "crash-recovery",
+        "category": "Vehicle",
+        "title": "Wrecks, rider separation and recovery",
+        "status": "PARTIAL",
+        "scope": "HOST CANDIDATE \u00b7 RELEASE TEST PENDING",
+        "summary": "Host-only actual-content browser work passes a Caribou preload hop \u2192 Nac Nac \u2192 vertical wreck \u2192 rider separation \u2192 terrain contact \u2192 automatic reset \u2192 driving-again loop. A separate real-touch preload hop lands cleanly and stays in Riding state. These tests do not complete crash recovery.",
+        "validation": "tools/test_wreck.mjs and tools/test_clean_landing.mjs passed on host actual content. Release-specific public crash verification is pending.",
+        "evidence": "research/WRECK.md \u2014 recovered rules, host tests and explicit remaining camera/contact limits.",
+        "next_step": "Verify the candidate against the exact public release, then continue native wreck camera and rider-versus-prop/water behavior; inspect an uncropped wreck capture."
+      },
+      {
+        "id": "preload-touch",
+        "category": "Vehicle",
+        "title": "Touch preload and takeoff lean",
+        "status": "PARTIAL",
+        "scope": "PUBLIC + HOST TESTS",
+        "summary": "Public touch hold/release changes rider pose without granting force on flat ground. Host ramp tests show native takeoff lean/pitch behavior and a separate clean four-wheel landing, but not a completed flip or full stunt system.",
+        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 host-only ramp/landing traces",
+        "evidence": "research/TOUCH.md \u2014 preload, takeoff continuity and touch verification.",
+        "next_step": "Finish native stunt/crash transitions and verify ramp, landing and recovery together on actual browser input."
+      },
+      {
+        "id": "stunt-actions",
+        "category": "Vehicle",
+        "title": "Stunt actions and trick animations",
+        "status": "PARTIAL",
+        "scope": "HOST RESEARCH / PARTLY CONNECTED",
+        "summary": "Original main/hold stunt clips and selection rules have been recovered and sampled; only a subset of touch gestures is exposed, and complete landing/cancel transitions remain incomplete.",
+        "validation": "Host instruction and pose tests; public stunt catalog parity is not claimed.",
+        "evidence": "research/TOUCH.md \u2014 airborne stunts; research/ANIMATION.md \u2014 rider animation recovery.",
+        "next_step": "Connect all original modifier/direction paths and test their native cooldown, hold, release and landing transitions."
+      },
+      {
+        "id": "stunt-scoring",
+        "category": "Game systems",
+        "title": "Stunt scoring and combos",
+        "status": "NEEDS RESEARCH",
+        "scope": "RESEARCH",
+        "summary": "The port does not yet implement original score awards, combo bookkeeping, profile restrictions or judged-landing results.",
+        "validation": "Scoring and combo landing bookkeeping are explicitly incomplete.",
+        "evidence": "research/TOUCH.md \u2014 presentation and remaining controls.",
+        "next_step": "Recover score event rules, landing windows and profile/mode gates before connecting scoring UI."
+      },
+      {
+        "id": "animation",
+        "category": "Presentation",
+        "title": "ATV and rider animation",
+        "status": "PARTIAL",
+        "scope": "PUBLIC + HOST CHECKS",
+        "summary": "Mechanical ATV linkage and normal rider states animate. Trick extension, crash poses, hand/foot IK, female hair and the full event system are still incomplete.",
+        "validation": "Public normal-rider animation checks plus host-only newer wreck/pose tests.",
+        "evidence": "research/ANIMATION.md \u2014 normal riding and remaining work.",
+        "next_step": "Finish clip/event transitions and solve rider hand/foot attachment over the moving ATV."
+      },
+      {
+        "id": "camera",
+        "category": "Presentation",
+        "title": "Chase camera",
+        "status": "LIVE",
+        "scope": "PUBLIC",
+        "summary": "The recovered landscape chase camera and preset cycling work. Portrait adds a bounded framing adjustment and restores the native landscape pose/FOV after rotation.",
+        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449 \u00b7 portrait\u2192landscape restore test",
+        "evidence": "research/CAMERA.md \u2014 camera recovery and portrait presentation.",
+        "next_step": "Connect object clearance and continue checking framing on the remaining terrain profiles."
+      },
+      {
+        "id": "missing-scene-meshes",
+        "category": "World",
+        "title": "Unsupported scene meshes",
+        "status": "PARTIAL",
+        "scope": "PUBLIC",
+        "summary": "Most map scenery renders, but known mesh gaps remain: rtower in ENV01 and ENV06, pwrtwrB in ENV02, and coal_twr in ENV08.",
+        "validation": "Public \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 eight-map rendering regression",
+        "evidence": "research/GEOMETRY.md \u2014 PSG rigid meshes and eight-environment release.",
+        "next_step": "Recover the remaining packet signatures and validate each mesh in its original map context."
+      },
+      {
+        "id": "graphics",
+        "category": "Presentation",
+        "title": "Rendering and original visual effects",
+        "status": "PARTIAL",
+        "scope": "PUBLIC + HOST RESEARCH",
+        "summary": "Recovered models, materials, terrain, sky and vegetation render through WebGL2. Original PS2 VU/GS shading, reflective surfaces and fog are incomplete; rtower (ENV01/06), pwrtwrB (ENV02) and coal_twr (ENV08) are still missing.",
+        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449 \u00b7 renderer regression; exact original hardware output is not claimed",
+        "evidence": "research/GEOMETRY.md \u2014 PSG meshes and terrain shading; research/IMPLEMENTATION.md.",
+        "next_step": "Decode the missing scene mesh variants and compare material, far-terrain and fog behavior with original captures."
+      },
+      {
+        "id": "input",
+        "category": "Platform",
+        "title": "Keyboard, controller and touch input",
+        "status": "PARTIAL",
+        "scope": "PUBLIC",
+        "summary": "Tested keyboard/controller menu routes, browser gamepad driving, multitouch, cancellation, mobile pause and a small set of native riding gestures. Full remapping and physical iOS/Bluetooth compatibility are not established.",
+        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449 \u00b7 mobile browser checks; no physical iOS Safari claim",
+        "evidence": "research/TOUCH.md \u2014 browser adapter limits; research/IMPLEMENTATION.md \u2014 input requirements.",
+        "next_step": "Validate with physical iOS and controller hardware, then implement/verify original remapping and remaining controls."
+      },
+      {
+        "id": "audio",
+        "category": "Audio",
+        "title": "Music and engine sound",
+        "status": "PARTIAL",
+        "scope": "PUBLIC + HOST CHECKS",
+        "summary": "The 21-song catalog streams and original engine samples are connected. The complete mixer, effects, spatialization, dialogue and all original transitions are not reproduced.",
+        "validation": "Public content checks and browser playback; complete mixer parity is not claimed.",
+        "evidence": "research/DEPLOYMENT.md \u2014 runtime manifest; research/IMPLEMENTATION.md \u2014 audio acceptance gate.",
+        "next_step": "Recover mixer levels, sample interpolation, effect buses, spatialization and mode-specific music transitions."
+      },
+      {
+        "id": "local-split-screen",
+        "category": "Game systems",
+        "title": "Local split-screen play",
+        "status": "NEEDS RESEARCH",
+        "scope": "RESEARCH",
+        "summary": "The current browser renderer runs one rider and one camera viewport. Original local multiplayer, player setup, viewport layout and two-player race flow are not connected.",
+        "validation": "No two-player or split-screen browser test.",
+        "evidence": "research/CAMERA.md \u2014 original split-screen sections are parsed; research/IMPLEMENTATION.md \u2014 game modes remain an acceptance gate.",
+        "next_step": "Recover player-count setup, split-screen camera/viewport rules and shared race state before implementing a second actor."
+      },
+      {
+        "id": "online-multiplayer",
+        "category": "Platform",
+        "title": "Online multiplayer",
+        "status": "NEEDS RESEARCH",
+        "scope": "RESEARCH",
+        "summary": "No network lobby, race synchronization or multiplayer transport is connected. Original local split-screen and online play remain to be researched.",
+        "validation": "No multiplayer implementation or network test.",
+        "evidence": "research/RESOURCES.md \u2014 multiplayer research lead; research/IMPLEMENTATION.md \u2014 verify modes and runtime behavior.",
+        "next_step": "Recover local split-screen behavior first, then document the original online protocol/service dependencies."
+      }
+    ]
+  }
 }

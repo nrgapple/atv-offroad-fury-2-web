@@ -186,6 +186,9 @@ impl Animator {
             ),
         })
     }
+    pub fn channels(&self) -> crate::animation::Channels {
+        self.current.clone()
+    }
     pub fn pose(&self, nodes: &[crate::mesh::Node]) -> Result<crate::animation::Pose> {
         self.current.pose(nodes)
     }

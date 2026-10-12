@@ -7,6 +7,92 @@ function element(tag, text, className) {
   if (className) node.className = className;
   return node;
 }
+function featureCard(feature) {
+  const card = element('article', undefined, 'feature-card');
+  card.id = `feature-${feature.id}`;
+  card.dataset.category = feature.category;
+  card.dataset.status = feature.status;
+  const head = element('div', undefined, 'feature-head');
+  head.append(element('span', feature.category, 'feature-category'));
+  const status = element('span', feature.status, 'feature-status');
+  status.dataset.status = feature.status;
+  head.append(status);
+  card.append(head, element('h3', feature.title), element('p', feature.summary));
+  const more = element('details', undefined, 'feature-more');
+  more.append(element('summary', 'Evidence and next step'));
+  const content = element('div', undefined, 'feature-more-content');
+  const scope = element('span', feature.scope, 'feature-scope');
+  scope.dataset.scope = feature.scope;
+  content.append(scope);
+  if (feature.validation) content.append(element('p', feature.validation, 'feature-validation'));
+  if (feature.evidence) content.append(element('p', `Evidence: ${feature.evidence}`, 'feature-source'));
+  const next = element('p', undefined, 'feature-next');
+  next.append(element('strong', 'Next step'), document.createTextNode(feature.next_step));
+  content.append(next);
+  more.append(content);
+  card.append(more);
+  return card;
+}
+function renderPortStatus(port) {
+  if (!port || !Array.isArray(port.features)) return;
+  $('port-status-note').textContent = port.note;
+  const release = $('port-release');
+  release.replaceChildren();
+  if (port.public_release) {
+    const label = element('span', `VERIFIED BASELINE · ${port.public_release.commit.slice(0, 12)}`);
+    release.append(label, document.createElement('br'));
+    const link = element('a', port.public_release.url);
+    link.href = port.public_release.url;
+    link.target = '_blank'; link.rel = 'noopener';
+    release.append(link, document.createElement('br'));
+    release.append(document.createTextNode(`CI ${port.public_release.ci_run}`));
+  }
+  const statusNames = [
+    ['LIVE', 'Live'], ['PARTIAL', 'Partial'],
+    ['RECOVERED NOT CONNECTED', 'Recovered, not connected'],
+    ['NEEDS RESEARCH', 'Needs research']
+  ];
+  const counts = new Map(statusNames.map(([status]) => [status, 0]));
+  for (const feature of port.features) counts.set(feature.status, (counts.get(feature.status) || 0) + 1);
+  $('status-summary').replaceChildren(...statusNames.map(([status, label]) => {
+    const cell = element('div', undefined, 'status-count');
+    cell.dataset.status = status;
+    cell.append(element('strong', String(counts.get(status) || 0)), element('span', label));
+    return cell;
+  }));
+  $('port-priorities').replaceChildren(...(port.next_priorities || []).map((priority) => element('li', priority)));
+  const category = $('feature-category');
+  const selectedCategory = category.value;
+  category.replaceChildren(new Option('All categories', ''));
+  for (const name of [...new Set(port.features.map(feature => feature.category))].sort()) {
+    category.add(new Option(name, name));
+  }
+  if ([...category.options].some(option => option.value === selectedCategory)) category.value = selectedCategory;
+  category.onchange = filterFeatures;
+  $('feature-status').onchange = filterFeatures;
+  const board = $('feature-board');
+  board.replaceChildren(...port.features.map(featureCard));
+  filterFeatures();
+}
+function filterFeatures() {
+  const cards = [...$('feature-board').querySelectorAll('.feature-card')];
+  const category = $('feature-category').value;
+  const status = $('feature-status').value;
+  let shown = 0;
+  for (const card of cards) {
+    const visible = (!category || card.dataset.category === category) && (!status || card.dataset.status === status);
+    card.hidden = !visible;
+    if (visible) shown++;
+  }
+  $('feature-count').textContent = `Showing ${shown} of ${cards.length} features`;
+  if (cards.length && shown === 0) {
+    let empty = $('feature-board').querySelector('.feature-empty');
+    if (!empty) { empty = element('p', 'No features match both filters.', 'feature-empty'); $('feature-board').append(empty); }
+    empty.hidden = false;
+  } else {
+    $('feature-board').querySelector('.feature-empty')?.remove();
+  }
+}
 function entryCard(entry) {
   const article = element('article'); article.id = `checkpoint-${entry.id}`;
   const copy = element('div', undefined, 'entry-copy');
@@ -36,6 +122,7 @@ async function refresh() {
     if (next !== revision) {
       $('build-state').textContent = log.status;
       $('working-on').textContent = log.working_on ? `Current work: ${log.working_on}` : '';
+      renderPortStatus(log.port_status);
       const entries = [...log.entries].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
       // Keep existing cards/images when appending new checkpoints during viewing.
       const old = new Map([...$('entries').children].map(node => [node.id, node]));

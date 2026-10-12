@@ -1,0 +1,52 @@
+// Opt-in original Caribou ramp: preload takeoff and clean landing without a stunt.
+// Drives only through actual Chromium touch events; no physics/state injection.
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { writeFile, mkdir } from 'node:fs/promises';
+const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
+await mkdir('work/verification', {recursive: true});
+const browser = await chromium.launch({ headless: true });
+try {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const errors = []; page.on('pageerror', e => errors.push(e.message));
+  const url = new URL('/play.html', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173');
+  url.searchParams.set('drive', '1'); url.searchParams.set('environment', 'env01');
+  await page.goto(url.href);
+  await page.waitForFunction(() => window.atvTerrainStatus?.simulation && !document.querySelector('#touch-controls').hidden, null, { timeout: 90000 });
+  const cdp = await page.context().newCDPSession(page);
+  const touch = (type, points = []) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(point => ({ radiusX: 6, radiusY: 6, force: 1, ...point })) });
+  const left = { id: 1, x: 60, y: 560 }, drive = { ...left, y: 490 };
+  const right = { id: 2, x: 310, y: 530 };
+  await page.evaluate(() => {
+    window.rampFrames = []; let previous = 0;
+    function record() {
+      const state = window.atvTerrainStatus;
+      if (state.simulationSteps !== previous) {
+        previous = state.simulationSteps;
+        window.rampFrames.push({ step: previous, frame: state.frame, input: state.input });
+      }
+      requestAnimationFrame(record);
+    }
+    requestAnimationFrame(record);
+  });
+  await touch('touchStart', [left]); await touch('touchMove', [drive]); await touch('touchStart', [drive, right]);
+  await page.waitForFunction(() => window.atvTerrainStatus.frame.preload_armed, null, { timeout: 45000, polling: 'raf' });
+  // CDP touchEnd carries the released finger, preserving the left throttle.
+  await touch('touchEnd', [right]);
+  await page.waitForFunction(() => window.rampFrames.some(s => s.frame.preload_active), null, { timeout: 5000, polling: 'raf' });
+  await page.waitForFunction(() => !window.atvTerrainStatus.frame.grounded.some(Boolean), null, { timeout: 5000, polling: 'raf' });
+
+  await touch('touchCancel');
+  await page.waitForFunction(() => window.atvTerrainStatus.frame.grounded.some(Boolean),null,{timeout:10000,polling:'raf'});
+  await page.waitForTimeout(1000);
+  const frames=await page.evaluate(()=>window.rampFrames);
+  await writeFile('work/verification/clean-landing-trace.json',JSON.stringify(frames,null,2));
+  const final=await page.evaluate(()=>window.atvTerrainStatus.frame);
+  assert(frames.some(s=>!s.frame.grounded.some(Boolean)), 'A real airborne interval must occur');
+  assert(frames.every(s=>s.frame.wreck.phase==='Riding'), 'A clean hop must never enter wreck state');
+  assert.equal(final.wreck.phase,'Riding');
+  assert.equal(final.reset_count,0);
+  assert.deepEqual(errors, []);
+  assert.equal(await page.evaluate(() => window.atvTerrainStatus.glError), 0);
+  console.log('PASS clean preload takeoff and landing without stunt or wreck');
+} finally {await browser.close();}

@@ -1,4 +1,5 @@
-// Opt-in original Caribou ramp, airborne touch steering and original stunt motions.
+// Opt-in short Caribou hop: original stunt entry/release and unfinished-landing wreck.
+// Main/held-motion timing is covered by core tests; this hop is too short to hold.
 // Drives only through actual Chromium touch events; no physics/state injection.
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
@@ -41,22 +42,23 @@ try {
   const swipe = { ...right, y: right.y - 70 };
   await touch('touchMove', [drive, swipe]);
   await page.waitForFunction(() => window.atvTerrainStatus.frame.stunt?.id === 0, null, { timeout: 5000, polling: 'raf' });
-  await page.waitForFunction(() => window.atvTerrainStatus.frame.stunt?.main_time > .65, null, { timeout: 5000, polling: 'raf' });
+  await page.waitForFunction(() => window.atvTerrainStatus.frame.stunt?.main_time > .05, null, { timeout: 5000, polling: 'raf' });
   const performing = await page.evaluate(() => window.atvTerrainStatus.frame);
   assert.equal(performing.rider_mode, 'stunt');
   assert.notDeepEqual(performing.rider_node_matrices, before.rider_node_matrices, 'Original Nac Nac MOT must change the actual rendered rider pose');
-  if (process.env.ATV_TOUCH_STUNT_SCREENSHOT) await page.screenshot({ path: process.env.ATV_TOUCH_STUNT_SCREENSHOT });
-  await page.waitForFunction(() => window.atvTerrainStatus.frame.stunt?.holding, null, { timeout: 5000, polling: 'raf' });
-  const held = await page.evaluate(() => window.atvTerrainStatus.frame);
-  assert.equal(held.rider_mode, 'hold'); assert.equal(held.stunt.name, 'Nac Nac');
-  // A released modifier resumes the main motion from its paused clock.
+  // Release while the main motion is still playing. This short hop cannot
+  // reach the original 0.92-second hold threshold before landing.
   await touch('touchEnd', [swipe]);
-  await page.waitForFunction(time => window.atvTerrainStatus.frame.stunt && !window.atvTerrainStatus.frame.stunt.holding && window.atvTerrainStatus.frame.stunt.main_time > time, held.stunt.main_time, { timeout: 5000, polling: 'raf' });
+  await page.waitForFunction(time => window.rampFrames.some(s => s.input.stunt_modifiers === 0 && s.frame.stunt?.id === 0 && !s.frame.stunt.holding && s.frame.stunt.main_time > time), performing.stunt.main_time, { timeout: 5000, polling: 'raf' });
+  if (process.env.ATV_TOUCH_STUNT_SCREENSHOT) await page.screenshot({ path: process.env.ATV_TOUCH_STUNT_SCREENSHOT });
+  await page.waitForFunction(() => window.atvTerrainStatus.frame.rider_mode === 'wreck', null, { timeout: 10000, polling: 'raf' });
+  const landing = await page.evaluate(() => window.atvTerrainStatus.frame);
+  assert.equal(landing.wreck.kind, 'Vertical', 'An unfinished original stunt at wheel contact must enter the native landing wreck');
   await touch('touchCancel');
   const frames = await page.evaluate(() => window.rampFrames);
   assert(frames.some(s => s.frame.stunt && !s.frame.grounded.some(Boolean)));
   assert(frames.some(s => s.frame.preload_active));
   assert.deepEqual(errors, []);
-  if (process.env.ATV_TOUCH_STUNT_TRACE) await writeFile(process.env.ATV_TOUCH_STUNT_TRACE, JSON.stringify({ armed, before, performing, held, frames, errors }, null, 2));
-  console.log(`PASS: real Caribou ramp into original Nac Nac main/held MOT clips; hold at ${held.stunt.main_time.toFixed(2)}s; release resumes main animation. No injected state/forces.`);
+  if (process.env.ATV_TOUCH_STUNT_TRACE) await writeFile(process.env.ATV_TOUCH_STUNT_TRACE, JSON.stringify({ armed, before, performing, landing, frames, errors }, null, 2));
+  console.log('PASS: real Caribou short hop enters original Nac Nac, changes rider pose, releases modifier and advances main motion, then unfinished landing triggers native Vertical wreck. No held-stunt completion claim or injected state/forces.');
 } finally { await browser.close(); }

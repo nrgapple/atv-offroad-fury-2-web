@@ -103,13 +103,33 @@ pub fn resolve_static(
     contact: StaticContact,
     corrections: &mut ContactCorrections,
 ) -> Result<()> {
+    resolve_static_with_position_scale(body, body_config, config, contact, corrections, 0.3)
+}
+/// Same native response with the caller's actor-specific penetration correction
+/// coefficient (normal ATV0.3; detached rider0.25).
+pub fn resolve_static_with_position_scale(
+    body: &mut BodyState,
+    body_config: &BodyConfig,
+    config: ContactConfig,
+    contact: StaticContact,
+    corrections: &mut ContactCorrections,
+    position_scale: f32,
+) -> Result<()> {
     let arm = inverse_transform(body.basis(), sub(contact.point, body.center));
     let rotational = cross(body.local_angular_velocity, arm);
     let velocity = add(
         crate::dynamics::transform(body.basis(), rotational),
         body.linear_velocity,
     );
-    resolve_static_with_velocity(body, body_config, config, contact, velocity, corrections)
+    resolve_with_velocity_and_scale(
+        body,
+        body_config,
+        config,
+        contact,
+        velocity,
+        corrections,
+        position_scale,
+    )
 }
 /// Explicit pre-impact point velocity also allows independent instruction-oracle
 /// verification without conflating the query/point-velocity routines.
@@ -120,6 +140,25 @@ pub fn resolve_static_with_velocity(
     contact: StaticContact,
     velocity: Vec3,
     corrections: &mut ContactCorrections,
+) -> Result<()> {
+    resolve_with_velocity_and_scale(
+        body,
+        body_config,
+        config,
+        contact,
+        velocity,
+        corrections,
+        0.3,
+    )
+}
+fn resolve_with_velocity_and_scale(
+    body: &mut BodyState,
+    body_config: &BodyConfig,
+    config: ContactConfig,
+    contact: StaticContact,
+    velocity: Vec3,
+    corrections: &mut ContactCorrections,
+    position_scale: f32,
 ) -> Result<()> {
     let StaticContact {
         point,
@@ -134,6 +173,7 @@ pub fn resolve_static_with_velocity(
         .chain(
             [
                 penetration,
+                position_scale,
                 material_grip,
                 config.reflection,
                 config.angular_impulse_scale,
@@ -185,7 +225,7 @@ pub fn resolve_static_with_velocity(
     let displacement = scale(normal, penetration * effective_mass);
     merge_translation(
         &mut corrections.translation,
-        scale(scale(displacement, 0.3), inverse_mass),
+        scale(scale(displacement, position_scale), inverse_mass),
     );
     let tangent = sub(velocity, scale(normal, normal_velocity));
     let squared = dot(tangent, tangent);

@@ -53,6 +53,14 @@ pub struct VehicleFrame {
     pub preload_active: bool,
     pub preload_strength: f32,
     pub wheelie_active: bool,
+    pub wreck: crate::wreck::State,
+    pub reset_count: u32,
+}
+struct WreckPhysics {
+    rules: crate::wreck::Config,
+    contact: ContactConfig,
+    center: Vec3,
+    checkpoint_rays: crate::collision::CollisionRayTree,
 }
 pub struct Vehicle {
     body: BodyState,
@@ -88,8 +96,16 @@ pub struct Vehicle {
     chassis_contact_count: usize,
     chassis_config: ContactConfig,
     obstacle_rays: Option<std::rc::Rc<crate::collision::CollisionRayTree>>,
+    wreck_rays: Option<std::rc::Rc<crate::collision::CollisionRayTree>>,
     obstacles: Vec<crate::obstacle::StaticObstacle>,
     obstacle_contact_count: usize,
+    wreck_physics: Option<WreckPhysics>,
+    normal_contact: ContactConfig,
+    wreck: crate::wreck::State,
+    stunt_landing_safe: bool,
+    reset_origin: Vec3,
+    reset_yaw: f32,
+    reset_count: u32,
 }
 impl Vehicle {
     pub fn new(mesh: &Mesh, data: &PhysicsData, origin: Vec3, yaw: f32) -> Result<Self> {
@@ -216,9 +232,87 @@ impl Vehicle {
             chassis_contact_count: 0,
             chassis_config: ContactConfig::from_physics(data)?,
             obstacle_rays: None,
+            wreck_rays: None,
             obstacles: Vec::new(),
             obstacle_contact_count: 0,
+            wreck_physics: None,
+            normal_contact: ContactConfig::from_physics(data)?,
+            wreck: crate::wreck::State::default(),
+            stunt_landing_safe: true,
+            reset_origin: origin,
+            reset_yaw: yaw,
+            reset_count: 0,
         })
+    }
+    pub fn enable_wrecks(&mut self, data: &PhysicsData) -> Result<()> {
+        self.wreck_physics = Some(WreckPhysics {
+            checkpoint_rays: crate::wreck::checkpoint_clearance_rays(),
+            rules: crate::wreck::Config::from_physics(data, 0.0)?,
+            contact: ContactConfig {
+                reflection: self.normal_contact.reflection,
+                angular_impulse_scale: data
+                    .first_scalar("Collisions", "WreckAngularImpulseScale")?,
+                friction_scale: data.first_scalar("Collisions", "WreckFriction")?,
+                friction_torque_scale: data
+                    .first_scalar("Collisions", "WreckFrictionTorqueScale")?,
+            },
+            center: [
+                data.first_scalar("Physical Properties", "WreckCofGX")?,
+                data.first_scalar("Physical Properties", "WreckCofGY")?,
+                data.first_scalar("Physical Properties", "WreckCofGZ")?,
+            ],
+        });
+        Ok(())
+    }
+    pub fn set_stunt_landing_safe(&mut self, safe: bool) {
+        self.stunt_landing_safe = safe;
+    }
+    pub fn begin_wreck(&mut self, kind: crate::wreck::Kind) {
+        if self.wreck.phase != crate::wreck::Phase::Riding {
+            return;
+        }
+        if let Some(config) = &self.wreck_physics {
+            self.wreck.begin(kind);
+            self.chassis_config = config.contact;
+            self.rider_state = RiderState::default();
+            self.pose_preload_axis = 0.0;
+        }
+    }
+    /// Rider contact is supplied by the separate original wreck-body simulation.
+    pub fn advance_wreck(&mut self, dt: f32, rider_grounded: bool) -> Result<bool> {
+        if !dt.is_finite() || dt <= 0.0 || dt > 0.1 {
+            return Err("invalid wreck time step".into());
+        }
+        if !self.wreck.step(dt, rider_grounded) {
+            return Ok(false);
+        }
+        self.body_config.center_of_mass = self.base_center;
+        self.body = BodyState::new(
+            self.reset_origin,
+            [
+                (self.reset_yaw * 0.5).cos(),
+                0.,
+                (self.reset_yaw * 0.5).sin(),
+                0.,
+            ],
+            &self.body_config,
+        )?;
+        self.wheels = [WheelState::default(); 4];
+        self.suspension = [SuspensionState::default(); 4];
+        self.contacts = [SuspensionOutput::default(); 4];
+        self.engine.state = crate::drivetrain::EngineState::default();
+        self.smoothed_axes = [0.; 2];
+        self.rider_state = RiderState::default();
+        self.rider_crouch = crate::rider_pose::Crouch::default();
+        self.lean_gesture = LeanGesture::default();
+        self.pose_preload_axis = 0.0;
+        self.chassis_config = self.normal_contact;
+        self.wreck = crate::wreck::State::default();
+        self.stunt_landing_safe = true;
+        self.chassis_contact_count = 0;
+        self.obstacle_contact_count = 0;
+        self.reset_count = self.reset_count.wrapping_add(1);
+        Ok(true)
     }
     ///002d87c0 copies this rider field without MPH conversion.
     pub fn set_rider_physics(&mut self, data: &PhysicsData) -> Result<()> {
@@ -275,6 +369,22 @@ impl Vehicle {
     pub fn set_materials(&mut self, materials: [TerrainMaterial; 8]) {
         self.materials = Some(materials);
     }
+    ///001e8a20 selects the AO obstacle hull during a wreck; normal riding uses AR.
+    pub fn set_wreck_rays(
+        &mut self,
+        rays: std::rc::Rc<crate::collision::CollisionRayTree>,
+    ) -> Result<()> {
+        rays.chassis_points()?;
+        if rays.transform
+            != [
+                1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+            ]
+        {
+            return Err("nonidentity wreck collision transform".into());
+        }
+        self.wreck_rays = Some(rays);
+        Ok(())
+    }
     pub fn frame(&self) -> VehicleFrame {
         VehicleFrame {
             origin: self.body.origin(&self.body_config),
@@ -304,6 +414,8 @@ impl Vehicle {
             preload_active: self.rider_state.preload_active,
             preload_strength: self.rider_state.preload_strength,
             wheelie_active: self.rider_state.wheelie_active,
+            wreck: self.wreck,
+            reset_count: self.reset_count,
         }
     }
     /// Recovered riding inputs, with the separate touch preload also expressed
@@ -353,6 +465,12 @@ impl Vehicle {
         let materials = self
             .materials
             .ok_or("original terrain material table is required")?;
+        let crashed = self.wreck.phase != crate::wreck::Phase::Riding;
+        let input = if crashed {
+            VehicleInput::default()
+        } else {
+            input
+        };
         let throttle = input.throttle.clamp(0., 1.);
         let pose_target = input.preload_axis.unwrap_or(0.0).clamp(-1.0, 1.0);
         let pose_limit = self.axis_config.normal_rate[1] * dt;
@@ -368,13 +486,21 @@ impl Vehicle {
             false,
             dt,
         )?;
-        let center = rider_control::shifted_center(
+        let riding_center = rider_control::shifted_center(
             self.base_center,
             self.center_range,
             self.smoothed_axes,
             speed,
             self.rider_stand_up_speed,
         );
+        let center = if crashed {
+            self.wreck_physics
+                .as_ref()
+                .map(|c| c.center)
+                .unwrap_or(riding_center)
+        } else {
+            riding_center
+        };
         //001469e0 reconstructs world center from the scene origin and current
         //local center before integration. Preserve that origin when the rider shifts.
         self.body.center = add(
@@ -397,8 +523,15 @@ impl Vehicle {
                     self.steer_scale[0].max(self.steer_scale[1]),
                 )
         };
-        let steering = ((self.smoothed_axes[0] * 30.0) * f32::from_bits(0x3c8efa34)) * steer_scale;
-        self.steering_angle = steering;
+        if crashed {
+            //001e7940 decays the stored angle directly in wreck mode.
+            let limit = self.axis_config.normal_rate[0] * dt;
+            self.steering_angle += (-self.steering_angle).clamp(-limit, limit);
+        } else {
+            self.steering_angle =
+                ((self.smoothed_axes[0] * 30.0) * f32::from_bits(0x3c8efa34)) * steer_scale;
+        }
+        let steering = self.steering_angle;
         let driven = std::array::from_fn::<_, 2, _>(|i| DrivenWheel {
             angular_speed: self.wheels[i + 2].angular_speed,
             brake,
@@ -502,12 +635,18 @@ impl Vehicle {
             b[0][0], b[0][1], b[0][2], 0., b[1][0], b[1][1], b[1][2], 0., b[2][0], b[2][1],
             b[2][2], 0., origin[0], origin[1], origin[2], 1.,
         ];
-        let obstacle_contacts = if let Some(rays) = &self.obstacle_rays {
+        let active_rays = if crashed {
+            self.wreck_rays.as_ref().or(self.obstacle_rays.as_ref())
+        } else {
+            self.obstacle_rays.as_ref()
+        };
+        let obstacle_contacts = if let Some(rays) = active_rays {
             crate::obstacle::query_static_scene(rays, &ray_world, &self.obstacles)?
         } else {
             Vec::new()
         };
         let mut elapsed = 0.0;
+        let mut impact: Vec3 = [0.0; 3];
         while elapsed < dt {
             let step = (dt - elapsed).min(f32::from_bits(0x3c888889));
             let b = self.body.basis();
@@ -569,33 +708,35 @@ impl Vehicle {
                     self.body.linear_velocity = transform(b, local);
                 }
             }
-            rider_control::step(
-                self.rider_config,
-                &mut self.rider_state,
-                RiderInput {
-                    grounded: rider_grounded,
-                    throttle_pressed: throttle > 0.,
-                    brake_pressed: brake > 0.,
-                    neutral: engine.effective_direction == DriveDirection::Neutral,
-                    // Gameplay rider state4 gate is not yet reconstructed.
-                    half_air_control: false,
-                    lateral_axis: raw_axes[0],
-                    lean_axis: lean,
-                    preload_axis: input.preload_axis.map(|axis| axis.clamp(-1.0, 1.0)),
-                    lean_axis_rate: lean_rate,
-                    pitch: angles[0],
-                    roll: angles[2],
-                    local_angular_velocity: self.body.local_angular_velocity,
-                    local_forward_speed: inverse_transform(b, self.body.linear_velocity)[2],
-                    world_vertical_speed: self.body.linear_velocity[1],
-                    world_body_right: b[0],
-                    zero_right_fallback: [0.; 3],
-                    preload_world_direction: [0., 1., 0.],
-                },
-                step,
-                &mut self.body.force,
-                &mut self.body.local_torque,
-            )?;
+            if !crashed {
+                rider_control::step(
+                    self.rider_config,
+                    &mut self.rider_state,
+                    RiderInput {
+                        grounded: rider_grounded,
+                        throttle_pressed: throttle > 0.,
+                        brake_pressed: brake > 0.,
+                        neutral: engine.effective_direction == DriveDirection::Neutral,
+                        // Gameplay rider state4 gate is not yet reconstructed.
+                        half_air_control: false,
+                        lateral_axis: raw_axes[0],
+                        lean_axis: lean,
+                        preload_axis: input.preload_axis.map(|axis| axis.clamp(-1.0, 1.0)),
+                        lean_axis_rate: lean_rate,
+                        pitch: angles[0],
+                        roll: angles[2],
+                        local_angular_velocity: self.body.local_angular_velocity,
+                        local_forward_speed: inverse_transform(b, self.body.linear_velocity)[2],
+                        world_vertical_speed: self.body.linear_velocity[1],
+                        world_body_right: b[0],
+                        zero_right_fallback: [0.; 3],
+                        preload_world_direction: [0., 1., 0.],
+                    },
+                    step,
+                    &mut self.body.force,
+                    &mut self.body.local_torque,
+                )?;
+            }
             for (i, d) in drive.iter().enumerate() {
                 let wheel_center = add(origin, transform(b, self.wheel_rest[i]));
                 let contact = terrain.contact(wheel_center[0], wheel_center[2])?;
@@ -680,6 +821,11 @@ impl Vehicle {
                 }
             }
             self.body.step(&self.body_config, step)?;
+            for (value, next) in impact.iter_mut().zip(corrections.velocity_delta) {
+                if next.abs() > value.abs() {
+                    *value = next;
+                }
+            }
             self.body.center = add(self.body.center, corrections.translation);
             elapsed += step;
         }
@@ -695,6 +841,56 @@ impl Vehicle {
             inverse_transform(self.body.basis(), self.body.linear_velocity)[1],
             dt,
         )?;
+        if !crashed {
+            if let Some(config) = &self.wreck_physics {
+                let angles = rider_control::body_angles(self.body.orientation, f32::atan2);
+                if let Some(kind) = config.rules.evaluate(crate::wreck::Input {
+                    local_impact: inverse_transform(self.body.basis(), impact),
+                    vertical_limit_scale: 1.0,
+                    pitch: angles[0],
+                    roll: angles[2],
+                    wheel_contact: self.contacts.iter().any(|c| c.grounded),
+                    body_contact: self.chassis_contact_count + self.obstacle_contact_count > 0,
+                    rider_contact: false,
+                    forward_speed: inverse_transform(self.body.basis(), self.body.linear_velocity)
+                        [2],
+                    stunt_landing_safe: self.stunt_landing_safe,
+                }) {
+                    self.begin_wreck(kind);
+                }
+            }
+            // Recovered checkpoint gates: all wheels down and body-up >0.8.
+            // The original water/category gates are still separate. Preserve
+            // the eight horizontal clearance rays against supported obstacles.
+            if self.wreck.phase == crate::wreck::Phase::Riding
+                && self.contacts.iter().all(|c| c.grounded)
+                && self.body.basis()[1][1] >= 0.8
+                && self.obstacle_contact_count == 0
+            {
+                let origin = self.body.origin(&self.body_config);
+                let forward = self.body.basis()[2];
+                let yaw = forward[0].atan2(forward[2]);
+                let (sin, cos) = yaw.sin_cos();
+                let world = [
+                    cos, 0., -sin, 0., 0., 1., 0., 0., sin, 0., cos, 0., origin[0], origin[1],
+                    origin[2], 1.,
+                ];
+                let clear = if let Some(config) = &self.wreck_physics {
+                    crate::obstacle::query_static_scene(
+                        &config.checkpoint_rays,
+                        &world,
+                        &self.obstacles,
+                    )?
+                    .is_empty()
+                } else {
+                    true
+                };
+                if clear {
+                    self.reset_origin = origin;
+                    self.reset_yaw = yaw;
+                }
+            }
+        }
         Ok(self.frame())
     }
 }
@@ -702,6 +898,92 @@ impl Vehicle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn enable_test_wrecks(vehicle: &mut Vehicle) {
+        vehicle.wreck_physics = Some(WreckPhysics {
+            checkpoint_rays: crate::wreck::checkpoint_clearance_rays(),
+            rules: crate::wreck::Config {
+                impact_limit: [1000.; 3],
+                ground_angles: [1.4; 3],
+                air_angles: [1.5; 3],
+            },
+            contact: ContactConfig {
+                reflection: 0.002,
+                angular_impulse_scale: 1.,
+                friction_scale: 0.75,
+                friction_torque_scale: 0.4,
+            },
+            center: [0., 1.5, 0.],
+        });
+    }
+    #[test]
+    fn wreck_uses_passive_body_and_recovers_only_after_rider_contact() {
+        let (mut vehicle, terrain) = fixture();
+        enable_test_wrecks(&mut vehicle);
+        vehicle.body.linear_velocity = [5., 0., 0.];
+        vehicle.body.local_angular_velocity = [1., 0., 0.];
+        vehicle.steering_angle = 0.4;
+        vehicle.begin_wreck(crate::wreck::Kind::Front);
+        vehicle
+            .step(
+                &terrain,
+                VehicleInput {
+                    throttle: 1.,
+                    lean: 1.,
+                    steer: 1.,
+                    ..Default::default()
+                },
+                1. / 60.,
+            )
+            .unwrap();
+        assert_eq!(vehicle.smoothed_axes, [0.; 2]);
+        assert_eq!(
+            vehicle.steering_angle,
+            0.4 - (vehicle.axis_config.normal_rate[0] / 60.0).min(0.4)
+        );
+        assert_eq!(vehicle.body_config.center_of_mass, [0., 1.5, 0.]);
+        assert_eq!(vehicle.chassis_config.friction_scale, 0.75);
+        for _ in 0..180 {
+            assert!(!vehicle.advance_wreck(1. / 60., false).unwrap());
+        }
+        assert_eq!(vehicle.wreck.phase, crate::wreck::Phase::Recovering);
+        assert_eq!(vehicle.wreck.timer, 0.);
+        let mut recovered = false;
+        for _ in 0..120 {
+            if vehicle.advance_wreck(1. / 60., true).unwrap() {
+                recovered = true;
+                break;
+            }
+        }
+        assert!(recovered);
+        assert_eq!(vehicle.frame().reset_count, 1);
+        assert_eq!(vehicle.frame().origin, [500., 1., 500.]);
+        assert_eq!(vehicle.body.linear_velocity, [0.; 3]);
+        assert_eq!(vehicle.body.local_angular_velocity, [0.; 3]);
+        assert_eq!(vehicle.body_config.center_of_mass, vehicle.base_center);
+        assert_eq!(
+            vehicle.chassis_config.friction_scale,
+            vehicle.normal_contact.friction_scale
+        );
+        assert_eq!(vehicle.wreck.phase, crate::wreck::Phase::Riding);
+    }
+    #[test]
+    fn unfinished_stunt_on_wheel_contact_enters_original_vertical_wreck() {
+        let (mut vehicle, terrain) = fixture();
+        enable_test_wrecks(&mut vehicle);
+        for _ in 0..90 {
+            vehicle
+                .step(&terrain, VehicleInput::default(), 1. / 60.)
+                .unwrap();
+        }
+        assert!(vehicle.frame().grounded.iter().any(|c| *c));
+        assert_eq!(vehicle.wreck.phase, crate::wreck::Phase::Riding);
+        vehicle.set_stunt_landing_safe(false);
+        let frame = vehicle
+            .step(&terrain, VehicleInput::default(), 1. / 60.)
+            .unwrap();
+        assert_eq!(frame.wreck.kind, Some(crate::wreck::Kind::Vertical));
+        assert_eq!(frame.wreck.phase, crate::wreck::Phase::Falling);
+    }
     use crate::{
         mesh::Node,
         terrain::{TerrainLeaf, TerrainTile},
