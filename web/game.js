@@ -14,7 +14,7 @@ import { loadWheelEffects, WheelEffectsRenderer } from './wheel-effects.js';
 const $ = id => document.getElementById(id);
 const canvas = $('game');
 const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, powerPreference: 'high-performance' });
-const status = (text, error = false) => { $('status').textContent = text; $('status').classList.toggle('error', error); };
+const status = (text, error = false) => { frontend?.loadingStage(text); $('status').textContent = text; $('status').classList.toggle('error', error); };
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 const worker = new Worker('worker.js', { type: 'module' });
@@ -614,6 +614,35 @@ async function remoteAssets(quad, rider) {
     return model;
   })().catch(error=> {if(remoteModels.get(key)===model)remoteModels.delete(key);throw error;});
   return model.pending;
+}
+async function selectionAssets(quad, rider) {
+  const model = await remoteAssets(quad,rider);
+  if (!multiplayer?.state?.lobby) {
+    const keep = new Set([...remoteModels.keys()].slice(-2));
+    for (const [key, cached] of remoteModels) if (!keep.has(key) && cached.source) { disposeRemoteGpu(cached); remoteModels.delete(key); }
+  }
+  return model.source;
+}
+let menuRiderResource, menuRiderTextures;
+async function menuRiderAssets(rider, isCurrent) {
+  const content = await hostedContent;
+  const file = content.files.find(f => f.path === '/UI/RESOURCE/PAGEA/PAGE07.RES');
+  if (!file) return null;
+  menuRiderResource ??= read(content.file,file.lba*2048,file.bytes);
+  const bytes = await menuRiderResource;
+  if (!menuRiderTextures) {
+    const entries = await json(2,bytes), textures = new Map();
+    for (const [index,entry] of entries.entries()) {
+      if (!entry.name.toLowerCase().endsWith('.pst')) continue;
+      const image = await codec(3,bytes,index), info = await json(7,image);
+      textures.set(entry.name.split('/').at(-1).toLowerCase().replace(/\.pst$/, ''),{...info,rgba:await codec(8,image)});
+    }
+    textures.set('atv2_shirt_ui_export',textures.get('atv2_shirt_ui'));
+    menuRiderTextures = textures;
+  }
+  if (!isCurrent()) return null;
+  const original = await json(92,bytes,rider);
+  return {...original,textures:menuRiderTextures};
 }
 function drawRemotePlayers() {
   let draws=0;
@@ -1227,8 +1256,12 @@ function render(time) {
 }
 async function loadGame(file = null, environment = "env01") {
   if (!gl || lost) throw new Error('Graphics context is unavailable; wait for recovery.');
-  const token = ++generation; status('Opening terrain…'); diagnostics.ready = false;
+  const directStart = frontend?.root.hidden;
+  const token = ++generation;
+  if (frontend && !file) await frontend.beginLoading(environment);
+  status('Opening terrain…'); diagnostics.ready = false;
   audio.close(); audio = new GameAudio(codec, message => { diagnostics.audioError = message; status(`Audio: ${message}`, true); });
+  frontend?.syncPreview();
   delete diagnostics.audioError; void audio.resume().catch(error => { diagnostics.audioError = error.message; });
   simReady = false; simGeneration++; simAccumulator = 0; simFrame = undefined; $('disc').disabled = true;
   try {
@@ -1257,6 +1290,7 @@ async function loadGame(file = null, environment = "env01") {
     $('reset').textContent = simReady ? 'Reset ATV' : 'Reset view';
     $('help').textContent = simReady ? 'Pause → Controls: keyboard / controller bindings · left touch: steer / lean · right: drive / brake on ground; swipe, hold or circle in air' : 'Free camera · drag to look · WASD to move · Q/E up/down';
     status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain. Open the disc to load the ATV.');
+    if (directStart && frontend && !file) { frontend.busy = false; frontend.resume(); }
   } catch (error) { if (token === generation) status(error.message, true); throw error; }
   finally { if (token === generation) $('disc').disabled = false; }
 }
@@ -1335,7 +1369,7 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
   else {
     hostedContent = openHostedContent();
     multiplayer = new Multiplayer({codec,command,ready:()=>simReady,paused:()=>menuOpen||!focused||document.hidden||lost||pageSuspended,listener:()=>({position:[camera.x,camera.y,camera.z],forward:[Math.sin(camera.yaw)*Math.cos(camera.pitch),Math.sin(camera.pitch),Math.cos(camera.yaw)*Math.cos(camera.pitch)],velocity:simFrame?.linear_velocity??[0,0,0]}),audio:()=>audio,assets:remoteAssets,clearAssets:()=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();},report:message=>{diagnostics.multiplayerError=message;status(message,true);},onState:()=>{if(frontend){frontend.layoutKey='';void frontend.refresh();}},onStart:async (environment,isCurrent)=>{if(!isCurrent())return;frontend.busy=true;frontend.notice.textContent='Loading shared environment…';try {await loadGame(null,environment);if(isCurrent())frontend.resume();}finally{if(isCurrent())frontend.busy=false;}},onLeave:message=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show('multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
-    frontend = new Frontend({crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: environment => loadGame(null, environment), active: open => { menuOpen = open; clearInput(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
+    frontend = new Frontend({menuRider:menuRiderAssets,modelAssets:selectionAssets,crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: environment => loadGame(null, environment), active: open => { menuOpen = open; clearInput(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     hud = new HeadUpDisplay(frontend, canvas);
     if (params.get('drive') === '1') {
       menuOpen = false; $('frontend').hidden = true;

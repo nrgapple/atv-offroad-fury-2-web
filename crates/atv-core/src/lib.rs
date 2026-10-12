@@ -17,6 +17,7 @@ pub mod hud;
 pub mod ipu;
 pub mod iso;
 pub mod materials;
+pub mod menu_preview;
 pub mod mesh;
 pub mod motion_catalog;
 pub mod music;

@@ -7,13 +7,14 @@ const fields = section => Object.fromEntries([...section.fields].reverse().map(f
 const sections = doc => new Map(doc.sections.map(s => [s.name.toLowerCase(), fields(s)]));
 const fontName = 'tradegothic_boldcondensed_22s';
 export class Frontend {
-  constructor({ codec, json, content, read, start, active, audio, diagnosticsOverlay, mobileControls, multiplayer, crashSettings }) {
-    Object.assign(this, { codec, json, content, read, start, active, audio, diagnosticsOverlay, mobileControls, multiplayer, crashSettings });
+  constructor({ codec, json, content, read, start, active, audio, diagnosticsOverlay, mobileControls, multiplayer, crashSettings, modelAssets, menuRider }) {
+    Object.assign(this, { codec, json, content, read, start, active, audio, diagnosticsOverlay, mobileControls, multiplayer, crashSettings, modelAssets, menuRider });
     this.root = document.getElementById('frontend'); this.canvas = document.getElementById('menu-canvas');
     this.ctx = this.canvas.getContext('2d'); this.buttons = document.getElementById('menu-buttons');
     this.notice = document.getElementById('menu-notice');
+    this.modelViews = new Map(); this.modelKey = ''; this.modelToken = 0; this.loadingStatus = '';
     this.assets = new Map(); this.images = new Map(); this.fonts = new Map();
-    this.layoutKey = ''; this.layoutPending = false; this.loaded = new Set(); this.page = 'loading'; this.selection = 0; this.track = 0; this.busy = false; this.lastPad = new Set(); this.alive = true;
+    this.initialized = false; this.layoutKey = ''; this.layoutPending = false; this.loaded = new Set(); this.page = 'loading'; this.selection = 0; this.track = 0; this.busy = false; this.lastPad = new Set(); this.alive = true;
     this.quadId = 1; this.riderId = 0; this.playerName = 'Rider'; this.roomCode = new URL(location.href).searchParams.get('room') ?? ''; this.garageReturn = 'single';
     this.bindingDevice = 'keyboard'; this.bindingPage = 0; this.bindingRow = 0; this.musicPage = 0;
     this.capture = null; this.menuKeys = new Set();
@@ -78,7 +79,7 @@ export class Frontend {
           else void this.action(action === 'pause' ? 'accept' : action);
         }
         this.lastPad = held;
-        if (!this.root.hidden && !this.busy && this.page !== 'loading') void this.refresh();
+        if (!this.root.hidden && (!this.busy || this.page === 'loading')) void this.refresh();
       } else this.lastPad.clear();
       this.pollFrame = requestAnimationFrame(this.poll);
     };
@@ -145,12 +146,17 @@ export class Frontend {
       // manifests can still open every menu while that content update publishes.
       const {files} = await this.content;
       if (files.some(f => f.path === '/UI/RESOURCE/QUADINFO.RES')) { await this.archive('/UI/RESOURCE/QUADINFO.RES'); await this.image('multi_atv01'); }
+      // The original catalog is available before a terrain/engine is loaded.
+      const content = await this.content;
+      await this.audio?.()?.music.load({ ...content, read: this.read, isCurrent: () => this.alive });
+      await this.audio?.()?.loadMenuMusic({ ...content, read: this.read, isCurrent: () => this.alive });
+      this.initialized = true;
       if (showTitle) await this.show('title');
     } catch (error) { this.fail(error); }
   }
   fail(error) { this.notice.textContent = error.message; this.busy = false; this.root.dataset.error = 'true'; }
   syncPreview() {
-    void this.audio?.()?.setMusicPreview(this.page === 'music' && !this.root.hidden && !document.hidden && document.hasFocus()).catch(error => this.fail(error));
+    void this.audio?.()?.setMusicPreview(['title','main','single','tracks','garage','multiplayer','lobby','loading','music'].includes(this.page) && !this.root.hidden && !document.hidden && document.hasFocus(), this.page !== 'music').catch(error => this.fail(error));
   }
   beginCapture(id) {
     const row = gameplayBindings.rows(this.bindingDevice).find(row => row.id === id);
@@ -179,15 +185,15 @@ export class Frontend {
     for (const atom of atoms) if (!this.capture.atoms.some(a => JSON.stringify(a) === JSON.stringify(atom) || ('axis' in atom && a.axis === atom.axis)) && this.capture.atoms.length < 4) this.capture.atoms.push(atom);
     if (!atoms.length && this.capture.atoms.length) this.finishCapture();
   }
-  resume() { this.cancelCapture(); void this.audio?.()?.setMusicPreview(false); this.root.hidden = true; this.active(false); }
+  resume() { this.clearModelViews(); this.cancelCapture(); void this.audio?.()?.setMusicPreview(false); this.root.hidden = true; this.active(false); }
   async show(page) {
     this.padBlocked = true;
     this.cancelCapture();
-    if (page !== 'music') void this.audio?.()?.setMusicPreview(false);
+    this.clearModelViews();
     delete this.root.dataset.error;
     this.busy = true; this.root.hidden = false; this.active(true); this.notice.textContent = ''; this.buttons.replaceChildren();
     try {
-      if (page === 'tracks') {
+      if (page === 'tracks' || page === 'loading') {
         await this.archive('/UI/RESOURCE/TP/TP_ANAT.RES');
         await this.archive('/UI/RESOURCE/TP/TP_PSTNT.RES');
         for (const track of this.tracks) { await this.image(`${track.image}a`); await this.image(`${track.image}b`); }
@@ -200,7 +206,7 @@ export class Frontend {
   async action(action) {
     if (this.busy || this.root.hidden) return;
     this.notice.textContent = '';
-    if (['up','down'].includes(action) && ['title','main','single','pause','controls','bindings','music'].includes(this.page)) {
+    if (['up','down'].includes(action) && ['title','main','single','garage','multiplayer','lobby','pause','controls','bindings','music'].includes(this.page)) {
       this.selection = (this.selection + (action === 'up' ? -1 : 1) + this.frame.choices.length) % this.frame.choices.length;
       if (this.page === 'bindings' && this.selection < 4) this.bindingRow = this.bindingPage * 4 + this.selection;
     } else if (action === 'back') {
@@ -208,6 +214,8 @@ export class Frontend {
       if (this.page === 'garage') return this.show(this.garageReturn);
       if (this.page === 'lobby') return this.run('leave');
       return this.show(({bindings:'controls',music:'pause',controls:'pause',main:'title',single:'main',tracks:'single',multiplayer:'main'})[this.page] ?? 'title');
+    } else if (this.page === 'garage' && ['left','right'].includes(action)) {
+      return this.run(action === 'left' ? 'quadprev' : 'quadnext');
     } else if (this.page === 'tracks' && ['left','right','up','down'].includes(action)) {
       this.track = (this.track + (['left','up'].includes(action) ? -1 : 1) + this.tracks.length) % this.tracks.length;
     } else if (this.page === 'controls' && this.frame.choices[this.selection] === 'steering-sensitivity' && ['left','right'].includes(action)) {
@@ -217,9 +225,10 @@ export class Frontend {
     } else if (action === 'accept') {
       if (this.page === 'title') return this.run(this.frame.choices[this.selection]);
       if (this.page === 'tracks') {
-        this.busy = true; this.notice.textContent = `Loading ${this.tracks[this.track].name}…`;
-        try { await this.start(this.tracks[this.track].id); this.resume(); }
-        catch (error) { this.fail(error); }
+        const environment = this.tracks[this.track].id;
+        this.busy = true;
+        try { await this.start(environment); this.resume(); }
+        catch (error) { await this.show('tracks'); this.fail(error); }
         this.busy = false; return;
       }
       return this.run(this.frame.choices[this.selection]);
@@ -255,16 +264,16 @@ export class Frontend {
       else if (action === 'fullscreen') {
         if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen();
       } else if (action === 'devlog') location.href = 'devlog.html';
-      else return await this.action(action);
+      else if (!['quadprev','quadnext','riderchange'].includes(action)) return await this.action(action);
       this.layoutKey = ''; await this.refresh();
     } catch (error) { this.fail(error); }
   }
   async refresh() {
-    if (this.root.hidden || this.busy || this.layoutPending) return;
+    if (!this.initialized || this.root.hidden || (this.busy && this.page !== 'loading') || this.layoutPending) return;
     const stage = this.canvas.parentElement, track = this.tracks[this.track];
     const music = this.audio?.()?.music, musicState = music?.snapshot();
     const lobby = this.multiplayer?.state?.lobby;
-    const request = {quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? this.roomCode,lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:(this.page === 'lobby' ? this.tracks.find(t => t.id === this.multiplayer.state.environment)?.name : track?.name) ?? '',track_image:track?.image ?? '',fullscreen:Boolean(document.fullscreenEnabled),
+    const request = {quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? this.roomCode,lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:(this.page === 'loading' ? this.loadingTrack?.name : this.page === 'lobby' ? this.tracks.find(t => t.id === this.multiplayer.state.environment)?.name : track?.name) ?? '',track_image:(this.page === 'loading' ? this.loadingTrack?.image : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
       funny_crashes:this.crashSettings?.enabled ?? false,mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
       music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
@@ -276,10 +285,80 @@ export class Frontend {
       const frame = await this.json(62,new TextEncoder().encode(key));
       // Page/viewport can change while the worker handles the request. The next
       // frame requests fresh data, rather than applying a stale hit map.
-      if ((this.mobileControls?.steeringSensitivity ?? 85) !== request.mobile_steering_sensitivity || (this.capture?.label ?? '') !== request.capture_label || this.bindingPage !== request.binding_page || this.musicPage !== request.music_page || this.page !== request.page || this.selection !== request.selection || this.tracks[this.track]?.image !== request.track_image || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
-      this.frame = frame; this.layoutKey = key; this.draw(); this.rebuildButtons();
+      if ((this.mobileControls?.steeringSensitivity ?? 85) !== request.mobile_steering_sensitivity || (this.capture?.label ?? '') !== request.capture_label || this.bindingPage !== request.binding_page || this.musicPage !== request.music_page || this.page !== request.page || this.selection !== request.selection || this.quadId !== request.quad_id || this.riderId !== request.rider_id || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
+      this.frame = frame; this.layoutKey = key; this.draw(); this.rebuildButtons(); this.updateModelViews();
     } catch (error) { this.fail(error); }
     finally { this.layoutPending = false; }
+  }
+  async beginLoading(environment) {
+    this.loadingTrack = this.tracks.find(track => track.id === environment) ?? this.tracks[this.track];
+    this.loadingStatus = 'Opening course...';
+    await this.show('loading'); this.busy = true;
+    // Yield a frame so the loading UI is painted before decoding/upload work.
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  }
+  loadingStage(text) {
+    if (this.page !== 'loading' || this.root.hidden) return;
+    this.loadingStatus = text; this.layoutKey = ''; void this.refresh();
+  }
+  clearModelViews() {
+    cancelAnimationFrame(this.modelAnimation);
+    this.modelToken++; this.modelKey = '';
+    for (const view of this.modelViews.values()) view.destroy();
+    this.modelViews.clear();
+  }
+  updateModelViews() {
+    if (this.page !== 'garage') return;
+    const commands = this.frame.draw.filter(command => command.kind === 'model_preview');
+    for (const command of commands) {
+      let view = this.modelViews.get(command.model);
+      if (!view) {
+        view = new ModelView(this.canvas.parentElement, command.model);
+        this.modelViews.set(command.model, view);
+      }
+      view.place(command.rect, this.frame);
+    }
+    const key = `${this.quadId}:${this.riderId}`;
+    if (key === this.modelKey) return;
+    cancelAnimationFrame(this.modelAnimation);
+    this.modelKey = key; const token = ++this.modelToken;
+    for (const view of this.modelViews.values()) view.clear('Loading model...');
+    void this.modelAssets(this.quadId, this.riderId).then(source => {
+      if (token !== this.modelToken || this.page !== 'garage' || this.root.hidden) return;
+      this.modelViews.get('quad').set(source.mesh, source.textures);
+      this.modelViews.get('rider').set(source.riderMesh, source.riderTextures);
+      void this.startMenuRider(token, key);
+      for (const view of this.modelViews.values()) view.canvas.dataset.selection = key;
+    }).catch(error => {
+      if (token !== this.modelToken) return;
+      for (const view of this.modelViews.values()) view.clear('Model unavailable');
+      this.notice.textContent = `Models: ${error.message}`;
+    });
+  }
+  async startMenuRider(token, key) {
+    try {
+      const original = await this.menuRider(this.riderId, () => token === this.modelToken);
+      if (!original || token !== this.modelToken || this.page !== 'garage') return;
+      const view = this.modelViews.get('rider');
+      view.set(original.mesh,original.textures,original.pose.world_matrices);
+      view.canvas.dataset.selection = key; view.canvas.dataset.clip = original.clip;
+      const start = performance.now(); let busy = false, last = 0;
+      const tick = async time => {
+        if (token !== this.modelToken || !view.element.isConnected) return;
+        this.modelAnimation = requestAnimationFrame(tick);
+        if (document.hidden || !document.hasFocus() || busy || time-last < 33) return;
+        busy = true; last = time;
+        try {
+          const data = new Float32Array([Math.max(0,(time-start)/1000)]);
+          const result = await this.json(93,new Uint8Array(data.buffer));
+          if (token !== this.modelToken) return;
+          view.pose = result.pose.world_matrices; view.canvas.dataset.clip = result.clip;
+          view.canvas.dataset.animationTime = String(data[0]); view.render();
+        } catch (error) { if(token === this.modelToken) this.notice.textContent = `Rider animation: ${error.message}`; }
+        finally { busy = false; }
+      };
+      cancelAnimationFrame(this.modelAnimation); this.modelAnimation = requestAnimationFrame(tick);
+    } catch (error) { if(token === this.modelToken) this.notice.textContent = `Rider animation: ${error.message}`; }
   }
   rebuildButtons() {
     // Preserve native range nodes during input/redraw so dragging and keyboard
@@ -291,7 +370,7 @@ export class Frontend {
       b.style.left = `${x/this.frame.width*100}%`; b.style.top = `${y/this.frame.height*100}%`;
       b.style.width = `${w/this.frame.width*100}%`; b.style.height = `${h/this.frame.height*100}%`;
       b.setAttribute('aria-current',String(hit.selected));
-      b.onclick = () => void this.run(hit.action);
+      b.onclick = () => { const index = this.frame.choices.indexOf(hit.action); if (index >= 0) this.selection = index; void this.run(hit.action); };
       this.buttons.append(b);
     }
     for (const slider of this.frame.sliders) {
@@ -364,6 +443,7 @@ export class Frontend {
     this.canvas.width = Math.round(stage.clientWidth*dpr); this.canvas.height = Math.round(stage.clientHeight*dpr);
     c.setTransform(this.canvas.width/frame.width,0,0,this.canvas.height/frame.height,0,0);
     for (const command of frame.draw) {
+      if (command.kind === 'model_preview') continue;
       if (command.kind === 'text') {
         // The font is still the original CEL/PST glyph atlas, not a screenshot
         // of a page. Rust owns text content, positioning and maximum bounds.
@@ -390,4 +470,97 @@ export class Frontend {
       }
     }
   }
+}
+
+// Isolated inspection views use decoded original bind-pose meshes/materials.
+// They never initialize or step the gameplay animator/physics worker state.
+class ModelView {
+  constructor(stage, kind) {
+    this.element = document.createElement('div'); this.element.className = 'model-view';
+    this.canvas = document.createElement('canvas'); this.canvas.setAttribute('aria-label', `${kind === 'quad' ? 'ATV' : 'Rider'} model; drag to rotate`);
+    this.canvas.tabIndex = 0; this.message = document.createElement('span'); this.message.setAttribute('role', 'status');
+    this.element.append(this.canvas, this.message); stage.append(this.element);
+    this.gl = this.canvas.getContext('webgl2', { alpha: true, antialias: true });
+    this.yaw = -.6; this.groups = []; this.textures = []; this.kind = kind;
+    this.canvas.addEventListener('pointerdown', event => { this.pointer = {id:event.pointerId, x:event.clientX}; this.canvas.setPointerCapture(event.pointerId); });
+    this.canvas.addEventListener('pointermove', event => { if (this.pointer?.id !== event.pointerId) return; this.yaw += (event.clientX - this.pointer.x) * .015; this.pointer.x = event.clientX; this.render(); });
+    for (const type of ['pointerup','pointercancel','lostpointercapture']) this.canvas.addEventListener(type, () => { this.pointer = null; });
+    this.canvas.addEventListener('keydown', event => { if (!['ArrowLeft','ArrowRight'].includes(event.code)) return; event.preventDefault(); event.stopPropagation(); this.yaw += event.code === 'ArrowLeft' ? -.25 : .25; this.render(); });
+    this.canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); this.lost = true; delete this.canvas.dataset.ready; this.message.textContent = 'Restoring model...'; });
+    this.canvas.addEventListener('webglcontextrestored', () => { this.lost = false; this.program = null; this.groups = []; this.textures = []; if (this.source) this.set(...this.source); });
+  }
+  place([x,y,w,h], frame) {
+    Object.assign(this.element.style, {left:`${x/frame.width*100}%`,top:`${y/frame.height*100}%`,width:`${w/frame.width*100}%`,height:`${h/frame.height*100}%`}); this.render();
+  }
+  clear(message = '') {
+    const gl = this.gl;
+    if (gl && !this.lost) {
+      for (const group of this.groups) { gl.deleteVertexArray(group.vao); gl.deleteBuffer(group.buffer); }
+      for (const texture of this.textures) gl.deleteTexture(texture);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    }
+    this.groups = []; this.textures = []; this.source = null; this.message.textContent = message; delete this.canvas.dataset.ready;
+  }
+  set(mesh, materials, pose = mesh.nodes.map(node => node.world_matrix)) {
+    this.clear(); this.pose = pose; this.source = [mesh, materials, pose]; const gl = this.gl;
+    if (!gl || this.lost) { this.message.textContent = '3D preview unavailable'; return; }
+    if (!this.program) {
+      const shader = (type, text) => { const s=gl.createShader(type); gl.shaderSource(s,text); gl.compileShader(s); if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
+      const vertex=shader(gl.VERTEX_SHADER, `#version 300 es
+        layout(location=0) in vec3 p; layout(location=1) in vec3 n; layout(location=2) in vec2 uv; layout(location=3) in float node; uniform mat4 bones[32];
+        uniform vec3 center; uniform vec2 extent; uniform float yaw; out vec2 tex; out float light;
+        void main(){float c=cos(yaw),s=sin(yaw);mat3 r=mat3(c,0.,-s,0.,1.,0.,s,0.,c);vec3 v=r*((bones[int(node)]*vec4(p,1.)).xyz-center);
+        float pitch=.25;float y=v.y*cos(pitch)-v.z*sin(pitch);float z=v.y*sin(pitch)+v.z*cos(pitch);
+        gl_Position=vec4(v.x/extent.x,y/extent.y,-z/40.,1.);tex=uv;light=.58+.42*max(dot(normalize(r*mat3(bones[int(node)])*n),normalize(vec3(-.4,.8,.6))),0.);}`);
+      const fragment=shader(gl.FRAGMENT_SHADER, `#version 300 es
+        precision highp float; in vec2 tex; in float light; uniform sampler2D image; out vec4 color;
+        void main(){vec4 t=texture(image,tex);if(t.a<.15)discard;color=vec4(t.rgb*light,t.a);}`);
+      this.program=gl.createProgram();gl.attachShader(this.program,vertex);gl.attachShader(this.program,fragment);gl.linkProgram(this.program);
+      gl.deleteShader(vertex);gl.deleteShader(fragment);if(!gl.getProgramParameter(this.program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(this.program));
+      this.uniforms=Object.fromEntries(['center','extent','yaw','image','bones[0]'].map(n=>[n,gl.getUniformLocation(this.program,n)]));
+    }
+    const gpu=new Map();
+    const texture = decoded => {
+      const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,decoded.width,decoded.height,0,gl.RGBA,gl.UNSIGNED_BYTE,decoded.rgba);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);this.textures.push(t);return t;
+    };
+    for(const [name,decoded] of materials) if(decoded.rgba) gpu.set(name,texture(decoded));
+    const fallback=texture({width:1,height:1,rgba:new Uint8Array([185,185,185,255])});
+    const min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity];
+    for(const group of mesh.lods[0].groups) {
+      const values=new Float32Array(group.indices.length*9);
+      group.indices.forEach((index,i)=>{const v=group.vertices[index];values.set([...v.local_position,...localNormal(mesh.nodes[v.node].world_matrix,v.normal),...v.uv,v.node],i*9);const matrix=pose[v.node]; const position=[0,1,2].map(a=>matrix[a]*v.local_position[0]+matrix[a+4]*v.local_position[1]+matrix[a+8]*v.local_position[2]+matrix[a+12]);position.forEach((p,a)=>{min[a]=Math.min(min[a],p);max[a]=Math.max(max[a],p);});});
+      const vao=gl.createVertexArray(),buffer=gl.createBuffer();gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,values,gl.STATIC_DRAW);
+      for(const [i,size,offset] of [[0,3,0],[1,3,12],[2,2,24],[3,1,32]]){gl.enableVertexAttribArray(i);gl.vertexAttribPointer(i,size,gl.FLOAT,false,36,offset);}
+      this.groups.push({vao,buffer,count:group.indices.length,texture:gpu.get(mesh.materials[group.material])??fallback});
+    }
+    this.center=min.map((v,i)=>(v+max[i])/2); this.dimensions=min.map((v,i)=>max[i]-v);
+    this.canvas.dataset.ready='true';this.canvas.dataset.triangles=String(this.groups.reduce((n,g)=>n+g.count/3,0));this.render();
+  }
+  render() {
+    const gl=this.gl;if(!gl||this.lost||!this.groups.length||!this.element.isConnected)return;
+    const box=this.element.getBoundingClientRect(),dpr=Math.min(devicePixelRatio||1,2);
+    this.canvas.width=Math.max(1,Math.round(box.width*dpr));this.canvas.height=Math.max(1,Math.round(box.height*dpr));
+    gl.viewport(0,0,this.canvas.width,this.canvas.height);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);gl.useProgram(this.program);
+    // Fit height and horizontal turn radius separately so tall phone cards
+    // show the rider at useful scale while retaining the full model when rotated.
+    const horizontal=Math.hypot(this.dimensions[0],this.dimensions[2])/2,aspect=this.canvas.width/this.canvas.height;
+    const vertical=(this.dimensions[1]*Math.cos(.25)/2+horizontal*Math.sin(.25));
+    const extent=Math.max(vertical,horizontal/aspect)*1.12;
+    gl.uniformMatrix4fv(this.uniforms['bones[0]'],false,new Float32Array(this.pose.flat()));
+    gl.uniform3fv(this.uniforms.center,this.center);gl.uniform2f(this.uniforms.extent,extent*aspect,extent);gl.uniform1f(this.uniforms.yaw,this.yaw);gl.uniform1i(this.uniforms.image,0);gl.activeTexture(gl.TEXTURE0);
+    for(const group of this.groups){gl.bindVertexArray(group.vao);gl.bindTexture(gl.TEXTURE_2D,group.texture);gl.drawArrays(gl.TRIANGLES,0,group.count);}
+    this.canvas.dataset.glError=String(gl.getError());
+  }
+  destroy(){this.clear();if(this.program&&!this.lost)this.gl.deleteProgram(this.program);this.gl?.getExtension('WEBGL_lose_context')?.loseContext();this.element.remove();}
+}
+
+function localNormal(m, n) {
+  const a=m.slice(0,3),b=m.slice(4,7),c=m.slice(8,11);
+  const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],dot=(a,b)=>a.reduce((sum,v,i)=>sum+v*b[i],0);
+  const determinant=dot(a,cross(b,c));
+  if(Math.abs(determinant)<1e-10)throw new Error('Menu bind matrix is singular');
+  return [cross(b,c),cross(c,a),cross(a,b)].map(row=>dot(row,n)/determinant);
 }
