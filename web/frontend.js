@@ -128,7 +128,7 @@ export class Frontend {
   async action(action) {
     if (this.busy || this.root.hidden) return;
     this.notice.textContent = '';
-    if (['up','down'].includes(action) && this.page === 'pause') {
+    if (['up','down'].includes(action) && ['title','main','pause'].includes(this.page)) {
       this.selection = (this.selection + (action === 'up' ? -1 : 1) + this.frame.choices.length) % this.frame.choices.length;
     } else if (action === 'back') {
       if (this.page === 'pause') return this.resume();
@@ -136,7 +136,7 @@ export class Frontend {
     } else if (this.page === 'tracks' && ['left','right','up','down'].includes(action)) {
       this.track = (this.track + (['left','up'].includes(action) ? -1 : 1) + this.tracks.length) % this.tracks.length;
     } else if (action === 'accept') {
-      if (this.page === 'title') return this.show('main');
+      if (this.page === 'title') return this.run(this.frame.choices[this.selection]);
       if (this.page === 'controls') return this.show('pause');
       if (this.page === 'tracks') {
         this.busy = true; this.notice.textContent = `Loading ${this.tracks[this.track].name}…`;

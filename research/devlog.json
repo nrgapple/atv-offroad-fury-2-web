@@ -1,6 +1,6 @@
 {
-  "status": "Public baseline 1e5c4fd connects eight Freestyle environments, recovered terrain and vegetation, music, responsive Rust-drawn menus, touch rider input and portrait camera framing. CI 38186584449 and public browser checks passed for that baseline. A newer host candidate passes an actual-content wreck/reset loop and a separate clean touch-ramp landing; its release-specific public check is pending. Crash behavior remains partial, and the train, full race flow, original terrain LOD, and stunt scoring are unfinished.",
-  "working_on": "Verify the host-tested crash candidate against its exact release and continue native wreck-camera and rider-versus-prop/water work. Then connect the recovered Arlington train and ten-car route.",
+  "status": "The eight-map baseline 1e5c4fd remains the reference for earlier map, menu, terrain and touch evidence. Public commit 52534bbb (CI 38187838559) separately verifies one actual-content wreck/reset route and a clean preload landing. The start-screen Dev log link is host-verified and awaits a follow-up release. Crash and stunt behavior remain partial.",
+  "working_on": "Recover original ATV handling, airborne controls and trick transitions; improve crash and rider-contact fidelity using broader fixed-input comparisons. Publish the host-verified start-screen Dev log link in the follow-up release; then continue wreck-camera, center-of-gravity, prop/water contact and other crash-state work.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -613,20 +613,48 @@
       "limitation": "A recovered file format or routine is not a complete decompilation or a connected feature. Crash behavior remains partial; the train, original race HUD and flow, saves, AI and terrain LOD are unfinished.",
       "image": "/devlog-images/a-status-board-separates-recovered-work-from-live-feat-fb2690d8.png",
       "caption": "Host capture of the desktop feature board. Its count tiles summarize feature areas rather than percent complete; the host crash candidate is separate from the verified public baseline."
+    },
+    {
+      "id": "a-failed-landing-now-recovers-in-the-public-build-ee3248a1",
+      "timestamp": "2026-10-12T00:28:38.859957+00:00",
+      "recorded_at": "2026-10-12T00:28:38.859957+00:00",
+      "kind": "verification",
+      "title": "A failed landing now recovers in the public build",
+      "summary": "A real-content jump that ends badly now separates the rider, returns them to the terrain, resets the ATV, and gives control back for another run. A separate clean landing keeps the rider in Riding state, so the recovery path does not turn every jump into a wreck.",
+      "details": [
+        "Public commit 52534bbb955277a31dfda30b5be65863d4388453 passed tools/test_wreck.mjs: the Caribou preload hop, Nac Nac, vertical wreck, rider separation, ground contact, automatic reset and drive-again sequence completed in 108 frames with reset count 0\u21921 and no JavaScript errors.",
+        "The same commit passed tools/test_clean_landing.mjs: the clean touch-ramp landing stayed in Riding state and left reset count at 0. CI run 38187838559 passed; the public crash proof is recorded separately from the older eight-map baseline."
+      ],
+      "limitation": "This checks one wreck/recovery route and a separate clean landing. The native wreck camera, center-of-gravity matching, rider-versus-prop and water contacts, and other crash scenarios remain incomplete; this is not a complete stunt system."
+    },
+    {
+      "id": "dev-log-is-reachable-from-the-game-start-screen-52dafdf7",
+      "timestamp": "2026-10-12T00:29:24.873746+00:00",
+      "recorded_at": "2026-10-12T00:30:34.171475+00:00",
+      "kind": "verification",
+      "title": "Dev log is reachable from the game start screen",
+      "summary": "The start screen now offers the Dev log beside Press START, with selection that works from a touch screen. That keeps the update trail one step away without adding a separate landing page.",
+      "details": [
+        "Host frontend checks passed for title \u2192 Dev log, controller selection, keyboard focus in the main menu, the eight-map picker, driving and pause, plus mobile title navigation and return.",
+        "The menu is drawn by the Rust frontend and the Dev log route returns to the game title. This checkpoint is host-verified and is waiting for its follow-up release."
+      ],
+      "limitation": "The screenshot shows the host build; the start-menu link has not yet been verified in a public release. Original scenic menu artwork and other unimplemented game features remain separate port work.",
+      "image": "/devlog-images/dev-log-is-reachable-from-the-game-start-screen-52dafdf7.png",
+      "caption": "Host-verified mobile start screen, 390\u00d7844: Press START and Dev log are both visible and selectable."
     }
   ],
-  "updated_at": "2026-10-12T00:20:08.265609+00:00",
+  "updated_at": "2026-10-12T00:30:34.171475+00:00",
   "port_status": {
-    "note": "Counts describe feature areas, not percent completion. Recovered means source/data behavior has evidence; it does not mean the full game is decompiled or connected. Public labels refer to the stated released baseline. Host candidate work and its separate test scope are called out explicitly.",
+    "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The eight-map baseline and the separately recorded public wreck-loop check name their own commits and tests; neither implies a complete game or complete decompilation. Host-only candidates are labeled separately from public checks.",
     "public_release": {
       "commit": "1e5c4fd255a4979148bdda648e010e2fbb68221b",
       "ci_run": "38186584449",
       "url": "https://atv-offroad-fury-2.champtoday.workers.dev/"
     },
     "next_priorities": [
-      "Verify the host-tested wreck candidate against its exact release; continue camera and rider-versus-prop/water work without conflating host tests with public results.",
-      "Connect Arlington\u2019s recovered locomotive and ten-car route to movement, terrain contact and collisions.",
-      "Recover original race HUD, event flow, rivals, vehicle selection and save/progression behavior."
+      "Recover original ATV handling, airborne controls and trick transitions; compare fixed inputs and outcomes against the recovered reference routines.",
+      "Complete crash, rider-contact and recovery fidelity, including the native wreck camera, center of gravity, and prop/water contacts.",
+      "Broaden deterministic fixed-input comparisons across steering, braking, takeoff, trick transitions and wreck cases before tuning further."
     ],
     "features": [
       {
@@ -788,11 +816,21 @@
         "category": "Vehicle",
         "title": "Wrecks, rider separation and recovery",
         "status": "PARTIAL",
-        "scope": "HOST CANDIDATE \u00b7 RELEASE TEST PENDING",
-        "summary": "Host-only actual-content browser work passes a Caribou preload hop \u2192 Nac Nac \u2192 vertical wreck \u2192 rider separation \u2192 terrain contact \u2192 automatic reset \u2192 driving-again loop. A separate real-touch preload hop lands cleanly and stays in Riding state. These tests do not complete crash recovery.",
-        "validation": "tools/test_wreck.mjs and tools/test_clean_landing.mjs passed on host actual content. Release-specific public crash verification is pending.",
-        "evidence": "research/WRECK.md \u2014 recovered rules, host tests and explicit remaining camera/contact limits.",
-        "next_step": "Verify the candidate against the exact public release, then continue native wreck camera and rider-versus-prop/water behavior; inspect an uncropped wreck capture."
+        "scope": "PUBLIC VERIFIED \u00b7 TESTED LOOP",
+        "summary": "On public commit 52534bbb, an actual-content Caribou preload hop into Nac Nac, vertical wreck, rider separation, terrain contact, automatic reset and driving again completed in 108 frames; the reset counter moved from 0 to 1. A separate clean preload landing kept every rider frame in Riding state with no reset.",
+        "validation": "Public tools/test_wreck.mjs and tools/test_clean_landing.mjs passed on commit 52534bbb955277a31dfda30b5be65863d4388453 (CI 38187838559); both reported no JavaScript errors. The wreck loop reset once, while the clean landing did not reset.",
+        "evidence": "research/WRECK.md \u2014 recovered rules, public browser tests and remaining camera/contact limits.",
+        "next_step": "Continue native wreck-camera behavior, rider-versus-prop and water contacts, and center-of-gravity matching; keep expanding crash-state coverage.",
+        "release_verification": {
+          "commit": "52534bbb955277a31dfda30b5be65863d4388453",
+          "ci_run": "38187838559",
+          "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+          "checks": [
+            "tools/test_wreck.mjs: 108-frame actual-content recovery loop, reset count 0\u21921, no JavaScript errors",
+            "tools/test_clean_landing.mjs: clean landing, all rider frames Riding, reset count 0"
+          ]
+        },
+        "limitation": "This verifies one actual-content wreck/reset route and a separate clean landing, not the full stunt or crash system. Native wreck-camera behavior, center-of-gravity matching, rider-versus-prop and water collisions, and other crash scenarios remain incomplete."
       },
       {
         "id": "preload-touch",

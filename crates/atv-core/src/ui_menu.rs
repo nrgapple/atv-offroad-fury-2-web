@@ -232,6 +232,7 @@ pub fn layout(request: Request) -> Result<Frame> {
     };
     match request.page.as_str() {
         "title" => {
+            f.choices.extend(["main", "devlog"]);
             let y = (h * 0.30).max(95.);
             f.text("ATV", [34., y], 3.2, HEADER_FONT, "232,232,232", w - 68.);
             f.text(
@@ -244,9 +245,15 @@ pub fn layout(request: Request) -> Result<Frame> {
             );
             f.button(
                 "Press START",
-                "accept",
+                "main",
                 [24., h - 135., list_w.max(290.), 60.],
-                true,
+                request.selection.is_multiple_of(2),
+            );
+            f.button(
+                "Dev log",
+                "devlog",
+                [24., h - 74., list_w.max(290.), 56.],
+                request.selection % 2 == 1,
             );
         }
         "main" | "single" => {
@@ -260,15 +267,43 @@ pub fn layout(request: Request) -> Result<Frame> {
                 )
             };
             f.choices.push(action);
-            f.button(label, action, [20., 102., list_w, 58.], true);
+            let main = request.page == "main";
+            f.button(
+                label,
+                action,
+                [20., 102., list_w, 58.],
+                !main || request.selection.is_multiple_of(2),
+            );
+            if main {
+                f.choices.push("devlog");
+                f.button(
+                    "Dev log",
+                    "devlog",
+                    [20., 160., list_w, 58.],
+                    request.selection % 2 == 1,
+                );
+            }
+            let detail_y = if main { 254. } else { 190. };
             f.rect(
-                [24., 190., list_w - 4., 72.],
+                [24., detail_y, list_w - 4., 72.],
                 6.,
                 "#292020",
                 "#1c1717",
                 "#100b09",
             );
-            f.text(detail, [38., 212.], 0.85, FONT, "205,205,205", list_w - 32.);
+            let detail = if main && request.selection % 2 == 1 {
+                "Progress, screenshots and what is next."
+            } else {
+                detail
+            };
+            f.text(
+                detail,
+                [38., detail_y + 22.],
+                0.85,
+                FONT,
+                "205,205,205",
+                list_w - 32.,
+            );
             f.footer(true);
         }
         "tracks" => {
@@ -448,7 +483,7 @@ mod tests {
     fn supported_routes_have_no_unfinished_choices() {
         assert_eq!(
             layout(request("main", 1280., 720.)).unwrap().choices,
-            ["single"]
+            ["single", "devlog"]
         );
         assert_eq!(
             layout(request("single", 1280., 720.)).unwrap().choices,
