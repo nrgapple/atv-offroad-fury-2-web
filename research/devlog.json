@@ -1621,9 +1621,26 @@
       "limitation": "The screenshot uses an inspection camera for the authored curve test, not the app's normal camera. Other non-identity PSG roots may affect additional props; this result does not establish every placement or complete PS2 rendering parity.",
       "image": "/devlog-images/curved-rail-placement-fix-passes-public-checks-75498b8a.png",
       "caption": "Public inspection-camera test showing ENV08 curved rail geometry restored along its authored placement; the camera is test-only."
+    },
+    {
+      "id": "steering-sensitivity-verified-in-the-public-build-33ee7a61",
+      "timestamp": "2026-10-12T18:14:31.938077+00:00",
+      "recorded_at": "2026-10-12T18:15:32.738689+00:00",
+      "kind": "verification",
+      "title": "Steering sensitivity verified in the public build",
+      "summary": "The saved Mobile steering sensitivity setting is live in Pause \u2192 Controls. A fresh public 390\u00d7844 capture shows the default 85% value, and public Chromium/WebKit checks pass range, persistence and touch behavior.",
+      "details": [
+        "Merged PR #3 at public main commit f5ee8cddd74bc7342cccd80b9700bbf63d9b07a9; CI run 38289087535 passed build and deployment.",
+        "The validated current-main artifact was fetched and its separate R2 package uploaded with 341 approved objects and two changes. Public hashes matched the exact commit, 30 authored files and 340 served objects; the gallery had 100 log entries and 87 screenshots before this checkpoint.",
+        "Public tools/test_steering_sensitivity.mjs passed in Chromium and WebKit: default 85%, 50\u2013150% range, three viewport layouts, keyboard and drag focus, and persistence after reload. Chromium also passed real touch checks for both modes, unchanged lean, full steering lock and cancellation.",
+        "The screenshot was captured in a fresh public HTTPS browser session after the game simulation loaded; Pause \u2192 Controls showed the accessible slider at 85% with zero browser errors."
+      ],
+      "limitation": "Physical-phone steering response and native iOS loupe behavior remain unverified.",
+      "image": "/devlog-images/steering-sensitivity-verified-in-the-public-build-33ee7a61.png",
+      "caption": "Fresh public HTTPS Chromium capture at 390\u00d7844 showing the Mobile steering sensitivity default of 85% in Pause \u2192 Controls."
     }
   ],
-  "updated_at": "2026-10-12T18:05:53.456454+00:00",
+  "updated_at": "2026-10-12T18:15:32.738689+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

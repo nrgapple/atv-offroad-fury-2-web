@@ -55,4 +55,8 @@ The shared Pause/Camera controls and one/two-finger touch marker are in public m
 
 ## Native steering range control
 
-For settings where Rust owns navigation and persistence, keep the label, selected value, slider rectangle and menu choices in Rust. Bind a native DOM `<input type="range">` over the Rust-provided rectangle for direct pointer and keyboard access, then sync its value through menu redraws without replacing the focused input. Style it with the shared gold accent and focus tokens. The mobile steering response control uses 50–150% in 5% steps, defaults to 85%, and saves one value for both touch modes; 100% preserves the previous response. The sensitivity scales displacement before the original clamp so full lock remains reachable.
+Rust owns the menu labels, layout and navigation choices. The browser input adapter owns localStorage persistence. Bind a native DOM `<input type="range">` over the Rust-provided rectangle for direct pointer and keyboard access, then sync its value through menu redraws without replacing the focused input. Style it with the shared gold accent and focus tokens. The mobile steering response control uses 50–150% in 5% steps, defaults to 85%, and saves one value for both touch modes; 100% preserves the previous response. The sensitivity scales displacement before the original clamp so full lock remains reachable.
+
+### Public steering sensitivity checkpoint
+
+The setting is public in main commit `f5ee8cddd74bc7342cccd80b9700bbf63d9b07a9` (PR #3; CI run [38289087535](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38289087535)). Public Chromium and WebKit checks passed the default and range, three viewport sizes, keyboard/drag focus and reload persistence. Chromium also passed both touch modes, unchanged lean, full lock and cancellation. The fresh 390×844 public capture shows the 85% default. Physical phone response and native iOS loupe behavior remain unverified.
