@@ -434,3 +434,22 @@ dynamic/categories and complete original-game replay parity remain unfinished.
 
 The release workflow uses validated current-main CI artifacts and explicit
 checkpoint R2 uploads. The recurring publication heartbeat is retired.
+
+## Active wreck rider and camera scene queries (2026-10-12)
+
+Gameplay `f6353c37684063777cd5d0cff1d87e99a0de615f` passed
+[CI 38212608120](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38212608120)
+and automatic production deployment. The explicit R2 checkpoint upload and HTTPS
+verification matched 26 authored files and 319 served objects, including 74 log
+entries and 66 screenshots before the public verification entry.
+
+Serial public checks passed active wreck rider-cache/direct camera assertions,
+boundary launch/recovery and paired query flags, clean landing, all eight maps,
+diagnostics, saved one-handed controls and gallery filters. The Nac Nac trace
+contains 195 cached rider frames and 195 direct camera queries. Boundary flight
+includes 490 rider refreshes and retained plant candidates. These routes have no
+physical rider-prop contact or camera latch; synthetic core geometry checks those
+responses. Landing overlap remains 0.393066ft across 201 riding frames with none
+skipped. Normal-riding rider collision, MUD metadata, custom masks, dynamic actors,
+physical plant proxies, global attachment policy and full gameplay parity remain
+incomplete. The normal single-player chase source disables optional object queries.

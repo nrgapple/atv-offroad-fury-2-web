@@ -1,6 +1,7 @@
 # Implementation handoff
 
-Next host-verified component: the active wreck rider now borrows the Vehicle's
+Latest verified public gameplay component: `f6353c37684063777cd5d0cff1d87e99a0de615f`,
+CI `38212608120` success. The active wreck rider now borrows the Vehicle's
 shared scene cache, using its animated thirteen-spoke bounds and inclusive/current
 eligibility rules. The wreck camera uses its independent original partition query
 and retains the obstruction latch. Native probes match 500 rider spheres,
@@ -13,12 +14,19 @@ flags and recovery, all eight maps, diagnostics and saved one-handed controls.
 Landing overlap remains 0.393066ft across 201 riding frames with none skipped.
 Three concurrent host startup runs timed out without browser errors; a fresh
 single run and the subsequent serial suite pass, but concurrency is unverified.
-This component is pending public release. Normal riding rider collision, MUD
+Public HTTPS verification matches 26 app files and 319 runtime/gallery objects
+(74 entries, 66 screenshots before its verification entry). The serial public
+suite passes the same routes, including all eight maps, with no browser/GL errors.
+The Nac Nac trace covers 195 cached rider frames and 195 direct camera queries;
+the boundary trace covers 490 rider refreshes and retained plants. No physical
+rider-prop contact or camera latch occurs in these public routes; those response
+checks use synthetic core geometry. Public landing overlap is also 0.393066ft
+over 201 riding frames with none skipped. Normal riding rider collision, MUD
 metadata, custom masks, physical plant proxies, dynamic objects and full original
 replay parity remain incomplete. See [scene integration](research/SCENE_INTEGRATION.md)
 and [camera](research/CAMERA.md).
 
-Latest verified public gameplay gate: `f27869c84b1ea09a8425de50b6bdf50935d2ba54`,
+Preceding verified public gameplay gate: `f27869c84b1ea09a8425de50b6bdf50935d2ba54`,
 CI `38210131335` success. Source-verified spring torque now preserves the
 Model inverse-transform order. A single original static/ESB partition and 40/50ft
 cache supplies quad wheel/chassis candidates and recovery's plant-clearance gate.
@@ -36,7 +44,7 @@ maps, clean landing, wreck/recovery, boundary launch/recovery, one-handed mobile
 dev-log filters and desktop/portrait diagnostics passed publicly. Full-batch
 public landing capture measured 0.392639ft overlap across 184 riding frames with
 none skipped. This is not an identical before/after comparison or a clipping fix.
-Rider shared-cache integration is the next implementation gate. See
+Rider shared-cache integration followed in `f6353c3` above. See
 [coupled landing](research/COUPLED_LANDING.md) and
 [scene integration](research/SCENE_INTEGRATION.md).
 

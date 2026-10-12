@@ -244,3 +244,23 @@ browser integration checks pending public release, not original loaded-scene
 candidate replay or whole-game/hardware parity. Physical plant proxies, normal
 riding rider collision, MUD metadata and full custom/dynamic eligibility remain
 incomplete. Wreck-camera source and direct-query evidence is in [CAMERA.md](CAMERA.md).
+
+## Public rider/camera verification
+
+`f6353c37684063777cd5d0cff1d87e99a0de615f` passed CI `38212608120` and public
+HTTPS verification of 26 authored files and 319 runtime/gallery objects (74
+entries, 66 screenshots before its verification entry). Serial public clean
+landing, Nac Nac wreck/recovery, normal ENV04 boundary launch/recovery, all eight
+maps, diagnostics, one-handed controls and gallery checks pass.
+
+The public Nac Nac trace contains 195 cached rider frames: 29 attached, 58 air
+and 108 ground. This route has zero rider refreshes and zero selected ordinary
+props/plants. Its 195 direct camera queries see at most one ordinary candidate,
+with no obstruction latch. The boundary trace contains 516 rider frames and
+490 rider refreshes, up to two retained plants, two unsupported proxy entries
+and 61 paired actor-skip frames; it selects no ordinary rider props. These prove
+the live binding, refresh and plant visibility on the tested routes. Physical
+prop contact and the camera latch remain covered by synthetic core fixtures,
+not these public routes. Public landing minimum clearance is -0.39306640625ft
+across 201 riding frames with none skipped. Full original loaded-scene replay,
+physical plants and the remaining consumer/eligibility gaps above are unfinished.

@@ -1,6 +1,6 @@
 {
   "status": "The public Rust driving reconstruction is progressing; it is not the complete game.",
-  "working_on": "Integrating normal-riding rider queries and camera scene-cache contacts after the host wreck-path gate.",
+  "working_on": "Extending rider collision beyond the verified wreck route while preserving the public cache and camera component limits.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1216,19 +1216,37 @@
       "limitation": "Host-only component verification; the public release remains f27869c. Normal-riding rider queries, MUD metadata, custom masks, physical plant proxies, dynamic contacts, shared cached rider/camera queries beyond wreck cases, global/674 settings, whole-game parity and clipping remain incomplete or unverified. No clipping improvement is claimed.",
       "image": "/devlog-images/wreck-rider-and-camera-queries-use-the-recovered-scene-81a9e8e5.png",
       "caption": "Host portrait Nac Nac failure showing the rider separated above the quad. This inspected capture illustrates the wreck phase; it is not public-release evidence."
+    },
+    {
+      "id": "public-wreck-rider-and-camera-queries-use-the-recovere-803d450a",
+      "timestamp": "2026-10-12T06:30:06.420152+00:00",
+      "recorded_at": "2026-10-12T06:35:01.702396+00:00",
+      "kind": "verification",
+      "title": "Public wreck rider and camera queries use the recovered cache",
+      "summary": "Public release f6353c passes the touch wreck route, inward boundary recovery, clean landing, eight-map run, saved one-handed controls and diagnostic/dev-log layout checks. Active wreck riders use the shared scene cache, while the wreck camera runs its independent ordered query.",
+      "details": [
+        "Commit f6353c37684063777cd5d0cff1d87e99a0de615f passed CI 38212608120, deployed and completed the R2 upload. HTTPS verification matched 26 authored app files and 319 served objects, with 74 log entries and 66 screenshots at verification time.",
+        "Public touch Nac Nac → vertical wreck → rider separation/ground clip → terrain contact → automatic reset → resumed driving passed. The 195-frame route checked cached rider queries throughout: 29 attached, 58 airborne and 108 grounded frames; no rider refresh, selected static props or plants occurred on this route. The direct wreck camera ran 195 queries with at most one ordinary candidate; no obstruction latch occurred on this route. Synthetic core tests cover physical-prop/latch behavior, not a loaded-scene physical contact.",
+        "The ENV04 boundary route passed after 1,658 frames and cleared boundary state. Across 516 rider frames it recorded 29 attached, 379 airborne and 108 grounded; 490 rider-cache refreshes, at most two plant candidates and two unsupported proxies, and 61 rider-actor skip frames paired with the quad flag. No selected static contact or physical tree contact is claimed.",
+        "Public clean landing measured 0.393066 ft minimum clearance over 201 riding frames with zero skipped frames; worst was rear-left at step 163. Residual tire clipping remains; this value does not establish a clipping fix. One uninterrupted ENV01–ENV08 run passed with no browser/WebGL errors. Four wet maps reported finite water heights and dry maps retained the sentinel.",
+        "Saved one-handed controls, F3/Pause diagnostics in desktop and portrait layouts, and desktop/390px dev-log filters with no overflow passed. The inspected public separation screenshot shows the rider above the quad during the failed Nac Nac."
+      ],
+      "limitation": "Public component verification only. Normal-riding rider collision, MUD metadata, custom masks, dynamic contacts, physical plant proxies, global/674 settings, complete wreck-camera obstruction behavior, hardware behavior, clipping and whole-game parity remain incomplete or unverified. No loaded-scene native physical tree collision or full category parity is claimed.",
+      "image": "/devlog-images/public-wreck-rider-and-camera-queries-use-the-recovere-803d450a.png",
+      "caption": "Public f6353c capture during the failed Nac Nac, showing the rider separated above the quad. Cached rider queries are verified on this route; physical tree/proxy collision is not."
     }
   ],
-  "updated_at": "2026-10-12T06:26:35.166459+00:00",
+  "updated_at": "2026-10-12T06:35:01.702396+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
-      "commit": "f27869c84b1ea09a8425de50b6bdf50935d2ba54",
-      "ci_run": "38210131335",
+      "commit": "f6353c37684063777cd5d0cff1d87e99a0de615f",
+      "ci_run": "38212608120",
       "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
       "static_assets": 26,
-      "served_objects": 317,
-      "devlog_entries": 72,
-      "devlog_screenshots": 64
+      "served_objects": 319,
+      "devlog_entries": 74,
+      "devlog_screenshots": 66
     },
     "next_priorities": [
       "Extend wreck/recovery comparisons, rider contacts and boundary return; separate host boundary/water candidates from public proof.",
@@ -1247,20 +1265,20 @@
         "status": "LIVE",
         "scope": "PUBLIC",
         "summary": "ENV01–ENV08 appear in the Freestyle picker and load into drivable scenes. Public checks exercised movement on all eight; this does not mean every original race course or game mode is recovered.",
-        "validation": "Public f27869c84b1ea09a8425de50b6bdf50935d2ba54 · CI 38210131335: one uninterrupted ENV01–ENV08 load/drive and scene-cache assertion run passed with no browser/WebGL errors. Four wet maps reported finite water heights; four dry maps retained the -256 sentinel.",
+        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f · CI 38212608120: one uninterrupted ENV01–ENV08 load/drive run passed without browser/WebGL errors. Wet ENV04/05/07/08 reported four finite water channels; dry environments retained the sentinel.",
         "evidence": "research/GEOMETRY.md — Freeport Harbor; research/DEPLOYMENT.md — eight-environment release.",
         "next_step": "Connect the recovered Arlington train and audit remaining map-specific scene behavior.",
         "release_verification": {
-          "commit": "f27869c84b1ea09a8425de50b6bdf50935d2ba54",
-          "ci_run": "38210131335",
+          "commit": "f6353c37684063777cd5d0cff1d87e99a0de615f",
+          "ci_run": "38212608120",
           "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
           "static_assets": 26,
-          "served_objects": 317,
-          "devlog_entries": 72,
-          "devlog_screenshots": 64,
+          "served_objects": 319,
+          "devlog_entries": 74,
+          "devlog_screenshots": 66,
           "checks": [
-            "One uninterrupted public ENV01–ENV08 load/drive and scene-cache assertion run passed with no browser/WebGL errors.",
-            "Wet ENV04/05/07/08 reported finite water heights; dry environments retained the -256 sentinel."
+            "One uninterrupted ENV01–ENV08 load/drive run passed with no browser/WebGL errors.",
+            "Four wet maps reported finite water heights; dry maps retained the sentinel."
           ]
         }
       },
@@ -1269,23 +1287,22 @@
         "category": "World",
         "title": "Original vegetation placements",
         "status": "PARTIAL",
-        "scope": "PUBLIC RENDERING · PHYSICAL PROXIES UNSUPPORTED",
+        "scope": "PUBLIC BATCHED RENDERING · PHYSICAL PLANT CONTACTS UNVERIFIED",
         "summary": "Recovered ecosystem placements render across all eight environments in batched draws. Shared tree/cache state participates in the original quad wheel/chassis candidate order and recovery plant-clearance rule, but physical plant proxies are unsupported and the current vegetation visibility/LOD selection remains provisional.",
-        "validation": "Public f27869c84b1ea09a8425de50b6bdf50935d2ba54 · CI 38210131335: all-eight-map scene/cache assertions and the inward ENV04 boundary recovery passed. This does not establish physical plant-proxy collision or original vegetation visibility/LOD.",
+        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f · CI 38212608120: all-eight-map vegetation batches passed. On the boundary route, up to two plant candidates and two unsupported proxies were counted; this does not establish physical tree contacts or original vegetation visibility/LOD.",
         "evidence": "research/GEOMETRY.md — terrain quality investigation and Freeport ecosystem batches.",
         "next_step": "Recover original per-map culling/LOD and compare visible placements at measured camera distances.",
         "release_verification": {
-          "commit": "f27869c84b1ea09a8425de50b6bdf50935d2ba54",
-          "ci_run": "38210131335",
+          "commit": "f6353c37684063777cd5d0cff1d87e99a0de615f",
+          "ci_run": "38212608120",
           "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
           "static_assets": 26,
-          "served_objects": 317,
-          "devlog_entries": 72,
-          "devlog_screenshots": 64,
+          "served_objects": 319,
+          "devlog_entries": 74,
+          "devlog_screenshots": 66,
           "checks": [
-            "Eight-map scene/cache assertions passed publicly.",
-            "Boundary recovery completed inward with boundary state cleared.",
-            "Physical plant-proxy collision and original vegetation visibility/LOD remain incomplete."
+            "Eight-map vegetation batches passed.",
+            "Boundary route counted at most two plant candidates and two unsupported proxies; physical plant contacts are not established."
           ]
         }
       },
@@ -1363,20 +1380,20 @@
         "status": "PARTIAL",
         "scope": "PUBLIC · SPEED/PRELOAD/STUNT/DIAGNOSTICS SUBSET",
         "summary": "Original runtime speed, preload and stunt layouts, glyphs and art are drawn with authored Rust controllers. Public desktop and 390px dev-log filters pass; wheelie scoring callbacks are integrated through the HUD while the original disabled scoring flag yields no baseline wheelie awards. Race clocks, rank, laps, radar and multiplayer overlays remain unimplemented.",
-        "validation": "Public f27869c84b1ea09a8425de50b6bdf50935d2ba54 · CI 38210131335: live F3/Pause diagnostics passed desktop and portrait; dev-log desktop and 390px filters passed. Landing and wreck/recovery captures show the speed/preload/stunt subset. Final PS2 pixel parity remains unverified.",
+        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f · CI 38212608120: clean landing and failed Nac Nac recovery captures passed; F3/Pause diagnostics passed desktop and portrait layouts, and dev-log filters passed desktop/390px without overflow. Full race HUD behavior and final PS2 pixel parity remain unverified.",
         "evidence": "research/HUD.md; public wreck/landing captures and diagnostics logs.",
         "next_step": "Connect remaining race/mode HUD state and verify score animation against original presentation.",
         "release_verification": {
-          "commit": "f27869c84b1ea09a8425de50b6bdf50935d2ba54",
-          "ci_run": "38210131335",
+          "commit": "f6353c37684063777cd5d0cff1d87e99a0de615f",
+          "ci_run": "38212608120",
           "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
           "static_assets": 26,
-          "served_objects": 317,
-          "devlog_entries": 72,
-          "devlog_screenshots": 64,
+          "served_objects": 319,
+          "devlog_entries": 74,
+          "devlog_screenshots": 66,
           "checks": [
-            "F3/Pause diagnostics passed desktop and portrait layouts.",
-            "Dev-log filters passed desktop and 390px mobile layout.",
+            "Desktop and portrait F3/Pause diagnostics passed.",
+            "Desktop and 390px dev-log filters passed with no overflow.",
             "Full race HUD state and final PS2 pixel parity remain incomplete."
           ]
         }
@@ -1441,24 +1458,23 @@
         "category": "Vehicle",
         "title": "ATV handling and suspension",
         "status": "PARTIAL",
-        "scope": "PUBLIC F278 FULL-BATCH ROUTES + HOST SOURCE/CONTACT CHECKS",
+        "scope": "PUBLIC FULL-BATCH ROUTES + HOST SOURCE/CONTACT CHECKS · CLIPPING REMAINS",
         "summary": "Public handling includes the shared scene-cache candidate path, recovered spring torque, static-prop wheel support, terrain travel stop and prior handling components. Residual tire overlap remains; landing and slope traces with different inputs are not evidence of improvement. Full-game parity is unverified.",
-        "validation": "Public f27869c84b1ea09a8425de50b6bdf50935d2ba54 · CI 38210131335: full-batch clean landing, slope, wreck/recovery, boundary and all-map routes passed. Landing overlap was 0.392639 ft across 184 riding frames, zero skipped frames, worst rear-left at step 164 (0.75 ft maximum allowed). Host landing was 0.392776 ft across 199 frames on a different input trace. The values are not an identical before/after comparison; no improvement is claimed. Public slope also retains about 0.64 ft overlap across 382 riding frames/98 wreck exclusions; its source baseline used a different trajectory. Host serial landing measured 0.393066 ft overlap across 201 riding frames with zero skipped frames; worst was rear-left at step 163. This follows a different trace from public f278 (0.392639 ft across 184 riding frames), so no causal or improvement claim is made.",
+        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f · CI 38212608120: clean landing, boundary, wreck recovery and uninterrupted eight-map routes passed. Landing clearance was -0.393066 ft over 201 riding frames with zero skipped frames; worst rear-left at step 163. Tire clipping remains; this measurement does not claim a fix or establish whole-game parity.",
         "evidence": "research/MOVEMENT.md; research/DIAGNOSTICS.md; research/TOUCH.md.",
         "next_step": "Compare coupled original quad frames and incline turns; resolve residual rendered tire overlap and dynamic contacts.",
         "release_verification": {
-          "commit": "f27869c84b1ea09a8425de50b6bdf50935d2ba54",
-          "ci_run": "38210131335",
+          "commit": "f6353c37684063777cd5d0cff1d87e99a0de615f",
+          "ci_run": "38212608120",
           "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
           "static_assets": 26,
-          "served_objects": 317,
-          "devlog_entries": 72,
-          "devlog_screenshots": 64,
+          "served_objects": 319,
+          "devlog_entries": 74,
+          "devlog_screenshots": 66,
           "checks": [
-            "Public full-batch clean landing, slope, wreck/recovery and boundary routes passed.",
-            "Landing overlap: 0.392639 ft / 184 riding frames; zero skipped frames; worst rear-left at step 164; maximum allowed 0.75 ft.",
-            "Host landing: 0.392776 ft / 199 frames on a different input trace. No improvement claim.",
-            "Public slope retains about 0.64 ft overlap; compared trajectories differ and are not an improvement comparison."
+            "Clean landing measured -0.393066 ft minimum clearance over 201 riding frames, zero skipped; worst rear-left at step 163.",
+            "Boundary, wreck recovery and uninterrupted eight-map routes passed.",
+            "Residual clipping and whole-game parity remain unresolved."
           ]
         },
         "host_verification": {
@@ -1477,24 +1493,24 @@
         "category": "Vehicle",
         "title": "Terrain and static-object collisions",
         "status": "PARTIAL",
-        "scope": "PUBLIC F278 SCENE PATH + HOST WRECK RIDER/CAMERA CANDIDATE",
-        "summary": "The public quad wheel/chassis path uses the original shared scene cache, and recovery uses that cache with the recovered plant-clearance rule. A host wreck candidate also queries active rider spokes through the exact Vehicle cache and uses a separate direct wreck-camera query. Physical plant proxies, normal-riding rider queries, complete category eligibility, dynamic bodies and full collision parity remain incomplete.",
-        "validation": "Public baseline remains f27869c84b1ea09a8425de50b6bdf50935d2ba54 · CI 38210131335. Host probes matched 500 rider-sphere cases (1,112,500 instructions), 12 paired quad/rider boundary flags (1,508 instructions), and 120 oblique camera queries (1,930,484 instructions). The host serial wreck, boundary, landing and all-eight-map gates passed. These host changes are pending public release.",
+        "scope": "PUBLIC WRECK RIDER/CAMERA QUERIES + HOST SOURCE ORACLE",
+        "summary": "The public quad wheel/chassis path uses the original shared scene cache, and active wreck rider queries now use that cache; the independent wreck camera runs its ordered query. Physical plant proxies, normal-riding rider collision, complete category eligibility, dynamic bodies and full collision parity remain incomplete.",
+        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f · CI 38212608120: Nac Nac wreck, separation/contact/recovery, boundary and eight-map routes passed. The 195-frame wreck route checked cached rider queries, with zero refreshes and no selected static props/plants; the 516-rider-frame boundary route recorded 490 refreshes and at most two plant candidates/two unsupported proxies, with zero selected static contacts. Host source-order radius oracle remains 1,000 cases / 40,000 instructions.",
         "evidence": "research/COLLISION.md; research/CONTACT.md; research/OBSTACLES.md.",
         "next_step": "Recover scene ordering/category metadata and moving-body response; compare coupled prop impacts.",
         "release_verification": {
-          "commit": "f27869c84b1ea09a8425de50b6bdf50935d2ba54",
-          "ci_run": "38210131335",
+          "commit": "f6353c37684063777cd5d0cff1d87e99a0de615f",
+          "ci_run": "38212608120",
           "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
           "static_assets": 26,
-          "served_objects": 317,
-          "devlog_entries": 72,
-          "devlog_screenshots": 64,
+          "served_objects": 319,
+          "devlog_entries": 74,
+          "devlog_screenshots": 66,
           "checks": [
-            "Public scene-cache assertions passed across all eight environments.",
-            "Public Nac Nac separation/contact/recovery and ENV04 boundary recovery passed.",
-            "Host source-order oracle matched 1,000 quad/static-radius cases across 40,000 original instructions.",
-            "Physical plant proxies, full category eligibility and dynamic collision remain incomplete."
+            "Public wreck route: 195 frames; rider query cache checked throughout, zero refreshes, no selected static props/plants.",
+            "Wreck camera: 195 direct queries, maximum one ordinary candidate; no obstruction latch on this route. Synthetic core test covers prop/latch behavior, not loaded-scene physical contact.",
+            "Boundary: 516 rider frames, 490 rider-cache refreshes, at most two plant candidates/two unsupported proxies, and zero selected static contacts.",
+            "Normal-riding rider collision, physical plant contacts, complete categories and dynamic collision remain unverified."
           ]
         },
         "host_verification": {
@@ -1515,26 +1531,26 @@
         "category": "Vehicle",
         "title": "Wrecks, rider separation and recovery",
         "status": "PARTIAL",
-        "scope": "PUBLIC F278 LOOP + HOST WRECK-RIDER CACHE GATE",
-        "summary": "Public Nac Nac failure, rider separation/contact, recovery and boundary return routes pass. A host candidate now queries active wreck riders through the exact Vehicle scene cache and checks each rider’s 13 spokes. Normal-riding rider queries and full crash-state parity remain incomplete.",
-        "validation": "Public baseline remains f27869c84b1ea09a8425de50b6bdf50935d2ba54 · CI 38210131335. Host rider/camera gate: touch wreck → separation → ground contact → recovery → resumed driving passed with finite cached rider queries (≤256) across attached, separated and grounded phases; a 1,655-frame inward ENV04 boundary route also passed. Public release verification is unchanged; host candidate is pending release.",
+        "scope": "PUBLIC VERIFIED · WRECK RIDER CACHE AND RECOVERY LOOP",
+        "summary": "Public Nac Nac failure, cached rider separation/contact, terrain recovery and resumed driving pass. The ENV04 boundary route also launches upward/inward and recovers with state cleared. The public camera query runs independently; wet wrecks, normal-riding rider collision and full crash-state parity remain unverified.",
+        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f · CI 38212608120: the 195-frame Nac Nac route checked cached rider queries through 29 attached, 58 airborne and 108 grounded frames; every query was cached. The 1,658-frame ENV04 boundary route cleared boundary state, with 516 rider frames including 490 rider-cache refreshes. These route checks do not establish physical tree contact or normal-riding rider collision.",
         "evidence": "research/WRECK.md — recovered rules, public browser tests and remaining camera/contact limits.",
         "next_step": "Broaden crash/recovery and rider-contact comparisons, then verify boundary/water candidates publicly.",
         "release_verification": {
-          "commit": "f27869c84b1ea09a8425de50b6bdf50935d2ba54",
-          "ci_run": "38210131335",
+          "commit": "f6353c37684063777cd5d0cff1d87e99a0de615f",
+          "ci_run": "38212608120",
           "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
           "static_assets": 26,
-          "served_objects": 317,
-          "devlog_entries": 72,
-          "devlog_screenshots": 64,
+          "served_objects": 319,
+          "devlog_entries": 74,
+          "devlog_screenshots": 66,
           "checks": [
-            "Touch Nac Nac failure → separation/contact → recovery → resumed driving passed.",
-            "ENV04 inward boundary launch/recovery passed with boundary state cleared.",
-            "Wet wreck and full crash-state parity remain unverified."
+            "195-frame Nac Nac → wreck → rider separation/contact → recovery → resumed driving passed; all active rider queries were cached.",
+            "1,658-frame ENV04 boundary route recovered inward with boundary state cleared.",
+            "Wet wreck and normal-riding rider collision remain unverified."
           ]
         },
-        "limitation": "Selected public wreck/landing and ENV04 boundary routes pass. Complete mode exceptions, callback cadence, vegetation coverage, water behavior and shared RNG ordering remain unverified.",
+        "limitation": "Normal-riding rider collision, MUD metadata, custom masks, dynamic contacts, physical plant proxies, global/674 settings, wet wreck behavior and full crash-state parity remain incomplete or unverified.",
         "host_verification": {
           "scope": "Host-only candidate; pending public release.",
           "checks": [
@@ -1627,9 +1643,9 @@
         "category": "Presentation",
         "title": "Chase camera",
         "status": "LIVE",
-        "scope": "PUBLIC CHASE BASELINE + HOST DIRECT WRECK-QUERY CANDIDATE",
-        "summary": "The recovered landscape chase camera, preset cycling and portrait framing remain publicly available. A host wreck-camera candidate now uses an independent native-partition ordered direct-bounds/sphere query and retains the recovered latch; normal-riding shared cached queries remain pending.",
-        "validation": "Public chase baseline remains tied to the existing f278 release. Host wreck-camera probes matched 120 oblique-scene queries across 1,930,484 original instructions; 1,694 original clip poses and five recovery routes passed cached/direct query checks in an empty scene. Normal-riding rider/camera cache behavior is not established.",
+        "scope": "PUBLIC CHASE + INDEPENDENT WRECK CAMERA QUERY",
+        "summary": "The recovered landscape chase camera, preset cycling and portrait framing remain available. The public wreck camera runs its independent ordered query; physical obstruction/latch behavior is covered only by a synthetic core test, not by the loaded-scene route.",
+        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f · CI 38212608120: 195 direct wreck-camera queries ran with at most one ordinary candidate and no obstruction latch on that route. A synthetic core test covers physical-prop/latch behavior; loaded-scene physical obstruction and normal-riding shared rider queries remain unverified.",
         "evidence": "research/CAMERA.md — camera recovery and portrait presentation.",
         "next_step": "Compare camera/body coupling through original stunt and wreck sequences; keep touch focus recovery distinct from unresolved native wreck-camera behavior.",
         "host_verification": {
@@ -1642,6 +1658,20 @@
           ],
           "limitations": [
             "Normal-riding shared query integration, MUD metadata, custom masks, dynamic contacts, global/674 settings and complete camera parity remain unverified."
+          ]
+        },
+        "release_verification": {
+          "commit": "f6353c37684063777cd5d0cff1d87e99a0de615f",
+          "ci_run": "38212608120",
+          "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+          "static_assets": 26,
+          "served_objects": 319,
+          "devlog_entries": 74,
+          "devlog_screenshots": 66,
+          "checks": [
+            "195 direct wreck-camera queries; maximum one ordinary candidate, no latch on this route.",
+            "Synthetic core test covers physical-prop/latch behavior; it does not prove loaded-scene obstruction parity.",
+            "Normal-riding shared rider queries remain incomplete."
           ]
         }
       },
@@ -1689,21 +1719,21 @@
         "title": "Keyboard, controller and touch input",
         "status": "PARTIAL",
         "scope": "PUBLIC · KEYBOARD/CONTROLLER SETTINGS AND TOUCH BASELINE",
-        "summary": "Public Controls remap keyboard/controller actions across keys, buttons, signed axes and chords, with persistence. A saved one-handed setting supports single-thumb drive/brake/reverse plus airborne steer/lean; physical phone hardware and full handling parity are unverified.",
-        "validation": "Public f27869c84b1ea09a8425de50b6bdf50935d2ba54 · CI 38210131335: saved one-handed setting survived reload and passed drive, brake/reverse, airborne steer/lean without tricks, throttle or brace; boundary and touch routes passed. Physical phone hardware remains untested.",
+        "summary": "Public Controls remap keyboard/controller actions across keys, buttons, signed axes and chords, with persistence. A saved one-handed setting drives, brakes/reverses and supports airborne steer/lean. Physical phone hardware and full handling parity remain unverified.",
+        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f · CI 38212608120: saved one-handed controls, touch wreck route, boundary route, desktop/portrait diagnostics and no-overflow dev-log filters passed. Physical phone hardware remains untested.",
         "evidence": "research/TOUCH.md — browser adapter limits; research/IMPLEMENTATION.md — input requirements.",
         "next_step": "Compare more original fixed-input handling, stunt transitions and cancellation cases; test physical devices separately.",
         "release_verification": {
-          "commit": "f27869c84b1ea09a8425de50b6bdf50935d2ba54",
-          "ci_run": "38210131335",
+          "commit": "f6353c37684063777cd5d0cff1d87e99a0de615f",
+          "ci_run": "38212608120",
           "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
           "static_assets": 26,
-          "served_objects": 317,
-          "devlog_entries": 72,
-          "devlog_screenshots": 64,
+          "served_objects": 319,
+          "devlog_entries": 74,
+          "devlog_screenshots": 66,
           "checks": [
-            "Saved one-handed setting survived reload and passed the public control route.",
-            "Single-thumb drive, brake/reverse and airborne steer/lean passed; no trick/throttle/brace side effects.",
+            "Saved one-handed controls passed the public route.",
+            "Touch wreck, inward boundary, desktop/portrait F3/Pause diagnostics and desktop/390px dev-log filters passed.",
             "Physical phone hardware remains untested."
           ]
         }
