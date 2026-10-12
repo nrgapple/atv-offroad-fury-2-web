@@ -37,7 +37,7 @@ upload/verification reports stay under ignored private storage. Disc images, BIO
 raw executable, reverse-engineering output and reference repositories are excluded.
 
 GitHub CI continues to check and package only authored code/WASM and devlog text.
-`tools/stage_cloudflare.py` stages that verified artifact for `wrangler deploy`.
+`tools/stage_cloudflare.py` stages that verified artifact for the GitHub Actions production job; production deployment is not a manual local step.
 The main-only deployment step uses the scoped `CLOUDFLARE_API_TOKEN` repository
 secret, configured on 2026-10-11 after user approval. Its permissions are Individual
 Worker Editor for this game Worker and Account Settings Read, with a one-year
@@ -49,9 +49,10 @@ at 2026-10-11 23:26 UTC. Cloudflare Worker version
 matched all 23 unchanged authored/static file hashes, the CI devlog metadata,
 and all 282 served runtime/manifest/PNG objects. The gallery now contains 35
 entries and 32 approved screenshots. This verifies the GitHub push-to-Cloudflare
-path; the migrated heartbeat has been configured but an unattended scheduled
-R2 maintenance run remains unverified. Original resources and screenshots never
-enter GitHub or CI; CI attaches the existing R2 binding without uploading its data.
+path. A former scheduled publisher was later retired; R2 content and approved
+gallery updates are handled by the release agent at each validated checkpoint.
+Original resources and screenshots never enter GitHub or CI; CI attaches the
+existing R2 binding without uploading its data.
 `/devlog.json` merges screenshot references from the separately uploaded gallery
 only when each checkpoint's authored metadata exactly matches the CI revision.
 New or edited checkpoint screenshots require another authorized local R2 upload.
@@ -60,23 +61,37 @@ rejects other revisions and skips byte-identical objects recorded by its previou
 local upload report. `--force-upload` repairs remote drift; public hash verification
 remains required after each content/gallery update.
 
-Host publication commands after successful current-main CI:
+## Per-checkpoint R2 and gallery publication
+
+GitHub Actions deploys authored application assets after passing main checks. The
+release agent does not run a separate local Worker deployment. At each completed
+checkpoint, fetch the validated current-main CI artifact without a Site URL
+(the `--site-url` option is not used for the Cloudflare gallery workflow):
 
 ```sh
-python3 tools/fetch_site_release.py --site-url https://atv-offroad-fury-2.champtoday.workers.dev
-python3 tools/stage_cloudflare.py --release <validated-release> --commit <commit>
+python3 tools/fetch_site_release.py
+```
+
+Wait for a ready release, then confirm the public `/deployment.json` identifies
+its exact commit. Inspect newly approved screenshot pixels and ensure their image
+references are in the committed `research/devlog.json`; image files remain in
+ignored `private/reports/devlog-images/`. After confirming the validated R2 content
+package and screenshots, publish them and verify the public result:
+
+```sh
 python3 tools/upload_cloudflare_content.py --release <validated-release> --commit <commit>
-npx --yes wrangler@4.149.0 deploy
 python3 tools/verify_cloudflare.py --url https://atv-offroad-fury-2.champtoday.workers.dev --commit <commit>
 ```
 
-The verification command uses the checksum-validated release cached by
-`fetch_site_release.py`, verifies all public authored/static hashes and committed
-devlog metadata, then fetches every uploaded runtime object and screenshot over
-HTTPS to check size, SHA-256 and MIME type, deployment commit, landing route and
-gallery references. It does not replace the browser no-disc startup
-and actual gameplay regression. The R2 Worker serves GET/HEAD only; content-addressed
-blobs use immutable browser caching and manifests/gallery use revalidation. Do not
+The uploader accepts only a validated current-main release and committed gallery
+metadata, uploads approved runtime resources and screenshots to the separate R2
+bucket, and publishes the manifest/gallery pointers after blobs succeed. The
+verifier checks deployment identity, authored/static hashes and every served R2
+object's size, SHA-256 and MIME type, plus gallery references. Run relevant public
+browser checks after the upload as well; hashes alone do not prove game startup or
+behavior. Never publish uncommitted work or uninspected images. The R2 Worker serves
+GET/HEAD only; content-addressed blobs use immutable browser caching and
+manifests/gallery use revalidation. Do not
 claim a Cloudflare CDN edge-cache hit on the workers.dev hostname: the Workers Cache
 API is not effective there ([Cloudflare R2 cache documentation](https://developers.cloudflare.com/r2/examples/cache-api/)).
 Static application assets use Workers' managed asset storage.
@@ -200,19 +215,16 @@ publication.
 This authorization does not include the ISO/disc image, BIOS, raw boot executable,
 unrelated disc files, reverse-engineering output or pseudocode, or reference
 repositories. None of the extracted runtime resources, manifest blobs, or private
-analysis may be added to GitHub source or CI. Keep using the native Sites workflow
-and fresh session credential for the Site-only package. Do not claim autoload is
-complete until the published build starts without a file-selection step and public
-requests are verified against the approved manifest.
+analysis may be added to GitHub source or CI. The native Sites workflow described
+here is historical; current runtime-content and gallery publication uses the
+per-checkpoint Cloudflare R2 procedure above. Do not claim autoload is complete
+until the public build starts without a file-selection step and requests are
+verified against the approved manifest.
 
-The local Codex heartbeat `publish-atv-web-builds` remains **ACTIVE every 15
-minutes** in this thread, migrated to Cloudflare verification and validated R2
-content/gallery maintenance. GitHub deploys authored application assets on passing
-main builds; the heartbeat no longer publishes Sites versions. It skips commits
-waiting for CI and never publishes uncommitted devlog metadata. R2 maintenance
-needs the Mac/local Codex executor available; public Cloudflare visitors and GitHub
-application deployment do not need this Mac online. Screenshot updates can have
-up to one polling interval of delay.
+The former local 15-minute publisher is retired and is not an active workflow.
+GitHub Actions deploys authored application assets; the responsible release agent
+updates R2 content and approved screenshots at each validated checkpoint using
+the procedure above. Public visitors do not depend on a local heartbeat.
 
 The CI-artifact-to-public-Site path is verified for main commit
 `0dc5c09890df6bbf8f942309558ad168b7a8857b`; public `/deployment.json` returns
@@ -352,9 +364,10 @@ The first local autoload checkpoint was verified before public v4: desktop and
 with no JavaScript/WebGL errors, music underruns or mobile overflow. The deployed
 v4 and v5 tests independently verified the no-disc flow publicly.
 
-The heartbeat `publish-atv-web-builds` ran once at 2026-10-11 21:12 UTC and skipped
-because main was unchanged; this predates v8. V4 through v8 were published through the native Sites
-workflow. A successful unattended publish is still unverified.
+Historical note: the former scheduled publisher ran once on 2026-10-11 21:12 UTC
+and skipped because main was unchanged. V4 through v8 used the native Sites
+workflow. The scheduled publisher has since been retired; neither Sites publishing
+nor that heartbeat is part of current production operations.
 
 ## Release commands
 
@@ -365,15 +378,11 @@ python3 tools/package_release.py --commit "$(git rev-parse HEAD)"
 python3 -m unittest discover -s tools -p 'test_release*.py'
 ```
 
-An unattended publisher first runs `python3 tools/fetch_site_release.py --site-url
-<literal-verified-Site-URL>`. It returns JSON with `ready`, `unchanged`, or a waiting
-state. On `ready`, use the returned paths and SHA with `python3 tools/stage_site.py
---release <release> --commit <commit>`, then the Sites skill's fresh-credential
-source-helper/save/deploy workflow. The fetcher verifies current-main CI success,
-artifact hashes and exclusions, and that main did not change during retrieval.
-Staging uses the CI development log revision; it overlays approved local screenshot
-references only for entry IDs whose authored metadata exactly matches that revision.
-Uncommitted local application changes and log edits cannot enter this CI-based publish.
+The current Cloudflare checkpoint workflow is described above. The earlier
+unattended Sites publisher and `stage_site.py` instructions are historical and
+should not be used for production. The validated fetcher checks current-main CI
+success, artifact hashes/exclusions, and that main did not change during retrieval;
+only committed metadata from that exact revision is eligible for R2 publication.
 
 `work/release/static/` is the asset-free CI application output for hosting, and
 `work/release/release.json` contains commit and file hashes. The packager validates

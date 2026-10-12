@@ -21,12 +21,29 @@ Verification retries briefly for propagation and fails the job on a mismatch.
 Deployments are serialized to avoid interrupting a deployment already in flight.
 This check has no private-disc dependencies and uploads no original resources.
 
-Screenshot PNGs and required runtime resources remain in the separate R2 package.
-The existing host heartbeat validates and updates that package from passing main
-checkpoints. Inspect screenshot pixels before publication and verify the public
-gallery after its upload. CI verifying dev-log text does not establish screenshot
-freshness, gameplay parity or successful browser startup; continue the public
-browser and complete R2 verification checkpoints.
+Screenshot PNGs and required runtime resources remain in the separate R2 package;
+none enter GitHub source or CI. There is no recurring publication heartbeat. At
+each completed checkpoint, the responsible release agent should:
+
+1. Wait for passing current-main CI and its automatic production deployment. Fetch
+the validated current-main artifact with `python3 tools/fetch_site_release.py`
+without `--site-url`, then confirm the public `/deployment.json` identifies that
+same commit.
+2. Inspect each newly approved screenshot before publication and confirm its
+metadata is part of the validated commit. Keep image files in ignored private
+storage.
+3. Upload the validated runtime-content and approved-gallery package with
+`python3 tools/upload_cloudflare_content.py --release <validated-release> --commit <commit>`.
+4. After any R2 or public application change, run
+`python3 tools/verify_cloudflare.py --url https://atv-offroad-fury-2.champtoday.workers.dev --commit <commit>`.
+Confirm the deployment identity, authored hashes, served-object hashes/sizes/MIME,
+and gallery references; run relevant public browser checks as well.
+
+The fetch must represent passing current main, never an uncommitted checkout. Do
+not publish WIP, unreviewed screenshots, ISO/BIOS/raw executable, unrelated disc
+content, reverse-engineering output or reference repositories. CI verifying
+committed dev-log text does not establish screenshot freshness, gameplay parity
+or successful browser startup.
 
 On 2026-10-12 02:55 UTC, public and committed dev-log metadata matched main
 `1de08b210680c184217bda6b82d5e912a19a6dce`: 50 entries and 45 screenshots.
