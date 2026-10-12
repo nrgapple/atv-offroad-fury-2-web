@@ -453,3 +453,27 @@ responses. Landing overlap remains 0.393066ft across 201 riding frames with none
 skipped. Normal-riding rider collision, MUD metadata, custom masks, dynamic actors,
 physical plant proxies, global attachment policy and full gameplay parity remain
 incomplete. The normal single-player chase source disables optional object queries.
+
+## Vegetation physical-contact public checkpoint (2026-10-12)
+
+Main `0541085b495fd9e8d0a0dae59ba6c8ea186f49cc`, CI `38264831246` succeeds
+and identifies the public authored app. The separate R2 package validates 324
+approved objects and uploads only two changed objects (one inspected route-context
+PNG and gallery metadata). HTTPS checks match 26 authored files and 323 served
+objects, with 79 log entries and 70 screenshots before the verification note.
+
+Serial public browser checks pass original-content tree contact, steered ENV04
+boundary launch/separation/recovery with paired expansion flags, failed Nac Nac
+recovery/driving, clean landing, all eight environments, desktop/portrait
+diagnostics, saved one-handed controls, touch stunt input and dev-log filters.
+The public tree contact matches host step 484; the boundary trace has three
+active wreck-rider plant-hit frames and 60 expansion-suppressed frames. A previous
+public steered attempt stalls on a hill; a fresh route passes without the temporary
+lean assist sending any input. This is bounded route coverage, not an original
+hardware or deterministic full-game replay. Public landing overlap is 0.637466ft
+across 210 riding frames/no skips; host is 0.393066ft across 201. These are different
+traces, so neither a clipping fix nor a causal regression is claimed.
+
+Visible water, moving Arlington Stream train and one-finger feedback are now
+parallel feature lanes with independently owned tested commits/publication. Their
+in-progress source and private screenshots are excluded from this release.

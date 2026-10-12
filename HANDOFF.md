@@ -1,6 +1,45 @@
 # Implementation handoff
 
-## Current vegetation contact gate (host work, publication pending)
+## Latest verified public gameplay checkpoint
+
+`0541085b495fd9e8d0a0dae59ba6c8ea186f49cc`, CI `38264831246` success,
+is live on the public Cloudflare app. Original placed cylinders now provide
+physical chassis, wheel and active wreck-rider contacts. Native constructor,
+tree/contact and dispatch comparisons plus 266 core + 2 WASM tests pass; serial
+host and public checks cover the real ENV04 tree contact, boundary
+launch/separation/recovery, Nac Nac recovery/driving, clean landing, ENV01–08,
+diagnostics, saved one-handed input, touch stunts and dev-log filters. HTTPS
+verification matches 26 authored files and 323 runtime/gallery objects, with 79
+entries and 70 inspected screenshots before the public verification note.
+
+The public tree hit is identical to host step 484: one chassis callback/contact,
+five proxy queries and no ordinary candidates. Public boundary recovery covers
+1,733 frames, 559 boundary/cached-rider frames, three rider tree-hit frames and
+60 flag-suppressed frames with zero plant expansion. A preceding steered public
+attempt stalled near a hill; a fresh run passes. The temporary lean-assist test
+branch never sent lean input and was removed. Host and public routes are not
+identical native gameplay replays. Public landing measures 0.637466ft tire overlap
+across 210 riding frames/no skips, versus host 0.393066ft/201; different inputs and
+timing prevent causal improvement/regression claims. Tire overlap remains open.
+
+The stranded Riding pose is below the source angle limits, and native chassis
+support is permitted. Missing animated normal-rider query remains a source-backed
+gap, but state0 skips independent wreck-rider physics. Replay the complete
+classifier/contact inputs before changing automatic recovery. Do not invent an
+upright snap or assume wheel contact absence mandates ejection.
+
+The user has promoted visible water and the working Arlington Stream train
+(ENV08), and requested more informative one-finger touch feedback. These are
+parallel feature lanes, currently unverified work: water uses original WaterFile,
+signatures and material resources; train uses original procedural/VUE routes and
+models; mobile feedback preserves existing controls. Feature agents may commit,
+push and complete their own tested checkpoints without waiting for every lane.
+Coordinate only shared-file staging and current-main publication, keep required
+checks and lighter-agent dev-log upkeep, and never publish WIP. Remaining original
+priorities—wreck/recovery, stunt fidelity, rider/ATV animation, HUD/modes,
+terrain/static collision, terrain LOD and vegetation—remain incomplete.
+
+## Vegetation host gate, subsequently released as 0541085
 
 The authored simulation now expands the original ESB cylinders for chassis,
 wheels and the active wreck rider. All eight Freestyle ecosystems contain only
@@ -39,7 +78,7 @@ the stranded tilted recovery case and wet-wreck coverage; priority 2 then
 addresses original wreck policy and controlled rotation/stunt behavior. No
 additional scored flip was established by the read-only source audit.
 
-Latest verified public gameplay component: `f6353c37684063777cd5d0cff1d87e99a0de615f`,
+Preceding verified public gameplay component: `f6353c37684063777cd5d0cff1d87e99a0de615f`,
 CI `38212608120` success. The active wreck rider now borrows the Vehicle's
 shared scene cache, using its animated thirteen-spoke bounds and inclusive/current
 eligibility rules. The wreck camera uses its independent original partition query

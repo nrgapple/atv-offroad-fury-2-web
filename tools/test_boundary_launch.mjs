@@ -20,7 +20,7 @@ try {
             const decoded = JSON.parse(new TextDecoder().decode(data.bytes));
             if (Array.isArray(decoded) && decoded[0]?.frame?.boundary_launch) {
               window.boundaryFrames.push(...decoded.map(({frame: f}) => ({
-                origin: f.origin, orientation: f.orientation, linear_velocity: f.linear_velocity,
+                origin: f.origin, orientation: f.orientation, linear_velocity: f.linear_velocity, applied_input: f.applied_input, chassis_contact_count: f.chassis_contact_count, obstacle_contact_count: f.obstacle_contact_count,
                 local_angular_velocity: f.local_angular_velocity, grounded: f.grounded,
                 boundary_launch: f.boundary_launch, skip_vegetation_query: f.skip_vegetation_query, scene_query: f.scene_query,
                 wreck: f.wreck, reset_count: f.reset_count, rider_wreck: f.rider_wreck,
