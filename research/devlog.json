@@ -1,5 +1,5 @@
 {
-  "status": "Public 0906822adbc585f58e4a7309322f63f4cc3f7b6a (CI 38194430965) verifies remappable keyboard/controller settings, the 21-song selector and paused preview, and the recovered ATV thumbnail in the Main Menu, alongside the previously verified touch, map and driving routes. Physical iOS/controller behavior, full flips, broader course coverage, terrain LOD, full soundtrack fidelity and complete original game modes remain unfinished.",
+  "status": "The public Rust driving reconstruction is progressing; it is not the complete game.",
   "working_on": "Integrating and validating rider crashes, stunts, HUD and remaining original game systems.",
   "entries": [
     {
@@ -875,9 +875,26 @@
       "limitation": "Dynamic props, native scene category registration and spatial-grid object order, smooth collision normals and full original handling remain incomplete. The image documents the updated crash regression, not a visual demonstration of raised-ramp support. Public release is pending.",
       "image": "/devlog-images/the-tires-can-finally-stand-on-recovered-prop-ramps-c6f40b86.png",
       "caption": "Inspected host 390px capture from the passing handling-build crash regression: failed Nac Nac display and recovered wreck route. Raised-prop tire support was checked separately in Rust; public release pending."
+    },
+    {
+      "id": "the-handling-and-wreck-checkpoint-passes-on-the-public-f075ffde",
+      "timestamp": "2026-10-12T02:58:38.097412+00:00",
+      "recorded_at": "2026-10-12T03:02:53.434227+00:00",
+      "kind": "verification",
+      "title": "The handling and wreck checkpoint passes on the public game",
+      "summary": "The public Cloudflare game now passes the updated handling integration, recovered wreck route and original HUD checks. All eight connected maps load and drive without a disc picker; this remains a partial Rust reconstruction.",
+      "details": [
+        "Gameplay checkpoint 91b60c4 deployed with the CI-history follow-up 6d31df367fa5a8f5165541a16df12889b3c4c91c; GitHub Actions run 38197954580 succeeded.",
+        "Public browser checks passed the touch Nac Nac \u2192 Vertical wreck \u2192 separation/ground animation \u2192 contact \u2192 automatic reset \u2192 resumed driving route, clean landing, and all eight connected maps.",
+        "Public hash verification reported 301 served runtime/gallery objects and 25 authored static files, with 53 existing log entries and 48 screenshots. These are verification counts for the release before this new log entry.",
+        "The separate approved R2 upload covered 302 objects with four changes; game resources and screenshots remain outside GitHub source and CI."
+      ],
+      "limitation": "Passing selected browser paths and object hashes does not establish complete original handling, crash/stunt parity, physical-device compatibility, racing or progression. The game remains an authored Rust/WebAssembly driving reconstruction.",
+      "image": "/devlog-images/the-handling-and-wreck-checkpoint-passes-on-the-public-f075ffde.png",
+      "caption": "Inspected public-test capture of the failed Nac Nac wreck route at 390px, showing the original HUD and failure-colored pending stunt display."
     }
   ],
-  "updated_at": "2026-10-12T02:52:19.738665+00:00",
+  "updated_at": "2026-10-12T03:02:53.434227+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

@@ -117,6 +117,32 @@ driving, pause and a 390px Caribou reload. The Main Menu includes the recovered
 or iOS compatibility, listening fidelity, full menu-art restoration, full flips
 or whole-game parity.
 
+## Coupled handling, wrecks, stunt scoring and HUD (2026-10-12)
+
+Gameplay commit `91b60c4849c6f52299a623caa6c224daa275598c` passed CI
+`38197809475` and deployed. The following CI visibility commit
+`6d31df367fa5a8f5165541a16df12889b3c4c91c` passed
+[`38197954580`](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38197954580)
+with identical gameplay code. Public HTTPS checks passed no-disc startup,
+all eight map loading/driving routes, a clean preload jump/landing, and a failed
+Nac Nac → detached rider contact → automatic recovery → resumed driving. The
+failed stunt displays its pending score without awarding it. No JS/GL errors
+were observed. Host tests also passed remapped controls and cancellation.
+
+The public verifier matched all 25 authored/static hashes, committed log text and
+301 served runtime/gallery objects by size, hash and MIME. There were 53 entries
+and 48 screenshots before adding the public verification entry. The separate R2
+package contained 302 approved objects, 272,296,009 bytes; four objects changed.
+An expired host OAuth token initially blocked screenshot upload; Wrangler refreshed
+the existing session and the retry succeeded. No new credential or exposure path
+was introduced. The original content remains separate from GitHub and CI.
+
+This checkpoint corrects wheel support on static props, speed/controller cadence,
+animated axle feedback and several crash/control gates. It does not establish
+complete original handling, race systems, dynamic collisions, water behavior,
+camera obstruction, LOD or vegetation parity. See [movement](MOVEMENT.md),
+[wrecks](WRECK.md), [animation](ANIMATION.md) and [HUD](HUD.md) for evidence and limits.
+
 ## Historical Sites hosting
 
 

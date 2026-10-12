@@ -9,6 +9,13 @@ Priority order: wrecks/recovery, stunts, ATV/rider animation, HUD,
 terrain/static collisions, terrain detail/LOD, original vegetation placements.
 Full parity remains the goal; component checks do not establish whole-game parity.
 
+Latest public gate: gameplay91b60c4 plus CI-only6d31df3 deployed and passed
+public wreck/clean-landing/all-eight-map browser checks; 25 static hashes and
+301 served runtime/gallery objects verified. Current follow-on ownership:
+movement_audit recovers native dynamic water heights; wreck_parity recovers
+static scene candidate caching/order/categories; root studies wreck-camera
+motion obstruction. New probes stay private until verified implementation.
+
 Active claims for this thread (handling audit after user rail screenshot):
 - Wreck/collision agent: core wreck*.rs, obstacle.rs, collision.rs; type3 queries, rider-height impact and chassis terrain gates.
 - Stunt/animation agent: core stunt.rs, rider_pose.rs, rider_control.rs, stunt_score.rs, rider_ik.rs; hard-landing and reverse controller gates.
