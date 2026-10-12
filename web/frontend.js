@@ -40,6 +40,7 @@ export class Frontend {
     window.addEventListener('keydown', e => {
       if (e.repeat || this.busy) return;
       if (this.root.hidden) return;
+      if (e.target.matches?.('input[type="range"]') && e.code !== 'Escape') return;
       this.menuKeys.add(e.code);
       if (this.page === 'pause' && gameplayBindings.value('keyboard','pause',this.menuKeys,null) > .5) { e.preventDefault(); this.resume(); return; }
       const action = ({ ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'accept', Space: 'accept', Escape: 'back', Backspace: 'back' })[e.code];
@@ -205,6 +206,8 @@ export class Frontend {
       return this.show(({bindings:'controls',music:'pause',controls:'pause',main:'title',single:'main',tracks:'single'})[this.page] ?? 'title');
     } else if (this.page === 'tracks' && ['left','right','up','down'].includes(action)) {
       this.track = (this.track + (['left','up'].includes(action) ? -1 : 1) + this.tracks.length) % this.tracks.length;
+    } else if (this.page === 'controls' && this.frame.choices[this.selection] === 'steering-sensitivity' && ['left','right'].includes(action)) {
+      this.mobileControls?.setSteeringSensitivity(this.mobileControls.steeringSensitivity + (action === 'left' ? -5 : 5));
     } else if (['bindings','music'].includes(this.page) && ['left','right'].includes(action)) {
       return this.run(`${this.page === 'music' ? 'music' : 'bind'}${action === 'left' ? 'prev' : 'next'}`);
     } else if (action === 'accept') {
@@ -235,6 +238,7 @@ export class Frontend {
       else if (action.startsWith('song:')) { const music = this.audio?.()?.music; music?.setEnabled(true); music?.select(Number(action.slice(5))); this.syncPreview(); }
       else if (action === 'musictoggle') { const music = this.audio?.()?.music; if (music) music.setEnabled(!music.snapshot().enabled); this.syncPreview(); }
       else if (action === 'musicvolume') { const music = this.audio?.()?.music; if (music) music.setVolume((Math.round(music.snapshot().volume * 4) + 1) % 5 / 4); }
+      else if (action === 'steering-sensitivity') { this.buttons.querySelector('input[type=range]')?.focus(); return; }
       else if (action === 'onehanded') this.mobileControls?.toggleOneHanded();
       else if (action === 'diagnostics') this.diagnosticsOverlay?.cycle();
       else if (action === 'resume') return this.resume();
@@ -251,7 +255,7 @@ export class Frontend {
     const stage = this.canvas.parentElement, track = this.tracks[this.track];
     const music = this.audio?.()?.music, musicState = music?.snapshot();
     const request = {page:this.page,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:track?.name ?? '',track_image:track?.image ?? '',fullscreen:Boolean(document.fullscreenEnabled),
-      one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
+      mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
       music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
       music_page:this.musicPage,music_status:musicState ? `${musicState.enabled ? 'On' : 'Off'} / Volume ${Math.round(musicState.volume * 100)}% / ${musicState.title || 'Choose a song'}` : '',music_enabled:musicState?.enabled ?? true,music_volume:Math.round((musicState?.volume ?? .7)*100),menu_logo:this.images.has('original-logo'),menu_atv:this.images.has('multi_atv01')};
@@ -262,13 +266,15 @@ export class Frontend {
       const frame = await this.json(62,new TextEncoder().encode(key));
       // Page/viewport can change while the worker handles the request. The next
       // frame requests fresh data, rather than applying a stale hit map.
-      if ((this.capture?.label ?? '') !== request.capture_label || this.bindingPage !== request.binding_page || this.musicPage !== request.music_page || this.page !== request.page || this.selection !== request.selection || this.tracks[this.track]?.image !== request.track_image || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
+      if ((this.mobileControls?.steeringSensitivity ?? 85) !== request.mobile_steering_sensitivity || (this.capture?.label ?? '') !== request.capture_label || this.bindingPage !== request.binding_page || this.musicPage !== request.music_page || this.page !== request.page || this.selection !== request.selection || this.tracks[this.track]?.image !== request.track_image || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
       this.frame = frame; this.layoutKey = key; this.draw(); this.rebuildButtons();
     } catch (error) { this.fail(error); }
     finally { this.layoutPending = false; }
   }
   rebuildButtons() {
-    this.buttons.replaceChildren();
+    // Preserve native range nodes during input/redraw so dragging and keyboard
+    // focus survive every Rust label update.
+    for (const element of [...this.buttons.children]) if (element.tagName !== 'INPUT' || !this.frame.sliders.some(slider => slider.action === element.dataset.setting)) element.remove();
     for (const hit of this.frame.hits) {
       const b = document.createElement('button'), [x,y,w,h] = hit.rect;
       b.dataset.action = hit.action; b.type = 'button'; b.textContent = hit.label; b.setAttribute('aria-label',hit.label);
@@ -277,6 +283,26 @@ export class Frontend {
       b.setAttribute('aria-current',String(hit.selected));
       b.onclick = () => void this.run(hit.action);
       this.buttons.append(b);
+    }
+    for (const slider of this.frame.sliders) {
+      let input = this.buttons.querySelector(`input[data-setting="${slider.action}"]`);
+      if (!input) {
+        input = document.createElement('input'); input.type = 'range'; input.className = 'atv-range'; input.dataset.setting = slider.action;
+        input.setAttribute('aria-label', slider.label);
+        input.addEventListener('input', () => {
+          this.mobileControls?.setSteeringSensitivity(Number(input.value));
+          input.setAttribute('aria-valuetext', `${input.value}%`);
+          input.style.setProperty('--atv-range-fill', `${(Number(input.value) - Number(input.min)) / (Number(input.max) - Number(input.min)) * 100}%`);
+          this.layoutKey = ''; void this.refresh();
+        });
+        this.buttons.append(input);
+      }
+      const [x,y,w,h] = slider.rect;
+      Object.assign(input.style, { position: 'absolute', left: `${x/this.frame.width*100}%`, top: `${y/this.frame.height*100}%`, width: `${w/this.frame.width*100}%`, height: `${h/this.frame.height*100}%` });
+      input.min = slider.min; input.max = slider.max; input.step = slider.step; input.value = slider.value;
+      input.setAttribute('aria-valuetext', `${slider.value}%`);
+      input.style.setProperty('--atv-range-fill', `${(slider.value-slider.min)/(slider.max-slider.min)*100}%`);
+      input.dataset.selected = String(slider.selected);
     }
     this.root.dataset.page = this.page; this.root.dataset.selection = String(this.selection);
     this.root.dataset.track = this.tracks[this.track]?.id ?? '';

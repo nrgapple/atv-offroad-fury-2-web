@@ -61,3 +61,12 @@
   text-shadow: none;
 }
 .atv-control:disabled { opacity: .4; cursor: default; }
+
+/* Native range input: original gold selection palette, 44px touch surface. */
+.atv-range { appearance: none; -webkit-appearance: none; min-height: var(--atv-control-hit); margin: 0; padding: 0; border: 0; background: transparent; cursor: pointer; touch-action: pan-y; }
+.atv-range::-webkit-slider-runnable-track { height: 8px; border: 1px solid var(--atv-metal-edge); border-radius: 4px; background: linear-gradient(to right, var(--atv-gold) var(--atv-range-fill, 35%), var(--atv-ink) var(--atv-range-fill, 35%)); box-shadow: inset 0 1px 2px #000; }
+.atv-range::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 22px; height: 22px; margin-top: -8px; border: 1px solid var(--atv-gold); border-radius: 50%; background: linear-gradient(var(--atv-gold-light), var(--atv-gold-deep)); box-shadow: var(--atv-shadow); }
+.atv-range::-moz-range-track { height: 8px; border: 1px solid var(--atv-metal-edge); border-radius: 4px; background: var(--atv-ink); }
+.atv-range::-moz-range-progress { height: 8px; background: var(--atv-gold); }
+.atv-range::-moz-range-thumb { width: 22px; height: 22px; border: 1px solid var(--atv-gold); border-radius: 50%; background: linear-gradient(var(--atv-gold-light), var(--atv-gold-deep)); box-shadow: var(--atv-shadow); }
+.atv-range:focus-visible { outline: 2px solid var(--atv-focus); outline-offset: 2px; border-radius: var(--atv-control-radius); }

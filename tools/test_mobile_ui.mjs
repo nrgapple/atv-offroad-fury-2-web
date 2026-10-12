@@ -69,7 +69,7 @@ try {
     await touch('touchStart', [left, right]);
     await page.waitForFunction(() => window.atvTerrainStatus.input?.throttle === 1 && window.atvTerrainStatus.input?.preload_axis === 1);
     await touch('touchMove', [{ ...left, x: 95, y: 525 }, right]);
-    await page.waitForFunction(() => window.atvTerrainStatus.input?.steer === -.5 && window.atvTerrainStatus.input?.lean === -.5);
+    await page.waitForFunction(() => Math.abs(window.atvTerrainStatus.input?.steer + .425) < 1e-6 && window.atvTerrainStatus.input?.lean === -.5);
     assert.equal(await page.locator('.touch-rider-marker').evaluate(el => getComputedStyle(el).width), '72px');
     await touch('touchCancel');
     await page.waitForFunction(() => window.atvTerrainStatus.input?.throttle === 0 && window.atvTerrainStatus.input?.lean === 0);

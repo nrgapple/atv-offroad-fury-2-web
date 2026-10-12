@@ -56,6 +56,11 @@ pub struct Request {
     pub diagnostics_mode: String,
     #[serde(default)]
     pub one_handed_mobile: bool,
+    #[serde(default = "default_steering_sensitivity")]
+    pub mobile_steering_sensitivity: f32,
+}
+fn default_steering_sensitivity() -> f32 {
+    85.
 }
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -98,12 +103,24 @@ pub struct Hit {
     pub selected: bool,
 }
 #[derive(Serialize)]
+pub struct Slider {
+    pub action: &'static str,
+    pub label: &'static str,
+    pub rect: [f32; 4],
+    pub value: f32,
+    pub min: f32,
+    pub max: f32,
+    pub step: f32,
+    pub selected: bool,
+}
+#[derive(Serialize)]
 pub struct Frame {
     pub width: f32,
     pub height: f32,
     pub draw: Vec<Draw>,
     pub hits: Vec<Hit>,
     pub choices: Vec<String>,
+    pub sliders: Vec<Slider>,
 }
 impl Frame {
     fn rect(
@@ -194,6 +211,8 @@ pub fn layout(request: Request) -> Result<Frame> {
         || !request.height.is_finite()
         || !(240.0..=16384.0).contains(&request.width)
         || !(240.0..=16384.0).contains(&request.height)
+        || !request.mobile_steering_sensitivity.is_finite()
+        || !(50.0..=150.0).contains(&request.mobile_steering_sensitivity)
         || request.track_name.len() > 128
         || request.track_image.len() > 128
         || request.capture_label.len() > 128
@@ -228,6 +247,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         draw: vec![],
         hits: vec![],
         choices: vec![],
+        sliders: vec![],
     };
     if pause {
         f.rect([0., 0., w, h], 0., "#00000070", "#00000070", "");
@@ -513,7 +533,20 @@ pub fn layout(request: Request) -> Result<Frame> {
             }
         }
         "controls" => {
-            let touch_lines = if request.one_handed_mobile {
+            let compact = portrait && h < 540.;
+            let touch_lines = if compact {
+                if request.one_handed_mobile {
+                    vec![
+                        "Hold: drive / brace. Drag: steer / lean.",
+                        "Lift: coast / release preload.",
+                    ]
+                } else {
+                    vec![
+                        "Left: steer / lean. Right: drive / brake.",
+                        "Hold: brace. Air: swipe / circle tricks.",
+                    ]
+                }
+            } else if request.one_handed_mobile {
                 vec![
                     "One thumb anywhere: hold to drive and brace.",
                     "Drag left / right to steer; up / down to lean.",
@@ -536,7 +569,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                 } else {
                     30. + index as f32 * (w - 60.) / 3.
                 };
-                let width = w - 60.;
+                let width = if portrait { w - 60. } else { w * 0.55 - 60. };
                 if !portrait {
                     y = 102.;
                 }
@@ -555,6 +588,31 @@ pub fn layout(request: Request) -> Result<Frame> {
                 }
                 y += 18.;
             }
+            let slider_x = if portrait { 30. } else { w * 0.57 };
+            let slider_y = if portrait { y - 4. } else { 110. };
+            let slider_width = if portrait { w - 60. } else { w * 0.43 - 30. };
+            f.text(
+                format!(
+                    "Mobile steering: {}%",
+                    request.mobile_steering_sensitivity as u32
+                ),
+                [slider_x, slider_y],
+                0.85,
+                FONT,
+                "255,226,107",
+                slider_width,
+            );
+            f.sliders.push(Slider {
+                action: "steering-sensitivity",
+                label: "Mobile steering sensitivity",
+                rect: [slider_x, slider_y + 26., slider_width, 44.],
+                value: request.mobile_steering_sensitivity,
+                min: 50.,
+                max: 150.,
+                step: 5.,
+                selected: request.selection == 0,
+            });
+            f.choices.push("steering-sensitivity".into());
             for (i, (label, action)) in [
                 ("Keyboard bindings", "keyboard"),
                 ("Controller bindings", "controller"),
@@ -566,7 +624,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                     label,
                     action,
                     [24., h - 182. + i as f32 * 54., w - 48., 54.],
-                    request.selection == i,
+                    request.selection == i + 1,
                 );
                 f.choices.push((*action).into());
             }
@@ -574,7 +632,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                 "Back",
                 "back",
                 [24., h - 68., 132., 56.],
-                request.selection == 2,
+                request.selection == 3,
             );
             f.choices.push("back".into());
         }
@@ -747,6 +805,7 @@ mod tests {
             menu_atv: true,
             diagnostics_mode: String::new(),
             one_handed_mobile: false,
+            mobile_steering_sensitivity: 85.,
         }
     }
     #[test]
@@ -797,6 +856,34 @@ mod tests {
                 }
             }
         }
+    }
+    #[test]
+    fn steering_slider_is_bounded_and_clear_of_bindings() {
+        for (w, h) in [
+            (390., 844.),
+            (320., 568.),
+            (390., 448.),
+            (844., 390.),
+            (1280., 720.),
+        ] {
+            let f = layout(request("controls", w, h)).unwrap();
+            assert_eq!(f.sliders.len(), 1);
+            let slider = &f.sliders[0];
+            assert_eq!(
+                (slider.min, slider.max, slider.step, slider.value),
+                (50., 150., 5., 85.)
+            );
+            let [x, y, width, height] = slider.rect;
+            assert!(x >= 0. && y >= 0. && x + width <= f.width && y + height <= f.height);
+            assert!(height * w / f.width >= 34.);
+            assert!(
+                f.hits.iter().all(|hit| y + height <= hit.rect[1]),
+                "slider must not cover binding buttons"
+            );
+        }
+        let mut invalid = request("controls", 390., 844.);
+        invalid.mobile_steering_sensitivity = f32::NAN;
+        assert!(layout(invalid).is_err());
     }
     #[test]
     fn invalid_menu_requests_are_rejected() {

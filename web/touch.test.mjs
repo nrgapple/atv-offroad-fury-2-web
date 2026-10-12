@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TouchInput, TouchLeanIntent, oneHandedFeedback, loadOneHandedPreference } from './touch.js';
+import { TouchInput, TouchLeanIntent, oneHandedFeedback, loadOneHandedPreference, loadSteeringSensitivity, normalizeSteeringSensitivity, DEFAULT_STEERING_SENSITIVITY } from './touch.js';
 
 test('ground right press drives, back drag brakes, release requests preload once', () => {
   const touch=new TouchInput();touch.begin(1,300,500);
@@ -134,4 +134,28 @@ test('compact feedback follows cardinal and diagonal commands without consuming 
   touch.end(1);
   assert.deepEqual(oneHandedFeedback(touch), { steer: 0, lean: 0, cue: '' });
   assert.equal(touch.sample().preload_axis, -1);
+});
+
+
+test('mobile steering preference has a gentler default and safe persistent bounds', () => {
+  assert.equal(DEFAULT_STEERING_SENSITIVITY, 85);
+  for (const saved of [null, undefined, '', 'junk', '0', '151']) assert.equal(loadSteeringSensitivity(() => saved), 85);
+  assert.equal(loadSteeringSensitivity(() => { throw new Error('denied'); }), 85);
+  for (const value of [50, 85, 100, 150]) assert.equal(loadSteeringSensitivity(() => String(value)), value);
+  assert.equal(normalizeSteeringSensitivity(1), 50); assert.equal(normalizeSteeringSensitivity(300), 150);
+  assert.equal(normalizeSteeringSensitivity(NaN), 85); assert.equal(normalizeSteeringSensitivity(102), 100);
+});
+
+test('sensitivity softens both touch modes without capping full lock or changing lean/brace', () => {
+  const one = new TouchInput(); one.setOneHanded(true); one.steeringSensitivity = 85; one.begin(1, 100, 500); one.move(1, 135, 535);
+  assert.equal(one.sample().steer, .425); assert.equal(one.sample().lean, .5); assert.equal(one.sample().preload_axis, 1);
+  assert.equal(oneHandedFeedback(one).steer, .425);
+  one.move(1, 200, 535); assert.equal(one.sample().steer, 1, 'larger drag still reaches full lock');
+  let sensitivity = 85;
+  const two = new TouchLeanIntent(() => sensitivity); two.begin(1, 100, 500); two.move(1, 135, 535);
+  assert.equal(two.steer, .425); assert.equal(two.lean, .5);
+  sensitivity = 50; assert.equal(two.steer, .25, 'setting applies to existing displacement');
+  two.move(1, -40, 535); assert.equal(two.steer, -1, 'low sensitivity still reaches full left lock');
+  sensitivity = 150; two.move(1, 135, 535); assert.equal(two.steer, .75); assert.equal(two.lean, .5);
+  two.end(1); assert.equal(two.steer, 0); assert.equal(two.lean, 0);
 });
