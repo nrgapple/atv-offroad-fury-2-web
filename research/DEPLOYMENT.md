@@ -477,3 +477,30 @@ traces, so neither a clipping fix nor a causal regression is claimed.
 Visible water, moving Arlington Stream train and one-finger feedback are now
 parallel feature lanes with independently owned tested commits/publication. Their
 in-progress source and private screenshots are excluded from this release.
+
+
+## Original train contacts, rider impacts and wheel effects (2026-10-12)
+
+Public commit 9ac73657ba94045aa319d3eaed6d481162f242fd passes CI 38285135155.
+The validated current-main artifact and public deployment identity match; R2
+publication validates 335 approved objects and uploads 6 changes, including only
+the four required original BodyImpact samples in the compact audio bank, approved
+wheel captures and metadata. HTTPS verifies 29 authored files and 334 served
+objects, with 93 log entries/81 inspected images before the public verification
+note. Original data, screenshots and native probes remain excluded from Git/CI.
+
+Public train scenarios match host results: a rideable front lift/air/landing,
+a 65.4826ft/s upward head-on launch, side wreck/recovery, and top/drop contacts.
+The front effect comes from original collision ramp geometry and moving-target
+contact response. Actual touch wrecks produce two original rider clips with
+isolated PCM energy, no overlapping voices or queued backlog; cached detached
+sound location, recovery and pause/resume pass. All three train samples/11 loops,
+near/far stereo/Doppler and GL restoration pass without duplicate starts.
+
+Dry dust/turning dirt, original water and actual MUD effects pass desktop/390px:
+changed pixel counts 69/48, 4109/3322 and 1288/1286 respectively. Surface/atlas
+selection, pause/resume and context restoration pass at at most two draws and
+1,031,664 GPU bytes. Source-correlated kernels do not establish hardware or full
+gameplay parity. Normal public title/menu/controller/Tioga/Controls and 390px
+Caribou reload pass without file selection or browser errors. Missing curved
+rail geometry remains the next separate source placement repair.

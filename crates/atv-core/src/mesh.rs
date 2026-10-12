@@ -278,6 +278,20 @@ fn packet(
 }
 
 pub fn decode_psg(data: &[u8]) -> Result<Mesh> {
+    decode_psg_root(data, false)
+}
+
+/// Geometry relative to the model root for a static scene placement.
+/// 00206ba0 replaces the loaded root translation (001657c0) and basis
+/// (00164dd0), rather than composing the scene matrix with its bind matrix.
+/// Decode with an identity root so descendants retain their authored local
+/// transforms, including normals, without an approximate inverse of the bind.
+/// Vehicle, rider and ecosystem readers continue to use the stored bind pose.
+pub fn decode_psg_for_scene(data: &[u8]) -> Result<Mesh> {
+    decode_psg_root(data, true)
+}
+
+fn decode_psg_root(data: &[u8], scene_root: bool) -> Result<Mesh> {
     if data.len() > 128 * 1024 * 1024 {
         return Err("PSG exceeds 128 MiB limit".into());
     }
@@ -305,7 +319,11 @@ pub fn decode_psg(data: &[u8]) -> Result<Mesh> {
         for (i, value) in local_matrix.iter_mut().enumerate() {
             *value = float(data, at + 128 + i * 4)?;
         }
-        let world_matrix = if parent < 0 {
+        let world_matrix = if scene_root && index == 0 {
+            [
+                1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+            ]
+        } else if parent < 0 {
             local_matrix
         } else {
             let pm = &nodes[parent as usize].world_matrix;
@@ -450,6 +468,59 @@ mod tests {
         data.extend(geometry);
         data
     }
+    #[test]
+    fn static_placement_replaces_root_and_preserves_child_positions_and_normals() {
+        let mut data = synthetic_psg(3);
+        let root = [
+            0f32, 2., 0., 0., -3., 0., 0., 0., 0., 0., 4., 0., 100., 20., -300., 1.,
+        ];
+        for (i, value) in root.iter().enumerate() {
+            data[12 + 128 + i * 4..12 + 132 + i * 4].copy_from_slice(&value.to_le_bytes());
+        }
+        let mut child = data[12..236].to_vec();
+        let child_matrix = [
+            1f32, 0., 0., 0., 0., 0., -1., 0., 0., 2., 0., 0., 5., 6., 7., 1.,
+        ];
+        for (i, value) in child_matrix.iter().enumerate() {
+            child[128 + i * 4..132 + i * 4].copy_from_slice(&value.to_le_bytes());
+        }
+        child[220..224].copy_from_slice(&0i32.to_le_bytes());
+        data.splice(236..236, child);
+        data[8..12].copy_from_slice(&2u32.to_le_bytes());
+        let packet = 12 + 448 + 4 + 64 + 32 + 4 + 8 + 20;
+        for i in 0..3 {
+            let weight = if i == 2 { 32i16 } else { -32 };
+            let offset = packet + 4 + i * 8 + 6;
+            data[offset..offset + 2].copy_from_slice(&weight.to_le_bytes());
+        }
+        let bind = decode_psg(&data).unwrap();
+        let scene = decode_psg_for_scene(&data).unwrap();
+        let bind_vertex = &bind.lods[0].groups[0].vertices[0];
+        let relative_vertex = &scene.lods[0].groups[0].vertices[0];
+        assert_eq!(bind_vertex.position, [82., 28., -272.]);
+        assert_eq!(relative_vertex.position, [4., 6., 7.]);
+        assert_eq!(bind_vertex.normal, [-6., 0., 0.]);
+        assert_eq!(relative_vertex.normal, [0., 2., 0.]);
+        assert_eq!(scene.lods[0].groups[0].vertices[2].position, [5., 6., 5.]);
+        assert_eq!(scene.nodes[0].local_matrix, root);
+        assert_eq!(scene.nodes[1].world_matrix, child_matrix);
+        assert_eq!(
+            scene.lods[0].groups[0].indices,
+            bind.lods[0].groups[0].indices
+        );
+        // Exercise the same scene orientation interface used by the WASM loader.
+        let placement =
+            crate::scene::placement_matrix([10., 40., 30.], [1., 0., 0.], [0., 1., 0.]).unwrap();
+        assert_eq!(
+            point(&placement, relative_vertex.position, true),
+            [17., 46., 26.]
+        );
+        assert_eq!(
+            point(&placement, relative_vertex.normal, false),
+            [0., 2., 0.]
+        );
+    }
+
     #[test]
     fn v3_and_v4_share_the_bounded_geometry_layout() {
         for version in [3, 4] {

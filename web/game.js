@@ -199,7 +199,8 @@ async function terrainFromContent(file, files, token, environment = "env01") {
     const modelIndex = entries.findIndex(entry => entry.name.replaceAll('\\', '/').toLowerCase() === `geometry/${name}.psg`.toLowerCase());
     if (modelIndex < 0) throw new Error(`Original scene mesh is missing: ${name}`);
     try {
-      const model = await json(11, await codec(3, resource, modelIndex));
+      // Static scene setters replace the PSG root; upload root-relative geometry.
+      const model = await json(11, await codec(3, resource, modelIndex), 1);
       const textures = await baseTextures(model, resource, entries, sceneTextures);
       for (const [name, texture] of textures) sceneTextures.set(name, texture);
       sceneMeshes.set(name, model);

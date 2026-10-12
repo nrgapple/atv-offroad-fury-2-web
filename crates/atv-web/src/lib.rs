@@ -1599,7 +1599,11 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             let heights = terrain::decode_tr2(input)?.heightfield()?;
             return Ok(heights.iter().flat_map(|h| h.to_le_bytes()).collect());
         }
-        11 => serde_json::to_vec(&mesh::decode_psg(input)?),
+        11 => serde_json::to_vec(&match index {
+            0 => mesh::decode_psg(input)?,
+            1 => mesh::decode_psg_for_scene(input)?,
+            _ => return Err("unknown PSG coordinate space".into()),
+        }),
         30 => serde_json::to_vec(&terrain::texture_layout(input)?),
         35 => return Ok(atv_core::ipu::decode_ipum(input)?.rgba),
         36 => serde_json::to_vec(&atv_core::ipu::decode_ipum(input)?.info),

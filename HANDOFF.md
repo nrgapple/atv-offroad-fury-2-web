@@ -1,25 +1,37 @@
 # Implementation handoff
 
-## Current train and wheel integration gate
+## Latest train and wheel public checkpoint
 
-Original train motion/rendering and three spatial train loops are public at
-`d308c629b44ebeae5c26378c43544c75a84e0f1c` (CI 38280220923). Visible water and
-compact one-finger feedback/default are public at 629bc0a and its successors.
-The current host gate connects all 11 original colliding train bodies through the
-native static-provider/dynamic-list order, moving contact velocity, sequential
-height/pose publication, wheel support, detached rider and recovery queries.
-Original locomotive COL ramp faces produce the front lift: no scripted launch
-or unconditional side-wreck trigger was found. The route-derived encounter test
-passes a rideable lift/landing, a 65ft/s upward head-on launch, and side/top
-contacts with wreck/recovery. Source component probes do not prove a full PS2
-or identical original gameplay replay. See research/TRAIN_CONTACT.md.
+`9ac73657ba94045aa319d3eaed6d481162f242fd` is public on Cloudflare, CI
+38285135155 success. HTTPS verification matches 29 authored files and 334 served
+objects (93 devlog entries, 81 inspected screenshots before the verification
+entry). Public train tests pass the same four source-route cases as the host:
+a rideable front lift/airborne interval/landing, a 65.48ft/s upward head-on launch,
+side-body wreck/recovery and top/drop wheel/body contacts. The bridge binds all 11
+source collision-enabled cars through original list order, moving velocities,
+sequential scene height queries and pose publication. No scripted front-launch
+or unconditional side-wreck rule was introduced. See research/TRAIN_CONTACT.md.
 
-Original dry dust/dirt and water/mud particle work plus four rider impact samples
-share this integration gate. Screenshot/log metadata and private runtime audio
-assets must pass the current-main release process before claiming public delivery.
-The user asks to deploy these updates before fixing missing ENV08 rails. A
-read-only census finds 68 original track placements decoded; their rendering and
-terrain overlap still need investigation. Keep this out of the current gate.
+Original dust, turning dirt chunks/spray, water and actual MUD roost pass all six
+public desktop/390px gates, pause and context restoration without JS/GL errors.
+They use at most two draws and 1,031,664 GPU bytes in the tested scene. Mud detection
+retains terrain support and excludes MUD from established AR/AO geometry before
+nearest-row generation, as proven by 001e92c0/0011eeb0. Native kernel comparisons
+and these checks do not establish PS2 GS/VU, physical-phone or full-game parity.
+See research/WHEEL_EFFECTS.md.
+
+Four original rider impact samples now play from actual touch wrecks. Public
+isolated PCM, native sampled deltas, no overlap/backlog, cached actor position,
+recovery and pause/resume pass. Three original train samples retain 11 spatial
+loops, near/far gains, pan/Doppler and context restoration. Public title/menu,
+controller-to-Tioga, Controls and 390px Caribou reload pass without a disc picker.
+
+The user asks to deploy these updates before repairing missing ENV08 rails; that
+ordering is fulfilled. Read-only census finds all 68 track placements loaded.
+Native root setters show that 12 curved meshes carry a saved PSG model translation
+which must be replaced by scene placement, rather than applied twice. A separate
+scene mesh decoder repair is in progress; terrain/COL/route transforms must stay
+unchanged. Keep normal ATV/rider bind-pose decoding intact.
 
 ## Earlier verified public gameplay checkpoint
 
