@@ -51,6 +51,7 @@ pub struct Frame {
     pub grounded: bool,
     pub contact_count: usize,
     pub static_contact_count: usize,
+    pub sampled_impact_delta: Vec3,
     pub water_touching: bool,
     pub water_contact_count: usize,
     pub world_matrix: [f32; 16],
@@ -68,6 +69,8 @@ pub struct SceneQueryFrame {
     pub refreshed: bool,
     pub cached_nodes: usize,
     pub selected_static: usize,
+    pub selected_dynamic: usize,
+    pub dynamic_contact_callbacks: usize,
     pub vegetation_candidates: usize,
     pub unsupported_vegetation_proxies: usize,
     pub vegetation_proxy_queries: usize,
@@ -81,6 +84,7 @@ struct ContactPoint {
     node: usize,
     offset: Vec3,
 }
+type BodyContact = (Vec3, Vec3, Vec3, f32, Option<crate::train::MotionState>);
 /// Native animated terrain contact offsets, in bone-local coordinates. Four
 /// extra UprTorso points in002d7dc0 belong to water and are not terrain points.
 const CONTACT_POINTS: [(&str, Vec3); 13] = [
@@ -138,6 +142,7 @@ pub struct Animator {
     grounded: bool,
     contact_count: usize,
     static_contact_count: usize,
+    sampled_impact_delta: Vec3,
     water_touching: bool,
     water_contact_count: usize,
     obstacles: Vec<crate::obstacle::StaticObstacle>,
@@ -223,6 +228,7 @@ impl Animator {
             grounded: false,
             contact_count: 0,
             static_contact_count: 0,
+            sampled_impact_delta: [0.; 3],
             water_touching: false,
             water_contact_count: 0,
             obstacles: Vec::new(),
@@ -264,6 +270,7 @@ impl Animator {
         self.grounded = false;
         self.contact_count = 0;
         self.static_contact_count = 0;
+        self.sampled_impact_delta = [0.; 3];
         self.water_touching = false;
         self.water_contact_count = 0;
         self.scene_query = SceneQueryFrame::default();
@@ -293,6 +300,7 @@ impl Animator {
         self.grounded = false;
         self.contact_count = 0;
         self.static_contact_count = 0;
+        self.sampled_impact_delta = [0.; 3];
         self.water_touching = false;
         self.water_contact_count = 0;
         self.scene_query = SceneQueryFrame::default();
@@ -346,6 +354,7 @@ impl Animator {
             grounded: self.grounded,
             contact_count: self.contact_count,
             static_contact_count: self.static_contact_count,
+            sampled_impact_delta: self.sampled_impact_delta,
             water_touching: self.water_touching,
             water_contact_count: self.water_contact_count,
             world_matrix: self.world,
@@ -548,6 +557,7 @@ impl Animator {
         self.grounded = false;
         self.contact_count = 0;
         self.static_contact_count = 0;
+        self.sampled_impact_delta = [0.; 3];
         self.water_touching = false;
         self.water_contact_count = 0;
         let mut elapsed = 0.;
@@ -598,7 +608,7 @@ impl Animator {
             }
             let mut corrections = crate::contact::ContactCorrections::default();
             last_contacts = 0;
-            for (index, &(local, ground, normal, grip)) in contacts.iter().enumerate() {
+            for (index, &(local, ground, normal, grip, target)) in contacts.iter().enumerate() {
                 let point = crate::obstacle::transform_point(&model, local);
                 let penetration = dot(sub(ground, point), normal);
                 if penetration > 0. {
@@ -609,24 +619,46 @@ impl Animator {
                     //001ef690 activates the body before integration when any
                     //contact is reported, including while still attached.
                     self.integration_active = true;
-                    crate::contact::resolve_static_with_position_scale(
-                        body,
-                        &self.config,
-                        crate::contact::ContactConfig {
-                            reflection: 0.,
-                            angular_impulse_scale: 1.,
-                            friction_scale: 1.,
-                            friction_torque_scale: 1.,
-                        },
-                        crate::contact::StaticContact {
-                            point: add(point, scale(normal, penetration)),
-                            normal,
-                            penetration,
-                            material_grip: grip,
-                        },
-                        &mut corrections,
-                        0.25,
-                    )?;
+                    let config = crate::contact::ContactConfig {
+                        reflection: 0.,
+                        angular_impulse_scale: 1.,
+                        friction_scale: 1.,
+                        friction_torque_scale: 1.,
+                    };
+                    let contact = crate::contact::StaticContact {
+                        point: add(point, scale(normal, penetration)),
+                        normal,
+                        penetration,
+                        material_grip: grip,
+                    };
+                    if let Some(target) = target {
+                        target.resolve_contact_with_position_scale(
+                            body,
+                            &self.config,
+                            config,
+                            contact,
+                            &mut corrections,
+                            0.25,
+                        )?;
+                    } else {
+                        crate::contact::resolve_static_with_position_scale(
+                            body,
+                            &self.config,
+                            config,
+                            contact,
+                            &mut corrections,
+                            0.25,
+                        )?;
+                    }
+                }
+            }
+            for (sample, delta) in self
+                .sampled_impact_delta
+                .iter_mut()
+                .zip(corrections.velocity_delta)
+            {
+                if delta.abs() > sample.abs() {
+                    *sample = delta;
                 }
             }
             if self.integration_active {
@@ -654,7 +686,7 @@ impl Animator {
         pose: &Pose,
         scene: Option<&mut crate::scene_collision::SceneCollision>,
         skip_vegetation_query: bool,
-    ) -> Result<Vec<(Vec3, Vec3, Vec3, f32)>> {
+    ) -> Result<Vec<BodyContact>> {
         let endpoints: Vec<_> = self
             .points
             .iter()
@@ -678,20 +710,23 @@ impl Animator {
         };
         let selected = if let Some(scene) = scene {
             let exclusions = &self.static_exclusions;
-            let query =
-                scene.cached_query(center, radius, |index, _| !exclusions.contains(&index))?;
+            let mud = scene.mud_obstacles().to_vec();
+            let query = scene.cached_query(center, radius, |index, _| {
+                !exclusions.contains(&index) && !mud[index]
+            })?;
             let selected = scene.physical_selection(
                 &query,
                 crate::scene_collision::PhysicalTrim::CachedRider,
                 center,
                 radius,
                 skip_vegetation_query,
-                |index, _| !exclusions.contains(&index),
+                |index, _| !exclusions.contains(&index) && !mud[index],
             )?;
             self.scene_query.cached = true;
             self.scene_query.refreshed = query.refreshed;
             self.scene_query.cached_nodes = query.candidates.len();
             self.scene_query.selected_static = selected.static_candidates;
+            self.scene_query.selected_dynamic = selected.dynamic_candidates;
             self.scene_query.vegetation_candidates = selected.vegetation_candidates;
             self.scene_query.unsupported_vegetation_proxies =
                 selected.unsupported_vegetation_proxies;
@@ -707,6 +742,8 @@ impl Animator {
                     node: crate::scene_collision::SceneNode::StaticObstacle(index),
                     proxy_index: None,
                     obstacle: obstacle.clone(),
+                    motion: None,
+                    mud: false,
                 })
                 .collect::<Vec<_>>();
             self.scene_query.selected_static = obstacles.len();
@@ -724,17 +761,21 @@ impl Animator {
             if !hits.is_empty() && mesh.proxy_index.is_some() {
                 self.scene_query.vegetation_contact_callbacks += 1;
             }
-            contacts.extend(hits);
+            if !hits.is_empty() && mesh.motion.is_some() {
+                self.scene_query.dynamic_contact_callbacks += 1;
+            }
+            contacts.extend(hits.into_iter().map(|hit| (hit, mesh.motion)));
         }
         let to_local = inverse(self.world);
         Ok(contacts
             .into_iter()
-            .map(|hit| {
+            .map(|(hit, target)| {
                 (
                     crate::obstacle::transform_point(&to_local, hit.world_end),
                     hit.world_point,
                     hit.world_normal,
                     0.2,
+                    target,
                 )
             })
             .collect())
@@ -744,7 +785,7 @@ impl Animator {
         pose: &Pose,
         terrain: &crate::terrain::Terrain,
         _materials: &[crate::materials::TerrainMaterial; 8],
-    ) -> Result<Vec<(Vec3, Vec3, Vec3, f32)>> {
+    ) -> Result<Vec<BodyContact>> {
         let mut points = Vec::new();
         for p in &self.points {
             let local = crate::obstacle::transform_point(&pose.world_matrices[p.node], p.offset);
@@ -757,6 +798,7 @@ impl Animator {
                     ground,
                     hit.normal,
                     if hit.surface == 0 { 0.2 } else { 0. },
+                    None,
                 ));
             }
         }

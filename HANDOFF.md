@@ -1,6 +1,27 @@
 # Implementation handoff
 
-## Latest verified public gameplay checkpoint
+## Current train and wheel integration gate
+
+Original train motion/rendering and three spatial train loops are public at
+`d308c629b44ebeae5c26378c43544c75a84e0f1c` (CI 38280220923). Visible water and
+compact one-finger feedback/default are public at 629bc0a and its successors.
+The current host gate connects all 11 original colliding train bodies through the
+native static-provider/dynamic-list order, moving contact velocity, sequential
+height/pose publication, wheel support, detached rider and recovery queries.
+Original locomotive COL ramp faces produce the front lift: no scripted launch
+or unconditional side-wreck trigger was found. The route-derived encounter test
+passes a rideable lift/landing, a 65ft/s upward head-on launch, and side/top
+contacts with wreck/recovery. Source component probes do not prove a full PS2
+or identical original gameplay replay. See research/TRAIN_CONTACT.md.
+
+Original dry dust/dirt and water/mud particle work plus four rider impact samples
+share this integration gate. Screenshot/log metadata and private runtime audio
+assets must pass the current-main release process before claiming public delivery.
+The user asks to deploy these updates before fixing missing ENV08 rails. A
+read-only census finds 68 original track placements decoded; their rendering and
+terrain overlap still need investigation. Keep this out of the current gate.
+
+## Earlier verified public gameplay checkpoint
 
 `0541085b495fd9e8d0a0dae59ba6c8ea186f49cc`, CI `38264831246` success,
 is live on the public Cloudflare app. Original placed cylinders now provide
@@ -23,14 +44,15 @@ across 210 riding frames/no skips, versus host 0.393066ft/201; different inputs 
 timing prevent causal improvement/regression claims. Tire overlap remains open.
 
 The stranded Riding pose is below the source angle limits, and native chassis
-support is permitted. Missing animated normal-rider query remains a source-backed
-gap, but state0 skips independent wreck-rider physics. Replay the complete
+support is permitted. A later native phase audit confirms state0 has no independent
+animated rider physics/query; the normal AR chassis/classifier path handles riding
+contacts. Do not add a guessed rider query. Replay the complete
 classifier/contact inputs before changing automatic recovery. Do not invent an
 upright snap or assume wheel contact absence mandates ejection.
 
 The user has promoted visible water and the working Arlington Stream train
 (ENV08), and requested more informative one-finger touch feedback. These are
-parallel feature lanes, currently unverified work: water uses original WaterFile,
+parallel feature lanes, now delivered as the public checkpoints above: water uses original WaterFile,
 signatures and material resources; train uses original procedural/VUE routes and
 models; mobile feedback preserves existing controls. Feature agents may commit,
 push and complete their own tested checkpoints without waiting for every lane.

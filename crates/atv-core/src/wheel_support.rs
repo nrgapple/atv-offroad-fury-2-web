@@ -19,6 +19,11 @@ pub struct Support {
     /// The native prop override leaves the terrain-selected material unchanged.
     pub surface: usize,
     pub obstacle: bool,
+    ///001ebb30 stores moving Body support independently of the final geometry.
+    ///Later static callbacks do not clear it;001ebd90 clears it next outer query.
+    pub motion: Option<crate::train::MotionState>,
+    pub mud: bool,
+    pub mud_height: f32,
 }
 impl Default for Support {
     fn default() -> Self {
@@ -28,6 +33,9 @@ impl Default for Support {
             normal: [0., 1., 0.],
             surface: 0,
             obstacle: false,
+            motion: None,
+            mud: false,
+            mud_height: 0.,
         }
     }
 }
@@ -71,6 +79,9 @@ pub fn sample(
     let mut support = Support {
         available: false,
         obstacle: false,
+        motion: None,
+        mud: false,
+        mud_height: 0.,
         ..previous
     };
     if let Some(hit) = terrain.contact(center[0], center[2])? {
@@ -93,6 +104,7 @@ pub(crate) struct SceneSupport {
     pub support: Support,
     pub vegetation_proxies: usize,
     pub vegetation_callbacks: usize,
+    pub dynamic_callbacks: usize,
     pub unsupported_vegetation_proxies: usize,
 }
 
@@ -124,6 +136,8 @@ pub(crate) fn sample_with_scene(
     )?;
     let vegetation_proxies = selected.vegetation_proxies();
     let mut vegetation_callbacks = 0;
+    let mut dynamic_callbacks = 0;
+    let mut geometry_plane = None;
     for mesh in &selected.meshes {
         let hits = crate::wreck::query_static_segments(
             std::slice::from_ref(&ray),
@@ -133,17 +147,34 @@ pub(crate) fn sample_with_scene(
         if !hits.is_empty() && mesh.proxy_index.is_some() {
             vegetation_callbacks += 1;
         }
-        for hit in hits {
-            support.available = true;
-            support.obstacle = true;
-            support.point = hit.world_point;
-            support.normal = hit.world_normal;
+        if !hits.is_empty() && !mesh.mud && mesh.motion.is_some() {
+            dynamic_callbacks += 1;
+            support.motion = mesh.motion;
         }
+        for hit in hits {
+            if mesh.mud {
+                support.mud = true;
+                support.mud_height = hit.world_point[1];
+            } else {
+                geometry_plane = Some((hit.world_point, hit.world_normal));
+            }
+        }
+    }
+    //001ebd90 leaves the terrain support intact after any MUD callback,
+    //even if a later ordinary object changed the query's geometry result.
+    if !support.mud
+        && let Some((point, normal)) = geometry_plane
+    {
+        support.available = true;
+        support.obstacle = true;
+        support.point = point;
+        support.normal = normal;
     }
     Ok(SceneSupport {
         support,
         vegetation_proxies,
         vegetation_callbacks,
+        dynamic_callbacks,
         unsupported_vegetation_proxies: selected.unsupported_vegetation_proxies,
     })
 }
@@ -207,6 +238,83 @@ mod tests {
                 flags: 0,
             }),
             world_matrix,
+        }
+    }
+    #[test]
+    fn mud_hit_preserves_terrain_plane_and_independent_moving_owner() {
+        use crate::scene_collision::{DynamicObstacle, SceneCollision};
+        use crate::train::MotionState;
+        for mud_first in [true, false] {
+            let objects = vec![platform(2.5), platform(1.5)];
+            let mut scene = SceneCollision::new(
+                crate::scene_partition::Config {
+                    min_x: 0.,
+                    max_x: 128.,
+                    min_z: 0.,
+                    max_z: 128.,
+                    cell_size: 16.,
+                },
+                objects,
+                None,
+                false,
+                |_| Ok(0.),
+            )
+            .unwrap();
+            scene
+                .set_mud_obstacles(vec![mud_first, !mud_first])
+                .unwrap();
+            let object = platform(2.);
+            let mut previous = object.world_matrix;
+            previous[12] -= 1.;
+            let motion = MotionState {
+                current: object.world_matrix,
+                previous,
+                reciprocal_dt: 1.,
+            };
+            scene
+                .install_dynamic(vec![DynamicObstacle {
+                    obstacle: object,
+                    motion,
+                }])
+                .unwrap();
+            let query = scene.cached_query([30., 2., 30.], 4., |_, _| true).unwrap();
+            let result = sample_with_scene(
+                &terrain(),
+                &scene,
+                &query,
+                false,
+                &IDENTITY,
+                [30., 2., 30.],
+                1.,
+                1.,
+                Support::default(),
+            )
+            .unwrap();
+            assert!(result.support.mud);
+            assert_eq!(result.support.mud_height, if mud_first { 2.5 } else { 1.5 });
+            assert_eq!(result.support.point, [30., 0., 30.]);
+            assert!(!result.support.obstacle);
+            assert_eq!(
+                result.support.surface,
+                usize::from(terrain().contact(30., 30.).unwrap().unwrap().surface)
+            );
+            assert_eq!(result.support.motion, Some(motion));
+            //An outer frame with no MUD callback clears only the MUD state.
+            let far = scene.cached_query([80., 2., 80.], 4., |_, _| true).unwrap();
+            let result = sample_with_scene(
+                &terrain(),
+                &scene,
+                &far,
+                false,
+                &IDENTITY,
+                [80., 2., 80.],
+                1.,
+                1.,
+                result.support,
+            )
+            .unwrap();
+            assert!(!result.support.mud);
+            assert!(result.support.motion.is_none());
         }
     }
     #[test]

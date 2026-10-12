@@ -204,6 +204,23 @@ def selected_train_names(toy):
     return names
 
 
+def selected_body_impact_names(table):
+    """Rider BodyImpact samples only; unused voice/wreck banks stay excluded."""
+    section = config(table).get('bodyimpact', {})
+    count = int(section.get('numsounds', '0'))
+    if not 1 <= count <= 70:
+        raise ValueError('invalid rider BodyImpact bank count')
+    names = set()
+    for index in range(1, count + 1):
+        name = section[f'sound_{index}'].replace('\\', '/').lower().removeprefix('audio/')
+        if not name or '..' in name or name.startswith('/') or len(name) > 260 or not name.endswith('.vag'):
+            raise ValueError('invalid rider BodyImpact sample path')
+        names.add(name)
+    if len(names) != count:
+        raise ValueError('duplicated rider BodyImpact sample')
+    return names
+
+
 def mesh_material_names(data):
     """Read the bounded PSG v3 material table, as in atv-core's mesh reader."""
     if take(data, 0, 4) != b'psg\0' or u32(data, 4) != 3:
@@ -348,7 +365,10 @@ def main():
         train_names = selected_train_names(Resource(originals['/TRACKS/TRACKSA/ENV08/E08_FR.RES']).named('env08fr.toy'))
         if len(train_names) != 3:
             raise ValueError('exact-build train expected three unique body sounds')
-        names = engine_names | train_names
+        body_names = selected_body_impact_names(Resource(originals['/AUDIOTBL.RES']).named('rider.aud'))
+        if len(body_names) != 4:
+            raise ValueError('exact-build rider BodyImpact bank expected four samples')
+        names = engine_names | train_names | body_names
         audio = Resource(source('/AUDIO/AUDIO.RES'))
         samples = [(name, audio.extract(i)) for i, (name, _, _) in enumerate(audio.members) if name.lower().removeprefix('audio/') in names]
         if len(samples) != len(names):
@@ -367,7 +387,7 @@ def main():
                 raise ValueError('music source is not VAG')
             chunks = [{'offset': offset, **blob(data[offset:offset + CHUNK])} for offset in range(0, len(data), CHUNK)]
             records.append({'path': entry['path'], 'lba': entry['lba'], 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(), 'directory': False, 'lazy': True, 'chunks': chunks})
-        manifest = {'version': 1, 'build': 'USA v2.00', 'source_build_sha256': SOURCE_SHA, 'engine_sample_count': len(engine_names), 'train_sample_count': len(train_names), 'music_song_count': count, 'files': records}
+        manifest = {'version': 1, 'build': 'USA v2.00', 'source_build_sha256': SOURCE_SHA, 'engine_sample_count': len(engine_names), 'train_sample_count': len(train_names), 'rider_body_sample_count': len(body_names), 'music_song_count': count, 'files': records}
         temporary = output / 'manifest.json.tmp'
         temporary.write_text(json.dumps(manifest, indent=2) + '\n')
         temporary.replace(output / 'manifest.json')

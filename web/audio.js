@@ -27,6 +27,13 @@ export class GameAudio {
     this.spatialHistory = null;
     this.spatialPending = null;
     this.spatialReady = false;
+    this.effectsReady = false;
+    this.effectFrames = [];
+    this.effectVoices = new Map();
+    this.effectStarts = 0;
+    this.effectSelections = 0;
+    this.effectLast = null;
+    this.effectCamera = null;
     this.music = new MusicStream(codec, () => this.context, () => this.gain, report);
     this.unlock = () => this.resume().catch(error => this.report(error.message));
     window.addEventListener('pointerdown', this.unlock);
@@ -78,10 +85,26 @@ export class GameAudio {
       if (!isCurrent() || this.closed) return;
       await this.loadSample(name);
     }
+    const riderIndex = table.entries.findIndex(entry => /(^|[\\/])rider\.aud$/i.test(entry.name));
+    if (riderIndex < 0) throw new Error('Original rider sound table is missing.');
+    await this.loadEffects({ bytes: await this.codec(3, table.bytes, riderIndex), isCurrent });
     if (!isCurrent() || this.closed) return;
     await this.music.load({ file, files, read, isCurrent });
     if (!isCurrent() || this.closed) return;
     this.ready = true;
+  }
+  async loadEffects({ bytes, isCurrent }) {
+    try {
+      const config = JSON.parse(new TextDecoder().decode(await this.codec(76, bytes)));
+      for (const name of new Set(config.body_impact)) {
+        if (!isCurrent() || this.closed) return;
+        await this.loadSample(name);
+      }
+      if (!isCurrent() || this.closed) return;
+      this.effectsConfig = config; this.effectsReady = true;
+    } catch (error) {
+      if (isCurrent() && !this.closed) this.report(`Rider effects: ${error.message}`);
+    }
   }
   async loadSpatial({ toy, isCurrent }) {
     try {
@@ -141,9 +164,9 @@ export class GameAudio {
   }
   // Separate body voices survive engine sample transitions and vehicle resets.
   // Original stereo uses two integer gains, with its own quantized pitch.
-  playSpatial(index, definition) {
+  playSpatial(index, definition, voices = this.spatialVoices) {
     const sample = this.buffers.get(definition.sample);
-    if (!sample?.buffer || this.spatialVoices.has(index) || definition.start_disabled || this.closed) return;
+    if (!sample?.buffer || voices.has(index) || definition.start_disabled || this.closed) return;
     const source = this.context.createBufferSource();
     source.buffer = sample.buffer; source.loop = definition.looping;
     if (source.loop && sample.info.loop_start !== null && sample.info.loop_end !== null) {
@@ -151,7 +174,7 @@ export class GameAudio {
       source.loopEnd = sample.info.loop_end / sample.info.sample_rate;
     }
     const left = this.context.createGain(), right = this.context.createGain(), merger = this.context.createChannelMerger(2);
-    // Shipped train VAGs are mono. Explicit channel count prevents the merger
+    // Shipped train and body-impact VAGs are mono. Explicit channel count prevents the merger
     // inputs from receiving an accidental speaker-layout upmix.
     left.channelCount = right.channelCount = 1;
     left.channelCountMode = right.channelCountMode = 'explicit';
@@ -159,19 +182,27 @@ export class GameAudio {
     source.connect(left); source.connect(right);
     left.connect(merger, 0, 0); right.connect(merger, 0, 1); merger.connect(this.engineGain);
     const voice = { source, left, right, merger, sample: definition.sample, started: this.context.currentTime };
-    this.spatialVoices.set(index, voice);
+    voices.set(index, voice);
     source.onended = () => {
-      this.spatialVoices.delete(index); source.disconnect(); left.disconnect(); right.disconnect(); merger.disconnect();
+      voices.delete(index); source.disconnect(); left.disconnect(); right.disconnect(); merger.disconnect();
     };
-    source.start(); this.spatialStarts++;
+    source.start();
+    if (voices === this.spatialVoices) this.spatialStarts++;
+    else this.effectStarts++;
     return voice;
   }
-  stopSpatial() {
-    for (const voice of this.spatialVoices.values()) {
+  stopSpatial(voices = this.spatialVoices) {
+    for (const voice of voices.values()) {
       voice.source.onended = null; voice.source.stop(); voice.source.disconnect();
       voice.left.disconnect(); voice.right.disconnect(); voice.merger.disconnect();
     }
-    this.spatialVoices.clear();
+    voices.clear();
+  }
+  applySpatial(voice, command) {
+    if (!voice || !command || command.pitch < -1 || command.pitch >= 0x4000) return;
+    voice.left.gain.value = command.left / 100;
+    voice.right.gain.value = command.right / 100;
+    voice.source.playbackRate.value = Math.max(0, command.pitch) / 4096;
   }
   captureSpatial(dt, scene) {
     if (!this.spatialReady || !scene?.train || !scene?.camera) return;
@@ -194,15 +225,46 @@ export class GameAudio {
       if (!voice) continue;
       // The original setter does not submit invalid pitch; retain its last
       // audible parameters if the source's startup/discontinuous pose exceeds it.
-      if (command.pitch < -1 || command.pitch >= 0x4000) continue;
-      voice.left.gain.value = command.left / 100;
-      voice.right.gain.value = command.right / 100;
-      voice.source.playbackRate.value = Math.max(0, command.pitch) / 4096;
+      this.applySpatial(voice, command);
+    }
+  }
+  captureEffects(dt, frame, scene) {
+    if (!this.effectsReady || !scene?.camera) return;
+    const camera = { position: scene.camera.position, target: scene.camera.target };
+    const previous = this.effectCamera ?? camera; this.effectCamera = camera;
+    // Autoplay-locked output cannot play old events later. Seed pose history
+    // while locked and retain every completed step once audio is running.
+    if (!this.context || this.context.state !== 'running') return;
+    const rider = frame.rider_wreck;
+    this.effectFrames.push({ dt, camera, previous_camera: previous,
+      impact: { sampled_impact_delta: rider?.sampled_impact_delta ?? [0, 0, 0],
+        quad_wreck_phase: frame.wreck?.phase === 'Riding' ? 0 : 1 },
+      position: frame.rider_audio_position ?? null });
+    if (this.effectFrames.length > 256) {
+      this.effectFrames.length = 0; this.effectsReady = false;
+      this.report('Rider effects exceeded the bounded frame queue.');
+    }
+  }
+  async updateEffects(generation) {
+    // Preserve every completed physics step: an impact may last only one
+    // subframe inside a render batch. Playback state is sampled before each
+    // original state update, including events following a newly started voice.
+    if (!this.effectFrames.length) return;
+    const frames = this.effectFrames.splice(0, 64);
+    const bytes = await this.codec(77, new TextEncoder().encode(JSON.stringify({ frames, playing: this.effectVoices.size > 0 })));
+    if (this.closed || !this.active || generation !== this.generation) return;
+    for (const result of JSON.parse(new TextDecoder().decode(bytes))) {
+      if (result.event) {
+        this.effectSelections++; this.effectLast = result.event;
+        if (result.event.play) this.playSpatial(0, { sample: result.event.sample, looping: false }, this.effectVoices);
+      }
+      this.applySpatial(this.effectVoices.get(0), result.spatial);
     }
   }
   async update(dt, input, frame, scene) {
     if (!this.ready || !this.active || this.closed) return;
     this.captureSpatial(dt, scene);
+    this.captureEffects(dt, frame, scene);
     void this.music.update();
     this.elapsed += dt;
     if (this.busy || !this.context || this.context.state !== 'running') return;
@@ -212,6 +274,7 @@ export class GameAudio {
       if (!await this.decode()) return;
       if (generation !== this.generation) return;
       await this.updateSpatial(generation);
+      await this.updateEffects(generation);
       if (this.closed || !this.active || generation !== this.generation) return;
       if (!this.current && this.commands === 0 && this.config.samples[1].length) {
         // Original002cae30 loads and selects the last idle sample before updates.
@@ -236,6 +299,7 @@ export class GameAudio {
   async setActive(active) {
     this.active = active;
     this.elapsed = 0;
+    if (!active) this.effectFrames.length = 0;
     if (!this.context) return;
     this.engineGain.gain.value = active ? 1 : 0;
     if (active || this.musicPreview) await this.resume();
@@ -263,6 +327,9 @@ export class GameAudio {
     this.commands = 0;
     this.lastSound = null;
     if (this.ready) await this.codec(34, new Uint8Array());
+    this.effectFrames.length = 0;
+    this.stopSpatial(this.effectVoices);
+    if (this.effectsReady) await this.codec(78, new Uint8Array());
   }
   snapshot() {
     return { ready: this.ready, context: this.context?.state ?? 'locked', samples: this.buffers.size,
@@ -274,7 +341,10 @@ export class GameAudio {
           const sample = this.buffers.get(name);
           return { name, channels: sample?.info.channels, sampleRate: sample?.info.sample_rate,
             loopStart: sample?.info.loop_start, loopEnd: sample?.info.loop_end, decoded: Boolean(sample?.buffer) };
-        }) }, music: this.music.snapshot() };
+        }) }, effects: { ready: this.effectsReady, voices: this.effectVoices.size, starts: this.effectStarts,
+          selections: this.effectSelections, last: this.effectLast, queuedFrames: this.effectFrames.length,
+          samples: this.effectsConfig?.body_impact.map(name => ({ name, decoded: Boolean(this.buffers.get(name)?.buffer) })) ?? [] },
+      music: this.music.snapshot() };
   }
   close() {
     this.generation++; this.previewGeneration++;
@@ -287,6 +357,7 @@ export class GameAudio {
     window.removeEventListener('keydown', this.unlock);
     this.stopSources();
     this.stopSpatial(); this.spatialReady = false; this.spatialPending = this.spatialHistory = null;
+    this.stopSpatial(this.effectVoices); this.effectsReady = false; this.effectFrames.length = 0;
     this.context?.close();
     this.buffers.clear();
   }

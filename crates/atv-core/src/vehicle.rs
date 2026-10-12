@@ -84,6 +84,8 @@ pub struct VehicleFrame {
     pub suspension_stop_contacts: usize,
     pub chassis_contact_count: usize,
     pub obstacle_contact_count: usize,
+    pub dynamic_contact_count: usize,
+    pub dynamic_secondary_contacts: usize,
     pub preload_available: bool,
     pub preload_armed: bool,
     pub preload_active: bool,
@@ -98,6 +100,17 @@ pub struct VehicleFrame {
     pub scene_query: SceneQueryFrame,
 }
 
+#[derive(Debug, Serialize)]
+pub struct WheelEffectState {
+    pub time: f32,
+    pub radii: [f32; 4],
+    pub mud: [bool; 4],
+    pub mud_heights: [f32; 4],
+    pub surfaces: [usize; 4],
+    pub wheel_tangential_speeds: [f32; 4],
+    pub throttle: f32,
+}
+
 ///Most recent quad query, before the shared cache is used for recovery.
 ///Plant candidates are registered; physical plant proxy expansion is separate.
 #[derive(Debug, Default, Clone, Copy, Serialize)]
@@ -106,6 +119,9 @@ pub struct SceneQueryFrame {
     pub cached_nodes: usize,
     pub selected_static: usize,
     pub selected_vegetation: usize,
+    pub selected_dynamic: usize,
+    pub dynamic_chassis_callbacks: usize,
+    pub dynamic_wheel_callbacks: usize,
     pub refreshed: bool,
     pub vegetation_proxy_queries: usize,
     pub vegetation_chassis_callbacks: usize,
@@ -133,6 +149,10 @@ pub struct Vehicle {
     suspension: [SuspensionState; 4],
     suspension_config: SuspensionConfig,
     contacts: [SuspensionOutput; 4],
+    ///001ed330 retains this projected force point even when its depth/angle
+    ///gate rejects contact;001ecc40 consumes the preceding substep's value.
+    wheel_contact_points: [Vec3; 4],
+    wheel_world_angular_velocity: Vec3,
     supports: [crate::wheel_support::Support; 4],
     materials: Option<[TerrainMaterial; 8]>,
     tire_friction: f32,
@@ -165,6 +185,11 @@ pub struct Vehicle {
     scene_sphere_radius: f32,
     scene_query: SceneQueryFrame,
     obstacle_contact_count: usize,
+    dynamic_contact_count: usize,
+    dynamic_secondary_contacts: usize,
+    ///Secondary nonstatic contacts occur after the final integrator. Native
+    ///translation and impact delta remain until the next first integration.
+    pending_contact_corrections: ContactCorrections,
     wreck_physics: Option<WreckPhysics>,
     normal_contact: ContactConfig,
     wreck: crate::wreck::State,
@@ -309,6 +334,8 @@ impl Vehicle {
             suspension: [SuspensionState::default(); 4],
             suspension_config,
             contacts: [SuspensionOutput::default(); 4],
+            wheel_contact_points: [[0.; 3]; 4],
+            wheel_world_angular_velocity: [0.; 3],
             supports: [crate::wheel_support::Support::default(); 4],
             materials: None,
             tire_friction: data.first_scalar("Tires", "TireFriction")?,
@@ -354,6 +381,9 @@ impl Vehicle {
             scene_sphere_radius: dot(bounds.half_extents, bounds.half_extents).sqrt(),
             scene_query: SceneQueryFrame::default(),
             obstacle_contact_count: 0,
+            dynamic_contact_count: 0,
+            dynamic_secondary_contacts: 0,
+            pending_contact_corrections: ContactCorrections::default(),
             wreck_physics: None,
             normal_contact: ContactConfig::from_physics(data)?,
             wreck: crate::wreck::State::default(),
@@ -434,6 +464,20 @@ impl Vehicle {
     pub fn applied_drive_controls(&self) -> (f32, f32, bool) {
         self.applied_drive_controls
     }
+    ///Presentation-only original tire values; reading this does not step physics.
+    pub fn wheel_effect_state(&self) -> WheelEffectState {
+        WheelEffectState {
+            time: self.clock_ms * 0.001,
+            radii: self.wheel_config.map(|wheel| wheel.radius),
+            surfaces: self.supports.map(|support| support.surface),
+            mud: self.supports.map(|support| support.mud),
+            mud_heights: self.supports.map(|support| support.mud_height),
+            wheel_tangential_speeds: std::array::from_fn(|i| {
+                self.wheels[i].angular_speed * self.wheel_config[i].radius
+            }),
+            throttle: self.applied_drive_controls.0,
+        }
+    }
     /// Browser lifecycle cancellation is not a physical stick release. Forget
     /// any unfinished gesture while preserving a jump force already underway.
     pub fn cancel_preload_gesture(&mut self) {
@@ -476,6 +520,9 @@ impl Vehicle {
             ],
             &self.body_config,
         )?;
+        self.pending_contact_corrections = ContactCorrections::default();
+        self.wheel_contact_points = [[0.; 3]; 4];
+        self.wheel_world_angular_velocity = [0.; 3];
         self.wheels = [WheelState::default(); 4];
         // 001dd440 resets wheel state but retains animated node orientation;
         // the next completed physics update refreshes the mechanical pose.
@@ -625,6 +672,8 @@ impl Vehicle {
             suspension_stop_contacts: self.suspension_stop_contacts,
             chassis_contact_count: self.chassis_contact_count,
             obstacle_contact_count: self.obstacle_contact_count,
+            dynamic_contact_count: self.dynamic_contact_count,
+            dynamic_secondary_contacts: self.dynamic_secondary_contacts,
             preload_available: self.rider_state.preload_status,
             preload_armed: self.rider_state.preload_armed,
             preload_active: self.rider_state.preload_active,
@@ -856,7 +905,21 @@ impl Vehicle {
             self.scene_query = SceneQueryFrame {
                 enabled: true,
                 cached_nodes: query.candidates.len(),
-                selected_static: selected.len(),
+                selected_static: query
+                    .strictly_within()
+                    .filter(|c| {
+                        matches!(c.node, crate::scene_collision::SceneNode::StaticObstacle(_))
+                    })
+                    .count(),
+                selected_dynamic: query
+                    .strictly_within()
+                    .filter(|c| {
+                        matches!(
+                            c.node,
+                            crate::scene_collision::SceneNode::DynamicObstacle(_)
+                        )
+                    })
+                    .count(),
                 selected_vegetation: query
                     .strictly_within()
                     .filter(|candidate| {
@@ -894,6 +957,7 @@ impl Vehicle {
                 )?;
                 self.scene_query.vegetation_proxy_queries += sampled.vegetation_proxies;
                 self.scene_query.vegetation_wheel_callbacks += sampled.vegetation_callbacks;
+                self.scene_query.dynamic_wheel_callbacks += sampled.dynamic_callbacks;
                 self.scene_query.unsupported_vegetation_proxies +=
                     sampled.unsupported_vegetation_proxies;
                 sampled.support
@@ -912,6 +976,14 @@ impl Vehicle {
                 return Err("unsupported wheel surface".into());
             }
         }
+        //001ecc40 computes the moving support's point velocity once per outer
+        //wheel update, using the last001ed330 force point, then retains C0 for
+        //all spring substeps. Static/plant geometry does not clear body ownership.
+        let ground_velocities = std::array::from_fn::<_, 4, _>(|i| {
+            self.supports[i].motion.map_or([0.; 3], |target| {
+                target.point_velocity(self.wheel_contact_points[i])
+            })
+        });
         let driven = std::array::from_fn::<_, 2, _>(|i| DrivenWheel {
             angular_speed: self.wheels[i + 2].angular_speed,
             brake,
@@ -945,9 +1017,14 @@ impl Vehicle {
             let normal = self.supports[i].normal;
             let right = transform(b, self.wheel_right[i]);
             let forward = wheel::cross(right, normal);
-            let velocity = self
-                .body
-                .velocity_at_with_center(self.contacts[i].point, cached_world_center);
+            let velocity = add(
+                self.body.linear_velocity,
+                wheel::cross(
+                    self.wheel_world_angular_velocity,
+                    sub(self.wheel_contact_points[i], cached_world_center),
+                ),
+            );
+            let velocity = sub(velocity, ground_velocities[i]);
             *output = self.wheels[i].step(
                 self.wheel_config[i],
                 WheelInput {
@@ -1006,6 +1083,7 @@ impl Vehicle {
         } else {
             self.obstacle_rays.as_ref()
         };
+        let mut obstacle_targets = Vec::new();
         let obstacle_contacts = if let Some(rays) = active_rays {
             if let Some((scene, query)) =
                 self.scene_collision.as_ref().zip(scene_candidates.as_ref())
@@ -1014,8 +1092,10 @@ impl Vehicle {
                     scene.quad_contacts(query, rays, &ray_world, self.skip_vegetation_query)?;
                 self.scene_query.vegetation_proxy_queries += queried.vegetation_proxies;
                 self.scene_query.vegetation_chassis_callbacks += queried.vegetation_callbacks;
+                self.scene_query.dynamic_chassis_callbacks += queried.dynamic_callbacks;
                 self.scene_query.unsupported_vegetation_proxies +=
                     queried.unsupported_vegetation_proxies;
+                obstacle_targets = queried.targets;
                 queried.contacts
             } else {
                 crate::obstacle::query_static_scene(rays, &ray_world, &ordered_obstacles)?
@@ -1023,6 +1103,7 @@ impl Vehicle {
         } else {
             Vec::new()
         };
+        obstacle_targets.resize(obstacle_contacts.len(), None);
         let mut elapsed = 0.0;
         let mut impact: Vec3 = [0.0; 3];
         while elapsed < dt {
@@ -1124,7 +1205,11 @@ impl Vehicle {
                     &mut self.body.local_torque,
                 )?;
             }
-            let mut corrections = ContactCorrections::default();
+            let mut corrections = if elapsed == 0. {
+                std::mem::take(&mut self.pending_contact_corrections)
+            } else {
+                ContactCorrections::default()
+            };
             self.suspension_stop_contacts = 0;
             //001dd830 updates the separate four-point travel-stop actor before
             // the wheel springs. It remains active while the chassis is upright.
@@ -1146,6 +1231,9 @@ impl Vehicle {
                     (support.normal, support.point, support.available);
                 let bottom = sub(wheel_center, scale(normal, self.wheel_config[i].radius));
                 let point = add(bottom, scale(normal, dot(sub(ground, bottom), normal)));
+                if available {
+                    self.wheel_contact_points[i] = point;
+                }
                 let output = self.suspension[i].contact(
                     self.suspension_config,
                     SuspensionContact {
@@ -1156,7 +1244,16 @@ impl Vehicle {
                         radius: self.wheel_config[i].radius,
                         body_up: b[1],
                         body_forward: b[2],
-                        point_velocity: self.body.velocity_at_with_center(point, contact_center),
+                        point_velocity: sub(
+                            add(
+                                self.body.linear_velocity,
+                                wheel::cross(
+                                    self.wheel_world_angular_velocity,
+                                    sub(point, contact_center),
+                                ),
+                            ),
+                            ground_velocities[i],
+                        ),
                         stiffness_scale: 1.0,
                         tilt_angle: dot(normal, b[1]).clamp(-1., 1.).acos(),
                     },
@@ -1203,26 +1300,43 @@ impl Vehicle {
                 }
             }
             self.obstacle_contact_count = 0;
-            for c in &obstacle_contacts {
+            self.dynamic_contact_count = 0;
+            for (c, target) in obstacle_contacts.iter().zip(&obstacle_targets) {
                 let vertex = add(origin, transform(b, c.local_end));
                 let penetration = dot(sub(c.world_point, vertex), c.world_normal);
                 if penetration > 0.0 {
                     self.obstacle_contact_count += 1;
-                    contact::resolve_static(
-                        &mut self.body,
-                        &self.body_config,
-                        self.chassis_config,
-                        StaticContact {
-                            point: add(vertex, scale(c.world_normal, penetration)),
-                            normal: c.world_normal,
-                            penetration,
-                            material_grip: materials[0].grip,
-                        },
-                        &mut corrections,
-                    )?;
+                    self.dynamic_contact_count += usize::from(target.is_some());
+                    let contact = StaticContact {
+                        point: add(vertex, scale(c.world_normal, penetration)),
+                        normal: c.world_normal,
+                        penetration,
+                        material_grip: materials[0].grip,
+                    };
+                    if let Some(target) = target {
+                        let mut config = self.chassis_config;
+                        //001dcc70 disables moving-target tangential friction.
+                        config.friction_scale = 0.;
+                        target.resolve_contact(
+                            &mut self.body,
+                            &self.body_config,
+                            config,
+                            contact,
+                            &mut corrections,
+                        )?;
+                    } else {
+                        contact::resolve_static(
+                            &mut self.body,
+                            &self.body_config,
+                            self.chassis_config,
+                            contact,
+                            &mut corrections,
+                        )?;
+                    }
                 }
             }
             self.body.step(&self.body_config, step)?;
+            self.wheel_world_angular_velocity = self.body.world_angular_velocity();
             for (value, next) in impact.iter_mut().zip(corrections.velocity_delta) {
                 if next.abs() > value.abs() {
                     *value = next;
@@ -1230,6 +1344,81 @@ impl Vehicle {
             }
             self.body.center = add(self.body.center, corrections.translation);
             elapsed += step;
+        }
+        self.dynamic_secondary_contacts = 0;
+        //001dd830 re-queries admitted nonstatic actors against the completed
+        //body pose, uses full correction scale1, and performs no new integration.
+        //Immediate velocity changes do not enter this frame's sampled impact.
+        if let Some((scene, query, rays)) = self
+            .scene_collision
+            .as_ref()
+            .zip(scene_candidates.as_ref())
+            .zip(active_rays)
+            .map(|((s, q), r)| (s, q, r))
+            .filter(|(_, query, _)| {
+                query.strictly_within().any(|c| {
+                    matches!(
+                        c.node,
+                        crate::scene_collision::SceneNode::DynamicObstacle(_)
+                    )
+                })
+            })
+        {
+            let b = self.body.basis();
+            let origin = self.body.origin(&self.body_config);
+            let world = [
+                b[0][0], b[0][1], b[0][2], 0., b[1][0], b[1][1], b[1][2], 0., b[2][0], b[2][1],
+                b[2][2], 0., origin[0], origin[1], origin[2], 1.,
+            ];
+            if chassis_terrain_enabled {
+                for &local in &self.chassis_points {
+                    let vertex = add(origin, transform(b, local));
+                    if let Some(hit) = terrain.contact(vertex[0], vertex[2])? {
+                        let penetration =
+                            dot(sub([vertex[0], hit.height, vertex[2]], vertex), hit.normal);
+                        if penetration > 0. {
+                            contact::resolve_static_with_position_scale(
+                                &mut self.body,
+                                &self.body_config,
+                                self.chassis_config,
+                                StaticContact {
+                                    point: add(vertex, scale(hit.normal, penetration)),
+                                    normal: hit.normal,
+                                    penetration,
+                                    material_grip: materials[hit.surface as usize].grip,
+                                },
+                                &mut self.pending_contact_corrections,
+                                1.,
+                            )?;
+                        }
+                    }
+                }
+            }
+            let queried = scene.dynamic_contacts(query, rays, &world)?;
+            for (c, target) in queried.contacts.iter().zip(&queried.targets) {
+                let vertex = add(origin, transform(b, c.local_end));
+                let penetration = dot(sub(c.world_point, vertex), c.world_normal);
+                if penetration > 0.
+                    && let Some(target) = target
+                {
+                    self.dynamic_secondary_contacts += 1;
+                    let mut config = self.chassis_config;
+                    config.friction_scale = 0.;
+                    target.resolve_contact_with_position_scale(
+                        &mut self.body,
+                        &self.body_config,
+                        config,
+                        StaticContact {
+                            point: add(vertex, scale(c.world_normal, penetration)),
+                            normal: c.world_normal,
+                            penetration,
+                            material_grip: materials[0].grip,
+                        },
+                        &mut self.pending_contact_corrections,
+                        1.,
+                    )?;
+                }
+            }
         }
         //001e5260 runs edge launch after physics and before impact/wreck gates.
         // Query bit0 excludes vegetation expansion, not terrain/static objects.
@@ -1963,6 +2152,7 @@ mod tests {
         vehicle.body.center = add(origin, vehicle.body_config.center_of_mass);
         vehicle.body.linear_velocity = [3., -2., 40.];
         vehicle.body.local_angular_velocity = [0., 0., 1.];
+        vehicle.wheel_world_angular_velocity = vehicle.body.world_angular_velocity();
         let old_center = vehicle.body.center;
         let points = vehicle.wheel_rest.map(|rest| {
             let center = add(origin, rest);

@@ -70,4 +70,73 @@ PS2. Initial history is seeded with the first browser snapshot rather than an
 unrecovered source sound-constructor history. Surround mixing, original mixer
 saturation, reverb and physical iOS listening remain unverified. Paused music
 preview silences vehicle/train output through the inherited gain lifecycle.
-Additional rider, impact, surface and world sound scheduling remains open.
+Rider body impacts are described below. Additional rider vocals, chassis,
+surface and world sound scheduling remains open.
+
+## Original rider body impacts
+
+The original `rider.aud` BodyImpact bank supplies four mono VAGs. Only these
+four required original bank members are added to the R2-only compact archive;
+the 21 engine samples, three train samples and 21 songs remain separate counts.
+No game samples or extracted analysis are committed to source or CI.
+
+Exact-build `002ccf90` binds the impact emitter to the rider actor and its
+collision body's sampled contact delta, with the quad as its wreck-phase
+backpointer. It does not consume the vehicle chassis impact field. `001ef690`
+keeps the signed component with strictly greatest absolute value across contact
+substeps, sampling before each integration. Tied magnitudes keep the prior
+component. The runtime observer records this vector without changing response.
+
+`002cd2e0` clears the sound latch while the quad is riding. During wreck phases,
+the first magnitude at least 0.3 triggers selection; subsequent magnitudes at
+least 3 can retrigger only when the current body clip has stopped. `002cd1f0`
+uses `trunc(magnitude)/(70/sample_count)-1` plus its original random term and
+clamps to the ordered bank. Selection consumes one random word even if the
+initial-latch path selects while an earlier clip is still playing. `002cd420`
+then refuses to play over that existing clip. Browser playback retains this
+one-voice guard, plays original one-shot PCM and uses recovered single-player
+30/100-foot attenuation, integer stereo and quantized Doppler commands.
+
+Sound position and velocity come from the actor cache, rather than its physical
+body. `001e7600` refreshes actor position from the quad Model during riding or
+the attached rider phase; detached phases retain the last attached position.
+`002d9c10` computes velocity from adjacent cached positions using the engine
+reciprocal timestep, unless the prior position is the zero sentinel. The port
+preserves that cache and the source zero-sentinel guard. It therefore does not
+move the sound to the airborne rider's current physical pelvis.
+
+Bounded original-instruction checks pass 1,200 native phase/latch/index/random
+cases (86,383 instructions), 400 signed contact-substep maxima cases (175,383
+instructions), 800 actor velocity-cache cases (39,000 instructions) and 400
+position-copy/hold cases (21,176 instructions). The position probe supplies
+Model access and update services and uses the recovered zero placement offset;
+it does not prove whole-game callback ordering or every rider profile. The
+native sound-state services supply current playback and source random words.
+Initial RTC seed and whole-game random call order remain unverified.
+
+The frontend transports up to 64 completed fixed-step sound updates together,
+preserving each contact vector, latch update and random draw. Within that
+synchronous batch, the playing guard becomes true after the first permitted
+start. This prevents an audio-worker round-trip backlog from dropping a
+one-frame impact in a physics render batch. The pending queue remains bounded;
+autoplay-locked events are not accumulated for delayed playback after unlock.
+Focused tests cover retained intermediate impacts, the one-voice guard,
+original one-shot routing, pause/music-preview/reset and missing-bank fallback.
+Real touch wreck PCM verification is in `tools/test_body_impact_audio.mjs`.
+
+Host Chromium verification on port 4192 passed the real touch Caribou ramp
+and failed Nac Nac landing: sampled rider contact magnitudes 2.824348 and
+5.099363 selected two original clips with isolated output energy peaks 0.03029
+and 0.02301. All four original body samples decoded. Detached frames retained
+the last attached actor sound location, active clips did not overlap, recovery
+returned to riding, one-shot playback completed and pause/resume froze/restored
+the audio clock. No browser, audio or GL errors occurred. The inspected
+portrait capture shows the detached rider and original game view; sound proof
+comes from the separately instrumented audio nodes. This is host verification;
+public release verification remains separate.
+
+This component implements BodyImpact only. Rider vocals, chassis sounds and
+surface/skid/splash triggers require their own source event proof. The wheel
+particle placement routine previously investigated does not schedule sound.
+Hardware listening, SPU2 mixing/resampling and physical iOS playback remain
+unverified.

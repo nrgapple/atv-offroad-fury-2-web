@@ -117,6 +117,22 @@ pub struct CameraPose {
     pub position: Vec3,
     pub target: Vec3,
 }
+pub fn camera_listener(current: &CameraPose, previous: &CameraPose, dt: f32) -> Result<Listener> {
+    if !dt.is_finite() || dt <= 0. || dt > 0.1 {
+        return Err("invalid audio listener timestep".into());
+    }
+    let forward: Vec3 = std::array::from_fn(|i| current.target[i] - current.position[i]);
+    let squared = (forward[0] * forward[0] + forward[1] * forward[1]) + forward[2] * forward[2];
+    if squared <= 0. || !squared.is_finite() {
+        return Err("invalid audio camera direction".into());
+    }
+    let reciprocal = 1. / squared.sqrt();
+    Ok(Listener {
+        position: current.position,
+        forward: forward.map(|v| v * reciprocal),
+        velocity: std::array::from_fn(|i| (current.position[i] - previous.position[i]) * (1. / dt)),
+    })
+}
 #[derive(Debug, Deserialize)]
 pub struct SceneInput {
     pub dt: f32,
@@ -136,19 +152,7 @@ pub fn scene_commands(input: SceneInput) -> Result<Vec<Command>> {
     {
         return Err("invalid train audio frame history".into());
     }
-    let forward: Vec3 = std::array::from_fn(|i| input.camera.target[i] - input.camera.position[i]);
-    let squared = (forward[0] * forward[0] + forward[1] * forward[1]) + forward[2] * forward[2];
-    if squared <= 0. || !squared.is_finite() {
-        return Err("invalid audio camera direction".into());
-    }
-    let reciprocal = 1. / squared.sqrt();
-    let listener = Listener {
-        position: input.camera.position,
-        forward: forward.map(|v| v * reciprocal),
-        velocity: std::array::from_fn(|i| {
-            (input.camera.position[i] - input.previous_camera.position[i]) * (1. / input.dt)
-        }),
-    };
+    let listener = camera_listener(&input.camera, &input.previous_camera, input.dt)?;
     input
         .definitions
         .iter()

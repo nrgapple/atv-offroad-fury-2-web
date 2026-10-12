@@ -1416,20 +1416,99 @@
       "limitation": "Host-only; pending CI and public release. The screenshot uses a source-derived route/MOT camera placement beside the train, not the normal spawn. PS2 listening/SPU2, surround and full mixer/activation parity are unverified; the host acos-table service does not prove PS2 libm behavior. Physical iOS and other train sounds remain unverified. The three required VAG samples remain private runtime assets and are not in Git.",
       "image": "/devlog-images/original-train-sound-loops-pass-host-checks-93fd73ae.png",
       "caption": "Host capture at the source-derived train audio test placement, with the ATV beside the moving train cars."
+    },
+    {
+      "id": "original-train-audio-passes-public-checks-3b5caedc",
+      "timestamp": "2026-10-12T16:59:45.563520+00:00",
+      "recorded_at": "2026-10-12T16:59:45.563520+00:00",
+      "kind": "verification",
+      "title": "Original train audio passes public checks",
+      "summary": "Public release d308c62 verifies the three original train VAG loops on 11 attached cars, with audible train-only PCM, changing distance/pan and source pitch behavior. Pause/resume, context restore, mute and duplicate-voice checks pass.",
+      "details": [
+        "The public no-disc startup path passes from title/controller/menu through Tioga driving, pause/Controls and a 390px Caribou reload. Train audio checks cover original loop points, near/far gain and pitch, zero far-field PCM, and no page/audio errors."
+      ],
+      "limitation": "PS2 listening/SPU2 and surround parity, native per-body activation/start phase and physical iOS remain unverified. Other train collision and sound effects remain separate work."
+    },
+    {
+      "id": "dry-wheel-dust-and-dirt-effects-pass-host-checks-1c8b7914",
+      "timestamp": "2026-10-12T17:14:03.034578+00:00",
+      "recorded_at": "2026-10-12T17:19:08.778408+00:00",
+      "kind": "verification",
+      "title": "Dry wheel dust and dirt effects pass host checks",
+      "summary": "The host ENV04 route shows rear-wheel dust during normal riding and dirt chunks/spray during steering at speed. Browser checks capture visible pixel changes at desktop and 390px sizes, with pause/resume and graphics context restoration passing.",
+      "details": [
+        "Verified desktop pixel delta 370 and 390px delta 48; dry emission totals are 56/60 and steering totals 244/30/60 on desktop and 240/10/20 on mobile. One instanced draw stays within 1,031,664 GPU bytes; no page or WebGL errors. Native selector and particle-update probes cover 1,000 supplied cases each."
+      ],
+      "limitation": "Host-only and partial presentation; wet/mud particle effects are a separate gate. Local visual RNG, generic particle integration/fade, texture animation, and PS2 GS/VU visual parity are not established. Train contacts/effects remain separate work.",
+      "image": "/devlog-images/dry-wheel-dust-and-dirt-effects-pass-host-checks-1c8b7914.png",
+      "caption": "Host ENV04 desktop route showing the ATV with source-informed dry wheel dust/dirt effects during steering."
+    },
+    {
+      "id": "original-train-collision-routes-pass-host-scenarios-3ebb6c0d",
+      "timestamp": "2026-10-12T17:28:30.923543+00:00",
+      "recorded_at": "2026-10-12T17:28:30.923543+00:00",
+      "kind": "verification",
+      "title": "Original train collision routes pass host scenarios",
+      "summary": "All four source-route browser scenarios pass on the host: a front approach supports a rideable lift and landing; a head-on contact launches the ATV into wreck/recovery; side-body and top-drop encounters exercise dynamic contacts, wheel support and recovery.",
+      "details": [
+        "The head-on launch reaches 65.48 ft/s upward with 20 dynamic and six secondary contacts. The front landing stays Riding; side-body records 13 dynamic/four secondary contacts, and top-drop records 10/four. The bridge uses original train COL geometry, preserves native callback targeting/caps and queries, and adds the original secondary response path."
+      ],
+      "limitation": "Host-only, pending CI and public verification. These are four source-derived encounter scenarios, not complete train collision or whole-game parity. No collision-trigger or arbitrary launch behavior is claimed; PS2 hardware and broad loaded-scene coverage remain unverified."
+    },
+    {
+      "id": "original-wet-wheel-roost-passes-host-checks-4db24c1e",
+      "timestamp": "2026-10-12T17:25:19.041592+00:00",
+      "recorded_at": "2026-10-12T17:28:46.599954+00:00",
+      "kind": "verification",
+      "title": "Original wet wheel roost passes host checks",
+      "summary": "The host browser now renders water roost from source-derived tire surface hits at desktop and 390px sizes. The wet atlas changes 4,109 desktop pixels and 3,322 mobile pixels; pause, context restoration and fixed-clock behavior pass.",
+      "details": [
+        "The checked runtime placement uses a terrain-derived shallow-water point; particle births and a single instanced draw are recorded at both sizes. Dry dust and steering dirt effects also pass in the separate desktop/mobile gate."
+      ],
+      "limitation": "Host-only, pending CI/public verification. The capture is a test placement, not the original map spawn. Whole-game shared RNG, GS/VU hardware parity, depth/texture sampling and original body/tire texture effects remain incomplete.",
+      "image": "/devlog-images/original-wet-wheel-roost-passes-host-checks-4db24c1e.png",
+      "caption": "Host test placement showing original-atlas water roost from tire surface hits; not the map's normal spawn."
+    },
+    {
+      "id": "original-mud-wheel-roost-passes-host-checks-99b7171f",
+      "timestamp": "2026-10-12T17:25:38.456627+00:00",
+      "recorded_at": "2026-10-12T17:28:53.562536+00:00",
+      "kind": "verification",
+      "title": "Original mud wheel roost passes host checks",
+      "summary": "At a loaded ENV04 MUD placement, the host browser renders the original mud roost. The effect changes 1,288 desktop pixels and 1,286 mobile pixels, with 522 births, two draws and successful pause/context restore.",
+      "details": [
+        "The fixture is grounded in an original scene MUD triangle and checked at desktop and 390px. The MUD contact selects wet roost and suppresses dry effects; all dry, water and mud browser cases pass without JavaScript or WebGL errors."
+      ],
+      "limitation": "Host-only, pending CI/public verification. This validates the supplied ENV04 contact placement, not all MUD surfaces or game parity. Whole-game RNG order, exact GS/VU rendering, scene-visibility behavior and original body/tire effects remain incomplete.",
+      "image": "/devlog-images/original-mud-wheel-roost-passes-host-checks-99b7171f.png",
+      "caption": "Host capture at an original ENV04 MUD surface contact placement; this is a test route, not a normal map spawn."
+    },
+    {
+      "id": "train-body-impact-sound-passes-host-recovery-checks-378a49bd",
+      "timestamp": "2026-10-12T17:33:52.111494+00:00",
+      "recorded_at": "2026-10-12T17:33:52.111494+00:00",
+      "kind": "verification",
+      "title": "Train body-impact sound passes host recovery checks",
+      "summary": "A real touch-wreck route plays two original body-impact clips during separation and recovery. The 64-frame native batch keeps the impacts audible without overlapping clips; recovery and pause/resume pass.",
+      "details": [
+        "Body05/body04 sample magnitudes are 2.824348 and 5.099363; isolated PCM energies are 0.03029 and 0.02301. Detached-source position is retained. Native bounded probes cover 1,200 latch, 400 impact-sampler, 800 velocity-cache and 400 phase-position cases."
+      ],
+      "limitation": "Host-only; public collision/effects/audio verification is pending. This verifies two touch-wreck clips, not complete sound, mixer or PS2 audio parity. Four original samples are the only additional runtime assets required."
     }
   ],
-  "updated_at": "2026-10-12T16:45:13.318352+00:00",
+  "updated_at": "2026-10-12T17:33:52.111494+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
-      "commit": "629bc0ac8ccd586abd4630c826909287a671764b",
-      "ci_run": "38275179626",
+      "commit": "d308c629b44ebeae5c26378c43544c75a84e0f1c",
+      "ci_run": "38280220923",
       "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
       "static_assets": 28,
-      "served_objects": 328,
-      "devlog_entries": 84,
-      "devlog_screenshots": 75,
-      "r2_approved_objects": 329
+      "served_objects": 331,
+      "devlog_entries": 87,
+      "devlog_screenshots": 78,
+      "r2_approved_objects": 332,
+      "r2_upload_changes": 6
     },
     "next_priorities": [
       "Complete one-finger mobile feedback for steering/lean, diagonals, release, airborne control and landing while preserving current two-thumb behavior; physical-device validation remains open.",
@@ -1566,25 +1645,39 @@
         "category": "World",
         "title": "Arlington locomotive and train",
         "status": "PARTIAL",
-        "scope": "PUBLIC \u00b7 ROUTE RENDERING; COLLISION/AUDIO/SMOKE OPEN",
-        "summary": "The ENV08 Arlington train renders and moves along the recovered route with animated wheels. Train collisions, audio, smoke and full scene parity remain unfinished.",
-        "validation": "Public 629bc0ac8ccd586abd4630c826909287a671764b \u00b7 CI 38275179626: desktop/390px actual-pixel checks passed (3,990 / 1,710 changed pixels); movement, wheel animation, pause/resume and context restoration passed with zero page/WebGL errors.",
+        "scope": "PUBLIC \u00b7 ROUTE/WHEEL/AUDIO; HOST COLLISION SCENARIOS \u00b7 PUBLIC COLLISION PENDING",
+        "summary": "The ENV08 Arlington train renders and moves along the recovered route with animated wheels and 11 active original sound loops. Train collision, smoke and full scene/audio parity remain unfinished.",
+        "validation": "Public d308c629b44ebeae5c26378c43544c75a84e0f1c \u00b7 CI 38280220923: desktop/390px train pixel checks (3,990 / 1,710 changed pixels), movement/wheel animation, pause/resume/context restore and 11 train audio loops passed with no page/WebGL/audio errors.",
         "evidence": "research/TRAIN.md \u2014 procedural route, packed wheel animation and remaining integration gaps.",
-        "next_step": "Connect native scene-height behavior, moving-object collision, audio and smoke; validate route and timing against original behavior.",
+        "next_step": "Connect native scene-height behavior and moving-object collision; recover smoke and compare audio activation/start phase, SPU2 and surround behavior.",
         "release_verification": {
-          "commit": "629bc0ac8ccd586abd4630c826909287a671764b",
-          "ci_run": "38275179626",
+          "commit": "d308c629b44ebeae5c26378c43544c75a84e0f1c",
+          "ci_run": "38280220923",
           "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
           "static_assets": 28,
-          "served_objects": 328,
-          "devlog_entries": 84,
-          "devlog_screenshots": 75,
-          "r2_approved_objects": 329,
+          "served_objects": 331,
+          "devlog_entries": 87,
+          "devlog_screenshots": 78,
+          "r2_approved_objects": 332,
+          "r2_upload_changes": 6,
           "checks": [
-            "The corrected 629 package includes the imported water/train modules and a generic import-closure regression check; the initial 5c3bef0 package omitted two imports and is not treated as a successful release.",
-            "Public water checks passed for ENV04, ENV05, ENV07 and ENV08; dry ENV01 correctly has no water. 390px projection, banks and sky checks passed.",
-            "Public Arlington train rendering passed desktop and 390px pixel checks (3,990 / 1,710 changed pixels); movement, wheel animation, pause/resume and context restoration passed.",
-            "Zero page errors and WebGL errors; gallery desktop/mobile checks passed."
+            "Public ENV08 train audio passes with the three original mono 11,025 Hz VAG loops, 11 attached loops/starts, original loop points, train-only audible PCM, natural distance/pan/pitch behavior, explicit near/far checks and zero far-field PCM.",
+            "Pause/resume, context restoration and mute pass without duplicate voices or page/audio errors.",
+            "Public title/controller/menu to Tioga drive to pause/Controls to 390px Caribou reload passes without a disc picker.",
+            "PS2 listening/SPU2/surround parity, per-body activation/start phase and physical iOS are not established."
+          ]
+        },
+        "host_verification": {
+          "scope": "Host-only collision component; public release pending.",
+          "checks": [
+            "All four source-route browser scenarios passed: front-land remained Riding through a rideable lift and landing; front-launch entered Falling/Recovering after a 65.48 ft/s upward relative-speed contact; side-body and top-drop contacts exercised wreck/recovery and wheel support.",
+            "Contact trace counts: front-launch 20 dynamic / 6 secondary; side-body 13 / 4; top-drop 10 / 4. Front-land remained Riding.",
+            "Scene bridge uses original train COL geometry and preserves the native callback target, 60-unit cap, dynamic list, height queries and secondary contact response. No scripted launch/crash trigger was added.",
+            "Browser evidence: work/verification/train-contact-final-browser.log; source contract: research/TRAIN_CONTACT.md."
+          ],
+          "limitations": [
+            "Four source-derived encounters do not establish all train collision scenes, general loaded-scene coverage, whole-game parity or hardware behavior.",
+            "Public collision verification remains pending; train smoke and other effects are separate work."
           ]
         }
       },
@@ -1966,6 +2059,31 @@
         }
       },
       {
+        "id": "wheel-surface-effects",
+        "category": "Presentation",
+        "title": "Original wheel dust, dirt and wet roost",
+        "status": "PARTIAL",
+        "scope": "HOST VERIFIED \u00b7 DRY/WATER/MUD EFFECT SUBSET; PUBLIC PENDING",
+        "summary": "Source-informed rear dust, dirt chunks/spray and four-wheel water/mud roost now render from runtime tire/terrain contacts. Dry, water and mud routes change pixels on desktop and 390px views; this remains a portable visual backend, not full PS2 rendering parity.",
+        "validation": "Host tools/test_wheel_effects.mjs and tools/test_wheel_wet.mjs pass dry, water and original ENV04 MUD cases at desktop and 390px. All cases pass pause/resume, context restoration and zero JS/WebGL errors; at most two draws use 1,031,664 GPU bytes.",
+        "evidence": "research/WHEEL_EFFECTS.md; work/verification/wheel-effects-host.log; work/verification/wheel-effects-water.log; work/verification/wheel-effects-mud.log.",
+        "next_step": "Compare generic particle fade/integration, scene visibility and exact PS2 GS/VU output; verify public browser behavior and physical phone performance.",
+        "host_verification": {
+          "scope": "Host-only component; pending release CI and public browser verification.",
+          "checks": [
+            "Dry dust/dirt actual-pixel deltas: 69 desktop / 48 mobile. Dry emission was 60 in each view; steering emission totals were 228/4/8 desktop and 240/10/20 mobile.",
+            "Water roost actual-pixel deltas: 4,109 desktop / 3,322 mobile at a terrain-derived runtime placement; 1,278/1,818 births and one draw per view.",
+            "Original ENV04 MUD roost actual-pixel deltas: 1,288 desktop / 1,286 mobile at a loaded MUD placement; 522 births and two draws per view.",
+            "Native probes: selector 1,000 cases / 248,194 instructions; particle update 1,000 / 159,834; wet birth 200 / 379,220. Bounded output comparisons pass with supplied source tables/services."
+          ],
+          "limitations": [
+            "Host captures include test placements and do not establish normal map-spawn behavior or every MUD surface.",
+            "Whole-game shared RNG order, generic particle integration/fade, scene visibility, original body/tire texture animation and exact GS/VU hardware parity remain incomplete.",
+            "SwiftShader timing is not phone GPU performance; physical mobile validation remains open."
+          ]
+        }
+      },
+      {
         "id": "input",
         "category": "Platform",
         "title": "Keyboard, controller and touch input",
@@ -1997,19 +2115,26 @@
         "category": "Audio",
         "title": "Music and engine sound",
         "status": "PARTIAL",
-        "scope": "PUBLIC \u00b7 21-SONG SELECTOR AND PAUSED PREVIEW",
-        "summary": "The Music page selects all 21 original songs, preserves shuffle/history across map changes and previews while paused. Original mixer, effects, spatialization, dialogue and complete music transitions remain incomplete.",
-        "validation": "Public 0906822adbc585f58e4a7309322f63f4cc3f7b6a \u00b7 CI 38194430965: all 21 songs decoded/played through WASM with reads bounded at 65,536 bytes and zero underruns. Paused preview, off/on and focus behavior passed; this is not a listening comparison.",
+        "scope": "PUBLIC \u00b7 21-SONG SELECTOR AND TRAIN LOOP AUDIO",
+        "summary": "The Music page selects all 21 original songs, preserves shuffle/history across map changes and previews while paused. The ENV08 train plays 11 attached original audio loops. Original mixer, effects, SPU2/surround, dialogue and complete transitions remain incomplete.",
+        "validation": "Public 0906822adbc585f58e4a7309322f63f4cc3f7b6a \u00b7 CI 38194430965 verified all 21 songs; public d308c629b44ebeae5c26378c43544c75a84e0f1c \u00b7 CI 38280220923 verified train loop playback, distance/pan/pitch, near/far behavior, pause/resume and context restore. Neither check is a listening comparison.",
         "evidence": "research/DEPLOYMENT.md \u2014 runtime manifest; research/IMPLEMENTATION.md \u2014 audio acceptance gate.",
-        "next_step": "Compare track transitions and levels with original behavior, then recover mixer, effects, spatialization and dialogue.",
+        "next_step": "Compare train activation/start phase and music transitions/levels with original behavior, then recover mixer effects, SPU2/surround, spatialization and dialogue.",
         "release_verification": {
-          "commit": "0906822adbc585f58e4a7309322f63f4cc3f7b6a",
-          "ci_run": "38194430965",
+          "commit": "d308c629b44ebeae5c26378c43544c75a84e0f1c",
+          "ci_run": "38280220923",
           "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+          "static_assets": 28,
+          "served_objects": 331,
+          "devlog_entries": 87,
+          "devlog_screenshots": 78,
+          "r2_approved_objects": 332,
+          "r2_upload_changes": 6,
           "checks": [
-            "All 21 songs selected/decoded/played with bounded 65,536-byte reads and zero underruns.",
-            "Paused preview, mute/off-on and focus handling passed.",
-            "No listening or full mixer parity is claimed."
+            "Public ENV08 train audio passes with the three original mono 11,025 Hz VAG loops, 11 attached loops/starts, original loop points, train-only audible PCM, natural distance/pan/pitch behavior, explicit near/far checks and zero far-field PCM.",
+            "Pause/resume, context restoration and mute pass without duplicate voices or page/audio errors.",
+            "Public title/controller/menu to Tioga drive to pause/Controls to 390px Caribou reload passes without a disc picker.",
+            "PS2 listening/SPU2/surround parity, per-body activation/start phase and physical iOS are not established."
           ]
         }
       },

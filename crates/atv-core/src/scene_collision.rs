@@ -1,6 +1,6 @@
 //! Combined static/ESB partition and shared quad/recovery candidate cache.
 //! Shipped cylinders expand in native mixed-node order for quad, wheel and active
-//! wreck-rider consumers. Dynamic nodes and exceptional actor filters remain open.
+//! wreck-rider consumers. Arlington's native dynamic list follows that tree.
 use crate::{
     Result,
     ecosystem::Ecosystem,
@@ -8,6 +8,7 @@ use crate::{
     scene_candidates::{Candidate, CandidateCache, NodeClass},
     scene_partition::{Bounds, Config, Query, StaticPartition},
     terrain::Terrain,
+    train::{DynamicList, MotionState},
     vegetation_collision,
     wheel::{Vec3, dot},
 };
@@ -18,6 +19,14 @@ use std::rc::Rc;
 pub enum SceneNode {
     StaticObstacle(usize),
     Vegetation(usize),
+    DynamicObstacle(usize),
+}
+
+/// Original collision geometry and fixed-frame procedural body history.
+#[derive(Debug, Clone)]
+pub struct DynamicObstacle {
+    pub obstacle: StaticObstacle,
+    pub motion: MotionState,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -32,12 +41,15 @@ pub struct PhysicalMesh {
     pub node: SceneNode,
     pub proxy_index: Option<usize>,
     pub obstacle: StaticObstacle,
+    pub motion: Option<MotionState>,
+    pub mud: bool,
 }
 #[derive(Default)]
 pub struct PhysicalSelection {
     pub meshes: Vec<PhysicalMesh>,
     pub static_candidates: usize,
     pub vegetation_candidates: usize,
+    pub dynamic_candidates: usize,
     pub unsupported_vegetation_proxies: usize,
 }
 impl PhysicalSelection {
@@ -51,6 +63,10 @@ impl PhysicalSelection {
 
 pub struct SceneContacts {
     pub contacts: Vec<crate::obstacle::ObstacleContact>,
+    /// Each newly appended row uses the current callback target, even when its
+    /// cumulative nearest geometry was inherited from an earlier callback.
+    pub targets: Vec<Option<MotionState>>,
+    pub dynamic_callbacks: usize,
     pub vegetation_proxies: usize,
     pub vegetation_callbacks: usize,
     pub unsupported_vegetation_proxies: usize,
@@ -116,9 +132,12 @@ struct StaticSphere {
 #[derive(Debug, Clone)]
 pub struct SceneCollision {
     obstacles: Vec<StaticObstacle>,
+    mud_obstacles: Vec<bool>,
     static_spheres: Vec<StaticSphere>,
     vegetation: Vec<RegisteredVegetation>,
     vegetation_meshes: [Vec<Option<Rc<crate::collision::CollisionMesh>>>; 256],
+    dynamic: Vec<DynamicObstacle>,
+    dynamic_list: DynamicList,
     coordinate_unit: f32,
     coordinate_reciprocal: f32,
     partition: StaticPartition,
@@ -221,10 +240,13 @@ impl SceneCollision {
         }
         let partition = StaticPartition::new(config, &bounds)?;
         Ok(Self {
+            mud_obstacles: vec![false; obstacles.len()],
             obstacles,
             static_spheres,
             vegetation,
             vegetation_meshes,
+            dynamic: Vec::new(),
+            dynamic_list: DynamicList::default(),
             coordinate_unit,
             coordinate_reciprocal,
             partition,
@@ -257,6 +279,56 @@ impl SceneCollision {
     pub fn obstacles(&self) -> &[StaticObstacle] {
         &self.obstacles
     }
+    ///0020b7e0 assigns the selected raw environment's MUD geometry category.
+    pub fn set_mud_obstacles(&mut self, flags: Vec<bool>) -> Result<()> {
+        if flags.len() != self.obstacles.len() || self.cache.is_valid() {
+            return Err("mud categories must match original placements before querying".into());
+        }
+        self.mud_obstacles = flags;
+        Ok(())
+    }
+    pub fn mud_obstacles(&self) -> &[bool] {
+        &self.mud_obstacles
+    }
+    /// Install the original procedural loader order once for this scene.
+    /// Scene reload replaces the cache; ordinary actor movement does not.
+    pub fn install_dynamic(&mut self, objects: Vec<DynamicObstacle>) -> Result<()> {
+        if !self.dynamic.is_empty() || self.cache.is_valid() {
+            return Err("dynamic scene actors must be installed before the first query".into());
+        }
+        let mut list = DynamicList::default();
+        for (index, object) in objects.iter().enumerate() {
+            object.obstacle.world_bounds()?;
+            list.register(index)?;
+        }
+        self.dynamic = objects;
+        self.dynamic_list = list;
+        Ok(())
+    }
+    ///001a23f0 does not move or reorder Arlington's dynamic-list slots. Updating
+    ///the current body pose must not invalidate the shared native cache.
+    pub fn update_dynamic(&mut self, index: usize, motion: MotionState) -> Result<()> {
+        if motion
+            .current
+            .iter()
+            .chain(motion.previous.iter())
+            .any(|v| !v.is_finite())
+            || !motion.reciprocal_dt.is_finite()
+            || motion.reciprocal_dt < 0.
+        {
+            return Err("invalid dynamic actor history".into());
+        }
+        let object = self
+            .dynamic
+            .get_mut(index)
+            .ok_or("dynamic actor index out of range")?;
+        object.obstacle.world_matrix = motion.current;
+        object.motion = motion;
+        Ok(())
+    }
+    pub fn dynamic(&self) -> &[DynamicObstacle] {
+        &self.dynamic
+    }
     pub fn vegetation(&self) -> &[RegisteredVegetation] {
         &self.vegetation
     }
@@ -278,8 +350,10 @@ impl SceneCollision {
     fn node(&self, index: usize) -> SceneNode {
         if index < self.obstacles.len() {
             SceneNode::StaticObstacle(index)
-        } else {
+        } else if index < self.obstacles.len() + self.vegetation.len() {
             SceneNode::Vegetation(index - self.obstacles.len())
+        } else {
+            SceneNode::DynamicObstacle(index - self.obstacles.len() - self.vegetation.len())
         }
     }
     fn distance(&self, center: Vec3, index: usize) -> Result<f32> {
@@ -299,6 +373,20 @@ impl SceneCollision {
                     )?,
                     plant.radius,
                 )
+            }
+            SceneNode::DynamicObstacle(index) => {
+                let object = &self.dynamic[index].obstacle;
+                let root = object
+                    .mesh
+                    .nodes
+                    .first()
+                    .ok_or("missing dynamic collision root")?;
+                Ok(sphere_separation(
+                    center,
+                    0.,
+                    transform_point(&object.world_matrix, root.center),
+                    dot(root.half_extents, root.half_extents).sqrt(),
+                ))
             }
         }
     }
@@ -327,16 +415,21 @@ impl SceneCollision {
                     cell_min: [0.; 3],
                     cell_max: [0.; 3],
                 });
+            let offset = self.obstacles.len() + self.vegetation.len();
             let candidates = query
                 .indices
                 .iter()
-                .map(|&index| {
+                .copied()
+                .chain(self.dynamic_list.indices().map(|index| offset + index))
+                .map(|index| {
                     let node = self.node(index);
                     Ok(Candidate {
                         index,
                         distance: self.distance(center, index)?,
                         class: match node {
-                            SceneNode::StaticObstacle(_) => NodeClass::CollisionObject,
+                            SceneNode::StaticObstacle(_) | SceneNode::DynamicObstacle(_) => {
+                                NodeClass::CollisionObject
+                            }
                             SceneNode::Vegetation(_) => NodeClass::Vegetation,
                         },
                         eligible: match node {
@@ -344,8 +437,9 @@ impl SceneCollision {
                                 ordinary_eligible(index, &self.obstacles[index])
                             }
                             SceneNode::Vegetation(_) => false,
+                            SceneNode::DynamicObstacle(_) => true,
                         },
-                        static_mode: true,
+                        static_mode: !matches!(node, SceneNode::DynamicObstacle(_)),
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -391,6 +485,7 @@ impl SceneCollision {
             .strictly_within()
             .filter_map(|candidate| match candidate.node {
                 SceneNode::StaticObstacle(index) => Some(&self.obstacles[index]),
+                SceneNode::DynamicObstacle(index) => Some(&self.dynamic[index].obstacle),
                 SceneNode::Vegetation(_) => None,
             })
             .collect()
@@ -410,6 +505,7 @@ impl SceneCollision {
                 {
                     Some(&self.obstacles[index])
                 }
+                SceneNode::DynamicObstacle(index) => Some(&self.dynamic[index].obstacle),
                 _ => None,
             })
             .collect()
@@ -445,6 +541,8 @@ impl SceneCollision {
                         node: candidate.node,
                         proxy_index: None,
                         obstacle: self.obstacles[index].clone(),
+                        motion: None,
+                        mud: self.mud_obstacles[index],
                     });
                 }
                 SceneNode::Vegetation(index) => {
@@ -499,11 +597,24 @@ impl SceneCollision {
                                     mesh: mesh.clone(),
                                     world_matrix,
                                 },
+                                motion: None,
+                                mud: false,
                             });
                         } else {
                             selected.unsupported_vegetation_proxies += 1;
                         }
                     }
+                }
+                SceneNode::DynamicObstacle(index) => {
+                    selected.dynamic_candidates += 1;
+                    let object = &self.dynamic[index];
+                    selected.meshes.push(PhysicalMesh {
+                        node: candidate.node,
+                        proxy_index: None,
+                        obstacle: object.obstacle.clone(),
+                        motion: Some(object.motion),
+                        mud: false,
+                    });
                 }
                 _ => {}
             }
@@ -520,6 +631,25 @@ impl SceneCollision {
         world: &[f32; 16],
         skip_vegetation: bool,
     ) -> Result<SceneContacts> {
+        self.quad_contacts_filtered(query, rays, world, skip_vegetation, false)
+    }
+    ///001dd830's post-loop list contains only admitted nonstatic collision actors.
+    pub fn dynamic_contacts(
+        &self,
+        query: &CachedQuery,
+        rays: &crate::collision::CollisionRayTree,
+        world: &[f32; 16],
+    ) -> Result<SceneContacts> {
+        self.quad_contacts_filtered(query, rays, world, true, true)
+    }
+    fn quad_contacts_filtered(
+        &self,
+        query: &CachedQuery,
+        rays: &crate::collision::CollisionRayTree,
+        world: &[f32; 16],
+        skip_vegetation: bool,
+        only_dynamic: bool,
+    ) -> Result<SceneContacts> {
         let mut geometry = crate::obstacle::SceneContactQuery::new(rays, world)?;
         let selected = self.physical_selection(
             query,
@@ -527,18 +657,29 @@ impl SceneCollision {
             geometry.center,
             geometry.radius,
             skip_vegetation,
-            |_, _| true,
+            |index, _| !self.mud_obstacles[index],
         )?;
         let vegetation_proxies = selected.vegetation_proxies();
         let mut vegetation_callbacks = 0;
+        let mut dynamic_callbacks = 0;
+        let mut targets = Vec::new();
         for mesh in &selected.meshes {
-            let plant = mesh.proxy_index.is_some();
-            if geometry.visit_mesh(&mesh.obstacle, !plant)? && plant {
-                vegetation_callbacks += 1;
+            if only_dynamic && mesh.motion.is_none() {
+                continue;
             }
+            let before = geometry.contact_count();
+            let plant = mesh.proxy_index.is_some();
+            if geometry.visit_mesh(&mesh.obstacle, !plant)? {
+                vegetation_callbacks += usize::from(plant);
+                dynamic_callbacks += usize::from(mesh.motion.is_some());
+            }
+            targets.resize(geometry.contact_count(), mesh.motion);
+            debug_assert!(geometry.contact_count() >= before);
         }
         Ok(SceneContacts {
             contacts: geometry.finish(),
+            targets,
+            dynamic_callbacks,
             vegetation_proxies,
             vegetation_callbacks,
             unsupported_vegetation_proxies: selected.unsupported_vegetation_proxies,
@@ -573,12 +714,14 @@ impl SceneCollision {
         ignore_vegetation: bool,
         mut ordinary_eligible: impl FnMut(usize, &StaticObstacle) -> bool,
     ) -> Result<Vec<SceneNode>> {
-        let Some(query) = self.partition.query(bounds)? else {
-            return Ok(Vec::new());
-        };
-        Ok(query
-            .indices
+        let indices = self
+            .partition
+            .query(bounds)?
+            .map_or_else(Vec::new, |query| query.indices);
+        let offset = self.obstacles.len() + self.vegetation.len();
+        Ok(indices
             .into_iter()
+            .chain(self.dynamic_list.indices().map(|index| offset + index))
             .filter_map(|index| {
                 let node = self.node(index);
                 match node {
@@ -588,6 +731,7 @@ impl SceneCollision {
                         Some(node)
                     }
                     SceneNode::Vegetation(_) if !ignore_vegetation => Some(node),
+                    SceneNode::DynamicObstacle(_) => Some(node),
                     _ => None,
                 }
             })
@@ -629,6 +773,14 @@ impl SceneCollision {
                         .then_some(&self.obstacles[index])
                 }
                 SceneNode::Vegetation(_) => None,
+                SceneNode::DynamicObstacle(index) => {
+                    let object = &self.dynamic[index].obstacle;
+                    let root = object.mesh.nodes.first()?;
+                    let center = transform_point(&object.world_matrix, root.center);
+                    let object_radius = dot(root.half_extents, root.half_extents).sqrt();
+                    (sphere_separation(bounds.center, radius, center, object_radius) == 0.)
+                        .then_some(object)
+                }
             })
             .collect();
         Ok(DirectCameraQuery {
@@ -718,6 +870,171 @@ mod tests {
             [1, 0, 0, 0, 0, 0, 0, 0, 0],
         ];
         eco
+    }
+
+    fn dynamic(object: StaticObstacle, velocity: Vec3) -> DynamicObstacle {
+        let mut previous = object.world_matrix;
+        for i in 0..3 {
+            previous[12 + i] -= velocity[i];
+        }
+        DynamicObstacle {
+            motion: MotionState {
+                current: object.world_matrix,
+                previous,
+                reciprocal_dt: 1.,
+            },
+            obstacle: object,
+        }
+    }
+    #[test]
+    fn dynamic_list_is_global_and_movement_reuses_the_existing_cache() {
+        let mut far = IDENTITY;
+        far[12] = 5000.;
+        far[14] = 5000.;
+        let mut scene = SceneCollision::new(
+            config(),
+            vec![obstacle([128., 0., 128.], [1.; 3], IDENTITY)],
+            None,
+            false,
+            |_| Ok(0.),
+        )
+        .unwrap();
+        scene
+            .install_dynamic(vec![dynamic(obstacle([0.; 3], [1.; 3], far), [0.; 3])])
+            .unwrap();
+        let first = scene
+            .cached_query([128., 0., 128.], 3., |_, _| true)
+            .unwrap();
+        assert_eq!(
+            first.candidates.iter().map(|c| c.node).collect::<Vec<_>>(),
+            [SceneNode::StaticObstacle(0), SceneNode::DynamicObstacle(0)]
+        );
+        assert!(first.candidates[1].distance > first.cache_radius);
+        assert_eq!(scene.static_selection(&first).len(), 1);
+        let mut current = far;
+        current[12] = 128.;
+        current[14] = 128.;
+        scene
+            .update_dynamic(
+                0,
+                MotionState {
+                    current,
+                    previous: far,
+                    reciprocal_dt: 60.,
+                },
+            )
+            .unwrap();
+        let next = scene
+            .cached_query([128., 0., 128.], 3., |_, _| {
+                panic!("reuse does not re-evaluate membership")
+            })
+            .unwrap();
+        assert!(!next.refreshed);
+        assert_eq!(next.candidates[1].distance, 0.);
+        assert_eq!(scene.static_selection(&next).len(), 2);
+        assert!(scene.install_dynamic(Vec::new()).is_err());
+        let direct = scene
+            .direct_query(
+                Bounds {
+                    center: [-5000.; 3],
+                    half: [1.; 3],
+                },
+                true,
+                |_, _| true,
+            )
+            .unwrap();
+        assert_eq!(
+            direct,
+            [SceneNode::DynamicObstacle(0)],
+            "dynamic provider ignores spatial query bounds"
+        );
+    }
+    #[test]
+    fn appended_contacts_assign_current_callback_target_and_keep_global_capacity() {
+        use crate::collision::{CollisionRay, CollisionRayTree, Triangle};
+        let plane = |x: f32| StaticObstacle {
+            mesh: Rc::new(CollisionMesh {
+                transform: [1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0.],
+                vertices: vec![[x, -4., -4.], [x, 4., -4.], [x, 0., 4.]],
+                vertex_normal_bits: None,
+                triangles: vec![Triangle {
+                    indices: [0, 1, 2],
+                    normal: [1., 0., 0.],
+                    distance: -x,
+                    invalid_plane_bits: None,
+                }],
+                broad_phase_nodes: 1,
+                nodes: vec![RayTreeNode {
+                    center: [x, 0., 0.],
+                    half_extents: [0., 4., 4.],
+                    bound_measure: 128.,
+                    children: [0x8000; 2],
+                }],
+                flags: 0,
+            }),
+            world_matrix: IDENTITY,
+        };
+        let mut scene =
+            SceneCollision::new(config(), vec![plane(3.)], None, false, |_| Ok(0.)).unwrap();
+        scene
+            .install_dynamic((0..65).map(|_| dynamic(plane(2.), [1., 0., 0.])).collect())
+            .unwrap();
+        let rays = CollisionRayTree {
+            transform: IDENTITY,
+            query_capacity: 1,
+            rays: vec![CollisionRay {
+                start: [5., 0., 0.],
+                end: [0.; 3],
+            }],
+            nodes: vec![RayTreeNode {
+                center: [2.5, 0., 0.],
+                half_extents: [2.5, 0.1, 0.1],
+                bound_measure: 25.08,
+                children: [0x8000; 2],
+            }],
+        };
+        let query = scene.cached_query([2.5, 0., 0.], 3., |_, _| true).unwrap();
+        let hit = scene
+            .quad_contacts(&query, &rays, &IDENTITY, false)
+            .unwrap();
+        assert_eq!(hit.contacts.len(), 60);
+        assert_eq!(hit.targets.len(), 60);
+        assert_eq!(hit.dynamic_callbacks, 65);
+        assert!(hit.targets[0].is_none());
+        assert!(hit.targets[1..].iter().all(Option::is_some));
+        assert!(
+            hit.contacts.iter().all(|c| c.world_point == [3., 0., 0.]),
+            "farther train callbacks inherit nearer static geometry"
+        );
+        //001e92c0 excludes MUD from AR/AO geometry, without removing it
+        //from the shared broad candidate collector or contaminating nearest rows.
+        scene.mud_obstacles[0] = true;
+        let reused = scene.cached_query([2.5, 0., 0.], 3., |_, _| true).unwrap();
+        assert!(!reused.refreshed);
+        assert!(
+            reused
+                .candidates
+                .iter()
+                .any(|c| c.node == SceneNode::StaticObstacle(0))
+        );
+        let without_mud = scene
+            .quad_contacts(&reused, &rays, &IDENTITY, false)
+            .unwrap();
+        assert!(without_mud.targets.iter().all(Option::is_some));
+        assert!(
+            without_mud
+                .contacts
+                .iter()
+                .all(|c| c.world_point == [2., 0., 0.])
+        );
+        let secondary = scene.dynamic_contacts(&query, &rays, &IDENTITY).unwrap();
+        assert_eq!(secondary.contacts.len(), 60);
+        assert!(
+            secondary
+                .contacts
+                .iter()
+                .all(|c| c.world_point == [2., 0., 0.])
+        );
     }
 
     #[test]

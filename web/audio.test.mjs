@@ -107,3 +107,82 @@ test('a missing train bank leaves the existing engine/music player usable', asyn
     assert.deepEqual(reports, ['Train sound: missing original sample']);
   } finally { audio.close(); globalThis.window = previousWindow; }
 });
+
+test('rider effects retain batched impacts, obey native active-voice guard, and reset independently', async () => {
+  const previousWindow = globalThis.window;
+  const sources = [], requests = [];
+  class Node {
+    constructor() { this.gain = { value: 1 }; this.playbackRate = { value: 1 }; }
+    connect() {} disconnect() {}
+    start() { this.started = true; } stop() { this.stopped = true; }
+  }
+  class Context {
+    constructor() { this.state = 'suspended'; this.destination = {}; this.currentTime = 0; }
+    createGain() { return new Node(); }
+    createBufferSource() { const node = new Node(); sources.push(node); return node; }
+    createChannelMerger() { return new Node(); }
+    async resume() { this.state = 'running'; } async suspend() { this.state = 'suspended'; } async close() { this.state = 'closed'; }
+  }
+  globalThis.window = { AudioContext: Context, addEventListener() {}, removeEventListener() {} };
+  const encode = value => new TextEncoder().encode(JSON.stringify(value));
+  const audio = new GameAudio(async (op, bytes) => {
+    if (op === 76) return encode({ body_impact: ['body1', 'body2'], min_distance: 30, max_distance: 100 });
+    if (op === 77) {
+      const batch = JSON.parse(new TextDecoder().decode(bytes));
+      let playing = batch.playing;
+      return encode(batch.frames.map(request => {
+        request.impact.playing = playing; requests.push(request);
+        const event = request.impact.sampled_impact_delta[0] ? { sample: 'body1', magnitude: 3, play: !playing } : null;
+        if (event?.play) playing = true;
+        return { event, spatial: { left: 25, right: 75, pitch: 4100 } };
+      }));
+    }
+    if (op === 33) return encode(null);
+    if (op === 34 || op === 78) { requests.push(op); return new Uint8Array(); }
+    throw new Error(`Unexpected op ${op}`);
+  });
+  audio.music.update = async () => {}; audio.loadSample = async () => {};
+  for (const name of ['body1', 'body2']) audio.buffers.set(name, { buffer: { duration: 1 }, info: { channels: 1, sample_rate: 11025 } });
+  audio.ready = true; audio.config = { samples: Array.from({ length: 10 }, () => []) };
+  const scene = { camera: { position: [0,0,0], target: [0,0,1] } };
+  const frame = delta => ({ grounded: [false], speed_magnitude: 0, wreck: { phase: 'Wreck' },
+    rider_audio_position: [2,3,4], rider_wreck: { sampled_impact_delta: [delta,0,0], linear_velocity: [999,999,999] } });
+  try {
+    await audio.loadEffects({ bytes: new Uint8Array(), isCurrent: () => true });
+    audio.captureEffects(1 / 60, frame(3), scene);
+    assert.equal(audio.effectFrames.length, 0, 'Autoplay-locked events must not become delayed impact sounds');
+    await audio.resume();
+    audio.busy = true;
+    await audio.update(1 / 60, { throttle: 0 }, frame(3), scene);
+    await audio.update(1 / 60, { throttle: 0 }, frame(0), scene);
+    assert.equal(audio.effectFrames.length, 2);
+    audio.busy = false;
+    await audio.update(1 / 60, { throttle: 0 }, frame(3), scene);
+    assert.equal(audio.effectFrames.length, 0); assert.equal(requests.length, 3);
+    assert.deepEqual(requests.map(r => r.impact.sampled_impact_delta[0]), [3,0,3]);
+    assert.deepEqual(requests.map(r => r.impact.playing), [false,true,true]);
+    assert.deepEqual(requests[0].position, [2,3,4]); assert.equal(requests[0].velocity, undefined);
+    assert.equal(audio.effectSelections, 2); assert.equal(audio.effectStarts, 1); assert.equal(sources.length, 1);
+    assert.equal(sources[0].loop, false); assert.equal(sources[0].playbackRate.value, 4100 / 4096);
+    const voice = audio.effectVoices.get(0); assert.equal(voice.left.gain.value, .25); assert.equal(voice.right.gain.value, .75);
+    sources[0].onended(); assert.equal(audio.effectVoices.size, 0);
+    await audio.update(1 / 60, { throttle: 0 }, frame(3), scene); assert.equal(audio.effectStarts, 2);
+    await audio.setActive(false); assert.equal(audio.engineGain.gain.value, 0); assert.equal(audio.context.state, 'suspended');
+    await audio.setMusicPreview(true); assert.equal(audio.engineGain.gain.value, 0);
+    await audio.setMusicPreview(false); await audio.setActive(true);
+    await audio.reset(); assert.equal(audio.effectVoices.size, 0); assert(sources[1].stopped); assert(requests.includes(78));
+    audio.close(); assert.equal(audio.snapshot().effects.ready, false);
+  } finally { audio.close(); globalThis.window = previousWindow; }
+});
+
+test('missing original rider sample leaves engine and music available', async () => {
+  const previousWindow = globalThis.window;
+  globalThis.window = { addEventListener() {}, removeEventListener() {} };
+  const reports = [], audio = new GameAudio(async () => new TextEncoder().encode(JSON.stringify({ body_impact: ['missing'] })), message => reports.push(message));
+  audio.ready = true; audio.loadSample = async () => { throw new Error('missing original sample'); };
+  try {
+    await audio.loadEffects({ bytes: new Uint8Array(), isCurrent: () => true });
+    assert(audio.ready); assert.equal(audio.effectsReady, false);
+    assert.deepEqual(reports, ['Rider effects: missing original sample']);
+  } finally { audio.close(); globalThis.window = previousWindow; }
+});

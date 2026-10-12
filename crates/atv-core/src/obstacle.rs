@@ -242,10 +242,20 @@ pub fn query_bundle(
     ray_to_mesh: &[f32; 16],
     mesh_to_ray: &[f32; 16],
 ) -> crate::Result<Vec<BundleHit>> {
-    if rays.nodes.is_empty() || mesh.nodes.is_empty() {
+    query_bundle_from_root(rays, mesh, ray_to_mesh, mesh_to_ray, 0)
+}
+///Runtime-created one-ray actors use a leaf root with no internal nodes.
+pub fn query_bundle_from_root(
+    rays: &crate::collision::CollisionRayTree,
+    mesh: &crate::collision::CollisionMesh,
+    ray_to_mesh: &[f32; 16],
+    mesh_to_ray: &[f32; 16],
+    ray_root: u16,
+) -> crate::Result<Vec<BundleHit>> {
+    if (ray_root & 0x8000 == 0 && rays.nodes.is_empty()) || mesh.nodes.is_empty() {
         return Err("collision query requires original tree roots".into());
     }
-    let mut stack = vec![(0_u16, 0_u16)];
+    let mut stack = vec![(ray_root, 0_u16)];
     let mut hits: Vec<BundleHit> = Vec::new();
     let mut visits = 0;
     while let Some((ray_ref, mesh_ref)) = stack.pop() {
@@ -623,5 +633,8 @@ impl<'a> SceneContactQuery<'a> {
     }
     pub fn finish(self) -> Vec<ObstacleContact> {
         self.contacts
+    }
+    pub fn contact_count(&self) -> usize {
+        self.contacts.len()
     }
 }

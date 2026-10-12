@@ -54,6 +54,9 @@ impl CandidateCache {
     pub fn entries(&self) -> &[(usize, f32)] {
         &self.entries
     }
+    pub fn is_valid(&self) -> bool {
+        self.valid
+    }
     pub fn radius(&self) -> f32 {
         self.radius
     }

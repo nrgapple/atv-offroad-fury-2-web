@@ -2,7 +2,7 @@
 import struct
 import unittest
 
-from package_content import Resource, compact_map_placements, compact_rider_materials, pack_resource, selected_train_names
+from package_content import Resource, compact_map_placements, compact_rider_materials, pack_resource, selected_train_names, selected_body_impact_names
 
 
 def mesh(material):
@@ -11,6 +11,21 @@ def mesh(material):
 
 
 class ContentTests(unittest.TestCase):
+    def test_body_impact_selects_required_bank_only_and_rejects_invalid_paths(self):
+        table = b'''[BodyImpact]
+NumSounds=2
+Sound_1=audio\\rider\\authored1.vag
+Sound_2=rider/authored2.vag
+[Unused]
+NumSounds=1
+Sound_1=unused.vag
+'''
+        self.assertEqual(selected_body_impact_names(table), {'rider/authored1.vag', 'rider/authored2.vag'})
+        with self.assertRaisesRegex(ValueError, 'sample path'):
+            selected_body_impact_names(table.replace(b'audio\\rider\\authored1.vag', b'../private.vag'))
+        with self.assertRaisesRegex(ValueError, 'duplicated'):
+            selected_body_impact_names(table.replace(b'rider/authored2.vag', b'rider/authored1.vag'))
+
     def test_train_selects_only_bound_procedural_body_audio_and_deduplicates(self):
         toy = b'''[Animations]
 NumberOfAnimations=3

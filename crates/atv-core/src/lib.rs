@@ -30,6 +30,7 @@ pub mod scene_candidates;
 pub mod scene_collision;
 pub mod scene_partition;
 pub mod sky;
+pub mod sound_effects;
 pub mod spatial_audio;
 pub mod stunt;
 pub mod stunt_score;
@@ -58,6 +59,7 @@ pub(crate) fn u16le(data: &[u8], at: usize) -> Result<u16> {
 }
 
 pub mod wheel;
+pub mod wheel_effects;
 pub mod wheel_stop;
 pub mod wheel_support;
 pub mod wreck;

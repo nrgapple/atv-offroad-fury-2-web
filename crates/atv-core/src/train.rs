@@ -14,6 +14,9 @@ pub use motion::MotionState;
 #[path = "train_list.rs"]
 mod list;
 pub use list::DynamicList;
+#[path = "train_height.rs"]
+mod height;
+pub use height::height_geometry;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Definition {

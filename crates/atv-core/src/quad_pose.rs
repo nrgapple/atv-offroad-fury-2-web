@@ -260,6 +260,20 @@ impl QuadPose {
         }
         Ok(self.wheels.map(|wheel| col(&matrices[wheel], 0)))
     }
+    ///00165af0 reads final wheel model world translations, not aggregate bounds.
+    ///These remain body-relative until composed with the vehicle world transform.
+    pub fn wheel_positions(&self, matrices: &[Matrix]) -> Result<[[f32; 3]; 4]> {
+        if matrices.len() != self.bind.len() || matrices.iter().flatten().any(|v| !v.is_finite()) {
+            return Err("invalid quad wheel pose matrix array".into());
+        }
+        Ok(self.wheels.map(|wheel| {
+            [
+                matrices[wheel][12],
+                matrices[wheel][13],
+                matrices[wheel][14],
+            ]
+        }))
+    }
 
     pub fn sample(
         &self,

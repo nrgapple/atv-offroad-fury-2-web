@@ -225,3 +225,89 @@ An authored two-car scene test establishes that the second query observes the
 first published pose and that native identity-history startup remains intact.
 Actual loaded-scene height queries and moving encounters remain integration
 checks, rather than claims established by this callback-order test.
+
+`00328990`'s one-ray constructor has now been replayed directly:503 instructions
+with explicit allocation/base-actor services produce runtime type2, root
+reference `0x8000` (leaf0), zero internal nodes, the exact `[0,+5,0]` and
+`[0,-5,0]` endpoints, and a three-row scratch capacity. The parameter3 passed to
+`00328810` changes mode flags, not geometry type. The authored `height_geometry`
+helper consequently uses the type2 kernel and direct static-provider/dynamic-list
+order, inclusive provider sphere overlap, self-body exclusion and strict nearest
+replacement. It does not substitute the wheel/rider type3 segment kernel.
+
+The private actual ENV08 audit loads all314 configured static placements and11
+collision-configured train cars, with no missing COL resources. Its two startup
+owner queries obtain4.315851 feet at the initial origin and135.680603 feet at the
+first route pose. Both hits lie below authored route height, so scene binding
+changes none of the first4×12 body matrices. Actual original `0010c3f0` execution
+for those two queries visits11 targets and executes87,482 instructions, matching
+both height results exactly. The decoded geometry/placement data and selected
+provider list are explicit replay inputs; this does not claim a complete native
+scene startup or coupled gameplay replay. An authored platform test checks
+static-to-dynamic nearest replacement, self-body exclusion and geometric misses.
+
+The earlier unavailable MUD base-name input is now traced. Game constructor
+`0021add0` writes default environment `env01` and copies an optional launch
+selection to `+584`; track selection `00265620` copies its selected descriptor's
+base name there. `00214940/0021ca20` append the native mode suffix for the scene
+(Freestyle `fr`) while forwarding the unchanged environment base for common
+`.aud` and `.toy` resources. The existing `0020b7e0` wrapper compares the actual
+loaded collision filename against raw environment base plus `MUD`, using native
+case-insensitive ASCII comparison. It does not use the suffixed scene name.
+A9-case constructor prefix runs636 instructions;32 environment/mode loader
+prefix cases run3,024 instructions. String/file services and selected environment
+inputs are explicit. This establishes the eight shipped environment basenames;
+custom scene/terrain names should retain their own source inputs.
+
+## Live bridge integration and encounter gate
+
+All11 collision-enabled train bodies bind the authored original COL resources in
+procedural loader order. The browser publishes every moving body sequentially,
+uses the recovered height helper, and retains that dynamic list on ATV reset.
+Wheel point velocity uses the preceding projected wheel force point and the
+body's cached world angular velocity, updated only by integration; secondary
+angular impulses do not refresh that cache early. Recovery/camera targets include
+train geometry, while detached rider contacts retain their own friction policy.
+
+The actor-specific MUD filter is applied before AR/AO geometry callbacks, retaining
+MUD in broad scene membership and wheel queries. Successful wheel MUD hits expose
+the source mud height without replacing the terrain support plane. The earlier
+claim that broad masks implied chassis MUD inclusion missed 001e92c0 and is corrected
+by the native restore/filter evidence below. Rider queries also exclude MUD.
+
+`tools/test_train_collisions.mjs` uses decoded source route/model poses and original
+collision geometry. It places the test ATV without injecting speed, impulse or
+wreck state, then advances normal fixed-step vehicle/train simulation. Host cases
+pass a rideable front lift, airborne interval and landing, a higher relative-speed
+head-on launch above 65ft/s upward and 50ft altitude gain, side-body wreck/recovery,
+and a top/drop encounter with moving wheel support and body contacts. The same
+reset path reinstalls all 11 train bodies. Browser/source component checks do not
+establish hardware equivalence or every player trajectory. Original shared RNG,
+remaining procedural toys, smoke effects and full racing/gameplay remain separate.
+
+## Chassis MUD exclusion restored before geometry
+
+The normal chassis policy requires the `001e92c0` callee, not just the immediate
+`001e4c90` binding code. That restore routine clears AR/AO category exclusions,
+performs its temporary spawn-overlap query, clears them again and adds the MUD
+category to both actors. It runs during binding and normal restoration. The
+actual `001eb6f0/00193060` contact callback has no separate MUD suppression: the
+exclusion belongs to eligibility before geometry. Earlier notes that inferred
+chassis inclusion from the immediate binding caller alone were incomplete.
+
+Sixteen complete original restore calls cover modes0/7/9/11, vegetation policy
+on/off and temporary spawn-query hit/miss. The resulting128 original
+`0011eeb0` decisions accept enabled ordinary static targets, reject enabled
+Static|MUD targets and reject disabled targets, for both AR and AO. The bounded
+replay executes26,236 instructions with explicit initialized category bits,
+allocation/free, visual-alpha and temporary-geometry services. Its report is
+`private/reports/train/mud-chassis-restored-native.json`; reproduction is
+`work/train-probe/native_mud_chassis.py`.
+
+Broad cached membership still includes MUD. Chassis physical selection excludes
+it before visiting the type2 kernel, so it cannot seed cumulative nearest rows
+that a later train callback would inherit. Wheel queries retain their separate
+MUD hit/height callback and ordinary terrain support. Recovery and camera retain
+their own source filters. The observed ENV04 raised-MUD trace exposed this
+missing chassis exclusion; no altered tire-grounding or roost threshold was
+introduced to make the effect appear.
