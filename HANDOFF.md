@@ -29,7 +29,7 @@ Vancouver, load matching scenes, draw both rigs, exchange movement and engine
 voices, then end cleanly with host departure. A real close-during-load gate keeps
 a completed old load on the Multiplayer menu without resurrecting its room or
 resuming a disconnected ride. The original eight-map driving,
-touch-wreck, water/snow and public model proofs above remain separate evidence.
+touch-wreck, water/snow and public model proofs remain separate evidence.
 
 Combined host gates pass 307 core, 25 protocol, 3 relay, 12 WASM and 68 JS tests,
 17 release/content and 6 Worker checks, strict formatting/Clippy and 13 live relay
