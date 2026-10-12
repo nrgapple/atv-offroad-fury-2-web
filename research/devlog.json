@@ -1,6 +1,6 @@
 {
-  "status": "Public Cloudflare remains e18a371e. The host-only vegetation Sun gate, nine-map loading/driving, materials, Vancouver contact, touch batching and FREE05 multiplayer checks pass; reflection/frontend checks and the broader regression remain pending. The browser port is incomplete and is not equivalent to the full PS2 game.",
-  "working_on": "Finish the outstanding reflection/frontend and broader integration regression before considering publication. Keep this host candidate unpublished; source tree-lighting callback/frame behavior, LOD and hardware equivalence remain open.",
+  "status": "Public Cloudflare release d9596d937907395440b61e78be61b2045d987d4 is current. Near vegetation materials pass on all nine maps with 600 exact GPU color comparisons; 1,200 transport steps preserve sequential outputs. Public all-map route, Vancouver contact, touch and FREE05 multiplayer gates also pass. The inspected ENV07 image is held privately for a future validated gallery update.",
+  "working_on": "Continue distant vegetation, weather, lighting and shadow fidelity work. The bounded transport microbenchmark is host-only; do not infer production performance. Prepare the inspected ENV07 gallery image only with a later validated current-main release.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1949,9 +1949,27 @@
       "limitation": "Host-only WIP; public e18a371e remains unchanged, with no release or hardware comparison claimed. The benchmark measures a four-step operation-plus-output-copy batch, not individual-step or end-to-end performance; loading, rendering, worker overhead and physical phones are excluded. The native/GPU cases supply decoded normals and instance basis and do not replay the complete frame callback, vegetation LOD or PS2 pipeline. Source tree lighting is not complete. The combined material-plus-transport candidate is about 3.1% larger in WASM than the saved e18/prototype baseline despite its bounded hot-loop CPU reduction.",
       "image": "/devlog-images/sun-lit-vegetation-matches-bounded-source-cases-on-the-139d49b3.png",
       "caption": "Host ENV01 lighting test view with the bounded vegetation Sun path; this local candidate capture is not the public build or a PS2 framebuffer."
+    },
+    {
+      "id": "near-vegetation-materials-pass-across-all-nine-public--f607f256",
+      "timestamp": "2026-10-12T22:54:50.339172+00:00",
+      "recorded_at": "2026-10-12T22:57:33.520392+00:00",
+      "kind": "verification",
+      "title": "Near vegetation materials pass across all nine public maps",
+      "summary": "The public d9596d9 build passes near vegetation material checks on all nine maps, with 600 GPU color comparisons showing no byte differences. A 1,200-step transport check matches sequential outputs. Public all-map, Vancouver, touch and FREE05 multiplayer gates also pass. These are bounded component and route checks, not full rendering or game parity.",
+      "details": [
+        "Public main d9596d937907395440b61e78be61b2045d987d4d (PR #12) passed CI 38318057407. The validated deployment identity matches the artifact. Canonical R2 retains 106 records and 306 references; it validates 408 approved objects totaling 310,198,438 bytes. HTTPS verifies all 32 authored files and 407 served objects by hash, size and MIME. The public gallery has 120 entries and 101 screenshots.",
+        "Near vegetation materials pass on ENV01–ENV08 and FREE05. The expanded actual-GPU check covers 600 cases with zero RGBA byte differences. Public transport validation covers 1,200 steps and exactly matches sequential frame/camera decimal outputs. No production timing benchmark was run; the transport microbenchmark is host-only.",
+        "The public map route passes all nine maps. Vancouver desktop/390px draws all 78 placements with 43 colliders and 37,649 plants; the ride records 123 wheel-support frames, 31 body-contact frames, takeoff at step 19, later landing and ATM frame 1, with the map unlocked by default.",
+        "Public touch input matches batched and sequential simulation for 124 steps, including shifted release and cancellation. The public copied-link FREE05 pair passes with 13 remote draws per client, male/female rigs, one voice per client, host cleanup and a measured remote distance of 4.9307901763 feet.",
+        "This screenshot was visually inspected and selected from nine public deployment captures. Its PNG and new gallery reference remain in private storage until a later validated current-main artifact is approved for gallery publication."
+      ],
+      "limitation": "This checkpoint verifies bounded components and routes, not full-scene rendering or PS2/game parity. There is no public FPS/timing claim; the transport microbenchmark is host-only. Weather callbacks, distant vegetation/LOD, point lights, shadows, native GS/full-frame behavior and complete source tree lighting remain open.",
+      "image": "/devlog-images/near-vegetation-materials-pass-across-all-nine-public--f607f256.png",
+      "caption": "Public d9596d9 ENV07 capture with the near vegetation material path. This inspected PNG is held in private storage and has not been added to the public gallery."
     }
   ],
-  "updated_at": "2026-10-12T22:15:31.228446+00:00",
+  "updated_at": "2026-10-12T23:30:00+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

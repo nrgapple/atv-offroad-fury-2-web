@@ -697,9 +697,42 @@ Four wet maps plus 390px projection, dry-map behavior, Vancouver desktop/390px
 contact, frontend routes and copied-link FREE05 multiplayer pass. Vancouver
 draws 78 placements with 43 colliders, 123 wheel-support frames, 31 body-contact
 frames, takeoff at step 19 and later landing. The multiplayer pair renders 13
-remote draws with both rigs, audio and movement. No source vegetation-material
-or source tree-lighting completion is claimed in this release. Source vegetation
-work is again host-only WIP. Current ambient prototype evidence covers only
-supplied zero directional weights; the recently recovered global Sun matrices
-must be integrated before any lighting claim. Native terrain/water GS precision,
-other lighting/shadows/lens behavior, LOD and weather remain open.
+remote draws with both rigs, audio and movement. No source tree-lighting completion
+is claimed in this release. Near-vegetation materials were later verified publicly
+across all nine maps in d9596d9, including the reconstructed Sun/ambient inputs.
+Those component checks do not establish the complete inherited callback or global
+frame path. Native terrain/water GS precision, other lighting/shadows/lens
+behavior, LOD and weather remain open.
+
+## Public near-vegetation material and transport gate d9596d9 (2026-10-12)
+
+Public main `d9596d937907395440b61e78be61b2045d987d4d` (PR #12) passed
+[CI 38318057407](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38318057407)
+and is deployed. The verified deployment identity matches the validated artifact.
+Canonical R2 retains 106 records and 306 references. The upload validates 408
+approved objects totaling 310,198,438 bytes; HTTPS verification matches all 32
+authored files and 407 served objects by hash, size and MIME. The gallery has
+120 entries and 101 screenshots.
+
+The public near-vegetation material check passes all nine maps. Six hundred
+actual-GPU RGBA cases have zero byte differences. Public transport validation
+covers 1,200 steps and exactly matches sequential frame/camera decimal outputs;
+no production timing benchmark was run. These results do not establish full
+scene rendering, distant vegetation transitions, LOD, PS2 GS/hardware or
+end-to-end performance equivalence.
+
+The public all-map route passes on ENV01–ENV08 and FREE05. Vancouver desktop and
+390px checks draw all 78 placements and retain 43 colliders and 37,649 plants;
+the ride records 123 wheel-support frames, 31 body-contact frames, takeoff at
+step 19, later landing and ATM frame 1, with the map unlocked by default. Public
+touch input matches batched and sequential simulation for 124 steps, including
+shifted release and cancellation. The public copied-link FREE05 pair passes with
+13 remote draws per client, male/female rigs, one voice per client, host cleanup
+and a measured remote distance of 4.9307901763 feet. These checks do not include
+a production FPS/timing claim; the transport microbenchmark is host-only.
+
+The inspected ENV07 hero is a capture from this public deployment, but its PNG
+and gallery reference remain in private storage for a later validated current-main
+release. Weather callbacks, distant vegetation/LOD, point lights, shadows and
+native GS/full-frame behavior remain open. This release does not claim complete
+source tree lighting or whole-game/PS2 parity.
