@@ -52,3 +52,15 @@ test('root serves the explicit landing asset while preserving request method', a
   assert.equal(new URL(fetched.url).pathname, '/index.html');
   assert.equal(fetched.method, 'HEAD');
 });
+
+
+test('multiplayer requests require same-origin and forward only to Rust service', async () => {
+  let seen;
+  const env = {MULTIPLAYER:{fetch:async req=>{seen=req;return new Response('rust relay');}}};
+  assert.equal((await worker.fetch(request('/multiplayer/rooms',{method:'POST'}),env)).status,403);
+  assert.equal((await worker.fetch(request('/multiplayer/rooms',{method:'POST',headers:{Origin:'https://foreign.example'}}),env)).status,403);
+  const req=request('/multiplayer/rooms',{method:'POST',headers:{Origin:'https://game.example'}});
+  assert.equal(await (await worker.fetch(req,env)).text(),'rust relay');
+  assert.equal(seen,req);
+  assert.equal((await worker.fetch(request('/multiplayer/rooms',{method:'DELETE',headers:{Origin:'https://game.example'}}),env)).status,405);
+});

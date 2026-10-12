@@ -20,6 +20,7 @@ export class GameAudio {
     this.commands = 0;
     this.generation = 0;
     this.lastSound = null;
+    this.remoteVoices = new Map(); this.remoteEffects = new Map(); this.remoteLoaded = new Map(); this.remoteStarts = 0;
     this.spatialDefinitions = [];
     this.spatialVoices = new Map();
     this.spatialCommands = [];
@@ -54,7 +55,7 @@ export class GameAudio {
     }
     await this.context.resume();
   }
-  async load({ file, files, read, isCurrent }) {
+  async load({ file, files, read, isCurrent, quadId = 1 }) {
     const text = new TextDecoder();
     const json = async (op, bytes, index = 0) => JSON.parse(text.decode(await this.codec(op, bytes, index)));
     const archive = async path => {
@@ -66,7 +67,8 @@ export class GameAudio {
     const table = await archive('/AUDIOTBL.RES');
     const tableIndex = table.entries.findIndex(entry => /(^|[\\/])vehicle\.aud$/i.test(entry.name));
     if (tableIndex < 0) throw new Error('Original vehicle audio table is missing.');
-    this.config = await json(32, await this.codec(3, table.bytes, tableIndex), 1);
+    this.engineTable = await this.codec(3, table.bytes, tableIndex);
+    this.config = await json(32, this.engineTable, quadId);
     const sounds = await archive('/AUDIO/AUDIO.RES');
     const normal = path => path.replaceAll('\\', '/').toLowerCase().replace(/^audio\//, '');
     const lookup = new Map(sounds.entries.map((entry, index) => [normal(entry.name), index]));
@@ -120,6 +122,47 @@ export class GameAudio {
       // App assets and the separate R2 bank can become available at different
       // times. A missing train sample must leave driving/music usable.
       if (isCurrent() && !this.closed) this.report(`Train sound: ${error.message}`);
+    }
+  }
+  async loadRemoteModels(players) {
+    if (!this.engineTable || !this.loadSample || this.closed) return;
+    for (const player of players) {
+      if (this.remoteLoaded.has(player.atv_model)) { await this.remoteLoaded.get(player.atv_model); continue; }
+      const pending = (async () => {
+        const config = JSON.parse(new TextDecoder().decode(await this.codec(87,this.engineTable,player.atv_model)));
+        for (const name of new Set(config.samples.flat())) { if(this.closed)return; await this.loadSample(name); }
+        if (!this.closed) await this.decode();
+      })();
+      this.remoteLoaded.set(player.atv_model,pending);
+      await pending;
+    }
+  }
+  remotePlaying() {
+    return [...this.remoteVoices].map(([peer,voice])=>({peer,duration:voice.source.buffer.duration,playhead:Math.max(0,(this.context?.currentTime??0)-voice.started)}));
+  }
+  stopRemote(map,key) {
+    const voice=map.get(key); if(!voice)return;
+    voice.source.onended=null;voice.source.stop();voice.source.disconnect();voice.left.disconnect();voice.right.disconnect();voice.merger.disconnect();map.delete(key);
+  }
+  remoteFrame(peers) {
+    const ids=new Set(peers.filter(p=>!p.stale).map(p=>p.peer));
+    for(const key of this.remoteVoices.keys()) if(!ids.has(key))this.stopRemote(this.remoteVoices,key);
+    for(const key of this.remoteEffects.keys()) if(!ids.has(key))this.stopRemote(this.remoteEffects,key);
+    if(!this.active || this.context?.state!=='running' || this.closed)return;
+    for(const peer of peers) {
+      if(peer.stale)continue;
+      if(peer.engine && this.buffers.get(peer.engine.sample)?.buffer) {
+        this.stopRemote(this.remoteVoices,peer.peer);
+        const voice=this.playSpatial(peer.peer,{sample:peer.engine.sample,looping:peer.engine.looping},this.remoteVoices);
+        if(voice)this.remoteStarts++;
+      }
+      const voice=this.remoteVoices.get(peer.peer);
+      if(voice)this.applySpatial(voice,peer.spatial);
+      if(peer.crash && this.buffers.get(peer.crash.sample)?.buffer) {
+        this.stopRemote(this.remoteEffects,peer.peer);
+        const impact=this.playSpatial(peer.peer,{sample:peer.crash.sample,looping:false},this.remoteEffects);
+        this.applySpatial(impact,peer.crash.spatial);
+      }
     }
   }
   async decode() {
@@ -344,6 +387,7 @@ export class GameAudio {
         }) }, effects: { ready: this.effectsReady, voices: this.effectVoices.size, starts: this.effectStarts,
           selections: this.effectSelections, last: this.effectLast, queuedFrames: this.effectFrames.length,
           samples: this.effectsConfig?.body_impact.map(name => ({ name, decoded: Boolean(this.buffers.get(name)?.buffer) })) ?? [] },
+      multiplayer: {voices:this.remoteVoices.size,impacts:this.remoteEffects.size,starts:this.remoteStarts,playing:this.remotePlaying()},
       music: this.music.snapshot() };
   }
   close() {
@@ -356,6 +400,7 @@ export class GameAudio {
     window.removeEventListener('pointerdown', this.unlock);
     window.removeEventListener('keydown', this.unlock);
     this.stopSources();
+    this.stopSpatial(this.remoteVoices);this.stopSpatial(this.remoteEffects);
     this.stopSpatial(); this.spatialReady = false; this.spatialPending = this.spatialHistory = null;
     this.stopSpatial(this.effectVoices); this.effectsReady = false; this.effectFrames.length = 0;
     this.context?.close();

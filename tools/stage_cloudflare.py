@@ -1,20 +1,30 @@
 #!/usr/bin/env python3
 """Stage a checksum-verified asset-free CI release for Workers static assets."""
 import argparse
+import json
 from pathlib import Path
 import shutil
 
-from package_release import RELEASE_STATIC_FILES, ROOT, validate_release
+from package_release import RELEASE_STATIC_FILES, RELAY_FILES, ROOT, validate_release
 
 
 def stage(release, commit):
-    validate_release(release, commit)
+    metadata = validate_release(release, commit)
     target = ROOT / 'work/cloudflare/static'
     if target.exists():
         shutil.rmtree(target)
     target.mkdir(parents=True)
     for name in sorted(RELEASE_STATIC_FILES):
         shutil.copy2(release / 'static' / name, target / name)
+    relay = ROOT / 'work/cloudflare/relay'
+    relay.mkdir(parents=True, exist_ok=True)
+    for name in sorted(RELAY_FILES):
+        shutil.copy2(release / 'relay' / name, relay / name)
+    config = json.loads((ROOT / 'relay/wrangler.jsonc').read_text())
+    config.pop('build', None)
+    config['main'] = 'index.js'
+    config.setdefault('vars', {}).update(BUILD_COMMIT=commit, BUILD_WASM_SHA=metadata['sha256']['relay/index_bg.wasm'])
+    (relay / 'wrangler.jsonc').write_text(json.dumps(config, indent=2) + '\n')
     print(f'Staged {len(RELEASE_STATIC_FILES)} asset-free files for {commit}')
 
 

@@ -19,6 +19,20 @@ pub struct ControlRow {
 #[serde(deny_unknown_fields)]
 pub struct Request {
     pub page: String,
+    #[serde(default = "default_quad")]
+    pub quad_id: u16,
+    #[serde(default)]
+    pub rider_id: u16,
+    #[serde(default)]
+    pub room_code: String,
+    #[serde(default)]
+    pub player_name: String,
+    #[serde(default)]
+    pub lobby_status: String,
+    #[serde(default)]
+    pub lobby_host: bool,
+    #[serde(default)]
+    pub lobby_started: bool,
     pub width: f32,
     pub height: f32,
     pub selection: usize,
@@ -58,6 +72,9 @@ pub struct Request {
     pub one_handed_mobile: bool,
     #[serde(default = "default_steering_sensitivity")]
     pub mobile_steering_sensitivity: f32,
+}
+fn default_quad() -> u16 {
+    1
 }
 fn default_steering_sensitivity() -> f32 {
     85.
@@ -114,6 +131,14 @@ pub struct Slider {
     pub selected: bool,
 }
 #[derive(Serialize)]
+pub struct TextInput {
+    pub action: &'static str,
+    pub label: &'static str,
+    pub rect: [f32; 4],
+    pub value: String,
+    pub max_length: usize,
+}
+#[derive(Serialize)]
 pub struct Frame {
     pub width: f32,
     pub height: f32,
@@ -121,6 +146,7 @@ pub struct Frame {
     pub hits: Vec<Hit>,
     pub choices: Vec<String>,
     pub sliders: Vec<Slider>,
+    pub inputs: Vec<TextInput>,
 }
 impl Frame {
     fn rect(
@@ -213,6 +239,11 @@ pub fn layout(request: Request) -> Result<Frame> {
         || !(240.0..=16384.0).contains(&request.height)
         || !request.mobile_steering_sensitivity.is_finite()
         || !(50.0..=150.0).contains(&request.mobile_steering_sensitivity)
+        || request.room_code.len() > 64
+        || request.player_name.len() > 32
+        || request.lobby_status.len() > 256
+        || !(1..=26).contains(&request.quad_id)
+        || request.rider_id > 1
         || request.track_name.len() > 128
         || request.track_image.len() > 128
         || request.capture_label.len() > 128
@@ -248,6 +279,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         hits: vec![],
         choices: vec![],
         sliders: vec![],
+        inputs: vec![],
     };
     if pause {
         f.rect([0., 0., w, h], 0., "#00000070", "#00000070", "");
@@ -294,6 +326,9 @@ pub fn layout(request: Request) -> Result<Frame> {
         "title" => "ATV Offroad Fury 2",
         "main" => "Main Menu",
         "single" => "Single Player",
+        "multiplayer" => "Multiplayer",
+        "lobby" => "Free Ride Lobby",
+        "garage" => "Quad and Rider",
         "tracks" => "Freestyle",
         "pause" => "Pause",
         "controls" => "Controls",
@@ -365,18 +400,23 @@ pub fn layout(request: Request) -> Result<Frame> {
                 label,
                 action,
                 [20., 102., list_w, 58.],
-                !main || request.selection.is_multiple_of(2),
+                request.selection == 0,
             );
-            if main {
-                f.choices.push("devlog".into());
+            let items: &[(&str, &str)] = if main {
+                &[("Multiplayer", "multiplayer"), ("Dev log", "devlog")]
+            } else {
+                &[("Quad and Rider", "garage")]
+            };
+            for (i, (label, action)) in items.iter().enumerate() {
+                f.choices.push((*action).into());
                 f.button(
-                    "Dev log",
-                    "devlog",
-                    [20., 160., list_w, 58.],
-                    request.selection % 2 == 1,
+                    label,
+                    action,
+                    [20., 160. + i as f32 * 58., list_w, 58.],
+                    request.selection == i + 1,
                 );
             }
-            let detail_y = if main { 254. } else { 190. };
+            let detail_y = if main { 292. } else { 236. };
             f.rect(
                 [24., detail_y, list_w - 4., 72.],
                 6.,
@@ -384,7 +424,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                 "#1c1717",
                 "#100b09",
             );
-            let detail = if main && request.selection % 2 == 1 {
+            let detail = if main && request.selection == 2 {
                 "Progress, screenshots and what is next."
             } else {
                 detail
@@ -420,6 +460,120 @@ pub fn layout(request: Request) -> Result<Frame> {
                 }
             }
             f.footer(true);
+        }
+        "garage" => {
+            let model = crate::player_models::selection(request.quad_id, request.rider_id)?;
+            f.text(&model.label, [30., 108.], 1.2, FONT, "255,255,255", list_w);
+            f.text(
+                model.rider_label,
+                [30., 148.],
+                1.,
+                FONT,
+                "215,215,215",
+                list_w,
+            );
+            let rows = [
+                ("Previous quad", "quadprev"),
+                ("Next quad", "quadnext"),
+                ("Change rider", "riderchange"),
+                ("Done", "back"),
+            ];
+            for (i, (label, action)) in rows.iter().enumerate() {
+                f.choices.push((*action).into());
+                f.button(
+                    label,
+                    action,
+                    [24., 194. + i as f32 * 54., list_w, 54.],
+                    request.selection == i,
+                );
+            }
+        }
+        "multiplayer" => {
+            for (action, label, value, y, max_length) in [
+                (
+                    "player-name",
+                    "Rider name",
+                    request.player_name.clone(),
+                    104.,
+                    24,
+                ),
+                (
+                    "room-code",
+                    "Lobby code",
+                    request.room_code.clone(),
+                    166.,
+                    8,
+                ),
+            ] {
+                f.text(label, [30., y - 23.], 0.8, FONT, "215,215,215", list_w);
+                f.inputs.push(TextInput {
+                    action,
+                    label,
+                    value,
+                    rect: [30., y, list_w - 12., 40.],
+                    max_length,
+                });
+            }
+            let rows = [
+                ("Create lobby", "host"),
+                ("Join code", "join"),
+                ("Quad and Rider", "garage"),
+            ];
+            for (i, (label, action)) in rows.iter().enumerate() {
+                f.choices.push((*action).into());
+                f.button(
+                    label,
+                    action,
+                    [24., 226. + i as f32 * 54., list_w, 54.],
+                    request.selection == i,
+                );
+            }
+            f.footer(true);
+        }
+        "lobby" => {
+            f.text(
+                format!("Code: {}", request.room_code),
+                [30., 100.],
+                1.15,
+                FONT,
+                "255,230,100",
+                list_w,
+            );
+            f.text(
+                &request.track_name,
+                [30., 140.],
+                1.,
+                FONT,
+                "235,235,235",
+                list_w,
+            );
+            f.text(
+                &request.lobby_status,
+                [30., 179.],
+                0.8,
+                FONT,
+                "210,210,210",
+                list_w,
+            );
+            let mut rows = vec![("Copy invite link", "share")];
+            if request.lobby_started {
+                rows.push(("Resume ride", "resume"));
+            } else if request.lobby_host {
+                rows.extend([
+                    ("Next environment", "lobbymap"),
+                    ("Ride together", "lobbystart"),
+                ]);
+            }
+            rows.push(("Leave lobby", "leave"));
+            for (i, (label, action)) in rows.iter().enumerate() {
+                f.choices.push((*action).into());
+                f.button(
+                    label,
+                    action,
+                    [24., 214. + i as f32 * 54., list_w, 54.],
+                    request.selection == i,
+                );
+            }
         }
         "tracks" => {
             let preview = if portrait {
@@ -513,7 +667,12 @@ pub fn layout(request: Request) -> Result<Frame> {
             if request.fullscreen {
                 choices.push(("Fullscreen", "fullscreen"));
             }
-            choices.extend([("Dev log", "devlog"), ("Quit to Main Menu", "main")]);
+            choices.push(("Dev log", "devlog"));
+            choices.push(if request.lobby_status.is_empty() {
+                ("Quit to Main Menu", "main")
+            } else {
+                ("Lobby", "lobby")
+            });
             let row = ((h - if portrait { 110. } else { 90. }) / choices.len() as f32)
                 .min(if portrait { 64. } else { 48. });
             let selected = request.selection % choices.len();
@@ -785,6 +944,13 @@ mod tests {
     fn request(page: &str, w: f32, h: f32) -> Request {
         Request {
             page: page.into(),
+            quad_id: 1,
+            rider_id: 0,
+            room_code: String::new(),
+            player_name: String::new(),
+            lobby_status: String::new(),
+            lobby_host: false,
+            lobby_started: false,
             width: w,
             height: h,
             selection: 0,
@@ -812,11 +978,11 @@ mod tests {
     fn supported_routes_have_no_unfinished_choices() {
         assert_eq!(
             layout(request("main", 1280., 720.)).unwrap().choices,
-            ["single", "devlog"]
+            ["single", "multiplayer", "devlog"]
         );
         assert_eq!(
             layout(request("single", 1280., 720.)).unwrap().choices,
-            ["tracks"]
+            ["tracks", "garage"]
         );
         let mut r = request("pause", 390., 844.);
         r.fullscreen = false;

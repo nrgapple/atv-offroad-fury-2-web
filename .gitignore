@@ -1,8 +1,8 @@
-/private/
-/references/
-/work/
-/target/
-/web/dist/
+/private
+/references
+/work
+/target
+/web/dist
 .DS_Store
 __pycache__/
 *.pyc
@@ -11,3 +11,7 @@ __pycache__/
 /.dev.vars*
 /.env*
 
+
+/crates/atv-relay/build/
+/relay/.wrangler/
+/relay/node_modules/

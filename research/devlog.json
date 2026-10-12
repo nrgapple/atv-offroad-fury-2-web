@@ -1,6 +1,6 @@
 {
-  "status": "Publicly verified water recovery and snow-ramp collision checkpoint on commit b9a3a448d6d19103d63be8e6ec530974297b1870. The authored browser port remains incomplete.",
-  "working_on": "Continue recovering original gameplay and water presentation, including wakes and rendering detail, while retaining verified public regression coverage.",
+  "status": "Water recovery and snow-ramp collision are publicly verified. The multiplayer lobby, two-browser driving, remote wreck presentation and spatial audio pass host integration checks; multiplayer current-main CI and public verification are pending. The browser port remains incomplete.",
+  "working_on": "Complete multiplayer current-main integration and public verification while continuing water presentation and wakes, rendering detail, and the other active original gameplay lanes. Preserve the single-player baseline; racing and authority parity remain unverified.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1671,9 +1671,55 @@
         "The first public hash-verifier attempt encountered a transient connection reset; a fresh complete retry passed."
       ],
       "limitation": "This verifies the public authored port on bounded original-resource routes and native component comparisons. It does not establish full PS2 gameplay parity, full-game source replay, or physical-phone parity. Water wakes and rendering details remain incomplete. The attached screenshot on the previous host checkpoint remains a host capture; this public verification has no new screenshot."
+    },
+    {
+      "id": "two-browser-riders-share-a-rust-freeride-lobby-host-ve-b4c5fcb9",
+      "timestamp": "2026-10-12T18:52:48.915645+00:00",
+      "recorded_at": "2026-10-12T18:54:58.728310+00:00",
+      "kind": "build",
+      "title": "Two browser riders share a Rust Freeride lobby (host verified)",
+      "summary": "Two browser clients joined the same host-created Freeride room through its invite code/link, selected different recovered ATV and rider models, and drove together. Each browser rendered the remote ATV and articulated rider with 13 GPU draws while Rust handled the multiplayer protocol, relay, local physics and pose smoothing.",
+      "details": [
+        "Host and guest joined a shared lobby and started the same Caribou Peak session; host departure ended the room cleanly.",
+        "The host used male rider with ATV01 and the guest used female rider with ATV02, each loading its own mesh, physics, chassis collision and actor collision resources.",
+        "Remote state and rider orientation changed during driving; local browser audio played per-peer original engine samples with spatial position.",
+        "Implementation responsibilities: Rust owns simulation-facing physics state, bounded protocol, smoothing, relay and sample selection; JavaScript is browser API and rendering/audio glue."
+      ],
+      "limitation": "Host-only integration evidence. The browser-pair gate does not establish fast-internet performance, four physical players, race modes, player-to-player collision, host-authoritative physics, full-game parity or public availability. Public CI, deployment, R2 package and production browser checks are pending.",
+      "image": "/devlog-images/two-browser-riders-share-a-rust-freeride-lobby-host-ve-b4c5fcb9.png",
+      "caption": "Host-only two-browser Freeride check: both quads and riders visible in one client; this is not a public deployment."
+    },
+    {
+      "id": "remote-wrecks-replicate-rider-separation-and-impact-au-ec5a0fb8",
+      "timestamp": "2026-10-12T18:54:58.764583+00:00",
+      "recorded_at": "2026-10-12T18:54:58.764583+00:00",
+      "kind": "verification",
+      "title": "Remote wrecks replicate rider separation and impact audio (host verified)",
+      "summary": "A touch-driven failed Nac Nac in a Metal host browser ran for 189 guest frames through Riding, Airborne and Wreck. The remote crash serial advanced from 0 to 1, the rider rendered detached for 55 frames, and 13 frames played the original impact sample with a changing spatial pan before recovery.",
+      "details": [
+        "Two-browser live room checks also observed one spatial engine voice per remote peer and continued remote position updates after crash recovery.",
+        "The full host gate passes make verify and make check: 299 core, 22 network, 3 relay, 11 WASM and 66 JavaScript tests, plus 13 release and 5 Worker checks.",
+        "Native model/animation probes cover all 26 ATV models and both 78-clip rider catalogs; see the multiplayer gate logs under work/multiplayer/."
+      ],
+      "limitation": "This is host-only component evidence. It does not establish physical iOS input, low-latency internet behavior, four physical players, race systems, player collision resolution, server-authoritative physics, full-game parity or a public release. Current-main CI, deployment and public browser verification remain to be completed."
+    },
+    {
+      "id": "combined-multiplayer-water-and-snow-gate-passes-on-hos-f8a1c011",
+      "timestamp": "2026-10-12T19:04:50.599541+00:00",
+      "recorded_at": "2026-10-12T19:04:50.599541+00:00",
+      "kind": "verification",
+      "title": "Combined multiplayer, water and snow gate passes on host",
+      "summary": "The combined host integration gate passes multiplayer lobby, two-browser riding, remote crash/audio, original water recovery and bounded snow-ramp collision checks alongside the project verification suites.",
+      "details": [
+        "Combined build checks pass 303 core, 22 network, 3 relay, 11 WASM and 66 JavaScript tests, plus 15 release and 5 Worker checks.",
+        "A touch-driven failed Nac Nac replicated across 133 guest frames through Riding, Airborne and Wreck: crash serial 0\u21921, 56 detached-rider frames and 14 original impact-audio frames with changing spatial pan.",
+        "Source-derived wet-map routes pass for ENV04, ENV05 and ENV07 deep-water timer/reset plus water-only Swim/recovery; ENV08 shallow-water route passes without expiration.",
+        "Twenty-four original snow-ramp routes pass across desktop and 390px, with wheel/body contacts in both directions on the tested ramp placements."
+      ],
+      "limitation": "Host-only combined verification. Current-main CI, public deployment and public browser verification for multiplayer are pending. The bounded routes do not establish physical iOS parity, fast-internet or four-player behavior, race modes, player collision, host-authoritative physics, or full-game parity."
     }
   ],
-  "updated_at": "2026-10-12T18:49:05.236529+00:00",
+  "updated_at": "2026-10-12T19:04:50.599541+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

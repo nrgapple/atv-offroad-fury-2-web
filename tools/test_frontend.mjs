@@ -35,7 +35,7 @@ try {
   await page.getByRole('heading',{name:'Development log',exact:true}).waitFor();
   await page.getByRole('link',{name:'Play current build'}).click(); await screen('title');
   await page.keyboard.press('Enter'); await screen('main');
-  assert.equal(await page.getByRole('button',{name:'Multiplayer',exact:true}).count(),0);
+  assert.equal(await page.getByRole('button',{name:'Multiplayer',exact:true}).count(),1);
   assert.equal(await page.locator('#frontend').getAttribute('data-renderer'),'rust');
   assert.equal(await page.getByRole('button',{name:'Dev log',exact:true}).count(),1);
   await page.keyboard.press('ArrowDown');
@@ -44,7 +44,7 @@ try {
   await page.waitForFunction(() => document.querySelector('#frontend').dataset.selection === '0');
   await page.keyboard.press('Enter'); await screen('single');
   assert.equal(await page.getByRole('button',{name:'Race',exact:true}).count(),0);
-  await pad(13); assert.equal(await page.locator('#frontend').getAttribute('data-selection'),'0');
+  await pad(13); assert.equal(await page.locator('#frontend').getAttribute('data-selection'),'1'); await pad(12);
   await pad(0); await screen('tracks');
   assert.equal(await page.locator('#frontend').getAttribute('data-track'),'env01');
   const visited = new Set();

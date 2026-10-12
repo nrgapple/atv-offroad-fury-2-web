@@ -9,4 +9,6 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 atv-core = { path = "../atv-core" }
+atv-net = { path = "../atv-net" }
+serde.workspace = true
 serde_json.workspace = true

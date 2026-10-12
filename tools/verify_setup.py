@@ -44,7 +44,7 @@ def main():
         actual = subprocess.check_output(['git','-C',str(path),'rev-parse','HEAD'],text=True).strip()
         check(actual == revision, f'reference revision changed: {name}')
     for name in ('private', 'references', 'work'):
-        subprocess.run(['git','-C',str(ROOT),'check-ignore',name+'/probe'],check=True,stdout=subprocess.DEVNULL)
+        subprocess.run(['git','-C',str(ROOT),'check-ignore',name if (ROOT / name).is_symlink() else name+'/probe'],check=True,stdout=subprocess.DEVNULL)
     tracked_private = subprocess.check_output(['git','-C',str(ROOT),'ls-files','private','references','work'],text=True)
     check(not tracked_private.strip(), 'private/generated/reference files are tracked')
     print(f'PASS: {summary["elf"]}, {summary["file_count"]} disc files, matching ELF hash and layout, reference revisions, and Git exclusions')

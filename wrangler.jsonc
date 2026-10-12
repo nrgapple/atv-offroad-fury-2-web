@@ -11,7 +11,8 @@
     "directory": "work/cloudflare/static",
     "html_handling": "none",
     "not_found_handling": "none",
-    "run_worker_first": ["/", "/content/*", "/devlog-images/*", "/devlog.json"]
+    "run_worker_first": ["/", "/content/*", "/devlog-images/*", "/devlog.json", "/multiplayer/*"]
   },
+  "services": [{ "binding": "MULTIPLAYER", "service": "atv-offroad-fury-2-multiplayer" }],
   "r2_buckets": [{ "binding": "CONTENT", "bucket_name": "atv-offroad-fury-2-content" }]
 }
