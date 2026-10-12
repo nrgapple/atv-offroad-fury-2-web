@@ -79,8 +79,7 @@ jobs:
             exit 1
           fi
           python3 tools/stage_cloudflare.py --release work/release --commit "$GITHUB_SHA"
-          npx --yes wrangler@4.149.0 deploy --config work/cloudflare/relay/wrangler.jsonc
-          npx --yes wrangler@4.149.0 deploy
+          npx --yes wrangler@4.149.0 deploy --config work/cloudflare/wrangler.jsonc
       - name: Verify public commit, application hashes and dev log
         run: |
           python3 tools/verify_ci_deployment.py --release work/release --commit "$GITHUB_SHA" \

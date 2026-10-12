@@ -28,8 +28,8 @@ crash serial, independent rider separation, original impact audio and recovery;
 local RTT measurements do not establish Internet or physical-phone performance.
 The private native probe covers all 26 quads and both rigs’ 3,276 sampled poses.
 
-The checked CI artifact now includes the compiled Rust relay, deployed before the
-main app service binding. `/multiplayer/version` reports its configured checked
+The checked CI artifact includes the compiled Rust relay and the existing game
+Worker hosts its routes and Durable Object, preserving the scoped CI credential. `/multiplayer/version` reports its configured checked
 commit/WASM hash. Expanded required resources are staged separately in
 `private/reports/multiplayer-content` and must be uploaded from a validated current-main
 artifact using `upload_cloudflare_content.py --content`; public release still needs

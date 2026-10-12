@@ -71,8 +71,9 @@ Rust service with the Rust codec; `tools/test_multiplayer.mjs` exercises actual
 WASM/content, two-player link admission, different rigs, movement and departure.
 `ATV_MP_WRECK=1` adds a real-touch failed-stunt/detached-rider/recovery check.
 
-GitHub CI packages the authored frontend and compiled Rust Worker as one checked
-artifact, then deploys the relay before the static-app service binding. Original
+GitHub CI packages the authored frontend and compiled Rust relay as one checked
+artifact, then deploys both through the existing game Worker. Its deployment entry delegates
+room routes to the compiled Rust module and exports the Rust Durable Object. Original
 resources and screenshots remain in a separately validated R2-only manifest; the
 expanded package is lazy for other quad archives. `/multiplayer/version` identifies
 the checked relay commit/WASM hash through configuration, while public browser
