@@ -149,7 +149,15 @@ fn snapshot(c: &mut Client, sim: &Simulation, now: u32, paused: bool) -> Result<
     Ok(output)
 }
 fn status(c: &Client) -> Value {
-    json!({"peer":c.peer,"code":c.code,"lobby":c.lobby,"receivedBytes":c.received,"sentBytes":c.sent,"rttMs":c.rtt_ms})
+    let environment = c
+        .lobby
+        .as_ref()
+        .and_then(|lobby| atv_net::map_environment(lobby.map));
+    let next_map = c
+        .lobby
+        .as_ref()
+        .and_then(|lobby| atv_net::next_map(lobby.map));
+    json!({"peer":c.peer,"code":c.code,"lobby":c.lobby,"environment":environment,"nextMap":next_map,"receivedBytes":c.received,"sentBytes":c.sent,"rttMs":c.rtt_ms})
 }
 fn lobby(c: &mut Client, value: atv_net::Lobby) {
     if c.lobby.as_ref().is_some_and(|old| {
@@ -456,6 +464,48 @@ mod tests {
             assert!(!c.lobby.as_ref().unwrap().started);
         });
     }
+    #[test]
+    fn ninth_lobby_map_publishes_rust_environment_and_wrapped_next_map() {
+        setup(false);
+        let output = receive(
+            Packet::Welcome {
+                peer: 0,
+                code: *b"ABCD2345",
+                lobby: Lobby {
+                    map: 9,
+                    ..roster(false)
+                },
+            },
+            0,
+        )
+        .unwrap();
+        let value: Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(value["state"]["environment"], "free05");
+        assert_eq!(value["state"]["nextMap"], 1);
+        let output = receive(
+            Packet::Lobby(Lobby {
+                map: 1,
+                epoch: 2,
+                ..roster(false)
+            }),
+            10,
+        )
+        .unwrap();
+        let value: Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(value["state"]["environment"], "env01");
+        assert_eq!(value["state"]["nextMap"], 2);
+        let output = dispatch(
+            br#"{"quad_id":1,"rider_id":0}"#,
+            80,
+            0,
+            &Simulation::default(),
+        )
+        .unwrap();
+        let value: Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(value["environment"], Value::Null);
+        assert_eq!(value["nextMap"], Value::Null);
+    }
+
     #[test]
     fn rejects_invalid_configuration_without_resetting_live_session() {
         setup(true);

@@ -428,7 +428,7 @@ impl DurableObject for LobbyRoom {
                 map,
                 started,
             } if connection.peer == 0 && connection.player.is_some() => {
-                if !(1..=8).contains(&map) {
+                if !atv_net::valid_map(map) {
                     return ws.close(Some(1008), Some("Unknown environment"));
                 }
                 if epoch != room.epoch || (room.started && (map != room.map || !started)) {
@@ -546,7 +546,7 @@ mod tests {
             created_ms: 123.,
             closed: false,
             epoch: 5,
-            map: 8,
+            map: 9,
             started: true,
         };
         let connection = Connection {
@@ -567,7 +567,7 @@ mod tests {
         let loaded: Room = serde_json::from_str(&serde_json::to_string(&room).unwrap()).unwrap();
         assert_eq!(loaded.code, room.code);
         assert_eq!(loaded.host_token, room.host_token);
-        assert_eq!((loaded.epoch, loaded.map, loaded.started), (5, 8, true));
+        assert_eq!((loaded.epoch, loaded.map, loaded.started), (5, 9, true));
         let mut resumed: Connection =
             serde_json::from_str(&serde_json::to_string(&connection).unwrap()).unwrap();
         assert_eq!(resumed.player, connection.player);

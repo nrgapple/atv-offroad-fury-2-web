@@ -44,7 +44,7 @@ export class Multiplayer {
         if (this.started && this.ready()) void this.audio().loadRemoteModels(this.state.lobby?.players ?? []).catch(e=>this.report(e.message));
         if (this.state.lobby?.started && !this.started) {
           this.started = true;
-          void this.onStart(this.state.lobby.map).then(async () => {
+          void this.onStart(this.state.environment, () => generation === this.generation).then(async () => {
             if (generation === this.generation) await this.audio().loadRemoteModels(this.state.lobby.players);
           }).catch(error => this.report(error.message));
         }
@@ -70,7 +70,7 @@ export class Multiplayer {
       try { await navigator.clipboard.writeText(url.href); frontend.notice.textContent = 'Invite link copied.'; }
       catch { frontend.notice.textContent = url.href; }
     } else if (action === 'lobbymap') {
-      const lobby = this.state.lobby; if (lobby) await this.control({SetLobby:{epoch:lobby.epoch,map:lobby.map%8+1,started:false}});
+      const lobby = this.state.lobby; if (lobby) await this.control({SetLobby:{epoch:lobby.epoch,map:this.state.nextMap,started:false}});
     } else if (action === 'lobbystart') {
       const lobby = this.state.lobby; if (lobby) await this.control({SetLobby:{epoch:lobby.epoch,map:lobby.map,started:true}});
     } else if (action === 'leave') { await this.disconnect(); await frontend.show('multiplayer'); }
