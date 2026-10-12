@@ -504,3 +504,23 @@ selection, pause/resume and context restoration pass at at most two draws and
 gameplay parity. Normal public title/menu/controller/Tioga/Controls and 390px
 Caribou reload pass without file selection or browser errors. Missing curved
 rail geometry remains the next separate source placement repair.
+
+
+## Static root placement and restored curved rails (2026-10-12)
+
+Public 841f11c5d619cac92bc6033fe01e1e2d09cbdcc4 passes CI 38287671823. The
+current-main artifact and public deployment identity match. The repair retains
+the concurrently merged f21 original-game UI changes, source checks and gallery
+entry. R2 validates 339 approved objects and uploads 4 incremental changes after
+refreshing the existing OAuth session; no new original runtime content is needed.
+
+All 12 curved rail placements change framebuffer pixels in public desktop/390px
+inspection views, 36,027–49,735 and 6,041–8,366 respectively. They previously
+changed zero pixels because saved PSG root and SCN placement were composed twice.
+The repaired static decoder follows original root replacement, with all scene,
+COL, terrain, actor and train transforms otherwise preserved. Original native
+setter replay passes 68 placements/5,916 instructions. Public all-eight-map
+loading/driving covers 1,875 scene instances with zero unsupported meshes/JS/GL
+errors; normal menu/controller/Tioga/Controls and 390px Caribou reload pass with
+no disc picker. The four public train collision cases retain the same lift,
+launch and wreck/recovery results. See research/RAILS.md for evidence limits.

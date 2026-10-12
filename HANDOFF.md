@@ -1,6 +1,26 @@
 # Implementation handoff
 
-## Latest train and wheel public checkpoint
+## Latest verified public rail checkpoint
+
+`841f11c5d619cac92bc6033fe01e1e2d09cbdcc4` is public, CI 38287671823 success.
+All 12 ENV08 curved rail sections now render at original scene placements on
+desktop and 390px, with 36,027–49,735 and 6,041–8,366 changed pixels respectively,
+versus zero before repair. Native 68 setter cases confirm the static engine
+replaces saved PSG root translation/basis; the old browser composed both roots.
+The scene-only decoder preserves vehicle/rider/vegetation/train bind decoding,
+COL, source scene matrices and terrain heights. See research/RAILS.md.
+
+Public all-eight-map driving loads 1,875 scene instances without unsupported
+meshes, JS or GL errors. Normal title/menu, keyboard/controller-to-Tioga,
+Controls and 390px Caribou reload pass without a disc picker. Original train
+front lift/landing, 65.4826ft/s upward head-on launch, side wreck/recovery and
+moving top/wheel contacts retain the same public results as 9ac7365. Original
+sound/wheel effects have their separate verified 9ac evidence below. The incoming
+f21 original-game UI merge and its devlog capture are preserved; combined
+Chromium/WebKit UI and source/package gates pass. Inspection rail views are test
+cameras, not a change to the gameplay camera or a complete PS2 renderer replay.
+
+## Verified train and wheel public checkpoint
 
 `9ac73657ba94045aa319d3eaed6d481162f242fd` is public on Cloudflare, CI
 38285135155 success. HTTPS verification matches 29 authored files and 334 served
@@ -29,9 +49,9 @@ controller-to-Tioga, Controls and 390px Caribou reload pass without a disc picke
 The user asks to deploy these updates before repairing missing ENV08 rails; that
 ordering is fulfilled. Read-only census finds all 68 track placements loaded.
 Native root setters show that 12 curved meshes carry a saved PSG model translation
-which must be replaced by scene placement, rather than applied twice. A separate
-scene mesh decoder repair is in progress; terrain/COL/route transforms must stay
-unchanged. Keep normal ATV/rider bind-pose decoding intact.
+which must be replaced by scene placement, rather than applied twice. The separate
+scene mesh decoder repair is now publicly verified above; terrain/COL/route
+transforms are unchanged. Keep normal ATV/rider bind-pose decoding intact.
 
 ## Earlier verified public gameplay checkpoint
 

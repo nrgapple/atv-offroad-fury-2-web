@@ -1,6 +1,6 @@
 {
   "status": "Host-verified one-handed mobile input checkpoint; CI and public release pending. The browser port remains incomplete.",
-  "working_on": "Host root-pose correction passed desktop, mobile and all-map checks; complete the coherent source/CI/public release, then verify affected placements on production.",
+  "working_on": "Audit other source-normalized PSG root placements and continue comparing terrain LOD, fog, distant blending and material behavior.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1607,19 +1607,33 @@
       "limitation": "Host-only checkpoint; steering source is still isolated and not public. Public CI/release and physical-phone validation remain pending.",
       "image": "/devlog-images/mobile-steering-response-is-adjustable-in-controls-2d07c559.png",
       "caption": "Host capture of Pause \u2192 Controls with Mobile steering set to 50%."
+    },
+    {
+      "id": "curved-rail-placement-fix-passes-public-checks-75498b8a",
+      "timestamp": "2026-10-12T18:00:20.710295+00:00",
+      "recorded_at": "2026-10-12T18:05:53.456454+00:00",
+      "kind": "verification",
+      "title": "Curved rail placement fix passes public checks",
+      "summary": "Public release 841f11c5 restores all 12 ENV08 curved rail meshes at their authored placements. The same curves change from zero pixels before the fix to 36,027\u201349,735 pixels on desktop and 6,041\u20138,366 on 390px mobile.",
+      "details": [
+        "The native setter comparison passes 68 cases / 5,916 instructions. Public ENV01\u2013ENV08 loading and driving passed across 1,875 scene instances with zero unsupported meshes, JavaScript errors or WebGL errors. Train contact scenarios and normal title-to-driving/Controls flow also pass."
+      ],
+      "limitation": "The screenshot uses an inspection camera for the authored curve test, not the app's normal camera. Other non-identity PSG roots may affect additional props; this result does not establish every placement or complete PS2 rendering parity.",
+      "image": "/devlog-images/curved-rail-placement-fix-passes-public-checks-75498b8a.png",
+      "caption": "Public inspection-camera test showing ENV08 curved rail geometry restored along its authored placement; the camera is test-only."
     }
   ],
-  "updated_at": "2026-10-12T18:06:21.863010+00:00",
+  "updated_at": "2026-10-12T18:05:53.456454+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
-      "commit": "9ac73657ba94045aa319d3eaed6d481162f242fd",
-      "ci_run": "38285135155",
+      "commit": "841f11c5d619cac92bc6033fe01e1e2d09cbdcc4",
+      "ci_run": "38287671823",
       "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
-      "static_assets": 29,
-      "served_objects": 334,
-      "devlog_entries": 93,
-      "devlog_screenshots": 81
+      "devlog_entries": 97,
+      "devlog_screenshots": 85,
+      "r2_approved_objects": 339,
+      "r2_upload_changes": 4
     },
     "next_priorities": [
       "Complete one-finger mobile feedback for steering/lean, diagonals, release, airborne control and landing while preserving current two-thumb behavior; physical-device validation remains open.",
@@ -2149,29 +2163,35 @@
         "category": "Presentation",
         "title": "Rendering and original visual effects",
         "status": "PARTIAL",
-        "scope": "PUBLIC \u00b7 TOWER MATERIAL FIX; OTHER RENDERING PARTIAL",
-        "summary": "The public ENV02 power-tower lattice now renders open through its alpha cutouts. Terrain detail is connected, but projected terrain LOD, fog, distant blending and full GS material behavior still differ.",
-        "validation": "The public 3cc eight-map run passed with no unsupported placed meshes or JS/WebGL errors. The inspected ENV02 tower capture is a host-authored inspection-camera view, not ordinary gameplay framing.",
+        "scope": "PUBLIC \u00b7 NATIVE PSG ROOT-POSED MESH PLACEMENT; OTHER RENDERING PARTIAL",
+        "summary": "The original PSG saved-root setter restores all 12 ENV08 curved rail meshes at their authored placements. Other terrain LOD, fog, distant blending and full GS material behavior remain partial.",
+        "validation": "Public 841f11c5d619cac92bc6033fe01e1e2d09cbdcc4 \u00b7 CI 38287671823: all 12 curves changed from zero pixels before the fix to 36,027\u201349,735 desktop and 6,041\u20138,366 390px mobile pixels. Public ENV01\u2013ENV08 loading/driving covered 1,875 scene instances with zero unsupported meshes, JavaScript errors or WebGL errors.",
         "evidence": "research/GEOMETRY.md \u2014 PSG meshes and terrain shading; research/IMPLEMENTATION.md.",
-        "next_step": "Publish the verified host root-pose correction through the normal source/CI/R2 release path, then inspect affected placements on the public build.",
+        "next_step": "Audit other non-identity PSG root placements, then continue original terrain LOD, fog, distant blending and material behavior.",
         "release_verification": {
-          "commit": "3cc8e5fee7253fcfae207e61faa12ea70336459f",
-          "ci_run": "38192659265",
+          "commit": "841f11c5d619cac92bc6033fe01e1e2d09cbdcc4",
+          "ci_run": "38287671823",
           "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+          "devlog_entries": 97,
+          "devlog_screenshots": 85,
+          "r2_approved_objects": 339,
+          "r2_upload_changes": 4,
           "checks": [
-            "All-eight-map load/drive checks passed after tower and alpha-cutout restoration."
+            "All 12 ENV08 curved rail meshes render at the same authored placements on desktop and 390px mobile.",
+            "Public ENV01\u2013ENV08 loading/driving passed across 1,875 scene instances with zero unsupported meshes, JavaScript errors or WebGL errors.",
+            "The rail capture uses a test inspection camera. It does not establish normal-camera framing or complete PS2 rendering parity."
           ]
         },
         "host_verification": {
-          "scope": "Host-verified component; public rail verification pending.",
+          "scope": "Host desktop/mobile and all-map checks passed; public verification is now recorded separately.",
           "checks": [
-            "All 12 ENV08 curved rail meshes changed from zero pixels to 36,027\u201349,735 desktop pixels and 6,041\u20138,366 390px mobile pixels at the same authored placements after applying the original PSG root-pose setter.",
+            "All 12 ENV08 curved rail meshes changed from zero pixels to 36,027\u201349,735 desktop pixels and 6,041\u20138,366 390px mobile pixels at the same authored placements.",
             "ENV01\u2013ENV08 host loading/driving passed with zero unsupported meshes, JS errors or WebGL errors.",
             "Native setter comparison: 68 cases / 5,916 instructions. Host checks: 297 core, 2 WASM, 6 mesh tests, strict Clippy, formatting, private build and make verify."
           ],
           "limitations": [
-            "The fix is host-only pending CI and public deployment verification.",
-            "A source census found 234 non-identity root model types across 902 placements; other props may also be affected. The 12-curve test does not establish every placement or complete PS2 rendering parity."
+            "The screenshot framing is a test inspection camera.",
+            "A source census found 234 non-identity root model types across 902 placements; other props may be affected. The 12-curve test does not establish every placement or complete PS2 rendering parity."
           ]
         }
       },
