@@ -1,0 +1,63 @@
+/* ATV2 browser UI tokens. Evidence and component recipes: research/DESIGN_SYSTEM.md.
+   The original Rust menu and recovered HUD artwork remain the visual reference. */
+:root {
+  --atv-red: #9c1414;
+  --atv-red-deep: #210504;
+  --atv-silver: #b9b9b9;
+  --atv-silver-light: #e9e9e9;
+  --atv-ink: #080808;
+  --atv-charcoal: #222222;
+  --atv-text: #dedede;
+  --atv-gold: #e5d360;
+  --atv-gold-light: #fffaa1;
+  --atv-gold-deep: #a99900;
+  --atv-orange: #f4a13c;
+  --atv-focus: var(--atv-gold-light);
+  --atv-surface: linear-gradient(160deg, #383838ed, #080808d9);
+  --atv-metal-edge: #b9b9b98c;
+  --atv-bevel: inset 0 1px 0 #e9e9e94d, inset 0 -2px 0 #0009;
+  --atv-shadow: 0 2px 5px #0008;
+  --atv-font-label: 'Arial Narrow', 'Helvetica Neue', Arial, sans-serif;
+  --atv-label-size: 11px;
+  --atv-label-tracking: .045em;
+  --atv-control-hit: 44px;
+  --atv-control-radius: 4px;
+  --atv-space-1: 4px;
+  --atv-space-2: 8px;
+  --atv-space-3: 12px;
+  --atv-compass-size: 96px;
+}
+/* Reuse for browser-native utility actions; Rust menus keep their own hit regions. */
+.atv-control {
+  appearance: none;
+  min-height: var(--atv-control-hit);
+  min-width: var(--atv-control-hit);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--atv-space-2);
+  padding: 0 var(--atv-space-3);
+  border: 1px solid var(--atv-metal-edge);
+  border-bottom: 2px solid var(--atv-red);
+  border-radius: var(--atv-control-radius);
+  background: var(--atv-surface);
+  box-shadow: var(--atv-bevel), var(--atv-shadow);
+  color: var(--atv-silver-light);
+  font: italic 800 var(--atv-label-size)/1 var(--atv-font-label);
+  letter-spacing: var(--atv-label-tracking);
+  text-transform: uppercase;
+  text-shadow: 0 1px 2px #000;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.atv-control svg { width: 16px; height: 16px; flex: none; fill: currentColor; }
+.atv-control:focus-visible { outline: 2px solid var(--atv-focus); outline-offset: 3px; }
+@media (hover: hover) { .atv-control:hover:not(:disabled) { border-color: var(--atv-gold); color: var(--atv-gold-light); } }
+.atv-control:active:not(:disabled) {
+  color: var(--atv-ink);
+  background: linear-gradient(var(--atv-gold-light), var(--atv-gold-deep));
+  border-color: var(--atv-gold);
+  box-shadow: inset 0 1px 3px #0006;
+  text-shadow: none;
+}
+.atv-control:disabled { opacity: .4; cursor: default; }
