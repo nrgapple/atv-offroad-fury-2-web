@@ -29,6 +29,7 @@ pub mod scene;
 pub mod scene_candidates;
 pub mod scene_collision;
 pub mod scene_partition;
+pub mod scenery_material;
 pub mod sky;
 pub mod sound_effects;
 pub mod spatial_audio;

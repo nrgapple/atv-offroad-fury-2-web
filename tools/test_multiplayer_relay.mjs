@@ -123,19 +123,24 @@ try {
   check('Four-player capacity enforced');
   const oldEpoch = lastLobby(host).epoch - 1;
   let after = host.packets.length;
-  host.send(encode({ SetLobby: { epoch: oldEpoch, map: 8, started: true } }));
+  host.send(encode({ SetLobby: { epoch: oldEpoch, map: 9, started: true } }));
   await wait(host, p => p.Lobby?.epoch === oldEpoch + 1, after);
   assert.equal(lastLobby(host).started, false);
   check('Stale host command resynchronizes without disconnecting host');
   after = host.packets.length;
-  host.send(encode({ SetLobby: { epoch: lastLobby(host).epoch, map: 8, started: true } }));
-  await wait(host, p => p.Lobby?.started && p.Lobby.map === 8, after);
+  host.send(encode({ SetLobby: { epoch: lastLobby(host).epoch, map: 9, started: false } }));
+  await wait(host, p => p.Lobby?.map === 9 && !p.Lobby.started, after);
+  for (const ws of [guest, guest2, guest3]) await wait(ws, p => p.Lobby?.map === 9 && !p.Lobby.started);
+  check('Ninth environment selection reaches all four authenticated participants');
+  after = host.packets.length;
+  host.send(encode({ SetLobby: { epoch: lastLobby(host).epoch, map: 9, started: true } }));
+  await wait(host, p => p.Lobby?.started && p.Lobby.map === 9, after);
   const activeEpoch = lastLobby(host).epoch;
-  for (const attempted of [{ map: 1, started: true }, { map: 8, started: false }]) {
+  for (const attempted of [{ map: 1, started: true }, { map: 9, started: false }]) {
     after = host.packets.length;
     host.send(encode({ SetLobby: { epoch: activeEpoch, ...attempted } }));
     const retained = (await wait(host, p => p.Lobby, after)).Lobby;
-    assert.equal(retained.map, 8);
+    assert.equal(retained.map, 9);
     assert.equal(retained.started, true);
     assert.equal(retained.epoch, activeEpoch);
   }
@@ -178,6 +183,18 @@ try {
   assert.match((await closed(replacement)).reason, /Host left/);
   await rejectedSocket(code, 410);
   check('Host departure terminates session; no join resurrection');
+  const invalidCreation = await request('/multiplayer/rooms', { method: 'POST' });
+  assert.equal(invalidCreation.status, 201);
+  const invalidRoom = await invalidCreation.json();
+  const invalidHost = await connect(invalidRoom.code, player('Invalid map probe'), '?host=' + invalidRoom.hostToken);
+  // Bypass the shared encoder deliberately: the untrusted socket must reject
+  // map10 even when the rest of the version1 control packet is valid.
+  const invalidMap = encode({ SetLobby: { epoch: lastLobby(invalidHost).epoch, map: 9, started: false } });
+  invalidMap.writeUInt16LE(10, 12);
+  invalidHost.send(invalidMap);
+  assert.equal((await closed(invalidHost)).code, 1008);
+  await rejectedSocket(invalidRoom.code, 410);
+  check('Map10 rejected on the real socket; host termination cannot resurrect the invalid room');
   console.log(JSON.stringify(report, null, 2));
 } finally {
   for (const ws of sockets) if (ws.readyState < WebSocket.CLOSING) ws.close();

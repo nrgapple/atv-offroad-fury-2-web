@@ -470,3 +470,81 @@ fn qr_decomposition_preserves_affine_linkage_shear_and_interpolates_it() {
     bytes[61..65].copy_from_slice(&f32::NAN.to_le_bytes());
     assert_eq!(decode(&bytes), Err(Error::InvalidTransform));
 }
+
+#[test]
+fn ninth_map_control_and_roster_roundtrip_without_changing_wire_layout() {
+    for map in 1..=MAX_MAP_ID {
+        let control = Packet::SetLobby {
+            epoch: 7,
+            map,
+            started: true,
+        };
+        let bytes = encode(&control).unwrap();
+        assert_eq!(bytes.len(), 15);
+        assert_eq!(bytes[5], 8);
+        assert_eq!(&bytes[12..14], &map.to_le_bytes());
+        assert_eq!(decode(&bytes).unwrap(), control);
+        let roster = Lobby { map, ..lobby() };
+        for packet in [
+            Packet::Lobby(roster.clone()),
+            Packet::Welcome {
+                peer: 1,
+                code: *b"ABCD2345",
+                lobby: roster,
+            },
+        ] {
+            assert_eq!(decode(&encode(&packet).unwrap()).unwrap(), packet);
+        }
+    }
+}
+#[test]
+fn unsupported_maps_are_rejected_by_encoder_and_untrusted_wire_decoder() {
+    for map in [0, 10, 255, u16::MAX] {
+        assert!(!valid_map(map));
+        assert_eq!(
+            encode(&Packet::SetLobby {
+                epoch: 1,
+                map,
+                started: false
+            }),
+            Err(Error::InvalidValue)
+        );
+        assert_eq!(
+            encode(&Packet::Lobby(Lobby { map, ..lobby() })),
+            Err(Error::InvalidValue)
+        );
+        let mut control = encode(&Packet::SetLobby {
+            epoch: 1,
+            map: 9,
+            started: false,
+        })
+        .unwrap();
+        control[12..14].copy_from_slice(&map.to_le_bytes());
+        assert_eq!(decode(&control), Err(Error::InvalidValue));
+        let mut roster = encode(&Packet::Lobby(lobby())).unwrap();
+        roster[13..15].copy_from_slice(&map.to_le_bytes());
+        assert_eq!(decode(&roster), Err(Error::InvalidValue));
+        let mut welcome = encode(&Packet::Welcome {
+            peer: 1,
+            code: *b"ABCD2345",
+            lobby: lobby(),
+        })
+        .unwrap();
+        welcome[22..24].copy_from_slice(&map.to_le_bytes());
+        assert_eq!(decode(&welcome), Err(Error::InvalidValue));
+    }
+}
+
+#[test]
+fn environment_catalog_and_map_cycle_are_bounded_and_keep_source_keys() {
+    for id in 1..=8 {
+        assert_eq!(map_environment(id), Some(format!("env{id:02}").as_str()));
+        assert_eq!(next_map(id), Some(id + 1));
+    }
+    assert_eq!(map_environment(9), Some("free05"));
+    assert_eq!(next_map(9), Some(1));
+    for invalid in [0, 10, u16::MAX] {
+        assert_eq!(map_environment(invalid), None);
+        assert_eq!(next_map(invalid), None);
+    }
+}

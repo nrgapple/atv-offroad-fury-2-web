@@ -133,7 +133,7 @@ export class Frontend {
     try {
       await this.archive('/STARTAPP.RES');
       const tracks = await this.document('tracks.dat');
-      this.tracks = [...tracks.entries()].filter(([s, f]) => /^unspnat\d+$/.test(s) && ['env01','env02','env03','env04','env05','env06','env07','env08'].includes(f.scn))
+      this.tracks = [...tracks.entries()].filter(([s, f]) => (/^(unspnat\d+|spstunt6)$/.test(s)) && ['env01','env02','env03','env04','env05','env06','env07','env08','free05'].includes(f.scn))
         .map(([, f]) => ({ id: f.scn, name: unquote(f.name), image: f.image }));
       this.track = this.tracks.findIndex(t => t.id === 'env01');
       for (const name of [fontName, 'tradegothic_boldcondensed_22soff', 'tradegothic_boldcondenseditalic_-1fs_32ds']) await this.font(name);
@@ -189,6 +189,7 @@ export class Frontend {
     try {
       if (page === 'tracks') {
         await this.archive('/UI/RESOURCE/TP/TP_ANAT.RES');
+        await this.archive('/UI/RESOURCE/TP/TP_PSTNT.RES');
         for (const track of this.tracks) { await this.image(`${track.image}a`); await this.image(`${track.image}b`); }
       }
       this.page = page; this.selection = 0; this.busy = false; this.layoutKey = '';
@@ -262,7 +263,7 @@ export class Frontend {
     const stage = this.canvas.parentElement, track = this.tracks[this.track];
     const music = this.audio?.()?.music, musicState = music?.snapshot();
     const lobby = this.multiplayer?.state?.lobby;
-    const request = {quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? this.roomCode,lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:(this.page === 'lobby' ? this.tracks.find(t => t.id === `env${String(lobby?.map ?? 1).padStart(2,'0')}`)?.name : track?.name) ?? '',track_image:track?.image ?? '',fullscreen:Boolean(document.fullscreenEnabled),
+    const request = {quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? this.roomCode,lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:(this.page === 'lobby' ? this.tracks.find(t => t.id === this.multiplayer.state.environment)?.name : track?.name) ?? '',track_image:track?.image ?? '',fullscreen:Boolean(document.fullscreenEnabled),
       mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
       music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],

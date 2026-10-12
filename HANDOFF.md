@@ -1,5 +1,42 @@
 # Implementation handoff
 
+## Verified public map-fidelity and Vancouver Ridge checkpoint
+
+The isolated map lane has a complete 40-family/147-archive asset-header/config
+census and restored static prelit RGBA, FB_ONLY/source-alpha behavior and Rust UV
+movement. Vancouver Ridge is the previously unconnected FREE05, not Caribou:
+Single Player → Freestyle now exposes its original SPStunt6 name/thumbnail without
+an unlock. The host loads original terrain, 37,649 snowy plants and all 43 placed
+solid colliders. All 78 scenery meshes decode; 75 placements draw while three ice
+reflection overlays remain skipped. Its five-frame drag light now uses the
+recovered forward ATM clock. Desktop/390px source-ramp throttle tests pass wheel
+support, body contact, air and ground return; both menu routes pass without a disc
+picker. Public main `f585991579f8c44b098d6b137b1679eb8050e3fd` passes CI
+`38302626466`, 31 authored hashes and 399 served objects (110 log entries/93
+screenshots). Nine map loads, desktop/390px Vancouver contacts, four scenery
+materials and frontend gates pass through HTTPS. This is bounded verification,
+not full map or hardware parity. See [map evidence and limits](research/MAP_FIDELITY.md).
+Later ice-reflection work remains isolated WIP and is excluded from this checkpoint.
+
+## Combined ninth-map multiplayer candidate
+
+The merge preserves the public map/scenery release and extends Rust's shared
+lobby catalog to `env01`–`env08` plus `free05`. IDs remain stable; map 9 wraps to 1,
+and invalid map 10 is rejected. Rust supplies both environment keys and next-map
+metadata to browser UI/socket glue. The packet layout and host/identity/rate
+controls are unchanged. Two actual host browsers copy/join an invite, cycle to
+Vancouver, load matching scenes, draw both rigs, exchange movement and engine
+voices, then end cleanly with host departure. A real close-during-load gate keeps
+a completed old load on the Multiplayer menu without resurrecting its room or
+resuming a disconnected ride. The original eight-map driving,
+touch-wreck, water/snow and public model proofs above remain separate evidence.
+
+Combined host gates pass 307 core, 25 protocol, 3 relay, 12 WASM and 68 JS tests,
+17 release/content and 6 Worker checks, strict formatting/Clippy and 13 live relay
+cases. The 106-record runtime package preserves both lanes' required resources.
+Current-main CI and public map-nine multiplayer verification follow this merge;
+no later WIP reflection work is included.
+
 ## Verified public Rust multiplayer checkpoint
 
 Isolated `feature/rust-multiplayer` adds four-player host-controlled Freeride

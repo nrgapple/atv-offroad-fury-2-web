@@ -48,12 +48,12 @@ try {
   await pad(0); await screen('tracks');
   assert.equal(await page.locator('#frontend').getAttribute('data-track'),'env01');
   const visited = new Set();
-  for (let index = 0; index < 8; index++) {
+  for (let index = 0; index < 9; index++) {
     visited.add(await page.locator('#frontend').getAttribute('data-track'));
     await pad(15);
   }
-  assert.deepEqual([...visited].sort(), ['env01','env02','env03','env04','env05','env06','env07','env08']);
-  for (let index = 0; index < 8 && await page.locator('#frontend').getAttribute('data-track') !== 'env02'; index++) await pad(15);
+  assert.deepEqual([...visited].sort(), ['env01','env02','env03','env04','env05','env06','env07','env08','free05']);
+  for (let index = 0; index < 9 && await page.locator('#frontend').getAttribute('data-track') !== 'env02'; index++) await pad(15);
   assert.equal(await page.locator('#frontend').getAttribute('data-track'),'env02');
   if (process.env.ATV_UI_SCREENSHOTS) await page.screenshot({path:`${process.env.ATV_UI_SCREENSHOTS}-tioga-selection.png`});
   await pad(0);
@@ -76,7 +76,7 @@ try {
   await page.setViewportSize({width:390,height:844});
   await page.getByRole('button',{name:'Single Player',exact:true}).tap(); await screen('single');
   await page.getByRole('button',{name:'Freestyle',exact:true}).tap(); await screen('tracks');
-  for (let index = 0; index < 8 && await page.locator('#frontend').getAttribute('data-track') !== 'env01'; index++) {
+  for (let index = 0; index < 9 && await page.locator('#frontend').getAttribute('data-track') !== 'env01'; index++) {
     const before = await page.locator('#frontend').getAttribute('data-track');
     await page.getByRole('button',{name:'Previous environment',exact:true}).tap();
     await page.waitForFunction(before => document.querySelector('#frontend').dataset.track !== before,before);

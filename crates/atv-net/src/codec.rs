@@ -42,6 +42,7 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
             map,
             started,
         } => {
+            map_id(*map)?;
             w.u32(*epoch);
             w.u16(*map);
             w.byte(u8::from(*started));
@@ -143,17 +144,29 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
         5 => Packet::Leave { peer: r.peer()? },
         6 => Packet::Ping { nonce: r.u32()? },
         7 => Packet::Pong { nonce: r.u32()? },
-        8 => Packet::SetLobby {
-            epoch: r.u32()?,
-            map: r.u16()?,
-            started: r.boolean()?,
-        },
+        8 => {
+            let epoch = r.u32()?;
+            let map = r.u16()?;
+            map_id(map)?;
+            Packet::SetLobby {
+                epoch,
+                map,
+                started: r.boolean()?,
+            }
+        }
         _ => return Err(Error::UnknownKind),
     };
     if r.offset != bytes.len() {
         return Err(Error::InvalidLength);
     }
     Ok(packet)
+}
+fn map_id(id: u16) -> Result<()> {
+    if valid_map(id) {
+        Ok(())
+    } else {
+        Err(Error::InvalidValue)
+    }
 }
 fn room(code: &RoomCode) -> Result<()> {
     if valid_room_code(code) {
@@ -178,6 +191,7 @@ fn participant(p: &Participant) -> Result<()> {
 }
 fn lobby(l: &Lobby) -> Result<()> {
     peer_id(l.host)?;
+    map_id(l.map)?;
     if l.players.is_empty() || l.players.len() > MAX_PLAYERS {
         return Err(Error::InvalidValue);
     }

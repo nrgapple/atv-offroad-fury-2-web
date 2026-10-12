@@ -78,10 +78,6 @@ SoundResourceFile=unused
         with self.assertRaisesRegex(ValueError, 'expected one'):
             compact_map_placements(archive, 'ENV02')
 
-
-if __name__ == '__main__':
-    unittest.main()
-
 class PlayerContentTests(unittest.TestCase):
     def test_quad_package_contains_only_live_geometry_physics_and_collision(self):
         from package_content import compact_player_archive, pack_resource, Resource
@@ -114,3 +110,15 @@ class PlayerContentTests(unittest.TestCase):
         duplicate = pack_resource([('first/ride.mot', b'one'), ('second/ride.mot', b'two')])
         with self.assertRaisesRegex(ValueError, 'missing or duplicated'):
             compact_rider_motions(duplicate, [catalog])
+
+    def test_vancouver_thumbnail_includes_only_two_required_halves(self):
+        from package_content import compact_vancouver_thumbnail, pack_resource, Resource
+        source = pack_resource([('ui/trk_free05_a.pst', b'a'), ('ui/trk_free05_b.pst', b'b'), ('ui/trk_free01_a.pst', b'unrelated')])
+        result = Resource(compact_vancouver_thumbnail(source))
+        self.assertEqual([x[0] for x in result.members], ['ui/trk_free05_a.pst', 'ui/trk_free05_b.pst'])
+        with self.assertRaisesRegex(ValueError, 'missing or duplicated'):
+            compact_vancouver_thumbnail(pack_resource([('ui/trk_free05_a.pst', b'a')]))
+
+
+if __name__ == '__main__':
+    unittest.main()
