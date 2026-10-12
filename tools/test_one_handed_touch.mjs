@@ -1,10 +1,12 @@
 // Real browser menu/CDP touch events and original Caribou ramp; no state/force injection.
 import assert from 'node:assert/strict';
+import { captureSimulation } from './capture_simulation.mjs';
 import { createRequire } from 'node:module';
 const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  await captureSimulation(page, 'landingFrames');
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   const url=new URL('/play.html?drive=1&environment=env01',process.env.ATV_TEST_URL || 'http://127.0.0.1:4173');
   await page.goto(url.href);
@@ -32,8 +34,22 @@ try {
   await page.waitForFunction(()=>!window.atvTerrainStatus.frame.grounded.some(Boolean),null,{timeout:5000,polling:'raf'});
   await touch('touchStart',[origin]);
   await touch('touchMove',[{...origin,x:130,y:630}]);
-  await page.waitForFunction(()=>{const i=window.atvTerrainStatus.input;return i?.touch_drive.axis===0 && i.steer===-1 && i.lean===1 && i.stunt_modifiers===0 && i.preload_axis===undefined;},null,{timeout:5000,polling:'raf'});
+  await page.waitForFunction(()=>{const i=window.atvTerrainStatus.input;return i?.throttle===0 && i.brake===0 && i.touch_drive.grounded_only && i.steer===-1 && i.lean===1 && i.stunt_modifiers===0 && i.preload_axis===undefined;},null,{timeout:5000,polling:'raf'});
+  const queuedAt = await page.evaluate(()=>window.landingFrames.at(-1)?.step ?? 0);
+  // Prepare acceleration before touchdown, then keep this thumb still.
+  await touch('touchMove',[{...origin,y:530}]);
+  await page.waitForFunction(start=>window.landingFrames.some((s,i,frames)=>s.step>start && i>0 && !frames[i-1].frame.grounded.some(Boolean) && s.frame.grounded.some(Boolean)),queuedAt,{timeout:10000,polling:'raf'});
+  await page.waitForFunction(()=>window.landingFrames.some((s,i,frames)=>i>0 && frames[i-1].frame.grounded.some(Boolean) && s.frame.applied_input?.touch_drive.grounded_only && s.frame.applied_input.touch_drive.axis>0 && s.frame.applied_input.throttle>0),null,{timeout:5000,polling:'raf'});
+  const frames=await page.evaluate(()=>window.landingFrames);
+  const landing=frames.findIndex((s,i)=>s.step>queuedAt && i>0 && !frames[i-1].frame.grounded.some(Boolean) && s.frame.grounded.some(Boolean));
+  assert(landing>=0);
+  const next=frames[landing+1];assert(next,'Next fixed step after touchdown recorded');
+  assert.equal(next.frame.wreck.phase,'Riding');
+  if (!next.frame.applied_input.throttle) console.log(JSON.stringify(frames.slice(landing-2,landing+5).map(s=>({step:s.step,grounded:s.frame.grounded,input:s.input,wreck:s.frame.wreck,forced:s.frame.rider_mode})),null,2));
+  assert(next.frame.applied_input.throttle>0,'Queued held-thumb throttle must apply on the very next fixed step after first contact');
+  assert.equal(next.frame.applied_input.stunt_modifiers,0);
+  if(process.env.ATV_ONE_HAND_LANDING_SCREENSHOT)await page.screenshot({path:process.env.ATV_ONE_HAND_LANDING_SCREENSHOT});
   assert.deepEqual(errors,[]);
   await touch('touchCancel');
-  console.log('PASS: saved one-handed toggle survives reload; left-side single thumb braces, drives, brakes/reverses through native gate and controls airborne steer/lean with no tricks, throttle or brace. Physical phone hardware unverified.');
+  console.log('PASS: saved one-handed toggle survives reload; left-side single thumb braces, drives, brakes/reverses through native gate and controls airborne steer/lean with no tricks, throttle or brace; queued throttle resumes on the next fixed step after touchdown without a lift/move. Physical phone hardware unverified.');
 } finally {await browser.close();}

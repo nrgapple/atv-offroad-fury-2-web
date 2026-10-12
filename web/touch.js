@@ -22,8 +22,12 @@ export class TouchInput {
     this.airborne = airborne;
     const pointer = this.pointer;
     if (pointer) {
-      pointer.mode = airborne ? (this.oneHanded ? 'lean' : 'trick') : 'landed';
+      pointer.mode = airborne ? (this.oneHanded ? 'lean' : 'trick') : 'drive';
       if (!this.oneHanded) { pointer.x = pointer.currentX; pointer.y = pointer.currentY; }
+      if (!airborne) {
+        const back = pointer.currentY-pointer.y;
+        pointer.axis = this.oneHanded ? (Math.abs(back)>8 ? -clamp(back/70) : 0) : 1;
+      }
       pointer.points = [[pointer.x, pointer.y]]; pointer.selection = null; pointer.lastMove = Infinity;
     }
     // Cancel remembered brace without manufacturing a preload release at takeoff.
@@ -86,7 +90,12 @@ export class TouchInput {
     const leaning = this.oneHanded && pointer && ['drive','lean'].includes(pointer.mode);
     const steer = leaning ? clamp((pointer.currentX-pointer.x)/70) : 0;
     const lean = leaning ? clamp((pointer.currentY-pointer.y)/70) : 0;
-    const drive = { generation: this.generation, held: driving, axis: driving ? pointer.axis : 0 };
+    // Keep one-handed drive intent queued in the air. Rust enables it on the
+    // first fixed step with wheel contact, even within an already queued batch.
+    const queued = this.oneHanded && Boolean(pointer);
+    const back = pointer ? pointer.currentY-pointer.y : 0;
+    const axis = queued ? (Math.abs(back)>8 ? -clamp(back/70) : 0) : driving ? pointer.axis : 0;
+    const drive = { generation: this.generation, held: driving || queued, axis, grounded_only: this.oneHanded };
     let preload_axis = null;
     if (driving) { this.sampled = true; preload_axis = 1; }
     else if (this.releasePending) { this.releasePending = false; preload_axis = -1; }
@@ -170,7 +179,7 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
       airborne = Boolean(frame.grounded?.length && frame.grounded.every(contact => !contact));
       input.setAirborne(airborne);
       const state = frame.preload_active ? 'active' : frame.preload_armed ? 'armed' : frame.preload_available ? 'available' : 'idle';
-      root.dataset.preload = state; label.textContent = airborne ? (input.oneHanded ? 'LEAN' : frame.stunt?.name ?? 'SWIPE / CIRCLE') : input.pointer?.mode === 'landed' ? 'LIFT TO DRIVE' : state === 'armed' ? 'RELEASE' : state === 'active' ? 'PRELOADED' : 'BRACED';
+      root.dataset.preload = state; label.textContent = airborne ? (input.oneHanded ? 'LEAN' : frame.stunt?.name ?? 'SWIPE / CIRCLE') : state === 'armed' ? 'RELEASE' : state === 'active' ? 'PRELOADED' : 'BRACED';
     },
     sample() { refresh(); if (!active()) clear(); return input.sample(); },
     get engaged() { return touched; },

@@ -8,6 +8,9 @@ pub struct TouchIntent {
     pub held: bool,
     /// Right-thumb forward/up is positive throttle; down is brake/reverse.
     pub axis: f32,
+    /// Queue one-handed drive while airborne; apply at the first grounded step.
+    #[serde(default)]
+    pub grounded_only: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -41,6 +44,12 @@ impl TouchDrive {
         if self.generation != Some(intent.generation) {
             self.reset();
             self.generation = Some(intent.generation);
+        }
+        if intent.grounded_only && !grounded {
+            self.throttle = 0.;
+            self.brake = 0.;
+            independent.lean = independent.lean.clamp(-1., 1.);
+            return Ok(independent);
         }
         // A released touch must not impose its remembered direction over a
         // keyboard/controller command. A held touch still mixes independently.
@@ -104,6 +113,7 @@ mod tests {
             generation: 1,
             held: true,
             axis,
+            grounded_only: false,
         })
     }
     fn released() -> Option<TouchIntent> {
@@ -111,11 +121,42 @@ mod tests {
             generation: 1,
             held: false,
             axis: 0.,
+            grounded_only: false,
         })
     }
     fn channels(i: VehicleInput) -> (f32, f32, f32, bool) {
         (i.throttle, i.brake, i.lean, i.reverse)
     }
+    #[test]
+    fn queued_one_handed_drive_resumes_on_first_grounded_fixed_step() {
+        let mut touch = TouchDrive::default();
+        let mut queued = intent(0.75).unwrap();
+        queued.grounded_only = true;
+        let lean = VehicleInput {
+            lean: -0.5,
+            steer: 0.25,
+            ..Default::default()
+        };
+        for grounded in [true, false, false, true, true] {
+            let result = touch.resolve(lean, Some(queued), grounded, 20.).unwrap();
+            assert_eq!(result.throttle, if grounded { 0.75 } else { 0. });
+            assert_eq!(result.brake, 0.);
+            assert_eq!(result.lean, -0.5);
+            assert_eq!(result.steer, 0.25);
+        }
+        // Lift during the flight cancels the queued acceleration for landing.
+        queued.held = false;
+        queued.axis = 0.;
+        touch.resolve(lean, Some(queued), false, 20.).unwrap();
+        assert_eq!(
+            touch
+                .resolve(lean, Some(queued), true, 20.)
+                .unwrap()
+                .throttle,
+            0.
+        );
+    }
+
     #[test]
     fn right_drive_never_changes_left_lean_and_release_stops_throttle_in_air() {
         let mut touch = TouchDrive::default();
@@ -211,6 +252,7 @@ mod tests {
             generation: 2,
             held: false,
             axis: -1.,
+            grounded_only: false,
         });
         assert_eq!(
             channels(
