@@ -7,7 +7,7 @@ test('native face drive/brake/reverse and independent trigger brake',()=>{
  const b=new GameplayBindings(null);
  assert.equal(b.read(empty,pad([0])).input.throttle,1);
  assert.equal(b.read(empty,pad([2])).input.brake,1);
- let i=b.read(empty,pad([0,2])).input;assert(i.reverse);assert.equal(i.throttle,1);assert.equal(i.brake,0);
+ let i=b.read(empty,pad([0,2])).input;assert(i.reverse);assert.equal(i.throttle,1);assert.equal(i.brake,0);assert.equal(i.reverse_chord_brake,1,'Rust must receive the chord brake to apply the native speed gate');
  i=b.read(empty,pad([0,2,6])).input;assert(i.reverse);assert.equal(i.brake,1);
  i=b.read(new Set(['KeyS']),pad([0,2])).input;assert.equal(i.brake,1);
  assert.equal(b.read(empty,pad([0],0,1)).input.lean,1,'Down+Cross retains wheelie lean');

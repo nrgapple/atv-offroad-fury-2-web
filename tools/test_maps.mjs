@@ -12,7 +12,7 @@ try {
     page.on('pageerror', error => errors.push(error.message));
     try {
       await page.goto(`${base}/play.html?drive=1&environment=${environment}`);
-      await page.waitForFunction(() => window.atvTerrainStatus?.ready || document.querySelector('#status')?.classList.contains('error'), null, { timeout: 120000 });
+      await page.waitForFunction(() => (window.atvTerrainStatus?.ready && window.atvTerrainStatus?.simulation) || document.querySelector('#status')?.classList.contains('error'), null, { timeout: 120000 });
       const loaded = await page.evaluate(() => window.atvTerrainStatus);
       assert(loaded.ready, await page.locator('#status').textContent());
       assert.match(loaded.source, new RegExp(`${environment}\\.tr2$`));
@@ -24,7 +24,7 @@ try {
       assert(loaded.vegetationDraws > 0 && loaded.vegetationDraws < 40, 'Vegetation remains batched');
       assert(loaded.obstacles.instances > 0);
       assert.deepEqual(loaded.unsupportedSceneMeshes, [], 'All placed original scenery meshes decode, including the v4 towers');
-      await page.locator('#game').click();
+      await page.bringToFront(); await page.locator('#game').focus();
       await page.keyboard.down('KeyW');
       const target = loaded.simulationSteps + (environment === 'env01' ? 480 : 60);
       await page.waitForFunction(target => window.atvTerrainStatus.simulationSteps >= target, target, { timeout: 120000 });
@@ -33,6 +33,7 @@ try {
       assert(state.frame.origin.every(Number.isFinite));
       assert(state.frame.orientation.every(Number.isFinite));
       assert(Number.isFinite(state.frame.speed));
+      assert(Math.hypot(state.frame.origin[0]-loaded.frame.origin[0],state.frame.origin[2]-loaded.frame.origin[2])>.5, 'Throttle must move the ATV across the terrain');
       assert.equal(state.glError, 0);
       if (environment === 'env01') {
         assert(state.terrainDetailUpdates > loaded.terrainDetailUpdates, 'Finest terrain follows the moving ATV');

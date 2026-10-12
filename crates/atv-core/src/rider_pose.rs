@@ -48,6 +48,58 @@ pub enum Mode {
     Air,
     Stunt,
     Hold,
+    Landing,
+}
+
+/// Forced single-clip actions selected by 002daa50 and loaded by 002d6cc0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[repr(u8)]
+pub enum Landing {
+    Front,
+    Vertical,
+}
+impl Landing {
+    pub const SUFFIXES: [&'static str; 2] = ["LandHardF", "LandHard"];
+}
+
+/// 001e8690 uses collision velocity corrections in ATV local space. The
+/// hard-landing branches follow all five impact-wreck branches, before angle
+/// wreck checks; the caller must discard an action if those later checks wreck.
+#[derive(Debug, Clone, Copy)]
+pub struct LandingConfig {
+    pub wreck_impact: [f32; 3],
+    pub vertical: f32,
+    pub longitudinal: f32,
+}
+impl LandingConfig {
+    pub fn from_physics(data: &crate::physics_data::PhysicsData, upgrade: f32) -> Result<Self> {
+        let rules = crate::wreck::Config::from_physics(data, upgrade)?;
+        let get = |name| data.first_scalar("Wrecks", name);
+        Ok(Self {
+            wreck_impact: rules.impact_limit,
+            vertical: get("VerticalHardLandingFps")?
+                + get("TweakVerticalHardLandingFps")? * upgrade,
+            longitudinal: get("LongitudinalHardLandingFps")?,
+        })
+    }
+    pub fn evaluate(self, local_impact: [f32; 3], vertical_limit_scale: f32) -> Option<Landing> {
+        let [x, y, z] = local_impact;
+        let [lateral, vertical, longitudinal] = self.wreck_impact;
+        if z > longitudinal
+            || z < -longitudinal
+            || x > lateral
+            || x < -lateral
+            || y > vertical * vertical_limit_scale
+        {
+            None
+        } else if z < -self.longitudinal {
+            Some(Landing::Front)
+        } else if y > self.vertical {
+            Some(Landing::Vertical)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,6 +175,12 @@ pub struct Animator {
     stunt_state: crate::stunt::State,
     stunt_frame: Option<crate::stunt::Frame>,
     hold_noise: crate::stunt::HoldNoise,
+    landing_motions: Vec<Motion>,
+    landing: Option<Landing>,
+    landing_phase: f32,
+    score: crate::stunt_score::State,
+    scoring_mode: Option<u8>,
+    hand_ik: Option<crate::rider_ik::Hands>,
 }
 impl Animator {
     /// Motions must follow Clip::ALL. Reject controller layouts that the original
@@ -184,6 +242,12 @@ impl Animator {
             hold_noise: crate::stunt::HoldNoise::new(
                 &mut crate::engine_audio::OriginalRandom::with_seed(1),
             ),
+            landing_motions: Vec::new(),
+            landing: None,
+            landing_phase: 0.,
+            score: crate::stunt_score::State::default(),
+            scoring_mode: None,
+            hand_ik: None,
         })
     }
     pub fn channels(&self) -> crate::animation::Channels {
@@ -191,6 +255,32 @@ impl Animator {
     }
     pub fn pose(&self, nodes: &[crate::mesh::Node]) -> Result<crate::animation::Pose> {
         self.current.pose(nodes)
+    }
+    /// Prepare original shoulder/elbow/hand chains without activating them.
+    /// Native callers supply the mirrored local hinge axis separately.
+    pub fn configure_hand_ik(
+        &mut self,
+        nodes: &[crate::mesh::Node],
+        left_axis: [f32; 3],
+    ) -> Result<()> {
+        self.hand_ik = Some(crate::rider_ik::Hands::bind(nodes, left_axis)?);
+        Ok(())
+    }
+    /// Existing normal/stunt/landing states request None, matching002d8e50's
+    /// cleared hand gate. Explicit targets share the sampled pose's frame.
+    pub fn pose_with_hand_targets(
+        &self,
+        nodes: &[crate::mesh::Node],
+        targets: Option<[[f32; 3]; 2]>,
+    ) -> Result<crate::animation::Pose> {
+        let mut pose = self.pose(nodes)?;
+        if targets.is_some() {
+            self.hand_ik
+                .as_ref()
+                .ok_or("rider hand IK is not configured")?
+                .apply(nodes, &mut pose, targets)?;
+        }
+        Ok(pose)
     }
     pub fn reset(&mut self, nodes: &[crate::mesh::Node]) -> Result<()> {
         let initial = &self.motions[Clip::TurnMid as usize];
@@ -203,7 +293,62 @@ impl Animator {
         self.state = State::default();
         self.stunt_state.reset();
         self.stunt_frame = None;
+        self.landing = None;
+        self.landing_phase = 0.;
+        self.score.abort_rider()?;
         Ok(())
+    }
+    /// Caller supplies the exact original game-mode id and eligibility. Mode7
+    /// bypasses repeat penalties; None disables scoring for this rider.
+    pub fn set_scoring_mode(&mut self, native_mode: Option<u8>) -> Result<()> {
+        if native_mode.is_none() {
+            self.score.abort_rider()?;
+        }
+        self.scoring_mode = native_mode;
+        Ok(())
+    }
+    pub fn score_frame(&self) -> crate::stunt_score::Frame {
+        self.score.frame()
+    }
+    pub fn take_score_notifications(&mut self) -> Vec<crate::stunt_score::Notification> {
+        self.score.take_notifications()
+    }
+    /// Starting/restarting an event clears all score and repetition history.
+    /// Ordinary ATV reset/recovery instead calls reset and aborts only the chain.
+    pub fn reset_score_session(&mut self) {
+        self.score = crate::stunt_score::State::default();
+    }
+    pub fn abort_score_chain(&mut self) -> Result<()> {
+        self.score.abort_rider()
+    }
+    pub fn stunt_duration(&self, id: usize) -> Option<f32> {
+        self.stunt_motions
+            .get(id)
+            .filter(|_| id < 24)
+            .map(|motion| motion.animation.duration)
+    }
+    pub fn set_landing_motions(&mut self, motions: Vec<Motion>) -> Result<()> {
+        if motions.len() != 2
+            || motions
+                .iter()
+                .any(|m| !m.animation.duration.is_finite() || m.animation.duration <= 0.)
+        {
+            return Err("landing actions require LandHardF and LandHard".into());
+        }
+        self.landing_motions = motions;
+        Ok(())
+    }
+    /// Repeated requests do not restart a clip: native 002daa50 changes only
+    /// the action id; the phase is reset by the animation mode transition.
+    pub fn request_landing(&mut self, landing: Landing) -> Result<()> {
+        if self.landing_motions.is_empty() {
+            return Err("landing motions are not loaded".into());
+        }
+        self.landing = Some(landing);
+        Ok(())
+    }
+    pub fn landing_frame(&self) -> Option<(Landing, f32)> {
+        self.landing.map(|action| (action, self.landing_phase))
     }
     /// Original 24 main clips followed by their 24 held extensions.
     pub fn set_stunts(&mut self, motions: Vec<Motion>, looping: Vec<bool>) -> Result<()> {
@@ -233,11 +378,72 @@ impl Animator {
         stunt: crate::stunt::Input,
         dt: f32,
     ) -> Result<Mode> {
-        if self.stunt_motions.is_empty() {
+        self.step_controls_with_buttons(nodes, input, stunt, 0, dt)
+    }
+    pub fn step_controls_with_buttons(
+        &mut self,
+        nodes: &[crate::mesh::Node],
+        input: Input,
+        stunt: crate::stunt::Input,
+        direction_buttons: u8,
+        dt: f32,
+    ) -> Result<Mode> {
+        if self.scoring_mode.is_some() {
+            // Game rules00248020 execute0024dd00 before their child update
+            // traversal. This uses the previous rider hold flag for that tick.
+            // Original scene sibling/parent attachment order remains separate.
+            self.score.tick(dt)?;
+        }
+        if self.landing_phase >= 1. || stunt.crashed || stunt.disabled {
+            self.landing = None;
+        }
+        if self.stunt_motions.is_empty() && self.landing.is_none() {
             return Ok(self.step(nodes, input, dt)?.0.mode);
         }
-        let durations = std::array::from_fn(|i| self.stunt_motions[i].animation.duration);
-        self.stunt_frame = self.stunt_state.step(stunt, dt, &durations)?;
+        if !self.stunt_motions.is_empty() {
+            let durations = std::array::from_fn(|i| self.stunt_motions[i].animation.duration);
+            self.stunt_frame = self.stunt_state.step_controls(
+                stunt,
+                direction_buttons,
+                dt,
+                &durations,
+                self.landing.is_none(),
+            )?;
+        }
+        if let Some(native_mode) = self.scoring_mode {
+            if stunt.crashed || stunt.disabled {
+                self.score.abort_rider()?;
+            } else {
+                self.score.observe_rider(
+                    self.stunt_frame,
+                    self.stunt_frame
+                        .and_then(|frame| self.stunt_duration(frame.id)),
+                    stunt.grounded,
+                    dt,
+                    native_mode,
+                )?;
+            }
+        }
+        if let Some(landing) = self.landing {
+            let snapshot = self.select_single_mode(
+                Mode::Landing,
+                input,
+                self.stunt_frame.is_some_and(|f| f.started),
+                dt,
+            )?;
+            if snapshot {
+                self.landing_phase = 0.;
+            }
+            let motion = &self.landing_motions[landing as usize];
+            self.landing_phase = unit(self.landing_phase + dt * (1. / motion.animation.duration));
+            let target = motion.animation.sample_channels(
+                nodes,
+                self.landing_phase * motion.animation.duration,
+                motion.sampling,
+            )?;
+            self.apply(&target, self.state.snapshot_weight, None)?;
+            return Ok(Mode::Landing);
+        }
         let Some(frame) = self.stunt_frame else {
             return Ok(self.step(nodes, input, dt)?.0.mode);
         };
@@ -246,13 +452,7 @@ impl Animator {
         } else {
             Mode::Stunt
         };
-        self.state.snapshot_weight = (self.state.snapshot_weight - dt * 4.).clamp(0., 1.);
-        let snapshot = mode != self.state.previous_mode || frame.started;
-        if snapshot {
-            self.saved = self.current.clone();
-            self.state.snapshot_weight = 1.;
-            self.state.previous_mode = mode;
-        }
+        let snapshot = self.select_single_mode(mode, input, frame.started, dt)?;
         let index = frame.id + if frame.holding { 24 } else { 0 };
         let motion = &self.stunt_motions[index];
         let phase = frame.phase(
@@ -261,6 +461,7 @@ impl Animator {
             snapshot,
             self.hold_noise.sample(1.25 * frame.hold_time),
         );
+        self.landing_phase = phase;
         let target = motion.animation.sample_channels(
             nodes,
             phase.clamp(0., 1.) * motion.animation.duration,
@@ -269,6 +470,26 @@ impl Animator {
         self.apply(&target, self.state.snapshot_weight, None)?;
         Ok(mode)
     }
+    fn select_single_mode(
+        &mut self,
+        mode: Mode,
+        input: Input,
+        started: bool,
+        dt: f32,
+    ) -> Result<bool> {
+        if !dt.is_finite() || dt < 0. {
+            return Err("invalid rider pose time step".into());
+        }
+        self.state.snapshot_weight = (self.state.snapshot_weight - dt * 4.).clamp(0., 1.);
+        let snapshot = !input.suppress_snapshot
+            && (mode != self.state.previous_mode || started || input.force_snapshot);
+        if snapshot {
+            self.saved = self.current.clone();
+            self.state.snapshot_weight = 1.;
+            self.state.previous_mode = mode;
+        }
+        Ok(snapshot)
+    }
     pub fn step(
         &mut self,
         nodes: &[crate::mesh::Node],
@@ -276,6 +497,8 @@ impl Animator {
         dt: f32,
     ) -> Result<(Plan, crate::animation::Pose)> {
         let plan = self.state.step(input, dt)?;
+        // Native +0x3d8 is shared between normal, stunt and forced actions.
+        self.landing_phase = plan.phase;
         if plan.snapshot {
             self.saved = self.current.clone();
         }
@@ -512,7 +735,7 @@ impl State {
         });
         use Clip::*;
         let blend = match mode {
-            Mode::Stunt | Mode::Hold => {
+            Mode::Stunt | Mode::Hold | Mode::Landing => {
                 unreachable!("stunts use their own original single-clip path")
             }
             Mode::Reverse => Blend::Single(Reverse),
@@ -560,6 +783,221 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn stunt_animator() -> (Animator, Vec<crate::mesh::Node>) {
+        let (motions, nodes) = fixture();
+        let mut animator = Animator::new(motions, &nodes).unwrap();
+        let motions = (0..48)
+            .map(|_| {
+                let mut motion = fixture().0.remove(0);
+                motion.animation.duration = 3.;
+                motion
+            })
+            .collect();
+        animator.set_stunts(motions, vec![true; 48]).unwrap();
+        animator
+            .set_landing_motions(
+                (0..2)
+                    .map(|_| {
+                        let mut motion = fixture().0.remove(0);
+                        motion.animation.duration = 2.;
+                        motion
+                    })
+                    .collect(),
+            )
+            .unwrap();
+        (animator, nodes)
+    }
+    fn stunt_input() -> crate::stunt::Input {
+        crate::stunt::Input {
+            modifiers: 1,
+            axes: [0., -1.],
+            horizontal_speed_squared: 100.,
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn scoring_advances_once_through_both_control_paths_and_rejected_chain_keeps_event() {
+        let (mut animator, nodes) = stunt_animator();
+        animator
+            .set_scoring_mode(Some(crate::stunt_score::FREESTYLE_MODE))
+            .unwrap();
+        animator
+            .step_controls(&nodes, input(), stunt_input(), 0.125)
+            .unwrap();
+        assert_eq!(animator.score_frame().current.unwrap().id, 0);
+        animator
+            .step_controls_with_buttons(&nodes, input(), stunt_input(), 0, 0.125)
+            .unwrap();
+        assert_eq!(animator.score_frame().chain_seconds, 0.125);
+        animator
+            .step_controls(&nodes, input(), stunt_input(), 0.125)
+            .unwrap();
+        assert_eq!(animator.score_frame().chain_seconds, 0.25);
+        let mut s = stunt_input();
+        s.modifiers = 0;
+        animator.step_controls(&nodes, input(), s, 0.125).unwrap();
+        s.modifiers = 2;
+        animator.step_controls(&nodes, input(), s, 0.125).unwrap();
+        assert!(!animator.stunt_frame().unwrap().started);
+        assert_eq!(animator.stunt_frame().unwrap().id, 0);
+        assert_eq!(animator.score_frame().current.unwrap().id, 0);
+        let notifications = animator.take_score_notifications();
+        assert_eq!(notifications.len(), 5);
+        assert!(matches!(
+            notifications[0],
+            crate::stunt_score::Notification::Started { id: 0, .. }
+        ));
+        assert!(notifications[1..].iter().all(|event| matches!(
+            event,
+            crate::stunt_score::Notification::DisplayUpdated { id: 0, .. }
+        )));
+        assert!(animator.take_score_notifications().is_empty());
+    }
+    #[test]
+    fn scoring_survives_atv_reset_and_session_restart_clears_history() {
+        let (mut animator, nodes) = stunt_animator();
+        animator
+            .set_scoring_mode(Some(crate::stunt_score::FREESTYLE_MODE))
+            .unwrap();
+        animator
+            .step_controls(&nodes, input(), stunt_input(), 0.125)
+            .unwrap();
+        let mut s = stunt_input();
+        s.modifiers = 0;
+        for _ in 0..30 {
+            animator.step_controls(&nodes, input(), s, 0.125).unwrap();
+        }
+        assert!(animator.stunt_frame().is_none());
+        assert_eq!(animator.score_frame().pending_points, 500.);
+        s.grounded = true;
+        for _ in 0..5 {
+            animator.step_controls(&nodes, input(), s, 0.125).unwrap();
+        }
+        assert_eq!(animator.score_frame().committed_points, 500.);
+        animator.reset(&nodes).unwrap();
+        assert_eq!(animator.score_frame().committed_points, 500.);
+        assert_eq!(animator.score.repetition_weight(0), Some(0.85));
+        animator.reset_score_session();
+        assert_eq!(animator.score_frame().committed_points, 0.);
+        assert_eq!(animator.score.repetition_weight(0), Some(1.));
+    }
+    #[test]
+    fn landing_phase_and_snapshot_flags_match_original_instructions() {
+        // Five runs through 002d8e50 mode6. Native pose sampler and snapshot
+        // call were hooked; all phase/flag/weight instructions were executed.
+        for (previous, force, suppress, phase, weight) in [
+            (Mode::Air, false, false, 0x3d000000, 0x3f800000),
+            (Mode::Landing, false, false, 0x3f080000, 0x3f000000),
+            (Mode::Landing, true, false, 0x3d000000, 0x3f800000),
+            (Mode::Air, false, true, 0x3f080000, 0x3f000000),
+            (Mode::Landing, true, true, 0x3f080000, 0x3f000000),
+        ] {
+            let (mut animator, nodes) = stunt_animator();
+            animator.state.previous_mode = previous;
+            animator.state.snapshot_weight = 0.75;
+            animator.landing_phase = 0.5;
+            animator.request_landing(Landing::Front).unwrap();
+            let mut i = input();
+            i.force_snapshot = force;
+            i.suppress_snapshot = suppress;
+            assert_eq!(
+                animator
+                    .step_controls(&nodes, i, crate::stunt::Input::default(), 0.0625)
+                    .unwrap(),
+                Mode::Landing
+            );
+            assert_eq!(animator.landing_phase.to_bits(), phase);
+            assert_eq!(animator.state.snapshot_weight.to_bits(), weight);
+            assert_eq!(
+                animator.state.previous_mode,
+                if suppress { previous } else { Mode::Landing }
+            );
+        }
+    }
+    #[test]
+    fn landing_preempts_stunt_pauses_clock_and_repeated_requests_do_not_restart() {
+        let (mut animator, nodes) = stunt_animator();
+        animator
+            .step_controls(&nodes, input(), stunt_input(), 0.125)
+            .unwrap();
+        let time = animator.stunt_frame().unwrap().main_time;
+        animator.request_landing(Landing::Front).unwrap();
+        for frame in 0..16 {
+            assert_eq!(
+                animator
+                    .step_controls(&nodes, input(), stunt_input(), 0.125)
+                    .unwrap(),
+                Mode::Landing
+            );
+            assert_eq!(animator.stunt_frame().unwrap().main_time, time);
+            assert_eq!(animator.landing_phase, (frame + 1) as f32 / 16.);
+            if frame == 4 {
+                animator.request_landing(Landing::Vertical).unwrap();
+            }
+        }
+        assert_eq!(
+            animator
+                .step_controls(&nodes, input(), stunt_input(), 0.125)
+                .unwrap(),
+            Mode::Stunt
+        );
+        assert!(animator.stunt_frame().unwrap().main_time > time);
+        assert_eq!(animator.landing_frame(), None);
+        animator.request_landing(Landing::Front).unwrap();
+        assert_eq!(
+            animator
+                .step_controls(&nodes, input(), stunt_input(), 0.125)
+                .unwrap(),
+            Mode::Landing
+        );
+        assert_eq!(animator.landing_phase, 0.0625);
+        animator.reset(&nodes).unwrap();
+        assert_eq!(animator.landing_frame(), None);
+    }
+    #[test]
+    fn stunt_snapshot_suppression_defers_transition_and_force_saves_current_pose() {
+        let (mut animator, nodes) = stunt_animator();
+        let mut i = input();
+        i.suppress_snapshot = true;
+        animator
+            .step_controls(&nodes, i, stunt_input(), 0.125)
+            .unwrap();
+        assert_eq!(animator.state.previous_mode, Mode::Air);
+        assert_eq!(animator.state.snapshot_weight, 0.);
+        i.suppress_snapshot = false;
+        animator
+            .step_controls(&nodes, i, stunt_input(), 0.125)
+            .unwrap();
+        assert_eq!(animator.state.previous_mode, Mode::Stunt);
+        assert_eq!(animator.state.snapshot_weight, 1.);
+        animator
+            .step_controls(&nodes, i, stunt_input(), 0.125)
+            .unwrap();
+        assert_eq!(animator.state.snapshot_weight, 0.5);
+        i.force_snapshot = true;
+        animator
+            .step_controls(&nodes, i, stunt_input(), 0.125)
+            .unwrap();
+        assert_eq!(animator.state.snapshot_weight, 1.);
+    }
+    #[test]
+    fn hard_landing_uses_collision_delta_with_native_strict_thresholds_and_precedence() {
+        let config = LandingConfig {
+            wreck_impact: [19., 84., 21.],
+            vertical: 60.,
+            longitudinal: 15.,
+        };
+        assert_eq!(config.evaluate([0., 60., -15.], 1.), None);
+        assert_eq!(
+            config.evaluate([0., 60.01, 0.], 1.),
+            Some(Landing::Vertical)
+        );
+        assert_eq!(config.evaluate([0., 70., -15.01], 1.), Some(Landing::Front));
+        assert_eq!(config.evaluate([19.01, 70., -16.], 1.), None);
+        assert_eq!(config.evaluate([0., 85., -16.], 1.), None);
+        assert_eq!(config.evaluate([0., 85., -16.], 1.25), Some(Landing::Front));
+        assert_eq!(config.evaluate([0., 70., -21.01], 1.), None);
+    }
     #[test]
     fn crouch_matches_original_instruction_sequence() {
         // Synthetic local velocities through001e6b88..001e6d58. Only the

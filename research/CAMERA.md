@@ -30,3 +30,26 @@ portrait→landscape→portrait behavior in the live renderer; before/after 390�
 Caribou captures were inspected. This is an explicitly requested mobile adaptation,
 not a recovered original PS2 camera preset. Original object camera clearance is
 still not connected, so further obstruction testing remains relevant.
+
+## Wreck camera (priority-parity host checkpoint)
+
+The Rust camera now switches from the follow view to the original two-actor wreck
+camera, then resets to follow on recovery. Exact-build `001f33f0` binds the quad and
+rider; `0031d2f0`/`0031d640` seed its history from the outgoing view. `0031cc90` and
+its helpers preserve the distance-dependent rider weighting, 80-foot secondary
+actor cutoff, low-speed vertical-velocity suppression, retained heading, two-second
+transition, original angle convergence, 30–90-foot distance limits, 25–85-degree
+FOV limits, 1.2-second position/target filters, 0.4-second FOV filter, and five-foot
+terrain clearance. Angle convergence remains per original simulation update,
+not a rendering-frame effect; the browser calls it at 60 Hz.
+
+A 240-frame synthetic sequence executes 396,390 original instructions, including
+both actors, stopped vertical motion and separation beyond 80 feet. Its Rust
+position/target/FOV outputs differ by at most 0.000011265 feet/degrees. Actor
+transforms, terrain height and host trigonometry are explicit oracle hooks; the
+interpreter is not PS2 hardware. The camera-position obstacle callback and secondary
+surface-height provider are not connected. Attached-rider collision-induced motion
+and the full original body-transform sequence remain separate parity gaps.
+Private probes/results are in `work/wreck-camera/`; no original instruction bytes
+or pseudocode enter source control. Browser/public verification is recorded in the
+dev log only after the corresponding tests pass.

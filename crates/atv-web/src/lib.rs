@@ -39,11 +39,13 @@ struct Simulation {
     wreck_animator: Option<atv_core::wreck_animation::Animator>,
     chassis_points: Option<Vec<[f32; 3]>>,
     wreck_rays: Option<std::rc::Rc<atv_core::collision::CollisionRayTree>>,
-    quad_pose: Option<atv_core::quad_pose::QuadPose>,
+    quad_pose: Option<std::rc::Rc<atv_core::quad_pose::QuadPose>>,
     obstacle_rays: Option<std::rc::Rc<atv_core::collision::CollisionRayTree>>,
     obstacle_meshes: Vec<std::rc::Rc<atv_core::collision::CollisionMesh>>,
     obstacles: Option<Vec<atv_core::obstacle::StaticObstacle>>,
     camera: Option<atv_core::camera::FollowCamera>,
+    wreck_camera: Option<atv_core::camera::WreckCamera>,
+    hud: atv_core::hud::State,
 }
 thread_local! { static SIMULATION: RefCell<Simulation> = RefCell::default(); }
 
@@ -172,16 +174,22 @@ fn vehicle_world(frame: &atv_core::vehicle::VehicleFrame) -> [f32; 16] {
 }
 
 fn simulation_frame(sim: &Simulation, frame: &atv_core::vehicle::VehicleFrame) -> Result<Vec<u8>> {
-    let matrices = sim
-        .quad_pose
-        .as_ref()
-        .ok_or("load original quad linkage first")?
-        .sample(
-            frame.visual_steering_angle,
-            frame.wheel_angles,
-            frame.wheel_compression,
-        )?;
+    let matrices = if let Some(matrices) = sim.vehicle.as_ref().and_then(|v| v.linkage_matrices()) {
+        std::borrow::Cow::Borrowed(matrices)
+    } else {
+        std::borrow::Cow::Owned(
+            sim.quad_pose
+                .as_ref()
+                .ok_or("load original quad linkage first")?
+                .sample(
+                    frame.visual_steering_angle,
+                    frame.wheel_angles,
+                    frame.wheel_compression,
+                )?,
+        )
+    };
     let mut value = serde_json::to_value(frame).map_err(|error| error.to_string())?;
+    value["hud"] = serde_json::to_value(sim.hud.frame()).map_err(|e| e.to_string())?;
     value["applied_input"] = sim
         .resolved_input
         .clone()
@@ -195,6 +203,10 @@ fn simulation_frame(sim: &Simulation, frame: &atv_core::vehicle::VehicleFrame) -
                 .map_err(|e| e.to_string())?;
         value["rider_mode"] = serde_json::to_value(sim.rider_mode).map_err(|e| e.to_string())?;
         value["stunt"] = serde_json::to_value(animator.stunt_frame()).map_err(|e| e.to_string())?;
+        value["stunt_score"] =
+            serde_json::to_value(animator.score_frame()).map_err(|e| e.to_string())?;
+        value["rider_landing"] =
+            serde_json::to_value(animator.landing_frame()).map_err(|e| e.to_string())?;
     }
     if let Some(animator) = &sim.wreck_animator
         && let Some(wreck) = animator.frame()
@@ -212,9 +224,51 @@ fn simulation_frame(sim: &Simulation, frame: &atv_core::vehicle::VehicleFrame) -
     serde_json::to_vec(&value).map_err(|error| error.to_string())
 }
 
+fn update_hud(
+    sim: &mut Simulation,
+    frame: &atv_core::vehicle::VehicleFrame,
+    dt: f32,
+) -> Result<()> {
+    let mut active = false;
+    let mut points = 0.;
+    if let Some(animator) = &mut sim.rider_animator {
+        for event in animator.take_score_notifications() {
+            match event {
+                atv_core::stunt_score::Notification::DisplayUpdated { id, .. } => {
+                    sim.hud.name_event(atv_core::stunt::NAMES[id]);
+                }
+                atv_core::stunt_score::Notification::ChainFinished {
+                    success,
+                    display_count,
+                    ..
+                } => sim.hud.finish_event(success, display_count),
+                _ => {}
+            }
+        }
+        let score = animator.score_frame();
+        active = score.active;
+        points = score.display_points;
+        sim.hud
+            .set_score_cache(points, score.display_count, active)?;
+    }
+    sim.hud.step(
+        dt,
+        frame.speed_magnitude,
+        frame.preload_available,
+        frame.preload_strength,
+        active,
+        points,
+    )
+}
+
 fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
     SIMULATION.with_borrow_mut(|sim| {
         match op {
+            63 => {
+                let document = atv_core::ui::Document::parse(input)?;
+                sim.hud =
+                    atv_core::hud::State::new(atv_core::hud::Config::from_document(&document)?);
+            }
             20 => {
                 let terrain = terrain::decode_tr2(input)?;
                 sim.terrain = Some(terrain);
@@ -230,7 +284,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
             }
             22 => {
                 let mesh = mesh::decode_psg(input)?;
-                sim.quad_pose = Some(atv_core::quad_pose::QuadPose::new(&mesh)?);
+                sim.quad_pose = Some(std::rc::Rc::new(atv_core::quad_pose::QuadPose::new(&mesh)?));
                 sim.mesh = Some(mesh);
                 sim.chassis_points = None;
                 sim.wreck_rays = None;
@@ -261,8 +315,15 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 )?;
                 vehicle
                     .enable_wrecks(sim.physics.as_ref().ok_or("load original physics first")?)?;
+                vehicle.set_linkage(
+                    sim.quad_pose
+                        .as_ref()
+                        .ok_or("load original quad linkage first")?
+                        .clone(),
+                );
                 if let Some(wreck) = &mut sim.wreck_animator {
                     wreck.reset();
+                    wreck.set_static_obstacles(sim.obstacles.clone().unwrap_or_default());
                 }
                 vehicle.set_materials(
                     sim.materials
@@ -291,14 +352,17 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 )?;
                 if let Some(animator) = &mut sim.rider_animator {
                     animator.reset(&sim.rider_mesh.as_ref().ok_or("rider mesh missing")?.nodes)?;
+                    animator.reset_score_session();
                 }
+                sim.hud.reset();
                 sim.rider_mode = None;
                 sim.touch_drive.reset();
                 sim.input_generation = None;
                 sim.resolved_input = None;
-                let result = simulation_frame(sim, &vehicle.frame())?;
+                let frame = vehicle.frame();
+                sim.wreck_camera = None;
                 sim.vehicle = Some(vehicle);
-                return Ok(result);
+                return simulation_frame(sim, &frame);
             }
             24 => {
                 let value: serde_json::Value =
@@ -317,6 +381,11 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         .get("preload_axis")
                         .filter(|v| !v.is_null())
                         .map(|_| json_number(raw, "preload_axis"))
+                        .transpose()?,
+                    reverse_chord_brake: raw
+                        .get("reverse_chord_brake")
+                        .filter(|v| !v.is_null())
+                        .map(|_| json_number(raw, "reverse_chord_brake"))
                         .transpose()?,
                     reverse: raw
                         .get("reverse")
@@ -359,6 +428,10 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     .rider_animator
                     .as_ref()
                     .is_none_or(|a| a.stunt_landing_safe());
+                let forced_landing = sim
+                    .rider_animator
+                    .as_ref()
+                    .is_some_and(|a| a.landing_frame().is_some());
                 let vehicle = sim.vehicle.as_mut().ok_or("start simulation first")?;
                 if generation.is_some() && generation != sim.input_generation {
                     vehicle.cancel_preload_gesture();
@@ -366,7 +439,14 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 }
                 vehicle.set_stunt_landing_safe(safe);
                 vehicle.set_rider_mode(sim.rider_mode);
+                vehicle.set_forced_landing(forced_landing);
                 let frame = vehicle.step(terrain, input, dt)?;
+                if let Some(input) = &mut sim.resolved_input {
+                    let (throttle, brake, reverse) = vehicle.applied_drive_controls();
+                    input["throttle"] = serde_json::json!(throttle);
+                    input["brake"] = serde_json::json!(brake);
+                    input["reverse"] = serde_json::json!(reverse);
+                }
                 if frame.wreck.phase != atv_core::wreck::Phase::Riding {
                     // Never carry takeoff throttle/direction through recovery.
                     sim.touch_drive.reset();
@@ -411,9 +491,11 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         if let Some(camera) = &mut sim.camera {
                             camera.reset();
                         }
+                        sim.wreck_camera = None;
                         sim.rider_mode = None;
                     }
                     let frame = vehicle.frame();
+                    update_hud(sim, &frame, dt)?;
                     return simulation_frame(sim, &frame);
                 }
                 if let Some(animator) = &mut sim.rider_animator {
@@ -447,6 +529,9 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         crashed: false,
                         disabled: false,
                     };
+                    if let Some(landing) = frame.landing_action {
+                        animator.request_landing(landing)?;
+                    }
                     sim.rider_mode = Some(animator.step_controls(
                         nodes,
                         input,
@@ -454,6 +539,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         json_number(&value, "dt")?,
                     )?);
                 }
+                update_hud(sim, &frame, dt)?;
                 return simulation_frame(sim, &frame);
             }
             26 => {
@@ -532,6 +618,17 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                             .ok_or_else(|| format!("missing wreck motion {name}"))?,
                     );
                 }
+                for suffix in atv_core::rider_pose::Landing::SUFFIXES {
+                    let name = format!("M_{suffix}");
+                    selected.push(
+                        catalog
+                            .motions
+                            .iter()
+                            .find(|m| m.name.eq_ignore_ascii_case(&name))
+                            .cloned()
+                            .ok_or_else(|| format!("missing landing motion {name}"))?,
+                    );
+                }
                 let output = serde_json::to_vec(&selected).map_err(|e| e.to_string())?;
                 sim.rider_catalog = selected;
                 sim.rider_motions.clear();
@@ -545,20 +642,32 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     .as_ref()
                     .ok_or("load rider mesh first")?
                     .nodes;
-                if sim.rider_motions.len() != 76 {
-                    return Err("load all normal, stunt and wreck motions first".into());
+                if sim.rider_motions.len() != 78 {
+                    return Err("load all normal, stunt, wreck and landing motions first".into());
                 }
+                let landings = sim.rider_motions.split_off(76);
                 let wrecks = sim.rider_motions.split_off(62);
                 sim.wreck_animator = Some(atv_core::wreck_animation::Animator::new(
                     wrecks,
-                    sim.rider_catalog[62..].iter().map(|m| m.looping).collect(),
+                    sim.rider_catalog[62..76]
+                        .iter()
+                        .map(|m| m.looping)
+                        .collect(),
                     nodes,
                 )?);
+                sim.wreck_animator
+                    .as_mut()
+                    .ok_or("wreck animator missing")?
+                    .set_static_obstacles(sim.obstacles.clone().unwrap_or_default());
                 let stunts = sim.rider_motions.split_off(14);
                 let mut animator = atv_core::rider_pose::Animator::new(
                     std::mem::take(&mut sim.rider_motions),
                     nodes,
                 )?;
+                animator.set_landing_motions(landings)?;
+                // 002de690 identifies mode 11 as Freeride/Freestyle. The current
+                // browser route uses its ordinary stunt repetition penalties.
+                animator.set_scoring_mode(Some(atv_core::stunt_score::FREESTYLE_MODE))?;
                 animator.set_stunts(
                     stunts,
                     sim.rider_catalog[14..62]
@@ -605,6 +714,39 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 let velocity = vehicle.linear_velocity;
                 let local = atv_core::dynamics::inverse_transform(basis, velocity);
                 let terrain = sim.terrain.as_ref().ok_or("load original terrain first")?;
+                if let Some(wreck) = sim.wreck_animator.as_ref().and_then(|a| a.frame()) {
+                    let actors = [
+                        atv_core::camera::WreckActor {
+                            origin: vehicle.origin,
+                            velocity,
+                        },
+                        atv_core::camera::WreckActor {
+                            origin: wreck.origin,
+                            velocity: wreck.linear_velocity,
+                        },
+                    ];
+                    if sim.wreck_camera.is_none() {
+                        sim.wreck_camera = Some(
+                            sim.camera
+                                .as_ref()
+                                .ok_or("camera missing")?
+                                .wreck_camera(actors)?,
+                        );
+                    }
+                    let frame = sim
+                        .wreck_camera
+                        .as_mut()
+                        .ok_or("wreck camera missing")?
+                        .step(actors, basis[2], json_number(&value, "dt")?, |point| {
+                            Ok(terrain
+                                .contact(point[0], point[2])?
+                                .map_or(point[1], |c| c.height))
+                        })?;
+                    let mut output = serde_json::to_value(frame).map_err(|e| e.to_string())?;
+                    output["mode"] = serde_json::json!("wreck");
+                    return serde_json::to_vec(&output).map_err(|e| e.to_string());
+                }
+                sim.wreck_camera = None;
                 let frame = sim
                     .camera
                     .as_mut()
@@ -789,7 +931,7 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
     if (32..=34).contains(&op) {
         return engine_audio(input, op, index);
     }
-    if (20..=29).contains(&op) || (44..=47).contains(&op) || op == 51 || op == 53 {
+    if (20..=29).contains(&op) || (44..=47).contains(&op) || op == 51 || op == 53 || op == 63 {
         return simulation(input, op);
     }
     let json = match op {

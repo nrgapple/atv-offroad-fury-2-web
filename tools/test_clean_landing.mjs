@@ -12,7 +12,8 @@ try {
   const url = new URL('/play.html', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173');
   url.searchParams.set('drive', '1'); url.searchParams.set('environment', 'env01');
   await page.goto(url.href);
-  await page.waitForFunction(() => window.atvTerrainStatus?.simulation && !document.querySelector('#touch-controls').hidden, null, { timeout: 90000 });
+  await page.waitForFunction(() => window.atvTerrainStatus?.simulation, null, { timeout: 90000 });
+  await page.bringToFront(); await page.locator('#game').focus();
   const cdp = await page.context().newCDPSession(page);
   const touch = (type, points = []) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(point => ({ radiusX: 6, radiusY: 6, force: 1, ...point })) });
   const left = { id: 1, x: 60, y: 560 };

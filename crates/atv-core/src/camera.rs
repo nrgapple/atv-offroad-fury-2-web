@@ -193,6 +193,7 @@ pub struct FollowCamera {
     pub speed_reference: f32,
     frame: Option<CameraFrame>,
     terrain_lift: f32,
+    wreck_seed: Option<(CameraFrame, [f32; 2])>,
 }
 
 /// The original first-order filter saturates its step at the configured time.
@@ -225,6 +226,240 @@ fn rotate(axis: [f32; 3], value: [f32; 3], angle: f32) -> [f32; 3] {
     })
 }
 
+/// The two actors bound by001f33f0: quad first, detached rider second.
+#[derive(Debug, Clone, Copy)]
+pub struct WreckActor {
+    pub origin: [f32; 3],
+    pub velocity: [f32; 3],
+}
+
+/// Single-player wreck camera,0031cc90 and its arithmetic helpers. The original
+/// camera-position collision callback is deliberately outside this component.
+pub struct WreckCamera {
+    frame: CameraFrame,
+    angles: [f32; 2],
+    direction: [f32; 3],
+    last_velocity: [f32; 3],
+    raw_target: [f32; 3],
+    base_fov: f32,
+    distance: f32,
+    distance_offset: f32,
+    fov_offset: f32,
+    transition: f32,
+    separation: f32,
+    included: usize,
+}
+
+fn wreck_length(v: [f32; 3]) -> f32 {
+    ((v[2] * v[2] + v[0] * v[0]) + v[1] * v[1]).sqrt()
+}
+
+fn normalized(v: [f32; 3]) -> [f32; 3] {
+    let squared = (v[0] * v[0] + v[1] * v[1]) + v[2] * v[2];
+    if squared == 0. {
+        [0.; 3]
+    } else {
+        let reciprocal = 1. / squared.sqrt();
+        v.map(|n| n * reciprocal)
+    }
+}
+
+impl WreckCamera {
+    ///0031d2f0/0031d490 seed the filters from the outgoing camera, then0031d640
+    /// measures its offset from the mean actor origin. Angles are azimuth/elevation.
+    pub fn new(previous: CameraFrame, angles: [f32; 2], actors: [WreckActor; 2]) -> Result<Self> {
+        if !previous
+            .position
+            .iter()
+            .chain(previous.target.iter())
+            .chain([previous.fov].iter())
+            .chain(angles.iter())
+            .chain(
+                actors
+                    .iter()
+                    .flat_map(|a| a.origin.iter().chain(a.velocity.iter())),
+            )
+            .all(|v| v.is_finite())
+        {
+            return Err("invalid wreck-camera initialization".into());
+        }
+        let offset = std::array::from_fn(|i| {
+            previous.position[i] - (actors[0].origin[i] + actors[1].origin[i]) * 0.5
+        });
+        Ok(Self {
+            frame: previous,
+            angles: [angles[0].abs(), angles[1]],
+            direction: normalized(offset),
+            last_velocity: [0.; 3],
+            raw_target: previous.target,
+            base_fov: previous.fov,
+            distance: wreck_length(offset),
+            distance_offset: 0.,
+            fov_offset: 0.,
+            transition: 2.,
+            separation: wreck_length(std::array::from_fn(|i| {
+                actors[1].origin[i] - actors[0].origin[i]
+            })),
+            included: 2,
+        })
+    }
+
+    pub fn step(
+        &mut self,
+        actors: [WreckActor; 2],
+        fallback: [f32; 3],
+        dt: f32,
+        mut height: impl FnMut([f32; 3]) -> Result<f32>,
+    ) -> Result<CameraFrame> {
+        if !dt.is_finite()
+            || dt <= 0.
+            || dt > 0.25
+            || !actors
+                .iter()
+                .flat_map(|a| a.origin.iter().chain(a.velocity.iter()))
+                .chain(fallback.iter())
+                .all(|v| v.is_finite())
+        {
+            return Err("invalid wreck-camera input".into());
+        }
+        if self.transition > 0. {
+            self.transition -= dt;
+        }
+        //0031deb0 uses the previous frame's included count and pair distance.
+        let transition = (self.transition / 2.).max(0.);
+        if self.transition < 0. {
+            self.transition = 0.;
+        }
+        let old_span = if self.included > 1 {
+            self.separation
+        } else {
+            0.
+        };
+        self.separation = wreck_length(std::array::from_fn(|i| {
+            actors[1].origin[i] - actors[0].origin[i]
+        }));
+        let span = if self.included > 1 {
+            self.separation
+        } else {
+            45.
+        };
+        let change = if self.included > 1 {
+            span - old_span
+        } else {
+            0.
+        };
+        let zoom = transition * ((75. - (self.base_fov + self.fov_offset)) * 0.2)
+            + (1. - transition) * (change / 10.);
+        if zoom.abs() >= 0.1 || self.fov_offset <= 0. {
+            self.fov_offset += zoom;
+        } else {
+            self.fov_offset = (25.
+                + (85. - 25.) * ((90. - (30. + self.distance_offset)) / (90. - 30.)))
+                - self.base_fov;
+        }
+        let mut distance_change =
+            transition * ((35. - self.distance) * 0.03) + (1. - transition) * (change / 10.);
+        if change <= 1. {
+            let angle =
+                (self.base_fov + self.fov_offset - 20.).max(25.) * 0.5 * f32::from_bits(0x3c8efa34);
+            let correction = span / (angle.tan() * 2.) - (30. + self.distance_offset);
+            if correction > 0. || -correction < self.distance_offset {
+                distance_change += correction * 0.05;
+            }
+        }
+        self.distance_offset += distance_change;
+        let mut fov = self.base_fov + self.fov_offset;
+        if fov > 85. {
+            self.fov_offset = 60.;
+            fov = 85.;
+        } else if fov < 25. {
+            self.fov_offset = 0.;
+            fov = 25.;
+        }
+
+        //0031d7f0 reduces the second actor's position contribution with distance.
+        // Velocity is averaged separately, and slow actors contribute no Y speed.
+        let include_rider = (1. - self.separation / 80.).max(0.) > 0.;
+        self.included = if include_rider { 2 } else { 1 };
+        let mut center = actors[0].origin;
+        if include_rider {
+            let weight = (1. - 1. / 3.) * (1. - self.separation / 80.).max(0.);
+            center = std::array::from_fn(|i| {
+                (center[i]
+                    + (actors[0].origin[i] + weight * (actors[1].origin[i] - actors[0].origin[i])))
+                    * 0.5
+            });
+        }
+        let mut velocity = [0.; 3];
+        for actor in actors.iter().take(self.included) {
+            let mut v = actor.velocity;
+            if wreck_length(v) < 20. {
+                v[1] = 0.;
+            }
+            for i in 0..3 {
+                velocity[i] += v[i];
+            }
+        }
+        velocity = velocity.map(|v| v / self.included as f32);
+        // The original tests each axis, not vector magnitude (0031cd60).
+        let moving = velocity.iter().all(|v| *v != 0.);
+        if moving {
+            self.last_velocity = velocity;
+        } else {
+            if self.last_velocity == [0.; 3] {
+                self.last_velocity = fallback;
+            }
+            velocity = self.last_velocity;
+        }
+        self.angles[0] += (f32::from_bits(0x3fc90fd9) - self.angles[0]) * 0.05;
+        self.angles[1] += (f32::from_bits(0x3eb2b8c1) - self.angles[1]) * 0.05;
+        let heading = normalized([velocity[0], 0., velocity[2]]);
+        let direction = rotate(
+            [0., 1., 0.],
+            rotate(
+                [-heading[2], 0., heading[0]],
+                heading,
+                wrapped(self.angles[1]),
+            ),
+            wrapped(self.angles[0]),
+        );
+        self.direction =
+            std::array::from_fn(|i| direction[i] + (direction[i] - self.direction[i]) * 0.1);
+        let lead = if !moving {
+            0.
+        } else if self.included < 2 {
+            0.76
+        } else {
+            1.
+        };
+        self.raw_target = std::array::from_fn(|i| {
+            (center[i] + velocity[i] * lead) + transition * ((self.raw_target[i] - center[i]) * 0.2)
+        });
+        self.distance = (30. + self.distance_offset).clamp(30., 90.);
+        self.distance_offset = self.distance - 30.;
+        let direction = normalized(self.direction);
+        let position: [f32; 3] = std::array::from_fn(|i| center[i] + self.distance * direction[i]);
+        for (i, target) in position.into_iter().enumerate() {
+            self.frame.position[i] = filter_scalar(self.frame.position[i], target, dt, 1.2);
+            self.frame.target[i] = filter_scalar(self.frame.target[i], self.raw_target[i], dt, 1.2);
+        }
+        self.frame.fov = filter_scalar(self.frame.fov, fov, dt, 0.4);
+        //0031eeb0 clamps the stored position, unlike the normal follow camera.
+        self.frame.position[1] = self.frame.position[1].max(height(self.frame.position)? + 5.);
+        if !self
+            .frame
+            .position
+            .iter()
+            .chain(self.frame.target.iter())
+            .chain([self.frame.fov].iter())
+            .all(|v| v.is_finite())
+        {
+            return Err("nonfinite wreck-camera output".into());
+        }
+        Ok(self.frame)
+    }
+}
+
 impl FollowCamera {
     pub fn new(presets: Vec<Preset>, speed_reference: f32) -> Result<Self> {
         if presets.is_empty() || !speed_reference.is_finite() || speed_reference <= 0. {
@@ -248,11 +483,19 @@ impl FollowCamera {
             speed_reference,
             frame: None,
             terrain_lift: 0.,
+            wreck_seed: None,
         })
     }
     pub fn reset(&mut self) {
         self.frame = None;
         self.terrain_lift = 0.;
+        self.wreck_seed = None;
+    }
+    pub fn wreck_camera(&self, actors: [WreckActor; 2]) -> Result<WreckCamera> {
+        let (frame, angles) = self
+            .wreck_seed
+            .ok_or("follow camera must precede wreck camera")?;
+        WreckCamera::new(frame, angles, actors)
     }
     pub fn cycle(&mut self) {
         let count = self.presets.len();
@@ -391,6 +634,7 @@ impl FollowCamera {
         // The post-filter terrain clamp changes the output, not filter history.
         self.frame = Some(frame);
         frame.position[1] = frame.position[1].max(height(frame.position)? + 2.);
+        self.wreck_seed = Some((frame, [azimuth, elevation]));
         Ok(frame)
     }
 }
@@ -398,6 +642,84 @@ impl FollowCamera {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn wreck_transition_matches_original_instruction_checkpoint() {
+        let previous = CameraFrame {
+            position: [0., 12., -20.],
+            target: [0., 5., 0.],
+            fov: 85.,
+            preset: 0,
+        };
+        let mut actors = [
+            WreckActor {
+                origin: [0., 4., 0.],
+                velocity: [0., 0., 20.],
+            },
+            WreckActor {
+                origin: [1., 6., 0.],
+                velocity: [1., -2., 20.],
+            },
+        ];
+        let mut camera =
+            WreckCamera::new(previous, [f32::from_bits(0x4049_0fd8), 0.7], actors).unwrap();
+        actors[0].velocity = [3., 4., 18.];
+        actors[1].origin = [0., 6., 0.];
+        actors[1].velocity = [15., 24., 16.8];
+        let frame = camera
+            .step(actors, [0., 0., 1.], 1. / 60., |_| Ok(0.))
+            .unwrap();
+        // Synthetic actor inputs executed by0031cc90; no game assets in fixture.
+        let expected = [
+            -0.137_360_72,
+            12.173_682,
+            -20.011_15,
+            0.125,
+            5.162_77,
+            0.241_666_66,
+            84.917_35,
+        ];
+        for (actual, expected) in frame
+            .position
+            .into_iter()
+            .chain(frame.target)
+            .chain([frame.fov])
+            .zip(expected)
+        {
+            assert!(
+                (actual - expected).abs() < 0.000_03,
+                "{actual} != {expected}"
+            );
+        }
+    }
+    #[test]
+    fn stationary_wreck_retains_heading_and_clamps_stored_camera_to_ground() {
+        let actors = [WreckActor {
+            origin: [0., 1., 0.],
+            velocity: [0.; 3],
+        }; 2];
+        let previous = CameraFrame {
+            position: [0., 2., -10.],
+            target: [0., 1., 0.],
+            fov: 85.,
+            preset: 0,
+        };
+        let mut camera = WreckCamera::new(previous, [std::f32::consts::PI, 0.7], actors).unwrap();
+        for _ in 0..180 {
+            let frame = camera
+                .step(actors, [0., 0., 1.], 1. / 60., |_| Ok(3.))
+                .unwrap();
+            assert!(frame.position[1] >= 8.);
+            assert!(
+                frame
+                    .position
+                    .into_iter()
+                    .chain(frame.target)
+                    .all(f32::is_finite)
+            );
+        }
+        assert_eq!(camera.last_velocity, [0., 0., 1.]);
+        assert!(camera.step(actors, [0.; 3], 0., |_| Ok(0.)).is_err());
+    }
     #[test]
     fn changed_count_clears_defaults_and_layout_selects_section() {
         let text = b"[NumberOfPresets]\nNumberOfPresets=1\n[Preset1]\nFollowingDistance=9\n[Preset1h]\nFollowingDistance=12\n";

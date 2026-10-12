@@ -248,6 +248,19 @@ impl QuadPose {
             rear_offsets,
         })
     }
+    /// Body-relative axle directions from the completed 001d65c0 pose.
+    /// 001ecc40 consumes these at the next vehicle update, including front
+    /// camber and the unscaled linkage steering angle. Wheel spin leaves X
+    /// unchanged. Callers supply the full body-relative sample matrix array.
+    pub fn wheel_right_axes(&self, matrices: &[Matrix]) -> Result<[[f32; 3]; 4]> {
+        if matrices.len() != self.bind.len()
+            || matrices.iter().flatten().any(|value| !value.is_finite())
+        {
+            return Err("invalid quad pose matrix array".into());
+        }
+        Ok(self.wheels.map(|wheel| col(&matrices[wheel], 0)))
+    }
+
     pub fn sample(
         &self,
         steering: f32,

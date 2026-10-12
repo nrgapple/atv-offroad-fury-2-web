@@ -13,6 +13,15 @@ All source material is on MML under this project's `private/` directory. The ful
 
 Both were shallow-cloned, retain their own Git metadata, and are excluded from the parent project Git history. Both upstreams identify a GPL-3.0 license; inspect their actual license files before reuse. Cloning does not establish that their code builds or works on this Mac or in a browser.
 
+The Quadzilla reference was rechecked against upstream HEAD on 2026-10-11 after
+the user recommended it again: it still resolves to `21b9898` above. Its README
+primarily records work on the first game's symbol-bearing `SCUS_971.04`, while
+`ps2xRuntime/src/lib/scus_97211_overrides.cpp` also contains ATV2 boot/menu ABI
+wrappers. These are useful research leads for resource initialization and call
+conventions. The reviewed files do not supply reconstructed wreck, stunt, water,
+or rider IK implementations. No reference source has been incorporated into this
+Rust port; exact-build instruction probes remain the behavior evidence.
+
 Useful files already present locally:
 
 - PS2Recomp `README.md`: architecture, limitations, and the workflow for stripped executables.

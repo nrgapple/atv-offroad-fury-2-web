@@ -1,6 +1,7 @@
 //! Original rider wreck clip tables (002d7dc0), phase selection (001ee990),
 //! detached-body constants (001ee090/001efad0) and terrain contact points.
-//! Water and animated-prop contacts remain separate integration work.
+//! Static type-0 prop contacts share the native13 animated point spokes.
+//! Water and moving/compound-prop contacts remain separate integration work.
 use crate::{
     Result,
     animation::{Channels, Pose},
@@ -48,6 +49,7 @@ pub struct Frame {
     pub time: f32,
     pub grounded: bool,
     pub contact_count: usize,
+    pub static_contact_count: usize,
     pub world_matrix: [f32; 16],
     pub origin: Vec3,
     pub linear_velocity: Vec3,
@@ -95,10 +97,15 @@ pub struct Animator {
     body: Option<BodyState>,
     config: BodyConfig,
     world: [f32; 16],
-    previous_root: [f32; 16],
+    previous_time: f32,
+    integration_active: bool,
+    anchor_pelvis: bool,
+    pending_clip: Option<usize>,
     rng: OriginalRandom,
     grounded: bool,
     contact_count: usize,
+    static_contact_count: usize,
+    obstacles: Vec<crate::obstacle::StaticObstacle>,
     active: bool,
 }
 impl Animator {
@@ -146,22 +153,36 @@ impl Animator {
             body: None,
             config,
             world: IDENTITY,
-            previous_root: IDENTITY,
+            previous_time: 0.,
+            integration_active: false,
+            anchor_pelvis: false,
+            pending_clip: None,
             rng: OriginalRandom::with_seed(1),
             grounded: false,
             contact_count: 0,
+            static_contact_count: 0,
+            obstacles: Vec::new(),
             active: false,
         })
     }
     pub fn active(&self) -> bool {
         self.active
     }
+    /// Use the same original scene order and supported type-0 collision
+    /// placements as the ATV. Content and candidate filtering stay with caller.
+    pub fn set_static_obstacles(&mut self, obstacles: Vec<crate::obstacle::StaticObstacle>) {
+        self.obstacles = obstacles;
+    }
     pub fn reset(&mut self) {
         self.active = false;
         self.body = None;
+        self.integration_active = false;
+        self.anchor_pelvis = false;
+        self.pending_clip = None;
         self.config.center_of_mass = [0.; 3];
         self.grounded = false;
         self.contact_count = 0;
+        self.static_contact_count = 0;
     }
     pub fn begin(
         &mut self,
@@ -171,12 +192,21 @@ impl Animator {
         nodes: &[Node],
     ) -> Result<()> {
         self.current = riding;
-        self.previous_root = self.current.pose(nodes)?.world_matrices[0];
+        self.current.pose(nodes)?;
+        self.previous_time = 0.;
         self.world = vehicle_world;
-        self.body = None;
         self.config.center_of_mass = [0.; 3];
+        self.body = Some(BodyState::new(
+            [vehicle_world[12], vehicle_world[13], vehicle_world[14]],
+            quaternion(vehicle_world),
+            &self.config,
+        )?);
+        self.integration_active = false;
+        self.anchor_pelvis = false;
+        self.pending_clip = None;
         self.grounded = false;
         self.contact_count = 0;
+        self.static_contact_count = 0;
         self.active = true;
         let clip = match kind {
             crate::wreck::Kind::Front => 8,
@@ -226,6 +256,7 @@ impl Animator {
             time: self.time,
             grounded: self.grounded,
             contact_count: self.contact_count,
+            static_contact_count: self.static_contact_count,
             world_matrix: self.world,
             origin: [self.world[12], self.world[13], self.world[14]],
             linear_velocity: self.body.as_ref().map_or([0.; 3], |b| b.linear_velocity),
@@ -248,142 +279,206 @@ impl Animator {
         if !dt.is_finite() || dt <= 0. || dt > 0.1 {
             return Err("invalid wreck animation step".into());
         }
-        let vehicle_world = vehicle.world;
+        //001e7600 copies the quad Model world matrix during separation. The
+        //native body still belongs to the rider Model container, not Pelvis.
+        let attached = self.phase == Phase::Attached;
+        if attached {
+            self.world = vehicle.world;
+        }
+        if let Some(clip) = self.pending_clip.take() {
+            self.select(self.phase, clip);
+        }
+        let pose = self.current.pose(nodes)?;
+        let last_contacts = self.step_body(dt, &pose, terrain, materials, !attached)?;
+        let saved_pelvis = multiply(self.world, pose.world_matrices[0]);
+        //001ee990 performs physics and saves Pelvis before advancing animation.
+        //Category changes request the next clip on the following outer frame.
+        if !attached && self.phase == Phase::Air && last_contacts > 0 {
+            self.phase = Phase::Ground;
+            self.pending_clip = Some(self.random_four());
+        }
         let pose = self.sample(nodes, dt)?;
-        let root = pose.world_matrices[0];
-        if self.phase == Phase::Attached {
-            self.world = vehicle_world;
-            self.contact_count = self
-                .terrain_points(&pose, terrain, materials)?
-                .iter()
-                .filter(|(local, ground, normal, _)| {
-                    dot(
-                        sub(
-                            *ground,
-                            crate::obstacle::transform_point(&self.world, *local),
-                        ),
-                        *normal,
-                    ) > 0.
-                })
-                .count();
-            self.grounded = self.contact_count > 0;
+        if attached {
             let duration = self.motions[self.clip].animation.duration;
-            if duration - self.time <= BLEND_TIME || self.grounded {
-                let with_motion = !self.grounded;
-                let root_world = multiply(vehicle_world, root);
-                let mut body = BodyState::new(
-                    [root_world[12], root_world[13], root_world[14]],
-                    quaternion(root_world),
-                    &self.config,
-                )?;
-                let (linear, angular) = detach_velocity(
-                    self.previous_root,
-                    root,
-                    vehicle,
-                    body.basis(),
-                    dt,
-                    with_motion,
-                );
-                body.linear_velocity = linear;
-                body.local_angular_velocity = angular;
-                // Native draws z,y,x from its shared generator. The algorithm is
-                // original, but this port's independently seeded stream is not
-                // the complete game's RNG call ordering.
-                for axis in [2, 1, 0] {
-                    body.local_angular_velocity[axis] +=
-                        self.rng.next_u31() as f32 * 4.656_613e-10 * 4. - 2.;
-                }
-                self.body = Some(body);
-                let next = self.random_four();
-                self.select(
-                    if self.grounded {
-                        Phase::Ground
-                    } else {
-                        Phase::Air
-                    },
-                    if self.grounded { next } else { 4 + next },
-                );
+            let current_pelvis = multiply(self.world, pose.world_matrices[0]);
+            if duration - self.time <= BLEND_TIME {
+                self.detach(saved_pelvis, current_pelvis, vehicle, dt, true)?;
             }
+            //Native first enters Air when the clip window expires, then can
+            //override it with Ground in the same frame. Preserve both sets of
+            //random draws rather than skipping the first entry when touching.
+            if last_contacts > 0 {
+                self.detach(saved_pelvis, current_pelvis, vehicle, dt, false)?;
+            }
+        } else if self.anchor_pelvis
+            || self.motions[self.clip].animation.duration - self.time <= dt
+            || self.time < self.previous_time
+        {
+            self.world = rebase_model(self.world, pose.world_matrices[0], saved_pelvis);
+            self.anchor_pelvis = true;
+        }
+        self.previous_time = self.time;
+        Ok(())
+    }
+    fn detach(
+        &mut self,
+        previous: [f32; 16],
+        current: [f32; 16],
+        vehicle: VehicleMotion,
+        dt: f32,
+        with_motion: bool,
+    ) -> Result<()> {
+        let (linear, angular) = detach_world_velocity(
+            previous,
+            current,
+            vehicle,
+            matrix_basis(self.world),
+            dt,
+            with_motion,
+        );
+        let body = self.body.as_mut().ok_or("missing rider Model body")?;
+        body.linear_velocity = linear;
+        body.local_angular_velocity = angular;
+        //Native draws z,y,x. The stream remains independently seeded; full
+        //game RNG ordering requires all other systems' calls to be restored.
+        for axis in [2, 1, 0] {
+            body.local_angular_velocity[axis] +=
+                self.rng.next_u31() as f32 * 4.656_613e-10 * 4. - 2.;
+        }
+        self.integration_active = true;
+        let next = self.random_four();
+        self.phase = if with_motion {
+            Phase::Air
         } else {
-            let current_root_inverse = inverse(root);
-            // Keep the physical pelvis fixed while changing clips; animation
-            // displacement must not teleport the independent rigid body.
-            self.world = multiply(
-                body_matrix(
-                    self.body.as_ref().ok_or("missing detached body")?,
-                    &self.config,
-                ),
-                current_root_inverse,
-            );
-            //00193b40 bounds all animated contact points in world space;
-            //001ef690 transforms that center into the detached body's frame.
-            //Do not use only penetrating points, or average bone positions.
-            let center = contact_bounds_center(self.points.iter().map(|point| {
-                let local = crate::obstacle::transform_point(
-                    &pose.world_matrices[point.node],
-                    point.offset,
-                );
-                crate::obstacle::transform_point(&self.world, local)
-            }));
-            recenter_body(self.body.as_mut().unwrap(), &mut self.config, center);
-            let contacts = self.terrain_points(&pose, terrain, materials)?;
-            self.grounded = false;
-            self.contact_count = 0;
-            let mut elapsed = 0.;
-            let mut last_contacts = 0;
-            while elapsed < dt {
-                let step = (dt - elapsed).min(f32::from_bits(0x3c360b61));
-                let body = self.body.as_mut().ok_or("missing detached body")?;
+            Phase::Ground
+        };
+        self.pending_clip = Some(if with_motion { 4 + next } else { next });
+        Ok(())
+    }
+    fn step_body(
+        &mut self,
+        dt: f32,
+        pose: &Pose,
+        terrain: &crate::terrain::Terrain,
+        materials: &[crate::materials::TerrainMaterial; 8],
+        gravity: bool,
+    ) -> Result<usize> {
+        //001469e0 obtains position/orientation from the Model scene on every
+        //step. Root rebasing changes that scene basis without rotating stored
+        //local angular velocity or discarding Adams–Bashforth history.
+        let body = self.body.as_mut().ok_or("missing rider Model body")?;
+        body.orientation = quaternion(self.world);
+        let origin = [self.world[12], self.world[13], self.world[14]];
+        body.center = add(origin, transform(body.basis(), self.config.center_of_mass));
+        let center = contact_bounds_center(self.points.iter().map(|point| {
+            crate::obstacle::transform_point(
+                &self.world,
+                crate::obstacle::transform_point(&pose.world_matrices[point.node], point.offset),
+            )
+        }));
+        recenter_body(body, &mut self.config, center);
+        let mut contacts = self.terrain_points(pose, terrain, materials)?;
+        let terrain_count = contacts.len();
+        contacts.extend(self.static_points(pose)?);
+        self.grounded = false;
+        self.contact_count = 0;
+        self.static_contact_count = 0;
+        let mut elapsed = 0.;
+        let mut last_contacts = 0;
+        while elapsed < dt {
+            let step = (dt - elapsed).min(f32::from_bits(0x3c360b61));
+            let body = self.body.as_mut().ok_or("missing rider Model body")?;
+            if gravity {
                 body.force[1] -= self.config.mass * f32::from_bits(0x4200cccd);
-                let model = multiply(body_matrix(body, &self.config), current_root_inverse);
-                let mut corrections = crate::contact::ContactCorrections::default();
-                last_contacts = 0;
-                for &(local, ground, normal, grip) in &contacts {
-                    let point = crate::obstacle::transform_point(&model, local);
-                    let penetration = dot(sub(ground, point), normal);
-                    if penetration > 0. {
-                        self.grounded = true;
-                        self.contact_count += 1;
-                        last_contacts += 1;
-                        crate::contact::resolve_static_with_position_scale(
-                            body,
-                            &self.config,
-                            crate::contact::ContactConfig {
-                                reflection: 0.,
-                                angular_impulse_scale: 1.,
-                                friction_scale: 1.,
-                                friction_torque_scale: 1.,
-                            },
-                            crate::contact::StaticContact {
-                                point: add(point, scale(normal, penetration)),
-                                normal,
-                                penetration,
-                                material_grip: grip,
-                            },
-                            &mut corrections,
-                            0.25,
-                        )?;
-                    }
+            }
+            let model = if self.integration_active {
+                body_matrix(body, &self.config)
+            } else {
+                self.world
+            };
+            let mut corrections = crate::contact::ContactCorrections::default();
+            last_contacts = 0;
+            for (index, &(local, ground, normal, grip)) in contacts.iter().enumerate() {
+                let point = crate::obstacle::transform_point(&model, local);
+                let penetration = dot(sub(ground, point), normal);
+                if penetration > 0. {
+                    self.grounded = true;
+                    self.contact_count += 1;
+                    self.static_contact_count += usize::from(index >= terrain_count);
+                    last_contacts += 1;
+                    //001ef690 activates the body before integration when any
+                    //contact is reported, including while still attached.
+                    self.integration_active = true;
+                    crate::contact::resolve_static_with_position_scale(
+                        body,
+                        &self.config,
+                        crate::contact::ContactConfig {
+                            reflection: 0.,
+                            angular_impulse_scale: 1.,
+                            friction_scale: 1.,
+                            friction_torque_scale: 1.,
+                        },
+                        crate::contact::StaticContact {
+                            point: add(point, scale(normal, penetration)),
+                            normal,
+                            penetration,
+                            material_grip: grip,
+                        },
+                        &mut corrections,
+                        0.25,
+                    )?;
                 }
+            }
+            if self.integration_active {
                 body.step(&self.config, step)?;
                 body.center = add(body.center, corrections.translation);
-                elapsed += step;
+            } else {
+                //Disabled001469e0 still clears force/correction accumulators.
+                body.force = [0.; 3];
+                body.local_torque = [0.; 3];
             }
-            if last_contacts > 0 {
-                let body = self.body.as_mut().unwrap();
-                body.linear_velocity = scale(body.linear_velocity, 1. - 0.03);
-            }
-            self.world = multiply(
-                body_matrix(self.body.as_ref().unwrap(), &self.config),
-                current_root_inverse,
-            );
-            if self.phase == Phase::Air && self.grounded {
-                let next = self.random_four();
-                self.select(Phase::Ground, next);
-            }
+            elapsed += step;
         }
-        self.previous_root = root;
-        Ok(())
+        if last_contacts > 0 {
+            let body = self.body.as_mut().unwrap();
+            body.linear_velocity = scale(body.linear_velocity, 1. - f32::from_bits(0x3cf5c28f));
+        }
+        if self.integration_active {
+            self.world = body_matrix(self.body.as_ref().unwrap(), &self.config);
+        }
+        Ok(last_contacts)
+    }
+    fn static_points(&self, pose: &Pose) -> Result<Vec<(Vec3, Vec3, Vec3, f32)>> {
+        if self.obstacles.is_empty() {
+            return Ok(Vec::new());
+        }
+        let endpoints: Vec<_> = self
+            .points
+            .iter()
+            .map(|point| {
+                crate::obstacle::transform_point(
+                    &self.world,
+                    crate::obstacle::transform_point(
+                        &pose.world_matrices[point.node],
+                        point.offset,
+                    ),
+                )
+            })
+            .collect();
+        let rays = rider_static_rays(&endpoints);
+        let contacts = crate::wreck::query_static_segments(&rays, &self.obstacles, 60)?;
+        let to_local = inverse(self.world);
+        Ok(contacts
+            .into_iter()
+            .map(|hit| {
+                (
+                    crate::obstacle::transform_point(&to_local, hit.world_end),
+                    hit.world_point,
+                    hit.world_normal,
+                    0.2,
+                )
+            })
+            .collect())
     }
     fn terrain_points(
         &self,
@@ -408,6 +503,16 @@ impl Animator {
         }
         Ok(points)
     }
+}
+///00193b40 puts each spoke start at the world-axis bounds midpoint and its
+///end at the corresponding animated bone offset. Neither pelvis nor velocity
+///is a substitute for this collision hull.
+pub(crate) fn rider_static_rays(endpoints: &[Vec3]) -> Vec<crate::collision::CollisionRay> {
+    let center = contact_bounds_center(endpoints.iter().copied());
+    endpoints
+        .iter()
+        .map(|&end| crate::collision::CollisionRay { start: center, end })
+        .collect()
 }
 /// Native world-axis bounds midpoint, not a mass-weighted centroid. Callers
 /// supply the nonempty, finite animated contact-point list.
@@ -465,13 +570,32 @@ pub fn detach_velocity(
     dt: f32,
     include_motion: bool,
 ) -> (Vec3, Vec3) {
+    detach_world_velocity(
+        multiply(vehicle.world, previous),
+        multiply(vehicle.world, current),
+        vehicle,
+        rider_basis,
+        dt,
+        include_motion,
+    )
+}
+///001eff20 receives the Pelvis in world coordinates and converts only the
+///angular difference into the Model container's local physics axes.
+pub(crate) fn detach_world_velocity(
+    previous: [f32; 16],
+    current: [f32; 16],
+    vehicle: VehicleMotion,
+    rider_basis: Basis,
+    dt: f32,
+    include_motion: bool,
+) -> (Vec3, Vec3) {
     let linear = vehicle.linear_velocity;
     let angular = vehicle.local_angular_velocity;
-    let vehicle_basis = matrix_basis(vehicle.world);
     if !include_motion {
         return (linear, angular);
     }
-    let delta = std::array::from_fn(|i| (current[12 + i] - previous[12 + i]) / dt);
+    let inverse_dt = 1. / dt;
+    let delta = std::array::from_fn(|i| (current[12 + i] - previous[12 + i]) * inverse_dt);
     let prev = matrix_basis(previous);
     let now = matrix_basis(current);
     let rotation = if prev[1] == now[1] {
@@ -484,13 +608,10 @@ pub fn detach_velocity(
         cross(prev[1], now[1])
     };
     (
-        add(linear, transform(vehicle_basis, delta)),
+        add(linear, delta),
         add(
             angular,
-            inverse_transform(
-                rider_basis,
-                transform(vehicle_basis, scale(rotation, 1. / dt)),
-            ),
+            inverse_transform(rider_basis, scale(rotation, inverse_dt)),
         ),
     )
 }
@@ -502,6 +623,33 @@ fn multiply(a: [f32; 16], b: [f32; 16]) -> [f32; 16] {
 }
 fn inverse(m: [f32; 16]) -> [f32; 16] {
     crate::obstacle::relative_transform(&IDENTITY, &m)
+}
+///001f03e0 adjusts the Model container, while keeping the animated Pelvis
+///world transform saved before sampling. Physics axes belong to the container.
+pub(crate) fn rebase_model(
+    model: [f32; 16],
+    pelvis_local: [f32; 16],
+    saved_pelvis_world: [f32; 16],
+) -> [f32; 16] {
+    let correction = multiply(saved_pelvis_world, inverse(multiply(model, pelvis_local)));
+    let mut result = multiply(correction, model);
+    // Native orthonormalizes forward, then right=up×forward, then up=forward×right.
+    let normalize = |v: Vec3| scale(v, (1. / f64::from(dot(v, v)).sqrt()) as f32);
+    let forward = normalize([result[8], result[9], result[10]]);
+    let right = normalize(cross([result[4], result[5], result[6]], forward));
+    let up = cross(forward, right);
+    for (column, vector) in [right, up, forward].into_iter().enumerate() {
+        result[column * 4..column * 4 + 3].copy_from_slice(&vector);
+        result[column * 4 + 3] = 0.;
+    }
+    let pelvis = crate::obstacle::transform_point(
+        &result,
+        [pelvis_local[12], pelvis_local[13], pelvis_local[14]],
+    );
+    for axis in 0..3 {
+        result[12 + axis] += saved_pelvis_world[12 + axis] - pelvis[axis];
+    }
+    result
 }
 fn body_matrix(b: &BodyState, c: &BodyConfig) -> [f32; 16] {
     let basis = b.basis();
@@ -567,6 +715,232 @@ fn quaternion(m: [f32; 16]) -> [f32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn fixture() -> (
+        Animator,
+        Vec<Node>,
+        crate::terrain::Terrain,
+        [crate::materials::TerrainMaterial; 8],
+    ) {
+        let bones = [
+            ("Pelvis", [0., 0., 0.]),
+            ("UprTorso", [0., 2., 0.]),
+            ("Head", [0., 3., 0.]),
+            ("LwrArmL", [-1., 2., 0.]),
+            ("HandL", [-1., 1.5, 0.]),
+            ("LwrArmR", [1., 2., 0.]),
+            ("HandR", [1., 1.5, 0.]),
+            ("LwrLegL", [-0.5, 0., 0.]),
+            ("FootL", [-0.5, -0.8, 0.]),
+            ("LwrLegR", [0.5, 0., 0.]),
+            ("FootR", [0.5, -0.8, 0.]),
+        ];
+        let nodes: Vec<_> = bones
+            .into_iter()
+            .enumerate()
+            .map(|(i, (name, position))| {
+                let mut matrix = IDENTITY;
+                matrix[12..15].copy_from_slice(&position);
+                if i == 0 {
+                    matrix[0] = 0.;
+                    matrix[2] = -1.;
+                    matrix[8] = 1.;
+                    matrix[10] = 0.;
+                }
+                Node {
+                    name: name.into(),
+                    parent: if i == 0 { -1 } else { 0 },
+                    local_matrix: matrix,
+                    world_matrix: matrix,
+                    bounds: [0.; 7],
+                }
+            })
+            .collect();
+        let motions = (0..14)
+            .map(|_| Motion {
+                animation: crate::animation::Animation {
+                    version: 2,
+                    frame_count: 60,
+                    duration: 2.,
+                    bone_names: vec![],
+                    translation_kind: 0,
+                    translations: vec![],
+                    rotations: vec![],
+                },
+                sampling: crate::animation::Sampling::default(),
+            })
+            .collect();
+        let animator = Animator::new(motions, vec![true; 14], &nodes).unwrap();
+        let terrain = crate::terrain::Terrain {
+            spacing: 10.,
+            tiles: vec![crate::terrain::TerrainTile {
+                tag: 0,
+                heights: [0; 289],
+                attributes: [u32::from_le_bytes([0, 127, 0, 0]); 289],
+            }],
+            leaves: vec![crate::terrain::TerrainLeaf {
+                x: 0,
+                z: 0,
+                tile: 0,
+                height_morph: 1.,
+                height_scale: 0.,
+                minimum_height: 0.,
+                maximum_height: 0.,
+            }],
+            hierarchy_nodes: 1,
+            width_cells: 16,
+            depth_cells: 16,
+        };
+        let materials = [crate::materials::TerrainMaterial {
+            grip: 0.,
+            drag: 0.,
+            drive: 0.,
+            powerslide: 0.,
+            braking: 0.,
+        }; 8];
+        (animator, nodes, terrain, materials)
+    }
+    #[test]
+    fn separation_keeps_model_axes_and_has_no_gravity_until_detachment() {
+        let (mut animator, nodes, terrain, materials) = fixture();
+        let channels = animator.pose(&nodes).unwrap();
+        assert_ne!(
+            matrix_basis(channels.world_matrices[0]),
+            matrix_basis(IDENTITY)
+        );
+        let riding = animator.current.clone();
+        let mut world = IDENTITY;
+        world[12] = 50.;
+        world[13] = 20.;
+        world[14] = 50.;
+        animator
+            .begin(crate::wreck::Kind::Front, riding, world, &nodes)
+            .unwrap();
+        for _ in 0..10 {
+            world[14] += 1.;
+            animator
+                .step(
+                    1. / 60.,
+                    VehicleMotion {
+                        world,
+                        linear_velocity: [0., 0., 60.],
+                        local_angular_velocity: [0.; 3],
+                    },
+                    &nodes,
+                    &terrain,
+                    &materials,
+                )
+                .unwrap();
+            assert_eq!(animator.world, world);
+            assert_eq!(animator.phase, Phase::Attached);
+            assert!(!animator.integration_active);
+            assert_eq!(animator.body.as_ref().unwrap().basis(), matrix_basis(world));
+            assert_eq!(animator.frame().unwrap().linear_velocity, [0.; 3]);
+        }
+    }
+    #[test]
+    fn attached_prop_overlap_activates_model_body_before_detach_and_corrects_position() {
+        let (mut animator, nodes, terrain, materials) = fixture();
+        let mut prop =
+            crate::wreck::tests::surface([[-30., 20., -30.], [0., 20., 30.], [30., 20., -30.]]);
+        prop.world_matrix[12] = 50.;
+        prop.world_matrix[14] = 50.;
+        animator.set_static_obstacles(vec![prop]);
+        let mut world = IDENTITY;
+        world[12] = 50.;
+        world[13] = 20.;
+        world[14] = 50.;
+        animator
+            .begin(
+                crate::wreck::Kind::Front,
+                animator.current.clone(),
+                world,
+                &nodes,
+            )
+            .unwrap();
+        animator
+            .step(
+                1. / 60.,
+                VehicleMotion {
+                    world,
+                    linear_velocity: [0.; 3],
+                    local_angular_velocity: [0.; 3],
+                },
+                &nodes,
+                &terrain,
+                &materials,
+            )
+            .unwrap();
+        let frame = animator.frame().unwrap();
+        assert!(frame.static_contact_count > 0);
+        assert!(animator.integration_active);
+        assert_eq!(frame.phase, Phase::Ground);
+        assert!(frame.origin[1] > 20.);
+        assert_eq!(frame.clip, "SepFront");
+        assert!(animator.pending_clip.is_some());
+    }
+    #[test]
+    fn rebase_preserves_pelvis_world_without_using_pelvis_as_physics_basis() {
+        let mut model = IDENTITY;
+        model[12] = 30.;
+        model[13] = 40.;
+        model[14] = 50.;
+        let mut old = IDENTITY;
+        old[12] = 2.;
+        old[13] = 3.;
+        let mut current = IDENTITY;
+        current[0] = 0.;
+        current[2] = -1.;
+        current[8] = 1.;
+        current[10] = 0.;
+        current[12] = 5.;
+        let saved = multiply(model, old);
+        let result = rebase_model(model, current, saved);
+        assert_eq!(multiply(result, current), saved);
+        assert_ne!(matrix_basis(result), matrix_basis(saved));
+    }
+    #[test]
+    fn rider_spokes_contact_a_prop_without_terrain_and_resolve_the_endpoint() {
+        let endpoints = [[-3., -2., -4.], [3., 2., 4.], [1., 1., 3.]];
+        let rays = rider_static_rays(&endpoints);
+        assert!(rays.iter().all(|ray| ray.start == [0.; 3]));
+        assert_eq!(
+            rays.iter().map(|ray| ray.end).collect::<Vec<_>>(),
+            endpoints
+        );
+        let wall = crate::wreck::tests::surface([[-10., -10., 2.], [0., 10., 2.], [10., -10., 2.]]);
+        let hits = crate::wreck::query_static_segments(&rays, &[wall], 60).unwrap();
+        assert_eq!(hits.len(), 2);
+        let config = BodyConfig::new(4., [3.; 3], [0.; 3]).unwrap();
+        let mut body = BodyState::new([0.; 3], [1., 0., 0., 0.], &config).unwrap();
+        body.linear_velocity = [0., 0., 20.];
+        let mut corrections = crate::contact::ContactCorrections::default();
+        for hit in hits {
+            let penetration = dot(sub(hit.world_point, hit.world_end), hit.world_normal);
+            assert!(penetration > 0.);
+            crate::contact::resolve_static_with_position_scale(
+                &mut body,
+                &config,
+                crate::contact::ContactConfig {
+                    reflection: 0.,
+                    angular_impulse_scale: 1.,
+                    friction_scale: 1.,
+                    friction_torque_scale: 1.,
+                },
+                crate::contact::StaticContact {
+                    point: hit.world_point,
+                    normal: hit.world_normal,
+                    penetration,
+                    material_grip: 0.,
+                },
+                &mut corrections,
+                0.25,
+            )
+            .unwrap();
+        }
+        assert!(body.linear_velocity[2] < 20.);
+        assert!(corrections.translation[2] < 0.);
+        assert!(body.local_angular_velocity.iter().all(|v| v.is_finite()));
+    }
     #[test]
     fn animated_bounds_shift_contact_leverage_without_teleporting_the_rider() {
         let points = [[-4., -2., -1.], [8., 6., 3.], [7., 5., 2.]];

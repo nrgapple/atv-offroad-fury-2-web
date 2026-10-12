@@ -23,6 +23,24 @@ pub struct LateralInput {
     pub throttle: f32,
 }
 
+/// 001d8540 constructs front/rear contact velocities directly in body space.
+/// Preserve the original point construction before subtracting center of mass;
+/// these are not world-space point queries followed by inverse transforms.
+pub fn contact_point_velocities(
+    local_velocity: Vec3,
+    local_angular_velocity: Vec3,
+    center_of_gravity: Vec3,
+) -> [Vec3; 2] {
+    [3.0, -3.0].map(|distance| {
+        let lever = [
+            0.0 - center_of_gravity[0],
+            0.0 - center_of_gravity[1],
+            (center_of_gravity[2] + distance) - center_of_gravity[2],
+        ];
+        crate::wheel::add(local_velocity, cross(local_angular_velocity, lever))
+    })
+}
+
 /// Body-X forces at the front and rear virtual contact points.
 /// They remain body-X forces after using steering to measure front slip.
 pub fn lateral_forces(input: LateralInput) -> Result<[f32; 2]> {
@@ -304,5 +322,14 @@ mod tests {
             })
             .is_err()
         );
+    }
+    #[test]
+    fn local_contact_velocity_includes_center_shift_and_angular_motion() {
+        // Original 001d8540 branch fixture; rear Z differs from the body's
+        // forward speed and is the field consumed by the reverse gate.
+        let velocities = contact_point_velocities([1., 2., 4.], [2., -1., 0.5], [0.5, 0.25, 0.5]);
+        assert_eq!(velocities, [[-1.875, -4.25, 3.], [4.125, 7.75, 3.]]);
+        let straight = contact_point_velocities([1., 2., 4.], [0.; 3], [0.5, 0.25, 0.5]);
+        assert_eq!(straight, [[1., 2., 4.]; 2]);
     }
 }

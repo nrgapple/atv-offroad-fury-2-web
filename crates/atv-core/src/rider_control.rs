@@ -3,6 +3,34 @@
 //! filtering, Euler-angle extraction and gameplay gates remain caller concerns.
 use crate::{Result, physics_data::PhysicsData};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReverseChordSelection {
+    pub reverse: bool,
+    /// Brake contributed by the chord's Square button. Independent brake
+    /// inputs remain separate and must be merged by the browser adapter.
+    pub brake: bool,
+}
+/// Original001e7940 Cross+Square gate. Speed is the previous update's cached
+/// rear virtual-point forward velocity (+198->+88), not body speed/magnitude.
+/// The routine first writes Forward as the direction request, so the subsequent
+/// non-neutral test does not depend on the previously selected engine direction.
+pub fn select_native_reverse_chord(
+    throttle_pressed: bool,
+    chord_brake_pressed: bool,
+    cached_rear_forward_speed: f32,
+    stand_up_speed: f32,
+) -> Result<ReverseChordSelection> {
+    if !cached_rear_forward_speed.is_finite() || !stand_up_speed.is_finite() {
+        return Err("invalid original reverse chord speed".into());
+    }
+    let reverse =
+        throttle_pressed && chord_brake_pressed && cached_rear_forward_speed < stand_up_speed;
+    Ok(ReverseChordSelection {
+        reverse,
+        brake: chord_brake_pressed && !reverse,
+    })
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct RiderConfig {
     pub air_force: f32,
@@ -370,6 +398,26 @@ pub fn step(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn original_reverse_chord_uses_strict_cached_rear_speed_gate() {
+        // Captured001e7940 full control routine at threshold10: Wheel brake
+        // fields224, engine direction4c; the rider update call was hooked.
+        for (throttle, square, rear_speed, reverse, brake) in [
+            (true, true, 9.9999, true, false),
+            (true, true, 10., false, true),
+            (true, true, 100., false, true),
+            (true, true, -100., true, false),
+            (false, true, 0., false, true),
+            (true, false, 0., false, false),
+            (false, false, 0., false, false),
+        ] {
+            assert_eq!(
+                select_native_reverse_chord(throttle, square, rear_speed, 10.).unwrap(),
+                ReverseChordSelection { reverse, brake }
+            );
+        }
+        assert!(select_native_reverse_chord(true, true, f32::NAN, 10.).is_err());
+    }
     fn config() -> RiderConfig {
         RiderConfig {
             air_force: 2.,

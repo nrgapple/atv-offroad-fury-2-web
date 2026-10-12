@@ -1,6 +1,6 @@
 {
   "status": "Public 0906822adbc585f58e4a7309322f63f4cc3f7b6a (CI 38194430965) verifies remappable keyboard/controller settings, the 21-song selector and paused preview, and the recovered ATV thumbnail in the Main Menu, alongside the previously verified touch, map and driving routes. Physical iOS/controller behavior, full flips, broader course coverage, terrain LOD, full soundtrack fidelity and complete original game modes remain unfinished.",
-  "working_on": "Continue original ATV handling, air-control/trick transitions and crash behavior with broader fixed-input comparisons. Treat the public settings/music checks as component verification, not whole-game or physical-device parity.",
+  "working_on": "Integrating and validating rider crashes, stunts, HUD and remaining original game systems.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -826,9 +826,58 @@
           "The public Music page passed paused preview, off/on and focus checks. The catalog interface and retained shuffle/history do not establish original soundtrack transitions or listening fidelity."
         ]
       }
+    },
+    {
+      "id": "the-original-speed-and-preload-display-joins-the-ride-6cd2b4a1",
+      "timestamp": "2026-10-12T02:28:01.651153+00:00",
+      "recorded_at": "2026-10-12T02:29:42.096869+00:00",
+      "kind": "build",
+      "title": "The original speed and preload display joins the ride",
+      "summary": "The host build now draws original speed, preload and stunt art with an authored Rust controller. Desktop and compact phone captures show the meter inside the viewport; deployment is pending.",
+      "details": [
+        "Original runtime layouts, bitmap glyphs and meter textures remain in the separate authorized content manifest, outside GitHub source.",
+        "Host no-input checks passed at 1280\u00d7720 and 390\u00d7844 with simulation running and no page, console or failed-request errors. The compact phone placement moves the meter above driving thumbs.",
+        "Selected exact-build preload instructions matched 600 Rust controller frames. This component check does not validate final Canvas pixels or whole-game behavior."
+      ],
+      "limitation": "Race clocks, rank, laps, radar, multiplayer overlays and original PS2 pixel equivalence remain incomplete. This checkpoint is host-verified; public deployment is pending.",
+      "image": "/devlog-images/the-original-speed-and-preload-display-joins-the-ride-6cd2b4a1.png",
+      "caption": "Inspected host desktop capture: original 00 Mph speed glyphs and empty preload meter beside the Caribou ride. Public deployment pending."
+    },
+    {
+      "id": "a-failed-nac-nac-now-follows-the-recovered-wreck-route-d0427758",
+      "timestamp": "2026-10-12T02:28:35.701666+00:00",
+      "recorded_at": "2026-10-12T02:29:42.176662+00:00",
+      "kind": "build",
+      "title": "A failed Nac Nac now follows the recovered wreck route",
+      "summary": "The host browser run passed a real touch Nac Nac, vertical wreck, recovered separation and ground animation, contact, automatic reset and resumed driving. Model-root and body ordering corrections improve the detached rider path.",
+      "details": [
+        "The corrected wreck path preserves original Model-root/body transform ordering and adds detached terrain/prop contact handling and the recovered wreck camera. Separate root/rebase instruction comparisons passed 500 cases each.",
+        "The actual Chromium touch run passed Nac Nac \u2192 Vertical wreck \u2192 original separation/ground clip \u2192 terrain contact \u2192 automatic reset \u2192 resumed driving, with no JavaScript or WebGL errors.",
+        "The inspected phone capture includes the original stunt name and failed-score display. The displayed 600 is pending stunt display data during failure, not a claim of awarded cumulative points."
+      ],
+      "limitation": "This is a selected host browser path, not whole-game crash/stunt parity. Rider IK, remaining collision and game systems, physical device behavior and PS2 visual comparison remain unfinished or separately under validation. Public deployment is pending.",
+      "image": "/devlog-images/a-failed-nac-nac-now-follows-the-recovered-wreck-route-d0427758.png",
+      "caption": "Inspected host 390px capture during the failed Nac Nac ground clip, with failure-colored stunt text and original speed meter. Public deployment pending."
+    },
+    {
+      "id": "the-tires-can-finally-stand-on-recovered-prop-ramps-c6f40b86",
+      "timestamp": "2026-10-12T02:51:32.624857+00:00",
+      "recorded_at": "2026-10-12T02:52:19.738665+00:00",
+      "kind": "build",
+      "title": "The tires can finally stand on recovered prop ramps",
+      "summary": "The Rust handling path now gives wheels finite suspension contact queries against static props as well as terrain. Previously a ramp or bridge could support the chassis while its tires still sampled the ground below.",
+      "details": [
+        "The movement audit also corrected the separate total-speed and forward-speed roles, control snapshots across body steps, and wheel axle directions carried from the completed mechanical pose.",
+        "A coupled Rust check with the original ATV01 mesh, physics and Caribou ramp held all four wheels on the raised prop for 233 frames after settling. A separate regression falls after removing its prop, checking that stale support is not reused.",
+        "Selected exact-build instruction checks matched wheel-support rays, rear-contact velocity and wheel frames. These component checks are not a replay against the original game.",
+        "The updated host Chromium touch run passed Nac Nac \u2192 Vertical wreck \u2192 recovered separation/ground clip \u2192 terrain contact \u2192 automatic reset \u2192 resumed driving, with JavaScript and WebGL checks clear. Both fresh crash screenshots were inspected before recording."
+      ],
+      "limitation": "Dynamic props, native scene category registration and spatial-grid object order, smooth collision normals and full original handling remain incomplete. The image documents the updated crash regression, not a visual demonstration of raised-ramp support. Public release is pending.",
+      "image": "/devlog-images/the-tires-can-finally-stand-on-recovered-prop-ramps-c6f40b86.png",
+      "caption": "Inspected host 390px capture from the passing handling-build crash regression: failed Nac Nac display and recovered wreck route. Raised-prop tire support was checked separately in Rust; public release pending."
     }
   ],
-  "updated_at": "2026-10-12T02:11:21.257312+00:00",
+  "updated_at": "2026-10-12T02:52:19.738665+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

@@ -12,7 +12,8 @@ try {
   const url = new URL('/play.html', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173');
   url.searchParams.set('drive', '1'); url.searchParams.set('environment', 'env01');
   await page.goto(url.href);
-  await page.waitForFunction(() => window.atvTerrainStatus?.simulation && !document.querySelector('#touch-controls').hidden, null, { timeout: 90000 });
+  await page.waitForFunction(() => window.atvTerrainStatus?.simulation, null, { timeout: 90000 });
+  await page.bringToFront(); await page.locator('#game').focus();
   const cdp = await page.context().newCDPSession(page);
   const touch = (type, points = []) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(point => ({ radiusX: 6, radiusY: 6, force: 1, ...point })) });
   const left = { id: 1, x: 60, y: 560 };
@@ -23,7 +24,7 @@ try {
       const state = window.atvTerrainStatus;
       if (state.simulationSteps !== previous) {
         previous = state.simulationSteps;
-        window.rampFrames.push({ step: previous, frame: state.frame, input: state.input });
+        window.rampFrames.push({ step: previous, frame: state.frame, input: state.input, camera: state.followCamera });
       }
       requestAnimationFrame(record);
     }
@@ -59,11 +60,19 @@ try {
   await touch('touchCancel');
   const frames = await page.evaluate(() => window.rampFrames);
   assert(frames.some(s => s.frame.stunt?.id === 0));
+  assert(frames.some(s => s.frame.stunt_score?.active && s.frame.stunt_score.pending_points > 0), 'Accepted stunt must enter native scoring');
+  assert.equal(reset.stunt_score.active, false);
+  assert.equal(reset.stunt_score.pending_points, 0);
+  assert.equal(reset.stunt_score.committed_points, 0, 'A failed landing must not award the displayed pending score');
+  assert(frames.some(s => s.frame.hud?.stunt_name === 'Nac Nac' && s.frame.hud.stunt_visible), 'Native stunt HUD must consume the scoring callbacks');
+  assert.equal(await page.locator('#native-hud').getAttribute('data-renderer'), 'rust');
   const detached = frames.map(s => s.frame.rider_wreck).filter(f => f && f.phase !== 'attached');
   assert(detached.length > 0);
   assert(detached.every(f => f.center_of_mass.every(Number.isFinite)));
   assert(detached.some(f => Math.hypot(...f.center_of_mass) > 0.05), 'Detached rider must use animated contact bounds instead of a fixed pelvis center');
   assert.equal(start.wreck.kind, 'Vertical');
+  assert(frames.some(s => s.camera?.mode === 'wreck'), 'Original wreck camera must run during separation');
+  assert(frames.filter(s => s.camera?.mode === 'wreck').every(s => [...s.camera.position, ...s.camera.target, s.camera.fov].every(Number.isFinite)), 'Wreck camera must remain finite');
   await writeFile('work/verification/wreck-browser-trace.json',JSON.stringify({start,reset,frames,errors},null,2));
   assert.deepEqual(errors, []);
   assert.equal(await page.evaluate(() => window.atvTerrainStatus.glError), 0);

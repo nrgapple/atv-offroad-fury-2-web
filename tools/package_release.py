@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
-STATIC_FILES = {'index.html', 'landing.css', 'landing.js', 'play.html', 'game.css', 'game.js', 'frontend.js', 'touch.js', 'touch.css', 'content.js', 'audio.js', 'devlog.html',
+STATIC_FILES = {'index.html', 'landing.css', 'landing.js', 'play.html', 'game.css', 'game.js', 'hud.js', 'frontend.js', 'touch.js', 'touch.css', 'content.js', 'audio.js', 'devlog.html',
                 'devlog.css', 'devlog.js', 'workbench.html', 'style.css', 'app.js',
                 'worker.js', 'input.js', 'controls.js', 'bindings.js', 'atv_web.wasm', 'music.js'}
 RELEASE_STATIC_FILES = STATIC_FILES | {'deployment.json', 'devlog.json'}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Record a checkpoint; screenshots stay ignored and are served only on the existing private site."""
+"""Record a checkpoint; screenshots stay ignored until authorized public Workers/R2 publication."""
 import argparse
 from datetime import datetime, timezone
 import json

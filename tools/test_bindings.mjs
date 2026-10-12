@@ -10,7 +10,7 @@ try {
   await page.addInitScript(() => {
     window.bindingPad = null; window.initialPackets = []; window.bindingBatches = []; window.bindingResets = 0;
     Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [window.bindingPad] });
-    const load = new Set([20,21,22,23,26,27,28,29,44,45,46,47,48,49,51,52,53]);
+    const load = new Set([20,21,22,23,26,27,28,29,44,45,46,47,48,49,51,52,53,63]);
     const post = Worker.prototype.postMessage;
     Worker.prototype.postMessage = function(data, ...rest) {
       if (load.has(data.op) && !window.runtimePackets) window.initialPackets.push({ op:data.op, index:data.index, bytes:data.bytes.slice() });
@@ -22,7 +22,7 @@ try {
   await page.goto(new URL('/play.html?drive=1', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173').href);
   await page.waitForFunction(() => window.atvTerrainStatus?.simulation, null, { timeout:90000 });
   await page.evaluate(async () => { window.runtimePackets = window.initialPackets.slice(); window.bindings = (await import('./bindings.js')).gameplayBindings; });
-  const focus = async () => page.evaluate(() => document.querySelector('#game').focus());
+  const focus = async () => { await page.bringToFront(); await page.locator('#game').focus(); };
   const steps = async (count=4) => {
     const first = await page.evaluate(() => window.atvTerrainStatus.simulationSteps);
     await page.waitForFunction(({first,count}) => window.atvTerrainStatus.simulationSteps >= first + count, {first,count});
@@ -72,7 +72,7 @@ try {
   await pad();
   await pad([0]); await input({throttle:1,reverse:false});
   await pad([2]); await input({throttle:0,brake:1});
-  await pad([0,2]); await input({throttle:1,brake:0,reverse:true});
+  await pad([0,2]); await input({throttle:1,brake:0,reverse:true,reverse_chord_brake:1});
   await pad([0,2,6]); await input({throttle:1,brake:1,reverse:true});
   await pad();
   await set('controller','throttle',{axis:3,sign:-1});

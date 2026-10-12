@@ -82,15 +82,18 @@ export class GameplayBindings {
     if(this.controllerIdentity!==undefined&&this.controllerIdentity!==controllerIdentity)this.cancel();
     this.controllerIdentity=controllerIdentity;
     const values=Object.fromEntries(ACTIONS.map(({id})=>[id,Math.max(this.value('keyboard',id,keys,pad),this.value('controller',id,keys,pad))]));
-    // The original Cross+Square reverse chord consumes its Square brake. Other
+    // Preserve the chord's full brake for Rust's native speed gate. Other
     // brake alternatives (e.g. trigger or keyboard) remain independent.
     let brake=0;
+    let reverseChord=false;
     for(const device of ['keyboard','controller']) {
       const consumed=this.profile[device].reverse.filter(b=>b.chord&&amount(b,keys,pad)>.5).flatMap(b=>b.chord.map(a=>JSON.stringify(a)));
+      reverseChord ||= consumed.length>0;
       for(const binding of this.profile[device].brake) if(!(binding.chord??[binding]).every(a=>consumed.includes(JSON.stringify(a)))) brake=Math.max(brake,amount(binding,keys,pad));
     }
     const x=values.steerRight-values.steerLeft,y=values.leanBack-values.leanForward;
     const input={throttle:values.throttle,brake,steer:x,lean:y,reverse:values.reverse>.5,stunt_modifiers:Number(values.stuntCircle>.5)|(Number(values.stuntTriangle>.5)<<1)|(Number(values.stuntL1>.5)<<2),stunt_x:x,stunt_y:y};
+    if(reverseChord)input.reverse_chord_brake=values.brake;
     const actions={};
     for(const id of ['camera','reset','pause']) {
       const held=values[id]>.5;

@@ -135,6 +135,11 @@ pub fn direction(axes: [f32; 2]) -> Option<usize> {
         Some(3)
     }
 }
+/// 002d9870 uses D-pad Up/Down/Left/Right in that priority only when the
+/// analog stick does not exceed its radial threshold. Bits follow that order.
+pub fn direction_with_buttons(axes: [f32; 2], buttons: u8) -> Option<usize> {
+    direction(axes).or_else(|| (0..4).find(|bit| buttons & (1 << bit) != 0))
+}
 impl State {
     pub fn reset(&mut self) {
         *self = Self {
@@ -143,11 +148,24 @@ impl State {
         };
     }
     pub fn step(&mut self, input: Input, dt: f32, durations: &[f32; 24]) -> Result<Option<Frame>> {
+        self.step_controls(input, 0, dt, durations, true)
+    }
+    /// Control acceptance continues during a forced landing action, but
+    /// 002d8ba0 pauses both stunt clocks while its action mode6 has priority.
+    pub fn step_controls(
+        &mut self,
+        input: Input,
+        direction_buttons: u8,
+        dt: f32,
+        durations: &[f32; 24],
+        advance_clocks: bool,
+    ) -> Result<Option<Frame>> {
         if !dt.is_finite()
             || dt < 0.
             || !input.horizontal_speed_squared.is_finite()
             || input.axes.iter().any(|x| !x.is_finite())
             || input.modifiers > 7
+            || direction_buttons > 15
             || durations.iter().any(|x| !x.is_finite() || *x <= 0.)
         {
             return Err("invalid stunt input or clip duration".into());
@@ -180,7 +198,7 @@ impl State {
                     7 => 20,
                     _ => unreachable!(),
                 };
-                if let Some(direction) = direction(input.axes)
+                if let Some(direction) = direction_with_buttons(input.axes, direction_buttons)
                     && self.active.is_none_or(|id| self.main_time >= MIN_TIME[id])
                 {
                     self.active = Some(group + direction);
@@ -204,10 +222,12 @@ impl State {
                 self.accepted_mask = 0xff;
                 return Ok(None);
             }
-            if holding {
-                self.hold_time += dt;
-            } else {
-                self.main_time += dt;
+            if advance_clocks {
+                if holding {
+                    self.hold_time += dt;
+                } else {
+                    self.main_time += dt;
+                }
             }
             return Ok(Some(Frame {
                 id,
@@ -260,6 +280,36 @@ impl HoldNoise {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn digital_direction_fallback_has_original_priority_and_analog_precedence() {
+        for buttons in 0..16 {
+            assert_eq!(
+                direction_with_buttons([0.5, 0.], buttons),
+                (0..4).find(|i| buttons & (1 << i) != 0)
+            );
+            assert_eq!(direction_with_buttons([0.5001, 0.], buttons), Some(3));
+            assert_eq!(direction_with_buttons([-1., -0.251], buttons), Some(0));
+        }
+        for (mask_group, modifiers) in [1, 2, 3, 5, 6, 7].into_iter().enumerate() {
+            for direction in 0..4 {
+                let frame = State::default()
+                    .step_controls(
+                        Input {
+                            modifiers,
+                            axes: [0.; 2],
+                            ..airborne()
+                        },
+                        1 << direction,
+                        1. / 60.,
+                        &[3.; 24],
+                        true,
+                    )
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(frame.id, mask_group * 4 + direction);
+            }
+        }
+    }
     fn airborne() -> Input {
         Input {
             modifiers: 1,

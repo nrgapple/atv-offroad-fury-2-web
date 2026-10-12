@@ -10,6 +10,7 @@ pub mod ecosystem;
 pub mod elf;
 pub mod engine_audio;
 pub mod grip;
+pub mod hud;
 pub mod ipu;
 pub mod iso;
 pub mod materials;
@@ -21,12 +22,15 @@ pub mod physics_data;
 pub mod quad_pose;
 pub mod resource;
 pub mod rider_control;
+pub mod rider_ik;
 pub mod rider_pose;
 pub mod scene;
 pub mod sky;
 pub mod stunt;
+pub mod stunt_score;
 pub mod terrain;
 pub mod texture;
+pub mod water;
 
 pub type Result<T> = std::result::Result<T, String>;
 
@@ -45,6 +49,7 @@ pub(crate) fn u16le(data: &[u8], at: usize) -> Result<u16> {
 }
 
 pub mod wheel;
+pub mod wheel_support;
 pub mod wreck;
 
 pub mod dynamics;
