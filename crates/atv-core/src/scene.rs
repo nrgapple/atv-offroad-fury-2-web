@@ -331,7 +331,7 @@ pub fn parse(data: &[u8]) -> Result<Scene> {
     parse_with_start(data, None)
 }
 
-fn document(data: &[u8]) -> Result<PhysicsData> {
+pub(crate) fn document(data: &[u8]) -> Result<PhysicsData> {
     if data.len() > 1024 * 1024 || data.contains(&0) {
         return Err("invalid scene text extent".into());
     }

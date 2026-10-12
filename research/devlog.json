@@ -1,6 +1,6 @@
 {
   "status": "Water recovery and snow-ramp collision are publicly verified. The multiplayer lobby, two-browser driving, remote wreck presentation and spatial audio pass host integration checks; multiplayer current-main CI and public verification are pending. The browser port remains incomplete.",
-  "working_on": "Complete multiplayer current-main integration and public verification while continuing water presentation and wakes, rendering detail, and the other active original gameplay lanes. Preserve the single-player baseline; racing and authority parity remain unverified.",
+  "working_on": "Recover and connect the original FREE05 Vancouver Ridge ski-jump map (skijump), then verify its map loading and source fidelity.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1717,9 +1717,28 @@
         "Twenty-four original snow-ramp routes pass across desktop and 390px, with wheel/body contacts in both directions on the tested ramp placements."
       ],
       "limitation": "Host-only combined verification. Current-main CI, public deployment and public browser verification for multiplayer are pending. The bounded routes do not establish physical iOS parity, fast-internet or four-player behavior, race modes, player collision, host-authoritative physics, or full-game parity."
+    },
+    {
+      "id": "prelit-map-materials-and-animated-water-surfaces-02784718",
+      "timestamp": "2026-10-12T19:38:37.870376+00:00",
+      "recorded_at": "2026-10-12T19:39:52.584244+00:00",
+      "kind": "build",
+      "title": "Prelit map materials and animated water surfaces",
+      "summary": "Static map materials now use recovered source vertex colors and alpha behavior, and two authored UV flows animate on their original map surfaces. The inspected ENV07 capture shows the lava material; related host inspection views cover Freeport rain cards and Arlington waterflow.",
+      "details": [
+        "Static prelit materials now use decoded RGBA vertex colors, source-alpha blending, and FB_ONLY alpha-test color writes without Z updates.",
+        "Translation-only UV animation drives Freeport static rain cards at authored V velocity 2 and Arlington waterduct waterflow at 0.983, retaining the negative sample offset and signed fmod behavior. Animation advances once per fixed simulation step and holds its phase while paused or the graphics context is lost.",
+        "A Rust probe matches 600 exact original 001be5d0 instruction cases across 78,000 instructions with zero binary32 mismatches; zero-angle trigonometry and finite host fmodf behavior are handled explicitly.",
+        "Verification passes: make check (305 core tests plus bridge, network and relay tests and 66 JavaScript tests), make verify, make web, 15 release tests, 5 Worker tests, and tools/test_maps.mjs across all eight original playable maps.",
+        "The material browser report records visible source draws with 4,977 changed rain pixels on ENV04, 73,978 lava pixels on ENV07, and 6,334 waterflow pixels on ENV08. The latest material run also passes source RGBA upload, UV motion, pause and context phase retention with zero JavaScript or GL errors.",
+        "A private census covers 147 track RES files, 40 map families and 14,802 within-family asset variants by header/config identity; this is not a complete mesh or gameplay-equivalence audit."
+      ],
+      "limitation": "Host-only checkpoint. The supplied screenshots are inspection-camera views rather than normal gameplay or public-release evidence. Caribou ice reflection groups, exact fog, LOD, point lights, weather, other modes and overall map fidelity remain incomplete. The missing Vancouver Ridge ski-jump map is identified as original FREE05/skijump and is the next implementation focus.",
+      "image": "/devlog-images/prelit-map-materials-and-animated-water-surfaces-02784718.png",
+      "caption": "Host inspection camera on ENV07 showing the lava surface material; related reviewed inspection views show Freeport rain cards and Arlington waterflow. This is not a normal-gameplay or public-release capture."
     }
   ],
-  "updated_at": "2026-10-12T19:04:50.599541+00:00",
+  "updated_at": "2026-10-12T19:39:52.584244+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

@@ -267,7 +267,8 @@ async function baseTextures(mesh, materialArchive, materialEntries, cache = new 
       const sceneCutout = /^\s*alphaTestOnOff\s*=\s*1\s*$/mi.test(materialText)
         && /^\s*alphaTestMethod\s*=\s*5\s*$/mi.test(materialText)
         && /^\s*processingMethodWhenFailedInAlphaTest\s*=\s*[01]\s*$/mi.test(materialText);
-      image = { ...info, rgba, shader, alphaTest: /alphaTestOnOff\s*=\s*0/i.test(materialText) ? 0 : Number(alphaMatch?.[1] ?? 0) / 255, sceneAlphaCutoff: sceneCutout ? Number(alphaMatch?.[1] ?? 0) / 255 : 0 };
+      const pass = materialIndex < 0 ? null : await json(90, new TextEncoder().encode(materialText));
+      image = { ...info, rgba, shader, pass, materialText, alphaTest: /alphaTestOnOff\s*=\s*0/i.test(materialText) ? 0 : Number(alphaMatch?.[1] ?? 0) / 255, sceneAlphaFailure: sceneCutout ? Number(materialText.match(/processingMethodWhenFailedInAlphaTest\s*=\s*(\d+)/i)?.[1] ?? 0) : 0, sceneAlphaCutoff: sceneCutout ? Number(alphaMatch?.[1] ?? 0) / 255 : 0 };
     } catch (error) { image = { shader, error: error.message }; }
     textures.set(material, image); cache.set(material, image);
   }
@@ -294,6 +295,9 @@ layout(location=2) in vec2 uv;
 layout(location=3) in float quadNode;
 layout(location=4) in vec3 ecoPosition;
 layout(location=5) in vec2 ecoScale;
+layout(location=6) in vec4 vertexColor;
+uniform vec2 sceneryUvOffset;
+out vec4 authoredColor;
 uniform bool useEcosystem;
 uniform vec2 ecoRotation;
 uniform mat4 viewProjection;
@@ -308,7 +312,8 @@ out float worldHeight;
 out vec2 texcoord;
 out vec2 worldXZ;
 void main() {
-  texcoord = uv;
+  texcoord = uv + sceneryUvOffset;
+  authoredColor = vertexColor;
   mat4 localPose = useQuadPose ? quadBones[int(quadNode)] : mat4(1.0);
   vec4 worldPosition = model * localPose * vec4(position, 1.0);
   if (useEcosystem) {
@@ -329,6 +334,10 @@ in float distanceToEye;
 in float worldHeight;
 in vec2 texcoord;
 in vec2 worldXZ;
+in vec4 authoredColor;
+uniform bool useVertexColor;
+uniform bool sceneryBlend;
+uniform bool alphaFailPass;
 uniform vec2 heights;
 uniform float fogDistance;
 uniform vec3 surfaceColor;
@@ -354,7 +363,15 @@ void main() {
   vec3 base = mix(vec3(.29,.32,.22), vec3(.60,.54,.41), altitude);
   base = mix(base, vec3(.40,.38,.34), smoothstep(.14,.65,1.0-n.y));
   if (surfaceColor.x >= 0.0) base = surfaceColor;
-  if (useTexture) { vec4 sampled = texture(baseTexture, texcoord); if (sampled.a < alphaCutoff) discard; base = sampled.rgb; }
+  float sourceAlpha = 1.0;
+  if (useTexture) {
+    vec4 sampled = texture(baseTexture, texcoord);
+    if (useVertexColor) sampled *= authoredColor / 128.0;
+    if (alphaFailPass ? sampled.a >= alphaCutoff : sampled.a < alphaCutoff) discard;
+    base = sampled.rgb;
+    // GS source alpha uses 128 for unity, while decoded PST bytes use 255.
+    sourceAlpha = sceneryBlend ? clamp(sampled.a * (255.0 / 128.0), 0.0, 1.0) : 1.0;
+  }
   if (useTerrainTexture) {
     vec2 grid = worldXZ / (terrainSpacing * 64.0);
     ivec2 tile = clamp(ivec2(floor(grid)), ivec2(0), textureSize(terrainMapping, 0) - 1);
@@ -376,7 +393,7 @@ void main() {
   float sunlight = max(dot(n, normalize(sunlightDirection)),0.0);
   vec3 lit = unlit ? base : base * (ambientLight + sunlightColor * sunlight);
   float fog = 1.0-exp(-pow(distanceToEye/fogDistance,2.0));
-  color = vec4(skyPass ? base : mix(lit, fogColor, min(.94,fog)),1.0);
+  color = vec4(skyPass ? base : mix(lit, fogColor, min(.94,fog)),sourceAlpha);
 }`;
 function shader(type, source) {
   const result = gl.createShader(type);
@@ -389,7 +406,7 @@ function initializeGl() {
   program = gl.createProgram(); gl.attachShader(program, vertex); gl.attachShader(program, fragment); gl.linkProgram(program);
   gl.deleteShader(vertex); gl.deleteShader(fragment);
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
-  uniforms = Object.fromEntries(['viewProjection', 'model', 'eye', 'heights', 'fogDistance', 'surfaceColor', 'baseTexture', 'useTexture', 'useTerrainTexture', 'terrainColors', 'terrainMapping', 'terrainDetail', 'terrainDetailScale', 'terrainSpacing', 'ambientLight', 'sunlightColor', 'sunlightDirection', 'fogColor', 'unlit', 'skyPass'].map(name => [name, gl.getUniformLocation(program, name)]));
+  uniforms = Object.fromEntries(['viewProjection', 'model', 'eye', 'heights', 'fogDistance', 'surfaceColor', 'baseTexture', 'useTexture', 'useTerrainTexture', 'terrainColors', 'terrainMapping', 'terrainDetail', 'terrainDetailScale', 'terrainSpacing', 'ambientLight', 'sunlightColor', 'sunlightDirection', 'fogColor', 'unlit', 'skyPass', 'useVertexColor', 'sceneryBlend', 'sceneryUvOffset', 'alphaFailPass'].map(name => [name, gl.getUniformLocation(program, name)]));
   uniforms.useEcosystem = gl.getUniformLocation(program, 'useEcosystem');
   uniforms.ecoRotation = gl.getUniformLocation(program, 'ecoRotation');
   uniforms.alphaCutoff = gl.getUniformLocation(program, 'alphaCutoff');
@@ -465,14 +482,15 @@ function uploadTerrainTextures() {
   diagnostics.terrainDetailTexture = [detail.width, detail.height];
   diagnostics.terrainLighting = 'original base/detail blend; projected pass selection pending';
 }
-function upload(vertices, indices, hasUv = false, hasNodes = false) {
+function upload(vertices, indices, hasUv = false, hasNodes = false, hasColors = false) {
   const chunk = { vao: gl.createVertexArray(), vertices: gl.createBuffer(), indices: gl.createBuffer(), count: indices.length };
   gl.bindVertexArray(chunk.vao); gl.bindBuffer(gl.ARRAY_BUFFER, chunk.vertices); gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
-  const stride = hasNodes ? 36 : hasUv ? 32 : 24;
+  const stride = hasColors ? 48 : hasNodes ? 36 : hasUv ? 32 : 24;
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, stride, 0);
   gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, stride, 12);
   if (hasUv) { gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, stride, 24); }
   if (hasNodes) { gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 1, gl.FLOAT, false, stride, 32); }
+  if (hasColors) { gl.enableVertexAttribArray(6); gl.vertexAttribPointer(6, 4, gl.FLOAT, false, stride, 32); }
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, chunk.indices); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
   return chunk;
 }
@@ -752,10 +770,14 @@ function buildMesh() {
         // Environment/reflection shaders need their original coordinate generation.
         // Keep those groups absent until recovered rather than drawing a false UV map.
         if (/refl|envmap/i.test(decoded?.shader ?? '')) { skippedSceneGroups++; continue; }
-        const vertices = new Float32Array(group.vertices.length * 8);
-        group.vertices.forEach((vertex, index) => vertices.set([...vertex.position, ...vertex.normal, ...vertex.uv], index * 8));
-        const chunk = upload(vertices, new Uint16Array(group.indices), true);
-        chunk.texture = textures.get(material); chunk.alphaCutoff = decoded?.sceneAlphaCutoff ?? 0; groups.push(chunk); sceneChunks.push(chunk);
+        const prelit = decoded?.pass?.prelit ?? false;
+        const vertices = new Float32Array(group.vertices.length * (prelit ? 12 : 8));
+        group.vertices.forEach((vertex, index) => vertices.set([...vertex.position, ...vertex.normal, ...vertex.uv, ...(prelit ? vertex.color ?? [128,128,128,128] : [])], index * (prelit ? 12 : 8)));
+        const chunk = upload(vertices, new Uint16Array(group.indices), true, false, prelit);
+        chunk.texture = textures.get(material); chunk.alphaCutoff = decoded?.sceneAlphaCutoff ?? 0;
+        chunk.prelit = prelit; chunk.material = material; chunk.blend = decoded?.pass?.blend ?? false; chunk.alphaFailure = decoded?.sceneAlphaFailure ?? 0;
+        chunk.depthWrite = decoded?.pass?.depth_write ?? true;
+        groups.push(chunk); sceneChunks.push(chunk);
       }
       geometry.set(name, groups);
     }
@@ -763,11 +785,13 @@ function buildMesh() {
       const groups = geometry.get(model.name);
       if (!groups?.length) continue;
       sceneInstances++;
-      for (const chunk of groups) { sceneDraws.push({ chunk, matrix: new Float32Array(model.world_matrix), unlit: !model.use_lighting }); sceneTriangles += chunk.count / 3; }
+      for (const chunk of groups) { sceneDraws.push({ chunk, matrix: new Float32Array(model.world_matrix), unlit: chunk.prelit || !model.use_lighting }); sceneTriangles += chunk.count / 3; }
     }
   }
   gl.bindVertexArray(null);
   diagnostics.skyTiles = skyChunks.length;
+  diagnostics.sceneryPrelitGroups = sceneChunks.filter(chunk => chunk.prelit).length;
+  diagnostics.sceneryUnsupportedAnimations = [...(terrain.world?.textures ?? [])].filter(([, texture]) => texture.pass?.unsupported_animation).map(([name, texture]) => ({ name, reason: texture.pass.unsupported_animation }));
   diagnostics.unsupportedSceneTextures = [...(terrain.world?.textures ?? [])].filter(([, texture]) => texture.error).map(([name, texture]) => ({ name, error: texture.error }));
   Object.assign(diagnostics, { vehicleVertices: vehicle?.groups.reduce((sum, group) => sum + group.vertices.length, 0) ?? 0, vehicleTriangles: vehicle?.groups.reduce((sum, group) => sum + group.indices.length / 3, 0) ?? 0, vehicleTextures: materialTextures.size, riderTriangles, riderTextures: riderTextureCount, vehiclePosition: vehicle?.position, sceneInstances, sceneTriangles, skippedSceneGroups, unsupportedSceneMeshes: terrain.world?.unsupported ?? [] });
 }
@@ -899,6 +923,9 @@ async function startSimulation(source) {
     trainRenderer?.accept(source.train.frame);
     diagnostics.train = { time: source.train.frame.time, duration: source.train.frame.duration, cars: source.train.frame.cars.filter(car => car.use_collision).length, wheelNodes: source.train.frame.wheel_matrices?.length ?? 0, frame: source.train.frame };
   } else diagnostics.train = null;
+  const uvSources = Object.fromEntries([...source.world.textures].filter(([, texture]) => texture.pass?.uv_scroll).map(([name, texture]) => [name, texture.materialText]));
+  const uvState = await command(91, uvSources);
+  diagnostics.sceneryUv = Object.fromEntries(uvState.map(([name]) => [name, [0,0]]));
   simReady = true;
 }
 async function pumpSimulation() {
@@ -920,8 +947,9 @@ async function pumpSimulation() {
     diagnostics.physicsRoundTripMs = performance.now() - submitted;
     diagnostics.physicsBatchSteps = count;
     if (token !== simGeneration) return;
-    for (const { frame, camera: cameraResult, water, train } of frames) {
+    for (const { frame, camera: cameraResult, water, train, scenery_uv } of frames) {
       acceptFrame(frame);
+      diagnostics.sceneryUv = scenery_uv;
       if (trainRenderer && train) { trainRenderer.accept(train); diagnostics.train.time = train.time; diagnostics.train.frame = train; }
       if (waterRenderer && water) { waterRenderer.accept(water); terrain.waterSource.frame = water; diagnostics.waterRender.baseHeight = water.base_height; }
       diagnostics.simulationSteps++;
@@ -1004,6 +1032,7 @@ function render(time) {
   }
   gl.viewport(0, 0, width, height); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.useProgram(program);
   gl.uniform1i(uniforms.useQuadPose, false); gl.uniform1i(uniforms.useEcosystem, false); gl.uniform1f(uniforms.alphaCutoff, 0);
+  gl.uniform1i(uniforms.useVertexColor, false); gl.uniform1i(uniforms.sceneryBlend, false); gl.uniform1i(uniforms.alphaFailPass, false); gl.uniform2f(uniforms.sceneryUvOffset, 0, 0);
   const viewProjection = matrix();
   gl.uniformMatrix4fv(uniforms.viewProjection, false, viewProjection); gl.uniform3f(uniforms.eye, camera.x, camera.y, camera.z);
   gl.uniform2f(uniforms.heights, terrain.min, terrain.max); gl.uniform1f(uniforms.fogDistance, Math.max(terrain.sizeX, terrain.sizeZ) * .85);
@@ -1046,10 +1075,22 @@ function render(time) {
   for (const { chunk, matrix, unlit } of sceneDraws) {
     gl.uniformMatrix4fv(uniforms.model, false, matrix); gl.uniform1i(uniforms.unlit, unlit);
     gl.uniform1f(uniforms.alphaCutoff, chunk.alphaCutoff);
+    gl.uniform1i(uniforms.useVertexColor, chunk.prelit); gl.uniform1i(uniforms.sceneryBlend, chunk.blend);
+    gl.uniform2fv(uniforms.sceneryUvOffset, diagnostics.sceneryUv?.[chunk.material] ?? [0,0]);
+    gl.depthMask(chunk.depthWrite);
+    if (chunk.blend) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); } else gl.disable(gl.BLEND);
     gl.uniform1i(uniforms.useTexture, Boolean(chunk.texture)); gl.bindTexture(gl.TEXTURE_2D, chunk.texture ?? fallbackTexture);
     gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
+    // GS FB_ONLY keeps failed fragments in the framebuffer without writing Z.
+    // Split the mutually exclusive predicates so each source pixel blends once.
+    if (chunk.alphaFailure === 1 && chunk.alphaCutoff > 0) {
+      gl.uniform1i(uniforms.alphaFailPass, true); gl.depthMask(false);
+      gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
+      gl.uniform1i(uniforms.alphaFailPass, false);
+    }
   }
-  gl.uniform1f(uniforms.alphaCutoff, 0);
+  gl.uniform1f(uniforms.alphaCutoff, 0); gl.uniform1i(uniforms.useVertexColor, false); gl.uniform1i(uniforms.sceneryBlend, false);
+  gl.uniform2f(uniforms.sceneryUvOffset, 0, 0); gl.depthMask(true); gl.disable(gl.BLEND);
   if (trainRenderer) { trainRenderer.draw(uniforms, fallbackTexture); diagnostics.train.draws = trainRenderer.draws; diagnostics.train.triangles = trainRenderer.triangles; }
   drawEcosystem();
   gl.uniform1i(uniforms.unlit, false);

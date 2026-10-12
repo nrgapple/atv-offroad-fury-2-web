@@ -52,6 +52,7 @@ struct Simulation {
     water: Option<atv_core::water_animation::LiveField>,
     camera: Option<atv_core::camera::FollowCamera>,
     train: Option<atv_core::train::Runtime>,
+    scenery_uv: Vec<(String, atv_core::scenery_material::Scroll)>,
     train_collision: Vec<TrainCollisionBinding>,
     train_collision_installed: bool,
     effects_time: f32,
@@ -1337,12 +1338,38 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
             serde_json::from_slice(&simulation(&camera, 46)?).map_err(|e| e.to_string())?;
         let water = SIMULATION
             .with_borrow(|sim| sim.water.as_ref().map(atv_core::water_render::Frame::new));
-        frames.push(serde_json::json!({"frame":frame,"camera":camera,"water":water,"train":train}));
+        let scenery_uv = SIMULATION.with_borrow_mut(|sim| {
+            sim.scenery_uv
+                .iter_mut()
+                .map(|(name, scroll)| scroll.step(1. / 60.).map(|offset| (name.clone(), offset)))
+                .collect::<Result<std::collections::BTreeMap<_, _>>>()
+        })?;
+        frames.push(serde_json::json!({"frame":frame,"camera":camera,"water":water,"train":train,"scenery_uv":scenery_uv}));
     }
     serde_json::to_vec(&frames).map_err(|e| e.to_string())
 }
 
 fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
+    if op == 90 {
+        return serde_json::to_vec(&atv_core::scenery_material::parse(input)?)
+            .map_err(|e| e.to_string());
+    }
+    if op == 91 {
+        let sources: std::collections::BTreeMap<String, String> =
+            serde_json::from_slice(input).map_err(|e| e.to_string())?;
+        if sources.len() > 4096 || sources.keys().any(|name| name.len() > 128) {
+            return Err("scenery animation configuration exceeds limit".into());
+        }
+        let mut animations = Vec::new();
+        for (name, source) in sources {
+            if let Some(scroll) = atv_core::scenery_material::parse(source.as_bytes())?.uv_scroll {
+                animations.push((name, scroll));
+            }
+        }
+        let result = serde_json::to_vec(&animations).map_err(|e| e.to_string())?;
+        SIMULATION.with_borrow_mut(|sim| sim.scenery_uv = animations);
+        return Ok(result);
+    }
     if (80..=85).contains(&op) {
         return SIMULATION.with_borrow(|sim| multiplayer::dispatch(input, op, index, sim));
     }
