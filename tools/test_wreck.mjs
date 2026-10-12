@@ -36,12 +36,10 @@ try {
   await touch('touchEnd', [drive]);
   await page.waitForFunction(() => window.rampFrames.some(s => s.frame.preload_active), null, { timeout: 5000, polling: 'raf' });
   await page.waitForFunction(() => !window.atvTerrainStatus.frame.grounded.some(Boolean), null, { timeout: 5000, polling: 'raf' });
-  // Primary right is always drive/preload. An extra right finger owns stunts.
-  const stunt = { id: 3, x: 230, y: 530 };
+  // The primary right thumb switches to tricks after takeoff.
   await touch('touchStart', [left, right]);
-  await touch('touchStart', [left, right, stunt]);
-  const swipe = { ...stunt, y: stunt.y - 70 };
-  await touch('touchMove', [left, right, swipe]);
+  const swipe = { ...right, y: right.y - 70 };
+  await touch('touchMove', [left, swipe]);
 
   await page.waitForFunction(() => window.atvTerrainStatus.frame.rider_mode === 'wreck', null, {timeout: 15000,polling:'raf'});
   const start = await page.evaluate(() => window.atvTerrainStatus.frame);

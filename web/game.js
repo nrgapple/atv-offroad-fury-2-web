@@ -752,6 +752,7 @@ function drivingInput() {
   input.lean += touchLean.lean;
   const touch = touchControls.sample();
   input.touch_drive = touch.drive;
+  input.steer += touch.steer; input.lean += touch.lean;
   // Cancellation also resets the native lean-flick history. A resumed forward
   // lean must not release a preload that was abandoned by blur/menu/disconnect.
   input.input_generation = gameplayBindings.generation + touchControls.generation;
@@ -759,7 +760,7 @@ function drivingInput() {
   if (touch.preload_axis !== null) input.preload_axis = touch.preload_axis;
   input.throttle = Math.max(0, clamp(input.throttle)); input.brake = Math.max(0, clamp(input.brake));
   // Browser axes point right; the recovered steering scalar points left.
-  input.steer = -clamp(input.steer); // Rust clamps the combined physical lean; right touch never adds pitch.
+  input.steer = -clamp(input.steer); // Rust clamps the combined physical lean; one-handed touch also supplies lean.
   return { input, actions };
 }
 function acceptFrame(frame) {
@@ -1003,7 +1004,7 @@ async function loadGame(file = null, environment = "env01") {
     Object.assign(diagnostics, { ready: true, source: source.name, width, depth, min, max, frames: 0 });
     $('reset').disabled = false; $('camera').disabled = !simReady; $('help').hidden = false;
     $('reset').textContent = simReady ? 'Reset ATV' : 'Reset view';
-    $('help').textContent = simReady ? 'Pause → Controls: keyboard / controller bindings · left touch: steer / lean · right: press to drive, drag back to brake / reverse, release preload' : 'Free camera · drag to look · WASD to move · Q/E up/down';
+    $('help').textContent = simReady ? 'Pause → Controls: keyboard / controller bindings · left touch: steer / lean · right: drive / brake on ground; swipe, hold or circle in air' : 'Free camera · drag to look · WASD to move · Q/E up/down';
     status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain. Open the disc to load the ATV.');
   } catch (error) { if (token === generation) status(error.message, true); throw error; }
   finally { if (token === generation) $('disc').disabled = false; }
@@ -1082,7 +1083,7 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
   if (params.get('source') === 'disc') { menuOpen = false; $('frontend').hidden = true; }
   else {
     hostedContent = openHostedContent();
-    frontend = new Frontend({codec, json, content: hostedContent, read, diagnosticsOverlay: stats, audio: () => audio, start: environment => loadGame(null, environment), active: open => { menuOpen = open; clearInput(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
+    frontend = new Frontend({codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: environment => loadGame(null, environment), active: open => { menuOpen = open; clearInput(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     hud = new HeadUpDisplay(frontend, canvas);
     if (params.get('drive') === '1') {
       menuOpen = false; $('frontend').hidden = true;

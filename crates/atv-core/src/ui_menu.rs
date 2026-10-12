@@ -54,6 +54,8 @@ pub struct Request {
     pub menu_atv: bool,
     #[serde(default)]
     pub diagnostics_mode: String,
+    #[serde(default)]
+    pub one_handed_mobile: bool,
 }
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -473,11 +475,17 @@ pub fn layout(request: Request) -> Result<Frame> {
                 "debug" => "Stats: Debug (F3)",
                 _ => "Stats: Off (F3)",
             };
+            let mobile_label = if request.one_handed_mobile {
+                "One-handed mobile: On"
+            } else {
+                "One-handed mobile: Off"
+            };
             let mut choices = vec![
                 ("Resume", "resume"),
                 ("Reset ATV", "reset"),
                 ("Controls", "controls"),
                 (diagnostics_label, "diagnostics"),
+                (mobile_label, "onehanded"),
             ];
             if request.music_ready {
                 choices.push(("Music", "music"));
@@ -486,7 +494,8 @@ pub fn layout(request: Request) -> Result<Frame> {
                 choices.push(("Fullscreen", "fullscreen"));
             }
             choices.extend([("Dev log", "devlog"), ("Quit to Main Menu", "main")]);
-            let row = ((h - 110.) / choices.len() as f32).min(if portrait { 64. } else { 48. });
+            let row = ((h - if portrait { 110. } else { 90. }) / choices.len() as f32)
+                .min(if portrait { 64. } else { 48. });
             let selected = request.selection % choices.len();
             for (i, (label, action)) in choices.iter().enumerate() {
                 f.choices.push(action.to_string());
@@ -495,7 +504,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                     action,
                     [
                         24.,
-                        98. + i as f32 * row,
+                        (if portrait { 98. } else { 78. }) + i as f32 * row,
                         if portrait { w - 60. } else { w - 108. },
                         row,
                     ],
@@ -504,15 +513,22 @@ pub fn layout(request: Request) -> Result<Frame> {
             }
         }
         "controls" => {
-            let groups = [(
-                "TOUCH",
+            let touch_lines = if request.one_handed_mobile {
+                vec![
+                    "One thumb anywhere: drag forward to drive.",
+                    "Left / right: steer. Back: brake / reverse.",
+                    "Keep contact to brace; lift to release preload.",
+                    "In air: steer and lean. Tricks disabled.",
+                ]
+            } else {
                 vec![
                     "Left: steer and lean, on ground or in air.",
                     "Right: press to drive; drag back to brake / reverse.",
                     "Hold right to brace. Lift to release preload.",
-                    "In air: extra right finger swipes stunts.",
-                ],
-            )];
+                    "In air: right thumb swipes / circles tricks.",
+                ]
+            };
+            let groups = [("TOUCH", touch_lines)];
             let mut y = 96.;
             for (index, (heading, lines)) in groups.into_iter().enumerate() {
                 let x = if portrait {
@@ -730,6 +746,7 @@ mod tests {
             menu_logo: true,
             menu_atv: true,
             diagnostics_mode: String::new(),
+            one_handed_mobile: false,
         }
     }
     #[test]

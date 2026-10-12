@@ -4,7 +4,7 @@ The left half is a floating steering/lean pad: horizontal motion steers, vertica
 
 The primary right finger controls drive and prepares preload. Press anywhere on the right to request full throttle immediately; drag backward/down beyond an eight-pixel jitter margin for progressive braking, then reverse near standstill. Forward input while reversing brakes first. Direction changes are resolved in Rust on every fixed step with current signed speed and a one-foot/second standstill tolerance. Direction stays selected while airborne because body rotation can change the sign of body-relative speed; opposite right input brakes instead of switching gear. Releasing the right finger drops touch throttle/brake immediately, including in air, and submits one preload-release input. Left lean stays independent. These are authored browser adaptations, not recovered PS2 control mappings.
 
-Every primary right hold prepares preload, including airborne holds, without bypassing the original ramp gates. A small marker follows vertical drive input and says **BRACED**, **RELEASE** when native arming is active, or **PRELOADED** during force application. There is no accumulating charge bar or separate brake/reverse button. Pause and Camera remain separate hit areas. A second right finger can select an original stunt while airborne without stealing the primary throttle/preload control.
+Every primary right hold prepares preload, including airborne holds, without bypassing the original ramp gates. A small marker follows vertical drive input and says **BRACED**, **RELEASE** when native arming is active, or **PRELOADED** during force application. There is no accumulating charge bar or separate brake/reverse button. Pause and Camera remain separate hit areas. At takeoff the same right thumb switches to trick gestures, with throttle/bracing suppressed; landing requires lifting that thumb before driving again.
 
 ## Native preload and the touch adaptation
 
@@ -18,9 +18,19 @@ Release is consumed at the simulation boundary so a visual-frame timer cannot ex
 
 ## Airborne stunts
 
-While the primary right finger is held, a **second** right-side press in the air becomes a stunt swipe: up selects Nac Nac, down No Footed Can Can, left Suicide No Hander, right Bar Hop. Hold that second finger after swiping to extend the original stunt; release it to finish. These four gestures map to the original Circle-plus-direction family. Primary right movement always remains throttle/brake, including in air. Gestures do not apply extra ATV forces or invented animations.
+The primary right thumb switches automatically from drive/bracing to tricks when all wheel contacts are absent. Its gesture origin resets to the thumb's current location at takeoff, so the ground throttle drag cannot accidentally select a trick. Airborne input sends zero touch throttle and no brace axis. The left thumb continues steering/leaning.
 
-The runtime loads all 24 original main stunt MOTs and all 24 original held extensions from the rider MCF catalog. Controller Circle, Triangle and L1 combinations plus stick direction address all 24; keyboard J, K and L supply the three modifiers with arrow directions. Touch currently exposes the four Circle-family stunts. Controller left-stick Y now uses the correct original sign (up leans forward), and R3 changes camera so Triangle is free for its original stunt modifier. Trigger drive/brake remains available alongside bottom/left face-button drive/brake; bottom plus left face buttons select reverse.
+| Right-thumb gesture in air | Original stunt |
+| --- | --- |
+| Up / down / left / right | Nac Nac / No Footed Can Can / Suicide No Hander / Bar Hop |
+| Up-left / up-right / down-left / down-right | Heel Clicker / Point Back / Nothing / Cliff Hanger |
+| Clockwise circle / counterclockwise circle | Cat Nac / Cordova |
+
+Swipe at least 36 CSS pixels and pause briefly (120ms) to select; this settling window lets a curved path become a circle rather than prematurely selecting a swipe. Circles require a near-closed loop, at least 44px width/height, and at least about 300 degrees of turning. Hold the thumb after a recognized gesture to request the original held extension; the native main-motion minimum still applies. Lift to release. A quick released swipe queues its modifier once, then releases it. Only one right finger owns this control. Cancel/blur/reset discard the gesture and pending input.
+
+Landing clears trick input and leaves the still-held thumb neutral until lifted; a fresh grounded press resumes throttle/bracing. Holding a trick through actual contact still reaches the original unsafe-landing classifier before browser feedback clears the gesture. These mappings are browser adaptations, not new stunt animations or physics. Ten of the original 24 stunts are exposed through these gestures; keyboard/controller mappings retain all 24. Physical iOS/controller validation and full flip behavior remain incomplete.
+
+The runtime loads all 24 main stunt MOTs and 24 held extensions from the rider MCF catalog. This replaces the earlier secondary-finger Circle-family touch mapping described in historical checks below.
 
 Recovered routines `002d9530` and `002d9870` determine modifier rearming, direction thresholds and held extension. Entry `002da6c0` requires no wheel contact, horizontal world speed above 4 feet/second, and an expired reposition timer; the exact 2-second reset timer is preserved. Per-stunt minimum main-motion times come from exact-build control tuning. The main clock pauses during extension; releasing resumes it. The selector and evaluator `002d8ba0/002d8e50` use the original main/hold motions and snapshot fade. Looping hold motion is sampled using the recovered one-dimensional gradient noise (`003454c0`, initialized by `00345650`), **not a sine wave**. A local original-RNG seed is used, so whole-game shared RNG order is not claimed.
 
@@ -57,6 +67,12 @@ The takeoff recenter was removed after the user reported ineffective pullback. I
 `tools/test_lifecycle.mjs` covers a verified browser lifecycle defect: the old unconditional `pagehide` handler terminated the Rust worker and closed audio even when the browser retained the page. Persisted hides now suspend rendering/audio and clear input while retaining resources; persisted shows restart one render loop with fresh timing. The frontend separately resumes menu polling. Actual-content WebKit and Chromium checks drove airborne, dispatched **synthetic** persisted hide/show events, verified suspension then continued body motion with the same worker, checked stale throttle clearing, and exercised pause/resume. Natural Back navigation in the tested installations reloaded the page instead of using BFCache. Thus this regression proves the event-handling fix, not that retained navigation caused the user's hovering report. Ordinary host and public touch driving/release/resume attempts did not reproduce persistent hovering.
 
 `tools/test_touch_pose.mjs` separately verifies the restored pose-only preload feedback: stationary right hold with neutral physical lean and release produce different original rider matrices, while native preload force remains inactive. The inspected `work/verification/touch-preload-pose-held.png` and `touch-preload-pose-released.png` show that pose change. This is a visual preparation cue, not evidence of a free jump or accumulated charge.
+
+## One-handed mobile option
+
+Pause → **One-handed mobile: On/Off** saves the choice in this browser. In one-handed mode a single thumb anywhere on the game view owns a floating stick. Contact alone braces without throttle; drag forward to accelerate, backward to brake/reverse through the original direction gate, and horizontally to steer. Vertical displacement also supplies rider lean. Lift near the ramp's preload opportunity to request the original jump force.
+
+Airborne contact uses the same steer/lean axes as the normal left thumb, with no touch drive, brace, or tricks. The stick origin remains unchanged across takeoff. On landing an existing contact stays neutral until lifted, avoiding surprise acceleration. Changing modes, pause, blur and cancellation clear old inputs. Storage denial falls back to a session-only setting. Keyboard/controller inputs remain available.
 
 ## Original main-stunt air-control gate
 

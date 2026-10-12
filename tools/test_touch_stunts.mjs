@@ -37,20 +37,36 @@ try {
   await page.waitForFunction(() => window.rampFrames.some(s => s.frame.preload_active), null, { timeout: 5000, polling: 'raf' });
   await page.waitForFunction(() => !window.atvTerrainStatus.frame.grounded.some(Boolean), null, { timeout: 5000, polling: 'raf' });
   const before = await page.evaluate(() => window.atvTerrainStatus.frame);
-  // Primary right retains drive/preload; secondary airborne right selects trick.
+  // The primary right thumb now selects tricks in air without a second finger.
   await touch('touchStart', [left, right]);
-  const trick = { id: 3, x: 230, y: 530 }, swipe = { ...trick, y: 460 };
-  await touch('touchStart', [left, right, trick]);
-  await touch('touchMove', [left, right, swipe]);
-  await page.waitForFunction(() => window.atvTerrainStatus.frame.stunt?.id === 0, null, { timeout: 5000, polling: 'raf' });
-  await page.waitForFunction(() => window.atvTerrainStatus.frame.stunt?.main_time > .05, null, { timeout: 5000, polling: 'raf' });
-  const performing = await page.evaluate(() => window.atvTerrainStatus.frame);
+  let swipe = { ...right, y: 460 };
+  const gesture = process.env.ATV_TOUCH_GESTURE || 'up';
+  const stuntId = gesture === 'circle-cw' ? 8 : gesture === 'circle-ccw' ? 9 : 0;
+  if (gesture.startsWith('circle-')) {
+    const direction = gesture === 'circle-cw' ? 1 : -1;
+    for (let i=1;i<=12;i++) {
+      const angle=direction*i*Math.PI*2/12;
+      swipe = { ...right, x: right.x-40+40*Math.cos(angle), y: right.y+40*Math.sin(angle) };
+      await touch('touchMove', [left, swipe]);
+    }
+  } else await touch('touchMove', [left, swipe]);
+  await page.waitForFunction(id => window.rampFrames.some(s => s.frame.stunt?.id === id && s.frame.stunt.main_time > .05), stuntId, { timeout: 5000, polling: 'raf' });
+  const snapshot = await page.evaluate(id => window.rampFrames.find(s => s.frame.stunt?.id === id && s.frame.stunt.main_time > .05), stuntId);
+  const performing = snapshot.frame;
   assert.equal(performing.rider_mode, 'stunt');
+  const input = snapshot.input;
+  assert.equal(input.touch_drive.axis, 0);
+  assert.equal(input.preload_axis, undefined);
   assert.notDeepEqual(performing.rider_node_matrices, before.rider_node_matrices, 'Original Nac Nac MOT must change the actual rendered rider pose');
+  if (gesture !== 'up') {
+    await touch('touchCancel');
+    assert.deepEqual(errors, []);
+    console.log(`PASS (${gesture}): primary-thumb circle enters original ${performing.stunt.name}, changes rider pose, with zero drive and no brace. Short-hop test does not establish held completion.`);
+  } else {
   // Release while the main motion is still playing. This short hop cannot
   // reach the original 0.92-second hold threshold before landing.
   await touch('touchEnd', [swipe]);
-  await page.waitForFunction(time => window.rampFrames.some(s => s.input.stunt_modifiers === 0 && s.frame.stunt?.id === 0 && !s.frame.stunt.holding && s.frame.stunt.main_time > time), performing.stunt.main_time, { timeout: 5000, polling: 'raf' });
+  await page.waitForFunction(({time,id}) => window.rampFrames.some(s => s.input.stunt_modifiers === 0 && s.frame.stunt?.id === id && !s.frame.stunt.holding && s.frame.stunt.main_time > time), {time:performing.stunt.main_time,id:stuntId}, { timeout: 5000, polling: 'raf' });
   if (process.env.ATV_TOUCH_STUNT_SCREENSHOT) await page.screenshot({ path: process.env.ATV_TOUCH_STUNT_SCREENSHOT });
   await page.waitForFunction(() => window.atvTerrainStatus.frame.rider_mode === 'wreck', null, { timeout: 10000, polling: 'raf' });
   const landing = await page.evaluate(() => window.atvTerrainStatus.frame);
@@ -61,5 +77,6 @@ try {
   assert(frames.some(s => s.frame.preload_active));
   assert.deepEqual(errors, []);
   if (process.env.ATV_TOUCH_STUNT_TRACE) await writeFile(process.env.ATV_TOUCH_STUNT_TRACE, JSON.stringify({ armed, before, performing, landing, frames, errors }, null, 2));
-  console.log('PASS: real Caribou short hop enters original Nac Nac, changes rider pose, releases modifier and advances main motion, then unfinished landing triggers native Vertical wreck. No held-stunt completion claim or injected state/forces.');
+  console.log(`PASS (${gesture}): real Caribou short hop enters original Nac Nac, changes rider pose, releases modifier and advances main motion, then unfinished landing triggers native Vertical wreck. No held-stunt completion claim or injected state/forces.`);
+  }
 } finally { await browser.close(); }

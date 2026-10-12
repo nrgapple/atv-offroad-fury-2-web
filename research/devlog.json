@@ -1,6 +1,6 @@
 {
-  "status": "The public Rust driving reconstruction is progressing; it is not the complete game.",
-  "working_on": "Coupled landing/slope handling and native collision candidate order after terrain, rider-water cache and wheelie integration.",
+  "status": "Host-verified touch-control checkpoint; CI and public release pending. The browser port remains incomplete.",
+  "working_on": "Validate one-handed mobile controls through CI and the public Cloudflare build; continue recovering the game systems.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1113,9 +1113,42 @@
       "limitation": "Host verification only; pending release and public verification. Rendered tire overlap remains 0.497238 ft across 62 riding frames, so no clipping improvement is claimed. Physical-device behavior, full water rendering/behavior and whole-game parity remain unverified.",
       "image": "/devlog-images/wheelie-scoring-and-water-integration-pass-host-checks-cab5ead4.png",
       "caption": "Host portrait clean-landing capture with live F3 diagnostics after wheelie scoring/HUD and water integration. Tire overlap remains measurable; this is not public-release evidence."
+    },
+    {
+      "id": "primary-right-side-gestures-select-airborne-tricks-7f034c07",
+      "timestamp": "2026-10-12T05:22:31.371257+00:00",
+      "recorded_at": "2026-10-12T05:26:43.047955+00:00",
+      "kind": "build",
+      "title": "Primary right-side gestures select airborne tricks",
+      "summary": "The portrait browser adaptation now uses the right-side touch area for airborne trick gestures. An up swipe enters the Nac Nac pose in a host Chromium check, with a 500-point HUD reading visible in the inspected capture.",
+      "details": [
+        "Eight swipe directions select original stunt choices; clockwise and counterclockwise circles select Cat Nac and Cordova.",
+        "A stationary finger settles after 120 ms, then extends the selected trick while held; release ends the gesture. Browser checks cover cancellation and ground, air, and landing transitions.",
+        "The left-side steering and lean controls remain unchanged. A rider lift is still required before landing."
+      ],
+      "limitation": "Host Chromium evidence only; CI and public deployment are pending. Physical phone behavior and full held-circle completion remain unverified. The overall stunt system is still incomplete.",
+      "image": "/devlog-images/primary-right-side-gestures-select-airborne-tricks-7f034c07.png",
+      "caption": "Host Chromium portrait capture: airborne Nac Nac with 500 points shown on the HUD."
+    },
+    {
+      "id": "one-handed-mobile-controls-can-be-enabled-from-pause-9c01a670",
+      "timestamp": "2026-10-12T05:30:49.669322+00:00",
+      "recorded_at": "2026-10-12T05:31:27.062240+00:00",
+      "kind": "verification",
+      "title": "One-handed mobile controls can be enabled from Pause",
+      "summary": "Pause now includes a persistent One-handed mobile setting. A host Chromium check enabled it, reloaded the game, and confirmed it remained on; a single left-side thumb then controlled bracing, steering, and lean through braking, reverse, ramp release, and airborne input.",
+      "details": [
+        "With one thumb held stationary, the test confirmed bracing with zero drive input. Backward input applied native braking/reverse; forward input applied lean.",
+        "At a ramp, releasing the touch produced takeoff. In the air, the same thumb steered and leaned, with no throttle, brace, or trick input.",
+        "The default two-sided Nac Nac touch path also continues to pass in the browser.",
+        "The pause menu screenshot shows the One-handed mobile setting enabled."
+      ],
+      "limitation": "Host Chromium evidence only; CI and public deployment are pending. Physical phone behavior remains unverified. This setting covers the tested touch-control path, not the complete game or stunt system.",
+      "image": "/devlog-images/one-handed-mobile-controls-can-be-enabled-from-pause-9c01a670.png",
+      "caption": "Host Chromium portrait pause menu with One-handed mobile set to On."
     }
   ],
-  "updated_at": "2026-10-12T05:12:24.340277+00:00",
+  "updated_at": "2026-10-12T05:31:27.062240+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
