@@ -98,7 +98,7 @@ The browser build has a portrait layout and touch controls. Open the [public gam
 - **Right thumb:** press and hold to accelerate immediately. Drag down to brake, then reverse after slowing. Lift to stop applying throttle/brake.
 - **Jump preparation:** the right hold also braces the rider; release at a suitable ramp to request preload. The recovered speed and ramp rules still apply—there's no free jump on flat ground.
 - **Tricks:** in the air, the right thumb switches to tricks. Swipe in eight directions or draw a clockwise/counterclockwise circle, then hold to extend the trick or lift to finish. On landing, a held thumb resumes drive immediately. See [gesture mappings](research/TOUCH.md).
-- **One-handed option:** enable **Pause → One-handed mobile** for one thumb anywhere: forward drives, back brakes/reverses, sideways steers, contact braces, and lifting releases preload. In air it steers/leans with tricks disabled.
+- **One-handed option:** enable **Pause → One-handed mobile** for one thumb anywhere: touch holds throttle and braces; drag sideways to steer and up/down to lean. Lift to coast and release preload. The same controls work in air, with no touch brake, reverse, or tricks.
 - **Pause and Camera:** use the on-screen buttons.
 
 Touch is a browser adaptation of the PS2 controls. Portrait and gesture checks pass in automated browsers; physical iOS Safari and Bluetooth-controller behavior remain unverified. The full original stunt system is still being rebuilt.

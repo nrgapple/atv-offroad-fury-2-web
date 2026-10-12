@@ -1,6 +1,6 @@
 {
-  "status": "Host-verified mobile landing response checkpoint; CI and public release pending. The browser port remains incomplete.",
-  "working_on": "Validate the immediate mobile landing response through CI and the public Cloudflare build, then continue the port.",
+  "status": "Host-verified one-handed mobile input checkpoint; CI and public release pending. The browser port remains incomplete.",
+  "working_on": "Validate this one-handed control behavior through CI and the public Cloudflare build, then continue the port.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1251,9 +1251,26 @@
       "limitation": "Host Chromium evidence only; CI and public deployment are pending. Physical phone behavior and full original-game parity remain unverified. Original landing forces and wreck behavior are unchanged.",
       "image": "/devlog-images/held-mobile-input-resumes-on-the-first-landing-step-0ef43fd5.png",
       "caption": "Host Chromium portrait capture after landing, with the rider braced at 14 mph."
+    },
+    {
+      "id": "one-handed-touch-now-holds-drive-through-landing-0836354a",
+      "timestamp": "2026-10-12T13:21:05.404205+00:00",
+      "recorded_at": "2026-10-12T13:23:15.268121+00:00",
+      "kind": "verification",
+      "title": "One-handed touch now holds drive through landing",
+      "summary": "The one-handed mobile mode now uses a held touch for throttle and brace on the ground and in the air. Four-direction drags steer and lean while the hold continues; releasing removes throttle and coasts without braking. A host Chromium run completed a Caribou preload, takeoff, and clean landing while the input stayed held.",
+      "details": [
+        "In the real-browser check, stationary touch applied throttle and brace. Four drag directions changed steering or lean while throttle stayed on; brake, reverse, and stunt inputs remained off.",
+        "Releasing the touch set throttle to zero while brake stayed zero. Holding through takeoff and landing kept drive active; releasing after landing let the ATV coast.",
+        "A deterministic 2,000-operation comparison of the default two-finger path against the baseline produced identical outputs, including begin, move, end, cancel, clear, and air/ground transitions.",
+        "The inspected portrait capture shows the release indicator at 28 mph; the interaction and landing sequence are supported by logged browser frames."
+      ],
+      "limitation": "Host checks only; CI and public deployment are pending. Physical phone behavior and full-game parity remain unverified. The two-finger equivalence check covers the tested input sequence, not every device or gameplay case.",
+      "image": "/devlog-images/one-handed-touch-now-holds-drive-through-landing-0836354a.png",
+      "caption": "Host Chromium portrait capture showing the one-handed release indicator at 28 mph."
     }
   ],
-  "updated_at": "2026-10-12T12:59:31.576675+00:00",
+  "updated_at": "2026-10-12T13:23:15.268121+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

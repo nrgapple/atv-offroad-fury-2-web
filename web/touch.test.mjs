@@ -80,20 +80,24 @@ test('small jitter and incomplete tiny circles never select tricks', () => {
   assert.equal(touch.sample(1000).stunt_modifiers,0);
 });
 
-test('one-handed ground contact braces; forward drives, back brakes, horizontal steers', () => {
+test('one-handed contact holds throttle and brace; four directions only steer/lean', () => {
   const touch=new TouchInput();touch.setOneHanded(true);touch.begin(1,60,500);
-  let s=touch.sample();assert.equal(s.drive.axis,0);assert.equal(s.preload_axis,1);
-  touch.move(1,130,430);s=touch.sample();assert.equal(s.drive.axis,1);assert.equal(s.steer,1);assert.equal(s.lean,-1);assert.equal(s.stunt_modifiers,0);
-  touch.move(1,-10,570);s=touch.sample();assert.equal(s.drive.axis,-1);assert.equal(s.steer,-1);assert.equal(s.lean,1);
-  touch.end(1);assert.equal(touch.sample().preload_axis,-1);
+  for(const [dx,dy,x,y] of [[0,0,0,0],[70,0,1,0],[-70,0,-1,0],[0,-70,0,-1],[0,70,0,1]]) {
+    touch.move(1,60+dx,500+dy);const s=touch.sample();
+    assert.equal(s.drive.axis,1);assert.equal(s.drive.held,true);assert.equal(s.drive.grounded_only,false);
+    assert.equal(s.preload_axis,1);assert.equal(s.steer,x);assert.equal(s.lean,y);assert.equal(s.stunt_modifiers,0);
+  }
+  touch.end(1);let s=touch.sample();assert.equal(s.drive.axis,0);assert.equal(s.drive.held,false);assert.equal(s.preload_axis,-1);
+  assert.equal(touch.sample().preload_axis,null);
 });
 
-test('one-handed air queues drive and retains lean; landing activates without lifting', () => {
-  const touch=new TouchInput();touch.setOneHanded(true);touch.begin(1,60,500);touch.move(1,60,430);touch.sample();touch.setAirborne(true);
-  let s=touch.sample();assert.equal(s.lean,-1);assert.equal(s.preload_axis,null);assert.equal(s.drive.axis,1);assert.equal(s.drive.grounded_only,true);
-  touch.move(1,130,570,0);s=touch.sample(500);assert.equal(s.steer,1);assert.equal(s.lean,1);assert.equal(s.stunt_modifiers,0);
-  touch.move(1,60,430);touch.setAirborne(false);s=touch.sample();assert.equal(s.drive.axis,1);assert.equal(s.steer,0);assert.equal(s.lean,-1);
-  touch.end(1);assert.equal(touch.sample().preload_axis,-1);
+test('one-handed controls and brace remain continuous through takeoff and landing', () => {
+  const touch=new TouchInput();touch.setOneHanded(true);touch.begin(1,60,500);touch.move(1,130,570);
+  const baseline=touch.sample();const generation=touch.generation;
+  for(const airborne of [true,false,true]) {
+    touch.setAirborne(airborne);assert.deepEqual(touch.sample(),baseline);assert.equal(touch.generation,generation);
+  }
+  touch.end(1);const released=touch.sample();assert.equal(released.drive.axis,0);assert.equal(released.preload_axis,-1);
 });
 
 test('changing mobile mode cancels old gesture, drive and pending releases', () => {

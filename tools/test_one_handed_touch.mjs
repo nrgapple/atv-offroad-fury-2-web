@@ -24,32 +24,37 @@ try {
   const touch=(type,points=[])=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:points.map(p=>({radiusX:6,radiusY:6,force:1,...p}))});
   const origin={id:1,x:60,y:560};
   await touch('touchStart',[origin]);
-  await page.waitForFunction(()=>window.atvTerrainStatus.input?.touch_drive.held && window.atvTerrainStatus.input.touch_drive.axis===0 && window.atvTerrainStatus.input.preload_axis===1);
-  await touch('touchMove',[{...origin,y:630}]);
-  await page.waitForFunction(()=>window.atvTerrainStatus.input?.touch_drive.axis===-1 && window.atvTerrainStatus.input.lean===1);
-  await touch('touchMove',[{...origin,y:490}]);
-  await page.waitForFunction(()=>window.atvTerrainStatus.input?.touch_drive.axis===1 && window.atvTerrainStatus.input.lean===-1);
+  await page.waitForFunction(()=>{const i=window.atvTerrainStatus.input;return i?.throttle===1 && i.brake===0 && !i.reverse && i.preload_axis===1 && i.lean===0;});
+  for (const [dx,dy,steer,lean] of [[0,70,0,1],[0,-70,0,-1],[70,0,-1,0],[-70,0,1,0]]) {
+    await touch('touchMove',[{...origin,x:origin.x+dx,y:origin.y+dy}]);
+    await page.waitForFunction(([x,y])=>{const i=window.atvTerrainStatus.input;return i?.throttle===1 && i.brake===0 && !i.reverse && i.steer===x && i.lean===y && i.stunt_modifiers===0;},[steer,lean]);
+  }
+  await touch('touchEnd');
+  await page.waitForFunction(()=>{const i=window.atvTerrainStatus.input;return i?.throttle===0 && i.brake===0 && !i.reverse && !i.touch_drive.held;});
+  // Fresh original start for the ramp, retaining the saved mode.
+  await page.reload();
+  await page.waitForFunction(()=>window.atvTerrainStatus?.simulation,null,{timeout:90000});
+  await touch('touchStart',[origin]);
   await page.waitForFunction(()=>window.atvTerrainStatus.frame.preload_armed,null,{timeout:45000,polling:'raf'});
   await touch('touchEnd');
   await page.waitForFunction(()=>!window.atvTerrainStatus.frame.grounded.some(Boolean),null,{timeout:5000,polling:'raf'});
   await touch('touchStart',[origin]);
   await touch('touchMove',[{...origin,x:130,y:630}]);
-  await page.waitForFunction(()=>{const i=window.atvTerrainStatus.input;return i?.throttle===0 && i.brake===0 && i.touch_drive.grounded_only && i.steer===-1 && i.lean===1 && i.stunt_modifiers===0 && i.preload_axis===undefined;},null,{timeout:5000,polling:'raf'});
-  const queuedAt = await page.evaluate(()=>window.landingFrames.at(-1)?.step ?? 0);
-  // Prepare acceleration before touchdown, then keep this thumb still.
-  await touch('touchMove',[{...origin,y:530}]);
-  await page.waitForFunction(start=>window.landingFrames.some((s,i,frames)=>s.step>start && i>0 && !frames[i-1].frame.grounded.some(Boolean) && s.frame.grounded.some(Boolean)),queuedAt,{timeout:10000,polling:'raf'});
-  await page.waitForFunction(()=>window.landingFrames.some((s,i,frames)=>i>0 && frames[i-1].frame.grounded.some(Boolean) && s.frame.applied_input?.touch_drive.grounded_only && s.frame.applied_input.touch_drive.axis>0 && s.frame.applied_input.throttle>0),null,{timeout:5000,polling:'raf'});
+  await page.waitForFunction(()=>{const i=window.atvTerrainStatus.input;return i?.throttle===1 && i.brake===0 && !i.reverse && i.steer===-1 && i.lean===1 && i.stunt_modifiers===0 && i.preload_axis===1;},null,{timeout:5000,polling:'raf'});
+  const heldAt = await page.evaluate(()=>window.landingFrames.at(-1)?.step ?? 0);
+  await touch('touchMove',[origin]);
+  await page.waitForFunction(start=>window.landingFrames.some((s,i,frames)=>s.step>start && i>0 && !frames[i-1].frame.grounded.some(Boolean) && s.frame.grounded.some(Boolean)),heldAt,{timeout:10000,polling:'raf'});
+  await page.waitForFunction(start=>window.landingFrames.some(s=>s.step>start && s.frame.grounded.some(Boolean) && s.input?.throttle===1 && s.input.lean===0),heldAt,{timeout:5000,polling:'raf'});
   const frames=await page.evaluate(()=>window.landingFrames);
-  const landing=frames.findIndex((s,i)=>s.step>queuedAt && i>0 && !frames[i-1].frame.grounded.some(Boolean) && s.frame.grounded.some(Boolean));
+  const landing=frames.findIndex((s,i)=>s.step>heldAt && i>0 && !frames[i-1].frame.grounded.some(Boolean) && s.frame.grounded.some(Boolean));
   assert(landing>=0);
   const next=frames[landing+1];assert(next,'Next fixed step after touchdown recorded');
   assert.equal(next.frame.wreck.phase,'Riding');
-  if (!next.frame.applied_input.throttle) console.log(JSON.stringify(frames.slice(landing-2,landing+5).map(s=>({step:s.step,grounded:s.frame.grounded,input:s.input,wreck:s.frame.wreck,forced:s.frame.rider_mode})),null,2));
-  assert(next.frame.applied_input.throttle>0,'Queued held-thumb throttle must apply on the very next fixed step after first contact');
-  assert.equal(next.frame.applied_input.stunt_modifiers,0);
+  assert.equal(next.input.throttle,1,'Held contact must retain throttle across landing');
+  assert.equal(next.input.brake,0);assert.equal(next.input.reverse,false);assert.equal(next.input.stunt_modifiers,0);
   if(process.env.ATV_ONE_HAND_LANDING_SCREENSHOT)await page.screenshot({path:process.env.ATV_ONE_HAND_LANDING_SCREENSHOT});
+  await touch('touchEnd');
+  await page.waitForFunction(()=>{const i=window.atvTerrainStatus.input;return i?.throttle===0 && i.brake===0 && !i.reverse && !i.touch_drive.held;});
   assert.deepEqual(errors,[]);
-  await touch('touchCancel');
-  console.log('PASS: saved one-handed toggle survives reload; left-side single thumb braces, drives, brakes/reverses through native gate and controls airborne steer/lean with no tricks, throttle or brace; queued throttle resumes on the next fixed step after touchdown without a lift/move. Physical phone hardware unverified.');
+  console.log('PASS: saved one-handed setting, touch-to-throttle/brace, four steering/lean directions with no brake/reverse/tricks, release coasts, and continuous held throttle/brace through air and landing. Physical phone hardware unverified.');
 } finally {await browser.close();}

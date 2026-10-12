@@ -515,10 +515,10 @@ pub fn layout(request: Request) -> Result<Frame> {
         "controls" => {
             let touch_lines = if request.one_handed_mobile {
                 vec![
-                    "One thumb anywhere: drag forward to drive.",
-                    "Left / right: steer. Back: brake / reverse.",
-                    "Keep contact to brace; lift to release preload.",
-                    "In air: steer and lean. Tricks disabled.",
+                    "One thumb anywhere: hold to drive and brace.",
+                    "Drag left / right to steer; up / down to lean.",
+                    "Lift: no throttle; releases preload, no brake.",
+                    "Same controls in air. No reverse or tricks.",
                 ]
             } else {
                 vec![

@@ -70,9 +70,9 @@ The takeoff recenter was removed after the user reported ineffective pullback. I
 
 ## One-handed mobile option
 
-Pause → **One-handed mobile: On/Off** saves the choice in this browser. In one-handed mode a single thumb anywhere on the game view owns a floating stick. Contact alone braces without throttle; drag forward to accelerate, backward to brake/reverse through the original direction gate, and horizontally to steer. Vertical displacement also supplies rider lean. Lift near the ramp's preload opportunity to request the original jump force.
+Pause → **One-handed mobile: On/Off** saves the choice in this browser. A single thumb anywhere on the game view holds full throttle and braces immediately. Drag left/right to steer and up/down to lean forward/back, using the same floating-stick axes as the normal left thumb. Vertical movement never brakes or requests reverse. Lift to remove throttle (coast, without braking) and request preload through the original ramp gates.
 
-Airborne contact uses the same steer/lean axes as the normal left thumb, with no touch drive, brace, or tricks. The stick origin remains unchanged across takeoff. One-handed drive intent stays queued while airborne, with throttle/brake suppressed by Rust at every fixed step without wheel contact. It activates on the first step whose starting state has wheel contact, including within a queued four-step batch; no lift or new pointer movement is needed. Airborne lean remains unchanged, and brace requests still follow ground feedback. Changing modes, pause, blur and cancellation clear old inputs. Storage denial falls back to a session-only setting. Keyboard/controller inputs remain available.
+These inputs stay identical in air and on the ground: no touch mode transition, throttle suppression, origin reset, or landing delay. Holding continues both throttle and bracing; lifting in air removes throttle and releases the brace without bypassing native jump rules. Touch tricks are disabled. Cancellation, pause, blur and changing modes clear input without producing a preload release. Storage denial falls back to a session-only setting. Two-finger controls and independent keyboard/controller bindings are unchanged.
 
 ## Original main-stunt air-control gate
 
