@@ -29,8 +29,10 @@ STARTUP = (
     '/TRACKS/TRACKSA/ENV06/E06_FR.RES', '/TRACKS/TRACKSA/ENV06/E06_ENDL.RES',
     '/TRACKS/TRACKSA/ENV07/E07_FR.RES', '/TRACKS/TRACKSA/ENV07/E07_ENDL.RES',
     '/TRACKS/TRACKSA/ENV08/E08_FR.RES', '/TRACKS/TRACKSA/ENV08/E08_ENDL.RES',
+    '/TRACKS/TRACKSA/FREE05/F05_FR.RES',
     '/UI/RESOURCE/QUADINFO.RES',
     '/UI/RESOURCE/TP/TP_ANAT.RES',
+    '/UI/RESOURCE/TP/TP_PSTNT.RES',
     '/UI/RESOURCE/TITLE.RES', '/UI/RESOURCE/PAGEA/PAGE01.RES',
     '/UI/RESOURCE/PAGEA/PAGE02.RES', '/UI/RESOURCE/PAGEA/PAGE06.RES',
 )
@@ -294,6 +296,17 @@ def compact_map_placements(data, environment):
     return pack_resource([(resource.members[index][0], resource.extract(index))])
 
 
+def compact_vancouver_thumbnail(data):
+    """Only the two source Vancouver preview halves used by the selector."""
+    resource = Resource(data)
+    names = {'trk_free05_a.pst', 'trk_free05_b.pst'}
+    selected = [(name, resource.extract(i)) for i, (name, _, _) in enumerate(resource.members)
+                if name.lower().rsplit('/', 1)[-1] in names]
+    if len(selected) != 2 or {name.lower().rsplit('/', 1)[-1] for name, _ in selected} != names:
+        raise ValueError('missing or duplicated Vancouver thumbnail halves')
+    return pack_resource(selected)
+
+
 def validated_content(directory):
     """Validate and return only manifest-authorized runtime files for Sites."""
     directory = Path(directory)
@@ -375,6 +388,8 @@ def main():
                 data = compact_player_archive(data, path)
             elif path.endswith('_ENDL.RES'):
                 data = compact_map_placements(data, path.split('/')[-2])
+            elif path == '/UI/RESOURCE/TP/TP_PSTNT.RES':
+                data = compact_vancouver_thumbnail(data)
             elif path == '/RIDER/RIDER_MT.RES':
                 data = compact_rider_materials(originals['/RIDER/MRIDER.RES'], data, (originals['/RIDER/FRIDER.RES'],))
             record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith('/QUAD/') or path in ('/RIDER/FRIDER.RES',), **blob(data)}

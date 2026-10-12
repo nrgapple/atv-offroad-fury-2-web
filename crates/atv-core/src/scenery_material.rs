@@ -12,6 +12,70 @@ pub struct Pass {
     pub depth_write: bool,
     pub uv_scroll: Option<Scroll>,
     pub unsupported_animation: Option<String>,
+    pub texture_animation: Option<TextureAnimation>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct TextureAnimation {
+    pub fps: f32,
+    pub initial: f32,
+    pub looping: bool,
+    pub loop_start: i32,
+}
+
+/// Forward ATM frame clock from 001bd8e0/001bdb60. Original elapsed time is
+/// unsigned milliseconds; the first preparation has zero elapsed time.
+pub struct TextureClock {
+    config: TextureAnimation,
+    frames: usize,
+    phase: f32,
+    previous_ms: Option<u32>,
+}
+impl TextureClock {
+    pub fn phase(&self) -> f32 {
+        self.phase
+    }
+    pub fn new(config: TextureAnimation, frames: usize) -> Result<Self> {
+        if frames == 0
+            || frames > 512
+            || !config.initial.is_finite()
+            || !config.fps.is_finite()
+            || !(0.0..=1000.0).contains(&config.fps)
+            || config.initial < 0.
+            || config.initial >= frames as f32
+            || config.loop_start < -1
+            || config.loop_start >= frames as i32
+        {
+            return Err("invalid scenery ATM frame range".into());
+        }
+        Ok(Self {
+            phase: config.initial,
+            config,
+            frames,
+            previous_ms: None,
+        })
+    }
+    pub fn tick(&mut self, milliseconds: u32) -> usize {
+        let elapsed = self
+            .previous_ms
+            .filter(|previous| *previous != u32::MAX)
+            .map(|previous| milliseconds.wrapping_sub(previous) as f32 * 0.001)
+            .unwrap_or(0.);
+        self.previous_ms = Some(milliseconds);
+        self.phase += elapsed * self.config.fps;
+        if self.phase >= self.frames as f32 {
+            let remainder = self.phase % self.frames as f32;
+            self.phase = if !self.config.looping {
+                (self.frames - 1) as f32
+            } else if self.config.loop_start < 0 {
+                remainder
+            } else {
+                self.config.loop_start as f32
+                    + remainder % (self.frames as f32 - self.config.loop_start as f32)
+            };
+        }
+        self.phase as usize
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -91,6 +155,28 @@ pub fn parse(data: &[u8]) -> Result<Pass> {
         !get("ZWriteDisabled").is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
     let animate = number("uvs_animate_1", number("uvs_animate", 0.)?)? != 0.;
     let mut unsupported_animation = None;
+    let texture_animation = if get("TextureAnimation")
+        .is_some_and(|v| v.eq_ignore_ascii_case("unique") || v.eq_ignore_ascii_case("shared"))
+    {
+        let field = |key: &str, default: f32| number(&format!("{key}_1"), number(key, default)?);
+        if field("animatedMapReverseLoopOnEnd", 0.)? != 0. {
+            unsupported_animation = Some("reverse ATM playback".into());
+            None
+        } else {
+            let fps = field("animatedMapFramesPerSecond", 1.)?;
+            if !(0.0..=1000.0).contains(&fps) {
+                return Err("invalid scenery ATM rate".into());
+            }
+            Some(TextureAnimation {
+                fps,
+                initial: field("animatedMapInitialFrame", 0.)?,
+                looping: field("animatedMapLooping", 1.)? != 0.,
+                loop_start: field("animatedMapLoopOnEndToFrame", -1.)? as i32,
+            })
+        }
+    } else {
+        None
+    };
     let uv_scroll = if animate {
         let observed = shader.eq_ignore_ascii_case("TexTransformPrelitCompressed");
         let defaults = [
@@ -133,6 +219,7 @@ pub fn parse(data: &[u8]) -> Result<Pass> {
         depth_write,
         uv_scroll,
         unsupported_animation,
+        texture_animation,
     })
 }
 
@@ -160,5 +247,28 @@ mod tests {
         assert!(pass.unsupported_animation.is_some());
         assert!(pass.uv_scroll.is_none());
         assert!(parse(b"[ShaderPass_1]\nv_velocity=NaN\nuvs_animate=1\nmicroProgramName=TexTransformPrelitCompressed\n").is_err());
+    }
+    #[test]
+    fn atm_clock_retains_first_frame_uses_unsigned_ms_and_loop_start() {
+        let config = TextureAnimation {
+            fps: 2.,
+            initial: 0.,
+            looping: true,
+            loop_start: 0,
+        };
+        let mut clock = TextureClock::new(config.clone(), 4).unwrap();
+        assert_eq!(clock.tick(u32::MAX - 249), 0);
+        assert_eq!(clock.tick(250), 1);
+        assert_eq!(clock.tick(1750), 0);
+        let mut clock = TextureClock::new(
+            TextureAnimation {
+                looping: false,
+                ..config
+            },
+            4,
+        )
+        .unwrap();
+        assert_eq!(clock.tick(0), 0);
+        assert_eq!(clock.tick(3000), 3);
     }
 }

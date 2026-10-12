@@ -1,6 +1,6 @@
 {
   "status": "Water recovery and snow-ramp collision are publicly verified. The multiplayer lobby, two-browser driving, remote wreck presentation and spatial audio pass host integration checks; multiplayer current-main CI and public verification are pending. The browser port remains incomplete.",
-  "working_on": "Recover and connect the original FREE05 Vancouver Ridge ski-jump map (skijump), then verify its map loading and source fidelity.",
+  "working_on": "Integrate Vancouver Ridge into the current-main release, run the nine-map regression, and complete the authorized Cloudflare publication checks.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1736,9 +1736,28 @@
       "limitation": "Host-only checkpoint. The supplied screenshots are inspection-camera views rather than normal gameplay or public-release evidence. Caribou ice reflection groups, exact fog, LOD, point lights, weather, other modes and overall map fidelity remain incomplete. The missing Vancouver Ridge ski-jump map is identified as original FREE05/skijump and is the next implementation focus.",
       "image": "/devlog-images/prelit-map-materials-and-animated-water-surfaces-02784718.png",
       "caption": "Host inspection camera on ENV07 showing the lava surface material; related reviewed inspection views show Freeport rain cards and Arlington waterflow. This is not a normal-gameplay or public-release capture."
+    },
+    {
+      "id": "vancouver-ridge-ski-jump-joins-freestyle-6340b7f5",
+      "timestamp": "2026-10-12T19:51:44.475088+00:00",
+      "recorded_at": "2026-10-12T19:55:28.288960+00:00",
+      "kind": "build",
+      "title": "Vancouver Ridge ski jump joins Freestyle",
+      "summary": "The original FREE05 Vancouver Ridge ski-jump course now loads through the Single Player \u2192 Freestyle route under its SPStunt6 name and original two-part thumbnail. Source-derived map content and a bounded no-injection ramp approach pass host checks on desktop and mobile.",
+      "details": [
+        "The original F05_FR source contains free05.scn and free05.toy, distinct from ENV01. The connected map uses the original 1281\u00d71281 terrain at 4.5-foot spacing, detail texture, sky and 37,649 snow-vegetation placements. Of 78 scenery definitions, 75 draw; three original ice-reflection overlays remain unsupported.",
+        "All 43 placed solid colliders are retained across draglight, l_post, skijump and skilodge1/2/3 assets. The skijump PSG provides 280 finest-LOD triangles; its COL mesh provides 200 vertices and 279 triangles. Source placement matrices are retained.",
+        "tools/test_vancouver.mjs passes desktop and 390px ramp-spawn driving through normal throttle: 123 wheel-support frames, 31 body-contact frames, flight begins at step 19, and later ground contact occurs with finite physics and no JavaScript or GL errors. Both unlocked Freestyle menu routes pass without a disc picker.",
+        "Original drag-light ATM animation restores its five frames at 2 FPS with the forward-loop frame clock. A Rust probe covers 300 original 001bdb60 cases across 21,582 instructions with zero binary32 mismatches; explicit texture-handle/frame-count lookup and finite host fmod behavior are included, and pause holds the frame.",
+        "Verification passes: make check (307 core, 22 network, 11 relay, 3 bridge and 66 JavaScript tests), make verify, make web, 16 release tests, 5 Worker tests, and the four-map scenery-material browser test. The latter includes source RGBA upload and 115,571 contributing skijump pixels, retaining source animation phase across pause and graphics-context loss.",
+        "The inspected companion desktop and portrait route captures provide normal-drive context approaching the ramp; the selected hero image is a deliberate inspection-camera close view of the jump."
+      ],
+      "limitation": "Host-only checkpoint. This reconstruction does not establish original-hardware validation or whole-map parity. Exact fog, 92 light/lens flags, three ice reflections, LOD, shadows, weather, full mode/progression coverage and complete gameplay fidelity remain open.",
+      "image": "/devlog-images/vancouver-ridge-ski-jump-joins-freestyle-6340b7f5.png",
+      "caption": "Host inspection-camera view of the original Vancouver Ridge ski jump. Companion desktop and portrait host captures show the ATV approaching the ramp during ordinary driving; this checkpoint has not been publicly released."
     }
   ],
-  "updated_at": "2026-10-12T19:39:52.584244+00:00",
+  "updated_at": "2026-10-12T19:55:28.288960+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

@@ -7,7 +7,7 @@ const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4173';
 const browser=await chromium.launch({headless:true});
 const results=[];
 try {
-  for(const [environment,model,material,velocity] of [['env04','sx13rain','rain',2],['env07','lava','lava',0],['env08','waterduct1','waterflow',.983]]) {
+  for(const [environment,model,material,velocity] of [['env04','sx13rain','rain',2],['env07','lava','lava',0],['env08','waterduct1','waterflow',.983],['free05','skijump','skijump',0]]) {
     const page=await browser.newPage({viewport:{width:960,height:600}}),errors=[];
     page.on('pageerror',e=>errors.push(e.message));
     await page.addInitScript(model => {

@@ -1,5 +1,21 @@
 # Implementation handoff
 
+## Map-fidelity and Vancouver Ridge host checkpoint
+
+The isolated map lane has a complete 40-family/147-archive asset-header/config
+census and restored static prelit RGBA, FB_ONLY/source-alpha behavior and Rust UV
+movement. Vancouver Ridge is the previously unconnected FREE05, not Caribou:
+Single Player → Freestyle now exposes its original SPStunt6 name/thumbnail without
+an unlock. The host loads original terrain, 37,649 snowy plants and all 43 placed
+solid colliders. All 78 scenery meshes decode; 75 placements draw while three ice
+reflection overlays remain skipped. Its five-frame drag light now uses the
+recovered forward ATM clock. Desktop/390px source-ramp throttle tests pass wheel
+support, body contact, air and ground return; both menu routes pass without a disc
+picker. This is a host checkpoint, not full map or hardware parity. See
+[map evidence and limits](research/MAP_FIDELITY.md). Public verification is pending
+current-main CI/deployment, required R2 content/inspected screenshot publication
+and public browser gates. Preserve the other lane's Rust relay deployment fix.
+
 ## Rust multiplayer host checkpoint, public verification pending
 
 Isolated `feature/rust-multiplayer` adds four-player host-controlled Freeride

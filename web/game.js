@@ -97,21 +97,24 @@ async function discTerrain(file, token) {
   return terrainFromContent(file, files, token);
 }
 async function terrainFromContent(file, files, token, environment = "env01") {
-  if (!["env01", "env02", "env03", "env04", "env05", "env06", "env07", "env08"].includes(environment)) throw new Error("Environment is not connected yet.");
-  const number = environment.slice(-2);
+  if (!["env01", "env02", "env03", "env04", "env05", "env06", "env07", "env08", "free05"].includes(environment)) throw new Error("Environment is not connected yet.");
+  const number = environment.slice(-2), vancouver = environment === 'free05';
+  const directory = vancouver ? 'FREE05' : `ENV${number}`;
+  const archiveStem = vancouver ? 'F05' : `E${number}`;
+  const sceneStem = vancouver ? environment : `${environment}fr`;
   const memberNamed = (entry, name) => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase();
   status('Loading original engine sounds…');
   await audio.load({ file, files, read, isCurrent: () => token === generation, quadId: frontend?.quadId ?? 1 });
-  const archive = files.find(entry => entry.path === `/TRACKS/TRACKSA/ENV${number}/E${number}_FR.RES`);
+  const archive = files.find(entry => entry.path === `/TRACKS/TRACKSA/${directory}/${archiveStem}_FR.RES`);
   if (!archive) throw new Error(`Original ${environment.toUpperCase()} terrain archive is missing.`);
   status('Reading original terrain…');
   const resource = await read(file, archive.lba * 2048, archive.bytes);
   const entries = await json(2, resource);
   const index = entries.findIndex(entry => memberNamed(entry, `${environment}.tr2`));
   if (index < 0) throw new Error('Original terrain is missing from the archive.');
-  const sceneIndex = entries.findIndex(entry => memberNamed(entry, `${environment}fr.scn`));
+  const sceneIndex = entries.findIndex(entry => memberNamed(entry, `${sceneStem}.scn`));
   if (sceneIndex < 0) throw new Error('Original start position is missing.');
-  const modeIndex = entries.findIndex(entry => memberNamed(entry, `${environment}fr.toy`));
+  const modeIndex = entries.findIndex(entry => memberNamed(entry, `${sceneStem}.toy`));
   const mode = modeIndex < 0 ? null : decoder.decode(await codec(3, resource, modeIndex));
   const sceneMetadata = await command(60, { scene: decoder.decode(await codec(3, resource, sceneIndex)), mode });
   const waterIndex = sceneMetadata.water_file ? entries.findIndex(entry => memberNamed(entry, sceneMetadata.water_file.toLowerCase())) : -1;
@@ -256,19 +259,22 @@ async function baseTextures(mesh, materialArchive, materialEntries, cache = new 
     const shader = materialText.split(/\r?\n/).map(line => line.split(';')[0].trim()).find(line => /^microProgramName\s*=/i.test(line))?.split('=')[1].trim();
     if (/refl|envmap/i.test(shader ?? '')) { const unsupported = { shader }; textures.set(material, unsupported); cache.set(material, unsupported); continue; }
     const textureIndex = findMaterial(`${binding}.pst`);
-    if (textureIndex < 0) { if (materialIndex < 0) continue; throw new Error(`Original material texture is missing: ${binding}`); }
-    const pst = await codec(3, materialArchive, textureIndex);
+    const pass = materialIndex < 0 ? null : await json(90, new TextEncoder().encode(materialText));
+    const atmIndex = pass?.texture_animation ? findMaterial(`${binding}.atm`) : -1;
+    if (textureIndex < 0 && atmIndex < 0) { if (materialIndex < 0) continue; throw new Error(`Original material texture is missing: ${binding}`); }
+    const pst = atmIndex >= 0 ? await codec(3, materialArchive, atmIndex) : await codec(3, materialArchive, textureIndex);
     let image;
     try {
-      const info = await json(7, pst), rgba = await codec(8, pst);
+      const info = await json(atmIndex >= 0 ? 56 : 7, pst);
+      const animationFrames = atmIndex >= 0 ? await Promise.all(Array.from({length:info.frames},(_,index)=>codec(57,pst,index))) : null;
+      const rgba = animationFrames ? animationFrames[0] : await codec(8, pst);
       const alphaMatch = materialText.match(/alphaReferenceValue\s*=\s*(\d+)/i);
       // Explicit GEQUAL cutout materials, including the original tower lattice.
       // FB_ONLY/source-alpha edge blending is not yet a complete GS match.
       const sceneCutout = /^\s*alphaTestOnOff\s*=\s*1\s*$/mi.test(materialText)
         && /^\s*alphaTestMethod\s*=\s*5\s*$/mi.test(materialText)
         && /^\s*processingMethodWhenFailedInAlphaTest\s*=\s*[01]\s*$/mi.test(materialText);
-      const pass = materialIndex < 0 ? null : await json(90, new TextEncoder().encode(materialText));
-      image = { ...info, rgba, shader, pass, materialText, alphaTest: /alphaTestOnOff\s*=\s*0/i.test(materialText) ? 0 : Number(alphaMatch?.[1] ?? 0) / 255, sceneAlphaFailure: sceneCutout ? Number(materialText.match(/processingMethodWhenFailedInAlphaTest\s*=\s*(\d+)/i)?.[1] ?? 0) : 0, sceneAlphaCutoff: sceneCutout ? Number(alphaMatch?.[1] ?? 0) / 255 : 0 };
+      image = { ...info, rgba, animationFrames, shader, pass, materialText, alphaTest: /alphaTestOnOff\s*=\s*0/i.test(materialText) ? 0 : Number(alphaMatch?.[1] ?? 0) / 255, sceneAlphaFailure: sceneCutout ? Number(materialText.match(/processingMethodWhenFailedInAlphaTest\s*=\s*(\d+)/i)?.[1] ?? 0) : 0, sceneAlphaCutoff: sceneCutout ? Number(alphaMatch?.[1] ?? 0) / 255 : 0 };
     } catch (error) { image = { shader, error: error.message }; }
     textures.set(material, image); cache.set(material, image);
   }
@@ -608,7 +614,8 @@ function buildEcosystem() {
       source.vertices.forEach((v, i) => vertices.set([...v.position, ...v.normal, ...v.uv], i * 8));
       const chunk = upload(vertices, new Uint16Array(source.indices), true);
       const material = mesh.materials[source.material], decoded = eco.textures.get(material);
-      chunk.texture = textures.get(material); chunk.alphaCutoff = decoded?.alphaTest ?? 0;
+      chunk.texture = textures.get(material);
+        chunk.alphaCutoff = decoded?.alphaTest ?? 0;
       gl.bindVertexArray(chunk.vao); gl.bindBuffer(gl.ARRAY_BUFFER, group.instances);
       gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 3, gl.FLOAT, false, 20, 0); gl.vertexAttribDivisor(4, 1);
       gl.enableVertexAttribArray(5); gl.vertexAttribPointer(5, 2, gl.FLOAT, false, 20, 12); gl.vertexAttribDivisor(5, 1);
@@ -775,6 +782,7 @@ function buildMesh() {
         group.vertices.forEach((vertex, index) => vertices.set([...vertex.position, ...vertex.normal, ...vertex.uv, ...(prelit ? vertex.color ?? [128,128,128,128] : [])], index * (prelit ? 12 : 8)));
         const chunk = upload(vertices, new Uint16Array(group.indices), true, false, prelit);
         chunk.texture = textures.get(material); chunk.alphaCutoff = decoded?.sceneAlphaCutoff ?? 0;
+        chunk.animationFrames = decoded?.animationFrames?.map(rgba => { const gpu = texture({...decoded,rgba}); gpuTextures.push(gpu); return gpu; });
         chunk.prelit = prelit; chunk.material = material; chunk.blend = decoded?.pass?.blend ?? false; chunk.alphaFailure = decoded?.sceneAlphaFailure ?? 0;
         chunk.depthWrite = decoded?.pass?.depth_write ?? true;
         groups.push(chunk); sceneChunks.push(chunk);
@@ -923,7 +931,7 @@ async function startSimulation(source) {
     trainRenderer?.accept(source.train.frame);
     diagnostics.train = { time: source.train.frame.time, duration: source.train.frame.duration, cars: source.train.frame.cars.filter(car => car.use_collision).length, wheelNodes: source.train.frame.wheel_matrices?.length ?? 0, frame: source.train.frame };
   } else diagnostics.train = null;
-  const uvSources = Object.fromEntries([...source.world.textures].filter(([, texture]) => texture.pass?.uv_scroll).map(([name, texture]) => [name, texture.materialText]));
+  const uvSources = Object.fromEntries([...source.world.textures].filter(([, texture]) => texture.pass?.uv_scroll || texture.pass?.texture_animation).map(([name, texture]) => [name, {source:texture.materialText,frames:texture.animationFrames?.length}]));
   const uvState = await command(91, uvSources);
   diagnostics.sceneryUv = Object.fromEntries(uvState.map(([name]) => [name, [0,0]]));
   simReady = true;
@@ -947,9 +955,9 @@ async function pumpSimulation() {
     diagnostics.physicsRoundTripMs = performance.now() - submitted;
     diagnostics.physicsBatchSteps = count;
     if (token !== simGeneration) return;
-    for (const { frame, camera: cameraResult, water, train, scenery_uv } of frames) {
+    for (const { frame, camera: cameraResult, water, train, scenery_uv, scenery_textures } of frames) {
       acceptFrame(frame);
-      diagnostics.sceneryUv = scenery_uv;
+      diagnostics.sceneryUv = scenery_uv; diagnostics.sceneryTextureFrames = scenery_textures;
       if (trainRenderer && train) { trainRenderer.accept(train); diagnostics.train.time = train.time; diagnostics.train.frame = train; }
       if (waterRenderer && water) { waterRenderer.accept(water); terrain.waterSource.frame = water; diagnostics.waterRender.baseHeight = water.base_height; }
       diagnostics.simulationSteps++;
@@ -1079,7 +1087,8 @@ function render(time) {
     gl.uniform2fv(uniforms.sceneryUvOffset, diagnostics.sceneryUv?.[chunk.material] ?? [0,0]);
     gl.depthMask(chunk.depthWrite);
     if (chunk.blend) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); } else gl.disable(gl.BLEND);
-    gl.uniform1i(uniforms.useTexture, Boolean(chunk.texture)); gl.bindTexture(gl.TEXTURE_2D, chunk.texture ?? fallbackTexture);
+    const sceneTexture = chunk.animationFrames?.[diagnostics.sceneryTextureFrames?.[chunk.material] ?? 0] ?? chunk.texture;
+    gl.uniform1i(uniforms.useTexture, Boolean(sceneTexture)); gl.bindTexture(gl.TEXTURE_2D, sceneTexture ?? fallbackTexture);
     gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
     // GS FB_ONLY keeps failed fragments in the framebuffer without writing Z.
     // Split the mutually exclusive predicates so each source pixel blends once.

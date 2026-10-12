@@ -98,3 +98,11 @@ class PlayerContentTests(unittest.TestCase):
         source = pack_resource([('anim/rider/frider.psg', b'mesh'), ('anim/Rider/frider.mcf', b'catalog'), ('anim/Rider/farms.psg', b'unused'), ('frider.phy', b'unused')])
         result = Resource(compact_player_archive(source, '/RIDER/FRIDER.RES'))
         self.assertEqual([m[0] for m in result.members], ['anim/rider/frider.psg', 'anim/Rider/frider.mcf'])
+
+    def test_vancouver_thumbnail_includes_only_two_required_halves(self):
+        from package_content import compact_vancouver_thumbnail, pack_resource, Resource
+        source = pack_resource([('ui/trk_free05_a.pst', b'a'), ('ui/trk_free05_b.pst', b'b'), ('ui/trk_free01_a.pst', b'unrelated')])
+        result = Resource(compact_vancouver_thumbnail(source))
+        self.assertEqual([x[0] for x in result.members], ['ui/trk_free05_a.pst', 'ui/trk_free05_b.pst'])
+        with self.assertRaisesRegex(ValueError, 'missing or duplicated'):
+            compact_vancouver_thumbnail(pack_resource([('ui/trk_free05_a.pst', b'a')]))
