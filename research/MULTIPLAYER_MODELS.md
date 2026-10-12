@@ -72,3 +72,48 @@ banks with Web Audio spatialization; sending PCM over the game socket is
 unnecessary. Per-vehicle original engine selectors must be read from each PHY/
 audio configuration, and female rider vocals require appropriate bank selection.
 Original SPU2 mixing and complete female hair/IK fidelity remain unverified.
+
+## Original player-facing quad names
+
+`/UI/RESOURCE/QUADINFO.RES` → `ui/frontend/uiQuad.txt` contains 25 named
+selector entries. Their `IngameID` values establish the mapping below;
+selector index is a different order and must not be used as model ID.
+The `uiQuad.txt` copies in `/UI/RESOURCE/PAGEA/PAGE07.RES` and `PAGE20.RES`
+independently match all 25 names/IDs. Private extraction census is
+`private/reports/multiplayer-quad-labels.json`.
+The original `DefaultQuad_P1`–`DefaultQuad_P4` value 1 selects menu entry 1,
+which maps to in-race ID 22 (Honda 400EX Yellow); it is not in-race ID 1.
+
+| In-race ID | Original name |
+| --- | --- |
+| 01 | Ravage Talon Black |
+| 02 | Kawasaki Lakota Sport |
+| 03 | Kawasaki Mojave |
+| 04 | Honda 400EX Red |
+| 05 | Honda 300EX |
+| 06 | No selector entry found; browser fallback: ATV 06 (unlisted model) |
+| 07 | Kawasaki KFX700 |
+| 08 | Patriot |
+| 09 | CT Racing |
+| 10 | Trinity Racing |
+| 11 | Bombardier DS650 |
+| 12 | Alba Racing |
+| 13 | Nac's Racing |
+| 14 | Honda 250EX |
+| 15 | Duncan Racing |
+| 16 | K&K Racing |
+| 17 | Curtis Sparks Racing |
+| 18 | Lonestar Racing |
+| 19 | G Ride |
+| 20 | Trenga Racing |
+| 21 | B6000 |
+| 22 | Honda 400EX Yellow |
+| 23 | Ravage Talon Blue |
+| 24 | Ravage Talon Red |
+| 25 | Ravage Talon Yellow |
+| 26 | Ravage Talon Green |
+
+ATV06's materials include `dirtDZ400m1.pst` / `dirtDZ400m2.pst`; this is a
+research lead, insufficient evidence for a manufacturer/model name. Honda 300EX
+has original selector `Access=3` (hidden). Offering every decoded model immediately
+in the browser garage is an authored adaptation, not recovered progression.

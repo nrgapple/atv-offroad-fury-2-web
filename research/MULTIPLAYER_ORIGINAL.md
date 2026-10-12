@@ -108,3 +108,15 @@ The test resolves Cargo's actual target directory, so global Cargo configuration
 and ignored worktree build symlinks do not need to coincide. Port 4190 is only
 an internal test relay; browsers use the combined test origin on 4186. Production
 access goes through the existing game's HTTPS Worker service binding.
+
+The current full-pose Rust codec emits 2,520 bytes for 27 ATV + 18 male rider
+nodes, or 2,988 bytes for 27 ATV + 27 female rider nodes. At the browser's 20 Hz
+send cadence that is 50,400 / 59,760 bytes per second per actor; receiving three
+female actors is 179,280 bytes per second before WebSocket/TCP/TLS overhead.
+These are codec measurements and rate arithmetic, not measured internet traffic.
+Client `sentBytes` counts encoded snapshot bytes before transport/backpressure;
+`receivedBytes` counts valid decoded incoming packets, including control packets.
+Relay attachment byte/message counters cover only their current one-second rate
+window, not cumulative bandwidth analytics. There is no relay simulation loop.
+Lobby heartbeat pings every two seconds and cleanup alarms every thirty seconds
+still cause short event handling during otherwise idle periods.
