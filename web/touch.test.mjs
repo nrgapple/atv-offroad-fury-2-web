@@ -84,7 +84,7 @@ test('one-handed contact holds throttle and brace; four directions only steer/le
   const touch=new TouchInput();touch.setOneHanded(true);touch.begin(1,60,500);
   for(const [dx,dy,x,y] of [[0,0,0,0],[70,0,1,0],[-70,0,-1,0],[0,-70,0,-1],[0,70,0,1]]) {
     touch.move(1,60+dx,500+dy);const s=touch.sample();
-    assert.equal(s.drive.axis,1);assert.equal(s.drive.held,true);assert.equal(s.drive.grounded_only,false);
+    assert.equal(s.drive.axis,1);assert.equal(s.drive.held,true);assert.equal(s.drive.grounded_only,false);assert.equal(s.drive.forward_only,true);
     assert.equal(s.preload_axis,1);assert.equal(s.steer,x);assert.equal(s.lean,y);assert.equal(s.stunt_modifiers,0);
   }
   touch.end(1);let s=touch.sample();assert.equal(s.drive.axis,0);assert.equal(s.drive.held,false);assert.equal(s.preload_axis,-1);

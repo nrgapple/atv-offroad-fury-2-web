@@ -90,6 +90,7 @@ export class TouchInput {
     const steer = leaning ? clamp((pointer.currentX-pointer.x)/70) : 0;
     const lean = leaning ? clamp((pointer.currentY-pointer.y)/70) : 0;
     const drive = { generation: this.generation, held: driving, axis: driving ? pointer.axis : 0, grounded_only: false };
+    if (this.oneHanded) drive.forward_only = true;
     let preload_axis = null;
     if (driving) { this.sampled = true; preload_axis = 1; }
     else if (this.releasePending) { this.releasePending = false; preload_axis = -1; }

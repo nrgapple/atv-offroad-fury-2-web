@@ -1,6 +1,6 @@
 {
   "status": "Host-verified one-handed mobile input checkpoint; CI and public release pending. The browser port remains incomplete.",
-  "working_on": "Validate this one-handed control behavior through CI and the public Cloudflare build, then continue the port.",
+  "working_on": "Validate the rollback behavior through CI and the public Cloudflare build, then continue the port.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1268,9 +1268,23 @@
       "limitation": "Host checks only; CI and public deployment are pending. Physical phone behavior and full-game parity remain unverified. The two-finger equivalence check covers the tested input sequence, not every device or gameplay case.",
       "image": "/devlog-images/one-handed-touch-now-holds-drive-through-landing-0836354a.png",
       "caption": "Host Chromium portrait capture showing the one-handed release indicator at 28 mph."
+    },
+    {
+      "id": "one-handed-drive-no-longer-brakes-during-rollback-e0f22406",
+      "timestamp": "2026-10-12T13:27:15.875087+00:00",
+      "recorded_at": "2026-10-12T13:27:15.875087+00:00",
+      "kind": "verification",
+      "title": "One-handed drive no longer brakes during rollback",
+      "summary": "The one-handed mobile hold now applies only forward throttle, including while the ATV is still rolling backward after a landing. Releasing the touch adds no brake or reverse input. A host browser rerun passed the full one-handed ground, air, landing, and release sequence.",
+      "details": [
+        "The Rust touch path bypasses its legacy automatic brake and gear policy for one-handed input, including at ground and air speeds that trigger that policy.",
+        "Dedicated tests cover eight speed/ground/air combinations, release while moving backward, and independent keyboard/controller brake and reverse inputs.",
+        "The default two-finger touch packet behavior still matches the prior baseline in a 2,000-operation deterministic comparison."
+      ],
+      "limitation": "Host verification only; CI and public deployment are pending. Physical phone behavior and full-game parity remain unverified."
     }
   ],
-  "updated_at": "2026-10-12T13:23:15.268121+00:00",
+  "updated_at": "2026-10-12T13:27:15.875087+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

@@ -11,6 +11,9 @@ pub struct TouchIntent {
     /// Queue one-handed drive while airborne; apply at the first grounded step.
     #[serde(default)]
     pub grounded_only: bool,
+    /// One-handed touch supplies forward throttle only, even when rolling back.
+    #[serde(default)]
+    pub forward_only: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -44,6 +47,17 @@ impl TouchDrive {
         if self.generation != Some(intent.generation) {
             self.reset();
             self.generation = Some(intent.generation);
+        }
+        if intent.forward_only {
+            self.engaged = false;
+            self.reverse = false;
+            self.throttle = 0.;
+            self.brake = 0.;
+            if intent.held {
+                independent.throttle = independent.throttle.max(intent.axis.clamp(0., 1.));
+            }
+            independent.lean = independent.lean.clamp(-1., 1.);
+            return Ok(independent);
         }
         if intent.grounded_only && !grounded {
             self.throttle = 0.;
@@ -114,6 +128,7 @@ mod tests {
             held: true,
             axis,
             grounded_only: false,
+            forward_only: false,
         })
     }
     fn released() -> Option<TouchIntent> {
@@ -122,11 +137,45 @@ mod tests {
             held: false,
             axis: 0.,
             grounded_only: false,
+            forward_only: false,
         })
     }
     fn channels(i: VehicleInput) -> (f32, f32, f32, bool) {
         (i.throttle, i.brake, i.lean, i.reverse)
     }
+    #[test]
+    fn forward_only_touch_never_brakes_or_reverses_even_rolling_back_or_airborne() {
+        let mut touch = TouchDrive::default();
+        let mut held = intent(1.).unwrap();
+        held.forward_only = true;
+        for grounded in [true, false] {
+            for speed in [-30., -2., 0., 30.] {
+                let result = touch
+                    .resolve(VehicleInput::default(), Some(held), grounded, speed)
+                    .unwrap();
+                assert_eq!(channels(result), (1., 0., 0., false));
+            }
+        }
+        held.held = false;
+        assert_eq!(
+            channels(
+                touch
+                    .resolve(VehicleInput::default(), Some(held), true, -30.)
+                    .unwrap()
+            ),
+            (0., 0., 0., false)
+        );
+        // Independent controller brake/reverse remains available.
+        held.held = true;
+        let controller = VehicleInput {
+            brake: 0.5,
+            reverse: true,
+            ..Default::default()
+        };
+        let result = touch.resolve(controller, Some(held), true, -30.).unwrap();
+        assert_eq!(channels(result), (1., 0.5, 0., true));
+    }
+
     #[test]
     fn queued_one_handed_drive_resumes_on_first_grounded_fixed_step() {
         let mut touch = TouchDrive::default();
@@ -253,6 +302,7 @@ mod tests {
             held: false,
             axis: -1.,
             grounded_only: false,
+            forward_only: false,
         });
         assert_eq!(
             channels(
