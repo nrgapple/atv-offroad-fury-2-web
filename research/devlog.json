@@ -1,6 +1,6 @@
 {
-  "status": "Public Cloudflare release a4d3003 (CI 38309959773) is current; the host-only fog/reflection candidate recorded below is not included. The browser port remains an incomplete reconstruction, not a full-game or original-hardware equivalent.",
-  "working_on": "Continue terrain/water GS precision, active-view overrides and weather callbacks, then original lighting, shadows, lens effects and LOD. Keep fog/reflection host work unpublished until its release owner validates a new current-main artifact.",
+  "status": "Public Cloudflare remains e18a371e. The host-only vegetation Sun gate, nine-map loading/driving, materials, Vancouver contact, touch batching and FREE05 multiplayer checks pass; reflection/frontend checks and the broader regression remain pending. The browser port is incomplete and is not equivalent to the full PS2 game.",
+  "working_on": "Finish the outstanding reflection/frontend and broader integration regression before considering publication. Keep this host candidate unpublished; source tree-lighting callback/frame behavior, LOD and hardware equivalence remain open.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1913,9 +1913,45 @@
       "limitation": "Host-only candidate; fog is absent from current public a4d3003 (CI 38309959773), as well as historical cef26f4 and f585991. This validates source-correlated compressed-prelit packing and screen-affine coverage, not full VU/hardware replay. Terrain and water GS precision, water reflection/froth, original program-specific precision, active-view overrides, weather callbacks, lighting, shadows, lens effects and LOD remain open.",
       "image": "/devlog-images/source-fog-ranges-and-affine-gpu-coverage-pass-host-va-00b4c159.png",
       "caption": "Host ENV04 drive capture using the recovered scene fog path. This is a local candidate image, not the current public a4d3003 build (or historical cef26f4/f585991 builds) or an original PS2 framebuffer."
+    },
+    {
+      "id": "source-fog-and-ice-reflections-verified-on-public-clou-6f449ead",
+      "timestamp": "2026-10-12T21:54:52.166825+00:00",
+      "recorded_at": "2026-10-12T22:02:10.571593+00:00",
+      "kind": "verification",
+      "title": "Source fog and ice reflections verified on public Cloudflare release",
+      "summary": "Public release e18a371e passes the nine-map, fog, reflection, material, water, Vancouver and multiplayer browser gates. The new source-correlated fog coverage and restored Caribou/Vancouver ice reflections are verified in public browser checks, with original-hardware and full-game parity still open.",
+      "details": [
+        "Public main e18a371e81b471137dd5fb1121b05d454584b1d0 passed CI run 38312395498. The validated current-main artifact matches 32 authored files and all 405 served object hashes. The canonical R2 package has 106 records, 306 referenced files and 406 approved objects across three incremental changes; the public gallery has 118 entries and 99 screenshots.",
+        "Public fog validation covers ENV01, ENV04 and FREE05. The actual GPU matches 3,000 coverage samples with zero byte differences; the screen-affine triangle sample is 55 and passes the affine-versus-perspective check. This is source-correlated compressed-prelit coverage, not full VU/GS or PS2 hardware replay.",
+        "Public reflections draw ENV01's 88 groups/275 instances (141,770 contributing pixels) and FREE05's three groups/78 instances (236,380 pixels), with 2,304 GPU comparisons and maximum UV error 7.15e-7. Vancouver desktop and 390px traces draw all 78 placements with 43 colliders, 123 wheel-support frames, 31 body-contact frames, takeoff at step 19 and later landing.",
+        "All nine maps pass. Public material checks report 4,618 rain, 73,970 lava, 6,335 waterflow and 115,571 ski-jump contributing pixels with pause/context retention. Four wet maps plus the 390px water case and dry-map behavior pass. The frontend routes and copied-link FREE05 multiplayer pair pass; both peers draw 13 remote models and preserve rig, audio and movement behavior."
+      ],
+      "limitation": "These are public browser component and route checks, not full-map, full-game or original PS2 hardware equivalence. Fog packing remains source-correlated and source-specific terrain/water GS precision is not established. Source vegetation-material work is currently unpublished WIP. Do not claim source tree lighting is complete: current ambient prototype tests cover supplied zero directional weights only, while global Sun matrices were just recovered and the prototype is being corrected. Other lighting, shadows, lens behavior, LOD, weather callbacks and remaining game modes are still open.",
+      "image": "/devlog-images/source-fog-and-ice-reflections-verified-on-public-clou-6f449ead.png",
+      "caption": "Public Cloudflare ENV04 drive view showing the fog path in the e18a371e release; this is an authored browser renderer capture, not an original PS2 framebuffer."
+    },
+    {
+      "id": "sun-lit-vegetation-matches-bounded-source-cases-on-the-139d49b3",
+      "timestamp": "2026-10-12T22:14:46.559330+00:00",
+      "recorded_at": "2026-10-12T22:15:31.228446+00:00",
+      "kind": "verification",
+      "title": "Sun-lit vegetation matches bounded source cases on the host",
+      "summary": "A bounded native-to-Rust comparison and actual-GPU check now validate selected directional Sun vegetation-lighting cases on ENV01, ENV04 and FREE05. The source-derived scene path and state isolation also pass focused host browser checks; this is not full-frame or PS2 lighting equivalence.",
+      "details": [
+        "The expanded native probe includes original light base constructor 00137ca0 and validates its missing/zero-look fallback to native direction +X, rather than supplying initial object state. Across 600 cases it matches 303,599 original EE and 12,600 VU instructions with zero directional-vector bit differences and zero packed-color byte differences, including the zero-look case. The probe uses decoded normals and instance basis; it does not replay the complete native frame callback, vegetation LOD or PS2 hardware pipeline.",
+        "The expanded actual-GPU run passes all 600 cases with zero byte differences. The original focused browser run passes source blending, fog, depth and renderer-state isolation on ENV01, ENV04 and FREE05, with 2,176, 1,167 and 4,251 contributing pixels respectively; these are test contributions, not full-scene scores. A subsequent near-vegetation material gate passes on all nine requested maps with zero GL errors. The focused three-map pixel counts remain from the original run.",
+        "A four-step V8 WASM benchmark with the full vegetation proxy loaded measures the selected operation plus output copy, using five alternating runs of 200 batches after 30 warmups. Median per-four-step batch times: ENV01 0.8435 to 0.479 ms (43.21% less batch time), ENV04 0.8115 to 0.448 ms (44.79% less batch time), ENV08 0.912 to 0.506 ms (44.52% less batch time), FREE05 0.800 to 0.4395 ms (45.06% less batch time). Loading, rendering, workers and phones are excluded. Across 1,200 compared steps with counts 1–4, every output f32 field remains bit-equivalent; frame/camera decimal outputs match the current sequential implementation. The measured combined material-plus-transport WASM candidate is 1,813,643 bytes versus the saved e18/prototype baseline at 1,759,312 bytes, about 3.1% larger; the bounded CPU improvement does not imply a smaller download.",
+        "All nine maps pass loading and driving. Materials pass with 2,604 rain, 73,970 lava, 6,335 waterflow and 115,571 ski-jump contributing pixels, with pause/context retention. Fog passes 3,000 GPU samples with zero byte difference and the affine sample at 55. Vancouver desktop/390px draws all 78 placements, 43 colliders, 123 wheel-support frames and 31 body-contact frames, with takeoff at step 19, later landing, ATM frame 1 and default-unlocked menu route. The original-map touch gate passes 124 steps batched versus sequential and restores initial world clocks on fresh instances for shifted-phase replay. The copied-link FREE05 multiplayer pair passes with 13 remote draws per client, both rigs, audio and host cleanup.",
+        "make check passes 311 core, 25 network, 3 relay, 13 bridge and 68 JavaScript tests. Formatting/Clippy, setup, 17 release tests, 6 Worker tests and hygiene pass. The expanded reflection gate passes ENV01 with 88 groups/275 instances/141,770 pixels and FREE05 with 3 groups/78 instances/236,380 pixels, across 2,304 GPU comparisons with maximum UV error 7.152557e-7. The frontend gate passes original title/menu/controller/mobile-touch/pause/Tioga/Caribou/no-disc routes. This host checkpoint does not change the public build.",
+        "The source shader census identifies DiffuseCompressed for near vegetation and EcoSystemCode2D for the corresponding distant variants. The 25 inspected ENV01/ENV04/FREE05 models all have a single-node identity root, so these tested normal/basis paths have no hidden bind-root transform. This does not cover every map asset, distant transition, billboard/LOD behavior or full GS parity."
+      ],
+      "limitation": "Host-only WIP; public e18a371e remains unchanged, with no release or hardware comparison claimed. The benchmark measures a four-step operation-plus-output-copy batch, not individual-step or end-to-end performance; loading, rendering, worker overhead and physical phones are excluded. The native/GPU cases supply decoded normals and instance basis and do not replay the complete frame callback, vegetation LOD or PS2 pipeline. Source tree lighting is not complete. The combined material-plus-transport candidate is about 3.1% larger in WASM than the saved e18/prototype baseline despite its bounded hot-loop CPU reduction.",
+      "image": "/devlog-images/sun-lit-vegetation-matches-bounded-source-cases-on-the-139d49b3.png",
+      "caption": "Host ENV01 lighting test view with the bounded vegetation Sun path; this local candidate capture is not the public build or a PS2 framebuffer."
     }
   ],
-  "updated_at": "2026-10-12T21:20:43.588890+00:00",
+  "updated_at": "2026-10-12T22:15:31.228446+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

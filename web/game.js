@@ -310,6 +310,10 @@ uniform vec2 sceneryUvOffset;
 out vec4 authoredColor;
 uniform bool useEcosystem;
 uniform vec2 ecoRotation;
+uniform vec3 ecoAmbient;
+uniform vec3 ecoSunlight;
+uniform vec3 ecoSunDirection;
+uniform bool ecoSunPresent;
 uniform mat4 viewProjection;
 uniform mat4 model;
 uniform vec3 eye;
@@ -330,6 +334,14 @@ void main() {
   if (useEcosystem) {
     vec3 scaled = position * vec3(ecoScale.x, ecoScale.y, ecoScale.x);
     worldPosition = vec4(ecoPosition + vec3(ecoRotation.x * scaled.x - ecoRotation.y * scaled.z, scaled.y, ecoRotation.y * scaled.x + ecoRotation.x * scaled.z), 1.0);
+    // TriStripPrologue transforms the light through the scaled instance basis.
+    // DiffuseCompressed retains authored normal magnitude and bias quantization.
+    vec3 localLight = vec3((ecoRotation.x * ecoScale.x) * ecoSunDirection.x + (ecoRotation.y * ecoScale.x) * ecoSunDirection.z,
+      ecoSunDirection.y * ecoScale.y, (-ecoRotation.y * ecoScale.x) * ecoSunDirection.x + (ecoRotation.x * ecoScale.x) * ecoSunDirection.z);
+    float weight = max((localLight.x * normal.x + localLight.y * normal.y) + localLight.z * normal.z, 0.0);
+    vec4 biased = vec4(8388608.0) + vec4(ecoAmbient,64.0);
+    biased = min(biased + vec4(ecoSunlight,ecoSunPresent ? 1.0 : 0.0) * weight,vec4(8388863.0));
+    authoredColor = vec4(floatBitsToUint(biased) & uvec4(255u));
   }
   if (sceneryReflectionPlane != 0) {
     // TriStripPrologue transforms the world camera into each rigid node's
@@ -347,6 +359,7 @@ void main() {
   distanceToEye = length(worldPosition.xyz - eye);
   gl_Position = viewProjection * worldPosition;
   prepareFog(distanceToEye, gl_Position);
+  if (useEcosystem) authoredColor *= gl_Position.w;
   if (skyPass) gl_Position = gl_Position.xyww;
 }`;
 const fragmentSource = `#version 300 es
@@ -356,6 +369,7 @@ in float worldHeight;
 in vec2 texcoord;
 in vec2 worldXZ;
 in vec4 authoredColor;
+uniform bool useEcosystem;
 uniform bool useVertexColor;
 uniform bool sceneryBlend;
 uniform bool alphaFailPass;
@@ -387,7 +401,7 @@ void main() {
   float sourceAlpha = 1.0;
   if (useTexture) {
     vec4 sampled = texture(baseTexture, texcoord);
-    if (useVertexColor) sampled *= authoredColor / 128.0;
+    if (useVertexColor) sampled *= (useEcosystem ? authoredColor / fogInterpolation.y : authoredColor) / 128.0;
     if (alphaFailPass ? sampled.a >= alphaCutoff : sampled.a < alphaCutoff) discard;
     base = sampled.rgb;
     // GS source alpha uses 128 for unity, while decoded PST bytes use 255.
@@ -432,6 +446,7 @@ function initializeGl() {
   uniforms.fogPacking = gl.getUniformLocation(program, 'fogPacking');
   uniforms.fogEnabled = gl.getUniformLocation(program, 'fogEnabled');
   uniforms.ecoRotation = gl.getUniformLocation(program, 'ecoRotation');
+  for (const name of ['ecoAmbient','ecoSunlight','ecoSunDirection','ecoSunPresent']) uniforms[name] = gl.getUniformLocation(program,name);
   uniforms.alphaCutoff = gl.getUniformLocation(program, 'alphaCutoff');
   uniforms.useQuadPose = gl.getUniformLocation(program, 'useQuadPose');
   uniforms.quadBones = gl.getUniformLocation(program, 'quadBones[0]');
@@ -639,7 +654,10 @@ function buildEcosystem() {
       const material = mesh.materials[source.material], decoded = eco.textures.get(material);
       chunk.texture = textures.get(material);
       chunk.fog = decoded?.pass?.fog ?? true;
-        chunk.alphaCutoff = decoded?.alphaTest ?? 0;
+      chunk.alphaCutoff = decoded?.alphaTest ?? 0;
+      chunk.blend = decoded?.pass?.blend ?? false;
+      chunk.depthWrite = decoded?.pass?.depth_write ?? true;
+      chunk.alphaFailure = decoded?.sceneAlphaFailure ?? 0;
       gl.bindVertexArray(chunk.vao); gl.bindBuffer(gl.ARRAY_BUFFER, group.instances);
       gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 3, gl.FLOAT, false, 20, 0); gl.vertexAttribDivisor(4, 1);
       gl.enableVertexAttribArray(5); gl.vertexAttribPointer(5, 2, gl.FLOAT, false, 20, 12); gl.vertexAttribDivisor(5, 1);
@@ -665,6 +683,12 @@ function drawEcosystem() {
   candidates.sort((a, b) => a.distance - b.distance);
   for (const { group, p } of candidates.slice(0, 1500)) group.visible.set([...p.position, ...p.scale], group.count++ * 5);
   gl.uniform1i(uniforms.useEcosystem, true); gl.uniform1i(uniforms.unlit, true); gl.uniform1i(uniforms.useQuadPose, false);
+  // Global Sun matrices survive the near packet's ambient override. Billboard
+  // selection and transition alpha remain outside this near material path.
+  const lighting = terrain.world.metadata.ecosystem_lighting;
+  gl.uniform3fv(uniforms.ecoAmbient,lighting.ambient); gl.uniform3fv(uniforms.ecoSunlight,lighting.sunlight);
+  gl.uniform3fv(uniforms.ecoSunDirection,lighting.direction); gl.uniform1i(uniforms.ecoSunPresent,lighting.sun_present);
+  gl.uniform1i(uniforms.useVertexColor,true); diagnostics.vegetationLighting = lighting;
   gl.uniformMatrix4fv(uniforms.model, false, identity);
   // 002fe710 rotates the vegetation models about Y using the view basis.
   gl.uniform2f(uniforms.ecoRotation, -Math.cos(camera.yaw), Math.sin(camera.yaw));
@@ -675,13 +699,22 @@ function drawEcosystem() {
     for (const chunk of group.chunks) {
       gl.uniform1f(uniforms.alphaCutoff, chunk.alphaCutoff); gl.uniform1i(uniforms.useTexture, Boolean(chunk.texture));
       gl.uniform1i(uniforms.fogEnabled,Boolean(terrain.world?.metadata.fog)&&chunk.fog);
+      gl.uniform1i(uniforms.sceneryBlend,chunk.blend); gl.depthMask(chunk.depthWrite);
+      if (chunk.blend) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA); } else gl.disable(gl.BLEND);
       gl.bindTexture(gl.TEXTURE_2D, chunk.texture ?? fallbackTexture); gl.bindVertexArray(chunk.vao);
       gl.drawElementsInstanced(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0, group.count); draws++;
+      if (chunk.alphaFailure === 1 && chunk.alphaCutoff > 0) {
+        gl.uniform1i(uniforms.alphaFailPass,true); gl.depthMask(false);
+        gl.drawElementsInstanced(gl.TRIANGLES,chunk.count,gl.UNSIGNED_SHORT,0,group.count); draws++;
+        gl.uniform1i(uniforms.alphaFailPass,false);
+      }
       diagnostics.vegetationTriangles += chunk.count / 3 * group.count;
     }
   }
   diagnostics.vegetationVisible = Math.min(candidates.length, 1500); diagnostics.vegetationDraws = draws;
   gl.uniform1i(uniforms.useEcosystem, false); gl.uniform1f(uniforms.alphaCutoff, 0);
+  gl.uniform1i(uniforms.useVertexColor,false); gl.uniform1i(uniforms.sceneryBlend,false);
+  gl.disable(gl.BLEND); gl.depthMask(true);
 }
 function buildTerrainMesh() {
   for (const chunk of chunks) { gl.deleteVertexArray(chunk.vao); gl.deleteBuffer(chunk.vertices); gl.deleteBuffer(chunk.indices); }
