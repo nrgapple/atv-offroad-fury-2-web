@@ -1638,6 +1638,23 @@
       "limitation": "Physical-phone steering response and native iOS loupe behavior remain unverified.",
       "image": "/devlog-images/steering-sensitivity-verified-in-the-public-build-33ee7a61.png",
       "caption": "Fresh public HTTPS Chromium capture at 390\u00d7844 showing the Mobile steering sensitivity default of 85% in Pause \u2192 Controls."
+    },
+    {
+      "id": "water-recovery-and-snow-ramp-collisions-d6c4d382",
+      "timestamp": "2026-10-12T18:27:31.082535+00:00",
+      "recorded_at": "2026-10-12T18:29:17.222589+00:00",
+      "kind": "verification",
+      "title": "Water recovery and snow ramp collisions",
+      "summary": "The authored browser port now handles the recovered deep-water timer reset and rider water recovery, while existing original snow-ramp geometry produces wheel and body contact across tested approach routes.",
+      "details": [
+        "The ATV counts down five seconds while its origin stays more than three feet below the preceding cached surface. Expiration returns it to its recovery point on the next update; shallower water restores the timer. No forced water wreck or ATV floating force was added.",
+        "Rider buoyancy, Swim state and water-only recovery passed with original resources on ENV04 desktop/390px and ENV05/07; ENV08 desktop/390px passed shallow-water clock gating and water-only Swim/recovery, without a deep-water timer expiry route.",
+        "Snow collision uses the existing original e01ramp and five snowski1 placements: 194 placed faces and 776 tree-ray hits. Twenty-four browser approach routes across desktop and 390px produced wheel/body contact. The direction -1 ramp route supported a clean approach, airborne interval and landing while remaining in Riding; the measured upward speed was 35.63 ft/s.",
+        "Verification also passed the four-map water suite, all eight map routes, clean landing, Nac Nac recovery, native 144-case/6,160-instruction water-timer comparison, Rust bit-exact comparison, 301 core tests, 2 WASM tests, strict Clippy, formatting, 45 JavaScript tests, 13 release tests, 4 Worker tests, make verify and source exclusions."
+      ],
+      "limitation": "Host-verified only; not yet public. This is a partial authored port, not full source replay or PS2 hardware parity. ENV08 was not driven deep enough to expire its timer, and water rendering/wake behavior remains incomplete.",
+      "image": "/devlog-images/water-recovery-and-snow-ramp-collisions-d6c4d382.png",
+      "caption": "Host capture: the ATV airborne above the original snow ramp during a normal gameplay-camera run. Water behavior was verified in separate browser routes; this image documents the snow collision portion."
     }
   ],
   "updated_at": "2026-10-12T18:15:32.738689+00:00",

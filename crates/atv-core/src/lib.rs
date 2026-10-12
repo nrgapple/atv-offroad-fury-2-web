@@ -39,6 +39,7 @@ pub mod texture;
 pub mod train;
 pub mod water;
 pub mod water_animation;
+pub mod water_failure;
 pub mod water_render;
 pub mod water_surface;
 
