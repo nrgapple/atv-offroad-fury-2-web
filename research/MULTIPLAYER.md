@@ -107,10 +107,24 @@ See `DEPLOYMENT.md` and the public dev log for broader checks and limitations.
 Vancouver Ridge (`FREE05`) joins the stable Rust catalog as map ID 9, after
 `env01`–`env08`. The Rust protocol/relay share that catalog and reject ID 10;
 the WASM adapter derives environment keys and next-map choices for the browser.
-This extends supported values without changing packet layout. The host candidate
-passes actual copied-link two-browser Vancouver driving/audio/cleanup plus 13
-live relay cases, including all-four map selection and invalid-map rejection.
-Public verification follows the combined current-main CI release.
+This extends supported values without changing packet layout. Public main
+`cef26f4495f0c5dbf6f8398133ea81bf4b78aed3` / CI `38307658534` passes actual
+copied-link two-browser Vancouver driving/audio/cleanup plus 13 live relay cases,
+including all-four map selection and invalid-map rejection. Host closure during
+asset loading keeps the completed old load on Multiplayer without reviving its
+room or resuming a disconnected ride. All authored files, the Rust relay hash and
+402 served objects match checked packages through HTTPS.
+
+The merged renderer also passes four actual public clients, each with three
+finite remote actors, 39 remote draws and three engine voices. All four drivers'
+movement reaches every observer; host-end clears guest rooms and pose/audio/GPU
+caches. A real 390px touch failed stunt records 403 guest frames across riding,
+airborne and wreck, including 42 detached-rider frames and 14 impact-audio frames
+with changing pan, then recovery. The four-client 12-second sample on one Mac,
+headless Chromium Metal, 1280×896 and synthetic focus is 71.00–75.86 FPS,
+25.9–27.2ms frame p95, 2.61–3.11ms render CPU, 2.1–6.6ms physics round trip and
+41–52ms relay RTT. Concurrent validation workload was not measured; this is not
+a general device or Internet performance claim.
 
 Shared dynamic-world clocks and server/host physics reconciliation remain future
 work: this baseline relays riders' owned simulations while scene animations and

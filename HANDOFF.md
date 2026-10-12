@@ -18,24 +18,44 @@ materials and frontend gates pass through HTTPS. This is bounded verification,
 not full map or hardware parity. See [map evidence and limits](research/MAP_FIDELITY.md).
 Later ice-reflection work remains isolated WIP and is excluded from this checkpoint.
 
-## Combined ninth-map multiplayer candidate
+## Verified public ninth-map Rust multiplayer
 
 The merge preserves the public map/scenery release and extends Rust's shared
 lobby catalog to `env01`–`env08` plus `free05`. IDs remain stable; map 9 wraps to 1,
 and invalid map 10 is rejected. Rust supplies both environment keys and next-map
 metadata to browser UI/socket glue. The packet layout and host/identity/rate
-controls are unchanged. Two actual host browsers copy/join an invite, cycle to
+controls are unchanged. Two actual public browsers copy/join an invite, cycle to
 Vancouver, load matching scenes, draw both rigs, exchange movement and engine
 voices, then end cleanly with host departure. A real close-during-load gate keeps
 a completed old load on the Multiplayer menu without resurrecting its room or
 resuming a disconnected ride. The original eight-map driving,
-touch-wreck, water/snow and public model proofs above remain separate evidence.
+touch-wreck, water/snow and public model proofs remain separate evidence.
 
 Combined host gates pass 307 core, 25 protocol, 3 relay, 12 WASM and 68 JS tests,
 17 release/content and 6 Worker checks, strict formatting/Clippy and 13 live relay
 cases. The 106-record runtime package preserves both lanes' required resources.
-Current-main CI and public map-nine multiplayer verification follow this merge;
-no later WIP reflection work is included.
+Main `cef26f4495f0c5dbf6f8398133ea81bf4b78aed3` passes CI `38307658534`.
+Public HTTPS matches 31 authored files, the Rust relay identity/WASM hash and
+402 served objects (115 log entries/96 screenshots before this verification note).
+All 13 public relay cases, copied-link Vancouver play and host-close during loading
+pass. Four public clients each draw three remote peers in 39 draws with three
+engine voices; movement from all four riders reaches all observers, and host-end
+clears guest rooms, audio and GPU caches. A 390px failed-stunt replay records 403
+guest frames, 42 detached-rider frames and 14 spatial impact-audio frames, followed
+by recovery. No later WIP reflection work is included.
+
+All 26 garage choices pass again against this merged public renderer: 13 male and
+13 female selections load correct resources, produce actual animated GPU draws,
+drive 37.44–44.76ft and run their exact model engine configuration without browser,
+HTTP, worker or WebGL errors. The validated canonical private `hosted-content`
+manifest now has 106 records; prior manifests and old blobs are retained.
+
+The four-client 12-second sample uses one Mac, headless Chromium Metal, 1280×896
+and synthetic focus: 71.00–75.86 FPS, 25.9–27.2ms frame p95, 2.61–3.11ms render
+CPU, 2.1–6.6ms physics round trips and 41–52ms relay RTT. Concurrent validation
+workload overlap was not measured; these are bounded results, not device or
+Internet guarantees. Shared dynamic-world clocks, racing, player collision,
+host migration and server/host physics reconciliation remain unfinished.
 
 ## Verified public Rust multiplayer checkpoint
 
