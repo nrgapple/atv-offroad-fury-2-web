@@ -256,6 +256,32 @@ with 43 colliders, 123 wheel-support frames, 31 body-contact frames, takeoff at
 step 19 and later landing. The public frontend and copied-link FREE05 multiplayer
 pair pass with 13 remote draws, both rigs, audio and movement.
 
+## Public near-vegetation material release (d9596d9)
+
+Public main `d9596d937907395440b61e78be61b2045d987d4d` (PR #12) passed CI
+`38318057407`; deployment identity matches the validated artifact. Canonical R2
+retains 106 records and 306 references; 408 approved objects totaling
+310,198,438 bytes are published. HTTPS verifies all 32 authored files and 407
+served objects by hash, size and MIME. The gallery has 120 entries and 101
+screenshots.
+
+Near-vegetation materials pass on ENV01–ENV08 and FREE05, with 600 actual-GPU
+RGBA comparisons and zero byte differences. The public 1,200-step transport
+check exactly matches sequential frame and camera decimal outputs; this release
+has no production timing benchmark. The public map route passes all nine maps.
+Vancouver desktop/390px draws all 78 placements with 43 colliders and 37,649
+plants; contact evidence includes 123 wheel-support frames, 31 body-contact
+frames, takeoff at step 19, later landing and ATM frame 1, with the map unlocked
+by default. Public touch input matches batched/sequential behavior for 124 steps,
+including shifted release and cancellation. A public copied-link FREE05 pair
+passes with 13 remote draws per client, male/female rigs, one voice per client,
+host cleanup and 4.9307901763-foot remote distance. These are component/route
+checks, not full-scene or PS2 parity; no public FPS/timing claim is made, and the
+transport microbenchmark remains host-only. The inspected ENV07 capture remains
+private until a later validated current-main artifact includes its gallery
+reference. Weather callbacks, distant vegetation/LOD, point lights, shadows,
+native GS/full-frame precision and complete source tree lighting remain open.
+
 ## Map audio/render configuration audit
 
 A review of the extracted `.scn`/`.toy` configuration for ENV01–ENV08 and
@@ -323,8 +349,12 @@ tests; formatting/Clippy, setup, 17 release, 6 Worker and hygiene checks pass.
 The reflection gate passes ENV01's 88 groups/275 instances/141,770 pixels and
 FREE05's three groups/78 instances/236,380 pixels, with 2,304 GPU comparisons
 and maximum UV error `7.152557e-7`. The frontend gate passes original
-title/menu/controller/mobile-touch/pause/Tioga/Caribou/no-disc routes. This
-candidate and its inspected screenshot remain host-only WIP, not a public release.
+title/menu/controller/mobile-touch/pause/Tioga/Caribou/no-disc routes. The
+near-vegetation material and reconstructed Sun/ambient path was later released
+and verified publicly on all nine maps in d9596d9, including the 600 GPU color
+cases. The original arithmetic probe remains private research; neither that
+probe nor the release validates the complete inherited Sun callback/global frame
+path or complete source tree lighting.
 
 The source material census assigns `DiffuseCompressed` to the near vegetation
 shader family and `EcoSystemCode2D` to corresponding distant variants. Across
@@ -346,13 +376,13 @@ the current sequential implementation.
 
 ## Remaining fidelity gates
 
-The fog/reflection path is public at e18a371e. Original hardware equivalence
-remains open. Native terrain and water GS precision, source-specific precision,
-active-view overrides and weather callbacks remain unverified. Source vegetation
-material work is a separate host-only WIP. Selected directional Sun vegetation
-cases now pass the bounded host checks above, but they do not validate the full
-inherited Sun callback/global frame path or establish complete source tree
-lighting. Terrain projected pass selection and
+The fog/reflection path is public at e18a371e, and near-vegetation materials
+were later verified publicly across all nine maps in d9596d9. Original hardware
+equivalence remains open. Native terrain and water GS precision, source-specific
+precision, active-view overrides and weather callbacks remain unverified. The
+selected directional Sun vegetation cases pass the bounded host and public GPU checks above,
+but they do not validate the full inherited Sun callback/global frame path or
+establish complete source tree lighting. Terrain projected pass selection and
 adaptive LOD, vegetation visibility, point lights, random weather/lens effects, shadows, remaining
 ambient emitters and actors, shader families and gameplay modes remain incomplete.
 Original dynamic assets and configuration presence do not establish that they

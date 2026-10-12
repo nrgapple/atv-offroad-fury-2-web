@@ -20,7 +20,33 @@ WASM build and make verify pass. Host screenshots are inspected and recorded in
 the dev log, with publication pending validated main CI and the R2 gallery upload.
 This evidence is an optional presentation component, not original-game parity.
 
-## Latest verified public fog/reflection release
+## Latest verified public near-material release
+
+Public main `d9596d937907395440b61e78be61b2045d987d4d` (PR #12) passed CI
+`38318057407` and is deployed. Deployment identity matches the validated
+artifact. Canonical R2 retains 106 records and 306 references; the current upload
+validates 408 approved objects totaling 310,198,438 bytes. HTTPS verification
+matches all 32 authored files and 407 served objects by hash, size and MIME. The
+public gallery has 120 entries and 101 screenshots.
+
+The public near-vegetation material gate passes all nine maps; 600 actual-GPU
+RGBA comparisons have zero byte differences. Public transport validation passes
+1,200 steps with exact sequential frame and camera decimal outputs. No production
+timing benchmark was run. The public route regression passes all nine maps.
+Vancouver desktop/390px passes with 78 drawn placements, 43 colliders, 37,649
+plants, 123 wheel-support frames, 31 body-contact frames, takeoff at step 19,
+later landing, ATM frame 1 and the default-unlocked route. Public touch input
+matches batched/sequential behavior for 124 steps, including shifted release and
+cancellation. A public copied-link FREE05 pair passes with 13 remote draws per
+client, male/female rigs, one voice per client, host cleanup and a measured
+4.9307901763-foot remote distance. No public production timing benchmark was
+run; the transport microbenchmark is host-only. These are bounded component and
+route checks, not full-scene or PS2 equivalence. The selected ENV07 screenshot is
+inspected but remains in private storage until a later validated current-main
+artifact supports a gallery update. Weather callbacks, distant vegetation/LOD,
+point lights, shadows and native GS/full-frame behavior remain open.
+
+## Previous verified public fog/reflection release (e18a371e)
 
 Public main `e18a371e81b471137dd5fb1121b05d454584b1d0` passed CI
 `38312395498`. The validated artifact matches 32 authored files and all 405
@@ -43,12 +69,11 @@ pair draws 13 remote models with both rigs, audio and movement.
 
 This verifies authored browser components and routes, not complete map/game
 parity or PS2 hardware behavior. Fog packing remains source-correlated; native
-terrain/water GS precision is unverified. Source vegetation-material work is
-again host-only WIP. Lighting is still under research: current ambient prototype
-tests cover supplied zero directional weights only, and the newly recovered
-global Sun matrices must be incorporated before any lighting release claim.
-Other lighting, shadows, lens behavior, LOD, weather callbacks, remaining modes
-and progression remain open. See [deployment evidence](research/DEPLOYMENT.md),
+terrain/water GS precision is unverified. The later d9596d9 release adds
+near-vegetation material and bounded transport checks, but does not complete
+source tree lighting. Global Sun/frame behavior, distant transitions, LOD, other
+lighting, shadows, lens behavior, weather callbacks, remaining modes and
+progression remain open. See [deployment evidence](research/DEPLOYMENT.md),
 [map evidence](research/MAP_FIDELITY.md) and the public
 [dev log](https://atv-offroad-fury-2.champtoday.workers.dev/devlog.html).
 
