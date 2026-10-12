@@ -13,46 +13,46 @@ left/center/right, V top/bottom and the mesh-derived base-height offset. The
 six-vertex triangle fan has four triangles and three separately shaded columns;
 two shipped species with empty atlas rectangles retain that absence.
 
-The scene reader recovers `EcoDistance3D`/`EcoDistance2D` defaults of120/180feet
-from00202bd0.0012a1c0 supplies the quantized distance phase, near-entry signed-short
-orientation and stale-visibility phase reset;002ff150 supplies distant alpha;
+The scene reader recovers `EcoDistance3D`/`EcoDistance2D` defaults of 120/180 feet
+from routine 00202bd0. Routine 0012a1c0 supplies the quantized distance phase, near-entry signed-short
+orientation and stale-visibility phase reset; 002ff150 supplies distant alpha;
 002fe710 overrides near TEST/alpha with GREATER/KEEP. The transition billboard
-pass disables depth writes and uses reference1. Each map shares one original
+pass disables depth writes and uses reference 1. Each map shares one original
 atlas across species: distant and transition queues now use two ordered instance
 draws total, with descending projected depth. Near meshes remain grouped.
 
 Rust decoding uses direct species-slot lookup instead of a species search for
-every placement. It builds stable64² packed-coordinate cells with prefix offsets
+every placement. It builds stable 64² packed-coordinate cells with prefix offsets
 and original placement indices. The browser queries relevant cells and selects
-up to1500 placements with a reusable max heap; it sorts only that bounded result
+up to 1,500 placements with a reusable max heap; it sorts only that bounded result
 for transparency. This acceleration preserves the current browser visibility
 envelope and source identities. It does not reproduce native spatial callbacks,
 whole-depth-bucket cutoff or clipping/cache order.
 
-Host evidence: all nine map driving and atlas gates pass with8–17 total vegetation
+Host evidence: all nine map driving and atlas gates pass with 8–17 total vegetation
 draws and two billboard draws per frame, zero browser/GL errors and visible
 billboard pixels. The indexed selection matches a full scan on every map,
-including capped ENV02/ENV06 selections. Starting views scan1385–4802 placements
-out of6617–39641 (about69–92% fewer checks); this is work-count evidence, not an
+including capped ENV02/ENV06 selections. Starting views scan 1,385–4,802 placements
+out of 6,617–39,641 (about 69–92% fewer checks); this is work-count evidence, not an
 FPS or physical-phone benchmark. All nine near-material gates pass; ENV07 uses a
 test-only focused authored-fern inspection view because its starting near queue
 has no contributing pixels. Normal driving captures remain separate.
 
-A private finite interpreter executes600 original002fea30 frame preparations
-(228606 EE instructions), supplying view/global ambient/Sun state. The actual
-browser shader matches1800 three-column RGBA comparisons with zero differing
-bytes. Another300 EcoSystemCode2D cases supply correlated facing-view matrices,
-finite packet data, accepted clip flags and scalar Q/P:1800 GPU vertices have
-maximum view-coordinate error0.0009765625 feet and exact atlas UVs. This does not
+A private finite interpreter executes 600 original 002fea30 frame preparations
+(228,606 EE instructions), supplying view/global ambient/Sun state. The actual
+browser shader matches 1,800 three-column RGBA comparisons with zero differing
+bytes. Another 300 EcoSystemCode2D cases supply correlated facing-view matrices,
+finite packet data, accepted clip flags and scalar Q/P: 1,800 GPU vertices have
+maximum view-coordinate error 0.0009765625 feet and exact atlas UVs. This does not
 emulate VU latency, EFU/hardware precision, native clipping, GS viewport/depth or
 full callback scheduling. Billboard fog currently uses shared per-corner biased
 coverage; original per-row fog/depth packing remains to connect.
 
-`make check` passes317 core,25 net,3 relay and13 bridge tests, strict Clippy,
-formatting and68 JS tests. Setup verification,17 release and6 Worker tests pass.
-Vancouver desktop/390px retains78 scenery placements,43 colliders,37649 plants,
-123 wheel-support frames,31 body-contact frames, takeoff at step19, later landing,
-ATM frame1 and the unlocked route. FREE05 copied-link multiplayer retains13
+`make check` passes 317 core, 25 net, 3 relay and 13 bridge tests, strict Clippy,
+formatting and 68 JS tests. Setup verification, 17 release and 6 Worker tests pass.
+Vancouver desktop/390px retains 78 scenery placements, 43 colliders, 37,649 plants,
+123 wheel-support frames, 31 body-contact frames, takeoff at step 19, later landing,
+ATM frame 1 and the unlocked route. FREE05 copied-link multiplayer retains 13
 remote draws, both rider rigs, one voice each, movement and host cleanup. Original
 material animation/context, fog and reflection regressions pass. These are host
 checks; this candidate is not yet a verified public release. Wind/weather,
