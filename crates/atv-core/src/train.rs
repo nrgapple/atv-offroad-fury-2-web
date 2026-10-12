@@ -445,6 +445,18 @@ impl Runtime {
         dt: f32,
         mut static_height: impl FnMut(Vec3) -> Result<Option<f32>>,
     ) -> Result<Frame> {
+        self.step_with_scene(dt, |_, previous| static_height(previous), |_, _| Ok(()))
+    }
+    ///Native actors query height and publish their model/collision cache in
+    ///definition order. Later actors therefore see earlier actors' new poses.
+    ///Height services exclude the current body and supply the nearest direct
+    ///scene hit from the previous model origin's vertical five-foot segment.
+    pub fn step_with_scene(
+        &mut self,
+        dt: f32,
+        mut height_query: impl FnMut(usize, Vec3) -> Result<Option<f32>>,
+        mut publish: impl FnMut(usize, MotionState) -> Result<()>,
+    ) -> Result<Frame> {
         if !dt.is_finite() || dt <= 0. || dt > 0.1 {
             return Err("invalid train update step".into());
         }
@@ -474,7 +486,7 @@ impl Runtime {
                 let mut height = position[1];
                 if car.definition.drive_on_soultrees {
                     let previous = [car.matrix[12], car.matrix[13], car.matrix[14]];
-                    if let Some(hit) = static_height(previous)?
+                    if let Some(hit) = height_query(index, previous)?
                         && height < hit
                     {
                         height = hit
@@ -517,6 +529,14 @@ impl Runtime {
                 1.,
             ];
             car.route_time = t;
+            publish(
+                index,
+                MotionState {
+                    current: car.matrix,
+                    previous: car.previous_matrix,
+                    reciprocal_dt: self.reciprocal_dt,
+                },
+            )?;
         }
         self.frame()
     }
@@ -606,5 +626,78 @@ mod tests {
         assert_ne!(frame.cars[0].route_time, frame.cars[1].route_time);
         assert_eq!(frame.cars[0].matrix[13], 2.);
         assert!(runtime.step(0., |_| Ok(None)).is_err());
+    }
+    #[test]
+    fn scene_height_sees_earlier_cars_new_pose_before_later_car_update() {
+        use std::cell::RefCell;
+        let definition = Definition {
+            model: "car.slt".into(),
+            route: "route.vue".into(),
+            fps: 2.,
+            lag_distance: 0,
+            offset: [0.; 3],
+            path_is_level: false,
+            drive_on_soultrees: true,
+            use_collision: true,
+            use_lighting: true,
+        };
+        let mut runtime = Runtime::new(
+            Route::from_vue(VUE, 2.).unwrap(),
+            vec![definition.clone(), definition],
+        )
+        .unwrap();
+        let published = RefCell::new(Vec::<(usize, MotionState)>::new());
+        let origins = RefCell::new(Vec::new());
+        runtime
+            .step_with_scene(
+                0.1,
+                |index, previous| {
+                    origins.borrow_mut().push(previous);
+                    if index == 0 {
+                        Ok(Some(10.))
+                    } else {
+                        Ok(Some(published.borrow()[0].1.current[13] + 1.))
+                    }
+                },
+                |index, motion| {
+                    published.borrow_mut().push((index, motion));
+                    Ok(())
+                },
+            )
+            .unwrap();
+        let published = published.into_inner();
+        assert_eq!(origins.into_inner(), [[0.; 3]; 2]);
+        assert_eq!(
+            published
+                .iter()
+                .map(|(index, _)| *index)
+                .collect::<Vec<_>>(),
+            [0, 1]
+        );
+        assert_eq!(published[0].1.current[13], 10.);
+        assert_eq!(published[1].1.current[13], 11.);
+        assert_eq!(published[0].1.linear_velocity()[1], 100.);
+        assert_eq!(runtime.motion_state(1), Some(published[1].1));
+        //With a no-hit service, the retained wrapper produces identical route
+        //poses and history without publishing scene updates.
+        let make = || {
+            Runtime::new(
+                Route::from_vue(VUE, 2.).unwrap(),
+                runtime
+                    .cars
+                    .iter()
+                    .map(|car| car.definition.clone())
+                    .collect(),
+            )
+            .unwrap()
+        };
+        let mut plain = make();
+        let mut scene = make();
+        plain.step(0.1, |_| Ok(None)).unwrap();
+        scene
+            .step_with_scene(0.1, |_, _| Ok(None), |_, _| Ok(()))
+            .unwrap();
+        assert_eq!(plain.motion_state(0), scene.motion_state(0));
+        assert_eq!(plain.motion_state(1), scene.motion_state(1));
     }
 }

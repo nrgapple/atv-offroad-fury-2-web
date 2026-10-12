@@ -187,3 +187,41 @@ all-category accepted mask; caller-specific exclusions remain independent.
 Train Body actors pass that mask, while normal chase object obstruction remains
 disabled by its verified caller. Detached rider correction uses0.25 and the same
 moving point-velocity input.
+
+## Caller response flags and attached rider
+
+The arithmetic API can reproduce nonstatic friction, but the actual chassis
+caller disables it: `001dcc70` sets solver flag `+54` to zero. `00194930`
+therefore skips tangential friction for rows with a moving body, in both chassis
+passes. Static/plant rows keep configured friction. Detached rider construction
+retains the solver's default flag1, so its moving contacts keep friction. An
+8-case original constructor/dispatcher replay executes2,781 instructions with
+explicit caller flags and arithmetic callback services, checking positive/absent
+penetration and static/train ownership. It distinguishes caller policy from the
+separate500-case arithmetic comparison.
+
+Normal riding has no extra independent animated rider collision response.
+`001ee990` phase0 clears the detached body-enabled flag and skips its physics
+query; phases1–4 dispatch that query. A12-case phase/enabled-state original
+prefix replay executes462 instructions and verifies this. The quad's passive
+`f.col` actor is updated around physics and serves as another actor's target; it
+is not an added head/torso solver. Riding wreck decisions retain chassis ray
+contacts and their existing impact, first-height-contact, stunt and angle rules.
+Adding a special side-hit wreck trigger would not follow this source evidence.
+
+## Sequential scene-height binding
+
+`Runtime::step_with_scene` queries height with the car index and its preceding
+model origin, then publishes each car's current/prior matrices immediately after
+its update. The existing `step` method supplies a no-op publication callback.
+This allows the scene bridge to preserve original definition order, see earlier
+cars' new poses and exclude the querying car. The height service chooses the
+nearest original type2 ray-tree hit on the previous origin's vertical segment extending
+five feet each way; only a higher hit replaces authored route height. Level-path
+shared height and source cache timing stay inside the runtime.
+
+The no-hit240×12 native route comparison still matches all46,080 matrix words.
+An authored two-car scene test establishes that the second query observes the
+first published pose and that native identity-history startup remains intact.
+Actual loaded-scene height queries and moving encounters remain integration
+checks, rather than claims established by this callback-order test.
