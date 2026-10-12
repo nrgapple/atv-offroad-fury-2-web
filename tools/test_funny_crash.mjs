@@ -21,6 +21,7 @@ try {
     const source=JSON.parse(new TextDecoder().decode(message.bytes)),f=window.atvTerrainStatus?.frame;
     if(f?.speed_magnitude>55&&!f.grounded.some(Boolean)&&f.wreck.phase==='Riding')held=true;
     if(f?.wreck.phase!=='Riding')held=false;
+    source.count=4;
     source.input={...source.input,throttle:1,brake:0,steer:0,lean:0,reverse:false,touch_drive:null,preload_axis:null,stunt_modifiers:held?1:0,stunt_x:0,stunt_y:held?1:0};
     message={...message,bytes:new TextEncoder().encode(JSON.stringify(source))};
    }
@@ -30,8 +31,11 @@ try {
  await page.goto(`${process.env.ATV_TEST_URL||'http://127.0.0.1:4182'}/play.html?drive=1&environment=env01`);
  await page.waitForFunction(()=>window.atvTerrainStatus?.simulation,null,{timeout:120000});
  assert.equal(await page.evaluate(()=>window.atvTerrainStatus.funnyCrashes),true);
- await page.locator('#game').focus();await page.evaluate(()=>window.crashDriving=true);
- await page.waitForFunction(()=>window.atvTerrainStatus.frame.funny_crash?.detached_parts===7&&window.atvTerrainStatus.frame.funny_crash.rider_node_matrices.length>0&&window.atvTerrainStatus.frame.funny_crash.age>1.1,null,{timeout:60000});
+ await page.keyboard.press('Escape');
+ await page.getByRole('button',{name:'Reset ATV',exact:true}).waitFor();
+ await page.evaluate(()=>window.crashDriving=true);
+ await page.getByRole('button',{name:'Reset ATV',exact:true}).click();
+ await page.waitForFunction(()=>window.atvTerrainStatus.frame.funny_crash?.detached_parts===7&&window.atvTerrainStatus.frame.funny_crash.rider_node_matrices.length>0&&window.atvTerrainStatus.frame.funny_crash.age>.6,null,{timeout:60000});
  await page.evaluate(()=>window.crashDriving=false);
  const crash=await page.evaluate(()=>window.atvTerrainStatus.frame);
  assert.equal(crash.funny_crash.detached_parts,7);

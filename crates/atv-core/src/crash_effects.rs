@@ -97,7 +97,9 @@ impl Particle {
         }
     }
     fn advance(&mut self, floor: &impl Fn(V) -> Option<f32>) {
-        let velocity = scale(sub(self.p, self.previous), 0.995);
+        let raw = sub(self.p, self.previous);
+        // At 120 Hz, one foot per substep caps presentation speed at 120 ft/s.
+        let velocity = scale(raw, 0.995 / dot(raw, raw).sqrt().max(1.));
         self.previous = self.p;
         self.p = add(add(self.p, velocity), [0., -32.174 / 14400., 0.]);
         self.contact(floor, true);
