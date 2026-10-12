@@ -1,4 +1,4 @@
-// Original-content near-vegetation packet/state gate. Billboard/LOD parity remains open.
+// Original-content near-vegetation packet/state gate. Distant vegetation has a separate gate.
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import fs from 'node:fs/promises';
@@ -9,6 +9,9 @@ const browser=await chromium.launch({headless:true});
 try {for(const environment of (process.env.ATV_ECO_MAPS||'env01,env04,free05').split(',')) {
  const page=await browser.newPage({viewport:{width:960,height:600}}),errors=[];
  page.on('pageerror',error=>errors.push(error.message));
+ // The recovered LOD leaves ENV07's starting near queue outside the view.
+ // Inspect the nearest authored fern with a test-only frozen camera.
+ if(environment==='env07')await page.route('**/game.js',async route=>{const response=await route.fetch();await route.fulfill({response,body:(await response.text())+`\nwindow.inspectNearVegetation=()=>{const p=ecoGroups[0].placements.reduce((best,p)=>Math.hypot(p.position[0]-camera.x,p.position[2]-camera.z)<Math.hypot(best.position[0]-camera.x,best.position[2]-camera.z)?p:best);menuOpen=false;focused=false;cameraFrame=null;$('frontend').hidden=true;camera.x=p.position[0]+10;camera.z=p.position[2]+10;camera.y=p.position[1]+p.radius*1.5;camera.yaw=Math.atan2(-10,-10);camera.pitch=Math.atan2(-p.radius,Math.sqrt(200));};`});});
  await page.addInitScript(()=>{
   window.ecoMaterialNames=[];window.ecoPasses={};window.ecoDraws=0;window.ecoPixels=0;window.ecoVehicleDraws=0;
   const NativeWorker=Worker;
@@ -26,7 +29,7 @@ try {for(const environment of (process.env.ATV_ECO_MAPS||'env01,env04,free05').s
   prototype.shaderSource=function(s,text){if(text.includes('ecoSunDirection'))window.ecoVertexSource=text;return shader.call(this,s,text);};
   prototype.drawElementsInstanced=function(...args){
    const program=this.getParameter(this.CURRENT_PROGRAM),uniform=name=>{const location=this.getUniformLocation(program,name);return location&&this.getUniform(program,location);};
-   if(!uniform('useEcosystem'))return draw.apply(this,args);
+   if(!uniform('useEcosystem')||uniform('ecoBillboard'))return draw.apply(this,args);
    const names=[...new Set(ecoMaterialNames)];if(names.length!==1)throw Error('Vegetation gate requires a single source material family per inspected map');
    const pass=ecoPasses[names[0].toLowerCase()];if(!pass)throw Error('Source vegetation material metadata unavailable');
    if(!uniform('useVertexColor')||!uniform('unlit'))throw Error('Original near vegetation color is not connected');
@@ -47,6 +50,7 @@ try {for(const environment of (process.env.ATV_ECO_MAPS||'env01,env04,free05').s
  await page.waitForFunction(()=>window.atvTerrainStatus?.ready&&window.atvTerrainStatus?.simulation,null,{timeout:120000});
  assert.match(await page.evaluate(()=>window.atvTerrainStatus.source),new RegExp(`${environment}\\.tr2$`),'Requested vegetation map must load');
  await page.evaluate(()=>window.captureEco=true);
+ if(environment==='env07'){await page.keyboard.press('Escape');await page.waitForTimeout(250);await page.evaluate(()=>inspectNearVegetation());}
  await page.waitForFunction(()=>ecoPixels>0&&ecoVehicleDraws>0,null,{timeout:15000});
  await page.evaluate(()=>window.captureEco=false);
  const result=await page.evaluate(()=>({environment:atvTerrainStatus.source,lighting:atvTerrainStatus.vegetationLighting,draws:ecoDraws,vehicleDraws:ecoVehicleDraws,pixels:ecoPixels,gl:atvTerrainStatus.glError}));
@@ -68,5 +72,5 @@ try {for(const environment of (process.env.ATV_ECO_MAPS||'env01,env04,free05').s
  assert(result.draws>0&&result.vehicleDraws>0&&result.pixels>0);assert.equal(result.gl,0);assert.deepEqual(errors,[]);console.log(JSON.stringify(result));
  if(process.env.ATV_ECO_SCREENSHOTS)await page.screenshot({path:`${process.env.ATV_ECO_SCREENSHOTS}-${environment}.png`});
  await page.close();
- }console.log('PASS: near vegetation Sun/ambient preparation, source blend/fog/depth switches, visible vegetation and vehicle-state isolation; optional original arithmetic comparison. Billboard/LOD/transition and full GS hardware parity remain open.');
+ }console.log('PASS: near vegetation Sun/ambient preparation, source blend/fog/depth switches, visible vegetation and vehicle-state isolation; optional original arithmetic comparison. Full native visibility/GS hardware parity remain open.');
 }finally{await browser.close();}
