@@ -78,3 +78,41 @@ resources and screenshots remain in a separately validated R2-only manifest; the
 expanded package is lazy for other quad archives. `/multiplayer/version` identifies
 the checked relay commit/WASM hash through configuration, while public browser
 checks verify actual socket/game operation. Host checks are not a public release.
+
+
+## Public integration evidence
+
+Main `ceee73d44bc69f940729c5fdf20b892e4394bb59` and CI `38300517282` are
+verified through the production HTTPS app. The relay's identity and all authored
+static/R2 object hashes match their checked packages. Eleven live public room
+gates cover capacity, authentication/identity, packet validation, rate limits and
+cleanup. A real copied-invite two-client session replicates movement, original
+spatial engine/impact audio, 390px touch-driven crash, detached rider and recovery.
+An actual four-browser session gives each client three remote actors/engine voices
+and propagates each rider's movement to all observers; host-end clears every guest.
+All 26 garage choices also drive through actual public UI with alternating rigs.
+
+Opt-in browser gates are `tools/test_multiplayer.mjs`,
+`tools/test_multiplayer_four.mjs` and `tools/test_player_models.mjs`; original game
+content is supplied only by the separate approved manifest or private host server,
+never CI. The four-client timing sample uses one Mac, Chromium Metal, 1280×896 and
+synthetic focus: 71.59–74.14 FPS, 2.47–2.92ms render CPU, 2.1–4.3ms physics worker
+round trips and 37–201ms relay RTT (final 42–47ms). Headless/backend/device/workload
+and location matter; these numbers do not establish performance on other devices.
+See `DEPLOYMENT.md` and the public dev log for broader checks and limitations.
+
+
+## Ninth-map integration
+
+Vancouver Ridge (`FREE05`) joins the stable Rust catalog as map ID 9, after
+`env01`–`env08`. The Rust protocol/relay share that catalog and reject ID 10;
+the WASM adapter derives environment keys and next-map choices for the browser.
+This extends supported values without changing packet layout. The host candidate
+passes actual copied-link two-browser Vancouver driving/audio/cleanup plus 13
+live relay cases, including all-four map selection and invalid-map rejection.
+Public verification follows the combined current-main CI release.
+
+Shared dynamic-world clocks and server/host physics reconciliation remain future
+work: this baseline relays riders' owned simulations while scene animations and
+dynamic objects run on each client's local scene clock. Competitive authority,
+player collision, host migration and original online/race rules are unfinished.

@@ -17,6 +17,12 @@ pub use transform::Transform;
 
 pub const VERSION: u8 = 1;
 pub const MAX_PLAYERS: usize = 4;
+/// One-based lobby IDs reference this authored catalog; source resource keys
+/// remain stable even when their browser display names change.
+pub const MAP_ENVIRONMENTS: [&str; 9] = [
+    "env01", "env02", "env03", "env04", "env05", "env06", "env07", "env08", "free05",
+];
+pub const MAX_MAP_ID: u16 = MAP_ENVIRONMENTS.len() as u16;
 pub const MAX_NODES: usize = 64;
 pub const MAX_PACKET_BYTES: usize = 8192;
 pub const MAX_NAME_BYTES: usize = 32;
@@ -67,6 +73,17 @@ pub fn sequence_newer(candidate: u32, previous: u32) -> bool {
     let delta = candidate.wrapping_sub(previous);
     delta != 0 && delta < 0x8000_0000
 }
+pub fn map_environment(id: u16) -> Option<&'static str> {
+    id.checked_sub(1)
+        .and_then(|index| MAP_ENVIRONMENTS.get(usize::from(index)).copied())
+}
+pub fn next_map(id: u16) -> Option<u16> {
+    valid_map(id).then(|| if id == MAX_MAP_ID { 1 } else { id + 1 })
+}
+pub fn valid_map(id: u16) -> bool {
+    (1..=MAX_MAP_ID).contains(&id)
+}
+
 pub fn valid_peer(id: PeerId) -> bool {
     (id as usize) < MAX_PLAYERS
 }

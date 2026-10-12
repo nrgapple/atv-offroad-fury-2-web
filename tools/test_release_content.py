@@ -88,6 +88,9 @@ class PlayerContentTests(unittest.TestCase):
         self.assertTrue(all(result.extract(i) == b'fixture' for i in range(7)))
         with self.assertRaisesRegex(ValueError, 'missing or duplicated'):
             compact_player_archive(pack_resource([(names[0], b'fixture')]), '/QUAD/BIKESB/ATV26.RES')
+        duplicate = [(name, b'fixture') for name in names[:-1]] + [('second/atv26.psg', b'fixture')]
+        with self.assertRaisesRegex(ValueError, 'missing or duplicated'):
+            compact_player_archive(pack_resource(duplicate), '/QUAD/BIKESB/ATV26.RES')
 
     def test_rider_package_excludes_first_person_and_unbound_physics(self):
         from package_content import compact_player_archive, pack_resource, Resource
@@ -104,6 +107,9 @@ class PlayerContentTests(unittest.TestCase):
         self.assertEqual([m[0] for m in result.members], ['anim/ride.mot', 'anim/jump.mot'])
         with self.assertRaisesRegex(ValueError, 'missing or duplicated'):
             compact_rider_motions(source, [other.replace(b'RIDE', b'missing')])
+        duplicate = pack_resource([('first/ride.mot', b'one'), ('second/ride.mot', b'two')])
+        with self.assertRaisesRegex(ValueError, 'missing or duplicated'):
+            compact_rider_motions(duplicate, [catalog])
 
     def test_vancouver_thumbnail_includes_only_two_required_halves(self):
         from package_content import compact_vancouver_thumbnail, pack_resource, Resource

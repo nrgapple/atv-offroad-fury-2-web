@@ -549,3 +549,62 @@ and mobile map routes without disc selection, diagnostics persistence/layout,
 uninterrupted all-eight-map driving and dev-log filters pass without JS/GL errors.
 These are bounded original-resource routes and component proofs, not complete
 PS2/gameplay/physical-phone parity. See [water/snow evidence](WATER_SNOW_GATE.md).
+
+
+## Rust Freeride multiplayer release (2026-10-12)
+
+Main `ceee73d44bc69f940729c5fdf20b892e4394bb59` passes
+[CI 38300517282](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38300517282)
+and is verified on the existing public HTTPS game URL. The checked artifact now
+contains authored frontend assets and a compiled Rust room relay. The existing
+game Worker exports its Rust `LobbyRoom` Durable Object and delegates room routes
+to the Rust WorkerEntrypoint; no separate Worker or expanded CI credential is
+required. `/multiplayer/version` reports the checked commit and relay WASM hash.
+
+The private expanded R2 package includes 26 quad mesh/PHY/AO/AR/particle archives,
+both rider body rigs, their union of 140 used MOT clips, connected materials and
+per-model engine banks. Unused first-person arms and unreferenced animation clips
+are excluded. The uploader validates 396 approved objects and uploads 59 changes;
+HTTPS verification checks all 395 served runtime/manifest/PNG objects plus 31
+unchanged authored/static hashes. The gallery initially has 108 entries and 91
+screenshots; the public verification note follows separately. Source resources
+and screenshots remain outside GitHub and CI. If the existing host OAuth session
+has expired, `npx --yes wrangler@4.149.0 whoami` refreshes it before the R2 upload.
+
+Eleven live public Rust relay gates pass, including four-slot capacity, origin
+rejection, reserved host identity, stale command resynchronization, immutable
+active map/start, validated snapshots, safe slot reuse, malformed sender isolation,
+rate limits, model validation and host departure. The real two-browser Metal GPU
+gate uses the copied invite link and distinct ATV01/male and ATV02/female rigs.
+Remote movement, orientation, spatial engine audio, touch-driven crash/rider
+separation/impact sound/recovery and host-end all pass. The crash trace contains
+112 guest samples, 51 detached-rider frames and 13 impact-audio frames. Sampled
+public round trips are 38–51ms from one host through Cloudflare; no cross-location,
+physical-phone or general Internet performance claim is made.
+
+A second actual public gate starts four browser clients with ATVs 1/14/26/2 and
+both rider rigs. Each renders three finite remote actors (39 draws) with three
+engine voices. Movement from each of the four riders reaches every observer;
+host-end clears all guest room, pose, audio, impact and GPU caches. No page errors
+or failed HTTP responses occur. `tools/test_multiplayer_four.mjs` repeats this
+opt-in original-content check. On a single Mac with Chromium Metal at 1280×896
+and synthetic focus, a 12-second diagnostics sample reports 71.59–74.14 FPS,
+26.4–27.2ms frame p95, 2.47–2.92ms CPU draw and 2.1–4.3ms physics round trips.
+Relay RTT samples are 37–201ms (final 42–47ms). These are bounded measurements,
+not claims about other machines, phones, browser backends or locations.
+
+The public actual-UI garage probe selects and drives all 26 models, alternating
+13 male/13 female rigs. Expected source paths, animated GPU pose draws, finite
+Rust physics, per-model engine configurations and live voices pass without
+HTTP/page/worker/WebGL errors. Representative public models 01/14/26 are inspected. The repeatable authored
+garage gate is `tools/test_player_models.mjs`. The canonical private
+`hosted-content` package is refreshed to this verified 104-record manifest,
+preserving earlier blobs and a prior manifest backup; future packages must use
+the current content packager so multiplayer resources remain present.
+Public original title/menu/controller/Tioga/pause/390px Caribou reload passes
+without a file picker or JS/GL errors. This is an owner-authoritative shared
+Freeride baseline; racing, player collision, server/host physics reconciliation,
+host migration, split-screen and full original game parity remain incomplete.
+See [implementation and transport tradeoffs](MULTIPLAYER.md),
+[original multiplayer evidence](MULTIPLAYER_ORIGINAL.md) and
+[model census](MULTIPLAYER_MODELS.md).

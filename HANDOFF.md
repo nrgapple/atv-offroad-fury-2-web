@@ -1,6 +1,6 @@
 # Implementation handoff
 
-## Map-fidelity and Vancouver Ridge host checkpoint
+## Verified public map-fidelity and Vancouver Ridge checkpoint
 
 The isolated map lane has a complete 40-family/147-archive asset-header/config
 census and restored static prelit RGBA, FB_ONLY/source-alpha behavior and Rust UV
@@ -11,12 +11,33 @@ solid colliders. All 78 scenery meshes decode; 75 placements draw while three ic
 reflection overlays remain skipped. Its five-frame drag light now uses the
 recovered forward ATM clock. Desktop/390px source-ramp throttle tests pass wheel
 support, body contact, air and ground return; both menu routes pass without a disc
-picker. This is a host checkpoint, not full map or hardware parity. See
-[map evidence and limits](research/MAP_FIDELITY.md). Public verification is pending
-current-main CI/deployment, required R2 content/inspected screenshot publication
-and public browser gates. Preserve the other lane's Rust relay deployment fix.
+picker. Public main `f585991579f8c44b098d6b137b1679eb8050e3fd` passes CI
+`38302626466`, 31 authored hashes and 399 served objects (110 log entries/93
+screenshots). Nine map loads, desktop/390px Vancouver contacts, four scenery
+materials and frontend gates pass through HTTPS. This is bounded verification,
+not full map or hardware parity. See [map evidence and limits](research/MAP_FIDELITY.md).
+Later ice-reflection work remains isolated WIP and is excluded from this checkpoint.
 
-## Rust multiplayer host checkpoint, public verification pending
+## Combined ninth-map multiplayer candidate
+
+The merge preserves the public map/scenery release and extends Rust's shared
+lobby catalog to `env01`–`env08` plus `free05`. IDs remain stable; map 9 wraps to 1,
+and invalid map 10 is rejected. Rust supplies both environment keys and next-map
+metadata to browser UI/socket glue. The packet layout and host/identity/rate
+controls are unchanged. Two actual host browsers copy/join an invite, cycle to
+Vancouver, load matching scenes, draw both rigs, exchange movement and engine
+voices, then end cleanly with host departure. A real close-during-load gate keeps
+a completed old load on the Multiplayer menu without resurrecting its room or
+resuming a disconnected ride. The original eight-map driving,
+touch-wreck, water/snow and public model proofs above remain separate evidence.
+
+Combined host gates pass 307 core, 25 protocol, 3 relay, 12 WASM and 68 JS tests,
+17 release/content and 6 Worker checks, strict formatting/Clippy and 13 live relay
+cases. The 106-record runtime package preserves both lanes' required resources.
+Current-main CI and public map-nine multiplayer verification follow this merge;
+no later WIP reflection work is included.
+
+## Verified public Rust multiplayer checkpoint
 
 Isolated `feature/rust-multiplayer` adds four-player host-controlled Freeride
 lobbies, eight-character share codes/links and an authored Rust Cloudflare relay.
@@ -32,8 +53,8 @@ resources, and male 18/female 27-node rigs with their matching 78-motion catalog
 Original unlock/profile rules are not reconstructed. Networking preserves source
 node shear and detached rider poses; state switches/teleports are discontinuities.
 Host departure closes the event. Protocol/relay component commits are 4fa8ad0 and
-53a0db4; browser integration and public release identity follow at the completed
-release checkpoint. No source disc/executable/unused VUT or first-person arms enter
+53a0db4; browser integration is b96c702. Public main
+`ceee73d44bc69f940729c5fdf20b892e4394bb59` passes CI `38300517282`. No source disc/executable/unused VUT or first-person arms enter
 GitHub or the runtime package.
 
 Initial host gates pass 299 core + 22 net + 3 relay + 11 WASM + 66 JS tests, strict formatting/Clippy,
@@ -48,9 +69,48 @@ The checked CI artifact includes the compiled Rust relay and the existing game
 Worker hosts its routes and Durable Object, preserving the scoped CI credential. `/multiplayer/version` reports its configured checked
 commit/WASM hash. Expanded required resources are staged separately in
 `private/reports/multiplayer-content` and must be uploaded from a validated current-main
-artifact using `upload_cloudflare_content.py --content`; public release still needs
-CI, R2 publication and production browser verification. Preserve other agents'
-water/snow and UI lanes while integrating current main.
+artifact using `upload_cloudflare_content.py --content`. That package is now public:
+396 approved R2 objects, with 59 incremental uploads. HTTPS verification matches
+31 authored/static hashes and all 395 served runtime/gallery objects, with 108
+log entries and 91 screenshots before the public verification note. The relay's
+configured commit/WASM hash matches its checked CI artifact. The original scoped
+CI token deploys the combined Worker; host upload authentication uses the existing
+Wrangler login (refresh an expired OAuth session with `wrangler whoami`).
+
+Public real-browser verification follows the actual copied invite link, starts
+ATV01/male and ATV02/female, draws remote rigs, exchanges movement and spatial
+engine sound, and ends cleanly with host departure. A 390px touch-driven failed
+Nac Nac produces 112 guest samples across Riding/Airborne/Wreck, 51 detached-rider
+frames, 13 original impact-audio frames with changing pan, then recovery. Sampled
+round trips are 38–51ms from this host through public Cloudflare, not a promise
+about other locations or physical devices. Normal public menus/controller,
+Tioga/pause and 390px Caribou reload also pass with no disc prompt or browser errors.
+
+The actual public four-browser gate also passes with ATVs 1/14/26/2 and both rigs.
+Each client draws three remote peers (39 draws) and starts three independent engine
+voices; each rider's keyboard movement reaches all three observers. Host departure
+clears all guest room/pose/audio/impact/GPU caches without browser or HTTP errors.
+A 12-second measurement on one Mac with Chromium Metal, 1280×896 and synthetic
+focus yields 71.59–74.14 FPS, 26.4–27.2ms frame p95, 2.47–2.92ms render CPU and
+2.1–4.3ms physics worker round trips. Relay RTT samples range 37–201ms, ending at
+42–47ms. These automation/device/workload conditions do not establish general
+Internet, physical-phone or multi-device performance. Repeat with
+`tools/test_multiplayer_four.mjs`; original-content garage coverage is repeatable
+through `tools/test_player_models.mjs`. Outputs remain in ignored private storage.
+
+All 26 garage choices also pass the public actual-UI single-player probe, with
+13 male and 13 female selections. Each loads its own expected model/physics/material
+paths, renders finite 27-node quad and 18/27-node rider poses, drives 37.21–45.45ft
+under throttle and runs its exact per-model engine configuration/voice. No HTTP,
+page, worker or WebGL errors occur. Public representative models 01/14/26 were
+inspected; this verifies the connected loading/driving path, not complete original
+handling, unlock, controller or physical-phone parity.
+
+The current component gate passes 303 core, 22 protocol, 3 relay, 11 WASM and 66 JS
+tests, 16 release/content checks, 6 Worker routing checks, formatting/Clippy and
+`make verify`. All 11 live public relay checks pass, including four-slot capacity,
+stale command resynchronization, sender identity, malformed-packet isolation,
+rate limits and host-end behavior. Preserve the integrated water/snow and UI lanes.
 
 The combined merge against water/snow main cec8a6d passes 303 core, 22 net,
 3 relay, 11 WASM and 66 JS tests, plus 15 release/5 Worker checks. Serial

@@ -26,7 +26,7 @@ function fixture() {
   }
   globalThis.WebSocket=Socket;
   const calls=[], overrides=new Map(), states=[], starts=[], leaves=[], reports=[], frames=[], models=[], assets=[], cleanups=[];
-  const defaultState={peer:0,code:'ABCD2345',lobby:{host:0,epoch:1,map:1,started:false,players:[]}};
+  const defaultState={peer:0,code:'ABCD2345',environment:'env01',nextMap:2,lobby:{host:0,epoch:1,map:1,started:false,players:[]}};
   const sound={active:true,context:{state:'running'},remotePlaying:()=>[],remoteFrame:v=>frames.push(v),loadRemoteModels:async v=>models.push(v)};
   const codec=async(op,bytes,index)=>{
     calls.push({op,bytes,index});
@@ -171,8 +171,8 @@ test('local pause flag crosses the Rust snapshot boundary without queueing extra
 test('one authoritative start loads only once and abandoned map completion cannot load audio into a replacement room',async()=>{
   const f=fixture();try {
     const socket=await f.connect();const pending=deferred();f.mp.onStart=map=>{f.starts.push(map);return pending.promise;};
-    f.overrides.set(82,async()=>encode({state:{...f.defaultState,lobby:{...f.defaultState.lobby,started:true,map:3}},event:{}}));
-    socket.message();await f.mp.receiveQueue;assert.deepEqual(f.starts,[3]);
+    f.overrides.set(82,async()=>encode({state:{...f.defaultState,environment:'env03',nextMap:4,lobby:{...f.defaultState.lobby,started:true,map:3}},event:{}}));
+    socket.message();await f.mp.receiveQueue;assert.deepEqual(f.starts,['env03']);
     await f.mp.disconnect(false);pending.resolve();await flush();assert.deepEqual(f.models,[]);
   }finally{await f.cleanup();}
 });
@@ -187,5 +187,32 @@ test('superseded asynchronous session configuration cannot replace the newer soc
     // instead of leaving a fake pending connection with an unexecuted timer.
     if(f.sockets.length>1)await f.sockets.at(-1).open();
     await first;assert.equal(f.sockets.length,1,'cancelled configuration must not construct a late socket');assert.equal(f.mp.socket,current);
+  }finally{await f.cleanup();}
+});
+
+test('Rust map metadata cycles to Vancouver, wraps, and starts its asset key',async()=>{
+  const f=fixture();try {
+    const socket=await f.connect();
+    f.mp.state={...f.defaultState,environment:'env08',nextMap:9,lobby:{...f.defaultState.lobby,map:8}};
+    await f.mp.action('lobbymap',f.frontend);
+    assert.deepEqual(decode(socket.sent.at(-1)),{SetLobby:{epoch:1,map:9,started:false}});
+    f.mp.state={...f.defaultState,environment:'free05',nextMap:1,lobby:{...f.defaultState.lobby,map:9}};
+    await f.mp.action('lobbymap',f.frontend);
+    assert.deepEqual(decode(socket.sent.at(-1)),{SetLobby:{epoch:1,map:1,started:false}});
+    f.overrides.set(82,async()=>encode({state:{...f.mp.state,lobby:{...f.mp.state.lobby,started:true}},event:{}}));
+    socket.message();await f.mp.receiveQueue;
+    assert.deepEqual(f.starts,['free05']);
+  }finally{await f.cleanup();}
+});
+
+test('host close invalidates the pending map loader before it can resume a ride',async()=>{
+  const f=fixture();try {
+    const socket=await f.connect(),pending=deferred();let current;
+    f.mp.onStart=(_environment,isCurrent)=>{current=isCurrent;return pending.promise;};
+    f.overrides.set(82,async()=>encode({state:{...f.defaultState,lobby:{...f.defaultState.lobby,started:true}},event:{}}));
+    socket.message();await f.mp.receiveQueue;assert.equal(current(),true);
+    socket.close(1000,'Host left');assert.equal(current(),false);
+    pending.resolve();await flush();assert.equal(f.models.length,0);
+    assert.equal(f.mp.state.code,undefined);
   }finally{await f.cleanup();}
 });

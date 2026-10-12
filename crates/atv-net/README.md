@@ -10,7 +10,9 @@ The decoder rejects trailing bytes, unsupported versions/enums, nonfinite floats
 invalid transforms, duplicate roster slots, invalid room codes and oversized
 allocations. Four players, 64 ATV nodes, 64 rider nodes and 8,192 bytes per packet
 are hard limits. Names are at most 32 UTF-8 bytes and exclude control characters.
-Room codes contain eight nonambiguous uppercase base-32 characters.
+Room codes contain eight nonambiguous uppercase base-32 characters. Lobby map IDs
+are bounded to 1–9, with source keys `env01` through `env08`, then `free05`
+(Vancouver Ridge). `map_environment` and `next_map` share this Rust catalog.
 
 | Kind | Payload |
 | --- | --- |
