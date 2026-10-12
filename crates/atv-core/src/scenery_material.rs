@@ -8,6 +8,9 @@ use serde::Serialize;
 pub struct Pass {
     pub shader: String,
     pub prelit: bool,
+    /// Original local-normal reflection projection: 1=XY, 2=XZ, 3=YZ.
+    pub reflection_plane: u8,
+    pub fog: bool,
     pub blend: bool,
     pub depth_write: bool,
     pub uv_scroll: Option<Scroll>,
@@ -139,9 +142,16 @@ pub fn parse(data: &[u8]) -> Result<Pass> {
         Ok(value)
     };
     let shader = get("microProgramName").unwrap_or("").to_owned();
+    let reflection_plane = match shader.to_ascii_lowercase().as_str() {
+        "prelitreflxyenvmapcompressed" => 1,
+        "prelitreflxzenvmapcompressed" => 2,
+        "prelitreflyzenvmapcompressed" => 3,
+        _ => 0,
+    };
     let prelit = shader.eq_ignore_ascii_case("PrelitCompressed")
         || shader.eq_ignore_ascii_case("TexTransformPrelitCompressed")
-        || shader.eq_ignore_ascii_case("prelit");
+        || shader.eq_ignore_ascii_case("prelit")
+        || reflection_plane != 0;
     let blend = number("alphaBlendingOnOff", 0.)? != 0.
         && ["inputColorA", "inputColorB", "inputAlphaC", "inputAlphaD"]
             .into_iter()
@@ -215,6 +225,10 @@ pub fn parse(data: &[u8]) -> Result<Pass> {
     Ok(Pass {
         shader,
         prelit,
+        reflection_plane,
+        // DefaultMT constructor001b9810 enables fog; explicit PSM passes
+        // override its GS PRIM bit through001b51d0.
+        fog: number("foggingOnOff", 1.)? != 0.,
         blend,
         depth_write,
         uv_scroll,
@@ -226,6 +240,28 @@ pub fn parse(data: &[u8]) -> Result<Pass> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reflection_planes_preserve_prelit_blend_and_disabled_depth() {
+        for (shader, plane) in [
+            ("PrelitReflXyEnvmapCompressed", 1),
+            ("PrelitReflXZEnvmapCompressed", 2),
+            ("PrelitReflYZEnvmapCompressed", 3),
+        ] {
+            let source = format!(
+                "[ShaderPass_1]\nmicroProgramName={shader}\nalphaBlendingOnOff=1\nZWriteDisabled=1\n"
+            );
+            let pass = parse(source.as_bytes()).unwrap();
+            assert_eq!(pass.reflection_plane, plane);
+            assert!(pass.prelit && pass.blend && !pass.depth_write);
+            assert!(pass.fog);
+        }
+        let unsupported =
+            parse(b"[ShaderPass_1]\nmicroProgramName=EnvironmentMapCompressed\n").unwrap();
+        assert_eq!(unsupported.reflection_plane, 0);
+        assert!(!unsupported.prelit);
+        let unfogged = parse(b"[ShaderPass_1]\nfoggingOnOff=0\n").unwrap();
+        assert!(!unfogged.fog);
+    }
     #[test]
     fn scroll_uses_negative_sampling_offset_and_signed_wrap() {
         let mut scroll = Scroll {

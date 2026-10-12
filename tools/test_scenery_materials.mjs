@@ -11,13 +11,14 @@ try {
     const page=await browser.newPage({viewport:{width:960,height:600}}),errors=[];
     page.on('pageerror',e=>errors.push(e.message));
     await page.addInitScript(model => {
-      window.sceneryModelName = model; window.sourceColors = new Set(['[128,128,128,128]']); window.checkedColorVaos = new WeakSet(); window.materialDraws = 0; window.materialPixels = 0; window.uvPixels = 0;
+      window.sceneryModelName = model; window.sourceColors = new Set(['[128,128,128,128]']); window.checkedColorVaos = new WeakSet(); window.materialDraws = 0; window.materialPixels = 0; window.uvPixels = 0; window.materialPending = 0;
       const NativeWorker = Worker;
       window.Worker = class extends NativeWorker {
         constructor(...args) {
           super(...args); this.ops = new Map();
           this.addEventListener('message', ({ data }) => {
             const op = this.ops.get(data.id); this.ops.delete(data.id);
+            if (op === 50) window.materialPending--;
             if (op === 11 && data.bytes && !data.error) {
               const mesh = JSON.parse(new TextDecoder().decode(data.bytes));
               for (const group of mesh.lods[0].groups) for (const vertex of group.vertices) if (vertex.color) window.sourceColors.add(JSON.stringify(vertex.color));
@@ -28,16 +29,22 @@ try {
             }
           });
         }
-        postMessage(data, ...args) { this.ops.set(data.id, data.op); super.postMessage(data, ...args); }
+        postMessage(data, ...args) { this.ops.set(data.id, data.op); if (data.op === 50) window.materialPending++; super.postMessage(data, ...args); }
       };
       const names = new WeakMap(), getLocation = WebGL2RenderingContext.prototype.getUniformLocation;
       WebGL2RenderingContext.prototype.getUniformLocation = function (...args) { const location=getLocation.apply(this,args); if(location) names.set(location,args[1]); return location; };
+      const eyeUniform = WebGL2RenderingContext.prototype.uniform3f;
+      WebGL2RenderingContext.prototype.uniform3f = function (location, ...value) {
+        if (window.materialEye && names.get(location) === 'eye') value = window.materialEye;
+        return eyeUniform.call(this, location, ...value);
+      };
       const matrix = WebGL2RenderingContext.prototype.uniformMatrix4fv;
       WebGL2RenderingContext.prototype.uniformMatrix4fv = function (location, transpose, value) {
         const selected = window.sceneryModels?.[0];
         const p = this.getParameter(this.CURRENT_PROGRAM);
-        if (selected && names.get(location) === 'viewProjection') {
+        if (p && selected && names.get(location) === 'viewProjection') {
           const center = selected.world_matrix.slice(12, 15), eye = [center[0], center[1] + 60, center[2] - 90];
+          window.materialEye = eye;
           const forward = [0, -60 / Math.hypot(60, 90), 90 / Math.hypot(60, 90)];
           const right = [-1, 0, 0], up = [0, forward[2], -forward[1]];
           const view = [right[0], up[0], -forward[0], 0, right[1], up[1], -forward[1], 0, right[2], up[2], -forward[2], 0,
@@ -52,7 +59,9 @@ try {
       };
       const draw = WebGL2RenderingContext.prototype.drawElements;
       WebGL2RenderingContext.prototype.drawElements = function (...args) {
-        const p = this.getParameter(this.CURRENT_PROGRAM), location = this.getUniformLocation(p, 'useVertexColor');
+        const p = this.getParameter(this.CURRENT_PROGRAM);
+        if (!p || this.isContextLost()) return draw.apply(this,args);
+        const location = this.getUniformLocation(p, 'useVertexColor');
         if (!location || !this.getUniform(p, location)) return draw.apply(this,args);
         window.materialDraws++;
         const vao=this.getParameter(this.VERTEX_ARRAY_BINDING);
@@ -63,7 +72,8 @@ try {
           if(!window.sourceColors.has(JSON.stringify([...firstColor])))throw new Error('Uploaded RGBA differs from original decoded vertex color');
           this.bindBuffer(this.ARRAY_BUFFER,previous);window.checkedColorVaos.add(vao);
         }
-        if (!this.getVertexAttrib(6, this.VERTEX_ATTRIB_ARRAY_ENABLED) || this.getVertexAttrib(6, this.VERTEX_ATTRIB_ARRAY_STRIDE) !== 48) throw new Error('Original RGBA vertex attribute is not connected');
+        const reflection = this.getUniform(p, this.getUniformLocation(p, 'sceneryReflectionPlane'));
+        if (!this.getVertexAttrib(6, this.VERTEX_ATTRIB_ARRAY_ENABLED) || this.getVertexAttrib(6, this.VERTEX_ATTRIB_ARRAY_STRIDE) !== (reflection ? 76 : 48)) throw new Error('Original RGBA vertex attribute is not connected');
         const selected = window.sceneryModels?.[0], ml = this.getUniformLocation(p, 'model');
         const matrix = ml && this.getUniform(p, ml);
         if (!selected || !matrix || !selected.world_matrix.every((v,i)=>Math.fround(v)===matrix[i]) || !window.captureMaterial) return draw.apply(this,args);
@@ -91,7 +101,7 @@ try {
       state=await page.evaluate(()=>window.atvTerrainStatus);
       assert.notDeepEqual(state.sceneryUv[material],previous);
       await page.keyboard.press('Escape');
-      await page.waitForTimeout(150);
+      await page.waitForFunction(()=>document.querySelector('#frontend').dataset.page==='pause' && materialPending===0);
       const paused=await page.evaluate(()=>window.atvTerrainStatus.sceneryUv);
       await page.waitForTimeout(250);assert.deepEqual(await page.evaluate(()=>window.atvTerrainStatus.sceneryUv),paused);
       await page.getByRole('button',{name:'Resume',exact:true}).click();
@@ -103,7 +113,8 @@ try {
     await page.evaluate(()=>window.captureMaterial=false);
     if(process.env.ATV_SCENERY_SCREENSHOTS)await page.screenshot({path:`${process.env.ATV_SCENERY_SCREENSHOTS}-${environment}.png`});
     // Pause makes phase retention independent of browser event scheduling.
-    await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+    await page.locator('#game').focus(); await page.keyboard.press('Escape');
+    await page.waitForFunction(()=>document.querySelector('#frontend').dataset.page==='pause' && materialPending===0);
     // Context restoration must retain the Rust UV phase instead of restarting.
     await page.evaluate(()=>{window.sceneryContext=document.querySelector('#game').getContext('webgl2').getExtension('WEBGL_lose_context');window.sceneryContext.loseContext();});
     await page.waitForTimeout(150);const lost=await page.evaluate(()=>window.atvTerrainStatus.sceneryUv);

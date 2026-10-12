@@ -10,6 +10,7 @@ pub mod drivetrain;
 pub mod ecosystem;
 pub mod elf;
 pub mod engine_audio;
+pub mod fog;
 pub mod grip;
 pub mod hud;
 pub mod ipu;

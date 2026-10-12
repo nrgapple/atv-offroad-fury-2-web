@@ -1,22 +1,93 @@
 # Implementation handoff
 
-## Verified public map-fidelity and Vancouver Ridge checkpoint
+## Public Vancouver Ridge map checkpoint
 
-The isolated map lane has a complete 40-family/147-archive asset-header/config
-census and restored static prelit RGBA, FB_ONLY/source-alpha behavior and Rust UV
-movement. Vancouver Ridge is the previously unconnected FREE05, not Caribou:
-Single Player → Freestyle now exposes its original SPStunt6 name/thumbnail without
-an unlock. The host loads original terrain, 37,649 snowy plants and all 43 placed
-solid colliders. All 78 scenery meshes decode; 75 placements draw while three ice
-reflection overlays remain skipped. Its five-frame drag light now uses the
-recovered forward ATM clock. Desktop/390px source-ramp throttle tests pass wheel
-support, body contact, air and ground return; both menu routes pass without a disc
-picker. Public main `f585991579f8c44b098d6b137b1679eb8050e3fd` passes CI
-`38302626466`, 31 authored hashes and 399 served objects (110 log entries/93
-screenshots). Nine map loads, desktop/390px Vancouver contacts, four scenery
-materials and frontend gates pass through HTTPS. This is bounded verification,
-not full map or hardware parity. See [map evidence and limits](research/MAP_FIDELITY.md).
-Later ice-reflection work remains isolated WIP and is excluded from this checkpoint.
+Public main `f585991579f8c44b098d6b137b1679eb8050e3fd` passed CI
+`38302626466`; HTTPS verification matches all 31 authored files and 399 served
+objects. The R2 package validates 400 approved objects, with six incremental
+changes totaling 305,224,223 bytes. The public gallery has 110 entries and 93
+screenshots. Vancouver Ridge/FREE05 is connected to Single Player → Freestyle
+under its original SPStunt6 name and two-part thumbnail, unlocked by default.
+
+Public desktop and 390px traces each cover the original terrain, 37,649 snow
+plants, 78 source scenery definitions/75 drawn, 43 placed colliders, 123
+wheel-support frames, 31 body-contact frames, flight at step 19, later ground
+contact, and drag-light frame 1. The bounded ramp route uses normal throttle
+without injected velocity, force or wreck state. The public ENV01–ENV08 plus
+FREE05 regression, source-material inspection and original title/menu/controller/
+touch/pause routes pass without JavaScript or GL errors or a disc prompt. These
+are browser component and route checks, not full map, hardware or game parity.
+Three Vancouver ice-reflection overlays, exact fog, 92 light/lens behaviors,
+projected terrain/vegetation LOD, shadows, weather, remaining modes and progression
+remain open. See [map evidence and limits](research/MAP_FIDELITY.md) and the
+[deployment record](research/DEPLOYMENT.md). Preserve the separate multiplayer
+integration lane. The newly inspected desktop public-ride screenshot is referenced
+in the local log but remains in ignored private storage pending the next validated
+R2 gallery upload.
+
+## Current host-only reflection candidate
+
+An uncommitted renderer candidate now draws ENV01's 88 original reflection groups
+across 275 instances and FREE05's three groups across all 78 instances, with no
+skipped groups. Host inspection records 152,862 and 236,566 contributing pixels.
+The updated Vancouver desktop and 390px traces draw all 78 placements with zero
+skipped groups; both have 43 colliders, 123 wheel-support frames and 31
+body-contact frames, plus takeoff at step 19, later ground contact, animation and
+menu checks. Expanded GPU transform feedback compares 768 original arithmetic
+cases across identity, translated/rotated placement and rotated child-node
+transforms: 2,304 GPU comparisons across 5,376 interpreted instructions, with
+maximum UV difference 7.152557373046875e-7. The test supplies a pre-normalized
+finite local view direction and does not emulate PS2 accumulators, reciprocal
+behavior or the full pipeline. `make check` passes 308 core tests, 22 network
+tests, 11 relay tests, 3 bridge tests and 66 JavaScript tests. `make verify`,
+`make web`, 17 release tests and 6 Worker tests also pass. All nine maps pass
+terrain-following/vegetation checks; material tests report 2,488 rain, 73,978
+lava, 6,329 waterflow and 115,571 ski-jump contributing pixels with pause/context
+retention. Original menu/controller/touch/pause routes, Tioga drive and Caribou
+reload pass without a disc prompt or browser errors. The host regression is
+complete, but this candidate remains unpublished pending PR9 integration and is
+not in public commit f585991; see
+[map-fidelity evidence](research/MAP_FIDELITY.md). Keep the public Vancouver
+checkpoint and the separate multiplayer lane intact.
+
+## Current host-only fog candidate
+
+The integrated host candidate now reads source Fog Visibility and Haziness for
+ENV01/ENV04 (range 0–768, haziness 1) and FREE05 (352–768, haziness 0.5),
+with ENV01/ENV04 source haziness 1.2 clamped by Rust `min(1)` to 1, and following
+fog end for the view far clip. Compressed
+prelit materials use source-correlated 8-bit GS fog packing and the per-PSM
+fogging switch; the water base pass uses its source switch. The shared GPU
+coverage path uses screen-affine interpolation rather than the earlier guessed
+exponential curve. On the host GPU, 3,000 coverage samples match with zero byte
+difference; a triangle sample is 55 versus 55.25 affine and 96.25 perspective.
+
+Native range/coefficient checks cover 600 scalar cases and 35,393 original EE
+instructions with zero compared binary32 mismatches. The 3,000 packing samples
+are source-correlated expressions with finite distance supplied, not complete
+VU runs or hardware replay. The fog-integrated reflection test passes 2,304 GPU
+comparisons with maximum UV error 7.15e-7. Nine-map, materials, water, Vancouver
+desktop/390px contact and frontend regressions pass; `make check` passes 309
+core, 22 network, 11 relay, 3 bridge and 66 JavaScript tests, alongside verify,
+web, 17 release and 6 Worker tests. The disassembler's SUB broadcast label was
+corrected against execution: SUBAz writes ACC; the reflection XYZ comparisons
+are unchanged because the tested operation wrote W only.
+
+This remains unpublished host work and is absent from current public
+`a4d3003` (CI `38309959773`), as well as the historical `cef26f4` and `f585991`
+releases. The integrated multiplayer host checks also pass: two-client
+FREE05/link-pair routes draw 13 remote models; four actual clients each render
+three remotes in 39 draws with three voices, and every movement driver passes.
+Host departure clears remote models and voices; cancellation during map loading
+passes. Timing was measured in one Mac headless Metal synthetic-focus run and
+does not establish device or Internet performance. The combined gate passes
+309 core, 25 network, 3 relay, 12 bridge and 68 JavaScript tests, plus 17
+release tests, 6 Worker tests, verify, web and hygiene checks. Terrain and
+water GS precision, water reflection/froth, source-specific program precision,
+active-view overrides, weather callbacks, lighting, shadows, lens effects and
+LOD remain open. The host ENV04 screenshot in the dev log is not a public-build
+capture or an original PS2 framebuffer. Preserve the separate multiplayer
+release lane.
 
 ## Verified public ninth-map Rust multiplayer
 

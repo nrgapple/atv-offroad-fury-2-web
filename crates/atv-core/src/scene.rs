@@ -36,6 +36,7 @@ pub struct Scene {
     pub water_file: Option<String>,
     pub lights: Vec<Light>,
     pub fog_color: [f32; 3],
+    pub fog: Option<crate::fog::Fog>,
     pub models: Vec<StaticModel>,
     pub collision_models: Vec<CollisionModel>,
     /// Original single-region static partition dimensions from Environment.
@@ -468,6 +469,7 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
         lights,
         water_file: value(&data, "Environment", "WaterFile").map(str::to_owned),
         fog_color: color(&data, "Fog")?,
+        fog: crate::fog::parse(&data)?,
         models,
         collision_models,
         collision_partition: collision_partition(&data)?,

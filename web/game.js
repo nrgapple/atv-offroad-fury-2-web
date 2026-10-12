@@ -8,6 +8,7 @@ import { gameplayBindings } from './bindings.js';
 import { HeadUpDisplay } from './hud.js';
 import { DiagnosticsOverlay } from './diagnostics.js';
 import { WaterRenderer } from './water.js';
+import { fogVertexShader, fogFragmentShader } from './fog.js';
 import { loadTrain, TrainRenderer } from './train.js';
 import { loadWheelEffects, WheelEffectsRenderer } from './wheel-effects.js';
 const $ = id => document.getElementById(id);
@@ -257,9 +258,9 @@ async function baseTextures(mesh, materialArchive, materialEntries, cache = new 
     const binding = materialIndex < 0 ? material : textureBinding(materialText);
     if (!binding) continue;
     const shader = materialText.split(/\r?\n/).map(line => line.split(';')[0].trim()).find(line => /^microProgramName\s*=/i.test(line))?.split('=')[1].trim();
-    if (/refl|envmap/i.test(shader ?? '')) { const unsupported = { shader }; textures.set(material, unsupported); cache.set(material, unsupported); continue; }
-    const textureIndex = findMaterial(`${binding}.pst`);
     const pass = materialIndex < 0 ? null : await json(90, new TextEncoder().encode(materialText));
+    if (/refl|envmap/i.test(shader ?? '') && !pass?.reflection_plane) { const unsupported = { shader }; textures.set(material, unsupported); cache.set(material, unsupported); continue; }
+    const textureIndex = findMaterial(`${binding}.pst`);
     const atmIndex = pass?.texture_animation ? findMaterial(`${binding}.atm`) : -1;
     if (textureIndex < 0 && atmIndex < 0) { if (materialIndex < 0) continue; throw new Error(`Original material texture is missing: ${binding}`); }
     const pst = atmIndex >= 0 ? await codec(3, materialArchive, atmIndex) : await codec(3, materialArchive, textureIndex);
@@ -302,6 +303,9 @@ layout(location=3) in float quadNode;
 layout(location=4) in vec3 ecoPosition;
 layout(location=5) in vec2 ecoScale;
 layout(location=6) in vec4 vertexColor;
+layout(location=7) in vec3 reflectionPosition;
+layout(location=8) in vec3 reflectionNormal;
+uniform int sceneryReflectionPlane;
 uniform vec2 sceneryUvOffset;
 out vec4 authoredColor;
 uniform bool useEcosystem;
@@ -317,6 +321,7 @@ out float distanceToEye;
 out float worldHeight;
 out vec2 texcoord;
 out vec2 worldXZ;
+${fogVertexShader}
 void main() {
   texcoord = uv + sceneryUvOffset;
   authoredColor = vertexColor;
@@ -326,17 +331,27 @@ void main() {
     vec3 scaled = position * vec3(ecoScale.x, ecoScale.y, ecoScale.x);
     worldPosition = vec4(ecoPosition + vec3(ecoRotation.x * scaled.x - ecoRotation.y * scaled.z, scaled.y, ecoRotation.y * scaled.x + ecoRotation.x * scaled.z), 1.0);
   }
+  if (sceneryReflectionPlane != 0) {
+    // TriStripPrologue transforms the world camera into each rigid node's
+    // coordinates. The compressed reflection programs retain the authored
+    // scaled normal; normalizing it would change the original UVs.
+    mat4 nodeWorld = model * quadBones[int(quadNode)];
+    vec3 localEye = transpose(mat3(nodeWorld)) * (eye - nodeWorld[3].xyz);
+    vec3 direction = normalize(localEye - reflectionPosition);
+    vec3 reflected = vec3(0.5) - 0.5 * direction + reflectionNormal * dot(reflectionNormal, direction);
+    texcoord = sceneryReflectionPlane == 1 ? reflected.xy : sceneryReflectionPlane == 2 ? reflected.xz : reflected.yz;
+  }
   worldXZ = worldPosition.xz;
   surfaceNormal = mat3(model) * mat3(localPose) * normal;
   worldHeight = worldPosition.y;
   distanceToEye = length(worldPosition.xyz - eye);
   gl_Position = viewProjection * worldPosition;
+  prepareFog(distanceToEye, gl_Position);
   if (skyPass) gl_Position = gl_Position.xyww;
 }`;
 const fragmentSource = `#version 300 es
 precision highp float;
 in vec3 surfaceNormal;
-in float distanceToEye;
 in float worldHeight;
 in vec2 texcoord;
 in vec2 worldXZ;
@@ -345,7 +360,6 @@ uniform bool useVertexColor;
 uniform bool sceneryBlend;
 uniform bool alphaFailPass;
 uniform vec2 heights;
-uniform float fogDistance;
 uniform vec3 surfaceColor;
 uniform sampler2D baseTexture;
 uniform bool useTexture;
@@ -363,6 +377,7 @@ uniform vec3 fogColor;
 uniform bool unlit;
 uniform bool skyPass;
 out vec4 color;
+${fogFragmentShader}
 void main() {
   vec3 n = normalize(surfaceNormal);
   float altitude = clamp((worldHeight - heights.x) / max(1.0, heights.y - heights.x), 0.0, 1.0);
@@ -398,8 +413,7 @@ void main() {
   }
   float sunlight = max(dot(n, normalize(sunlightDirection)),0.0);
   vec3 lit = unlit ? base : base * (ambientLight + sunlightColor * sunlight);
-  float fog = 1.0-exp(-pow(distanceToEye/fogDistance,2.0));
-  color = vec4(skyPass ? base : mix(lit, fogColor, min(.94,fog)),sourceAlpha);
+  color = vec4(skyPass ? base : mix(fogColor, lit, fogCoverage()),sourceAlpha);
 }`;
 function shader(type, source) {
   const result = gl.createShader(type);
@@ -412,8 +426,11 @@ function initializeGl() {
   program = gl.createProgram(); gl.attachShader(program, vertex); gl.attachShader(program, fragment); gl.linkProgram(program);
   gl.deleteShader(vertex); gl.deleteShader(fragment);
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
-  uniforms = Object.fromEntries(['viewProjection', 'model', 'eye', 'heights', 'fogDistance', 'surfaceColor', 'baseTexture', 'useTexture', 'useTerrainTexture', 'terrainColors', 'terrainMapping', 'terrainDetail', 'terrainDetailScale', 'terrainSpacing', 'ambientLight', 'sunlightColor', 'sunlightDirection', 'fogColor', 'unlit', 'skyPass', 'useVertexColor', 'sceneryBlend', 'sceneryUvOffset', 'alphaFailPass'].map(name => [name, gl.getUniformLocation(program, name)]));
+  uniforms = Object.fromEntries(['viewProjection', 'model', 'eye', 'heights', 'surfaceColor', 'baseTexture', 'useTexture', 'useTerrainTexture', 'terrainColors', 'terrainMapping', 'terrainDetail', 'terrainDetailScale', 'terrainSpacing', 'ambientLight', 'sunlightColor', 'sunlightDirection', 'fogColor', 'unlit', 'skyPass', 'useVertexColor', 'sceneryBlend', 'sceneryUvOffset', 'alphaFailPass'].map(name => [name, gl.getUniformLocation(program, name)]));
   uniforms.useEcosystem = gl.getUniformLocation(program, 'useEcosystem');
+  uniforms.sceneryReflectionPlane = gl.getUniformLocation(program, 'sceneryReflectionPlane');
+  uniforms.fogPacking = gl.getUniformLocation(program, 'fogPacking');
+  uniforms.fogEnabled = gl.getUniformLocation(program, 'fogEnabled');
   uniforms.ecoRotation = gl.getUniformLocation(program, 'ecoRotation');
   uniforms.alphaCutoff = gl.getUniformLocation(program, 'alphaCutoff');
   uniforms.useQuadPose = gl.getUniformLocation(program, 'useQuadPose');
@@ -488,15 +505,20 @@ function uploadTerrainTextures() {
   diagnostics.terrainDetailTexture = [detail.width, detail.height];
   diagnostics.terrainLighting = 'original base/detail blend; projected pass selection pending';
 }
-function upload(vertices, indices, hasUv = false, hasNodes = false, hasColors = false) {
+function upload(vertices, indices, hasUv = false, hasNodes = false, hasColors = false, hasReflection = false) {
   const chunk = { vao: gl.createVertexArray(), vertices: gl.createBuffer(), indices: gl.createBuffer(), count: indices.length };
   gl.bindVertexArray(chunk.vao); gl.bindBuffer(gl.ARRAY_BUFFER, chunk.vertices); gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
-  const stride = hasColors ? 48 : hasNodes ? 36 : hasUv ? 32 : 24;
+  const stride = hasReflection ? 76 : hasColors ? 48 : hasNodes ? 36 : hasUv ? 32 : 24;
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, stride, 0);
   gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, stride, 12);
   if (hasUv) { gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, stride, 24); }
   if (hasNodes) { gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 1, gl.FLOAT, false, stride, 32); }
   if (hasColors) { gl.enableVertexAttribArray(6); gl.vertexAttribPointer(6, 4, gl.FLOAT, false, stride, 32); }
+  if (hasReflection) {
+    gl.enableVertexAttribArray(7); gl.vertexAttribPointer(7, 3, gl.FLOAT, false, stride, 48);
+    gl.enableVertexAttribArray(8); gl.vertexAttribPointer(8, 3, gl.FLOAT, false, stride, 60);
+    gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 1, gl.FLOAT, false, stride, 72);
+  }
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, chunk.indices); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
   return chunk;
 }
@@ -548,7 +570,7 @@ function buildRemoteGpu(model) {
     for (const group of mesh.lods[0].groups) {
       const vertices = new Float32Array(group.vertices.length * 9);
       group.vertices.forEach((v,i) => vertices.set([...v.local_position,...inverseDirection(mesh.nodes[v.node].world_matrix,v.normal),...v.uv,v.node],i*9));
-      const chunk = upload(vertices,new Uint16Array(group.indices),true,true); chunk.rider=rider; chunk.texture=gpu.get(mesh.materials[group.material]); model.chunks.push(chunk);
+      const chunk = upload(vertices,new Uint16Array(group.indices),true,true); chunk.rider=rider; chunk.texture=gpu.get(mesh.materials[group.material]); chunk.fog=textures.get(mesh.materials[group.material])?.pass?.fog ?? true; model.chunks.push(chunk);
     }
   }
 }
@@ -582,6 +604,7 @@ function drawRemotePlayers() {
     for (const chunk of model.chunks ?? []) {
       gl.uniformMatrix4fv(uniforms.model,false,chunk.rider?riderWorld:quadWorld);
       gl.uniformMatrix4fv(uniforms.quadBones,false,chunk.rider?rider:quad);
+      gl.uniform1i(uniforms.fogEnabled,Boolean(terrain.world?.metadata.fog)&&chunk.fog);
       gl.uniform1i(uniforms.useTexture,Boolean(chunk.texture));gl.bindTexture(gl.TEXTURE_2D,chunk.texture??fallbackTexture);
       gl.bindVertexArray(chunk.vao);gl.drawElements(gl.TRIANGLES,chunk.count,gl.UNSIGNED_SHORT,0);draws++;
     }
@@ -615,6 +638,7 @@ function buildEcosystem() {
       const chunk = upload(vertices, new Uint16Array(source.indices), true);
       const material = mesh.materials[source.material], decoded = eco.textures.get(material);
       chunk.texture = textures.get(material);
+      chunk.fog = decoded?.pass?.fog ?? true;
         chunk.alphaCutoff = decoded?.alphaTest ?? 0;
       gl.bindVertexArray(chunk.vao); gl.bindBuffer(gl.ARRAY_BUFFER, group.instances);
       gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 3, gl.FLOAT, false, 20, 0); gl.vertexAttribDivisor(4, 1);
@@ -650,6 +674,7 @@ function drawEcosystem() {
     gl.bindBuffer(gl.ARRAY_BUFFER, group.instances); gl.bufferSubData(gl.ARRAY_BUFFER, 0, group.visible.subarray(0, group.count * 5));
     for (const chunk of group.chunks) {
       gl.uniform1f(uniforms.alphaCutoff, chunk.alphaCutoff); gl.uniform1i(uniforms.useTexture, Boolean(chunk.texture));
+      gl.uniform1i(uniforms.fogEnabled,Boolean(terrain.world?.metadata.fog)&&chunk.fog);
       gl.bindTexture(gl.TEXTURE_2D, chunk.texture ?? fallbackTexture); gl.bindVertexArray(chunk.vao);
       gl.drawElementsInstanced(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0, group.count); draws++;
       diagnostics.vegetationTriangles += chunk.count / 3 * group.count;
@@ -734,6 +759,7 @@ function buildMesh() {
     const chunk = upload(vertices, new Uint16Array(group.indices), true, true);
     chunk.quad = true;
     chunk.texture = materialTextures.get(vehicle.materials[group.material]);
+    chunk.fog = vehicle.textures.get(vehicle.materials[group.material])?.pass?.fog ?? true;
     vehicleChunks.push(chunk);
   }
   let riderTriangles = 0, riderTextureCount = 0;
@@ -752,6 +778,7 @@ function buildMesh() {
       const chunk = upload(vertices, new Uint16Array(group.indices), true, true);
       chunk.rider = true;
       chunk.texture = riderTextures.get(rider.mesh.materials[group.material]);
+      chunk.fog = rider.textures.get(rider.mesh.materials[group.material])?.pass?.fog ?? true;
       vehicleChunks.push(chunk); riderTriangles += group.indices.length / 3;
     }
   }
@@ -774,17 +801,21 @@ function buildMesh() {
       const groups = [];
       for (const group of mesh.lods[0].groups) {
         const material = mesh.materials[group.material], decoded = world.textures.get(material);
-        // Environment/reflection shaders need their original coordinate generation.
-        // Keep those groups absent until recovered rather than drawing a false UV map.
-        if (/refl|envmap/i.test(decoded?.shader ?? '')) { skippedSceneGroups++; continue; }
+        const reflection = decoded?.pass?.reflection_plane ?? 0;
+        if (/refl|envmap/i.test(decoded?.shader ?? '') && !reflection) { skippedSceneGroups++; continue; }
         const prelit = decoded?.pass?.prelit ?? false;
-        const vertices = new Float32Array(group.vertices.length * (prelit ? 12 : 8));
-        group.vertices.forEach((vertex, index) => vertices.set([...vertex.position, ...vertex.normal, ...vertex.uv, ...(prelit ? vertex.color ?? [128,128,128,128] : [])], index * (prelit ? 12 : 8)));
-        const chunk = upload(vertices, new Uint16Array(group.indices), true, false, prelit);
+        if (reflection && mesh.nodes.length > 32) throw new Error('Reflection mesh exceeds original rigid-node GPU capacity.');
+        const width = reflection ? 19 : prelit ? 12 : 8;
+        const vertices = new Float32Array(group.vertices.length * width);
+        group.vertices.forEach((vertex, index) => vertices.set([...vertex.position, ...vertex.normal, ...vertex.uv, ...(prelit ? vertex.color ?? [128,128,128,128] : []), ...(reflection ? [...vertex.local_position, ...vertex.local_normal, vertex.node] : [])], index * width));
+        const chunk = upload(vertices, new Uint16Array(group.indices), true, false, prelit, Boolean(reflection));
+        chunk.reflection = reflection;
+        chunk.reflectionNodes = reflection ? new Float32Array(mesh.nodes.flatMap(node => node.world_matrix)) : null;
         chunk.texture = textures.get(material); chunk.alphaCutoff = decoded?.sceneAlphaCutoff ?? 0;
         chunk.animationFrames = decoded?.animationFrames?.map(rgba => { const gpu = texture({...decoded,rgba}); gpuTextures.push(gpu); return gpu; });
         chunk.prelit = prelit; chunk.material = material; chunk.blend = decoded?.pass?.blend ?? false; chunk.alphaFailure = decoded?.sceneAlphaFailure ?? 0;
         chunk.depthWrite = decoded?.pass?.depth_write ?? true;
+        chunk.fog = decoded?.pass?.fog ?? true;
         groups.push(chunk); sceneChunks.push(chunk);
       }
       geometry.set(name, groups);
@@ -799,6 +830,7 @@ function buildMesh() {
   gl.bindVertexArray(null);
   diagnostics.skyTiles = skyChunks.length;
   diagnostics.sceneryPrelitGroups = sceneChunks.filter(chunk => chunk.prelit).length;
+  diagnostics.sceneryReflectionGroups = sceneChunks.filter(chunk => chunk.reflection).length;
   diagnostics.sceneryUnsupportedAnimations = [...(terrain.world?.textures ?? [])].filter(([, texture]) => texture.pass?.unsupported_animation).map(([name, texture]) => ({ name, reason: texture.pass.unsupported_animation }));
   diagnostics.unsupportedSceneTextures = [...(terrain.world?.textures ?? [])].filter(([, texture]) => texture.error).map(([name, texture]) => ({ name, error: texture.error }));
   Object.assign(diagnostics, { vehicleVertices: vehicle?.groups.reduce((sum, group) => sum + group.vertices.length, 0) ?? 0, vehicleTriangles: vehicle?.groups.reduce((sum, group) => sum + group.indices.length / 3, 0) ?? 0, vehicleTextures: materialTextures.size, riderTriangles, riderTextures: riderTextureCount, vehiclePosition: vehicle?.position, sceneInstances, sceneTriangles, skippedSceneGroups, unsupportedSceneMeshes: terrain.world?.unsupported ?? [] });
@@ -838,7 +870,8 @@ function matrix() {
   const view = new Float32Array([right[0], up[0], -forward[0], 0, right[1], up[1], -forward[1], 0, right[2], up[2], -forward[2], 0, -(right[0] * x + right[2] * z), -(up[0] * x + up[1] * y + up[2] * z), forward[0] * x + forward[1] * y + forward[2] * z, 1]);
   // Original00325e80 uses horizontal FOV. Preserve the4:3 vertical framing
   // while extending the view horizontally on widescreen displays.
-  const near = 1, far = Math.max(terrain.sizeX, terrain.sizeZ) * 5;
+  // 0012b360 applies the active fog end to the view's far clipping plane.
+  const near = 1, far = terrain.world?.metadata.fog?.end ?? Math.max(terrain.sizeX, terrain.sizeZ) * 5;
   const f = cameraFrame ? diagnostics.cameraPresentation.focalLength : 1 / Math.tan(Math.PI / 6);
   const projection = new Float32Array([f / (canvas.width / canvas.height), 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) / (near - far), -1, 0, 0, 2 * far * near / (near - far), 0]);
   const result = new Float32Array(16);
@@ -1041,10 +1074,14 @@ function render(time) {
   }
   gl.viewport(0, 0, width, height); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.useProgram(program);
   gl.uniform1i(uniforms.useQuadPose, false); gl.uniform1i(uniforms.useEcosystem, false); gl.uniform1f(uniforms.alphaCutoff, 0);
+  gl.uniform1i(uniforms.sceneryReflectionPlane, 0);
   gl.uniform1i(uniforms.useVertexColor, false); gl.uniform1i(uniforms.sceneryBlend, false); gl.uniform1i(uniforms.alphaFailPass, false); gl.uniform2f(uniforms.sceneryUvOffset, 0, 0);
   const viewProjection = matrix();
   gl.uniformMatrix4fv(uniforms.viewProjection, false, viewProjection); gl.uniform3f(uniforms.eye, camera.x, camera.y, camera.z);
-  gl.uniform2f(uniforms.heights, terrain.min, terrain.max); gl.uniform1f(uniforms.fogDistance, Math.max(terrain.sizeX, terrain.sizeZ) * .85);
+  const fog=terrain.world?.metadata.fog;
+  gl.uniform2f(uniforms.heights, terrain.min, terrain.max);
+  gl.uniform2f(uniforms.fogPacking,fog?.encoded_bias??524288,fog?.coefficient??0);
+  gl.uniform1i(uniforms.fogEnabled,Boolean(fog)); diagnostics.fog=fog;
   const lights = terrain.world?.metadata.lights;
   const ambient = lights?.find(light => light.kind === 'Ambient')?.color.map(value => value / 255) ?? [.38, .38, .38];
   const sun = lights?.find(light => light.kind === 'Directional'), sunColor = sun?.color.map(value => value / 255) ?? [.8, .8, .8];
@@ -1065,6 +1102,7 @@ function render(time) {
     const skyMatrix = new Float32Array(identity); skyMatrix.set(terrain.sky.origin, 12);
     gl.uniformMatrix4fv(uniforms.model, false, skyMatrix);
     gl.uniform1i(uniforms.skyPass, true); gl.uniform1i(uniforms.useTexture, true);
+    gl.uniform1i(uniforms.fogEnabled, false);
     gl.activeTexture(gl.TEXTURE0); gl.depthMask(false); gl.disable(gl.DEPTH_TEST);
     for (const chunk of skyChunks) {
       gl.bindTexture(gl.TEXTURE_2D, chunk.texture); gl.bindVertexArray(chunk.vao);
@@ -1073,6 +1111,7 @@ function render(time) {
     gl.depthMask(true); gl.enable(gl.DEPTH_TEST);
   }
   gl.uniformMatrix4fv(uniforms.model, false, identity); gl.uniform1i(uniforms.skyPass, false); gl.uniform1i(uniforms.useTexture, false);
+  gl.uniform1i(uniforms.fogEnabled, Boolean(fog));
   gl.uniform1i(uniforms.useTerrainTexture, Boolean(terrain.textures));
   // The original single-player terrain VU program supplies constant RGB,
   // not a normal-based sun pass. Keep authored base colors free of our
@@ -1084,7 +1123,10 @@ function render(time) {
   for (const { chunk, matrix, unlit } of sceneDraws) {
     gl.uniformMatrix4fv(uniforms.model, false, matrix); gl.uniform1i(uniforms.unlit, unlit);
     gl.uniform1f(uniforms.alphaCutoff, chunk.alphaCutoff);
+    gl.uniform1i(uniforms.fogEnabled,Boolean(fog)&&chunk.fog);
     gl.uniform1i(uniforms.useVertexColor, chunk.prelit); gl.uniform1i(uniforms.sceneryBlend, chunk.blend);
+    gl.uniform1i(uniforms.sceneryReflectionPlane, chunk.reflection);
+    if (chunk.reflectionNodes) gl.uniformMatrix4fv(uniforms.quadBones, false, chunk.reflectionNodes);
     gl.uniform2fv(uniforms.sceneryUvOffset, diagnostics.sceneryUv?.[chunk.material] ?? [0,0]);
     gl.depthMask(chunk.depthWrite);
     if (chunk.blend) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); } else gl.disable(gl.BLEND);
@@ -1100,13 +1142,15 @@ function render(time) {
     }
   }
   gl.uniform1f(uniforms.alphaCutoff, 0); gl.uniform1i(uniforms.useVertexColor, false); gl.uniform1i(uniforms.sceneryBlend, false);
+  gl.uniform1i(uniforms.sceneryReflectionPlane, 0);
   gl.uniform2f(uniforms.sceneryUvOffset, 0, 0); gl.depthMask(true); gl.disable(gl.BLEND);
-  if (trainRenderer) { trainRenderer.draw(uniforms, fallbackTexture); diagnostics.train.draws = trainRenderer.draws; diagnostics.train.triangles = trainRenderer.triangles; }
+  if (trainRenderer) { trainRenderer.draw(uniforms, fallbackTexture, Boolean(fog)); diagnostics.train.draws = trainRenderer.draws; diagnostics.train.triangles = trainRenderer.triangles; }
   drawEcosystem();
   gl.uniform1i(uniforms.unlit, false);
   if (vehicle) gl.uniformMatrix4fv(uniforms.model, false, vehicleMatrix());
   if (vehicle) gl.uniformMatrix4fv(uniforms.quadBones, false, vehicle.nodeMatrices);
   for (const chunk of vehicleChunks) {
+    gl.uniform1i(uniforms.fogEnabled,Boolean(fog)&&chunk.fog);
     gl.uniformMatrix4fv(uniforms.model, false, chunk.rider && simFrame?.rider_world_matrix ? new Float32Array(simFrame.rider_world_matrix) : vehicleMatrix());
     gl.uniform1i(uniforms.useQuadPose, Boolean(chunk.quad || chunk.rider));
     if (chunk.quad) gl.uniformMatrix4fv(uniforms.quadBones, false, vehicle.nodeMatrices);
@@ -1118,7 +1162,7 @@ function render(time) {
   void multiplayer?.sample();
   if (waterRenderer) {
     waterRenderer.draw({ camera, viewProjection, focalLength: cameraFrame ? diagnostics.cameraPresentation.focalLength : 1 / Math.tan(Math.PI / 6), aspect: canvas.width / canvas.height,
-      farDistance: Math.max(terrain.sizeX, terrain.sizeZ) * 5, fogColor, fogDistance: Math.max(terrain.sizeX, terrain.sizeZ) * .85 });
+      farDistance: fog?.end ?? Math.max(terrain.sizeX, terrain.sizeZ) * 5, fogColor, fog });
     diagnostics.waterRender.draws = waterRenderer.draws;
     diagnostics.waterRender.gpuBytes = waterRenderer.gpuBytes;
     diagnostics.waterRender.cpuMilliseconds = waterRenderer.cpuMilliseconds;
