@@ -2,7 +2,7 @@
 import struct
 import unittest
 
-from package_content import Resource, compact_map_placements, compact_rider_materials, pack_resource
+from package_content import Resource, compact_map_placements, compact_rider_materials, pack_resource, selected_train_names
 
 
 def mesh(material):
@@ -11,6 +11,37 @@ def mesh(material):
 
 
 class ContentTests(unittest.TestCase):
+    def test_train_selects_only_bound_procedural_body_audio_and_deduplicates(self):
+        toy = b'''[Animations]
+NumberOfAnimations=3
+[Animation1]
+AnimationType=Procedural
+VUE=locomotive.Vue
+NumberOfLoopingSounds=1
+[Animation1LoopSound1]
+AttachToObject=Body
+SoundResourceFile=audio\\soultree\\test
+[Animation2]
+AnimationType=Procedural
+VUE=locomotive.vue
+NumberOfLoopingSounds=1
+[Animation2LoopSound1]
+AttachToObject=Body
+SoundResourceFile=soultree/test.VAG
+[Animation3]
+AnimationType=Procedural
+VUE=other.vue
+NumberOfLoopingSounds=1
+[Animation3LoopSound1]
+AttachToObject=Body
+SoundResourceFile=unused
+'''
+        self.assertEqual(selected_train_names(toy), {'soultree/test.vag'})
+        with self.assertRaisesRegex(ValueError, 'sample path'):
+            selected_train_names(toy.replace(b'audio\\soultree\\test', b'../private'))
+        with self.assertRaisesRegex(ValueError, 'attachment'):
+            selected_train_names(toy.replace(b'AttachToObject=Body', b'AttachToObject=Wheel', 1))
+
     def test_rider_retains_all_passes_and_default_bindings(self):
         meshes = pack_resource([('body.psg', mesh('shirt')), ('arm.psg', mesh('hand'))])
         members = [('shirt.psm', b'[ShaderPass_1]\nTextureMap_1=cloth\n[ShaderPass_2]\nTextureMap_1=dirt'),

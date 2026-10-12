@@ -1,6 +1,6 @@
 {
   "status": "Host-verified one-handed mobile input checkpoint; CI and public release pending. The browser port remains incomplete.",
-  "working_on": "Advance source-supported visible water on the wet maps and the original Arlington train in ENV08 in parallel, alongside one-finger mobile feedback; continue the stranded recovery/wet-wreck and original stunt-policy work.",
+  "working_on": "Continue native water-effect parity and Arlington train collision, audio and smoke work; investigate the remaining recovery and wreck gaps.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1374,25 +1374,64 @@
       "limitation": "Host-verified only; public deployment is pending. Physical phone behavior is unverified.",
       "image": "/devlog-images/compact-one-finger-control-is-the-default-d0b05d12.png",
       "caption": "390px portrait view showing the compact compass/vector and small lift cue during one-finger input."
+    },
+    {
+      "id": "water-and-arlington-train-pass-public-release-checks-dad1c7b0",
+      "timestamp": "2026-10-12T15:25:24.852141+00:00",
+      "recorded_at": "2026-10-12T16:13:11.067856+00:00",
+      "kind": "verification",
+      "title": "Water and Arlington train pass public release checks",
+      "summary": "Public release 629bc0a (CI 38275179626) verifies rendered water on ENV04, ENV05, ENV07 and ENV08, no water on dry ENV01, and a moving Arlington train in ENV08. The initial 5c3bef0 package omitted imports; the corrected 629 release adds the import allowlist and closure regression check.",
+      "details": [
+        "Public deployment served 28 authored hashes and 328 R2 objects from a 329-object package. Public checks cover 390px water projection/banks/sky, train pixels (3,990 desktop / 1,710 mobile), route movement and wheel animation, pause/resume and context restoration, with zero page or WebGL errors. Gallery desktop/mobile checks pass."
+      ],
+      "limitation": "This records the verified water/train release; the screenshot is a previously inspected host capture at the ENV08 runtime test placement, not the native map spawn. Native water parity, reflection, froth and wakes remain unfinished. Train collision, audio and smoke remain unfinished. The compact touch correction is present in the source release but its final public behavior suite is pending.",
+      "image": "/devlog-images/water-and-arlington-train-pass-public-release-checks-dad1c7b0.png",
+      "caption": "Previously inspected host capture at the ENV08 runtime test placement; public verification for this release separately covers all four wet maps and train rendering."
+    },
+    {
+      "id": "compact-one-finger-controls-pass-public-checks-0d6519df",
+      "timestamp": "2026-10-12T16:11:16.530844+00:00",
+      "recorded_at": "2026-10-12T16:13:50.710917+00:00",
+      "kind": "verification",
+      "title": "Compact one-finger controls pass public checks",
+      "summary": "The default compact portrait control passes public checks: one-finger input, saved Off/On behavior, cardinal and diagonal vectors, immediate release/coast, and the same controls in air. A strict held-throttle landing route passes; optional two-finger Nac Nac/wreck and 124-step batching/orbit checks pass.",
+      "details": [
+        "Verified on public commit 629bc0ac8ccd586abd4630c826909287a671764b, CI 38275179626, with public identity checked before and after. The 390px UI keeps only the small compass/vector and cue; there is no panel, meters, percentages or air headings."
+      ],
+      "limitation": "Public browser checks passed. Physical phone hardware remains unverified; this is not a handling or physics parity claim.",
+      "image": "/devlog-images/compact-one-finger-controls-pass-public-checks-0d6519df.png",
+      "caption": "Public 390px portrait gameplay with the compact compass and cue during one-finger input."
+    },
+    {
+      "id": "original-train-sound-loops-pass-host-checks-93fd73ae",
+      "timestamp": "2026-10-12T16:34:30.290267+00:00",
+      "recorded_at": "2026-10-12T16:45:13.318352+00:00",
+      "kind": "verification",
+      "title": "Original train sound loops pass host checks",
+      "summary": "On the host build, the Arlington train plays its three original mono 11,025 Hz VAG loops across 11 attached cars. Tests confirm train-only audio, distance-based level and pan, source pitch behavior, pause/resume, context restore, mute and no duplicate voices.",
+      "details": [
+        "Host browser checks pass with audible analyser PCM near train bodies, exact near/far gain boundaries, zero far-field PCM, and no page or audio errors. Native checks cover 5,767 distance/heading/gain/pitch cases with integer agreement; host acos-table service is explicit."
+      ],
+      "limitation": "Host-only; pending CI and public release. The screenshot uses a source-derived route/MOT camera placement beside the train, not the normal spawn. PS2 listening/SPU2, surround and full mixer/activation parity are unverified; the host acos-table service does not prove PS2 libm behavior. Physical iOS and other train sounds remain unverified. The three required VAG samples remain private runtime assets and are not in Git.",
+      "image": "/devlog-images/original-train-sound-loops-pass-host-checks-93fd73ae.png",
+      "caption": "Host capture at the source-derived train audio test placement, with the ATV beside the moving train cars."
     }
   ],
-  "updated_at": "2026-10-12T16:01:52.141087+00:00",
+  "updated_at": "2026-10-12T16:45:13.318352+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
-      "commit": "0541085b495fd9e8d0a0dae59ba6c8ea186f49cc",
-      "ci_run": "38264831246",
+      "commit": "629bc0ac8ccd586abd4630c826909287a671764b",
+      "ci_run": "38275179626",
       "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
-      "static_assets": 26,
-      "served_objects": 323,
-      "devlog_entries": 79,
-      "devlog_screenshots": 70,
-      "r2_approved_objects": 324,
-      "r2_upload_changes": 2
+      "static_assets": 28,
+      "served_objects": 328,
+      "devlog_entries": 84,
+      "devlog_screenshots": 75,
+      "r2_approved_objects": 329
     },
     "next_priorities": [
-      "Render source-supported visible water and wakes on wet ENV04/05/07/08. Dynamic water-height checks do not establish the visible surface or wake behavior.",
-      "Connect and verify the original Arlington train/railroad route and timing in ENV08. Treat this as parallel work with visible-water recovery.",
       "Complete one-finger mobile feedback for steering/lean, diagonals, release, airborne control and landing while preserving current two-thumb behavior; physical-device validation remains open.",
       "Investigate the stranded tilted/no-wheel-contact recovery case and wet-wreck coverage after the source-authored tree-contact gate; keep scripted callback evidence separate from complete collision/parity claims.",
       "Recover the original stunt policy and flip behavior, including mode-specific enable/score gates, remaining gesture paths, and landing/cancel transitions. Preserve the source baseline and do not infer unrestricted flips from partial stunt checks.",
@@ -1410,23 +1449,50 @@
         "status": "LIVE",
         "scope": "PUBLIC",
         "summary": "ENV01\u2013ENV08 appear in the Freestyle picker and load into drivable scenes. Public checks exercised movement on all eight; this does not mean every original race course or game mode is recovered.",
-        "validation": "Public 0541085b495fd9e8d0a0dae59ba6c8ea186f49cc \u00b7 CI 38264831246: one uninterrupted ENV01\u2013ENV08 load/drive run passed without browser/WebGL errors. Wet ENV04/05/07/08 reported finite dynamic heights; this does not verify visible water surfaces or wakes. The Arlington train remains unconnected.",
+        "validation": "Public 629bc0ac8ccd586abd4630c826909287a671764b \u00b7 CI 38275179626: all eight environments load and drive; visible water renders on ENV04/05/07/08, dry ENV01 has no water, and the Arlington train renders and moves in ENV08. This does not establish full game parity.",
         "evidence": "research/GEOMETRY.md \u2014 Freeport Harbor; research/DEPLOYMENT.md \u2014 eight-environment release.",
-        "next_step": "Render source-supported water on the four wet maps and connect the recovered Arlington train in ENV08, then verify each in the public build.",
+        "next_step": "Continue source-parity work for water effects and train contacts, audio and smoke; finish public validation of compact one-finger controls.",
         "release_verification": {
-          "commit": "0541085b495fd9e8d0a0dae59ba6c8ea186f49cc",
-          "ci_run": "38264831246",
+          "commit": "629bc0ac8ccd586abd4630c826909287a671764b",
+          "ci_run": "38275179626",
           "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
-          "static_assets": 26,
-          "served_objects": 323,
-          "devlog_entries": 79,
-          "devlog_screenshots": 70,
-          "r2_approved_objects": 324,
-          "r2_upload_changes": 2,
+          "static_assets": 28,
+          "served_objects": 328,
+          "devlog_entries": 84,
+          "devlog_screenshots": 75,
+          "r2_approved_objects": 329,
           "checks": [
-            "One uninterrupted public ENV01\u2013ENV08 load/drive run passed without JS/WebGL errors.",
-            "Four wet maps reported finite water heights; dry maps retained the sentinel.",
-            "Visible water/wakes and the Arlington train are not established by this release."
+            "The corrected 629 package includes the imported water/train modules and a generic import-closure regression check; the initial 5c3bef0 package omitted two imports and is not treated as a successful release.",
+            "Public water checks passed for ENV04, ENV05, ENV07 and ENV08; dry ENV01 correctly has no water. 390px projection, banks and sky checks passed.",
+            "Public Arlington train rendering passed desktop and 390px pixel checks (3,990 / 1,710 changed pixels); movement, wheel animation, pause/resume and context restoration passed.",
+            "Zero page errors and WebGL errors; gallery desktop/mobile checks passed."
+          ]
+        }
+      },
+      {
+        "id": "water",
+        "category": "World",
+        "title": "Source-supported visible water",
+        "status": "PARTIAL",
+        "scope": "PUBLIC \u00b7 FOUR WET MAPS",
+        "summary": "Visible water renders on ENV04, ENV05, ENV07 and ENV08, with dry ENV01 remaining dry. Surface appearance is connected to the shared live height field; native water effects and full visual parity remain incomplete.",
+        "validation": "Public 629bc0ac8ccd586abd4630c826909287a671764b \u00b7 CI 38275179626: four wet maps passed, dry ENV01 had no water, and 390px projection/bank/sky checks passed. The package served 328 R2 objects from 28 authored hashes.",
+        "evidence": "research/WATER.md \u2014 source gates, live height field and rendering limits.",
+        "next_step": "Recover native VU water parity, reflections, froth and wakes; validate on physical phone GPUs.",
+        "release_verification": {
+          "commit": "629bc0ac8ccd586abd4630c826909287a671764b",
+          "ci_run": "38275179626",
+          "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+          "static_assets": 28,
+          "served_objects": 328,
+          "devlog_entries": 84,
+          "devlog_screenshots": 75,
+          "r2_approved_objects": 329,
+          "checks": [
+            "The corrected 629 package includes the imported water/train modules and a generic import-closure regression check; the initial 5c3bef0 package omitted two imports and is not treated as a successful release.",
+            "Public water checks passed for ENV04, ENV05, ENV07 and ENV08; dry ENV01 correctly has no water. 390px projection, banks and sky checks passed.",
+            "Public Arlington train rendering passed desktop and 390px pixel checks (3,990 / 1,710 changed pixels); movement, wheel animation, pause/resume and context restoration passed.",
+            "Zero page errors and WebGL errors; gallery desktop/mobile checks passed."
           ]
         }
       },
@@ -1499,12 +1565,28 @@
         "id": "arlington-train",
         "category": "World",
         "title": "Arlington locomotive and train",
-        "status": "RECOVERED NOT CONNECTED",
-        "scope": "RESEARCH",
-        "summary": "The Arlington archive and route data identify a locomotive, ten following cars, wheel/smoke animation and a shared looping VUE path with per-car offsets. Nothing renders or moves in the public scene yet.",
-        "validation": "Format and executable-path observations; no connected runtime test.",
-        "evidence": "research/GEOMETRY.md \u2014 Arlington train recovery in progress.",
-        "next_step": "Connect path sampling, per-car transforms, terrain contact and moving-object collision, then verify on ENV08."
+        "status": "PARTIAL",
+        "scope": "PUBLIC \u00b7 ROUTE RENDERING; COLLISION/AUDIO/SMOKE OPEN",
+        "summary": "The ENV08 Arlington train renders and moves along the recovered route with animated wheels. Train collisions, audio, smoke and full scene parity remain unfinished.",
+        "validation": "Public 629bc0ac8ccd586abd4630c826909287a671764b \u00b7 CI 38275179626: desktop/390px actual-pixel checks passed (3,990 / 1,710 changed pixels); movement, wheel animation, pause/resume and context restoration passed with zero page/WebGL errors.",
+        "evidence": "research/TRAIN.md \u2014 procedural route, packed wheel animation and remaining integration gaps.",
+        "next_step": "Connect native scene-height behavior, moving-object collision, audio and smoke; validate route and timing against original behavior.",
+        "release_verification": {
+          "commit": "629bc0ac8ccd586abd4630c826909287a671764b",
+          "ci_run": "38275179626",
+          "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+          "static_assets": 28,
+          "served_objects": 328,
+          "devlog_entries": 84,
+          "devlog_screenshots": 75,
+          "r2_approved_objects": 329,
+          "checks": [
+            "The corrected 629 package includes the imported water/train modules and a generic import-closure regression check; the initial 5c3bef0 package omitted two imports and is not treated as a successful release.",
+            "Public water checks passed for ENV04, ENV05, ENV07 and ENV08; dry ENV01 correctly has no water. 390px projection, banks and sky checks passed.",
+            "Public Arlington train rendering passed desktop and 390px pixel checks (3,990 / 1,710 changed pixels); movement, wheel animation, pause/resume and context restoration passed.",
+            "Zero page errors and WebGL errors; gallery desktop/mobile checks passed."
+          ]
+        }
       },
       {
         "id": "menus",
@@ -1888,26 +1970,25 @@
         "category": "Platform",
         "title": "Keyboard, controller and touch input",
         "status": "PARTIAL",
-        "scope": "PUBLIC \u00b7 KEYBOARD/CONTROLLER SETTINGS AND TOUCH BASELINE",
-        "summary": "Public Controls remap keyboard/controller actions across keys, buttons, signed axes and chords, with persistence. A saved one-handed setting drives, brakes/reverses and supports airborne steer/lean. Physical phone hardware and full handling parity remain unverified.",
-        "validation": "Public 0541085b495fd9e8d0a0dae59ba6c8ea186f49cc \u00b7 CI 38264831246: saved one-handed controls, touch stunts, desktop/portrait diagnostics and the public landing route passed. Physical mobile device behavior remains untested; the separate one-finger feedback work is pending.",
+        "scope": "PUBLIC \u00b7 COMPACT ONE-FINGER CONTROLS + KEYBOARD/CONTROLLER SETTINGS",
+        "summary": "The compact compass/vector is the default for one-finger steer/lean/throttle/brace input, supports diagonals and air, and hides promptly on release. Saved keyboard/controller mappings and one-handed controls remain available. Physical phone hardware remains unverified.",
+        "validation": "Public 629bc0ac8ccd586abd4630c826909287a671764b \u00b7 CI 38275179626: default and denied-storage behavior, saved Off/On settings, cardinal/diagonal proportional vectors, release/coast, air control, strict Riding held-throttle landing, optional two-finger stunts/wreck, and 124-step batching/orbit passed at 390px. Physical phone hardware remains untested.",
         "evidence": "research/TOUCH.md \u2014 browser adapter limits; research/IMPLEMENTATION.md \u2014 input requirements.",
-        "next_step": "Compare more original fixed-input handling, stunt transitions and cancellation cases; test physical devices separately.",
+        "next_step": "Test physical phones and continue comparing fixed-input handling/stunt transitions with the original.",
         "release_verification": {
-          "commit": "0541085b495fd9e8d0a0dae59ba6c8ea186f49cc",
-          "ci_run": "38264831246",
+          "commit": "629bc0ac8ccd586abd4630c826909287a671764b",
+          "ci_run": "38275179626",
           "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
-          "static_assets": 26,
-          "served_objects": 323,
-          "devlog_entries": 79,
-          "devlog_screenshots": 70,
-          "r2_approved_objects": 324,
-          "r2_upload_changes": 2,
+          "static_assets": 28,
+          "served_objects": 328,
+          "devlog_entries": 84,
+          "devlog_screenshots": 75,
+          "r2_approved_objects": 329,
           "checks": [
-            "Saved one-handed control route passed.",
-            "Touch-stunt route passed.",
-            "Desktop/portrait diagnostics and 390px dev-log filters passed.",
-            "Physical phone hardware and separate one-finger feedback work remain unverified."
+            "Public compact one-finger controls default on when unset or storage is denied; saved Off and On choices persist.",
+            "Cardinal and diagonal steer/lean vectors, proportional values, tiny cue bounds, and immediate release/coast passed at 390px.",
+            "The same input remains active in air; strict Riding held-throttle landing route passed. Optional two-finger Nac Nac/wreck and 124-step batching/orbit checks passed.",
+            "Physical phone hardware remains unverified."
           ]
         }
       },

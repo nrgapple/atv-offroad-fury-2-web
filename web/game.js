@@ -231,6 +231,7 @@ async function terrainFromContent(file, files, token, environment = "env01") {
     collisionPlacements.push({ ...placement, name });
   }
   const train = environment === 'env08' ? await loadTrain({ resource, entries, modeIndex, codec, json, baseTextures, isCurrent: () => token === generation }) : null;
+  if (train && mode) await audio.loadSpatial({ toy: new TextEncoder().encode(mode), isCurrent: () => token === generation });
   return { bytes, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
 }
 async function baseTextures(mesh, materialArchive, materialEntries, cache = new Map()) {
@@ -852,7 +853,7 @@ async function pumpSimulation() {
       if (waterRenderer && water) { waterRenderer.accept(water); terrain.waterSource.frame = water; diagnostics.waterRender.baseHeight = water.base_height; }
       diagnostics.simulationSteps++;
       acceptCameraFrame(cameraResult);
-      void audio.update(1 / 60, frame.applied_input ?? input, frame);
+      void audio.update(1 / 60, frame.applied_input ?? input, frame, { train, camera: cameraResult });
     }
   } catch (error) {
     if (token === simGeneration) { simReady = false; status(`Simulation stopped: ${error.message}`, true); }

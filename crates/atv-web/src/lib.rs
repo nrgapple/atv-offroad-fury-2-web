@@ -1041,6 +1041,15 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
+    if op == 72 {
+        return serde_json::to_vec(&atv_core::spatial_audio::train_definitions(input)?)
+            .map_err(|e| e.to_string());
+    }
+    if op == 73 {
+        let request = serde_json::from_slice(input).map_err(|e| e.to_string())?;
+        return serde_json::to_vec(&atv_core::spatial_audio::scene_commands(request)?)
+            .map_err(|e| e.to_string());
+    }
     if op == 67 {
         let train = if input.is_empty() {
             None

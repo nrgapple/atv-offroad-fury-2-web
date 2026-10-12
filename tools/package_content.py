@@ -176,6 +176,34 @@ def selected_engine_names(table):
     return names
 
 
+def selected_train_names(toy):
+    """Only source-bound Arlington body sounds used by the authored runtime."""
+    data = config(toy)
+    count = int(data.get('animations', {}).get('numberofanimations', '0'))
+    if not 0 <= count <= 4096:
+        raise ValueError('invalid train animation count')
+    names = set()
+    for index in range(1, count + 1):
+        section = data.get(f'animation{index}', {})
+        route = section.get('vue', '').replace('\\', '/').split('/')[-1].lower()
+        if section.get('animationtype', '').lower() != 'procedural' or route != 'locomotive.vue':
+            continue
+        sounds = int(section.get('numberofloopingsounds', '0'))
+        if not 0 <= sounds <= 32:
+            raise ValueError('invalid train loop count')
+        for sound in range(1, sounds + 1):
+            loop = data[f'animation{index}loopsound{sound}']
+            if loop.get('attachtoobject', '').lower() != 'body':
+                raise ValueError('unsupported train audio attachment')
+            name = loop['soundresourcefile'].replace('\\', '/').lower().removeprefix('audio/')
+            if not name or '..' in name or name.startswith('/') or len(name) > 260:
+                raise ValueError('invalid train sample path')
+            if not name.endswith('.vag'):
+                name += '.vag'
+            names.add(name)
+    return names
+
+
 def mesh_material_names(data):
     """Read the bounded PSG v3 material table, as in atv-core's mesh reader."""
     if take(data, 0, 4) != b'psg\0' or u32(data, 4) != 3:
@@ -316,11 +344,15 @@ def main():
             if data != originals[path]:
                 record.update(repacked=True, member_count=len(Resource(data).members))
             records.append(record)
-        names = selected_engine_names(Resource(originals['/AUDIOTBL.RES']).named('vehicle.aud'))
+        engine_names = selected_engine_names(Resource(originals['/AUDIOTBL.RES']).named('vehicle.aud'))
+        train_names = selected_train_names(Resource(originals['/TRACKS/TRACKSA/ENV08/E08_FR.RES']).named('env08fr.toy'))
+        if len(train_names) != 3:
+            raise ValueError('exact-build train expected three unique body sounds')
+        names = engine_names | train_names
         audio = Resource(source('/AUDIO/AUDIO.RES'))
         samples = [(name, audio.extract(i)) for i, (name, _, _) in enumerate(audio.members) if name.lower().removeprefix('audio/') in names]
         if len(samples) != len(names):
-            raise ValueError('missing or duplicated selected engine sample')
+            raise ValueError('missing or duplicated selected runtime sound sample')
         packed = pack_resource(samples)
         records.append({'path': '/AUDIO/AUDIO.RES', 'lba': by_path['/audio/audio.res']['lba'], 'directory': False, 'lazy': False, 'repacked': True, 'member_count': len(samples), **blob(packed)})
         music = config(Resource(originals['/STARTAPP.RES']).named('music.pb'))
@@ -335,7 +367,7 @@ def main():
                 raise ValueError('music source is not VAG')
             chunks = [{'offset': offset, **blob(data[offset:offset + CHUNK])} for offset in range(0, len(data), CHUNK)]
             records.append({'path': entry['path'], 'lba': entry['lba'], 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(), 'directory': False, 'lazy': True, 'chunks': chunks})
-        manifest = {'version': 1, 'build': 'USA v2.00', 'source_build_sha256': SOURCE_SHA, 'engine_sample_count': len(samples), 'music_song_count': count, 'files': records}
+        manifest = {'version': 1, 'build': 'USA v2.00', 'source_build_sha256': SOURCE_SHA, 'engine_sample_count': len(engine_names), 'train_sample_count': len(train_names), 'music_song_count': count, 'files': records}
         temporary = output / 'manifest.json.tmp'
         temporary.write_text(json.dumps(manifest, indent=2) + '\n')
         temporary.replace(output / 'manifest.json')

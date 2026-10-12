@@ -30,6 +30,7 @@ pub mod scene_candidates;
 pub mod scene_collision;
 pub mod scene_partition;
 pub mod sky;
+pub mod spatial_audio;
 pub mod stunt;
 pub mod stunt_score;
 pub mod terrain;

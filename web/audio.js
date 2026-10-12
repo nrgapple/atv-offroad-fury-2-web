@@ -20,6 +20,13 @@ export class GameAudio {
     this.commands = 0;
     this.generation = 0;
     this.lastSound = null;
+    this.spatialDefinitions = [];
+    this.spatialVoices = new Map();
+    this.spatialCommands = [];
+    this.spatialStarts = 0;
+    this.spatialHistory = null;
+    this.spatialPending = null;
+    this.spatialReady = false;
     this.music = new MusicStream(codec, () => this.context, () => this.gain, report);
     this.unlock = () => this.resume().catch(error => this.report(error.message));
     window.addEventListener('pointerdown', this.unlock);
@@ -56,20 +63,41 @@ export class GameAudio {
     const sounds = await archive('/AUDIO/AUDIO.RES');
     const normal = path => path.replaceAll('\\', '/').toLowerCase().replace(/^audio\//, '');
     const lookup = new Map(sounds.entries.map((entry, index) => [normal(entry.name), index]));
-    // Keep encoded WAV until a user gesture creates/unlocks the audio context.
-    for (const name of new Set(this.config.samples.flat())) {
-      if (!isCurrent() || this.closed) return;
-      const index = lookup.get(normal(name));
-      if (index === undefined) throw new Error(`Original engine sample is missing: ${name}`);
+    this.loadSample = async name => {
+      if (this.buffers.has(name)) return;
+      const key = normal(name), index = lookup.get(key) ?? lookup.get(`${key}.vag`);
+      if (index === undefined) throw new Error(`Original sound sample is missing: ${name}`);
       const vag = await this.codec(3, sounds.bytes, index);
       const info = await json(5, vag);
       const wave = await this.codec(4, vag);
+      if (!isCurrent() || this.closed) return;
       this.buffers.set(name, { wave, info, buffer: null });
+    };
+    // Keep encoded WAV until a user gesture creates/unlocks the audio context.
+    for (const name of new Set(this.config.samples.flat())) {
+      if (!isCurrent() || this.closed) return;
+      await this.loadSample(name);
     }
     if (!isCurrent() || this.closed) return;
     await this.music.load({ file, files, read, isCurrent });
     if (!isCurrent() || this.closed) return;
     this.ready = true;
+  }
+  async loadSpatial({ toy, isCurrent }) {
+    try {
+      const definitions = JSON.parse(new TextDecoder().decode(await this.codec(72, toy)));
+      for (const name of new Set(definitions.map(definition => definition.sample))) {
+        if (!isCurrent() || this.closed) return;
+        await this.loadSample(name);
+      }
+      if (!isCurrent() || this.closed) return;
+      this.spatialDefinitions = definitions;
+      this.spatialReady = true;
+    } catch (error) {
+      // App assets and the separate R2 bank can become available at different
+      // times. A missing train sample must leave driving/music usable.
+      if (isCurrent() && !this.closed) this.report(`Train sound: ${error.message}`);
+    }
   }
   async decode() {
     if (!this.context || this.context.state !== 'running' || !this.ready) return false;
@@ -111,8 +139,70 @@ export class GameAudio {
     this.sources.clear();
     this.current = null;
   }
-  async update(dt, input, frame) {
+  // Separate body voices survive engine sample transitions and vehicle resets.
+  // Original stereo uses two integer gains, with its own quantized pitch.
+  playSpatial(index, definition) {
+    const sample = this.buffers.get(definition.sample);
+    if (!sample?.buffer || this.spatialVoices.has(index) || definition.start_disabled || this.closed) return;
+    const source = this.context.createBufferSource();
+    source.buffer = sample.buffer; source.loop = definition.looping;
+    if (source.loop && sample.info.loop_start !== null && sample.info.loop_end !== null) {
+      source.loopStart = sample.info.loop_start / sample.info.sample_rate;
+      source.loopEnd = sample.info.loop_end / sample.info.sample_rate;
+    }
+    const left = this.context.createGain(), right = this.context.createGain(), merger = this.context.createChannelMerger(2);
+    // Shipped train VAGs are mono. Explicit channel count prevents the merger
+    // inputs from receiving an accidental speaker-layout upmix.
+    left.channelCount = right.channelCount = 1;
+    left.channelCountMode = right.channelCountMode = 'explicit';
+    left.gain.value = right.gain.value = 0;
+    source.connect(left); source.connect(right);
+    left.connect(merger, 0, 0); right.connect(merger, 0, 1); merger.connect(this.engineGain);
+    const voice = { source, left, right, merger, sample: definition.sample, started: this.context.currentTime };
+    this.spatialVoices.set(index, voice);
+    source.onended = () => {
+      this.spatialVoices.delete(index); source.disconnect(); left.disconnect(); right.disconnect(); merger.disconnect();
+    };
+    source.start(); this.spatialStarts++;
+    return voice;
+  }
+  stopSpatial() {
+    for (const voice of this.spatialVoices.values()) {
+      voice.source.onended = null; voice.source.stop(); voice.source.disconnect();
+      voice.left.disconnect(); voice.right.disconnect(); voice.merger.disconnect();
+    }
+    this.spatialVoices.clear();
+  }
+  captureSpatial(dt, scene) {
+    if (!this.spatialReady || !scene?.train || !scene?.camera) return;
+    const current = { camera: { position: scene.camera.position, target: scene.camera.target }, cars: scene.train.cars.map(car => car.matrix) };
+    const previous = this.spatialHistory ?? current;
+    this.spatialPending = { dt, camera: current.camera, previous_camera: previous.camera,
+      cars: current.cars, previous_cars: previous.cars, definitions: this.spatialDefinitions };
+    this.spatialHistory = current;
+  }
+  async updateSpatial(generation) {
+    const payload = this.spatialPending;
+    if (!payload || !this.spatialReady) return;
+    const bytes = await this.codec(73, new TextEncoder().encode(JSON.stringify(payload)));
+    if (this.closed || !this.active || generation !== this.generation) return;
+    const commands = JSON.parse(new TextDecoder().decode(bytes));
+    this.spatialCommands = commands;
+    for (let index = 0; index < commands.length; index++) {
+      const command = commands[index], definition = this.spatialDefinitions[index];
+      const voice = this.spatialVoices.get(index) ?? this.playSpatial(index, definition);
+      if (!voice) continue;
+      // The original setter does not submit invalid pitch; retain its last
+      // audible parameters if the source's startup/discontinuous pose exceeds it.
+      if (command.pitch < -1 || command.pitch >= 0x4000) continue;
+      voice.left.gain.value = command.left / 100;
+      voice.right.gain.value = command.right / 100;
+      voice.source.playbackRate.value = Math.max(0, command.pitch) / 4096;
+    }
+  }
+  async update(dt, input, frame, scene) {
     if (!this.ready || !this.active || this.closed) return;
+    this.captureSpatial(dt, scene);
     void this.music.update();
     this.elapsed += dt;
     if (this.busy || !this.context || this.context.state !== 'running') return;
@@ -121,6 +211,8 @@ export class GameAudio {
     try {
       if (!await this.decode()) return;
       if (generation !== this.generation) return;
+      await this.updateSpatial(generation);
+      if (this.closed || !this.active || generation !== this.generation) return;
       if (!this.current && this.commands === 0 && this.config.samples[1].length) {
         // Original002cae30 loads and selects the last idle sample before updates.
         this.play(this.config.samples[1].at(-1), 'Idle', false);
@@ -174,7 +266,15 @@ export class GameAudio {
   }
   snapshot() {
     return { ready: this.ready, context: this.context?.state ?? 'locked', samples: this.buffers.size,
-      musicPreview: this.musicPreview, voices: this.sources.size, commands: this.commands, sound: this.lastSound, music: this.music.snapshot() };
+      musicPreview: this.musicPreview, voices: this.sources.size, commands: this.commands, sound: this.lastSound,
+      spatial: { ready: this.spatialReady, sources: this.spatialDefinitions.length, voices: this.spatialVoices.size,
+        starts: this.spatialStarts, commands: this.spatialCommands,
+        clock: this.context?.currentTime ?? 0, active: this.active,
+        samples: [...new Set(this.spatialDefinitions.map(definition => definition.sample))].map(name => {
+          const sample = this.buffers.get(name);
+          return { name, channels: sample?.info.channels, sampleRate: sample?.info.sample_rate,
+            loopStart: sample?.info.loop_start, loopEnd: sample?.info.loop_end, decoded: Boolean(sample?.buffer) };
+        }) }, music: this.music.snapshot() };
   }
   close() {
     this.generation++; this.previewGeneration++;
@@ -186,6 +286,7 @@ export class GameAudio {
     window.removeEventListener('pointerdown', this.unlock);
     window.removeEventListener('keydown', this.unlock);
     this.stopSources();
+    this.stopSpatial(); this.spatialReady = false; this.spatialPending = this.spatialHistory = null;
     this.context?.close();
     this.buffers.clear();
   }
