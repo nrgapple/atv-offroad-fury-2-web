@@ -52,3 +52,7 @@ This checkpoint restyles Pause, Camera and the existing one/two-finger drive mar
 ## Public checkpoint
 
 The shared Pause/Camera controls and one/two-finger touch marker are in public main commit `f21f6b50af07ac12db4a39ac9e1a4c03323174b2` (PR #1; CI run [38286720860](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38286720860)). Public Chromium and WebKit mobile UI checks passed at 390×844, 320×568 and 844×390, including 44px targets, focus, camera and pause actions, scoped native touch cancellation and cleanup. Public one-handed input checks also passed saved settings, directional steering, air control and landing. These browser checks do not verify physical iOS loupe behavior or exact PS2 visual parity; the larger two-finger route assertion remains a baseline-reproduced timing failure documented in the dev log.
+
+## Native steering range control
+
+For settings where Rust owns navigation and persistence, keep the label, selected value, slider rectangle and menu choices in Rust. Bind a native DOM `<input type="range">` over the Rust-provided rectangle for direct pointer and keyboard access, then sync its value through menu redraws without replacing the focused input. Style it with the shared gold accent and focus tokens. The mobile steering response control uses 50–150% in 5% steps, defaults to 85%, and saves one value for both touch modes; 100% preserves the previous response. The sensitivity scales displacement before the original clamp so full lock remains reachable.

@@ -17,6 +17,8 @@ try {
   }), true, 'Unavailable storage uses one finger');
   await denied.close();
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  // This baseline trajectory uses the original 100% setting; the slider gate covers the gentler default.
+  await page.addInitScript(() => localStorage.setItem('atv-mobile-steering-sensitivity', '100'));
   await captureSimulation(page, 'landingFrames');
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   const url=new URL('/play.html?drive=1&environment=env01',process.env.ATV_TEST_URL || 'http://127.0.0.1:4173');

@@ -1589,9 +1589,27 @@
         "The public frontend menu route check also passes without a disc-selection step or browser errors."
       ],
       "limitation": "This is a dev-log presentation and metadata-consistency check; it does not expand game implementation or change the broader feature-status assessment."
+    },
+    {
+      "id": "mobile-steering-response-is-adjustable-in-controls-2d07c559",
+      "timestamp": "2026-10-12T18:03:36.275212+00:00",
+      "recorded_at": "2026-10-12T18:05:54.225919+00:00",
+      "kind": "build",
+      "title": "Mobile steering response is adjustable in Controls",
+      "summary": "Pause \u2192 Controls now includes a saved Mobile steering setting for both touch modes. The 50% host capture shows the native gold range control; 85% is the default, with 100% retaining the original steering response.",
+      "details": [
+        "The range is 50\u2013150% in 5% steps. Rust owns the label, range geometry and menu choices; the DOM range control reuses the shared gold focus styling and preserves drag/focus through redraw.",
+        "Sensitivity scales touch displacement before the original input clamp, so full lock remains reachable. Lean, braking and preload behavior stay unchanged.",
+        "The setting persists in localStorage and applies to one- and two-finger touch modes. Host make verify and make check passed (298 core, 2 WASM and 47 JavaScript tests); release validation passed 13 tests plus four Worker tests.",
+        "tools/test_steering_sensitivity.mjs passed in Chromium and WebKit for default/range, three viewports, keyboard and pointer adjustment, focus and persistence. Chromium also checked both touch modes, axis behavior, full lock and cancellation. tools/test_mobile_ui.mjs passed with the 85% default.",
+        "The host one-handed 100% baseline and original frontend route both passed; the steering default remains 85%."
+      ],
+      "limitation": "Host-only checkpoint; steering source is still isolated and not public. Public CI/release and physical-phone validation remain pending.",
+      "image": "/devlog-images/mobile-steering-response-is-adjustable-in-controls-2d07c559.png",
+      "caption": "Host capture of Pause \u2192 Controls with Mobile steering set to 50%."
     }
   ],
-  "updated_at": "2026-10-12T17:54:57.001238+00:00",
+  "updated_at": "2026-10-12T18:06:21.863010+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

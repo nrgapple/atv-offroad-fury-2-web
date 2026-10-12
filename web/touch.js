@@ -1,8 +1,18 @@
 // Browser gestures adapt input axes only; the recovered Rust gates own jump force.
 const clamp = value => Math.max(-1, Math.min(1, Number.isFinite(value) ? value : 0));
+export const DEFAULT_STEERING_SENSITIVITY = 85;
+export const normalizeSteeringSensitivity = value => Math.max(50, Math.min(150, Math.round((Number.isFinite(value) ? value : DEFAULT_STEERING_SENSITIVITY) / 5) * 5));
+export function loadSteeringSensitivity(read = () => localStorage.getItem('atv-mobile-steering-sensitivity')) {
+  try {
+    const saved = read(), value = Number(saved);
+    return saved !== null && saved !== '' && Number.isFinite(value) && value >= 50 && value <= 150 ? normalizeSteeringSensitivity(value) : DEFAULT_STEERING_SENSITIVITY;
+  } catch { return DEFAULT_STEERING_SENSITIVITY; }
+}
+// Scale displacement BEFORE clipping so a larger drag can still reach full lock.
+const steeringAxis = (dx, sensitivity) => clamp(dx / 70 * sensitivity / 100);
 // Gesture mappings are browser adaptations of original modifier/direction inputs.
 export class TouchInput {
-  constructor() { this.generation = 0; this.airborne = false; this.oneHanded = false; this.clear(); }
+  constructor() { this.generation = 0; this.airborne = false; this.oneHanded = false; this.steeringSensitivity = 100; this.clear(); }
   clear() { this.generation++; this.pointer = null; this.pendingSelection = null; this.sampled = false; this.releasePending = false; }
   owns(id) { return this.pointer?.id === id; }
   begin(id, x = 0, y = 0, airborne = this.airborne) {
@@ -87,7 +97,7 @@ export class TouchInput {
     }
     const driving = pointer?.mode === 'drive';
     const leaning = this.oneHanded && pointer && ['drive','lean'].includes(pointer.mode);
-    const steer = leaning ? clamp((pointer.currentX-pointer.x)/70) : 0;
+    const steer = leaning ? steeringAxis(pointer.currentX-pointer.x, this.steeringSensitivity) : 0;
     const lean = leaning ? clamp((pointer.currentY-pointer.y)/70) : 0;
     const drive = { generation: this.generation, held: driving, axis: driving ? pointer.axis : 0, grounded_only: false };
     if (this.oneHanded) drive.forward_only = true;
@@ -104,7 +114,7 @@ export class TouchInput {
 
 // The left thumb always steers and leans, whether grounded or airborne.
 export class TouchLeanIntent {
-  constructor() { this.clear(); }
+  constructor(sensitivity = () => 100) { this.sensitivity = sensitivity; this.clear(); }
   clear() { this.pointer = null; }
   begin(id, x, y) {
     if (this.pointer) return false;
@@ -112,11 +122,11 @@ export class TouchLeanIntent {
   }
   move(id, x, y) {
     if (this.pointer?.id !== id) return;
-    this.pointer.dx = clamp((x - this.pointer.x) / 70);
+    this.pointer.dx = x - this.pointer.x;
     this.pointer.dy = clamp((y - this.pointer.y) / 70);
   }
   end(id) { if (this.pointer?.id === id) this.pointer = null; }
-  get steer() { return this.pointer?.dx ?? 0; }
+  get steer() { return steeringAxis(this.pointer?.dx ?? 0, this.sensitivity()); }
   get lean() { return this.pointer?.dy ?? 0; }
 }
 
@@ -131,7 +141,7 @@ export function oneHandedFeedback(input, frame) {
   const applied = frame?.applied_input;
   const current = applied?.touch_drive?.generation === input.generation && applied.touch_drive.held;
   return {
-    steer: pointer ? clamp((pointer.currentX - pointer.x) / 70) : 0,
+    steer: pointer ? steeringAxis(pointer.currentX - pointer.x, input.steeringSensitivity) : 0,
     lean: pointer ? clamp((pointer.currentY - pointer.y) / 70) : 0,
     cue: !pointer ? '' : frame?.preload_active ? 'PRELOADED' : frame?.preload_armed ? 'LIFT FOR PRELOAD' : current && applied.brake > 0 ? 'BRAKE · BRACE' : 'DRIVE · BRACE',
   };
@@ -140,6 +150,7 @@ export function oneHandedFeedback(input, frame) {
 export function mountTouchControls({ active, focus, surface, parent = document.body }) {
   const input = new TouchInput();
   input.setOneHanded(loadOneHandedPreference());
+  input.steeringSensitivity = loadSteeringSensitivity();
   let touched = false, airborne = false, lastFrame = null;
   const root = document.createElement('div'); root.id = 'touch-controls'; root.setAttribute('aria-hidden', 'true');
   root.innerHTML = '<div class="touch-rider-marker"><b class="touch-axis forward">FWD</b><b class="touch-axis back">BACK</b><b class="touch-axis left">L</b><b class="touch-axis right">R</b><em class="touch-direction"></em><i></i><span>PRELOAD</span></div>';
@@ -208,6 +219,12 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
   return {
     clear, refresh,
     get oneHanded() { return input.oneHanded; },
+    get steeringSensitivity() { return input.steeringSensitivity; },
+    setSteeringSensitivity(value) {
+      input.steeringSensitivity = normalizeSteeringSensitivity(value);
+      try { localStorage.setItem('atv-mobile-steering-sensitivity', String(input.steeringSensitivity)); } catch { /* Session-only setting. */ }
+      present();
+    },
     toggleOneHanded() {
       input.setOneHanded(!input.oneHanded);
       try { localStorage.setItem('atv-mobile-one-handed', String(input.oneHanded)); } catch { /* Session-only setting. */ }

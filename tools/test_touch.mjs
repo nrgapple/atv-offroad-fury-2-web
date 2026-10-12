@@ -5,7 +5,8 @@ const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODUL
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
-  await page.addInitScript(() => localStorage.setItem('atv-mobile-one-handed', 'false')); // Explicit optional two-finger mode.
+  // Explicit optional two-finger mode and original steering response for this baseline route.
+  await page.addInitScript(() => { localStorage.setItem('atv-mobile-one-handed', 'false'); localStorage.setItem('atv-mobile-steering-sensitivity', '100'); });
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.addInitScript(() => {
     window.touchSamples = []; window.touchResolved = [];

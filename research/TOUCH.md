@@ -133,3 +133,7 @@ explains press-to-drive and backward drag.
 
 
 The immediate-press route passed the public Chromium touch suite on release `0f074b4558f864ea4e4a8103b017b60e102c6690` (CI `38202065109`). This verifies the browser adaptation and cancellation paths, not physical iOS/controller equivalence or original handling parity.
+
+## Mobile steering response
+
+Pause → Controls offers a saved Mobile steering response from 50% to 150% in 5% steps, defaulting to 85%. It applies to both one- and two-finger touch modes. At 100%, steering matches the previous input response. The scale is applied to displacement before the unchanged full-lock clamp; it does not alter lean, brake or preload input. Keyboard and controller bindings are unaffected.
