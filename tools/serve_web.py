@@ -10,6 +10,12 @@ ROOT = Path(__file__).resolve().parents[1] / 'web/dist'
 PROJECT = Path(__file__).resolve().parents[1]
 ALLOWED = {'index.html', 'landing.css', 'landing.js', 'play.html', 'game.css', 'game.js', 'hud.js', 'diagnostics.js', 'frontend.js', 'touch.js', 'touch.css', 'content.js', 'audio.js', 'music.js', 'deployment.json', 'devlog.html', 'devlog.css', 'devlog.js', 'devlog.json', 'workbench.html', 'style.css', 'app.js', 'worker.js', 'input.js', 'controls.js', 'bindings.js', 'atv_web.wasm'}
 
+class StaticServer(ThreadingHTTPServer):
+    # ES-module startup opens more connections than Python's default five-slot
+    # backlog. Admit the burst without changing the existing resource allowlist.
+    request_queue_size = 128
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -54,6 +60,6 @@ def main():
     PROJECT = args.project.resolve()
     if not (ROOT / 'atv_web.wasm').is_file(): parser.error('run make web first')
     print(f'Static workbench listening on {args.bind}:{args.port}. Host verification only; remote access is not established.', flush=True)
-    ThreadingHTTPServer((args.bind, args.port), Handler).serve_forever()
+    StaticServer((args.bind, args.port), Handler).serve_forever()
 
 if __name__ == '__main__': main()

@@ -107,6 +107,10 @@ pub struct SceneQueryFrame {
     pub selected_static: usize,
     pub selected_vegetation: usize,
     pub refreshed: bool,
+    pub vegetation_proxy_queries: usize,
+    pub vegetation_chassis_callbacks: usize,
+    pub vegetation_wheel_callbacks: usize,
+    pub unsupported_vegetation_proxies: usize,
 }
 struct WreckPhysics {
     rules: crate::wreck::Config,
@@ -845,7 +849,7 @@ impl Vehicle {
             b[0][0], b[0][1], b[0][2], 0., b[1][0], b[1][1], b[1][2], 0., b[2][0], b[2][1],
             b[2][2], 0., origin[0], origin[1], origin[2], 1.,
         ];
-        let ordered_obstacles = if let Some(scene) = &mut self.scene_collision {
+        let (ordered_obstacles, scene_candidates) = if let Some(scene) = &mut self.scene_collision {
             let center = crate::obstacle::transform_point(&ray_world, self.scene_sphere_center);
             let query = scene.cached_query(center, self.scene_sphere_radius, |_, _| true)?;
             let selected = scene.static_selection(&query);
@@ -863,22 +867,47 @@ impl Vehicle {
                     })
                     .count(),
                 refreshed: query.refreshed,
+                ..SceneQueryFrame::default()
             };
-            std::borrow::Cow::Owned(selected.into_iter().cloned().collect::<Vec<_>>())
+            (
+                std::borrow::Cow::Owned(selected.into_iter().cloned().collect::<Vec<_>>()),
+                Some(query),
+            )
         } else {
-            std::borrow::Cow::Borrowed(self.obstacles.as_slice())
+            (std::borrow::Cow::Borrowed(self.obstacles.as_slice()), None)
         };
         let stop_planes = crate::wheel_stop::sample(terrain, &ray_world, self.wheel_stops)?;
         for i in 0..4 {
-            self.supports[i] = crate::wheel_support::sample(
-                terrain,
-                &ordered_obstacles,
-                &ray_world,
-                self.wheel_rest[i],
-                self.suspension_config.travel,
-                self.wheel_config[i].radius,
-                self.supports[i],
-            )?;
+            self.supports[i] = if let Some((scene, query)) =
+                self.scene_collision.as_ref().zip(scene_candidates.as_ref())
+            {
+                let sampled = crate::wheel_support::sample_with_scene(
+                    terrain,
+                    scene,
+                    query,
+                    self.skip_vegetation_query,
+                    &ray_world,
+                    self.wheel_rest[i],
+                    self.suspension_config.travel,
+                    self.wheel_config[i].radius,
+                    self.supports[i],
+                )?;
+                self.scene_query.vegetation_proxy_queries += sampled.vegetation_proxies;
+                self.scene_query.vegetation_wheel_callbacks += sampled.vegetation_callbacks;
+                self.scene_query.unsupported_vegetation_proxies +=
+                    sampled.unsupported_vegetation_proxies;
+                sampled.support
+            } else {
+                crate::wheel_support::sample(
+                    terrain,
+                    &ordered_obstacles,
+                    &ray_world,
+                    self.wheel_rest[i],
+                    self.suspension_config.travel,
+                    self.wheel_config[i].radius,
+                    self.supports[i],
+                )?
+            };
             if self.supports[i].surface >= materials.len() {
                 return Err("unsupported wheel surface".into());
             }
@@ -978,7 +1007,19 @@ impl Vehicle {
             self.obstacle_rays.as_ref()
         };
         let obstacle_contacts = if let Some(rays) = active_rays {
-            crate::obstacle::query_static_scene(rays, &ray_world, &ordered_obstacles)?
+            if let Some((scene, query)) =
+                self.scene_collision.as_ref().zip(scene_candidates.as_ref())
+            {
+                let queried =
+                    scene.quad_contacts(query, rays, &ray_world, self.skip_vegetation_query)?;
+                self.scene_query.vegetation_proxy_queries += queried.vegetation_proxies;
+                self.scene_query.vegetation_chassis_callbacks += queried.vegetation_callbacks;
+                self.scene_query.unsupported_vegetation_proxies +=
+                    queried.unsupported_vegetation_proxies;
+                queried.contacts
+            } else {
+                crate::obstacle::query_static_scene(rays, &ray_world, &ordered_obstacles)?
+            }
         } else {
             Vec::new()
         };
@@ -2069,6 +2110,90 @@ mod tests {
         assert_eq!(frame.obstacle_contact_count, 1);
         assert!(frame.linear_velocity[2] < 1.);
         assert!(frame.origin[2] < 500.);
+    }
+
+    #[test]
+    fn planted_cylinder_rejects_chassis_motion_and_actor_bit_disables_only_expansion() {
+        use crate::{
+            collision::{CollisionRay, CollisionRayTree, RayTreeNode},
+            ecosystem::{Ecosystem, Placement, Species},
+            scene_partition::Config,
+        };
+        let mut frames = Vec::new();
+        for skip in [false, true] {
+            let (mut vehicle, terrain) = fixture();
+            let identity = [
+                1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+            ];
+            let rays = std::rc::Rc::new(CollisionRayTree {
+                transform: identity,
+                query_capacity: 1,
+                nodes: vec![RayTreeNode {
+                    center: [0.; 3],
+                    half_extents: [2.; 3],
+                    bound_measure: 48.,
+                    children: [0x8000; 2],
+                }],
+                rays: vec![CollisionRay {
+                    start: [0.2, 0., -2.],
+                    end: [0.2, 0., 1.],
+                }],
+            });
+            vehicle.set_obstacles(rays, vec![]).unwrap();
+            let eco = Ecosystem {
+                species: vec![Species {
+                    slot: 0,
+                    model: String::new(),
+                    billboard: String::new(),
+                    parameters: [0; 23],
+                    optional_name: None,
+                    proxies: vec![[1, 0, 0, 0, 0, 0, 0, 1f32.to_bits(), 5f32.to_bits()]],
+                }],
+                placements: vec![Placement {
+                    slot: 0,
+                    resample_height: false,
+                    coordinates: [32000, 0, 32000],
+                    height: 5.,
+                    radius: 2.,
+                }],
+                global_name: None,
+                global_word: 0,
+                placement_texture: None,
+            };
+            vehicle
+                .set_scene_partition(
+                    Config {
+                        min_x: 0.,
+                        max_x: 1024.,
+                        min_z: 0.,
+                        max_z: 1024.,
+                        cell_size: 32.,
+                    },
+                    Some(&eco),
+                    &terrain,
+                )
+                .unwrap();
+            vehicle.skip_vegetation_query = skip;
+            vehicle.body.linear_velocity = [0., 0., 10.];
+            frames.push(
+                vehicle
+                    .step(&terrain, VehicleInput::default(), 1. / 60.)
+                    .unwrap(),
+            );
+        }
+        let hit = &frames[0];
+        let bypassed = &frames[1];
+        assert_eq!(hit.scene_query.selected_static, 0);
+        assert_eq!(hit.scene_query.selected_vegetation, 1);
+        assert_eq!(hit.scene_query.vegetation_chassis_callbacks, 1);
+        assert_eq!(hit.scene_query.unsupported_vegetation_proxies, 0);
+        assert_eq!(hit.obstacle_contact_count, 1);
+        assert!(hit.linear_velocity[2] < 1.);
+        assert!(hit.origin[2] < 500.);
+        assert_eq!(bypassed.scene_query.selected_vegetation, 1);
+        assert_eq!(bypassed.scene_query.vegetation_proxy_queries, 0);
+        assert_eq!(bypassed.obstacle_contact_count, 0);
+        assert!(bypassed.linear_velocity[2] > 9.);
     }
 
     #[test]

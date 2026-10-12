@@ -79,6 +79,7 @@ export class DiagnosticsOverlay {
       `Suspension ft ${vector(f?.wheel_compression)}`,
       `Stops ${f?.suspension_stop_contacts ?? 0}  Body ${f?.chassis_contact_count ?? 0}  Props ${f?.obstacle_contact_count ?? 0}`,
       `Scene cache ${f?.scene_query?.enabled ? f.scene_query.cached_nodes : 'off'}  Props ${f?.scene_query?.selected_static ?? 0}  Plants ${f?.scene_query?.selected_vegetation ?? 0}`,
+      `Plant queries ${f?.scene_query?.vegetation_proxy_queries ?? 0}  Hits ${f?.scene_query?.vegetation_chassis_callbacks ?? 0}/${f?.scene_query?.vegetation_wheel_callbacks ?? 0}`,
       `Wreck ${f?.wreck?.phase ?? '—'}  Resets ${f?.reset_count ?? 0}`,
       `Boundary ${f?.boundary_launch?.active ? 'launch' : 'ready'} ${number(f?.boundary_launch?.elapsed ?? 0, 2)} s`,
       `Water ft ${s.water ? number(f?.water_height, 2) : 'none'}  Rider contacts ${f?.rider_wreck?.water_contact_count ?? 0}`,
@@ -89,7 +90,7 @@ export class DiagnosticsOverlay {
     );
     if (this.mode === 'debug' && f?.rider_wreck) {
       const query = f.rider_wreck.scene_query;
-      lines.push(`Rider cache ${query?.cached ? query.cached_nodes : 'off'}  Props ${query?.selected_static ?? 0}  Proxy gaps ${query?.unsupported_vegetation_proxies ?? 0}`);
+      lines.push(`Rider cache ${query?.cached ? query.cached_nodes : 'off'}  Plant hits ${query?.vegetation_contact_callbacks ?? 0}  Gaps ${query?.unsupported_vegetation_proxies ?? 0}`);
     }
     this.element.textContent = lines.join('\n');
   }

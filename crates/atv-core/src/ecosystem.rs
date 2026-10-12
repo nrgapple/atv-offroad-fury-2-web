@@ -1,5 +1,5 @@
 //! Original ESB v2 vegetation species and packed placements,00128ca0/00129b70.
-//! Proxy records remain raw until their collision behavior is reconstructed.
+//! Raw proxy words are interpreted by vegetation_proxy and the scene consumers.
 use crate::{Result, slice, u16le, u32le};
 use serde::Serialize;
 

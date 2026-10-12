@@ -60,7 +60,8 @@ pub struct Frame {
     pub scene_query: SceneQueryFrame,
 }
 ///Current rider actor query, distinct from the preceding quad query. Plants
-///remain candidates; configured physical proxies are counted as unsupported.
+///remain candidates; source cylinder contacts and unresolved definitions have
+///separate counters.
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 pub struct SceneQueryFrame {
     pub cached: bool,
@@ -69,6 +70,8 @@ pub struct SceneQueryFrame {
     pub selected_static: usize,
     pub vegetation_candidates: usize,
     pub unsupported_vegetation_proxies: usize,
+    pub vegetation_proxy_queries: usize,
+    pub vegetation_contact_callbacks: usize,
     pub skip_vegetation_query: bool,
     pub center: Vec3,
     pub radius: f32,
@@ -677,34 +680,52 @@ impl Animator {
             let exclusions = &self.static_exclusions;
             let query =
                 scene.cached_query(center, radius, |index, _| !exclusions.contains(&index))?;
-            let obstacles =
-                scene.inclusive_static_selection(&query, |index, _| !exclusions.contains(&index));
+            let selected = scene.physical_selection(
+                &query,
+                crate::scene_collision::PhysicalTrim::CachedRider,
+                center,
+                radius,
+                skip_vegetation_query,
+                |index, _| !exclusions.contains(&index),
+            )?;
             self.scene_query.cached = true;
             self.scene_query.refreshed = query.refreshed;
             self.scene_query.cached_nodes = query.candidates.len();
-            self.scene_query.selected_static = obstacles.len();
-            for candidate in query.inclusively_within() {
-                if let crate::scene_collision::SceneNode::Vegetation(index) = candidate.node {
-                    self.scene_query.vegetation_candidates += 1;
-                    if !skip_vegetation_query {
-                        self.scene_query.unsupported_vegetation_proxies +=
-                            scene.vegetation()[index].proxy_count;
-                    }
-                }
-            }
-            obstacles.into_iter().cloned().collect::<Vec<_>>()
+            self.scene_query.selected_static = selected.static_candidates;
+            self.scene_query.vegetation_candidates = selected.vegetation_candidates;
+            self.scene_query.unsupported_vegetation_proxies =
+                selected.unsupported_vegetation_proxies;
+            self.scene_query.vegetation_proxy_queries = selected.vegetation_proxies();
+            selected.meshes
         } else {
             let obstacles = self
                 .obstacles
                 .iter()
                 .enumerate()
                 .filter(|(index, _)| !self.static_exclusions.contains(index))
-                .map(|(_, obstacle)| obstacle.clone())
+                .map(|(index, obstacle)| crate::scene_collision::PhysicalMesh {
+                    node: crate::scene_collision::SceneNode::StaticObstacle(index),
+                    proxy_index: None,
+                    obstacle: obstacle.clone(),
+                })
                 .collect::<Vec<_>>();
             self.scene_query.selected_static = obstacles.len();
             obstacles
         };
-        let contacts = crate::wreck::query_static_segments(&rays, &selected, 60)?;
+        let mut contacts = Vec::new();
+        for mesh in selected {
+            //The type3 nearest buffer resets for each ordinary object/proxy.
+            //Its shared output still has the original sixty-record capacity.
+            let hits = crate::wreck::query_static_segments(
+                &rays,
+                std::slice::from_ref(&mesh.obstacle),
+                60 - contacts.len(),
+            )?;
+            if !hits.is_empty() && mesh.proxy_index.is_some() {
+                self.scene_query.vegetation_contact_callbacks += 1;
+            }
+            contacts.extend(hits);
+        }
         let to_local = inverse(self.world);
         Ok(contacts
             .into_iter()
@@ -1846,5 +1867,68 @@ mod tests {
             assert_eq!(frame.static_contact_count, 0);
             assert_eq!(frame.scene_query.selected_static, 0);
         }
+    }
+
+    #[test]
+    fn attached_cylinder_contact_activates_rider_and_query_bit_preserves_binding() {
+        use crate::ecosystem::{Ecosystem, Placement, Species};
+        let mut observed = Vec::new();
+        for skip in [false, true] {
+            let (mut animator, nodes, terrain, materials) = fixture();
+            let vehicle = start_fixture(&mut animator, &nodes);
+            let mut parameters = [0; 23];
+            parameters[0] = 20f32.to_bits();
+            parameters[3] = 2f32.to_bits();
+            let eco = Ecosystem {
+                species: vec![Species {
+                    slot: 0,
+                    model: String::new(),
+                    billboard: String::new(),
+                    parameters,
+                    optional_name: None,
+                    proxies: vec![[1, 0, 0, 0, 0, 0, 0, 0.5f32.to_bits(), 5f32.to_bits()]],
+                }],
+                placements: vec![Placement {
+                    slot: 0,
+                    resample_height: false,
+                    coordinates: [13056, 4608, 12826],
+                    height: 20.,
+                    radius: 2.,
+                }],
+                global_name: None,
+                global_word: 0,
+                placement_texture: None,
+            };
+            let mut scene = collision_scene(vec![], Some(&eco));
+            animator
+                .step_with_scene(
+                    1. / 60.,
+                    vehicle,
+                    &nodes,
+                    &terrain,
+                    &materials,
+                    None,
+                    Some(&mut scene),
+                    skip,
+                )
+                .unwrap();
+            let frame = animator.frame().unwrap();
+            assert!(frame.scene_query.cached);
+            assert_eq!(frame.scene_query.vegetation_candidates, 1);
+            assert_eq!(frame.scene_query.unsupported_vegetation_proxies, 0);
+            observed.push((frame, animator.integration_active));
+        }
+        let (hit, active) = &observed[0];
+        let (bypassed, inactive) = &observed[1];
+        assert!(*active, "rider cylinder query {:?}", hit.scene_query);
+        assert!(hit.static_contact_count > 0);
+        assert!(hit.scene_query.vegetation_contact_callbacks > 0);
+        assert_eq!(hit.phase, Phase::Ground);
+        assert!(hit.origin[0] < 50.);
+        assert!(!inactive);
+        assert_eq!(bypassed.static_contact_count, 0);
+        assert_eq!(bypassed.scene_query.vegetation_proxy_queries, 0);
+        assert_eq!(bypassed.phase, Phase::Attached);
+        assert_eq!(bypassed.origin, [50., 20., 50.]);
     }
 }

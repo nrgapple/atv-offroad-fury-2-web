@@ -264,3 +264,13 @@ prop contact and the camera latch remain covered by synthetic core fixtures,
 not these public routes. Public landing minimum clearance is -0.39306640625ft
 across 201 riding frames with none skipped. Full original loaded-scene replay,
 physical plants and the remaining consumer/eligibility gaps above are unfinished.
+
+## Original shipped vegetation contacts
+
+The shared cache now expands original ESB cylinder geometry for quad chassis,
+wheel support and active wreck-rider queries. Supplied and cached-rider gates,
+mixed callback order and boundary expansion suppression remain distinct.
+See [geometry, native probes and consumer limits](VEGETATION_COLLISION.md).
+Normal riding rider collision, exceptional category/custom masks and dynamic
+objects remain separate. Host and public evidence belongs to the checkpoint
+handoff; source geometry comparisons alone do not establish complete gameplay.

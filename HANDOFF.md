@@ -1,5 +1,44 @@
 # Implementation handoff
 
+## Current vegetation contact gate (host work, publication pending)
+
+The authored simulation now expands the original ESB cylinders for chassis,
+wheels and the active wreck rider. All eight Freestyle ecosystems contain only
+kind-1 cylinder records: 40 definitions and 94,992 placed proxy slots. Original
+sixteen-sided open meshes, tree ordering, packed translation, mixed candidate
+order and separate supplied/cached-rider gates are preserved. No new runtime
+resource is needed. Synthetic contacts verify chassis velocity rejection and
+attached rider response; the full gate passes 266 core + 2 WASM tests, 39 JS,
+strict formatting/Clippy, setup, 10 release/4 Worker checks and hygiene. Native
+component comparisons and their hooks are documented in
+[vegetation evidence](research/VEGETATION_COLLISION.md).
+
+The serial host gate passes original ENV01–08 loading/driving, failed Nac Nac
+separation/ground/recovery/driving, clean landing, desktop/portrait diagnostics,
+saved one-handed controls and touch stunts. A dedicated ENV04 normal-throttle
+route has one tree chassis callback/contact at step 484. The normal-keyboard
+steered ENV04 boundary route passes launch, paired query flags, rider separation
+and inward automatic recovery across 2,126 frames. It records 24 chassis, one
+wheel and eight active wreck-rider frames with plant callbacks; 553 frames are
+boundary flight and 710 use the cached rider query. Full-batch clean landing
+still measures 0.393066ft maximum tire overlap across 201 riding frames, none
+skipped. This is not a clipping fix.
+
+The historical straight-throttle ENV04 boundary route now times out after
+repeated wreck/deflection; ENV03 also times out after one recovery with a tilted
+Riding ATV and no grounded wheels. A first steering-harness attempt reversed
+the correction sign; the corrected route passes. Four maps passed before an
+ENV05 startup timeout without browser errors on the five-slot host HTTP backlog;
+a fresh uninterrupted ENV01–08 run on a 128-slot backlog passes. The latter
+also serves 48 simultaneous authored-module requests while private paths remain
+404; the prior startup cause is not conclusively isolated. This component is
+host-verified and pending public release. Existing mobile controls through
+`e6878eb` are retained. Normal riding rider collision, exceptional masks, dynamic
+objects, unshipped proxy kinds and full replay remain open. Priority 1 next is
+the stranded tilted recovery case and wet-wreck coverage; priority 2 then
+addresses original wreck policy and controlled rotation/stunt behavior. No
+additional scored flip was established by the read-only source audit.
+
 Latest verified public gameplay component: `f6353c37684063777cd5d0cff1d87e99a0de615f`,
 CI `38212608120` success. The active wreck rider now borrows the Vehicle's
 shared scene cache, using its animated thirteen-spoke bounds and inclusive/current

@@ -96,6 +96,35 @@ pub(crate) struct SegmentContact {
     pub world_normal: crate::wheel::Vec3,
 }
 
+/// 00327810/00121440 geometry gate. Scene candidate selection separately
+/// accepts touching spheres; the type-3 dispatcher requires strict overlap.
+fn segment_spheres_overlap(a: crate::wheel::Vec3, ar: f32, b: crate::wheel::Vec3, br: f32) -> bool {
+    let difference = crate::wheel::sub(a, b);
+    crate::wheel::dot(difference, difference) < (ar + br) * (ar + br)
+}
+
+///00327360 bounds shared by plant admission and the type-3 geometry wrapper.
+pub(crate) fn segment_query_sphere(
+    rays: &[crate::collision::CollisionRay],
+) -> (crate::wheel::Vec3, f32) {
+    if rays.is_empty() {
+        return ([0.; 3], 0.);
+    }
+    let mut low = [f32::MAX; 3];
+    let mut high = [-f32::MAX; 3];
+    for ray in rays {
+        for point in [ray.start, ray.end] {
+            for i in 0..3 {
+                low[i] = low[i].min(point[i]);
+                high[i] = high[i].max(point[i]);
+            }
+        }
+    }
+    let center = std::array::from_fn(|i| (high[i] + low[i]) * 0.5);
+    let extent = std::array::from_fn(|i| (high[i] - low[i]) * 0.5);
+    (center, crate::wheel::dot(extent, extent).sqrt())
+}
+
 /// Native type-3 box entry rule (001148c0), including X/Z/Y plane order.
 /// Direction is transformed from the normalized world ray; retain its length.
 fn segment_enters_box(
@@ -167,23 +196,18 @@ pub(crate) fn query_static_segments(
     if rays.is_empty() || capacity == 0 {
         return Ok(Vec::new());
     }
-    let mut low = [f32::MAX; 3];
-    let mut high = [-f32::MAX; 3];
-    for ray in rays {
-        for point in [ray.start, ray.end] {
-            for i in 0..3 {
-                low[i] = low[i].min(point[i]);
-                high[i] = high[i].max(point[i]);
-            }
-        }
-    }
-    let world_center = std::array::from_fn(|i| (high[i] + low[i]) * 0.5);
-    let extent = std::array::from_fn(|i| (high[i] - low[i]) * 0.5);
-    let radius = dot(extent, extent).sqrt();
+    let (world_center, radius) = segment_query_sphere(rays);
     let mut contacts = Vec::new();
     for object in obstacles {
-        if object.mesh.nodes.is_empty() {
-            return Err("missing static segment mesh root".into());
+        let root = object
+            .mesh
+            .nodes
+            .first()
+            .ok_or("missing static segment mesh root")?;
+        let center = crate::obstacle::transform_point(&object.world_matrix, root.center);
+        let object_radius = dot(root.half_extents, root.half_extents).sqrt();
+        if !segment_spheres_overlap(world_center, radius, center, object_radius) {
+            continue;
         }
         let to_mesh = crate::obstacle::relative_transform(&IDENTITY, &object.world_matrix);
         let local: Vec<_> = world
@@ -533,6 +557,37 @@ pub(crate) mod tests {
             query_static_segments(&rays, &[near, far], 2).unwrap().len(),
             2
         );
+    }
+    #[test]
+    fn segment_geometry_strict_spheres_match_native_boundary_replay() {
+        // Actual 00327810 and 00121440 instruction replays with radius-one
+        // actors enter the mesh callee only below distance two. The callee was
+        // explicitly hooked to no-hit to isolate this wrapper boundary.
+        assert!(segment_spheres_overlap(
+            [0.; 3],
+            1.,
+            [f32::from_bits(2_f32.to_bits() - 1), 0., 0.],
+            1.
+        ));
+        assert!(!segment_spheres_overlap([0.; 3], 1., [2., 0., 0.], 1.));
+        assert!(!segment_spheres_overlap(
+            [0.; 3],
+            1.,
+            [f32::from_bits(2_f32.to_bits() + 1), 0., 0.],
+            1.
+        ));
+        assert_eq!(
+            crate::obstacle::sphere_separation([0.; 3], 1., [2., 0., 0.], 1.),
+            0.
+        );
+        let ray = crate::collision::CollisionRay {
+            start: [0., 0., 0.],
+            end: [0., 0., 4.],
+        };
+        let object = surface([[-2., -2., 2.], [0., 2., 2.], [2., -2., 2.]]);
+        let hits = query_static_segments(&[ray], &[object], 1).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].world_point, [0., 0., 2.]);
     }
     #[test]
     fn riding_rider_height_flag_uses_first_row_and_strict_threshold() {

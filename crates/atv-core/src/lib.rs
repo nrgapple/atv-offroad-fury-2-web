@@ -64,6 +64,8 @@ pub mod dynamics;
 pub mod ui;
 pub mod ui_menu;
 pub mod vegetation_collision;
+pub mod vegetation_proxy;
+pub mod vegetation_ray;
 pub mod vehicle;
 
 pub mod wreck_animation;

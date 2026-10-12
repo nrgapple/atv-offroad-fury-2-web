@@ -1,6 +1,6 @@
 {
   "status": "Host-verified one-handed mobile input checkpoint; CI and public release pending. The browser port remains incomplete.",
-  "working_on": "Validate the rollback behavior through CI and the public Cloudflare build, then continue the port.",
+  "working_on": "Push the host-verified vegetation contact checkpoint through CI and public verification; next investigate the stranded tilted/no-wheel-contact recovery case and wet-wreck gaps, then continue original stunt-policy work.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -113,7 +113,7 @@
       "title": "Original sky and streaming soundtrack",
       "summary": "The recovered sky renders above ENV01, and original music streams directly from the locally opened disc.",
       "details": [
-        "The 21-song catalog is decoded in Rust; browser verification streamed What\u2019s Golden with no underruns during the checkpoint run.",
+        "The 21-song catalog is decoded in Rust; browser verification streamed What’s Golden with no underruns during the checkpoint run.",
         "Stereo ADPCM decoding preserves predictors between chunks. A complete track matched the existing full-file decoder sample for sample.",
         "Music uses small scheduled buffers rather than decoding an entire track into memory."
       ],
@@ -239,12 +239,12 @@
       "title": "We found the title art and the menu data",
       "summary": "A decoded title image explains what is missing from the current drive-first build: the original screens have not vanished, but recovering their files is only the first step toward rebuilding the menus.",
       "details": [
-        "The Rust PST decoder opens the original 640\u00d7448 title screen, and the main-menu background is identified as bk_mainmenu.pst. Inventory of the 59-page UI archive reveals text layouts, widget positions and control groups, with original CEL fonts and animated-menu ATM data.",
-        "The original track catalog calls ENV01 \u201cCaribou Peak.\u201d That gives the map-selection recovery a concrete starting point, but the browser currently connects only ENV01 as a driving scene."
+        "The Rust PST decoder opens the original 640×448 title screen, and the main-menu background is identified as bk_mainmenu.pst. Inventory of the 59-page UI archive reveals text layouts, widget positions and control groups, with original CEL fonts and animated-menu ATM data.",
+        "The original track catalog calls ENV01 “Caribou Peak.” That gives the map-selection recovery a concrete starting point, but the browser currently connects only ENV01 as a driving scene."
       ],
       "limitation": "This image is recovered source artwork, not a screenshot of a working menu. Title/menu navigation, map selection, race HUD and the other maps are not implemented. We have identified and decoded source assets and layout records; browser UI behavior is still the next work.",
       "image": "/devlog-images/we-found-the-title-art-and-the-menu-data-87d47187.png",
-      "caption": "Original 640\u00d7448 title-screen art decoded from PST; the port does not yet display a working title screen."
+      "caption": "Original 640×448 title-screen art decoded from PST; the port does not yet display a working title screen."
     },
     {
       "id": "the-public-rider-now-leans-into-the-ride-d44d41f8",
@@ -326,7 +326,7 @@
       "title": "Freestyle now connects two original environments",
       "summary": "The reconstructed title route now reaches the original Freestyle environment picker, and both Caribou Peak (ENV01) and Tioga Valley (ENV02) enter a driving scene in the local browser build.",
       "details": [
-        "The full frontend check passed title \u2192 Main Menu \u2192 Single Player \u2192 Freestyle using keyboard and synthetic controller input. Start returns to the menu and pauses the Rust frame; on a 390-pixel touch viewport, selecting Caribou loads the scene and Escape returns without overflow or JavaScript errors.",
+        "The full frontend check passed title → Main Menu → Single Player → Freestyle using keyboard and synthetic controller input. Start returns to the menu and pauses the Rust frame; on a 390-pixel touch viewport, selecting Caribou loads the scene and Escape returns without overflow or JavaScript errors.",
         "The page uses decoded original menu layouts, fonts and artwork. Its map choice now changes between Caribou Peak (ENV01) and Tioga Valley (ENV02)."
       ],
       "limitation": "Host-only checkpoint; public v5 still starts directly on Caribou Peak. Only two environments and the Freestyle route are connected. Other modes, original menu callbacks, race HUD and full game flow remain unfinished; this is not whole-game PS2 equivalence.",
@@ -420,7 +420,7 @@
       "summary": "The local v8 homepage has two choices: Play opens the unchanged game at /play.html, while Dev log opens the progress journal. Plain copy explains that the game code is rebuilt in Rust instead of emulating a PlayStation 2.",
       "details": [
         "The page contains only Play and Dev log. A small landing script supports controller navigation between the links and gamepad A to open the selected item.",
-        "The host integration check passed landing \u2192 Play \u2192 original title/menu \u2192 Tioga and pause, then landing \u2192 Dev log \u2192 Play \u2192 title; it also checked Caribou selection at 390 pixels.",
+        "The host integration check passed landing → Play → original title/menu → Tioga and pause, then landing → Dev log → Play → title; it also checked Caribou selection at 390 pixels.",
         "Before Play, the landing route loads no WASM, game runtime or original content. Its layout fits a 390-pixel viewport."
       ],
       "limitation": "Captured and verified on the host before publication. This entry records the local v8 checkpoint; no public landing-page route test is claimed here.",
@@ -451,7 +451,7 @@
       "title": "Original trees now appear across six local environments",
       "summary": "Fixing one filename rule made original ecosystem records usable: the resource parser now removes spaces from unquoted fields, and missing material UVs default to zero. The host build can enter and drive ENV01, ENV02, ENV03, ENV05, ENV06 and ENV07 with original trees and bushes visible.",
       "details": [
-        "The six original ESB placement lists contain 37,948, 39,641, 26,530, 14,883, 38,968 and 6,617 entries respectively. The renderer currently selects up to 1,500 nearest placements and batches them into 7\u201324 draw calls per map.",
+        "The six original ESB placement lists contain 37,948, 39,641, 26,530, 14,883, 38,968 and 6,617 entries respectively. The renderer currently selects up to 1,500 nearest placements and batches them into 7–24 draw calls per map.",
         "All six local map runs completed without JavaScript or WebGL errors. This adds four host-only routes beyond the two environments in the public build."
       ],
       "limitation": "Visibility is provisional and does not reproduce the PS2 level-of-detail rules; this does not mean every ecosystem placement is drawn at once. ENV08 was still blocked at this six-map checkpoint; a later local checkpoint records its decoder recovery. These map changes were not yet published.",
@@ -496,10 +496,10 @@
       "title": "The terrain detail was already stored in an alpha channel",
       "summary": "The answer to the close-up terrain question was not a larger model or an upscaled texture. The original scene stores a separate _d.pst detail layer; its alpha carries the snow and dirt grain. That layer now blends into the local renderer near the ATV.",
       "details": [
-        "The ENV01 height grid is 1,281 \u00d7 1,281 samples at 4.5-foot spacing. Its largest stored macrotexture is 256 \u00d7 256 pixels, with 240 useful texels across 288 feet; no finer stored terrain model was found.",
+        "The ENV01 height grid is 1,281 × 1,281 samples at 4.5-foot spacing. Its largest stored macrotexture is 256 × 256 pixels, with 240 useful texels across 288 feet; no finer stored terrain model was found.",
         "The browser now uses the original detail texture with recovered world scale and near-pass modulation. Correct UV gradients also keep tile wrapping from choosing tiny mip levels at seams.",
         "The comparison capture shows grain in close snow that was absent in the preceding local frame. No artificial texture upscale or replacement high-resolution model was used.",
-        "The completed local detail build passed the seven-map regression with original 64\u00d764 detail textures, moving full-sample terrain patches and batched vegetation. The 390px renderer checks passed gamepad input, touch cancellation, audio-engine startup and graphics-context restoration. Menu navigation passed immediately before the terrain-only shader changes."
+        "The completed local detail build passed the seven-map regression with original 64×64 detail textures, moving full-sample terrain patches and batched vegetation. The 390px renderer checks passed gamepad input, touch cancellation, audio-engine startup and graphics-context restoration. Menu navigation passed immediately before the terrain-only shader changes."
       ],
       "limitation": "This is a local screenshot. Original projected-coverage pass selection, distant mip behavior, fog, and geometry rounding are still not matched; this is not a full PS2 terrain LOD result.",
       "image": "/devlog-images/the-terrain-detail-was-already-stored-in-an-alpha-chan-7b6fafd6.png",
@@ -527,7 +527,7 @@
       "title": "Seven maps move to a Worker with music and assets kept in R2",
       "summary": "The public build now separates its small Rust/WebAssembly game app from original runtime content streamed through R2. That keeps maps and music out of the app deploy bundle and avoids a database for the current browser-only game.",
       "details": [
-        "Public Play: https://atv-offroad-fury-2.champtoday.workers.dev/ \u2014 dev log: https://atv-offroad-fury-2.champtoday.workers.dev/devlog.html. The Worker serves main commit ad605e1b589720bd9b093ae84c25a753ea65a0fc; a live /deployment.json request confirmed the same SHA. Worker version: 63ff7d3b-1f10-4976-8673-c409cd758a6e.",
+        "Public Play: https://atv-offroad-fury-2.champtoday.workers.dev/ — dev log: https://atv-offroad-fury-2.champtoday.workers.dev/devlog.html. The Worker serves main commit ad605e1b589720bd9b093ae84c25a753ea65a0fc; a live /deployment.json request confirmed the same SHA. Worker version: 63ff7d3b-1f10-4976-8673-c409cd758a6e.",
         "R2 verification checked 281 runtime, manifest and gallery objects for exact size, SHA-256 and MIME type. All 21 music tracks remain present. The currently served gallery has 34 entries and 31 PNGs.",
         "Public seven-map test 4299 passed. Frontend test 78959 passed the landing/controller route, title/menu, map selection, Tioga driving/pause, and 390px Caribou touch flow with no JS errors or ROM prompt."
       ],
@@ -541,9 +541,9 @@
       "recorded_at": "2026-10-11T23:34:58.297051+00:00",
       "kind": "discovery",
       "title": "A half-inch seam had hidden Freeport Harbor",
-      "summary": "Freeport\u2019s terrain was not corrupt; our seam check was too strict. Two vertices on a shared border differ by only 0.03262 feet, less than half an inch. The renderer\u2019s dense grid now chooses the height from the tile that owns each cell, while preserving the source per-tile geometry and collision data.",
+      "summary": "Freeport’s terrain was not corrupt; our seam check was too strict. Two vertices on a shared border differ by only 0.03262 feet, less than half an inch. The renderer’s dense grid now chooses the height from the tile that owns each cell, while preserving the source per-tile geometry and collision data.",
       "details": [
-        "Freeport ENV04 uses a 1,025 \u00d7 1,281 grid at 4.5-foot spacing. Its scene has 356 instances and 13,816 ecosystem placements in nine batches, with 235,870 terrain triangles and no unsupported meshes.",
+        "Freeport ENV04 uses a 1,025 × 1,281 grid at 4.5-foot spacing. Its scene has 356 instances and 13,816 ecosystem placements in nine batches, with 235,870 terrain triangles and no unsupported meshes.",
         "The scene file omits the freestyle starting direction, so the route uses original TOY start settings recovered from native routine 0x002fa3c0.",
         "The public Cloudflare build from main commit e19ec6b4c7f515e6ea3ed7c7aa97810357109f13 passed CI run 38184851978. The automatic CI-to-Worker publish completed for this release.",
         "Public checks passed load-and-drive for all eight maps, plus the controller/menu selector, pause, and 390px touch route without a disc prompt or JavaScript/WebGL errors. Checks also matched 23 static-app hashes and 285 runtime, manifest and PNG objects by hash and MIME; the 21-song catalog remains present.",
@@ -622,7 +622,7 @@
       "title": "A failed landing now recovers in the public build",
       "summary": "A real-content jump that ends badly now separates the rider, returns them to the terrain, resets the ATV, and gives control back for another run. A separate clean landing keeps the rider in Riding state, so the recovery path does not turn every jump into a wreck.",
       "details": [
-        "Public commit 52534bbb955277a31dfda30b5be65863d4388453 passed tools/test_wreck.mjs: the Caribou preload hop, Nac Nac, vertical wreck, rider separation, ground contact, automatic reset and drive-again sequence completed in 108 frames with reset count 0\u21921 and no JavaScript errors.",
+        "Public commit 52534bbb955277a31dfda30b5be65863d4388453 passed tools/test_wreck.mjs: the Caribou preload hop, Nac Nac, vertical wreck, rider separation, ground contact, automatic reset and drive-again sequence completed in 108 frames with reset count 0→1 and no JavaScript errors.",
         "The same commit passed tools/test_clean_landing.mjs: the clean touch-ramp landing stayed in Riding state and left reset count at 0. CI run 38187838559 passed; the public crash proof is recorded separately from the older eight-map baseline."
       ],
       "limitation": "This checks one wreck/recovery route and a separate clean landing. The native wreck camera, center-of-gravity matching, rider-versus-prop and water contacts, and other crash scenarios remain incomplete; this is not a complete stunt system."
@@ -635,12 +635,12 @@
       "title": "Dev log is reachable from the game start screen",
       "summary": "The start screen offers Dev log beside Press START, with keyboard, controller and touch selection. The pictured host screen was later confirmed in public release 667f24bc (CI 38188315671), including return to the game.",
       "details": [
-        "Host frontend checks covered title \u2192 Dev log, controller selection, keyboard focus in the main menu, the eight-map picker, driving and pause, plus mobile title navigation and return.",
+        "Host frontend checks covered title → Dev log, controller selection, keyboard focus in the main menu, the eight-map picker, driving and pause, plus mobile title navigation and return.",
         "Public commit 667f24bc707f5240d6927c49c65cdf6583728ad5 (CI 38188315671) separately verified the start-screen route and frontend navigation. The older eight-map baseline remains documented separately."
       ],
       "limitation": "The capture shows the host build and the menu is Rust-drawn; scenic original menu backgrounds, animated highlights and some original callbacks are still missing.",
       "image": "/devlog-images/dev-log-is-reachable-from-the-game-start-screen-52dafdf7.png",
-      "caption": "Host-verified mobile start screen, 390\u00d7844: Press START and Dev log are both visible and selectable.",
+      "caption": "Host-verified mobile start screen, 390×844: Press START and Dev log are both visible and selectable.",
       "release_verification": {
         "commit": "667f24bc707f5240d6927c49c65cdf6583728ad5",
         "ci_run": "38188315671",
@@ -660,7 +660,7 @@
       "details": [
         "The main-trick mode now uses the recovered stunt-axis slew rates and half-strength input angular moment; held and ordinary-air modes retain their existing response. The native instruction comparison matched all 60 varied cases. The old gate disagreed on 20 main-mode samples and the other 40 were unchanged.",
         "Tire steering and the visual linkage now use separate angles. In main tricks the visual angle eases by 0.8 each update; held and ordinary-air states use the original 30-degree scale. A host browser check at 17.90 ft/s measured tire angle -0.488329 rad and handlebar angle -0.523599 rad.",
-        "The host candidate derives the crashed rider center of gravity from animated 13-point world bounds rather than a fixed pelvis. Five hundred synthetic cases matched the original instruction behavior; 1,694 original-pose samples and five detach/ground/reset cases passed. The final integrated host browser checks passed with this center-of-gravity update: real-touch Nac Nac \u2192 vertical wreck \u2192 separation/ground clip \u2192 terrain contact \u2192 automatic reset \u2192 drive; a separate clean landing stayed in Riding state."
+        "The host candidate derives the crashed rider center of gravity from animated 13-point world bounds rather than a fixed pelvis. Five hundred synthetic cases matched the original instruction behavior; 1,694 original-pose samples and five detach/ground/reset cases passed. The final integrated host browser checks passed with this center-of-gravity update: real-touch Nac Nac → vertical wreck → separation/ground clip → terrain contact → automatic reset → drive; a separate clean landing stayed in Riding state."
       ],
       "limitation": "The integrated real-touch wreck/recovery and clean-landing browser checks now pass on the host after the visual-steering change. These mechanics additions are still host-only, not public proof or full PS2 gameplay parity. Broader trick transitions, native wreck camera, rider-versus-prop/water contacts, and wider fixed-input replay comparisons remain unfinished."
     },
@@ -673,10 +673,10 @@
       "summary": "The per-step touch and focus/orbit recovery captured here later shipped in public release 7a08. Its tests showed right-touch focus recovery without a synthetic focus event; this proof is separate from the newer two-thumb layout.",
       "details": [
         "In a 68-frame WASM comparison, four-step shifted batches matched sequential Rust calls at every native-f32 value. A takeoff at step 55 produced air-lean 1 and brake 0 at step 56; landing at 66 produced ground-brake 1 at 67. Cancel generation cleared the following four steps.",
-        "A synthetic blur \u2192 right-touch \u2192 focus \u2192 drag test changed from stale orbit -0.2 rad with preload missing to orbit 0 with preload 1 while still Riding. The permanent regression also verifies that right-touch reacquires focus without a synthetic focus event.",
+        "A synthetic blur → right-touch → focus → drag test changed from stale orbit -0.2 rad with preload missing to orbit 0 with preload 1 while still Riding. The permanent regression also verifies that right-touch reacquires focus without a synthetic focus event.",
         "The original coupled-pitch sweep matched Rust wreck decisions across 361 samples, with maximum angle error 2.38e-7 rad and the first rear wreck near 85 degrees. This does not show full flips are fixed; original global wreck-enable mode exceptions remain unknown.",
         "Host make check passed 131 core, 1 web and 11 JavaScript tests, with actual touch and ramp regressions passing.",
-        "Public release 7a08ccc25e7a7aa6e313f285baa130d77a69d903 \u00b7 CI 38190627553 includes the per-step touch update and camera-orbit fallback fix."
+        "Public release 7a08ccc25e7a7aa6e313f285baa130d77a69d903 · CI 38190627553 includes the per-step touch update and camera-orbit fallback fix."
       ],
       "limitation": "This released checkpoint does not establish physical iOS behavior or full flips, and it does not cover the newer two-thumb mapping now under host test.",
       "image": "/devlog-images/touch-input-now-follows-physics-steps-through-takeoff--10fe86e7.png",
@@ -761,10 +761,10 @@
       "summary": "The public Controls pages now let players remap keyboard keys, controller buttons, signed axes and chords, then keep those choices after reload. A cancellation fix also prevents stale lean from becoming an unintended preload on resume.",
       "details": [
         "Public keyboard and controller settings captured keys, buttons and signed axes; mapped input drove the actual WASM vehicle and persisted after reload.",
-        "Reverse/brake chords, stunt axes, once-only commands, disconnect/blur cancellation and the fresh Resume\u2192Escape path passed public browser checks.",
+        "Reverse/brake chords, stunt axes, once-only commands, disconnect/blur cancellation and the fresh Resume→Escape path passed public browser checks.",
         "The public control suite exercised the 33-step stale-preload cancellation regression; physical controller/iOS equivalence and full-flip parity are not claimed."
       ],
-      "limitation": "Public browser tests do not verify a physical gamepad or iOS device. The original quick down\u2192up preload remains the baseline; Space hold/release is a browser adaptation. This does not establish full-flip or complete handling parity.",
+      "limitation": "Public browser tests do not verify a physical gamepad or iOS device. The original quick down→up preload remains the baseline; Space hold/release is a browser adaptation. This does not establish full-flip or complete handling parity.",
       "image": "/devlog-images/bindings-now-follow-you-from-keyboard-to-controller-b55f5d98.png",
       "caption": "Host capture of the public-verified Controls page showing example custom bindings, including a signed controller axis; physical hardware was not tested.",
       "release_verification": {
@@ -773,7 +773,7 @@
         "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
         "checks": [
           "Public keyboard and controller settings captured keys, buttons and signed axes; mapped input drove the actual WASM vehicle and persisted after reload.",
-          "Reverse/brake chords, stunt axes, once-only commands, disconnect/blur cancellation and the fresh Resume\u2192Escape path passed public browser checks.",
+          "Reverse/brake chords, stunt axes, once-only commands, disconnect/blur cancellation and the fresh Resume→Escape path passed public browser checks.",
           "The public control suite exercised the 33-step stale-preload cancellation regression; physical controller/iOS equivalence and full-flip parity are not claimed."
         ]
       }
@@ -786,11 +786,11 @@
       "title": "A real quad image was hiding in the menu files",
       "summary": "The public Main Menu now includes a small original ATV thumbnail recovered from the UI archive. The image fills an empty spot at its real source resolution; it does not recreate the whole menu.",
       "details": [
-        "The thumbnail is an original 256\u00d7128 transparent ATV image from QUADINFO.RES. It appears from that source asset; it is not new high-resolution artwork.",
+        "The thumbnail is an original 256×128 transparent ATV image from QUADINFO.RES. It appears from that source asset; it is not new high-resolution artwork.",
         "The menu layout, panel geometry, most artwork and callbacks remain authored or incomplete; this is one recovered image, not a restored original menu page.",
         "The public build also includes the 21-song selector; the separate Music checkpoint covers its playback and shuffle behavior."
       ],
-      "limitation": "The thumbnail retains its original 256\u00d7128 source detail. Other original menu pages, artwork and callbacks are not fully reconstructed.",
+      "limitation": "The thumbnail retains its original 256×128 source detail. Other original menu pages, artwork and callbacks are not fully reconstructed.",
       "image": "/devlog-images/the-soundtrack-selector-remembers-where-the-shuffle-wa-d877a05b.png",
       "caption": "Host capture of the public-verified Main Menu with an image from the original ATV thumbnail; other original menu art remains incomplete.",
       "release_verification": {
@@ -836,7 +836,7 @@
       "summary": "The host build now draws original speed, preload and stunt art with an authored Rust controller. Desktop and compact phone captures show the meter inside the viewport; deployment is pending.",
       "details": [
         "Original runtime layouts, bitmap glyphs and meter textures remain in the separate authorized content manifest, outside GitHub source.",
-        "Host no-input checks passed at 1280\u00d7720 and 390\u00d7844 with simulation running and no page, console or failed-request errors. The compact phone placement moves the meter above driving thumbs.",
+        "Host no-input checks passed at 1280×720 and 390×844 with simulation running and no page, console or failed-request errors. The compact phone placement moves the meter above driving thumbs.",
         "Selected exact-build preload instructions matched 600 Rust controller frames. This component check does not validate final Canvas pixels or whole-game behavior."
       ],
       "limitation": "Race clocks, rank, laps, radar, multiplayer overlays and original PS2 pixel equivalence remain incomplete. This checkpoint is host-verified; public deployment is pending.",
@@ -852,7 +852,7 @@
       "summary": "The host browser run passed a real touch Nac Nac, vertical wreck, recovered separation and ground animation, contact, automatic reset and resumed driving. Model-root and body ordering corrections improve the detached rider path.",
       "details": [
         "The corrected wreck path preserves original Model-root/body transform ordering and adds detached terrain/prop contact handling and the recovered wreck camera. Separate root/rebase instruction comparisons passed 500 cases each.",
-        "The actual Chromium touch run passed Nac Nac \u2192 Vertical wreck \u2192 original separation/ground clip \u2192 terrain contact \u2192 automatic reset \u2192 resumed driving, with no JavaScript or WebGL errors.",
+        "The actual Chromium touch run passed Nac Nac → Vertical wreck → original separation/ground clip → terrain contact → automatic reset → resumed driving, with no JavaScript or WebGL errors.",
         "The inspected phone capture includes the original stunt name and failed-score display. The displayed 600 is pending stunt display data during failure, not a claim of awarded cumulative points."
       ],
       "limitation": "This is a selected host browser path, not whole-game crash/stunt parity. Rider IK, remaining collision and game systems, physical device behavior and PS2 visual comparison remain unfinished or separately under validation. Public deployment is pending.",
@@ -870,7 +870,7 @@
         "The movement audit also corrected the separate total-speed and forward-speed roles, control snapshots across body steps, and wheel axle directions carried from the completed mechanical pose.",
         "A coupled Rust check with the original ATV01 mesh, physics and Caribou ramp held all four wheels on the raised prop for 233 frames after settling. A separate regression falls after removing its prop, checking that stale support is not reused.",
         "Selected exact-build instruction checks matched wheel-support rays, rear-contact velocity and wheel frames. These component checks are not a replay against the original game.",
-        "The updated host Chromium touch run passed Nac Nac \u2192 Vertical wreck \u2192 recovered separation/ground clip \u2192 terrain contact \u2192 automatic reset \u2192 resumed driving, with JavaScript and WebGL checks clear. Both fresh crash screenshots were inspected before recording."
+        "The updated host Chromium touch run passed Nac Nac → Vertical wreck → recovered separation/ground clip → terrain contact → automatic reset → resumed driving, with JavaScript and WebGL checks clear. Both fresh crash screenshots were inspected before recording."
       ],
       "limitation": "Dynamic props, native scene category registration and spatial-grid object order, smooth collision normals and full original handling remain incomplete. The image documents the updated crash regression, not a visual demonstration of raised-ramp support. Public release is pending.",
       "image": "/devlog-images/the-tires-can-finally-stand-on-recovered-prop-ramps-c6f40b86.png",
@@ -885,7 +885,7 @@
       "summary": "The public Cloudflare game now passes the updated handling integration, recovered wreck route and original HUD checks. All eight connected maps load and drive without a disc picker; this remains a partial Rust reconstruction.",
       "details": [
         "Gameplay checkpoint 91b60c4 deployed with the CI-history follow-up 6d31df367fa5a8f5165541a16df12889b3c4c91c; GitHub Actions run 38197954580 succeeded.",
-        "Public browser checks passed the touch Nac Nac \u2192 Vertical wreck \u2192 separation/ground animation \u2192 contact \u2192 automatic reset \u2192 resumed driving route, clean landing, and all eight connected maps.",
+        "Public browser checks passed the touch Nac Nac → Vertical wreck → separation/ground animation → contact → automatic reset → resumed driving route, clean landing, and all eight connected maps.",
         "Public hash verification reported 301 served runtime/gallery objects and 25 authored static files, with 53 existing log entries and 48 screenshots. These are verification counts for the release before this new log entry.",
         "The separate approved R2 upload covered 302 objects with four changes; game resources and screenshots remain outside GitHub source and CI."
       ],
@@ -950,8 +950,8 @@
       "title": "The suspension stop and obstruction camera are verified publicly",
       "summary": "The public Rust reconstruction now includes the recovered suspension travel stop and camera obstruction gate. The landing reproduction improves substantially, while measurable tire overlap remains.",
       "details": [
-        "Public release c0810ab92bb1529a8558a7edaf83d72a558495b2 passed GitHub Actions run 38200640787. Public clean landing and Nac Nac \u2192 wreck \u2192 contact \u2192 reset \u2192 resumed driving checks passed.",
-        "The complete public eight-map run passed loading and driving in ENV01\u2013ENV08, with batched vegetation, moving full-sample terrain and no browser or WebGL errors.",
+        "Public release c0810ab92bb1529a8558a7edaf83d72a558495b2 passed GitHub Actions run 38200640787. Public clean landing and Nac Nac → wreck → contact → reset → resumed driving checks passed.",
+        "The complete public eight-map run passed loading and driving in ENV01–ENV08, with batched vegetation, moving full-sample terrain and no browser or WebGL errors.",
         "The public landing measurement improved peak actual tire-vertex clearance from -1.9423218 feet to -0.47921753 feet. Negative clearance still means overlap; the clipping issue is reduced rather than eliminated.",
         "Public HTTPS verification matched 25 authored static files and 305 served runtime/gallery objects, including 57 existing entries and 52 screenshots. Those counts describe the release before this new checkpoint.",
         "A separate host W-D-A hill-turn trace traversed 14.29 feet of altitude with 117 riding frames and worst overlap -0.319519 feet, then wrecked into scenery. It is mixed driving evidence, not an isolated incline validation."
@@ -968,7 +968,7 @@
       "title": "Live diagnostics and immediate touch throttle are connected",
       "summary": "The host game adds persistent Off, Performance and Debug stats, plus immediate throttle when the primary right thumb presses. Portrait captures show live diagnostics fitting the screen without blocking driving controls.",
       "details": [
-        "F3 cycles Off \u2192 Performance \u2192 Debug; Pause Stats remembers the selection. Performance reports measured render cadence, WASM call timing, worker round-trip time, draw counts and allocated WASM memory. Debug adds existing contact, suspension, input, position and wreck state.",
+        "F3 cycles Off → Performance → Debug; Pause Stats remembers the selection. Performance reports measured render cadence, WASM call timing, worker round-trip time, draw counts and allocated WASM memory. Debug adds existing contact, suspension, input, position and wreck state.",
         "The right-thumb press now applies full throttle immediately, with an eight-pixel jitter margin. Dragging backward progressively brakes and uses native reverse selection; release, cancellation, preload and secondary-finger stunts remain connected.",
         "Host diagnostics and press-throttle tests passed, including persistence, pointer-transparent desktop/portrait layout and input cancellation. The displayed headless FPS is not a physical-phone benchmark."
       ],
@@ -985,7 +985,7 @@
       "summary": "The host wheel solver corrects a native terrain gate that used the body right-axis vertical component where the original routine uses the forward axis. The clean landing and wreck recovery regressions pass; residual tire overlap remains.",
       "details": [
         "A comparison of 600 complete native wheel-update cases executed 374,963 original instructions. With the shared acos boundary, the corrected geometry and force components match bits in all recorded cases.",
-        "Unit checks, workspace formatting, strict Clippy and the web build passed. Browser checks passed clean landing with Debug enabled and Nac Nac \u2192 vertical wreck \u2192 separation/ground clip \u2192 terrain contact \u2192 reset \u2192 resumed driving.",
+        "Unit checks, workspace formatting, strict Clippy and the web build passed. Browser checks passed clean landing with Debug enabled and Nac Nac → vertical wreck → separation/ground clip → terrain contact → reset → resumed driving.",
         "Rendered tire-vertex measurements across 62 riding frames found minimum clearance -0.497024536 feet, with no skipped frames. That negative clearance is remaining overlap, not a complete clipping fix."
       ],
       "limitation": "This is host verification, not a public release or whole-game parity. Wreck frames are excluded from the tire-clearance measurement. The recovered boundary-launch path is not yet live.",
@@ -1032,9 +1032,9 @@
       "title": "Boundary and dynamic water-height integration pass host checks",
       "summary": "The pending host boundary build passes clean landing, wreck recovery and persistent diagnostics checks. All eight maps were verified across two browser runs; water-height fields are connected, while visible water and wakes remain absent.",
       "details": [
-        "The first map run passed ENV01\u2013ENV04, then timed out starting ENV05 without a diagnosed cause. A fresh ENV05\u2013ENV08 run passed; this is coverage across two runs, not a single uninterrupted eight-map pass.",
+        "The first map run passed ENV01–ENV04, then timed out starting ENV05 without a diagnosed cause. A fresh ENV05–ENV08 run passed; this is coverage across two runs, not a single uninterrupted eight-map pass.",
         "Wet maps ENV04/05/07/08 load four live dynamic signature channels with finite changing heights. Dry maps have no water field and retain the cached -256 sentinel. This verifies height connection, not complete water behavior or rendered surfaces.",
-        "Host touch Nac Nac \u2192 wreck \u2192 separation \u2192 ground contact \u2192 recovery \u2192 driving, clean preload takeoff/landing with Debug, and F3/Pause persistence at desktop and portrait sizes passed. The workspace passed 218 core and two WASM tests and strict Clippy."
+        "Host touch Nac Nac → wreck → separation → ground contact → recovery → driving, clean preload takeoff/landing with Debug, and F3/Pause persistence at desktop and portrait sizes passed. The workspace passed 218 core and two WASM tests and strict Clippy."
       ],
       "limitation": "These changes remain host-only and are ready for a coherent release gate, not yet a verified public release. Visible water surfaces/wakes, complete rider-water behavior, original callback cadence, vegetation collision and full RNG/gameplay parity remain incomplete or unverified."
     },
@@ -1060,7 +1060,7 @@
       "recorded_at": "2026-10-12T04:40:02.597880+00:00",
       "kind": "verification",
       "title": "The public boundary and water-height build passes all eight maps",
-      "summary": "Release 22ab240 now passes one uninterrupted public ENV01\u2013ENV08 loading and driving run, with no JavaScript or WebGL errors. This completes the map check that was pending in the preceding boundary checkpoint.",
+      "summary": "Release 22ab240 now passes one uninterrupted public ENV01–ENV08 loading and driving run, with no JavaScript or WebGL errors. This completes the map check that was pending in the preceding boundary checkpoint.",
       "details": [
         "Wet ENV04/05/07/08 load all four live dynamic signature channels with finite observed heights approximately 115.275,129.178,150.397 and120.553 feet. Dry environments retain a null field and cached -256 sentinel."
       ],
@@ -1106,9 +1106,9 @@
       "summary": "The final host build connects original wheelie scoring callbacks through the HUD, while the default source flag keeps wheelie awards disabled. Clean landing, wreck recovery, touch controls, diagnostics and one uninterrupted eight-map run pass.",
       "details": [
         "make check passed 233 core tests, 2 WASM tests, strict Clippy and formatting, 33 JavaScript tests, 10 release tests and 4 Worker tests. make verify and repository hygiene checks passed.",
-        "The actual game passed clean landing and Nac Nac \u2192 wreck \u2192 rider separation \u2192 contact \u2192 recovery \u2192 resumed driving. F3/Pause diagnostics passed in desktop and portrait layouts; immediate right-thumb throttle and backward-drag brake/reverse passed.",
+        "The actual game passed clean landing and Nac Nac → wreck → rider separation → contact → recovery → resumed driving. F3/Pause diagnostics passed in desktop and portrait layouts; immediate right-thumb throttle and backward-drag brake/reverse passed.",
         "Wheelie scoring and HUD callbacks are integrated end-to-end. The original default scoring flag remains false and no cheat UI is exposed. A 2,070-operation oracle comparison executed 67,982 original instructions; final all-map assertions confirm no baseline wheelie awards.",
-        "One uninterrupted host run loaded and drove ENV01\u2013ENV08 with no JavaScript or WebGL errors. The four wet maps reported finite water heights and dry maps retained the sentinel."
+        "One uninterrupted host run loaded and drove ENV01–ENV08 with no JavaScript or WebGL errors. The four wet maps reported finite water heights and dry maps retained the sentinel."
       ],
       "limitation": "Host verification only; pending release and public verification. Rendered tire overlap remains 0.497238 ft across 62 riding frames, so no clipping improvement is claimed. Physical-device behavior, full water rendering/behavior and whole-game parity remain unverified.",
       "image": "/devlog-images/wheelie-scoring-and-water-integration-pass-host-checks-cab5ead4.png",
@@ -1123,8 +1123,8 @@
       "summary": "Public release 01c9cbb passes one uninterrupted run across all eight environments, clean landing, the failed Nac Nac recovery route, immediate touch braking and diagnostics layout checks.",
       "details": [
         "Commit 01c9cbb0c8358ba43f589dab1e342c3f746f0a1b passed CI 38207020177. Public validation matched 26 authored files and 313 served objects, including 68 dev-log entries and 60 screenshots.",
-        "One uninterrupted public ENV01\u2013ENV08 load-and-drive run passed without JavaScript or WebGL errors. The four wet maps reported finite water heights; dry maps retained the sentinel. Map assertions also confirmed no baseline wheelie awards under the original disabled scoring flag.",
-        "Public clean landing, Nac Nac failure \u2192 rider separation/contact \u2192 recovery \u2192 resumed driving, immediate right-thumb throttle, backward-drag brake/reverse, and desktop/390px dev-log filters passed.",
+        "One uninterrupted public ENV01–ENV08 load-and-drive run passed without JavaScript or WebGL errors. The four wet maps reported finite water heights; dry maps retained the sentinel. Map assertions also confirmed no baseline wheelie awards under the original disabled scoring flag.",
+        "Public clean landing, Nac Nac failure → rider separation/contact → recovery → resumed driving, immediate right-thumb throttle, backward-drag brake/reverse, and desktop/390px dev-log filters passed.",
         "The public sampled landing trace measures 0.310089 ft overlap across 54 riding frames; the host trace measured 0.497238 ft across 62 riding frames. These RAF samples differ in coverage because the sampler skips intermediate ABI-batch frames, so they are not comparable evidence of improvement. Fixing the sampler is next."
       ],
       "limitation": "Public component verification only. No clipping improvement or full-game parity is established. Wet wreck behavior, physical-device behavior and full water rendering/behavior remain unverified.",
@@ -1174,7 +1174,7 @@
       "details": [
         "The spring torque uses the original Model inverse-matrix order. A 1,000-case isolated oracle executed 220,000 instructions and matched all 3,000 components exactly. A coupled run covered 300 frames and 400 substeps, executed 2,185,204 instructions, matched all 1,200 contacts and left 0.002853 rad/s angular residual.",
         "The native scene-cache oracle covered 120 targeted frames and 1,779,297 instructions, including 464 retained plant candidates and 210 ordinary entries after plants. An earlier fixture had zero retained plants, so this targeted run covers that missing case. Original 40/50 shared static and ESB tree/cache state supplies wheel/chassis candidate order; recovery uses that cache and the original plant-clearance rule. Physical plant proxies are still unsupported.",
-        "Host checks passed: 245 core and 2 WASM tests, strict Clippy and formatting, 39 JavaScript tests, 10 release tests, 4 Worker tests, and setup/repository verification. One uninterrupted ENV01\u2013ENV08 load/drive run passed with no JS/WebGL errors. Full-batch clean landing covered 199 frames with 0.392776 ft measured overlap; failed Nac Nac separation/contact/recovery/driving passed. The 480-step slope route recorded 382 riding and 98 wreck frames. ENV04 boundary launch recovered inward after 1,652 frames at [2086.9436, 186.5682, 3854.6753]. One-handed controls and F3/Pause diagnostics passed.",
+        "Host checks passed: 245 core and 2 WASM tests, strict Clippy and formatting, 39 JavaScript tests, 10 release tests, 4 Worker tests, and setup/repository verification. One uninterrupted ENV01–ENV08 load/drive run passed with no JS/WebGL errors. Full-batch clean landing covered 199 frames with 0.392776 ft measured overlap; failed Nac Nac separation/contact/recovery/driving passed. The 480-step slope route recorded 382 riding and 98 wreck frames. ENV04 boundary launch recovered inward after 1,652 frames at [2086.9436, 186.5682, 3854.6753]. One-handed controls and F3/Pause diagnostics passed.",
         "The full ABI-batch trace capture is now used for landing, wreck and slope. The prior public baseline full-capture landing measured 0.396179 ft over 199 frames, but it followed a different input trace; the values are not a comparable improvement measurement.",
         "Full-ABI-capture slope clearance retained an overlap of about 0.64 ft: source 01c9cbb had -0.6439667 ft across 376 riding frames, excluding 98 wreck frames; the new host run had -0.6438141 ft across 382 riding frames, excluding 98 wreck frames. These are different input/frame trajectories, not an identical before/after comparison, so no improvement is claimed. The exact new clean-landing trace remains 199 frames at 0.392776 ft overlap."
       ],
@@ -1191,7 +1191,7 @@
       "summary": "Public release f27869c passes clean landing, wreck recovery, eight-map scene-cache checks, boundary recovery, saved one-handed controls and diagnostics. The authored port now uses the recovered shared scene cache for quad wheel/chassis candidates and recovery plant clearance.",
       "details": [
         "Commit f27869c84b1ea09a8425de50b6bdf50935d2ba54 passed CI 38210131335. Public verification matched 26 authored static files and 317 served objects, with 72 dev-log entries and 64 screenshots at verification time.",
-        "Public clean preload landing, failed Nac Nac \u2192 wreck \u2192 rider separation/ground clip \u2192 terrain contact \u2192 reset \u2192 resumed driving, and one uninterrupted ENV01\u2013ENV08 load/drive/cache run passed with no browser or WebGL errors. Wet ENV04/05/07/08 exposed four water signature channels with finite heights; the four dry environments retained the -256 sentinel.",
+        "Public clean preload landing, failed Nac Nac → wreck → rider separation/ground clip → terrain contact → reset → resumed driving, and one uninterrupted ENV01–ENV08 load/drive/cache run passed with no browser or WebGL errors. Wet ENV04/05/07/08 exposed four water signature channels with finite heights; the four dry environments retained the -256 sentinel.",
         "The public ENV04 boundary route launched upward/inward at [26.02, 112.15, -168.47] ft/s from [1935.53, 208.27, 5265.60] ft and recovered at [2173.06, 164.44, 3795.87] ft with boundary state cleared. Saved one-handed controls, F3/Pause diagnostics, and desktop/390px dev-log filters also passed.",
         "Public full-ABI-batch landing capture measured minimum clearance -0.392639 ft over 184 riding frames, with zero skipped frames; worst penetration was rear-left at step 164 (0.75 ft maximum allowed). The host run measured -0.392776 ft over 199 frames, but these are different traces and are not an identical before/after comparison; no improvement is claimed.",
         "A native quad/static-radius audit matched 1,000 cases across 40,000 original instructions. Decompiled arithmetic that reorders operations did not match the source behavior; the instruction-order result is the evidence."
@@ -1210,7 +1210,7 @@
       "details": [
         "Active wreck riders reuse the Vehicle scene cache with inclusive bounds for their own 13 spokes and recheck exclusions when a cached candidate list is reused. The wreck camera uses its own native-partition ordered direct-bounds/sphere query and retains the recovered camera latch. A normal-chase optional-object setup probe remains source-disabled: 100 cases executed 3,800 instructions.",
         "Native probes passed: 500 rider-sphere cases (1,112,500 original instructions), 12 paired quad/rider boundary flags (1,508 instructions), 120 oblique-camera scene queries (1,930,484 instructions), and 1,694 original clip poses plus five recovery routes through cached/direct queries in an empty scene.",
-        "The final serial host gates passed: make check covered 251 core and 2 WASM tests, strict formatting/Clippy, 39 JavaScript tests, 10 release tests and 4 Worker tests; setup and repository hygiene passed. Clean landing, touch Nac Nac \u2192 wreck \u2192 separation/ground contact \u2192 recovery \u2192 resumed driving, a 1,655-frame inward ENV04 boundary recovery, one uninterrupted ENV01\u2013ENV08 run, desktop/portrait diagnostics and saved one-handed controls passed.",
+        "The final serial host gates passed: make check covered 251 core and 2 WASM tests, strict formatting/Clippy, 39 JavaScript tests, 10 release tests and 4 Worker tests; setup and repository hygiene passed. Clean landing, touch Nac Nac → wreck → separation/ground contact → recovery → resumed driving, a 1,655-frame inward ENV04 boundary recovery, one uninterrupted ENV01–ENV08 run, desktop/portrait diagnostics and saved one-handed controls passed.",
         "Full-batch landing measured 0.393066 ft overlap over 201 riding frames, with zero skipped frames and worst penetration at rear-left step 163. The different host traces do not establish a causal before/after change. Three concurrent startup attempts timed out without JS errors; a fresh serial startup passed in 20 seconds, so concurrency behavior remains unresolved."
       ],
       "limitation": "Host-only component verification; the public release remains f27869c. Normal-riding rider queries, MUD metadata, custom masks, physical plant proxies, dynamic contacts, shared cached rider/camera queries beyond wreck cases, global/674 settings, whole-game parity and clipping remain incomplete or unverified. No clipping improvement is claimed.",
@@ -1226,9 +1226,9 @@
       "summary": "Public release f6353c passes the touch wreck route, inward boundary recovery, clean landing, eight-map run, saved one-handed controls and diagnostic/dev-log layout checks. Active wreck riders use the shared scene cache, while the wreck camera runs its independent ordered query.",
       "details": [
         "Commit f6353c37684063777cd5d0cff1d87e99a0de615f passed CI 38212608120, deployed and completed the R2 upload. HTTPS verification matched 26 authored app files and 319 served objects, with 74 log entries and 66 screenshots at verification time.",
-        "Public touch Nac Nac \u2192 vertical wreck \u2192 rider separation/ground clip \u2192 terrain contact \u2192 automatic reset \u2192 resumed driving passed. The 195-frame route checked cached rider queries throughout: 29 attached, 58 airborne and 108 grounded frames; no rider refresh, selected static props or plants occurred on this route. The direct wreck camera ran 195 queries with at most one ordinary candidate; no obstruction latch occurred on this route. Synthetic core tests cover physical-prop/latch behavior, not a loaded-scene physical contact.",
+        "Public touch Nac Nac → vertical wreck → rider separation/ground clip → terrain contact → automatic reset → resumed driving passed. The 195-frame route checked cached rider queries throughout: 29 attached, 58 airborne and 108 grounded frames; no rider refresh, selected static props or plants occurred on this route. The direct wreck camera ran 195 queries with at most one ordinary candidate; no obstruction latch occurred on this route. Synthetic core tests cover physical-prop/latch behavior, not a loaded-scene physical contact.",
         "The ENV04 boundary route passed after 1,658 frames and cleared boundary state. Across 516 rider frames it recorded 29 attached, 379 airborne and 108 grounded; 490 rider-cache refreshes, at most two plant candidates and two unsupported proxies, and 61 rider-actor skip frames paired with the quad flag. No selected static contact or physical tree contact is claimed.",
-        "Public clean landing measured 0.393066 ft minimum clearance over 201 riding frames with zero skipped frames; worst was rear-left at step 163. Residual tire clipping remains; this value does not establish a clipping fix. One uninterrupted ENV01\u2013ENV08 run passed with no browser/WebGL errors. Four wet maps reported finite water heights and dry maps retained the sentinel.",
+        "Public clean landing measured 0.393066 ft minimum clearance over 201 riding frames with zero skipped frames; worst was rear-left at step 163. Residual tire clipping remains; this value does not establish a clipping fix. One uninterrupted ENV01–ENV08 run passed with no browser/WebGL errors. Four wet maps reported finite water heights and dry maps retained the sentinel.",
         "Saved one-handed controls, F3/Pause diagnostics in desktop and portrait layouts, and desktop/390px dev-log filters with no overflow passed. The inspected public separation screenshot shows the rider above the quad during the failed Nac Nac."
       ],
       "limitation": "Public component verification only. Normal-riding rider collision, MUD metadata, custom masks, dynamic contacts, physical plant proxies, global/674 settings, complete wreck-camera obstruction behavior, hardware behavior, clipping and whole-game parity remain incomplete or unverified. No loaded-scene native physical tree collision or full category parity is claimed.",
@@ -1282,9 +1282,27 @@
         "The default two-finger touch packet behavior still matches the prior baseline in a 2,000-operation deterministic comparison."
       ],
       "limitation": "Host verification only; CI and public deployment are pending. Physical phone behavior and full-game parity remain unverified."
+    },
+    {
+      "id": "original-vegetation-proxies-contact-chassis-wheels-and-af15ad2c",
+      "timestamp": "2026-10-12T10:38:35Z",
+      "recorded_at": "2026-10-12T14:41:11.299190+00:00",
+      "kind": "build",
+      "title": "Original vegetation proxies contact chassis, wheels and wreck riders in host routes",
+      "summary": "The host build now records source-authored vegetation proxy contacts in normal ENV04W driving and a corrected steered boundary route. Chassis, wheel and active wreck-rider consumers receive contacts through the recovered scene path; public verification is pending.",
+      "details": [
+        "Source research documents all 40 shipped ESB proxy records as cylinders and their original type-specific dispatch. The 48-case native 0011f9a0 admission/dispatch probe executed 23,592 instructions; integration preserves the original mixed object/plant order, query gates, exclusions and callback rules without substituting generic colliders.",
+        "Normal ENV04W keyboard driving recorded a live chassis/plant contact at step 484 while still Riding: two vegetation candidates selected, five proxy queries, one chassis callback/contact, zero selected static objects, zero unsupported proxies and no cache refresh. The inspected screenshot is route context; it does not depict the contact moment.",
+        "The corrected steered ENV04 boundary route completed 2,126 frames, including 553 boundary frames, one launch, 710 cached rider frames, two resets and a return from Z≈5266 ft to Z≈3825 ft with paired flags cleared. Trace telemetry records 24 chassis/plant-hit frames, one wheel/plant-hit frame and eight active wreck-rider/plant-hit frames. These are verified browser callbacks on this route, not full collision or whole-game parity.",
+        "Host checks passed: 266 core and 2 WASM tests, 39 JavaScript tests, 10 release tests, 4 Worker tests, formatting, strict Clippy, setup and repository hygiene. A fresh serial run passed ENV01–ENV08, diagnostics, one-handed controls, touch stunts and boundary checks with no JS/WebGL errors. The larger server backlog passed 48 simultaneous module requests and private/source paths returned 404; this does not prove the cause of earlier startup timeouts.",
+        "Clean landing remains at -0.393066 ft minimum clearance across 201 riding frames with zero skipped frames; no clipping improvement is claimed. Straight-throttle boundary routes previously timed out on ENV04 and ENV03; ENV03 became stranded tilted with no grounded wheels and no vegetation proxy records, so the failure is not attributed to tree geometry."
+      ],
+      "limitation": "Host-verified component only; the public release remains f6353c and this vegetation change is pending CI/deployment/public verification. The boundary failure on ENV03, wet-wreck coverage, full category/mode behavior, dynamic contacts, original parity and tire clipping remain open. The tested callbacks do not establish every shipped proxy or full-game contact equivalence.",
+      "image": "/devlog-images/original-vegetation-proxies-contact-chassis-wheels-and-af15ad2c.png",
+      "caption": "Host ENV04W riding through the vegetation corridor; the corresponding trace records a chassis proxy callback at step 484, though this frame does not show the contact itself."
     }
   ],
-  "updated_at": "2026-10-12T13:27:15.875087+00:00",
+  "updated_at": "2026-10-12T14:41:11.299190+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
@@ -1297,8 +1315,8 @@
       "devlog_screenshots": 66
     },
     "next_priorities": [
-      "Extend wreck/recovery comparisons, rider contacts and boundary return; separate host boundary/water candidates from public proof.",
-      "Complete original stunt actions, scoring/chaining and landing transitions, including remaining wheelie and mode-specific paths.",
+      "Investigate the stranded tilted/no-wheel-contact recovery case and wet-wreck coverage after the source-authored tree-contact gate; keep scripted callback evidence separate from complete collision/parity claims.",
+      "Recover the original stunt policy and flip behavior, including mode-specific enable/score gates, remaining gesture paths, and landing/cancel transitions. Preserve the source baseline and do not infer unrestricted flips from partial stunt checks.",
       "Compare ATV/rider animation and mechanical linkage; preserve source-disabled normal hand IK.",
       "Complete original HUD mode fields and score presentation.",
       "Recover collision scene order/categories and dynamic contacts; resolve residual tire overlap.",
@@ -1312,9 +1330,9 @@
         "title": "Eight environments",
         "status": "LIVE",
         "scope": "PUBLIC",
-        "summary": "ENV01\u2013ENV08 appear in the Freestyle picker and load into drivable scenes. Public checks exercised movement on all eight; this does not mean every original race course or game mode is recovered.",
-        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f \u00b7 CI 38212608120: one uninterrupted ENV01\u2013ENV08 load/drive run passed without browser/WebGL errors. Wet ENV04/05/07/08 reported four finite water channels; dry environments retained the sentinel.",
-        "evidence": "research/GEOMETRY.md \u2014 Freeport Harbor; research/DEPLOYMENT.md \u2014 eight-environment release.",
+        "summary": "ENV01–ENV08 appear in the Freestyle picker and load into drivable scenes. Public checks exercised movement on all eight; this does not mean every original race course or game mode is recovered.",
+        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f · CI 38212608120: one uninterrupted ENV01–ENV08 load/drive run passed without browser/WebGL errors. Wet ENV04/05/07/08 reported four finite water channels; dry environments retained the sentinel.",
+        "evidence": "research/GEOMETRY.md — Freeport Harbor; research/DEPLOYMENT.md — eight-environment release.",
         "next_step": "Connect the recovered Arlington train and audit remaining map-specific scene behavior.",
         "release_verification": {
           "commit": "f6353c37684063777cd5d0cff1d87e99a0de615f",
@@ -1325,7 +1343,7 @@
           "devlog_entries": 74,
           "devlog_screenshots": 66,
           "checks": [
-            "One uninterrupted ENV01\u2013ENV08 load/drive run passed with no browser/WebGL errors.",
+            "One uninterrupted ENV01–ENV08 load/drive run passed with no browser/WebGL errors.",
             "Four wet maps reported finite water heights; dry maps retained the sentinel."
           ]
         }
@@ -1335,10 +1353,10 @@
         "category": "World",
         "title": "Original vegetation placements",
         "status": "PARTIAL",
-        "scope": "PUBLIC BATCHED RENDERING \u00b7 PHYSICAL PLANT CONTACTS UNVERIFIED",
-        "summary": "Recovered ecosystem placements render across all eight environments in batched draws. Shared tree/cache state participates in the original quad wheel/chassis candidate order and recovery plant-clearance rule, but physical plant proxies are unsupported and the current vegetation visibility/LOD selection remains provisional.",
-        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f \u00b7 CI 38212608120: all-eight-map vegetation batches passed. On the boundary route, up to two plant candidates and two unsupported proxies were counted; this does not establish physical tree contacts or original vegetation visibility/LOD.",
-        "evidence": "research/GEOMETRY.md \u2014 terrain quality investigation and Freeport ecosystem batches.",
+        "scope": "PUBLIC BATCHED RENDERING + HOST VERIFIED SOURCE-AUTHORED CONTACT SUBSET · PUBLIC UPDATE PENDING",
+        "summary": "Recovered placements render across eight environments. Host routes now record source-authored chassis, wheel and active wreck-rider callbacks from shipped cylinder proxies; current visibility/LOD remains provisional, and these routes do not establish complete proxy coverage or full collision parity.",
+        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f · CI 38212608120: all-eight-map vegetation batches passed. On the boundary route, up to two plant candidates and two unsupported proxies were counted; this does not establish physical tree contacts or original vegetation visibility/LOD.",
+        "evidence": "research/GEOMETRY.md — terrain quality investigation and Freeport ecosystem batches.",
         "next_step": "Recover original per-map culling/LOD and compare visible placements at measured camera distances.",
         "release_verification": {
           "commit": "f6353c37684063777cd5d0cff1d87e99a0de615f",
@@ -1352,6 +1370,20 @@
             "Eight-map vegetation batches passed.",
             "Boundary route counted at most two plant candidates and two unsupported proxies; physical plant contacts are not established."
           ]
+        },
+        "host_verification": {
+          "scope": "Host-verified component; public update pending.",
+          "native_source_evidence": "48-case native 0011f9a0 admission/dispatch probe executed 23,592 original instructions; original mixed ordering, query gates, exclusions and callback rules are retained.",
+          "checks": [
+            "Normal ENV04W keyboard route: step 484 recorded two selected plant candidates, five proxy queries, one chassis callback/contact while Riding, no cache refresh, zero selected static objects and zero unsupported proxies.",
+            "Corrected steered ENV04 boundary route: 2,126 frames, 553 boundary frames, one launch, 710 cached rider frames, two resets and return from Z≈5266 ft to Z≈3825 ft with paired flags cleared. Trace recorded 24 chassis-hit frames, one wheel-hit frame and eight active wreck-rider-hit frames.",
+            "Host suite passed 266 core and 2 WASM tests, 39 JS tests, 10 release tests, 4 Worker tests, formatting, strict Clippy, setup/hygiene, fresh serial maps, diagnostics, one-handed controls, touch stunts and boundary checks."
+          ],
+          "limitations": [
+            "Contact evidence covers selected scripted routes, not every proxy or complete game parity.",
+            "Straight-throttle boundary routes timed out on ENV04/ENV03; ENV03 became stranded with no grounded wheels and no proxy records, so that failure is not attributed to vegetation.",
+            "Wet-wreck coverage, dynamic contacts, remaining collision behavior and tire clipping remain unresolved."
+          ]
         }
       },
       {
@@ -1361,8 +1393,8 @@
         "status": "PARTIAL",
         "scope": "PUBLIC MAP CHECKS + HOST SOURCE ORACLE",
         "summary": "The stored near grid, base textures and near-pass detail blend are connected; original projected terrain LOD, fog and vegetation visibility remain unmatched. A source-checked single-round terrain-normal path is connected.",
-        "validation": "Public 01c9cbb0c8358ba43f589dab1e342c3f746f0a1b \u00b7 CI 38207020177 passed the uninterrupted eight-environment load/drive run. Separately, the single-round terrain-normal rsqrt matched 500 synthetic and 1,000 ENV01\u2013ENV08 native query cases; this host oracle result is component evidence, not complete terrain or rendering parity.",
-        "evidence": "research/GEOMETRY.md \u2014 terrain quality investigation.",
+        "validation": "Public 01c9cbb0c8358ba43f589dab1e342c3f746f0a1b · CI 38207020177 passed the uninterrupted eight-environment load/drive run. Separately, the single-round terrain-normal rsqrt matched 500 synthetic and 1,000 ENV01–ENV08 native query cases; this host oracle result is component evidence, not complete terrain or rendering parity.",
+        "evidence": "research/GEOMETRY.md — terrain quality investigation.",
         "next_step": "Recover projected-coverage selection, far-color modulation, fog and GS quantization behavior.",
         "release_verification": {
           "commit": "01c9cbb0c8358ba43f589dab1e342c3f746f0a1b",
@@ -1374,7 +1406,7 @@
           "devlog_screenshots": 60,
           "checks": [
             "All eight public Freestyle environments loaded and drove in one run without JS/WebGL errors.",
-            "Host native-query oracle: 500 synthetic and 1,000 ENV01\u2013ENV08 terrain-normal cases matched for the single-round rsqrt path."
+            "Host native-query oracle: 500 synthetic and 1,000 ENV01–ENV08 terrain-normal cases matched for the single-round rsqrt path."
           ]
         }
       },
@@ -1386,7 +1418,7 @@
         "scope": "RESEARCH",
         "summary": "The Arlington archive and route data identify a locomotive, ten following cars, wheel/smoke animation and a shared looping VUE path with per-car offsets. Nothing renders or moves in the public scene yet.",
         "validation": "Format and executable-path observations; no connected runtime test.",
-        "evidence": "research/GEOMETRY.md \u2014 Arlington train recovery in progress.",
+        "evidence": "research/GEOMETRY.md — Arlington train recovery in progress.",
         "next_step": "Connect path sampling, per-car transforms, terrain contact and moving-object collision, then verify on ENV08."
       },
       {
@@ -1394,10 +1426,10 @@
         "category": "Front end",
         "title": "Title, menus and map selection",
         "status": "PARTIAL",
-        "scope": "PUBLIC \u00b7 RUST-DRAWN ROUTE AND RECOVERED ATV THUMBNAIL",
-        "summary": "The public Rust-drawn route reaches Single Player \u2192 Freestyle \u2192 all eight environments. Main Menu includes a recovered 256\u00d7128 ATV thumbnail; the full original menu art, callbacks and every page are not reproduced.",
-        "validation": "Public 0906822adbc585f58e4a7309322f63f4cc3f7b6a \u00b7 CI 38194430965 passed the title/menu, keyboard/controller, Tioga, pause and 390px Caribou frontend route. The ATV thumbnail is a recovered source asset; other menu artwork and callbacks remain incomplete.",
-        "evidence": "research/UI.md \u2014 connected route and page-layout evidence.",
+        "scope": "PUBLIC · RUST-DRAWN ROUTE AND RECOVERED ATV THUMBNAIL",
+        "summary": "The public Rust-drawn route reaches Single Player → Freestyle → all eight environments. Main Menu includes a recovered 256×128 ATV thumbnail; the full original menu art, callbacks and every page are not reproduced.",
+        "validation": "Public 0906822adbc585f58e4a7309322f63f4cc3f7b6a · CI 38194430965 passed the title/menu, keyboard/controller, Tioga, pause and 390px Caribou frontend route. The ATV thumbnail is a recovered source asset; other menu artwork and callbacks remain incomplete.",
+        "evidence": "research/UI.md — connected route and page-layout evidence.",
         "next_step": "Recover remaining original menu pages, callbacks and art where available; keep authored layout work distinct from original-page fidelity.",
         "release_verification": {
           "commit": "0906822adbc585f58e4a7309322f63f4cc3f7b6a",
@@ -1417,8 +1449,8 @@
         "status": "PARTIAL",
         "scope": "PUBLIC",
         "summary": "Rust draw commands and recovered font atlas now build the responsive pause/Controls panels. Pause/resume, reset, Fullscreen, Dev log and return-to-menu actions work; these are authored web callbacks, not the original callback code or recovered pause panel art.",
-        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449 \u00b7 pause/resume and mobile frontend checks",
-        "evidence": "research/UI.md \u2014 pause overlay and callback limits.",
+        "validation": "PUBLIC · main 1e5c4fd255a4979148bdda648e010e2fbb68221b · CI 38186584449 · pause/resume and mobile frontend checks",
+        "evidence": "research/UI.md — pause overlay and callback limits.",
         "next_step": "Compare pause navigation and focus behavior against the original page handlers."
       },
       {
@@ -1426,9 +1458,9 @@
         "category": "Front end",
         "title": "In-race HUD",
         "status": "PARTIAL",
-        "scope": "PUBLIC \u00b7 SPEED/PRELOAD/STUNT/DIAGNOSTICS SUBSET",
+        "scope": "PUBLIC · SPEED/PRELOAD/STUNT/DIAGNOSTICS SUBSET",
         "summary": "Original runtime speed, preload and stunt layouts, glyphs and art are drawn with authored Rust controllers. Public desktop and 390px dev-log filters pass; wheelie scoring callbacks are integrated through the HUD while the original disabled scoring flag yields no baseline wheelie awards. Race clocks, rank, laps, radar and multiplayer overlays remain unimplemented.",
-        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f \u00b7 CI 38212608120: clean landing and failed Nac Nac recovery captures passed; F3/Pause diagnostics passed desktop and portrait layouts, and dev-log filters passed desktop/390px without overflow. Full race HUD behavior and final PS2 pixel parity remain unverified.",
+        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f · CI 38212608120: clean landing and failed Nac Nac recovery captures passed; F3/Pause diagnostics passed desktop and portrait layouts, and dev-log filters passed desktop/390px without overflow. Full race HUD behavior and final PS2 pixel parity remain unverified.",
         "evidence": "research/HUD.md; public wreck/landing captures and diagnostics logs.",
         "next_step": "Connect remaining race/mode HUD state and verify score animation against original presentation.",
         "release_verification": {
@@ -1453,8 +1485,8 @@
         "status": "PARTIAL",
         "scope": "PUBLIC",
         "summary": "Freestyle is the one connected start-to-drive path. Race starts, finishes, laps, event transitions and mode-specific rules are not implemented as a full flow.",
-        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449 \u00b7 Freestyle route and driving only",
-        "evidence": "research/UI.md \u2014 supported menu route; research/IMPLEMENTATION.md \u2014 acceptance gates.",
+        "validation": "PUBLIC · main 1e5c4fd255a4979148bdda648e010e2fbb68221b · CI 38186584449 · Freestyle route and driving only",
+        "evidence": "research/UI.md — supported menu route; research/IMPLEMENTATION.md — acceptance gates.",
         "next_step": "Recover the original mode/state transitions and validate a complete event from start to results."
       },
       {
@@ -1465,7 +1497,7 @@
         "scope": "RESEARCH",
         "summary": "No opponent spawning, racing behavior, passing logic or opponent collision behavior is connected.",
         "validation": "No AI or rival browser test is claimed.",
-        "evidence": "research/IMPLEMENTATION.md \u2014 race-system acceptance gates.",
+        "evidence": "research/IMPLEMENTATION.md — race-system acceptance gates.",
         "next_step": "Locate opponent update routines and race-specific tuning, then identify a small testable behavior slice."
       },
       {
@@ -1476,7 +1508,7 @@
         "scope": "RESEARCH",
         "summary": "Profile creation, championship structure, unlock conditions and persistent career progression are not connected.",
         "validation": "No progression path is available from the current menu.",
-        "evidence": "research/UI.md \u2014 profiles and championships remain unimplemented; research/IMPLEMENTATION.md.",
+        "evidence": "research/UI.md — profiles and championships remain unimplemented; research/IMPLEMENTATION.md.",
         "next_step": "Map the original profile and event state transitions before adding progression screens."
       },
       {
@@ -1487,7 +1519,7 @@
         "scope": "RESEARCH",
         "summary": "Browser control bindings, music settings and Stats selection persist. Original profiles, career records, unlocks and save format remain unimplemented.",
         "validation": "Public binding/music evidence remains 0906822; Stats persistence passed publicly on 0f074b4. These settings do not implement original profile saves.",
-        "evidence": "research/IMPLEMENTATION.md \u2014 verify menus, progression and saves.",
+        "evidence": "research/IMPLEMENTATION.md — verify menus, progression and saves.",
         "next_step": "Find and document the original save structures and update rules before choosing browser storage."
       },
       {
@@ -1498,7 +1530,7 @@
         "scope": "RESEARCH",
         "summary": "One recovered ATV is connected for driving. The original vehicle roster, selection flow, tuning/customization screens and saved setup are not connected.",
         "validation": "Current Freestyle route loads the implemented ATV; no roster/customization test.",
-        "evidence": "research/UI.md \u2014 supported menu route; research/GEOMETRY.md \u2014 ATV mesh recovery.",
+        "evidence": "research/UI.md — supported menu route; research/GEOMETRY.md — ATV mesh recovery.",
         "next_step": "Inventory original vehicle pages, model/tuning records and setup persistence before adding selection controls."
       },
       {
@@ -1506,9 +1538,9 @@
         "category": "Vehicle",
         "title": "ATV handling and suspension",
         "status": "PARTIAL",
-        "scope": "PUBLIC FULL-BATCH ROUTES + HOST SOURCE/CONTACT CHECKS \u00b7 CLIPPING REMAINS",
+        "scope": "PUBLIC FULL-BATCH ROUTES + HOST SOURCE/CONTACT CHECKS · CLIPPING REMAINS",
         "summary": "Public handling includes the shared scene-cache candidate path, recovered spring torque, static-prop wheel support, terrain travel stop and prior handling components. Residual tire overlap remains; landing and slope traces with different inputs are not evidence of improvement. Full-game parity is unverified.",
-        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f \u00b7 CI 38212608120: clean landing, boundary, wreck recovery and uninterrupted eight-map routes passed. Landing clearance was -0.393066 ft over 201 riding frames with zero skipped frames; worst rear-left at step 163. Tire clipping remains; this measurement does not claim a fix or establish whole-game parity.",
+        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f · CI 38212608120: clean landing, boundary, wreck recovery and uninterrupted eight-map routes passed. Landing clearance was -0.393066 ft over 201 riding frames with zero skipped frames; worst rear-left at step 163. Tire clipping remains; this measurement does not claim a fix or establish whole-game parity.",
         "evidence": "research/MOVEMENT.md; research/DIAGNOSTICS.md; research/TOUCH.md.",
         "next_step": "Compare coupled original quad frames and incline turns; resolve residual rendered tire overlap and dynamic contacts.",
         "release_verification": {
@@ -1541,9 +1573,9 @@
         "category": "Vehicle",
         "title": "Terrain and static-object collisions",
         "status": "PARTIAL",
-        "scope": "PUBLIC WRECK RIDER/CAMERA QUERIES + HOST SOURCE ORACLE",
-        "summary": "The public quad wheel/chassis path uses the original shared scene cache, and active wreck rider queries now use that cache; the independent wreck camera runs its ordered query. Physical plant proxies, normal-riding rider collision, complete category eligibility, dynamic bodies and full collision parity remain incomplete.",
-        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f \u00b7 CI 38212608120: Nac Nac wreck, separation/contact/recovery, boundary and eight-map routes passed. The 195-frame wreck route checked cached rider queries, with zero refreshes and no selected static props/plants; the 516-rider-frame boundary route recorded 490 refreshes and at most two plant candidates/two unsupported proxies, with zero selected static contacts. Host source-order radius oracle remains 1,000 cases / 40,000 instructions.",
+        "scope": "PUBLIC F635 QUAD PATH + HOST VERIFIED VEGETATION CONTACT SUBSET · PUBLIC UPDATE PENDING",
+        "summary": "The public quad wheel/chassis path uses the recovered shared scene cache. The host vegetation gate records source-authored chassis, wheel and active wreck-rider callbacks from shipped cylinders; complete native category eligibility, physical proxy coverage, dynamic bodies and full collision parity remain incomplete.",
+        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f · CI 38212608120: Nac Nac wreck, separation/contact/recovery, boundary and eight-map routes passed. The 195-frame wreck route checked cached rider queries, with zero refreshes and no selected static props/plants; the 516-rider-frame boundary route recorded 490 refreshes and at most two plant candidates/two unsupported proxies, with zero selected static contacts. Host source-order radius oracle remains 1,000 cases / 40,000 instructions.",
         "evidence": "research/COLLISION.md; research/CONTACT.md; research/OBSTACLES.md.",
         "next_step": "Recover scene ordering/category metadata and moving-body response; compare coupled prop impacts.",
         "release_verification": {
@@ -1562,15 +1594,13 @@
           ]
         },
         "host_verification": {
-          "scope": "Host-only candidate; pending public release.",
+          "scope": "Host-verified component; public update pending.",
           "checks": [
-            "500 rider-sphere cases matched across 1,112,500 original instructions.",
-            "12 paired quad/rider boundary flag cases matched across 1,508 instructions.",
-            "1,694 original clip poses and five recovery routes passed cached/direct query checks in an empty scene.",
-            "Wreck, boundary, landing, diagnostics, saved one-handed controls and uninterrupted eight-map serial checks passed."
+            "A normal ENV04W drive produced a source-authored chassis plant contact; a corrected boundary route recorded chassis, wheel and active wreck-rider plant-hit frames.",
+            "48-case native dispatch probe executed 23,592 original instructions. No generic collider substitution was used."
           ],
           "limitations": [
-            "Physical plant proxies, complete native category eligibility, normal-riding rider cached queries, custom masks, dynamic bodies and full collision parity remain incomplete or unverified."
+            "The browser route evidence does not establish every shipped proxy, loaded-scene native category parity or whole-game collision parity."
           ]
         }
       },
@@ -1579,10 +1609,10 @@
         "category": "Vehicle",
         "title": "Wrecks, rider separation and recovery",
         "status": "PARTIAL",
-        "scope": "PUBLIC VERIFIED \u00b7 WRECK RIDER CACHE AND RECOVERY LOOP",
-        "summary": "Public Nac Nac failure, cached rider separation/contact, terrain recovery and resumed driving pass. The ENV04 boundary route also launches upward/inward and recovers with state cleared. The public camera query runs independently; wet wrecks, normal-riding rider collision and full crash-state parity remain unverified.",
-        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f \u00b7 CI 38212608120: the 195-frame Nac Nac route checked cached rider queries through 29 attached, 58 airborne and 108 grounded frames; every query was cached. The 1,658-frame ENV04 boundary route cleared boundary state, with 516 rider frames including 490 rider-cache refreshes. These route checks do not establish physical tree contact or normal-riding rider collision.",
-        "evidence": "research/WRECK.md \u2014 recovered rules, public browser tests and remaining camera/contact limits.",
+        "scope": "PUBLIC F635 RECOVERY LOOP + HOST VEGETATION CONTACT SUBSET · PUBLIC UPDATE PENDING",
+        "summary": "Public Nac Nac separation/contact/recovery and ENV04 inward boundary routes pass. Host boundary telemetry also records eight active wreck-rider vegetation-hit frames through source-authored proxy callbacks. Wet-wreck coverage, the tilted no-wheel-contact recovery case and full crash-state parity remain incomplete.",
+        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f · CI 38212608120: the 195-frame Nac Nac route checked cached rider queries through 29 attached, 58 airborne and 108 grounded frames; every query was cached. The 1,658-frame ENV04 boundary route cleared boundary state, with 516 rider frames including 490 rider-cache refreshes. These route checks do not establish physical tree contact or normal-riding rider collision.",
+        "evidence": "research/WRECK.md — recovered rules, public browser tests and remaining camera/contact limits.",
         "next_step": "Broaden crash/recovery and rider-contact comparisons, then verify boundary/water candidates publicly.",
         "release_verification": {
           "commit": "f6353c37684063777cd5d0cff1d87e99a0de615f",
@@ -1593,21 +1623,20 @@
           "devlog_entries": 74,
           "devlog_screenshots": 66,
           "checks": [
-            "195-frame Nac Nac \u2192 wreck \u2192 rider separation/contact \u2192 recovery \u2192 resumed driving passed; all active rider queries were cached.",
+            "195-frame Nac Nac → wreck → rider separation/contact → recovery → resumed driving passed; all active rider queries were cached.",
             "1,658-frame ENV04 boundary route recovered inward with boundary state cleared.",
             "Wet wreck and normal-riding rider collision remain unverified."
           ]
         },
         "limitation": "Normal-riding rider collision, MUD metadata, custom masks, dynamic contacts, physical plant proxies, global/674 settings, wet wreck behavior and full crash-state parity remain incomplete or unverified.",
         "host_verification": {
-          "scope": "Host-only candidate; pending public release.",
+          "scope": "Host-verified component; public update pending.",
           "checks": [
-            "Serial touch Nac Nac \u2192 vertical wreck \u2192 rider separation/ground clip \u2192 terrain contact \u2192 automatic reset \u2192 resumed driving passed.",
-            "Active wreck rider borrows the exact Vehicle cache, checks inclusive bounds for its own 13 spokes and rechecks exclusions on cache reuse. Every active cached query was finite and \u2264256 through attached, separated and grounded phases.",
-            "A 1,655-frame inward ENV04 boundary launch/recovery passed; boundary state cleared."
+            "Corrected steered ENV04 boundary route passed 2,126 frames, one launch, two resets and cleared paired flags.",
+            "Trace records eight active wreck-rider plant-hit frames and one active wheel plant-hit frame; these are route-specific callbacks, not full collision parity."
           ],
           "limitations": [
-            "Normal-riding rider queries, MUD metadata, custom masks, physical plant proxies, dynamic contacts, global/674 settings and full crash-state parity remain incomplete or unverified."
+            "Wet-wreck behavior and the prior stranded tilted/no-wheel-contact recovery case remain open."
           ]
         }
       },
@@ -1616,10 +1645,10 @@
         "category": "Vehicle",
         "title": "Touch preload and takeoff lean",
         "status": "PARTIAL",
-        "scope": "PUBLIC TOUCH/RAMP CHECKS \u00b7 FULL FLIPS UNRESOLVED",
+        "scope": "PUBLIC TOUCH/RAMP CHECKS · FULL FLIPS UNRESOLVED",
         "summary": "Public primary right press requests immediate throttle and braces preload; backward drag brakes/reverses through the Rust gate, release drops drive and submits preload release. Secondary airborne stunt gestures remain separate. Full flips and physical-device parity remain unverified.",
         "validation": "Public 0f074b4 (CI38202065109) touch and clean preload landing checks passed. Historical batch/ramp comparisons retain narrower scope.",
-        "evidence": "research/TOUCH.md \u2014 preload, takeoff continuity and touch verification.",
+        "evidence": "research/TOUCH.md — preload, takeoff continuity and touch verification.",
         "next_step": "Compare original hold/release, takeoff, landing and cancellation behavior across more references; do not infer full flips from the ramp tests.",
         "release_verification": {
           "commit": "0f074b4558f864ea4e4a8103b017b60e102c6690",
@@ -1638,8 +1667,8 @@
         "status": "PARTIAL",
         "scope": "PUBLIC SUBSET + HOST CANDIDATE",
         "summary": "Public c3 connects the original main-trick control gate for the tested stunt subset. Host instruction comparisons match its original stunt-axis rates and half-strength input angular moment; not all gesture families, cancel/landing transitions or full flips are established.",
-        "validation": "Public stunt regression subset passed on c3c18677bff40f0731c05b1b6406d80a983ed413 \u00b7 CI 38189067629. Host original-instruction comparison: 60 varied force/state cases bit-identical; the former gate differed on 20 main-mode samples and the other 40 were unchanged. The 361-sample original pitch/crash sweep matched Rust wreck decisions with maximum angle error 2.38e-7 rad; the first rear wreck occurred near 85 degrees. This does not show a full flip is fixed; original global wreck-enable mode exceptions remain unknown.",
-        "evidence": "research/TOUCH.md \u2014 airborne stunts; research/ANIMATION.md \u2014 rider animation recovery; research/WRECK.md \u2014 coupled pitch and wreck sweep.",
+        "validation": "Public stunt regression subset passed on c3c18677bff40f0731c05b1b6406d80a983ed413 · CI 38189067629. Host original-instruction comparison: 60 varied force/state cases bit-identical; the former gate differed on 20 main-mode samples and the other 40 were unchanged. The 361-sample original pitch/crash sweep matched Rust wreck decisions with maximum angle error 2.38e-7 rad; the first rear wreck occurred near 85 degrees. This does not show a full flip is fixed; original global wreck-enable mode exceptions remain unknown.",
+        "evidence": "research/TOUCH.md — airborne stunts; research/ANIMATION.md — rider animation recovery; research/WRECK.md — coupled pitch and wreck sweep.",
         "next_step": "Cover every original modifier/direction path and determine the source global wreck-enable mode exceptions; compare trick entry, hold/release, landing and cancel traces against fixed-input references. Do not claim full flips.",
         "release_verification": {
           "commit": "c3c18677bff40f0731c05b1b6406d80a983ed413",
@@ -1655,10 +1684,10 @@
         "category": "Game systems",
         "title": "Stunt scoring and combos",
         "status": "PARTIAL",
-        "scope": "PUBLIC \u00b7 REGULAR STUNT CORE + WHEELIE FLAG GATE",
+        "scope": "PUBLIC · REGULAR STUNT CORE + WHEELIE FLAG GATE",
         "summary": "Recovered regular-stunt pending/committed points, chaining, repetition penalties and failure rollback are connected with the stunt HUD. Wheelie callbacks now reach scoring and HUD end-to-end; the original false enable flag yields no normal-baseline wheelie awards and no cheat UI is exposed. Full judged modes and profile restrictions remain incomplete.",
-        "validation": "Public 01c9cbb0c8358ba43f589dab1e342c3f746f0a1b \u00b7 CI 38207020177: failed Nac Nac recovery and eight-map assertions confirming no baseline wheelie awards passed. The 2,070-operation oracle comparison executed 67,982 original instructions on the host. Failure display points are not awarded totals.",
-        "evidence": "research/ANIMATION.md \u2014 stunt scoring; research/HUD.md.",
+        "validation": "Public 01c9cbb0c8358ba43f589dab1e342c3f746f0a1b · CI 38207020177: failed Nac Nac recovery and eight-map assertions confirming no baseline wheelie awards passed. The 2,070-operation oracle comparison executed 67,982 original instructions on the host. Failure display points are not awarded totals.",
+        "evidence": "research/ANIMATION.md — stunt scoring; research/HUD.md.",
         "next_step": "Verify successful chains and remaining wheelie/mode/profile behavior against original execution.",
         "release_verification": {
           "commit": "01c9cbb0c8358ba43f589dab1e342c3f746f0a1b",
@@ -1669,7 +1698,7 @@
           "devlog_entries": 68,
           "devlog_screenshots": 60,
           "checks": [
-            "Public failed Nac Nac \u2192 wreck/separation/contact \u2192 recovery \u2192 resumed driving passed.",
+            "Public failed Nac Nac → wreck/separation/contact → recovery → resumed driving passed.",
             "Public eight-map assertions confirm the original disabled wheelie flag awards no baseline points.",
             "Host wheelie oracle comparison: 2,070 operations and 67,982 original instructions; no full scoring parity claim."
           ]
@@ -1693,8 +1722,8 @@
         "status": "LIVE",
         "scope": "PUBLIC CHASE + INDEPENDENT WRECK CAMERA QUERY",
         "summary": "The recovered landscape chase camera, preset cycling and portrait framing remain available. The public wreck camera runs its independent ordered query; physical obstruction/latch behavior is covered only by a synthetic core test, not by the loaded-scene route.",
-        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f \u00b7 CI 38212608120: 195 direct wreck-camera queries ran with at most one ordinary candidate and no obstruction latch on that route. A synthetic core test covers physical-prop/latch behavior; loaded-scene physical obstruction and normal-riding shared rider queries remain unverified.",
-        "evidence": "research/CAMERA.md \u2014 camera recovery and portrait presentation.",
+        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f · CI 38212608120: 195 direct wreck-camera queries ran with at most one ordinary candidate and no obstruction latch on that route. A synthetic core test covers physical-prop/latch behavior; loaded-scene physical obstruction and normal-riding shared rider queries remain unverified.",
+        "evidence": "research/CAMERA.md — camera recovery and portrait presentation.",
         "next_step": "Compare camera/body coupling through original stunt and wreck sequences; keep touch focus recovery distinct from unresolved native wreck-camera behavior.",
         "host_verification": {
           "scope": "Host-only candidate; pending public release.",
@@ -1728,10 +1757,10 @@
         "category": "World",
         "title": "Unsupported scene meshes",
         "status": "LIVE",
-        "scope": "PUBLIC \u00b7 EIGHT FREESTYLE ENVIRONMENTS",
+        "scope": "PUBLIC · EIGHT FREESTYLE ENVIRONMENTS",
         "summary": "All meshes placed in the eight public Freestyle environments now load, including the five tower placements restored after a version guard had rejected their visible geometry. Their original collision meshes were already present, so making them visible did not change physics. This does not claim complete race-course coverage or visual parity.",
-        "validation": "Public 3cc8e5fee7253fcfae207e61faa12ea70336459f \u00b7 CI 38192659265 passed all-eight-map load/drive checks with an empty unsupported-mesh list and no JS/WebGL errors. Host archive audit decoded all 502 mesh records (498 v3, 4 v4); inspection views covered the five towers, their materials and draw counts.",
-        "evidence": "research/GEOMETRY.md \u2014 PSG rigid meshes and eight-environment release.",
+        "validation": "Public 3cc8e5fee7253fcfae207e61faa12ea70336459f · CI 38192659265 passed all-eight-map load/drive checks with an empty unsupported-mesh list and no JS/WebGL errors. Host archive audit decoded all 502 mesh records (498 v3, 4 v4); inspection views covered the five towers, their materials and draw counts.",
+        "evidence": "research/GEOMETRY.md — PSG rigid meshes and eight-environment release.",
         "next_step": "Cover any additional course archives and verify scene-specific materials and collision use beyond the eight Freestyle environments.",
         "release_verification": {
           "commit": "3cc8e5fee7253fcfae207e61faa12ea70336459f",
@@ -1747,10 +1776,10 @@
         "category": "Presentation",
         "title": "Rendering and original visual effects",
         "status": "PARTIAL",
-        "scope": "PUBLIC \u00b7 TOWER MATERIAL FIX; OTHER RENDERING PARTIAL",
+        "scope": "PUBLIC · TOWER MATERIAL FIX; OTHER RENDERING PARTIAL",
         "summary": "The public ENV02 power-tower lattice now renders open through its alpha cutouts. Terrain detail is connected, but projected terrain LOD, fog, distant blending and full GS material behavior still differ.",
         "validation": "The public 3cc eight-map run passed with no unsupported placed meshes or JS/WebGL errors. The inspected ENV02 tower capture is a host-authored inspection-camera view, not ordinary gameplay framing.",
-        "evidence": "research/GEOMETRY.md \u2014 PSG meshes and terrain shading; research/IMPLEMENTATION.md.",
+        "evidence": "research/GEOMETRY.md — PSG meshes and terrain shading; research/IMPLEMENTATION.md.",
         "next_step": "Compare remaining material and alpha-test variants, then recover projected terrain selection, far-color blending, fog and original GS behavior.",
         "release_verification": {
           "commit": "3cc8e5fee7253fcfae207e61faa12ea70336459f",
@@ -1766,10 +1795,10 @@
         "category": "Platform",
         "title": "Keyboard, controller and touch input",
         "status": "PARTIAL",
-        "scope": "PUBLIC \u00b7 KEYBOARD/CONTROLLER SETTINGS AND TOUCH BASELINE",
+        "scope": "PUBLIC · KEYBOARD/CONTROLLER SETTINGS AND TOUCH BASELINE",
         "summary": "Public Controls remap keyboard/controller actions across keys, buttons, signed axes and chords, with persistence. A saved one-handed setting drives, brakes/reverses and supports airborne steer/lean. Physical phone hardware and full handling parity remain unverified.",
-        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f \u00b7 CI 38212608120: saved one-handed controls, touch wreck route, boundary route, desktop/portrait diagnostics and no-overflow dev-log filters passed. Physical phone hardware remains untested.",
-        "evidence": "research/TOUCH.md \u2014 browser adapter limits; research/IMPLEMENTATION.md \u2014 input requirements.",
+        "validation": "Public f6353c37684063777cd5d0cff1d87e99a0de615f · CI 38212608120: saved one-handed controls, touch wreck route, boundary route, desktop/portrait diagnostics and no-overflow dev-log filters passed. Physical phone hardware remains untested.",
+        "evidence": "research/TOUCH.md — browser adapter limits; research/IMPLEMENTATION.md — input requirements.",
         "next_step": "Compare more original fixed-input handling, stunt transitions and cancellation cases; test physical devices separately.",
         "release_verification": {
           "commit": "f6353c37684063777cd5d0cff1d87e99a0de615f",
@@ -1791,10 +1820,10 @@
         "category": "Audio",
         "title": "Music and engine sound",
         "status": "PARTIAL",
-        "scope": "PUBLIC \u00b7 21-SONG SELECTOR AND PAUSED PREVIEW",
+        "scope": "PUBLIC · 21-SONG SELECTOR AND PAUSED PREVIEW",
         "summary": "The Music page selects all 21 original songs, preserves shuffle/history across map changes and previews while paused. Original mixer, effects, spatialization, dialogue and complete music transitions remain incomplete.",
-        "validation": "Public 0906822adbc585f58e4a7309322f63f4cc3f7b6a \u00b7 CI 38194430965: all 21 songs decoded/played through WASM with reads bounded at 65,536 bytes and zero underruns. Paused preview, off/on and focus behavior passed; this is not a listening comparison.",
-        "evidence": "research/DEPLOYMENT.md \u2014 runtime manifest; research/IMPLEMENTATION.md \u2014 audio acceptance gate.",
+        "validation": "Public 0906822adbc585f58e4a7309322f63f4cc3f7b6a · CI 38194430965: all 21 songs decoded/played through WASM with reads bounded at 65,536 bytes and zero underruns. Paused preview, off/on and focus behavior passed; this is not a listening comparison.",
+        "evidence": "research/DEPLOYMENT.md — runtime manifest; research/IMPLEMENTATION.md — audio acceptance gate.",
         "next_step": "Compare track transitions and levels with original behavior, then recover mixer, effects, spatialization and dialogue.",
         "release_verification": {
           "commit": "0906822adbc585f58e4a7309322f63f4cc3f7b6a",
@@ -1815,7 +1844,7 @@
         "scope": "RESEARCH",
         "summary": "The current browser renderer runs one rider and one camera viewport. Original local multiplayer, player setup, viewport layout and two-player race flow are not connected.",
         "validation": "No two-player or split-screen browser test.",
-        "evidence": "research/CAMERA.md \u2014 original split-screen sections are parsed; research/IMPLEMENTATION.md \u2014 game modes remain an acceptance gate.",
+        "evidence": "research/CAMERA.md — original split-screen sections are parsed; research/IMPLEMENTATION.md — game modes remain an acceptance gate.",
         "next_step": "Recover player-count setup, split-screen camera/viewport rules and shared race state before implementing a second actor."
       },
       {
@@ -1826,7 +1855,7 @@
         "scope": "RESEARCH",
         "summary": "No network lobby, race synchronization or multiplayer transport is connected. Original local split-screen and online play remain to be researched.",
         "validation": "No multiplayer implementation or network test.",
-        "evidence": "research/RESOURCES.md \u2014 multiplayer research lead; research/IMPLEMENTATION.md \u2014 verify modes and runtime behavior.",
+        "evidence": "research/RESOURCES.md — multiplayer research lead; research/IMPLEMENTATION.md — verify modes and runtime behavior.",
         "next_step": "Recover local split-screen behavior first, then document the original online protocol/service dependencies."
       }
     ]

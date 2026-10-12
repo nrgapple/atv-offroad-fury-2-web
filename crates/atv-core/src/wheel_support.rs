@@ -89,6 +89,65 @@ pub fn sample(
     Ok(support)
 }
 
+pub(crate) struct SceneSupport {
+    pub support: Support,
+    pub vegetation_proxies: usize,
+    pub vegetation_callbacks: usize,
+    pub unsupported_vegetation_proxies: usize,
+}
+
+///The supplied quad list retains mixed node order. Each wheel has its own
+///0011f9a0 plant-sphere gate and each expanded proxy can replace the support
+///plane without changing the terrain-selected material.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn sample_with_scene(
+    terrain: &Terrain,
+    scene: &crate::scene_collision::SceneCollision,
+    query: &crate::scene_collision::CachedQuery,
+    skip_vegetation: bool,
+    world: &[f32; 16],
+    rest: Vec3,
+    travel: f32,
+    radius: f32,
+    previous: Support,
+) -> Result<SceneSupport> {
+    let mut support = sample(terrain, &[], world, rest, travel, radius, previous)?;
+    let ray = support_ray(world, rest, travel, radius);
+    let (center, query_radius) = crate::wreck::segment_query_sphere(std::slice::from_ref(&ray));
+    let selected = scene.physical_selection(
+        query,
+        crate::scene_collision::PhysicalTrim::Supplied,
+        center,
+        query_radius,
+        skip_vegetation,
+        |_, _| true,
+    )?;
+    let vegetation_proxies = selected.vegetation_proxies();
+    let mut vegetation_callbacks = 0;
+    for mesh in &selected.meshes {
+        let hits = crate::wreck::query_static_segments(
+            std::slice::from_ref(&ray),
+            std::slice::from_ref(&mesh.obstacle),
+            usize::MAX,
+        )?;
+        if !hits.is_empty() && mesh.proxy_index.is_some() {
+            vegetation_callbacks += 1;
+        }
+        for hit in hits {
+            support.available = true;
+            support.obstacle = true;
+            support.point = hit.world_point;
+            support.normal = hit.world_normal;
+        }
+    }
+    Ok(SceneSupport {
+        support,
+        vegetation_proxies,
+        vegetation_callbacks,
+        unsupported_vegetation_proxies: selected.unsupported_vegetation_proxies,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

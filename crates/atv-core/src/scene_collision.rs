@@ -1,6 +1,6 @@
 //! Combined static/ESB partition and shared quad/recovery candidate cache.
-//! Physical vegetation proxy expansion, dynamic nodes and actor callbacks remain
-//! consumer work; retained plants are exposed alongside ordinary obstacle nodes.
+//! Shipped cylinders expand in native mixed-node order for quad, wheel and active
+//! wreck-rider consumers. Dynamic nodes and exceptional actor filters remain open.
 use crate::{
     Result,
     ecosystem::Ecosystem,
@@ -11,12 +11,49 @@ use crate::{
     vegetation_collision,
     wheel::{Vec3, dot},
 };
+use std::rc::Rc;
 
 /// Index within its original loader stage, never a distance-sorted index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SceneNode {
     StaticObstacle(usize),
     Vegetation(usize),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum PhysicalTrim {
+    Supplied,
+    CachedRider,
+}
+
+///Geometry instances in original mixed-node and per-species proxy order.
+///Unsupported definitions retain their slots without becoming a guessed shape.
+pub struct PhysicalMesh {
+    pub node: SceneNode,
+    pub proxy_index: Option<usize>,
+    pub obstacle: StaticObstacle,
+}
+#[derive(Default)]
+pub struct PhysicalSelection {
+    pub meshes: Vec<PhysicalMesh>,
+    pub static_candidates: usize,
+    pub vegetation_candidates: usize,
+    pub unsupported_vegetation_proxies: usize,
+}
+impl PhysicalSelection {
+    pub fn vegetation_proxies(&self) -> usize {
+        self.meshes
+            .iter()
+            .filter(|mesh| mesh.proxy_index.is_some())
+            .count()
+    }
+}
+
+pub struct SceneContacts {
+    pub contacts: Vec<crate::obstacle::ObstacleContact>,
+    pub vegetation_proxies: usize,
+    pub vegetation_callbacks: usize,
+    pub unsupported_vegetation_proxies: usize,
 }
 
 /// Direct type-3 camera query, independent of the retained quad/rider cache.
@@ -33,7 +70,7 @@ pub struct RegisteredVegetation {
     pub coordinates: [u16; 3],
     pub height: f32,
     pub radius: f32,
-    /// Configured species count, not a claim that its physical proxy works.
+    /// Configured species count; supported geometry is expanded by each consumer.
     pub proxy_count: usize,
     pub bounds: Bounds,
 }
@@ -81,6 +118,7 @@ pub struct SceneCollision {
     obstacles: Vec<StaticObstacle>,
     static_spheres: Vec<StaticSphere>,
     vegetation: Vec<RegisteredVegetation>,
+    vegetation_meshes: [Vec<Option<Rc<crate::collision::CollisionMesh>>>; 256],
     coordinate_unit: f32,
     coordinate_reciprocal: f32,
     partition: StaticPartition,
@@ -129,6 +167,7 @@ impl SceneCollision {
             static_spheres.push(sphere);
         }
         let mut vegetation = Vec::new();
+        let mut vegetation_meshes = std::array::from_fn(|_| Vec::new());
         if let Some(ecosystem) = ecosystem {
             let mut proxy_counts = [None; 256];
             for species in &ecosystem.species {
@@ -136,6 +175,18 @@ impl SceneCollision {
                     return Err("duplicate collision ecosystem species slot".into());
                 }
                 proxy_counts[usize::from(species.slot)] = Some(species.proxies.len());
+                for words in &species.proxies {
+                    let mesh = match crate::vegetation_proxy::Record::parse(words)? {
+                        crate::vegetation_proxy::Record::Cylinder(cylinder) => Some(Rc::new(
+                            crate::vegetation_ray::cylinder_collision(&cylinder.mesh()?)?,
+                        )),
+                        //All eight shipped Freestyle ecosystems use cylinders.
+                        //Other definitions need their own verified resource or
+                        //dispatch contracts; preserve count/order meanwhile.
+                        _ => None,
+                    };
+                    vegetation_meshes[usize::from(species.slot)].push(mesh);
+                }
             }
             vegetation.reserve(ecosystem.placements.len());
             for placement in &ecosystem.placements {
@@ -173,6 +224,7 @@ impl SceneCollision {
             obstacles,
             static_spheres,
             vegetation,
+            vegetation_meshes,
             coordinate_unit,
             coordinate_reciprocal,
             partition,
@@ -362,6 +414,136 @@ impl SceneCollision {
             })
             .collect()
     }
+
+    ///0011f9a0 supplied consumers have a separate inclusive horizontal plant
+    ///sphere gate. 0011fd30 cached riders use their inclusive retained distance
+    ///instead. Actor bf.0 suppresses expansion without changing membership.
+    pub fn physical_selection(
+        &self,
+        query: &CachedQuery,
+        trim: PhysicalTrim,
+        actor_center: Vec3,
+        actor_radius: f32,
+        skip_vegetation: bool,
+        mut ordinary_eligible: impl FnMut(usize, &StaticObstacle) -> bool,
+    ) -> Result<PhysicalSelection> {
+        let mut selected = PhysicalSelection::default();
+        for candidate in &query.candidates {
+            let included = match trim {
+                PhysicalTrim::Supplied => candidate.distance < query.query_radius,
+                PhysicalTrim::CachedRider => candidate.distance <= query.query_radius,
+            };
+            if !included {
+                continue;
+            }
+            match candidate.node {
+                SceneNode::StaticObstacle(index)
+                    if ordinary_eligible(index, &self.obstacles[index]) =>
+                {
+                    selected.static_candidates += 1;
+                    selected.meshes.push(PhysicalMesh {
+                        node: candidate.node,
+                        proxy_index: None,
+                        obstacle: self.obstacles[index].clone(),
+                    });
+                }
+                SceneNode::Vegetation(index) => {
+                    selected.vegetation_candidates += 1;
+                    if skip_vegetation {
+                        continue;
+                    }
+                    let plant = &self.vegetation[index];
+                    let position = vegetation_collision::placement_position(
+                        plant.coordinates,
+                        self.coordinate_unit,
+                    )?;
+                    if matches!(trim, PhysicalTrim::Supplied)
+                        && vegetation_collision::horizontal_separation(
+                            actor_center,
+                            actor_radius,
+                            position,
+                            plant.radius,
+                        )? != 0.
+                    {
+                        continue;
+                    }
+                    //001280b0 copies the runtime0 template basis and replaces
+                    //its packed XYZ translation; visual size ratios are unused.
+                    let world_matrix = [
+                        1.,
+                        0.,
+                        0.,
+                        0.,
+                        0.,
+                        1.,
+                        0.,
+                        0.,
+                        0.,
+                        0.,
+                        1.,
+                        0.,
+                        position[0],
+                        position[1],
+                        position[2],
+                        1.,
+                    ];
+                    for (proxy_index, mesh) in self.vegetation_meshes[usize::from(plant.slot)]
+                        .iter()
+                        .enumerate()
+                    {
+                        if let Some(mesh) = mesh {
+                            selected.meshes.push(PhysicalMesh {
+                                node: candidate.node,
+                                proxy_index: Some(proxy_index),
+                                obstacle: StaticObstacle {
+                                    mesh: mesh.clone(),
+                                    world_matrix,
+                                },
+                            });
+                        } else {
+                            selected.unsupported_vegetation_proxies += 1;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(selected)
+    }
+
+    ///Quad AR/AO type2 geometry callbacks retain one nearest-hit accumulator
+    ///across ordinary meshes and every expanded plant proxy in native order.
+    pub fn quad_contacts(
+        &self,
+        query: &CachedQuery,
+        rays: &crate::collision::CollisionRayTree,
+        world: &[f32; 16],
+        skip_vegetation: bool,
+    ) -> Result<SceneContacts> {
+        let mut geometry = crate::obstacle::SceneContactQuery::new(rays, world)?;
+        let selected = self.physical_selection(
+            query,
+            PhysicalTrim::Supplied,
+            geometry.center,
+            geometry.radius,
+            skip_vegetation,
+            |_, _| true,
+        )?;
+        let vegetation_proxies = selected.vegetation_proxies();
+        let mut vegetation_callbacks = 0;
+        for mesh in &selected.meshes {
+            let plant = mesh.proxy_index.is_some();
+            if geometry.visit_mesh(&mesh.obstacle, !plant)? && plant {
+                vegetation_callbacks += 1;
+            }
+        }
+        Ok(SceneContacts {
+            contacts: geometry.finish(),
+            vegetation_proxies,
+            vegetation_callbacks,
+            unsupported_vegetation_proxies: selected.unsupported_vegetation_proxies,
+        })
+    }
     ///001ea050's plant exclusion uses retained cache distances, configured
     ///proxy count and an inclusive twenty-foot horizontal circle, not geometry.
     pub fn vegetation_blocks_checkpoint(&self, query: &CachedQuery) -> Result<bool> {
@@ -524,6 +706,184 @@ mod tests {
             height: 20.,
             radius: 2.,
         }
+    }
+
+    fn cylinder_plants() -> Ecosystem {
+        let mut eco = ecosystem(vec![plant(128, 128, 0), plant(129, 128, 0)], &[2]);
+        for placement in &mut eco.placements {
+            placement.radius = 0.25;
+        }
+        eco.species[0].proxies = vec![
+            [1, 0, 0, 0, 0, 0, 0, 1f32.to_bits(), 5f32.to_bits()],
+            [1, 0, 0, 0, 0, 0, 0, 0, 0],
+        ];
+        eco
+    }
+
+    #[test]
+    fn physical_expansion_keeps_mixed_order_zero_proxy_and_distinct_actor_gates() {
+        let eco = cylinder_plants();
+        let objects = vec![
+            obstacle([128., 1., 128.], [1.; 3], IDENTITY),
+            obstacle([129., 1., 128.], [1.; 3], IDENTITY),
+        ];
+        let scene = SceneCollision::new(config(), objects, Some(&eco), false, |_| Ok(0.)).unwrap();
+        let query = CachedQuery {
+            center: [128., 0., 128.],
+            query_radius: 3.,
+            cache_radius: 40.,
+            refreshed: false,
+            candidates: vec![
+                RetainedCandidate {
+                    node: SceneNode::StaticObstacle(0),
+                    distance: 0.,
+                },
+                RetainedCandidate {
+                    node: SceneNode::Vegetation(0),
+                    distance: 0.,
+                },
+                RetainedCandidate {
+                    node: SceneNode::StaticObstacle(1),
+                    distance: 0.,
+                },
+                RetainedCandidate {
+                    node: SceneNode::Vegetation(1),
+                    distance: 0.75,
+                },
+            ],
+        };
+        let cached = scene
+            .physical_selection(
+                &query,
+                PhysicalTrim::CachedRider,
+                query.center,
+                query.query_radius,
+                false,
+                |_, _| true,
+            )
+            .unwrap();
+        let order: Vec<_> = cached
+            .meshes
+            .iter()
+            .map(|m| (m.node, m.proxy_index))
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                (SceneNode::StaticObstacle(0), None),
+                (SceneNode::Vegetation(0), Some(0)),
+                (SceneNode::Vegetation(0), Some(1)),
+                (SceneNode::StaticObstacle(1), None),
+                (SceneNode::Vegetation(1), Some(0)),
+                (SceneNode::Vegetation(1), Some(1)),
+            ]
+        );
+        assert_eq!(cached.unsupported_vegetation_proxies, 0);
+        assert_eq!(cached.meshes[2].obstacle.mesh.triangles.len(), 32);
+        assert!(
+            cached.meshes[2]
+                .obstacle
+                .mesh
+                .vertices
+                .iter()
+                .all(|p| *p == [0.; 3])
+        );
+        let wheel = scene
+            .physical_selection(
+                &query,
+                PhysicalTrim::Supplied,
+                [129., 0., 128.],
+                0.5,
+                false,
+                |_, _| true,
+            )
+            .unwrap();
+        assert_eq!(
+            wheel
+                .meshes
+                .iter()
+                .filter(|m| m.proxy_index.is_some())
+                .map(|m| m.node)
+                .collect::<Vec<_>>(),
+            vec![SceneNode::Vegetation(1); 2]
+        );
+        let skip = scene
+            .physical_selection(
+                &query,
+                PhysicalTrim::CachedRider,
+                query.center,
+                query.query_radius,
+                true,
+                |i, _| i == 1,
+            )
+            .unwrap();
+        assert_eq!(skip.vegetation_candidates, 2);
+        assert_eq!(skip.meshes.len(), 1);
+        assert_eq!(skip.meshes[0].node, SceneNode::StaticObstacle(1));
+    }
+
+    #[test]
+    fn cylinder_type2_contacts_keep_callbacks_across_proxy_order_and_query_bit() {
+        use crate::collision::{CollisionRay, CollisionRayTree};
+        let mut eco = cylinder_plants();
+        eco.placements.truncate(1);
+        //Two actual cylinders in one plant make two source callbacks; the
+        //second re-appends the accumulated nearest row before the zero proxy.
+        let duplicate = eco.species[0].proxies[0];
+        eco.species[0].proxies.insert(1, duplicate);
+        let mut scene =
+            SceneCollision::new(config(), vec![], Some(&eco), false, |_| Ok(0.)).unwrap();
+        let mut world = IDENTITY;
+        world[12] = 128.;
+        world[14] = 128.;
+        let rays = CollisionRayTree {
+            transform: IDENTITY,
+            query_capacity: 1,
+            rays: vec![CollisionRay {
+                start: [2., 2., 0.2],
+                end: [0., 2., 0.2],
+            }],
+            nodes: vec![RayTreeNode {
+                center: [1., 2., 0.2],
+                half_extents: [1., 0.1, 0.1],
+                bound_measure: 4.04,
+                children: [0x8000; 2],
+            }],
+        };
+        let query = scene
+            .cached_query([128., 2., 128.], 3., |_, _| true)
+            .unwrap();
+        let hit = scene.quad_contacts(&query, &rays, &world, false).unwrap();
+        assert_eq!(hit.vegetation_proxies, 3);
+        assert_eq!(hit.unsupported_vegetation_proxies, 0);
+        assert_eq!(hit.vegetation_callbacks, 2);
+        assert_eq!(hit.contacts.len(), 2);
+        assert_eq!(hit.contacts[0].world_point, hit.contacts[1].world_point);
+        assert!(hit.contacts[0].world_normal[0] > 0.9);
+        assert!(hit.contacts[0].world_point[0] > 128.8 && hit.contacts[0].world_point[0] < 129.);
+        let before = scene.cache().entries().to_vec();
+        let skipped = scene.quad_contacts(&query, &rays, &world, true).unwrap();
+        assert!(skipped.contacts.is_empty());
+        assert_eq!(skipped.vegetation_proxies, 0);
+        assert_eq!(scene.cache().entries(), before);
+        //Cylinder has no top cap, even when the plant gate admits this ray.
+        let vertical = CollisionRayTree {
+            rays: vec![CollisionRay {
+                start: [0.2, 6., 0.1],
+                end: [0.2, 4., 0.1],
+            }],
+            nodes: vec![RayTreeNode {
+                center: [0.2, 5., 0.1],
+                half_extents: [0.1, 1., 0.1],
+                bound_measure: 4.04,
+                children: [0x8000; 2],
+            }],
+            ..rays
+        };
+        let cap = scene
+            .quad_contacts(&query, &vertical, &world, false)
+            .unwrap();
+        assert!(cap.contacts.is_empty());
     }
 
     #[test]

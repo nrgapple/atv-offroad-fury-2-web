@@ -541,27 +541,63 @@ pub fn query_static_scene(
     ray_world: &[f32; 16],
     obstacles: &[StaticObstacle],
 ) -> crate::Result<Vec<ObstacleContact>> {
-    let mut nearest: Vec<(usize, f32, ObstacleContact)> = Vec::new();
-    let mut contacts = Vec::new();
-    let ray_root = rays.nodes.first().ok_or("missing ray root")?;
-    let ray_center = transform_point(ray_world, ray_root.center);
-    let ray_radius = dot(ray_root.half_extents, ray_root.half_extents).sqrt();
+    let mut query = SceneContactQuery::new(rays, ray_world)?;
     for object in obstacles {
-        let root = object.mesh.nodes.first().ok_or("missing obstacle root")?;
-        let center = transform_point(&object.world_matrix, root.center);
-        let radius = dot(root.half_extents, root.half_extents).sqrt();
-        if sphere_separation(ray_center, ray_radius, center, radius) != 0.0 {
-            continue;
+        query.visit_mesh(object, true)?;
+    }
+    Ok(query.finish())
+}
+
+/// One type-2 actor query across the original mixed ordinary/plant order.
+/// Plant expansion calls geometry without the ordinary provider sphere gate;
+/// every successful proxy callback still appends the cumulative nearest rows.
+pub(crate) struct SceneContactQuery<'a> {
+    rays: &'a crate::collision::CollisionRayTree,
+    world: &'a [f32; 16],
+    pub center: Vec3,
+    pub radius: f32,
+    nearest: Vec<(usize, f32, ObstacleContact)>,
+    contacts: Vec<ObstacleContact>,
+}
+impl<'a> SceneContactQuery<'a> {
+    pub fn new(
+        rays: &'a crate::collision::CollisionRayTree,
+        world: &'a [f32; 16],
+    ) -> crate::Result<Self> {
+        let root = rays.nodes.first().ok_or("missing ray root")?;
+        Ok(Self {
+            rays,
+            world,
+            center: transform_point(world, root.center),
+            radius: dot(root.half_extents, root.half_extents).sqrt(),
+            nearest: Vec::new(),
+            contacts: Vec::new(),
+        })
+    }
+    ///Returns whether geometry invokes the successful contact callback, even
+    ///when its appended rows have reached the native sixty-record capacity.
+    pub fn visit_mesh(
+        &mut self,
+        object: &StaticObstacle,
+        ordinary_sphere_gate: bool,
+    ) -> crate::Result<bool> {
+        if ordinary_sphere_gate {
+            let root = object.mesh.nodes.first().ok_or("missing obstacle root")?;
+            let center = transform_point(&object.world_matrix, root.center);
+            let radius = dot(root.half_extents, root.half_extents).sqrt();
+            if sphere_separation(self.center, self.radius, center, radius) != 0.0 {
+                return Ok(false);
+            }
         }
-        let ray_to_mesh = relative_transform(ray_world, &object.world_matrix);
-        let mesh_to_ray = relative_transform(&object.world_matrix, ray_world);
-        let hits = query_bundle(rays, &object.mesh, &ray_to_mesh, &mesh_to_ray)?;
+        let ray_to_mesh = relative_transform(self.world, &object.world_matrix);
+        let mesh_to_ray = relative_transform(&object.world_matrix, self.world);
+        let hits = query_bundle(self.rays, &object.mesh, &ray_to_mesh, &mesh_to_ray)?;
         if hits.is_empty() {
-            continue;
+            return Ok(false);
         }
         for h in hits {
             let contact = ObstacleContact {
-                local_end: rays.rays[h.ray_index].end,
+                local_end: self.rays.rays[h.ray_index].end,
                 world_point: transform_point(&object.world_matrix, h.hit.point),
                 world_normal: std::array::from_fn(|i| {
                     (object.world_matrix[i] * h.hit.normal[0]
@@ -569,20 +605,23 @@ pub fn query_static_scene(
                         + object.world_matrix[8 + i] * h.hit.normal[2]
                 }),
             };
-            if let Some(previous) = nearest.iter_mut().find(|x| x.0 == h.ray_index) {
+            if let Some(previous) = self.nearest.iter_mut().find(|x| x.0 == h.ray_index) {
                 if h.hit.fraction < previous.1 {
                     *previous = (h.ray_index, h.hit.fraction, contact);
                 }
             } else {
-                nearest.push((h.ray_index, h.hit.fraction, contact));
+                self.nearest.push((h.ray_index, h.hit.fraction, contact));
             }
         }
-        for &(_, _, contact) in &nearest {
-            if contacts.len() == 60 {
+        for &(_, _, contact) in &self.nearest {
+            if self.contacts.len() == 60 {
                 break;
             }
-            contacts.push(contact);
+            self.contacts.push(contact);
         }
+        Ok(true)
     }
-    Ok(contacts)
+    pub fn finish(self) -> Vec<ObstacleContact> {
+        self.contacts
+    }
 }
