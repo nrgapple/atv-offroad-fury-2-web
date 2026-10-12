@@ -304,7 +304,10 @@ vegetation LOD or PS2 hardware equivalence. Source tree lighting is not complete
 
 Focused browser checks pass source blending, fog, depth and renderer-state
 isolation. The three host captures report 2,176 ENV01, 1,167 ENV04 and 4,251
-FREE05 contributing pixels; these are test contributions, not full-scene scores.
+FREE05 contributing pixels; these are from the original focused three-map run,
+not full-scene scores. The subsequent near-vegetation material gate passes on
+all nine requested maps, with source blending/fog/depth switches and renderer
+state isolation, and zero GL errors.
 All nine maps load and drive. Material checks pass with 2,604 rain, 73,970 lava,
 6,335 waterflow and 115,571 ski-jump pixels plus pause/context retention.
 Vancouver desktop/390px passes with all 78 placements drawn, 43 colliders, 123
@@ -322,6 +325,13 @@ FREE05's three groups/78 instances/236,380 pixels, with 2,304 GPU comparisons
 and maximum UV error `7.152557e-7`. The frontend gate passes original
 title/menu/controller/mobile-touch/pause/Tioga/Caribou/no-disc routes. This
 candidate and its inspected screenshot remain host-only WIP, not a public release.
+
+The source material census assigns `DiffuseCompressed` to the near vegetation
+shader family and `EcoSystemCode2D` to corresponding distant variants. Across
+the tested ENV01/ENV04/FREE05 resource sets, all 25 inspected models have a
+single-node identity root, so the tested normal/basis path has no additional
+bind-root transform in those models. This bounded census does not cover every
+map asset, distant transition, billboard/LOD behavior or complete GS parity.
 
 The four-step WASM benchmark measures the selected operation plus output copy,
 using five alternating runs of 200 batches after 30 warmups with the full

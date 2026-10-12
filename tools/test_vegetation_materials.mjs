@@ -6,7 +6,7 @@ const native=process.env.ATV_ECO_NATIVE?JSON.parse(await fs.readFile(process.env
 const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
 const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4290';
 const browser=await chromium.launch({headless:true});
-try {for(const environment of ['env01','env04','free05']) {
+try {for(const environment of (process.env.ATV_ECO_MAPS||'env01,env04,free05').split(',')) {
  const page=await browser.newPage({viewport:{width:960,height:600}}),errors=[];
  page.on('pageerror',error=>errors.push(error.message));
  await page.addInitScript(()=>{
@@ -45,6 +45,7 @@ try {for(const environment of ['env01','env04','free05']) {
  });
  await page.goto(`${base}/play.html?drive=1&environment=${environment}`);
  await page.waitForFunction(()=>window.atvTerrainStatus?.ready&&window.atvTerrainStatus?.simulation,null,{timeout:120000});
+ assert.match(await page.evaluate(()=>window.atvTerrainStatus.source),new RegExp(`${environment}\\.tr2$`),'Requested vegetation map must load');
  await page.evaluate(()=>window.captureEco=true);
  await page.waitForFunction(()=>ecoPixels>0&&ecoVehicleDraws>0,null,{timeout:15000});
  await page.evaluate(()=>window.captureEco=false);
