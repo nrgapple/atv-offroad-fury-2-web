@@ -38,6 +38,7 @@ export class TrainRenderer {
         });
         const chunk = upload(vertices, new Uint16Array(group.indices), true, true);
         chunk.texture = textures.get(material); chunk.alphaCutoff = image?.sceneAlphaCutoff ?? 0;
+        chunk.fog = image?.pass?.fog ?? true;
         chunks.push(chunk); this.chunks.push(chunk);
       }
       this.geometry.set(name, { chunks, bind: new Float32Array(mesh.nodes.flatMap(node => node.world_matrix)) });
@@ -48,13 +49,14 @@ export class TrainRenderer {
     if (!frame || !Number.isFinite(frame.time) || !Number.isFinite(frame.duration) || frame.cars.some(car => car.matrix.length !== 16 || !car.matrix.every(Number.isFinite)) || (frame.wheel_matrices && frame.wheel_matrices.some(matrix => matrix.length !== 16 || !matrix.every(Number.isFinite)))) throw new Error('Simulation returned an invalid train pose.');
     this.frame = frame; this.source.frame = frame;
   }
-  draw(uniforms, fallbackTexture) {
+  draw(uniforms, fallbackTexture, fogEnabled = false) {
     const gl = this.gl; this.draws = 0; this.triangles = 0;
     gl.uniform1i(uniforms.useQuadPose, true); gl.uniform1i(uniforms.useEcosystem, false); gl.uniform1i(uniforms.useTerrainTexture, false);
     const draw = (geometry, matrix, bones, unlit) => {
       if (!geometry) return;
       gl.uniformMatrix4fv(uniforms.model, false, matrix); gl.uniformMatrix4fv(uniforms.quadBones, false, bones); gl.uniform1i(uniforms.unlit, unlit);
       for (const chunk of geometry.chunks) {
+        gl.uniform1i(uniforms.fogEnabled,fogEnabled&&chunk.fog);
         gl.uniform1f(uniforms.alphaCutoff, chunk.alphaCutoff); gl.uniform1i(uniforms.useTexture, Boolean(chunk.texture)); gl.bindTexture(gl.TEXTURE_2D, chunk.texture ?? fallbackTexture);
         gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0); this.draws++; this.triangles += chunk.count / 3;
       }

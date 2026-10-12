@@ -180,11 +180,55 @@ integration gate is complete. It remains unpublished and absent from the public
 f585991 release; public release is pending PR9 integration. Fog, lighting/lens
 effects, LOD, shadows and weather are not covered by this checkpoint.
 
+## Host fog and shared coverage gate
+
+The later integrated host candidate reads source Fog Visibility and Haziness
+from connected map scenes. ENV01/ENV04 resolve to visibility 1, haziness 1 and
+range 0–768; FREE05 defaults to visibility 1, haziness 0.5 and range 352–768.
+The ENV01/ENV04 source haziness value is 1.2; Rust applies `min(1)`, yielding 1.
+The view far clip follows fog end through source
+routine `0012b360`. Compressed prelit materials use source-correlated 8-bit GS
+fog-coverage packing and the per-PSM `foggingOnOff` switch (native constructor
+`001b9810` defaults to 1); the water base pass uses its source fog switch. The
+shared GPU coverage path uses screen-affine interpolation, replacing the prior
+guessed exponential curve.
+
+The actual host GPU matches 3,000 source-correlated coverage samples with zero
+byte differences. One triangle sample produces 55 on GPU, 55.25 under affine
+interpolation, and 96.25 under perspective interpolation. Rust range/coefficient
+checks match 600 complete scalar cases across 35,393 original EE instructions
+with zero compared binary32 mismatches. A further 3,000 packing samples are
+source-correlated expressions with finite distance supplied; they are not full
+VU runs or a hardware replay. Native GS precision for terrain and water remains
+unverified. The fog-integrated reflection regression passes 2,304 GPU
+comparisons with maximum UV error `7.152557373046875e-7`; ENV01 and FREE05 report
+141,770 and 236,380 contributing pixels respectively.
+
+The corrected disassembler execution table confirms SUBAz writes ACC, contrary
+to the previous special SUB broadcast label. Reflection XYZ comparisons remain
+unchanged because their tested operation wrote W only. Vancouver desktop and
+390px traces each draw all 78 placements with zero skipped groups, 43 colliders,
+123 wheel-support frames and 31 body-contact frames, with takeoff at step 19 and
+later landing. All nine maps, material source RGBA/UV/pause/context tests, four
+wet-map and 390px water checks, dry-map behavior and frontend routes pass with
+zero JS/GL errors. `make check` passes 309 core, 22 network, 11 relay, 3 bridge
+and 66 JavaScript tests; `make verify`, `make web`, 17 release tests, 6 Worker
+tests and source hygiene pass.
+
+This is a host-only integration result and is absent from the current public
+`cef26f4` release (and historical f585991 predecessor). The packing validation does not establish a full
+native VU or PS2 pipeline. Terrain/water GS precision, water reflection/froth,
+source-specific program precision, active-view overrides, weather callbacks,
+lighting, shadows, lens effects and LOD remain open. The inspected ENV04 image
+is a host candidate capture, not a public-build or PS2 framebuffer comparison.
+
 ## Remaining fidelity gates
 
-Broader reflection coverage and original hardware equivalence remain open.
-Terrain projected pass selection and adaptive LOD, vegetation visibility,
-per-material fog, point lights, random weather/lens effects, shadows, remaining
+Original hardware equivalence remains open. Fog visibility, range and shared
+screen-affine coverage now pass the described host checks, while native terrain
+and water GS precision, source-specific precision, active-view overrides and
+weather callbacks remain unverified. Terrain projected pass selection and
+adaptive LOD, vegetation visibility, point lights, random weather/lens effects, shadows, remaining
 ambient emitters and actors, shader families and gameplay modes remain incomplete.
 Original dynamic assets and configuration presence do not establish that they
 interact, move or emit particles correctly. Continue through the source census

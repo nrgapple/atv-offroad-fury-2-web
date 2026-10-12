@@ -1,6 +1,6 @@
 {
-  "status": "Public Cloudflare release f585991579f8c44b098d6b137b1679eb8050e3fd adds FREE05 Vancouver Ridge and passes public hash, nine-map, material and frontend checks. The map is a partial reconstruction and the browser port remains incomplete.",
-  "working_on": "Host reflection and nine-map/material/frontend integration checks pass. Integrate the isolated change after PR9, then validate public deployment while continuing fog, lighting, LOD and weather recovery; preserve the public f585991 baseline and the independent multiplayer lane.",
+  "status": "Public Cloudflare release cef26f4 is current; the host-only fog candidate recorded below is not included. The browser port remains an incomplete reconstruction, not a full-game or original-hardware equivalent.",
+  "working_on": "Continue terrain/water GS precision, active-view overrides and weather callbacks, then original lighting, shadows, lens effects and LOD. Keep fog/reflection host work unpublished until the release owner validates a new current-main artifact.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1809,9 +1809,30 @@
       "limitation": "Host-only reflection integration checkpoint; the renderer and wider host regressions pass, but this candidate is not in the public f585991 release and publication remains pending PR9 integration. The pre-normalized view-direction service and bounded arithmetic windows do not establish exact PS2 VU/GS behavior or full rendering equivalence. Fog, original lighting and lens effects, LOD, shadows and weather remain unchanged and incomplete.",
       "image": "/devlog-images/original-ice-reflections-render-on-caribou-and-vancouv-256e003e.png",
       "caption": "Host inspection-camera view of restored ENV01 ice-reflection projections on snow and nearby structures. FREE05 also passes its reflection test; this capture is not from the public release."
+    },
+    {
+      "id": "source-fog-ranges-and-affine-gpu-coverage-pass-host-va-00b4c159",
+      "timestamp": "2026-10-12T21:10:50.702356+00:00",
+      "recorded_at": "2026-10-12T21:20:43.588890+00:00",
+      "kind": "verification",
+      "title": "Source fog ranges and affine GPU coverage pass host validation",
+      "summary": "Connected scenes now use recovered fog visibility, haziness, range and far clip with the source compressed-prelit coverage path. Native scalar cases, actual-GPU coverage samples and the integrated map/material/water/frontend regressions pass on the host.",
+      "details": [
+        "The scene reader uses original Fog Visibility and Haziness. ENV01 and ENV04 resolve to visibility 1, haziness 1, and a 0\u2013768 fog range; FREE05 defaults to visibility 1, haziness 0.5, and a 352\u2013768 range. ENV01/ENV04 source haziness is 1.2; Rust applies min(1), yielding 1. View far clip follows fog end through source routine 0012b360.",
+        "Compressed prelit materials use the original 8-bit GS fog-coverage packing and per-PSM foggingOnOff switch; the native constructor at 001b9810 defaults it to 1. The water base pass uses its source fog switch. This replaces the guessed exponential curve with source-correlated packing and screen-affine coverage.",
+        "The host GPU matches 3,000 source-correlated coverage samples with zero byte differences. A triangle sample gives 55 on the GPU versus 55.25 affine and 96.25 perspective interpolation, confirming screen-linear interpolation for this test.",
+        "Rust range/coefficient validation matches 600 complete scalar cases across 35,393 original EE instructions with zero compared binary32 differences. Another 3,000 packing samples evaluate source-correlated expressions with finite distance supplied; these are not complete VU runs or a hardware replay.",
+        "With fog integrated, reflection validation passes 2,304 GPU comparisons with maximum UV error 7.152557373046875e-7. ENV01 reports 141,770 contributing reflection pixels and FREE05 236,380. The disassembler SUB broadcast label was corrected against execution: SUBAz writes ACC; this does not change the reflection XYZ comparisons, whose tested operation wrote W only.",
+        "Vancouver desktop and 390px checks draw all 78 placements with zero skipped groups and report 43 colliders, 123 wheel-support frames, 31 body-contact frames, takeoff at step 19, later landing, drag-light animation and unlocked menu access.",
+        "All nine maps pass terrain-following, vegetation, reflection and contact checks without unsupported meshes or JS/GL errors. Materials pass source RGBA, UV animation, pause and context retention: ENV04 rain 2,604 pixels, ENV07 lava 73,970, ENV08 waterflow 6,335 and FREE05 ski jump 115,571. Water passes four wet maps plus 390px projection and dry-map behavior with zero GL errors. Original menu/controller/touch/pause frontend routes pass without a disc prompt or browser errors.",
+        "make check passes 309 core tests, 22 network tests, 11 relay tests, 3 bridge tests and 66 JavaScript tests. make verify, make web, 17 release tests, 6 Worker tests and source hygiene checks pass."
+      ],
+      "limitation": "Host-only candidate; fog is absent from current public cef26f4 and its historical f585991 predecessor. This validates source-correlated compressed-prelit packing and screen-affine coverage, not full VU/hardware replay. Terrain and water GS precision, water reflection/froth, original program-specific precision, active-view overrides, weather callbacks, lighting, shadows, lens effects and LOD remain open.",
+      "image": "/devlog-images/source-fog-ranges-and-affine-gpu-coverage-pass-host-va-00b4c159.png",
+      "caption": "Host ENV04 drive capture using the recovered scene fog path. This is a local candidate image, not the current public cef26f4 build (or historical f585991 build) or an original PS2 framebuffer."
     }
   ],
-  "updated_at": "2026-10-12T20:43:31.003469+00:00",
+  "updated_at": "2026-10-12T21:20:43.588890+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

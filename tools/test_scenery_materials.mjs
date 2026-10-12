@@ -33,12 +33,18 @@ try {
       };
       const names = new WeakMap(), getLocation = WebGL2RenderingContext.prototype.getUniformLocation;
       WebGL2RenderingContext.prototype.getUniformLocation = function (...args) { const location=getLocation.apply(this,args); if(location) names.set(location,args[1]); return location; };
+      const eyeUniform = WebGL2RenderingContext.prototype.uniform3f;
+      WebGL2RenderingContext.prototype.uniform3f = function (location, ...value) {
+        if (window.materialEye && names.get(location) === 'eye') value = window.materialEye;
+        return eyeUniform.call(this, location, ...value);
+      };
       const matrix = WebGL2RenderingContext.prototype.uniformMatrix4fv;
       WebGL2RenderingContext.prototype.uniformMatrix4fv = function (location, transpose, value) {
         const selected = window.sceneryModels?.[0];
         const p = this.getParameter(this.CURRENT_PROGRAM);
         if (p && selected && names.get(location) === 'viewProjection') {
           const center = selected.world_matrix.slice(12, 15), eye = [center[0], center[1] + 60, center[2] - 90];
+          window.materialEye = eye;
           const forward = [0, -60 / Math.hypot(60, 90), 90 / Math.hypot(60, 90)];
           const right = [-1, 0, 0], up = [0, forward[2], -forward[1]];
           const view = [right[0], up[0], -forward[0], 0, right[1], up[1], -forward[1], 0, right[2], up[2], -forward[2], 0,

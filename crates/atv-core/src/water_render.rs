@@ -20,6 +20,7 @@ pub struct Material {
     pub additional_fov: f32,
     pub environment_blend: bool,
     pub environment_depth_write: bool,
+    pub environment_fog: bool,
     pub froth_alpha_reference: f32,
     pub froth_depth_write: bool,
 }
@@ -100,6 +101,12 @@ impl Material {
             additional_fov: scalar(&wtt, general, "AdditionalFov", 4.)?,
             environment_blend: scalar(&psm, pass, "alphaBlendingOnOff_1", 0.)? != 0.,
             environment_depth_write: scalar(&psm, pass, "zWriteDisabled_1", 0.)? == 0.,
+            environment_fog: scalar(
+                &psm,
+                pass,
+                "foggingOnOff_1",
+                scalar(&psm, pass, "foggingOnOff", 1.)?,
+            )? != 0.,
             froth_alpha_reference: scalar(&psm, pass, "alphaReferenceValue_2", 0.)? / 128.,
             froth_depth_write: scalar(&psm, pass, "zWriteDisabled_2", 0.)? == 0.,
         };

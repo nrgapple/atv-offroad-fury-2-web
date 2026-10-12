@@ -10,6 +10,7 @@ pub struct Pass {
     pub prelit: bool,
     /// Original local-normal reflection projection: 1=XY, 2=XZ, 3=YZ.
     pub reflection_plane: u8,
+    pub fog: bool,
     pub blend: bool,
     pub depth_write: bool,
     pub uv_scroll: Option<Scroll>,
@@ -225,6 +226,9 @@ pub fn parse(data: &[u8]) -> Result<Pass> {
         shader,
         prelit,
         reflection_plane,
+        // DefaultMT constructor001b9810 enables fog; explicit PSM passes
+        // override its GS PRIM bit through001b51d0.
+        fog: number("foggingOnOff", 1.)? != 0.,
         blend,
         depth_write,
         uv_scroll,
@@ -249,11 +253,14 @@ mod tests {
             let pass = parse(source.as_bytes()).unwrap();
             assert_eq!(pass.reflection_plane, plane);
             assert!(pass.prelit && pass.blend && !pass.depth_write);
+            assert!(pass.fog);
         }
         let unsupported =
             parse(b"[ShaderPass_1]\nmicroProgramName=EnvironmentMapCompressed\n").unwrap();
         assert_eq!(unsupported.reflection_plane, 0);
         assert!(!unsupported.prelit);
+        let unfogged = parse(b"[ShaderPass_1]\nfoggingOnOff=0\n").unwrap();
+        assert!(!unfogged.fog);
     }
     #[test]
     fn scroll_uses_negative_sampling_offset_and_signed_wrap() {

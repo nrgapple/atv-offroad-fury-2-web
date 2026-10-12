@@ -60,7 +60,7 @@ try {for(const environment of ['env01','free05']) {
     const vertices=mesh.lods[0].groups.flatMap(g=>g.vertices),low=[0,1,2].map(i=>Math.min(...vertices.map(v=>v.position[i]))),high=[0,1,2].map(i=>Math.max(...vertices.map(v=>v.position[i])));
     const center=low.map((v,i)=>(v+high[i])*.5),m=placement.world_matrix;
     const point=[0,1,2].map(i=>m[12+i]+m[i]*center[0]+m[4+i]*center[1]+m[8+i]*center[2]);
-    const span=Math.max(high[0]-low[0],high[2]-low[2],50),eye=[point[0],point[1]+span,point[2]];
+    const span=Math.max(high[0]-low[0],high[2]-low[2],50),eye=[point[0],point[1]+Math.min(span,status.fog?.end*.2||span),point[2]];
     const half=span*.65,aspect=960/600;
     // Asset-derived top-down inspection view; this camera is test-only.
     window.reflectionView=[1/half,0,0,0,0,0,-1/(span*4),0,0,-aspect/half,0,0,-point[0]/half,point[2]*aspect/half,eye[1]/(span*4),1];

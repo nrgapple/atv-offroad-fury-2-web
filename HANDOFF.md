@@ -50,6 +50,37 @@ not in public commit f585991; see
 [map-fidelity evidence](research/MAP_FIDELITY.md). Keep the public Vancouver
 checkpoint and the separate multiplayer lane intact.
 
+## Current host-only fog candidate
+
+The integrated host candidate now reads source Fog Visibility and Haziness for
+ENV01/ENV04 (range 0–768, haziness 1) and FREE05 (352–768, haziness 0.5),
+with ENV01/ENV04 source haziness 1.2 clamped by Rust `min(1)` to 1, and following
+fog end for the view far clip. Compressed
+prelit materials use source-correlated 8-bit GS fog packing and the per-PSM
+fogging switch; the water base pass uses its source switch. The shared GPU
+coverage path uses screen-affine interpolation rather than the earlier guessed
+exponential curve. On the host GPU, 3,000 coverage samples match with zero byte
+difference; a triangle sample is 55 versus 55.25 affine and 96.25 perspective.
+
+Native range/coefficient checks cover 600 scalar cases and 35,393 original EE
+instructions with zero compared binary32 mismatches. The 3,000 packing samples
+are source-correlated expressions with finite distance supplied, not complete
+VU runs or hardware replay. The fog-integrated reflection test passes 2,304 GPU
+comparisons with maximum UV error 7.15e-7. Nine-map, materials, water, Vancouver
+desktop/390px contact and frontend regressions pass; `make check` passes 309
+core, 22 network, 11 relay, 3 bridge and 66 JavaScript tests, alongside verify,
+web, 17 release and 6 Worker tests. The disassembler's SUB broadcast label was
+corrected against execution: SUBAz writes ACC; the reflection XYZ comparisons
+are unchanged because the tested operation wrote W only.
+
+This remains unpublished host work and is absent from the current public
+`cef26f4` release (and its historical f585991 predecessor). Terrain and
+water GS precision, water reflection/froth, source-specific program precision,
+active-view overrides, weather callbacks, lighting, shadows, lens effects and
+LOD remain open. The host ENV04 screenshot in the dev log is not a public-build
+capture or an original PS2 framebuffer. Preserve the separate multiplayer
+release lane.
+
 ## Rust multiplayer host checkpoint, public verification pending
 
 Isolated `feature/rust-multiplayer` adds four-player host-controlled Freeride
