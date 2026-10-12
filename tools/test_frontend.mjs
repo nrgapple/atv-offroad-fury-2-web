@@ -36,10 +36,11 @@ try {
   assert.equal(await page.locator('#disc').isHidden(), true);
   assert.equal((await page.evaluate(()=>window.atvTerrainStatus)).simulation, false);
   await page.keyboard.press('Enter'); await screen('main');
-  await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
-  assert.match(await page.locator('#menu-notice').textContent(), /Multiplayer is not implemented/);
-  await page.keyboard.press('ArrowUp'); await page.keyboard.press('Enter'); await screen('single');
-  await pad(13); assert.equal(await page.locator('#frontend').getAttribute('data-selection'),'1');
+  assert.equal(await page.getByRole('button',{name:'Multiplayer',exact:true}).count(),0);
+  assert.equal(await page.locator('#frontend').getAttribute('data-renderer'),'rust');
+  await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter'); await screen('single');
+  assert.equal(await page.getByRole('button',{name:'Race',exact:true}).count(),0);
+  await pad(13); assert.equal(await page.locator('#frontend').getAttribute('data-selection'),'0');
   await pad(0); await screen('tracks');
   assert.equal(await page.locator('#frontend').getAttribute('data-track'),'env01');
   const visited = new Set();
@@ -71,9 +72,16 @@ try {
   await page.setViewportSize({width:390,height:844});
   await page.getByRole('button',{name:'Single Player',exact:true}).tap(); await screen('single');
   await page.getByRole('button',{name:'Freestyle',exact:true}).tap(); await screen('tracks');
-  for (let index = 0; index < 8 && await page.locator('#frontend').getAttribute('data-track') !== 'env01'; index++) await page.getByRole('button',{name:'Previous environment',exact:true}).tap();
+  for (let index = 0; index < 8 && await page.locator('#frontend').getAttribute('data-track') !== 'env01'; index++) {
+    const before = await page.locator('#frontend').getAttribute('data-track');
+    await page.getByRole('button',{name:'Previous environment',exact:true}).tap();
+    await page.waitForFunction(before => document.querySelector('#frontend').dataset.track !== before,before);
+  }
   assert.equal(await page.locator('#frontend').getAttribute('data-track'),'env01');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth),390);
+  const stage = await page.locator('#menu-stage').boundingBox();
+  assert.equal(stage.width,390); assert.equal(stage.height,844);
+  for (const button of await page.locator('#menu-buttons button').all()) assert((await button.boundingBox()).height >= 44);
   if (process.env.ATV_UI_SCREENSHOTS) await page.screenshot({path:`${process.env.ATV_UI_SCREENSHOTS}-mobile.png`});
   await page.getByRole('button',{name:'Ride Caribou Peak',exact:true}).tap();
   await page.waitForFunction(()=>document.querySelector('#frontend').hidden&&window.atvTerrainStatus.ready,null,{timeout:90000});
@@ -99,5 +107,5 @@ try {
   await page.getByRole('heading',{name:'Development log',exact:true}).waitFor();
   await page.getByRole('link',{name:'Play current build'}).tap(); await screen('title');
   assert.deepEqual(errors,[]);
-  console.log('PASS: original title/menu/track resources, keyboard and controller navigation, truthful unavailable modes, Tioga drive, paused simulation, mobile touch selection, Caribou reload, no disc prompt or browser errors.');
+  console.log('PASS: original title/menu/track resources, keyboard and controller navigation, only supported menu routes, Tioga drive, paused simulation, mobile touch selection, Caribou reload, no disc prompt or browser errors.');
 } finally { await browser.close(); }

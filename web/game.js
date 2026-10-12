@@ -702,6 +702,7 @@ function vehicleMatrix() {
   ]);
 }
 function matrix() {
+  if (cameraFrame) presentCameraFrame();
   const { x, y, z, yaw, pitch } = camera;
   const forward = [Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)];
   const right = [-Math.cos(yaw), 0, Math.sin(yaw)];
@@ -710,7 +711,7 @@ function matrix() {
   // Original00325e80 uses horizontal FOV. Preserve the4:3 vertical framing
   // while extending the view horizontally on widescreen displays.
   const near = 1, far = Math.max(terrain.sizeX, terrain.sizeZ) * 5;
-  const f = cameraFrame ? (4 / 3) / Math.tan(cameraFrame.fov * Math.PI / 360) : 1 / Math.tan(Math.PI / 6);
+  const f = cameraFrame ? diagnostics.cameraPresentation.focalLength : 1 / Math.tan(Math.PI / 6);
   const projection = new Float32Array([f / (canvas.width / canvas.height), 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) / (near - far), -1, 0, 0, 2 * far * near / (near - far), 0]);
   const result = new Float32Array(16);
   for (let column = 0; column < 4; column++) for (let row = 0; row < 4; row++) for (let k = 0; k < 4; k++) result[column * 4 + row] += projection[k * 4 + row] * view[column * 4 + k];
@@ -748,12 +749,9 @@ function drivingInput() {
     if (pointer.move) {
       input.steer += pointer.dx / 70;
       leftAxis = -pointer.dy / 70; leftHeld = true;
-      if (airborne) {
-        // Recenter on takeoff: the held accelerator position must not become
-        // an immediate full-pitch command as wheel contact disappears.
-        pointer.airOriginY ??= pointer.y;
-        leftAirLean = clamp((pointer.y - pointer.airOriginY) / 70);
-      } else delete pointer.airOriginY;
+      // Keep the thumb's original center across takeoff. A pullback already
+      // held on the ramp must immediately become the original backward lean.
+      leftAirLean = pointer.dy / 70;
     }
   }
   if (leftHeld || (touchDrive.engaged && input.throttle === 0 && input.brake === 0 && !input.reverse)) {
@@ -831,11 +829,25 @@ async function pumpSimulation() {
 function acceptCameraFrame(frame) {
   if (frame?.position?.length !== 3 || frame?.target?.length !== 3 || ![...frame.position, ...frame.target, frame.fov].every(Number.isFinite)) throw new Error('Simulation returned an invalid camera pose.');
   cameraFrame = frame;
+  presentCameraFrame();
+  diagnostics.followCamera = { ...frame, presetName: diagnostics.cameraPresets?.[frame.preset] };
+}
+function presentCameraFrame() {
+  const frame = cameraFrame;
+  // Keep the recovered landscape camera intact. A narrow viewport needs extra
+  // distance and a higher sightline so the quad does not hide the next jump.
+  const aspect = canvas.width / canvas.height;
+  const portrait = Math.max(0, Math.min(1, (1 - aspect) / .5));
+  const distanceScale = 1 + .35 * portrait;
   [camera.x, camera.y, camera.z] = frame.position;
   const offset = frame.target.map((value, i) => value - frame.position[i]);
+  camera.x -= offset[0] * (distanceScale - 1);
+  camera.y -= offset[1] * (distanceScale - 1);
+  camera.z -= offset[2] * (distanceScale - 1);
   camera.yaw = Math.atan2(offset[0], offset[2]);
-  camera.pitch = Math.atan2(offset[1], Math.hypot(offset[0], offset[2]));
-  diagnostics.followCamera = { ...frame, presetName: diagnostics.cameraPresets?.[frame.preset] };
+  camera.pitch = Math.atan2(offset[1], Math.hypot(offset[0], offset[2])) + .12 * portrait;
+  const focalLength = (4 / 3) / Math.tan(frame.fov * Math.PI / 360) * (1 - .12 * portrait);
+  diagnostics.cameraPresentation = { aspect, portrait, distanceScale, pitchLift: .12 * portrait, focalLength };
 }
 function followCamera(dt) {
   const pad = focused ? gamepad() : null;
@@ -1013,13 +1025,27 @@ window.addEventListener('keydown', event => {
 });
 window.addEventListener('keyup', event => keys.delete(event.code));
 const clearInput = () => { keys.clear(); pointers.clear(); touchControls.clear(); touchDrive.clear(); simAccumulator = 0; cameraCycle = false; cameraButtonHeld = false; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
-const syncAudio = () => { void audio.setActive(focused && !document.hidden && !lost && !menuOpen).catch(error => { diagnostics.audioError = error.message; }); };
+let pageSuspended = false;
+const syncAudio = () => { void audio.setActive(focused && !document.hidden && !lost && !menuOpen && !pageSuspended).catch(error => { diagnostics.audioError = error.message; }); };
 window.addEventListener('blur', () => { focused = false; clearInput(); syncAudio(); });
 window.addEventListener('focus', () => { focused = true; syncAudio(); });
 document.addEventListener('visibilitychange', () => { clearInput(); syncAudio(); });
 canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; diagnostics.ready = false; clearInput(); syncAudio(); status('Graphics context lost; waiting for recovery.'); });
 canvas.addEventListener('webglcontextrestored', () => { try { lost = false; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
-window.addEventListener('pagehide', () => { cancelAnimationFrame(frame); audio.close(); worker.terminate(); clearInput(); });
+window.addEventListener('pagehide', event => {
+  cancelAnimationFrame(frame); frame = 0; clearInput();
+  if (event.persisted) {
+    // Back/forward cache retains this page. Its live Rust worker and audio
+    // resources must survive too; closing them leaves a restored frozen ATV.
+    pageSuspended = true; focused = false; syncAudio();
+  } else { audio.close(); worker.terminate(); }
+});
+window.addEventListener('pageshow', event => {
+  if (!event.persisted || !pageSuspended) return;
+  pageSuspended = false; focused = document.hasFocus(); lastTime = 0;
+  clearInput(); syncAudio();
+  if (!frame) frame = requestAnimationFrame(render);
+});
 try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); initializeGl(); frame = requestAnimationFrame(render); const params = new URLSearchParams(location.search);
   if (params.get('source') === 'disc') { menuOpen = false; $('frontend').hidden = true; }
   else {

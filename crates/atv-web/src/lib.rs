@@ -627,6 +627,10 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             };
             serde_json::to_vec(&atv_core::scene::parse_with_start(scene.as_bytes(), mode)?)
         }
+        62 => {
+            let request = serde_json::from_slice(input).map_err(|e| e.to_string())?;
+            serde_json::to_vec(&atv_core::ui_menu::layout(request)?)
+        }
         54 => serde_json::to_vec(&atv_core::ui::Document::parse(input)?),
         55 => serde_json::to_vec(&atv_core::ui::Font::decode(input)?),
         56 => {

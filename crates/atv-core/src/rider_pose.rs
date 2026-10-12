@@ -3,6 +3,41 @@
 //! Wrecks, scoring, events and look-target selection remain separate systems.
 use crate::Result;
 
+/// Vertical-motion crouch controller at the end of USA v2.00 001e5260.
+/// These are animation blend weights, never additional suspension forces.
+#[derive(Debug, Clone, Copy)]
+pub struct Crouch {
+    demand: f32,
+    previous_vertical_speed: f32,
+    pub blend: f32,
+}
+impl Default for Crouch {
+    fn default() -> Self {
+        Self {
+            demand: 0.2,
+            previous_vertical_speed: 0.0,
+            blend: 0.5,
+        }
+    }
+}
+impl Crouch {
+    pub fn step(&mut self, local_vertical_speed: f32, dt: f32) -> Result<()> {
+        if !local_vertical_speed.is_finite() || !dt.is_finite() || dt <= 0.0 {
+            return Err("invalid crouch motion input".into());
+        }
+        self.demand += ((0.2 - self.blend) * 0.5).clamp(-2.25 * dt, 2.25 * dt);
+        let change = local_vertical_speed - self.previous_vertical_speed;
+        if change > 0.0 {
+            self.demand = (self.demand + change / 38.0).min(1.5);
+        } else if self.demand <= 0.25 {
+            self.demand = (self.demand + change * 0.15).max(0.0);
+        }
+        self.blend += ((self.demand.min(1.0) - self.blend) * 0.5).clamp(-6.0 * dt, 6.0 * dt);
+        self.previous_vertical_speed = local_vertical_speed;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 #[repr(u8)]
@@ -522,6 +557,44 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn crouch_matches_original_instruction_sequence() {
+        // Synthetic local velocities through001e6b88..001e6d58. Only the
+        // world-to-local transform was hooked; all blend math ran as EE ops.
+        let cases = [
+            (0.0, 0x3ecccccc),
+            (0.0, 0x3e999998),
+            (38.0, 0x3ecccccc),
+            (-20.0, 0x3f000000),
+            (-20.0, 0x3f19999a),
+            (0.0, 0x3f333334),
+            (0.0, 0x3f4cccce),
+            (50.0, 0x3f666667),
+            (0.0, 0x3f733334),
+        ];
+        let mut crouch = Crouch::default();
+        for (velocity, expected) in cases {
+            crouch.step(velocity, 1.0 / 60.0).unwrap();
+            assert_eq!(crouch.blend.to_bits(), expected);
+        }
+    }
+    #[test]
+    fn crouch_settles_and_reacts_to_vertical_motion_without_changing_physics() {
+        let mut crouch = Crouch::default();
+        for _ in 0..300 {
+            crouch.step(0.0, 1.0 / 60.0).unwrap();
+        }
+        assert!((crouch.blend - 0.2).abs() < 1e-5);
+        let settled = crouch.blend;
+        crouch.step(38.0, 1.0 / 60.0).unwrap();
+        assert!(crouch.blend > settled);
+        assert!(crouch.blend - settled <= 0.100001);
+        for _ in 0..300 {
+            crouch.step(0.0, 1.0 / 60.0).unwrap();
+        }
+        assert!((crouch.blend - 0.2).abs() < 1e-5);
+        assert!(crouch.step(f32::NAN, 0.01).is_err());
+    }
     fn fixture() -> (Vec<Motion>, Vec<crate::mesh::Node>) {
         use crate::animation::{Animation, RotationKey, Sampling, Track, TranslationKey};
         let identity = [

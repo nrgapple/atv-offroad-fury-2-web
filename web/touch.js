@@ -54,9 +54,9 @@ export class TouchDrive {
     }
     return { ...this.ground };
   }
-  // Keep the accelerator/brake held at takeoff while the same thumb now controls
-  // the original airborne pitch axis. No velocity or angular impulse is added.
-  airSample(lean) { return { ...this.ground, lean: clamp(lean) }; }
+  // Keep takeoff throttle/gear, but pullback now means pitch, not wheel brake.
+  // Independent controller/keyboard brakes remain handled by the input mixer.
+  airSample(lean) { return { ...this.ground, brake: 0, lean: clamp(lean) }; }
 
 }
 

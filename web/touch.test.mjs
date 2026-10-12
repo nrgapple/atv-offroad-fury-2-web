@@ -30,6 +30,8 @@ test('second right finger cannot steal gesture or cause premature release', () =
 test('backward left input brakes forward motion and reverses only near standstill', () => {
   const drive = new TouchDrive();
   assert.deepEqual(drive.sample(-1, 30), { throttle: 0, brake: 1, reverse: false });
+  assert.deepEqual(drive.airSample(1), { throttle: 0, brake: 0, reverse: false, lean: 1 }, 'Ramp pullback becomes pitch without retaining its ground brake');
+  assert.deepEqual(drive.sample(-1, 25), { throttle: 0, brake: 1, reverse: false }, 'The same held pullback brakes again after landing');
   assert.deepEqual(drive.sample(-.5, 1.01), { throttle: 0, brake: .5, reverse: false });
   assert.deepEqual(drive.sample(-.5, .99), { throttle: .5, brake: 0, reverse: true });
   assert.deepEqual(drive.sample(-1, -10), { throttle: 1, brake: 0, reverse: true });

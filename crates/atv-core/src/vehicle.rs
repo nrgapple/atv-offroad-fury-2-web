@@ -79,6 +79,8 @@ pub struct Vehicle {
     stiction_speed: f32,
     axis_config: AxisConfig,
     smoothed_axes: [f32; 2],
+    rider_crouch: crate::rider_pose::Crouch,
+    pose_preload_axis: f32,
     base_center: Vec3,
     center_range: Vec3,
     rider_stand_up_speed: f32,
@@ -200,6 +202,8 @@ impl Vehicle {
             stiction_speed: data.first_scalar("Tires", "StictionSpeed")?,
             axis_config: AxisConfig::from_physics(data)?,
             smoothed_axes: [0.; 2],
+            rider_crouch: crate::rider_pose::Crouch::default(),
+            pose_preload_axis: 0.0,
             base_center: center,
             center_range: [
                 data.first_scalar("Physical Properties", "CofGRangeX")?,
@@ -302,11 +306,15 @@ impl Vehicle {
             wheelie_active: self.rider_state.wheelie_active,
         }
     }
-    /// Recovered normal-riding inputs. Crouch and look-target behavior are not
-    /// recovered here; keep their original constructor values until connected.
+    /// Recovered riding inputs, with the separate touch preload also expressed
+    /// through the original lean clips. Look-target acquisition remains separate.
     pub fn rider_pose_input(&self) -> crate::rider_pose::Input {
+        let mut axes = self.smoothed_axes;
+        if self.contacts.iter().any(|contact| contact.grounded) && axes[1].abs() < 0.01 {
+            axes[1] += self.pose_preload_axis;
+        }
         crate::rider_pose::Input {
-            axes: self.smoothed_axes,
+            axes,
             local_forward_speed: inverse_transform(self.body.basis(), self.body.linear_velocity)[2],
             stand_up_speed: self.rider_stand_up_speed,
             wheel_contact: self.contacts.iter().any(|contact| contact.grounded),
@@ -315,7 +323,7 @@ impl Vehicle {
                 DriveDirection::Reverse
             ),
             reverse_override: false,
-            crouch: 0.5,
+            crouch: self.rider_crouch.blend,
             look_phase: 0.5,
             force_snapshot: false,
             suppress_snapshot: false,
@@ -346,6 +354,10 @@ impl Vehicle {
             .materials
             .ok_or("original terrain material table is required")?;
         let throttle = input.throttle.clamp(0., 1.);
+        let pose_target = input.preload_axis.unwrap_or(0.0).clamp(-1.0, 1.0);
+        let pose_limit = self.axis_config.normal_rate[1] * dt;
+        self.pose_preload_axis +=
+            (pose_target - self.pose_preload_axis).clamp(-pose_limit, pose_limit);
         let brake = input.brake.clamp(0., 1.);
         let speed = inverse_transform(self.body.basis(), self.body.linear_velocity)[2];
         let raw_axes = rider_control::smooth_axes(
@@ -679,6 +691,10 @@ impl Vehicle {
                 [0., -1., 0.],
             )?;
         }
+        self.rider_crouch.step(
+            inverse_transform(self.body.basis(), self.body.linear_velocity)[1],
+            dt,
+        )?;
         Ok(self.frame())
     }
 }

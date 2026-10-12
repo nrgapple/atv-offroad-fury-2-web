@@ -35,3 +35,31 @@ Public v7's pause test passed on desktop Tioga and a 390-pixel Caribou session: 
 The route connects two environments: ENV01 / Caribou Peak and ENV02 / Tioga Valley. A `ruins.col` prop collision mesh exposed four NaN triangle-plane records on zero-area faces created by duplicate-coordinate vertices. The targeted parser handling preserves the original tree and triangle indices and stored plane words while skipping just those four degenerate faces; non-finite vertices and other invalid geometry remain rejected. See [collision evidence](COLLISION.md).
 
 The frontend test covers the selected route and input cases above. It does not establish all original menus, callbacks, map coverage, race behavior, or whole-game equivalence. No PS2-hardware comparison has been made. Public v7 contains the route, two maps, pause panel and revised mobile controls. Physical iOS behavior and complete original pause/stunt behavior remain unverified or incomplete.
+
+## Responsive Rust menu reconstruction (2026-10-11)
+
+The authored `ui_menu` module now emits full-viewport draw commands and matching
+hit regions through WASM operation 62. A Canvas browser bridge rasterizes those
+commands and dispatches input. Curved red/silver frontend panels, charcoal pause
+panels, yellow selection bars and the recovered italic/condensed font atlases
+replace fixed 640×448 page backgrounds. Title typography is authored text, not
+the original logo artwork; original scenic backdrops and animated selection
+materials are not yet reproduced. This is a responsive reconstruction of the
+original visual style, not pixel-exact native UI rendering.
+
+Only implemented choices are exposed: Main Menu → Single Player → Freestyle,
+eight environment previews, and the working pause commands. Unsupported racing,
+multiplayer, training, profiles and other modes are absent rather than selectable
+placeholders. Fullscreen is omitted where the browser reports it unsupported.
+The original track photographs and font glyphs remain separate runtime assets;
+no complete menu screenshot or page background is used to render these screens.
+
+Host Chromium validation passes controller and keyboard navigation, all eight
+picker entries, Tioga driving, frozen simulation while paused, Controls/back,
+390×844 touch selection, Caribou reload, and no browser errors or disc prompt.
+Portrait menu bounds fill the viewport and exposed touch targets measure at
+least 44 CSS pixels in height. Rust tests cover supported choices, invalid
+requests and hit-region bounds at five portrait/landscape sizes. Late worker
+layout responses are discarded after a route, selection or viewport change.
+The frontend also retains its poll loop correctly across persisted pagehide /
+pageshow; physical iOS Safari remains a separate validation target.

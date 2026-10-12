@@ -17,3 +17,16 @@ A private finite-binary32 instruction interpreter ran the original executable by
 These are component checks, not PS2 hardware or full-game replay equivalence. Scene/body access is supplied by explicit hooks. Trigonometry still uses host sine/cosine instead of the original lookup table, and VU exceptional arithmetic is not fully emulated. Terrain queries are integrated; the optional camera clearance query against objects remains incomplete. Browser controller/touch orbit scaling is provisional. Projection recovery (`0011b070` → `0013bdb0` → `00325e80`) establishes horizontal field of view. The browser uses the recovered FOV at a 4:3 reference aspect and preserves its vertical framing while extending the horizontal view for widescreen. This widescreen framing is a browser adaptation. Original render-distance/LOD policies remain incomplete.
 
 Private reproduction scripts and results live under `work/physics/camera_*` and `private/reports/`; extracted presets and decompiler output remain ignored.
+
+### Portrait presentation
+
+Portrait view now pulls the recovered chase position back by up to 35%, raises
+the sightline by up to 0.12 radians and reduces focal length by up to 12%. The change
+blends from square to narrow portrait; landscape retains the exact recovered
+position, target-derived pitch and 85-degree native horizontal FOV projection.
+The renderer applies this from each untouched native camera frame, so rotating
+the device does not compound offsets. `tools/test_portrait_camera.mjs` verifies
+portrait→landscape→portrait behavior in the live renderer; before/after 390×844
+Caribou captures were inspected. This is an explicitly requested mobile adaptation,
+not a recovered original PS2 camera preset. Original object camera clearance is
+still not connected, so further obstruction testing remains relevant.

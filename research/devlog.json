@@ -552,7 +552,49 @@
       "limitation": "The eight-map build is publicly verified, but this remains a partial reconstruction. The Arlington locomotive and ten-car looping path have been recovered in research but are not rendered or connected to the game. Full race flow and original terrain LOD behavior remain unfinished.",
       "image": "/devlog-images/a-half-inch-seam-had-hidden-freeport-harbor-fc44799c.png",
       "caption": "Host-verified Freeport Harbor spawn on the original dirt road, with recovered vegetation and terrain."
+    },
+    {
+      "id": "a-phone-sized-map-menu-now-works-9f2e1444",
+      "timestamp": "2026-10-11T23:55:03.553178+00:00",
+      "recorded_at": "2026-10-12T00:02:31.005646+00:00",
+      "kind": "build",
+      "title": "A phone-sized map menu now works",
+      "summary": "The port now has a responsive Rust-drawn menu route from Single Player to Freestyle, with all eight environment choices and touch-sized controls.",
+      "details": [
+        "The menu uses recovered original fonts and map imagery, while Rust now handles layout, focus, drawing, and hit testing. Keyboard, controller, and touch navigation passed the host frontend regression; the portrait picker has 44-pixel-or-larger targets."
+      ],
+      "limitation": "This is an original-style reconstruction, not a pixel-exact copy: scenic menu backdrops, animated highlights, some original callbacks, other modes, and the race HUD are still unfinished.",
+      "image": "/devlog-images/a-phone-sized-map-menu-now-works-9f2e1444.png",
+      "caption": "Host-verified portrait map picker: Freestyle at Caribou Peak, with large Previous, Next, Back, and Ride targets."
+    },
+    {
+      "id": "the-camera-now-makes-room-for-portrait-play-3a61e706",
+      "timestamp": "2026-10-11T23:53:22.015682+00:00",
+      "recorded_at": "2026-10-12T00:02:37.468574+00:00",
+      "kind": "build",
+      "title": "The camera now makes room for portrait play",
+      "summary": "Portrait mode uses a longer chase view and a slightly higher, wider sightline, then restores the exact landscape camera pose and field of view when the screen rotates back.",
+      "details": [
+        "The host camera test passed with 35% more chase distance and a 0.12-radian upward sightline in portrait. The adjustment stays scoped to portrait instead of changing the recovered landscape view."
+      ],
+      "limitation": "This camera regression and screenshot were captured on the host; they do not establish behavior on a public deployment. Crash recovery and the remaining race behavior are separate unfinished work.",
+      "image": "/devlog-images/the-camera-now-makes-room-for-portrait-play-3a61e706.png",
+      "caption": "Host-verified portrait chase view, with more of the snowy course visible ahead of the ATV."
+    },
+    {
+      "id": "a-held-pullback-now-reaches-the-airborne-rider-pose-2b752c1d",
+      "timestamp": "2026-10-12T00:01:13.950840+00:00",
+      "recorded_at": "2026-10-12T00:02:53.969580+00:00",
+      "kind": "verification",
+      "title": "A held pullback now reaches the airborne rider pose",
+      "summary": "On a real Caribou ramp, touch pullback now reaches the recovered airborne lean and native pitch response without an added torque boost; a separate ramp run landed on all four wheels and drove on.",
+      "details": [
+        "The final trace showed the first airborne frame with lean input active and ground braking cleared. The browser lifecycle regression also passed in WebKit and Chromium with persisted pagehide/pageshow events, then resumed driving and pause controls without JavaScript or WebGL errors."
+      ],
+      "limitation": "A full flip, stunt scoring, and crash recovery are not implemented. The user's earlier hover report is not explained by the lifecycle test: natural navigation reloaded locally, so its cause remains unconfirmed.",
+      "image": "/devlog-images/a-held-pullback-now-reaches-the-airborne-rider-pose-2b752c1d.png",
+      "caption": "Host-verified touch-driven Caribou ramp run used to check pullback through takeoff; the screenshot is not proof of a completed flip."
     }
   ],
-  "updated_at": "2026-10-11T23:40:30.526079+00:00"
+  "updated_at": "2026-10-12T00:02:53.969580+00:00"
 }
