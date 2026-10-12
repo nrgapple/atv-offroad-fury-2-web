@@ -43,6 +43,8 @@ struct Simulation {
     obstacle_rays: Option<std::rc::Rc<atv_core::collision::CollisionRayTree>>,
     obstacle_meshes: Vec<std::rc::Rc<atv_core::collision::CollisionMesh>>,
     obstacles: Option<Vec<atv_core::obstacle::StaticObstacle>>,
+    scene_partition: Option<atv_core::scene_partition::Config>,
+    ecosystem: Option<atv_core::ecosystem::Ecosystem>,
     boundary_config: Option<atv_core::boundary_launch::Config>,
     crowd_present: bool,
     water: Option<atv_core::water_animation::LiveField>,
@@ -320,9 +322,23 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 sim.obstacle_rays = None;
                 sim.obstacle_meshes.clear();
                 sim.obstacles = None;
+                sim.scene_partition = None;
+                sim.ecosystem = None;
                 sim.boundary_config = None;
                 sim.crowd_present = false;
                 sim.water = None;
+            }
+            65 => {
+                sim.ecosystem = if input.is_empty() {
+                    None
+                } else {
+                    Some(atv_core::ecosystem::decode(input)?)
+                };
+                sim.vehicle = None;
+                return serde_json::to_vec(&serde_json::json!({
+                    "placements": sim.ecosystem.as_ref().map_or(0, |eco| eco.placements.len()),
+                }))
+                .map_err(|e| e.to_string());
             }
             21 => {
                 let physics = PhysicsData::parse(input)?;
@@ -401,6 +417,13 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         .ok_or("load original scene collision first")?
                         .clone(),
                 )?;
+                if let Some(config) = sim.scene_partition {
+                    vehicle.set_scene_partition(
+                        config,
+                        sim.ecosystem.as_ref(),
+                        sim.terrain.as_ref().ok_or("load original terrain first")?,
+                    )?;
+                }
                 if let Some(animator) = &mut sim.rider_animator {
                     animator.reset(&sim.rider_mesh.as_ref().ok_or("rider mesh missing")?.nodes)?;
                     animator.reset_score_session();
@@ -929,6 +952,10 @@ fn obstacle_input(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         let source: serde_json::Value = serde_json::from_slice(input).map_err(|e| e.to_string())?;
         let placements = source.as_array().or_else(|| source.get("placements").and_then(serde_json::Value::as_array)).ok_or("collision placements need an array")?;
         let boundary_config: Option<atv_core::boundary_launch::Config> = source.get("boundary_launch").filter(|v| !v.is_null()).map(|v| serde_json::from_value(v.clone()).map_err(|e| e.to_string())).transpose()?;
+        let scene_partition: Option<atv_core::scene_partition::Config> = source.get("scene_partition").filter(|v| !v.is_null()).map(|v| serde_json::from_value(v.clone()).map_err(|e| e.to_string())).transpose()?;
+        if let Some(config) = scene_partition {
+            atv_core::scene_partition::StaticPartition::new(config, &[])?;
+        }
         if let Some(config) = boundary_config { config.outside([0.; 3], false)?; }
         let crowd_present = source.get("crowd_present").map(|v| v.as_bool().ok_or("invalid crowd flag")).transpose()?.unwrap_or(false);
         if placements.len() > 4096 { return Err("too many collision placements".into()); }
@@ -947,6 +974,7 @@ fn obstacle_input(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         }
         let result = serde_json::json!({"instances":obstacles.len(),"meshes":sim.obstacle_meshes.len()});
         sim.obstacles = Some(obstacles);
+        sim.scene_partition = scene_partition;
         sim.boundary_config = boundary_config;
         sim.crowd_present = crowd_present;
         sim.vehicle = None;
@@ -1054,7 +1082,13 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
     if (32..=34).contains(&op) {
         return engine_audio(input, op, index);
     }
-    if (20..=29).contains(&op) || (44..=47).contains(&op) || op == 51 || op == 53 || op == 63 {
+    if (20..=29).contains(&op)
+        || (44..=47).contains(&op)
+        || op == 51
+        || op == 53
+        || op == 63
+        || op == 65
+    {
         return simulation(input, op);
     }
     let json = match op {

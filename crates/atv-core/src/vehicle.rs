@@ -33,6 +33,25 @@ fn speed_magnitude(velocity: Vec3) -> f32 {
     }
 }
 
+/// 001ed330 applies a spring at a world point through the Model inverse matrix
+/// (00166510), then subtracts the current local CoG. Preserve its separate
+/// rotated point and negative rotated origin: subtracting world CoG first is
+/// algebraically equivalent but changes binary32 cancellation on large tracks.
+fn apply_spring_world_force(body: &mut BodyState, config: &BodyConfig, force: Vec3, point: Vec3) {
+    let basis = body.basis();
+    let origin = body.origin(config);
+    let local_point = add(
+        inverse_transform(basis, point),
+        scale(inverse_transform(basis, origin), -1.),
+    );
+    let arm = sub(local_point, config.center_of_mass);
+    body.force = add(body.force, force);
+    body.local_torque = add(
+        body.local_torque,
+        wheel::cross(arm, inverse_transform(basis, force)),
+    );
+}
+
 #[derive(Debug, Default, Clone, Copy, Deserialize)]
 pub struct VehicleInput {
     pub throttle: f32,
@@ -76,6 +95,18 @@ pub struct VehicleFrame {
     pub water_height: f32,
     pub landing_action: Option<crate::rider_pose::Landing>,
     pub reset_count: u32,
+    pub scene_query: SceneQueryFrame,
+}
+
+///Most recent quad query, before the shared cache is used for recovery.
+///Plant candidates are registered; physical plant proxy expansion is separate.
+#[derive(Debug, Default, Clone, Copy, Serialize)]
+pub struct SceneQueryFrame {
+    pub enabled: bool,
+    pub cached_nodes: usize,
+    pub selected_static: usize,
+    pub selected_vegetation: usize,
+    pub refreshed: bool,
 }
 struct WreckPhysics {
     rules: crate::wreck::Config,
@@ -125,6 +156,10 @@ pub struct Vehicle {
     obstacle_rays: Option<std::rc::Rc<crate::collision::CollisionRayTree>>,
     wreck_rays: Option<std::rc::Rc<crate::collision::CollisionRayTree>>,
     obstacles: Vec<crate::obstacle::StaticObstacle>,
+    scene_collision: Option<crate::scene_collision::SceneCollision>,
+    scene_sphere_center: Vec3,
+    scene_sphere_radius: f32,
+    scene_query: SceneQueryFrame,
     obstacle_contact_count: usize,
     wreck_physics: Option<WreckPhysics>,
     normal_contact: ContactConfig,
@@ -159,7 +194,8 @@ impl Vehicle {
         ];
         //001e3b80 sets the sphere-bounds flag before requesting inertia extents.
         //001b3ed0 returns the aggregate radius in all three components.
-        let dimensions = [mesh.bind_bounds()?.sphere_radius; 3];
+        let bounds = mesh.bind_bounds()?;
+        let dimensions = [bounds.sphere_radius; 3];
         let inertia = [
             data.first_scalar("Physical Properties", "PitchInertiaScale")?
                 * (mass / 12.0)
@@ -307,6 +343,12 @@ impl Vehicle {
             obstacle_rays: None,
             wreck_rays: None,
             obstacles: Vec::new(),
+            scene_collision: None,
+            //001e1fd0 configures this query before001e3b80 selects sphere
+            //bounds for inertia; retain the bind AABB center/diagonal here.
+            scene_sphere_center: bounds.center,
+            scene_sphere_radius: dot(bounds.half_extents, bounds.half_extents).sqrt(),
+            scene_query: SceneQueryFrame::default(),
             obstacle_contact_count: 0,
             wreck_physics: None,
             normal_contact: ContactConfig::from_physics(data)?,
@@ -507,6 +549,29 @@ impl Vehicle {
         }
         self.obstacle_rays = Some(rays);
         self.obstacles = obstacles;
+        self.scene_collision = None;
+        self.scene_query = SceneQueryFrame::default();
+        Ok(())
+    }
+    ///Single-region ordinary placements and ESB nodes share one original tree
+    ///and one40/50-foot candidate cache, including recovery queries.
+    pub fn set_scene_partition(
+        &mut self,
+        config: crate::scene_partition::Config,
+        ecosystem: Option<&crate::ecosystem::Ecosystem>,
+        terrain: &Terrain,
+    ) -> Result<()> {
+        self.scene_collision = Some(crate::scene_collision::SceneCollision::from_terrain(
+            config,
+            self.obstacles.clone(),
+            ecosystem,
+            terrain,
+            false,
+        )?);
+        self.scene_query = SceneQueryFrame {
+            enabled: true,
+            ..SceneQueryFrame::default()
+        };
         Ok(())
     }
     pub fn set_materials(&mut self, materials: [TerrainMaterial; 8]) {
@@ -558,6 +623,7 @@ impl Vehicle {
             water_height: self.water_height,
             landing_action: self.landing_action,
             reset_count: self.reset_count,
+            scene_query: self.scene_query,
         }
     }
     /// Recovered riding inputs, with the separate touch preload also expressed
@@ -770,11 +836,34 @@ impl Vehicle {
             b[0][0], b[0][1], b[0][2], 0., b[1][0], b[1][1], b[1][2], 0., b[2][0], b[2][1],
             b[2][2], 0., origin[0], origin[1], origin[2], 1.,
         ];
+        let ordered_obstacles = if let Some(scene) = &mut self.scene_collision {
+            let center = crate::obstacle::transform_point(&ray_world, self.scene_sphere_center);
+            let query = scene.cached_query(center, self.scene_sphere_radius, |_, _| true)?;
+            let selected = scene.static_selection(&query);
+            self.scene_query = SceneQueryFrame {
+                enabled: true,
+                cached_nodes: query.candidates.len(),
+                selected_static: selected.len(),
+                selected_vegetation: query
+                    .strictly_within()
+                    .filter(|candidate| {
+                        matches!(
+                            candidate.node,
+                            crate::scene_collision::SceneNode::Vegetation(_)
+                        )
+                    })
+                    .count(),
+                refreshed: query.refreshed,
+            };
+            std::borrow::Cow::Owned(selected.into_iter().cloned().collect::<Vec<_>>())
+        } else {
+            std::borrow::Cow::Borrowed(self.obstacles.as_slice())
+        };
         let stop_planes = crate::wheel_stop::sample(terrain, &ray_world, self.wheel_stops)?;
         for i in 0..4 {
             self.supports[i] = crate::wheel_support::sample(
                 terrain,
-                &self.obstacles,
+                &ordered_obstacles,
                 &ray_world,
                 self.wheel_rest[i],
                 self.suspension_config.travel,
@@ -880,7 +969,7 @@ impl Vehicle {
             self.obstacle_rays.as_ref()
         };
         let obstacle_contacts = if let Some(rays) = active_rays {
-            crate::obstacle::query_static_scene(rays, &ray_world, &self.obstacles)?
+            crate::obstacle::query_static_scene(rays, &ray_world, &ordered_obstacles)?
         } else {
             Vec::new()
         };
@@ -1023,7 +1112,12 @@ impl Vehicle {
                     },
                 )?;
                 if output.grounded {
-                    self.body.apply_world_force(output.force, output.point);
+                    apply_spring_world_force(
+                        &mut self.body,
+                        &self.body_config,
+                        output.force,
+                        output.point,
+                    );
                 } else {
                     // 001ed330 invalidates this plane until the next outer query.
                     self.supports[i].available = false;
@@ -1172,7 +1266,23 @@ impl Vehicle {
                 let forward = self.body.basis()[2];
                 let yaw = forward[0].atan2(forward[2]);
                 let support = if self.wreck_physics.is_some() {
-                    crate::wreck::checkpoint_static_support(candidate, yaw, &self.obstacles)?
+                    if let Some(scene) = &mut self.scene_collision {
+                        //001ea050 queries the same cache at radius twenty,
+                        //then uses its own strict trim and plant exclusion.
+                        let query = scene.cached_query(candidate, 20., |_, _| true)?;
+                        if scene.vegetation_blocks_checkpoint(&query)? {
+                            None
+                        } else {
+                            let selected: Vec<_> = scene
+                                .static_selection(&query)
+                                .into_iter()
+                                .cloned()
+                                .collect();
+                            crate::wreck::checkpoint_static_support(candidate, yaw, &selected)?
+                        }
+                    } else {
+                        crate::wreck::checkpoint_static_support(candidate, yaw, &self.obstacles)?
+                    }
                 } else {
                     Some(candidate)
                 };
@@ -1203,6 +1313,32 @@ impl Vehicle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn spring_force_retains_model_inverse_order_at_large_world_positions() {
+        let config = BodyConfig::new(10., [2., 3., 4.], [0.125, 0.2, -0.25]).unwrap();
+        let mut body = BodyState::new([4096., 100., 3072.], [0.8, 0.6, 0., 0.], &config).unwrap();
+        body.force = [1., 2., 3.];
+        body.local_torque = [4., 5., 6.];
+        let point = [4094.5, 99.75, 3073.25];
+        let force = [17., 1400., -30.];
+        let before = body.clone();
+        let mut world_center_order = body.clone();
+        world_center_order.apply_world_force(force, point);
+        apply_spring_world_force(&mut body, &config, force, point);
+        // Authored fixture; expected bits come from the isolated original
+        // 001ed85c..001edad0 force/torque instruction block, not game assets.
+        assert_eq!(body.force, [18., 1402., -27.]);
+        assert_eq!(
+            body.local_torque.map(f32::to_bits),
+            [0xc4c2d4c6, 0xc50825ee, 0xc4160082],
+        );
+        assert_ne!(body.local_torque, world_center_order.local_torque);
+        assert_eq!(body.center, before.center);
+        assert_eq!(body.orientation, before.orientation);
+        assert_eq!(body.linear_velocity, before.linear_velocity);
+        assert_eq!(body.local_angular_velocity, before.local_angular_velocity);
+    }
+
     #[test]
     fn boundary_flight_replaces_motion_once_and_restores_limits_on_recovery() {
         let (mut vehicle, terrain) = fixture();
@@ -2064,5 +2200,188 @@ mod tests {
         assert!(falling.origin[1] < resting.origin[1] - 2., "{falling:?}");
         assert!(falling.grounded.iter().all(|c| !c));
         assert!(falling.wheel_obstacle_support.iter().all(|c| !c));
+    }
+    #[test]
+    fn empty_scene_partition_preserves_legacy_vehicle_physics_on_flat_and_slope() {
+        for sloped in [false, true] {
+            let (mut legacy, mut terrain) = fixture();
+            let (mut combined, _) = fixture();
+            if sloped {
+                //Continuous synthetic y=x/8 surface with recovered triangle
+                //height/normal queries, crossing the original tile seams.
+                terrain.tiles.clear();
+                for leaf in &mut terrain.leaves {
+                    leaf.tile = terrain.tiles.len() as u16;
+                    leaf.height_scale = 0.125;
+                    terrain.tiles.push(TerrainTile {
+                        tag: 0,
+                        heights: std::array::from_fn(|i| (leaf.x + (i % 17) as u32) as u16),
+                        attributes: [u32::from_le_bytes([(-16_i8) as u8, 126, 0, 0]); 289],
+                    });
+                }
+            }
+            let angle = if sloped { 0.125_f32.atan() } else { 0. };
+            let orientation = [(angle / 2.).cos(), 0., 0., (angle / 2.).sin()];
+            let ground = terrain.contact(500., 500.).unwrap().unwrap().height;
+            for vehicle in [&mut legacy, &mut combined] {
+                enable_test_wrecks(vehicle);
+                vehicle.body =
+                    BodyState::new([500., ground + 1., 500.], orientation, &vehicle.body_config)
+                        .unwrap();
+            }
+            combined
+                .set_scene_partition(
+                    crate::scene_partition::Config {
+                        min_x: 0.,
+                        max_x: 1024.,
+                        min_z: 0.,
+                        max_z: 1024.,
+                        cell_size: 96.,
+                    },
+                    None,
+                    &terrain,
+                )
+                .unwrap();
+            let mut grounded_frames = 0;
+            for step in 0..120 {
+                let input = VehicleInput {
+                    throttle: if step < 30 { 0. } else { 0.7 },
+                    brake: if step >= 100 { 0.3 } else { 0. },
+                    steer: if step < 60 { 0. } else { 0.25 },
+                    lean: if step >= 80 { -0.4 } else { 0. },
+                    ..VehicleInput::default()
+                };
+                let mut before = legacy.step(&terrain, input, 1. / 60.).unwrap();
+                let mut after = combined.step(&terrain, input, 1. / 60.).unwrap();
+                assert!(after.scene_query.enabled);
+                assert_eq!(after.scene_query.cached_nodes, 0);
+                assert_eq!(after.scene_query.selected_static, 0);
+                assert_eq!(after.scene_query.selected_vegetation, 0);
+                assert!(!before.scene_query.enabled);
+                grounded_frames += usize::from(after.grounded.iter().all(|contact| *contact));
+                //Compare all exported physical/gameplay channels, excluding
+                //only the intentional difference in candidate diagnostics.
+                before.scene_query = SceneQueryFrame::default();
+                after.scene_query = SceneQueryFrame::default();
+                assert_eq!(
+                    format!("{before:?}"),
+                    format!("{after:?}"),
+                    "surface sloped={sloped}, step={step}"
+                );
+                assert_eq!(legacy.reset_origin, combined.reset_origin);
+                assert_eq!(legacy.reset_yaw.to_bits(), combined.reset_yaw.to_bits());
+            }
+            assert!(
+                grounded_frames > 60,
+                "fixture did not exercise grounded driving"
+            );
+            assert!(legacy.frame().origin[2] > 500., "fixture did not move");
+        }
+    }
+
+    #[test]
+    fn scene_vegetation_checkpoint_gate_preserves_safe_point_and_respects_source_edges() {
+        use crate::ecosystem::{Ecosystem, Placement, Species};
+        for proxy_count in [1, 0] {
+            let (mut vehicle, terrain) = fixture();
+            enable_test_wrecks(&mut vehicle);
+            let ecosystem = Ecosystem {
+                species: vec![Species {
+                    slot: 0,
+                    model: String::new(),
+                    billboard: String::new(),
+                    parameters: [0; 23],
+                    optional_name: None,
+                    proxies: vec![[0; 9]; proxy_count],
+                }],
+                placements: vec![Placement {
+                    slot: 0,
+                    resample_height: true,
+                    coordinates: [35200, 0, 32000],
+                    height: 20.,
+                    radius: 2.,
+                }],
+                global_name: None,
+                global_word: 0,
+                placement_texture: None,
+            };
+            vehicle
+                .set_scene_partition(
+                    crate::scene_partition::Config {
+                        min_x: 0.,
+                        max_x: 1024.,
+                        min_z: 0.,
+                        max_z: 1024.,
+                        cell_size: 96.,
+                    },
+                    Some(&ecosystem),
+                    &terrain,
+                )
+                .unwrap();
+            for _ in 0..120 {
+                vehicle
+                    .step(&terrain, VehicleInput::default(), 1. / 60.)
+                    .unwrap();
+            }
+            let settled = vehicle.frame();
+            assert!(settled.grounded.iter().all(|contact| *contact));
+            assert_eq!(settled.wreck.phase, crate::wreck::Phase::Riding);
+            let safe_point = vehicle.reset_origin;
+            assert_eq!(safe_point[0], 500.);
+            //Controlled candidate relocation keeps the same settled pose. All
+            //grounding, quad cache and recovery-radius queries run through real
+            //Vehicle steps; no contact flags or checkpoint result are forced.
+            for x in [550., 570., 572., 580.] {
+                vehicle.body = BodyState::new(
+                    [x, settled.origin[1], 500.],
+                    settled.orientation,
+                    &vehicle.body_config,
+                )
+                .unwrap();
+                for _ in 0..30 {
+                    vehicle
+                        .step(&terrain, VehicleInput::default(), 1. / 60.)
+                        .unwrap();
+                }
+                let frame = vehicle.frame();
+                assert!(
+                    frame.grounded.iter().all(|contact| *contact),
+                    "x={x}: {frame:?}"
+                );
+                assert_eq!(frame.wreck.phase, crate::wreck::Phase::Riding);
+                let scene = vehicle.scene_collision.as_ref().unwrap();
+                assert_eq!(scene.vegetation()[0].proxy_count, proxy_count);
+                let plant_distance = scene
+                    .cache()
+                    .entries()
+                    .iter()
+                    .find(|(index, _)| *index == 0)
+                    .unwrap()
+                    .1;
+                assert_eq!(plant_distance, (x - 550. - 2.).max(0.));
+                if proxy_count > 0 && x <= 570. {
+                    //Exact horizontal proximity20 remains excluded despite
+                    //its width-based cached distance18 being strictly below20.
+                    assert_eq!(
+                        vehicle.reset_origin, safe_point,
+                        "unsafe checkpoint advanced at x={x}"
+                    );
+                } else {
+                    //Proxyless plants do not reject. At x572 the retained
+                    //distance is exactly20, so the recovery strict gate skips
+                    //it; at x580 the candidate is clearly outside the circle.
+                    assert_eq!(vehicle.reset_origin[0], x);
+                    assert_eq!(vehicle.reset_origin, frame.origin);
+                }
+                if x == 550. {
+                    assert_eq!(frame.scene_query.selected_vegetation, 1);
+                }
+                assert_eq!(frame.scene_query.selected_static, 0);
+                assert_eq!(
+                    frame.obstacle_contact_count, 0,
+                    "plant metadata is not physical proxy geometry"
+                );
+            }
+        }
     }
 }

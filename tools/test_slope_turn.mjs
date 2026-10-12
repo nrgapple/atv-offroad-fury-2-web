@@ -3,28 +3,18 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { captureSimulation } from './capture_simulation.mjs';
 const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
 await mkdir('work/verification', { recursive: true });
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1100, height: 700 } });
+  await captureSimulation(page, 'turnFrames');
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(new URL('/play.html?drive=1&environment=env01', process.env.ATV_TEST_URL || 'http://127.0.0.1:4180').href);
   await page.waitForFunction(() => window.atvTerrainStatus?.simulation, null, { timeout: 90000 });
   await page.bringToFront(); await page.locator('#game').focus();
   for (let i = 0; i < 3 && (await page.evaluate(() => window.atvTerrainStatus.performance.mode)) !== 'debug'; i++) await page.keyboard.press('F3');
-  await page.evaluate(() => {
-    window.turnFrames = []; let previous = -1;
-    function record() {
-      const state = window.atvTerrainStatus;
-      if (state.simulationSteps !== previous) {
-        previous = state.simulationSteps;
-        window.turnFrames.push({ step: previous, frame: state.frame, input: state.input });
-      }
-      requestAnimationFrame(record);
-    }
-    requestAnimationFrame(record);
-  });
   const start = await page.evaluate(() => window.atvTerrainStatus.simulationSteps);
   const until = step => page.waitForFunction(step => window.atvTerrainStatus.simulationSteps >= step, start + step, { timeout: 90000 });
   await page.keyboard.down('KeyW'); await until(90);

@@ -1,6 +1,22 @@
 # Implementation handoff
 
-Continuation host gate: terrain normals use the original single-round reciprocal
+Latest continuation host gate: source-verified spring torque now preserves the
+Model inverse-transform order. A single original static/ESB partition and 40/50ft
+cache supplies quad wheel/chassis candidates and recovery's plant-clearance gate.
+Physical vegetation proxies, exceptional categories/dynamic objects and the
+newly recovered rider cache binding remain incomplete. Landing/wreck/slope tests
+now record every delivered WASM batch step. The isolated combined build includes
+committed mobile controls `179fd92` and passes 245 core + 2 WASM tests, strict
+Clippy/formatting, 39 JS tests, release/Worker checks, all eight maps, clean landing,
+Nac Nac recovery, uneven turns, boundary launch/recovery, one-handed touch and
+desktop/portrait diagnostics. Recorded landing overlap is 0.392776ft across 199
+frames; this is not an identical before/after comparison or a clipping fix.
+This newer component is host-verified and pending public release. See
+[coupled landing](research/COUPLED_LANDING.md) and
+[scene integration](research/SCENE_INTEGRATION.md).
+
+Verified public continuation `01c9cbb0c8358ba43f589dab1e342c3f746f0a1b`, CI
+`38207020177`: terrain normals use the original single-round reciprocal
 square root; detached rider water velocity retains the previous integration cache,
 including across recovery and another wreck; wheelie accounting/HUD callbacks now
 run in the live WASM sequence with the original scoring flag off. Native checks
@@ -8,13 +24,16 @@ cover 1,500 terrain queries, 300 water kernels, 64 wreck-cache lifecycle cases a
 2,070 wheelie operations. Shared spatial/vegetation loader contracts are documented;
 their helpers still do not supply live vegetation contacts.
 
-The combined host build passes 233 core + 2 WASM tests, strict Clippy/formatting,
+That combined build passed 233 core + 2 WASM tests, strict Clippy/formatting,
 33 JS tests, 10 release and 4 Worker tests, setup/hygiene checks, clean landing,
 failed Nac Nac separation/contact/recovery/resumed driving, desktop/portrait F3 and
 Pause diagnostics, immediate touch throttle/brake/reverse and one uninterrupted
 ENV01–ENV08 load/drive run. Landing tire overlap remains 0.497238ft across 62
-riding frames. This is a verified host checkpoint pending CI/public release,
-not a clipping fix or complete original gameplay parity. See
+riding frames in its host sample. Public HTTPS verification matched 26 authored
+files and 313 served objects; public landing, wreck/recovery, touch and one
+uninterrupted eight-map run passed. The original RAF clearance samples were
+incomplete and are not comparable; later full-batch capture is the measurement
+baseline. This is not a clipping fix or complete original gameplay parity. See
 [terrain contacts](research/TERRAIN_CONTACT.md), [water](research/WATER.md) and
 [HUD](research/HUD.md).
 

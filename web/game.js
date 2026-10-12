@@ -203,7 +203,8 @@ async function terrainFromContent(file, files, token, environment = "env01") {
   const ecoIndex = entries.findIndex(entry => memberNamed(entry, `${environment}.esb`));
   let ecosystem;
   if (ecoIndex >= 0) {
-    const data = await json(58, await codec(3, resource, ecoIndex)), models = new Map(), textures = new Map();
+    const ecoBytes = await codec(3, resource, ecoIndex);
+    const data = await json(58, ecoBytes), models = new Map(), textures = new Map();
     for (const species of data.species) {
       if (token !== generation) throw new Error('Opening cancelled.');
       const member = entries.findIndex(entry => entry.name.replaceAll('\\', '/').toLowerCase() === `eco/${species.model}.psg`.toLowerCase());
@@ -212,7 +213,7 @@ async function terrainFromContent(file, files, token, environment = "env01") {
       models.set(species.slot, decoded);
       for (const [name, image] of await baseTextures(decoded.mesh, resource, entries, textures)) textures.set(name, image);
     }
-    ecosystem = { ...data, models, textures };
+    ecosystem = { ...data, bytes: ecoBytes, models, textures };
   }
   status('Reading original scene collisions…');
   const collisionMeshes = new Map(), collisionPlacements = [];
@@ -788,6 +789,7 @@ async function startSimulation(source) {
   simReady = false; simFrame = undefined; cameraFrame = undefined; simAccumulator = 0; simGeneration++;
   if (!source.physics) return;
   await codec(20, source.bytes); await codec(21, source.physics); await codec(22, source.meshBytes); await codec(26, source.toy);
+  await codec(65, source.ecosystem?.bytes ?? new Uint8Array());
   diagnostics.water = source.water ? await json(64, source.water.resource, source.water.index) : null;
   diagnostics.chassis = await json(44, source.chassis);
   const actor = await json(48, source.actorRays, 0), collisionIds = new Map();
@@ -797,6 +799,7 @@ async function startSimulation(source) {
   const obstacles = await command(49, {
     placements: source.collisions.placements.map(placement => ({ mesh: collisionIds.get(placement.name), world_matrix: placement.world_matrix })),
     boundary_launch: source.world.metadata.boundary_launch, crowd_present: source.world.metadata.crowd_present,
+    scene_partition: source.world.metadata.collision_partition,
   });
   diagnostics.obstacles = { ...obstacles, rays: actor.rays };
   simStart = { origin: source.scene.position, yaw: source.scene.yaw };

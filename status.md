@@ -14,6 +14,15 @@ landing, wreck/recovery, diagnostics/touch and an uninterrupted eight-map run.
 Terrain, water-cache and wheelie/HUD integration is ready for CI/public gates;
 landing overlap remains 0.497238ft. Latest public gameplay baseline is `35d328e`;
 `d58ee24` retires the publisher timer. Root will upload and verify R2 per checkpoint.
+
+Continuation progress: `01c9cbb` passed CI `38207020177`, full public authored/R2
+verification and all-eight-map/landing/wreck/touch checks. Mobile owner subsequently
+committed `179fd92`; its controls are included in the isolated next build.
+Root now owns scene-cache/recovery integration, spring torque and full-batch trace
+capture. Host gate passes 245 core + 2 WASM tests, strict lint/formatting, 39 JS,
+release/Worker tests, all eight maps, landing/wreck/slope, boundary and input/debug
+checks. Pending: commit/CI, R2 sync, public browser verification. Landing overlap
+remains 0.392776ft in 199 captured frames; no parity or clipping-fix claim.
 User requested coordination with existing thread
 `01a12c55-0503-7591-8d0d-7f91fb03cdb4`. Direct message delivery initially failed
 with “already has an active writer”; this file is the shared claim record.

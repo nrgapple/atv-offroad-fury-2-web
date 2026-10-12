@@ -1,0 +1,114 @@
+# Coupled landing and spring torque audit
+
+The coupled audit found a verified numerical discrepancy in spring torque at
+large world coordinates. The Rust vehicle now preserves the original Model
+inverse-transform order when applying each grounded spring force. This improves
+bounded instruction comparisons; it does not establish a reduction in rendered
+tire overlap or complete original handling parity.
+
+## Original scheduling under test
+
+The private probe executes actual `001dd830` instructions, including its previous
+wheel-contact/normal snapshots, four outer wheel support wrappers (`001ebd90`),
+gravity actor (`00164390`), substep loop, four-point travel stop (`00194930` /
+`00196cf0`), all four springs (`001ed330`), full body update (`001469e0`) with its
+integrator and Model setters, impact accumulation, and suspension visual update
+(`001edcd0`). The engine substep routine `001f60f0` is an actual two-instruction
+stub and is executed. Support planes remain frozen across each outer frame.
+
+The fixture explicitly supplies analytic flat/slope terrain, empty static scene
+queries, grip/rider force and torque inputs, zero wheel drive forces, and finite
+host acos. Outer engine/wheel rotation services are hooks. It uses synthetic
+body/wheel configurations and initialized integrator histories; this is not a
+captured whole-quad PS2 state. Scene selection, game controllers, mechanical pose
+updates, native math-table initialization and complete gameplay remain separate
+gates. The Rust companion calls the production stop, spring and body kernels with
+an adapter preserving the recovered scheduling. It is not a direct replay of
+every branch of `Vehicle::step_with_scene`.
+
+There are 300 independent outer frames: 200 one-substep frames and 100 two-substep
+frames, for 400 body substeps and 2,185,204 original instructions. Cases vary
+pitch, roll, slopes, downward velocity, angular velocity, previous contact state,
+cached world CoG and visual compression. Half use world X/Z around 3,000–5,000
+feet to expose cancellation at actual track coordinate scales. All 1,200 final
+wheel-contact decisions agree.
+
+## Verified spring force discrepancy
+
+The grounded spring branch at `001ed85c` converts its world force with
+`00166400` and world contact point with `00166510`, then subtracts the current
+body-local CoG. The Model inverse applies rotation to the full world point and
+adds the separately rotated negative Model translation. The former Rust call
+subtracted world CoG before rotating. The two expressions are algebraically
+equivalent, but their binary32 cancellation differs at large coordinates.
+
+`vehicle::apply_spring_world_force` now retains the native ordering for this
+spring call alone. Its geometry uses the current Model origin/current local CoG;
+point velocity retains the already-recovered preceding world-center cache before
+the first body integration. Generic body-force and other collision callers were
+not changed by this spring audit.
+
+An isolated original `001ed85c`–`001edad0` replay covers 1,000 synthetic world
+force/contact-point cases and 220,000 instructions. The previous order differs in
+2,099 of 3,000 torque components, with maximum absolute difference 3.826172 in
+source torque units. The recovered order matches all 3,000 torque components
+bit-for-bit. An authored large-world regression pins the production helper's
+force/torque results and verifies that applying force does not change position,
+orientation or velocity.
+
+## Bounded coupled results
+
+These are differences from the synthetic native frame replay, not measured
+browser tire clearances or claims about perceptual improvement.
+
+| Maximum absolute difference | Previous spring lever order | Recovered order |
+| --- | ---: | ---: |
+| World CoG position, feet | 0.000549316 | 0.000000477 |
+| Linear velocity, feet/second | 0.0198259 | 0.00000191 |
+| Local angular velocity, radians/second | 0.0693121 | 0.00285339 |
+| Final visual suspension compression, feet | 0.000907987 | 0.000000238 |
+
+The coupled result remains imperfect: 23 position, 28 linear-velocity, 128
+angular-velocity and 47 compression components differ across these frames. The
+one-substep subset's maximum angular difference is `0.00000620`; the largest
+angular differences occur after the second substep. Native Model-to-quaternion
+rebinding and matrix rounding remain numerical limits, with cancellation at large
+world coordinates amplifying small pose differences. This audit has not shown
+that those limits explain half-foot rendered tire overlap.
+
+## Browser trace limits and reproduction
+
+The initial clean-landing trace had 62 latest-render snapshots, with missing
+simulation steps between them. During this audit, the release agent replaced
+that shared trace with a capture of every delivered WASM batch frame; the observed
+replacement has 192 consecutive steps. Earlier host/public minima from different
+sample counts are not an isolated before/after comparison. The browser trace also
+does not expose original PS2 state or internal solver histories/forces, so it
+cannot initialize a complete native replay without additional instrumentation.
+
+Private probes live under `work/coupled-landing-probe/`; reports remain under
+ignored `private/reports/coupled-landing-*.json`. No source bytes, pseudocode or
+runtime assets are included in these shareable notes.
+
+```sh
+python3 work/coupled-landing-probe/generate.py
+python3 work/coupled-landing-probe/lever.py
+CARGO_TARGET_DIR=work/terrain-contact-target ~/.cargo/bin/cargo run --release \
+  --manifest-path work/coupled-landing-probe/Cargo.toml --bin lever
+NATIVE_LEVER=1 CARGO_TARGET_DIR=work/terrain-contact-target \
+  ~/.cargo/bin/cargo run --release \
+  --manifest-path work/coupled-landing-probe/Cargo.toml --bin coupled-landing-probe
+python3 work/coupled-landing-probe/compare.py
+CARGO_TARGET_DIR=work/terrain-contact-target ~/.cargo/bin/cargo test --locked \
+  -p atv-core vehicle::tests
+CARGO_TARGET_DIR=work/terrain-contact-target ~/.cargo/bin/cargo clippy --locked \
+  -p atv-core --all-targets -- -D warnings
+~/.cargo/bin/rustfmt --edition 2024 --check crates/atv-core/src/vehicle.rs
+make verify
+```
+
+All 18 vehicle tests, strict core Clippy, formatting, setup verification and diff
+checks pass for this component gate. Browser integration and public delivery are
+the release agent's next gate. No new public result is claimed here. The finite
+instruction interpreter remains a bounded arithmetic model, not PS2 hardware
+execution. See [movement](MOVEMENT.md) and [terrain contact](TERRAIN_CONTACT.md).

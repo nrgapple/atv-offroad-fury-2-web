@@ -148,7 +148,8 @@ R5900/PS2 floating-point emulator or an original gameplay capture.
 | Initializer, registration and returned query order | 100 scenes, 3,600 registrations, 400 queries | 7,475,365 | Every packed key and returned index sequence matches |
 | Candidate refresh/reuse and ordinary eligibility policy | 300 four-frame sequences | 1,308,598 | All cache membership/order, radius and distance bits match |
 | Combined native tree → iterator → collector/cache | 30 four-frame sequences | 1,856,111 | All membership/order, radius and distance bits match, including translated minima |
-| Mixed ordinary/vegetation tree → shared collector/cache | 30 four-frame sequences | 1,779,241 | All membership/order, radius and distance bits match, including vegetation exclusion and alternating quad/recovery sphere radii |
+| Mixed ordinary/vegetation registration → shared cache | 30 four-frame sequences | 1,779,241 | All membership/order, radius and distance bits match; these frames retain zero plants |
+| Nearby mixed nodes → shared cache with flag changes | 30 four-frame sequences | 1,779,297 | All bits/order match; 464 retained plant entries and 210 ordinary entries following plants |
 
 The partition cases use synthetic translated, non-square regions and 16/32/64/128
 foot division sizes, overlapping footprints, repeated-cell queries and whole-tree
@@ -162,8 +163,11 @@ packed Vegetation nodes, matching the recovered class-stage order. Original
 species-width and horizontal-distance instructions execute. The same cache
 receives query radii three, twenty, three, three across the sequence, with
 vegetation excluded in half the cases. Registration bounds are supplied rather
-than loaded from a disc scene. This joins the proven providers and collector;
-full physical vegetation proxy expansion and loaded-scene behavior remain open.
+than loaded from a disc scene. The original randomized fixture retains no plants,
+so it does not prove positive plant selection or class interleaving. A targeted
+nearby-node fixture now supplies that coverage, including ignore-flag changes
+during refresh/reuse. See [combined bridge evidence](SCENE_INTEGRATION.md).
+Physical vegetation proxy expansion and complete loaded-scene parity remain open.
 
 Core regressions retain a native order checkpoint, deduplication, out-of-region
 registration/query behavior, X/Z-only partitioning, strict static radius, equality

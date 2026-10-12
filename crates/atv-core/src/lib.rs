@@ -27,6 +27,7 @@ pub mod rider_ik;
 pub mod rider_pose;
 pub mod scene;
 pub mod scene_candidates;
+pub mod scene_collision;
 pub mod scene_partition;
 pub mod sky;
 pub mod stunt;

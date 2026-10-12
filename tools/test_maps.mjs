@@ -38,6 +38,8 @@ try {
         assert.equal(state.frame.water_height, -256, 'Dry scenes retain the original no-water sentinel');
       }
       assert(state.frame.origin.every(Number.isFinite));
+      assert.equal(state.frame.scene_query.enabled, true, 'Scene metadata and ESB placements must reach the original shared candidate cache');
+      assert(state.frame.scene_query.cached_nodes <= 256, 'Native cache capacity remains bounded with vegetation included');
       assert(state.frame.orientation.every(Number.isFinite));
       assert(Number.isFinite(state.frame.speed));
       assert.equal(state.frame.wheelie_scoring_enabled, false, 'Original wheelie scoring cheat stays off in baseline sessions');
