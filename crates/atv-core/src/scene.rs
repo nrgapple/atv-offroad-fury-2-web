@@ -21,6 +21,7 @@ pub struct Light {
     pub position: Option<[f32; 3]>,
     pub target: Option<[f32; 3]>,
     pub look: Option<[f32; 3]>,
+    pub emits_light: bool,
 }
 #[derive(Debug, Serialize)]
 pub struct CollisionModel {
@@ -35,6 +36,7 @@ pub struct Scene {
     pub cube_file: String,
     pub water_file: Option<String>,
     pub lights: Vec<Light>,
+    pub ecosystem_lighting: crate::ecosystem::Lighting,
     pub fog_color: [f32; 3],
     pub fog: Option<crate::fog::Fog>,
     pub models: Vec<StaticModel>,
@@ -413,6 +415,7 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
             position: optional_vector(&data, &section, "Position")?,
             target: optional_vector(&data, &section, "TargetPosition")?,
             look: optional_vector(&data, &section, "LookVector")?,
+            emits_light: boolean(&data, &section, "EmitsLight", true)?,
         });
     }
     // 00201f60/00207a10: absent/-1 collision count reuses Model%d in
@@ -462,11 +465,38 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
             material: 0,
         });
     }
+    //001399f0 replaces the global ambient on each registration. The manager
+    // defaults to50 (00139600), equivalent to authored RGB100 before halving.
+    let sun = lights
+        .iter()
+        .rev()
+        .find(|light| light.emits_light && light.kind.eq_ignore_ascii_case("Directional"));
+    let sun = sun.map(|light| {
+        let look = light
+            .look
+            .or_else(|| {
+                light.target.map(|target| {
+                    std::array::from_fn(|i| target[i] - light.position.unwrap_or([0.; 3])[i])
+                })
+            })
+            .unwrap_or([0.; 3]);
+        (light.color, look)
+    });
+    let ecosystem_lighting = crate::ecosystem::Lighting::prepare(
+        lights
+            .iter()
+            .rev()
+            .find(|light| light.kind.eq_ignore_ascii_case("Ambient"))
+            .map(|light| light.color)
+            .unwrap_or([100.; 3]),
+        sun,
+    )?;
     Ok(Scene {
         start_position,
         start_direction,
         cube_file,
         lights,
+        ecosystem_lighting,
         water_file: value(&data, "Environment", "WaterFile").map(str::to_owned),
         fog_color: color(&data, "Fog")?,
         fog: crate::fog::parse(&data)?,
@@ -580,6 +610,16 @@ mod tests {
         assert_eq!(scene_line("[A section]"), "[A section]");
     }
     const SOURCE: &str = "[SceneInfo]\nDefaultStartPosition=1,2,3\nDefaultStartDirection=0,0,1\nStart1=4,5,6 ; authored override\n[Environment]\nCubeFile=sample.cub\n[Lights]\nNumberOfLights=1\n[Light1]\nType=Ambient\nColorRGB=20,30,40\n[Fog]\nColorRGB=80,90,100\n[StaticModels]\nNumberOfStaticModels=1\n[Model1]\nSLT=sample.slt\nPosition=3,4,5\nLookVector=0,0,-1\n";
+    #[test]
+    fn near_vegetation_uses_last_registered_ambient_and_emitting_sun() {
+        let mut data = SOURCE.replace("NumberOfLights=1", "NumberOfLights=5");
+        data.push_str("[Light2]\nType=Directional\nColorRGB=10,20,30\nLookVector=1,0,0\n[Light3]\nType=Ambient\nColorRGB=80,90,100\n[Light4]\nType=Directional\nColorRGB=90,100,110\nPosition=1,2,3\nTargetPosition=1,0,3\n[Light5]\nType=Directional\nColorRGB=200,200,200\nLookVector=1,0,0\nEmitsLight=F\n");
+        let light = parse(data.as_bytes()).unwrap().ecosystem_lighting;
+        assert_eq!(light.ambient, [40., 45., 50.]);
+        assert_eq!(light.sunlight, [45., 50., 55.]);
+        assert_eq!(light.direction, [-0., 1., -0.]);
+        assert!(light.sun_present);
+    }
     #[test]
     fn authored_overrides_names_and_flags() {
         let scene = parse(SOURCE.as_bytes()).unwrap();

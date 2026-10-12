@@ -3,6 +3,76 @@
 use crate::{Result, slice, u16le, u32le};
 use serde::Serialize;
 
+/// Frame0013a550 supplies global Sun matrices; near packet002fe710 replaces
+/// their ambient column and alpha64. Point lights/LOD transitions are separate.
+#[derive(Debug, Serialize)]
+pub struct Lighting {
+    pub ambient: [f32; 3],
+    pub sunlight: [f32; 3],
+    pub direction: [f32; 3],
+    pub sun_present: bool,
+}
+impl Lighting {
+    pub fn prepare(ambient: [f32; 3], sun: Option<([f32; 3], [f32; 3])>) -> Result<Self> {
+        let valid_color = |v: [f32; 3]| v.iter().all(|v| v.is_finite() && (0.0..=255.).contains(v));
+        if !valid_color(ambient) || sun.is_some_and(|(color, _)| !valid_color(color)) {
+            return Err("unsupported vegetation lighting color".into());
+        }
+        let (sunlight, direction) = if let Some((color, look)) = sun {
+            //00138570: three rounded squares, (x²+y²)+z², then VRSQRT.
+            let squared = (look[0] * look[0] + look[1] * look[1]) + look[2] * look[2];
+            if !look.iter().all(|v| v.is_finite()) || !squared.is_finite() {
+                return Err("unsupported vegetation sunlight direction".into());
+            }
+            //00137ca0 caches a zero look but initializes direction to +X.
+            //00138570 skips the setter when a supplied zero equals that cache.
+            let direction = if look == [0.; 3] {
+                [-1., -0., -0.]
+            } else {
+                if squared <= 0. {
+                    return Err("unsupported vegetation sunlight direction".into());
+                }
+                let reciprocal = (1.0 / f64::from(squared).sqrt()) as f32;
+                look.map(|v| -(v * reciprocal))
+            };
+            (color.map(|v| v * 0.5), direction)
+        } else {
+            ([0.; 3], [0.; 3])
+        };
+        Ok(Self {
+            ambient: ambient.map(|v| v * 0.5),
+            sunlight,
+            direction,
+            sun_present: sun.is_some(),
+        })
+    }
+
+    /// Finite binary32 reference for the compressed diffuse arithmetic window.
+    /// Normal is authored (not normalized); scale and Y rotation are per instance.
+    pub fn near_color(&self, normal: [f32; 3], scale: [f32; 2], rotation: [f32; 2]) -> [u8; 4] {
+        let [c, s] = rotation;
+        let [x, y, z] = self.direction;
+        let local = [
+            (c * scale[0]) * x + (s * scale[0]) * z,
+            y * scale[1],
+            (-s * scale[0]) * x + (c * scale[0]) * z,
+        ];
+        let weight = ((local[0] * normal[0] + local[1] * normal[1]) + local[2] * normal[2]).max(0.);
+        std::array::from_fn(|i| {
+            let ambient = if i == 3 { 64. } else { self.ambient[i] };
+            let color = if i == 3 {
+                f32::from(self.sun_present)
+            } else {
+                self.sunlight[i]
+            };
+            (((8388608f32 + ambient) + color * weight)
+                .min(8388863.)
+                .to_bits()
+                & 255) as u8
+        })
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct Species {
     pub slot: u8,
@@ -166,6 +236,32 @@ pub fn decode(bytes: &[u8]) -> Result<Ecosystem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn near_packet_preserves_bias_rounding_sunlight_scaling_and_alpha() {
+        let color = |ambient| {
+            Lighting::prepare(ambient, None)
+                .unwrap()
+                .near_color([0., 1., 0.], [1.; 2], [1., 0.])
+        };
+        assert_eq!(color([79., 80., 92.]), [40, 40, 46, 64]);
+        assert_eq!(color([1., 3., 255.]), [0, 2, 128, 64]);
+        let sun = Lighting::prepare([100.; 3], Some(([128.; 3], [0., -10., 0.]))).unwrap();
+        assert_eq!(
+            sun.near_color([0., 1., 0.], [1., 2.], [1., 0.]),
+            [178, 178, 178, 66]
+        );
+        assert_eq!(
+            sun.near_color([0., -1., 0.], [1., 2.], [1., 0.]),
+            [50, 50, 50, 64]
+        );
+        assert!(Lighting::prepare([f32::NAN, 0., 0.], None).is_err());
+        assert_eq!(
+            Lighting::prepare([100.; 3], Some(([128.; 3], [0.; 3])))
+                .unwrap()
+                .direction,
+            [-1., -0., -0.]
+        );
+    }
     fn sample() -> Vec<u8> {
         let mut b = 2u32.to_le_bytes().to_vec();
         for slot in 0..256 {
