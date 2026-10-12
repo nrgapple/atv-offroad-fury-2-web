@@ -109,6 +109,8 @@ Touch is a browser adaptation of the PS2 controls. Portrait and gesture checks p
 
 *A host Chromium test capture of an unfinished Nac Nac. The recovered wreck/recovery sequence was subsequently checked publicly; this particular image comes from the host test.*
 
+**Optional funny crashes:** **Pause → Funny crashes: On** adds a floppy rider ragdoll and breakaway ATV wheels, handlebars and rear suspension on harder wrecks. It starts Off and remembers your choice. Recovery restores the whole ATV; original driving and scoring stay intact. The effects apply to your local rider.
+
 Keyboard and controllers work too. **Pause → Controls** lets you remap keyboard keys, controller buttons, analog directions, and button combinations; settings are saved in your browser.
 
 | Action | Keyboard default | Controller default |

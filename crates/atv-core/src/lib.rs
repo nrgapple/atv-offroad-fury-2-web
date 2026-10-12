@@ -6,6 +6,7 @@ pub mod browser_input;
 pub mod camera;
 pub mod collision;
 pub mod contact;
+pub mod crash_effects;
 pub mod drivetrain;
 pub mod ecosystem;
 pub mod elf;

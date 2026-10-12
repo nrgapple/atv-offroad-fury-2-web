@@ -23,6 +23,7 @@ thread_local! { static BUFFERS: RefCell<Buffers> = RefCell::default(); }
 
 #[derive(Default)]
 struct Simulation {
+    funny_crashes: atv_core::crash_effects::Effects,
     terrain: Option<terrain::Terrain>,
     physics: Option<PhysicsData>,
     mesh: Option<mesh::Mesh>,
@@ -345,7 +346,10 @@ fn vehicle_world(frame: &atv_core::vehicle::VehicleFrame) -> [f32; 16] {
     ]
 }
 
-fn simulation_frame(sim: &Simulation, frame: &atv_core::vehicle::VehicleFrame) -> Result<Vec<u8>> {
+fn simulation_frame(
+    sim: &mut Simulation,
+    frame: &atv_core::vehicle::VehicleFrame,
+) -> Result<Vec<u8>> {
     multiplayer::observe_wreck(frame.wreck.phase != atv_core::wreck::Phase::Riding);
     let matrices = if let Some(matrices) = sim.vehicle.as_ref().and_then(|v| v.linkage_matrices()) {
         std::borrow::Cow::Borrowed(matrices)
@@ -403,7 +407,7 @@ fn simulation_frame(sim: &Simulation, frame: &atv_core::vehicle::VehicleFrame) -
         .clone()
         .unwrap_or(serde_json::Value::Null);
     value["quad_node_matrices"] =
-        serde_json::to_value(matrices).map_err(|error| error.to_string())?;
+        serde_json::to_value(&matrices).map_err(|error| error.to_string())?;
     if let Some(animator) = &sim.rider_animator {
         let mesh = sim.rider_mesh.as_ref().ok_or("rider mesh missing")?;
         value["rider_node_matrices"] =
@@ -432,6 +436,40 @@ fn simulation_frame(sim: &Simulation, frame: &atv_core::vehicle::VehicleFrame) -
         value["rider_wreck"] = serde_json::to_value(wreck).map_err(|e| e.to_string())?;
         value["rider_mode"] = serde_json::json!("wreck");
         value["stunt"] = serde_json::Value::Null;
+    }
+    if sim.funny_crashes.enabled()
+        && let (Some(mesh), Some(rider_mesh), Some(terrain)) =
+            (&sim.mesh, &sim.rider_mesh, &sim.terrain)
+    {
+        let rider_pose: Vec<[f32; 16]> =
+            serde_json::from_value(value["rider_node_matrices"].clone())
+                .map_err(|e| e.to_string())?;
+        let rider_world = sim
+            .wreck_animator
+            .as_ref()
+            .and_then(|a| a.frame())
+            .map_or(vehicle_world(frame), |f| f.world_matrix);
+        let detached = sim
+            .wreck_animator
+            .as_ref()
+            .and_then(|a| a.frame())
+            .is_some_and(|f| f.phase != atv_core::wreck_animation::Phase::Attached);
+        value["funny_crash"] = serde_json::to_value(sim.funny_crashes.update(
+            sim.effects_tick,
+            frame.reset_count,
+            sim.effects_dt,
+            frame.wreck.phase != atv_core::wreck::Phase::Riding,
+            detached,
+            frame.linear_velocity,
+            vehicle_world(frame),
+            &matrices,
+            &mesh.nodes,
+            rider_world,
+            &rider_pose,
+            &rider_mesh.nodes,
+            |p| terrain.contact(p[0], p[2]).ok().flatten().map(|h| h.height),
+        ))
+        .map_err(|e| e.to_string())?;
     }
     serde_json::to_vec(&value).map_err(|error| error.to_string())
 }
@@ -686,6 +724,11 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         .and_then(serde_json::Value::as_bool)
                         .ok_or("missing reverse input")?,
                 };
+                sim.funny_crashes.set_enabled(
+                    raw.get("funny_crashes")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                );
                 let terrain = sim.terrain.as_ref().ok_or("load original terrain first")?;
                 let dt = json_number(&value, "dt")?;
                 if dt <= 0. || dt > 0.1 {
