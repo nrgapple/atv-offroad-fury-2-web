@@ -3,6 +3,7 @@ import { Frontend } from './frontend.js';
 import { mountTouchControls, TouchLeanIntent } from './touch.js';
 import { GameAudio } from './audio.js';
 import { openHostedContent } from './content.js';
+import { gameplayBindings } from './bindings.js';
 const $ = id => document.getElementById(id);
 const canvas = $('game');
 const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, powerPreference: 'high-performance' });
@@ -14,7 +15,7 @@ const pending = new Map();
 let requestId = 0, generation = 0, terrain, vehicle, program, uniforms, chunks = [], vehicleChunks = [], gpuTextures = [], fallbackTexture, terrainAtlas, terrainTextureMap, terrainDetailMap, frame = 0, lastTime = 0, lost = false;
 let focused = document.hasFocus(), gamepadsAvailable = true, menuOpen = true;
 let frontend, hostedContent;
-let simReady = false, simBusy = false, simAccumulator = 0, simFrame, simStart, simGeneration = 0, orbit = 0, cameraFrame, cameraCycle = false, cameraButtonHeld = false;
+let simReady = false, simBusy = false, simAccumulator = 0, simFrame, simStart, simGeneration = 0, orbit = 0, cameraFrame, cameraCycle = false;
 let sceneChunks = [], sceneDraws = [], skyChunks = [], ecoGroups = [];
 const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const camera = { x: 0, y: 0, z: 0, yaw: 0, pitch: -.35 };
@@ -733,38 +734,29 @@ function gamepad() {
 }
 function drivingInput() {
   const empty = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false };
-  if (!focused || document.hidden || menuOpen) return empty;
-  const pad = gamepad(), clamp = value => Math.max(-1, Math.min(1, value));
-  const faceReverse = Boolean(pad?.buttons[0]?.pressed && pad?.buttons[2]?.pressed);
-  const padX = clamp(deadzone(pad?.axes[0]) + Number(Boolean(pad?.buttons[15]?.pressed)) - Number(Boolean(pad?.buttons[14]?.pressed)));
-  const padY = clamp(deadzone(pad?.axes[1]) + Number(Boolean(pad?.buttons[13]?.pressed)) - Number(Boolean(pad?.buttons[12]?.pressed)));
-  const input = {
-    throttle: Math.max(Number(keys.has('KeyW') || keys.has('ArrowUp')), pad?.buttons[7]?.value ?? 0, pad?.buttons[0]?.value ?? 0),
-    brake: Math.max(Number(keys.has('KeyS') || keys.has('ArrowDown')), pad?.buttons[6]?.value ?? 0, faceReverse ? 0 : (pad?.buttons[2]?.value ?? 0)),
-    steer: Number(keys.has('KeyD') || keys.has('ArrowRight')) - Number(keys.has('KeyA') || keys.has('ArrowLeft')) + padX,
-    lean: Number(keys.has('KeyE')) - Number(keys.has('KeyQ')) + padY,
-    reverse: keys.has('KeyR') || faceReverse,
-    stunt_modifiers: (Number(keys.has('KeyJ') || pad?.buttons[1]?.pressed) | (Number(keys.has('KeyK') || pad?.buttons[3]?.pressed) << 1) | (Number(keys.has('KeyL') || pad?.buttons[4]?.pressed) << 2)),
-    stunt_x: Number(keys.has('ArrowRight')) - Number(keys.has('ArrowLeft')) + padX,
-    stunt_y: Number(keys.has('ArrowDown')) - Number(keys.has('ArrowUp')) + padY,
-  };
+  if (!focused || document.hidden || menuOpen) return { input: empty, actions: {} };
+  const clamp = value => Math.max(-1, Math.min(1, value));
+  const { input, actions } = gameplayBindings.read(keys, gamepad());
   input.steer += touchLean.steer;
   input.lean += touchLean.lean;
   const touch = touchControls.sample();
   input.touch_drive = touch.drive;
+  // Cancellation also resets the native lean-flick history. A resumed forward
+  // lean must not release a preload that was abandoned by blur/menu/disconnect.
+  input.input_generation = gameplayBindings.generation + touchControls.generation;
   if (touch.stunt_modifiers) Object.assign(input, { stunt_modifiers: touch.stunt_modifiers, stunt_x: touch.stunt_x, stunt_y: touch.stunt_y });
   if (touch.preload_axis !== null) input.preload_axis = touch.preload_axis;
   input.throttle = Math.max(0, clamp(input.throttle)); input.brake = Math.max(0, clamp(input.brake));
   // Browser axes point right; the recovered steering scalar points left.
   input.steer = -clamp(input.steer); // Rust clamps the combined physical lean; right touch never adds pitch.
-  return input;
+  return { input, actions };
 }
 function acceptFrame(frame) {
   if (!frame?.origin?.every(Number.isFinite) || frame.origin.length !== 3 || !frame.orientation?.every(Number.isFinite) || frame.orientation.length !== 4 || !Number.isFinite(frame.speed) || !Number.isFinite(frame.rpm)) throw new Error('Simulation returned a nonfinite pose.');
   simFrame = frame;
   // A completed old batch may arrive after pause/blur/cancel. Keep its physical
   // frame, but do not overwrite cleared controls with the old touch generation.
-  if (frame.applied_input && frame.applied_input.touch_drive?.generation === touchControls.generation) diagnostics.input = frame.applied_input;
+  if (frame.applied_input && frame.applied_input.input_generation === gameplayBindings.generation + touchControls.generation) diagnostics.input = frame.applied_input;
   touchControls.feedback(frame);
   vehicle.position = frame.origin.slice();
   if (frame.quad_node_matrices?.length !== vehicle.nodes.length || frame.quad_node_matrices.some(matrix => matrix.length !== 16 || !matrix.every(Number.isFinite))) throw new Error('Simulation returned an invalid quad linkage pose.');
@@ -804,9 +796,12 @@ async function pumpSimulation() {
   simBusy = true;
   const token = simGeneration;
   try {
+    const { input, actions } = drivingInput();
+    // Menu/reset transitions cancel input before any further physics is queued.
+    if (actions.pause) { void frontend?.show('pause'); return; }
+    if (actions.reset) { await $('reset').onclick(); return; }
     for (let step = 0; step < count; step++) simAccumulator -= 1 / 60;
-    const input = drivingInput();
-    const cycle = cameraCycle; cameraCycle = false;
+    const cycle = cameraCycle || actions.camera; cameraCycle = false;
     if (cycle) orbit = 0;
     const frames = await command(50, { count, input, orbit, cycle });
     if (token !== simGeneration) return;
@@ -845,10 +840,11 @@ function presentCameraFrame() {
 }
 function followCamera(dt) {
   const pad = focused ? gamepad() : null;
-  orbit -= deadzone(pad?.axes[2]) * dt * 1.7;
-  const pressed = Boolean(pad?.buttons[11]?.pressed);
-  if (pressed && !cameraButtonHeld) cameraCycle = true;
-  cameraButtonHeld = pressed;
+  if (!focused || document.hidden || menuOpen) return;
+  // Side-effect-free values here: edge actions/preload are sampled once per
+  // submitted physics batch, so render frames cannot swallow a release.
+  const amount = id => Math.max(gameplayBindings.value('keyboard', id, keys, pad), gameplayBindings.value('controller', id, keys, pad));
+  orbit -= (amount('cameraRight') - amount('cameraLeft')) * dt * 1.7;
 }
 function updateCamera(dt) {
   if (simReady) { followCamera(dt); return; }
@@ -981,7 +977,7 @@ async function loadGame(file = null, environment = "env01") {
     Object.assign(diagnostics, { ready: true, source: source.name, width, depth, min, max, frames: 0 });
     $('reset').disabled = false; $('camera').disabled = !simReady; $('help').hidden = false;
     $('reset').textContent = simReady ? 'Reset ATV' : 'Reset view';
-    $('help').textContent = simReady ? 'WASD / arrows: drive · R: reverse · C / R3: camera · triggers / left stick: controller · left touch: steer / lean · right: up drive, down brake / reverse, release preload' : 'Free camera · drag to look · WASD to move · Q/E up/down';
+    $('help').textContent = simReady ? 'Pause → Controls: keyboard / controller bindings · left touch: steer / lean · right: up drive, down brake / reverse, release preload' : 'Free camera · drag to look · WASD to move · Q/E up/down';
     status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain. Open the disc to load the ATV.');
   } catch (error) { if (token === generation) status(error.message, true); throw error; }
   finally { if (token === generation) $('disc').disabled = false; }
@@ -1023,11 +1019,16 @@ canvas.addEventListener('pointermove', event => {
 for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(name, event => { touchLean.end(event.pointerId, name !== 'pointerup'); pointers.delete(event.pointerId); });
 window.addEventListener('keydown', event => {
   if (document.activeElement !== canvas) return;
-  if (event.code === 'KeyC' && !event.repeat && simReady) { event.preventDefault(); cameraCycle = true; }
-  if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyR', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ShiftLeft'].includes(event.code)) { event.preventDefault(); keys.add(event.code); }
+  // A key held across blur/pause may resume with OS repeat events. It must be
+  // released and pressed again after cancellation before becoming new input.
+  if (event.repeat && !keys.has(event.code)) return;
+  const bound = simReady ? gameplayBindings.usesKey(event.code) : ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ShiftLeft'].includes(event.code);
+  if (bound) { event.preventDefault(); keys.add(event.code); if (simReady) gameplayBindings.observeKeys(keys, event.repeat ? null : event.code); }
 });
-window.addEventListener('keyup', event => keys.delete(event.code));
-const clearInput = () => { keys.clear(); pointers.clear(); touchControls.clear(); touchLean.clear(); simAccumulator = 0; cameraCycle = false; cameraButtonHeld = false; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
+window.addEventListener('keyup', event => { keys.delete(event.code); gameplayBindings.observeKeys(keys); });
+const clearInput = () => { keys.clear(); pointers.clear(); touchControls.clear(); touchLean.clear(); gameplayBindings.cancel(); simAccumulator = 0; cameraCycle = false; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
+gameplayBindings.subscribe(clearInput);
+window.addEventListener('gamepaddisconnected', clearInput);
 let pageSuspended = false;
 const syncAudio = () => { void audio.setActive(focused && !document.hidden && !lost && !menuOpen && !pageSuspended).catch(error => { diagnostics.audioError = error.message; }); };
 window.addEventListener('blur', () => { focused = false; clearInput(); syncAudio(); });
@@ -1055,7 +1056,7 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
   if (params.get('source') === 'disc') { menuOpen = false; $('frontend').hidden = true; }
   else {
     hostedContent = openHostedContent();
-    frontend = new Frontend({codec, json, content: hostedContent, read, start: environment => loadGame(null, environment), active: open => { menuOpen = open; clearInput(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
+    frontend = new Frontend({codec, json, content: hostedContent, read, audio: () => audio, start: environment => loadGame(null, environment), active: open => { menuOpen = open; clearInput(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     if (params.get('drive') === '1') {
       menuOpen = false; $('frontend').hidden = true;
       void frontend.init(false).then(() => loadGame(null, params.get('environment') ?? 'env01')).catch(error => status(error.message, true));

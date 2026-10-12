@@ -1,6 +1,6 @@
 {
-  "status": "Verified public baseline 7a08ccc25e7a7aa6e313f285baa130d77a69d903 (CI 38190627553) includes the earlier per-step touch and focus/orbit fix. The new two-thumb layout and five restored tower placements pass host checks but are not yet public-verified. Full flips, physical iOS behavior, terrain LOD and original mode exceptions remain unresolved.",
-  "working_on": "Verify the two-thumb controls and restored tower/material candidate in the next public release; continue original handling, airborne controls and trick-transition comparisons. Physical iOS behavior, complete terrain LOD, remaining scene meshes and full-flip parity are still unverified.",
+  "status": "Verified public baseline 3cc8e5fee7253fcfae207e61faa12ea70336459f (CI 38192659265) covers two-thumb touch/ramp checks, eight Freestyle environments and the feature board. A newer host candidate adds editable keyboard/controller bindings, the 21-song selector and an original ATV thumbnail in the menu; those additions are not yet public-verified. Full flips, physical-device behavior, broader course coverage, terrain LOD and original audio parity remain incomplete.",
+  "working_on": "Verify the host settings/music/menu-art candidate on the public Worker, then continue original ATV handling, stunt transitions and broader reference comparisons. Do not infer full-flip, physical-device, complete-menu or full-audio parity from these component checks.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -693,14 +693,23 @@
       "recorded_at": "2026-10-12T01:35:23.137605+00:00",
       "kind": "verification",
       "title": "Each thumb now has a separate job on the ATV",
-      "summary": "The left thumb steers and leans; the right thumb drives forward, brakes into reverse and holds preload. Releasing preload with throttle releases it for a jump when ramp conditions allow. The layout keeps steering/lean and throttle/preload independent.",
+      "summary": "The public build gives each thumb a steady role: left steers and leans; right drives forward, brakes into reverse and holds preload. Releasing preload with throttle releases it for a jump when ramp conditions allow.",
       "details": [
-        "In a 124-step Caribou run, batched transport matched sequential Rust execution at native-f32 precision through takeoff and landing. A takeoff inside a batch preserved left lean 0.25; released right throttle left brake at 0. The six host browser variants covered touch, batched input, ramp, stunt and stationary brace pose.",
-        "The host build also keeps orbit at 0 after blur/focus recovery while right-touch preload is held. The inspected mobile capture shows the right-side BRACED state on the ATV."
+        "Public 3cc verification passed the two-thumb touch and 124-step Caribou batch checks, including takeoff/landing transitions; the air-axis ramp test also passed.",
+        "The touch/ramp check is separate from the still-incomplete full-flip and stunt system."
       ],
-      "limitation": "Host candidate only; physical iOS input has not been verified. Original thresholds are preserved, but full flips and overall original handling parity are not established.",
+      "limitation": "The screenshot is a host capture. Public browser checks passed, but physical iOS hardware compatibility and full original-game handling parity are not established.",
       "image": "/devlog-images/each-thumb-now-has-a-separate-job-on-the-atv-22f0035d.png",
-      "caption": "Host mobile capture of the held right-thumb gesture and BRACED rider state; this is not a public-release screenshot."
+      "caption": "Host mobile capture of the held right-thumb gesture and BRACED rider state; this is not a public-release screenshot.",
+      "release_verification": {
+        "commit": "3cc8e5fee7253fcfae207e61faa12ea70336459f",
+        "ci_run": "38192659265",
+        "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+        "checks": [
+          "Two-thumb touch and 124-step Caribou batch check passed.",
+          "Air-axis ramp regression passed."
+        ]
+      }
     },
     {
       "id": "five-map-towers-were-there-all-along-as-invisible-obst-ee2b3f1c",
@@ -708,23 +717,101 @@
       "recorded_at": "2026-10-12T01:35:23.182250+00:00",
       "kind": "discovery",
       "title": "Five map towers were there all along as invisible obstacles",
-      "summary": "The towers weren\u2019t missing from the map archives: the visible meshes were rejected by a version check even though their collision geometry had already loaded. The host fix restores five tower placements, making those existing obstacles visible without changing physics.",
+      "summary": "The towers were already in the map archives: a version guard had rejected their visible meshes even though collision geometry was loaded. The public build now restores five tower placements, making those obstacles visible without changing physics.",
       "details": [
-        "An audit decoded all 502 original mesh records in the eight current map archives: 498 v3 and four v4 records. The fix restores two rtower placements in ENV01, pwrtwrB in ENV02, rtower in ENV06 and coal_twr in ENV08.",
-        "After the alpha-cutout correction, all eight maps loaded and drove in host browser tests with zero unsupported placed meshes and no JS/WebGL errors. Four inspection views covered the five placements, materials and draw counts; the ENV02 lattice is open against the landscape."
+        "A host audit decoded all 502 mesh records in the eight current map archives: 498 v3 and four v4 records. It identified two rtower placements in ENV01, pwrtwrB in ENV02, rtower in ENV06 and coal_twr in ENV08.",
+        "Public 3cc checks loaded and drove all eight environments with an empty unsupported-mesh list and no JS/WebGL errors. The public board also passed its filter/mobile checks."
       ],
-      "limitation": "These are host inspection-camera captures, not ordinary gameplay framing or public proof. The tower decoder and alpha fix do not solve projected terrain LOD, fog, distant blending or full GS material parity.",
+      "limitation": "The screenshot is a host inspection-camera view, not ordinary gameplay framing. The restored towers and alpha cutout do not solve projected terrain LOD, fog, distant blending or full GS material parity, and do not establish coverage of other race courses.",
       "image": "/devlog-images/five-map-towers-were-there-all-along-as-invisible-obst-ee2b3f1c.png",
-      "caption": "Host inspection-camera view of the restored ENV02 power tower; the alpha-tested lattice is open so the landscape shows through. This is not gameplay framing."
+      "caption": "Host inspection-camera view of the restored ENV02 power tower; the alpha-tested lattice is open so the landscape shows through. This is not gameplay framing.",
+      "release_verification": {
+        "commit": "3cc8e5fee7253fcfae207e61faa12ea70336459f",
+        "ci_run": "38192659265",
+        "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+        "checks": [
+          "All eight environments loaded/drove with zero unsupported placed meshes and no JS/WebGL errors."
+        ]
+      }
+    },
+    {
+      "id": "wreck-camera-rider-prop-contacts-and-hard-landings-pas-697b2afd",
+      "timestamp": "2026-10-12T01:59:03.282317+00:00",
+      "recorded_at": "2026-10-12T02:00:42.901675+00:00",
+      "kind": "build",
+      "title": "Wreck camera, rider prop contacts and hard landings pass host checks",
+      "summary": "The host candidate runs the recovered wreck camera, rider contacts against supported static props, platform recovery support and two original hard-landing actions. A fresh actual-content touch crash test passed recovery and resumed driving; this checkpoint has not been verified on the public release.",
+      "details": [
+        "The 240-frame native wreck-camera comparison executed 396,390 original instructions with maximum absolute output difference 1.1264648435371782e-5. Its position-collision callback remains outside that comparison.",
+        "The browser loads 78 selected original rider clips, including LandHardF and LandHard. Loading all clips does not mean each has been visually exercised. Native snapshot/input/impact component checks and 4,195 finite source-asset pose samples support the hard-landing integration.",
+        "The fresh host Chromium touch run passed preload takeoff, Nac Nac, unfinished landing into vertical wreck, separation/ground motion, rider contact, automatic reset and resumed driving. It also asserted that the native wreck camera activates and remains finite.",
+        "Static rider spokes and the ninth downward recovery ray are connected. Component probes bit-match 6,500 spoke endpoints and 6,500 flat-leaf hit decisions (254 hits); those checks exclude broadphase, transforms, smooth normals and contact response.",
+        "An original-content probe sampled 1,694 wreck poses and five detach/terrain/recovery cases. A separate synthetic placement of the source distillery roof above Caribou terrain produced static contact, finite motion and recovery for all five separation types. See research/WRECK.md for scope."
+      ],
+      "limitation": "Host-only verification; publication and public regression remain pending. This is a partial driving reconstruction. Component checks do not establish PS2 hardware arithmetic or whole-game parity. Water/moving actors, attached-phase contact impulses, camera clearance, original shared RNG order, scoring, rider IK and full animation fidelity remain incomplete.",
+      "image": "/devlog-images/wreck-camera-rider-prop-contacts-and-hard-landings-pas-697b2afd.png",
+      "caption": "Fresh host touch crash test at 390px: the rider and rolling quad during the ground phase. The automated trace verifies wreck camera activation, contact and recovery; this image alone does not establish parity."
+    },
+    {
+      "id": "bindings-now-follow-you-from-keyboard-to-controller-b55f5d98",
+      "timestamp": "2026-10-12T02:01:01.202984+00:00",
+      "recorded_at": "2026-10-12T02:02:50.657306+00:00",
+      "kind": "verification",
+      "title": "Bindings now follow you from keyboard to controller",
+      "summary": "The new Controls pages let you change keyboard keys, controller buttons, signed axes and chords, then keep those choices after reload. One subtle fix prevents a cancelled brace from turning into an unintended preload when you resume.",
+      "details": [
+        "The original jump still comes from a quick down-to-up lean at a ramp. The separate browser hold/release is an adaptation; remapping does not replace the original force gates.",
+        "Actual-WASM checks covered key remapping and persistence, controller button and signed-axis capture, reverse/brake chords, cancellation and a fresh Escape immediately after Resume. A native replay confirmed that cancelling stale lean history removes a pending boost while preserving force already underway.",
+        "The menu also keeps navigation controls independent of gameplay remapping, so changing a drive binding does not strand keyboard or controller users in Settings."
+      ],
+      "limitation": "Host-verified candidate only; public deployment is pending. Synthetic controller tests do not verify a physical gamepad or iOS device. This does not establish all 24 touch gestures, full-flip behavior or complete handling parity.",
+      "image": "/devlog-images/bindings-now-follow-you-from-keyboard-to-controller-b55f5d98.png",
+      "caption": "Host candidate Controls screen showing example custom bindings, including a signed controller axis. These are not defaults or a test of physical hardware."
+    },
+    {
+      "id": "the-soundtrack-selector-remembers-where-the-shuffle-wa-d877a05b",
+      "timestamp": "2026-10-12T02:00:25.381532+00:00",
+      "recorded_at": "2026-10-12T02:02:50.693431+00:00",
+      "kind": "discovery",
+      "title": "A real quad image was hiding in the menu files",
+      "summary": "The Main Menu had room for a vehicle but no vehicle art. A small original ATV thumbnail turned up in a separate UI archive, and the host candidate now places it beside the reconstructed menu.",
+      "details": [
+        "The original QUADINFO resource contains a 256\u00d7128 transparent ATV thumbnail. Using the recovered image fills the empty space without pretending it is a new high-resolution render.",
+        "The Main Menu remains Rust-drawn: its layout, panel geometry, callbacks and other missing artwork are still reconstructed or incomplete. The source image is one recovered asset, not a restored original menu page.",
+        "The same host menu candidate adds the 21-song selector; its separate screenshot shows the paused Music page."
+      ],
+      "limitation": "Host-verified candidate only; public deployment is pending. The thumbnail retains its original source resolution and does not establish full menu-art or callback parity.",
+      "image": "/devlog-images/the-soundtrack-selector-remembers-where-the-shuffle-wa-d877a05b.png",
+      "caption": "Host candidate Main Menu with a recovered ATV image from the original 256\u00d7128 thumbnail; it is not the complete original menu artwork."
+    },
+    {
+      "id": "the-21-song-list-no-longer-starts-over-at-track-one-48dfd0d9",
+      "timestamp": "2026-10-12T02:01:03.321800+00:00",
+      "recorded_at": "2026-10-12T02:03:42.141863+00:00",
+      "kind": "discovery",
+      "title": "The 21-song list no longer starts over at track one",
+      "summary": "All 21 original songs were already streamable, but changing maps quietly restarted the shuffle from its first track. The host candidate preserves shuffle/history across map changes and adds direct song selection with a paused preview.",
+      "details": [
+        "The original catalog supplies title and artist for each song. The menu provides catalog-page navigation, direct selection, mute and volume; playback history is retained separately.",
+        "Actual WASM playback checks selected all 21 tracks with bounded 64 KiB decode input and no stream/browser errors. Preview works while the simulation is paused, and focus loss/mute stop preview work.",
+        "A separate Main Menu change uses a recovered original ATV thumbnail at its 256\u00d7128 source resolution; the thumbnail and the song selector are both host-candidate menu work."
+      ],
+      "limitation": "Host-verified candidate only; public deployment is pending. Playback checks are not a listening comparison, and mixer, effects, spatialization and complete original transitions remain incomplete.",
+      "image": "/devlog-images/the-21-song-list-no-longer-starts-over-at-track-one-48dfd0d9.png",
+      "caption": "Host candidate Music page previewing Amplified by Cypress Hill while the game is paused. Playback and controls were browser-verified; this is not a listening comparison."
     }
   ],
-  "updated_at": "2026-10-12T01:35:23.182250+00:00",
+  "updated_at": "2026-10-12T02:03:42.141863+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
-      "commit": "7a08ccc25e7a7aa6e313f285baa130d77a69d903",
-      "ci_run": "38190627553",
-      "url": "https://atv-offroad-fury-2.champtoday.workers.dev/"
+      "commit": "3cc8e5fee7253fcfae207e61faa12ea70336459f",
+      "ci_run": "38192659265",
+      "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+      "static_assets": 23,
+      "served_objects": 293,
+      "devlog_entries": 46,
+      "devlog_screenshots": 41
     },
     "next_priorities": [
       "Recover original ATV handling, airborne controls and trick transitions; compare fixed inputs and outcomes against the recovered reference routines.",
@@ -781,11 +868,11 @@
         "category": "Front end",
         "title": "Title, menus and map selection",
         "status": "PARTIAL",
-        "scope": "PUBLIC \u00b7 TITLE-SCREEN DEVLOG LINK",
-        "summary": "A Rust-drawn responsive route reaches Single Player \u2192 Freestyle \u2192 all eight environments. Recovered fonts and map imagery support original-style screens; this is not a pixel-exact recreation of every original page or callback.",
-        "validation": "Earlier eight-map route evidence: main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449. The start-screen Dev log link has separate public verification on 667f24bc707f5240d6927c49c65cdf6583728ad5 \u00b7 CI 38188315671.",
+        "scope": "PUBLIC ROUTE \u00b7 MENU-ART CANDIDATE HOST-VERIFIED",
+        "summary": "The public Rust-drawn route reaches Single Player \u2192 Freestyle \u2192 all eight environments. A host candidate adds the recovered 256\u00d7128 ATV thumbnail to the Main Menu; the full original menu art, callbacks and every page are not reproduced.",
+        "validation": "Earlier eight-map route evidence: main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449. The start-screen Dev log link has separate public verification on 667f24bc707f5240d6927c49c65cdf6583728ad5 \u00b7 CI 38188315671. The candidate screenshot is host-only; thumbnail scale remains the original source resolution.",
         "evidence": "research/UI.md \u2014 connected route and page-layout evidence.",
-        "next_step": "Recover remaining original menu pages and callbacks, then replace authored panel geometry and missing menu art.",
+        "next_step": "Verify the thumbnail on the public Worker, then recover remaining menu pages, callbacks and higher-resolution art where available.",
         "release_verification": {
           "commit": "667f24bc707f5240d6927c49c65cdf6583728ad5",
           "ci_run": "38188315671",
@@ -926,11 +1013,20 @@
         "category": "Vehicle",
         "title": "Touch preload and takeoff lean",
         "status": "PARTIAL",
-        "scope": "PUBLIC + HOST TESTS",
-        "summary": "Public touch hold/release changes rider pose without granting force on flat ground. Host ramp tests show native takeoff lean/pitch behavior and a separate clean four-wheel landing, but not a completed flip or full stunt system.",
-        "validation": "Public 7a08ccc25e7a7aa6e313f285baa130d77a69d903 \u00b7 CI 38190627553 verifies the earlier per-step touch/focus path. Host two-thumb candidate passed six browser variants including stationary brace, ramp and stunt checks; a 124-step Caribou trace matched sequential native-f32 execution across batched transport.",
+        "scope": "PUBLIC TOUCH/RAMP CHECKS \u00b7 FULL FLIPS UNRESOLVED",
+        "summary": "Public touch and air-axis ramp regressions pass with original takeoff/landing thresholds. The right thumb holds preload and releases it with throttle when ramp conditions allow; touch takeoff/landing works in batched physics updates. This does not establish full flips or the complete stunt system.",
+        "validation": "Public 3cc8e5fee7253fcfae207e61faa12ea70336459f \u00b7 CI 38192659265 passed the 124-step Caribou touch-batch trace and air-axis ramp variant. Physical iOS and full-flip parity remain unverified.",
         "evidence": "research/TOUCH.md \u2014 preload, takeoff continuity and touch verification.",
-        "next_step": "Verify the two-thumb mapping on a public release and physical iOS; compare takeoff, hold, release, landing and cancellation against more original reference sequences."
+        "next_step": "Compare original hold/release, takeoff, landing and cancellation behavior across more references; do not infer full flips from the ramp tests.",
+        "release_verification": {
+          "commit": "3cc8e5fee7253fcfae207e61faa12ea70336459f",
+          "ci_run": "38192659265",
+          "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+          "checks": [
+            "124-step touch/batch comparison passed.",
+            "Air-axis ramp regression passed; full flips are not claimed."
+          ]
+        }
       },
       {
         "id": "stunt-actions",
@@ -988,45 +1084,71 @@
         "id": "missing-scene-meshes",
         "category": "World",
         "title": "Unsupported scene meshes",
-        "status": "PARTIAL",
-        "scope": "PUBLIC 7a08 BASELINE + HOST MAP CANDIDATE",
-        "summary": "Five tower placements were present in the map and already had collision meshes, but the renderer discarded their visible meshes at a version guard. The host candidate accepts the observed PSG v4 layout alongside v3, restoring 2 rtower placements in ENV01, pwrtwrB in ENV02, rtower in ENV06 and coal_twr in ENV08. This makes existing invisible obstacles visible without changing physics.",
-        "validation": "Native audit decoded all 502 original mesh records in the eight current FR archives (498 v3, 4 v4). Host browser tests loaded/driven all eight maps with zero unsupported placed meshes and no JS/WebGL errors; four inspection views covered all five tower placements, materials and draw counts.",
+        "status": "LIVE",
+        "scope": "PUBLIC \u00b7 EIGHT FREESTYLE ENVIRONMENTS",
+        "summary": "All meshes placed in the eight public Freestyle environments now load, including the five tower placements restored after a version guard had rejected their visible geometry. Their original collision meshes were already present, so making them visible did not change physics. This does not claim complete race-course coverage or visual parity.",
+        "validation": "Public 3cc8e5fee7253fcfae207e61faa12ea70336459f \u00b7 CI 38192659265 passed all-eight-map load/drive checks with an empty unsupported-mesh list and no JS/WebGL errors. Host archive audit decoded all 502 mesh records (498 v3, 4 v4); inspection views covered the five towers, their materials and draw counts.",
         "evidence": "research/GEOMETRY.md \u2014 PSG rigid meshes and eight-environment release.",
-        "next_step": "Verify these restorations in the next public release; continue auditing remaining scene models, material passes and map-specific placements."
+        "next_step": "Cover any additional course archives and verify scene-specific materials and collision use beyond the eight Freestyle environments.",
+        "release_verification": {
+          "commit": "3cc8e5fee7253fcfae207e61faa12ea70336459f",
+          "ci_run": "38192659265",
+          "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+          "checks": [
+            "All eight Freestyle maps loaded and drove; unsupported placed-mesh list was empty; no JS/WebGL errors."
+          ]
+        }
       },
       {
         "id": "graphics",
         "category": "Presentation",
         "title": "Rendering and original visual effects",
         "status": "PARTIAL",
-        "scope": "PUBLIC 7a08 BASELINE + HOST MAP CANDIDATE",
-        "summary": "The host map candidate also restores the ENV02 tower\u2019s open lattice with the recovered alpha-cutout test. Terrain detail is connected, but projected terrain LOD, fog, distant blending and full GS material behavior still differ.",
-        "validation": "Host ENV02 inspection capture verifies the open lattice after explicit GEQUAL alpha testing; all eight maps load/drive after the material change. Captures use a deliberately positioned inspection camera, not normal gameplay framing.",
+        "scope": "PUBLIC \u00b7 TOWER MATERIAL FIX; OTHER RENDERING PARTIAL",
+        "summary": "The public ENV02 power-tower lattice now renders open through its alpha cutouts. Terrain detail is connected, but projected terrain LOD, fog, distant blending and full GS material behavior still differ.",
+        "validation": "The public 3cc eight-map run passed with no unsupported placed meshes or JS/WebGL errors. The inspected ENV02 tower capture is a host-authored inspection-camera view, not ordinary gameplay framing.",
         "evidence": "research/GEOMETRY.md \u2014 PSG meshes and terrain shading; research/IMPLEMENTATION.md.",
-        "next_step": "Compare remaining material and alpha-test variants, then recover projected terrain selection, far-color blending, fog and original GS behavior."
+        "next_step": "Compare remaining material and alpha-test variants, then recover projected terrain selection, far-color blending, fog and original GS behavior.",
+        "release_verification": {
+          "commit": "3cc8e5fee7253fcfae207e61faa12ea70336459f",
+          "ci_run": "38192659265",
+          "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+          "checks": [
+            "All-eight-map load/drive checks passed after tower and alpha-cutout restoration."
+          ]
+        }
       },
       {
         "id": "input",
         "category": "Platform",
         "title": "Keyboard, controller and touch input",
         "status": "PARTIAL",
-        "scope": "PUBLIC 7a08 BASELINE + HOST TWO-THUMB CANDIDATE",
-        "summary": "Public 7a08 includes the per-physics-step touch update and focus/orbit fallback fix. A newer host candidate gives each thumb a dedicated role: left steers and leans; right drives forward, brakes into reverse, and holds preload. Releasing preload with throttle releases it for a jump when ramp conditions allow.",
-        "validation": "Public baseline: 7a08ccc25e7a7aa6e313f285baa130d77a69d903 \u00b7 CI 38190627553. Host candidate: 124 actual Caribou steps across shifted batches matched sequential native-f32 execution through takeoff/landing; left lean 0.25 persisted at a batched takeoff and released right throttle produced brake 0. Six browser variants passed, including two-thumb drive, held preload pose, ramp and stunt checks. Physical iOS behavior remains unverified.",
+        "scope": "PUBLIC 3cc TOUCH BASELINE \u00b7 SETTINGS CANDIDATE HOST-VERIFIED",
+        "summary": "The public baseline gives each thumb a steady role: left steers and leans; right drives, brakes into reverse and holds preload. A host candidate adds remapping for 16 keyboard/controller actions, including buttons, signed axes and chords. Physical iOS/gamepad behavior and full original handling parity are not established.",
+        "validation": "Public 3cc8e5fee7253fcfae207e61faa12ea70336459f \u00b7 CI 38192659265 verified the two-thumb touch and ramp path. The newer host candidate passed actual-WASM keyboard persistence, controller button/signed-axis capture, reverse/brake chords, cancellation and immediate Resume\u2192Escape checks. It is not yet public; no physical hardware equivalence is claimed.",
         "evidence": "research/TOUCH.md \u2014 browser adapter limits; research/IMPLEMENTATION.md \u2014 input requirements.",
-        "next_step": "Verify the two-thumb layout on a public release and physical iOS; continue original remapping and remaining control/handling comparisons."
+        "next_step": "Verify remapping on the public Worker, then compare additional original handling and trick inputs; test physical devices separately.",
+        "release_verification": {
+          "commit": "3cc8e5fee7253fcfae207e61faa12ea70336459f",
+          "ci_run": "38192659265",
+          "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+          "checks": [
+            "Two-thumb touch interaction and 124-step Caribou batch comparison passed.",
+            "Air-axis ramp regression passed.",
+            "Mobile board/frontend checks passed at 390px; physical iOS not tested."
+          ]
+        }
       },
       {
         "id": "audio",
         "category": "Audio",
         "title": "Music and engine sound",
         "status": "PARTIAL",
-        "scope": "PUBLIC + HOST CHECKS",
-        "summary": "The 21-song catalog streams and original engine samples are connected. The complete mixer, effects, spatialization, dialogue and all original transitions are not reproduced.",
-        "validation": "Public content checks and browser playback; complete mixer parity is not claimed.",
+        "scope": "PUBLIC STREAMING BASELINE \u00b7 SELECTOR CANDIDATE HOST-VERIFIED",
+        "summary": "The public baseline streams the 21-song catalog and original engine samples. A host candidate preserves shuffle/history across map changes and adds direct selection plus paused preview. The complete mixer, effects, spatialization, dialogue and original transitions remain incomplete.",
+        "validation": "The host candidate selected all 21 songs through the actual WASM decoder with bounded 64 KiB decode input and no stream/browser errors; paused preview, focus loss and mute were checked. This is not a listening comparison or public verification.",
         "evidence": "research/DEPLOYMENT.md \u2014 runtime manifest; research/IMPLEMENTATION.md \u2014 audio acceptance gate.",
-        "next_step": "Recover mixer levels, sample interpolation, effect buses, spatialization and mode-specific music transitions."
+        "next_step": "Verify the selector on the public Worker; compare playback and transitions against original behavior, then recover mixer levels, effects and spatialization."
       },
       {
         "id": "local-split-screen",

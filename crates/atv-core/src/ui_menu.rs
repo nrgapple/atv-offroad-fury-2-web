@@ -10,6 +10,13 @@ const SELECTED_FONT: &str = "tradegothic_boldcondensed_22soff";
 const HEADER_FONT: &str = "tradegothic_boldcondenseditalic_-1fs_32ds";
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ControlRow {
+    pub id: String,
+    pub label: String,
+    pub value: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Request {
     pub page: String,
     pub width: f32,
@@ -21,6 +28,30 @@ pub struct Request {
     pub track_image: String,
     #[serde(default)]
     pub fullscreen: bool,
+    #[serde(default)]
+    pub control_rows: Vec<ControlRow>,
+    #[serde(default)]
+    pub binding_device: String,
+    #[serde(default)]
+    pub binding_page: usize,
+    #[serde(default)]
+    pub capture_label: String,
+    #[serde(default)]
+    pub music_ready: bool,
+    #[serde(default)]
+    pub music_rows: Vec<ControlRow>,
+    #[serde(default)]
+    pub music_page: usize,
+    #[serde(default)]
+    pub music_status: String,
+    #[serde(default)]
+    pub music_enabled: bool,
+    #[serde(default)]
+    pub music_volume: usize,
+    #[serde(default)]
+    pub menu_logo: bool,
+    #[serde(default)]
+    pub menu_atv: bool,
 }
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -46,6 +77,10 @@ pub enum Draw {
         color: &'static str,
         max_width: f32,
     },
+    Artwork {
+        image: &'static str,
+        rect: [f32; 4],
+    },
     Preview {
         image: String,
         rect: [f32; 4],
@@ -54,7 +89,7 @@ pub enum Draw {
 #[derive(Serialize)]
 pub struct Hit {
     pub label: String,
-    pub action: &'static str,
+    pub action: String,
     pub rect: [f32; 4],
     pub selected: bool,
 }
@@ -64,7 +99,7 @@ pub struct Frame {
     pub height: f32,
     pub draw: Vec<Draw>,
     pub hits: Vec<Hit>,
-    pub choices: Vec<&'static str>,
+    pub choices: Vec<String>,
 }
 impl Frame {
     fn rect(
@@ -101,7 +136,7 @@ impl Frame {
             max_width,
         });
     }
-    fn button(&mut self, label: &str, action: &'static str, rect: [f32; 4], selected: bool) {
+    fn button(&mut self, label: &str, action: &str, rect: [f32; 4], selected: bool) {
         let [x, y, w, h] = rect;
         if selected {
             self.rect(
@@ -137,7 +172,7 @@ impl Frame {
         );
         self.hits.push(Hit {
             label: label.into(),
-            action,
+            action: action.into(),
             rect,
             selected,
         });
@@ -157,6 +192,21 @@ pub fn layout(request: Request) -> Result<Frame> {
         || !(240.0..=16384.0).contains(&request.height)
         || request.track_name.len() > 128
         || request.track_image.len() > 128
+        || request.capture_label.len() > 128
+        || request.binding_device.len() > 32
+        || request.music_status.len() > 256
+        || request.control_rows.len() > 32
+        || request.music_rows.len() > 64
+        || request
+            .control_rows
+            .iter()
+            .chain(&request.music_rows)
+            .any(|row| {
+                row.id.len() > 40
+                    || !row.id.bytes().all(|c| c.is_ascii_alphanumeric())
+                    || row.label.len() > 128
+                    || row.value.len() > 256
+            })
     {
         return Err("invalid menu viewport or label".into());
     }
@@ -164,7 +214,10 @@ pub fn layout(request: Request) -> Result<Frame> {
     let w = request.width / scale;
     let h = request.height / scale;
     let portrait = h > w;
-    let pause = matches!(request.page.as_str(), "pause" | "controls");
+    let pause = matches!(
+        request.page.as_str(),
+        "pause" | "controls" | "bindings" | "music"
+    );
     let mut f = Frame {
         width: w,
         height: h,
@@ -220,6 +273,14 @@ pub fn layout(request: Request) -> Result<Frame> {
         "tracks" => "Freestyle",
         "pause" => "Pause",
         "controls" => "Controls",
+        "bindings" => {
+            if request.binding_device == "controller" {
+                "Controller"
+            } else {
+                "Keyboard"
+            }
+        }
+        "music" => "Music",
         _ => return Err("unknown menu page".into()),
     };
     if request.page != "title" {
@@ -232,17 +293,25 @@ pub fn layout(request: Request) -> Result<Frame> {
     };
     match request.page.as_str() {
         "title" => {
-            f.choices.extend(["main", "devlog"]);
+            f.choices.extend(["main", "devlog"].map(String::from));
             let y = (h * 0.30).max(95.);
-            f.text("ATV", [34., y], 3.2, HEADER_FONT, "232,232,232", w - 68.);
-            f.text(
-                "OFFROAD FURY 2",
-                [36., y + 115.],
-                1.25,
-                HEADER_FONT,
-                "247,206,72",
-                w - 72.,
-            );
+            if request.menu_logo {
+                let width = (w - 60.).min(540.);
+                f.draw.push(Draw::Artwork {
+                    image: "original-logo",
+                    rect: [30., y + 30., width, width / 3.],
+                });
+            } else {
+                f.text("ATV", [34., y], 3.2, HEADER_FONT, "232,232,232", w - 68.);
+                f.text(
+                    "OFFROAD FURY 2",
+                    [36., y + 115.],
+                    1.25,
+                    HEADER_FONT,
+                    "247,206,72",
+                    w - 72.,
+                );
+            }
             f.button(
                 "Press START",
                 "main",
@@ -266,7 +335,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                     "Choose an environment and free ride.",
                 )
             };
-            f.choices.push(action);
+            f.choices.push(action.to_string());
             let main = request.page == "main";
             f.button(
                 label,
@@ -275,7 +344,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                 !main || request.selection.is_multiple_of(2),
             );
             if main {
-                f.choices.push("devlog");
+                f.choices.push("devlog".into());
                 f.button(
                     "Dev log",
                     "devlog",
@@ -304,6 +373,28 @@ pub fn layout(request: Request) -> Result<Frame> {
                 "205,205,205",
                 list_w - 32.,
             );
+            if request.menu_atv {
+                let width = if portrait {
+                    (w - 60.).min((h - detail_y - 186.).max(0.) * 2.)
+                } else {
+                    (w * 0.43).min(380.)
+                };
+                if width >= 100. {
+                    f.draw.push(Draw::Artwork {
+                        image: "multi_atv01",
+                        rect: [
+                            if portrait {
+                                (w - width) / 2.
+                            } else {
+                                w - width - 22.
+                            },
+                            if portrait { detail_y + 92. } else { 170. },
+                            width,
+                            width / 2.,
+                        ],
+                    });
+                }
+            }
             f.footer(true);
         }
         "tracks" => {
@@ -380,14 +471,17 @@ pub fn layout(request: Request) -> Result<Frame> {
                 ("Reset ATV", "reset"),
                 ("Controls", "controls"),
             ];
+            if request.music_ready {
+                choices.push(("Music", "music"));
+            }
             if request.fullscreen {
                 choices.push(("Fullscreen", "fullscreen"));
             }
             choices.extend([("Dev log", "devlog"), ("Quit to Main Menu", "main")]);
-            let row = if portrait { 64. } else { 48. };
+            let row = ((h - 110.) / choices.len() as f32).min(if portrait { 64. } else { 48. });
             let selected = request.selection % choices.len();
             for (i, (label, action)) in choices.iter().enumerate() {
-                f.choices.push(action);
+                f.choices.push(action.to_string());
                 f.button(
                     label,
                     action,
@@ -402,36 +496,15 @@ pub fn layout(request: Request) -> Result<Frame> {
             }
         }
         "controls" => {
-            let groups = [
-                (
-                    "TOUCH",
-                    vec![
-                        "Left: steer and lean, on ground or in air.",
-                        "Right: up to drive; down to brake / reverse.",
-                        "Hold right to brace. Lift to release preload.",
-                        "In air: extra right finger swipes stunts.",
-                        "Up / down: Nac Nac / No Footed Can Can.",
-                        "Left / right: Suicide No Hander / Bar Hop.",
-                    ],
-                ),
-                (
-                    "CONTROLLER",
-                    vec![
-                        "Stick: steer / lean. Triggers: drive / brake.",
-                        "Bottom + left face buttons: reverse.",
-                        "Circle / Triangle / L1 + stick: stunts.",
-                        "R3: camera. Start: pause.",
-                    ],
-                ),
-                (
-                    "KEYBOARD",
-                    vec![
-                        "WASD: drive. Q / E: lean. R: reverse.",
-                        "J / K / L + arrows: stunts.",
-                        "C: camera. Esc: pause.",
-                    ],
-                ),
-            ];
+            let groups = [(
+                "TOUCH",
+                vec![
+                    "Left: steer and lean, on ground or in air.",
+                    "Right: up to drive; down to brake / reverse.",
+                    "Hold right to brace. Lift to release preload.",
+                    "In air: extra right finger swipes stunts.",
+                ],
+            )];
             let mut y = 96.;
             for (index, (heading, lines)) in groups.into_iter().enumerate() {
                 let x = if portrait {
@@ -439,7 +512,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                 } else {
                     30. + index as f32 * (w - 60.) / 3.
                 };
-                let width = if portrait { w - 60. } else { (w - 90.) / 3. };
+                let width = w - 60.;
                 if !portrait {
                     y = 102.;
                 }
@@ -454,11 +527,170 @@ pub fn layout(request: Request) -> Result<Frame> {
                         "222,222,222",
                         width,
                     );
-                    y += if portrait { 27. } else { 34. };
+                    y += if portrait { 22. } else { 26. };
                 }
-                y += 28.;
+                y += 18.;
             }
-            f.footer(true);
+            for (i, (label, action)) in [
+                ("Keyboard bindings", "keyboard"),
+                ("Controller bindings", "controller"),
+            ]
+            .iter()
+            .enumerate()
+            {
+                f.button(
+                    label,
+                    action,
+                    [24., h - 182. + i as f32 * 54., w - 48., 54.],
+                    request.selection == i,
+                );
+                f.choices.push((*action).into());
+            }
+            f.button(
+                "Back",
+                "back",
+                [24., h - 68., 132., 56.],
+                request.selection == 2,
+            );
+            f.choices.push("back".into());
+        }
+        "bindings" | "music" => {
+            let music = request.page == "music";
+            if !request.capture_label.is_empty() {
+                f.text(
+                    &request.capture_label,
+                    [30., 112.],
+                    1.1,
+                    FONT,
+                    "255,226,107",
+                    w - 60.,
+                );
+                for (i, line) in [
+                    "Press a key, button or move an axis.",
+                    "Hold several together for a combination.",
+                    "Release to save. Escape cancels.",
+                ]
+                .iter()
+                .enumerate()
+                {
+                    f.text(
+                        *line,
+                        [30., 172. + i as f32 * 34.],
+                        0.85,
+                        FONT,
+                        "222,222,222",
+                        w - 60.,
+                    );
+                }
+                f.button("Cancel", "bindcancel", [24., h - 74., w - 48., 56.], true);
+                f.choices.push("bindcancel".into());
+            } else {
+                let rows = if music {
+                    &request.music_rows
+                } else {
+                    &request.control_rows
+                };
+                let pages = rows.len().div_ceil(4).max(1);
+                let page = (if music {
+                    request.music_page
+                } else {
+                    request.binding_page
+                })
+                .min(pages - 1);
+                let note = if music {
+                    request.music_status.clone()
+                } else {
+                    if request.binding_device == "controller" {
+                        "Native preload: lean back, then forward at ramp lip.".into()
+                    } else {
+                        "Select an action to change its binding.".into()
+                    }
+                };
+                f.text(note, [30., 80.], 0.75, FONT, "222,222,222", w - 60.);
+                for (i, row) in rows.iter().skip(page * 4).take(4).enumerate() {
+                    let y = 110. + i as f32 * 54.;
+                    let action = format!("{}:{}", if music { "song" } else { "bind" }, row.id);
+                    let selected = request.selection == i;
+                    f.button("", &action, [24., y, w - 48., 54.], selected);
+                    f.hits.last_mut().unwrap().label = format!("{}: {}", row.label, row.value);
+                    let color = if selected { "0,0,0" } else { "222,222,222" };
+                    f.text(
+                        &row.label,
+                        [50., y + 11.],
+                        0.72,
+                        if selected { SELECTED_FONT } else { FONT },
+                        color,
+                        w - 90.,
+                    );
+                    f.text(
+                        &row.value,
+                        [50., y + 29.],
+                        0.58,
+                        if selected { SELECTED_FONT } else { FONT },
+                        color,
+                        w - 90.,
+                    );
+                    f.choices.push(action);
+                }
+                let prefix = if music { "music" } else { "bind" };
+                for (i, label) in ["Previous", "Next"].iter().enumerate() {
+                    let action = format!("{prefix}{}", if i == 0 { "prev" } else { "next" });
+                    f.button(
+                        label,
+                        &action,
+                        [
+                            24. + i as f32 * (w - 48.) / 2.,
+                            h - 122.,
+                            (w - 48.) / 2.,
+                            54.,
+                        ],
+                        request.selection == f.choices.len(),
+                    );
+                    f.choices.push(action);
+                }
+                f.text(
+                    format!("{} / {}", page + 1, pages),
+                    [w - 90., 30.],
+                    0.8,
+                    FONT,
+                    "230,230,230",
+                    66.,
+                );
+                let actions = if music {
+                    vec![
+                        ("Back", "back"),
+                        (
+                            if request.music_enabled {
+                                "Music off"
+                            } else {
+                                "Music on"
+                            },
+                            "musictoggle",
+                        ),
+                        ("Volume", "musicvolume"),
+                    ]
+                } else {
+                    vec![
+                        ("Back", "back"),
+                        ("Clear", "bindclear"),
+                        ("Defaults", "bindreset"),
+                    ]
+                };
+                for (i, (label, action)) in actions.iter().enumerate() {
+                    f.button(
+                        label,
+                        action,
+                        [
+                            20. + i as f32 * (w - 40.) / 3.,
+                            h - 66.,
+                            (w - 40.) / 3.,
+                            54.,
+                        ],
+                        request.selection == f.choices.len(),
+                    );
+                    f.choices.push((*action).into());
+                }
+            }
         }
         _ => unreachable!(),
     }
@@ -477,6 +709,18 @@ mod tests {
             track_name: "Arlington Stream".into(),
             track_image: "arlington".into(),
             fullscreen: true,
+            control_rows: vec![],
+            binding_device: String::new(),
+            binding_page: 0,
+            capture_label: String::new(),
+            music_ready: true,
+            music_rows: vec![],
+            music_page: 0,
+            music_status: String::new(),
+            music_enabled: true,
+            music_volume: 70,
+            menu_logo: true,
+            menu_atv: true,
         }
     }
     #[test]
@@ -491,7 +735,13 @@ mod tests {
         );
         let mut r = request("pause", 390., 844.);
         r.fullscreen = false;
-        assert!(!layout(r).unwrap().choices.contains(&"fullscreen"));
+        assert!(
+            !layout(r)
+                .unwrap()
+                .choices
+                .iter()
+                .any(|choice| choice == "fullscreen")
+        );
     }
     #[test]
     fn touch_regions_fit_viewport_at_all_aspects() {
@@ -502,7 +752,9 @@ mod tests {
             (320., 568.),
             (768., 1024.),
         ] {
-            for page in ["title", "main", "single", "tracks", "pause", "controls"] {
+            for page in [
+                "title", "main", "single", "tracks", "pause", "controls", "bindings", "music",
+            ] {
                 let f = layout(request(page, w, h)).unwrap();
                 let scale = w / f.width;
                 for hit in &f.hits {

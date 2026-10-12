@@ -277,6 +277,15 @@ impl Vehicle {
     pub fn set_rider_mode(&mut self, mode: Option<crate::rider_pose::Mode>) {
         self.stunt_state_four = mode == Some(crate::rider_pose::Mode::Stunt);
     }
+    /// Browser lifecycle cancellation is not a physical stick release. Forget
+    /// any unfinished gesture while preserving a jump force already underway.
+    pub fn cancel_preload_gesture(&mut self) {
+        self.lean_gesture = LeanGesture::default();
+        self.rider_state.preload_armed = false;
+        if !self.rider_state.preload_active {
+            self.rider_state.timer = 0.0;
+        }
+    }
     pub fn begin_wreck(&mut self, kind: crate::wreck::Kind) {
         if self.wreck.phase != crate::wreck::Phase::Riding {
             return;
@@ -918,6 +927,71 @@ impl Vehicle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cancelled_hold_cannot_release_from_resumed_forward_lean() {
+        let mut results = Vec::new();
+        for cancelled in [false, true] {
+            let (mut vehicle, terrain) = fixture();
+            // A rising, fast-moving quad still touching a ramp is the original
+            // force gate. Forward lean is independent of the held browser brace.
+            vehicle.body =
+                BodyState::new([500., -1., 500.], [1., 0., 0., 0.], &vehicle.body_config).unwrap();
+            vehicle
+                .step(&terrain, VehicleInput::default(), 1. / 60.)
+                .unwrap();
+            vehicle.body.linear_velocity = [0., 10., 50.];
+            let held = vehicle
+                .step(
+                    &terrain,
+                    VehicleInput {
+                        lean: -1.,
+                        preload_axis: Some(1.),
+                        ..Default::default()
+                    },
+                    1. / 60.,
+                )
+                .unwrap();
+            assert!(
+                held.preload_armed,
+                "fixture must reach native arming: {held:?}"
+            );
+            if cancelled {
+                vehicle.cancel_preload_gesture();
+            }
+            let released = vehicle
+                .step(
+                    &terrain,
+                    VehicleInput {
+                        lean: -1.,
+                        ..Default::default()
+                    },
+                    1. / 60.,
+                )
+                .unwrap();
+            results.push(released);
+        }
+        assert!(results[0].preload_active, "uncancelled hold must release");
+        assert!(results[0].preload_strength > 0.);
+        assert!(!results[1].preload_active);
+        assert!(!results[1].preload_armed);
+        assert_eq!(results[1].preload_strength, 0.);
+        assert!(results[0].linear_velocity[1] > results[1].linear_velocity[1]);
+    }
+
+    #[test]
+    fn cancellation_preserves_an_already_active_jump() {
+        let (mut vehicle, _) = fixture();
+        vehicle.rider_state.preload_active = true;
+        vehicle.rider_state.preload_armed = true;
+        vehicle.rider_state.preload_strength = 0.75;
+        vehicle.rider_state.timer = 0.2;
+        vehicle.cancel_preload_gesture();
+        assert!(vehicle.rider_state.preload_active);
+        assert!(!vehicle.rider_state.preload_armed);
+        assert_eq!(vehicle.rider_state.preload_strength, 0.75);
+        assert_eq!(vehicle.rider_state.timer, 0.2);
+    }
+
     fn enable_test_wrecks(vehicle: &mut Vehicle) {
         vehicle.wreck_physics = Some(WreckPhysics {
             checkpoint_rays: crate::wreck::checkpoint_clearance_rays(),

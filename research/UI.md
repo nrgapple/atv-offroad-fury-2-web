@@ -73,3 +73,9 @@ in Back history. Both title and main menus expose Dev log through Rust-owned
 choices/hit regions, keyboard and controller selection, and touch. Public
 frontend checks covered those links and return navigation, the eight-map picker,
 driving/pause and 390px input with no disc picker or browser errors.
+
+## Settings and original artwork checkpoint
+
+The responsive Rust menu now includes paginated keyboard/controller binding screens and a 21-song selector under Pause. The browser captures keys, buttons, signed axes and combinations; Rust owns their labels, layout, selection bars and hit regions. Music preview keeps physics and engine audio paused. Menu navigation and Back remain available when gameplay actions are remapped. The menu canvas follows device scale up to 3x with an eight-million-pixel allocation cap; recovered bitmap glyphs and pictures retain their source resolution.
+
+The original transparent logo halves from PAGE01 are assembled as artwork inside the Rust layout. A separately packaged QUADINFO thumbnail adds the original ATV to Main/Single Player at its original aspect ratio, without baking buttons or labels into the background. Older manifests omit that optional thumbnail while publication completes. This is still a responsive style reconstruction, not exact native menu behavior or a high-resolution 3D ATV selector. See [menu asset evidence](MENU_ART.md).

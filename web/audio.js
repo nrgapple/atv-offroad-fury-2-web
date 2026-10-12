@@ -11,6 +11,9 @@ export class GameAudio {
     this.current = null;
     this.ready = false;
     this.active = true;
+    this.musicPreview = false;
+    this.musicTimer = null;
+    this.previewGeneration = 0;
     this.closed = false;
     this.busy = false;
     this.elapsed = 0;
@@ -23,7 +26,7 @@ export class GameAudio {
     window.addEventListener('keydown', this.unlock);
   }
   async resume() {
-    if (this.closed || !this.active) return;
+    if (this.closed || (!this.active && !this.musicPreview)) return;
     if (!this.context) {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (!AudioContext) throw new Error('This browser does not expose Web Audio.');
@@ -31,6 +34,9 @@ export class GameAudio {
       this.gain = this.context.createGain();
       this.gain.gain.value = 0.65;
       this.gain.connect(this.context.destination);
+      this.engineGain = this.context.createGain();
+      this.engineGain.gain.value = this.active ? 1 : 0;
+      this.engineGain.connect(this.gain);
     }
     await this.context.resume();
   }
@@ -87,7 +93,7 @@ export class GameAudio {
       source.loopStart = sample.info.loop_start / sample.info.sample_rate;
       source.loopEnd = sample.info.loop_end / sample.info.sample_rate;
     }
-    source.connect(this.gain);
+    source.connect(this.engineGain);
     const voice = { source, started: this.context.currentTime, duration: sample.buffer.duration, loop: source.loop };
     this.sources.add(voice);
     source.onended = () => { this.sources.delete(voice); source.disconnect(); };
@@ -139,8 +145,23 @@ export class GameAudio {
     this.active = active;
     this.elapsed = 0;
     if (!this.context) return;
-    if (active) await this.resume();
+    this.engineGain.gain.value = active ? 1 : 0;
+    if (active || this.musicPreview) await this.resume();
     else await this.context.suspend();
+  }
+  // Music-menu preview keeps decoding independent of physics while engine
+  // voices remain silent. The caller clears preview on menu exit/focus loss.
+  async setMusicPreview(active) {
+    if (this.closed) return;
+    const generation = ++this.previewGeneration;
+    this.musicPreview = Boolean(active);
+    if (this.musicTimer !== null) { clearInterval(this.musicTimer); this.musicTimer = null; }
+    if (this.musicPreview) {
+      await this.resume();
+      if (this.closed || !this.musicPreview || generation !== this.previewGeneration) return;
+      this.musicTimer = setInterval(() => { void this.music.update(); }, 250);
+      void this.music.update();
+    } else if (!this.active && this.context) await this.context.suspend();
   }
   async reset() {
     if (this.closed) return;
@@ -153,11 +174,13 @@ export class GameAudio {
   }
   snapshot() {
     return { ready: this.ready, context: this.context?.state ?? 'locked', samples: this.buffers.size,
-      voices: this.sources.size, commands: this.commands, sound: this.lastSound, music: this.music.snapshot() };
+      musicPreview: this.musicPreview, voices: this.sources.size, commands: this.commands, sound: this.lastSound, music: this.music.snapshot() };
   }
   close() {
-    this.generation++;
+    this.generation++; this.previewGeneration++;
     this.closed = true;
+    if (this.musicTimer !== null) clearInterval(this.musicTimer);
+    this.musicTimer = null; this.musicPreview = false;
     this.music.close();
     this.ready = false;
     window.removeEventListener('pointerdown', this.unlock);

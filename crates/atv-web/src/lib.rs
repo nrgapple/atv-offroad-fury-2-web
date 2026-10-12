@@ -28,6 +28,7 @@ struct Simulation {
     materials: Option<[TerrainMaterial; 8]>,
     vehicle: Option<Vehicle>,
     touch_drive: atv_core::browser_input::TouchDrive,
+    input_generation: Option<u64>,
     resolved_input: Option<serde_json::Value>,
     rider_mesh: Option<mesh::Mesh>,
     rider_animation: Option<animation::Animation>,
@@ -84,16 +85,36 @@ fn music(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         if op == 40 {
             let library = atv_core::music::MusicLibrary::parse(input)?;
             let bytes = serde_json::to_vec(&library).map_err(|e| e.to_string())?;
-            let shuffle = atv_core::music::MusicShuffle::new(&library);
-            *slot = Some(MusicPlayback {
-                library,
-                shuffle,
-                random: OriginalRandom::with_seed(1),
-            });
+            // Changing maps reloads the same catalog. Keep its original shuffle
+            // history instead of restarting at the deterministic first track.
+            if slot.as_ref().is_none_or(|music| music.library != library) {
+                let shuffle = atv_core::music::MusicShuffle::new(&library);
+                *slot = Some(MusicPlayback {
+                    library,
+                    shuffle,
+                    random: OriginalRandom::with_seed(1),
+                });
+            }
             Ok(bytes)
         } else {
             let music = slot.as_mut().ok_or("load original music catalog first")?;
-            let song = music.shuffle.next_song(&mut music.random)?;
+            let song = if input.is_empty() {
+                music.shuffle.next_song(&mut music.random)?
+            } else {
+                let request: serde_json::Value =
+                    serde_json::from_slice(input).map_err(|e| e.to_string())?;
+                let fields = request.as_object().ok_or("invalid music selection")?;
+                if fields.len() != 1 {
+                    return Err("invalid music selection fields".into());
+                }
+                let selection = fields
+                    .get("select")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|value| usize::try_from(value).ok())
+                    .ok_or("invalid music selection index")?;
+                music.shuffle.select(selection)?;
+                Some(selection)
+            };
             serde_json::to_vec(&song.map(|i| &music.library.songs[i])).map_err(|e| e.to_string())
         }
     })
@@ -273,6 +294,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 }
                 sim.rider_mode = None;
                 sim.touch_drive.reset();
+                sim.input_generation = None;
                 sim.resolved_input = None;
                 let result = simulation_frame(sim, &vehicle.frame())?;
                 sim.vehicle = Some(vehicle);
@@ -282,6 +304,10 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 let value: serde_json::Value =
                     serde_json::from_slice(input).map_err(|error| error.to_string())?;
                 let raw = value.get("input").ok_or("missing simulation input")?;
+                let generation = raw
+                    .get("input_generation")
+                    .map(|v| v.as_u64().ok_or("invalid input generation"))
+                    .transpose()?;
                 let input = VehicleInput {
                     throttle: json_number(raw, "throttle")?,
                     brake: json_number(raw, "brake")?,
@@ -334,6 +360,10 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     .as_ref()
                     .is_none_or(|a| a.stunt_landing_safe());
                 let vehicle = sim.vehicle.as_mut().ok_or("start simulation first")?;
+                if generation.is_some() && generation != sim.input_generation {
+                    vehicle.cancel_preload_gesture();
+                    sim.input_generation = generation;
+                }
                 vehicle.set_stunt_landing_safe(safe);
                 vehicle.set_rider_mode(sim.rider_mode);
                 let frame = vehicle.step(terrain, input, dt)?;
@@ -855,6 +885,29 @@ pub extern "C" fn run(op: u32, index: usize) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn soundtrack_reload_preserves_shuffle_and_explicit_selection_is_validated() {
+        let mut catalog = String::from(
+            "[Songs]\nNumberOfSongs=3\nOrdered=1\n[Artists]\nNumberOfArtists=1\nArtist1=Artist\n[Genres]\nNumberOfGenres=1\nGenre1=Rock\n",
+        );
+        for i in 1..=3 {
+            catalog.push_str(&format!(
+                "[Song {i}]\nFilename=song{i}.vag\nTitle=Song{i}\nArtist=1\nGenre=1\nLocked=0\n"
+            ));
+        }
+        music(catalog.as_bytes(), 40, 0).unwrap();
+        let first = music(&[], 41, 0).unwrap();
+        music(catalog.as_bytes(), 40, 0).unwrap();
+        let second = music(&[], 41, 0).unwrap();
+        assert_ne!(first, second, "map reload must not restart the shuffle");
+        let selected: serde_json::Value =
+            serde_json::from_slice(&music(br#"{"select":2}"#, 41, 0).unwrap()).unwrap();
+        assert_eq!(selected["filename"], "song3.vag");
+        assert!(music(br#"{"select":3}"#, 41, 0).is_err());
+        assert!(music(br#"{"select":-1}"#, 41, 0).is_err());
+        assert!(music(br#"{"select":1.5}"#, 41, 0).is_err());
+        assert!(music(br#"{"select":1,"unexpected":true}"#, 41, 0).is_err());
+    }
     #[test]
     fn batch_rejects_unbounded_or_fractional_step_counts_before_simulation() {
         for count in ["0", "5", "1.5", "-1", "18446744073709551615"] {

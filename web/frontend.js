@@ -1,3 +1,4 @@
+import { gameplayBindings } from './bindings.js';
 // Rust owns responsive menu geometry, labels, supported choices and hit regions.
 // This bridge draws commands with recovered glyph atlases and binds browser input.
 const base = name => name.replaceAll('\\', '/').split('/').at(-1).toLowerCase();
@@ -6,20 +7,46 @@ const fields = section => Object.fromEntries([...section.fields].reverse().map(f
 const sections = doc => new Map(doc.sections.map(s => [s.name.toLowerCase(), fields(s)]));
 const fontName = 'tradegothic_boldcondensed_22s';
 export class Frontend {
-  constructor({ codec, json, content, read, start, active }) {
-    Object.assign(this, { codec, json, content, read, start, active });
+  constructor({ codec, json, content, read, start, active, audio }) {
+    Object.assign(this, { codec, json, content, read, start, active, audio });
     this.root = document.getElementById('frontend'); this.canvas = document.getElementById('menu-canvas');
     this.ctx = this.canvas.getContext('2d'); this.buttons = document.getElementById('menu-buttons');
     this.notice = document.getElementById('menu-notice');
     this.assets = new Map(); this.images = new Map(); this.fonts = new Map();
     this.layoutKey = ''; this.layoutPending = false; this.loaded = new Set(); this.page = 'loading'; this.selection = 0; this.track = 0; this.busy = false; this.lastPad = new Set(); this.alive = true;
+    this.bindingDevice = 'keyboard'; this.bindingPage = 0; this.bindingRow = 0; this.musicPage = 0;
+    this.capture = null; this.menuKeys = new Set();
+    gameplayBindings.subscribe(() => { this.layoutKey = ''; });
+    window.addEventListener('keydown', e => {
+      if (!this.capture) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      if (e.code === 'Escape') return this.cancelCapture();
+      if (this.bindingDevice !== 'keyboard' || e.repeat) return;
+      if (!/^[A-Za-z][A-Za-z0-9]{0,39}$/.test(e.code)) return;
+      this.capture.held.add(e.code);
+      if (!this.capture.atoms.some(a => a.key === e.code) && this.capture.atoms.length < 4) this.capture.atoms.push({key:e.code});
+    }, true);
+    window.addEventListener('keyup', e => {
+      this.menuKeys.delete(e.code);
+      if (!this.capture) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      if (this.bindingDevice !== 'keyboard') return;
+      this.capture.held.delete(e.code);
+      if (!this.capture.held.size && this.capture.atoms.length) this.finishCapture();
+    }, true);
+    window.addEventListener('blur', () => { this.padBlocked = true; this.menuKeys.clear(); this.cancelCapture(); void this.audio?.()?.setMusicPreview(false); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) { this.padBlocked = true; this.menuKeys.clear(); this.cancelCapture(); } this.syncPreview(); });
+    window.addEventListener('focus', () => this.syncPreview());
     window.addEventListener('keydown', e => {
       if (e.repeat || this.busy) return;
-      if (this.root.hidden) { if (e.code === 'Escape') { e.preventDefault(); void this.show('pause'); } return; }
+      if (this.root.hidden) return;
+      this.menuKeys.add(e.code);
+      if (this.page === 'pause' && gameplayBindings.value('keyboard','pause',this.menuKeys,null) > .5) { e.preventDefault(); this.resume(); return; }
       const action = ({ ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'accept', Space: 'accept', Escape: 'back', Backspace: 'back' })[e.code];
       if (action) { e.preventDefault(); void this.action(action); }
     });
     window.addEventListener('pagehide', event => {
+      void this.audio?.()?.setMusicPreview(false);
       cancelAnimationFrame(this.pollFrame); this.pollFrame = null; this.lastPad.clear();
       if (!event.persisted) this.alive = false;
     });
@@ -32,20 +59,20 @@ export class Frontend {
       if (!this.alive) return;
       if (!document.hidden && document.hasFocus()) {
         let pads = []; try { pads = [...navigator.getGamepads()].filter(Boolean); } catch { /* browser without gamepad permission */ }
+        if (this.capture) { this.pollCapture(pads.find(p => p.connected !== false)); this.pollFrame = requestAnimationFrame(this.poll); return; }
         const held = new Set();
         for (const p of pads) {
           if (p.buttons[0]?.pressed) held.add('accept');
-          if (p.buttons[9]?.pressed) held.add('pause');
+          if (p.buttons[9]?.pressed || gameplayBindings.value('controller','pause',null,p) > .5) held.add('pause');
           if (p.buttons[1]?.pressed || p.buttons[3]?.pressed) held.add('back');
           if (p.buttons[12]?.pressed || p.axes[1] < -.55) held.add('up');
           if (p.buttons[13]?.pressed || p.axes[1] > .55) held.add('down');
           if (p.buttons[14]?.pressed || p.axes[0] < -.55) held.add('left');
           if (p.buttons[15]?.pressed || p.axes[0] > .55) held.add('right');
         }
-        if (this.root.hidden) {
-          if (held.has('pause') && !this.lastPad.has('pause')) void this.show('pause');
-        } else for (const action of held) if (!this.lastPad.has(action)) {
-          if (action === 'pause' && ['pause','controls'].includes(this.page) && !this.busy) this.resume();
+        if (!held.size) this.padBlocked = false;
+        if (!this.root.hidden && !this.padBlocked) for (const action of held) if (!this.lastPad.has(action)) {
+          if (action === 'pause' && ['pause','controls','bindings','music'].includes(this.page) && !this.busy) this.resume();
           else void this.action(action === 'pause' ? 'accept' : action);
         }
         this.lastPad = held;
@@ -108,12 +135,53 @@ export class Frontend {
         .map(([, f]) => ({ id: f.scn, name: unquote(f.name), image: f.image }));
       this.track = this.tracks.findIndex(t => t.id === 'env01');
       for (const name of [fontName, 'tradegothic_boldcondensed_22soff', 'tradegothic_boldcondenseditalic_-1fs_32ds']) await this.font(name);
+      await this.archive('/UI/RESOURCE/PAGEA/PAGE01.RES');
+      const logoA = await this.image('mmlogo01'), logoB = await this.image('mmlogo02');
+      const logo = document.createElement('canvas'); logo.width = logoA.width + logoB.width; logo.height = Math.max(logoA.height,logoB.height);
+      logo.getContext('2d').drawImage(logoA,0,0); logo.getContext('2d').drawImage(logoB,logoA.width,0); this.images.set('original-logo',logo);
+      // The thumbnail arrives through a separately validated R2 package. Older
+      // manifests can still open every menu while that content update publishes.
+      const {files} = await this.content;
+      if (files.some(f => f.path === '/UI/RESOURCE/QUADINFO.RES')) { await this.archive('/UI/RESOURCE/QUADINFO.RES'); await this.image('multi_atv01'); }
       if (showTitle) await this.show('title');
     } catch (error) { this.fail(error); }
   }
   fail(error) { this.notice.textContent = error.message; this.busy = false; this.root.dataset.error = 'true'; }
-  resume() { this.root.hidden = true; this.active(false); }
+  syncPreview() {
+    void this.audio?.()?.setMusicPreview(this.page === 'music' && !this.root.hidden && !document.hidden && document.hasFocus()).catch(error => this.fail(error));
+  }
+  beginCapture(id) {
+    const row = gameplayBindings.rows(this.bindingDevice).find(row => row.id === id);
+    if (!row) return;
+    this.bindingRow = this.bindingPage * 4 + this.selection;
+    this.capture = {id, label:row.label, atoms:[], held:new Set(), armed:false};
+    gameplayBindings.cancel(); this.menuKeys.clear(); this.layoutKey = ''; void this.refresh();
+  }
+  cancelCapture() {
+    if (!this.capture) return;
+    this.capture = null; this.menuKeys.clear(); gameplayBindings.cancel(); this.layoutKey = ''; void this.refresh();
+  }
+  finishCapture() {
+    const capture = this.capture; if (!capture?.atoms.length) return;
+    const binding = capture.atoms.length === 1 ? capture.atoms[0] : {chord:capture.atoms};
+    gameplayBindings.setBinding(this.bindingDevice,capture.id,binding);
+    this.capture = null; this.menuKeys.clear(); this.layoutKey = ''; this.notice.textContent = gameplayBindings.storageError ?? ''; void this.refresh();
+  }
+  pollCapture(pad) {
+    if (this.bindingDevice !== 'controller' || !this.capture) return;
+    if (!pad) { this.capture.armed = false; this.capture.atoms = []; return; }
+    const atoms = [];
+    pad.buttons.forEach((b,i) => { if ((b.value ?? Number(b.pressed)) > .5) atoms.push({button:i}); });
+    pad.axes.forEach((v,i) => { if (Math.abs(v) > .65) atoms.push({axis:i,sign:v < 0 ? -1 : 1}); });
+    if (!this.capture.armed) { if (!atoms.length) this.capture.armed = true; return; }
+    for (const atom of atoms) if (!this.capture.atoms.some(a => JSON.stringify(a) === JSON.stringify(atom) || ('axis' in atom && a.axis === atom.axis)) && this.capture.atoms.length < 4) this.capture.atoms.push(atom);
+    if (!atoms.length && this.capture.atoms.length) this.finishCapture();
+  }
+  resume() { this.cancelCapture(); void this.audio?.()?.setMusicPreview(false); this.root.hidden = true; this.active(false); }
   async show(page) {
+    this.padBlocked = true;
+    this.cancelCapture();
+    if (page !== 'music') void this.audio?.()?.setMusicPreview(false);
     delete this.root.dataset.error;
     this.busy = true; this.root.hidden = false; this.active(true); this.notice.textContent = ''; this.buttons.replaceChildren();
     try {
@@ -122,22 +190,25 @@ export class Frontend {
         for (const track of this.tracks) { await this.image(`${track.image}a`); await this.image(`${track.image}b`); }
       }
       this.page = page; this.selection = 0; this.busy = false; this.layoutKey = '';
+      this.syncPreview();
       await this.refresh();
     } catch (error) { this.fail(error); }
   }
   async action(action) {
     if (this.busy || this.root.hidden) return;
     this.notice.textContent = '';
-    if (['up','down'].includes(action) && ['title','main','pause'].includes(this.page)) {
+    if (['up','down'].includes(action) && ['title','main','single','pause','controls','bindings','music'].includes(this.page)) {
       this.selection = (this.selection + (action === 'up' ? -1 : 1) + this.frame.choices.length) % this.frame.choices.length;
+      if (this.page === 'bindings' && this.selection < 4) this.bindingRow = this.bindingPage * 4 + this.selection;
     } else if (action === 'back') {
       if (this.page === 'pause') return this.resume();
-      return this.show(({controls:'pause',main:'title',single:'main',tracks:'single'})[this.page] ?? 'title');
+      return this.show(({bindings:'controls',music:'pause',controls:'pause',main:'title',single:'main',tracks:'single'})[this.page] ?? 'title');
     } else if (this.page === 'tracks' && ['left','right','up','down'].includes(action)) {
       this.track = (this.track + (['left','up'].includes(action) ? -1 : 1) + this.tracks.length) % this.tracks.length;
+    } else if (['bindings','music'].includes(this.page) && ['left','right'].includes(action)) {
+      return this.run(`${this.page === 'music' ? 'music' : 'bind'}${action === 'left' ? 'prev' : 'next'}`);
     } else if (action === 'accept') {
       if (this.page === 'title') return this.run(this.frame.choices[this.selection]);
-      if (this.page === 'controls') return this.show('pause');
       if (this.page === 'tracks') {
         this.busy = true; this.notice.textContent = `Loading ${this.tracks[this.track].name}…`;
         try { await this.start(this.tracks[this.track].id); this.resume(); }
@@ -151,19 +222,37 @@ export class Frontend {
   async run(action) {
     if (this.busy) return;
     try {
-      if (['main','single','tracks','controls'].includes(action)) return await this.show(action);
-      if (action === 'resume') return this.resume();
-      if (action === 'reset') { await document.getElementById('reset').onclick(); return this.resume(); }
-      if (action === 'fullscreen') {
+      if (['main','single','tracks','controls','music'].includes(action)) return await this.show(action);
+      if (['keyboard','controller'].includes(action)) { this.bindingDevice = action; this.bindingPage = 0; this.bindingRow = 0; return this.show('bindings'); }
+      if (action.startsWith('bind:')) { const id = action.slice(5); this.selection = gameplayBindings.rows(this.bindingDevice).findIndex(row => row.id === id) % 4; return this.beginCapture(id); }
+      if (action === 'bindcancel') return this.cancelCapture();
+      if (['bindprev','bindnext','musicprev','musicnext'].includes(action)) {
+        const music = action.startsWith('music'), rows = music ? (this.audio?.()?.music?.tracks ?? []) : gameplayBindings.rows(this.bindingDevice), pages = Math.max(1,Math.ceil(rows.length / 4)), prop = music ? 'musicPage' : 'bindingPage';
+        this[prop] = (this[prop] + (action.endsWith('prev') ? -1 : 1) + pages) % pages; this.selection = 0;
+        if (!music) this.bindingRow = this.bindingPage * 4;
+      } else if (action === 'bindclear') { const row = gameplayBindings.rows(this.bindingDevice)[this.bindingRow]; if (row) gameplayBindings.setBinding(this.bindingDevice,row.id,[]); }
+      else if (action === 'bindreset') gameplayBindings.reset(this.bindingDevice);
+      else if (action.startsWith('song:')) { const music = this.audio?.()?.music; music?.setEnabled(true); music?.select(Number(action.slice(5))); this.syncPreview(); }
+      else if (action === 'musictoggle') { const music = this.audio?.()?.music; if (music) music.setEnabled(!music.snapshot().enabled); this.syncPreview(); }
+      else if (action === 'musicvolume') { const music = this.audio?.()?.music; if (music) music.setVolume((Math.round(music.snapshot().volume * 4) + 1) % 5 / 4); }
+      else if (action === 'resume') return this.resume();
+      else if (action === 'reset') { await document.getElementById('reset').onclick(); return this.resume(); }
+      else if (action === 'fullscreen') {
         if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen();
       } else if (action === 'devlog') location.href = 'devlog.html';
       else return await this.action(action);
+      this.layoutKey = ''; await this.refresh();
     } catch (error) { this.fail(error); }
   }
   async refresh() {
     if (this.root.hidden || this.busy || this.layoutPending) return;
     const stage = this.canvas.parentElement, track = this.tracks[this.track];
-    const request = {page:this.page,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:track?.name ?? '',track_image:track?.image ?? '',fullscreen:Boolean(document.fullscreenEnabled)};
+    const music = this.audio?.()?.music, musicState = music?.snapshot();
+    const request = {page:this.page,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:track?.name ?? '',track_image:track?.image ?? '',fullscreen:Boolean(document.fullscreenEnabled),
+      control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
+      binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
+      music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
+      music_page:this.musicPage,music_status:musicState ? `${musicState.enabled ? 'On' : 'Off'} / Volume ${Math.round(musicState.volume * 100)}% / ${musicState.title || 'Choose a song'}` : '',music_enabled:musicState?.enabled ?? true,music_volume:Math.round((musicState?.volume ?? .7)*100),menu_logo:this.images.has('original-logo'),menu_atv:this.images.has('multi_atv01')};
     const key = JSON.stringify(request);
     if (this.layoutKey === key) return;
     this.layoutPending = true;
@@ -171,7 +260,7 @@ export class Frontend {
       const frame = await this.json(62,new TextEncoder().encode(key));
       // Page/viewport can change while the worker handles the request. The next
       // frame requests fresh data, rather than applying a stale hit map.
-      if (this.page !== request.page || this.selection !== request.selection || this.tracks[this.track]?.image !== request.track_image || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
+      if ((this.capture?.label ?? '') !== request.capture_label || this.bindingPage !== request.binding_page || this.musicPage !== request.music_page || this.page !== request.page || this.selection !== request.selection || this.tracks[this.track]?.image !== request.track_image || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
       this.frame = frame; this.layoutKey = key; this.draw(); this.rebuildButtons();
     } catch (error) { this.fail(error); }
     finally { this.layoutPending = false; }
@@ -180,7 +269,7 @@ export class Frontend {
     this.buttons.replaceChildren();
     for (const hit of this.frame.hits) {
       const b = document.createElement('button'), [x,y,w,h] = hit.rect;
-      b.type = 'button'; b.textContent = hit.label; b.setAttribute('aria-label',hit.label);
+      b.dataset.action = hit.action; b.type = 'button'; b.textContent = hit.label; b.setAttribute('aria-label',hit.label);
       b.style.left = `${x/this.frame.width*100}%`; b.style.top = `${y/this.frame.height*100}%`;
       b.style.width = `${w/this.frame.width*100}%`; b.style.height = `${h/this.frame.height*100}%`;
       b.setAttribute('aria-current',String(hit.selected));
@@ -190,6 +279,8 @@ export class Frontend {
     this.root.dataset.page = this.page; this.root.dataset.selection = String(this.selection);
     this.root.dataset.track = this.tracks[this.track]?.id ?? '';
     this.root.dataset.renderer = 'rust';
+    this.root.dataset.musicPage = String(this.musicPage);
+    this.root.dataset.bindingPage = String(this.bindingPage);
   }
   text(text, x, y, name = fontName, color = '200,200,200', alpha = 255, justify = '') {
     const font = this.fonts.get(name.toLowerCase()); if (!font) return;
@@ -215,7 +306,7 @@ export class Frontend {
   }
   draw() {
     const frame = this.frame; if (!frame) return;
-    const c = this.ctx, stage = this.canvas.parentElement, dpr = Math.min(devicePixelRatio || 1,2);
+    const c = this.ctx, stage = this.canvas.parentElement, dpr = Math.min(devicePixelRatio || 1,3, Math.sqrt(8_000_000 / Math.max(1,stage.clientWidth * stage.clientHeight)));
     this.canvas.width = Math.round(stage.clientWidth*dpr); this.canvas.height = Math.round(stage.clientHeight*dpr);
     c.setTransform(this.canvas.width/frame.width,0,0,this.canvas.height/frame.height,0,0);
     for (const command of frame.draw) {
@@ -228,6 +319,8 @@ export class Frontend {
         const scale = Math.min(command.scale,command.max_width/Math.max(width,1));
         c.save(); c.translate(...command.at); c.scale(scale,scale);
         this.text(command.text,0,0,command.font,command.color); c.restore();
+      } else if (command.kind === 'artwork') {
+        const image = this.images.get(command.image); if (image) c.drawImage(image,...command.rect);
       } else if (command.kind === 'preview') {
         const a=this.images.get(`${command.image}a`), b=this.images.get(`${command.image}b`);
         if (!a || !b) continue;

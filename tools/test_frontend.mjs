@@ -11,7 +11,7 @@ try {
   page.on('pageerror', e => errors.push(e.message));
   const screen = async name => {
     console.log(`Checking ${name}`);
-    await page.waitForFunction(name => document.querySelector('#frontend').dataset.page === name || document.querySelector('#frontend').dataset.error, name, { timeout: 90000 });
+    await page.waitForFunction(name => (document.querySelector('#frontend').dataset.page === name && !document.querySelector('#frontend').hidden) || document.querySelector('#frontend').dataset.error, name, { timeout: 90000 });
     assert.equal(await page.locator('#frontend').getAttribute('data-error'), null, await page.locator('#menu-notice').textContent());
     if (process.env.ATV_UI_SCREENSHOTS) { await page.waitForTimeout(350); await page.screenshot({ path: `${process.env.ATV_UI_SCREENSHOTS}-${name}.png` }); }
   };
