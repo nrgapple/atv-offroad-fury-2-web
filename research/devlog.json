@@ -1,6 +1,6 @@
 {
-  "status": "Water recovery and snow-ramp collision remain publicly verified. Multiplayer now uses the existing game Worker architecture and passes the full host two-browser/wreck gate; current-main CI and production deployment are pending. The browser port remains incomplete.",
-  "working_on": "Run current-main CI and verify the corrected single-Worker production deployment, then complete public multiplayer browser checks. Continue water presentation and wakes, rendering detail, and other active original gameplay lanes. Racing and authority parity remain unverified.",
+  "status": "Public four-browser Rust Freeride now passes live movement, remote rendering/audio and host-departure cleanup on a single Mac test rig; the all-26 ATV garage and both rider rigs also pass public browser checks. These automated results do not establish four physical players, other-device performance or broad Internet behavior. Original split-screen, races, player collision, authority/migration and full-game parity remain unfinished.",
+  "working_on": "Measure real-device and varied-network behavior, then continue original race and multiplayer-rule recovery while preserving the separate local split-screen lane. Continue handling, tricks, wrecks, rider/HUD, collision, water, terrain and rendering work; retain the current performance-test conditions in any claims.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1732,19 +1732,71 @@
         "A touch-driven failed Nac Nac was observed across 278 guest frames through Riding, Airborne and Wreck; crash serial advanced 0\u21921, the detached rider rendered for 46 frames, 14 impact frames played with changing spatial pan, and the guest recovered."
       ],
       "limitation": "Host-only verification. Current-main CI and automatic production deployment are pending; the existing public build remains on the previous release. This does not establish public multiplayer availability, fast-internet/four-player behavior, race modes, player-to-player collision, host-authoritative physics or full-game parity."
+    },
+    {
+      "id": "public-two-browser-rust-freeride-is-live-af95e346",
+      "timestamp": "2026-10-12T20:04:36.771041+00:00",
+      "recorded_at": "2026-10-12T20:07:34.792920+00:00",
+      "kind": "verification",
+      "title": "Public two-browser Rust Freeride is live",
+      "summary": "The public authored Rust port now hosts two-browser Freeride sessions through the existing game Worker. A host shared a copied invite link; the guest joined with a different ATV and rider, and public checks passed for movement, remote wreck/recovery, spatial audio and host departure.",
+      "details": [
+        "Commit ceee73d44bc69f940729c5fdf20b892e4394bb59 passed main CI 38300517282 and deployed the combined game Worker. The relay passed all 11 public checks, including four-slot admission; this is a capacity check, not a four-live-player gameplay result.",
+        "The public Metal browser session loaded ATV01 with the male rig and ATV02 with the female rig. Movement/orientation, separate remote rendering and per-peer original engine/impact audio passed; host departure closed the room.",
+        "The public failed-stunt route ran 112 guest frames through Riding, Airborne and Wreck: crash serial 0\u21921, 51 detached-rider frames, 13 impact-audio frames with changing spatial pan, then recovery.",
+        "RTT samples were 38\u201351 ms while both clients were on the same host and connected through Cloudflare; this does not predict performance across the public Internet.",
+        "The existing title/menu/controller/Tioga/pause/390px Caribou route passed without a file picker. Public verification matched 31 authored/static files and 395 served objects. The deployed artifact at this commit contained 108 dev-log entries and 91 screenshots; this checkpoint and its approved image are recorded after that artifact snapshot."
+      ],
+      "limitation": "This verifies a two-browser online Freeride baseline and relay admission for up to four slots. It does not verify four simultaneous live game clients, race modes, player-to-player collision, local split-screen, host migration/reconnect, host-authoritative physics, broad Internet latency, physical-device behavior or full-game parity. The Rust browser port remains incomplete.",
+      "image": "/devlog-images/public-two-browser-rust-freeride-is-live-af95e346.png",
+      "caption": "Public HTTPS capture of a two-browser Caribou Peak session, showing the host and copied-link guest as separate riders and quads."
+    },
+    {
+      "id": "all-26-atv-models-and-both-rider-rigs-pass-public-gara-fbdf9f70",
+      "timestamp": "2026-10-12T20:06:49.719886+00:00",
+      "recorded_at": "2026-10-12T20:10:04.089722+00:00",
+      "kind": "verification",
+      "title": "All 26 ATV models and both rider rigs pass public garage selection",
+      "summary": "The public Single Player garage loads all 26 recovered in-race ATV models with alternating male and female riders, then enters the Caribou Freestyle route. Every choice produced pose-enabled quad and rider WebGL draws, finite Rust physics, throttle movement and the correct running engine voice.",
+      "details": [
+        "Public deployment ceee73d44bc69f940729c5fdf20b892e4394bb59 / CI 38300517282 passed the actual menu buttons for all model IDs 1\u201326: 13 male and 13 female rider selections.",
+        "Each quad loaded its corresponding mesh, PHY, material archive and 27-node articulated model; male and female rider paths loaded their matching 18-node and 27-node rigs and animation catalogs.",
+        "All 26 choices showed finite physics, 37.21\u201345.45 feet of measured throttle movement, model-specific engine configuration and a running voice. HTTP requests, page/console errors, Worker errors and WebGL errors were zero.",
+        "The native probe of 26 quad resources and 3,276 sampled rider poses is separate evidence; it is not a public full-game or animation-equivalence claim."
+      ],
+      "limitation": "The public all-model check used automated desktop Chromium. It verifies selection, resource wiring, pose rendering, bounded physics movement and engine startup; it does not establish original PS2 fidelity, physical controller/phone behavior, profile unlocks, tuning/customization persistence, or full vehicle handling parity. Terrain/rendering fidelity remains incomplete.",
+      "image": "/devlog-images/all-26-atv-models-and-both-rider-rigs-pass-public-gara-fbdf9f70.png",
+      "caption": "Public HTTPS Freestyle capture after selecting ATV26 with the female rider; the frame shows the loaded green quad and rider in Caribou Peak."
+    },
+    {
+      "id": "four-browser-freeride-stays-connected-through-movement-9bc02776",
+      "timestamp": "2026-10-12T20:15:01.353692+00:00",
+      "recorded_at": "2026-10-12T20:15:01.353692+00:00",
+      "kind": "verification",
+      "title": "Four-browser Freeride stays connected through movement and host departure",
+      "summary": "Four simultaneous public browser clients joined one Rust Freeride room with distinct ATV and rider selections. Every client drew three remote riders, played three spatial engine voices, received each other\u2019s keyboard movement and cleared remote rendering/audio state when the host left.",
+      "details": [
+        "The actual UI host and three guests used ATVs 01, 14, 26 and 02 with male/female riders. Each client rendered three correct-model remote peers in 39 remote draws and ran three engine voices; all four riders\u2019 movement was observed by the other three clients, with 3.37\u20134.66 feet of measured displacement.",
+        "Host departure cleared all guest rooms, remote actors, voices, impacts and GPU caches. No HTTP failures, page errors, or WebGL errors occurred.",
+        "A 12-second window used four automated Chromium Metal clients on one Mac at 1280\u00d7896 with synthetic focus. Measured rates were 71.59\u201374.14 FPS, 26.4\u201327.2 ms frame p95, 2.47\u20132.92 ms render CPU, 2.1\u20134.3 ms physics round trip, and 37\u2013201 ms network RTT (final samples 42\u201347 ms). Other host workload was not measured."
+      ],
+      "limitation": "This verifies four live browser clients sharing one Mac, not four separate player devices. Performance and RTT apply only to this short synthetic-focus run and do not predict other hardware, contention or Internet routes. Local split-screen, races, player-to-player collision, host-authoritative physics, host migration/reconnect and full-game parity remain unfinished or unverified."
     }
   ],
-  "updated_at": "2026-10-12T19:42:33.228587+00:00",
+  "updated_at": "2026-10-12T20:15:01.353692+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
-      "commit": "841f11c5d619cac92bc6033fe01e1e2d09cbdcc4",
-      "ci_run": "38287671823",
+      "commit": "ceee73d44bc69f940729c5fdf20b892e4394bb59",
+      "ci_run": "38300517282",
       "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
-      "devlog_entries": 97,
-      "devlog_screenshots": 85,
-      "r2_approved_objects": 339,
-      "r2_upload_changes": 4
+      "devlog_entries": 108,
+      "devlog_screenshots": 91,
+      "r2_approved_objects": 396,
+      "r2_upload_changes": 59,
+      "static_assets": 31,
+      "served_objects": 395,
+      "snapshot_note": "Counts describe the verified deployment artifact at this commit, before subsequent dev-log checkpoint entries and screenshot gallery uploads."
     },
     "next_priorities": [
       "Complete one-finger mobile feedback for steering/lean, diagonals, release, airborne control and landing while preserving current two-thumb behavior; physical-device validation remains open.",
@@ -2022,12 +2074,29 @@
         "id": "vehicle-selection",
         "category": "Vehicle",
         "title": "ATV selection and customization",
-        "status": "NEEDS RESEARCH",
-        "scope": "RESEARCH",
-        "summary": "One recovered ATV is connected for driving. The original vehicle roster, selection flow, tuning/customization screens and saved setup are not connected.",
-        "validation": "Current Freestyle route loads the implemented ATV; no roster/customization test.",
-        "evidence": "research/UI.md \u2014 supported menu route; research/GEOMETRY.md \u2014 ATV mesh recovery.",
-        "next_step": "Inventory original vehicle pages, model/tuning records and setup persistence before adding selection controls."
+        "status": "PARTIAL",
+        "scope": "PUBLIC \u00b7 ALL 26 ATV CHOICES; ORIGINAL CUSTOMIZATION PARTIAL",
+        "summary": "The Single Player garage selects all 26 recovered in-race ATV models with male or female rider rigs and loads each into Caribou Freestyle. Public checks cover each model\u2019s mesh, PHY, materials, articulated pose, finite physics movement and configured running engine. Original profile unlocks, tuning/customization pages and saved setup behavior remain incomplete.",
+        "validation": "Public ceee73d44bc69f940729c5fdf20b892e4394bb59 \u00b7 CI 38300517282: all 26 garage choices loaded through the menu, alternating 13 male and 13 female selections. Every choice produced 27-node ATV and 18/27-node rider WebGL pose draws, finite Rust physics, 37.21\u201345.45 feet of throttle movement and one configured running engine voice; zero HTTP/page/console/Worker/WebGL errors.",
+        "evidence": "research/MULTIPLAYER_MODELS.md; research/GEOMETRY.md; research/ANIMATION.md.",
+        "next_step": "Recover original selection, profile/unlock, tuning and persistence rules; continue comparing each model\u2019s physics and handling against source behavior.",
+        "release_verification": {
+          "commit": "ceee73d44bc69f940729c5fdf20b892e4394bb59",
+          "ci_run": "38300517282",
+          "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+          "static_assets": 31,
+          "served_objects": 395,
+          "devlog_entries": 108,
+          "devlog_screenshots": 91,
+          "r2_approved_objects": 396,
+          "r2_upload_changes": 59,
+          "checks": [
+            "Public Single Player garage button routes loaded each ATV ID 1\u201326 into Caribou Freestyle.",
+            "All models produced pose-enabled 27-node quad and correct 18-node male or 27-node female rider draws, finite physics movement and configured engine audio.",
+            "This automated desktop Chromium route does not establish physical-device behavior, customization persistence or full PS2 parity."
+          ]
+        },
+        "limitation": "Profile unlocks, tuning/customization persistence, original handling equivalence and physical-device parity remain unverified."
       },
       {
         "id": "handling",
@@ -2208,10 +2277,10 @@
         "title": "ATV and rider animation",
         "status": "PARTIAL",
         "scope": "PUBLIC + HOST COMPONENT COMPARISONS",
-        "summary": "Public mechanical linkage, normal rider blends, main/held stunt poses and wreck clips are connected. The completed mechanical pose supplies cached wheel axles. Source-disabled normal hand IK stays disabled; complete event/hair and game-wide animation remain unfinished.",
-        "validation": "Public c0810ab wreck/clean landing and 0f074b4 clean landing pass with the integrated linkage. Host pose/linkage/root probes validate selected paths, not full PS2 animation parity.",
-        "evidence": "research/ANIMATION.md; research/MOVEMENT.md; research/WRECK.md.",
-        "next_step": "Compare complete animation transitions and display-time linkage; retain native IK enable gates."
+        "summary": "Public mechanical linkage, normal rider blends, main/held stunt poses and wreck clips are connected. The Single Player garage now loads all 26 quads with either the 18-node male or 27-node female rig and matching pose draws. Source-disabled normal hand IK stays disabled; complete event/hair and game-wide animation remain unfinished.",
+        "validation": "Public ceee73d44bc69f940729c5fdf20b892e4394bb59 \u00b7 CI 38300517282: 26 ATV choices alternated 13 male and 13 female rider loads with correct 18/27-node rig draws and zero WebGL errors. A separate native probe samples 3,276 poses across both catalogs; that component probe does not establish full PS2 animation parity.",
+        "evidence": "research/ANIMATION.md; research/MULTIPLAYER_MODELS.md; research/MOVEMENT.md; research/WRECK.md.",
+        "next_step": "Compare complete animation transitions, display-time linkage and original per-rider IK/event behavior; retain source enable gates."
       },
       {
         "id": "camera",
@@ -2414,12 +2483,29 @@
         "id": "online-multiplayer",
         "category": "Platform",
         "title": "Online multiplayer",
-        "status": "NEEDS RESEARCH",
-        "scope": "RESEARCH",
-        "summary": "No network lobby, race synchronization or multiplayer transport is connected. Original local split-screen and online play remain to be researched.",
-        "validation": "No multiplayer implementation or network test.",
-        "evidence": "research/RESOURCES.md \u2014 multiplayer research lead; research/IMPLEMENTATION.md \u2014 verify modes and runtime behavior.",
-        "next_step": "Recover local split-screen behavior first, then document the original online protocol/service dependencies."
+        "status": "PARTIAL",
+        "scope": "PUBLIC \u00b7 FOUR-CLIENT FREERIDE BASELINE",
+        "summary": "Four simultaneous browser clients can join a public Rust Freeride room with distinct ATV/rider selections. Each client receives and draws three remote quads/riders, sees the other riders\u2019 movement, and plays per-peer spatial engine audio. Host departure clears the three guest rooms and their remote/audio/GPU state. A short four-client capacity/performance check used four automated Chromium Metal clients on one Mac; local split-screen, races and broader original multiplayer behavior remain unfinished.",
+        "validation": "Public ceee73d44bc69f940729c5fdf20b892e4394bb59 \u00b7 CI 38300517282: actual UI host plus three guests used ATV01/14/26/02 with male/female rigs; all four clients rendered three remote peers in 39 remote draws and started three engine voices. Each rider\u2019s keyboard movement reached all three observers (3.37\u20134.66ft); host departure cleared all guest rooms, remotes, voices, impacts and GPU caches. No page/HTTP/WebGL errors. Twelve-second measurements on one Mac, headless Chromium Metal, 1280\u00d7896 and synthetic focus: 71.59\u201374.14 FPS, 26.4\u201327.2ms frame p95, 2.47\u20132.92ms render CPU, 2.1\u20134.3ms physics round trip and 37\u2013201ms RTT (final samples 42\u201347ms). Other host workload was not measured; these are not broad hardware/Internet guarantees.",
+        "evidence": "research/MULTIPLAYER.md; research/MULTIPLAYER_ORIGINAL.md; research/MULTIPLAYER_MODELS.md.",
+        "next_step": "Measure separate-device and varied-network sessions; recover remaining original online rules and modes. Keep local split-screen, race flow, collision, authority and migration work separately labeled.",
+        "release_verification": {
+          "commit": "ceee73d44bc69f940729c5fdf20b892e4394bb59",
+          "ci_run": "38300517282",
+          "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+          "static_assets": 31,
+          "served_objects": 395,
+          "devlog_entries": 108,
+          "devlog_screenshots": 91,
+          "r2_approved_objects": 396,
+          "r2_upload_changes": 59,
+          "checks": [
+            "Four simultaneous public browser clients joined through the room UI with distinct models; every client drew three peers and received all other riders\u2019 movement.",
+            "Host departure removed all three guests, remote render instances and audio voices.",
+            "Performance/RTT figures use a 12-second single-Mac synthetic-focus Chromium Metal run. Four physical devices and broad Internet performance are not established."
+          ]
+        },
+        "limitation": "The four clients shared one Mac and used automated focus. Results do not establish physical-device performance, real multi-device concurrency or latency on the wider Internet. Local split-screen, original race modes, player-to-player collision, host migration/reconnect, host-authoritative physics and full-game parity remain incomplete or unverified."
       }
     ]
   }

@@ -13,7 +13,8 @@ const metadata = process.env.ATV_CODEC ? null : spawnSync(path.join(homedir(), '
 const codec = process.env.ATV_CODEC ?? path.join(JSON.parse(metadata.stdout).target_directory, 'debug/examples/codec');
 const base = process.env.ATV_RELAY_URL ?? 'http://127.0.0.1:8788';
 const origin = process.env.ATV_RELAY_ORIGIN ?? base;
-const report = { checks: [], relay: base, reachability: 'host-only' };
+const verifierHeaders = { 'User-Agent': 'ATV-multiplayer-relay-verifier/1.0' };
+const report = { checks: [], relay: base, reachability: base === 'https://atv-offroad-fury-2.champtoday.workers.dev' ? 'public HTTPS' : 'host-only' };
 const sockets = [];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 function convert(mode, input) {
@@ -28,7 +29,7 @@ async function request(path, { method = 'GET', requestOrigin = origin } = {}) {
   return new Promise((resolve, reject) => {
     const url = new URL(base + path);
     const req = (url.protocol === 'https:' ? https : http).request(url, {
-      method, headers: requestOrigin ? { Origin: requestOrigin } : {},
+      method, headers: { ...verifierHeaders, ...(requestOrigin ? { Origin: requestOrigin } : {}) },
     }, response => {
       const parts = [];
       response.on('data', part => parts.push(part));
@@ -41,7 +42,7 @@ async function request(path, { method = 'GET', requestOrigin = origin } = {}) {
 }
 async function rejectedSocket(code, expected, token = '', requestOrigin = origin) {
   const status = await new Promise((resolve, reject) => {
-    const ws = new WebSocket(base.replace('http', 'ws') + '/multiplayer/rooms/' + code + token, { origin: requestOrigin });
+    const ws = new WebSocket(base.replace('http', 'ws') + '/multiplayer/rooms/' + code + token, { origin: requestOrigin, headers: verifierHeaders });
     ws.on('unexpected-response', (_req, response) => { response.resume(); ws.terminate(); resolve(response.statusCode); });
     ws.on('error', () => {});
     ws.on('open', () => { ws.close(); reject(new Error('Unexpected accepted socket')); });
@@ -49,7 +50,7 @@ async function rejectedSocket(code, expected, token = '', requestOrigin = origin
   assert.equal(status, expected);
 }
 async function connect(code, player, token = '') {
-  const ws = new WebSocket(base.replace('http', 'ws') + '/multiplayer/rooms/' + code + token, { origin });
+  const ws = new WebSocket(base.replace('http', 'ws') + '/multiplayer/rooms/' + code + token, { origin, headers: verifierHeaders });
   ws.packets = [];
   sockets.push(ws);
   ws.on('message', bytes => ws.packets.push(decode(bytes)));

@@ -278,7 +278,8 @@ def compact_player_archive(data, path):
                 if path.startswith('/QUAD/') else {f'{stem}.psg', f'{stem}.mcf'})
     selected = [(name, archive.extract(i)) for i, (name, _, _) in enumerate(archive.members)
                 if name.lower().rsplit('/', 1)[-1] in required]
-    if len(selected) != len(required):
+    selected_names = [name.lower().rsplit('/', 1)[-1] for name, _ in selected]
+    if len(selected_names) != len(set(selected_names)) or set(selected_names) != required:
         raise ValueError(f'missing or duplicated live player resource in {path}')
     return pack_resource(selected)
 
@@ -299,7 +300,8 @@ def compact_rider_motions(data, catalogs):
     archive = Resource(data)
     selected = [(name, archive.extract(i)) for i, (name, _, _) in enumerate(archive.members)
                 if name.lower().rsplit('/', 1)[-1] in required]
-    if len(selected) != len(required):
+    selected_names = [name.lower().rsplit('/', 1)[-1] for name, _ in selected]
+    if len(selected_names) != len(set(selected_names)) or set(selected_names) != required:
         raise ValueError('missing or duplicated connected rider motion')
     return pack_resource(selected)
 
