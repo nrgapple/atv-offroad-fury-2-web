@@ -34,6 +34,7 @@ pub mod stunt;
 pub mod stunt_score;
 pub mod terrain;
 pub mod texture;
+pub mod train;
 pub mod water;
 pub mod water_animation;
 pub mod water_surface;
