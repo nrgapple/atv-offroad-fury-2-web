@@ -1,6 +1,6 @@
 {
-  "status": "Water recovery and snow-ramp collision are publicly verified. The multiplayer lobby, two-browser driving, remote wreck presentation and spatial audio pass host integration checks; multiplayer current-main CI and public verification are pending. The browser port remains incomplete.",
-  "working_on": "Integrate Vancouver Ridge into the current-main release, run the nine-map regression, and complete the authorized Cloudflare publication checks.",
+  "status": "Public Cloudflare release f585991579f8c44b098d6b137b1679eb8050e3fd adds FREE05 Vancouver Ridge and passes public hash, nine-map, material and frontend checks. The map is a partial reconstruction and the browser port remains incomplete.",
+  "working_on": "Host reflection and nine-map/material/frontend integration checks pass. Integrate the isolated change after PR9, then validate public deployment while continuing fog, lighting, LOD and weather recovery; preserve the public f585991 baseline and the independent multiplayer lane.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1770,9 +1770,48 @@
       "limitation": "Host-only checkpoint. This reconstruction does not establish original-hardware validation or whole-map parity. Exact fog, 92 light/lens flags, three ice reflections, LOD, shadows, weather, full mode/progression coverage and complete gameplay fidelity remain open.",
       "image": "/devlog-images/vancouver-ridge-ski-jump-joins-freestyle-6340b7f5.png",
       "caption": "Host inspection-camera view of the original Vancouver Ridge ski jump. Companion desktop and portrait host captures show the ATV approaching the ramp during ordinary driving; this checkpoint has not been publicly released."
+    },
+    {
+      "id": "vancouver-ridge-joins-the-public-nine-map-build-bce9f4ed",
+      "timestamp": "2026-10-12T20:21:13.497502+00:00",
+      "recorded_at": "2026-10-12T20:25:32.396806+00:00",
+      "kind": "verification",
+      "title": "Vancouver Ridge joins the public nine-map build",
+      "summary": "FREE05 Vancouver Ridge now loads through the public Single Player \u2192 Freestyle route. Public desktop and 390px checks cover its original ski-jump approach, source scenery and a nine-map regression.",
+      "details": [
+        "Public main commit f585991579f8c44b098d6b137b1679eb8050e3fd passed CI run 38302626466. The validated R2 package contains 400 approved objects (six changes, 305,224,223 bytes); HTTPS verification matches 31 authored files and all 399 served objects, with 110 dev-log entries and 93 screenshot references.",
+        "Vancouver Ridge uses the original SPStunt6 name and two-part thumbnail and is unlocked by default. Its public route loads 1281\u00d71281 terrain at 4.5-foot spacing, detail and sky, 37,649 snow plants, 78 source definitions (75 drawn) and all 43 placed solid colliders.",
+        "Public desktop and 390px contact traces each report 78 models, 75 drawn, 43 colliders, 37,649 plants, 123 wheel-support frames, 31 body-contact frames, flight beginning at step 19, later ground contact and drag-light frame 1. The bounded route uses normal throttle without injected velocity, force or wreck state; menu access and contact/animation checks pass.",
+        "The public nine-map regression passes ENV01\u2013ENV08 plus FREE05 with terrain support, batched vegetation, no unsupported meshes and zero JavaScript/GL errors. Public material inspection records 2,729 contributing rain pixels, 73,978 lava, 6,331 waterflow and 115,571 ski-jump pixels; source prelit attributes, animation, pause and context phase retention pass.",
+        "Public frontend checks pass the original title/menu/track routes, keyboard and controller navigation, Tioga driving, pause/Controls, touch-based mobile selection and Caribou reload without a disc prompt or browser errors."
+      ],
+      "limitation": "Public browser verification covers these authored Rust/WASM routes and source-derived map components, not original-hardware behavior or full-game parity. Three original Vancouver ice-reflection overlays remain unsupported; exact fog, 92 light/lens flags, projected terrain and vegetation LOD, shadows, weather, remaining modes and progression remain incomplete.",
+      "image": "/devlog-images/vancouver-ridge-joins-the-public-nine-map-build-bce9f4ed.png",
+      "caption": "Public HTTPS desktop capture of Vancouver Ridge during ordinary driving toward the original ski jump. The PNG remains in ignored private storage pending the next validated R2 gallery upload; it is not an original PS2 capture."
+    },
+    {
+      "id": "original-ice-reflections-render-on-caribou-and-vancouv-256e003e",
+      "timestamp": "2026-10-12T20:35:13.665178+00:00",
+      "recorded_at": "2026-10-12T20:43:31.003469+00:00",
+      "kind": "verification",
+      "title": "Original ice reflections render on Caribou and Vancouver (host verified)",
+      "summary": "The recovered reflection shader now draws the original ice-reflection groups on ENV01 and FREE05. Source-local projections and a bounded GPU arithmetic comparison pass on the host; broader regression and public release remain pending.",
+      "details": [
+        "ENV01 restores 88 original reflection groups across 275 instances with zero skipped groups and 152,862 contributing ice pixels. FREE05 restores its three groups across all 78 instances with zero skipped groups and 236,566 contributing pixels.",
+        "The renderer uses each node\u2019s original PSG-local position and normal, derives local camera position through the transposed world basis, and evaluates all XY/XZ/YZ projections with original RGBA, blend and depth behavior.",
+        "Expanded GPU transform-feedback validation ran the same 768 private native arithmetic cases across identity, translated/rotated placement, and rotated child-node transforms: 2,304 GPU comparisons total, with a maximum absolute UV difference of 7.152557373046875e-7. This confirms local-versus-world camera mapping and XY/XZ/YZ swizzles for these cases.",
+        "A pre-normalized finite local view direction was supplied. These arithmetic windows do not validate PS2 hardware accumulators or reciprocal behavior, and do not replay the complete GS/VU pipeline.",
+        "The updated Vancouver desktop and 390px gate draws all 78 placements with zero skipped groups. Each trace reports 43 colliders, 123 wheel-support frames, 31 body-contact frames, flight beginning at step 19, later ground contact, drag-light animation and unlocked menu access.",
+        "The integrated host nine-map regression passes ENV01\u2013ENV08 and FREE05, with ENV01 at 275 scene instances and FREE05 at all 78 placements; terrain following, batched vegetation and zero JS/GL errors pass. The four-map material regression passes with 2,488 rain, 73,978 lava, 6,329 waterflow and 115,571 ski-jump contributing pixels, plus source color/UV animation, pause and context retention.",
+        "The host frontend regression passes original title/menu/track routes, keyboard/controller navigation, Tioga driving, pause/Controls, mobile touch selection and Caribou reload with no disc prompt or browser errors.",
+        "make check passes 308 core tests, 22 network tests, 11 relay tests, 3 bridge tests and 66 JavaScript tests. make verify, make web, 17 release tests, 6 Worker tests and source hygiene checks pass."
+      ],
+      "limitation": "Host-only reflection integration checkpoint; the renderer and wider host regressions pass, but this candidate is not in the public f585991 release and publication remains pending PR9 integration. The pre-normalized view-direction service and bounded arithmetic windows do not establish exact PS2 VU/GS behavior or full rendering equivalence. Fog, original lighting and lens effects, LOD, shadows and weather remain unchanged and incomplete.",
+      "image": "/devlog-images/original-ice-reflections-render-on-caribou-and-vancouv-256e003e.png",
+      "caption": "Host inspection-camera view of restored ENV01 ice-reflection projections on snow and nearby structures. FREE05 also passes its reflection test; this capture is not from the public release."
     }
   ],
-  "updated_at": "2026-10-12T19:55:28.288960+00:00",
+  "updated_at": "2026-10-12T20:43:31.003469+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

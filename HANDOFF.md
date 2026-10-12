@@ -1,20 +1,49 @@
 # Implementation handoff
 
-## Map-fidelity and Vancouver Ridge host checkpoint
+## Latest verified public map checkpoint
 
-The isolated map lane has a complete 40-family/147-archive asset-header/config
-census and restored static prelit RGBA, FB_ONLY/source-alpha behavior and Rust UV
-movement. Vancouver Ridge is the previously unconnected FREE05, not Caribou:
-Single Player → Freestyle now exposes its original SPStunt6 name/thumbnail without
-an unlock. The host loads original terrain, 37,649 snowy plants and all 43 placed
-solid colliders. All 78 scenery meshes decode; 75 placements draw while three ice
-reflection overlays remain skipped. Its five-frame drag light now uses the
-recovered forward ATM clock. Desktop/390px source-ramp throttle tests pass wheel
-support, body contact, air and ground return; both menu routes pass without a disc
-picker. This is a host checkpoint, not full map or hardware parity. See
-[map evidence and limits](research/MAP_FIDELITY.md). Public verification is pending
-current-main CI/deployment, required R2 content/inspected screenshot publication
-and public browser gates. Preserve the other lane's Rust relay deployment fix.
+Public main `f585991579f8c44b098d6b137b1679eb8050e3fd` passed CI
+`38302626466`; HTTPS verification matches all 31 authored files and 399 served
+objects. The R2 package validates 400 approved objects, with six incremental
+changes totaling 305,224,223 bytes. The public gallery has 110 entries and 93
+screenshots. Vancouver Ridge/FREE05 is connected to Single Player → Freestyle
+under its original SPStunt6 name and two-part thumbnail, unlocked by default.
+
+Public desktop and 390px traces each cover the original terrain, 37,649 snow
+plants, 78 source scenery definitions/75 drawn, 43 placed colliders, 123
+wheel-support frames, 31 body-contact frames, flight at step 19, later ground
+contact, and drag-light frame 1. The bounded ramp route uses normal throttle
+without injected velocity, force or wreck state. The public ENV01–ENV08 plus
+FREE05 regression, source-material inspection and original title/menu/controller/
+touch/pause routes pass without JavaScript or GL errors or a disc prompt. These
+are browser component and route checks, not full map, hardware or game parity.
+Three Vancouver ice-reflection overlays, exact fog, 92 light/lens behaviors,
+projected terrain/vegetation LOD, shadows, weather, remaining modes and progression
+remain open. See [map evidence and limits](research/MAP_FIDELITY.md) and the
+[deployment record](research/DEPLOYMENT.md). Preserve the separate multiplayer
+integration lane. The newly inspected desktop public-ride screenshot is referenced
+in the local log but remains in ignored private storage pending the next validated
+R2 gallery upload.
+
+## Current host-only reflection candidate
+
+An uncommitted renderer candidate now draws ENV01's 88 original reflection groups
+across 275 instances and FREE05's three groups across all 78 instances, with no
+skipped groups. Host inspection records 152,862 and 236,566 contributing pixels.
+The updated Vancouver desktop and 390px traces draw all 78 placements with zero
+skipped groups; both have 43 colliders, 123 wheel-support frames and 31
+body-contact frames, plus takeoff at step 19, later ground contact, animation and
+menu checks. Expanded GPU transform feedback compares 768 original arithmetic
+cases across identity, translated/rotated placement and rotated child-node
+transforms: 2,304 GPU comparisons across 5,376 interpreted instructions, with
+maximum UV difference 7.152557373046875e-7. The test supplies a pre-normalized
+finite local view direction and does not emulate PS2 accumulators, reciprocal
+behavior or the full pipeline. `make check` passes 308 core tests, 22 network
+tests, 11 relay tests, 3 bridge tests and 66 JavaScript tests; broader all-nine-map,
+materials and frontend runs are still pending. The candidate is host-only and not
+in public commit f585991; see
+[map-fidelity evidence](research/MAP_FIDELITY.md). Keep the public Vancouver
+checkpoint and the separate multiplayer lane intact.
 
 ## Rust multiplayer host checkpoint, public verification pending
 

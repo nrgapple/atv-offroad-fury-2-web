@@ -257,9 +257,9 @@ async function baseTextures(mesh, materialArchive, materialEntries, cache = new 
     const binding = materialIndex < 0 ? material : textureBinding(materialText);
     if (!binding) continue;
     const shader = materialText.split(/\r?\n/).map(line => line.split(';')[0].trim()).find(line => /^microProgramName\s*=/i.test(line))?.split('=')[1].trim();
-    if (/refl|envmap/i.test(shader ?? '')) { const unsupported = { shader }; textures.set(material, unsupported); cache.set(material, unsupported); continue; }
-    const textureIndex = findMaterial(`${binding}.pst`);
     const pass = materialIndex < 0 ? null : await json(90, new TextEncoder().encode(materialText));
+    if (/refl|envmap/i.test(shader ?? '') && !pass?.reflection_plane) { const unsupported = { shader }; textures.set(material, unsupported); cache.set(material, unsupported); continue; }
+    const textureIndex = findMaterial(`${binding}.pst`);
     const atmIndex = pass?.texture_animation ? findMaterial(`${binding}.atm`) : -1;
     if (textureIndex < 0 && atmIndex < 0) { if (materialIndex < 0) continue; throw new Error(`Original material texture is missing: ${binding}`); }
     const pst = atmIndex >= 0 ? await codec(3, materialArchive, atmIndex) : await codec(3, materialArchive, textureIndex);
@@ -302,6 +302,9 @@ layout(location=3) in float quadNode;
 layout(location=4) in vec3 ecoPosition;
 layout(location=5) in vec2 ecoScale;
 layout(location=6) in vec4 vertexColor;
+layout(location=7) in vec3 reflectionPosition;
+layout(location=8) in vec3 reflectionNormal;
+uniform int sceneryReflectionPlane;
 uniform vec2 sceneryUvOffset;
 out vec4 authoredColor;
 uniform bool useEcosystem;
@@ -325,6 +328,16 @@ void main() {
   if (useEcosystem) {
     vec3 scaled = position * vec3(ecoScale.x, ecoScale.y, ecoScale.x);
     worldPosition = vec4(ecoPosition + vec3(ecoRotation.x * scaled.x - ecoRotation.y * scaled.z, scaled.y, ecoRotation.y * scaled.x + ecoRotation.x * scaled.z), 1.0);
+  }
+  if (sceneryReflectionPlane != 0) {
+    // StripPreambleCode transforms the world camera into each rigid node's
+    // coordinates. The compressed reflection programs retain the authored
+    // scaled normal; normalizing it would change the original UVs.
+    mat4 nodeWorld = model * quadBones[int(quadNode)];
+    vec3 localEye = transpose(mat3(nodeWorld)) * (eye - nodeWorld[3].xyz);
+    vec3 direction = normalize(localEye - reflectionPosition);
+    vec3 reflected = vec3(0.5) - 0.5 * direction + reflectionNormal * dot(reflectionNormal, direction);
+    texcoord = sceneryReflectionPlane == 1 ? reflected.xy : sceneryReflectionPlane == 2 ? reflected.xz : reflected.yz;
   }
   worldXZ = worldPosition.xz;
   surfaceNormal = mat3(model) * mat3(localPose) * normal;
@@ -414,6 +427,7 @@ function initializeGl() {
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
   uniforms = Object.fromEntries(['viewProjection', 'model', 'eye', 'heights', 'fogDistance', 'surfaceColor', 'baseTexture', 'useTexture', 'useTerrainTexture', 'terrainColors', 'terrainMapping', 'terrainDetail', 'terrainDetailScale', 'terrainSpacing', 'ambientLight', 'sunlightColor', 'sunlightDirection', 'fogColor', 'unlit', 'skyPass', 'useVertexColor', 'sceneryBlend', 'sceneryUvOffset', 'alphaFailPass'].map(name => [name, gl.getUniformLocation(program, name)]));
   uniforms.useEcosystem = gl.getUniformLocation(program, 'useEcosystem');
+  uniforms.sceneryReflectionPlane = gl.getUniformLocation(program, 'sceneryReflectionPlane');
   uniforms.ecoRotation = gl.getUniformLocation(program, 'ecoRotation');
   uniforms.alphaCutoff = gl.getUniformLocation(program, 'alphaCutoff');
   uniforms.useQuadPose = gl.getUniformLocation(program, 'useQuadPose');
@@ -488,15 +502,20 @@ function uploadTerrainTextures() {
   diagnostics.terrainDetailTexture = [detail.width, detail.height];
   diagnostics.terrainLighting = 'original base/detail blend; projected pass selection pending';
 }
-function upload(vertices, indices, hasUv = false, hasNodes = false, hasColors = false) {
+function upload(vertices, indices, hasUv = false, hasNodes = false, hasColors = false, hasReflection = false) {
   const chunk = { vao: gl.createVertexArray(), vertices: gl.createBuffer(), indices: gl.createBuffer(), count: indices.length };
   gl.bindVertexArray(chunk.vao); gl.bindBuffer(gl.ARRAY_BUFFER, chunk.vertices); gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
-  const stride = hasColors ? 48 : hasNodes ? 36 : hasUv ? 32 : 24;
+  const stride = hasReflection ? 76 : hasColors ? 48 : hasNodes ? 36 : hasUv ? 32 : 24;
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, stride, 0);
   gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, stride, 12);
   if (hasUv) { gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, stride, 24); }
   if (hasNodes) { gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 1, gl.FLOAT, false, stride, 32); }
   if (hasColors) { gl.enableVertexAttribArray(6); gl.vertexAttribPointer(6, 4, gl.FLOAT, false, stride, 32); }
+  if (hasReflection) {
+    gl.enableVertexAttribArray(7); gl.vertexAttribPointer(7, 3, gl.FLOAT, false, stride, 48);
+    gl.enableVertexAttribArray(8); gl.vertexAttribPointer(8, 3, gl.FLOAT, false, stride, 60);
+    gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 1, gl.FLOAT, false, stride, 72);
+  }
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, chunk.indices); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
   return chunk;
 }
@@ -774,13 +793,16 @@ function buildMesh() {
       const groups = [];
       for (const group of mesh.lods[0].groups) {
         const material = mesh.materials[group.material], decoded = world.textures.get(material);
-        // Environment/reflection shaders need their original coordinate generation.
-        // Keep those groups absent until recovered rather than drawing a false UV map.
-        if (/refl|envmap/i.test(decoded?.shader ?? '')) { skippedSceneGroups++; continue; }
+        const reflection = decoded?.pass?.reflection_plane ?? 0;
+        if (/refl|envmap/i.test(decoded?.shader ?? '') && !reflection) { skippedSceneGroups++; continue; }
         const prelit = decoded?.pass?.prelit ?? false;
-        const vertices = new Float32Array(group.vertices.length * (prelit ? 12 : 8));
-        group.vertices.forEach((vertex, index) => vertices.set([...vertex.position, ...vertex.normal, ...vertex.uv, ...(prelit ? vertex.color ?? [128,128,128,128] : [])], index * (prelit ? 12 : 8)));
-        const chunk = upload(vertices, new Uint16Array(group.indices), true, false, prelit);
+        if (reflection && mesh.nodes.length > 32) throw new Error('Reflection mesh exceeds original rigid-node GPU capacity.');
+        const width = reflection ? 19 : prelit ? 12 : 8;
+        const vertices = new Float32Array(group.vertices.length * width);
+        group.vertices.forEach((vertex, index) => vertices.set([...vertex.position, ...vertex.normal, ...vertex.uv, ...(prelit ? vertex.color ?? [128,128,128,128] : []), ...(reflection ? [...vertex.local_position, ...vertex.local_normal, vertex.node] : [])], index * width));
+        const chunk = upload(vertices, new Uint16Array(group.indices), true, false, prelit, Boolean(reflection));
+        chunk.reflection = reflection;
+        chunk.reflectionNodes = reflection ? new Float32Array(mesh.nodes.flatMap(node => node.world_matrix)) : null;
         chunk.texture = textures.get(material); chunk.alphaCutoff = decoded?.sceneAlphaCutoff ?? 0;
         chunk.animationFrames = decoded?.animationFrames?.map(rgba => { const gpu = texture({...decoded,rgba}); gpuTextures.push(gpu); return gpu; });
         chunk.prelit = prelit; chunk.material = material; chunk.blend = decoded?.pass?.blend ?? false; chunk.alphaFailure = decoded?.sceneAlphaFailure ?? 0;
@@ -799,6 +821,7 @@ function buildMesh() {
   gl.bindVertexArray(null);
   diagnostics.skyTiles = skyChunks.length;
   diagnostics.sceneryPrelitGroups = sceneChunks.filter(chunk => chunk.prelit).length;
+  diagnostics.sceneryReflectionGroups = sceneChunks.filter(chunk => chunk.reflection).length;
   diagnostics.sceneryUnsupportedAnimations = [...(terrain.world?.textures ?? [])].filter(([, texture]) => texture.pass?.unsupported_animation).map(([name, texture]) => ({ name, reason: texture.pass.unsupported_animation }));
   diagnostics.unsupportedSceneTextures = [...(terrain.world?.textures ?? [])].filter(([, texture]) => texture.error).map(([name, texture]) => ({ name, error: texture.error }));
   Object.assign(diagnostics, { vehicleVertices: vehicle?.groups.reduce((sum, group) => sum + group.vertices.length, 0) ?? 0, vehicleTriangles: vehicle?.groups.reduce((sum, group) => sum + group.indices.length / 3, 0) ?? 0, vehicleTextures: materialTextures.size, riderTriangles, riderTextures: riderTextureCount, vehiclePosition: vehicle?.position, sceneInstances, sceneTriangles, skippedSceneGroups, unsupportedSceneMeshes: terrain.world?.unsupported ?? [] });
@@ -1041,6 +1064,7 @@ function render(time) {
   }
   gl.viewport(0, 0, width, height); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.useProgram(program);
   gl.uniform1i(uniforms.useQuadPose, false); gl.uniform1i(uniforms.useEcosystem, false); gl.uniform1f(uniforms.alphaCutoff, 0);
+  gl.uniform1i(uniforms.sceneryReflectionPlane, 0);
   gl.uniform1i(uniforms.useVertexColor, false); gl.uniform1i(uniforms.sceneryBlend, false); gl.uniform1i(uniforms.alphaFailPass, false); gl.uniform2f(uniforms.sceneryUvOffset, 0, 0);
   const viewProjection = matrix();
   gl.uniformMatrix4fv(uniforms.viewProjection, false, viewProjection); gl.uniform3f(uniforms.eye, camera.x, camera.y, camera.z);
@@ -1085,6 +1109,8 @@ function render(time) {
     gl.uniformMatrix4fv(uniforms.model, false, matrix); gl.uniform1i(uniforms.unlit, unlit);
     gl.uniform1f(uniforms.alphaCutoff, chunk.alphaCutoff);
     gl.uniform1i(uniforms.useVertexColor, chunk.prelit); gl.uniform1i(uniforms.sceneryBlend, chunk.blend);
+    gl.uniform1i(uniforms.sceneryReflectionPlane, chunk.reflection);
+    if (chunk.reflectionNodes) gl.uniformMatrix4fv(uniforms.quadBones, false, chunk.reflectionNodes);
     gl.uniform2fv(uniforms.sceneryUvOffset, diagnostics.sceneryUv?.[chunk.material] ?? [0,0]);
     gl.depthMask(chunk.depthWrite);
     if (chunk.blend) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); } else gl.disable(gl.BLEND);
@@ -1100,6 +1126,7 @@ function render(time) {
     }
   }
   gl.uniform1f(uniforms.alphaCutoff, 0); gl.uniform1i(uniforms.useVertexColor, false); gl.uniform1i(uniforms.sceneryBlend, false);
+  gl.uniform1i(uniforms.sceneryReflectionPlane, 0);
   gl.uniform2f(uniforms.sceneryUvOffset, 0, 0); gl.depthMask(true); gl.disable(gl.BLEND);
   if (trainRenderer) { trainRenderer.draw(uniforms, fallbackTexture); diagnostics.train.draws = trainRenderer.draws; diagnostics.train.triangles = trainRenderer.triangles; }
   drawEcosystem();

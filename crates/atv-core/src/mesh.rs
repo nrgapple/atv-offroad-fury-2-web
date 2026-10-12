@@ -18,6 +18,8 @@ pub struct Vertex {
     pub position: [f32; 3],
     pub local_position: [f32; 3],
     pub normal: [f32; 3],
+    /// Scaled VIF normal before the node transform, used by reflection passes.
+    pub local_normal: [f32; 3],
     pub uv: [f32; 2],
     /// Optional unsigned VIF V4-8 color, preserved before original shader scaling.
     pub color: Option<[u8; 4]>,
@@ -213,6 +215,7 @@ fn packet(
                             position,
                             local_position,
                             normal: [0.; 3],
+                            local_normal: [0.; 3],
                             uv: [0.; 2],
                             color: None,
                             node: node as u16,
@@ -245,6 +248,7 @@ fn packet(
                         if command == 0x6a {
                             let normal =
                                 std::array::from_fn(|k| raw[i * 3 + k] as i8 as f32 * scales[1]);
+                            vertex.local_normal = normal;
                             vertex.normal =
                                 point(&nodes[vertex.node as usize].world_matrix, normal, false);
                         } else if command == 0x65 {
@@ -501,6 +505,8 @@ mod tests {
         assert_eq!(relative_vertex.position, [4., 6., 7.]);
         assert_eq!(bind_vertex.normal, [-6., 0., 0.]);
         assert_eq!(relative_vertex.normal, [0., 2., 0.]);
+        assert_eq!(bind_vertex.local_normal, [0., 0., 1.]);
+        assert_eq!(relative_vertex.local_normal, bind_vertex.local_normal);
         assert_eq!(scene.lods[0].groups[0].vertices[2].position, [5., 6., 5.]);
         assert_eq!(scene.nodes[0].local_matrix, root);
         assert_eq!(scene.nodes[1].world_matrix, child_matrix);

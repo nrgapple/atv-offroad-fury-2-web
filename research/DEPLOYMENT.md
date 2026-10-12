@@ -549,3 +549,37 @@ and mobile map routes without disc selection, diagnostics persistence/layout,
 uninterrupted all-eight-map driving and dev-log filters pass without JS/GL errors.
 These are bounded original-resource routes and component proofs, not complete
 PS2/gameplay/physical-phone parity. See [water/snow evidence](WATER_SNOW_GATE.md).
+
+## Public Vancouver Ridge and nine-map checkpoint (2026-10-12)
+
+Main commit `f585991579f8c44b098d6b137b1679eb8050e3fd` passed successful CI run
+[`38302626466`](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38302626466).
+The public deployment identity matches that commit. R2 validates 400 approved
+objects and uploaded six incremental changes totaling 305,224,223 bytes. HTTPS
+verification matches all 31 authored files and 399 served objects. At verification,
+the public log contained 110 entries and 93 screenshot references.
+
+The public Single Player → Freestyle route includes FREE05 Vancouver Ridge as the
+original SPStunt6 entry, unlocked by default with its original two-part thumbnail.
+Desktop and 390px source-derived ramp traces each record 78 model definitions,
+75 drawn, 43 solid colliders, 37,649 vegetation placements, 123 wheel-support
+frames, 31 body-contact frames, flight beginning at step 19, later ground contact
+and drag-light frame 1. The bounded test uses ordinary throttle without injected
+velocity, force or wreck state. This does not test every collision face or prove
+original hardware behavior.
+
+The uninterrupted public map regression passes ENV01–ENV08 and FREE05, with
+terrain following, batched vegetation, no unsupported meshes and zero JS/GL errors.
+Material inspection records 2,729 contributing ENV04 rain pixels, 73,978 ENV07
+lava pixels, 6,331 ENV08 waterflow pixels and 115,571 FREE05 ski-jump pixels.
+Prelit attributes, source UV animation, pause/context phase retention and the
+original title/menu/controller/touch/pause routes pass. The frontend test also
+reaches Tioga, reloads Caribou at 390px and sees no disc prompt or browser errors.
+
+The newly inspected desktop public-ride capture is recorded in the local dev log,
+but its PNG remains in ignored private storage pending the next validated R2
+gallery upload. The public screenshot count above predates that entry. Three
+Vancouver ice-reflection overlays, exact fog, 92 light/lens behaviors, projected
+terrain/vegetation LOD, shadows, weather, other modes and progression remain
+unfinished. The public checks establish these authored browser components and
+routes, not full-map or original-game parity.

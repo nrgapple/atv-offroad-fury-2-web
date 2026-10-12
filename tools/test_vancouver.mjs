@@ -26,7 +26,7 @@ try {for(const mobile of [false,true]) {
   return {placementCount:placement.placements.length,modelCount:scene.models.length,sceneInstances:status.sceneInstances,unsupported:status.unsupportedSceneMeshes,skippedMaterials:status.skippedSceneGroups,vegetation:status.vegetationPlacements,colliderNames:names,
    frames:frames.map(f=>({origin:f.origin,velocity:f.linear_velocity,grounded:f.grounded,support:f.wheel_obstacle_support,body:f.obstacle_contact_count,wreck:f.wreck.phase,reset:f.reset_count,selected:f.scene_query.selected_static}))};
  });
- assert.equal(result.modelCount,78);assert.equal(result.sceneInstances,75);assert.deepEqual(result.unsupported,[]);assert.equal(result.vegetation,37649);
+ assert.equal(result.modelCount,78);assert.equal(result.sceneInstances,78);assert.equal(result.skippedMaterials,0);assert.deepEqual(result.unsupported,[]);assert.equal(result.vegetation,37649);
  assert(result.frames.every(f=>f.origin.every(Number.isFinite)&&f.velocity.every(Number.isFinite)));
  assert(result.frames.some(f=>f.support.some(Boolean)),'Ski ramp must provide original wheel support');
  assert(result.frames.some(f=>f.body>0),'Original solid ramp must provide body contacts');

@@ -37,8 +37,9 @@ nonexistent file. The mode TOY supplies the first authored start/direction.
 
 The host build decodes the original 1281×1281 terrain at 4.5-foot spacing,
 detail texture, sky and 37,649 snowy vegetation placements. All 78 original
-static meshes decode; 75 placements draw. The three original ice reflection
-overlays await their coordinate-generation shader and remain explicitly skipped.
+static meshes decode; 75 placements draw. At this initial connection gate, the
+three original ice-reflection overlays remained skipped; their later host
+renderer recovery is recorded below.
 All 43 original solid placements load with their original collision matrices:
 draglight, l_post, skijump, skilodge1, skilodge2 and skilodge3. Missing COLs on
 non-solid overlays follow the established native loader rule. The ski jump's
@@ -68,9 +69,10 @@ The source package adds only the required F05_FR archive and two Vancouver
 thumbnail halves, through ignored storage/R2. No original content enters Git or
 CI. The host gate passes 307 core, 22 network, 11 relay, three bridge and 66 JS
 tests, setup, strict formatting/Clippy, web build, 16 release and five Worker tests.
-Public release is a separate gate. Ninety-two original light definitions are
-retained as metadata; point/spot/lens behavior, fog, shadows, vegetation/terrain
-LOD, ice reflections and full PS2 rendering/gameplay equivalence remain unfinished.
+The public release and browser gates are recorded below. Ninety-two original light
+definitions are retained as metadata; outside the host-tested ice-reflection
+groups below, point/spot/lens behavior, fog, shadows, vegetation/terrain LOD and
+full PS2 rendering/gameplay equivalence remain unfinished.
 
 ## Static prelit materials and UV movement
 
@@ -104,9 +106,74 @@ Verification at the first host gate:
   Animated offsets, pause and context phase retention pass. These contributions
   are not before/after improvement metrics or a PS2 framebuffer comparison.
 
+## Public Vancouver and nine-map checkpoint
+
+Public main `f585991579f8c44b098d6b137b1679eb8050e3fd` passed CI `38302626466`.
+HTTPS checks match 31 authored files and 399 served objects; the approved R2
+package contains 400 objects, six changes, and 305,224,223 bytes. The public
+gallery serves 110 entries and 93 screenshot references. Vancouver Ridge/FREE05
+is available through the original SPStunt6 Freestyle route, using its original
+two-part thumbnail and default unlocked state.
+
+The public nine-map route passes ENV01–ENV08 plus FREE05. FREE05 loads the original
+1281×1281 terrain at 4.5-foot spacing, detail/sky, 37,649 vegetation placements,
+78 source scenery definitions (75 drawn) and 43 placed solid colliders. Desktop
+and 390px contact traces each report 123 wheel-support frames, 31 body-contact
+frames, takeoff beginning at step 19 and later ground contact. The test starts at
+an asset-derived ramp location and uses ordinary throttle without injecting
+velocity, forces or wreck state. It does not exercise every collider face or
+establish hardware handling equivalence.
+
+Public material inspection reports 2,729 contributing pixels for ENV04 rain,
+73,978 for ENV07 lava, 6,331 for ENV08 waterflow and 115,571 for FREE05's ski
+jump. Source prelit attributes and authored rain/waterflow UV movement pass with
+pause and graphics-context phase retention. The public frontend route passes the
+original menu/track resources, keyboard/controller navigation, Tioga drive,
+pause/Controls, mobile touch selection and Caribou reload without a disc picker.
+The nine-map, material and frontend browser checks report no JavaScript or GL
+errors. Pixel contributions are inspection evidence, not a PS2 framebuffer
+comparison or a whole-map fidelity score.
+
+The public f585991 release predates the reflection change below and still skips
+the three Vancouver overlays. Exact fog, 92 original light/lens behaviors,
+projected terrain/vegetation LOD, shadows, weather, other modes and progression
+remain open; the public release does not establish original hardware or full-game
+parity.
+
+## Host reflection shader gate
+
+`tools/test_reflections.mjs` passes the original local-space projection renderer
+on ENV01 and FREE05. ENV01 restores 88 reflection groups across 275 instances,
+with zero skipped groups and 152,862 contributing ice pixels. FREE05 restores its
+three groups across all 78 instances, with zero skipped groups and 236,566
+contributing pixels. The vertex path uses each PSG node's original local position
+and normal, transforms the local camera through the transposed world basis, and
+evaluates the original XY, XZ and YZ projections with source RGBA, blend and depth
+behavior. Host inspection images remain under ignored
+`private/reports/devlog-images/reflection-host-env01.png` and
+`reflection-host-free05.png`.
+
+Expanded GPU transform feedback compares the actual renderer vertex shader with
+the same 768 private native arithmetic cases under identity, translated/rotated
+placement and rotated child-node transforms: 2,304 GPU comparisons across 5,376
+interpreted arithmetic instructions, with maximum absolute UV difference
+7.152557373046875e-7. This validates local-versus-world camera mapping and the
+XY/XZ/YZ swizzles for these cases. The test supplies a pre-normalized finite local
+view direction; it does not validate PS2 hardware accumulators or reciprocal
+behavior, nor replay the complete GS/VU pipeline.
+
+The updated Vancouver desktop and 390px gate draws all 78 placements with zero
+skipped groups. Both traces report 43 colliders, 123 wheel-support frames, 31
+body-contact frames, takeoff at step 19, later ground contact, drag-light
+animation and unlocked menu access. `make check` passes 308 core tests, 22
+network tests, 11 relay tests, 3 bridge tests and 66 JavaScript tests. The wider
+all-nine-map, material and frontend regression is still running. This remains a
+host-only candidate; fog, lighting/lens effects, LOD, shadows and weather are not
+covered by this checkpoint.
+
 ## Remaining fidelity gates
 
-Caribou ice/reflection groups still need their original coordinate generation.
+Broader reflection coverage and original hardware equivalence remain open.
 Terrain projected pass selection and adaptive LOD, vegetation visibility,
 per-material fog, point lights, random weather/lens effects, shadows, remaining
 ambient emitters and actors, shader families and gameplay modes remain incomplete.
