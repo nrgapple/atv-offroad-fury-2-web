@@ -608,3 +608,35 @@ host migration, split-screen and full original game parity remain incomplete.
 See [implementation and transport tradeoffs](MULTIPLAYER.md),
 [original multiplayer evidence](MULTIPLAYER_ORIGINAL.md) and
 [model census](MULTIPLAYER_MODELS.md).
+
+## Combined Vancouver and Rust multiplayer verification (2026-10-12)
+
+Main `cef26f4495f0c5dbf6f8398133ea81bf4b78aed3` passes
+[CI 38307658534](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38307658534).
+The public HTTPS app and Rust relay identity/WASM hash match that exact artifact.
+The 106-record runtime package preserves nine environments, all 26 quads and both
+rider catalogs. R2 validation covers 403 approved objects with four changes;
+HTTPS checks 31 authored/static files and all 402 served objects, with 115 dev-log
+entries and 96 screenshots before the final verification note.
+
+Thirteen live public relay checks pass, including all-four ninth-map selection
+and rejection of map 10. The copied-invite Vancouver pair loads matching scenes,
+draws both rider rigs, exchanges movement and spatial engine audio, and cleans up
+when the host leaves. Actual host closure during guest asset loading also passes.
+Four public browsers each draw three peers in 39 remote draws with three engine
+voices; every rider's movement reaches every observer, then host-end clears all
+guest rooms, models and sound. The 390px failed-stunt replay records 403 guest
+frames, 42 detached-rider frames and 14 spatial impact-audio frames, then recovery.
+All 26 actual garage selections pass against the merged renderer, alternating
+13 male and 13 female rigs: exact assets/physics/engine configurations, finite
+Rust state, animated GPU poses, live voices and 37.44–44.76ft of throttle movement
+without runtime/HTTP/WebGL errors. The canonical private `hosted-content` package
+is refreshed to the validated 106-record manifest with its prior manifests and
+older blobs retained; future uploads must preserve this complete dependency set.
+
+Four-client timing uses one Mac, headless Chromium Metal, 1280×896 and synthetic
+focus: 71.00–75.86 FPS, 25.9–27.2ms frame p95, 2.61–3.11ms render CPU,
+2.1–6.6ms physics round trips and 41–52ms relay RTT. Concurrent validation
+overlap was not measured. These are bounded measurements, not phone or general
+Internet guarantees. The earlier public nine-map/material/contact proofs remain
+scoped to their recorded release; later reflection/fog work stays isolated WIP.
