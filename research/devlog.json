@@ -1,6 +1,6 @@
 {
   "status": "Host-verified one-handed mobile input checkpoint; CI and public release pending. The browser port remains incomplete.",
-  "working_on": "Continue native water-effect parity and Arlington train collision, audio and smoke work; investigate the remaining recovery and wreck gaps.",
+  "working_on": "Release the verified shared mobile UI checkpoint; continue the original gameplay reconstruction.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1494,9 +1494,28 @@
         "Body05/body04 sample magnitudes are 2.824348 and 5.099363; isolated PCM energies are 0.03029 and 0.02301. Detached-source position is retained. Native bounded probes cover 1,200 latch, 400 impact-sampler, 800 velocity-cache and 400 phase-position cases."
       ],
       "limitation": "Host-only; public collision/effects/audio verification is pending. This verifies two touch-wreck clips, not complete sound, mixer or PS2 audio parity. Four original samples are the only additional runtime assets required."
+    },
+    {
+      "id": "shared-controls-take-on-the-atv-metal-and-gold-style-9bc5b0b0",
+      "timestamp": "2026-10-12T17:42:51.083939+00:00",
+      "recorded_at": "2026-10-12T17:44:28.896948+00:00",
+      "kind": "build",
+      "title": "Shared controls take on the ATV metal-and-gold style",
+      "summary": "Pause, Camera and the touch direction marker now share a compact charcoal and silver treatment with gold direction cues and restrained red trim. Host Chromium checks cover three viewport shapes, focus, controls, gesture scope and listener teardown.",
+      "details": [
+        "Added shared design tokens and a reusable browser control treatment; the recovered menu and resource-backed HUD remain the visual references. See research/DESIGN_SYSTEM.md.",
+        "The existing one- and two-finger touch marker uses the new compass styling while retaining its input projection and behavior. Host gameplay checks pass cardinal and diagonal vectors, saved one-handed mode, throttle, preload, air control and landing.",
+        "Host make verify, make check (296 core, 2 web, 45 JavaScript checks), release validation (13 tests), and tools/test_mobile_ui.mjs passed. Chromium targets were 390\u00d7844, 320\u00d7568 and 844\u00d7390.",
+        "Safari mitigation disables selection and callouts on indicator descendants and scopes nonpassive touch cancellation to the active gameplay canvas, with listener teardown. The WebKit mobile UI gate passed at 390\u00d7844, 320\u00d7568 and 844\u00d7390, including 44px action targets, focus, camera cycle, pause/resume, scoped cancellation and teardown.",
+        "Short two-finger gate passed with simultaneous CDP contacts: throttle/brace, independent steer and lean at \u22120.5 axes, the 72px drive indicator, and cancellation returning input to neutral.",
+        "The original frontend menu route passed without a disc-selection step or browser errors."
+      ],
+      "limitation": "Host-only checkpoint pending branch CI and release. Physical iOS loupe behavior remains unverified; Android hardware and exact PS2 visual parity remain unverified. The older extended tools/test_touch.mjs route fails its grounded-preload assertion after takeoff (undefined !== 1 at line 57); rerunning the exact pre-checkpoint touch.js baseline produces the same failure, so this timing/assertion issue is not attributed to the styling or gesture suppression.",
+      "image": "/devlog-images/shared-controls-take-on-the-atv-metal-and-gold-style-9bc5b0b0.png",
+      "caption": "Host Chromium capture of the shared Pause/Camera controls and gold direction marker during a ride."
     }
   ],
-  "updated_at": "2026-10-12T17:33:52.111494+00:00",
+  "updated_at": "2026-10-12T17:46:50.785687+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

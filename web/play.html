@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#07122a">
   <title>ATV Offroad Fury 2</title>
+  <link rel="stylesheet" href="design-system.css">
   <link rel="stylesheet" href="game.css">
   <link rel="stylesheet" href="touch.css">
 </head>
@@ -15,8 +16,8 @@
     <p id="menu-notice" role="status">Loading original menus…</p>
   </section>
   <div id="toolbar">
-    <button id="menu" type="button" aria-label="Pause">Ⅱ</button>
-    <button id="camera" type="button" disabled>Camera</button>
+    <button id="menu" class="atv-control" type="button" aria-label="Pause"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3h4v14H5zM12 3h4v14h-4z"/></svg><span>Pause</span></button>
+    <button id="camera" class="atv-control" type="button" aria-label="Camera" disabled><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 3h8l2 3h2v11H2V6h2zm4 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm0 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4z"/></svg><span>Camera</span></button>
   </div>
   <div hidden>
     <input id="disc" type="file" accept=".iso,.tr2" hidden>

@@ -1,33 +1,59 @@
 /* Game-only stylesheet: the separately loaded development log stays selectable. */
-html, body, #game, #toolbar, #toolbar *, #touch-controls, #status, #help { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+html, body, #game, #toolbar, #toolbar *, #touch-controls, #touch-controls *, #status, #help { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 #game, #toolbar, #touch-controls { -webkit-tap-highlight-color: transparent; }
 #toolbar button, #toolbar a { touch-action: manipulation; }
 #touch-controls { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
 #touch-controls[hidden], body.menu-open #touch-controls { display: none; }
-.touch-rider-marker { position: absolute; width: 72px; height: 72px; margin: -36px; border: 1px solid #d7e6ff80; border-radius: 50%; background: #12243a40; box-shadow: inset 0 0 14px #b2d2f220; opacity: 0; }
+.touch-rider-marker {
+  --touch-accent: var(--atv-gold);
+  position: absolute; width: 72px; height: 72px; margin: -36px;
+  border: 2px solid var(--atv-metal-edge); border-radius: 50%;
+  background: radial-gradient(circle, #22222285 55%, #080808d9 57%, #383838eb 70%);
+  box-shadow: var(--atv-bevel), 0 0 0 1px #080808, var(--atv-shadow);
+  opacity: 0;
+}
 #touch-controls.held .touch-rider-marker, #touch-controls[data-preload=active] .touch-rider-marker { opacity: 1; }
-.touch-rider-marker i { position: absolute; top: 25px; left: 25px; width: 20px; height: 20px; border: 1px solid #edf5ffaa; border-radius: 50%; background: #9ebcdb35; transform: translateY(var(--drive, 0px)); }
-.touch-rider-marker span { position: absolute; top: 82px; left: -20px; width: 112px; text-align: center; font: bold 10px/1.2 system-ui, sans-serif; letter-spacing: .06em; color: #eef5ff; text-shadow: 0 1px 4px #000; }
-#touch-controls[data-preload=armed] .touch-rider-marker { border-color: #eee1a0; background: #78632e60; }
-#touch-controls[data-preload=active] .touch-rider-marker { border-color: #a3ecc3; background: #285d4f80; }
+.touch-rider-marker i {
+  position: absolute; top: 25px; left: 25px; width: 20px; height: 20px;
+  border: 1px solid var(--atv-gold-light); border-radius: 50%;
+  background: linear-gradient(135deg, var(--atv-gold-light), var(--touch-accent) 55%, var(--atv-gold-deep));
+  box-shadow: inset 0 1px 1px #fff9, 0 1px 3px #000c;
+  transform: translateY(var(--drive, 0px));
+}
+.touch-rider-marker span {
+  position: absolute; top: 82px; left: -20px; width: 112px;
+  padding: 1px 0; border-left: 2px solid var(--touch-accent); border-right: 2px solid var(--touch-accent);
+  border-radius: 2px; background: #080808d9; text-align: center;
+  font: 800 10px/1.2 var(--atv-font-label); letter-spacing: var(--atv-label-tracking);
+  color: var(--atv-silver-light); text-shadow: 0 1px 2px #000;
+}
+#touch-controls[data-preload=armed] .touch-rider-marker { --touch-accent: var(--atv-orange); border-color: var(--atv-orange); }
+#touch-controls[data-preload=active] .touch-rider-marker { --touch-accent: var(--atv-gold-light); border-color: var(--atv-gold-light); }
+#touch-controls[data-preload=available] .touch-rider-marker { border-color: var(--atv-gold); }
 body.touch-driving #help, body.touch-driving #status:not(.error) { display: none; }
 body.touch-driving #status.error { top: max(84px, calc(env(safe-area-inset-top) + 74px)); bottom: auto; }
-#touch-controls[data-preload=available] .touch-rider-marker { border-color: #8bd2ff; background: #28456e70; }
 /* One-finger mode displays finger commands, independently on both axes. */
 .touch-axis, .touch-direction { display: none; }
-#touch-controls[data-one-handed=true] .touch-rider-marker { width: 96px; height: 96px; margin: -48px; background: #0b172ba6; }
+#touch-controls[data-one-handed=true] .touch-rider-marker { width: var(--atv-compass-size); height: var(--atv-compass-size); margin: -48px; }
 #touch-controls[data-one-handed=true] .touch-rider-marker::before,
-#touch-controls[data-one-handed=true] .touch-rider-marker::after { content: ''; position: absolute; background: #d7e6ff35; }
-#touch-controls[data-one-handed=true] .touch-rider-marker::before { left: 47px; top: 12px; width: 1px; height: 72px; }
-#touch-controls[data-one-handed=true] .touch-rider-marker::after { top: 47px; left: 12px; height: 1px; width: 72px; }
-#touch-controls[data-one-handed=true] .touch-rider-marker i { left: 38px; top: 38px; width: 18px; height: 18px; background: #b3edca; border-color: #e9fff0; box-shadow: 0 0 8px #0008; transform: translate(var(--steer, 0px), var(--lean, 0px)); }
-#touch-controls[data-one-handed=true] .touch-rider-marker span { top: 118px; left: -24px; width: 144px; font-size: 9px; letter-spacing: .03em; }
-#touch-controls[data-one-handed=true] .touch-axis { display: block; position: absolute; font: 700 9px/1 system-ui, sans-serif; color: #eef5ff; text-shadow: 0 1px 4px #000; }
-.touch-axis.forward, .touch-axis.back { left: 28px; width: 40px; text-align: center; }
+#touch-controls[data-one-handed=true] .touch-rider-marker::after { content: ''; position: absolute; background: #b9b9b945; }
+#touch-controls[data-one-handed=true] .touch-rider-marker::before { left: 46px; top: 12px; width: 1px; height: 68px; }
+#touch-controls[data-one-handed=true] .touch-rider-marker::after { top: 46px; left: 12px; height: 1px; width: 68px; }
+#touch-controls[data-one-handed=true] .touch-rider-marker i { left: 37px; top: 37px; width: 18px; height: 18px; transform: translate(var(--steer, 0px), var(--lean, 0px)); }
+#touch-controls[data-one-handed=true] .touch-rider-marker span { top: 118px; left: -25px; width: 144px; font-size: 9px; letter-spacing: .03em; }
+#touch-controls[data-one-handed=true] .touch-axis {
+  display: block; position: absolute; font: 800 9px/1 var(--atv-font-label);
+  color: var(--atv-silver-light); text-shadow: 0 1px 2px #000;
+}
+.touch-axis.forward, .touch-axis.back { left: 26px; width: 40px; text-align: center; }
 .touch-axis.forward { top: -14px; }
 .touch-axis.back { bottom: -14px; }
-.touch-axis.left, .touch-axis.right { top: 43px; }
+.touch-axis.left, .touch-axis.right { top: 42px; }
 .touch-axis.left { left: -13px; }
 .touch-axis.right { right: -13px; }
-#touch-controls[data-one-handed=true] .touch-direction { display: block; position: absolute; left: 47px; top: 46px; width: var(--length, 0px); height: 2px; background: #b3edca; transform-origin: left center; transform: rotate(var(--angle, 0rad)); }
+#touch-controls[data-one-handed=true] .touch-direction {
+  display: block; position: absolute; left: 46px; top: 45px;
+  width: var(--length, 0px); height: 2px; background: var(--touch-accent);
+  box-shadow: 0 1px 2px #000; transform-origin: left center; transform: rotate(var(--angle, 0rad));
+}
 #touch-controls[data-one-handed=true]:not(.held) .touch-rider-marker { opacity: 0; }

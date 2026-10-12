@@ -192,6 +192,12 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
     if (!input.owns(event.pointerId)) return;
     event.preventDefault(); event.stopImmediatePropagation(); input.end(event.pointerId, event.type !== 'pointerup'); root.classList.toggle('held', Boolean(input.pointer)); present();
   };
+  // WebKit's loupe can ignore CSS selection suppression. Cancel native touch
+  // gestures on the active game surface as well; Pointer Events still own input.
+  // Keep menu/toolbar taps and the separate selectable dev log outside this gate.
+  const suppressNativeTouch = event => { if (active() && event.cancelable) event.preventDefault(); };
+  surface.addEventListener('touchstart', suppressNativeTouch, { passive: false });
+  surface.addEventListener('touchmove', suppressNativeTouch, { passive: false });
   surface.addEventListener('pointerdown', down); surface.addEventListener('pointermove', move);
   for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) surface.addEventListener(type, end);
   const suppress = event => { if (!document.querySelector('#frontend')?.contains(event.target)) event.preventDefault(); };
@@ -221,6 +227,7 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
     get generation() { return input.generation; },
     destroy() {
       clear(); root.remove(); document.body.classList.remove('touch-driving');
+      surface.removeEventListener('touchstart', suppressNativeTouch); surface.removeEventListener('touchmove', suppressNativeTouch);
       surface.removeEventListener('pointerdown', down); surface.removeEventListener('pointermove', move);
       for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) surface.removeEventListener(type, end);
       document.removeEventListener('selectstart', suppress); document.removeEventListener('contextmenu', suppress);
