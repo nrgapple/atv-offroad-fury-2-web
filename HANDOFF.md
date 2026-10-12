@@ -1,5 +1,41 @@
 # Implementation handoff
 
+## Rust multiplayer host checkpoint, public verification pending
+
+Isolated `feature/rust-multiplayer` adds four-player host-controlled Freeride
+lobbies, eight-character share codes/links and an authored Rust Cloudflare relay.
+Rust owns packet validation, sender identity, pose interpolation and per-peer
+spatial sound selection. Local driving remains immediate in its existing Rust
+simulation; this is owner-authoritative presentation, with no player-to-player
+collision resolution or competitive race authority yet. See
+[network implementation](research/MULTIPLAYER.md), [original multiplayer evidence](research/MULTIPLAYER_ORIGINAL.md)
+and [model census](research/MULTIPLAYER_MODELS.md).
+
+The garage adds all26 recovered in-race quads with their own PHY/AO/AR/linkage
+resources, and male18/female27-node rigs with their matching78-motion catalogs.
+Original unlock/profile rules are not reconstructed. Networking preserves source
+node shear and detached rider poses; state switches/teleports are discontinuities.
+Host departure closes the event. Protocol/relay component commits are4fa8ad0 and
+53a0db4; browser integration and public release identity follow at the completed
+release checkpoint. No source disc/executable/unused VUT or first-person arms enter
+GitHub or the runtime package.
+
+Host gates pass299core+22net+3relay+11WASM+66JS tests, strict formatting/Clippy,
+15release+5Worker checks and makeverify. Actual two-browser code/link admission,
+different models/rigs, remote movement, engine voices and host departure pass.
+A hardware Metal touch-driven failed Nac Nac replicates Riding/Airborne/Wreck,
+crash serial, independent rider separation, original impact audio and recovery;
+local RTT measurements do not establish Internet or physical-phone performance.
+The private native probe covers all26 quads and both rigs'3,276 sampled poses.
+
+The checked CI artifact now includes the compiled Rust relay, deployed before the
+main app service binding. `/multiplayer/version` reports its configured checked
+commit/WASM hash. Expanded required resources are staged separately in
+`private/reports/multiplayer-content` and must be uploaded from a validated current-main
+artifact using `upload_cloudflare_content.py --content`; public release still needs
+CI, R2 publication and production browser verification. Preserve other agents'
+water/snow and UI lanes while integrating current main.
+
 ## Latest verified public rail checkpoint
 
 `841f11c5d619cac92bc6033fe01e1e2d09cbdcc4` is public, CI 38287671823 success.

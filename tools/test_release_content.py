@@ -81,3 +81,20 @@ SoundResourceFile=unused
 
 if __name__ == '__main__':
     unittest.main()
+
+class PlayerContentTests(unittest.TestCase):
+    def test_quad_package_contains_only_live_geometry_physics_and_collision(self):
+        from package_content import compact_player_archive, pack_resource, Resource
+        names = ['quad/atv26.psg', 'quad/ATV26S01.phy', 'geometry/ATV26ao.col', 'geometry/ATV26ar.col', 'particles/quaddust.emt', 'particles/quaddirtchunk.emt', 'particles/quaddirtspray.emt']
+        source = pack_resource([(name, b'fixture') for name in names] + [('Quad/ATV26.Vut', b'unused'), ('quad/ATV26.mcf', b'unused'), ('geometry/ATV26f.col', b'unused')])
+        result = Resource(compact_player_archive(source, '/QUAD/BIKESB/ATV26.RES'))
+        self.assertEqual([m[0] for m in result.members], names)
+        self.assertTrue(all(result.extract(i) == b'fixture' for i in range(7)))
+        with self.assertRaisesRegex(ValueError, 'missing or duplicated'):
+            compact_player_archive(pack_resource([(names[0], b'fixture')]), '/QUAD/BIKESB/ATV26.RES')
+
+    def test_rider_package_excludes_first_person_and_unbound_physics(self):
+        from package_content import compact_player_archive, pack_resource, Resource
+        source = pack_resource([('anim/rider/frider.psg', b'mesh'), ('anim/Rider/frider.mcf', b'catalog'), ('anim/Rider/farms.psg', b'unused'), ('frider.phy', b'unused')])
+        result = Resource(compact_player_archive(source, '/RIDER/FRIDER.RES'))
+        self.assertEqual([m[0] for m in result.members], ['anim/rider/frider.psg', 'anim/Rider/frider.mcf'])

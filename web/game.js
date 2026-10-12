@@ -1,4 +1,5 @@
 // Original content and vehicle component simulation run in the Rust worker.
+import { Multiplayer } from './multiplayer.js';
 import { Frontend } from './frontend.js';
 import { mountTouchControls, TouchLeanIntent } from './touch.js';
 import { GameAudio } from './audio.js';
@@ -19,7 +20,8 @@ const worker = new Worker('worker.js', { type: 'module' });
 const pending = new Map();
 let requestId = 0, generation = 0, terrain, vehicle, program, uniforms, chunks = [], vehicleChunks = [], gpuTextures = [], fallbackTexture, terrainAtlas, terrainTextureMap, terrainDetailMap, frame = 0, lastTime = 0, lost = false;
 let focused = document.hasFocus(), gamepadsAvailable = true, menuOpen = true;
-let frontend, hostedContent, hud;
+let frontend, hostedContent, hud, multiplayer;
+const remoteModels = new Map();
 let simReady = false, simBusy = false, simAccumulator = 0, simFrame, simStart, simGeneration = 0, orbit = 0, cameraFrame, cameraCycle = false;
 let sceneChunks = [], sceneDraws = [], skyChunks = [], ecoGroups = [];
 let waterRenderer;
@@ -38,7 +40,7 @@ const diagnostics = { ready: false, frames: 0, vertices: 0, triangles: 0, chunks
 let audio = new GameAudio(codec, message => { diagnostics.audioError = message; status(`Audio: ${message}`, true); });
 const stats = new DiagnosticsOverlay({ snapshot: () => ({ ...diagnostics, frame: simFrame, paused: menuOpen, focused, resolution: [canvas.width, canvas.height] }) });
 // Read-only snapshot for verification; does not expose the locally opened file.
-Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
+Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()]} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
 worker.onmessage = ({ data }) => {
   if (data.startupError) { status(data.startupError, true); return; }
   const request = pending.get(data.id);
@@ -97,9 +99,9 @@ async function discTerrain(file, token) {
 async function terrainFromContent(file, files, token, environment = "env01") {
   if (!["env01", "env02", "env03", "env04", "env05", "env06", "env07", "env08"].includes(environment)) throw new Error("Environment is not connected yet.");
   const number = environment.slice(-2);
-  const memberNamed = (entry, name) => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name;
+  const memberNamed = (entry, name) => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase();
   status('Loading original engine sounds…');
-  await audio.load({ file, files, read, isCurrent: () => token === generation });
+  await audio.load({ file, files, read, isCurrent: () => token === generation, quadId: frontend?.quadId ?? 1 });
   const archive = files.find(entry => entry.path === `/TRACKS/TRACKSA/ENV${number}/E${number}_FR.RES`);
   if (!archive) throw new Error(`Original ${environment.toUpperCase()} terrain archive is missing.`);
   status('Reading original terrain…');
@@ -119,21 +121,23 @@ async function terrainFromContent(file, files, token, environment = "env01") {
   if (cameraIndex < 0) throw new Error('Original camera presets are missing.');
   const cameraPresets = await codec(3, resource, cameraIndex);
   const scene = { position: sceneMetadata.start_position, yaw: Math.atan2(sceneMetadata.start_direction[0], sceneMetadata.start_direction[2]) };
-  const quadFile = files.find(entry => entry.path === '/QUAD/BIKESA/ATV01.RES');
+  const model = await json(89, new Uint8Array([frontend?.riderId ?? 0]), frontend?.quadId ?? 1);
+  diagnostics.playerModel = model;
+  const quadFile = files.find(entry => entry.path === model.quad);
   if (!quadFile) throw new Error('Original ATV archive is missing.');
   status('Reading original ATV…');
   const quadArchive = await read(file, quadFile.lba * 2048, quadFile.bytes);
   const quadEntries = await json(2, quadArchive);
-  const quadIndex = quadEntries.findIndex(entry => /(^|[\\/])atv01\.psg$/i.test(entry.name));
+  const quadIndex = quadEntries.findIndex(entry => memberNamed(entry, model.quad_mesh));
   if (quadIndex < 0) throw new Error('Original ATV mesh is missing.');
   const meshBytes = await codec(3, quadArchive, quadIndex), mesh = await json(11, meshBytes);
-  const physicsIndex = quadEntries.findIndex(entry => /(^|[\\/])atv01s01\.phy$/i.test(entry.name));
+  const physicsIndex = quadEntries.findIndex(entry => memberNamed(entry, model.physics));
   if (physicsIndex < 0) throw new Error('Original ATV physics is missing.');
   const physics = await codec(3, quadArchive, physicsIndex);
-  const chassisIndex = quadEntries.findIndex(entry => /(^|[\\/])atv01ao\.col$/i.test(entry.name));
+  const chassisIndex = quadEntries.findIndex(entry => memberNamed(entry, model.chassis));
   if (chassisIndex < 0) throw new Error('Original chassis collision is missing.');
   const chassis = await codec(3, quadArchive, chassisIndex);
-  const actorIndex = quadEntries.findIndex(entry => /(^|[\\/])atv01ar\.col$/i.test(entry.name));
+  const actorIndex = quadEntries.findIndex(entry => memberNamed(entry, model.actor));
   if (actorIndex < 0) throw new Error('Original actor collision rays are missing.');
   const actorRays = await codec(3, quadArchive, actorIndex);
   let toyIndex = entries.findIndex(entry => memberNamed(entry, `${environment}.toy`)), toy;
@@ -146,7 +150,7 @@ async function terrainFromContent(file, files, token, environment = "env01") {
     if (toyIndex < 0) throw new Error('Original terrain materials are missing.');
     toy = await codec(3, sceneArchive, toyIndex);
   }
-  const materialFile = files.find(entry => entry.path === '/QUAD/BIKESA/ATV01_MT.RES');
+  const materialFile = files.find(entry => entry.path === model.quad_materials);
   if (!materialFile) throw new Error('Original ATV materials archive is missing.');
   const materialArchive = await read(file, materialFile.lba * 2048, materialFile.bytes), materialEntries = await json(2, materialArchive);
   const textures = await baseTextures(mesh, materialArchive, materialEntries);
@@ -162,9 +166,9 @@ async function terrainFromContent(file, files, token, environment = "env01") {
     if (index < 0) throw new Error(`Original rider file is missing: ${suffix}`);
     return codec(3, archive.bytes, index);
   }
-  const riderArchive = await archiveAt('/RIDER/MRIDER.RES'), motions = await archiveAt('/ANIMSRDR.RES');
-  const riderMesh = await json(27, await member(riderArchive, '/mrider.psg'));
-  const riding = await json(51, await member(riderArchive, '/mrider.mcf'));
+  const riderArchive = await archiveAt(model.rider), motions = await archiveAt('/ANIMSRDR.RES');
+  const riderMesh = await json(27, await member(riderArchive, '/' + model.rider_mesh));
+  const riding = await json(51, await member(riderArchive, '/' + model.rider_catalog));
   for (let index = 0; index < riding.length; index++) {
     if (token !== generation) throw new Error('Opening cancelled.');
     await codec(52, await member(motions, '/' + riding[index].path.split('/').at(-1)), index);
@@ -404,6 +408,7 @@ function initializeGl() {
   gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE); gl.clearColor(.34, .43, .53, 1);
 }
 function clearMesh() {
+  for (const model of remoteModels.values()) { disposeRemoteGpu(model); }
   wheelEffectsRenderer?.dispose(); wheelEffectsRenderer = undefined;
   trainRenderer?.dispose(); trainRenderer = undefined;
   waterRenderer?.dispose(); waterRenderer = undefined;
@@ -503,6 +508,61 @@ function inverseDirection(matrix, value) {
   const determinant = dot(a, cross(b, c));
   if (Math.abs(determinant) < 1e-10) throw new Error('Rider bind matrix is singular.');
   return [cross(b, c), cross(c, a), cross(a, b)].map(row => dot(row, value) / determinant);
+}
+function disposeRemoteGpu(model) {
+  for (const chunk of model.chunks ?? []) { gl.deleteVertexArray(chunk.vao); gl.deleteBuffer(chunk.vertices); gl.deleteBuffer(chunk.indices); }
+  for (const texture of model.gpuTextures ?? []) gl.deleteTexture(texture);
+  model.chunks = null; model.gpuTextures = [];
+}
+function buildRemoteGpu(model) {
+  if (!model.source || model.chunks || lost) return;
+  model.chunks = []; model.gpuTextures = [];
+  for (const [mesh, textures, rider] of [[model.source.mesh,model.source.textures,false],[model.source.riderMesh,model.source.riderTextures,true]]) {
+    if (mesh.nodes.length > 32) throw new Error('Remote rig exceeds GPU pose capacity.');
+    const gpu = new Map();
+    for (const [name, decoded] of textures) { if (!decoded.rgba) continue; const value = texture(decoded); gpu.set(name,value); model.gpuTextures.push(value); }
+    for (const group of mesh.lods[0].groups) {
+      const vertices = new Float32Array(group.vertices.length * 9);
+      group.vertices.forEach((v,i) => vertices.set([...v.local_position,...inverseDirection(mesh.nodes[v.node].world_matrix,v.normal),...v.uv,v.node],i*9));
+      const chunk = upload(vertices,new Uint16Array(group.indices),true,true); chunk.rider=rider; chunk.texture=gpu.get(mesh.materials[group.material]); model.chunks.push(chunk);
+    }
+  }
+}
+async function remoteAssets(quad, rider) {
+  const key = `${quad}:${rider}`;
+  if (remoteModels.has(key)) return remoteModels.get(key).pending;
+  const model = {source:null,chunks:null,gpuTextures:[]}; remoteModels.set(key,model);
+  model.pending = (async () => {
+    const content = await (hostedContent ??= openHostedContent());
+    const selected = await json(89,new Uint8Array([rider]),quad);
+    const archive = async path => { const f=content.files.find(f=>f.path===path); if (!f) throw new Error(`Player resource unavailable: ${path}`); const bytes=await read(content.file,f.lba*2048,f.bytes); return {bytes,entries:await json(2,bytes)}; };
+    const member = async (a,name) => { const index=a.entries.findIndex(e=>e.name.replaceAll('\\','/').split('/').at(-1).toLowerCase()===name.toLowerCase()); if(index<0) throw new Error('Remote player mesh missing.'); return codec(3,a.bytes,index); };
+    const quadArchive=await archive(selected.quad), riderArchive=await archive(selected.rider);
+    const mesh=await json(11,await member(quadArchive,selected.quad_mesh));
+    const riderMesh=await json(11,await member(riderArchive,selected.rider_mesh));
+    const quadMaterials=await archive(selected.quad_materials), riderMaterials=await archive('/RIDER/RIDER_MT.RES');
+    model.source={mesh,riderMesh,textures:await baseTextures(mesh,quadMaterials.bytes,quadMaterials.entries),riderTextures:await baseTextures(riderMesh,riderMaterials.bytes,riderMaterials.entries)};
+    return model;
+  })().catch(error=> {if(remoteModels.get(key)===model)remoteModels.delete(key);throw error;});
+  return model.pending;
+}
+function drawRemotePlayers() {
+  let draws=0;
+  for (const peer of multiplayer?.remote ?? []) {
+    const model=remoteModels.get(`${peer.atv_model}:${peer.rider_model}`); if (!model?.source) continue;
+    if (peer.quad_node_matrices.length!==model.source.mesh.nodes.length || peer.rider_node_matrices.length!==model.source.riderMesh.nodes.length) continue;
+    buildRemoteGpu(model);
+    const quad=new Float32Array(peer.quad_node_matrices.flat()), rider=new Float32Array(peer.rider_node_matrices.flat());
+    const quadWorld=new Float32Array(peer.world_matrix), riderWorld=new Float32Array(peer.rider_world_matrix);
+    gl.uniform1i(uniforms.useQuadPose,true);
+    for (const chunk of model.chunks ?? []) {
+      gl.uniformMatrix4fv(uniforms.model,false,chunk.rider?riderWorld:quadWorld);
+      gl.uniformMatrix4fv(uniforms.quadBones,false,chunk.rider?rider:quad);
+      gl.uniform1i(uniforms.useTexture,Boolean(chunk.texture));gl.bindTexture(gl.TEXTURE_2D,chunk.texture??fallbackTexture);
+      gl.bindVertexArray(chunk.vao);gl.drawElements(gl.TRIANGLES,chunk.count,gl.UNSIGNED_SHORT,0);draws++;
+    }
+  }
+  diagnostics.multiplayerDraws=draws;
 }
 function buildEcosystem() {
   const eco = terrain.ecosystem;
@@ -827,7 +887,9 @@ async function startSimulation(source) {
     scene_partition: source.world.metadata.collision_partition,
   });
   diagnostics.obstacles = { ...obstacles, rays: actor.rays };
-  simStart = { origin: source.scene.position, yaw: source.scene.yaw };
+  const origin=source.scene.position.slice();
+  if (multiplayer?.state.peer != null) { const slot=multiplayer.state.peer; origin[0]+=Math.cos(source.scene.yaw)*slot*8; origin[2]-=Math.sin(source.scene.yaw)*slot*8; }
+  simStart = { origin, yaw: source.scene.yaw };
   acceptFrame(await command(23, simStart));
   diagnostics.cameraPresets = (await json(45, source.cameraPresets)).map(preset => preset.name);
   orbit = 0; acceptCameraFrame(await command(46, { dt: 1 / 60, orbit }));
@@ -1001,6 +1063,8 @@ function render(time) {
     gl.uniform1i(uniforms.useTexture, chunk.texture ? 1 : 0); gl.bindTexture(gl.TEXTURE_2D, chunk.texture ?? fallbackTexture);
     gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
   }
+  drawRemotePlayers();
+  void multiplayer?.sample();
   if (waterRenderer) {
     waterRenderer.draw({ camera, viewProjection, focalLength: cameraFrame ? diagnostics.cameraPresentation.focalLength : 1 / Math.tan(Math.PI / 6), aspect: canvas.width / canvas.height,
       farDistance: Math.max(terrain.sizeX, terrain.sizeZ) * 5, fogColor, fogDistance: Math.max(terrain.sizeX, terrain.sizeZ) * .85 });
@@ -1111,7 +1175,7 @@ const syncAudio = () => { void audio.setActive(focused && !document.hidden && !l
 window.addEventListener('blur', () => { focused = false; clearInput(); syncAudio(); });
 window.addEventListener('focus', () => { focused = true; syncAudio(); });
 document.addEventListener('visibilitychange', () => { clearInput(); syncAudio(); });
-canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; diagnostics.ready = false; clearInput(); syncAudio(); status('Graphics context lost; waiting for recovery.'); });
+canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; for(const model of remoteModels.values()){model.chunks=null;model.gpuTextures=[];} diagnostics.ready = false; clearInput(); syncAudio(); status('Graphics context lost; waiting for recovery.'); });
 // Every old GPU handle belongs to the lost context, including vegetation instances.
 // Discard those references before buildMesh runs its normal resource cleanup.
 canvas.addEventListener('webglcontextrestored', () => { try { lost = false; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
@@ -1121,7 +1185,7 @@ window.addEventListener('pagehide', event => {
     // Back/forward cache retains this page. Its live Rust worker and audio
     // resources must survive too; closing them leaves a restored frozen ATV.
     pageSuspended = true; focused = false; syncAudio();
-  } else { audio.close(); worker.terminate(); }
+  } else { multiplayer?.close(); audio.close(); worker.terminate(); }
 });
 window.addEventListener('pageshow', event => {
   if (!event.persisted || !pageSuspended) return;
@@ -1133,11 +1197,12 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
   if (params.get('source') === 'disc') { menuOpen = false; $('frontend').hidden = true; }
   else {
     hostedContent = openHostedContent();
-    frontend = new Frontend({codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: environment => loadGame(null, environment), active: open => { menuOpen = open; clearInput(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
+    multiplayer = new Multiplayer({codec,command,ready:()=>simReady,paused:()=>menuOpen||!focused||document.hidden||lost||pageSuspended,listener:()=>({position:[camera.x,camera.y,camera.z],forward:[Math.sin(camera.yaw)*Math.cos(camera.pitch),Math.sin(camera.pitch),Math.cos(camera.yaw)*Math.cos(camera.pitch)],velocity:simFrame?.linear_velocity??[0,0,0]}),audio:()=>audio,assets:remoteAssets,clearAssets:()=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();},report:message=>{diagnostics.multiplayerError=message;status(message,true);},onState:()=>{if(frontend){frontend.layoutKey='';void frontend.refresh();}},onStart:async map=>{frontend.busy=true;frontend.notice.textContent='Loading shared environment…';try {await loadGame(null,`env${String(map).padStart(2,'0')}`);frontend.resume();}finally{frontend.busy=false;}},onLeave:message=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show('multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
+    frontend = new Frontend({multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: environment => loadGame(null, environment), active: open => { menuOpen = open; clearInput(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     hud = new HeadUpDisplay(frontend, canvas);
     if (params.get('drive') === '1') {
       menuOpen = false; $('frontend').hidden = true;
       void frontend.init(false).then(() => loadGame(null, params.get('environment') ?? 'env01')).catch(error => status(error.message, true));
-    } else { document.body.classList.add('menu-open'); void frontend.init(); }
+    } else { document.body.classList.add('menu-open'); void frontend.init().then(()=>{if(params.has('room'))return frontend.show('multiplayer');}); }
   } }
 catch (error) { status(error.message, true); $('menu-notice').textContent = error.message; }

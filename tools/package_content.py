@@ -20,7 +20,7 @@ SOURCE_SHA = '11b80faea827c5550df607d24c8c4f38a9e44cf55e3ecac9e1daeb3aca9d7c49'
 STARTUP = (
     '/TRACKS/TRACKSA/ENV01/E01_FR.RES', '/TRACKS/TRACKSA/ENV01/E01_ENDL.RES',
     '/QUAD/BIKESA/ATV01.RES', '/QUAD/BIKESA/ATV01_MT.RES',
-    '/RIDER/MRIDER.RES', '/RIDER/RIDER_MT.RES', '/ANIMSRDR.RES',
+    '/RIDER/MRIDER.RES', '/RIDER/FRIDER.RES', '/RIDER/RIDER_MT.RES', '/ANIMSRDR.RES',
     '/AUDIOTBL.RES', '/STARTAPP.RES', '/STARTEVT.RES', '/OVERLAYS.RES',
     '/TRACKS/TRACKSA/ENV02/E02_FR.RES', '/TRACKS/TRACKSA/ENV02/E02_ENDL.RES',
     '/TRACKS/TRACKSA/ENV03/E03_FR.RES', '/TRACKS/TRACKSA/ENV03/E03_ENDL.RES',
@@ -34,6 +34,9 @@ STARTUP = (
     '/UI/RESOURCE/TITLE.RES', '/UI/RESOURCE/PAGEA/PAGE01.RES',
     '/UI/RESOURCE/PAGEA/PAGE02.RES', '/UI/RESOURCE/PAGEA/PAGE06.RES',
 )
+STARTUP += tuple(path for i in range(2, 27) for path in (
+    f'/QUAD/BIKES{"A" if i <= 13 else "B"}/ATV{i:02}.RES',
+    f'/QUAD/BIKES{"A" if i <= 13 else "B"}/ATV{i:02}_MT.RES'))
 
 
 def take(data, at, count):
@@ -159,9 +162,9 @@ def config(data):
     return sections
 
 
-def selected_engine_names(table):
+def selected_engine_names(table, quad=1):
     data = config(table)
-    bank = int(data['enginesets']['quad1'].split(',')[0])
+    bank = int(data['enginesets'][f'quad{quad}'].split(',')[0])
     names = set()
     for sound in ('Idle', 'LowAccel', 'MidAccel', 'HighAccel', 'Power', 'Sputter', 'Decel', 'Rev', 'Reset'):
         section = data[f'{sound}-{bank}'.lower()]
@@ -171,7 +174,7 @@ def selected_engine_names(table):
         for i in range(1, count + 1):
             name = section[f'sound_{i}'].replace('\\', '/').lower()
             names.add(name.removeprefix('audio/'))
-    if len(names) != 21:
+    if quad == 1 and len(names) != 21:
         raise ValueError(f'exact-build ATV01 expected 21 unique engine samples, got {len(names)}')
     return names
 
@@ -236,13 +239,15 @@ def mesh_material_names(data):
             for i in range(count)}
 
 
-def compact_rider_materials(mesh_archive, material_archive):
+def compact_rider_materials(mesh_archive, material_archive, additional_meshes=()):
     """Keep every material/pass texture referenced by the packaged rider meshes."""
-    meshes, materials = Resource(mesh_archive), Resource(material_archive)
+    materials = Resource(material_archive)
     names = set()
-    for i, (name, _, _) in enumerate(meshes.members):
-        if name.lower().endswith('.psg'):
-            names.update(mesh_material_names(meshes.extract(i)))
+    for source in (mesh_archive, *additional_meshes):
+        meshes = Resource(source)
+        for i, (name, _, _) in enumerate(meshes.members):
+            if name.lower().endswith('.psg'):
+                names.update(mesh_material_names(meshes.extract(i)))
     indices = {}
     for i, (name, _, _) in enumerate(materials.members):
         basename = name.lower().split('/')[-1]
@@ -263,6 +268,19 @@ def compact_rider_materials(mesh_archive, material_archive):
                 raise ValueError(f'missing referenced rider texture: {texture}')
             selected.add(indices[f'{texture}.pst'])
     return pack_resource([(materials.members[i][0], materials.extract(i)) for i in sorted(selected)])
+
+
+def compact_player_archive(data, path):
+    """Only mesh/catalog or live quad PHY/AO/AR; no unused VUT/arm resources."""
+    archive = Resource(data)
+    stem = path.rsplit('/', 1)[-1].removesuffix('.RES').lower()
+    required = ({f'{stem}.psg', f'{stem}s01.phy', f'{stem}ao.col', f'{stem}ar.col', 'quaddust.emt', 'quaddirtchunk.emt', 'quaddirtspray.emt'}
+                if path.startswith('/QUAD/') else {f'{stem}.psg', f'{stem}.mcf'})
+    selected = [(name, archive.extract(i)) for i, (name, _, _) in enumerate(archive.members)
+                if name.lower().rsplit('/', 1)[-1] in required]
+    if len(selected) != len(required):
+        raise ValueError(f'missing or duplicated live player resource in {path}')
+    return pack_resource(selected)
 
 
 def compact_map_placements(data, environment):
@@ -353,15 +371,17 @@ def main():
         for path in STARTUP:
             data = source(path)
             originals[path] = data
-            if path.endswith('_ENDL.RES'):
+            if (path.startswith('/QUAD/') and not path.endswith('_MT.RES')) or path in ('/RIDER/MRIDER.RES', '/RIDER/FRIDER.RES'):
+                data = compact_player_archive(data, path)
+            elif path.endswith('_ENDL.RES'):
                 data = compact_map_placements(data, path.split('/')[-2])
             elif path == '/RIDER/RIDER_MT.RES':
-                data = compact_rider_materials(originals['/RIDER/MRIDER.RES'], data)
-            record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': False, **blob(data)}
+                data = compact_rider_materials(originals['/RIDER/MRIDER.RES'], data, (originals['/RIDER/FRIDER.RES'],))
+            record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith('/QUAD/') or path in ('/RIDER/FRIDER.RES',), **blob(data)}
             if data != originals[path]:
                 record.update(repacked=True, member_count=len(Resource(data).members))
             records.append(record)
-        engine_names = selected_engine_names(Resource(originals['/AUDIOTBL.RES']).named('vehicle.aud'))
+        engine_names = set().union(*(selected_engine_names(Resource(originals['/AUDIOTBL.RES']).named('vehicle.aud'), quad) for quad in range(1, 27)))
         train_names = selected_train_names(Resource(originals['/TRACKS/TRACKSA/ENV08/E08_FR.RES']).named('env08fr.toy'))
         if len(train_names) != 3:
             raise ValueError('exact-build train expected three unique body sounds')
@@ -391,7 +411,7 @@ def main():
         temporary = output / 'manifest.json.tmp'
         temporary.write_text(json.dumps(manifest, indent=2) + '\n')
         temporary.replace(output / 'manifest.json')
-        print(json.dumps({'manifest': str(output / 'manifest.json'), 'records': len(records), 'startup_bytes': sum(r['bytes'] for r in records if not r['lazy']), 'music_bytes': sum(r['bytes'] for r in records if r['lazy']), 'audio_archive_bytes': len(packed), 'blobs': len(list(output.glob('*.bin')))}))
+        print(json.dumps({'manifest': str(output / 'manifest.json'), 'records': len(records), 'startup_bytes': sum(r['bytes'] for r in records if not r['lazy']), 'music_bytes': sum(r['bytes'] for r in records if r['path'].endswith('.VAG')), 'audio_archive_bytes': len(packed), 'blobs': len(list(output.glob('*.bin')))}))
 
 
 if __name__ == '__main__':

@@ -7,13 +7,14 @@ const fields = section => Object.fromEntries([...section.fields].reverse().map(f
 const sections = doc => new Map(doc.sections.map(s => [s.name.toLowerCase(), fields(s)]));
 const fontName = 'tradegothic_boldcondensed_22s';
 export class Frontend {
-  constructor({ codec, json, content, read, start, active, audio, diagnosticsOverlay, mobileControls }) {
-    Object.assign(this, { codec, json, content, read, start, active, audio, diagnosticsOverlay, mobileControls });
+  constructor({ codec, json, content, read, start, active, audio, diagnosticsOverlay, mobileControls, multiplayer }) {
+    Object.assign(this, { codec, json, content, read, start, active, audio, diagnosticsOverlay, mobileControls, multiplayer });
     this.root = document.getElementById('frontend'); this.canvas = document.getElementById('menu-canvas');
     this.ctx = this.canvas.getContext('2d'); this.buttons = document.getElementById('menu-buttons');
     this.notice = document.getElementById('menu-notice');
     this.assets = new Map(); this.images = new Map(); this.fonts = new Map();
     this.layoutKey = ''; this.layoutPending = false; this.loaded = new Set(); this.page = 'loading'; this.selection = 0; this.track = 0; this.busy = false; this.lastPad = new Set(); this.alive = true;
+    this.quadId = 1; this.riderId = 0; this.playerName = 'Rider'; this.roomCode = new URL(location.href).searchParams.get('room') ?? ''; this.garageReturn = 'single';
     this.bindingDevice = 'keyboard'; this.bindingPage = 0; this.bindingRow = 0; this.musicPage = 0;
     this.capture = null; this.menuKeys = new Set();
     gameplayBindings.subscribe(() => { this.layoutKey = ''; });
@@ -40,7 +41,7 @@ export class Frontend {
     window.addEventListener('keydown', e => {
       if (e.repeat || this.busy) return;
       if (this.root.hidden) return;
-      if (e.target.matches?.('input[type="range"]') && e.code !== 'Escape') return;
+      if (e.target.matches?.('input') && e.code !== 'Escape') return;
       this.menuKeys.add(e.code);
       if (this.page === 'pause' && gameplayBindings.value('keyboard','pause',this.menuKeys,null) > .5) { e.preventDefault(); this.resume(); return; }
       const action = ({ ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'accept', Space: 'accept', Escape: 'back', Backspace: 'back' })[e.code];
@@ -73,7 +74,7 @@ export class Frontend {
         }
         if (!held.size) this.padBlocked = false;
         if (!this.root.hidden && !this.padBlocked) for (const action of held) if (!this.lastPad.has(action)) {
-          if (action === 'pause' && ['pause','controls','bindings','music'].includes(this.page) && !this.busy) this.resume();
+          if (action === 'pause' && ['pause','controls','bindings','music','multiplayer','lobby','garage'].includes(this.page) && !this.busy) this.resume();
           else void this.action(action === 'pause' ? 'accept' : action);
         }
         this.lastPad = held;
@@ -203,7 +204,9 @@ export class Frontend {
       if (this.page === 'bindings' && this.selection < 4) this.bindingRow = this.bindingPage * 4 + this.selection;
     } else if (action === 'back') {
       if (this.page === 'pause') return this.resume();
-      return this.show(({bindings:'controls',music:'pause',controls:'pause',main:'title',single:'main',tracks:'single'})[this.page] ?? 'title');
+      if (this.page === 'garage') return this.show(this.garageReturn);
+      if (this.page === 'lobby') return this.run('leave');
+      return this.show(({bindings:'controls',music:'pause',controls:'pause',main:'title',single:'main',tracks:'single',multiplayer:'main'})[this.page] ?? 'title');
     } else if (this.page === 'tracks' && ['left','right','up','down'].includes(action)) {
       this.track = (this.track + (['left','up'].includes(action) ? -1 : 1) + this.tracks.length) % this.tracks.length;
     } else if (this.page === 'controls' && this.frame.choices[this.selection] === 'steering-sensitivity' && ['left','right'].includes(action)) {
@@ -225,7 +228,11 @@ export class Frontend {
   async run(action) {
     if (this.busy) return;
     try {
-      if (['main','single','tracks','controls','music'].includes(action)) return await this.show(action);
+      if (action === 'garage') { this.garageReturn = this.page; return this.show('garage'); }
+      if (action === 'quadprev' || action === 'quadnext') { this.quadId = ((this.quadId - 1 + (action === 'quadnext' ? 1 : 25)) % 26) + 1; }
+      else if (action === 'riderchange') this.riderId = 1 - this.riderId;
+      else if (['host','join','share','lobbymap','lobbystart','leave'].includes(action)) return await this.multiplayer.action(action, this);
+      else if (['main','single','tracks','controls','music','multiplayer','lobby'].includes(action)) return await this.show(action);
       if (['keyboard','controller'].includes(action)) { this.bindingDevice = action; this.bindingPage = 0; this.bindingRow = 0; return this.show('bindings'); }
       if (action.startsWith('bind:')) { const id = action.slice(5); this.selection = gameplayBindings.rows(this.bindingDevice).findIndex(row => row.id === id) % 4; return this.beginCapture(id); }
       if (action === 'bindcancel') return this.cancelCapture();
@@ -254,7 +261,8 @@ export class Frontend {
     if (this.root.hidden || this.busy || this.layoutPending) return;
     const stage = this.canvas.parentElement, track = this.tracks[this.track];
     const music = this.audio?.()?.music, musicState = music?.snapshot();
-    const request = {page:this.page,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:track?.name ?? '',track_image:track?.image ?? '',fullscreen:Boolean(document.fullscreenEnabled),
+    const lobby = this.multiplayer?.state?.lobby;
+    const request = {quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? this.roomCode,lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:(this.page === 'lobby' ? this.tracks.find(t => t.id === `env${String(lobby?.map ?? 1).padStart(2,'0')}`)?.name : track?.name) ?? '',track_image:track?.image ?? '',fullscreen:Boolean(document.fullscreenEnabled),
       mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
       music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
@@ -274,7 +282,7 @@ export class Frontend {
   rebuildButtons() {
     // Preserve native range nodes during input/redraw so dragging and keyboard
     // focus survive every Rust label update.
-    for (const element of [...this.buttons.children]) if (element.tagName !== 'INPUT' || !this.frame.sliders.some(slider => slider.action === element.dataset.setting)) element.remove();
+    for (const element of [...this.buttons.children]) if (element.tagName !== 'INPUT' || ![...this.frame.sliders, ...(this.frame.inputs ?? [])].some(item => item.action === element.dataset.setting)) element.remove();
     for (const hit of this.frame.hits) {
       const b = document.createElement('button'), [x,y,w,h] = hit.rect;
       b.dataset.action = hit.action; b.type = 'button'; b.textContent = hit.label; b.setAttribute('aria-label',hit.label);
@@ -303,6 +311,22 @@ export class Frontend {
       input.setAttribute('aria-valuetext', `${slider.value}%`);
       input.style.setProperty('--atv-range-fill', `${(slider.value-slider.min)/(slider.max-slider.min)*100}%`);
       input.dataset.selected = String(slider.selected);
+    }
+    for (const field of this.frame.inputs ?? []) {
+      let input = this.buttons.querySelector(`input[data-setting="${field.action}"]`);
+      if (!input) {
+        input = document.createElement('input'); input.type = 'text'; input.className = 'atv-text-input'; input.dataset.setting = field.action;
+        input.autocomplete = 'off'; input.spellcheck = false; input.value = field.value;
+        input.addEventListener('input', () => {
+          if (field.action === 'player-name') this.playerName = input.value;
+          else this.roomCode = input.value.toUpperCase().trim();
+          this.layoutKey = '';
+        });
+        this.buttons.append(input);
+      }
+      const [x,y,w,h] = field.rect;
+      Object.assign(input.style, {position:'absolute',left:`${x/this.frame.width*100}%`,top:`${y/this.frame.height*100}%`,width:`${w/this.frame.width*100}%`,height:`${h/this.frame.height*100}%`});
+      input.maxLength = field.max_length; input.setAttribute('aria-label', field.label);
     }
     this.root.dataset.page = this.page; this.root.dataset.selection = String(this.selection);
     this.root.dataset.track = this.tracks[this.track]?.id ?? '';

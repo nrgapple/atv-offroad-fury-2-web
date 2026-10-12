@@ -12,6 +12,7 @@ use atv_core::{
     vehicle::{Vehicle, VehicleInput},
 };
 use std::cell::RefCell;
+mod multiplayer;
 
 #[derive(Default)]
 struct Buffers {
@@ -165,6 +166,7 @@ thread_local! { static SOUND_EFFECTS: RefCell<Option<EffectPlayback>> = const { 
 fn sound_effects(input: &[u8], op: u32) -> Result<Vec<u8>> {
     SOUND_EFFECTS.with_borrow_mut(|slot| {
         if op == 76 {
+            multiplayer::effect_table(input)?;
             let config = atv_core::sound_effects::Config::parse(input)?;
             let result = serde_json::to_vec(&config).map_err(|e| e.to_string())?;
             *slot = Some(EffectPlayback {
@@ -291,6 +293,7 @@ fn music(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
 fn engine_audio(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
     ENGINE_AUDIO.with_borrow_mut(|slot| {
         if op == 32 {
+            multiplayer::audio_table(input);
             let config = EngineAudioConfig::parse(input, index as u32)?;
             let bytes = serde_json::to_vec(&config).map_err(|e| e.to_string())?;
             *slot = Some(EnginePlayback { config, state: EngineAudioState::default(), previous: [usize::MAX; 10], random: OriginalRandom::with_seed(1) });
@@ -340,6 +343,7 @@ fn vehicle_world(frame: &atv_core::vehicle::VehicleFrame) -> [f32; 16] {
 }
 
 fn simulation_frame(sim: &Simulation, frame: &atv_core::vehicle::VehicleFrame) -> Result<Vec<u8>> {
+    multiplayer::observe_wreck(frame.wreck.phase != atv_core::wreck::Phase::Riding);
     let matrices = if let Some(matrices) = sim.vehicle.as_ref().and_then(|v| v.linkage_matrices()) {
         std::borrow::Cow::Borrowed(matrices)
     } else {
@@ -911,10 +915,15 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
             }
             51 => {
                 let catalog = atv_core::motion_catalog::MotionCatalog::parse(input)?;
+                let prefix = if catalog.motions.iter().any(|m| m.name.starts_with("F_")) {
+                    "F"
+                } else {
+                    "M"
+                };
                 let mut selected = atv_core::rider_pose::Clip::ALL
                     .iter()
                     .map(|clip| {
-                        let name = format!("M_{}", clip.suffix());
+                        let name = format!("{prefix}_{}", clip.suffix());
                         catalog
                             .motions
                             .iter()
@@ -923,9 +932,9 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                             .ok_or_else(|| format!("missing rider motion {name}"))
                     })
                     .collect::<Result<Vec<_>>>()?;
-                for prefix in ["Stunt", "Hold"] {
+                for kind in ["Stunt", "Hold"] {
                     for suffix in atv_core::stunt::SUFFIXES {
-                        let name = format!("M_{prefix}{suffix}");
+                        let name = format!("{prefix}_{kind}{suffix}");
                         selected.push(
                             catalog
                                 .motions
@@ -937,7 +946,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     }
                 }
                 for suffix in atv_core::wreck_animation::SUFFIXES {
-                    let name = format!("M_{suffix}");
+                    let name = format!("{prefix}_{suffix}");
                     selected.push(
                         catalog
                             .motions
@@ -948,7 +957,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     );
                 }
                 for suffix in atv_core::rider_pose::Landing::SUFFIXES {
-                    let name = format!("M_{suffix}");
+                    let name = format!("{prefix}_{suffix}");
                     selected.push(
                         catalog
                             .motions
@@ -1318,6 +1327,20 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
+    if (80..=85).contains(&op) {
+        return SIMULATION.with_borrow(|sim| multiplayer::dispatch(input, op, index, sim));
+    }
+    if op == 87 {
+        return serde_json::to_vec(&EngineAudioConfig::parse(input, index as u32)?)
+            .map_err(|e| e.to_string());
+    }
+    if op == 89 {
+        return serde_json::to_vec(&atv_core::player_models::selection(
+            index as u16,
+            if input.is_empty() { 0 } else { input[0] as u16 },
+        )?)
+        .map_err(|e| e.to_string());
+    }
     if (76..=78).contains(&op) {
         return sound_effects(input, op);
     }

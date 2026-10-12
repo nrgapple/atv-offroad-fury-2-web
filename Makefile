@@ -1,3 +1,4 @@
+export CARGO_TARGET_DIR ?= $(CURDIR)/target
 CARGO ?= $(HOME)/.cargo/bin/cargo
 NODE ?= node
 ISO ?= private/source/ATV Offroad Fury 2 (USA) (v2.00).iso
@@ -5,7 +6,7 @@ ELF ?= private/extracted/SCUS_972.11
 BIND ?= 127.0.0.1
 PORT ?= 4173
 
-.PHONY: verify verify-full inventory import check web serve audit code-map native-analyze browser-check
+.PHONY: verify verify-full inventory import check web relay serve audit code-map native-analyze browser-check
 
 verify:
 	python3 tools/verify_setup.py
@@ -23,11 +24,14 @@ check:
 	$(CARGO) fmt --all -- --check
 	$(CARGO) test --locked --workspace
 	$(CARGO) clippy --locked --workspace --all-targets -- -D warnings
-	$(NODE) --test web/input.test.mjs web/content.test.mjs web/touch.test.mjs web/bindings.test.mjs web/music.test.mjs web/audio.test.mjs web/diagnostics.test.mjs
+	$(NODE) --test web/input.test.mjs web/content.test.mjs web/touch.test.mjs web/bindings.test.mjs web/music.test.mjs web/audio.test.mjs web/diagnostics.test.mjs web/multiplayer.test.mjs
 	python3 -m py_compile tools/*.py
 
 web:
 	python3 tools/build_web.py
+
+relay:
+	cd crates/atv-relay && PATH="$(dir $(CARGO)):$(PATH)" $(HOME)/.cargo/bin/worker-build --release
 
 serve:
 	python3 tools/serve_web.py --bind $(BIND) --port $(PORT)

@@ -16,7 +16,7 @@ def verify(base, release, commit):
 
     def get(path):
         request = Request(base.rstrip('/') + '/' + path.lstrip('/'),
-                          headers={'User-Agent': 'ATV-CI-deployment-verifier/1.0',
+                          headers={'Origin': base.rstrip('/'), 'User-Agent': 'ATV-CI-deployment-verifier/1.0',
                                    'Cache-Control': 'no-cache'})
         with urlopen(request, timeout=20) as response:
             return response.read(), response.headers.get_content_type()
@@ -35,9 +35,13 @@ def verify(base, release, commit):
             raise ValueError(f'public authored asset differs: {name}')
 
     assets = [(name, digest) for name, digest in metadata['sha256'].items()
-              if name != 'static/devlog.json']
+              if name.startswith('static/') and name != 'static/devlog.json']
     with ThreadPoolExecutor(max_workers=6) as executor:
         list(executor.map(check, assets))
+    relay, _ = get('multiplayer/version')
+    identity = json.loads(relay)
+    if identity.get('commit') != commit or identity.get('wasmSha256') != metadata['sha256']['relay/index_bg.wasm']:
+        raise ValueError('public Rust multiplayer relay differs from checked artifact')
     body, mime = get('devlog.json')
     if mime != 'application/json':
         raise ValueError('public dev log has incorrect MIME type')

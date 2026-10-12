@@ -1,6 +1,6 @@
 {
-  "status": "Host-verified one-handed mobile input checkpoint; CI and public release pending. The browser port remains incomplete.",
-  "working_on": "Audit other source-normalized PSG root placements and continue comparing terrain LOD, fog, distant blending and material behavior.",
+  "status": "Host multiplayer lobby, two-browser driving, remote wreck presentation and spatial audio integration gates pass; current-main CI and public release are pending. The browser port remains incomplete.",
+  "working_on": "Complete the multiplayer protocol/integration handoff and release verification while continuing the other active gameplay and terrain/rendering lanes. Preserve the original single-player baseline and do not imply racing or authority parity.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1638,9 +1638,40 @@
       "limitation": "Physical-phone steering response and native iOS loupe behavior remain unverified.",
       "image": "/devlog-images/steering-sensitivity-verified-in-the-public-build-33ee7a61.png",
       "caption": "Fresh public HTTPS Chromium capture at 390\u00d7844 showing the Mobile steering sensitivity default of 85% in Pause \u2192 Controls."
+    },
+    {
+      "id": "two-browser-riders-share-a-rust-freeride-lobby-host-ve-b4c5fcb9",
+      "timestamp": "2026-10-12T18:52:48.915645+00:00",
+      "recorded_at": "2026-10-12T18:54:58.728310+00:00",
+      "kind": "build",
+      "title": "Two browser riders share a Rust Freeride lobby (host verified)",
+      "summary": "Two browser clients joined the same host-created Freeride room through its invite code/link, selected different recovered ATV and rider models, and drove together. Each browser rendered the remote ATV and articulated rider with 13 GPU draws while Rust handled the multiplayer protocol, relay, local physics and pose smoothing.",
+      "details": [
+        "Host and guest joined a shared lobby and started the same Caribou Peak session; host departure ended the room cleanly.",
+        "The host used male rider with ATV01 and the guest used female rider with ATV02, each loading its own mesh, physics, chassis collision and actor collision resources.",
+        "Remote state and rider orientation changed during driving; local browser audio played per-peer original engine samples with spatial position.",
+        "Implementation responsibilities: Rust owns simulation-facing physics state, bounded protocol, smoothing, relay and sample selection; JavaScript is browser API and rendering/audio glue."
+      ],
+      "limitation": "Host-only integration evidence. The browser-pair gate does not establish fast-internet performance, four physical players, race modes, player-to-player collision, host-authoritative physics, full-game parity or public availability. Public CI, deployment, R2 package and production browser checks are pending.",
+      "image": "/devlog-images/two-browser-riders-share-a-rust-freeride-lobby-host-ve-b4c5fcb9.png",
+      "caption": "Host-only two-browser Freeride check: both quads and riders visible in one client; this is not a public deployment."
+    },
+    {
+      "id": "remote-wrecks-replicate-rider-separation-and-impact-au-ec5a0fb8",
+      "timestamp": "2026-10-12T18:54:58.764583+00:00",
+      "recorded_at": "2026-10-12T18:54:58.764583+00:00",
+      "kind": "verification",
+      "title": "Remote wrecks replicate rider separation and impact audio (host verified)",
+      "summary": "A touch-driven failed Nac Nac in a Metal host browser ran for 189 guest frames through Riding, Airborne and Wreck. The remote crash serial advanced from 0 to 1, the rider rendered detached for 55 frames, and 13 frames played the original impact sample with a changing spatial pan before recovery.",
+      "details": [
+        "Two-browser live room checks also observed one spatial engine voice per remote peer and continued remote position updates after crash recovery.",
+        "The full host gate passes make verify and make check: 299 core, 22 network, 3 relay, 11 WASM and 66 JavaScript tests, plus 13 release and 5 Worker checks.",
+        "Native model/animation probes cover all 26 ATV models and both 78-clip rider catalogs; see the multiplayer gate logs under work/multiplayer/."
+      ],
+      "limitation": "This is host-only component evidence. It does not establish physical iOS input, low-latency internet behavior, four physical players, race systems, player collision resolution, server-authoritative physics, full-game parity or a public release. Current-main CI, deployment and public browser verification remain to be completed."
     }
   ],
-  "updated_at": "2026-10-12T18:15:32.738689+00:00",
+  "updated_at": "2026-10-12T18:54:58.764583+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
