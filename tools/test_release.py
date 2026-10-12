@@ -1,11 +1,12 @@
 """Release checks reject damaged artifacts and accidental private-content inclusion."""
 import hashlib
 import json
+import re
 from pathlib import Path
 import tempfile
 import unittest
 
-from package_release import EXPECTED_FILES, validate_release
+from package_release import EXPECTED_FILES, ROOT, STATIC_FILES, validate_release
 from fetch_site_release import eligible_run
 
 COMMIT = 'a' * 40
@@ -23,6 +24,17 @@ def fixture(root):
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_authored_module_dependencies_are_packaged(self):
+        # A valid hash list alone cannot catch an omitted imported module.
+        for name in STATIC_FILES:
+            if not name.endswith(".js"):
+                continue
+            source = (ROOT / "web" / name).read_text()
+            dependencies = re.findall(r"(?:from\s+|import\s*(?:\(\s*)?)[\"'](\./[^\"']+)", source)
+            for dependency in dependencies:
+                path = (Path(name).parent / dependency).as_posix()
+                self.assertIn(path, STATIC_FILES, f"{name} imports unpackaged {path}")
+
     def test_valid_release_is_accepted(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
