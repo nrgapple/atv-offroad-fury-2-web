@@ -215,8 +215,9 @@ zero JS/GL errors. `make check` passes 309 core, 22 network, 11 relay, 3 bridge
 and 66 JavaScript tests; `make verify`, `make web`, 17 release tests, 6 Worker
 tests and source hygiene pass.
 
-This is a host-only integration result and is absent from current public
-`a4d3003` (CI `38309959773`) and historical releases `cef26f4` and `f585991`.
+At the time of this host-only integration result, it was absent from public
+`a4d3003` (CI `38309959773`) and historical releases `cef26f4` and `f585991`;
+it was later validated in the e18a371e public release below.
 The packing validation does not establish a full
 native VU or PS2 pipeline. Terrain/water GS precision, water reflection/froth,
 source-specific program precision, active-view overrides, weather callbacks,
@@ -234,12 +235,36 @@ this result does not add them to public `a4d3003`. The combined check passes 309
 core, 25 network, 3 relay, 12 bridge and 68 JavaScript tests, plus 17 release
 tests, 6 Worker tests, verify, web and source hygiene.
 
+## Public fog and reflection release (e18a371e)
+
+Public main `e18a371e81b471137dd5fb1121b05d454584b1d0` passed CI
+`38312395498`. The validated artifact matches 32 authored files and all 405
+served objects. Canonical R2 has 106 records, 306 referenced files and 406
+approved objects across three changes; the gallery has 118 entries and 99
+screenshots. ENV01/ENV04/FREE05 public fog checks match 3,000 GPU coverage
+samples with zero byte differences, including the tested screen-affine sample.
+Fog packing remains source-correlated; this is not full VU/GS or PS2 hardware
+replay.
+
+Public reflections draw ENV01's 88 groups/275 instances (141,770 contributing
+pixels) and FREE05's three groups/78 instances (236,380 pixels), with 2,304 GPU
+comparisons and maximum UV error `7.15e-7`. All nine maps pass. Materials report
+4,618 rain, 73,970 lava, 6,335 waterflow and 115,571 ski-jump contributing
+pixels with pause/context retention. Four wet maps, 390px water projection and
+dry-map behavior pass. Vancouver desktop/390px contact traces draw 78 placements
+with 43 colliders, 123 wheel-support frames, 31 body-contact frames, takeoff at
+step 19 and later landing. The public frontend and copied-link FREE05 multiplayer
+pair pass with 13 remote draws, both rigs, audio and movement.
+
 ## Remaining fidelity gates
 
-Original hardware equivalence remains open. Fog visibility, range and shared
-screen-affine coverage now pass the described host checks, while native terrain
-and water GS precision, source-specific precision, active-view overrides and
-weather callbacks remain unverified. Terrain projected pass selection and
+The fog/reflection path is now public at e18a371e. Original hardware equivalence
+remains open. Native terrain and water GS precision, source-specific precision,
+active-view overrides and weather callbacks remain unverified. Source vegetation
+material work is a separate host-only WIP. Lighting is still under research:
+ambient prototype tests validate supplied zero directional weights only; they
+do not establish source tree lighting, and the recovered global Sun matrices
+still need to be incorporated into the prototype. Terrain projected pass selection and
 adaptive LOD, vegetation visibility, point lights, random weather/lens effects, shadows, remaining
 ambient emitters and actors, shader families and gameplay modes remain incomplete.
 Original dynamic assets and configuration presence do not establish that they

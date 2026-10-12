@@ -1,6 +1,38 @@
 # Implementation handoff
 
-## Public Vancouver Ridge map checkpoint
+## Latest verified public fog/reflection release
+
+Public main `e18a371e81b471137dd5fb1121b05d454584b1d0` passed CI
+`38312395498`. The validated artifact matches 32 authored files and all 405
+served objects. The canonical R2 package contains 106 records, 306 referenced
+files and 406 approved objects across three changes; the public gallery has 118
+entries and 99 screenshots. HTTPS/hash and public browser gates pass.
+
+Public ENV01/ENV04/FREE05 fog checks match 3,000 GPU coverage samples with zero
+byte differences; the tested screen-affine interpolation sample passes at 55.
+ENV01 reflections draw 88 groups/275 instances with 141,770 contributing pixels;
+FREE05 draws three groups/78 instances with 236,380 pixels. Across both maps,
+2,304 GPU comparisons have maximum UV error 7.15e-7. All nine maps pass. Public
+materials report 4,618 rain, 73,970 lava, 6,335 waterflow and 115,571 ski-jump
+contributing pixels, with pause/context retention. Four wet-map and 390px water
+checks, dry-map behavior, Vancouver desktop/390px contact traces, original
+frontend routes, and copied-link FREE05 multiplayer pass. The Vancouver traces
+draw all 78 placements with 43 colliders, 123 wheel-support frames, 31
+body-contact frames, takeoff at step 19 and later landing. The public multiplayer
+pair draws 13 remote models with both rigs, audio and movement.
+
+This verifies authored browser components and routes, not complete map/game
+parity or PS2 hardware behavior. Fog packing remains source-correlated; native
+terrain/water GS precision is unverified. Source vegetation-material work is
+again host-only WIP. Lighting is still under research: current ambient prototype
+tests cover supplied zero directional weights only, and the newly recovered
+global Sun matrices must be incorporated before any lighting release claim.
+Other lighting, shadows, lens behavior, LOD, weather callbacks, remaining modes
+and progression remain open. See [deployment evidence](research/DEPLOYMENT.md),
+[map evidence](research/MAP_FIDELITY.md) and the public
+[dev log](https://atv-offroad-fury-2.champtoday.workers.dev/devlog.html).
+
+## Historical public Vancouver Ridge map checkpoint (f585991)
 
 Public main `f585991579f8c44b098d6b137b1679eb8050e3fd` passed CI
 `38302626466`; HTTPS verification matches all 31 authored files and 399 served
@@ -25,7 +57,7 @@ integration lane. The newly inspected desktop public-ride screenshot is referenc
 in the local log but remains in ignored private storage pending the next validated
 R2 gallery upload.
 
-## Current host-only reflection candidate
+## Historical host reflection checkpoint, later released in e18a371e
 
 An uncommitted renderer candidate now draws ENV01's 88 original reflection groups
 across 275 instances and FREE05's three groups across all 78 instances, with no
@@ -44,13 +76,12 @@ tests, 11 relay tests, 3 bridge tests and 66 JavaScript tests. `make verify`,
 terrain-following/vegetation checks; material tests report 2,488 rain, 73,978
 lava, 6,329 waterflow and 115,571 ski-jump contributing pixels with pause/context
 retention. Original menu/controller/touch/pause routes, Tioga drive and Caribou
-reload pass without a disc prompt or browser errors. The host regression is
-complete, but this candidate remains unpublished pending PR9 integration and is
-not in public commit f585991; see
-[map-fidelity evidence](research/MAP_FIDELITY.md). Keep the public Vancouver
-checkpoint and the separate multiplayer lane intact.
+reload pass without a disc prompt or browser errors. This earlier host
+reflection evidence was subsequently integrated and passed public verification
+in e18a371e; this f585991 checkpoint predates it. See
+[map-fidelity evidence](research/MAP_FIDELITY.md).
 
-## Current host-only fog candidate
+## Historical host fog checkpoint, later released in e18a371e
 
 The integrated host candidate now reads source Fog Visibility and Haziness for
 ENV01/ENV04 (range 0–768, haziness 1) and FREE05 (352–768, haziness 0.5),
@@ -73,9 +104,9 @@ web, 17 release and 6 Worker tests. The disassembler's SUB broadcast label was
 corrected against execution: SUBAz writes ACC; the reflection XYZ comparisons
 are unchanged because the tested operation wrote W only.
 
-This remains unpublished host work and is absent from current public
-`a4d3003` (CI `38309959773`), as well as the historical `cef26f4` and `f585991`
-releases. The integrated multiplayer host checks also pass: two-client
+This host evidence was later released and publicly verified in e18a371e; it is
+absent from the historical `a4d3003`, `cef26f4` and `f585991` releases. The
+integrated multiplayer host checks also pass: two-client
 FREE05/link-pair routes draw 13 remote models; four actual clients each render
 three remotes in 39 draws with three voices, and every movement driver passes.
 Host departure clears remote models and voices; cancellation during map loading
