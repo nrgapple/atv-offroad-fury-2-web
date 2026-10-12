@@ -37,6 +37,7 @@ pub mod texture;
 pub mod train;
 pub mod water;
 pub mod water_animation;
+pub mod water_render;
 pub mod water_surface;
 
 pub type Result<T> = std::result::Result<T, String>;

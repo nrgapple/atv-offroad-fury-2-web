@@ -1,6 +1,6 @@
 # Water contact reconstruction
 
-Public release `22ab240cce0cea813b482ee20dbc22d5908ec69c` (CI `38204399428`) connects the shared dynamic physics height field for ENV04/05/07/08 from their original WTT profiles and raw PST signature channels in the separate runtime manifest. The uninterrupted public eight-map check verifies four live channels and finite heights on those maps, and null fields with cached -256 on dry maps. The authored Rust rider-water response is connected, but that browser check does not exercise an actual rider-water contact route. Source bindings and synthetic response regressions provide narrower evidence. Visible water surfaces and wakes remain absent; full coupled water parity is unproven.
+Public release `22ab240cce0cea813b482ee20dbc22d5908ec69c` (CI `38204399428`) connects the shared dynamic physics height field for ENV04/05/07/08 from their original WTT profiles and raw PST signature channels in the separate runtime manifest. The uninterrupted public eight-map check verifies four live channels and finite heights on those maps, and null fields with cached -256 on dry maps. The authored Rust rider-water response is connected, but that browser check does not exercise an actual rider-water contact route. Source bindings and synthetic response regressions provide narrower evidence. At that physics checkpoint, visible water surfaces and wakes remained absent; full coupled water parity is unproven. The later host-visible-surface gate is recorded below.
 
 The authored Rust `water` module reproduces the USA v2.00 buoyancy force kernel at `0033dd90` and its spring configuration at `0033da90`. The following initial kernel and surface checkpoints describe earlier isolated work; current integration is detailed below.
 
@@ -248,3 +248,108 @@ These remain component/port checks; a fully coupled original rider/water/solid
 instruction replay and public wet-wreck integration check remain outstanding.
 Reports and reproducible probes remain private under
 `private/reports/water-rider-*` and `work/priority-water/`.
+
+## Visible surface checkpoint (host verified, publication pending)
+
+`water_render` and `web/water.js` connect a portable projected water pass for the
+four actual WaterFile scenes, ENV04/05/07/08. Arlington Stream is ENV08, as already
+established by the original scene/catalog work in `GEOMETRY.md`; it is the
+railroad environment. Dry scenes do not instantiate this renderer. All four
+connected WTTs request `RenderInfinitePlane=1`, `NumPools=0`, zero wake and base
+map height scales, and one-frame signatures. Finite pool objects, animated
+signature frames, and differing height/derivative scrolling bitmap dimensions
+fail explicitly instead of receiving an invented flat-plane replacement.
+
+The scene's water is not an ordinary PSG in the static model list. Native
+`00200650` creates the dedicated PSXWater actor; `00188390` submits its VU-generated
+projected surface. The portable implementation derives its source quality-one
+counts from `00187bc0`: 334 projected subdivisions and three strip groups. A
+private original-instruction prefix probe verifies those counts in seven quality
+cases, 434 instructions, without hooks. It stops before profile initialization;
+it does **not** prove the VU's spatial orientation or exact topology. The portable
+335-by-4 indexed mesh has 1,340 vertices and 6,012 triangle indices, allocated
+once and reused. Its camera projection, topology and interpolation remain authored
+adaptations, rather than an instruction-equivalent VU geometry port.
+
+The material and texture inputs are original runtime resources already present
+in each hosted Freestyle RES. `env0N_water.psm` names the Water microprogram and
+`Env0N_WaterEnvironment.pst` / `Env0N_Froth.pst` texture bindings. WTT environment
+RGB values use the original GS modulation units, with 128 as unity. The connected
+environment pass uses the authored alpha-blend and disabled-depth-write settings.
+The environment texture's original alpha is retained. No generated water color,
+modern Fresnel term, extra lighting or second visual wave clock is introduced.
+`PolygonScale` is preserved as authored metadata but is not applied: no verified
+native use of that key was found. AdditionalFov is likewise exposed rather than
+inventing a separate gameplay camera.
+
+The height atlas contains the largest raw positive/negative signature bytes,
+independently of their display palette. Repeated waves share two 128-by-128 byte
+maps. Visual normal inputs use the original four `DxPos/DxNeg/DzPos/DzNeg` PSTs,
+packed into one 128-by-128 RGBA atlas. The original one-frame GS blend rounds
+`128 * BumpScale + 0.5` to an integer FIX before blending: authored 0.2
+becomes 26/128. The browser uses this recovered weight. An actual `00197980`
+instruction probe covers both derivative signs, five scales and two frame weights
+(40 cases, 3,220 instructions), including the GS ALPHA sign and FIX fields. These normal
+textures use display intensities and smooth sampling; treating nearest raw
+physics heights as a visual normal map produced visible noise and was removed.
+The native derivative channel construction and BumpScale are observed at
+`00198ca0` / `0030acb0` / `00197980`. Complete original GS intermediate-map arithmetic
+and its VU normal/reflection-coordinate mapping are still unverified; the
+portable environment-coordinate mapping is a documented approximation.
+
+WASM operation 66 builds these render inputs only after operation 64 installs the
+shared `LiveField`. Each fixed-step batch exports that field's completed
+render-preparation base height and signature origins. The browser uploads only
+those small uniforms per frame, and samples the same raw textures with the
+original integer truncation and wrapping for vertex displacement. Physics keeps
+its authoritative Rust sampler and the original previous-preparation contact
+ordering. Resetting the ATV retains field clocks, while loading a scene creates
+a new field. Context restoration recreates GPU resources from the retained
+runtime render inputs and last prepared snapshot.
+
+The initial per-fragment projected-plane implementation was measurably expensive.
+Moving height queries to the reused projected mesh also restores ordinary early
+bank/prop depth rejection. With original normal textures, the final pass adds one
+draw and 137,432 bytes of GPU texture/mesh storage (about 134 KiB): 32 KiB raw
+heights, 64 KiB normal channels, 16 KiB environment pixels, and 22,744 mesh bytes.
+No texture or mesh-buffer uploads occur during ordinary frames. At most four
+height fetches occur per vertex and two gradient plus one environment fetch per
+visible fragment for the shipped profiles. The optional asynchronous GPU timer
+uses a bounded reusable query pool; it reports unavailable when unsupported.
+
+Host Chromium uses ANGLE SwiftShader and does not expose the disjoint GPU timer.
+A forced-readback, full-water-coverage benchmark, after warmup, measures about
+9.63–9.94 ms per pass at 960-by-540 and 18.25–18.59 ms at 585-by-1266. The earlier
+per-fragment version measured about 20–21 ms and 29–31 ms respectively. These are
+synchronized software-driver measurements, including their readback amortization,
+not physical-phone GPU timings or a whole-game frame-rate guarantee. Ordinary
+CPU command submission is usually below the browser timer's 0.1 ms resolution.
+Hardware browser/mobile profiling and the original VU projection remain the next
+optimization evidence gates.
+
+Verification:
+
+- All four original render profiles load their exact material, environment and
+  derivative resources from the existing runtime manifest; no new game data is
+  committed or added to the R2 package.
+- An isolated GPU transform-feedback probe compares the production height-sampler
+  shader to `LiveField::height` for 7,680 points total (1,920 per map) over 12
+  prepared frames on each of the four maps, including negative coordinates and wrapping seams. All
+  sampled values match exactly. This validates the sampled kernel, not the
+  interpolated rendered mesh against native VU output.
+- `tools/test_water_render.mjs` derives wet test positions from the original
+  runtime terrain, rather than embedding a fabricated footprint. It verifies
+  changed water pixels and unchanged banks/sky on all four maps, no water pass
+  on ENV01, finite 390-pixel Arlington projection, one draw, and zero WebGL/JS
+  errors. In the inspected host captures, the top ten sky rows remain unchanged.
+- Core regressions cover original material selection/GS units, prepared-origin
+  transport and raw-map deduplication, ordered derivative-channel packing,
+  BumpScale, repeated-wave deduplication, and ignoring inactive WTT sections.
+
+Native VU tessellation, reflection coordinates, froth compositing, wakes and
+ATV spray particles remain unfinished. All four WTTs explicitly set WakeFroth
+Skip=1 and WakeScale=0, but this does not establish every original particle or
+froth behavior. Public surface deployment and physical-device performance are
+not claimed by this host checkpoint. Probes, resource-derived fixtures,
+benchmarks and screenshots remain ignored under `work/water-render/` and
+`private/reports/water-render-*`.

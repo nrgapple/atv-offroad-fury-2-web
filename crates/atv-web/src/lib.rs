@@ -49,6 +49,7 @@ struct Simulation {
     crowd_present: bool,
     water: Option<atv_core::water_animation::LiveField>,
     camera: Option<atv_core::camera::FollowCamera>,
+    train: Option<atv_core::train::Runtime>,
     wreck_camera: Option<atv_core::camera::WreckCamera>,
     hud: atv_core::hud::State,
 }
@@ -327,6 +328,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 sim.boundary_config = None;
                 sim.crowd_present = false;
                 sim.water = None;
+                sim.train = None;
             }
             65 => {
                 sim.ecosystem = if input.is_empty() {
@@ -1021,16 +1023,92 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
     }
     let mut frames = Vec::with_capacity(count as usize);
     for _ in 0..count {
+        let train = SIMULATION.with_borrow_mut(|sim| {
+            sim.train
+                .as_mut()
+                .map(|train| train.step(1.0 / 60.0, |_| Ok(None)))
+                .transpose()
+        })?;
         let frame: serde_json::Value =
             serde_json::from_slice(&simulation(&step, 24)?).map_err(|e| e.to_string())?;
         let camera: serde_json::Value =
             serde_json::from_slice(&simulation(&camera, 46)?).map_err(|e| e.to_string())?;
-        frames.push(serde_json::json!({"frame":frame,"camera":camera}));
+        let water = SIMULATION
+            .with_borrow(|sim| sim.water.as_ref().map(atv_core::water_render::Frame::new));
+        frames.push(serde_json::json!({"frame":frame,"camera":camera,"water":water,"train":train}));
     }
     serde_json::to_vec(&frames).map_err(|e| e.to_string())
 }
 
 fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
+    if op == 67 {
+        let train = if input.is_empty() {
+            None
+        } else {
+            atv_core::train::Runtime::from_resource(&Resource::parse(input)?, index)?
+        };
+        let output = train
+            .as_ref()
+            .map(atv_core::train::Runtime::frame)
+            .transpose()?;
+        SIMULATION.with_borrow_mut(|sim| sim.train = train);
+        return serde_json::to_vec(&output).map_err(|e| e.to_string());
+    }
+    if op == 68 {
+        return SIMULATION.with_borrow_mut(|sim| {
+            let train = sim.train.as_mut().ok_or("load original train first")?;
+            let frame = if input.is_empty() {
+                train.frame()?
+            } else {
+                let request = serde_json::from_slice(input).map_err(|e| e.to_string())?;
+                train.step(json_number(&request, "dt")?, |_| Ok(None))?
+            };
+            serde_json::to_vec(&frame).map_err(|e| e.to_string())
+        });
+    }
+    if op == 66 {
+        let resource = Resource::parse(input)?;
+        let wtt = resource.extract(index)?;
+        let directory = resource
+            .members
+            .get(index)
+            .ok_or("water render member index out of range")?
+            .name
+            .rsplit_once('/')
+            .ok_or("water render resource has no directory")?
+            .0;
+        let shader = atv_core::water_render::Material::shader_name(&wtt)?;
+        let load = |path: &str| -> Result<Vec<u8>> {
+            let member = resource
+                .members
+                .iter()
+                .position(|member| member.name.eq_ignore_ascii_case(path))
+                .ok_or_else(|| format!("missing water render resource {path}"))?;
+            resource.extract(member)
+        };
+        let material = atv_core::water_render::Material::parse(
+            &wtt,
+            &load(&format!("textures/{shader}.psm"))?,
+        )?;
+        let environment = texture::decode_pst(&load(&format!(
+            "textures/{}.pst",
+            material.environment_texture
+        ))?)?;
+        let gradients =
+            atv_core::water_render::GradientAtlas::new(&wtt, &format!("{directory}/Sigs"), load)?;
+        return SIMULATION.with_borrow(|sim| {
+            let field = sim.water.as_ref().ok_or("initialize shared water physics before rendering")?;
+            for wave in &gradients.waves {
+                if field.waves.get(wave.origin_channel).is_none_or(|channel| channel.dimension != gradients.textures[wave.layer].dimension) {
+                    return Err("portable water requires matching height/derivative scroll dimensions".into());
+                }
+            }
+            serde_json::to_vec(&serde_json::json!({"material":material,"height":atv_core::water_render::HeightAtlas::new(field)?,"gradients":gradients,
+                "frame":atv_core::water_render::Frame::new(field),"environment":{"width":environment.info.width,
+                "height":environment.info.height,"rgba":environment.rgba},"scope":"portable projected surface; native VU reflection/froth pending"}))
+                .map_err(|error|error.to_string())
+        });
+    }
     if op == 52 {
         return SIMULATION.with_borrow_mut(|sim| {
             if index != sim.rider_motions.len() {

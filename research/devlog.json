@@ -1332,9 +1332,37 @@
       "limitation": "Host verification only; this checkpoint is pending CI and public release. Physical iOS and Bluetooth input remain unverified. The older broad two-finger steady-ground test still fails against both this build and unchanged public 054, due to ground/air timing assumptions. The landing capture may show a later airborne bounce, so it records neutral-held controls after the verified landing route rather than a clean landing image.",
       "image": "/devlog-images/one-finger-mobile-feedback-is-host-verified-b2c3044e.png",
       "caption": "390px portrait gameplay with one-finger throttle and brace held while right steer and forward lean are each at 50%; the route and control vector are host-verified."
+    },
+    {
+      "id": "host-rendered-wet-terrain-streams-eae6b0ff",
+      "timestamp": "2026-10-12T15:25:24.852141+00:00",
+      "recorded_at": "2026-10-12T15:57:14.586728+00:00",
+      "kind": "verification",
+      "title": "Host-rendered wet terrain streams",
+      "summary": "The host build now renders source-supported water in all four wet environments, with a continuous stream visible on ENV08 beside the ATV. The shared live field provides matching water heights to the GPU surface across 7,680 sampled values.",
+      "details": [
+        "Host tests cover ENV04, ENV05, ENV07 and ENV08, dry ENV01 absence, finite 390px mobile projection, bank/sky rendering, and zero WebGL errors. The rendered surface uses one draw and 137,432 bytes; software-renderer frame timings were 9.63\u20139.94 ms at 960\u00d7540 and 18.25\u201318.59 ms at 585\u00d71266. A native derivative-rounding check covers 40 cases / 3,220 instructions."
+      ],
+      "limitation": "Host-only; public release pending. Software-renderer timings do not represent phone GPU performance. Native VU water parity, reflection, froth and wakes remain unfinished. The capture uses a runtime test placement, not the native map spawn.",
+      "image": "/devlog-images/host-rendered-wet-terrain-streams-eae6b0ff.png",
+      "caption": "Host capture of the ENV08 runtime test placement, showing the rendered water surface and stream banks."
+    },
+    {
+      "id": "original-arlington-train-route-renders-on-host-ab908493",
+      "timestamp": "2026-10-12T15:41:10.426005+00:00",
+      "recorded_at": "2026-10-12T15:57:18.014433+00:00",
+      "kind": "verification",
+      "title": "Original Arlington train route renders on host",
+      "summary": "The host build displays the source-derived ENV08 Arlington train moving along its procedural route beside the ATV. The consist includes 11 configured train bodies, a separate marker, and five wheel nodes driven by decoded MOT data.",
+      "details": [
+        "The host route test passes with 97 draws and 3,232 triangles. Across the test, the first body moves 88 ft over 2.1 simulated seconds and wheel matrices change. Combined water/train checks report 3,990 desktop and 1,710 mobile changed pixels, with pause/resume and context-restore coverage; zero WebGL errors and no page errors."
+      ],
+      "limitation": "Host-only; public release pending. Train collisions, audio and smoke remain unfinished. Rendering does not establish full source-game scene or physics parity.",
+      "image": "/devlog-images/original-arlington-train-route-renders-on-host-ab908493.png",
+      "caption": "Host ENV08 capture with the moving Arlington tender and freight cars beside the ATV."
     }
   ],
-  "updated_at": "2026-10-12T15:30:24.456511+00:00",
+  "updated_at": "2026-10-12T15:57:18.014433+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

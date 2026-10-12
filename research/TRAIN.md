@@ -2,7 +2,8 @@
 
 The implementation follows the original ENV08 Freestyle procedural route and
 named wheel motion. This core checkpoint provides authored Rust route time,
-carriage poses and wheel-node poses. Browser integration remains pending. Original
+carriage poses and wheel-node poses. The host integration draws the original
+runtime meshes; public verification remains pending. Original
 resources, native exports, instruction probes and their output stay under ignored
 `private/` and `work/`. No disc executable or emulator runs in the browser.
 
@@ -98,16 +99,26 @@ of an authored eight-byte MOT fixture. None embeds original game content.
 
 ## Integration status and remaining work
 
-The uncommitted integration under host verification uses WASM operation 67 to
-install the original train from the existing ENV08 archive;
+WASM operation 67 installs the original train from the existing ENV08 archive;
 68 returns its frame or performs a bounded diagnostic step. The regular batch
 updates it before vehicle/camera operations and carries each intermediate train
 snapshot. `web/train.js` draws the original body and wheel meshes using those
 Rust poses. Source definitions and GPU resources survive graphics-context rebuilds;
 route time pauses with the existing simulation lifecycle.
 
-These WASM/browser changes are excluded from this tested core-only checkpoint;
-the public browser train is not yet live. The working-tree bridge still supplies no-hit for the
+The desktop and 390px host gate executes the regular WASM batch and verifies
+eleven configured train bodies, five wheel nodes, changing body/wheel poses,
+pause/resume and graphics restoration. Train draws change 3,990 desktop and
+1,710 portrait pixels in the tested view, with no page or WebGL errors. Original
+route/MOT output supplies the test camera placement; no extracted map coordinates
+are committed. The renderer submits 97 draws and 3,232 triangles for the twelve
+procedural models and wheel assembly, sharing repeated model buffers.
+
+```sh
+ATV_TEST_URL=<host-or-public-url> PLAYWRIGHT_MODULE=<playwright-module> node tools/test_train.mjs
+```
+
+This is host evidence, not a verified public release. The bridge still supplies no-hit for the
 train's scene-height override. Dynamic train collision response, original spatial
 loop sounds and particle smoke are unfinished. The smoke PSG is the small original
 emitter marker, not a reconstructed smoke effect. These gaps must remain explicit
