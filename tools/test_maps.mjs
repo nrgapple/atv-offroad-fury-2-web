@@ -6,7 +6,7 @@ const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODUL
 const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4173';
 const browser = await chromium.launch({ headless: true });
 try {
-  for (const environment of (process.env.ATV_TEST_MAPS?.split(',') ?? ['env01','env02','env03','env04','env05','env06','env07','env08'])) {
+  for (const environment of (process.env.ATV_TEST_MAPS?.split(',') ?? ['env01','env02','env03','env04','env05','env06','env07','env08','free05'])) {
     const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));

@@ -52,6 +52,9 @@ struct Simulation {
     water: Option<atv_core::water_animation::LiveField>,
     camera: Option<atv_core::camera::FollowCamera>,
     train: Option<atv_core::train::Runtime>,
+    scenery_uv: Vec<(String, atv_core::scenery_material::Scroll)>,
+    scenery_textures: Vec<(String, atv_core::scenery_material::TextureClock)>,
+    scenery_tick: u64,
     train_collision: Vec<TrainCollisionBinding>,
     train_collision_installed: bool,
     effects_time: f32,
@@ -1337,12 +1340,67 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
             serde_json::from_slice(&simulation(&camera, 46)?).map_err(|e| e.to_string())?;
         let water = SIMULATION
             .with_borrow(|sim| sim.water.as_ref().map(atv_core::water_render::Frame::new));
-        frames.push(serde_json::json!({"frame":frame,"camera":camera,"water":water,"train":train}));
+        let scenery_uv = SIMULATION.with_borrow_mut(|sim| {
+            sim.scenery_uv
+                .iter_mut()
+                .map(|(name, scroll)| scroll.step(1. / 60.).map(|offset| (name.clone(), offset)))
+                .collect::<Result<std::collections::BTreeMap<_, _>>>()
+        })?;
+        let scenery_textures = SIMULATION.with_borrow_mut(|sim| {
+            let milliseconds = (sim.scenery_tick * 1000 / 60) as u32;
+            sim.scenery_tick += 1;
+            sim.scenery_textures
+                .iter_mut()
+                .map(|(name, clock)| (name.clone(), clock.tick(milliseconds)))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        });
+        frames.push(serde_json::json!({"frame":frame,"camera":camera,"water":water,"train":train,"scenery_uv":scenery_uv,"scenery_textures":scenery_textures}));
     }
     serde_json::to_vec(&frames).map_err(|e| e.to_string())
 }
 
 fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
+    if op == 90 {
+        return serde_json::to_vec(&atv_core::scenery_material::parse(input)?)
+            .map_err(|e| e.to_string());
+    }
+    if op == 91 {
+        let sources: std::collections::BTreeMap<String, serde_json::Value> =
+            serde_json::from_slice(input).map_err(|e| e.to_string())?;
+        if sources.len() > 4096 || sources.keys().any(|name| name.len() > 128) {
+            return Err("scenery animation configuration exceeds limit".into());
+        }
+        let mut animations = Vec::new();
+        let mut textures = Vec::new();
+        for (name, source) in sources {
+            let text = source
+                .as_str()
+                .or_else(|| source.get("source").and_then(serde_json::Value::as_str))
+                .ok_or("missing scenery material source")?;
+            let pass = atv_core::scenery_material::parse(text.as_bytes())?;
+            if let Some(scroll) = pass.uv_scroll {
+                animations.push((name.clone(), scroll));
+            }
+            if let Some(config) = pass.texture_animation {
+                let count = source
+                    .get("frames")
+                    .and_then(serde_json::Value::as_u64)
+                    .filter(|count| (1..=512).contains(count))
+                    .ok_or("missing scenery ATM count")?;
+                textures.push((
+                    name,
+                    atv_core::scenery_material::TextureClock::new(config, count as usize)?,
+                ));
+            }
+        }
+        let result = serde_json::to_vec(&animations).map_err(|e| e.to_string())?;
+        SIMULATION.with_borrow_mut(|sim| {
+            sim.scenery_uv = animations;
+            sim.scenery_textures = textures;
+            sim.scenery_tick = 0;
+        });
+        return Ok(result);
+    }
     if (80..=85).contains(&op) {
         return SIMULATION.with_borrow(|sim| multiplayer::dispatch(input, op, index, sim));
     }

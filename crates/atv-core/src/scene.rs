@@ -331,7 +331,7 @@ pub fn parse(data: &[u8]) -> Result<Scene> {
     parse_with_start(data, None)
 }
 
-fn document(data: &[u8]) -> Result<PhysicsData> {
+pub(crate) fn document(data: &[u8]) -> Result<PhysicsData> {
     if data.len() > 1024 * 1024 || data.contains(&0) {
         return Err("invalid scene text extent".into());
     }
@@ -339,6 +339,13 @@ fn document(data: &[u8]) -> Result<PhysicsData> {
     let clean = source
         .lines()
         .map(scene_line)
+        // Native indexed readers return their default for blank template keys.
+        // FREE05 deliberately leaves WaterFile empty: it is a dry venue.
+        .filter(|line| {
+            !line
+                .split_once('=')
+                .is_some_and(|(_, value)| value.is_empty())
+        })
         .collect::<Vec<_>>()
         .join("\n");
     PhysicsData::parse(clean.as_bytes())
@@ -471,6 +478,18 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn empty_optional_water_file_is_absent_and_mode_start_wins() {
+        let source = SOURCE.replace("CubeFile=sample.cub", "CubeFile=sample.cub\nWaterFile=");
+        let scene = parse_with_start(
+            source.as_bytes(),
+            Some(b"[SceneInfo]\nDefaultStartPosition=5,6,7\nDefaultStartDirection=1,0,0\n"),
+        )
+        .unwrap();
+        assert!(scene.water_file.is_none());
+        assert_eq!(scene.start_position, [5., 6., 7.]);
+        assert_eq!(scene.start_direction, [1., 0., 0.]);
+    }
     #[test]
     fn boundary_metadata_retains_scaled_dimensions_and_original_crowd_words() {
         let source = SOURCE.replace("CubeFile=sample.cub", "CubeFile=sample.cub\nTerrainWidth=4\nTerrainBreadth=5\nTerrainWidthScale=4.5\nTerrainBreadthScale=4.5");

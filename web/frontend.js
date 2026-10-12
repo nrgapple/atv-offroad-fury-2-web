@@ -133,7 +133,7 @@ export class Frontend {
     try {
       await this.archive('/STARTAPP.RES');
       const tracks = await this.document('tracks.dat');
-      this.tracks = [...tracks.entries()].filter(([s, f]) => /^unspnat\d+$/.test(s) && ['env01','env02','env03','env04','env05','env06','env07','env08'].includes(f.scn))
+      this.tracks = [...tracks.entries()].filter(([s, f]) => (/^(unspnat\d+|spstunt6)$/.test(s)) && ['env01','env02','env03','env04','env05','env06','env07','env08','free05'].includes(f.scn))
         .map(([, f]) => ({ id: f.scn, name: unquote(f.name), image: f.image }));
       this.track = this.tracks.findIndex(t => t.id === 'env01');
       for (const name of [fontName, 'tradegothic_boldcondensed_22soff', 'tradegothic_boldcondenseditalic_-1fs_32ds']) await this.font(name);
@@ -189,6 +189,7 @@ export class Frontend {
     try {
       if (page === 'tracks') {
         await this.archive('/UI/RESOURCE/TP/TP_ANAT.RES');
+        await this.archive('/UI/RESOURCE/TP/TP_PSTNT.RES');
         for (const track of this.tracks) { await this.image(`${track.image}a`); await this.image(`${track.image}b`); }
       }
       this.page = page; this.selection = 0; this.busy = false; this.layoutKey = '';
