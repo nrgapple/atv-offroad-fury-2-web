@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   web:
@@ -43,8 +43,31 @@ jobs:
           path: work/release/
           if-no-files-found: error
           retention-days: 14
+  deploy:
+    name: Deploy and verify production
+    needs: web
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      deployments: write
+    environment:
+      name: production
+      url: https://atv-offroad-fury-2.champtoday.workers.dev/
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Download checked release from this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: web-release
+          path: work/release/
       - name: Deploy successful main build to Cloudflare
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
@@ -54,3 +77,23 @@ jobs:
           fi
           python3 tools/stage_cloudflare.py --release work/release --commit "$GITHUB_SHA"
           npx --yes wrangler@4.149.0 deploy
+      - name: Verify public commit, application hashes and dev log
+        run: |
+          python3 tools/verify_ci_deployment.py --release work/release --commit "$GITHUB_SHA" \
+            --url https://atv-offroad-fury-2.champtoday.workers.dev/
+      - name: Record deployment links and result
+        if: always()
+        env:
+          DEPLOYMENT_RESULT: ${{ job.status }}
+        run: |
+          {
+            echo "## Production deployment: $DEPLOYMENT_RESULT"
+            echo "Commit: $GITHUB_SHA"
+            echo ""
+            echo "[Public HTTPS game](https://atv-offroad-fury-2.champtoday.workers.dev/) · [Screenshot dev log](https://atv-offroad-fury-2.champtoday.workers.dev/devlog.html)"
+            echo ""
+            echo "[GitHub deployment history](https://github.com/$GITHUB_REPOSITORY/deployments) · [This Actions run](https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
+            echo ""
+            echo "Success requires public commit identity, all authored application hashes, and committed dev-log text to match this run's checked artifact."
+            echo "Runtime content and screenshot images are maintained separately in R2; full gameplay checks remain local/public browser checkpoints."
+          } >> "$GITHUB_STEP_SUMMARY"
