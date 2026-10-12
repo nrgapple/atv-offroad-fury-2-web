@@ -1,6 +1,6 @@
 {
   "status": "The public Rust driving reconstruction is progressing; it is not the complete game.",
-  "working_on": "Integrating recovered wheel center timing and testing landing, slope turning and wreck recovery; public baseline remains 22ab240.",
+  "working_on": "Coupled landing/slope handling and native collision candidate order after terrain, rider-water cache and wheelie integration.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1082,9 +1082,40 @@
       "limitation": "Host-only candidate, pending release. The slope route is not isolated slope parity or proof of causal improvement. Tire clipping remains; vegetation helper tests are not live vegetation collision. No full-game parity is claimed.",
       "image": "/devlog-images/wheel-velocity-now-uses-the-recovered-center-timing-b84a93ad.png",
       "caption": "Inspected host Chromium portrait landing capture with live F3 diagnostics after the center timing change. Measured tire overlap remains; this image is not a public release verification."
+    },
+    {
+      "id": "recovered-wheel-center-timing-passes-public-riding-che-27aa6f90",
+      "timestamp": "2026-10-12T04:54:06.437171+00:00",
+      "recorded_at": "2026-10-12T04:54:06.437171+00:00",
+      "kind": "verification",
+      "title": "Recovered wheel center timing passes public riding checks",
+      "summary": "Public Cloudflare release 35d328e passes clean landing, keyboard slope turns, wreck/recovery and immediate touch input after the wheel center timing correction.",
+      "details": [
+        "Commit 35d328ef61c88619f35291e13fc3193ed9736e15 passed CI 38205280162. HTTPS verification matches 26 authored files and 312 served objects, with 66 log entries and 59 screenshots before this verification entry.",
+        "Public cog-public-landing, slope, wreck and touch logs pass. The slope route records 148 riding frames, zero wreck frames and 13.915ft elevation variation; route variation prevents an identical before/after comparison.",
+        "The previously inspected host landing screenshot is already published; no new screenshot accompanies this verification. Boundary and uninterrupted eight-map evidence remains the preceding 22ab240 release, with those paths unchanged by this correction."
+      ],
+      "limitation": "Public geometric clearance measurement is pending. Passing these routes does not prove clipping is fixed, isolated slope parity, complete handling parity or physical-device compatibility. Vegetation helpers remain disconnected from live collision."
+    },
+    {
+      "id": "wheelie-scoring-and-water-integration-pass-host-checks-cab5ead4",
+      "timestamp": "2026-10-12T05:10:02.068025+00:00",
+      "recorded_at": "2026-10-12T05:12:24.340277+00:00",
+      "kind": "build",
+      "title": "Wheelie scoring and water integration pass host checks",
+      "summary": "The final host build connects original wheelie scoring callbacks through the HUD, while the default source flag keeps wheelie awards disabled. Clean landing, wreck recovery, touch controls, diagnostics and one uninterrupted eight-map run pass.",
+      "details": [
+        "make check passed 233 core tests, 2 WASM tests, strict Clippy and formatting, 33 JavaScript tests, 10 release tests and 4 Worker tests. make verify and repository hygiene checks passed.",
+        "The actual game passed clean landing and Nac Nac \u2192 wreck \u2192 rider separation \u2192 contact \u2192 recovery \u2192 resumed driving. F3/Pause diagnostics passed in desktop and portrait layouts; immediate right-thumb throttle and backward-drag brake/reverse passed.",
+        "Wheelie scoring and HUD callbacks are integrated end-to-end. The original default scoring flag remains false and no cheat UI is exposed. A 2,070-operation oracle comparison executed 67,982 original instructions; final all-map assertions confirm no baseline wheelie awards.",
+        "One uninterrupted host run loaded and drove ENV01\u2013ENV08 with no JavaScript or WebGL errors. The four wet maps reported finite water heights and dry maps retained the sentinel."
+      ],
+      "limitation": "Host verification only; pending release and public verification. Rendered tire overlap remains 0.497238 ft across 62 riding frames, so no clipping improvement is claimed. Physical-device behavior, full water rendering/behavior and whole-game parity remain unverified.",
+      "image": "/devlog-images/wheelie-scoring-and-water-integration-pass-host-checks-cab5ead4.png",
+      "caption": "Host portrait clean-landing capture with live F3 diagnostics after wheelie scoring/HUD and water integration. Tire overlap remains measurable; this is not public-release evidence."
     }
   ],
-  "updated_at": "2026-10-12T04:47:28.694090+00:00",
+  "updated_at": "2026-10-12T05:12:24.340277+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
@@ -1254,10 +1285,20 @@
         "title": "ATV handling and suspension",
         "status": "PARTIAL",
         "scope": "PUBLIC + HOST COMPONENT CHECKS",
-        "summary": "Public handling includes static-prop wheel support, recovered speed/controller cadence, prior mechanical axle directions, the four-point terrain travel stop and forward-axis spring attenuation. Residual tire overlap and whole-game replay differences remain.",
-        "validation": "Public c0810ab clean landing/wreck and all-eight-map checks passed. Public 0f074b4 clean landing, immediate-throttle touch and all-eight-map checks passed; host wheel/support/stop comparisons validate selected routines, not whole-game replay.",
+        "summary": "Public handling includes static-prop wheel support, recovered speed/controller cadence, prior mechanical axle directions, the four-point terrain travel stop and forward-axis spring attenuation. Residual tire overlap and whole-game replay differences remain. Public 35d328e additionally preserves the preceding-center wheel point velocity until first integration.",
+        "validation": "Public 35d328ef61c88619f35291e13fc3193ed9736e15, CI 38205280162: clean landing, both-direction keyboard slope turns, wreck/recovery and immediate touch input pass. Slope route: 148 riding frames, zero wreck frames, 13.915ft elevation variation; not an identical before/after comparison. Public geometric clearance pending. Host 600-case wheel-center comparison matches selected binary32 outputs; no whole-game parity.",
         "evidence": "research/MOVEMENT.md; research/DIAGNOSTICS.md; research/TOUCH.md.",
-        "next_step": "Compare coupled original quad frames and incline turns; resolve residual rendered tire overlap and dynamic contacts."
+        "next_step": "Compare coupled original quad frames and incline turns; resolve residual rendered tire overlap and dynamic contacts.",
+        "release_verification": {
+          "commit": "35d328ef61c88619f35291e13fc3193ed9736e15",
+          "ci_run": "38205280162",
+          "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+          "checks": [
+            "Clean landing, keyboard slope turns, wreck/recovery and immediate touch input pass.",
+            "HTTPS matches 26 authored files and 312 served objects; 66 entries/59 screenshots before verification entry.",
+            "Public geometric clearance pending; full handling/clipping parity unclaimed."
+          ]
+        }
       },
       {
         "id": "static-collision",

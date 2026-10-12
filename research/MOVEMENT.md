@@ -221,3 +221,11 @@ points. Seventeen Vehicle tests and strict core Clippy pass. Private probes are
 cadence correction, not that it explains or eliminates the remaining measured
 landing/slope tire overlap. The detached rider's animated CoG cache requires its
 own caller audit before applying this behavior there.
+
+A stateful mechanical pose replay also retains preceding node orientations across
+300 `001d65c0` updates while resetting the full wheel rest XYZ exactly as
+`001edcd0` does. It executes 1,436,415 original instructions. All recovered Rust
+pose matrices remain within 0.000009775162 of the native replay; the largest
+component difference is rear-wheel Z. Scene matrix cache services are hooks and
+host trig/VU precision remain numerical limits. This probe does not demonstrate
+a missing linkage update or explain the residual landing overlap.

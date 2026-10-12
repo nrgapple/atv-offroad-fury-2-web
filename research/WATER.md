@@ -202,3 +202,49 @@ Phase priorities and dry/reset flag lifecycle are also covered. Connected
 profiles have authored `WakeScale=0`, so the unconnected ripple-injection visual
 service cannot alter these physics heights. No rider buoyancy is applied to the
 ATV, and visible water/wakes remain separate rendering work.
+
+### Rider kinematics cache across animated rebinding
+
+The water kernel consumes world center `body+60` and world angular velocity
+`body+290` cached by the last body integration. `001ef690` changes local CoG
+from animated bounds before dispatching water, while retaining both world
+fields until `001469e0`. Model rebasing and `001eff20`'s local angular velocity
+transfer/random spin likewise do not refresh the water angular cache. Force
+application still uses the **current** Model and new local CoG for its torque
+lever. The chassis solver independently refreshes its own world CoG; it must
+not inherit this delayed wheel/water center behavior.
+
+`water::PointKinematics` and `apply_contacts_with_kinematics` expose this source
+distinction, retaining the existing kernel wrapper for callers whose body state
+is already current. The wreck animator publishes the explicit center/angular
+cache only after integration and deferred contact translation. It preserves that
+cache during disabled integration and detach. Wreck entry and recovery also retain
+it: `001efb90` calls body reset `00146700`/`00146780` to clear velocity, force and
+integration history without writing world `+60` or `+290`; `001f0740` deactivates
+the wreck query/animation without clearing those fields. A fresh animator starts
+with zero world cache, while successive wrecks use the last enabled integration's
+cache until the next enabled body step. Animation and force geometry continue
+using the current pose.
+
+The complete original `0033dd90` kernel, including four torso Model transforms
+and force/torque application, executes 300 synthetic rebinding cases and 504,600
+instructions. The cached-state API matches every compared force and torque bit.
+The formerly immediate state differs in 300 force and 600 torque components;
+maximum differences are 109.79849 and 74.17312 in these synthetic source units.
+The native height/ripple services are hooks in this probe; source-height replay
+remains a separate proof. Four original `001ef690` dispatcher cases execute
+1,802 more instructions and establish the first/second substep cache boundary.
+An additional 64 original wreck-entry/recovery cases execute 17,280 instructions,
+checking preserved world center/angular cache and cleared local/linear velocity.
+Query activation, animation reset, RNG and the memset service are hooked in this
+lifecycle probe; the cache and velocity stores and body-history dispatcher execute.
+Integrated regressions exercise animated bounds/Model rebinding, different
+cached versus detached local angular velocity, publication between two native
+substeps, preserved detach/recovery/repeated-wreck cache and disabled-body dry
+frames. A checked binary32 kernel case covers forces, torque and all four ripple
+strengths independently of the integration assertions. Existing dry and wet
+wreck tests and the actual-content 1,694-pose/five-type recovery probe pass.
+These remain component/port checks; a fully coupled original rider/water/solid
+instruction replay and public wet-wreck integration check remain outstanding.
+Reports and reproducible probes remain private under
+`private/reports/water-rider-*` and `work/priority-water/`.

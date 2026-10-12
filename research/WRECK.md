@@ -354,6 +354,8 @@ exposes consecutive launch-related RNG words and a boundary speed-limit setter.
 Vehicle/WASM now share those four draws, connect the limit and launch helpers,
 and permit terrain-projected recovery candidates during boundary flight. The
 acceptance helper matches432 native wrappers; checkpoint invocation remains the
-port's per-outer-update cadence with the original virtual caller still
-unverified. Vegetation clearance and complete launch/camera equivalence remain
+port's per-outer-update phase. Its original manager callback, player flags and
+Model matrix inputs are now recovered, while its ordering relative to quad
+physics and late water sampling remains unverified; see the boundary evidence.
+Vegetation clearance and complete launch/camera equivalence remain
 separate work.

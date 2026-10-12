@@ -58,8 +58,9 @@ set. Its water-height and static-clearance checks still apply. Authored
 `checkpoint_candidate` matches432 original wrapper cases and75,496 instructions,
 including height mutation before rejection. The Vehicle now evaluates these
 gates outside the Riding-only branch and follows with the nine static clearance
-rays. It retains the port's once-per-outer-update checkpoint sampling cadence;
-the original virtual callback's caller cadence remains unverified. Vegetation
+rays. It retains the port's once-per-outer-update checkpoint sampling phase;
+the original manager callback is now recovered, but its ordering relative to
+quad physics and the late water cache remains unverified. Vegetation
 clearance/category coverage remains separate work. The existing wreck camera and clips
 are reused; a dedicated whole-game boundary camera replay has not been made.
 
@@ -85,3 +86,35 @@ recovery; it initially exposed the old-edge checkpoint retained by the
 Riding-only gate. The new boundary candidate override addresses that measured
 failure. Final inward-recovery regression and public verification are recorded
 by the delivery checkpoint, not inferred from these component comparisons.
+
+## Checkpoint manager dispatch
+
+The original save callback is reached through Quad adapter vtable `00456054`
+virtual `20`: thunk `001eba70` adjusts its receiver from Quad+30 to Quad and
+jumps to `001ea860`. The main game constructor `0020f780` maps game mode eleven
+to manager state three. Manager tick `00248020` invokes `0024e5a0` when its
+enabled flag is set and paused flag clear. For each linked player, adapter
+virtual `08` first invokes thunk `001ebad0` → `001e9890`, which copies current
+Body-bound Model world translation to player+60 and Model world forward to
+player+150. These are direct matrix reads, rather than Quad's cached pose fields.
+The checkpoint virtual then receives those vectors only when the player has
+active flag two and lacks finished flag one. Track bookkeeping between those
+calls does not replace the vectors. Manager postprocessing and its child update
+follow the selected state handler.
+
+A private forty-case replay executes 3,526 original instructions through the
+manager, both adapter thunks, player updater and save wrapper. It verifies the
+active/finished and enabled/paused gates, distinct Model-versus-cached-Quad
+position inputs and callback-before-manager-postprocessing order. Terrain,
+checkpoint acceptance and manager bookkeeping services are hooks. This does
+not yet establish where the separate Quad group update occurs relative to the
+manager in the full game frame; the live port still saves after physics and
+before its late water-height write. No phase change is inferred from this probe.
+
+Quad+34 is the manager: player registration `00248260` writes its pointer into
+adapter+4. Thus the acceptance helper's check at Quad34+64 refers to manager
+state two, rather than a player class. The main save wrapper `001ea860` bypasses
+the entire acceptance helper for that state. The current freeride mode eleven
+uses manager state three, so its gate path remains applicable. Other game modes'
+checkpoint contracts require their corresponding manager dispatch before live
+integration.

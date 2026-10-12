@@ -133,6 +133,12 @@ impl WheelieState {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Notification {
+    Wheelie {
+        event: WheelieNotification,
+    },
+    /// Accepted stunt002da6c0 resets/hides the wheelie HUD after awarding it,
+    /// before ordinary chain completion or allocation callbacks.
+    WheelieClearedForStunt,
     DisplayUpdated {
         id: usize,
         points: f32,
@@ -225,6 +231,17 @@ fn integer_points(points: f32) -> Result<f32> {
     Ok((points as i32) as f32)
 }
 impl State {
+    pub fn record_wheelie_event(&mut self, event: WheelieNotification) -> Result<()> {
+        if let WheelieNotification::Finished { points } = event {
+            self.credit_wheelie_points(points)?;
+        }
+        self.notifications.push(Notification::Wheelie { event });
+        Ok(())
+    }
+    pub fn clear_wheelie_for_stunt(&mut self) {
+        self.notifications
+            .push(Notification::WheelieClearedForStunt);
+    }
     /// 001e70e0 bypasses generic stunt integer quantization and combo/repeat
     /// accounting. Merge its award into the same native entity+104 accumulator.
     pub fn credit_wheelie_points(&mut self, points: f32) -> Result<()> {

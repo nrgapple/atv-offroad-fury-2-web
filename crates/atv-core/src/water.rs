@@ -3,7 +3,7 @@
 use crate::{
     Result,
     dynamics::BodyState,
-    wheel::{Vec3, add, scale, sub},
+    wheel::{Vec3, add, point_velocity, scale, sub},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -84,6 +84,22 @@ pub struct ContactResult {
     pub points: usize,
 }
 
+/// Body world kinematics cached at the last integration. Scene animation and
+/// local CoG can change before the next water dispatch without changing this cache.
+#[derive(Debug, Clone, Copy)]
+pub struct PointKinematics {
+    pub center: Vec3,
+    pub angular_velocity: Vec3,
+}
+impl PointKinematics {
+    pub fn from_body(body: &BodyState) -> Self {
+        Self {
+            center: body.center,
+            angular_velocity: body.world_angular_velocity(),
+        }
+    }
+}
+
 /// Selects one complete point list before resolving its contacts, then applies
 /// translational drag once if any point is submerged. There is no restitution
 /// impulse or positional projection in the original water response.
@@ -98,13 +114,45 @@ pub fn apply_contacts(
     low_points: &[Vec3],
     flow: Vec3,
     up: Vec3,
+    height: impl FnMut(Vec3) -> Result<f32>,
+    ripple: impl FnMut(Vec3, f32),
+) -> Result<ContactResult> {
+    let kinematics = PointKinematics::from_body(body);
+    apply_contacts_with_kinematics(
+        body,
+        config,
+        speed,
+        high_points,
+        low_points,
+        flow,
+        up,
+        height,
+        ripple,
+        kinematics,
+    )
+}
+/// 0033dd90 consumes cached world center+60/angular velocity+290 for point
+/// velocity, but applies torque through current Model/new localCoG. Callers with
+/// animation or controller rebinding preserve that first-substep distinction.
+#[allow(clippy::too_many_arguments)]
+pub fn apply_contacts_with_kinematics(
+    body: &mut BodyState,
+    config: Config,
+    speed: f32,
+    high_points: &[Vec3],
+    low_points: &[Vec3],
+    flow: Vec3,
+    up: Vec3,
     mut height: impl FnMut(Vec3) -> Result<f32>,
     mut ripple: impl FnMut(Vec3, f32),
+    kinematics: PointKinematics,
 ) -> Result<ContactResult> {
     if !speed.is_finite()
         || !flow
             .iter()
             .chain(up.iter())
+            .chain(kinematics.center.iter())
+            .chain(kinematics.angular_velocity.iter())
             .chain(high_points.iter().flatten())
             .chain(low_points.iter().flatten())
             .all(|v| v.is_finite())
@@ -126,7 +174,12 @@ pub fn apply_contacts(
         if depth > 0. {
             result.touching = true;
             result.points += 1;
-            let velocity = sub(body.velocity_at(point), flow);
+            let velocity = point_velocity(
+                body.linear_velocity,
+                kinematics.angular_velocity,
+                sub(point, kinematics.center),
+                flow,
+            );
             ripple(point, (velocity[1] * 0.02).clamp(-0.2, 0.2));
             let force = spring.stiffness * depth - spring.damping * velocity[1];
             body.apply_world_force(scale(up, force), point);
@@ -177,6 +230,56 @@ mod tests {
         );
         assert_eq!(ripples.len(), 2);
         assert_eq!(ripples[0].1, -3. * 0.02);
+    }
+
+    #[test]
+    fn rebound_model_uses_cached_point_velocity_and_current_torque_geometry() {
+        //First case of the 300-case original 0033dd90 replay: Model is rebound
+        //to identity with a new local CoG, while world+60/+290 retain old data.
+        let vector = |bits: [u32; 3]| bits.map(f32::from_bits);
+        let config = BodyConfig::new(
+            f32::from_bits(0x4095117d),
+            [1.; 3],
+            vector([0xbf43dd10, 0x3f83aeae, 0xbe4b1b14]),
+        )
+        .unwrap();
+        let mut body = BodyState::new([0.; 3], [1., 0., 0., 0.], &config).unwrap();
+        body.linear_velocity = vector([0xbff84ae9, 0xc05efa3a, 0x40125337]);
+        body.local_angular_velocity = vector([0xbd8e1602, 0x3e473436, 0x3d2fa996]);
+        let x = f32::from_bits(0x3eb95810);
+        let points = [
+            [x, 2.5, 0.3],
+            [-x, 2.5, -0.3],
+            [x, 2.5, -0.3],
+            [-x, 2.5, 0.3],
+        ];
+        let mut ripples = Vec::new();
+        let result = apply_contacts_with_kinematics(
+            &mut body,
+            Config::rider(config.mass).unwrap(),
+            0.,
+            &[],
+            &points,
+            [0.; 3],
+            [0., 1., 0.],
+            |_| Ok(f32::from_bits(0x4046cdb8)),
+            |_, strength| ripples.push(strength.to_bits()),
+            PointKinematics {
+                center: vector([0xbf4a55a5, 0x3f88f830, 0x3f617fbd]),
+                angular_velocity: vector([0xbd8e1602, 0x3e417ecd, 0x3d812818]),
+            },
+        )
+        .unwrap();
+        assert_eq!(result.points, 4);
+        assert_eq!(
+            body.force.map(f32::to_bits),
+            [0x411b2ed2, 0x439796df, 0xc136e805]
+        );
+        assert_eq!(
+            body.local_torque.map(f32::to_bits),
+            [0xc261b6ac, 0, 0x435a4ccb]
+        );
+        assert_eq!(ripples, [0xbd8d6125, 0xbd90f466, 0xbd8f15a2, 0xbd8f3fe9]);
     }
 
     #[test]

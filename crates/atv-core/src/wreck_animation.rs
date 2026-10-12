@@ -113,6 +113,7 @@ pub struct Animator {
     world: [f32; 16],
     previous_time: f32,
     integration_active: bool,
+    water_kinematics: crate::water::PointKinematics,
     anchor_pelvis: bool,
     pending_clip: Option<usize>,
     rng: OriginalRandom,
@@ -192,6 +193,10 @@ impl Animator {
             world: IDENTITY,
             previous_time: 0.,
             integration_active: false,
+            water_kinematics: crate::water::PointKinematics {
+                center: [0.; 3],
+                angular_velocity: [0.; 3],
+            },
             anchor_pelvis: false,
             pending_clip: None,
             rng: OriginalRandom::with_seed(1),
@@ -216,6 +221,8 @@ impl Animator {
         self.active = false;
         self.body = None;
         self.integration_active = false;
+        //001f0740 deactivates the wreck but retains body+60/+290. The next
+        //wreck's first water dispatch still reads the last integration cache.
         self.anchor_pelvis = false;
         self.pending_clip = None;
         self.config.center_of_mass = [0.; 3];
@@ -243,6 +250,8 @@ impl Animator {
             &self.config,
         )?);
         self.integration_active = false;
+        //001efb90 resets velocity/history through00146700, retaining the
+        //cached world center/angular velocity from the preceding body step.
         self.anchor_pelvis = false;
         self.pending_clip = None;
         self.grounded = false;
@@ -441,6 +450,9 @@ impl Animator {
         //step. Root rebasing changes that scene basis without rotating stored
         //local angular velocity or discarding Adams–Bashforth history.
         let body = self.body.as_mut().ok_or("missing rider Model body")?;
+        //001ef690 updates localCoG from animated bounds but retains world+60
+        //and+290 until integration. Detach also changes local angular velocity
+        //without refreshing+290, so preserve an explicit integration cache.
         body.orientation = quaternion(self.world);
         let origin = [self.world[12], self.world[13], self.world[14]];
         body.center = add(origin, transform(body.basis(), self.config.center_of_mass));
@@ -486,7 +498,7 @@ impl Animator {
                 //00451470 initializes flow=[0,0,0,1], up=[0,1,0,1].
                 //These live profiles have WakeScale=0: ripple injection cannot
                 //change sampled heights; rendering wakes remains separate.
-                let result = crate::water::apply_contacts(
+                let result = crate::water::apply_contacts_with_kinematics(
                     body,
                     self.water_config,
                     dot(body.linear_velocity, body.linear_velocity).sqrt(),
@@ -496,6 +508,7 @@ impl Animator {
                     [0., 1., 0.],
                     |point| water.height(point, false),
                     |_, _| {},
+                    self.water_kinematics,
                 )?;
                 self.water_touching = result.touching;
                 self.water_contact_count += result.points;
@@ -540,6 +553,7 @@ impl Animator {
             if self.integration_active {
                 body.step(&self.config, step)?;
                 body.center = add(body.center, corrections.translation);
+                self.water_kinematics = crate::water::PointKinematics::from_body(body);
             } else {
                 //Disabled001469e0 still clears force/correction accumulators.
                 body.force = [0.; 3];
@@ -1013,6 +1027,156 @@ mod tests {
         assert_eq!(frame.water_contact_count, 0);
         animator.reset();
         assert!(!animator.water_touching);
+    }
+    #[test]
+    fn animated_model_rebinding_retains_water_kinematics_until_integration() {
+        let (mut animator, nodes, terrain, materials) = fixture();
+        start_fixture(&mut animator, &nodes);
+        animator.integration_active = true;
+        animator.phase = Phase::Water;
+        animator.water_kinematics.angular_velocity = [0., 0., 1.];
+        let body = animator.body.as_mut().unwrap();
+        body.center[0] -= 1.; //previous physical center before Model rebasing
+        body.local_angular_velocity = [0., 0., 0.25]; //detach changed local state
+        animator.water_kinematics.center = body.center;
+        let cached = animator.water_kinematics;
+        let pose = animator.current.pose(&nodes).unwrap();
+        let water = water_fixture();
+        let mut expected = animator.body.as_ref().unwrap().clone();
+        let mut config = animator.config.clone();
+        expected.orientation = quaternion(animator.world);
+        expected.center = add(
+            [animator.world[12], animator.world[13], animator.world[14]],
+            transform(expected.basis(), config.center_of_mass),
+        );
+        let center = contact_bounds_center(animator.points.iter().map(|point| {
+            crate::obstacle::transform_point(
+                &animator.world,
+                crate::obstacle::transform_point(&pose.world_matrices[point.node], point.offset),
+            )
+        }));
+        recenter_body(&mut expected, &mut config, center);
+        //001ef690 consumes the previous integration cache on the first
+        //substep and the newly published cache on the second. The dry terrain
+        //is far below this body, so only the water actor can activate contacts.
+        let dt: f32 = 1. / 60.;
+        let mut elapsed = 0.;
+        let mut expected_cache = cached;
+        let mut point_count = 0;
+        while elapsed < dt {
+            let step = (dt - elapsed).min(f32::from_bits(0x3c360b61));
+            let model = body_matrix(&expected, &config);
+            let points = animator.water_points.map(|point| {
+                crate::obstacle::transform_point(
+                    &model,
+                    crate::obstacle::transform_point(
+                        &pose.world_matrices[point.node],
+                        point.offset,
+                    ),
+                )
+            });
+            point_count += crate::water::apply_contacts_with_kinematics(
+                &mut expected,
+                animator.water_config,
+                0.,
+                &[],
+                &points,
+                [0.; 3],
+                [0., 1., 0.],
+                |point| water.height(point, false),
+                |_, _| {},
+                expected_cache,
+            )
+            .unwrap()
+            .points;
+            expected.step(&config, step).unwrap();
+            expected_cache = crate::water::PointKinematics::from_body(&expected);
+            elapsed += step;
+        }
+        assert_eq!(point_count, 8);
+        animator
+            .step_body(dt, &pose, &terrain, &materials, false, Some(&water))
+            .unwrap();
+        let body = animator.body.as_ref().unwrap();
+        assert_eq!(body.linear_velocity, expected.linear_velocity);
+        assert_eq!(body.local_angular_velocity, expected.local_angular_velocity);
+        assert_eq!(animator.water_contact_count, point_count);
+        assert_eq!(animator.water_kinematics.center, body.center);
+        assert_eq!(
+            animator.water_kinematics.angular_velocity,
+            body.world_angular_velocity()
+        );
+        assert_ne!(
+            animator.water_kinematics.angular_velocity,
+            cached.angular_velocity
+        );
+        //001eff20 changes local angular velocity and adds random spin, but
+        //does not publish world+290 until the next body integration.
+        let before = animator.water_kinematics.angular_velocity;
+        let before_center = animator.water_kinematics.center;
+        animator
+            .detach(
+                IDENTITY,
+                IDENTITY,
+                VehicleMotion {
+                    world: IDENTITY,
+                    linear_velocity: [0.; 3],
+                    local_angular_velocity: [0.; 3],
+                },
+                dt,
+                false,
+            )
+            .unwrap();
+        assert_eq!(animator.water_kinematics.angular_velocity, before);
+        animator.reset();
+        assert_eq!(animator.water_kinematics.angular_velocity, before);
+        assert_eq!(animator.water_kinematics.center, before_center);
+    }
+    #[test]
+    fn disabled_body_retains_water_cache_across_dry_animated_frames() {
+        let (mut animator, nodes, terrain, materials) = fixture();
+        let mut vehicle = start_fixture(&mut animator, &nodes);
+        animator.water_kinematics.center = [5., 6., 7.];
+        animator.water_kinematics.angular_velocity = [0.125, 0.25, 0.375];
+        let before = animator.water_kinematics;
+        vehicle.world[12] += 5.;
+        vehicle.world[13] += 4.;
+        //The supplied dry field still dispatches the water actor twice. With
+        //no solid or water contacts, the native body remains disabled and its
+        //cached world center/angular velocity must survive animated rebinding.
+        let mut water = water_fixture();
+        water.definition.surface.base_height = -100.;
+        animator
+            .step_with_water(
+                1. / 60.,
+                vehicle,
+                &nodes,
+                &terrain,
+                &materials,
+                Some(&water),
+            )
+            .unwrap();
+        assert!(!animator.integration_active);
+        assert!(!animator.grounded);
+        assert_eq!(animator.water_contact_count, 0);
+        assert_eq!(animator.water_kinematics.center, before.center);
+        assert_eq!(
+            animator.water_kinematics.angular_velocity,
+            before.angular_velocity
+        );
+        assert_ne!(animator.body.as_ref().unwrap().center, before.center);
+        //Entry resets BodyState velocity/history while retaining the cache;
+        //recovery also preserves it until a later enabled body integration.
+        animator.reset();
+        start_fixture(&mut animator, &nodes);
+        assert_eq!(animator.water_kinematics.center, before.center);
+        assert_eq!(
+            animator.water_kinematics.angular_velocity,
+            before.angular_velocity
+        );
+        let body = animator.body.as_ref().unwrap();
+        assert_eq!(body.linear_velocity, [0.; 3]);
+        assert_eq!(body.local_angular_velocity, [0.; 3]);
     }
     #[test]
     fn dry_field_matches_the_existing_no_water_path() {

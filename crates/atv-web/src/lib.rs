@@ -208,6 +208,10 @@ fn simulation_frame(sim: &Simulation, frame: &atv_core::vehicle::VehicleFrame) -
         value["stunt"] = serde_json::to_value(animator.stunt_frame()).map_err(|e| e.to_string())?;
         value["stunt_score"] =
             serde_json::to_value(animator.score_frame()).map_err(|e| e.to_string())?;
+        value["wheelie_score"] =
+            serde_json::to_value(animator.wheelie_frame()).map_err(|e| e.to_string())?;
+        value["wheelie_scoring_enabled"] =
+            serde_json::json!(atv_core::stunt_score::DEFAULT_WHEELIE_SCORING);
         value["rider_landing"] =
             serde_json::to_value(animator.landing_frame()).map_err(|e| e.to_string())?;
     }
@@ -227,6 +231,29 @@ fn simulation_frame(sim: &Simulation, frame: &atv_core::vehicle::VehicleFrame) -
     serde_json::to_vec(&value).map_err(|error| error.to_string())
 }
 
+///001e5260 scores wheel contact/body pitch after physics and wreck entry,
+///including ongoing wreck frames, before the rider accepts airborne stunts.
+fn update_wheelie(
+    animator: Option<&mut atv_core::rider_pose::Animator>,
+    frame: &atv_core::vehicle::VehicleFrame,
+    dt: f32,
+) -> Result<()> {
+    if let Some(animator) = animator {
+        animator.update_wheelie(
+            dt,
+            atv_core::stunt_score::WheelieInput {
+                grounded: frame.grounded,
+                pitch: atv_core::rider_control::body_angles(frame.orientation, f32::atan2)[0],
+                //0020f370 initializes manager+13c to zero. The current active
+                //Freestyle route retains that gate; end transitions are separate.
+                context_allows: true,
+                scoring_enabled: atv_core::stunt_score::DEFAULT_WHEELIE_SCORING,
+            },
+        )?;
+    }
+    Ok(())
+}
+
 fn update_hud(
     sim: &mut Simulation,
     frame: &atv_core::vehicle::VehicleFrame,
@@ -237,6 +264,12 @@ fn update_hud(
     if let Some(animator) = &mut sim.rider_animator {
         for event in animator.take_score_notifications() {
             match event {
+                atv_core::stunt_score::Notification::Wheelie { event } => {
+                    sim.hud.wheelie_event(event);
+                }
+                atv_core::stunt_score::Notification::WheelieClearedForStunt => {
+                    sim.hud.clear_wheelie_for_stunt();
+                }
                 atv_core::stunt_score::Notification::DisplayUpdated { id, .. } => {
                     sim.hud.name_event(atv_core::stunt::NAMES[id]);
                 }
@@ -253,6 +286,14 @@ fn update_hud(
         points = score.display_points;
         sim.hud
             .set_score_cache(points, score.display_count, active)?;
+        let wheelie = animator.wheelie_frame();
+        if wheelie.eligible {
+            //002dd4b0 gives the wheelie cache precedence;002e3640 retains
+            //its panel while eligible, independently of airborne chains.
+            sim.hud.set_wheelie_points(wheelie.points)?;
+            active = true;
+            points = wheelie.points;
+        }
     }
     sim.hud.step(
         dt,
@@ -492,8 +533,13 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         sim.rider_animator
                             .as_mut()
                             .ok_or("rider animator missing")?
+                            .abort_wreck_scores()?;
+                        sim.rider_animator
+                            .as_mut()
+                            .ok_or("rider animator missing")?
                             .reset(nodes)?;
                     }
+                    update_wheelie(sim.rider_animator.as_mut(), &frame, dt)?;
                     wreck.step_with_water(
                         dt,
                         atv_core::wreck_animation::VehicleMotion {
@@ -528,6 +574,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     return simulation_frame(sim, &frame);
                 }
                 if let Some(animator) = &mut sim.rider_animator {
+                    update_wheelie(Some(animator), &frame, dt)?;
                     let nodes = &sim.rider_mesh.as_ref().ok_or("rider mesh missing")?.nodes;
                     let input = sim
                         .vehicle

@@ -1,6 +1,6 @@
 //! TR2 v6 terrain geometry reconstructed from the exact executable's loader and
-//! disc samples. Contact reconstruction follows 0x0016ac10 / 0x00133e00;
-//! host floating-point results are not yet compared against original execution.
+//! disc samples. Contact follows 0x0016ac10 / 0x00133e00; bounded original
+//! instruction comparisons cover the finite full-resolution TR2 query profile.
 use crate::{Result, slice, u16le, u32le};
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -417,8 +417,9 @@ impl Terrain {
     /// Missing/outside cells return None; nonfinite inputs are rejected. Heights
     /// use the original triangle plane, normals use the original inverse-square
     /// corner weights, and surfaces use the nearest corner's packed index.
-    /// The runtime's optional two-cell sampling mode and PS2 floating-point
-    /// rounding/reciprocal-square-root precision are not reproduced here.
+    /// The recovered scene loader selects full resolution; the optional two-cell
+    /// query mode is separate. Finite
+    /// reciprocal-square-root rounds once; PS2 hardware FPU quirks are unproven.
     pub fn contact(&self, x: f32, z: f32) -> Result<Option<TerrainContact>> {
         if !x.is_finite() || !z.is_finite() {
             return Err("nonfinite terrain contact position".into());
@@ -488,12 +489,14 @@ impl Terrain {
                 + normals[triangle[1]][axis] * weights[1])
                 + normals[triangle[2]][axis] * weights[2];
         }
-        let length =
-            ((normal[0] * normal[0] + normal[1] * normal[1]) + normal[2] * normal[2]).sqrt();
-        if !length.is_finite() || length == 0. || !height.is_finite() {
+        let length_squared =
+            (normal[0] * normal[0] + normal[1] * normal[1]) + normal[2] * normal[2];
+        if !length_squared.is_finite() || length_squared == 0. || !height.is_finite() {
             return Err("degenerate terrain contact attributes".into());
         }
-        let reciprocal_length = 1. / length;
+        // 0016ac10 VRSQRT produces one rounded reciprocal-square-root result,
+        // not a rounded square root followed by a second rounded division.
+        let reciprocal_length = (1. / f64::from(length_squared).sqrt()) as f32;
         for component in &mut normal {
             *component *= reciprocal_length;
         }
@@ -665,6 +668,44 @@ mod tests {
         assert_eq!(terrain.positions(&terrain.leaves[0])[0][1], 115.);
         assert_eq!(terrain.heightfield().unwrap()[0], 115.);
         assert_eq!(terrain.contact(0., 0.).unwrap().unwrap().height, 115.);
+    }
+
+    #[test]
+    fn contact_normal_rounds_reciprocal_square_root_once() {
+        let mut terrain = decode_tr2(&sample()).unwrap();
+        terrain.tiles[0].heights.fill(10);
+        // Authored packed-normal fixtures exercise both directions of the extra
+        // rounding caused by reciprocal(binary32 sqrt). The finite original
+        // instruction replay independently supplies the expected binary32 bits.
+        for (normal, expected) in [
+            ([20u8, 100, 226], [0x3e40a8df, 0x3f70d316, 0xbe907ea8]),
+            ([64, 64, 64], [0x3f13cd3a; 3]),
+        ] {
+            terrain.tiles[0]
+                .attributes
+                .fill(u32::from_le_bytes([normal[0], normal[1], normal[2], 5]));
+            let contact = terrain.contact(0.5, 0.5).unwrap().unwrap();
+            assert_eq!(contact.height, 10.);
+            assert_eq!(contact.surface, 2);
+            assert_eq!(contact.normal.map(f32::to_bits), expected);
+        }
+    }
+
+    #[test]
+    fn morph_baseline_is_signed_and_does_not_scale_vertical_normals() {
+        let mut terrain = decode_tr2(&sample()).unwrap();
+        terrain.tiles[0].tag = (-10i32) as u32;
+        terrain.tiles[0].heights.fill(30);
+        terrain.tiles[0]
+            .attributes
+            .fill(u32::from_le_bytes([40, 100, 20, 4]));
+        terrain.leaves[0].height_morph = 0.;
+        let contact = terrain.contact(1., 1.).unwrap().unwrap();
+        assert_eq!(contact.height, -10.);
+        assert_eq!(contact.normal[0], 0.);
+        assert_eq!(contact.normal[2], 0.);
+        assert!((contact.normal[1] - 1.).abs() < 1e-6);
+        assert_eq!(terrain.positions(&terrain.leaves[0])[0][1], -10.);
     }
 
     #[test]

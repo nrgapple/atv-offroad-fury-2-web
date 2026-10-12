@@ -40,6 +40,10 @@ try {
       assert(state.frame.origin.every(Number.isFinite));
       assert(state.frame.orientation.every(Number.isFinite));
       assert(Number.isFinite(state.frame.speed));
+      assert.equal(state.frame.wheelie_scoring_enabled, false, 'Original wheelie scoring cheat stays off in baseline sessions');
+      assert.equal(state.frame.wheelie_score.eligible, false);
+      assert(Number.isFinite(state.frame.wheelie_score.elapsed));
+      assert.equal(state.frame.stunt_score.committed_points, 0, 'Driving alone must not award stunt or wheelie points');
       assert(Math.hypot(state.frame.origin[0]-loaded.frame.origin[0],state.frame.origin[2]-loaded.frame.origin[2])>.5, 'Throttle must move the ATV across the terrain');
       assert.equal(state.glError, 0);
       if (environment === 'env01') {

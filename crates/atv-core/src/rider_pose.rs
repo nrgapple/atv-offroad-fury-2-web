@@ -179,6 +179,7 @@ pub struct Animator {
     landing: Option<Landing>,
     landing_phase: f32,
     score: crate::stunt_score::State,
+    wheelie: crate::stunt_score::WheelieState,
     scoring_mode: Option<u8>,
     hand_ik: Option<crate::rider_ik::Hands>,
 }
@@ -246,6 +247,7 @@ impl Animator {
             landing: None,
             landing_phase: 0.,
             score: crate::stunt_score::State::default(),
+            wheelie: crate::stunt_score::WheelieState::default(),
             scoring_mode: None,
             hand_ik: None,
         })
@@ -300,7 +302,7 @@ impl Animator {
         self.stunt_frame = None;
         self.landing = None;
         self.landing_phase = 0.;
-        self.score.abort_rider()?;
+        self.abort_score_chain()?;
         Ok(())
     }
     /// Caller supplies the exact original game-mode id and eligibility. Mode7
@@ -315,6 +317,27 @@ impl Animator {
     pub fn score_frame(&self) -> crate::stunt_score::Frame {
         self.score.frame()
     }
+    /// 001e70e0 credits wheelie awards to the same entity+104 scoreboard as
+    /// airborne stunts, without integer quantization or a combo multiplier.
+    pub fn credit_wheelie_points(&mut self, points: f32) -> Result<()> {
+        self.score.credit_wheelie_points(points)
+    }
+    pub fn wheelie_frame(&self) -> crate::stunt_score::WheelieState {
+        self.wheelie
+    }
+    /// Actor001e5260 wheelie section follows physics/wreck gates and precedes
+    /// rider controls. Supply native body Euler pitch and individual contacts.
+    /// The original scoring flag remains false unless GETONUP is enabled.
+    pub fn update_wheelie(
+        &mut self,
+        dt: f32,
+        input: crate::stunt_score::WheelieInput,
+    ) -> Result<()> {
+        for event in self.wheelie.update(dt, input)? {
+            self.score.record_wheelie_event(event)?;
+        }
+        Ok(())
+    }
     pub fn take_score_notifications(&mut self) -> Vec<crate::stunt_score::Notification> {
         self.score.take_notifications()
     }
@@ -322,9 +345,20 @@ impl Animator {
     /// Ordinary ATV reset/recovery instead calls reset and aborts only the chain.
     pub fn reset_score_session(&mut self) {
         self.score = crate::stunt_score::State::default();
+        self.wheelie = crate::stunt_score::WheelieState::default();
     }
     pub fn abort_score_chain(&mut self) -> Result<()> {
         self.score.abort_rider()
+    }
+    /// True wreck entry001e8a20 differs from generic vehicle reset001dd440,
+    /// which does not clear any wheelie scoring fields.
+    pub fn abort_wreck_scores(&mut self) -> Result<()> {
+        // 001e8a20 aborts airborne stunt accounting before wheelie HUD failure.
+        self.score.abort_rider()?;
+        if let Some(event) = self.wheelie.wreck() {
+            self.score.record_wheelie_event(event)?;
+        }
+        Ok(())
     }
     pub fn stunt_duration(&self, id: usize) -> Option<f32> {
         self.stunt_motions
@@ -417,8 +451,16 @@ impl Animator {
         }
         if let Some(native_mode) = self.scoring_mode {
             if stunt.crashed || stunt.disabled {
-                self.score.abort_rider()?;
+                self.abort_wreck_scores()?;
             } else {
+                if self.stunt_frame.is_some_and(|frame| frame.started) && self.wheelie.eligible {
+                    // 002da6c0 invokes001e70e0 and hides the old wheelie HUD
+                    // before it finalizes/allocates any regular stunt records.
+                    if let Some(event) = self.wheelie.finish() {
+                        self.score.record_wheelie_event(event)?;
+                    }
+                    self.score.clear_wheelie_for_stunt();
+                }
                 self.score.observe_rider(
                     self.stunt_frame,
                     self.stunt_frame
@@ -885,6 +927,127 @@ mod tests {
         animator.reset_score_session();
         assert_eq!(animator.score_frame().committed_points, 0.);
         assert_eq!(animator.score.repetition_weight(0), Some(1.));
+    }
+    #[test]
+    fn wheelie_credit_preserves_fraction_and_does_not_change_pending_stunt_chain() {
+        let (mut animator, nodes) = stunt_animator();
+        animator
+            .set_scoring_mode(Some(crate::stunt_score::FREESTYLE_MODE))
+            .unwrap();
+        animator
+            .step_controls(&nodes, input(), stunt_input(), 0.125)
+            .unwrap();
+        animator.credit_wheelie_points(10.25).unwrap();
+        animator.credit_wheelie_points(5.125).unwrap();
+        assert_eq!(animator.score_frame().committed_points, 15.375);
+        assert_eq!(animator.score_frame().chain_count, 1);
+        assert_eq!(animator.score_frame().current.unwrap().id, 0);
+        assert_eq!(animator.score.repetition_weight(0), Some(0.85));
+        animator.abort_score_chain().unwrap();
+        animator.reset(&nodes).unwrap();
+        //0024d690 quantizes the total even on an aborted regular stunt chain.
+        assert_eq!(animator.score_frame().committed_points, 15.);
+        animator.reset_score_session();
+        assert_eq!(animator.score_frame().committed_points, 0.);
+    }
+    fn wheelie_input(enabled: bool) -> crate::stunt_score::WheelieInput {
+        crate::stunt_score::WheelieInput {
+            grounded: [false, false, true, true],
+            pitch: 0.7,
+            context_allows: true,
+            scoring_enabled: enabled,
+        }
+    }
+    #[test]
+    fn accepted_stunt_credits_then_clears_wheelie_before_allocating_event() {
+        let (mut animator, nodes) = stunt_animator();
+        animator
+            .set_scoring_mode(Some(crate::stunt_score::FREESTYLE_MODE))
+            .unwrap();
+        animator.update_wheelie(1.125, wheelie_input(true)).unwrap();
+        animator.update_wheelie(0.125, wheelie_input(true)).unwrap();
+        animator.take_score_notifications();
+        animator
+            .step_controls(&nodes, input(), stunt_input(), 0.125)
+            .unwrap();
+        let events = animator.take_score_notifications();
+        assert!(matches!(
+            events.as_slice(),
+            [
+                crate::stunt_score::Notification::Wheelie {
+                    event: crate::stunt_score::WheelieNotification::Finished { points: 7.25 }
+                },
+                crate::stunt_score::Notification::WheelieClearedForStunt,
+                crate::stunt_score::Notification::Started { id: 0, .. }
+            ]
+        ));
+        assert_eq!(animator.score_frame().committed_points, 7.25);
+        assert!(!animator.wheelie_frame().eligible);
+        assert_eq!(animator.wheelie_frame().grace, 0.5);
+    }
+    #[test]
+    fn wreck_aborts_stunt_before_wheelie_failure_and_session_reset_reinitializes() {
+        let (mut animator, nodes) = stunt_animator();
+        animator
+            .set_scoring_mode(Some(crate::stunt_score::FREESTYLE_MODE))
+            .unwrap();
+        animator
+            .step_controls(&nodes, input(), stunt_input(), 0.125)
+            .unwrap();
+        animator.update_wheelie(1.125, wheelie_input(true)).unwrap();
+        animator.update_wheelie(0.125, wheelie_input(true)).unwrap();
+        animator.take_score_notifications();
+        animator.abort_wreck_scores().unwrap();
+        let events = animator.take_score_notifications();
+        assert!(matches!(
+            events.as_slice(),
+            [
+                crate::stunt_score::Notification::StuntFinished { success: false, .. },
+                crate::stunt_score::Notification::ChainFinished { success: false, .. },
+                crate::stunt_score::Notification::Wheelie {
+                    event: crate::stunt_score::WheelieNotification::Failed
+                }
+            ]
+        ));
+        assert_eq!(animator.score_frame().committed_points, 0.);
+        assert_eq!(animator.wheelie_frame().points, 7.25);
+        assert!(animator.wheelie_frame().active_this_tick);
+        assert_eq!(animator.wheelie_frame().elapsed, 0.);
+        animator.reset_score_session();
+        assert_eq!(animator.wheelie_frame().points, 1.);
+        assert!(!animator.wheelie_frame().active_this_tick);
+    }
+    #[test]
+    fn generic_pose_reset_preserves_wheelie_fields_until_actual_wreck_or_new_session() {
+        let (mut animator, nodes) = stunt_animator();
+        animator.update_wheelie(1.125, wheelie_input(true)).unwrap();
+        animator.update_wheelie(0.125, wheelie_input(true)).unwrap();
+        animator.take_score_notifications();
+        let before = animator.wheelie_frame();
+        animator.reset(&nodes).unwrap();
+        let after = animator.wheelie_frame();
+        assert_eq!(after.elapsed, before.elapsed);
+        assert_eq!(after.points, before.points);
+        assert_eq!(after.grace, before.grace);
+        assert!(after.armed && after.eligible && after.active_this_tick);
+        assert!(animator.take_score_notifications().is_empty());
+    }
+    #[test]
+    fn baseline_wheelie_updates_duration_without_points_or_hud_notifications() {
+        let (mut animator, _) = stunt_animator();
+        for _ in 0..16 {
+            animator
+                .update_wheelie(
+                    0.125,
+                    wheelie_input(crate::stunt_score::DEFAULT_WHEELIE_SCORING),
+                )
+                .unwrap();
+        }
+        assert_eq!(animator.wheelie_frame().elapsed, 2.);
+        assert!(animator.wheelie_frame().armed);
+        assert!(!animator.wheelie_frame().eligible);
+        assert!(animator.take_score_notifications().is_empty());
+        assert_eq!(animator.score_frame().committed_points, 0.);
     }
     #[test]
     fn landing_phase_and_snapshot_flags_match_original_instructions() {

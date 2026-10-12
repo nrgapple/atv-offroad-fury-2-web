@@ -106,10 +106,61 @@ its sound/activity condition uses the distinct per-tick `+0x928` field.
 The kernel returns ordered `Name`, `Finished { points }` and `Failed`
 notifications; `State::credit_wheelie_points` joins awards into the shared
 scoreboard. The Canvas bridge needs no wheelie-specific authored artwork.
-Vehicle/WASM integration is pending: it must supply native wheel contacts and
-body pitch and apply notifications in original callback order. The current
-implementation is an isolated kernel and HUD API. The source cheat/enable flag
-defaults false, so the normal baseline intentionally awards no wheelie points.
+The host WASM bridge supplies native wheel contacts and resulting body pitch,
+applies ordered notifications, and exposes the wheelie state for diagnostics.
+The source cheat/enable flag defaults false, so the normal baseline awards no
+wheelie points. The current integration is pending the full host/public release
+gate; it does not add a cheat UI or claim complete session parity.
+
+### Actor/rider integration contract
+
+The host core now joins wheelie state with the rider animator's shared stunt
+scoreboard and ordered notification stream. `Animator::update_wheelie` runs
+after the vehicle physics/wreck decision, before rider stunt acceptance.
+`WheelieInput` uses the individual wheel contact flags in front-left,
+front-right, rear-left, rear-right order and native signed body Euler pitch.
+There is no horizontal speed test in the wheelie section. Regular airborne
+stunt acceptance separately tests world X/Z velocity squared against 16.
+
+The exact body constructor `001465f0` selects vtable `004526d0`: virtual update
+`+0x38` is `00146850`, which refreshes Euler pitch; integration `+0x3c` is
+`001469e0`. Physics actor `001dd830` ends with child update traversal
+`001064b0` before outer actor `001e5260` reads pitch at `001e6508`. The port's
+wheelie input therefore derives pitch from the resulting body orientation,
+rather than reusing its pre-substep rider-force angles. The complete native
+child attachment/sibling schedule has not been replayed by this checkpoint.
+
+Manager constructor `0020f370` explicitly clears context `+0x13c` and `+0x138`
+at `0020f3cc/0020f3d0`; the full session initializer `0020f780` does not write
+`+0x13c`. A five-instruction comparison confirms those initial clears. The
+supported initial Freestyle manager permits wheelie eligibility; full session
+end/transition lifecycle remains outside the reconstruction. The independent
+GETONUP setting still defaults false.
+
+Accepted stunt callback `002da6c0` first finalizes an eligible wheelie, credits
+its fractional binary32 award, and resets/hides that panel, before ordinary
+stunt-chain finalization or event allocation. These actions share one ordered
+notification stream. True wreck entry `001e8a20` first aborts the ordinary stunt
+chain (`002daa90`), then requests wheelie failure and clears its attempt.
+`Animator::abort_wreck_scores` implements this order. Generic vehicle reset
+`001dd440` does not change the wheelie fields, so pose reset and
+`abort_score_chain` preserve them; a new scoring session reconstructs their
+constructor defaults. Ordinary actor updates still reach the wheelie section
+during active wrecks, subject to the actor's separate early-return flags.
+
+Native `0024d690` quantizes the shared cumulative score even when a regular
+stunt chain fails. Consequently a fractional wheelie award can lose its
+fraction on a later regular-chain finalization/abort; it retains the fraction
+until that callback. This existing scorer behavior is preserved.
+
+Five additional animator tests cover baseline duration without awarded points,
+accepted-stunt callback order, shared fractional awards, wreck failure order,
+and generic reset versus new session. The 19 animator tests and 13 scorer tests
+pass, as does strict core Clippy. The existing 2,070-operation/67,982-instruction
+wheelie comparison was rerun with zero state, score or notification differences.
+The constructor/table evidence is private in
+`private/reports/wheelie-integration-gates.json`. These are component and core
+integration checks; public gameplay verification belongs to the release gate.
 
 ## Presentation and limits
 
