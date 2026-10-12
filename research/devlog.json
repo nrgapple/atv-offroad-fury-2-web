@@ -1,6 +1,6 @@
 {
-  "status": "Host-verified one-handed mobile input checkpoint; CI and public release pending. The browser port remains incomplete.",
-  "working_on": "Audit other source-normalized PSG root placements and continue comparing terrain LOD, fog, distant blending and material behavior.",
+  "status": "Publicly verified water recovery and snow-ramp collision checkpoint on commit b9a3a448d6d19103d63be8e6ec530974297b1870. The authored browser port remains incomplete.",
+  "working_on": "Continue recovering original gameplay and water presentation, including wakes and rendering detail, while retaining verified public regression coverage.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1655,9 +1655,25 @@
       "limitation": "Host-verified only; not yet public. This is a partial authored port, not full source replay or PS2 hardware parity. ENV08 was not driven deep enough to expire its timer, and water rendering/wake behavior remains incomplete.",
       "image": "/devlog-images/water-recovery-and-snow-ramp-collisions-d6c4d382.png",
       "caption": "Host capture: the ATV airborne above the original snow ramp during a normal gameplay-camera run. Water behavior was verified in separate browser routes; this image documents the snow collision portion."
+    },
+    {
+      "id": "water-and-snow-checkpoint-verified-publicly-5598dbb8",
+      "timestamp": "2026-10-12T18:49:05.236529+00:00",
+      "recorded_at": "2026-10-12T18:49:05.236529+00:00",
+      "kind": "verification",
+      "title": "Water and snow checkpoint verified publicly",
+      "summary": "The water-recovery and snow-ramp checkpoint is live on the public Cloudflare build. The deployed identity matches commit b9a3a448d6d19103d63be8e6ec530974297b1870, and the public asset and dev-log checks pass.",
+      "details": [
+        "CI 38292520844 succeeded and the automatic Cloudflare deployment identity matches the commit. R2 validation covered 344 objects and uploaded two approved changes: the snow screenshot and gallery metadata; no runtime content changed. Public HTTPS verification passed for 30 authored files and 343 served objects, including 103 dev-log entries and 90 screenshots before this entry.",
+        "Public source-derived water routes passed on all four maps. ENV04 desktop/390px, ENV05, ENV07, and ENV08 shallow-water checks passed; deep routes on ENV04/05/07 expired and reset at frames 348/349, 345/346, and 337/338. ENV08 remained shallow and did not expire. Water-only rider buoyancy, Swim state, and recovery produced positive upward speed of 1.63\u20132.04 ft/s.",
+        "Twenty-four snow-ramp approaches across desktop and 390px contacted wheels or body on all six original placements. The ramp route had a clean takeoff and landing with upward speed of 35.63 ft/s. Public normal-touch clean landing and Nac Nac recovery also passed.",
+        "The public route checks also passed title/menu/controller navigation, Tioga and Controls, 390px Caribou reload without a disc prompt, F3/Pause Stats persistence and 390px layout, uninterrupted driving on all eight maps, and desktop/mobile dev-log filters and evidence expansion, with zero JavaScript or WebGL errors.",
+        "The first public hash-verifier attempt encountered a transient connection reset; a fresh complete retry passed."
+      ],
+      "limitation": "This verifies the public authored port on bounded original-resource routes and native component comparisons. It does not establish full PS2 gameplay parity, full-game source replay, or physical-phone parity. Water wakes and rendering details remain incomplete. The attached screenshot on the previous host checkpoint remains a host capture; this public verification has no new screenshot."
     }
   ],
-  "updated_at": "2026-10-12T18:15:32.738689+00:00",
+  "updated_at": "2026-10-12T18:49:05.236529+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

@@ -368,5 +368,5 @@ There is no new ATV floating actor or invented head-submersion death.
 The 144-case native clock comparison and all-four-map source-resource browser
 water/rider gates are recorded in [water and snow verification](WATER_SNOW_GATE.md).
 ENV04/05/07 routes drown and return to the dry bank; ENV08's shallower route
-exercises wave/depth timer clearing. These are host checks pending publication,
-not whole-game or hardware parity.
+exercises wave/depth timer clearing. Public main `b9a3a44` / CI `38292520844` passes those routes and the separate
+HTTPS/content gates. These remain bounded checks, not whole-game or hardware parity.

@@ -89,3 +89,23 @@ this host checkpoint. The shared primary checkout and its local edits are untouc
 The integrated host gate also passes the full water and snow routes, normal
 clean touch landing, Nac Nac wreck/recovery and normal title/menu/controller,
 Controls, 390px selection and Caribou reload without a disc prompt or JS errors.
+
+
+## Public verification
+
+Main `b9a3a448d6d19103d63be8e6ec530974297b1870` / CI `38292520844` succeeds
+and identifies the automatic public Cloudflare deployment. R2 validates 344
+objects and uploads two changes: the approved host snow PNG and gallery metadata.
+No new runtime content is needed. A complete HTTPS retry after one transient
+connection reset matches 30 authored files and 343 served objects, with 103 log
+entries / 90 screenshots before the public verification entry.
+
+Public all-four-map water routes reproduce the recorded depth clocks/resets and
+water-only rider buoyancy, Swim and recovery; ENV04 desktop/390px passes. Public
+24-route snow coverage reproduces wheel/body contacts and clean ramp launch/landing.
+Normal touch clean landing, failed Nac Nac recovery/driving, original menu and
+controller-to-Tioga/Controls/390px Caribou reload without disc selection, F3/Pause
+Stats persistence and portrait fit, uninterrupted eight-map driving and the
+desktop/mobile dev-log filters and expandable evidence all pass without JS/GL
+errors. The source-resource fixtures are still bounded routes, not whole-game
+or PS2 replay. The published snow PNG remains explicitly a host capture.

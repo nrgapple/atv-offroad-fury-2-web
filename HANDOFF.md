@@ -1,21 +1,31 @@
 # Implementation handoff
 
-## Water and Caribou collision checkpoint (host verified)
+## Verified public water and Caribou collision checkpoint
 
-Branch `feature/water-snow-collisions` in a separate managed worktree connects
-the original five-second deep-water reset, using the previous cached surface
-and retained checkpoint. Rider buoyancy/Swim/recovery passes actual water-only
-routes on all four wet maps; ENV04/05/07 demonstrate drowning and dry-bank reset,
-while ENV08's shallower route clears the countdown through the source wave/depth
-gates. Caribou's ramp and all five ski placements pass 776 per-face tree rays
-and 24 desktop/390px wheel/body approaches, including clean ramp launch/landing.
-Existing authored collision geometry needed no changes or offsets.
+Main `b9a3a448d6d19103d63be8e6ec530974297b1870`, CI `38292520844` success,
+is public on Cloudflare after PR #5 from `feature/water-snow-collisions` in the
+separate managed worktree. The original five-second deep-water reset uses the
+preceding cached surface and retained checkpoint. Public ENV04/05/07 routes
+expire/reset at 348/349, 345/346 and 337/338 and return above water to the dry bank.
+ENV08's shallower route exercises countdown clearing without expiration. All
+four wet maps pass water-only rider buoyancy, Swim and recovery; ENV04 passes
+at desktop/390px. Existing Caribou ramp and all five ski colliders needed no
+new shape/offset: 776 per-face tree rays and 24 public desktop/390px approaches
+cover wheel/body response and clean ramp launch/landing at 35.631ft/s upward.
 
+Public HTTPS verification matches 30 authored files and 343 served objects,
+with 103 dev-log entries / 90 inspected screenshots before the verification note.
+R2 validates 344 objects and uploads only the new approved host snow PNG and
+gallery metadata; no runtime resource changes. A first hash fetch resets its
+connection; the complete retry passes. Public clean touch landing, Nac Nac
+wreck/recovery/driving, title/menu/controller/Tioga/Controls/390px Caribou reload
+without a disc prompt, F3/Pause Stats persistence and portrait fit, uninterrupted
+ENV01–08 driving and dev-log filters/expandable evidence pass without JS/GL errors.
 302 core + 2 WASM tests, 47 JS tests, strict Clippy/fmt, setup, 13 release/4 Worker
-checks, normal clean landing/wreck recovery and uninterrupted eight-map driving
-pass. Screenshot/native/generated resources remain private. See
-[water/snow evidence and limits](research/WATER_SNOW_GATE.md). This is a host gate,
-not a claim that the branch is public or every map/system matches original play.
+checks pass. The snow screenshot is a host capture; no public capture is claimed.
+See [water/snow evidence and limits](research/WATER_SNOW_GATE.md). These bounded
+source-resource routes and component probes do not prove complete gameplay,
+render/wake fidelity, physical-phone behavior or PS2 hardware parity.
 
 ## Latest verified public rail checkpoint
 
