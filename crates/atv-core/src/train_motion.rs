@@ -1,11 +1,14 @@
 //! Native procedural-actor velocity getters (002daea0 / 002dafe0).
 use crate::{
     Result,
-    contact::{ContactConfig, ContactCorrections, StaticContact, resolve_static_with_velocity},
+    contact::{
+        ContactConfig, ContactCorrections, StaticContact,
+        resolve_static_with_velocity_and_position_scale,
+    },
     dynamics::{BodyConfig, BodyState, inverse_transform, transform},
     wheel::{Vec3, add, cross, scale, sub},
 };
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MotionState {
     pub current: [f32; 16],
     pub previous: [f32; 16],
@@ -51,13 +54,41 @@ impl MotionState {
         contact: StaticContact,
         corrections: &mut ContactCorrections,
     ) -> Result<()> {
+        self.resolve_contact_with_position_scale(
+            body,
+            body_config,
+            config,
+            contact,
+            corrections,
+            0.3,
+        )
+    }
+    /// The original secondary chassis pass uses1.0; detached rider callers use
+    /// their own coefficient. Impulse and friction arithmetic is unchanged.
+    pub fn resolve_contact_with_position_scale(
+        self,
+        body: &mut BodyState,
+        body_config: &BodyConfig,
+        config: ContactConfig,
+        contact: StaticContact,
+        corrections: &mut ContactCorrections,
+        position_scale: f32,
+    ) -> Result<()> {
         let arm = inverse_transform(body.basis(), sub(contact.point, body.center));
         let own = add(
             body.linear_velocity,
             transform(body.basis(), cross(body.local_angular_velocity, arm)),
         );
         let relative = sub(own, self.point_velocity(contact.point));
-        resolve_static_with_velocity(body, body_config, config, contact, relative, corrections)
+        resolve_static_with_velocity_and_position_scale(
+            body,
+            body_config,
+            config,
+            contact,
+            relative,
+            corrections,
+            position_scale,
+        )
     }
 }
 #[cfg(test)]
@@ -128,5 +159,77 @@ mod tests {
         };
         assert_eq!(state.angular_velocity(), [4., 0., 0.]);
         assert_eq!(state.point_velocity([1000.5, 2., -30.]), [1., 0., 10.]);
+    }
+    #[test]
+    fn secondary_pass_changes_only_the_penetration_coefficient() {
+        let config = BodyConfig::new(10., [20.; 3], [0.; 3]).unwrap();
+        let initial = BodyState::new([0.; 3], [1., 0., 0., 0.], &config).unwrap();
+        let mut prior = IDENTITY;
+        prior[12] = -1.;
+        let target = MotionState {
+            current: IDENTITY,
+            previous: prior,
+            reciprocal_dt: 1.,
+        };
+        let resolve = |position_scale| {
+            let mut body = initial.clone();
+            body.force = [-10., 0., 5.];
+            let mut corrections = ContactCorrections::default();
+            target
+                .resolve_contact_with_position_scale(
+                    &mut body,
+                    &config,
+                    ContactConfig {
+                        reflection: 0.,
+                        angular_impulse_scale: 0.1,
+                        friction_scale: 0.1,
+                        friction_torque_scale: 0.1,
+                    },
+                    StaticContact {
+                        point: [0., 1., 0.],
+                        normal: [1., 0., 0.],
+                        penetration: 0.2,
+                        material_grip: 1.,
+                    },
+                    &mut corrections,
+                    position_scale,
+                )
+                .unwrap();
+            (body, corrections)
+        };
+        let (ordinary, normal) = resolve(0.3);
+        let (secondary, full) = resolve(1.);
+        assert_eq!(ordinary.linear_velocity, secondary.linear_velocity);
+        assert_eq!(
+            ordinary.local_angular_velocity,
+            secondary.local_angular_velocity
+        );
+        assert_eq!(ordinary.force, secondary.force);
+        assert_eq!(ordinary.local_torque, secondary.local_torque);
+        assert_eq!(normal.velocity_delta, full.velocity_delta);
+        assert!(full.translation[0] > normal.translation[0]);
+        assert_eq!(initial.center, secondary.center); // deferred until integration
+        assert!(
+            target
+                .resolve_contact_with_position_scale(
+                    &mut initial.clone(),
+                    &config,
+                    ContactConfig {
+                        reflection: 0.,
+                        angular_impulse_scale: 0.,
+                        friction_scale: 0.,
+                        friction_torque_scale: 0.
+                    },
+                    StaticContact {
+                        point: [0.; 3],
+                        normal: [1., 0., 0.],
+                        penetration: 0.2,
+                        material_grip: 1.
+                    },
+                    &mut ContactCorrections::default(),
+                    f32::NAN,
+                )
+                .is_err()
+        );
     }
 }

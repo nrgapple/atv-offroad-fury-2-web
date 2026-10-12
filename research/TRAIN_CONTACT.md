@@ -95,6 +95,24 @@ are not original hardware or whole-game execution. Private reports remain under
 Authored tests cover moving-target push, both orientation axes, LIFO slot reuse,
 and the 1,024-slot boundary. Route, wheel and existing driving tests remain intact.
 
+## Live integration strategy
+
+The next gate binds the original collision-enabled train models from ENV08's
+existing resource archive. A separate native dynamic list follows the static/ESB
+provider; movement updates poses and distances without invalidating the shared
+quad/rider/recovery cache. Original type0 COL transforms compose with the original
+procedural body pose. Callback ownership is attached to newly appended cumulative
+contact rows, and the verified relative point-velocity solver supplies impact and
+friction to the existing vehicle wreck/landing decisions. Wheel support, detached
+rider contacts, recovery and camera queries retain their separate source gates.
+
+No extra front-launch impulse, side-wreck switch, collider box or rail speed is
+introduced. Front/side/top encounter tests will use source-derived geometry and
+vary approach speed/direction; successful or failed landings must follow the
+ordinary source classifier. The secondary nonstatic correction and original
+wheel treatment are checked against native instructions before enabling the
+coupled path. This strategy is not a claim that those live gates have passed.
+
 Private reproduction uses `work/train-probe/native_list.py`,
 `native_ownership.py`, `native_motion.py`, `native_contact.py` and
 `native_startup.py`, with Cargo companions `--bin list`, `motion`, `contact` and
@@ -104,3 +122,68 @@ Private reproduction uses `work/train-probe/native_list.py`,
 cargo test -p atv-core --lib train::
 cargo clippy -p atv-core --all-targets -- -D warnings
 ```
+
+## Secondary chassis pass and wheel moving support
+
+The source `001dd830` retains a second list containing eligible nonstatic collision
+actors. After its normal substeps and impact sampling, it redirects the existing
+chassis query to that list, resets/requeries contacts, changes the solver's
+penetration coefficient from its stored value to1.0, runs the same response, and
+restores the coefficient and ordinary list. No body integration follows this
+pass. Translation uses the existing correction merge and carries to the next
+integration; friction force/torque also carries. The impulse changes velocity
+immediately. Its accumulated velocity delta is excluded from this frame's impact
+sample, but survives into the next first normal solver sample: `001469e0` clears
+that buffer only at the end of integration. Crash entry `001e8a20` changes this
+same query from riding AR to wreck AO, so the second pass follows that selection.
+
+An original-instruction tail replay covers24 combinations of riding/wreck ray
+selection, empty/nonempty secondary lists and saved correction coefficients,
+executing776 instructions with explicit query/solver/wheel callback services.
+The coefficient, list pointers, query selection and call sequence match. A
+separate500-case moving response replay executes1,221,151 instructions with
+coefficient1.0; all9,000 queried-body and relative-velocity words match the new
+`MotionState::resolve_contact_with_position_scale` helper exactly. The default
+method retains0.3. This proves the bounded response and dispatch contract, not a
+complete two-frame vehicle encounter.
+
+Wheel callback `001ebb30` always stores the latest geometry actor. It updates the
+moving support body only for a Body target that is neither Static nor MUD; later
+static/MUD callbacks do not clear that body. The outer query resets it once.
+Twenty-seven original callback sequences (1,431 instructions) verify this with
+explicit initialized category-bit services. Geometry selection and moving support
+ownership therefore remain separate.
+
+Before the substeps, `001ecc40` evaluates moving ground velocity as target linear
+velocity plus the cross product of target world angular velocity with the arm
+from transformed target local center to cached wheel point. It subtracts this
+from the wheel's own point velocity before contact-frame projection. For the
+shipped train, target local center is zero. One thousand bounded original prefix
+cases execute263,000 instructions; all6,000 cached ground/relative velocity words
+match `MotionState::point_velocity` and subtraction exactly.
+
+The cached wheel point is `001ed330`'s projected force point, not its rendered
+wheel center. Each eligible spring step stores bottom plus normal times raw
+depth before checking/clamping support. Bottom is the transformed rest mount
+minus normal times radius. If both wheel query-availability flags are clear, the
+old point remains. Constructor/reset initializes it to zero; visual extension
+`001edcd0` does not change it. Spring damping subtracts the ground velocity cached
+before the substeps, even as the new force point changes. This evidence does not
+establish moving-target subtraction in the independent front/rear quad grip
+routine `001d8540`; that path retains its existing body-local velocity contract.
+
+Private reproduction adds `native_secondary.py`, `native_secondary_schedule.py`,
+`native_wheel_ground.py` and `native_wheel_owner.py`, with Rust companions
+`--bin secondary` and `--bin wheel_ground`. Authored regression tests check
+coefficient-only penetration changes, deferred center movement, identical
+impulse/friction and rejection of a nonfinite coefficient.
+
+A100-case original sampler/reset-prefix replay executes7,300 instructions:
+next-frame impact sampling retains the supplied secondary-plus-normal delta, and
+the subsequent original integrator tail clears it. The initialized sum is an
+explicit service; this is evidence for retention/reset timing, not a coupled
+impulse accumulation replay. Wreck-camera and rider queries inherit the base
+all-category accepted mask; caller-specific exclusions remain independent.
+Train Body actors pass that mask, while normal chase object obstruction remains
+disabled by its verified caller. Detached rider correction uses0.25 and the same
+moving point-velocity input.

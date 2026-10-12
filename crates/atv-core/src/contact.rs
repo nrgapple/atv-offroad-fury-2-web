@@ -141,7 +141,7 @@ pub fn resolve_static_with_velocity(
     velocity: Vec3,
     corrections: &mut ContactCorrections,
 ) -> Result<()> {
-    resolve_with_velocity_and_scale(
+    resolve_static_with_velocity_and_position_scale(
         body,
         body_config,
         config,
@@ -149,6 +149,27 @@ pub fn resolve_static_with_velocity(
         velocity,
         corrections,
         0.3,
+    )
+}
+/// Native response with both the supplied pre-impact point velocity and the
+/// caller's correction coefficient (the secondary nonstatic ATV pass uses1.0).
+pub fn resolve_static_with_velocity_and_position_scale(
+    body: &mut BodyState,
+    body_config: &BodyConfig,
+    config: ContactConfig,
+    contact: StaticContact,
+    velocity: Vec3,
+    corrections: &mut ContactCorrections,
+    position_scale: f32,
+) -> Result<()> {
+    resolve_with_velocity_and_scale(
+        body,
+        body_config,
+        config,
+        contact,
+        velocity,
+        corrections,
+        position_scale,
     )
 }
 fn resolve_with_velocity_and_scale(
