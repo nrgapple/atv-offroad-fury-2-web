@@ -74,6 +74,36 @@ Pause → **One-handed mobile: On/Off** saves the choice in this browser. A sing
 
 These inputs stay identical in air and on the ground: no touch mode transition, throttle suppression, origin reset, or landing delay. Holding continues both throttle and bracing; lifting in air removes throttle and releases the brace without bypassing native jump rules. Touch tricks are disabled. Cancellation, pause, blur and changing modes clear input without producing a preload release. Storage denial falls back to a session-only setting. Two-finger controls and independent keyboard/controller bindings are unchanged.
 
+## One-finger command display
+
+The one-handed option now shows a compact readout and a floating direction
+compass. Horizontal drag moves the dot toward L/R and reports the finger's
+steering direction and percentage. Vertical drag moves it toward FWD/BACK and
+reports forward/back lean independently. Diagonals combine both axes; a
+35-pixel drag on each axis displays 50% steering and 50% lean, while each axis
+reaches 100% at the unchanged 70-pixel input range. The percentages describe
+finger commands, before the recovered vehicle filtering and force routines.
+
+The readout distinguishes touch-to-drive, held throttle/brace and released
+coasting. It shows the native arming/release or active-preload cue when available.
+Airborne feedback explicitly says the same controls remain in use; landing
+returns to Ground without resetting the held input. When the current fixed-step
+input applies brake while rolling backward, the display explains that the brake
+is being used to move forward. The compass is kept within the screen without
+moving the gesture's input origin. No sensitivity, axis mapping, gesture,
+preload rule or physics coefficient changes.
+
+The display reads intent without calling the input sampler, so it cannot consume
+preload release pulses. Unchanged display state causes no DOM rewrites. Unit
+checks cover cardinal/diagonal percentages, air/landing continuity, preload cues,
+current-generation braking feedback and retained release pulses. The actual
+390px Chromium route checks all eight drag directions, a proportional diagonal,
+vector coordinates, release/coast and continuous neutral held throttle through
+a clean landing. An angled-air screenshot uses a separate route: prolonged full
+pullback can legitimately change the landing and wreck. Screenshot timing does
+not provide an identical-input physical comparison. Physical phones remain
+unverified.
+
 ## Original main-stunt air-control gate
 
 The vehicle now receives the rider mode selected by the preceding animation update. Exact-build `001e7940` checks mode 4; `002d8ba0/002d8e50` distinguish that main-stunt mode from mode 5, the held extension. While airborne in mode 4, the original stunt axis slew rates replace normal rates, and `001f0ae0` halves only the input-generated angular moment. Angular damping and lateral air force remain unchanged. The original force routine reads dead-zone-adjusted raw axes, so the slower filtered axes affect steering/center-of-mass and pose, not an additional delay before rotational input. Held extensions and ordinary air control use the full input moment. Automatic recovery clears the mode gate.

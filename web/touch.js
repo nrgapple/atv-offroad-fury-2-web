@@ -120,28 +120,82 @@ export class TouchLeanIntent {
   get lean() { return this.pointer?.dy ?? 0; }
 }
 
+// Presentation reads held intent without sampling it or consuming a preload release.
+export function oneHandedFeedback(input, frame, released = false) {
+  const pointer = input.pointer;
+  const steer = pointer ? clamp((pointer.currentX - pointer.x) / 70) : 0;
+  const lean = pointer ? clamp((pointer.currentY - pointer.y) / 70) : 0;
+  const percent = value => Math.round(Math.abs(value) * 100);
+  const applied = frame?.applied_input;
+  const current = applied?.touch_drive?.generation === input.generation && applied.touch_drive.held;
+  const preload = frame?.preload_active ? 'PRELOAD ACTIVE' : frame?.preload_armed ? 'LIFT FOR PRELOAD' : null;
+  return {
+    held: Boolean(pointer), steer, lean,
+    phase: input.airborne ? 'AIR · SAME CONTROLS' : 'GROUND',
+    drive: pointer ? current && applied.brake > 0 ? 'BRAKE TO MOVE FORWARD' : 'THROTTLE + BRACE' : released ? 'COASTING' : 'TOUCH TO DRIVE',
+    steering: percent(steer) ? `${steer < 0 ? 'LEFT' : 'RIGHT'} ${percent(steer)}%` : 'STRAIGHT',
+    leaning: percent(lean) ? `${lean < 0 ? 'FORWARD' : 'BACK'} ${percent(lean)}%` : 'NEUTRAL',
+    hint: pointer ? preload ?? 'Lift: coast + release brace' : 'Drag: ↔ steer · ↕ lean',
+  };
+}
+
 export function mountTouchControls({ active, focus, surface, parent = document.body }) {
   const input = new TouchInput();
   try { input.setOneHanded(localStorage.getItem('atv-mobile-one-handed') === 'true'); } catch { /* Session-only settings when storage is unavailable. */ }
-  let touched = false, airborne = false;
+  let touched = false, airborne = false, released = false, lastFrame = null;
   const root = document.createElement('div'); root.id = 'touch-controls'; root.setAttribute('aria-hidden', 'true');
-  root.innerHTML = '<div class="touch-rider-marker"><i></i><span>PRELOAD</span></div>';
+  root.innerHTML = `<div class="touch-rider-marker"><b class="touch-axis forward">FWD</b><b class="touch-axis back">BACK</b><b class="touch-axis left">L</b><b class="touch-axis right">R</b><em class="touch-direction"></em><i></i><span>PRELOAD</span></div>
+    <div class="touch-one-hand-readout"><div class="touch-mode">ONE FINGER <span class="touch-phase">GROUND</span></div><strong class="touch-drive-status">TOUCH TO DRIVE</strong><div class="touch-command-row"><span>STEER <b class="touch-steer-status">STRAIGHT</b></span><div class="touch-axis-meter steer"><i></i></div></div><div class="touch-command-row"><span>LEAN <b class="touch-lean-status">NEUTRAL</b></span><div class="touch-axis-meter lean"><i></i></div></div><small class="touch-hint">Drag: ↔ steer · ↕ lean</small></div>`;
   parent.append(root);
   const marker = root.firstElementChild, label = marker.querySelector('span');
+  const readout = root.querySelector('.touch-one-hand-readout');
+  const fields = Object.fromEntries(['phase', 'drive-status', 'steer-status', 'lean-status', 'hint'].map(name => [name, readout.querySelector(`.touch-${name}`)]));
+  let presentationKey = null;
+  const meters = { steer: readout.querySelector('.touch-axis-meter.steer i'), lean: readout.querySelector('.touch-axis-meter.lean i') };
+  const present = () => {
+    root.dataset.oneHanded = String(input.oneHanded);
+    if (!input.oneHanded) return;
+    const state = oneHandedFeedback(input, lastFrame, released);
+    const key = [state.steer, state.lean, state.phase, state.drive, state.hint].join('|');
+    if (key === presentationKey) return;
+    presentationKey = key;
+    root.dataset.phase = input.airborne ? 'air' : 'ground';
+    root.dataset.drive = state.held ? 'held' : released ? 'coast' : 'idle';
+    fields.phase.textContent = state.phase;
+    fields['drive-status'].textContent = state.drive;
+    fields['steer-status'].textContent = state.steering;
+    fields['lean-status'].textContent = state.leaning;
+    fields.hint.textContent = state.hint;
+    marker.style.setProperty('--steer', `${state.steer * 34}px`);
+    marker.style.setProperty('--lean', `${state.lean * 34}px`);
+    marker.style.setProperty('--angle', `${Math.atan2(state.lean, state.steer)}rad`);
+    marker.style.setProperty('--length', `${Math.hypot(state.steer, state.lean) * 34}px`);
+    for (const [axis, value] of [['steer', state.steer], ['lean', state.lean]]) {
+      const meter = meters[axis];
+      meter.style.left = `${50 + Math.min(value, 0) * 50}%`;
+      meter.style.width = `${Math.abs(value) * 50}%`;
+    }
+  };
   const coarse = window.matchMedia('(any-pointer: coarse)');
   const refresh = () => {
     root.hidden = !active();
     document.body.classList.toggle('touch-driving', !root.hidden && (coarse.matches || touched));
+    present();
   };
-  const clear = () => { input.clear(); root.classList.remove('held'); root.dataset.preload = 'idle'; refresh(); };
+  const clear = () => { input.clear(); released = false; lastFrame = null; root.classList.remove('held'); root.dataset.preload = 'idle'; refresh(); };
   const down = event => {
     if (event.pointerType !== 'touch' || (!input.oneHanded && event.clientX < innerWidth / 2)) return;
     focus?.();
     if (!active()) return;
     event.preventDefault(); event.stopImmediatePropagation(); touched = true;
     if (!input.begin(event.pointerId, event.clientX, event.clientY, airborne)) return;
-    surface.setPointerCapture(event.pointerId); root.classList.add('held');
-    if (input.pointer?.id === event.pointerId) { marker.style.left = `${event.clientX}px`; marker.style.top = `${event.clientY}px`; marker.style.setProperty('--drive', '-30px'); }
+    surface.setPointerCapture(event.pointerId); root.classList.add('held'); released = false;
+    if (input.pointer?.id === event.pointerId) {
+      // Keep the visual compass and labels on screen without moving the input origin.
+      marker.style.left = `${input.oneHanded ? Math.max(62, Math.min(innerWidth - 62, event.clientX)) : event.clientX}px`;
+      marker.style.top = `${input.oneHanded ? Math.max(82, Math.min(innerHeight - 164, event.clientY)) : event.clientY}px`;
+      marker.style.setProperty('--drive', '-30px');
+    }
     label.textContent = airborne && !input.oneHanded ? 'SWIPE / CIRCLE' : input.oneHanded ? 'BRACED' : 'PRELOAD'; refresh();
   };
   const move = event => {
@@ -149,11 +203,11 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
     event.preventDefault(); event.stopImmediatePropagation();
     const events = event.getCoalescedEvents?.() ?? [];
     for (const point of events.length ? events : [event]) input.move(event.pointerId, point.clientX, point.clientY, point.timeStamp);
-    marker.style.setProperty('--drive', `${-(input.pointer?.axis ?? 0) * 30}px`);
+    marker.style.setProperty('--drive', `${-(input.pointer?.axis ?? 0) * 30}px`); present();
   };
   const end = event => {
     if (!input.owns(event.pointerId)) return;
-    event.preventDefault(); event.stopImmediatePropagation(); input.end(event.pointerId, event.type !== 'pointerup'); root.classList.toggle('held', Boolean(input.pointer));
+    event.preventDefault(); event.stopImmediatePropagation(); released = event.type === 'pointerup'; input.end(event.pointerId, !released); root.classList.toggle('held', Boolean(input.pointer)); present();
   };
   surface.addEventListener('pointerdown', down); surface.addEventListener('pointermove', move);
   for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) surface.addEventListener(type, end);
@@ -171,10 +225,11 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
       clear();
     },
     feedback(frame) {
+      lastFrame = frame;
       airborne = Boolean(frame.grounded?.length && frame.grounded.every(contact => !contact));
       input.setAirborne(airborne);
       const state = frame.preload_active ? 'active' : frame.preload_armed ? 'armed' : frame.preload_available ? 'available' : 'idle';
-      root.dataset.preload = state; label.textContent = airborne && !input.oneHanded ? (frame.stunt?.name ?? 'SWIPE / CIRCLE') : state === 'armed' ? 'RELEASE' : state === 'active' ? 'PRELOADED' : 'BRACED';
+      root.dataset.preload = state; present(); label.textContent = airborne && !input.oneHanded ? (frame.stunt?.name ?? 'SWIPE / CIRCLE') : state === 'armed' ? 'RELEASE' : state === 'active' ? 'PRELOADED' : 'BRACED';
     },
     sample() { refresh(); if (!active()) clear(); return input.sample(); },
     get engaged() { return touched; },
