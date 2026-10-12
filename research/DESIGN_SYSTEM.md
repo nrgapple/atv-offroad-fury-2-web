@@ -48,3 +48,7 @@ Every touch indicator descendant explicitly disables selection and WebKit callou
 ## Scope and verification
 
 This checkpoint restyles Pause, Camera and the existing one/two-finger drive marker. It preserves the menu and speedometer rendering and gesture behavior. Automated Chromium screenshots and input checks cover portrait, narrow portrait and landscape layouts, keyboard focus, button actions and marker states. The older extended two-finger route check currently fails a grounded-preload assertion after takeoff, including with the unchanged pre-checkpoint touch module. A short two-finger input gate covers simultaneous drive/steer/lean/cancel. Physical iOS/Android hardware and exact PS2 visual parity remain unverified.
+
+## Public checkpoint
+
+The shared Pause/Camera controls and one/two-finger touch marker are in public main commit `f21f6b50af07ac12db4a39ac9e1a4c03323174b2` (PR #1; CI run [38286720860](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38286720860)). Public Chromium and WebKit mobile UI checks passed at 390×844, 320×568 and 844×390, including 44px targets, focus, camera and pause actions, scoped native touch cancellation and cleanup. Public one-handed input checks also passed saved settings, directional steering, air control and landing. These browser checks do not verify physical iOS loupe behavior or exact PS2 visual parity; the larger two-finger route assertion remains a baseline-reproduced timing failure documented in the dev log.

@@ -1556,9 +1556,42 @@
       "limitation": "Host verification only; the public release remains 9ac73657, so the rail fix is not yet publicly verified. A source census found 234 non-identity root model types across 902 placements, so other props may be affected; the mesh test does not audit every placement. No arbitrary raising or whole-scene/PS2 rendering parity is claimed.",
       "image": "/devlog-images/env08-curved-rails-restored-on-the-host-cad04f1f.png",
       "caption": "After the host fix: the same ENV08 curve placements show rail track meshes on desktop and 390px mobile."
+    },
+    {
+      "id": "shared-mobile-controls-verified-on-the-public-build-1cdf62e3",
+      "timestamp": "2026-10-12T17:52:44.932310+00:00",
+      "recorded_at": "2026-10-12T17:53:14.027754+00:00",
+      "kind": "verification",
+      "title": "Shared mobile controls verified on the public build",
+      "summary": "The charcoal and silver Pause and Camera controls and gold touch compass are live on the public Workers build. Public Chromium and WebKit checks pass across three viewport sizes, including native gesture cancellation and the short simultaneous two-finger drive/steer/lean path.",
+      "details": [
+        "Merged PR #1 at main commit f21f6b50af07ac12db4a39ac9e1a4c03323174b2; CI run 38286720860 passed build and deployment.",
+        "The validated current-main artifact was fetched and its separate R2 package uploaded with 336 approved objects and two changes. Public verification matched the exact commit, 30 authored files and 335 served objects; the gallery had 94 entries and 82 screenshots before this checkpoint.",
+        "Public tools/test_mobile_ui.mjs passed in Chromium and WebKit at 390\u00d7844, 320\u00d7568 and 844\u00d7390, covering 44px targets, focus, camera cycle, pause/resume, scoped native touch cancellation and cleanup. Chromium also passed rapid, long and edge touches plus simultaneous two-finger input and cancellation.",
+        "Public tools/test_one_handed_touch.mjs passed saved settings, cardinal and diagonal steering, air control and landing without browser errors or a disc-selection step. The original frontend menu route also passed without browser errors.",
+        "See research/DESIGN_SYSTEM.md for the shared tokens, component guidance and scope."
+      ],
+      "limitation": "Public automated browser checks do not verify the native iOS loupe on physical hardware. The older extended two-finger route assertion fails after takeoff with undefined !== 1 at line 57; rerunning the exact pre-checkpoint touch.js reproduces it, so this timing/assertion failure is not attributed to the UI changes. Android hardware and exact PS2 visual parity remain unverified.",
+      "image": "/devlog-images/shared-mobile-controls-verified-on-the-public-build-1cdf62e3.png",
+      "caption": "Fresh public HTTPS Chromium capture at 390\u00d7844 showing the shared Pause and Camera controls and gold touch compass."
+    },
+    {
+      "id": "public-dev-log-feature-board-test-follows-live-metadat-9ffe53f4",
+      "timestamp": "2026-10-12T17:54:57.001238+00:00",
+      "recorded_at": "2026-10-12T17:54:57.001238+00:00",
+      "kind": "verification",
+      "title": "Public dev-log feature board test follows live metadata",
+      "summary": "The public dev-log browser check now reads feature areas and the Arlington train status/scope from the served metadata. Its public run passes the board count, status totals, filters, expandable evidence, mobile width and browser error checks.",
+      "details": [
+        "The public test observed 28 feature areas and the train\u2019s current PARTIAL status and PUBLIC route/wheel/audio scope, with public collision still pending.",
+        "Desktop and mobile category/status filters, status-count totals, crash-recovery and train evidence expansion, 390px no-overflow layout and zero browser errors all passed.",
+        "The earlier failure came from stale test expectations: it hard-coded 26 feature areas and expected the train to be RECOVERED NOT CONNECTED. The live metadata now reports 28 and PARTIAL.",
+        "The public frontend menu route check also passes without a disc-selection step or browser errors."
+      ],
+      "limitation": "This is a dev-log presentation and metadata-consistency check; it does not expand game implementation or change the broader feature-status assessment."
     }
   ],
-  "updated_at": "2026-10-12T17:50:49.856573+00:00",
+  "updated_at": "2026-10-12T17:54:57.001238+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
