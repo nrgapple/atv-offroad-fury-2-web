@@ -1,0 +1,21 @@
+{
+  "name": "atv-offroad-fury-2-multiplayer",
+  "account_id": "92b7e16fd24d5fb585f866f5832a032b",
+  "main": "../crates/atv-relay/build/worker/shim.mjs",
+  "compatibility_date": "2026-09-10",
+  "workers_dev": false,
+  "build": {
+    "command": "worker-build --release",
+    "cwd": "crates/atv-relay",
+    "watch_dir": "../crates/atv-relay/src"
+  },
+  "vars": {
+    "GAME_ORIGIN": "https://atv-offroad-fury-2.champtoday.workers.dev",
+    "BUILD_COMMIT": "host-only",
+    "BUILD_WASM_SHA": "host-only"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "LOBBIES", "class_name": "LobbyRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["LobbyRoom"] }]
+}
