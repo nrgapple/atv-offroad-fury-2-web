@@ -218,7 +218,8 @@ pub struct SuspensionContact {
     pub wheel_center: Vec3,
     pub radius: f32,
     pub body_up: Vec3,
-    pub body_right: Vec3,
+    /// Model forward column, used by the original pitch-dependent attenuation gate.
+    pub body_forward: Vec3,
     pub point_velocity: Vec3,
     pub stiffness_scale: f32,
     /// Angle from the original acos table for dot(normal,body_up).
@@ -246,7 +247,7 @@ impl SuspensionState {
             .chain(c.ground_point.iter())
             .chain(c.wheel_center.iter())
             .chain(c.body_up.iter())
-            .chain(c.body_right.iter())
+            .chain(c.body_forward.iter())
             .chain(c.point_velocity.iter())
             .all(|x| x.is_finite())
             || ![c.radius, c.stiffness_scale, c.tilt_angle]
@@ -268,7 +269,7 @@ impl SuspensionState {
             - config.damping * speed)
             .max(0.0);
         let mut force = scale(c.normal, magnitude);
-        if c.body_right[1].abs() < 0.5 {
+        if c.body_forward[1].abs() < 0.5 {
             let angle_start = f32::from_bits(0x3f5f66f1);
             let angle_range = f32::from_bits(0x3e32b8c4);
             let factor = ((-(c.tilt_angle - angle_start)) / angle_range + 1.0).clamp(0.0, 1.0);
@@ -365,7 +366,7 @@ mod tests {
             wheel_center: [0., 0.8, 0.],
             radius: 1.0,
             body_up: [0., 1., 0.],
-            body_right: [1., 0., 0.],
+            body_forward: [0., 0., 1.],
             point_velocity: [0.; 3],
             stiffness_scale: 1.0,
             tilt_angle: 0.0,
@@ -388,6 +389,42 @@ mod tests {
         c.body_up = [0., 1., 0.];
         c.point_velocity = [0., 100., 0.];
         assert_eq!(s.contact(config, c).unwrap().magnitude, 0.0);
+    }
+    #[test]
+    fn spring_attenuation_uses_forward_pitch_gate() {
+        let config = SuspensionConfig {
+            travel: 1.0,
+            extension_speed: 1.0,
+            stiffness: 1000.0,
+            damping: 0.0,
+        };
+        let mut state = SuspensionState::default();
+        let mut contact = SuspensionContact {
+            available: true,
+            normal: [0., 1., 0.],
+            ground_point: [0.; 3],
+            wheel_center: [0., 0.75, 0.],
+            radius: 1.0,
+            body_up: [0., 0.5, 0.75_f32.sqrt()],
+            body_forward: [0., -0.75_f32.sqrt(), 0.5],
+            point_velocity: [0.; 3],
+            stiffness_scale: 1.0,
+            tilt_angle: 0.5_f32.acos(),
+        };
+        // A sixty-degree pitch retains the full spring; the same up-vector
+        // angle caused by roll is attenuated when forward is horizontal.
+        let pitched = state.contact(config, contact).unwrap();
+        assert!(pitched.grounded);
+        assert_eq!(pitched.force, [0., 250., 0.]);
+        contact.body_up = [-0.75_f32.sqrt(), 0.5, 0.];
+        contact.body_forward = [0., 0., 1.];
+        let rolled = state.contact(config, contact).unwrap();
+        assert!(rolled.grounded);
+        assert_eq!(rolled.force, [0.; 3]);
+        // The original strict comparison keeps a pitch of exactly thirty
+        // degrees outside attenuation, even with additional roll.
+        contact.body_forward = [0., -0.5, 0.75_f32.sqrt()];
+        assert_eq!(state.contact(config, contact).unwrap().force, pitched.force);
     }
     #[test]
     fn point_velocity_includes_body_rotation_and_moving_ground() {

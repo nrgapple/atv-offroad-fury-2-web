@@ -156,3 +156,38 @@ terrain samples in the browser landing trace improved from -1.9423ft to
 no false wreck; it did not establish acceptable tire clearance. The restored
 stop leaves shallow overlap and does not establish complete original landing
 or slope-turn parity.
+
+## Full wheel spring replay and pitch attenuation
+
+The coupled landing investigation now executes the complete original wheel
+spring routine `001ed330`, including Model point/vector transforms, contact-point
+velocity and body force/torque accumulation. This exposed an incorrect axis in
+our spring attenuation gate. Native `00165330` copies the Model forward column
+into the first output and up into the second. The spring routine tests the first
+output's vertical component: attenuation applies only when
+`abs(body_forward.Y) < 0.5`. The former Rust right-axis test could suppress a
+pitched spring that the original retains, or retain a rolled spring that the
+original attenuates. `SuspensionContact::body_forward` now names and supplies the
+correct axis. A regression distinguishes sixty-degree pitch from roll and retains
+the original strict comparison at the thirty-degree pitch boundary.
+
+A private instruction replay covers 600 finite pitch/roll contact cases and
+374,963 original instructions. With the old axis, 170 force components differ,
+with a maximum absolute difference of 1,338.308 in source force units. With the
+forward-axis gate, all contact decisions and compared compression, contact-point,
+point-velocity, spring-magnitude and force components match binary32 bits. The
+original acos lookup service is hooked with finite host acos; both paths receive
+that same supplied angle. The fixture uses a fixed flat plane, varied body
+orientations and linear/angular velocities, and no moving ground. It establishes
+the wheel routine and gate, not original table initialization or a complete quad
+frame. Private reproducible files are `work/physics/suspension_full_oracle.py`
+and `work/suspension-full-probe/`; generated reports stay under `private/reports/`.
+
+A separate 240-frame replay executes the full original `001469e0` body update,
+its `0013c010` integrator and Model setters (292,320 instructions), with constant
+synthetic falling/rotating forces and an identity scene parent. Rust linear and
+angular velocities match all frames. Model-to-quaternion rebinding introduces
+small pose differences: at most 0.00000763 feet in center and 0.000000417 in
+quaternion components. That bounded body result does not explain the observed
+shallow rendered tire overlap. Original full-quad orchestration, initial bindings,
+terrain sampling and display-time mesh linkage remain to be compared together.

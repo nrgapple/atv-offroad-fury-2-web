@@ -943,7 +943,7 @@ impl Vehicle {
                         wheel_center,
                         radius: self.wheel_config[i].radius,
                         body_up: b[1],
-                        body_right: b[0],
+                        body_forward: b[2],
                         point_velocity: self.body.velocity_at(point),
                         stiffness_scale: 1.0,
                         tilt_angle: dot(normal, b[1]).clamp(-1., 1.).acos(),

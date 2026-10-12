@@ -52,6 +52,8 @@ pub struct Request {
     pub menu_logo: bool,
     #[serde(default)]
     pub menu_atv: bool,
+    #[serde(default)]
+    pub diagnostics_mode: String,
 }
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -466,10 +468,16 @@ pub fn layout(request: Request) -> Result<Frame> {
             f.footer(true);
         }
         "pause" => {
+            let diagnostics_label = match request.diagnostics_mode.as_str() {
+                "performance" => "Stats: Performance (F3)",
+                "debug" => "Stats: Debug (F3)",
+                _ => "Stats: Off (F3)",
+            };
             let mut choices = vec![
                 ("Resume", "resume"),
                 ("Reset ATV", "reset"),
                 ("Controls", "controls"),
+                (diagnostics_label, "diagnostics"),
             ];
             if request.music_ready {
                 choices.push(("Music", "music"));
@@ -500,7 +508,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                 "TOUCH",
                 vec![
                     "Left: steer and lean, on ground or in air.",
-                    "Right: up to drive; down to brake / reverse.",
+                    "Right: press to drive; drag back to brake / reverse.",
                     "Hold right to brace. Lift to release preload.",
                     "In air: extra right finger swipes stunts.",
                 ],
@@ -721,6 +729,7 @@ mod tests {
             music_volume: 70,
             menu_logo: true,
             menu_atv: true,
+            diagnostics_mode: String::new(),
         }
     }
     #[test]

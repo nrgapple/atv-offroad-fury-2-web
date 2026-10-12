@@ -2,13 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TouchInput, TouchLeanIntent } from './touch.js';
 
-test('primary right up drives, down brakes, hold preloads and release drops drive', () => {
+test('primary right press drives immediately, back drag brakes, release drops drive', () => {
   for(const airborne of [false,true]) {
     const touch=new TouchInput();touch.begin(1,300,500,airborne);
     assert.equal(touch.sample().preload_axis,1);
+    assert.equal(touch.sample().drive.axis,1,'A stationary right press must drive');
+    touch.move(1,305,507);assert.equal(touch.sample().drive.axis,1,'Touch jitter must not drop throttle');
     touch.move(1,350,430);assert.equal(touch.sample().drive.axis,1);
     touch.move(1,250,570);assert.equal(touch.sample().drive.axis,-1);
     assert.equal(touch.sample().stunt_modifiers,0,'Primary airborne drag is still drive');
+    touch.move(1,300,500);assert.equal(touch.sample().drive.axis,1,'Returning to the press position requests forward');
     touch.end(1);const released=touch.sample();
     assert.equal(released.drive.held,false);assert.equal(released.drive.axis,0);assert.equal(released.preload_axis,-1);
     assert.equal(touch.sample().preload_axis,null);

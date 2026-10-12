@@ -214,6 +214,11 @@ pub struct Hands {
     pub right: Arm,
 }
 impl Hands {
+    /// 00450070 initializes rider-local +Y at004a9450;002d8810 mirrors it
+    /// for the right arm. Binding does not activate the002d8e50 hand gate.
+    pub fn bind_native(nodes: &[Node]) -> Result<Self> {
+        Self::bind(nodes, [0., 1., 0.])
+    }
     pub fn bind(nodes: &[Node], left_axis: Vec3) -> Result<Self> {
         Ok(Self {
             left: Arm::bind(nodes, "HandL", left_axis)?,
@@ -287,6 +292,21 @@ mod tests {
         .map(f32::from_bits);
         for (actual, expected) in pose.local_matrices[arm.shoulder].iter().zip(expected) {
             assert!((actual - expected).abs() < 0.000005);
+        }
+    }
+    #[test]
+    fn native_hinge_axes_are_mirrored_and_binding_keeps_targets_disabled() {
+        let (nodes, mut pose) = fixture();
+        let hands = Hands::bind_native(&nodes).unwrap();
+        assert_eq!(hands.left.bend_axis, [0., 1., 0.]);
+        assert_eq!(hands.right.bend_axis, [-0., -1., -0.]);
+        let before = pose.local_matrices.clone();
+        assert!(!hands.apply(&nodes, &mut pose, None).unwrap());
+        assert_eq!(pose.local_matrices, before);
+        let targets = [[1., 0., 0.7], [-1., 2., -0.7]];
+        hands.apply(&nodes, &mut pose, Some(targets)).unwrap();
+        for (index, target) in [hands.left.hand, hands.right.hand].into_iter().zip(targets) {
+            assert!(length(sub(position(pose.world_matrices[index]), target)) < 0.00001);
         }
     }
     #[test]

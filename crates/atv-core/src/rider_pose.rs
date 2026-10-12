@@ -266,6 +266,11 @@ impl Animator {
         self.hand_ik = Some(crate::rider_ik::Hands::bind(nodes, left_axis)?);
         Ok(())
     }
+    /// Bind the recovered rider-local +Y/-Y hand hinges without enabling IK.
+    pub fn configure_native_hand_ik(&mut self, nodes: &[crate::mesh::Node]) -> Result<()> {
+        self.hand_ik = Some(crate::rider_ik::Hands::bind_native(nodes)?);
+        Ok(())
+    }
     /// Existing normal/stunt/landing states request None, matching002d8e50's
     /// cleared hand gate. Explicit targets share the sampled pose's frame.
     pub fn pose_with_hand_targets(

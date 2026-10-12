@@ -55,6 +55,60 @@ pulse. The HUD pulse/failure belongs to chain finalization, not every event
 record closure. Native wheelie score has a separate path (`001e5260`,
 `001e70e0`); it is not inferred from regular stunt points.
 
+## Wheelie scoring and the original cheat flag
+
+The original settings constructor `0021add0` explicitly initializes
+`settings+0x1878` to zero (`0021b8c0`). Cheat dispatcher `0033ede0` toggles that
+field for `GETONUP`, with the original enabled/disabled wheelie-for-points
+messages. **Normal baseline riding therefore does not award or display wheelie
+points.** Physical wheelie assist is a separate recovered rider-controller path;
+it must not be used as a substitute scoring gate. The authored wheelie kernel
+supports the original flag, which remains false by default. The cheat UI and
+session flow are not implemented by this component.
+
+`stunt_score::WheelieState` reconstructs actor fields `+0x914` (armed), `+0x918`
+(eligible/display), `+0x91c` (duration), `+0x920` (points), `+0x7fc` (front-contact
+grace) and `+0x928` (activity during the current tick). Constructor `001e1b10`
+initializes points to 1 and grace to 0.5 seconds. The scoring section at
+`001e6450..001e6600` applies these conditions:
+
+- Both front wheels lack native contact, both rear wheels have contact, the
+  grace value equals exactly 0.5, body Euler pitch exceeds binary32
+  `0x3edf66f1` (approximately 25 degrees), and context `+0x13c` is zero.
+- On first qualifying contact state, points become 1 and the attempt arms.
+  Duration advances even when the cheat flag is disabled. Previous duration
+  must be strictly greater than one second before scoring begins. An enabled
+  scoring tick adds `50 * dt`, sets eligible/activity, and refreshes `Wheelie`
+  text through the ordinary HUD name callback.
+- Front contact clears an unscored armed attempt but retains its duration.
+  For an eligible attempt, front contact decrements grace while positive;
+  finalization occurs on the next front-contact update after it reaches zero.
+  Both-front-airborne states freeze a partially consumed grace value; they do
+  not restart scoring or finish the award.
+
+`001e70e0` adds wheelie points directly to the same entity `+0x104` cumulative
+score used by regular stunts, using binary32 addition without an integer floor
+or combo multiplier. It clears armed, eligible and duration, restores grace to
+0.5, and leaves point/activity fields intact. The HUD pulses one success event
+only if its overlay is visible; otherwise its animation resets without showing
+a new panel. An accepted airborne stunt also finalizes an eligible wheelie,
+then explicitly resets/hides the wheelie panel before the stunt name callback
+(`002da6c0`).
+
+The wheelie wreck slice in `001e8a20` requests the failure fade when eligible,
+credits no pending wheelie points, and performs the same armed/eligible/duration
+clear and grace restoration. `002dd4b0` gives eligible wheelie points priority
+over the regular cached stunt text, truncating them to an integer. Once
+eligibility clears, the display returns to the regular stunt cache. Native
+`002e3640` prevents ordinary HUD expiration while wheelie eligibility persists;
+its sound/activity condition uses the distinct per-tick `+0x928` field.
+
+The kernel returns ordered `Name`, `Finished { points }` and `Failed`
+notifications; `State::credit_wheelie_points` joins awards into the shared
+scoreboard. The Canvas bridge needs no wheelie-specific authored artwork.
+Vehicle/WASM integration supplies native wheel contacts and body pitch, applies
+notifications in original callback order, and retains the false default flag.
+
 ## Presentation and limits
 
 Single-player coordinates retain the original 640×448 frame: speed/preload
@@ -64,8 +118,8 @@ phones move the meter above the driving thumb region and bound text width.
 Those are explicit browser presentation adaptations; they do not change score,
 physics, preload eligibility or animation clocks.
 
-The authored path omits unimplemented race clocks, rank, laps and radar. Native
-wheelie HUD/scoring, controller-vibration/sound triggers, participant selection
+The authored path omits unimplemented race clocks, rank, laps and radar.
+Controller-vibration/sound triggers, participant selection
 for other modes, disabled-overlays settings, original text-depth/GS rounding and
 multiplayer remain incomplete. Shake uses the original libc generator with a
 local seed; full-game shared RNG draw ordering has not been recovered, so its
@@ -87,3 +141,17 @@ meter with unit source height; it is a selected-component check, not validation
 of final Canvas pixels, the PS2 hardware FPU, or whole-game replay equivalence.
 Evidence remains in `private/reports/hud-meter-oracle.json`; temporary harnesses
 remain under ignored `work/hud-probe/`.
+
+The wheelie comparison covers 2,070 operations and 67,982 original instructions:
+native update section `001e6450..001e6604`, full finish routine `001e70e0`, and
+the actual wreck wheelie decision/reset slice `001e8c6c..001e8cf0`. Disabled and
+enabled flags, exact pitch/previous-duration boundaries, front-contact grace,
+airborne pauses, explicit finish and wreck cases produce zero differences in
+all six wheelie state fields, shared cumulative score bits and ordered callback
+notifications. HUD and parent score-report calls are intercepted; those calls'
+rendering, audio and progression are not validated by the probe. Private results
+are in `private/reports/wheelie-score-oracle.json`, with the synthetic harness
+under `work/hud-probe/wheelie/`. Eight additional Rust tests cover the wheelie
+kernel, fractional score merge and HUD callback behavior. This remains a
+selected-component instruction comparison, not a PS2 gameplay replay or proof
+of full game parity.

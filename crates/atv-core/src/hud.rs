@@ -184,6 +184,37 @@ impl State {
         };
         Ok(())
     }
+    /// 002dd4b0 gives eligible wheelie points priority over stunt cache text.
+    /// Apply after ordinary cache updates, only while actor+918 is nonzero.
+    pub fn set_wheelie_points(&mut self, points: f32) -> Result<()> {
+        if !points.is_finite() {
+            return Err("invalid HUD wheelie score".into());
+        }
+        self.points = points as i32;
+        Ok(())
+    }
+    pub fn wheelie_event(&mut self, event: crate::stunt_score::WheelieNotification) {
+        use crate::stunt_score::WheelieNotification;
+        match event {
+            WheelieNotification::Name => {
+                self.name_event("Wheelie");
+            }
+            WheelieNotification::Finished { .. } => {
+                // 001e70e0 pulses only if overlay flag+29 bit0 is set; an
+                // invisible overlay is reset, without showing a new panel.
+                if self.visible {
+                    self.finish_event(true, 1);
+                } else {
+                    self.reset_stunt();
+                }
+            }
+            WheelieNotification::Failed => self.finish_event(false, 1),
+        }
+    }
+    /// 002da6c0 hides/resets the wheelie panel before naming an accepted stunt.
+    pub fn clear_wheelie_for_stunt(&mut self) {
+        self.hide();
+    }
     /// 002e3b70 changes the event name only while scale phase == 3.
     pub fn name_event(&mut self, name: &str) -> bool {
         if self.phase != 3 {
@@ -479,5 +510,29 @@ mod tests {
         s.finish_event(true, 1);
         s.step(0.025, 0., false, 0., true, 500.).unwrap();
         assert_eq!(s.frame().stunt_scale, 2.);
+    }
+    #[test]
+    fn wheelie_uses_same_panel_with_priority_points_and_single_event_pulse() {
+        use crate::stunt_score::WheelieNotification;
+        let mut s = State::default();
+        s.set_score_cache(500., 2, true).unwrap();
+        s.wheelie_event(WheelieNotification::Name);
+        s.set_wheelie_points(20.75).unwrap();
+        assert_eq!(s.frame().stunt_name, "Wheelie");
+        assert_eq!(s.frame().stunt_points, "20");
+        s.wheelie_event(WheelieNotification::Finished { points: 20.75 });
+        assert_eq!(s.frame().stunt_name, "Wheelie");
+        assert_eq!(s.frame().scale_phase, 0);
+        s.clear_wheelie_for_stunt();
+        assert!(!s.frame().stunt_visible);
+        s.name_event("Nac Nac");
+        assert_eq!(s.frame().stunt_name, "Nac Nac");
+    }
+    #[test]
+    fn finished_hidden_wheelie_does_not_show_or_pulse_overlay() {
+        let mut s = State::default();
+        s.wheelie_event(crate::stunt_score::WheelieNotification::Finished { points: 30. });
+        assert!(!s.frame().stunt_visible);
+        assert_eq!(s.frame().scale_phase, 3);
     }
 }

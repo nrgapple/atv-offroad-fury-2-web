@@ -48,6 +48,8 @@ try {
     const right = { id: 1, ...position };
     await resetSamples(); await touch('touchStart', [right]); await steps(3);
     assert.equal((await read()).input.preload_axis, 1); assert.equal((await read()).input.lean, 0);
+    assert.equal(Math.max((await read()).input.throttle, (await read()).input.brake), 1, 'Right press must request drive without a forward drag');
+    assert((await samples()).some(s => s.input.touch_drive?.held && s.input.touch_drive?.axis === 1), 'Stationary press must submit forward drive to Rust');
     await touch('touchMove', [{ ...right, y: right.y - 70 }]); await steps(3);
     assert.equal((await read()).input.lean, 0); assert.equal(Math.max((await read()).input.throttle, (await read()).input.brake), 1); assert.equal((await read()).input.preload_axis, 1);
     await touch('touchMove', [{ ...right, y: right.y + 70 }]); await steps(3);
@@ -57,7 +59,7 @@ try {
     assert.equal((await samples()).filter(s => s.input.preload_axis === -1).length, 1);
     assert.equal((await read()).input.lean, 0);
   }
-  console.log('Anywhere on the right holds preload; vertical drag controls drive without adding lean; release submits once.');
+  console.log('Anywhere on the right drives immediately and holds preload; back drag brakes without adding lean; release submits once.');
   const right = { id: 1, x: 310, y: 530 };
   await resetSamples(); await touch('touchStart', [right]); await steps(2); await touch('touchCancel'); await steps(3);
   assert(!(await samples()).some(s => s.input.preload_axis === -1));

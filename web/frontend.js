@@ -7,8 +7,8 @@ const fields = section => Object.fromEntries([...section.fields].reverse().map(f
 const sections = doc => new Map(doc.sections.map(s => [s.name.toLowerCase(), fields(s)]));
 const fontName = 'tradegothic_boldcondensed_22s';
 export class Frontend {
-  constructor({ codec, json, content, read, start, active, audio }) {
-    Object.assign(this, { codec, json, content, read, start, active, audio });
+  constructor({ codec, json, content, read, start, active, audio, diagnosticsOverlay }) {
+    Object.assign(this, { codec, json, content, read, start, active, audio, diagnosticsOverlay });
     this.root = document.getElementById('frontend'); this.canvas = document.getElementById('menu-canvas');
     this.ctx = this.canvas.getContext('2d'); this.buttons = document.getElementById('menu-buttons');
     this.notice = document.getElementById('menu-notice');
@@ -235,6 +235,7 @@ export class Frontend {
       else if (action.startsWith('song:')) { const music = this.audio?.()?.music; music?.setEnabled(true); music?.select(Number(action.slice(5))); this.syncPreview(); }
       else if (action === 'musictoggle') { const music = this.audio?.()?.music; if (music) music.setEnabled(!music.snapshot().enabled); this.syncPreview(); }
       else if (action === 'musicvolume') { const music = this.audio?.()?.music; if (music) music.setVolume((Math.round(music.snapshot().volume * 4) + 1) % 5 / 4); }
+      else if (action === 'diagnostics') this.diagnosticsOverlay?.cycle();
       else if (action === 'resume') return this.resume();
       else if (action === 'reset') { await document.getElementById('reset').onclick(); return this.resume(); }
       else if (action === 'fullscreen') {
@@ -249,7 +250,7 @@ export class Frontend {
     const stage = this.canvas.parentElement, track = this.tracks[this.track];
     const music = this.audio?.()?.music, musicState = music?.snapshot();
     const request = {page:this.page,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:track?.name ?? '',track_image:track?.image ?? '',fullscreen:Boolean(document.fullscreenEnabled),
-      control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
+      diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
       music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
       music_page:this.musicPage,music_status:musicState ? `${musicState.enabled ? 'On' : 'Off'} / Volume ${Math.round(musicState.volume * 100)}% / ${musicState.title || 'Choose a song'}` : '',music_enabled:musicState?.enabled ?? true,music_volume:Math.round((musicState?.volume ?? .7)*100),menu_logo:this.images.has('original-logo'),menu_atv:this.images.has('multi_atv01')};

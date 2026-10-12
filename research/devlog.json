@@ -959,9 +959,41 @@
       "limitation": "Residual tire overlap, complete incline-turn behavior and whole-game handling parity remain unproven. The obstruction camera and suspension checks validate selected recovered components, not complete game equivalence.",
       "image": "/devlog-images/the-suspension-stop-and-obstruction-camera-are-verifie-3f22c762.png",
       "caption": "Inspected public release capture after the recovered suspension stop: peak measured tire overlap is reduced to about 0.48 feet, but remains unresolved."
+    },
+    {
+      "id": "live-diagnostics-and-immediate-touch-throttle-are-conn-5e654857",
+      "timestamp": "2026-10-12T03:56:12.595062+00:00",
+      "recorded_at": "2026-10-12T03:59:53.941387+00:00",
+      "kind": "build",
+      "title": "Live diagnostics and immediate touch throttle are connected",
+      "summary": "The host game adds persistent Off, Performance and Debug stats, plus immediate throttle when the primary right thumb presses. Portrait captures show live diagnostics fitting the screen without blocking driving controls.",
+      "details": [
+        "F3 cycles Off \u2192 Performance \u2192 Debug; Pause Stats remembers the selection. Performance reports measured render cadence, WASM call timing, worker round-trip time, draw counts and allocated WASM memory. Debug adds existing contact, suspension, input, position and wreck state.",
+        "The right-thumb press now applies full throttle immediately, with an eight-pixel jitter margin. Dragging backward progressively brakes and uses native reverse selection; release, cancellation, preload and secondary-finger stunts remain connected.",
+        "Host diagnostics and press-throttle tests passed, including persistence, pointer-transparent desktop/portrait layout and input cancellation. The displayed headless FPS is not a physical-phone benchmark."
+      ],
+      "limitation": "This checkpoint is host-only and not a public release. Diagnostics expose the reconstruction state; they do not establish original handling or physical-device performance.",
+      "image": "/devlog-images/live-diagnostics-and-immediate-touch-throttle-are-conn-5e654857.png",
+      "caption": "Inspected host portrait Debug capture with actual render/WASM timings and contact state. Headless performance values are not a phone benchmark."
+    },
+    {
+      "id": "the-wheel-terrain-gate-now-uses-the-recovered-forward--ae5cd7c8",
+      "timestamp": "2026-10-12T03:58:04.394438+00:00",
+      "recorded_at": "2026-10-12T03:59:54.020901+00:00",
+      "kind": "build",
+      "title": "The wheel terrain gate now uses the recovered forward axis",
+      "summary": "The host wheel solver corrects a native terrain gate that used the body right-axis vertical component where the original routine uses the forward axis. The clean landing and wreck recovery regressions pass; residual tire overlap remains.",
+      "details": [
+        "A comparison of 600 complete native wheel-update cases executed 374,963 original instructions. With the shared acos boundary, the corrected geometry and force components match bits in all recorded cases.",
+        "Unit checks, workspace formatting, strict Clippy and the web build passed. Browser checks passed clean landing with Debug enabled and Nac Nac \u2192 vertical wreck \u2192 separation/ground clip \u2192 terrain contact \u2192 reset \u2192 resumed driving.",
+        "Rendered tire-vertex measurements across 62 riding frames found minimum clearance -0.497024536 feet, with no skipped frames. That negative clearance is remaining overlap, not a complete clipping fix."
+      ],
+      "limitation": "This is host verification, not a public release or whole-game parity. Wreck frames are excluded from the tire-clearance measurement. The recovered boundary-launch path is not yet live.",
+      "image": "/devlog-images/the-wheel-terrain-gate-now-uses-the-recovered-forward--ae5cd7c8.png",
+      "caption": "Inspected host clean-landing capture with Debug enabled after the forward-axis correction. Measured tire overlap still reaches about half a foot."
     }
   ],
-  "updated_at": "2026-10-12T03:44:47.363530+00:00",
+  "updated_at": "2026-10-12T03:59:54.020901+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

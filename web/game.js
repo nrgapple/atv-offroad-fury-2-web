@@ -5,6 +5,7 @@ import { GameAudio } from './audio.js';
 import { openHostedContent } from './content.js';
 import { gameplayBindings } from './bindings.js';
 import { HeadUpDisplay } from './hud.js';
+import { DiagnosticsOverlay } from './diagnostics.js';
 const $ = id => document.getElementById(id);
 const canvas = $('game');
 const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, powerPreference: 'high-performance' });
@@ -29,13 +30,16 @@ const touchControls = mountTouchControls({
 });
 const diagnostics = { ready: false, frames: 0, vertices: 0, triangles: 0, chunks: 0, glError: 0, camera: [], source: null };
 let audio = new GameAudio(codec, message => { diagnostics.audioError = message; status(`Audio: ${message}`, true); });
+const stats = new DiagnosticsOverlay({ snapshot: () => ({ ...diagnostics, frame: simFrame, paused: menuOpen, focused, resolution: [canvas.width, canvas.height] }) });
 // Read-only snapshot for verification; does not expose the locally opened file.
-Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, audio: audio.snapshot(), simulation: simReady, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
+Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
 worker.onmessage = ({ data }) => {
   if (data.startupError) { status(data.startupError, true); return; }
   const request = pending.get(data.id);
   if (!request) return;
   pending.delete(data.id);
+  if (Number.isFinite(data.wasmBytes)) diagnostics.wasmBytes = data.wasmBytes;
+  if (request.op === 50 && Number.isFinite(data.operationMs)) diagnostics.physicsBatchMs = data.operationMs;
   data.error ? request.reject(new Error(data.error)) : request.resolve(data.bytes);
 };
 worker.onerror = event => {
@@ -46,7 +50,7 @@ worker.onerror = event => {
 function codec(op, bytes, index = 0) {
   return new Promise((resolve, reject) => {
     const id = ++requestId;
-    pending.set(id, { resolve, reject });
+    pending.set(id, { resolve, reject, op });
     worker.postMessage({ id, op, index, bytes });
   });
 }
@@ -519,6 +523,8 @@ function buildEcosystem() {
   }
 }
 function drawEcosystem() {
+  diagnostics.vegetationTriangles = 0;
+  diagnostics.vegetationDraws = 0;
   if (!ecoGroups.length) return;
   // Original placement, dimensions and model normalization; browser visibility
   // selection is provisional. Batch repeated original meshes, not thousands of draws.
@@ -544,6 +550,7 @@ function drawEcosystem() {
       gl.uniform1f(uniforms.alphaCutoff, chunk.alphaCutoff); gl.uniform1i(uniforms.useTexture, Boolean(chunk.texture));
       gl.bindTexture(gl.TEXTURE_2D, chunk.texture ?? fallbackTexture); gl.bindVertexArray(chunk.vao);
       gl.drawElementsInstanced(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0, group.count); draws++;
+      diagnostics.vegetationTriangles += chunk.count / 3 * group.count;
     }
   }
   diagnostics.vegetationVisible = Math.min(candidates.length, 1500); diagnostics.vegetationDraws = draws;
@@ -804,7 +811,10 @@ async function pumpSimulation() {
     for (let step = 0; step < count; step++) simAccumulator -= 1 / 60;
     const cycle = cameraCycle || actions.camera; cameraCycle = false;
     if (cycle) orbit = 0;
+    const submitted = performance.now();
     const frames = await command(50, { count, input, orbit, cycle });
+    diagnostics.physicsRoundTripMs = performance.now() - submitted;
+    diagnostics.physicsBatchSteps = count;
     if (token !== simGeneration) return;
     for (const { frame, camera: cameraResult } of frames) {
       acceptFrame(frame);
@@ -871,10 +881,11 @@ function updateCamera(dt) {
   camera.y = Math.max(terrain.min - span * .2, Math.min(terrain.max + span * 2, camera.y));
 }
 function render(time) {
+  const started = performance.now();
   frame = requestAnimationFrame(render);
   touchControls.refresh();
   hud?.draw(simFrame?.hud, simReady && !lost && !document.hidden && !menuOpen);
-  if (lost || !gl || !terrain || document.hidden || menuOpen) { lastTime = time; return; }
+  if (lost || !gl || !terrain || document.hidden || menuOpen) { lastTime = time; stats.sample(time, 0, false); return; }
   const dt = Math.min(.05, Math.max(0, (time - (lastTime || time)) / 1000)); lastTime = time;
   const ratio = Math.min(devicePixelRatio || 1, 1.5), width = Math.max(1, Math.round(innerWidth * ratio)), height = Math.max(1, Math.round(innerHeight * ratio));
   if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
@@ -945,10 +956,15 @@ function render(time) {
     gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
   }
   diagnostics.frames++;
+  if (stats.mode !== 'off') {
+    diagnostics.drawCalls = chunks.length + sceneDraws.length + vehicleChunks.length + (terrain.sky ? skyChunks.length : 0) + diagnostics.vegetationDraws;
+    diagnostics.drawTriangles = (chunks.reduce((sum, c) => sum + c.count, 0) + sceneDraws.reduce((sum, d) => sum + d.chunk.count, 0) + vehicleChunks.reduce((sum, c) => sum + c.count, 0) + (terrain.sky ? skyChunks.reduce((sum, c) => sum + c.count, 0) : 0)) / 3 + diagnostics.vegetationTriangles;
+  }
   if (diagnostics.frames === 1 || diagnostics.frames % 120 === 0) {
     diagnostics.glError = gl.getError();
     if (diagnostics.glError) status(`Graphics error ${diagnostics.glError}.`, true);
   }
+  stats.sample(time, performance.now() - started, focused);
 }
 async function loadGame(file = null, environment = "env01") {
   if (!gl || lost) throw new Error('Graphics context is unavailable; wait for recovery.');
@@ -980,7 +996,7 @@ async function loadGame(file = null, environment = "env01") {
     Object.assign(diagnostics, { ready: true, source: source.name, width, depth, min, max, frames: 0 });
     $('reset').disabled = false; $('camera').disabled = !simReady; $('help').hidden = false;
     $('reset').textContent = simReady ? 'Reset ATV' : 'Reset view';
-    $('help').textContent = simReady ? 'Pause → Controls: keyboard / controller bindings · left touch: steer / lean · right: up drive, down brake / reverse, release preload' : 'Free camera · drag to look · WASD to move · Q/E up/down';
+    $('help').textContent = simReady ? 'Pause → Controls: keyboard / controller bindings · left touch: steer / lean · right: press to drive, drag back to brake / reverse, release preload' : 'Free camera · drag to look · WASD to move · Q/E up/down';
     status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain. Open the disc to load the ATV.');
   } catch (error) { if (token === generation) status(error.message, true); throw error; }
   finally { if (token === generation) $('disc').disabled = false; }
@@ -1059,7 +1075,7 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
   if (params.get('source') === 'disc') { menuOpen = false; $('frontend').hidden = true; }
   else {
     hostedContent = openHostedContent();
-    frontend = new Frontend({codec, json, content: hostedContent, read, audio: () => audio, start: environment => loadGame(null, environment), active: open => { menuOpen = open; clearInput(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
+    frontend = new Frontend({codec, json, content: hostedContent, read, diagnosticsOverlay: stats, audio: () => audio, start: environment => loadGame(null, environment), active: open => { menuOpen = open; clearInput(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     hud = new HeadUpDisplay(frontend, canvas);
     if (params.get('drive') === '1') {
       menuOpen = false; $('frontend').hidden = true;

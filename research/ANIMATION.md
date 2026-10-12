@@ -158,29 +158,44 @@ The rider constructor `002d8810` builds two `002b7070` solvers from `HandL` and
 `002b7a60` is synchronous: it uses projected two-link lengths and a signed hinge
 offset to replace elbow rotation, then rotates the shoulder toward the target.
 It clamps unreachable target distances and retains original hand joint offsets.
-`rider_ik` now reconstructs this path; `Animator::configure_hand_ik` prepares it
-and `pose_with_hand_targets` accepts explicit targets in the sampled pose frame.
-The mirrored local hinge axis remains supplied separately, as in the native
-constructor; its BSS initializer is not yet verified.
+`rider_ik` reconstructs this path; `Animator::configure_native_hand_ik` prepares
+the recovered axes and `pose_with_hand_targets` accepts explicit targets in the
+sampled pose frame. Startup constructor `00450070`, listed at `00451850` in the
+constructor table, initializes `004a9450` to `(0,1,0,1)`. The left hinge is local
++Y and `002d8810` negates it for the right hinge. An exact 32-instruction probe
+verifies this initializer. `Hands::bind_native` uses these axes; the existing
+explicit-axis binding API remains available.
 
 The recovered normal, stunt, hold and forced-landing selectors all clear the
-rider's hand-target gate at +0x41c. The port therefore keeps normal hand IK
+rider's hand-target gate at +0x41c. A separate exact selector probe covers all
+seven supported modes with ordinary, forced and suppressed snapshots: all 35
+cases clear a previously enabled gate and make no hand-solver call. The port
+therefore keeps normal hand IK
 disabled; constructing a solver does not force hands onto handlebars or prevent
 stunt poses from releasing them. First-person arm constructors `00313680` and
 `00313ca0` also use this solver, but their complete runtime controller remains
 separate. The seven-node constraint path in `002d6380`/`002d9a20` is the female
-`HairParent`/`Hair01`…`Hair07` chain, not a foot or arm IK system. No original
-foot-target path has been verified here.
+`HairParent`/`Hair01`…`Hair07` chain, not a foot or arm IK system. The inspected
+`FootL`/`FootR` references in `002d7dc0` add detached-rider collision spokes.
+All direct two-link constructor calls bind normal-rider or first-person hands.
+The generic animation player `0013d7a0` has an optional solver array, initialized
+empty by `0013c950`; normal rider modes use separate clip-blend evaluators.
+These observations establish no additional foot constraint for the recovered
+normal riding path. They do not prove that every whole-game foot-IK path is absent.
 
 A private original-instruction probe runs 120 synthetic rigid-arm targets through
 `002b7070`/`002b7a60` (98,760 instructions). Scalar/VU solver math executes from
 the exact executable; world-transform, matrix-setter and trigonometry-library
 helpers are hooked. Rust's 5,760 resulting matrix values differ by at most
 0.00000188 from those captured values. A native fixture is pinned in a Rust
-regression test. A separate real-resource check covers 1,519 poses from 49 male
-riding/stunt/hold clips: disabling targets preserves every matrix; enabling
-explicit synthetic hinge/target inputs produces finite poses. The worst
-endpoint error in that latter check is 0.02244 original world units, and its
-hinge axis is not established as the original runtime axis. These checks verify
-a bounded solver component, not hand-contact parity or PS2 hardware equivalence.
-Private probe evidence is retained under `private/reports/hand-ik-*`.
+regression test. A follow-up using the recovered +Y/-Y axes covers 240 native
+constructor/solver cases (197,520 instructions); all 11,520 matrix values differ
+by at most 0.000000328. A focused Rust test checks mirrored axes, unchanged
+disabled poses and reachable explicit targets. A separate real-resource check
+covers 1,519 poses from 49 male riding/stunt/hold clips with the recovered axes:
+disabling targets preserves every matrix and arbitrary explicit target offsets
+produce finite poses. Those offsets are not original handlebar targets; the
+maximum endpoint error is 0.53352 original world units. These checks verify a
+bounded solver component, not hand-contact parity or PS2 hardware equivalence.
+Private probe evidence remains under `private/reports/hand-ik-*` and
+`private/reports/rider-axis-gates-native.json`.

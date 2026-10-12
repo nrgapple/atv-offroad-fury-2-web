@@ -14,6 +14,9 @@ try {
   await page.goto(url.href);
   await page.waitForFunction(() => window.atvTerrainStatus?.simulation, null, { timeout: 90000 });
   await page.bringToFront(); await page.locator('#game').focus();
+  if (process.env.ATV_DIAGNOSTICS === 'debug') {
+    for (let i = 0; i < 3 && (await page.evaluate(() => window.atvTerrainStatus.performance.mode)) !== 'debug'; i++) await page.keyboard.press('F3');
+  }
   const cdp = await page.context().newCDPSession(page);
   const touch = (type, points = []) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(point => ({ radiusX: 6, radiusY: 6, force: 1, ...point })) });
   const left = { id: 1, x: 60, y: 560 };
@@ -43,6 +46,7 @@ try {
   const frames=await page.evaluate(()=>window.rampFrames);
   await writeFile('work/verification/clean-landing-trace.json',JSON.stringify(frames,null,2));
   const final=await page.evaluate(()=>window.atvTerrainStatus.frame);
+  if (process.env.ATV_LANDING_SCREENSHOT) await page.screenshot({path:process.env.ATV_LANDING_SCREENSHOT});
   assert(frames.some(s=>!s.frame.grounded.some(Boolean)), 'A real airborne interval must occur');
   assert(frames.filter(s=>s.frame.preload_active).every(s=>s.input.throttle===0), 'Right release must drop throttle during the jump');
   assert(frames.every(s=>s.frame.wreck.phase==='Riding'), 'A clean hop must never enter wreck state');

@@ -1,9 +1,11 @@
 [package]
 name = "atv-tools"
+default-run = "atv-tools"
 edition.workspace = true
 version.workspace = true
 publish.workspace = true
 
 [dependencies]
 atv-core = { path = "../atv-core" }
+serde.workspace = true
 serde_json.workspace = true

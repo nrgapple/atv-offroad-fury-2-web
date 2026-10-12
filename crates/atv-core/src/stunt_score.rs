@@ -16,6 +16,120 @@ pub const EVENT_CAPACITY: usize = 100;
 /// also depends on settings+0; this constant does not recreate that session flow.
 pub const FREESTYLE_MODE: u8 = 11;
 
+/// settings+1878 is zero in constructor0021add0. The original GETONUP
+/// cheat toggles it at0033ede0; regular wheelie torque has a separate gate.
+pub const DEFAULT_WHEELIE_SCORING: bool = false;
+pub const WHEELIE_PITCH_THRESHOLD: f32 = f32::from_bits(0x3edf66f1);
+
+#[derive(Debug, Clone, Copy)]
+pub struct WheelieInput {
+    /// Native wheel ordering: front left/right, rear left/right (+158..164).
+    pub grounded: [bool; 4],
+    /// Body Euler pitch from00146850, not joystick or rider pose pitch.
+    pub pitch: f32,
+    /// Original context+13c must be zero. Caller supplies game-mode eligibility.
+    pub context_allows: bool,
+    /// The native GETONUP setting. Default is deliberately false.
+    pub scoring_enabled: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WheelieNotification {
+    /// 001e5260 refreshes the original "Wheelie" text on every scoring tick.
+    Name,
+    /// 001e70e0 adds these binary32 points directly to entity+104.
+    Finished { points: f32 },
+    /// 001e8a20 requests failure animation but credits no wheelie points.
+    Failed,
+}
+
+/// Native actor+914/+918/+91c/+920/+7fc/+928. This is scoring eligibility,
+/// distinct from the rider controller's physical wheelie-assist state.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct WheelieState {
+    pub armed: bool,
+    pub eligible: bool,
+    pub elapsed: f32,
+    pub points: f32,
+    pub grace: f32,
+    pub active_this_tick: bool,
+}
+impl Default for WheelieState {
+    fn default() -> Self {
+        // Exact constructor001e1b10, no inferred initial score or grace.
+        Self {
+            armed: false,
+            eligible: false,
+            elapsed: 0.,
+            points: 1.,
+            grace: 0.5,
+            active_this_tick: false,
+        }
+    }
+}
+impl WheelieState {
+    /// Wheelie section001e6450..001e6600, after the native actor update clears
+    /// +928. Strict duration/pitch tests and exact grace comparison are retained.
+    pub fn update(&mut self, dt: f32, input: WheelieInput) -> Result<Vec<WheelieNotification>> {
+        if !dt.is_finite() || dt < 0. || !input.pitch.is_finite() {
+            return Err("invalid wheelie scoring input/time step".into());
+        }
+        self.active_this_tick = false;
+        if input.grounded[0] || input.grounded[1] {
+            if !self.eligible {
+                // Native does NOT reset elapsed or grace for an unscored attempt.
+                self.armed = false;
+            } else if self.grace <= 0. {
+                return Ok(self.finish().into_iter().collect());
+            } else {
+                self.grace -= dt;
+            }
+        } else if self.grace == 0.5
+            && input.grounded[2]
+            && input.grounded[3]
+            && input.pitch > WHEELIE_PITCH_THRESHOLD
+            && input.context_allows
+        {
+            if !self.armed {
+                self.points = 1.;
+                self.armed = true;
+            }
+            if self.elapsed > 1. && input.scoring_enabled {
+                self.eligible = true;
+                self.points += 50. * dt;
+                self.active_this_tick = true;
+                self.elapsed += dt;
+                return Ok(vec![WheelieNotification::Name]);
+            }
+            self.elapsed += dt;
+        }
+        Ok(vec![])
+    }
+    /// 001e70e0: front-contact grace expiry or accepted airborne stunt. The
+    /// caller credits the shared stunt scoreboard and invokes native HUD logic.
+    pub fn finish(&mut self) -> Option<WheelieNotification> {
+        let event = (self.armed && self.eligible).then_some(WheelieNotification::Finished {
+            points: self.points,
+        });
+        self.armed = false;
+        self.eligible = false;
+        self.elapsed = 0.;
+        self.grace = 0.5;
+        // +920 and +928 are left intact by the native finish function.
+        event
+    }
+    /// 001e8a20 clears the wheelie attempt without adding its pending points.
+    pub fn wreck(&mut self) -> Option<WheelieNotification> {
+        let event = self.eligible.then_some(WheelieNotification::Failed);
+        self.armed = false;
+        self.eligible = false;
+        self.elapsed = 0.;
+        self.grace = 0.5;
+        event
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Notification {
@@ -111,6 +225,16 @@ fn integer_points(points: f32) -> Result<f32> {
     Ok((points as i32) as f32)
 }
 impl State {
+    /// 001e70e0 bypasses generic stunt integer quantization and combo/repeat
+    /// accounting. Merge its award into the same native entity+104 accumulator.
+    pub fn credit_wheelie_points(&mut self, points: f32) -> Result<()> {
+        let total = self.committed_points + points;
+        if !points.is_finite() || points < 0. || !total.is_finite() || total >= 2_147_483_648. {
+            return Err("invalid wheelie score award".into());
+        }
+        self.committed_points = total;
+        Ok(())
+    }
     /// Consumers drain once per simulation frame, including batched updates.
     pub fn take_notifications(&mut self) -> Vec<Notification> {
         std::mem::take(&mut self.notifications)
@@ -351,6 +475,133 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn wheelie_input() -> WheelieInput {
+        WheelieInput {
+            grounded: [false, false, true, true],
+            pitch: 0.7,
+            context_allows: true,
+            scoring_enabled: true,
+        }
+    }
+    #[test]
+    fn native_default_does_not_award_wheelies() {
+        let mut state = WheelieState::default();
+        let input = WheelieInput {
+            scoring_enabled: DEFAULT_WHEELIE_SCORING,
+            ..wheelie_input()
+        };
+        for _ in 0..120 {
+            assert!(state.update(1. / 60., input).unwrap().is_empty());
+        }
+        assert!(state.elapsed > 1. && state.armed);
+        assert!(!state.eligible && !state.active_this_tick);
+        assert_eq!(state.points, 1.);
+        assert!(state.finish().is_none());
+    }
+    #[test]
+    fn wheelie_pitch_and_previous_duration_tests_are_strict() {
+        let mut state = WheelieState::default();
+        let equal = WheelieInput {
+            pitch: WHEELIE_PITCH_THRESHOLD,
+            ..wheelie_input()
+        };
+        state.update(2., equal).unwrap();
+        assert_eq!(state.elapsed, 0.);
+        let above = WheelieInput {
+            pitch: f32::from_bits(WHEELIE_PITCH_THRESHOLD.to_bits() + 1),
+            ..wheelie_input()
+        };
+        assert!(state.update(1., above).unwrap().is_empty());
+        assert!(state.update(0.125, above).unwrap().is_empty());
+        assert_eq!(
+            state.update(0.125, above).unwrap(),
+            vec![WheelieNotification::Name]
+        );
+        assert_eq!(state.points, 7.25);
+    }
+    #[test]
+    fn wheelie_grace_expires_on_next_front_contact_and_freezes_airborne() {
+        let mut state = WheelieState {
+            armed: true,
+            eligible: true,
+            elapsed: 2.,
+            points: 20.25,
+            ..WheelieState::default()
+        };
+        let front = WheelieInput {
+            grounded: [true, false, true, true],
+            ..wheelie_input()
+        };
+        assert!(state.update(0.5, front).unwrap().is_empty());
+        assert_eq!(state.grace, 0.);
+        assert!(
+            state
+                .update(
+                    1.,
+                    WheelieInput {
+                        grounded: [false; 4],
+                        ..front
+                    }
+                )
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(state.grace, 0.);
+        assert_eq!(
+            state.update(0., front).unwrap(),
+            vec![WheelieNotification::Finished { points: 20.25 }]
+        );
+        assert_eq!(state.grace, 0.5);
+        assert_eq!(state.elapsed, 0.);
+        assert!(!state.armed && !state.eligible);
+    }
+    #[test]
+    fn unscored_front_contact_leaves_accumulated_duration_intact() {
+        let mut state = WheelieState::default();
+        state.update(0.8, wheelie_input()).unwrap();
+        state
+            .update(
+                1.,
+                WheelieInput {
+                    grounded: [true; 4],
+                    ..wheelie_input()
+                },
+            )
+            .unwrap();
+        assert_eq!(state.elapsed, 0.8);
+        assert!(!state.armed);
+        assert!(state.update(0.3, wheelie_input()).unwrap().is_empty());
+        assert_eq!(
+            state.update(0.25, wheelie_input()).unwrap(),
+            vec![WheelieNotification::Name]
+        );
+        assert_eq!(state.points, 13.5);
+    }
+    #[test]
+    fn wheelie_wreck_discards_award_without_clearing_native_point_or_activity_fields() {
+        let mut state = WheelieState {
+            armed: true,
+            eligible: true,
+            elapsed: 2.,
+            points: 25.,
+            active_this_tick: true,
+            ..WheelieState::default()
+        };
+        assert_eq!(state.wreck(), Some(WheelieNotification::Failed));
+        assert_eq!(state.points, 25.);
+        assert!(state.active_this_tick);
+        assert_eq!(state.elapsed, 0.);
+        assert_eq!(state.grace, 0.5);
+        assert!(state.finish().is_none());
+    }
+    #[test]
+    fn wheelie_award_joins_shared_score_without_integer_quantization() {
+        let mut state = State::default();
+        state.credit_wheelie_points(10.25).unwrap();
+        state.credit_wheelie_points(5.125).unwrap();
+        assert_eq!(state.frame().committed_points, 15.375);
+        assert!(!state.frame().active && state.events().is_empty());
+    }
     fn rider_frame(id: usize, started: bool, holding: bool) -> crate::stunt::Frame {
         crate::stunt::Frame {
             id,

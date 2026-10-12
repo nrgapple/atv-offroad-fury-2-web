@@ -21,6 +21,7 @@ name = "atv-tools"
 version = "0.1.0"
 dependencies = [
  "atv-core",
+ "serde",
  "serde_json",
 ]
 

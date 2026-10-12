@@ -79,3 +79,19 @@ Cancellation, blur/pause clear and manual reset clear touch state; wreck recover
 `tools/test_touch_batches.mjs` replays loaded Caribou resources into two fresh WASM instances and compares all returned frame values at native f32 precision, accounting for the extra JSON round trip. The updated 124-step actual-map sequence agrees between four-step batches and individual calls. Replaying identical per-step packets in all three shifted chunk phases places takeoff inside a batch and checks that the following step retains left lean +0.25 with released right throttle/brake zero. The same controls persist through landing; four cancellation-generation steps are neutral. These are authored-port transport comparisons using original content, not console replay equivalence. No pose or force is injected.
 
 A separate confirmed camera fallback occurred when a right touch was accepted by the generic canvas handler before the right gesture handler became active. Its movement then entered mouse orbit. Gameplay touch can no longer enter that fallback, and touch interaction reacquires gameplay focus. A controlled synthetic blur → touch-down → focus → drag comparison changed the committed code's orbit by −0.2 radians with no preload; patched code kept orbit at zero with preload held, both while Riding. The permanent portrait regression additionally requires right touch alone to resume after blur, then drags both thumbs horizontally/vertically while asserting every submitted orbit remains zero. Original chase-camera movement following body motion is separate; the user's exact physical iOS event sequence remains unverified. Inspected private before/after captures are `work/verification/touch-orbit-before.png` and `touch-orbit-after.png`.
+
+## Immediate right-side throttle (2026-10-12)
+
+At the user's request, a primary press anywhere on the right now requests full
+forward throttle immediately. A backward/downward drag beyond an eight-pixel
+jitter margin requests progressive braking, reaching full brake at seventy
+pixels. The existing Rust direction gate switches to reverse after slowing.
+Returning to the press position requests forward again; release/cancellation
+drops drive. Holding still also braces preload, and the secondary airborne
+finger continues to select tricks independently. This is an explicit mobile
+input adaptation, with no change to the underlying engine/brake behavior.
+
+Unit and actual-WASM Chromium touch checks cover stationary presses at multiple
+right-side positions, forward/reverse direction changes, release, cancellation,
+left-thumb isolation, secondary fingers, focus and pause. The controls page now
+explains press-to-drive and backward drag.

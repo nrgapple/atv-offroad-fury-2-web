@@ -12,11 +12,17 @@ export class TouchInput {
       if (!airborne || this.stunt) return false;
       this.stunt = { id, x, y, axes: null }; return true;
     }
-    this.pointer = { id, x, y, axis: 0 }; this.sampled = false; this.releasePending = false;
+    this.pointer = { id, x, y, axis: 1 }; this.sampled = false; this.releasePending = false;
     return true;
   }
   move(id, x, y) {
-    if (this.pointer?.id === id) this.pointer.axis = clamp((this.pointer.y - y) / 70);
+    if (this.pointer?.id === id) {
+      // Press anywhere on the right to drive. A small touch-jitter margin keeps
+      // a stationary thumb at full throttle; dragging back requests braking,
+      // then the Rust direction gate selects reverse when the ATV has slowed.
+      const back = y - this.pointer.y;
+      this.pointer.axis = back > 8 ? -clamp((back - 8) / 62) : 1;
+    }
     else if (this.stunt?.id === id) {
       const pointer = this.stunt, dx = x - pointer.x, dy = y - pointer.y;
       if (!pointer.axes && Math.hypot(dx, dy) >= 36) pointer.axes = Math.abs(dy) >= Math.abs(dx) ? [0, Math.sign(dy)] : [Math.sign(dx), 0];
@@ -74,7 +80,7 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
     event.preventDefault(); event.stopImmediatePropagation(); touched = true;
     if (!input.begin(event.pointerId, event.clientX, event.clientY, airborne)) return;
     surface.setPointerCapture(event.pointerId); root.classList.add('held');
-    if (input.pointer?.id === event.pointerId) { marker.style.left = `${event.clientX}px`; marker.style.top = `${event.clientY}px`; marker.style.setProperty('--drive', '0px'); }
+    if (input.pointer?.id === event.pointerId) { marker.style.left = `${event.clientX}px`; marker.style.top = `${event.clientY}px`; marker.style.setProperty('--drive', '-30px'); }
     label.textContent = input.stunt ? 'SWIPE' : 'PRELOAD'; refresh();
   };
   const move = event => {
