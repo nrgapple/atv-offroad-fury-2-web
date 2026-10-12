@@ -98,3 +98,13 @@ class PlayerContentTests(unittest.TestCase):
         source = pack_resource([('anim/rider/frider.psg', b'mesh'), ('anim/Rider/frider.mcf', b'catalog'), ('anim/Rider/farms.psg', b'unused'), ('frider.phy', b'unused')])
         result = Resource(compact_player_archive(source, '/RIDER/FRIDER.RES'))
         self.assertEqual([m[0] for m in result.members], ['anim/rider/frider.psg', 'anim/Rider/frider.mcf'])
+
+    def test_motion_package_keeps_catalog_union_and_drops_unused_arm_clips(self):
+        from package_content import compact_rider_motions, pack_resource, Resource
+        catalog = b'[General info]\nNumberOfMotions=2\n[Motion 1]\nVUE=anim\\rider\\ride.vue\n[Motion 2]\nVUE=jump.MOT\n'
+        other = b'[General info]\nNumberOfMotions=1\n[Motion 1]\nVUE=RIDE.MOT\n'
+        source = pack_resource([('anim/ride.mot', b'ride'), ('anim/jump.mot', b'jump'), ('anim/arms.mot', b'unused'), ('riderarmleft.mcf', b'unused')])
+        result = Resource(compact_rider_motions(source, [catalog, other]))
+        self.assertEqual([m[0] for m in result.members], ['anim/ride.mot', 'anim/jump.mot'])
+        with self.assertRaisesRegex(ValueError, 'missing or duplicated'):
+            compact_rider_motions(source, [other.replace(b'RIDE', b'missing')])

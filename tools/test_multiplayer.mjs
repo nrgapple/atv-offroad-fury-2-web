@@ -33,7 +33,7 @@ try{
    await b.evaluate(()=>{window.remoteTrace=[];window.remoteTimer=setInterval(()=>{const s=window.atvTerrainStatus;const p=s.multiplayer?.remote[0];if(p){window.remoteTrace.push({state:p.rider_state,crash:p.crash_serial,quad:p.world_matrix.slice(12,15),rider:p.rider_world_matrix.slice(12,15),spatial:p.spatial,voices:s.audio.multiplayer});if(window.remoteTrace.length>1200)window.remoteTrace.shift();}},50);});
    // Optional two-thumb mode, real touch driving and airborne stunt gesture.
    await a.evaluate(()=>{localStorage.setItem('atv-mobile-one-handed','false');});
-   await a.keyboard.press('Escape');await button(a,'One-handed mobile: On').click();await button(a,'Resume').click();
+   await button(a,'Pause').click();await a.waitForFunction(()=>document.querySelector('#frontend').dataset.page==='pause',null,{timeout:10000});if(await button(a,'One-handed mobile: On').count())await button(a,'One-handed mobile: On').click();await button(a,'Resume').click();
    const cdp=await a.context().newCDPSession(a);
    const touch=(type,points=[])=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:points.map(p=>({radiusX:6,radiusY:6,force:1,...p}))});
    const left={id:1,x:60,y:560},right={id:2,x:310,y:530},drive={...right,y:460};

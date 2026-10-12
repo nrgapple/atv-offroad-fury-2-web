@@ -1,6 +1,6 @@
 {
-  "status": "Water recovery and snow-ramp collision are publicly verified. The multiplayer lobby, two-browser driving, remote wreck presentation and spatial audio pass host integration checks; multiplayer current-main CI and public verification are pending. The browser port remains incomplete.",
-  "working_on": "Complete multiplayer current-main integration and public verification while continuing water presentation and wakes, rendering detail, and the other active original gameplay lanes. Preserve the single-player baseline; racing and authority parity remain unverified.",
+  "status": "Water recovery and snow-ramp collision remain publicly verified. Multiplayer now uses the existing game Worker architecture and passes the full host two-browser/wreck gate; current-main CI and production deployment are pending. The browser port remains incomplete.",
+  "working_on": "Run current-main CI and verify the corrected single-Worker production deployment, then complete public multiplayer browser checks. Continue water presentation and wakes, rendering detail, and other active original gameplay lanes. Racing and authority parity remain unverified.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1717,9 +1717,24 @@
         "Twenty-four original snow-ramp routes pass across desktop and 390px, with wheel/body contacts in both directions on the tested ramp placements."
       ],
       "limitation": "Host-only combined verification. Current-main CI, public deployment and public browser verification for multiplayer are pending. The bounded routes do not establish physical iOS parity, fast-internet or four-player behavior, race modes, player collision, host-authoritative physics, or full-game parity."
+    },
+    {
+      "id": "rust-multiplayer-now-shares-the-existing-game-worker-h-fd0b9c73",
+      "timestamp": "2026-10-12T19:42:33.228587+00:00",
+      "recorded_at": "2026-10-12T19:42:33.228587+00:00",
+      "kind": "verification",
+      "title": "Rust multiplayer now shares the existing game Worker (host verified)",
+      "summary": "A separately deployed relay Worker was rejected by the credential scope, so the authored Rust room service and Durable Object now deploy through the existing game Worker. The live host relay, full two-browser session and remote wreck/audio gate pass with the combined architecture.",
+      "details": [
+        "The game Worker entrypoint exports the compiled Rust lobby Durable Object and routes multiplayer requests internally; CI now packages and deploys one Worker using the existing deployment credential.",
+        "Eleven live workerd room checks, 16 release checks and 6 router checks pass.",
+        "Two browser clients load distinct ATV01/male and ATV02/female rigs, render 13 remote GPU draws, exchange changing movement/orientation and spatial engine audio, and terminate cleanly when the host leaves.",
+        "A touch-driven failed Nac Nac was observed across 278 guest frames through Riding, Airborne and Wreck; crash serial advanced 0\u21921, the detached rider rendered for 46 frames, 14 impact frames played with changing spatial pan, and the guest recovered."
+      ],
+      "limitation": "Host-only verification. Current-main CI and automatic production deployment are pending; the existing public build remains on the previous release. This does not establish public multiplayer availability, fast-internet/four-player behavior, race modes, player-to-player collision, host-authoritative physics or full-game parity."
     }
   ],
-  "updated_at": "2026-10-12T19:04:50.599541+00:00",
+  "updated_at": "2026-10-12T19:42:33.228587+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
