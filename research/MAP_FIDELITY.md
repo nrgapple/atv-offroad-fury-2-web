@@ -256,15 +256,93 @@ with 43 colliders, 123 wheel-support frames, 31 body-contact frames, takeoff at
 step 19 and later landing. The public frontend and copied-link FREE05 multiplayer
 pair pass with 13 remote draws, both rigs, audio and movement.
 
+## Map audio/render configuration audit
+
+A review of the extracted `.scn`/`.toy` configuration for ENV01–ENV08 and
+FREE05 finds nine distinct map/config pairs: the eight `envNNfr.scn/.toy` pairs
+and Vancouver's `free05.scn/.toy` pair. It is a configuration audit, not a
+complete inventory of runtime events. All nine scene files name terrain, sky,
+ecosystem and particle-texture
+resources. ENV04/05/07/08 point to water files; FREE05's water filename is
+blank. Ambient and directional base-light records appear in each scene. Five
+scenes additionally declare 140 object-point lights in total: ENV03 30, ENV04
+5, ENV05 1, ENV07 14 and FREE05 90. The FREE05 records also carry light-flare
+attributes. Their presence in source configs does not prove the browser currently
+renders each light, flare or callback faithfully.
+
+Only ENV01 and ENV04 explicitly store fog visibility and haziness in these
+files; the other seven provide fog color without those fields. Explicit rain
+sections appear in ENV04 and ENV05 with chance 0, and ENV07/ENV08 with chance
+0.1; the other five have no rain section in the audited SCN. This is a declaration
+census, not proof of runtime weather policy or a map's full set of weather
+effects. Detail/fog rendering and light behavior remain subject to the limits
+above.
+
+There are no map-level sound/audio/music keys or `[Sounds]` declarations in the
+nine `.scn` files. The original ambient-sound reader `002053d0` reads
+`[Sounds].NumAmbientSounds` with default zero, so these files declare no
+per-map ambient entries on that reader path. Among the nine `.toy` files, only
+Arlington/ENV08 declares looping sounds: eleven animation-bound loop records
+reference three original train samples. This train audio route is separately
+reconstructed and documented in [Audio reconstruction](AUDIO.md). The other
+eight TOY files contain no sound/audio fields. Model-archive bindings, global
+music selection and dynamic event dispatch remain outside this config census;
+it does not establish that the maps have no audio.
+
+## Host Sun-lit vegetation sample gate
+
+A separate host-only candidate compares 600 selected directional vegetation
+lighting cases. The expanded native probe includes the original light base
+constructor `00137ca0`, validating its missing/zero-look fallback to native
+direction +X rather than supplying initial object state. It matches 303,599
+original EE and 12,600 VU instructions with zero directional-vector bit
+differences and zero packed-color byte differences, including the zero-look
+case. The expanded actual-GPU run also passes all 600 cases with zero byte
+differences. The probe uses decoded normals and instance basis; it does not
+execute the complete frame callback or establish whole-scene lighting,
+vegetation LOD or PS2 hardware equivalence. Source tree lighting is not complete.
+
+Focused browser checks pass source blending, fog, depth and renderer-state
+isolation. The three host captures report 2,176 ENV01, 1,167 ENV04 and 4,251
+FREE05 contributing pixels; these are test contributions, not full-scene scores.
+All nine maps load and drive. Material checks pass with 2,604 rain, 73,970 lava,
+6,335 waterflow and 115,571 ski-jump pixels plus pause/context retention.
+Vancouver desktop/390px passes with all 78 placements drawn, 43 colliders, 123
+wheel-support frames, 31 body-contact frames, takeoff at step 19, landing, ATM
+animation and the default-unlocked menu route. A copied-link FREE05 multiplayer
+pair passes with 13 draws per client, both rigs, audio and host cleanup. The
+original-map touch test passes 124 steps batched versus sequential and restores
+initial world clocks on fresh instances for shifted-phase replay. Fog sampling
+passes 3,000 GPU bytes with zero difference and the affine sample at 55.
+
+`make check` passes 311 core, 25 network, 3 relay, 13 bridge and 68 JavaScript
+tests; formatting/Clippy, setup, 17 release, 6 Worker and hygiene checks pass.
+The reflection gate passes ENV01's 88 groups/275 instances/141,770 pixels and
+FREE05's three groups/78 instances/236,380 pixels, with 2,304 GPU comparisons
+and maximum UV error `7.152557e-7`. The frontend gate passes original
+title/menu/controller/mobile-touch/pause/Tioga/Caribou/no-disc routes. This
+candidate and its inspected screenshot remain host-only WIP, not a public release.
+
+The four-step WASM benchmark measures the selected operation plus output copy,
+using five alternating runs of 200 batches after 30 warmups with the full
+vegetation proxy loaded. Measured per-four-step batch times are ENV01 0.8435 to
+0.479 ms (43.21% less batch time), ENV04 0.8115 to 0.448 ms (44.79% less),
+ENV08 0.912 to 0.506 ms (44.52% less), and FREE05 0.800 to 0.4395 ms (45.06% less).
+Loading, rendering,
+workers and phones are excluded, so these are not
+end-to-end game-performance results. Across 1,200 steps with counts 1–4, every
+output f32 field remains bit-equivalent; frame and camera decimal outputs match
+the current sequential implementation.
+
 ## Remaining fidelity gates
 
-The fog/reflection path is now public at e18a371e. Original hardware equivalence
+The fog/reflection path is public at e18a371e. Original hardware equivalence
 remains open. Native terrain and water GS precision, source-specific precision,
 active-view overrides and weather callbacks remain unverified. Source vegetation
-material work is a separate host-only WIP. Lighting is still under research:
-ambient prototype tests validate supplied zero directional weights only; they
-do not establish source tree lighting, and the recovered global Sun matrices
-still need to be incorporated into the prototype. Terrain projected pass selection and
+material work is a separate host-only WIP. Selected directional Sun vegetation
+cases now pass the bounded host checks above, but they do not validate the full
+inherited Sun callback/global frame path or establish complete source tree
+lighting. Terrain projected pass selection and
 adaptive LOD, vegetation visibility, point lights, random weather/lens effects, shadows, remaining
 ambient emitters and actors, shader families and gameplay modes remain incomplete.
 Original dynamic assets and configuration presence do not establish that they
