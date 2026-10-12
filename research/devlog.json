@@ -941,9 +941,27 @@
       "limitation": "This checkpoint is host-only; public deployment and the current eight-map run are pending. Residual tire overlap and incline-turn behavior need further assessment. Level-grid and water-height modules have isolated verification but are not connected to live gameplay.",
       "image": "/devlog-images/the-missing-suspension-travel-stop-is-now-connected-e8549bf7.png",
       "caption": "Inspected host landing capture after connecting the recovered travel stop. Measured peak tire overlap is reduced but remains present; public release pending."
+    },
+    {
+      "id": "the-suspension-stop-and-obstruction-camera-are-verifie-3f22c762",
+      "timestamp": "2026-10-12T03:42:04.463686+00:00",
+      "recorded_at": "2026-10-12T03:44:47.363530+00:00",
+      "kind": "verification",
+      "title": "The suspension stop and obstruction camera are verified publicly",
+      "summary": "The public Rust reconstruction now includes the recovered suspension travel stop and camera obstruction gate. The landing reproduction improves substantially, while measurable tire overlap remains.",
+      "details": [
+        "Public release c0810ab92bb1529a8558a7edaf83d72a558495b2 passed GitHub Actions run 38200640787. Public clean landing and Nac Nac \u2192 wreck \u2192 contact \u2192 reset \u2192 resumed driving checks passed.",
+        "The complete public eight-map run passed loading and driving in ENV01\u2013ENV08, with batched vegetation, moving full-sample terrain and no browser or WebGL errors.",
+        "The public landing measurement improved peak actual tire-vertex clearance from -1.9423218 feet to -0.47921753 feet. Negative clearance still means overlap; the clipping issue is reduced rather than eliminated.",
+        "Public HTTPS verification matched 25 authored static files and 305 served runtime/gallery objects, including 57 existing entries and 52 screenshots. Those counts describe the release before this new checkpoint.",
+        "A separate host W-D-A hill-turn trace traversed 14.29 feet of altitude with 117 riding frames and worst overlap -0.319519 feet, then wrecked into scenery. It is mixed driving evidence, not an isolated incline validation."
+      ],
+      "limitation": "Residual tire overlap, complete incline-turn behavior and whole-game handling parity remain unproven. The obstruction camera and suspension checks validate selected recovered components, not complete game equivalence.",
+      "image": "/devlog-images/the-suspension-stop-and-obstruction-camera-are-verifie-3f22c762.png",
+      "caption": "Inspected public release capture after the recovered suspension stop: peak measured tire overlap is reduced to about 0.48 feet, but remains unresolved."
     }
   ],
-  "updated_at": "2026-10-12T03:33:22.792154+00:00",
+  "updated_at": "2026-10-12T03:44:47.363530+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

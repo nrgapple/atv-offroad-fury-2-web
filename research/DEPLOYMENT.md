@@ -385,3 +385,22 @@ archive prepared.
 GitHub's [artifact download documentation](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)
 and [GitHub CLI documentation](https://cli.github.com/manual/gh_run_download)
 describe the authenticated CI artifact retrieval used by an updater.
+
+## Suspension travel stops and obstruction camera (2026-10-12)
+
+Gameplay `c0810ab92bb1529a8558a7edaf83d72a558495b2` passed
+[CI 38200640787](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38200640787)
+and deployed through the existing production job. Public HTTPS verification
+matched all 25 authored/static file hashes and 305 served runtime/gallery objects,
+with 57 log entries and 52 inspected screenshots. The R2-only upload contains 306
+approved objects including its internal gallery metadata, totaling 273140944 bytes.
+
+Public no-disc Chromium checks passed all eight environments, a real-touch clean
+preload landing, and failed Nac Nac → rider separation/contact → automatic recovery
+→ resumed driving, with no JavaScript/WebGL errors. Comparing transformed tire
+vertices to original terrain in the public landing trace found a minimum clearance
+of -0.47921753 feet, improved from the earlier -1.9423218 feet. Residual overlap is
+explicitly unfinished. The host steering capture covers changing elevation and
+turning, but includes a scenery collision and is not an isolated incline proof.
+Native instruction comparisons establish the restored travel-stop actor and wreck
+camera components; these browser checks do not prove complete original handling.

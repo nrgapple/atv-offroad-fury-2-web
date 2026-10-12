@@ -9,7 +9,7 @@ Priority order: wrecks/recovery, stunts, ATV/rider animation, HUD,
 terrain/static collisions, terrain detail/LOD, original vegetation placements.
 Full parity remains the goal; component checks do not establish whole-game parity.
 
-Latest public gate: `02fdf5180ed3138db6b08196b0ec8a5e3dd7f706`, CI38198295882 successful; gameplay remains91b60c4. Public wreck/clean-landing/all-eight-map tests passed; 25 static hashes and302 served runtime/gallery objects verified (54log entries,49screenshots).
+Latest public gate: `c0810ab92bb1529a8558a7edaf83d72a558495b2`, CI38200640787 successful. Public wreck/clean-landing/all-eight-map tests passed; 25 static hashes and305 served runtime/gallery objects verified (57log entries,52screenshots, before the new verification entry). Public measured landing overlap is now0.4792ft; the user issue is improved, not fully solved.
 
 Latest user steering: ATV clips into terrain on landing and turning across
 inclined sides. The missing original four-point suspension travel-stop actor is
@@ -20,7 +20,7 @@ improved from -1.9423ft to -0.4836ft minimum clearance in the clean ramp landing
 Residual overlap remains; this is not complete penetration or handling parity.
 No speculative ride-height clamp was added.
 
-Follow-on host gate: 195 core + 2 WASM tests, strict Clippy, formatting, web build,
+Suspension release gate: 195 core + 2 WASM tests, strict Clippy, formatting, web build,
 31 JS tests, 10 release tests, Worker tests and setup/repository checks pass.
 Real-touch clean landing and failed Nac Nac → separation/contact/recovery/driving
 pass. All eight environments load and drive without JS/GL errors. The first run
@@ -33,10 +33,10 @@ to live scene collision/water. Native actor dt uses a smoothed frame timer; a fi
 
 Active claims for this thread:
 - Wreck/collision agent: private coupled original-quad replay and remaining landing divergence.
-- Stunt/animation agent: native hand-axis initialization and foot-IK activation audit.
+- HUD agent: native wheelie scoring/display path. The animation audit recovered +Y/−Y hand hinges and confirmed normal modes disable them; narrow API/test changes are validated and pending commit.
 - Movement agent: original water initialization, ripple and frame updates.
 - Root: vehicle.rs, camera.rs, scene/obstacle integration, WASM, browser verification and delivery.
-- Lighter logger completed three inspected host checkpoints, including before/after landing screenshots; public verification remains pending.
+- Lighter logger completed the inspected public suspension/camera verification entry; metadata publication is next.
 
 The other thread committed audio/music/menu/browser changes as 0906822 and its public verification as 1de08b2. Preserve those changes.
 Coordinate before editing/staging atv-web/src/lib.rs, web/game.js,
