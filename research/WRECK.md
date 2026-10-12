@@ -51,8 +51,11 @@ attached separation to independent airborne/ground behavior. Separation complete
 when the selected clip has 0.5 seconds remaining; it is not one fixed ejection delay.
 `001eff20` supplies vehicle velocity plus separation root-motion velocity at detach.
 The rider uses 13 original bone-local terrain contact points and its own rigid body.
-Supported static type-0 props now receive the rider collision spokes. Water,
-moving props and compound/dynamic collision are not yet connected. A separate
+Supported static type-0 props now receive the rider collision spokes; active
+wrecks use the Vehicle's shared scene cache with the native inclusive rider
+distance gate. Dynamic water contacts are connected as described in
+[water evidence](WATER.md). Physical vegetation proxies, moving props and
+compound/dynamic collision are not yet connected. A separate
 native wreck camera now tracks both the ATV and rider during this sequence.
 
 ## Validation scope
@@ -135,6 +138,28 @@ nearest-hit results for each object and calls `001148c0` through `00117830`;
 contact records. Prior-object nearest hits must not be carried into the next
 object. The Rust static-segment path now preserves these per-object resets,
 mesh-child order and contact order, reusing the recovered flat-face kernel.
+
+The active-wreck caller now borrows the quad/recovery `SceneCollision` cache
+instead of scanning every ordinary prop. `00327360` derives its current actor
+sphere from the thirteen animated world endpoints; `0011fd30` includes nodes
+at exactly that radius and rechecks current ordinary eligibility even on cache
+reuse. A rider refresh can remove actor-excluded nodes from shared membership;
+a subsequent quad reuse does not restore them. The actor sphere uses binary32
+XYZ square accumulation, matching 500 original endpoint-copy/preparation cases
+and 1,112,500 instructions with zero compared center/radius mismatches. The
+bound-result reset service is hooked in that component proof. Existing static
+spoke/geometry comparisons below remain separate proofs.
+
+`Animator::step_with_scene` retains direct fallback when no shared scene is
+provided. Scene diagnostics distinguish ordinary selections, retained plants,
+and configured but unsupported plant proxies. The boundary block explicitly
+sets/clears both quad and rider actor `bf.0`; the bridge passes that paired flag
+without changing collector `+82c`. General game `+674` initialization remains
+unverified. Explicit ordinary-index exclusions are supported, but native `MUD`
+category transport is not yet connected: command49 does not carry placement
+names or the original game `+584` base-name provenance. No filename heuristic
+is applied. Normal riding rider collider/physics updates remain separate from
+this active-wreck integration.
 
 Static prop contacts feed the same independent body solver, with the rider's
 0.25 positional correction, zero reflection and default surface-0 grip 0.2.

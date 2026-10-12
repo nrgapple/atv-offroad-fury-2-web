@@ -577,6 +577,15 @@ impl Vehicle {
     pub fn set_materials(&mut self, materials: [TerrainMaterial; 8]) {
         self.materials = Some(materials);
     }
+    ///001e4c90/001ee630 bind the rider to this same cache, including during
+    ///separation and recovery. Borrow it; cloning would split actor membership.
+    pub fn scene_collision_mut(&mut self) -> Option<&mut crate::scene_collision::SceneCollision> {
+        self.scene_collision.as_mut()
+    }
+    ///Direct-query consumers borrow the partition without touching this cache.
+    pub fn scene_collision(&self) -> Option<&crate::scene_collision::SceneCollision> {
+        self.scene_collision.as_ref()
+    }
     ///001e8a20 selects the AO obstacle hull during a wreck; normal riding uses AR.
     pub fn set_wreck_rays(
         &mut self,

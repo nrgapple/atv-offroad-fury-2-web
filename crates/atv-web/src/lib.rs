@@ -563,7 +563,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                             .reset(nodes)?;
                     }
                     update_wheelie(sim.rider_animator.as_mut(), &frame, dt)?;
-                    wreck.step_with_water(
+                    wreck.step_with_scene(
                         dt,
                         atv_core::wreck_animation::VehicleMotion {
                             world: vehicle_world(&frame),
@@ -574,6 +574,8 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         terrain,
                         sim.materials.as_ref().ok_or("missing terrain materials")?,
                         sim.water.as_ref(),
+                        vehicle.scene_collision_mut(),
+                        frame.skip_vegetation_query,
                     )?;
                     let grounded = wreck.frame().is_some_and(|f| f.grounded);
                     if vehicle.advance_wreck(dt, grounded)? {
@@ -840,11 +842,17 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         .wreck_camera
                         .as_mut()
                         .ok_or("wreck camera missing")?
-                        .step(actors, basis[2], json_number(&value, "dt")?, |point| {
-                            Ok(terrain
-                                .contact(point[0], point[2])?
-                                .map_or(point[1], |c| c.height))
-                        })?;
+                        .step_with_scene(
+                            actors,
+                            basis[2],
+                            json_number(&value, "dt")?,
+                            |point| {
+                                Ok(terrain
+                                    .contact(point[0], point[2])?
+                                    .map_or(point[1], |c| c.height))
+                            },
+                            sim.vehicle.as_ref().and_then(Vehicle::scene_collision),
+                        )?;
                     let mut output = serde_json::to_value(frame).map_err(|e| e.to_string())?;
                     output["mode"] = serde_json::json!("wreck");
                     output["motion_blocked"] = serde_json::json!(
@@ -852,6 +860,12 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                             .as_ref()
                             .is_some_and(|camera| camera.motion_blocked())
                     );
+                    output["scene_query"] = serde_json::to_value(
+                        sim.wreck_camera
+                            .as_ref()
+                            .and_then(|camera| camera.scene_query()),
+                    )
+                    .map_err(|error| error.to_string())?;
                     return serde_json::to_vec(&output).map_err(|e| e.to_string());
                 }
                 sim.wreck_camera = None;

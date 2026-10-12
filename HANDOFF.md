@@ -1,5 +1,23 @@
 # Implementation handoff
 
+Next host-verified component: the active wreck rider now borrows the Vehicle's
+shared scene cache, using its animated thirteen-spoke bounds and inclusive/current
+eligibility rules. The wreck camera uses its independent original partition query
+and retains the obstruction latch. Native probes match 500 rider spheres,
+12 paired boundary flag cases and 120 oblique camera queries; original-content
+probes cover 1,694 poses and five recovery directions with an empty scene.
+The combined build passes 251 core + 2 WASM tests, strict Clippy/formatting,
+39 JS tests, 10 release/4 Worker checks and setup/hygiene. Serial host checks pass
+clean landing, failed Nac Nac separation/ground/recovery/driving, paired boundary
+flags and recovery, all eight maps, diagnostics and saved one-handed controls.
+Landing overlap remains 0.393066ft across 201 riding frames with none skipped.
+Three concurrent host startup runs timed out without browser errors; a fresh
+single run and the subsequent serial suite pass, but concurrency is unverified.
+This component is pending public release. Normal riding rider collision, MUD
+metadata, custom masks, physical plant proxies, dynamic objects and full original
+replay parity remain incomplete. See [scene integration](research/SCENE_INTEGRATION.md)
+and [camera](research/CAMERA.md).
+
 Latest verified public gameplay gate: `f27869c84b1ea09a8425de50b6bdf50935d2ba54`,
 CI `38210131335` success. Source-verified spring torque now preserves the
 Model inverse-transform order. A single original static/ESB partition and 40/50ft

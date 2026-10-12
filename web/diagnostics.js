@@ -87,6 +87,10 @@ export class DiagnosticsOverlay {
       `Vegetation ${s.vegetationVisible ?? 0}/${s.vegetationPlacements ?? 0}  Batches ${s.vegetationDraws ?? 0}`,
       `Terrain updates ${s.terrainDetailUpdates ?? 0}  GL ${s.glError ?? 0}`,
     );
+    if (this.mode === 'debug' && f?.rider_wreck) {
+      const query = f.rider_wreck.scene_query;
+      lines.push(`Rider cache ${query?.cached ? query.cached_nodes : 'off'}  Props ${query?.selected_static ?? 0}  Proxy gaps ${query?.unsupported_vegetation_proxies ?? 0}`);
+    }
     this.element.textContent = lines.join('\n');
   }
 }

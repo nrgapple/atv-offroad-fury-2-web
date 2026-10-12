@@ -57,6 +57,21 @@ pub struct Frame {
     pub origin: Vec3,
     pub linear_velocity: Vec3,
     pub center_of_mass: Vec3,
+    pub scene_query: SceneQueryFrame,
+}
+///Current rider actor query, distinct from the preceding quad query. Plants
+///remain candidates; configured physical proxies are counted as unsupported.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct SceneQueryFrame {
+    pub cached: bool,
+    pub refreshed: bool,
+    pub cached_nodes: usize,
+    pub selected_static: usize,
+    pub vegetation_candidates: usize,
+    pub unsupported_vegetation_proxies: usize,
+    pub skip_vegetation_query: bool,
+    pub center: Vec3,
+    pub radius: f32,
 }
 #[derive(Clone, Copy)]
 struct ContactPoint {
@@ -123,6 +138,8 @@ pub struct Animator {
     water_touching: bool,
     water_contact_count: usize,
     obstacles: Vec<crate::obstacle::StaticObstacle>,
+    static_exclusions: Vec<usize>,
+    scene_query: SceneQueryFrame,
     active: bool,
 }
 impl Animator {
@@ -206,6 +223,8 @@ impl Animator {
             water_touching: false,
             water_contact_count: 0,
             obstacles: Vec::new(),
+            static_exclusions: Vec::new(),
+            scene_query: SceneQueryFrame::default(),
             active: false,
         })
     }
@@ -216,6 +235,19 @@ impl Animator {
     /// placements as the ATV. Content and candidate filtering stay with caller.
     pub fn set_static_obstacles(&mut self, obstacles: Vec<crate::obstacle::StaticObstacle>) {
         self.obstacles = obstacles;
+        self.static_exclusions.clear();
+    }
+    ///Explicit actor exclusion metadata in the ordinary loader's index space.
+    ///Do not infer the native MUD category from an unverified collision filename.
+    ///The live transport currently supplies no exceptional category/object list.
+    pub fn set_static_exclusions(&mut self, mut indices: Vec<usize>) -> Result<()> {
+        if indices.iter().any(|&index| index >= self.obstacles.len()) {
+            return Err("rider static exclusion outside supplied scene".into());
+        }
+        indices.sort_unstable();
+        indices.dedup();
+        self.static_exclusions = indices;
+        Ok(())
     }
     pub fn reset(&mut self) {
         self.active = false;
@@ -231,6 +263,7 @@ impl Animator {
         self.static_contact_count = 0;
         self.water_touching = false;
         self.water_contact_count = 0;
+        self.scene_query = SceneQueryFrame::default();
     }
     pub fn begin(
         &mut self,
@@ -259,6 +292,7 @@ impl Animator {
         self.static_contact_count = 0;
         self.water_touching = false;
         self.water_contact_count = 0;
+        self.scene_query = SceneQueryFrame::default();
         self.active = true;
         let clip = match kind {
             crate::wreck::Kind::Front => 8,
@@ -315,6 +349,7 @@ impl Animator {
             origin: [self.world[12], self.world[13], self.world[14]],
             linear_velocity: self.body.as_ref().map_or([0.; 3], |b| b.linear_velocity),
             center_of_mass: self.config.center_of_mass,
+            scene_query: self.scene_query,
         })
     }
     /// Animation and independent rider-body step. `vehicle_world` is used only
@@ -340,6 +375,23 @@ impl Animator {
         materials: &[crate::materials::TerrainMaterial; 8],
         water: Option<&crate::water_animation::LiveField>,
     ) -> Result<()> {
+        self.step_with_scene(dt, vehicle, nodes, terrain, materials, water, None, false)
+    }
+    ///00193b40 prioritizes the attached shared-cache binding over direct query.
+    ///Caller borrows the Vehicle's exact scene cache throughout wreck phases;
+    ///the actor query bit controls plant expansion independently of the cache.
+    #[allow(clippy::too_many_arguments)]
+    pub fn step_with_scene(
+        &mut self,
+        dt: f32,
+        vehicle: VehicleMotion,
+        nodes: &[Node],
+        terrain: &crate::terrain::Terrain,
+        materials: &[crate::materials::TerrainMaterial; 8],
+        water: Option<&crate::water_animation::LiveField>,
+        scene: Option<&mut crate::scene_collision::SceneCollision>,
+        skip_vegetation_query: bool,
+    ) -> Result<()> {
         if !self.active {
             return Ok(());
         }
@@ -356,7 +408,16 @@ impl Animator {
             self.select(self.phase, clip);
         }
         let pose = self.current.pose(nodes)?;
-        let last_contacts = self.step_body(dt, &pose, terrain, materials, !attached, water)?;
+        let last_contacts = self.step_body_with_scene(
+            dt,
+            &pose,
+            terrain,
+            materials,
+            !attached,
+            water,
+            scene,
+            skip_vegetation_query,
+        )?;
         let saved_pelvis = multiply(self.world, pose.world_matrices[0]);
         //001ee990 performs physics and saves Pelvis before advancing animation.
         //Category changes request the next clip on the following outer frame.
@@ -437,6 +498,7 @@ impl Animator {
         self.pending_clip = Some(if with_motion { 4 + next } else { next });
         Ok(())
     }
+    #[cfg(test)]
     fn step_body(
         &mut self,
         dt: f32,
@@ -445,6 +507,20 @@ impl Animator {
         materials: &[crate::materials::TerrainMaterial; 8],
         gravity: bool,
         water: Option<&crate::water_animation::LiveField>,
+    ) -> Result<usize> {
+        self.step_body_with_scene(dt, pose, terrain, materials, gravity, water, None, false)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn step_body_with_scene(
+        &mut self,
+        dt: f32,
+        pose: &Pose,
+        terrain: &crate::terrain::Terrain,
+        materials: &[crate::materials::TerrainMaterial; 8],
+        gravity: bool,
+        water: Option<&crate::water_animation::LiveField>,
+        scene: Option<&mut crate::scene_collision::SceneCollision>,
+        skip_vegetation_query: bool,
     ) -> Result<usize> {
         //001469e0 obtains position/orientation from the Model scene on every
         //step. Root rebasing changes that scene basis without rotating stored
@@ -465,7 +541,7 @@ impl Animator {
         recenter_body(body, &mut self.config, center);
         let mut contacts = self.terrain_points(pose, terrain, materials)?;
         let terrain_count = contacts.len();
-        contacts.extend(self.static_points(pose)?);
+        contacts.extend(self.static_points_with_scene(pose, scene, skip_vegetation_query)?);
         self.grounded = false;
         self.contact_count = 0;
         self.static_contact_count = 0;
@@ -570,10 +646,12 @@ impl Animator {
         }
         Ok(last_contacts)
     }
-    fn static_points(&self, pose: &Pose) -> Result<Vec<(Vec3, Vec3, Vec3, f32)>> {
-        if self.obstacles.is_empty() {
-            return Ok(Vec::new());
-        }
+    fn static_points_with_scene(
+        &mut self,
+        pose: &Pose,
+        scene: Option<&mut crate::scene_collision::SceneCollision>,
+        skip_vegetation_query: bool,
+    ) -> Result<Vec<(Vec3, Vec3, Vec3, f32)>> {
         let endpoints: Vec<_> = self
             .points
             .iter()
@@ -588,7 +666,45 @@ impl Animator {
             })
             .collect();
         let rays = rider_static_rays(&endpoints);
-        let contacts = crate::wreck::query_static_segments(&rays, &self.obstacles, 60)?;
+        let (center, radius) = rider_query_sphere(&endpoints);
+        self.scene_query = SceneQueryFrame {
+            center,
+            radius,
+            skip_vegetation_query,
+            ..SceneQueryFrame::default()
+        };
+        let selected = if let Some(scene) = scene {
+            let exclusions = &self.static_exclusions;
+            let query =
+                scene.cached_query(center, radius, |index, _| !exclusions.contains(&index))?;
+            let obstacles =
+                scene.inclusive_static_selection(&query, |index, _| !exclusions.contains(&index));
+            self.scene_query.cached = true;
+            self.scene_query.refreshed = query.refreshed;
+            self.scene_query.cached_nodes = query.candidates.len();
+            self.scene_query.selected_static = obstacles.len();
+            for candidate in query.inclusively_within() {
+                if let crate::scene_collision::SceneNode::Vegetation(index) = candidate.node {
+                    self.scene_query.vegetation_candidates += 1;
+                    if !skip_vegetation_query {
+                        self.scene_query.unsupported_vegetation_proxies +=
+                            scene.vegetation()[index].proxy_count;
+                    }
+                }
+            }
+            obstacles.into_iter().cloned().collect::<Vec<_>>()
+        } else {
+            let obstacles = self
+                .obstacles
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| !self.static_exclusions.contains(index))
+                .map(|(_, obstacle)| obstacle.clone())
+                .collect::<Vec<_>>();
+            self.scene_query.selected_static = obstacles.len();
+            obstacles
+        };
+        let contacts = crate::wreck::query_static_segments(&rays, &selected, 60)?;
         let to_local = inverse(self.world);
         Ok(contacts
             .into_iter()
@@ -645,6 +761,21 @@ pub(crate) fn rider_static_rays(endpoints: &[Vec3]) -> Vec<crate::collision::Col
         .iter()
         .map(|&end| crate::collision::CollisionRay { start: center, end })
         .collect()
+}
+///00327360 derives the actor sphere from the current segment endpoints. Spoke
+///starts lie within these same animated bounds and cannot enlarge the sphere.
+fn rider_query_sphere(endpoints: &[Vec3]) -> (Vec3, f32) {
+    let center = contact_bounds_center(endpoints.iter().copied());
+    let mut low = [f32::MAX; 3];
+    let mut high = [-f32::MAX; 3];
+    for &point in endpoints {
+        for axis in 0..3 {
+            low[axis] = low[axis].min(point[axis]);
+            high[axis] = high[axis].max(point[axis]);
+        }
+    }
+    let half = std::array::from_fn(|axis| (high[axis] - low[axis]) * 0.5);
+    (center, dot(half, half).sqrt())
 }
 /// Native world-axis bounds midpoint, not a mass-weighted centroid. Callers
 /// supply the nonempty, finite animated contact-point list.
@@ -1444,6 +1575,276 @@ mod tests {
             for (a, b) in basis.iter().flatten().zip(body.basis().iter().flatten()) {
                 assert!((a - b).abs() < 1e-5);
             }
+        }
+    }
+    fn collision_scene(
+        obstacles: Vec<crate::obstacle::StaticObstacle>,
+        ecosystem: Option<&crate::ecosystem::Ecosystem>,
+    ) -> crate::scene_collision::SceneCollision {
+        crate::scene_collision::SceneCollision::new(
+            crate::scene_partition::Config {
+                min_x: 0.,
+                max_x: 256.,
+                min_z: 0.,
+                max_z: 256.,
+                cell_size: 32.,
+            },
+            obstacles,
+            ecosystem,
+            false,
+            |_| Ok(0.),
+        )
+        .unwrap()
+    }
+    #[test]
+    fn shared_rider_prop_query_matches_direct_motion_through_detach_and_recovery_binding() {
+        let (mut cached, nodes, terrain, materials) = fixture();
+        let (mut direct, _, _, _) = fixture();
+        let mut prop =
+            crate::wreck::tests::surface([[-30., 20., -30.], [0., 20., 30.], [30., 20., -30.]]);
+        prop.world_matrix[12] = 50.;
+        prop.world_matrix[14] = 50.;
+        cached.set_static_obstacles(vec![prop.clone()]);
+        direct.set_static_obstacles(vec![prop.clone()]);
+        let mut scene = collision_scene(vec![prop], None);
+        let vehicle = start_fixture(&mut cached, &nodes);
+        start_fixture(&mut direct, &nodes);
+        let quad = scene
+            .cached_query([50., 20., 50.], 3., |_, _| true)
+            .unwrap();
+        assert!(quad.refreshed);
+        let mut touched = false;
+        for step in 0..120 {
+            cached
+                .step_with_scene(
+                    1. / 60.,
+                    vehicle,
+                    &nodes,
+                    &terrain,
+                    &materials,
+                    None,
+                    Some(&mut scene),
+                    false,
+                )
+                .unwrap();
+            direct
+                .step(1. / 60., vehicle, &nodes, &terrain, &materials)
+                .unwrap();
+            let mut a = cached.frame().unwrap();
+            let mut b = direct.frame().unwrap();
+            assert!(a.scene_query.cached);
+            assert_eq!(a.scene_query.cached_nodes, 1);
+            assert_eq!(a.scene_query.selected_static, 1);
+            if step == 0 {
+                assert!(!a.scene_query.refreshed);
+                assert!(a.static_contact_count > 0);
+                assert_eq!(a.phase, Phase::Ground);
+            }
+            touched |= a.static_contact_count > 0;
+            a.scene_query = SceneQueryFrame::default();
+            b.scene_query = SceneQueryFrame::default();
+            assert_eq!(format!("{a:?}"), format!("{b:?}"), "rider frame{step}");
+        }
+        assert!(touched);
+        let before = scene
+            .cache()
+            .entries()
+            .iter()
+            .map(|entry| entry.0)
+            .collect::<Vec<_>>();
+        let recovery = scene
+            .cached_query([50., 20., 50.], 20., |_, _| true)
+            .unwrap();
+        assert!(!recovery.refreshed);
+        cached.reset();
+        assert_eq!(
+            scene
+                .cache()
+                .entries()
+                .iter()
+                .map(|entry| entry.0)
+                .collect::<Vec<_>>(),
+            before
+        );
+        start_fixture(&mut cached, &nodes);
+        cached
+            .step_with_scene(
+                1. / 60.,
+                vehicle,
+                &nodes,
+                &terrain,
+                &materials,
+                None,
+                Some(&mut scene),
+                false,
+            )
+            .unwrap();
+        assert!(cached.frame().unwrap().scene_query.cached);
+        assert!(!cached.frame().unwrap().scene_query.refreshed);
+    }
+    #[test]
+    fn rider_inclusive_selection_rechecks_exclusions_and_refresh_affects_shared_membership() {
+        let (mut animator, nodes, terrain, materials) = fixture();
+        let mut prop =
+            crate::wreck::tests::surface([[-30., 20., -30.], [0., 20., 30.], [30., 20., -30.]]);
+        prop.world_matrix[12] = 50.;
+        prop.world_matrix[14] = 50.;
+        animator.set_static_obstacles(vec![prop.clone()]);
+        let mut scene = collision_scene(vec![prop], None);
+        let vehicle = start_fixture(&mut animator, &nodes);
+        scene
+            .cached_query([50., 20., 50.], 3., |_, _| true)
+            .unwrap();
+        animator.set_static_exclusions(vec![0]).unwrap();
+        animator
+            .step_with_scene(
+                1. / 60.,
+                vehicle,
+                &nodes,
+                &terrain,
+                &materials,
+                None,
+                Some(&mut scene),
+                false,
+            )
+            .unwrap();
+        let query = animator.frame().unwrap().scene_query;
+        assert!(query.cached && !query.refreshed);
+        assert_eq!(query.cached_nodes, 1);
+        assert_eq!(query.selected_static, 0);
+        assert_eq!(animator.static_contact_count, 0);
+        //A rider refresh applies its own eligibility to the shared cache; the
+        //following quad reuse must not restore that excluded object's entry.
+        let mut moved = vehicle;
+        moved.world[12] = 100.;
+        animator
+            .step_with_scene(
+                1. / 60.,
+                moved,
+                &nodes,
+                &terrain,
+                &materials,
+                None,
+                Some(&mut scene),
+                false,
+            )
+            .unwrap();
+        assert!(animator.frame().unwrap().scene_query.refreshed);
+        assert!(scene.cache().entries().is_empty());
+        let quad = scene
+            .cached_query([100., 20., 50.], 3., |_, _| true)
+            .unwrap();
+        assert!(!quad.refreshed);
+        assert!(quad.candidates.is_empty());
+    }
+    #[test]
+    fn rider_query_retains_exact_radius_candidate() {
+        use crate::collision::{CollisionMesh, RayTreeNode, Triangle};
+        let (mut animator, nodes, _, _) = fixture();
+        start_fixture(&mut animator, &nodes);
+        let pose = animator.current.pose(&nodes).unwrap();
+        let local_center = contact_bounds_center(animator.points.iter().map(|point| {
+            crate::obstacle::transform_point(&pose.world_matrices[point.node], point.offset)
+        }));
+        //Place this dispatch-only fixture near zero, avoiding loss of radius
+        //bits when constructing the exact-radius point at a large origin.
+        animator.world[12..15].copy_from_slice(&scale(local_center, -1.));
+        let endpoints: Vec<_> = animator
+            .points
+            .iter()
+            .map(|p| {
+                crate::obstacle::transform_point(
+                    &animator.world,
+                    crate::obstacle::transform_point(&pose.world_matrices[p.node], p.offset),
+                )
+            })
+            .collect();
+        let (center, radius) = rider_query_sphere(&endpoints);
+        //A degenerate, skipped face supplies a point sphere at exactly the
+        //rider radius. This tests dispatch eligibility, not a physical contact.
+        let point = add(center, [radius, 0., 0.]);
+        let prop = crate::obstacle::StaticObstacle {
+            mesh: std::rc::Rc::new(CollisionMesh {
+                transform: [0.; 12],
+                vertices: vec![point; 3],
+                vertex_normal_bits: None,
+                triangles: vec![Triangle {
+                    indices: [0, 1, 2],
+                    normal: [0.; 3],
+                    distance: 0.,
+                    invalid_plane_bits: Some([0; 4]),
+                }],
+                broad_phase_nodes: 1,
+                flags: 0,
+                nodes: vec![RayTreeNode {
+                    bound_measure: 0.,
+                    center: point,
+                    half_extents: [0.; 3],
+                    children: [0x8000; 2],
+                }],
+            }),
+            world_matrix: IDENTITY,
+        };
+        animator.set_static_obstacles(vec![prop.clone()]);
+        let mut scene = collision_scene(vec![prop], None);
+        let query = scene.cached_query(center, radius, |_, _| true).unwrap();
+        assert_eq!(query.candidates[0].distance.to_bits(), radius.to_bits());
+        assert!(scene.static_selection(&query).is_empty());
+        animator
+            .static_points_with_scene(&pose, Some(&mut scene), false)
+            .unwrap();
+        assert_eq!(animator.scene_query.selected_static, 1);
+        assert_eq!(animator.scene_query.radius.to_bits(), radius.to_bits());
+    }
+    #[test]
+    fn rider_plant_query_bit_skips_proxy_expansion_without_changing_cache_membership() {
+        use crate::ecosystem::{Ecosystem, Placement, Species};
+        let (mut animator, nodes, terrain, materials) = fixture();
+        let vehicle = start_fixture(&mut animator, &nodes);
+        let eco = Ecosystem {
+            species: vec![Species {
+                slot: 0,
+                model: String::new(),
+                billboard: String::new(),
+                parameters: [0; 23],
+                optional_name: None,
+                proxies: vec![[0; 9]; 2],
+            }],
+            placements: vec![Placement {
+                slot: 0,
+                resample_height: false,
+                coordinates: [12800, 0, 12800],
+                height: 20.,
+                radius: 2.,
+            }],
+            global_name: None,
+            global_word: 0,
+            placement_texture: None,
+        };
+        let mut scene = collision_scene(vec![], Some(&eco));
+        for (skip, unsupported) in [(false, 2), (true, 0), (false, 2)] {
+            animator
+                .step_with_scene(
+                    1. / 60.,
+                    vehicle,
+                    &nodes,
+                    &terrain,
+                    &materials,
+                    None,
+                    Some(&mut scene),
+                    skip,
+                )
+                .unwrap();
+            let frame = animator.frame().unwrap();
+            assert_eq!(frame.scene_query.cached_nodes, 1);
+            assert_eq!(frame.scene_query.vegetation_candidates, 1);
+            assert_eq!(
+                frame.scene_query.unsupported_vegetation_proxies,
+                unsupported
+            );
+            assert_eq!(frame.scene_query.skip_vegetation_query, skip);
+            assert_eq!(frame.static_contact_count, 0);
+            assert_eq!(frame.scene_query.selected_static, 0);
         }
     }
 }

@@ -19,6 +19,13 @@ pub enum SceneNode {
     Vegetation(usize),
 }
 
+/// Direct type-3 camera query, independent of the retained quad/rider cache.
+pub struct DirectCameraQuery<'a> {
+    pub bounds: Bounds,
+    pub radius: f32,
+    pub obstacles: Vec<&'a StaticObstacle>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RegisteredVegetation {
     pub slot: u8,
@@ -48,6 +55,12 @@ pub struct CachedQuery {
     pub candidates: Vec<RetainedCandidate>,
 }
 impl CachedQuery {
+    ///0011fd30 includes exact-radius nodes, unlike the quad/recovery trim.
+    pub fn inclusively_within(&self) -> impl Iterator<Item = &RetainedCandidate> {
+        self.candidates
+            .iter()
+            .filter(|candidate| candidate.distance <= self.query_radius)
+    }
     ///001dd830 and001ea050 use a strict consumer gate. Cached rider0011fd30
     ///instead uses inclusive distance and its own eligibility/proxy callbacks.
     pub fn strictly_within(&self) -> impl Iterator<Item = &RetainedCandidate> {
@@ -330,6 +343,25 @@ impl SceneCollision {
             })
             .collect()
     }
+    ///Cached rider0011fd30 rechecks current ordinary eligibility even on cache
+    ///reuse. A refresh uses that same actor's eligibility for cache membership.
+    pub fn inclusive_static_selection<'a>(
+        &'a self,
+        query: &CachedQuery,
+        mut ordinary_eligible: impl FnMut(usize, &StaticObstacle) -> bool,
+    ) -> Vec<&'a StaticObstacle> {
+        query
+            .inclusively_within()
+            .filter_map(|candidate| match candidate.node {
+                SceneNode::StaticObstacle(index)
+                    if ordinary_eligible(index, &self.obstacles[index]) =>
+                {
+                    Some(&self.obstacles[index])
+                }
+                _ => None,
+            })
+            .collect()
+    }
     ///001ea050's plant exclusion uses retained cache distances, configured
     ///proxy count and an inclusive twenty-foot horizontal circle, not geometry.
     pub fn vegetation_blocks_checkpoint(&self, query: &CachedQuery) -> Result<bool> {
@@ -378,6 +410,50 @@ impl SceneCollision {
                 }
             })
             .collect())
+    }
+
+    ///0031d190/0011f2c0 use segment bounds to traverse the scene partition,
+    ///then require inclusive sphere overlap and current ordinary eligibility.
+    ///The camera's query bitbf.0 disables physical vegetation expansion. This
+    ///path does not reuse, refresh, sort or capacity-trim the vehicle cache.
+    pub fn direct_camera_candidates(
+        &self,
+        ray: &crate::collision::CollisionRay,
+        ordinary_eligible: impl FnMut(usize, &StaticObstacle) -> bool,
+    ) -> Result<DirectCameraQuery<'_>> {
+        if !ray
+            .start
+            .iter()
+            .chain(ray.end.iter())
+            .all(|v| v.is_finite())
+        {
+            return Err("nonfinite camera collision ray".into());
+        }
+        let low: Vec3 = std::array::from_fn(|i| ray.start[i].min(ray.end[i]));
+        let high: Vec3 = std::array::from_fn(|i| ray.start[i].max(ray.end[i]));
+        //00327360 prepares these bounds/sphere before the direct iterator.
+        let bounds = Bounds {
+            center: std::array::from_fn(|i| (high[i] + low[i]) * 0.5),
+            half: std::array::from_fn(|i| (high[i] - low[i]) * 0.5),
+        };
+        let radius = dot(bounds.half, bounds.half).sqrt();
+        let obstacles = self
+            .direct_query(bounds, true, ordinary_eligible)?
+            .into_iter()
+            .filter_map(|node| match node {
+                SceneNode::StaticObstacle(index) => {
+                    let sphere = self.static_spheres[index];
+                    (sphere_separation(bounds.center, radius, sphere.center, sphere.radius) == 0.)
+                        .then_some(&self.obstacles[index])
+                }
+                SceneNode::Vegetation(_) => None,
+            })
+            .collect();
+        Ok(DirectCameraQuery {
+            bounds,
+            radius,
+            obstacles,
+        })
     }
 }
 
@@ -448,6 +524,65 @@ mod tests {
             height: 20.,
             radius: 2.,
         }
+    }
+
+    #[test]
+    fn camera_direct_query_preserves_cache_and_uses_inclusive_sphere_without_capacity_trim() {
+        let mut obstacles = (0..300)
+            .map(|_| obstacle([128., 0., 128.], [2.; 3], IDENTITY))
+            .collect::<Vec<_>>();
+        obstacles.push(obstacle([134., 0., 128.], [1., 0., 0.], IDENTITY));
+        obstacles.push(obstacle([135., 0., 128.], [1., 0., 0.], IDENTITY));
+        let plants = ecosystem(vec![plant(128, 128, 0)], &[1]);
+        let mut scene =
+            SceneCollision::new(config(), obstacles, Some(&plants), false, |_| Ok(0.)).unwrap();
+        scene
+            .cached_query([128., 0., 128.], 3., |_, _| true)
+            .unwrap();
+        let previous = scene.cache().entries().to_vec();
+        assert_eq!(previous.len(), 256);
+        let query = scene
+            .direct_camera_candidates(
+                &crate::collision::CollisionRay {
+                    start: [123., 0., 128.],
+                    end: [133., 0., 128.],
+                },
+                |index, _| index != 1,
+            )
+            .unwrap();
+        assert_eq!(query.bounds.center, [128., 0., 128.]);
+        assert_eq!(query.radius, 5.);
+        assert_eq!(query.obstacles.len(), 300);
+        assert!(
+            query
+                .obstacles
+                .iter()
+                .any(|o| std::ptr::eq(*o, &scene.obstacles()[300]))
+        );
+        assert!(
+            !query
+                .obstacles
+                .iter()
+                .any(|o| std::ptr::eq(*o, &scene.obstacles()[301]))
+        );
+        assert!(
+            !query
+                .obstacles
+                .iter()
+                .any(|o| std::ptr::eq(*o, &scene.obstacles()[1]))
+        );
+        assert_eq!(scene.cache().entries(), previous);
+        assert!(
+            scene
+                .direct_camera_candidates(
+                    &crate::collision::CollisionRay {
+                        start: [f32::NAN, 0., 0.],
+                        end: [0.; 3],
+                    },
+                    |_, _| true,
+                )
+                .is_err()
+        );
     }
     #[test]
     fn shared_quad_recovery_quad_query_preserves_membership_and_own_trim() {

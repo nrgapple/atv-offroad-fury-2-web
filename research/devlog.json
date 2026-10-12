@@ -1,6 +1,6 @@
 {
   "status": "The public Rust driving reconstruction is progressing; it is not the complete game.",
-  "working_on": "Completing the cached rider/camera query gate after publishing source-verified quad/static candidate and recovery ordering.",
+  "working_on": "Integrating normal-riding rider queries and camera scene-cache contacts after the host wreck-path gate.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1199,9 +1199,26 @@
       "limitation": "Public component verification only. Shallow tire clipping remains. Physical plant proxies are unsupported; rider/camera shared cached queries are not live. Dynamic contacts, full category eligibility, hardware/RNG behavior and whole-game parity remain incomplete or unverified. Wet wreck behavior is unverified.",
       "image": "/devlog-images/shared-scene-candidates-and-full-batch-handling-pass-p-11bd7dfa.png",
       "caption": "Public portrait clean-landing capture for f27869c with live Debug scene-cache counts. Full-batch measurement still shows residual rear-left tire overlap; no before/after improvement is claimed."
+    },
+    {
+      "id": "wreck-rider-and-camera-queries-use-the-recovered-scene-81a9e8e5",
+      "timestamp": "2026-10-12T06:22:52.561211+00:00",
+      "recorded_at": "2026-10-12T06:26:35.166459+00:00",
+      "kind": "build",
+      "title": "Wreck rider and camera queries use the recovered scene cache",
+      "summary": "The host wreck path now borrows the exact Vehicle scene cache for active rider contacts, while the wreck camera runs an independent ordered query. Serial wreck, boundary, map, landing and input gates pass; cached queries for normal riding and physical plant proxies remain unfinished.",
+      "details": [
+        "Active wreck riders reuse the Vehicle scene cache with inclusive bounds for their own 13 spokes and recheck exclusions when a cached candidate list is reused. The wreck camera uses its own native-partition ordered direct-bounds/sphere query and retains the recovered camera latch. A normal-chase optional-object setup probe remains source-disabled: 100 cases executed 3,800 instructions.",
+        "Native probes passed: 500 rider-sphere cases (1,112,500 original instructions), 12 paired quad/rider boundary flags (1,508 instructions), 120 oblique-camera scene queries (1,930,484 instructions), and 1,694 original clip poses plus five recovery routes through cached/direct queries in an empty scene.",
+        "The final serial host gates passed: make check covered 251 core and 2 WASM tests, strict formatting/Clippy, 39 JavaScript tests, 10 release tests and 4 Worker tests; setup and repository hygiene passed. Clean landing, touch Nac Nac → wreck → separation/ground contact → recovery → resumed driving, a 1,655-frame inward ENV04 boundary recovery, one uninterrupted ENV01–ENV08 run, desktop/portrait diagnostics and saved one-handed controls passed.",
+        "Full-batch landing measured 0.393066 ft overlap over 201 riding frames, with zero skipped frames and worst penetration at rear-left step 163. The different host traces do not establish a causal before/after change. Three concurrent startup attempts timed out without JS errors; a fresh serial startup passed in 20 seconds, so concurrency behavior remains unresolved."
+      ],
+      "limitation": "Host-only component verification; the public release remains f27869c. Normal-riding rider queries, MUD metadata, custom masks, physical plant proxies, dynamic contacts, shared cached rider/camera queries beyond wreck cases, global/674 settings, whole-game parity and clipping remain incomplete or unverified. No clipping improvement is claimed.",
+      "image": "/devlog-images/wreck-rider-and-camera-queries-use-the-recovered-scene-81a9e8e5.png",
+      "caption": "Host portrait Nac Nac failure showing the rider separated above the quad. This inspected capture illustrates the wreck phase; it is not public-release evidence."
     }
   ],
-  "updated_at": "2026-10-12T06:05:27.668967+00:00",
+  "updated_at": "2026-10-12T06:26:35.166459+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
@@ -1424,9 +1441,9 @@
         "category": "Vehicle",
         "title": "ATV handling and suspension",
         "status": "PARTIAL",
-        "scope": "PUBLIC FULL-BATCH ROUTES + HOST SOURCE ORACLES · CLEARANCE TRACES NOT COMPARABLE",
+        "scope": "PUBLIC F278 FULL-BATCH ROUTES + HOST SOURCE/CONTACT CHECKS",
         "summary": "Public handling includes the shared scene-cache candidate path, recovered spring torque, static-prop wheel support, terrain travel stop and prior handling components. Residual tire overlap remains; landing and slope traces with different inputs are not evidence of improvement. Full-game parity is unverified.",
-        "validation": "Public f27869c84b1ea09a8425de50b6bdf50935d2ba54 · CI 38210131335: full-batch clean landing, slope, wreck/recovery, boundary and all-map routes passed. Landing overlap was 0.392639 ft across 184 riding frames, zero skipped frames, worst rear-left at step 164 (0.75 ft maximum allowed). Host landing was 0.392776 ft across 199 frames on a different input trace. The values are not an identical before/after comparison; no improvement is claimed. Public slope also retains about 0.64 ft overlap across 382 riding frames/98 wreck exclusions; its source baseline used a different trajectory.",
+        "validation": "Public f27869c84b1ea09a8425de50b6bdf50935d2ba54 · CI 38210131335: full-batch clean landing, slope, wreck/recovery, boundary and all-map routes passed. Landing overlap was 0.392639 ft across 184 riding frames, zero skipped frames, worst rear-left at step 164 (0.75 ft maximum allowed). Host landing was 0.392776 ft across 199 frames on a different input trace. The values are not an identical before/after comparison; no improvement is claimed. Public slope also retains about 0.64 ft overlap across 382 riding frames/98 wreck exclusions; its source baseline used a different trajectory. Host serial landing measured 0.393066 ft overlap across 201 riding frames with zero skipped frames; worst was rear-left at step 163. This follows a different trace from public f278 (0.392639 ft across 184 riding frames), so no causal or improvement claim is made.",
         "evidence": "research/MOVEMENT.md; research/DIAGNOSTICS.md; research/TOUCH.md.",
         "next_step": "Compare coupled original quad frames and incline turns; resolve residual rendered tire overlap and dynamic contacts.",
         "release_verification": {
@@ -1443,6 +1460,16 @@
             "Host landing: 0.392776 ft / 199 frames on a different input trace. No improvement claim.",
             "Public slope retains about 0.64 ft overlap; compared trajectories differ and are not an improvement comparison."
           ]
+        },
+        "host_verification": {
+          "scope": "Host-only candidate; pending public release.",
+          "checks": [
+            "Full-batch clean landing passed with 201 riding frames, zero skipped, and minimum clearance -0.393066 ft; worst rear-left at step 163.",
+            "A fresh single host startup passed in 20 seconds after three concurrent startup attempts timed out without JavaScript errors."
+          ],
+          "limitations": [
+            "The landing traces are not identical; no improvement claim. Concurrent startup behavior remains unresolved."
+          ]
         }
       },
       {
@@ -1450,9 +1477,9 @@
         "category": "Vehicle",
         "title": "Terrain and static-object collisions",
         "status": "PARTIAL",
-        "scope": "PUBLIC SHARED CANDIDATE/RECOVERY PATH + HOST SOURCE ORACLE",
-        "summary": "The original shared scene cache supplies quad wheel and chassis candidate order, and recovery uses the same cache with the recovered plant-clearance rule. A native quad/static-radius instruction-order audit matched 1,000 cases across 40,000 original instructions. Physical plant proxies, complete category eligibility, dynamic bodies, smooth normals and full collision parity remain incomplete.",
-        "validation": "Public f27869c84b1ea09a8425de50b6bdf50935d2ba54 · CI 38210131335 passed all-eight-map/cache checks, clean landing, failed Nac Nac separation/contact/recovery and ENV04 boundary recovery. Host native quad/static-radius audit matched 1,000 cases across 40,000 original instructions; a decompiler expression that reordered arithmetic did not match source behavior, so the instruction-order oracle is the evidence.",
+        "scope": "PUBLIC F278 SCENE PATH + HOST WRECK RIDER/CAMERA CANDIDATE",
+        "summary": "The public quad wheel/chassis path uses the original shared scene cache, and recovery uses that cache with the recovered plant-clearance rule. A host wreck candidate also queries active rider spokes through the exact Vehicle cache and uses a separate direct wreck-camera query. Physical plant proxies, normal-riding rider queries, complete category eligibility, dynamic bodies and full collision parity remain incomplete.",
+        "validation": "Public baseline remains f27869c84b1ea09a8425de50b6bdf50935d2ba54 · CI 38210131335. Host probes matched 500 rider-sphere cases (1,112,500 instructions), 12 paired quad/rider boundary flags (1,508 instructions), and 120 oblique camera queries (1,930,484 instructions). The host serial wreck, boundary, landing and all-eight-map gates passed. These host changes are pending public release.",
         "evidence": "research/COLLISION.md; research/CONTACT.md; research/OBSTACLES.md.",
         "next_step": "Recover scene ordering/category metadata and moving-body response; compare coupled prop impacts.",
         "release_verification": {
@@ -1469,6 +1496,18 @@
             "Host source-order oracle matched 1,000 quad/static-radius cases across 40,000 original instructions.",
             "Physical plant proxies, full category eligibility and dynamic collision remain incomplete."
           ]
+        },
+        "host_verification": {
+          "scope": "Host-only candidate; pending public release.",
+          "checks": [
+            "500 rider-sphere cases matched across 1,112,500 original instructions.",
+            "12 paired quad/rider boundary flag cases matched across 1,508 instructions.",
+            "1,694 original clip poses and five recovery routes passed cached/direct query checks in an empty scene.",
+            "Wreck, boundary, landing, diagnostics, saved one-handed controls and uninterrupted eight-map serial checks passed."
+          ],
+          "limitations": [
+            "Physical plant proxies, complete native category eligibility, normal-riding rider cached queries, custom masks, dynamic bodies and full collision parity remain incomplete or unverified."
+          ]
         }
       },
       {
@@ -1476,9 +1515,9 @@
         "category": "Vehicle",
         "title": "Wrecks, rider separation and recovery",
         "status": "PARTIAL",
-        "scope": "PUBLIC VERIFIED · TESTED LOOP",
-        "summary": "Public recovered wreck clips, detached rider root/contact handling, hard landings and obstruction latch support Nac Nac failure → separation/contact → reset → resumed drive. The ENV04 boundary route also launches the quad upward/inward and recovers with boundary state cleared. Shared cached rider/camera queries are not live; wet wreck and full crash-state parity remain unverified.",
-        "validation": "Public f27869c84b1ea09a8425de50b6bdf50935d2ba54 · CI 38210131335 passed touch Nac Nac → wreck → separation/ground clip → terrain contact → reset → resumed driving. The ENV04 boundary route launched from [1935.53, 208.27, 5265.60] ft at [26.02, 112.15, -168.47] ft/s and recovered at [2173.06, 164.44, 3795.87] ft with boundary state cleared. Shared rider/camera cached-query integration is still pending.",
+        "scope": "PUBLIC F278 LOOP + HOST WRECK-RIDER CACHE GATE",
+        "summary": "Public Nac Nac failure, rider separation/contact, recovery and boundary return routes pass. A host candidate now queries active wreck riders through the exact Vehicle scene cache and checks each rider’s 13 spokes. Normal-riding rider queries and full crash-state parity remain incomplete.",
+        "validation": "Public baseline remains f27869c84b1ea09a8425de50b6bdf50935d2ba54 · CI 38210131335. Host rider/camera gate: touch wreck → separation → ground contact → recovery → resumed driving passed with finite cached rider queries (≤256) across attached, separated and grounded phases; a 1,655-frame inward ENV04 boundary route also passed. Public release verification is unchanged; host candidate is pending release.",
         "evidence": "research/WRECK.md — recovered rules, public browser tests and remaining camera/contact limits.",
         "next_step": "Broaden crash/recovery and rider-contact comparisons, then verify boundary/water candidates publicly.",
         "release_verification": {
@@ -1495,7 +1534,18 @@
             "Wet wreck and full crash-state parity remain unverified."
           ]
         },
-        "limitation": "Selected public wreck/landing and ENV04 boundary routes pass. Complete mode exceptions, callback cadence, vegetation coverage, water behavior and shared RNG ordering remain unverified."
+        "limitation": "Selected public wreck/landing and ENV04 boundary routes pass. Complete mode exceptions, callback cadence, vegetation coverage, water behavior and shared RNG ordering remain unverified.",
+        "host_verification": {
+          "scope": "Host-only candidate; pending public release.",
+          "checks": [
+            "Serial touch Nac Nac → vertical wreck → rider separation/ground clip → terrain contact → automatic reset → resumed driving passed.",
+            "Active wreck rider borrows the exact Vehicle cache, checks inclusive bounds for its own 13 spokes and rechecks exclusions on cache reuse. Every active cached query was finite and ≤256 through attached, separated and grounded phases.",
+            "A 1,655-frame inward ENV04 boundary launch/recovery passed; boundary state cleared."
+          ],
+          "limitations": [
+            "Normal-riding rider queries, MUD metadata, custom masks, physical plant proxies, dynamic contacts, global/674 settings and full crash-state parity remain incomplete or unverified."
+          ]
+        }
       },
       {
         "id": "preload-touch",
@@ -1577,11 +1627,23 @@
         "category": "Presentation",
         "title": "Chase camera",
         "status": "LIVE",
-        "scope": "PUBLIC",
-        "summary": "The recovered landscape chase camera and preset cycling work. Portrait adds a bounded framing adjustment and restores the native landscape pose/FOV after rotation.",
-        "validation": "Public landscape/portrait framing checks remain tied to 1e5c4fd255a4979148bdda648e010e2fbb68221b · CI 38186584449. A separate host synthetic blur→touch→focus→drag regression verifies stale touch orbit returns from -0.2 rad to 0 when focus is reacquired; this is input-focus recovery, not proof that original crash-coupled camera behavior is complete.",
+        "scope": "PUBLIC CHASE BASELINE + HOST DIRECT WRECK-QUERY CANDIDATE",
+        "summary": "The recovered landscape chase camera, preset cycling and portrait framing remain publicly available. A host wreck-camera candidate now uses an independent native-partition ordered direct-bounds/sphere query and retains the recovered latch; normal-riding shared cached queries remain pending.",
+        "validation": "Public chase baseline remains tied to the existing f278 release. Host wreck-camera probes matched 120 oblique-scene queries across 1,930,484 original instructions; 1,694 original clip poses and five recovery routes passed cached/direct query checks in an empty scene. Normal-riding rider/camera cache behavior is not established.",
         "evidence": "research/CAMERA.md — camera recovery and portrait presentation.",
-        "next_step": "Compare camera/body coupling through original stunt and wreck sequences; keep touch focus recovery distinct from unresolved native wreck-camera behavior."
+        "next_step": "Compare camera/body coupling through original stunt and wreck sequences; keep touch focus recovery distinct from unresolved native wreck-camera behavior.",
+        "host_verification": {
+          "scope": "Host-only candidate; pending public release.",
+          "checks": [
+            "Wreck camera uses an independent native-partition ordered bounds/sphere query; its latch remains retained.",
+            "120 oblique-scene query cases matched across 1,930,484 original instructions.",
+            "1,694 original clip poses and five recovery routes passed cached/direct query checks in an empty scene.",
+            "Normal-chase optional-object setup remains source-disabled; 100 cases executed 3,800 instructions."
+          ],
+          "limitations": [
+            "Normal-riding shared query integration, MUD metadata, custom masks, dynamic contacts, global/674 settings and complete camera parity remain unverified."
+          ]
+        }
       },
       {
         "id": "missing-scene-meshes",

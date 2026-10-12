@@ -233,12 +233,24 @@ pub struct WreckActor {
     pub velocity: [f32; 3],
 }
 
+/// Last direct obstruction query. A latched camera keeps this evidence while
+/// setting queried_this_step=false on subsequent updates.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct CameraSceneQuery {
+    pub direct: bool,
+    pub queried_this_step: bool,
+    pub center: [f32; 3],
+    pub radius: f32,
+    pub static_candidates: usize,
+}
+
 /// Single-player wreck camera,0031cc90 and its arithmetic helpers.
 pub struct WreckCamera {
     frame: CameraFrame,
     output_position: [f32; 3],
     motion_blocked: bool,
     obstacles: Vec<crate::obstacle::StaticObstacle>,
+    scene_query: Option<CameraSceneQuery>,
     angles: [f32; 2],
     direction: [f32; 3],
     last_velocity: [f32; 3],
@@ -322,6 +334,7 @@ impl WreckCamera {
             output_position: previous.position,
             motion_blocked: false,
             obstacles: Vec::new(),
+            scene_query: None,
             angles: [angles[0].abs(), angles[1]],
             direction: normalized(offset),
             last_velocity: [0.; 3],
@@ -346,12 +359,29 @@ impl WreckCamera {
         self.motion_blocked
     }
 
+    pub fn scene_query(&self) -> Option<CameraSceneQuery> {
+        self.scene_query
+    }
+
     pub fn step(
         &mut self,
         actors: [WreckActor; 2],
         fallback: [f32; 3],
         dt: f32,
+        height: impl FnMut([f32; 3]) -> Result<f32>,
+    ) -> Result<CameraFrame> {
+        self.step_with_scene(actors, fallback, dt, height, None)
+    }
+
+    ///The live wreck camera uses its independent scene partition query. The
+    ///legacy static list supports isolated camera fixtures without a scene.
+    pub fn step_with_scene(
+        &mut self,
+        actors: [WreckActor; 2],
+        fallback: [f32; 3],
+        dt: f32,
         mut height: impl FnMut([f32; 3]) -> Result<f32>,
+        scene: Option<&crate::scene_collision::SceneCollision>,
     ) -> Result<CameraFrame> {
         if !dt.is_finite()
             || dt <= 0.
@@ -501,10 +531,40 @@ impl WreckCamera {
         // 0031cc90 latches the collision flag for the rest of this wreck-camera
         // activation. Filters/target/FOV continue; only the rendered position
         // retains its previous value. Recovery constructs a fresh follow view.
+        if let Some(query) = &mut self.scene_query {
+            query.queried_this_step = false;
+        }
         if !self.motion_blocked {
             let ray = wreck_camera_motion_ray(self.output_position, self.frame.position)?;
-            self.motion_blocked =
-                !crate::wreck::query_static_segments(&[ray], &self.obstacles, 1)?.is_empty();
+            self.motion_blocked = if let Some(scene) = scene {
+                //Loaded ordinary placements currently supply default enabled
+                //eligibility. Custom native category/list masks lack transport.
+                let query = scene.direct_camera_candidates(&ray, |_, _| true)?;
+                self.scene_query = Some(CameraSceneQuery {
+                    direct: true,
+                    queried_this_step: true,
+                    center: query.bounds.center,
+                    radius: query.radius,
+                    static_candidates: query.obstacles.len(),
+                });
+                let mut blocked = false;
+                for obstacle in query.obstacles {
+                    if !crate::wreck::query_static_segments(
+                        std::slice::from_ref(&ray),
+                        std::slice::from_ref(obstacle),
+                        1,
+                    )?
+                    .is_empty()
+                    {
+                        blocked = true;
+                        break;
+                    }
+                }
+                blocked
+            } else {
+                self.scene_query = None;
+                !crate::wreck::query_static_segments(&[ray], &self.obstacles, 1)?.is_empty()
+            };
             if !self.motion_blocked {
                 self.output_position = self.frame.position;
             }
@@ -793,6 +853,72 @@ mod tests {
         let stationary = wreck_camera_motion_ray(previous.position, previous.position).unwrap();
         assert_eq!(stationary.start, stationary.end);
         assert!(wreck_camera_motion_ray([f32::NAN, 0., 0.], [0.; 3]).is_err());
+    }
+
+    #[test]
+    fn live_wreck_query_uses_scene_candidates_and_retains_latch_diagnostics() {
+        let actors = [
+            WreckActor {
+                origin: [128., 4., 128.],
+                velocity: [3., 4., 18.],
+            },
+            WreckActor {
+                origin: [128., 6., 128.],
+                velocity: [15., 24., 16.8],
+            },
+        ];
+        let previous = CameraFrame {
+            position: [128., 12., 108.],
+            target: [128., 5., 128.],
+            fov: 85.,
+            preset: 0,
+        };
+        let config = crate::scene_partition::Config {
+            min_x: 0.,
+            max_x: 256.,
+            min_z: 0.,
+            max_z: 256.,
+            cell_size: 32.,
+        };
+        let plane =
+            crate::wreck::tests::surface([[28., 13., 28.], [228., 13., 28.], [128., 13., 228.]]);
+        let empty =
+            crate::scene_collision::SceneCollision::new(config, vec![], None, false, |_| Ok(0.))
+                .unwrap();
+        let scene = crate::scene_collision::SceneCollision::new(
+            config,
+            vec![plane.clone()],
+            None,
+            false,
+            |_| Ok(0.),
+        )
+        .unwrap();
+        let mut open = WreckCamera::new(previous, [std::f32::consts::PI, 0.7], actors).unwrap();
+        let mut blocked = WreckCamera::new(previous, [std::f32::consts::PI, 0.7], actors).unwrap();
+        // An explicit scene is authoritative over the old all-static fixture list.
+        open.set_static_obstacles(vec![plane]);
+        let moving = open
+            .step_with_scene(actors, [0., 0., 1.], 1. / 60., |_| Ok(0.), Some(&empty))
+            .unwrap();
+        assert!(!open.motion_blocked());
+        assert_eq!(open.scene_query().unwrap().static_candidates, 0);
+        assert_ne!(moving.position, previous.position);
+        let fixed = blocked
+            .step_with_scene(actors, [0., 0., 1.], 1. / 60., |_| Ok(0.), Some(&scene))
+            .unwrap();
+        assert!(blocked.motion_blocked());
+        assert_eq!(fixed.position, previous.position);
+        let first_query = blocked.scene_query().unwrap();
+        assert!(first_query.direct && first_query.queried_this_step);
+        assert_eq!(first_query.static_candidates, 1);
+        let next = blocked
+            .step_with_scene(actors, [0., 0., 1.], 1. / 60., |_| Ok(0.), Some(&empty))
+            .unwrap();
+        assert_eq!(next.position, previous.position);
+        let retained = blocked.scene_query().unwrap();
+        assert!(retained.direct && !retained.queried_this_step);
+        assert_eq!(retained.static_candidates, first_query.static_candidates);
+        assert_eq!(retained.center, first_query.center);
     }
 
     #[test]

@@ -63,6 +63,9 @@ try {
     const frames = await page.evaluate(() => window.boundaryFrames);
     const duringFlight = frames.filter(f => f.boundary_launch.active);
     assert(duringFlight.some(f => f.rider_wreck?.phase === 'air'), 'Rider must separate during launch');
+    const riders = duringFlight.filter(f => f.rider_wreck);
+    assert(riders.length > 0 && riders.every(f => f.rider_wreck.scene_query?.cached), 'Boundary rider must retain the shared scene cache');
+    assert(riders.every(f => f.rider_wreck.scene_query.skip_vegetation_query === f.skip_vegetation_query), 'Native boundary launch must set and clear both actor query flags');
     assert(duringFlight.some(f => f.boundary_launch.elapsed > 1 && !f.skip_vegetation_query));
     assert.equal(duringFlight.filter(f => f.boundary_launch.elapsed === 0).length, 1);
     console.log(JSON.stringify({ recovered: { origin: recovered.origin, boundary: recovered.boundary_launch, resets: recovered.reset_count } }));
@@ -71,7 +74,7 @@ try {
     console.log('PASS normal drive crosses original edge, launches inward/upward into wreck, separates and recovers with boundary state cleared.');
   } finally {
     const frames = await page.evaluate(() => window.boundaryFrames);
-    await writeFile('work/verification/boundary-launch-trace.json', JSON.stringify(frames));
+    await writeFile(process.env.ATV_BOUNDARY_TRACE || 'work/verification/boundary-launch-trace.json', JSON.stringify(frames));
     console.log(JSON.stringify({ frames: frames.length, final: frames.at(-1) }));
   }
 } finally { await browser.close(); }

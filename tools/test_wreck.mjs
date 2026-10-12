@@ -6,6 +6,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { captureSimulation } from './capture_simulation.mjs';
 const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
 await mkdir('work/verification', {recursive: true});
+const screenshotPrefix = process.env.ATV_WRECK_SCREENSHOT_PREFIX || 'work/verification/rider-wreck';
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
@@ -35,9 +36,9 @@ try {
   const start = await page.evaluate(() => window.atvTerrainStatus.frame);
   await touch('touchCancel');
   await page.waitForFunction(() => window.atvTerrainStatus.frame.rider_wreck && window.atvTerrainStatus.frame.rider_wreck.phase !== 'attached', null, {timeout: 10000,polling:'raf'});
-  await page.screenshot({path:'work/verification/rider-wreck-separation.png'});
+  await page.screenshot({path:`${screenshotPrefix}-separation.png`});
   await page.waitForFunction(() => window.atvTerrainStatus.frame.rider_wreck?.grounded, null, {timeout: 10000,polling:'raf'});
-  await page.screenshot({path:'work/verification/rider-wreck-ground.png'});
+  await page.screenshot({path:`${screenshotPrefix}-ground.png`});
   await page.waitForFunction(count => window.atvTerrainStatus.frame.reset_count > count, start.reset_count, {timeout:15000,polling:'raf'});
   const reset = await page.evaluate(() => window.atvTerrainStatus.frame);
   assert.equal(reset.wreck.phase, 'Riding');
@@ -54,13 +55,26 @@ try {
   assert.equal(reset.stunt_score.committed_points, 0, 'A failed landing must not award the displayed pending score');
   assert(frames.some(s => s.frame.hud?.stunt_name === 'Nac Nac' && s.frame.hud.stunt_visible), 'Native stunt HUD must consume the scoring callbacks');
   assert.equal(await page.locator('#native-hud').getAttribute('data-renderer'), 'rust');
-  const detached = frames.map(s => s.frame.rider_wreck).filter(f => f && f.phase !== 'attached');
+  const riders = frames.map(s => s.frame.rider_wreck).filter(Boolean);
+  assert(riders.every(f => f.scene_query?.cached), 'Every active wreck phase must borrow the quad scene cache');
+  assert(riders.every(f => f.scene_query.cached_nodes <= 256 && f.scene_query.radius >= 0 && [
+    ...f.scene_query.center, f.scene_query.radius,
+  ].every(Number.isFinite)), 'Cached rider bounds and membership must remain valid');
+  assert(riders.some(f => f.phase === 'attached'), 'The shared cache must also run before separation');
+  assert(riders.some(f => f.grounded), 'The shared cache must remain bound through ground contact');
+  const detached = riders.filter(f => f.phase !== 'attached');
   assert(detached.length > 0);
   assert(detached.every(f => f.center_of_mass.every(Number.isFinite)));
   assert(detached.some(f => Math.hypot(...f.center_of_mass) > 0.05), 'Detached rider must use animated contact bounds instead of a fixed pelvis center');
   assert.equal(start.wreck.kind, 'Vertical');
   assert(frames.some(s => s.camera?.mode === 'wreck'), 'Original wreck camera must run during separation');
   assert(frames.filter(s => s.camera?.mode === 'wreck').every(s => [...s.camera.position, ...s.camera.target, s.camera.fov].every(Number.isFinite)), 'Wreck camera must remain finite');
+  const cameras = frames.filter(s => s.camera?.mode === 'wreck').map(s => s.camera);
+  assert(cameras.every(camera => camera.scene_query?.direct), 'Wreck camera must use its independent original partition query');
+  assert(cameras.some(camera => camera.scene_query.queried_this_step), 'The direct obstruction query must execute before any latch');
+  assert(cameras.every(camera => camera.scene_query.radius >= 0 && [...camera.scene_query.center,
+    camera.scene_query.radius,
+  ].every(Number.isFinite)), 'Direct camera bounds must remain finite');
   await writeFile(process.env.ATV_WRECK_TRACE || 'work/verification/wreck-browser-trace.json',JSON.stringify({start,reset,frames,errors},null,2));
   assert.deepEqual(errors, []);
   assert.equal(await page.evaluate(() => window.atvTerrainStatus.glError), 0);

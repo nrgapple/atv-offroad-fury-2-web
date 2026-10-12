@@ -14,7 +14,7 @@ A private finite-binary32 instruction interpreter ran the original executable by
 - 600 initial follow-camera frames spanning all seven presets, reverse motion, falling and orbit: maximum absolute difference below 0.000028 across position, target and field of view.
 - 1,260 sequential frames across seven presets with a sloping floor, changing velocity, yaw and contact: 1,575,771 original instructions; maximum absolute difference below 0.0000053 across the same outputs.
 
-These are component checks, not PS2 hardware or full-game replay equivalence. Scene/body access is supplied by explicit hooks. Trigonometry still uses host sine/cosine instead of the original lookup table, and VU exceptional arithmetic is not fully emulated. Terrain queries are integrated; the optional camera clearance query against objects remains incomplete. Browser right-stick/mouse orbit scaling is provisional. Gameplay touches never orbit the camera; the left touch steers/leans and the right touch drives/braces. Projection recovery (`0011b070` → `0013bdb0` → `00325e80`) establishes horizontal field of view. The browser uses the recovered FOV at a 4:3 reference aspect and preserves its vertical framing while extending the horizontal view for widescreen. This widescreen framing is a browser adaptation. Original render-distance/LOD policies remain incomplete.
+These are component checks, not PS2 hardware or full-game replay equivalence. Scene/body access is supplied by explicit hooks. Trigonometry still uses host sine/cosine instead of the original lookup table, and VU exceptional arithmetic is not fully emulated. Terrain queries are integrated. The recovered single-player chase setup disables its optional object query; the separate wreck camera uses direct scene candidates as described below. Browser right-stick/mouse orbit scaling is provisional. Gameplay touches never orbit the camera; the left touch steers/leans and the right touch drives/braces. Projection recovery (`0011b070` → `0013bdb0` → `00325e80`) establishes horizontal field of view. The browser uses the recovered FOV at a 4:3 reference aspect and preserves its vertical framing while extending the horizontal view for widescreen. This widescreen framing is a browser adaptation. Original render-distance/LOD policies remain incomplete.
 
 Private reproduction scripts and results live under `work/physics/camera_*` and `private/reports/`; extracted presets and decompiler output remain ignored.
 
@@ -28,8 +28,8 @@ The renderer applies this from each untouched native camera frame, so rotating
 the device does not compound offsets. `tools/test_portrait_camera.mjs` verifies
 portrait→landscape→portrait behavior in the live renderer; before/after 390×844
 Caribou captures were inspected. This is an explicitly requested mobile adaptation,
-not a recovered original PS2 camera preset. Original object camera clearance is
-still not connected, so further obstruction testing remains relevant.
+not a recovered original PS2 camera preset. The original single-player chase setup disables object obstruction queries; the
+portrait adaptation does not enable a different collision policy.
 
 ## Wreck camera (priority-parity host checkpoint)
 
@@ -64,11 +64,11 @@ Target, field of view and internal position filters continue advancing. Entering
 the next wreck camera clears the latch. This differs from a generic camera that
 slides continuously around obstacles.
 
-The authored camera now implements this guard against the loaded static props.
-Its native query has vegetation expansion disabled; ordinary enabled static props
-are eligible with the default category masks. Original custom masks/exclusions,
-dynamic scene actors and the normal following camera's separate behavior still
-require reconstruction. Water clearance remains pending the original wave field.
+The authored camera now implements this guard against loaded static props selected
+through its independent scene query. Its native query has vegetation expansion
+disabled; ordinary enabled static props are eligible with default category masks.
+Original custom masks/exclusions and dynamic scene actors remain incomplete. Water
+clearance remains pending the original wave field.
 
 Private instruction probes cover 600 actual `0031d190` executions (51,900
 instructions): all 3,600 ray coordinate bit patterns match Rust, including zero
@@ -81,3 +81,69 @@ position stays fixed, and Rust target/FOV differ by at most 0.00000763. A couple
 Rust regression uses an actual type-0 triangle query, confirms the ten-foot
 lookahead, and preserves the latch after removal while filters continue unchanged.
 Probe sources and data stay under ignored `work/camera-obstruction/`.
+
+
+### Direct scene candidate integration
+
+The wreck camera now runs `SceneCollision::direct_camera_candidates` against the
+combined ordinary/vegetation partition. Native `0031d190` calls `0011f2c0` with
+its cache interval argument zero. The original type-3 prepare `00327360` computes
+segment AABB center/half extents and their diagonal sphere; its virtual bounds
+accessor supplies that box to the original partition iterator. Ordinary candidates
+must have zero sphere separation (inclusive overlap), then pass current
+`0011eeb0` eligibility before the geometry test. Candidates retain iterator order.
+This path has no retained quad/rider membership, distance sort, forty-foot cache
+radius, or 256-entry collector limit. Camera queries neither refresh nor alter the
+shared vehicle/rider cache.
+
+The former camera tested every static placement. That omitted native partition,
+sphere and eligibility gates. The live WASM camera call now uses the independent
+scene path. Loaded ordinary placements still supply default enabled eligibility;
+native custom category masks, object inclusion/exclusion lists and dynamic
+registrations lack transport. The API accepts an explicit eligibility predicate
+for verified callers. It excludes vegetation expansion using the camera's native
+query bit, rather than assigning visual plants invented collision shapes.
+
+An original-instruction comparison covers 120 oblique ten-foot queries through
+30 mixed scenes and 1,930,484 instructions. Actual registration, type-3 bounds
+preparation, partition traversal, deduplication, sphere distance and ordinary
+eligibility execute. A no-hit geometry service records the selected object order;
+physical geometry is independently tested by the existing segment probes. All
+candidate sequences, query centers and radius bits match the Rust scene bridge.
+Scene registration uses synthetic bounds and region links, including enabled and
+disabled ordinary objects and nearby plant nodes. This does not establish complete
+loaded-scene or hardware parity.
+
+A separate 100-case `00319b70` caller-prefix replay executes 3,800 instructions
+and confirms that normal follow-camera initialization supplies zero for optional
+object-query setup, even with varied incoming values. Its vtable `+28` resolves to
+`00319c30`, the terrain/water clearance routine. The ordinary single-player chase
+path was therefore left unchanged. This does not establish other original camera
+modes or custom configurations.
+
+Two authored regressions require direct selection to exceed 256 ordinary objects,
+retain inclusive exact-sphere touching, reevaluate supplied eligibility, exclude
+plants and preserve an already populated vehicle cache. The live-camera regression
+also makes the explicit scene authoritative over the old full-static fixture list
+and checks obstruction latching and retained diagnostics. Seven camera and ten
+scene-collision tests pass; the atv-web bridge crate passes native Cargo checking.
+WASM build and release/browser verification are separate gates.
+
+WASM camera frames expose `scene_query` with `direct`, `queried_this_step`,
+`center`, `radius` and `static_candidates`. After obstruction latches,
+`queried_this_step` is false and the remaining fields describe the last actual
+query; they do not claim another query ran. Private probes and reports live under
+`work/camera-scene-probe/` and `private/reports/camera-scene-*.json`. Reproduce with:
+
+```sh
+python3 work/camera-scene-probe/oracle.py
+python3 work/camera-scene-probe/follow_setup.py
+CARGO_TARGET_DIR=work/terrain-contact-target ~/.cargo/bin/cargo run --release \
+  --manifest-path work/camera-scene-probe/Cargo.toml
+CARGO_TARGET_DIR=work/terrain-contact-target ~/.cargo/bin/cargo test --locked \
+  -p atv-core camera::tests
+CARGO_TARGET_DIR=work/terrain-contact-target ~/.cargo/bin/cargo test --locked \
+  -p atv-core scene_collision::tests
+CARGO_TARGET_DIR=work/terrain-contact-target ~/.cargo/bin/cargo check --locked \
+  -p atv-web
+```

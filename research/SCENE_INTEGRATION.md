@@ -39,7 +39,8 @@ resample. Callers should pass false for that loading path.
 
 ## Consumers and state
 
-`cached_query` owns one `CandidateCache(40,50)` shared by quad and recovery.
+`cached_query` owns one `CandidateCache(40,50)` shared by quad, active wreck rider
+and recovery.
 It receives a world query center, the caller's native sphere radius and an
 ordinary eligibility predicate. Refresh uses the combined tree's native query
 at forty-foot half extents; reuse updates distances without changing membership
@@ -89,11 +90,12 @@ The bound cached-rider contract uses inclusive distance and current ordinary
 `0011eeb0` eligibility before geometry/callback dispatch. It must not substitute
 a strict quad trim or direct query. Attachment adds the special `MUD` category
 to the rider actor's exclusion list. Vegetation proxy expansion separately
-requires actor query bit `bf.0` clear. These caller contracts are recovered but
-remain unwired in the authored rider; the live bridge currently connects quad
-and recovery, while rider/camera retain the preceding ordinary-static scans.
-Special `MUD` metadata transport, dynamic registration and exceptional
-object/category filters remain separate work.
+requires actor query bit `bf.0` clear. The authored active-wreck animator now
+borrows the Vehicle's exact scene cache, including its initial attached wreck
+phase and subsequent separated phases. Ordinary riding does not yet run this
+rider collider update. Direct fallback remains available when no scene binding
+is supplied. Special `MUD` metadata transport, dynamic registration and
+exceptional object/category filters remain separate work.
 
 ## Evidence and limits
 
@@ -149,7 +151,7 @@ physical vegetation collision, complete category eligibility or whole-game
 parity. Source/probe data stays under ignored `work/scene-integration-probe/`,
 `work/physics/` and `private/reports/wreck/`.
 
-## Live quad and recovery host gate
+## Live quad and recovery gate (released as `f27869c`)
 
 The WASM transport now reloads the original ESB bytes after terrain initialization
 and passes recovered Environment partition metadata with collision placements.
@@ -167,6 +169,78 @@ and proxyless plants, including the strict separation and inclusive circle edges
 An uninterrupted ENV01–ENV08 load/drive run confirms the live cache and finite
 physics with no JavaScript/WebGL errors. Clean landing, failed Nac Nac separation/
 contact/recovery/driving, uneven turning, normal ENV04 boundary launch/recovery,
-one-handed mobile and desktop/portrait diagnostics pass. This is host integration
-pending public release, not loaded-scene original replay equivalence. Rider/camera
-queries, physical proxies and complete category/dynamic behavior remain separate.
+one-handed mobile and desktop/portrait diagnostics pass. The same paths passed
+publicly on `f27869c`, CI `38210131335`; HTTPS verification matched 26 authored
+files and 317 served runtime/gallery objects before its verification entry.
+This is live integration, not loaded-scene original replay equivalence. Rider and
+camera consumers were separate follow-up gates described below and in
+[camera evidence](CAMERA.md). Physical proxies and complete category/dynamic
+behavior remain unfinished.
+
+## Active wreck rider cache component
+
+`Vehicle::scene_collision_mut` supplies the same owned scene/cache to
+`Animator::step_with_scene` after the quad update. No cache is cloned. All active
+wreck phases, including initial attached separation, use the current thirteen
+spokes' bounds center and half-extent diagonal as their actor sphere. Selection
+is inclusive at the actor radius, and current explicit ordinary-index exclusions
+are applied both during refresh and before geometry on reuse. Default transported
+ordinary static nodes have the recovered enabled/queryable setup; exceptional
+category/object-list metadata remains unavailable. The sixty-record contact
+capacity and existing per-object ray reset/order remain intact. Recovery/new
+wreck entry do not replace Vehicle scene membership. The normal riding rider
+collider update is not connected by this active-wreck gate.
+
+Source `00327360` radius instructions `00327798`–`003277a8` accumulate
+`(X²+Y²)+Z²` before square root. Five hundred native thirteen-spoke endpoint-copy
+and preparation cases execute 1,112,500 instructions; the authored center/radius
+helper matches every compared binary32 bit. The bound-result reset service is a
+hook, and endpoints are supplied already in world space; this does not repeat
+animated-node transform or full geometry/force parity claims.
+
+The native `001e5260` boundary block writes `bf.0` on both quad `+97c` and the
+rider actor at `(((quad+884)+24c)+40)+38`, then clears both after its strict
+one-second gate when game `+674` permits. Twelve focused native cases execute
+1,508 instructions and verify paired writes/late clearing. The bridge passes
+that paired boundary flag to the rider without modifying collector `+82c`.
+Initial attachment's global `+674` policy remains unverified; the port retains
+its preceding default policy. Configured plant proxies are exposed as unsupported
+in rider diagnostics when expansion is permitted, and generate no physical
+contacts. Their presence still consumes shared cache capacity.
+
+Four new core regressions check 120-frame static prop contact/motion equivalence
+against direct fallback through detach, recovery query and repeated wreck entry;
+current ordinary exclusion on cache reuse and the resulting shared membership
+after rider refresh; exact-radius inclusion; and plant-query-bit changes without
+cache membership loss. All sixteen wreck animator tests pass, including existing
+dry/wet and body-cache regressions. The actual-content 1,694-pose/five-direction
+recovery probe passes with both direct fallback and the shared-cache path, with
+finite cached actor spheres at every active frame. That cached variant uses
+original rider clips/terrain and an empty ordinary/vegetation partition; static
+prop contact/cached equivalence is covered by the synthetic core fixture, not
+an original loaded prop scene in that variant. Both WASM tests pass. Public browser validation and
+complete original coupled rider/cache/geometry replay remain subsequent gates.
+`MUD` exclusions are supported through explicit verified metadata, but current
+command49 omits placement names and the original game `+584` base-name provenance;
+this gate does not infer them from a collision filename.
+
+## Combined rider/camera host browser gate
+
+The combined build passes 251 core + 2 WASM tests, strict Clippy/formatting,
+39 JavaScript tests, 10 release tests, four Worker tests, setup and repository
+hygiene. The serial real-touch Nac Nac route confirms cached finite rider bounds
+through attached, detached and grounded wreck frames; its camera reports direct
+finite scene bounds and an executed obstruction query. The normal ENV04 edge
+route confirms shared rider queries and paired actor vegetation bits through
+launch, late clearing and recovery. Clean preload landing, one uninterrupted
+ENV01–ENV08 load/drive run, diagnostics and saved one-handed touch checks pass.
+
+The full-batch landing capture contains 201 riding frames, zero skipped, minimum
+clearance -0.39306640625ft. It is a different trace from preceding releases and
+does not establish improvement or resolve clipping. Three simultaneous host
+startup runs timed out with no browser errors; a fresh single startup and the
+serial suite passed. Host concurrency remains unverified. These are authored
+browser integration checks pending public release, not original loaded-scene
+candidate replay or whole-game/hardware parity. Physical plant proxies, normal
+riding rider collision, MUD metadata and full custom/dynamic eligibility remain
+incomplete. Wreck-camera source and direct-query evidence is in [CAMERA.md](CAMERA.md).
