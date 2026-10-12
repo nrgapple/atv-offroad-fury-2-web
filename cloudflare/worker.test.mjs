@@ -64,3 +64,10 @@ test('multiplayer requests require same-origin and forward only to Rust service'
   assert.equal(seen,req);
   assert.equal((await worker.fetch(request('/multiplayer/rooms',{method:'DELETE',headers:{Origin:'https://game.example'}}),env)).status,405);
 });
+
+
+test('configured game origin remains strict through a local verification proxy', async () => {
+  const env={GAME_ORIGIN:'https://approved.example',MULTIPLAYER:{fetch:async()=>new Response('rust')}};
+  assert.equal((await worker.fetch(request('/multiplayer/version',{headers:{Origin:'https://game.example'}}),env)).status,403);
+  assert.equal(await (await worker.fetch(request('/multiplayer/version',{headers:{Origin:'https://approved.example'}}),env)).text(),'rust');
+});

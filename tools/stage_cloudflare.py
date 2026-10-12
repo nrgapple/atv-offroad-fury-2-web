@@ -17,14 +17,16 @@ def stage(release, commit):
     for name in sorted(RELEASE_STATIC_FILES):
         shutil.copy2(release / 'static' / name, target / name)
     relay = ROOT / 'work/cloudflare/relay'
-    relay.mkdir(parents=True, exist_ok=True)
+    if relay.exists():
+        shutil.rmtree(relay)
+    relay.mkdir(parents=True)
     for name in sorted(RELAY_FILES):
         shutil.copy2(release / 'relay' / name, relay / name)
-    config = json.loads((ROOT / 'relay/wrangler.jsonc').read_text())
-    config.pop('build', None)
-    config['main'] = 'index.js'
+    config = json.loads((ROOT / 'wrangler.jsonc').read_text())
+    config['main'] = str(ROOT / 'cloudflare/entry.mjs')
+    config['assets']['directory'] = str(target)
     config.setdefault('vars', {}).update(BUILD_COMMIT=commit, BUILD_WASM_SHA=metadata['sha256']['relay/index_bg.wasm'])
-    (relay / 'wrangler.jsonc').write_text(json.dumps(config, indent=2) + '\n')
+    (ROOT / 'work/cloudflare/wrangler.jsonc').write_text(json.dumps(config, indent=2) + '\n')
     print(f'Staged {len(RELEASE_STATIC_FILES)} asset-free files for {commit}')
 
 

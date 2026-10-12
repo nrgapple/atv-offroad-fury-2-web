@@ -99,10 +99,12 @@ class PlayerContentTests(unittest.TestCase):
         result = Resource(compact_player_archive(source, '/RIDER/FRIDER.RES'))
         self.assertEqual([m[0] for m in result.members], ['anim/rider/frider.psg', 'anim/Rider/frider.mcf'])
 
-    def test_vancouver_thumbnail_includes_only_two_required_halves(self):
-        from package_content import compact_vancouver_thumbnail, pack_resource, Resource
-        source = pack_resource([('ui/trk_free05_a.pst', b'a'), ('ui/trk_free05_b.pst', b'b'), ('ui/trk_free01_a.pst', b'unrelated')])
-        result = Resource(compact_vancouver_thumbnail(source))
-        self.assertEqual([x[0] for x in result.members], ['ui/trk_free05_a.pst', 'ui/trk_free05_b.pst'])
+    def test_motion_package_keeps_catalog_union_and_drops_unused_arm_clips(self):
+        from package_content import compact_rider_motions, pack_resource, Resource
+        catalog = b'[General info]\nNumberOfMotions=2\n[Motion 1]\nVUE=anim\\rider\\ride.vue\n[Motion 2]\nVUE=jump.MOT\n'
+        other = b'[General info]\nNumberOfMotions=1\n[Motion 1]\nVUE=RIDE.MOT\n'
+        source = pack_resource([('anim/ride.mot', b'ride'), ('anim/jump.mot', b'jump'), ('anim/arms.mot', b'unused'), ('riderarmleft.mcf', b'unused')])
+        result = Resource(compact_rider_motions(source, [catalog, other]))
+        self.assertEqual([m[0] for m in result.members], ['anim/ride.mot', 'anim/jump.mot'])
         with self.assertRaisesRegex(ValueError, 'missing or duplicated'):
-            compact_vancouver_thumbnail(pack_resource([('ui/trk_free05_a.pst', b'a')]))
+            compact_rider_motions(source, [other.replace(b'RIDE', b'missing')])

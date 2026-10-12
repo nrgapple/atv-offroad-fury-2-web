@@ -285,6 +285,27 @@ def compact_player_archive(data, path):
     return pack_resource(selected)
 
 
+def compact_rider_motions(data, catalogs):
+    """Only the MOT files used by the connected male/female body catalogs."""
+    required = set()
+    for catalog in catalogs:
+        table = config(catalog)
+        count = int(table['general info']['numberofmotions'])
+        if not 1 <= count <= 512:
+            raise ValueError('invalid rider motion catalog count')
+        for i in range(1, count + 1):
+            path = table[f'motion {i}']['vue'].replace('\\', '/')
+            if not path or '..' in path or ':' in path:
+                raise ValueError('unsafe rider motion path')
+            required.add(path.rsplit('/', 1)[-1].rsplit('.', 1)[0].lower() + '.mot')
+    archive = Resource(data)
+    selected = [(name, archive.extract(i)) for i, (name, _, _) in enumerate(archive.members)
+                if name.lower().rsplit('/', 1)[-1] in required]
+    if len(selected) != len(required):
+        raise ValueError('missing or duplicated connected rider motion')
+    return pack_resource(selected)
+
+
 def compact_map_placements(data, environment):
     """ENDL supplies only the common placement TOY; FR owns map rendering data."""
     resource = Resource(data)
@@ -386,6 +407,9 @@ def main():
             originals[path] = data
             if (path.startswith('/QUAD/') and not path.endswith('_MT.RES')) or path in ('/RIDER/MRIDER.RES', '/RIDER/FRIDER.RES'):
                 data = compact_player_archive(data, path)
+            elif path == '/ANIMSRDR.RES':
+                catalogs = [Resource(originals[f'/RIDER/{stem}.RES']).named(stem.lower() + '.mcf') for stem in ('MRIDER', 'FRIDER')]
+                data = compact_rider_motions(data, catalogs)
             elif path.endswith('_ENDL.RES'):
                 data = compact_map_placements(data, path.split('/')[-2])
             elif path == '/UI/RESOURCE/TP/TP_PSTNT.RES':
