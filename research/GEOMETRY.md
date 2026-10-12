@@ -12,7 +12,7 @@ Recovered world height is `u16_height * node_height_scale * spacing`. ENV01 has 
 
 The first native scan covered all 40 differently named original terrains. All tile and hierarchy payloads parsed; 36 dense outputs passed the initial seam guard, while ENV04, FREE04, FREE05 and NAT01 were rejected for larger seam differences pending investigation. Current results are in `private/reports/terrain-audit.json`; these are not asset fixtures in Git. Bounds/cycle/truncation tests and a synthetic tile-to-world-coordinate test accompany the reader.
 
-Original per-cell triangle selection, packed contact normals and surface indices now feed the vehicle contacts; see [collision evidence](COLLISION.md). Compressed tile payloads and the four seam cases remain unsupported. Original adaptive rendering LOD remains unreconstructed.
+Original per-cell triangle selection, packed contact normals and surface indices now feed the vehicle contacts; see [collision evidence](COLLISION.md). Compressed tile payloads remain unsupported. The four seam cases were subsequently resolved below. Original adaptive rendering LOD remains unreconstructed.
 
 ### Terrain quality investigation, October 11
 
@@ -28,17 +28,72 @@ Private evidence: the exact-build Ghidra exports, `terrain-vu-disassembly.txt`, 
 
 ## PSG rigid meshes
 
-`mesh::decode_psg` reads PSG version 3 nodes, material names, LOD groups and supported VIF geometry. All 26 original in-race quad meshes decoded in the native Rust audit (`private/reports/quad-mesh-audit.json`). ATV01's highest LOD contains 7,337 submitted vertices and 4,587 indexed triangles across six material groups and 27 transform nodes. There are four stored LODs. Its remaining 40-byte trailer is counted but not interpreted.
+`mesh::decode_psg` reads PSG version 3 and 4 nodes, material names, LOD groups and supported VIF geometry. All 26 original in-race quad meshes decoded in the native Rust audit (`private/reports/quad-mesh-audit.json`). ATV01's highest LOD contains 7,337 submitted vertices and 4,587 indexed triangles across six material groups and 27 transform nodes. There are four stored LODs. Its remaining 40-byte trailer is counted but not interpreted.
 
 The node record is 224 bytes: name[128], local 4-by-4 float matrix, seven bounds floats, and signed parent index. `Node.bounds` preserves local center XYZ, half-extents XYZ and a bounding-sphere radius at record offset 192; mesh extrema corroborate the center/extents interpretation. Sphere radius is not wheel rolling radius. Exact node loader `0x00166d10` reads the center into runtime `+0x100`, half-extents into `+0x110`, and sphere radius into `+0x154`. Wheel initializer `0x001ec600` consumes `+0x110` and `+0x114` directly as width/radius; its width is the stored X half-extent, with no doubling. Column-major parent composition produces the bind pose. Material names occupy 64 bytes. The following four float coefficients scale position, normal, U and V components. LOD groups contain a 20-byte header followed by a length-delimited VIF packet stream. The low half of the packed count field agrees with every decoded group's submitted vertex count.
 
 Supported position streams are four signed 16-bit or signed 32-bit components. Optional VIF `0x6e` unsigned four-byte colors are now retained as raw RGBA when their address matches `0xc001 + 3 * batch_count`; original shader scaling remains separate. XYZ uses the position coefficient. The fourth component's magnitude divided by 16 minus one selects a rigid node; a negative fourth component suppresses triangle emission. Each batch forms a triangle strip with alternating winding. Normals use three signed bytes and UVs two signed shorts, with the stored coefficients. Original positions, transformed positions, node indices, normals, UVs and material IDs are retained.
 
-This is supported by exact extents, valid node indices, declared vertex-count agreement, all 26 quad meshes, and a private untextured render showing the recovered ATV assembly. The original VU shader behavior has not yet been compared against hardware/emulation. Original male/female rider rigid-joint meshes and MOT pose sampling are now decoded separately; see [ANIMATION.md](ANIMATION.md). The initial sample rejected VIF vertex-color streams. With their bounded reader implemented, 120 of 121 extracted ENV01 PSGs now decode, including all ice overlays; `rtower.psg` retains an unsupported signature/version. The raw color extension was corroborated against 3,354 original VIF color batches. Unsupported packets fail rather than being interpreted as another stream.
+This is supported by exact extents, valid node indices, declared vertex-count agreement, all 26 quad meshes, and a private untextured render showing the recovered ATV assembly. The original VU shader behavior has not yet been compared against hardware/emulation. Original male/female rider rigid-joint meshes and MOT pose sampling are now decoded separately; see [ANIMATION.md](ANIMATION.md). The initial sample rejected VIF vertex-color streams. Their bounded reader brought the initial ENV01 sample to 120 of 121 decoded PSGs, including all ice overlays. The remaining `rtower.psg` version guard is resolved below. The raw color extension was corroborated against 3,354 original VIF color batches. Unsupported packets fail rather than being interpreted as another stream.
 
 PSM files in the quad archives are plaintext shader/material configuration, not meshes. ATV01 base/dirt texture bindings and mipmapped PST decoding have been validated privately. Unit tests cover signed coordinates, rigid-node selection, strip restart/winding and column-major point transforms.
 
 `Mesh::bind_bounds` reproduces the loaded hierarchy aggregation in `0x001b3ed0`, `0x00167600` and `0x00167730`. AABB extents stay half-extents. The sphere branch retains its initial center and expands radius using maximum absolute axis displacement plus each authored radius, matching the VU `vmaxy`/`vmaxz` instructions. Vehicle initialization `0x001e3b80` selects this sphere branch for inertia and uses the radius in all three mass/12 terms. The Rust initializer preserves that behavior instead of substituting a conventional cuboid inertia. All 26 original quad hierarchies were audited; ATV01 radius is 3.7050302, with aggregate AABB half-extents approximately [2.095283, 1.808427, 3.066544].
+
+### Missing tower meshes: PSG v4
+
+The three missing scenery mesh names were excluded by the port's version guard.
+The original loader `001b2d40` reads the header's version word at `001b3198`
+into stack offset `0x67c`, then never reads that slot again. It proceeds through
+the common node and material readers (`00166d10`, `001b2bd0`). The observed v4
+resources use the same bounded layout and supported VIF streams as v3. The Rust
+reader now admits these two observed versions while retaining all node, extent,
+declared vertex-count, material-index and packet validation; it does not accept
+arbitrary version numbers or reinterpret unsupported packets.
+
+An audit of the existing eight hosted freestyle archives passes all 502 original
+`geometry/*.psg` occurrences: 498 v3 and four v4, with zero decoding failures.
+The four v4 occurrences are three distinct files: `rtower` in ENV01 and ENV06
+(151 finest-LOD triangles each), `pwrtwrB` in ENV02 (116), and `coal_twr` in
+ENV08 (339, plus its separate lower LOD). Each consumes its entire file with no
+unparsed trailer. Their original scene files place five instances in total:
+two in ENV01, one each in ENV02, ENV06 and ENV08. This is geometry decoding
+coverage, not full material/shader or scene-feature parity.
+
+Those placements already loaded their original COL obstacles through the
+unchanged default scene-model collision path. Restoring their visible geometry
+addresses invisible scenery obstacles; it does not alter their collision meshes
+or the vehicle response.
+
+Five mesh unit tests pass, including a synthetic full v3/v4 container, rejection
+of every truncated prefix, unknown versions, wrong declared vertex counts and
+unsupported packet commands. The original archive bytes are unchanged and
+already present in the R2 allowlist; this decoder change needs no new runtime
+content. Private audit results and source observations remain under
+`private/reports/map-fidelity/` and `private/reports/ghidra/`.
+
+Inspection also exposed the renderer ignoring static scenery's parsed alpha
+threshold, leaving solid black panels between a power tower's beams. Static
+groups now use the authored reference only when the material explicitly enables
+alpha test method 5 (GEQUAL) with KEEP or FB_ONLY failure behavior. These register
+identifiers are corroborated by the [PCSX2 GS register definitions](https://github.com/PCSX2/pcsx2/blob/master/pcsx2/GS/GSRegs.h).
+Each group sets its own cutoff, and the renderer clears it before other passes.
+The original `rtower` and `pwrtwr` materials use reference 120. This restores
+their fully transparent openings through the existing cutout shader; it is not
+full GS material fidelity. Original FB_ONLY source-alpha blending at filtered
+edges, other alpha-test methods and GS quantization remain unimplemented.
+
+The rebuilt host browser verifies all five placements: GPU matrices match the
+original parsed scene transforms at f32 precision, each material has a decoded
+texture and every expected triangle reaches a scenery draw group. Four inspected
+screenshots show the towers at their original positions, including the restored
+open power-tower lattice. These use a deliberately positioned inspection camera
+through an ignored test script; they are not normal gameplay-camera screenshots
+or evidence of improved terrain LOD. No scene data or deployed camera behavior
+was changed for these views. Public deployment is verified separately.
+The final host regression also passes loading and driving in all eight maps,
+with no unsupported placed scenery meshes or JavaScript/WebGL errors, and the
+moving full-sample terrain patch remains functional.
 
 ## Freeport Harbor and shared terrain borders (2026-10-11)
 

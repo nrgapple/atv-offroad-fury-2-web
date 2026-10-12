@@ -1,6 +1,6 @@
 // Original content and vehicle component simulation run in the Rust worker.
 import { Frontend } from './frontend.js';
-import { mountTouchControls, TouchDriveIntent } from './touch.js';
+import { mountTouchControls, TouchLeanIntent } from './touch.js';
 import { GameAudio } from './audio.js';
 import { openHostedContent } from './content.js';
 const $ = id => document.getElementById(id);
@@ -19,7 +19,7 @@ let sceneChunks = [], sceneDraws = [], skyChunks = [], ecoGroups = [];
 const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const camera = { x: 0, y: 0, z: 0, yaw: 0, pitch: -.35 };
 const keys = new Set(), pointers = new Map();
-const touchDrive = new TouchDriveIntent();
+const touchLean = new TouchLeanIntent();
 const touchControls = mountTouchControls({
   surface: canvas,
   active: () => simReady && focused && !document.hidden && !menuOpen && !lost,
@@ -238,7 +238,12 @@ async function baseTextures(mesh, materialArchive, materialEntries, cache = new 
     try {
       const info = await json(7, pst), rgba = await codec(8, pst);
       const alphaMatch = materialText.match(/alphaReferenceValue\s*=\s*(\d+)/i);
-      image = { ...info, rgba, shader, alphaTest: /alphaTestOnOff\s*=\s*0/i.test(materialText) ? 0 : Number(alphaMatch?.[1] ?? 0) / 255 };
+      // Explicit GEQUAL cutout materials, including the original tower lattice.
+      // FB_ONLY/source-alpha edge blending is not yet a complete GS match.
+      const sceneCutout = /^\s*alphaTestOnOff\s*=\s*1\s*$/mi.test(materialText)
+        && /^\s*alphaTestMethod\s*=\s*5\s*$/mi.test(materialText)
+        && /^\s*processingMethodWhenFailedInAlphaTest\s*=\s*[01]\s*$/mi.test(materialText);
+      image = { ...info, rgba, shader, alphaTest: /alphaTestOnOff\s*=\s*0/i.test(materialText) ? 0 : Number(alphaMatch?.[1] ?? 0) / 255, sceneAlphaCutoff: sceneCutout ? Number(alphaMatch?.[1] ?? 0) / 255 : 0 };
     } catch (error) { image = { shader, error: error.message }; }
     textures.set(material, image); cache.set(material, image);
   }
@@ -659,7 +664,7 @@ function buildMesh() {
         const vertices = new Float32Array(group.vertices.length * 8);
         group.vertices.forEach((vertex, index) => vertices.set([...vertex.position, ...vertex.normal, ...vertex.uv], index * 8));
         const chunk = upload(vertices, new Uint16Array(group.indices), true);
-        chunk.texture = textures.get(material); groups.push(chunk); sceneChunks.push(chunk);
+        chunk.texture = textures.get(material); chunk.alphaCutoff = decoded?.sceneAlphaCutoff ?? 0; groups.push(chunk); sceneChunks.push(chunk);
       }
       geometry.set(name, groups);
     }
@@ -743,15 +748,15 @@ function drivingInput() {
     stunt_x: Number(keys.has('ArrowRight')) - Number(keys.has('ArrowLeft')) + padX,
     stunt_y: Number(keys.has('ArrowDown')) - Number(keys.has('ArrowUp')) + padY,
   };
-  input.steer += touchDrive.steer;
-  input.touch_drive = touchDrive.sample();
+  input.steer += touchLean.steer;
+  input.lean += touchLean.lean;
   const touch = touchControls.sample();
-  input.lean += touch.lean;
+  input.touch_drive = touch.drive;
   if (touch.stunt_modifiers) Object.assign(input, { stunt_modifiers: touch.stunt_modifiers, stunt_x: touch.stunt_x, stunt_y: touch.stunt_y });
   if (touch.preload_axis !== null) input.preload_axis = touch.preload_axis;
   input.throttle = Math.max(0, clamp(input.throttle)); input.brake = Math.max(0, clamp(input.brake));
   // Browser axes point right; the recovered steering scalar points left.
-  input.steer = -clamp(input.steer); // Rust clamps lean after adding per-step touch pitch.
+  input.steer = -clamp(input.steer); // Rust clamps the combined physical lean; right touch never adds pitch.
   return input;
 }
 function acceptFrame(frame) {
@@ -759,7 +764,7 @@ function acceptFrame(frame) {
   simFrame = frame;
   // A completed old batch may arrive after pause/blur/cancel. Keep its physical
   // frame, but do not overwrite cleared controls with the old touch generation.
-  if (frame.applied_input && frame.applied_input.touch_drive?.generation === touchDrive.generation) diagnostics.input = frame.applied_input;
+  if (frame.applied_input && frame.applied_input.touch_drive?.generation === touchControls.generation) diagnostics.input = frame.applied_input;
   touchControls.feedback(frame);
   vehicle.position = frame.origin.slice();
   if (frame.quad_node_matrices?.length !== vehicle.nodes.length || frame.quad_node_matrices.some(matrix => matrix.length !== 16 || !matrix.every(Number.isFinite))) throw new Error('Simulation returned an invalid quad linkage pose.');
@@ -924,9 +929,11 @@ function render(time) {
   gl.uniform3f(uniforms.surfaceColor, .68, .70, .73);
   for (const { chunk, matrix, unlit } of sceneDraws) {
     gl.uniformMatrix4fv(uniforms.model, false, matrix); gl.uniform1i(uniforms.unlit, unlit);
+    gl.uniform1f(uniforms.alphaCutoff, chunk.alphaCutoff);
     gl.uniform1i(uniforms.useTexture, Boolean(chunk.texture)); gl.bindTexture(gl.TEXTURE_2D, chunk.texture ?? fallbackTexture);
     gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
   }
+  gl.uniform1f(uniforms.alphaCutoff, 0);
   drawEcosystem();
   gl.uniform1i(uniforms.unlit, false);
   if (vehicle) gl.uniformMatrix4fv(uniforms.model, false, vehicleMatrix());
@@ -974,7 +981,7 @@ async function loadGame(file = null, environment = "env01") {
     Object.assign(diagnostics, { ready: true, source: source.name, width, depth, min, max, frames: 0 });
     $('reset').disabled = false; $('camera').disabled = !simReady; $('help').hidden = false;
     $('reset').textContent = simReady ? 'Reset ATV' : 'Reset view';
-    $('help').textContent = simReady ? 'WASD / arrows: drive · R: reverse · C / △ / Y: camera · triggers / left stick: controller · left touch: drive · right: hold, drag to lean, release to preload' : 'Free camera · drag to look · WASD to move · Q/E up/down';
+    $('help').textContent = simReady ? 'WASD / arrows: drive · R: reverse · C / R3: camera · triggers / left stick: controller · left touch: steer / lean · right: up drive, down brake / reverse, release preload' : 'Free camera · drag to look · WASD to move · Q/E up/down';
     status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain. Open the disc to load the ATV.');
   } catch (error) { if (token === generation) status(error.message, true); throw error; }
   finally { if (token === generation) $('disc').disabled = false; }
@@ -999,13 +1006,13 @@ canvas.addEventListener('pointerdown', event => {
   const left = event.pointerType === 'touch' && event.clientX < innerWidth / 2;
   // An unclaimed right gameplay touch must never fall through to mouse orbit.
   if (simReady && event.pointerType === 'touch' && !left) return;
-  if (left && !touchDrive.begin(event.pointerId, event.clientX, event.clientY)) return;
+  if (left && !touchLean.begin(event.pointerId, event.clientX, event.clientY)) return;
   focused = true; canvas.focus({ preventScroll: true }); syncAudio(); canvas.setPointerCapture(event.pointerId);
   pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, dx: 0, dy: 0, touch: event.pointerType === 'touch', move: event.pointerType === 'touch' && event.clientX < innerWidth / 2 });
 });
 canvas.addEventListener('pointermove', event => {
   const pointer = pointers.get(event.pointerId); if (!pointer) return;
-  if (pointer.move) touchDrive.move(event.pointerId, event.clientX, event.clientY);
+  if (pointer.move) touchLean.move(event.pointerId, event.clientX, event.clientY);
   pointer.dx = Math.max(-70, Math.min(70, event.clientX - pointer.startX)); pointer.dy = Math.max(-70, Math.min(70, event.clientY - pointer.startY));
   if (!pointer.move) {
     if (simReady) { if (!pointer.touch) orbit -= (event.clientX - pointer.x) * .004; }
@@ -1013,14 +1020,14 @@ canvas.addEventListener('pointermove', event => {
   }
   pointer.x = event.clientX; pointer.y = event.clientY;
 });
-for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(name, event => { touchDrive.end(event.pointerId, name !== 'pointerup'); pointers.delete(event.pointerId); });
+for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(name, event => { touchLean.end(event.pointerId, name !== 'pointerup'); pointers.delete(event.pointerId); });
 window.addEventListener('keydown', event => {
   if (document.activeElement !== canvas) return;
   if (event.code === 'KeyC' && !event.repeat && simReady) { event.preventDefault(); cameraCycle = true; }
   if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyR', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ShiftLeft'].includes(event.code)) { event.preventDefault(); keys.add(event.code); }
 });
 window.addEventListener('keyup', event => keys.delete(event.code));
-const clearInput = () => { keys.clear(); pointers.clear(); touchControls.clear(); touchDrive.clear(); simAccumulator = 0; cameraCycle = false; cameraButtonHeld = false; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
+const clearInput = () => { keys.clear(); pointers.clear(); touchControls.clear(); touchLean.clear(); simAccumulator = 0; cameraCycle = false; cameraButtonHeld = false; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
 let pageSuspended = false;
 const syncAudio = () => { void audio.setActive(focused && !document.hidden && !lost && !menuOpen && !pageSuspended).catch(error => { diagnostics.audioError = error.message; }); };
 window.addEventListener('blur', () => { focused = false; clearInput(); syncAudio(); });

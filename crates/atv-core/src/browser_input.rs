@@ -6,7 +6,7 @@ use crate::{Result, vehicle::VehicleInput};
 pub struct TouchIntent {
     pub generation: u64,
     pub held: bool,
-    /// Forward is positive. The same pullback becomes positive lean in air.
+    /// Right-thumb forward/up is positive throttle; down is brake/reverse.
     pub axis: f32,
 }
 
@@ -58,34 +58,38 @@ impl TouchDrive {
         } else {
             0.
         };
-        let brake = if !grounded && intent.held {
-            // Preserve takeoff throttle/direction, never its gesture brake.
-            // Right-hand lean remains in `independent` and retains the agreed
-            // additive/clamped policy; this patch does not invent new torque.
-            independent.lean = (independent.lean - axis).clamp(-1., 1.);
-            0.
+        let strength = axis.abs();
+        if strength <= 0.08 {
+            self.throttle = 0.;
+            self.brake = 0.;
         } else {
-            let strength = axis.abs();
-            if strength <= 0.08 {
-                self.throttle = 0.;
-                self.brake = 0.;
-            } else {
-                self.engaged = true;
-                let wanted_reverse = axis < 0.;
-                if (wanted_reverse && speed > 1.) || (!wanted_reverse && speed < -1.) {
-                    self.reverse = speed < 0.;
-                    self.throttle = 0.;
-                    self.brake = strength;
+            self.engaged = true;
+            let wanted_reverse = axis < 0.;
+            if !grounded {
+                // Authored touch adaptation: body-relative speed changes sign
+                // during rotation, so airborne input cannot select another gear.
+                self.throttle = if wanted_reverse == self.reverse {
+                    strength
                 } else {
-                    self.reverse = wanted_reverse;
-                    self.throttle = strength;
-                    self.brake = 0.;
-                }
+                    0.
+                };
+                self.brake = if wanted_reverse == self.reverse {
+                    0.
+                } else {
+                    strength
+                };
+            } else if (wanted_reverse && speed > 1.) || (!wanted_reverse && speed < -1.) {
+                self.reverse = speed < 0.;
+                self.throttle = 0.;
+                self.brake = strength;
+            } else {
+                self.reverse = wanted_reverse;
+                self.throttle = strength;
+                self.brake = 0.;
             }
-            self.brake
-        };
+        }
         independent.throttle = independent.throttle.max(self.throttle);
-        independent.brake = independent.brake.max(brake);
+        independent.brake = independent.brake.max(self.brake);
         independent.reverse |= self.reverse;
         independent.lean = independent.lean.clamp(-1., 1.);
         Ok(independent)
@@ -102,131 +106,144 @@ mod tests {
             axis,
         })
     }
-    fn channels(input: VehicleInput) -> (f32, f32, f32, bool) {
-        (input.throttle, input.brake, input.lean, input.reverse)
+    fn released() -> Option<TouchIntent> {
+        Some(TouchIntent {
+            generation: 1,
+            held: false,
+            axis: 0.,
+        })
+    }
+    fn channels(i: VehicleInput) -> (f32, f32, f32, bool) {
+        (i.throttle, i.brake, i.lean, i.reverse)
     }
     #[test]
-    fn held_pullback_switches_at_each_takeoff_and_landing_step() {
+    fn right_drive_never_changes_left_lean_and_release_stops_throttle_in_air() {
         let mut touch = TouchDrive::default();
-        let states = [(true, 30.), (false, 29.), (false, 28.), (true, 27.)];
-        let actual: Vec<_> = states
-            .into_iter()
-            .map(|(grounded, speed)| {
-                channels(
-                    touch
-                        .resolve(VehicleInput::default(), intent(-1.), grounded, speed)
-                        .unwrap(),
-                )
-            })
-            .collect();
+        let left = VehicleInput {
+            lean: 1.,
+            steer: 0.5,
+            ..Default::default()
+        };
+        for grounded in [true, false, true] {
+            let active = touch.resolve(left, intent(1.), grounded, 30.).unwrap();
+            assert_eq!(channels(active), (1., 0., 1., false));
+            assert_eq!(active.steer, 0.5);
+        }
         assert_eq!(
-            actual,
-            vec![
-                (0., 1., 0., false),
-                (0., 0., 1., false),
-                (0., 0., 1., false),
-                (0., 1., 0., false)
-            ]
+            channels(touch.resolve(left, released(), false, 30.).unwrap()),
+            (0., 0., 1., false)
+        );
+        assert_eq!(
+            channels(touch.resolve(left, intent(-1.), false, 30.).unwrap()),
+            (0., 1., 1., false)
         );
     }
     #[test]
-    fn batches_and_individual_steps_have_identical_transition_outputs() {
-        let states = [
-            (true, 35.),
-            (false, 34.),
-            (false, 33.),
-            (true, 25.),
-            (true, 1.01),
-            (true, 0.99),
-            (false, -2.),
-            (true, -3.),
-        ];
-        let mut sequential = TouchDrive::default();
-        let expected: Vec<_> = states
-            .into_iter()
-            .map(|(g, s)| {
+    fn each_ground_step_brakes_before_changing_direction() {
+        let mut touch = TouchDrive::default();
+        for (axis, speed, expected) in [
+            (-1., 30., (0., 1., 0., false)),
+            (-1., 1.01, (0., 1., 0., false)),
+            (-1., 0.99, (1., 0., 0., true)),
+            (-1., -5., (1., 0., 0., true)),
+            (1., -5., (0., 1., 0., true)),
+            (1., -1.01, (0., 1., 0., true)),
+            (1., -0.99, (1., 0., 0., false)),
+        ] {
+            assert_eq!(
                 channels(
-                    sequential
-                        .resolve(VehicleInput::default(), intent(-1.), g, s)
-                        .unwrap(),
-                )
-            })
-            .collect();
-        let mut batched = TouchDrive::default();
-        let mut actual = Vec::new();
-        for batch in states.chunks(4) {
-            for &(g, s) in batch {
-                actual.push(channels(
-                    batched
-                        .resolve(VehicleInput::default(), intent(-1.), g, s)
-                        .unwrap(),
-                ));
-            }
+                    touch
+                        .resolve(VehicleInput::default(), intent(axis), true, speed)
+                        .unwrap()
+                ),
+                expected
+            );
         }
-        assert_eq!(actual, expected);
-        assert_eq!(actual[4], (0., 1., 0., false));
-        assert_eq!(actual[5], (1., 0., 0., true));
-        assert_eq!(actual[6], (1., 0., 1., true));
     }
     #[test]
-    fn cancellation_generation_and_recovery_discard_takeoff_memory() {
+    fn airborne_body_rotation_cannot_switch_the_selected_gear() {
         let mut touch = TouchDrive::default();
         touch
-            .resolve(VehicleInput::default(), intent(-0.8), true, -5.)
+            .resolve(VehicleInput::default(), intent(-1.), true, 0.)
             .unwrap();
+        for speed in [-20., 0., 20.] {
+            assert_eq!(
+                channels(
+                    touch
+                        .resolve(VehicleInput::default(), intent(-1.), false, speed)
+                        .unwrap()
+                ),
+                (1., 0., 0., true)
+            );
+            assert_eq!(
+                channels(
+                    touch
+                        .resolve(VehicleInput::default(), intent(1.), false, speed)
+                        .unwrap()
+                ),
+                (0., 1., 0., true)
+            );
+            assert_eq!(
+                channels(
+                    touch
+                        .resolve(VehicleInput::default(), released(), false, speed)
+                        .unwrap()
+                ),
+                (0., 0., 0., true)
+            );
+        }
         assert_eq!(
             channels(
                 touch
-                    .resolve(VehicleInput::default(), intent(1.), false, -5.)
+                    .resolve(VehicleInput::default(), intent(1.), true, 0.)
                     .unwrap()
             ),
-            (0.8, 0., -1., true)
+            (1., 0., 0., false)
         );
-        let clear = Some(TouchIntent {
+    }
+    #[test]
+    fn cancellation_generation_and_recovery_clear_drive_memory() {
+        let mut touch = TouchDrive::default();
+        touch
+            .resolve(VehicleInput::default(), intent(-1.), true, -5.)
+            .unwrap();
+        let cancel = Some(TouchIntent {
             generation: 2,
             held: false,
-            axis: 0.,
+            axis: -1.,
         });
         assert_eq!(
             channels(
                 touch
-                    .resolve(VehicleInput::default(), clear, false, -5.)
+                    .resolve(VehicleInput::default(), cancel, false, -5.)
                     .unwrap()
             ),
             (0., 0., 0., false)
         );
         touch
-            .resolve(VehicleInput::default(), intent(1.), true, 5.)
+            .resolve(VehicleInput::default(), intent(-1.), true, -5.)
             .unwrap();
         touch.reset();
         assert_eq!(
             channels(
                 touch
-                    .resolve(VehicleInput::default(), intent(1.), false, 0.)
+                    .resolve(VehicleInput::default(), released(), false, -5.)
                     .unwrap()
             ),
-            (0., 0., -1., false)
+            (0., 0., 0., false)
         );
         assert_eq!(
             channels(
                 touch
-                    .resolve(VehicleInput::default(), None, true, 0.)
+                    .resolve(VehicleInput::default(), None, false, 0.)
                     .unwrap()
             ),
             (0., 0., 0., false)
         );
     }
     #[test]
-    fn releasing_and_independent_controls_do_not_leave_touch_brakes_or_gear() {
+    fn independent_controller_input_survives_touch_release_and_keeps_its_lean() {
         let mut touch = TouchDrive::default();
-        touch
-            .resolve(VehicleInput::default(), intent(-1.), true, -5.)
-            .unwrap();
-        let released = Some(TouchIntent {
-            generation: 1,
-            held: false,
-            axis: -1.,
-        });
         let independent = VehicleInput {
             throttle: 0.6,
             brake: 0.4,
@@ -234,34 +251,27 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            channels(touch.resolve(independent, released, false, -5.).unwrap()),
+            channels(touch.resolve(independent, intent(1.), false, 30.).unwrap()),
+            (1., 0.4, -0.25, false)
+        );
+        assert_eq!(
+            channels(touch.resolve(independent, released(), false, 30.).unwrap()),
             (0.6, 0.4, -0.25, false)
         );
-        // A held gesture cannot cancel a separate controller brake or lean.
-        let mixed = touch.resolve(independent, intent(-1.), false, -5.).unwrap();
-        assert_eq!(channels(mixed), (1., 0.4, 0.75, true));
-        let combined = touch
-            .resolve(
-                VehicleInput {
-                    lean: 1.5,
-                    ..independent
-                },
-                intent(1.),
-                false,
-                -5.,
-            )
-            .unwrap();
         assert_eq!(
-            combined.lean, 0.5,
-            "Clamp only after all independent and touch lean contributions"
-        );
-        assert_eq!(
-            channels(
-                touch
-                    .resolve(VehicleInput::default(), released, false, -5.)
-                    .unwrap()
-            ),
-            (0., 0., 0., true)
+            touch
+                .resolve(
+                    VehicleInput {
+                        lean: 1.5,
+                        ..independent
+                    },
+                    intent(-1.),
+                    false,
+                    30.
+                )
+                .unwrap()
+                .lean,
+            1.
         );
     }
 }

@@ -1,4 +1,4 @@
-//! PSG v3 rigid mesh recovery. Returns the stored bind pose, not animation or
+//! PSG v3/v4 rigid mesh recovery. Returns the stored bind pose, not animation or
 //! the original VU rendering pipeline. Unsupported packet forms fail explicitly.
 use crate::{Result, slice, u16le, u32le};
 use serde::Serialize;
@@ -281,7 +281,11 @@ pub fn decode_psg(data: &[u8]) -> Result<Mesh> {
     if data.len() > 128 * 1024 * 1024 {
         return Err("PSG exceeds 128 MiB limit".into());
     }
-    if slice(data, 0, 4)? != b"psg\0" || u32le(data, 4)? != 3 {
+    // 001b2d40 reads the version word at 001b3198, then uses the same node,
+    // material and geometry readers without inspecting it. Both observed
+    // versions use this layout; retain explicit admission and packet checks
+    // rather than accepting arbitrary future versions.
+    if slice(data, 0, 4)? != b"psg\0" || !matches!(u32le(data, 4)?, 3 | 4) {
         return Err("unsupported PSG signature/version".into());
     }
     let count = u32le(data, 8)? as usize;
@@ -399,6 +403,91 @@ pub fn decode_psg(data: &[u8]) -> Result<Mesh> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn synthetic_psg(version: u32) -> Vec<u8> {
+        let mut data = b"psg\0".to_vec();
+        data.extend(version.to_le_bytes());
+        data.extend(1u32.to_le_bytes());
+        let node = identity();
+        let mut node_name = [0; 128];
+        node_name[..4].copy_from_slice(b"test");
+        data.extend(node_name);
+        for value in node.local_matrix {
+            data.extend(value.to_le_bytes());
+        }
+        for value in [0f32, 1., 0., 1., 1., 0., 2.] {
+            data.extend(value.to_le_bytes());
+        }
+        data.extend((-1i32).to_le_bytes());
+        data.extend(1u32.to_le_bytes());
+        let mut material = [0; 64];
+        material[..5].copy_from_slice(b"stone");
+        data.extend(material);
+        for value in [0.5f32, 1., 0.25, 0.25] {
+            data.extend(value.to_le_bytes());
+        }
+        data.extend([0; 16]);
+        data.extend(1u32.to_le_bytes());
+        data.extend(100f32.to_le_bytes());
+        data.extend(1u32.to_le_bytes());
+        let mut geometry = 0x6d038001u32.to_le_bytes().to_vec();
+        for position in [[-2i16, 0, 0, -16], [2, 0, 0, -16], [0, 4, 0, 16]] {
+            for component in position {
+                geometry.extend(component.to_le_bytes());
+            }
+        }
+        geometry.extend(0x6a038004u32.to_le_bytes());
+        geometry.extend([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0]);
+        geometry.extend(0x65038007u32.to_le_bytes());
+        for uv in [[0i16, 0], [4, 0], [2, 4]] {
+            for component in uv {
+                geometry.extend(component.to_le_bytes());
+            }
+        }
+        geometry.extend(0x17000000u32.to_le_bytes());
+        for value in [0u32, 7, 0, 3, geometry.len() as u32] {
+            data.extend(value.to_le_bytes());
+        }
+        data.extend(geometry);
+        data
+    }
+    #[test]
+    fn v3_and_v4_share_the_bounded_geometry_layout() {
+        for version in [3, 4] {
+            let data = synthetic_psg(version);
+            let mesh = decode_psg(&data).unwrap();
+            assert_eq!(mesh.nodes[0].name, "test");
+            assert_eq!(mesh.nodes[0].bounds, [0., 1., 0., 1., 1., 0., 2.]);
+            assert_eq!(mesh.materials, ["stone"]);
+            assert_eq!(mesh.lods[0].threshold, 100.);
+            let group = &mesh.lods[0].groups[0];
+            assert_eq!(group.flags, 7);
+            assert_eq!(group.vertices[0].position, [-1., 0., 0.]);
+            assert_eq!(group.vertices[2].position, [0., 2., 0.]);
+            assert_eq!(group.vertices[2].normal, [0., 0., 1.]);
+            assert_eq!(group.vertices[2].uv, [0.5, 1.]);
+            assert_eq!(group.indices, [0, 1, 2]);
+            assert_eq!(mesh.trailing_bytes, 0);
+            for end in 0..data.len() {
+                assert!(decode_psg(&data[..end]).is_err());
+            }
+        }
+        assert!(
+            decode_psg(&synthetic_psg(5))
+                .unwrap_err()
+                .contains("signature/version")
+        );
+    }
+    #[test]
+    fn v4_retains_declared_vertex_and_packet_validation() {
+        let mut data = synthetic_psg(4);
+        // Header + node + material table + scales + LOD header, then group.
+        let group = 12 + 224 + 4 + 64 + 32 + 4 + 8;
+        data[group + 12..group + 16].copy_from_slice(&2u32.to_le_bytes());
+        assert!(decode_psg(&data).unwrap_err().contains("vertex count"));
+        data[group + 12..group + 16].copy_from_slice(&3u32.to_le_bytes());
+        data[group + 20..group + 24].copy_from_slice(&0xff038001u32.to_le_bytes());
+        assert!(decode_psg(&data).unwrap_err().contains("VIF command"));
+    }
     fn identity() -> Node {
         Node {
             name: "test".into(),

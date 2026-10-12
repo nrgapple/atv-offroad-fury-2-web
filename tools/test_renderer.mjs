@@ -133,7 +133,7 @@ try {
   const before = await read();
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point(1, 80, 440)] });
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point(1, 80, 440), point(2, 290, 440)] });
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point(1, 105, 380), point(2, 330, 440)] });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point(1, 105, 440), point(2, 290, 380)] });
   await page.waitForTimeout(500);
   const during = await read(); finite(during);
   assert(during.input.throttle > .5 && during.input.steer < 0);

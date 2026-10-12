@@ -55,9 +55,10 @@ try {
    const trace=[], expectedFrames=[], packets=[];
    const canonical=value=>JSON.stringify(value,(_,v)=>typeof v==='number'?Math.fround(v):v);
    for(let batch=0;batch<140;batch++){
-     if(!released&&previous.preload_armed)released=true;
-     const input={throttle:0,brake:0,steer:0,lean:0,reverse:false,preload_axis:released?-1:1,
-       touch_drive:{generation:1,held:true,axis:released?-1:1}};
+     const releasing = !released && previous.preload_armed;
+     if(releasing)released=true;
+     const input={throttle:0,brake:0,steer:0,lean:released?.25:0,reverse:false,preload_axis:releasing?-1:released?null:1,
+       touch_drive:{generation:1,held:!released,axis:released?0:1}};
      const frames=invoke(instances[0],50,encode({count:4,input,orbit:0,cycle:false}));
      for(let i=0;i<4;i++){
        const sequential=invoke(instances[1],24,encode({dt:1/60,input}));
@@ -68,8 +69,7 @@ try {
        if(canonical(frame)!==canonical(sequential))throw Error(`batch/sequential f32 mismatch at ${batch*4+i}`);
        const grounded=previous.grounded.some(Boolean), applied=frame.applied_input;
        if(released&&previous.wreck.phase==='Riding'){
-         if(!grounded && (applied.lean!==1||applied.brake!==0))throw Error('airborne pullback was not resolved for current step');
-         if(grounded&&previous.speed>1&&(applied.lean!==0||applied.brake!==1))throw Error('ground pullback was not braking for current step');
+         if(applied.lean!==.25||applied.brake!==0||applied.throttle!==0)throw Error('left lean/right release must persist on either side of ground contact');
        }
        if(i<3&&grounded!==frame.grounded.some(Boolean))transitions++;
        if(released&&!frame.grounded.some(Boolean))sawAir=true;
@@ -80,15 +80,16 @@ try {
      }
      if(released&&sawAir&&sawLanding)break;
    }
-   // Replay the exact same per-step inputs with a one-step prefix at release,
-   // then four-step batches. This moves takeoff inside the batch without any
+   // Replay the exact same per-step inputs with each prefix phase at release,
+   // then four-step batches. This finds takeoff inside a batch without any
    // pose/force modification or changing when the player released preload.
    const resetPacket=window.initialPackets.findLast(p=>p.op===23);
-   invoke(instances[0],23,resetPacket.bytes,resetPacket.index);
    const releaseStart=packets.findIndex(p=>p.preload_axis===-1);
    let insideTakeoff=null;
+   for(let phase=1;phase<=3;phase++){
+   invoke(instances[0],23,resetPacket.bytes,resetPacket.index);
    for(let offset=0;offset<packets.length;){
-     const input=packets[offset];let count=offset===releaseStart?1:Math.min(4,packets.length-offset);
+     const input=packets[offset];let count=offset===releaseStart?phase:Math.min(4,packets.length-offset);
      while(count>1&&JSON.stringify(packets[offset+count-1])!==JSON.stringify(input))count--;
      const frames=invoke(instances[0],50,encode({count,input,orbit:0,cycle:false}));
      for(let i=0;i<count;i++){
@@ -96,11 +97,12 @@ try {
        if(canonical(frame)!==canonical(expectedFrames[step]))throw Error(`shifted chunk f32 mismatch at ${step}`);
        if(i<count-1&&trace[step].groundedBefore&&!trace[step].groundedAfter){
          const next=frames[i+1].frame.applied_input;
-         if(next.lean!==1||next.brake!==0)throw Error('takeoff inside batch retained ground controls');
-         insideTakeoff={step,nextStep:step+1,input:next};
+         if(next.lean!==.25||next.brake!==0||next.throttle!==0)throw Error('takeoff inside batch changed left lean or retained released right throttle');
+         insideTakeoff={phase,step,nextStep:step+1,input:next};
        }
      }
      offset+=count;
+   }
    }
    const cancel={throttle:0,brake:0,steer:0,lean:0,reverse:false,touch_drive:{generation:2,held:false,axis:0}};
    const cancelled=invoke(instances[0],50,encode({count:4,input:cancel,orbit:0,cycle:false}));
@@ -114,8 +116,8 @@ try {
  });
  if(process.env.ATV_TOUCH_BATCH_TRACE)await writeFile(process.env.ATV_TOUCH_BATCH_TRACE,JSON.stringify(result,null,2));
  assert(result.released&&result.sawAir&&result.sawLanding,'Original map must reach preload/takeoff/landing');
- assert(result.insideTakeoff,'Takeoff must occur inside a batch and the following step must use air lean/brake0');
+ assert(result.insideTakeoff,'Takeoff must occur inside a batch and the following step must retain lean with throttle/brake0');
  assert(result.transitions>0,'At least one ground/air transition must occur within a four-step batch');
  assert.deepEqual(errors,[]);
- console.log(`PASS: ${result.steps} original-map steps match four-step batches vs sequential calls; held pullback switches within batch through takeoff/landing; both portrait thumb drags preserve orbit after focus loss.`);
+ console.log(`PASS: ${result.steps} original-map steps match four-step batches vs sequential calls; left lean and right release remain independent through takeoff/landing; both portrait thumb drags preserve orbit after focus loss.`);
 }finally{await browser.close();}

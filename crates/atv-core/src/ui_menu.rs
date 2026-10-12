@@ -406,10 +406,10 @@ pub fn layout(request: Request) -> Result<Frame> {
                 (
                     "TOUCH",
                     vec![
-                        "Left: drive / brake / reverse.",
-                        "In air: pitch and turn with the left thumb.",
-                        "Right: hold, lean, then release preload.",
-                        "In air: swipe; keep holding to extend.",
+                        "Left: steer and lean, on ground or in air.",
+                        "Right: up to drive; down to brake / reverse.",
+                        "Hold right to brace. Lift to release preload.",
+                        "In air: extra right finger swipes stunts.",
                         "Up / down: Nac Nac / No Footed Can Can.",
                         "Left / right: Suicide No Hander / Bar Hop.",
                     ],

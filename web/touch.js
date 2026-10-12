@@ -1,42 +1,46 @@
 // Browser gestures adapt input axes only; the recovered Rust gates own jump force.
 const clamp = value => Math.max(-1, Math.min(1, Number.isFinite(value) ? value : 0));
 export class TouchInput {
-  constructor() { this.clear(); }
-  clear() { this.pointer = null; this.sampled = false; this.releasePending = false; }
+  constructor() { this.generation = 0; this.clear(); }
+  clear() { this.generation++; this.pointer = null; this.stunt = null; this.sampled = false; this.releasePending = false; }
+  owns(id) { return this.pointer?.id === id || this.stunt?.id === id; }
   begin(id, x = 0, y = 0, airborne = false) {
-    if (this.pointer) return false;
-    this.pointer = { id, x, y, lean: 0, stunt: airborne, axes: null }; this.sampled = false; this.releasePending = false;
+    if (this.owns(id)) return false;
+    if (this.pointer) {
+      // A second right finger selects an original stunt independently of the
+      // primary thumb's throttle. Grounded extra fingers cannot steal drive.
+      if (!airborne || this.stunt) return false;
+      this.stunt = { id, x, y, axes: null }; return true;
+    }
+    this.pointer = { id, x, y, axis: 0 }; this.sampled = false; this.releasePending = false;
     return true;
   }
   move(id, x, y) {
-    if (this.pointer?.id !== id) return;
-    const pointer = this.pointer, dx = x - pointer.x, dy = y - pointer.y;
-    if (pointer.stunt) {
-      // One airborne swipe is a held Circle+direction command. It cannot turn
-      // into a preload release or keep selecting different stunts mid-gesture.
+    if (this.pointer?.id === id) this.pointer.axis = clamp((this.pointer.y - y) / 70);
+    else if (this.stunt?.id === id) {
+      const pointer = this.stunt, dx = x - pointer.x, dy = y - pointer.y;
       if (!pointer.axes && Math.hypot(dx, dy) >= 36) pointer.axes = Math.abs(dy) >= Math.abs(dx) ? [0, Math.sign(dy)] : [Math.sign(dx), 0];
-    } else pointer.lean = clamp(dy / 70);
+    }
   }
   end(id, cancelled = false) {
+    if (this.stunt?.id === id) { this.stunt = null; return; }
     if (this.pointer?.id !== id) return;
-    this.releasePending = !cancelled && this.sampled && !this.pointer.stunt; this.pointer = null; this.sampled = false;
+    if (cancelled) { this.clear(); return; }
+    this.releasePending = this.sampled; this.pointer = null; this.sampled = false;
   }
   sample() {
-    if (this.pointer) {
-      this.sampled = true;
-      if (this.pointer.stunt) return { lean: 0, preload_axis: null, stunt_modifiers: this.pointer.axes ? 1 : 0, stunt_x: this.pointer.axes?.[0] ?? 0, stunt_y: this.pointer.axes?.[1] ?? 0 };
-      return { lean: this.pointer.lean, preload_axis: 1 };
-    }
-    if (this.releasePending) { this.releasePending = false; return { lean: 0, preload_axis: -1 }; }
-    return { lean: 0, preload_axis: null };
+    const drive = { generation: this.generation, held: Boolean(this.pointer), axis: this.pointer?.axis ?? 0 };
+    let preload_axis = null;
+    if (this.pointer) { this.sampled = true; preload_axis = 1; }
+    else if (this.releasePending) { this.releasePending = false; preload_axis = -1; }
+    return { drive, preload_axis, stunt_modifiers: this.stunt?.axes ? 1 : 0, stunt_x: this.stunt?.axes?.[0] ?? 0, stunt_y: this.stunt?.axes?.[1] ?? 0 };
   }
 }
 
-// Raw left-thumb intent only. Rust resolves drive/brake/air lean against each
-// fixed physics step, so a transport batch cannot keep the old grounded mode.
-export class TouchDriveIntent {
-  constructor() { this.generation = 0; this.clear(); }
-  clear() { this.generation++; this.pointer = null; }
+// The left thumb always steers and leans, whether grounded or airborne.
+export class TouchLeanIntent {
+  constructor() { this.clear(); }
+  clear() { this.pointer = null; }
   begin(id, x, y) {
     if (this.pointer) return false;
     this.pointer = { id, x, y, dx: 0, dy: 0 }; return true;
@@ -46,12 +50,9 @@ export class TouchDriveIntent {
     this.pointer.dx = clamp((x - this.pointer.x) / 70);
     this.pointer.dy = clamp((y - this.pointer.y) / 70);
   }
-  end(id, cancelled = false) {
-    if (this.pointer?.id !== id) return;
-    if (cancelled) this.clear(); else this.pointer = null;
-  }
-  sample() { return { generation: this.generation, held: Boolean(this.pointer), axis: this.pointer ? -this.pointer.dy : 0 }; }
+  end(id) { if (this.pointer?.id === id) this.pointer = null; }
   get steer() { return this.pointer?.dx ?? 0; }
+  get lean() { return this.pointer?.dy ?? 0; }
 }
 
 export function mountTouchControls({ active, focus, surface, parent = document.body }) {
@@ -73,17 +74,17 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
     event.preventDefault(); event.stopImmediatePropagation(); touched = true;
     if (!input.begin(event.pointerId, event.clientX, event.clientY, airborne)) return;
     surface.setPointerCapture(event.pointerId); root.classList.add('held');
-    marker.style.left = `${event.clientX}px`; marker.style.top = `${event.clientY}px`; marker.style.setProperty('--lean', '0px');
-    label.textContent = airborne ? 'SWIPE' : 'PRELOAD'; refresh();
+    if (input.pointer?.id === event.pointerId) { marker.style.left = `${event.clientX}px`; marker.style.top = `${event.clientY}px`; marker.style.setProperty('--drive', '0px'); }
+    label.textContent = input.stunt ? 'SWIPE' : 'PRELOAD'; refresh();
   };
   const move = event => {
-    if (input.pointer?.id !== event.pointerId) return;
+    if (!input.owns(event.pointerId)) return;
     event.preventDefault(); event.stopImmediatePropagation(); input.move(event.pointerId, event.clientX, event.clientY);
-    marker.style.setProperty('--lean', `${input.pointer.lean * 30}px`);
+    marker.style.setProperty('--drive', `${-(input.pointer?.axis ?? 0) * 30}px`);
   };
   const end = event => {
-    if (input.pointer?.id !== event.pointerId) return;
-    event.preventDefault(); event.stopImmediatePropagation(); input.end(event.pointerId, event.type !== 'pointerup'); root.classList.remove('held');
+    if (!input.owns(event.pointerId)) return;
+    event.preventDefault(); event.stopImmediatePropagation(); input.end(event.pointerId, event.type !== 'pointerup'); root.classList.toggle('held', Boolean(input.pointer || input.stunt));
   };
   surface.addEventListener('pointerdown', down); surface.addEventListener('pointermove', move);
   for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) surface.addEventListener(type, end);
@@ -97,10 +98,11 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
     feedback(frame) {
       airborne = Boolean(frame.grounded?.every(contact => !contact));
       const state = frame.preload_active ? 'active' : frame.preload_armed ? 'armed' : frame.preload_available ? 'available' : 'idle';
-      root.dataset.preload = state; label.textContent = input.pointer?.stunt ? (frame.stunt?.name ?? 'SWIPE') : state === 'armed' ? 'RELEASE' : state === 'active' ? 'PRELOADED' : 'PRELOAD';
+      root.dataset.preload = state; label.textContent = input.stunt ? (frame.stunt?.name ?? 'SWIPE') : state === 'armed' ? 'RELEASE' : state === 'active' ? 'PRELOADED' : 'BRACED';
     },
     sample() { refresh(); if (!active()) clear(); return input.sample(); },
     get engaged() { return touched; },
+    get generation() { return input.generation; },
     destroy() {
       clear(); root.remove(); document.body.classList.remove('touch-driving');
       surface.removeEventListener('pointerdown', down); surface.removeEventListener('pointermove', move);

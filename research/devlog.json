@@ -1,6 +1,6 @@
 {
-  "status": "Latest verified public release c3c18677bff40f0731c05b1b6406d80a983ed413 (CI 38189067629) passed the board, stunt-subset, wreck and clean-landing checks. The public Dev log start link remains separately verified on 667f24bc707f5240d6927c49c65cdf6583728ad5. New per-physics-step touch mapping, focus recovery and the 361-sample orientation sweep are host-tested candidate work, not public proof. Full flips, original wreck-mode exceptions and overall handling parity remain unresolved.",
-  "working_on": "Verify the host per-physics-step touch mapping and focus recovery in a public release; continue original handling, airborne controls and trick-transition comparisons. Investigate native crash-camera/body coupling, original wreck-mode exceptions and rider-prop/water contacts; physical iOS behavior remains unverified.",
+  "status": "Verified public baseline 7a08ccc25e7a7aa6e313f285baa130d77a69d903 (CI 38190627553) includes the earlier per-step touch and focus/orbit fix. The new two-thumb layout and five restored tower placements pass host checks but are not yet public-verified. Full flips, physical iOS behavior, terrain LOD and original mode exceptions remain unresolved.",
+  "working_on": "Verify the two-thumb controls and restored tower/material candidate in the next public release; continue original handling, airborne controls and trick-transition comparisons. Physical iOS behavior, complete terrain LOD, remaining scene meshes and full-flip parity are still unverified.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -670,24 +670,60 @@
       "recorded_at": "2026-10-12T01:05:03.525020+00:00",
       "kind": "verification",
       "title": "Right-thumb preload stays out of camera orbit after focus loss",
-      "summary": "After focus returns, a right-thumb touch now reacquires the ATV preload control instead of leaving stale camera orbit. Separately, left-thumb pullback switches from braking to backward lean immediately after takeoff. Both changes passed host regressions; the exact physical-iOS sequence and the cause of the user\u2019s original camera symptom remain unconfirmed.",
+      "summary": "The per-step touch and focus/orbit recovery captured here later shipped in public release 7a08. Its tests showed right-touch focus recovery without a synthetic focus event; this proof is separate from the newer two-thumb layout.",
       "details": [
         "In a 68-frame WASM comparison, four-step shifted batches matched sequential Rust calls at every native-f32 value. A takeoff at step 55 produced air-lean 1 and brake 0 at step 56; landing at 66 produced ground-brake 1 at 67. Cancel generation cleared the following four steps.",
         "A synthetic blur \u2192 right-touch \u2192 focus \u2192 drag test changed from stale orbit -0.2 rad with preload missing to orbit 0 with preload 1 while still Riding. The permanent regression also verifies that right-touch reacquires focus without a synthetic focus event.",
         "The original coupled-pitch sweep matched Rust wreck decisions across 361 samples, with maximum angle error 2.38e-7 rad and the first rear wreck near 85 degrees. This does not show full flips are fixed; original global wreck-enable mode exceptions remain unknown.",
-        "Host make check passed 131 core, 1 web and 11 JavaScript tests, with actual touch and ramp regressions passing."
+        "Host make check passed 131 core, 1 web and 11 JavaScript tests, with actual touch and ramp regressions passing.",
+        "Public release 7a08ccc25e7a7aa6e313f285baa130d77a69d903 \u00b7 CI 38190627553 includes the per-step touch update and camera-orbit fallback fix."
       ],
-      "limitation": "The per-step touch mapping and focus-recovery changes are host-only. Public c3 includes the tested main-trick control gate and animated-bounds center of gravity, but neither release establishes full flips or overall PS2 gameplay parity. Physical iOS behavior, original wreck-mode exceptions and the reported camera symptom\u2019s exact cause remain unresolved.",
+      "limitation": "This released checkpoint does not establish physical iOS behavior or full flips, and it does not cover the newer two-thumb mapping now under host test.",
       "image": "/devlog-images/touch-input-now-follows-physics-steps-through-takeoff--10fe86e7.png",
-      "caption": "Host mobile capture after focus recovery, with the right-side PRELOAD gesture visible. The still illustrates the touch control; the orbit and per-step behavior are established by browser tests."
+      "caption": "Host mobile capture after focus recovery, with the right-side PRELOAD gesture visible. The still illustrates the touch control; the orbit and per-step behavior are established by browser tests.",
+      "release_verification": {
+        "commit": "7a08ccc25e7a7aa6e313f285baa130d77a69d903",
+        "ci_run": "38190627553",
+        "url": "https://atv-offroad-fury-2.champtoday.workers.dev/"
+      }
+    },
+    {
+      "id": "each-thumb-now-has-a-separate-job-on-the-atv-22f0035d",
+      "timestamp": "2026-10-12T01:23:41.910454+00:00",
+      "recorded_at": "2026-10-12T01:35:23.137605+00:00",
+      "kind": "verification",
+      "title": "Each thumb now has a separate job on the ATV",
+      "summary": "The left thumb steers and leans; the right thumb drives forward, brakes into reverse and holds preload. Releasing preload with throttle releases it for a jump when ramp conditions allow. The layout keeps steering/lean and throttle/preload independent.",
+      "details": [
+        "In a 124-step Caribou run, batched transport matched sequential Rust execution at native-f32 precision through takeoff and landing. A takeoff inside a batch preserved left lean 0.25; released right throttle left brake at 0. The six host browser variants covered touch, batched input, ramp, stunt and stationary brace pose.",
+        "The host build also keeps orbit at 0 after blur/focus recovery while right-touch preload is held. The inspected mobile capture shows the right-side BRACED state on the ATV."
+      ],
+      "limitation": "Host candidate only; physical iOS input has not been verified. Original thresholds are preserved, but full flips and overall original handling parity are not established.",
+      "image": "/devlog-images/each-thumb-now-has-a-separate-job-on-the-atv-22f0035d.png",
+      "caption": "Host mobile capture of the held right-thumb gesture and BRACED rider state; this is not a public-release screenshot."
+    },
+    {
+      "id": "five-map-towers-were-there-all-along-as-invisible-obst-ee2b3f1c",
+      "timestamp": "2026-10-12T01:31:32.993863+00:00",
+      "recorded_at": "2026-10-12T01:35:23.182250+00:00",
+      "kind": "discovery",
+      "title": "Five map towers were there all along as invisible obstacles",
+      "summary": "The towers weren\u2019t missing from the map archives: the visible meshes were rejected by a version check even though their collision geometry had already loaded. The host fix restores five tower placements, making those existing obstacles visible without changing physics.",
+      "details": [
+        "An audit decoded all 502 original mesh records in the eight current map archives: 498 v3 and four v4 records. The fix restores two rtower placements in ENV01, pwrtwrB in ENV02, rtower in ENV06 and coal_twr in ENV08.",
+        "After the alpha-cutout correction, all eight maps loaded and drove in host browser tests with zero unsupported placed meshes and no JS/WebGL errors. Four inspection views covered the five placements, materials and draw counts; the ENV02 lattice is open against the landscape."
+      ],
+      "limitation": "These are host inspection-camera captures, not ordinary gameplay framing or public proof. The tower decoder and alpha fix do not solve projected terrain LOD, fog, distant blending or full GS material parity.",
+      "image": "/devlog-images/five-map-towers-were-there-all-along-as-invisible-obst-ee2b3f1c.png",
+      "caption": "Host inspection-camera view of the restored ENV02 power tower; the alpha-tested lattice is open so the landscape shows through. This is not gameplay framing."
     }
   ],
-  "updated_at": "2026-10-12T01:05:03.525020+00:00",
+  "updated_at": "2026-10-12T01:35:23.182250+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
-      "commit": "c3c18677bff40f0731c05b1b6406d80a983ed413",
-      "ci_run": "38189067629",
+      "commit": "7a08ccc25e7a7aa6e313f285baa130d77a69d903",
+      "ci_run": "38190627553",
       "url": "https://atv-offroad-fury-2.champtoday.workers.dev/"
     },
     "next_priorities": [
@@ -892,9 +928,9 @@
         "status": "PARTIAL",
         "scope": "PUBLIC + HOST TESTS",
         "summary": "Public touch hold/release changes rider pose without granting force on flat ground. Host ramp tests show native takeoff lean/pitch behavior and a separate clean four-wheel landing, but not a completed flip or full stunt system.",
-        "validation": "Public c3c18677bff40f0731c05b1b6406d80a983ed413 \u00b7 CI 38189067629 passed the released touch/stunt regression subset. Host candidate additionally matched sequential native-f32 updates across 68 WASM frames with takeoff and landing transitions occurring on adjacent physics steps; physical iOS and full-flip behavior are not established.",
+        "validation": "Public 7a08ccc25e7a7aa6e313f285baa130d77a69d903 \u00b7 CI 38190627553 verifies the earlier per-step touch/focus path. Host two-thumb candidate passed six browser variants including stationary brace, ramp and stunt checks; a 124-step Caribou trace matched sequential native-f32 execution across batched transport.",
         "evidence": "research/TOUCH.md \u2014 preload, takeoff continuity and touch verification.",
-        "next_step": "Verify the per-step adapter on physical iOS and compare original takeoff, landing, cancellation and recovery sequences across more fixed inputs."
+        "next_step": "Verify the two-thumb mapping on a public release and physical iOS; compare takeoff, hold, release, landing and cancellation against more original reference sequences."
       },
       {
         "id": "stunt-actions",
@@ -953,33 +989,33 @@
         "category": "World",
         "title": "Unsupported scene meshes",
         "status": "PARTIAL",
-        "scope": "PUBLIC",
-        "summary": "Most map scenery renders, but known mesh gaps remain: rtower in ENV01 and ENV06, pwrtwrB in ENV02, and coal_twr in ENV08.",
-        "validation": "Public \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 eight-map rendering regression",
+        "scope": "PUBLIC 7a08 BASELINE + HOST MAP CANDIDATE",
+        "summary": "Five tower placements were present in the map and already had collision meshes, but the renderer discarded their visible meshes at a version guard. The host candidate accepts the observed PSG v4 layout alongside v3, restoring 2 rtower placements in ENV01, pwrtwrB in ENV02, rtower in ENV06 and coal_twr in ENV08. This makes existing invisible obstacles visible without changing physics.",
+        "validation": "Native audit decoded all 502 original mesh records in the eight current FR archives (498 v3, 4 v4). Host browser tests loaded/driven all eight maps with zero unsupported placed meshes and no JS/WebGL errors; four inspection views covered all five tower placements, materials and draw counts.",
         "evidence": "research/GEOMETRY.md \u2014 PSG rigid meshes and eight-environment release.",
-        "next_step": "Recover the remaining packet signatures and validate each mesh in its original map context."
+        "next_step": "Verify these restorations in the next public release; continue auditing remaining scene models, material passes and map-specific placements."
       },
       {
         "id": "graphics",
         "category": "Presentation",
         "title": "Rendering and original visual effects",
         "status": "PARTIAL",
-        "scope": "PUBLIC + HOST RESEARCH",
-        "summary": "Recovered models, materials, terrain, sky and vegetation render through WebGL2. Original PS2 VU/GS shading, reflective surfaces and fog are incomplete; rtower (ENV01/06), pwrtwrB (ENV02) and coal_twr (ENV08) are still missing.",
-        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449 \u00b7 renderer regression; exact original hardware output is not claimed",
+        "scope": "PUBLIC 7a08 BASELINE + HOST MAP CANDIDATE",
+        "summary": "The host map candidate also restores the ENV02 tower\u2019s open lattice with the recovered alpha-cutout test. Terrain detail is connected, but projected terrain LOD, fog, distant blending and full GS material behavior still differ.",
+        "validation": "Host ENV02 inspection capture verifies the open lattice after explicit GEQUAL alpha testing; all eight maps load/drive after the material change. Captures use a deliberately positioned inspection camera, not normal gameplay framing.",
         "evidence": "research/GEOMETRY.md \u2014 PSG meshes and terrain shading; research/IMPLEMENTATION.md.",
-        "next_step": "Decode the missing scene mesh variants and compare material, far-terrain and fog behavior with original captures."
+        "next_step": "Compare remaining material and alpha-test variants, then recover projected terrain selection, far-color blending, fog and original GS behavior."
       },
       {
         "id": "input",
         "category": "Platform",
         "title": "Keyboard, controller and touch input",
         "status": "PARTIAL",
-        "scope": "PUBLIC BASELINE + HOST CANDIDATE",
-        "summary": "Public browser checks cover keyboard/controller menus, driving, multitouch, cancellation and mobile pause. A host candidate now resolves raw touch intent on every Rust physics step, including batched catch-up steps, so takeoff/landing transitions no longer wait for the next render batch. A separate synthetic blur/touch/focus test also recovers the touch orbit/preload state.",
-        "validation": "Public checks: c3c18677bff40f0731c05b1b6406d80a983ed413 \u00b7 CI 38189067629. Host WASM: 68-frame shifted-batch vs sequential execution matched native f32 state; takeoff 55\u219256 mapped to air-lean 1/brake 0, landing 66\u219267 to ground-brake 1, and cancel generation cleared the following four steps. Synthetic blur\u2192right-touch\u2192focus\u2192drag changed stale orbit -0.2 rad/no preload to orbit 0/preload 1 while Riding; a permanent test confirms right-touch focus reacquisition without a synthetic focus event. Physical iOS behavior remains unverified. Host make check passed 131 core, 1 web and 11 JavaScript tests; actual touch and ramp regressions passed.",
+        "scope": "PUBLIC 7a08 BASELINE + HOST TWO-THUMB CANDIDATE",
+        "summary": "Public 7a08 includes the per-physics-step touch update and focus/orbit fallback fix. A newer host candidate gives each thumb a dedicated role: left steers and leans; right drives forward, brakes into reverse, and holds preload. Releasing preload with throttle releases it for a jump when ramp conditions allow.",
+        "validation": "Public baseline: 7a08ccc25e7a7aa6e313f285baa130d77a69d903 \u00b7 CI 38190627553. Host candidate: 124 actual Caribou steps across shifted batches matched sequential native-f32 execution through takeoff/landing; left lean 0.25 persisted at a batched takeoff and released right throttle produced brake 0. Six browser variants passed, including two-thumb drive, held preload pose, ramp and stunt checks. Physical iOS behavior remains unverified.",
         "evidence": "research/TOUCH.md \u2014 browser adapter limits; research/IMPLEMENTATION.md \u2014 input requirements.",
-        "next_step": "Verify per-step mapping and focus recovery on physical iOS/browser input; complete original remapping and remaining controls."
+        "next_step": "Verify the two-thumb layout on a public release and physical iOS; continue original remapping and remaining control/handling comparisons."
       },
       {
         "id": "audio",

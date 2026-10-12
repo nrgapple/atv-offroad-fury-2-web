@@ -49,37 +49,41 @@ try {
     await resetSamples(); await touch('touchStart', [right]); await steps(3);
     assert.equal((await read()).input.preload_axis, 1); assert.equal((await read()).input.lean, 0);
     await touch('touchMove', [{ ...right, y: right.y - 70 }]); await steps(3);
-    assert.equal((await read()).input.lean, -1); assert.equal((await read()).input.preload_axis, 1);
+    assert.equal((await read()).input.lean, 0); assert.equal(Math.max((await read()).input.throttle, (await read()).input.brake), 1); assert.equal((await read()).input.preload_axis, 1);
     await touch('touchMove', [{ ...right, y: right.y + 70 }]); await steps(3);
-    assert.equal((await read()).input.lean, 1); assert.equal((await read()).input.preload_axis, 1);
+    assert.equal((await read()).input.lean, 0); assert.equal((await read()).input.preload_axis, 1);
     assert.equal((await read()).frame.preload_active, false);
     await touch('touchEnd'); await steps(3);
     assert.equal((await samples()).filter(s => s.input.preload_axis === -1).length, 1);
     assert.equal((await read()).input.lean, 0);
   }
-  console.log('Anywhere on the right holds preload; drag leans without firing; release submits once.');
+  console.log('Anywhere on the right holds preload; vertical drag controls drive without adding lean; release submits once.');
   const right = { id: 1, x: 310, y: 530 };
   await resetSamples(); await touch('touchStart', [right]); await steps(2); await touch('touchCancel'); await steps(3);
   assert(!(await samples()).some(s => s.input.preload_axis === -1));
-  const left = { id: 2, x: 60, y: 620 }, forward = { ...left, y: 550 };
-  await touch('touchStart', [left]); await touch('touchMove', [forward]); await touch('touchStart', [forward, right]); await steps(15);
+  const left = { id: 2, x: 60, y: 620 }, lean = { ...left, x: 95, y: 690 };
+  const drive = { ...right, y: 460 }, reverse = { ...right, y: 600 };
+  await touch('touchStart', [left]); await touch('touchMove', [lean]); await steps(3);
+  assert.equal((await read()).input.throttle, 0); assert.equal((await read()).input.brake, 0);
+  assert.equal((await read()).input.lean, 1); assert.equal((await read()).input.steer, -.5);
+  await touch('touchMove', [left]); await touch('touchStart', [left, right]); await touch('touchMove', [left, drive]);
+  await page.waitForFunction(() => window.atvTerrainStatus.frame.speed > 5, null, { timeout: 30000 });
   let state = await read(); assert.equal(state.input.throttle, 1); assert.equal(state.input.preload_axis, 1);
   if (process.env.ATV_TOUCH_SCREENSHOT) await page.screenshot({ path: process.env.ATV_TOUCH_SCREENSHOT });
-  await resetSamples(); await touch('touchEnd', [right]); await steps(3);
-  assert.equal((await read()).input.throttle, 1); assert.equal((await samples()).filter(s => s.input.preload_axis === -1).length, 1);
-  await steps(15); assert((await read()).frame.speed > 1);
-  await resetSamples(); await touch('touchMove', [{ ...left, y: 690 }]);
+  await resetSamples(); await touch('touchMove', [left, reverse]);
   await page.waitForFunction(() => window.atvTerrainStatus.input.brake > .9, null, { timeout: 10000 });
   assert.equal((await read()).input.reverse, false);
   await page.waitForFunction(() => window.atvTerrainStatus.input.reverse && window.atvTerrainStatus.frame.speed < -2, null, { timeout: 45000 });
   { const log = await page.evaluate(() => window.touchResolved), start = log.findIndex(s => s.input.brake > .9); assert(start >= 0); assert(log.slice(start).filter(s => s.speed > 1).every(s => !s.input.reverse && s.input.throttle === 0), JSON.stringify(log)); }
-  await resetSamples(); await touch('touchMove', [forward]);
+  await resetSamples(); await touch('touchMove', [left, drive]);
   await page.waitForFunction(() => window.atvTerrainStatus.input.brake > .9, null, { timeout: 10000 });
   assert.equal((await read()).input.reverse, true);
   await page.waitForFunction(() => !window.atvTerrainStatus.input.reverse && window.atvTerrainStatus.frame.speed > 2, null, { timeout: 45000 });
   { const log = await page.evaluate(() => window.touchResolved), start = log.findIndex(s => s.input.brake > .9); assert(start >= 0); assert(log.slice(start).filter(s => s.speed < -1).every(s => s.input.reverse && s.input.throttle === 0), JSON.stringify(log)); }
+  await resetSamples(); await touch('touchEnd', [drive]); await steps(3);
+  assert.equal((await read()).input.throttle, 0); assert.equal((await samples()).filter(s => s.input.preload_axis === -1).length, 1);
   await touch('touchCancel'); await steps(3);
-  console.log('Left back brakes before reverse, and forward brakes reverse motion before changing gear.');
+  console.log('Left always steers/leans; right brakes before gear changes and releases throttle with preload.');
   await touch('touchStart', [right]); await steps(2); await resetSamples();
   await page.evaluate(() => window.dispatchEvent(new Event('blur'))); await touch('touchCancel');
   await page.waitForTimeout(100); const paused = (await read()).frame;
@@ -96,5 +100,5 @@ try {
   const log = await browser.newPage(); await log.goto(new URL('/devlog.html', page.url()).href);
   assert.notEqual(await log.evaluate(() => getComputedStyle(document.body).webkitUserSelect), 'none', 'Dev log remains selectable');
   assert.deepEqual(errors, []);
-  console.log('PASS: whole-right hold/lean/release, safe automatic direction changes, cancellation, multi-touch, focus/menu pause, game text selection suppressed; dev log unaffected.');
+  console.log('PASS: right drive/preload, left steer/lean, safe automatic direction changes, cancellation, multi-touch, focus/menu pause, game text selection suppressed; dev log unaffected.');
 } finally { await browser.close(); }

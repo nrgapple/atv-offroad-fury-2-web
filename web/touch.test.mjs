@@ -1,62 +1,58 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TouchInput, TouchDriveIntent } from './touch.js';
+import { TouchInput, TouchLeanIntent } from './touch.js';
 
-test('whole-right gesture separates physical lean from hold/release preload', () => {
-  const touch = new TouchInput(); touch.begin(1, 300, 400);
-  assert.deepEqual(touch.sample(), { lean: 0, preload_axis: 1 });
-  touch.move(1, 200, 330); assert.deepEqual(touch.sample(), { lean: -1, preload_axis: 1 });
-  touch.move(1, 350, 470); assert.deepEqual(touch.sample(), { lean: 1, preload_axis: 1 });
-  touch.end(1); assert.deepEqual(touch.sample(), { lean: 0, preload_axis: -1 });
-  assert.deepEqual(touch.sample(), { lean: 0, preload_axis: null });
-});
-
-test('cancel, blur/reset and an unseen tap never emit preload release', () => {
-  for (const reason of ['cancel', 'clear', 'tap']) {
-    const touch = new TouchInput(); touch.begin(1);
-    if (reason !== 'tap') touch.sample();
-    if (reason === 'clear') touch.clear(); else touch.end(1, reason === 'cancel');
-    assert.equal(touch.sample().preload_axis, null);
+test('primary right up drives, down brakes, hold preloads and release drops drive', () => {
+  for(const airborne of [false,true]) {
+    const touch=new TouchInput();touch.begin(1,300,500,airborne);
+    assert.equal(touch.sample().preload_axis,1);
+    touch.move(1,350,430);assert.equal(touch.sample().drive.axis,1);
+    touch.move(1,250,570);assert.equal(touch.sample().drive.axis,-1);
+    assert.equal(touch.sample().stunt_modifiers,0,'Primary airborne drag is still drive');
+    touch.end(1);const released=touch.sample();
+    assert.equal(released.drive.held,false);assert.equal(released.drive.axis,0);assert.equal(released.preload_axis,-1);
+    assert.equal(touch.sample().preload_axis,null);
   }
 });
 
-test('second right finger cannot steal gesture or cause premature release', () => {
-  const touch = new TouchInput(); assert(touch.begin(1)); assert(!touch.begin(2));
-  touch.move(2, 0, 70); touch.end(2); assert.deepEqual(touch.sample(), { lean: 0, preload_axis: 1 });
-  touch.end(1); touch.end(1, true); assert.equal(touch.sample().preload_axis, -1);
-  touch.begin(3); assert.equal(touch.sample().preload_axis, 1);
-});
-
-test('left touch sends raw intent and preserves center while a second finger cannot steal it', () => {
-  const left = new TouchDriveIntent(); const initial = left.sample();
-  assert.deepEqual(initial, { generation: 1, held: false, axis: 0 });
-  assert(left.begin(1, 60, 500)); assert(!left.begin(2, 70, 510));
-  left.move(1, 130, 570); assert.equal(left.steer, 1);
-  assert.deepEqual(left.sample(), { generation: 1, held: true, axis: -1 });
-  left.move(2, 0, 0); left.end(2, true);
-  assert.equal(left.sample().axis, -1); assert.equal(left.sample().generation, 1);
-  left.move(1, 60, 430); assert.equal(left.sample().axis, 1);
-  left.end(1); assert.deepEqual(left.sample(), initial);
-  assert(left.begin(3, 60, 500));
-});
-
-test('left cancel and clear advance generation to invalidate queued takeoff memory', () => {
-  const left = new TouchDriveIntent(); left.begin(1, 50, 500); left.move(1, 50, 430);
-  const queued = left.sample(); left.end(1, true);
-  assert.equal(queued.axis, 1); assert.equal(left.sample().axis, 0);
-  assert.equal(left.sample().generation, queued.generation + 1);
-  left.begin(2, 50, 500); left.clear();
-  assert.equal(left.sample().generation, queued.generation + 2);
-  assert.equal(left.sample().held, false); assert.equal(left.steer, 0);
-});
-
-test('airborne right swipes hold original Circle directions and never emit preload release', () => {
-  for (const [dx,dy,x,y] of [[0,-70,0,-1],[0,70,0,1],[-70,0,-1,0],[70,0,1,0]]) {
-    const touch = new TouchInput(); touch.begin(1,300,500,true);
-    assert.equal(touch.sample().stunt_modifiers,0);
-    touch.move(1,300+dx,500+dy);
-    assert.deepEqual(touch.sample(), { lean:0,preload_axis:null,stunt_modifiers:1,stunt_x:x,stunt_y:y });
-    touch.move(1,300-dx,500-dy); assert.equal(touch.sample().stunt_x,x);
-    touch.end(1); assert.deepEqual(touch.sample(), { lean:0,preload_axis:null });
+test('right cancel, blur/reset and unseen tap never emit preload release', () => {
+  for(const reason of ['cancel','clear','tap']) {
+    const touch=new TouchInput();touch.begin(1);const generation=touch.generation;
+    if(reason!=='tap')touch.sample();
+    if(reason==='clear')touch.clear();else touch.end(1,reason==='cancel');
+    const sample=touch.sample();assert.equal(sample.preload_axis,null);assert.equal(sample.drive.axis,0);
+    if(reason!=='tap')assert(touch.generation>generation);
   }
+});
+
+test('extra grounded right finger cannot steal throttle or release preload', () => {
+  const touch=new TouchInput();touch.begin(1,300,500);touch.move(1,300,430);touch.sample();
+  assert(!touch.begin(2,350,500));touch.move(2,350,570);touch.end(2);
+  assert.equal(touch.sample().drive.axis,1);assert.equal(touch.sample().preload_axis,1);
+});
+
+test('left thumb always steers and leans with exclusive ownership and no drive channel', () => {
+  const left=new TouchLeanIntent();assert(left.begin(1,60,500));assert(!left.begin(2,70,510));
+  left.move(1,130,570);assert.equal(left.steer,1);assert.equal(left.lean,1);
+  left.move(2,0,0);left.end(2);assert.equal(left.lean,1);
+  left.move(1,60,430);assert.equal(left.lean,-1);assert.equal(left.steer,0);
+  left.end(1);assert.equal(left.lean,0);assert.equal(left.steer,0);
+  left.begin(3,50,400);left.clear();assert.equal(left.lean,0);
+});
+
+test('secondary airborne right swipes select original tricks independently of throttle', () => {
+  for(const [dx,dy,x,y] of [[0,-70,0,-1],[0,70,0,1],[-70,0,-1,0],[70,0,1,0]]) {
+    const touch=new TouchInput();touch.begin(1,300,500,true);touch.move(1,300,430);
+    assert(touch.begin(2,350,500,true));assert(!touch.begin(3,350,500,true));
+    touch.move(2,350+dx,500+dy);let sample=touch.sample();
+    assert.equal(sample.drive.axis,1);assert.equal(sample.stunt_modifiers,1);assert.equal(sample.stunt_x,x);assert.equal(sample.stunt_y,y);
+    touch.end(2);sample=touch.sample();assert.equal(sample.drive.axis,1);assert.equal(sample.stunt_modifiers,0);assert.equal(sample.preload_axis,1);
+  }
+});
+
+test('releasing primary right while secondary stunt held drops throttle without dropping trick', () => {
+  const touch=new TouchInput();touch.begin(1,300,500,true);touch.move(1,300,430);touch.sample();
+  touch.begin(2,350,500,true);touch.move(2,350,430);touch.end(1);
+  const sample=touch.sample();assert.equal(sample.drive.held,false);assert.equal(sample.drive.axis,0);assert.equal(sample.preload_axis,-1);assert.equal(sample.stunt_modifiers,1);
+  touch.clear();assert.equal(touch.sample().stunt_modifiers,0);
 });

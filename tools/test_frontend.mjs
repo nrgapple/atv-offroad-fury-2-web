@@ -99,6 +99,7 @@ try {
   const resumeBounds = await page.getByRole('button',{name:'Resume',exact:true}).boundingBox();
   assert(resumeBounds.height >= 43, 'Portrait pause targets remain finger-sized');
   await page.getByRole('button',{name:'Controls',exact:true}).tap(); await screen('controls');
+  if (process.env.ATV_UI_SCREENSHOTS) await page.screenshot({path:`${process.env.ATV_UI_SCREENSHOTS}-controls-mobile.png`});
   await page.getByRole('button',{name:'Back',exact:true}).tap(); await screen('pause');
   await page.getByRole('button',{name:'Resume',exact:true}).tap();
   await page.waitForFunction(()=>document.querySelector('#frontend').hidden);

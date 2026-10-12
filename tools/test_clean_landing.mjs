@@ -15,8 +15,8 @@ try {
   await page.waitForFunction(() => window.atvTerrainStatus?.simulation && !document.querySelector('#touch-controls').hidden, null, { timeout: 90000 });
   const cdp = await page.context().newCDPSession(page);
   const touch = (type, points = []) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(point => ({ radiusX: 6, radiusY: 6, force: 1, ...point })) });
-  const left = { id: 1, x: 60, y: 560 }, drive = { ...left, y: 490 };
-  const right = { id: 2, x: 310, y: 530 };
+  const left = { id: 1, x: 60, y: 560 };
+  const right = { id: 2, x: 310, y: 530 }, drive = { ...right, y: 460 };
   await page.evaluate(() => {
     window.rampFrames = []; let previous = 0;
     function record() {
@@ -29,10 +29,10 @@ try {
     }
     requestAnimationFrame(record);
   });
-  await touch('touchStart', [left]); await touch('touchMove', [drive]); await touch('touchStart', [drive, right]);
+  await touch('touchStart', [left, right]); await touch('touchMove', [left, drive]);
   await page.waitForFunction(() => window.atvTerrainStatus.frame.preload_armed, null, { timeout: 45000, polling: 'raf' });
-  // CDP touchEnd carries the released finger, preserving the left throttle.
-  await touch('touchEnd', [right]);
+  // Release throttle and preload together; the neutral left thumb adds no drive.
+  await touch('touchEnd', [drive]);
   await page.waitForFunction(() => window.rampFrames.some(s => s.frame.preload_active), null, { timeout: 5000, polling: 'raf' });
   await page.waitForFunction(() => !window.atvTerrainStatus.frame.grounded.some(Boolean), null, { timeout: 5000, polling: 'raf' });
 
@@ -43,6 +43,7 @@ try {
   await writeFile('work/verification/clean-landing-trace.json',JSON.stringify(frames,null,2));
   const final=await page.evaluate(()=>window.atvTerrainStatus.frame);
   assert(frames.some(s=>!s.frame.grounded.some(Boolean)), 'A real airborne interval must occur');
+  assert(frames.filter(s=>s.frame.preload_active).every(s=>s.input.throttle===0), 'Right release must drop throttle during the jump');
   assert(frames.every(s=>s.frame.wreck.phase==='Riding'), 'A clean hop must never enter wreck state');
   assert.equal(final.wreck.phase,'Riding');
   assert.equal(final.reset_count,0);

@@ -23,6 +23,7 @@ try {
       assert(loaded.vegetationPlacements > 6000 && loaded.vegetationVisible > 0);
       assert(loaded.vegetationDraws > 0 && loaded.vegetationDraws < 40, 'Vegetation remains batched');
       assert(loaded.obstacles.instances > 0);
+      assert.deepEqual(loaded.unsupportedSceneMeshes, [], 'All placed original scenery meshes decode, including the v4 towers');
       await page.locator('#game').click();
       await page.keyboard.down('KeyW');
       const target = loaded.simulationSteps + (environment === 'env01' ? 480 : 60);
