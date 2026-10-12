@@ -1,8 +1,8 @@
 # Water contact reconstruction
 
-The authored Rust `water` module reproduces the USA v2.00 buoyancy force kernel
-at `0033dd90` and its spring configuration at `0033da90`. It is a verified
-building block; water contact is not yet connected to live driving or wrecks.
+Public release `22ab240cce0cea813b482ee20dbc22d5908ec69c` (CI `38204399428`) connects the shared dynamic physics height field for ENV04/05/07/08 from their original WTT profiles and raw PST signature channels in the separate runtime manifest. The uninterrupted public eight-map check verifies four live channels and finite heights on those maps, and null fields with cached -256 on dry maps. The authored Rust rider-water response is connected, but that browser check does not exercise an actual rider-water contact route. Source bindings and synthetic response regressions provide narrower evidence. Visible water surfaces and wakes remain absent; full coupled water parity is unproven.
+
+The authored Rust `water` module reproduces the USA v2.00 buoyancy force kernel at `0033dd90` and its spring configuration at `0033da90`. The following initial kernel and surface checkpoints describe earlier isolated work; current integration is detailed below.
 
 The original selects one complete set of contact points based on speed, samples
 water height at each world point, caps penetration depth, and applies a spring
@@ -22,18 +22,17 @@ covers angular velocity, water flow, depth limits, dry contacts, and high/low-sp
 point selection. Synthetic regression tests preserve an original force/torque
 checkpoint and the strict speed threshold.
 
-Live integration must recover the dynamic surface and its initialization. The
+At the initial isolated-kernel checkpoint, live integration still required recovery of the dynamic surface and its initialization. The
 original `00199cd0` height query combines a ripple grid, authored signature waves,
 and the environment's base height; using only a flat base plane would change
-contacts. Ripple updates, world flow/up initialization, actor point bindings and
-water rendering remain incomplete. No complete water-physics or rendering parity
+contacts. Dynamic surface initialization, world flow/up initialization and rider point bindings were subsequently recovered and connected as detailed below. Ripple propagation and water rendering remain incomplete. No complete water-physics or rendering parity
 is claimed by this isolated kernel.
 
 
-## Surface height checkpoint
+## Initial isolated surface height checkpoint
 
 `water_surface` now reproduces the composed height query at `00199cd0` and
-signature texture sampling at `00192090`. Live water remains disconnected.
+signature texture sampling at `00192090`. Live water was disconnected at this historical checkpoint.
 The first probe executes 600 original height queries (59,592 instructions),
 matching every output height bit and sampler-call gate. A second executes 500
 signature queries (51,212 instructions), matching every output height bit across
@@ -67,20 +66,18 @@ use 0.75-foot base swell and period 1.5, and include animated/scrolling signatur
 height maps. Native `00188680` advances elapsed time and computes sine of
 `elapsed / period` after angle wrapping; the period is a divisor in radians,
 not an invented full-cycle duration. The source sine-polynomial backend and one-frame signature initialization/update
-are now recovered below. Ripple propagation, live actor binding and rendering
-remain separate integration work. A flat-plane fallback is not a parity implementation.
+are now recovered below. Live actor binding was subsequently connected as detailed below; ripple propagation and rendering remain separate work. A flat-plane fallback is not a parity implementation.
 
 Rider update `001ef690` runs gravity, water response, then solid contacts during
 its at-most-1/90-second substeps. Either water touching or solid contacts activates
 the rider body and latches the rider contact/recovery flags. Only solid contacts
-apply the separate final damping stage. Water therefore must feed the existing
-wreck recovery grounded gate when live integration is added.
+apply the separate final damping stage. The connected rider path now feeds this water contact into the existing wreck recovery grounded gate; its source dispatch and synthetic tests are described below.
 
 Native inputs, source textures, original exports and result files remain in ignored
 `work/priority-water/` and `private/reports/`; no game content was added to source.
 
 
-## Staged dynamic surface for the connected scenes
+## Connected dynamic physics surface
 
 `water_animation` now provides a runtime-byte constructor and stateful height
 field. `Definition::parse` reads the WTT profile and
@@ -144,12 +141,7 @@ match Rust. The original PST loader/pixel-copy/getter executes another 1,158
 instructions for the positive and negative textures, verifying largest-mip
 binding and all 32,768 raw pixels. Targeted tests and strict core Clippy pass.
 
-Live integration should advance this shared field once per original outer frame,
-let the ATV and detached rider query it during their updates, then publish
-signature origins during the completed render-preparation phase. A vehicle
-recovery/reset must preserve the shared scene's swell/scroll clocks; loading a
-new scene constructs a fresh field. Keep terrain-solid and water-touching flags
-separate. The rider `+44` water actor runs before its solid solver and feeds the
+The connected caller advances this shared field once per outer frame, lets the ATV and detached rider query it during their updates, then publishes signature origins during the completed render-preparation phase. Vehicle recovery/reset preserves the shared scene's swell/scroll clocks; loading a new scene constructs a fresh field. Terrain-solid and water-touching flags remain separate. The rider `+44` water actor runs before its solid solver and feeds the
 recovery contact latch. ATV `001e5260` stores water height in `+900` late in the
 outer update, so its earlier submerged tests read the previous outer value.
 Its `+994`/`+99c` effect categories become eight for a grounded corresponding

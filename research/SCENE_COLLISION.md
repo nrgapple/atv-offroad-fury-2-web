@@ -100,3 +100,44 @@ and other search methods remain separate. In particular, vegetation geometry in
 the renderer is not yet proof of native collision participation. Wreck rider and
 recovery paths must use their own native query contract. Validate coupled driving,
 rider contact and recovery on actual loaded scenes before claiming complete parity.
+# Vegetation recovery exclusion components
+
+The vegetation path is now traced separately from ordinary COL0 placements.
+`00200900` initializes the ecosystem with collision proxies enabled. Species
+records support a COL0 mesh (kind0), an open sixteen-sided cylinder built from32
+side triangles (kind1), a sphere actor (kind2), or a box actor (kind3).
+`001280b0` applies packed placement coordinates and signed height/width scale
+ratios to those shared proxy actors before querying them. Physical proxy contacts
+are still unimplemented; a visible plant model is not evidence of its collider.
+
+`00129640` sets the packed coordinate unit to the greatest terrain world extent
+divided by65536. `00129b70` registers each plant in ESB placement order with
+center `(packedX*unit, packedY*unit+height/2, packedZ*unit)` and half extents
+`(radius,height/2,radius)`. Height-resampled placements quantize their sampled
+height back into the original unsigned16-bit coordinate before registration.
+The placement/tree registration wrapper has been read; complete combined
+ordinary/vegetation loader ordering remains to be validated.
+
+The plant distance provider `0033e2e0` uses horizontal distance minus plant width
+radius and query radius, clamped at0. Altitude does not enter this provider.
+Candidate-cache refresh/reuse callers pass query radius0 to this distance
+provider; query range is handled by subsequent cache/consumer gates.
+`vegetation_collision::horizontal_separation` matches600 original cases and
+15,000 instructions bit for bit, with no instruction hooks.
+
+Recovery `001ea050` takes the retained cache candidates and requires cached
+separation strictly below20. For Vegetation nodes, it checks configured species
+proxy count via `00128090`; if any proxy exists, horizontal squared distance
+from the packed plant base to the recovery candidate at most400 rejects that
+checkpoint. It does not test actual proxy intersection or candidate altitude.
+`vegetation_collision::blocks_checkpoint` matches600 complete wrapper cases
+and157,058 original instructions, including actual `001280b0` sphere-placement
+and dimension helpers. Ordered cache output and buffer clearing are explicit
+service hooks. This helper expects already selected native cache candidates;
+testing all plants without preserving cache/grid scope would broaden behavior.
+
+Three authored regressions cover the distinct strict cache gate and inclusive
+twenty-foot circle, absent proxies, height-independent distance, and coordinate
+scaling. The helpers are a component gate, not live vegetation collision or
+whole-map recovery parity. Private probes remain under `work/physics/` and
+`work/vegetation-checkpoint-probe/`, with generated data under `private/reports/`.

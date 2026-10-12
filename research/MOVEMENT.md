@@ -191,3 +191,33 @@ small pose differences: at most 0.00000763 feet in center and 0.000000417 in
 quaternion components. That bounded body result does not explain the observed
 shallow rendered tire overlap. Original full-quad orchestration, initial bindings,
 terrain sampling and display-time mesh linkage remain to be compared together.
+
+## Center-of-mass cache before the first wheel substep
+
+The controller `001e7940` changes body-local CoG `+1a0`; body virtual `+9c`
+(`001460e0`) only clears the contact count. `001469e0` refreshes world CoG `+60`
+from the Model at the beginning of integration. Consequently wheel rotation
+`001ecc40` and wheel spring `001ed330` point velocity use the preceding cached
+world center before the first body integration of this outer frame.
+
+The port refreshed the world center immediately and used it for those velocities.
+It now retains the preceding center explicitly for outer wheel rotation and the
+first spring substep. Geometry still uses the unchanged Model origin, and force
+torque uses the newly selected local CoG. Subsequent substeps use the integrated
+world center. This distinction matters: delaying every use of the center would
+be incorrect. Chassis solver `00194930` explicitly reconstructs its **own**
+world CoG `+130` from Model/new local CoG before velocity and impulse response;
+its existing contact center is retained.
+
+A 600-case full `001ed330` replay with changed local CoG and retained world CoG
+executes 386,315 instructions. The retained-center point velocity and spring
+force match all compared binary32 values. The former immediate-center input
+produces 1,813 differing velocity/force components, with maximum difference
+105.493774 in these synthetic source units. A coupled Vehicle regression checks
+nonzero angular velocity plus rider CoG shift while preserving projected Model
+points. Seventeen Vehicle tests and strict core Clippy pass. Private probes are
+`work/physics/suspension_cog_cadence_oracle.py` and the `cog` binary under
+`work/suspension-full-probe/`; reports remain private. This proves a handling
+cadence correction, not that it explains or eliminates the remaining measured
+landing/slope tire overlap. The detached rider's animated CoG cache requires its
+own caller audit before applying this behavior there.

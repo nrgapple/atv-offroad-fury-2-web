@@ -129,9 +129,14 @@ impl BodyState {
         transform(self.basis(), self.local_angular_velocity)
     }
     pub fn velocity_at(&self, point: Vec3) -> Vec3 {
+        self.velocity_at_with_center(point, self.center)
+    }
+    ///001ed330 uses body+60's cached world center before001469e0 refreshes
+    ///it from the Model and a newly shifted local center of mass.
+    pub fn velocity_at_with_center(&self, point: Vec3, cached_center: Vec3) -> Vec3 {
         add(
             self.linear_velocity,
-            cross(self.world_angular_velocity(), sub(point, self.center)),
+            cross(self.world_angular_velocity(), sub(point, cached_center)),
         )
     }
     pub fn apply_world_force(&mut self, force: Vec3, point: Vec3) {

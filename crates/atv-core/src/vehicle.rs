@@ -711,6 +711,10 @@ impl Vehicle {
         } else {
             riding_center
         };
+        //Wheel point velocity retains body+60 until the first001469e0
+        //integration. Geometry, force torque and chassis solver CoG already
+        //use the unchanged Model origin and newly selected local CoG.
+        let cached_world_center = self.body.center;
         //001469e0 reconstructs world center from the scene origin and current
         //local center before integration. Preserve that origin when the rider shifts.
         self.body.center = add(
@@ -814,7 +818,9 @@ impl Vehicle {
             let normal = self.supports[i].normal;
             let right = transform(b, self.wheel_right[i]);
             let forward = wheel::cross(right, normal);
-            let velocity = self.body.velocity_at(self.contacts[i].point);
+            let velocity = self
+                .body
+                .velocity_at_with_center(self.contacts[i].point, cached_world_center);
             *output = self.wheels[i].step(
                 self.wheel_config[i],
                 WheelInput {
@@ -884,6 +890,11 @@ impl Vehicle {
             let step = (dt - elapsed).min(f32::from_bits(0x3c888889));
             let b = self.body.basis();
             let origin = self.body.origin(&self.body_config);
+            let contact_center = if elapsed == 0. {
+                cached_world_center
+            } else {
+                self.body.center
+            };
             self.body.force[1] -= self.body_config.mass * f32::from_bits(0x4200cccd);
             if !rider_grounded {
                 self.body.force[1] -= self.airborne_gravity * f32::from_bits(0x4200cccd);
@@ -1006,7 +1017,7 @@ impl Vehicle {
                         radius: self.wheel_config[i].radius,
                         body_up: b[1],
                         body_forward: b[2],
-                        point_velocity: self.body.velocity_at(point),
+                        point_velocity: self.body.velocity_at_with_center(point, contact_center),
                         stiffness_scale: 1.0,
                         tilt_angle: dot(normal, b[1]).clamp(-1., 1.).acos(),
                     },
@@ -1758,6 +1769,40 @@ mod tests {
             depth_cells: 128,
         };
         (v, t)
+    }
+    #[test]
+    fn shifted_cog_retains_first_substep_velocity_center_without_moving_model_queries() {
+        let (mut vehicle, terrain) = fixture();
+        let origin = [500., -0.4, 500.];
+        vehicle.body.center = add(origin, vehicle.body_config.center_of_mass);
+        vehicle.body.linear_velocity = [3., -2., 40.];
+        vehicle.body.local_angular_velocity = [0., 0., 1.];
+        let old_center = vehicle.body.center;
+        let points = vehicle.wheel_rest.map(|rest| {
+            let center = add(origin, rest);
+            [center[0], 0., center[2]]
+        });
+        let expected = points.map(|point| vehicle.body.velocity_at(point)[1]);
+        vehicle
+            .step(
+                &terrain,
+                VehicleInput {
+                    steer: 1.,
+                    ..VehicleInput::default()
+                },
+                1. / 60.,
+            )
+            .unwrap();
+        assert_ne!(vehicle.body_config.center_of_mass[0], 0.);
+        assert_ne!(old_center, add(origin, vehicle.body_config.center_of_mass));
+        for (i, contact) in vehicle.contacts.iter().enumerate() {
+            assert!(contact.grounded);
+            assert_eq!(contact.point, points[i], "Model query moved with local CoG");
+            assert_eq!(
+                contact.normal_speed, expected[i],
+                "spring used refreshed center before integration"
+            );
+        }
     }
     #[test]
     fn suspension_travel_stops_catch_landings_before_springs_on_flat_and_side_slopes() {

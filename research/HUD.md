@@ -106,8 +106,10 @@ its sound/activity condition uses the distinct per-tick `+0x928` field.
 The kernel returns ordered `Name`, `Finished { points }` and `Failed`
 notifications; `State::credit_wheelie_points` joins awards into the shared
 scoreboard. The Canvas bridge needs no wheelie-specific authored artwork.
-Vehicle/WASM integration supplies native wheel contacts and body pitch, applies
-notifications in original callback order, and retains the false default flag.
+Vehicle/WASM integration is pending: it must supply native wheel contacts and
+body pitch and apply notifications in original callback order. The current
+implementation is an isolated kernel and HUD API. The source cheat/enable flag
+defaults false, so the normal baseline intentionally awards no wheelie points.
 
 ## Presentation and limits
 

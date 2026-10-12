@@ -1,6 +1,6 @@
 {
   "status": "The public Rust driving reconstruction is progressing; it is not the complete game.",
-  "working_on": "Integrating and validating rider crashes, stunts, HUD and remaining original game systems.",
+  "working_on": "Integrating recovered wheel center timing and testing landing, slope turning and wreck recovery; public baseline remains 22ab240.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1037,24 +1037,73 @@
         "Host touch Nac Nac \u2192 wreck \u2192 separation \u2192 ground contact \u2192 recovery \u2192 driving, clean preload takeoff/landing with Debug, and F3/Pause persistence at desktop and portrait sizes passed. The workspace passed 218 core and two WASM tests and strict Clippy."
       ],
       "limitation": "These changes remain host-only and are ready for a coherent release gate, not yet a verified public release. Visible water surfaces/wakes, complete rider-water behavior, original callback cadence, vegetation collision and full RNG/gameplay parity remain incomplete or unverified."
+    },
+    {
+      "id": "the-map-edge-launch-and-inward-recovery-pass-publicly-02fd0c15",
+      "timestamp": "2026-10-12T04:37:45.090688+00:00",
+      "recorded_at": "2026-10-12T04:39:18.996863+00:00",
+      "kind": "verification",
+      "title": "The map-edge launch and inward recovery pass publicly",
+      "summary": "The public ENV04 keyboard drive crosses the original boundary, launches the quad upward and inward, separates the rider and recovers inside the map with boundary state cleared.",
+      "details": [
+        "Public release 22ab240cce0cea813b482ee20dbc22d5908ec69c passed CI 38204399428. The actual keyboard route passed launch, rider separation, full-ray recovery acceptance and cleared recovery state.",
+        "Observed launch origin was approximately [1931.50,208.26,5265.74] feet, with velocity [26.30,112.15,-168.43] feet per second; recovery was approximately [2179.42,149.02,3748.17]. This is a measured inward return, not a teleport.",
+        "HTTPS verification matched 26 authored static files and 310 served runtime/gallery objects, with 63 existing entries and 57 screenshots before this new entry. The separate approved R2 upload covered 311 objects, 274,640,869 bytes and three changes."
+      ],
+      "limitation": "The current release eight-map run is still pending; no new all-eight claim is made here. Original callback cadence, complete vegetation collision, full RNG ordering, residual tire overlap and whole-game parity remain unverified. Connected water heights do not supply visible water surfaces or wakes.",
+      "image": "/devlog-images/the-map-edge-launch-and-inward-recovery-pass-publicly-02fd0c15.png",
+      "caption": "Inspected public ENV04 boundary-flight capture: airborne ATV by the treetops and live boundary state in Debug. Headless FPS is not a physical-device benchmark."
+    },
+    {
+      "id": "the-public-boundary-and-water-height-build-passes-all--89ec8b71",
+      "timestamp": "2026-10-12T04:40:02.597880+00:00",
+      "recorded_at": "2026-10-12T04:40:02.597880+00:00",
+      "kind": "verification",
+      "title": "The public boundary and water-height build passes all eight maps",
+      "summary": "Release 22ab240 now passes one uninterrupted public ENV01\u2013ENV08 loading and driving run, with no JavaScript or WebGL errors. This completes the map check that was pending in the preceding boundary checkpoint.",
+      "details": [
+        "Wet ENV04/05/07/08 load all four live dynamic signature channels with finite observed heights approximately 115.275,129.178,150.397 and120.553 feet. Dry environments retain a null field and cached -256 sentinel."
+      ],
+      "limitation": "This verifies map movement and water-height connection, not visible water surfaces, wakes, full rider-water behavior or original-game parity. Residual tire overlap, callback cadence, vegetation collision and shared RNG ordering remain open."
+    },
+    {
+      "id": "wheel-velocity-now-uses-the-recovered-center-timing-b84a93ad",
+      "timestamp": "2026-10-12T04:44:35.329913+00:00",
+      "recorded_at": "2026-10-12T04:47:28.694090+00:00",
+      "kind": "discovery",
+      "title": "Wheel velocity now uses the recovered center timing",
+      "summary": "A host candidate preserves the preceding world center for wheel point velocity until the first body integration. Original-instruction comparisons pass; measured landing overlap remains.",
+      "details": [
+        "600 complete original wheel-spring cases execute 386,315 instructions: the retained-center inputs produce zero compared binary32 mismatches; the former immediate-center inputs differ in 1,813 velocity/force components.",
+        "Geometry, force torque and the chassis contact solver retain the newly selected center rules. The timing change applies only to outer wheel rotation and the first wheel spring substep.",
+        "Host clean landing, keyboard cross-slope turning with both steering directions, and wreck/recovery logs pass. Workspace 222 core + 2 WASM tests, strict Clippy, formatting and make verify pass.",
+        "Landing minimum tire clearance stays -0.4970245ft. Cross-slope minimum changes from -0.3231964ft to -0.3015594ft across 14.457ft of elevation, but the route includes props and excludes 119 riding/30 wreck frames."
+      ],
+      "limitation": "Host-only candidate, pending release. The slope route is not isolated slope parity or proof of causal improvement. Tire clipping remains; vegetation helper tests are not live vegetation collision. No full-game parity is claimed.",
+      "image": "/devlog-images/wheel-velocity-now-uses-the-recovered-center-timing-b84a93ad.png",
+      "caption": "Inspected host Chromium portrait landing capture with live F3 diagnostics after the center timing change. Measured tire overlap remains; this image is not a public release verification."
     }
   ],
-  "updated_at": "2026-10-12T04:34:23.684321+00:00",
+  "updated_at": "2026-10-12T04:47:28.694090+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
-      "commit": "0906822adbc585f58e4a7309322f63f4cc3f7b6a",
-      "ci_run": "38194430965",
+      "commit": "22ab240cce0cea813b482ee20dbc22d5908ec69c",
+      "ci_run": "38204399428",
       "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
-      "static_assets": 24,
-      "served_objects": 298,
-      "devlog_entries": 50,
-      "devlog_screenshots": 45
+      "static_assets": 26,
+      "served_objects": 310,
+      "devlog_entries": 63,
+      "devlog_screenshots": 57
     },
     "next_priorities": [
-      "Recover original ATV handling, airborne controls and trick transitions; compare fixed inputs and outcomes against the recovered reference routines.",
-      "Complete native wreck-camera behavior and rider-versus-prop/water contacts; extend animated-bounds center-of-gravity comparisons across more original crash and recovery states.",
-      "Broaden deterministic fixed-input comparisons across steering, braking, takeoff, trick transitions and wreck cases before tuning further."
+      "Extend wreck/recovery comparisons, rider contacts and boundary return; separate host boundary/water candidates from public proof.",
+      "Complete original stunt actions, scoring/chaining and landing transitions, including remaining wheelie and mode-specific paths.",
+      "Compare ATV/rider animation and mechanical linkage; preserve source-disabled normal hand IK.",
+      "Complete original HUD mode fields and score presentation.",
+      "Recover collision scene order/categories and dynamic contacts; resolve residual tire overlap.",
+      "Match original terrain projected LOD, detail, fog and distant blending.",
+      "Match original vegetation selection, visibility and collision coverage."
     ],
     "features": [
       {
@@ -1064,7 +1113,7 @@
         "status": "LIVE",
         "scope": "PUBLIC",
         "summary": "ENV01\u2013ENV08 appear in the Freestyle picker and load into drivable scenes. Public checks exercised movement on all eight; this does not mean every original race course or game mode is recovered.",
-        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449",
+        "validation": "Public 22ab240cce0cea813b482ee20dbc22d5908ec69c \u00b7 CI38204399428: one uninterrupted ENV01\u2013ENV08 loading/driving run passed without JS/WebGL errors; wet maps load four finite live water-height channels and dry maps retain null/-256.",
         "evidence": "research/GEOMETRY.md \u2014 Freeport Harbor; research/DEPLOYMENT.md \u2014 eight-environment release.",
         "next_step": "Connect the recovered Arlington train and audit remaining map-specific scene behavior."
       },
@@ -1137,12 +1186,12 @@
         "id": "race-hud",
         "category": "Front end",
         "title": "In-race HUD",
-        "status": "NEEDS RESEARCH",
-        "scope": "RESEARCH",
-        "summary": "The game has simple Pause and Camera controls, but its original race HUD, timing/lap panels and race-state display are not connected.",
-        "validation": "No original race HUD implementation or public HUD test.",
-        "evidence": "research/UI.md \u2014 race HUD remains unimplemented.",
-        "next_step": "Inventory the original HUD pages, update routines and mode-specific fields before drawing a replacement."
+        "status": "PARTIAL",
+        "scope": "PUBLIC \u00b7 SPEED/PRELOAD/STUNT SUBSET",
+        "summary": "Original runtime speed, preload and stunt layouts, glyphs and art are drawn with authored Rust controllers. Race clocks, rank, laps, radar and multiplayer overlays remain unimplemented.",
+        "validation": "Public HUD appears in tested wreck/landing captures from 6d31df3 and c0810ab; 0f074b4 diagnostics and clean landing also pass. Host selected-instruction preload comparisons cover 600 frames; final PS2 pixel parity is unverified.",
+        "evidence": "research/HUD.md; public wreck/landing captures and diagnostics logs.",
+        "next_step": "Connect remaining race/mode HUD state and verify score animation against original presentation."
       },
       {
         "id": "modes-raceflow",
@@ -1183,8 +1232,8 @@
         "title": "Save data and records",
         "status": "NEEDS RESEARCH",
         "scope": "RESEARCH",
-        "summary": "The browser port does not yet save profiles, settings, records or unlock state.",
-        "validation": "Save format and write behavior have not been validated.",
+        "summary": "Browser control bindings, music settings and Stats selection persist. Original profiles, career records, unlocks and save format remain unimplemented.",
+        "validation": "Public binding/music evidence remains 0906822; Stats persistence passed publicly on 0f074b4. These settings do not implement original profile saves.",
         "evidence": "research/IMPLEMENTATION.md \u2014 verify menus, progression and saves.",
         "next_step": "Find and document the original save structures and update rules before choosing browser storage."
       },
@@ -1205,10 +1254,10 @@
         "title": "ATV handling and suspension",
         "status": "PARTIAL",
         "scope": "PUBLIC + HOST COMPONENT CHECKS",
-        "summary": "The Rust simulation drives, steers, brakes and animates suspension. Host candidate work restores a separate main-trick air-control response and decouples physical tire steering from visual handlebar linkage; full original-game replay parity is not established.",
-        "validation": "Public drive/control evidence remains 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449. Host candidate comparisons: 60 varied air-kernel cases bit-identical; visual steering/browser pose check passed with finite 27-node matrices. Final host actual-content wreck/recovery and clean-landing browser tests passed after the steering change; these mechanics additions are not yet public-verified.",
-        "evidence": "research/CONTACT.md; research/TOUCH.md; research/IMPLEMENTATION.md.",
-        "next_step": "Compare fixed-input steering, main-trick and ordinary-air position/rotation/landing traces against original execution; keep tire and handlebar responses separate."
+        "summary": "Public handling includes static-prop wheel support, recovered speed/controller cadence, prior mechanical axle directions, the four-point terrain travel stop and forward-axis spring attenuation. Residual tire overlap and whole-game replay differences remain.",
+        "validation": "Public c0810ab clean landing/wreck and all-eight-map checks passed. Public 0f074b4 clean landing, immediate-throttle touch and all-eight-map checks passed; host wheel/support/stop comparisons validate selected routines, not whole-game replay.",
+        "evidence": "research/MOVEMENT.md; research/DIAGNOSTICS.md; research/TOUCH.md.",
+        "next_step": "Compare coupled original quad frames and incline turns; resolve residual rendered tire overlap and dynamic contacts."
       },
       {
         "id": "static-collision",
@@ -1216,10 +1265,10 @@
         "title": "Terrain and static-object collisions",
         "status": "PARTIAL",
         "scope": "PUBLIC + HOST COMPONENT CHECKS",
-        "summary": "Terrain chassis contact and the selected static-obstacle query/response path are connected publicly. Unsupported collision variants, scene-ordering gaps, rider-vs-prop/water contact and full collision-system parity remain open.",
-        "validation": "Public \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 connected static contact path; host component comparisons do not prove full collision parity.",
+        "summary": "Public terrain, chassis and selected static-object contacts include finite wheel supports on props and detached rider spokes. Original scene ordering/categories, smooth normals, dynamic bodies and complete water/vegetation collision remain incomplete.",
+        "validation": "Public c0810ab and 0f074b4 map/landing checks cover supported scenes; public recovered wreck route passed on c0810ab. Host component comparisons do not establish full collision parity.",
         "evidence": "research/COLLISION.md; research/CONTACT.md; research/OBSTACLES.md.",
-        "next_step": "Cover remaining supported mesh/query cases and validate object contacts, ordering and dynamic response across maps."
+        "next_step": "Recover scene ordering/category metadata and moving-body response; compare coupled prop impacts."
       },
       {
         "id": "crash-recovery",
@@ -1227,25 +1276,20 @@
         "title": "Wrecks, rider separation and recovery",
         "status": "PARTIAL",
         "scope": "PUBLIC VERIFIED \u00b7 TESTED LOOP",
-        "summary": "Public commit 52534bbb verified an actual-content Caribou preload hop into Nac Nac, vertical wreck, rider separation, terrain contact, automatic reset and driving again; a separate clean landing kept every rider frame in Riding state. Public c3 also includes the tested animated-bounds center of gravity, which follows 13 rider points rather than a fixed pelvis.",
-        "validation": "Public tools/test_wreck.mjs and tools/test_clean_landing.mjs passed on commit 52534bbb955277a31dfda30b5be65863d4388453 (CI 38187838559); the newer public c3 regression also passed wreck, clean-landing and stunt checks. These released checks cover only their tested routes; host-only orientation and per-step input refinements are separate.",
+        "summary": "Public recovered wreck clips, detached rider root/contact handling, hard landings, two-subject camera and obstruction latch support the tested Nac Nac failure \u2192 separation \u2192 terrain contact \u2192 reset \u2192 resumed drive route. Public 22ab240 additionally passes the ENV04 map-edge launch, rider separation and inward recovery route. Complete water and boundary parity remain unverified.",
+        "validation": "Public c0810ab (CI38200640787) passed touch wreck/recovery and clean landing. Selected host instruction probes cover Model-root/rebase, wreck camera and static contacts; full crash-state parity is unverified. Public 22ab240 (CI38204399428) passed the keyboard boundary route and cleared recovery state; its uninterrupted public ENV01\u2013ENV08 run passed movement with no JavaScript/WebGL errors.",
         "evidence": "research/WRECK.md \u2014 recovered rules, public browser tests and remaining camera/contact limits.",
-        "next_step": "Continue native wreck-camera behavior and rider-versus-prop/water contacts; compare the animated-bounds center of gravity across more original crash and recovery states.",
+        "next_step": "Broaden crash/recovery and rider-contact comparisons, then verify boundary/water candidates publicly.",
         "release_verification": {
-          "commit": "52534bbb955277a31dfda30b5be65863d4388453",
-          "ci_run": "38187838559",
+          "commit": "c0810ab92bb1529a8558a7edaf83d72a558495b2",
+          "ci_run": "38200640787",
           "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
           "checks": [
-            "tools/test_wreck.mjs: 108-frame actual-content recovery loop, reset count 0\u21921, no JavaScript errors",
-            "tools/test_clean_landing.mjs: clean landing, all rider frames Riding, reset count 0"
+            "Public touch Nac Nac \u2192 wreck \u2192 separation/contact \u2192 reset \u2192 resumed driving passed.",
+            "Public clean landing and eight-map checks passed; residual tire overlap remains."
           ]
         },
-        "limitation": "Public tests cover one actual-content wreck/reset route and a clean landing, not the full stunt or crash system. Host orientation and per-step input refinements are not public proof. Native wreck-camera behavior, rider-versus-prop and water contacts, original mode exceptions, and broader crash-state coverage remain incomplete.",
-        "host_candidate": {
-          "scope": "PUBLIC IMPLEMENTATION \u00b7 HOST COMPONENT COMPARISONS",
-          "validation": "The animated-bounds center-of-gravity implementation is included in public c3; its 500 synthetic instruction comparisons matched using point-transform hooks. Additionally, 1,694 original pose samples and five detach/ground/reset cases passed. Host actual-content tests passed real-touch wreck recovery and a separate clean landing with CoG assertions. The newer per-step touch/focus changes remain host-only.",
-          "evidence": "research/WRECK.md; research/ANIMATION.md"
-        }
+        "limitation": "Selected public wreck/landing and ENV04 boundary routes pass. Complete mode exceptions, callback cadence, vegetation coverage, water behavior and shared RNG ordering remain unverified."
       },
       {
         "id": "preload-touch",
@@ -1253,17 +1297,17 @@
         "title": "Touch preload and takeoff lean",
         "status": "PARTIAL",
         "scope": "PUBLIC TOUCH/RAMP CHECKS \u00b7 FULL FLIPS UNRESOLVED",
-        "summary": "Public touch and air-axis ramp regressions pass with original takeoff/landing thresholds. The right thumb holds preload and releases it with throttle when ramp conditions allow; touch takeoff/landing works in batched physics updates. This does not establish full flips or the complete stunt system.",
-        "validation": "Public 3cc8e5fee7253fcfae207e61faa12ea70336459f \u00b7 CI 38192659265 passed the 124-step Caribou touch-batch trace and air-axis ramp variant. Physical iOS and full-flip parity remain unverified.",
+        "summary": "Public primary right press requests immediate throttle and braces preload; backward drag brakes/reverses through the Rust gate, release drops drive and submits preload release. Secondary airborne stunt gestures remain separate. Full flips and physical-device parity remain unverified.",
+        "validation": "Public 0f074b4 (CI38202065109) touch and clean preload landing checks passed. Historical batch/ramp comparisons retain narrower scope.",
         "evidence": "research/TOUCH.md \u2014 preload, takeoff continuity and touch verification.",
         "next_step": "Compare original hold/release, takeoff, landing and cancellation behavior across more references; do not infer full flips from the ramp tests.",
         "release_verification": {
-          "commit": "3cc8e5fee7253fcfae207e61faa12ea70336459f",
-          "ci_run": "38192659265",
+          "commit": "0f074b4558f864ea4e4a8103b017b60e102c6690",
+          "ci_run": "38202065109",
           "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
           "checks": [
-            "124-step touch/batch comparison passed.",
-            "Air-axis ramp regression passed; full flips are not claimed."
+            "Public press-to-drive, cancellation and touch suite passed.",
+            "Public clean preload takeoff/landing passed; no full-flip or physical-device claim."
           ]
         }
       },
@@ -1290,23 +1334,23 @@
         "id": "stunt-scoring",
         "category": "Game systems",
         "title": "Stunt scoring and combos",
-        "status": "NEEDS RESEARCH",
-        "scope": "RESEARCH",
-        "summary": "The port does not yet implement original score awards, combo bookkeeping, profile restrictions or judged-landing results.",
-        "validation": "Scoring and combo landing bookkeeping are explicitly incomplete.",
-        "evidence": "research/TOUCH.md \u2014 presentation and remaining controls.",
-        "next_step": "Recover score event rules, landing windows and profile/mode gates before connecting scoring UI."
+        "status": "PARTIAL",
+        "scope": "PUBLIC \u00b7 SINGLE-RIDER CORE ACCOUNTING",
+        "summary": "Recovered regular-stunt pending/committed points, chaining, repetition penalties and failure rollback are connected with the original stunt HUD. Wheelie scoring is an isolated kernel/HUD API, not Vehicle/WASM integration; the source false enable flag intentionally yields no normal-baseline wheelie awards. Full judged modes and profile restrictions remain incomplete.",
+        "validation": "Public 6d31df3/c0810ab wreck captures show failure display and passing recovery; host native comparisons validate selected scoring/cache/rollback operations. Failure display points are not awarded totals.",
+        "evidence": "research/ANIMATION.md \u2014 stunt scoring; research/HUD.md.",
+        "next_step": "Verify successful chains and remaining wheelie/mode/profile behavior against original execution."
       },
       {
         "id": "animation",
         "category": "Presentation",
         "title": "ATV and rider animation",
         "status": "PARTIAL",
-        "scope": "PUBLIC + HOST CHECKS",
-        "summary": "Mechanical ATV linkage and normal rider states animate. Host candidate work separates visual handlebar angle from tire steering: main-trick visuals ease by a factor of 0.8 each update while held/ordinary-air visuals use the original 30-degree scale. Hand/foot IK and full event behavior remain incomplete.",
-        "validation": "Normal riding animation has public checks. Host visual-steering check at 17.90 ft/s measured tire angle -0.488329 rad and visual handlebar angle -0.523599 rad, with finite 27-node matrices and no JavaScript errors. Final combined host actual-content wreck and clean-landing checks passed after the visual-steering change; no public verification is claimed for this candidate.",
-        "evidence": "research/ANIMATION.md \u2014 normal riding and remaining work.",
-        "next_step": "Complete trick/crash clip transitions and solve rider hand/foot attachment over the moving ATV; compare visual linkage timing against original reference traces."
+        "scope": "PUBLIC + HOST COMPONENT COMPARISONS",
+        "summary": "Public mechanical linkage, normal rider blends, main/held stunt poses and wreck clips are connected. The completed mechanical pose supplies cached wheel axles. Source-disabled normal hand IK stays disabled; complete event/hair and game-wide animation remain unfinished.",
+        "validation": "Public c0810ab wreck/clean landing and 0f074b4 clean landing pass with the integrated linkage. Host pose/linkage/root probes validate selected paths, not full PS2 animation parity.",
+        "evidence": "research/ANIMATION.md; research/MOVEMENT.md; research/WRECK.md.",
+        "next_step": "Compare complete animation transitions and display-time linkage; retain native IK enable gates."
       },
       {
         "id": "camera",
