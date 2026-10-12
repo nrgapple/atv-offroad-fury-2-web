@@ -934,6 +934,7 @@ async function startSimulation(source) {
   const uvSources = Object.fromEntries([...source.world.textures].filter(([, texture]) => texture.pass?.uv_scroll || texture.pass?.texture_animation).map(([name, texture]) => [name, {source:texture.materialText,frames:texture.animationFrames?.length}]));
   const uvState = await command(91, uvSources);
   diagnostics.sceneryUv = Object.fromEntries(uvState.map(([name]) => [name, [0,0]]));
+  diagnostics.sceneryTextureFrames = {};
   simReady = true;
 }
 async function pumpSimulation() {
