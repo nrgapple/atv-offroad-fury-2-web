@@ -70,39 +70,28 @@ The takeoff recenter was removed after the user reported ineffective pullback. I
 
 ## One-handed mobile option
 
-Pause → **One-handed mobile: On/Off** saves the choice in this browser. A single thumb anywhere on the game view holds full throttle and braces immediately. Drag left/right to steer and up/down to lean forward/back, using the same floating-stick axes as the normal left thumb. Vertical movement never brakes or requests reverse. Lift to remove throttle (coast, without braking) and request preload through the original ramp gates.
+One-finger control is the default. Pause → **One-handed mobile: On/Off** saves the choice in this browser; an existing saved Off continues using two fingers. A single thumb anywhere on the game view holds full throttle and braces immediately. Drag left/right to steer and up/down to lean forward/back, using the same floating-stick axes as the normal left thumb. Vertical movement never brakes or requests reverse. Lift to remove throttle (coast, without braking) and request preload through the original ramp gates.
 
 These inputs stay identical in air and on the ground: no touch mode transition, throttle suppression, origin reset, or landing delay. Holding continues both throttle and bracing; lifting in air removes throttle and releases the brace without bypassing native jump rules. Touch tricks are disabled. Cancellation, pause, blur and changing modes clear input without producing a preload release. Storage denial falls back to a session-only setting. Two-finger controls and independent keyboard/controller bindings are unchanged.
 
-## One-finger command display
+## Compact one-finger feedback and default
 
-The one-handed option now shows a compact readout and a floating direction
-compass. Horizontal drag moves the dot toward L/R and reports the finger's
-steering direction and percentage. Vertical drag moves it toward FWD/BACK and
-reports forward/back lean independently. Diagonals combine both axes; a
-35-pixel drag on each axis displays 50% steering and 50% lean, while each axis
-reaches 100% at the unchanged 70-pixel input range. The percentages describe
-finger commands, before the recovered vehicle filtering and force routines.
+One-finger mode is the default for new/unset settings and unavailable storage.
+An explicitly saved Off is preserved, and Pause still offers the two-finger
+option. The TouchInput constructor and both modes' mappings remain unchanged.
 
-The readout distinguishes touch-to-drive, held throttle/brace and released
-coasting. It shows the native arming/release or active-preload cue when available.
-Airborne feedback explicitly says the same controls remain in use; landing
-returns to Ground without resetting the held input. When the current fixed-step
-input applies brake while rolling backward, the display explains that the brake
-is being used to move forward. The compass is kept within the screen without
-moving the gesture's input origin. No sensitivity, axis mapping, gesture,
-preload rule or physics coefficient changes.
+The compact floating circle shows a moving vector and FWD/BACK/L/R directions.
+A small cue attached to the marker shows drive/brace or the native preload cue;
+it disappears immediately on release. There is no persistent card, percentage,
+meter or ground/air heading. Diagonals combine steering and lean independently
+at the unchanged 70-pixel range. Keeping the visual marker within the viewport
+does not move the gesture's input origin.
 
 The display reads intent without calling the input sampler, so it cannot consume
-preload release pulses. Unchanged display state causes no DOM rewrites. Unit
-checks cover cardinal/diagonal percentages, air/landing continuity, preload cues,
-current-generation braking feedback and retained release pulses. The actual
-390px Chromium route checks all eight drag directions, a proportional diagonal,
-vector coordinates, release/coast and continuous neutral held throttle through
-a clean landing. An angled-air screenshot uses a separate route: prolonged full
-pullback can legitimately change the landing and wreck. Screenshot timing does
-not provide an identical-input physical comparison. Physical phones remain
-unverified.
+preload releases. Unchanged display state causes no DOM rewrites. Focused checks
+cover unset/storage-denied/saved modes, cardinal and diagonal vectors, release
+hiding, preload cues, air continuity and clean held-throttle landing. No input
+mapping or physics changed; physical phone validation remains outstanding.
 
 ## Original main-stunt air-control gate
 

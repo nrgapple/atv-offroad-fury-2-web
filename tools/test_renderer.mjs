@@ -25,6 +25,7 @@ const finite = state => {
 };
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, hasTouch: true });
+  await page.addInitScript(() => localStorage.setItem('atv-mobile-one-handed', 'false')); // Explicit optional two-finger mode.
   const read = () => page.evaluate(() => window.atvTerrainStatus);
   const steps = async count => {
     const start = (await read()).simulationSteps;

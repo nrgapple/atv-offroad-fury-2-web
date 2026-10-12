@@ -5,6 +5,7 @@ const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE ||
 const browser=await chromium.launch({headless:true});
 try {
   const page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
+  await page.addInitScript(() => localStorage.setItem('atv-mobile-one-handed', 'false')); // Explicit optional two-finger mode.
   const errors=[]; page.on('pageerror',error=>errors.push(error.message));
   await page.goto(new URL('/play.html?drive=1',process.env.ATV_TEST_URL || 'http://127.0.0.1:4173').href);
   await page.waitForFunction(()=>window.atvTerrainStatus?.simulation&&window.atvTerrainStatus.frame.grounded.every(Boolean),null,{timeout:90000});

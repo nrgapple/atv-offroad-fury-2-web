@@ -14,14 +14,14 @@ body.touch-driving #help, body.touch-driving #status:not(.error) { display: none
 body.touch-driving #status.error { top: max(84px, calc(env(safe-area-inset-top) + 74px)); bottom: auto; }
 #touch-controls[data-preload=available] .touch-rider-marker { border-color: #8bd2ff; background: #28456e70; }
 /* One-finger mode displays finger commands, independently on both axes. */
-.touch-axis, .touch-direction, .touch-one-hand-readout { display: none; }
+.touch-axis, .touch-direction { display: none; }
 #touch-controls[data-one-handed=true] .touch-rider-marker { width: 96px; height: 96px; margin: -48px; background: #0b172ba6; }
 #touch-controls[data-one-handed=true] .touch-rider-marker::before,
 #touch-controls[data-one-handed=true] .touch-rider-marker::after { content: ''; position: absolute; background: #d7e6ff35; }
 #touch-controls[data-one-handed=true] .touch-rider-marker::before { left: 47px; top: 12px; width: 1px; height: 72px; }
 #touch-controls[data-one-handed=true] .touch-rider-marker::after { top: 47px; left: 12px; height: 1px; width: 72px; }
 #touch-controls[data-one-handed=true] .touch-rider-marker i { left: 38px; top: 38px; width: 18px; height: 18px; background: #b3edca; border-color: #e9fff0; box-shadow: 0 0 8px #0008; transform: translate(var(--steer, 0px), var(--lean, 0px)); }
-#touch-controls[data-one-handed=true] .touch-rider-marker span { display: none; }
+#touch-controls[data-one-handed=true] .touch-rider-marker span { top: 118px; left: -24px; width: 144px; font-size: 9px; letter-spacing: .03em; }
 #touch-controls[data-one-handed=true] .touch-axis { display: block; position: absolute; font: 700 9px/1 system-ui, sans-serif; color: #eef5ff; text-shadow: 0 1px 4px #000; }
 .touch-axis.forward, .touch-axis.back { left: 28px; width: 40px; text-align: center; }
 .touch-axis.forward { top: -14px; }
@@ -30,18 +30,4 @@ body.touch-driving #status.error { top: max(84px, calc(env(safe-area-inset-top) 
 .touch-axis.left { left: -13px; }
 .touch-axis.right { right: -13px; }
 #touch-controls[data-one-handed=true] .touch-direction { display: block; position: absolute; left: 47px; top: 46px; width: var(--length, 0px); height: 2px; background: #b3edca; transform-origin: left center; transform: rotate(var(--angle, 0rad)); }
-body.touch-driving #touch-controls[data-one-handed=true] .touch-one-hand-readout { display: block; }
-.touch-one-hand-readout { position: absolute; bottom: max(12px, env(safe-area-inset-bottom)); left: max(12px, env(safe-area-inset-left)); width: 226px; box-sizing: border-box; padding: 9px 12px; border: 1px solid #b6cce140; border-radius: 10px; background: #071426dc; color: #edf5ff; font: 10px/1.4 system-ui, sans-serif; box-shadow: 0 2px 12px #0004; }
-.touch-mode { display: flex; justify-content: space-between; gap: 8px; color: #9fbed9; font-size: 8px; font-weight: 700; letter-spacing: .06em; }
-.touch-phase { letter-spacing: 0; }
-.touch-drive-status { display: block; margin: 2px 0 5px; font-size: 12px; color: #c5d6e7; }
-#touch-controls[data-drive=held] .touch-drive-status { color: #b3edca; }
-.touch-command-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 18px; }
-.touch-command-row > span { color: #91aec6; white-space: nowrap; }
-.touch-command-row b { margin-left: 4px; font-weight: 600; color: #edf5ff; }
-.touch-axis-meter { position: relative; width: 52px; height: 4px; flex-shrink: 0; border-radius: 2px; background: #7894af40; }
-.touch-axis-meter::after { content: ''; position: absolute; left: 50%; top: -2px; width: 1px; height: 8px; background: #e3f0ffaa; }
-.touch-axis-meter i { position: absolute; top: 0; height: 4px; background: #b3edca; border-radius: 2px; }
-.touch-hint { display: block; margin-top: 5px; font-size: 9px; color: #c5d6e7; }
-@media (max-height: 480px) { .touch-one-hand-readout { left: auto; right: max(12px, env(safe-area-inset-right)); } }
 #touch-controls[data-one-handed=true]:not(.held) .touch-rider-marker { opacity: 0; }

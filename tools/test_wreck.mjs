@@ -10,6 +10,7 @@ const screenshotPrefix = process.env.ATV_WRECK_SCREENSHOT_PREFIX || 'work/verifi
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  await page.addInitScript(() => localStorage.setItem('atv-mobile-one-handed', 'false')); // Explicit optional two-finger mode.
   await captureSimulation(page, 'rampFrames');
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   const url = new URL('/play.html', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173');

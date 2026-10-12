@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TouchInput, TouchLeanIntent, oneHandedFeedback } from './touch.js';
+import { TouchInput, TouchLeanIntent, oneHandedFeedback, loadOneHandedPreference } from './touch.js';
 
 test('ground right press drives, back drag brakes, release requests preload once', () => {
   const touch=new TouchInput();touch.begin(1,300,500);
@@ -108,40 +108,30 @@ test('changing mobile mode cancels old gesture, drive and pending releases', () 
 });
 
 
-test('one-finger feedback explains independent axes at cardinal and diagonal angles', () => {
-  const touch = new TouchInput(); touch.setOneHanded(true); touch.begin(1, 100, 500);
-  for (const [dx, dy, steering, leaning] of [
-    [0, 0, 'STRAIGHT', 'NEUTRAL'], [70, 0, 'RIGHT 100%', 'NEUTRAL'],
-    [-70, 0, 'LEFT 100%', 'NEUTRAL'], [0, -70, 'STRAIGHT', 'FORWARD 100%'],
-    [0, 70, 'STRAIGHT', 'BACK 100%'], [35, -35, 'RIGHT 50%', 'FORWARD 50%'],
-    [-70, -70, 'LEFT 100%', 'FORWARD 100%'], [70, 70, 'RIGHT 100%', 'BACK 100%'],
-    [-70, 70, 'LEFT 100%', 'BACK 100%'],
-  ]) {
-    touch.move(1, 100 + dx, 500 + dy);
-    const state = oneHandedFeedback(touch);
-    assert.equal(state.steering, steering); assert.equal(state.leaning, leaning);
-    assert.equal(state.drive, 'THROTTLE + BRACE'); assert.equal(state.phase, 'GROUND');
-    const command = touch.sample(); assert.equal(state.steer, command.steer); assert.equal(state.lean, command.lean);
-  }
+
+test('one-finger default respects saved mode and storage denial', () => {
+  for (const value of [null, undefined, 'true', 'invalid']) assert.equal(loadOneHandedPreference(() => value), true);
+  assert.equal(loadOneHandedPreference(() => 'false'), false);
+  assert.equal(loadOneHandedPreference(() => { throw new Error('storage unavailable'); }), true);
 });
 
-test('feedback reads air, landing, preload and resolved forward brake without changing intent', () => {
-  const touch = new TouchInput(); touch.setOneHanded(true); touch.begin(1, 100, 500); touch.move(1, 135, 465);
-  const command = touch.sample();
-  touch.setAirborne(true);
-  assert.equal(oneHandedFeedback(touch).phase, 'AIR · SAME CONTROLS');
-  assert.deepEqual(touch.sample(), command);
-  touch.setAirborne(false);
-  assert.equal(oneHandedFeedback(touch, { preload_armed: true }).hint, 'LIFT FOR PRELOAD');
-  assert.equal(oneHandedFeedback(touch, { preload_active: true }).hint, 'PRELOAD ACTIVE');
+test('compact feedback follows cardinal and diagonal commands without consuming releases', () => {
+  const touch = new TouchInput(); touch.setOneHanded(true); touch.begin(1, 100, 500);
+  for (const [dx, dy] of [[0,0], [70,0], [-70,0], [0,-70], [0,70], [35,-35], [-70,-70], [70,70], [-70,70]]) {
+    touch.move(1, 100 + dx, 500 + dy);
+    const state = oneHandedFeedback(touch);
+    const command = touch.sample();
+    assert.equal(state.steer, command.steer); assert.equal(state.lean, command.lean);
+    assert.equal(state.cue, 'DRIVE · BRACE');
+    touch.setAirborne(true); assert.deepEqual(oneHandedFeedback(touch), state); touch.setAirborne(false);
+  }
+  assert.equal(oneHandedFeedback(touch, { preload_armed: true }).cue, 'LIFT FOR PRELOAD');
+  assert.equal(oneHandedFeedback(touch, { preload_active: true }).cue, 'PRELOADED');
   const applied_input = { touch_drive: { generation: touch.generation, held: true }, brake: 1 };
-  assert.equal(oneHandedFeedback(touch, { applied_input }).drive, 'BRAKE TO MOVE FORWARD');
+  assert.equal(oneHandedFeedback(touch, { applied_input }).cue, 'BRAKE · BRACE');
   applied_input.touch_drive.generation--;
-  assert.equal(oneHandedFeedback(touch, { applied_input }).drive, 'THROTTLE + BRACE');
+  assert.equal(oneHandedFeedback(touch, { applied_input }).cue, 'DRIVE · BRACE');
   touch.end(1);
-  assert.equal(oneHandedFeedback(touch, undefined, true).drive, 'COASTING');
-  assert.equal(oneHandedFeedback(touch, undefined, true).steering, 'STRAIGHT');
-  // Drawing feedback must never consume the pending release pulse.
+  assert.deepEqual(oneHandedFeedback(touch), { steer: 0, lean: 0, cue: '' });
   assert.equal(touch.sample().preload_axis, -1);
-  assert.equal(oneHandedFeedback(touch).drive, 'TOUCH TO DRIVE');
 });
