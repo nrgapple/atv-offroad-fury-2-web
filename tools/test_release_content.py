@@ -119,6 +119,20 @@ class PlayerContentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'missing or duplicated'):
             compact_vancouver_thumbnail(pack_resource([('ui/trk_free05_a.pst', b'a')]))
 
+    def test_menu_rider_package_excludes_unrelated_page_and_executable_members(self):
+        from package_content import compact_menu_riders, pack_resource, Resource
+        names = ['mrider_ui.psg', 'frider_ui.psg']
+        for stem, count in [('mrider', 7), ('frider', 5)]:
+            names += [f'{stem}_body_breathe.mot'] + [f'{stem}_body_idle{i:02}.mot' for i in range(1, count + 1)]
+        source = pack_resource([(f'ui/anim/{n}', b'fixture') for n in names] + [('unused.vut', b'private'), ('other.pst', b'unrelated')])
+        textures = ['atv2_helmet_ui', 'atv2_shirt_ui', 'atv2_black_gloves_ui', 'atv2_black_boots_ui', 'atv2_black_goggles_ui', 'atv2_pants_ui', 'atv2_sleeves_ui']
+        materials = pack_resource([(n + '.pst', b'fixture') for n in textures] + [('unused.pst', b'unrelated')])
+        result = Resource(compact_menu_riders(source, materials, b'config'))
+        self.assertEqual(len(result.members), len(names) + len(textures) + 1)
+        self.assertFalse(any('unused' in n or 'other' in n or n.endswith('.vut') for n, _, _ in result.members))
+        with self.assertRaisesRegex(ValueError, 'missing or duplicated'):
+            compact_menu_riders(pack_resource([('mrider_ui.psg', b'fixture')]), materials, b'config')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -30,7 +30,7 @@ STARTUP = (
     '/TRACKS/TRACKSA/ENV07/E07_FR.RES', '/TRACKS/TRACKSA/ENV07/E07_ENDL.RES',
     '/TRACKS/TRACKSA/ENV08/E08_FR.RES', '/TRACKS/TRACKSA/ENV08/E08_ENDL.RES',
     '/TRACKS/TRACKSA/FREE05/F05_FR.RES',
-    '/UI/RESOURCE/QUADINFO.RES',
+    '/UI/RESOURCE/QUADINFO.RES', '/UI/RESOURCE/PAGEA/PAGE07.RES',
     '/UI/RESOURCE/TP/TP_ANAT.RES',
     '/UI/RESOURCE/TP/TP_PSTNT.RES',
     '/UI/RESOURCE/TITLE.RES', '/UI/RESOURCE/PAGEA/PAGE01.RES',
@@ -367,6 +367,23 @@ def validated_content(directory):
     return sorted(allowed)
 
 
+def compact_menu_riders(data, materials, audio_definition):
+    """Only the two rendered menu rigs, body clips, seven base maps and UI audio config."""
+    archive = Resource(data)
+    required = {'mrider_ui.psg', 'frider_ui.psg'}
+    for stem, count in [('mrider', 7), ('frider', 5)]:
+        required.add(f'{stem}_body_breathe.mot')
+        required.update(f'{stem}_body_idle{i:02}.mot' for i in range(1, count + 1))
+    selected = [(name, archive.extract(i)) for i, (name, _, _) in enumerate(archive.members) if name.lower().split('/')[-1] in required]
+    if len(selected) != len(required):
+        raise ValueError('menu rider resources missing or duplicated')
+    textures = Resource(materials)
+    for name in ['atv2_helmet_ui', 'atv2_shirt_ui', 'atv2_black_gloves_ui', 'atv2_black_boots_ui', 'atv2_black_goggles_ui', 'atv2_pants_ui', 'atv2_sleeves_ui']:
+        selected.append((f'ui/frontend/textures/{name}.pst', textures.named(f'{name}.pst')))
+    selected.append(('audio/UI/uimusic.aud', audio_definition))
+    return pack_resource(selected)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--iso', type=Path, default=ROOT / 'private/source/ATV Offroad Fury 2 (USA) (v2.00).iso')
@@ -409,6 +426,8 @@ def main():
             originals[path] = data
             if (path.startswith('/QUAD/') and not path.endswith('_MT.RES')) or path in ('/RIDER/MRIDER.RES', '/RIDER/FRIDER.RES'):
                 data = compact_player_archive(data, path)
+            elif path == '/UI/RESOURCE/PAGEA/PAGE07.RES':
+                data = compact_menu_riders(data, source('/UI/RESOURCE/RIDEINFO.RES'), source('/AUDIO/UI/UIMUSIC.AUD'))
             elif path == '/ANIMSRDR.RES':
                 catalogs = [Resource(originals[f'/RIDER/{stem}.RES']).named(stem.lower() + '.mcf') for stem in ('MRIDER', 'FRIDER')]
                 data = compact_rider_motions(data, catalogs)
@@ -429,7 +448,8 @@ def main():
         body_names = selected_body_impact_names(Resource(originals['/AUDIOTBL.RES']).named('rider.aud'))
         if len(body_names) != 4:
             raise ValueError('exact-build rider BodyImpact bank expected four samples')
-        names = engine_names | train_names | body_names
+        menu_names = {f'ui/uitune{i}{channel}.vag' for i in range(1, 5) for channel in 'lr'}
+        names = engine_names | train_names | body_names | menu_names
         audio = Resource(source('/AUDIO/AUDIO.RES'))
         samples = [(name, audio.extract(i)) for i, (name, _, _) in enumerate(audio.members) if name.lower().removeprefix('audio/') in names]
         if len(samples) != len(names):

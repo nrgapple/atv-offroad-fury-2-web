@@ -11,6 +11,7 @@ export class GameAudio {
     this.current = null;
     this.ready = false;
     this.active = true;
+    this.menuTracks = []; this.menuSource = null; this.menuMusicMode = false;
     this.musicPreview = false;
     this.musicTimer = null;
     this.previewGeneration = 0;
@@ -54,6 +55,7 @@ export class GameAudio {
       this.engineGain.connect(this.gain);
     }
     await this.context.resume();
+    if (this.musicPreview && this.menuMusicMode) void this.playMenuMusic();
   }
   async load({ file, files, read, isCurrent, quadId = 1 }) {
     const text = new TextDecoder();
@@ -92,8 +94,64 @@ export class GameAudio {
     await this.loadEffects({ bytes: await this.codec(3, table.bytes, riderIndex), isCurrent });
     if (!isCurrent() || this.closed) return;
     await this.music.load({ file, files, read, isCurrent });
+    await this.loadMenuMusic({ file, files, read, isCurrent });
     if (!isCurrent() || this.closed) return;
     this.ready = true;
+  }
+  async loadMenuMusic({ file, files, read, isCurrent }) {
+    if (this.menuTracks.length || this.closed) return;
+    const menu = files.find(item => item.path === '/UI/RESOURCE/PAGEA/PAGE07.RES');
+    if (!menu) return; // Existing manifests remain playable during R2 publication.
+    const json = async (op, bytes, index = 0) => JSON.parse(new TextDecoder().decode(await this.codec(op, bytes, index)));
+    const bytes = await read(file, menu.lba * 2048, menu.bytes);
+    const entries = await json(2, bytes);
+    const definition = entries.findIndex(e => /(^|[\\/])uimusic\.aud$/i.test(e.name));
+    if (definition < 0) throw new Error('Original menu music definition missing');
+    const doc = await json(54, await this.codec(3, bytes, definition));
+    const values = Object.fromEntries(doc.sections.find(s => s.name.toLowerCase() === 'uimusic').fields.map(f => [f.key.toLowerCase(), f.value.replaceAll('\\', '/')]));
+    if (Number(values.numtracks) !== 4) throw new Error('Original UI expected four tunes');
+    const audio = files.find(item => item.path === '/AUDIO/AUDIO.RES');
+    if (!audio) throw new Error('Original menu sound archive missing');
+    const bank = await read(file, audio.lba * 2048, audio.bytes), samples = await json(2, bank), tracks = [];
+    for (let i = 1; i <= 4; i++) {
+      const pair = [], info = [];
+      for (const channel of ['l', 'r']) {
+        const suffix = `${values['track'+i]}${channel}.vag`.toLowerCase();
+        const index = samples.findIndex(e => e.name.replaceAll('\\', '/').toLowerCase().endsWith('/'+suffix));
+        if (index < 0) throw new Error(`Original UI tune missing: ${suffix}`);
+        const vag = await this.codec(3, bank, index);
+        info.push(await json(5,vag));
+        pair.push(await this.codec(4,vag));
+        if (!isCurrent() || this.closed) return;
+      }
+      tracks.push({name:values['track'+i], waves:pair, info});
+    }
+    this.menuTracks = tracks;
+    if (this.musicPreview && this.menuMusicMode) void this.playMenuMusic();
+  }
+  stopMenuMusic() {
+    if (!this.menuSource) return;
+    this.menuSource.stop(); this.menuSource.disconnect(); this.menuSource = null;
+  }
+  async playMenuMusic() {
+    if (this.menuSource || this.menuBusy || !this.menuTracks.length || !this.musicPreview || !this.menuMusicMode || !this.music.enabled || this.context?.state !== 'running') return;
+    this.menuBusy = true; const generation = this.previewGeneration;
+    try {
+      const track = this.menuTracks[0];
+      if (!track.buffer) {
+        const pair = await Promise.all(track.waves.map(wave => this.context.decodeAudioData(wave.slice().buffer)));
+        if (this.closed) return;
+        if (pair[0].sampleRate !== pair[1].sampleRate || pair[0].length !== pair[1].length) throw new Error('Menu stereo channels differ');
+        track.buffer = this.context.createBuffer(2,pair[0].length,pair[0].sampleRate);
+        pair.forEach((buffer,i) => track.buffer.copyToChannel(buffer.getChannelData(0),i));
+      }
+      if (this.closed || generation !== this.previewGeneration || !this.musicPreview || !this.menuMusicMode || !this.music.enabled) return;
+      this.music.pauseQueue();
+      this.menuGain ??= this.context.createGain(); this.menuGain.gain.value = this.music.volume;
+      this.menuGain.disconnect(); this.menuGain.connect(this.gain);
+      const source = this.context.createBufferSource(); source.buffer = track.buffer; source.loop = true; source.loopStart = (track.info[0].loop_start ?? 0) / track.info[0].sample_rate; source.loopEnd = track.info[0].loop_end == null ? track.buffer.duration : track.info[0].loop_end / track.info[0].sample_rate; source.connect(this.menuGain); source.start(); this.menuSource = source;
+    } catch (error) { if (!this.closed) this.report(`Menu music: ${error.message}`); }
+    finally { this.menuBusy = false; if (generation !== this.previewGeneration && !this.closed) void this.playMenuMusic(); }
   }
   async loadEffects({ bytes, isCurrent }) {
     try {
@@ -350,16 +408,24 @@ export class GameAudio {
   }
   // Music-menu preview keeps decoding independent of physics while engine
   // voices remain silent. The caller clears preview on menu exit/focus loss.
-  async setMusicPreview(active) {
+  async setMusicPreview(active, originalMenu = false) {
     if (this.closed) return;
     const generation = ++this.previewGeneration;
     this.musicPreview = Boolean(active);
+    this.menuMusicMode = originalMenu;
+    if (!active || !originalMenu) this.stopMenuMusic();
     if (this.musicTimer !== null) { clearInterval(this.musicTimer); this.musicTimer = null; }
     if (this.musicPreview) {
       await this.resume();
       if (this.closed || !this.musicPreview || generation !== this.previewGeneration) return;
-      this.musicTimer = setInterval(() => { void this.music.update(); }, 250);
-      void this.music.update();
+      const tick = () => {
+        if (this.menuMusicMode && this.menuTracks.length) {
+          this.music.pauseQueue();
+          if (!this.music.enabled) this.stopMenuMusic();
+          else { if (this.menuGain) this.menuGain.gain.value = this.music.volume; void this.playMenuMusic(); }
+        } else void this.music.update();
+      };
+      this.musicTimer = setInterval(tick, 250); tick();
     } else if (!this.active && this.context) await this.context.suspend();
   }
   async reset() {
@@ -376,6 +442,7 @@ export class GameAudio {
   }
   snapshot() {
     return { ready: this.ready, context: this.context?.state ?? 'locked', samples: this.buffers.size,
+      menuMusic: {ready:this.menuTracks.length === 4,voices:this.menuSource ? 1 : 0,track:this.menuSource ? this.menuTracks[0].name : null,stereo:Boolean(this.menuTracks[0]?.buffer?.numberOfChannels === 2)},
       musicPreview: this.musicPreview, voices: this.sources.size, commands: this.commands, sound: this.lastSound,
       spatial: { ready: this.spatialReady, sources: this.spatialDefinitions.length, voices: this.spatialVoices.size,
         starts: this.spatialStarts, commands: this.spatialCommands,
@@ -395,6 +462,7 @@ export class GameAudio {
     this.closed = true;
     if (this.musicTimer !== null) clearInterval(this.musicTimer);
     this.musicTimer = null; this.musicPreview = false;
+    this.stopMenuMusic(); this.menuGain?.disconnect(); this.menuTracks = [];
     this.music.close();
     this.ready = false;
     window.removeEventListener('pointerdown', this.unlock);

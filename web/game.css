@@ -39,3 +39,11 @@ body:not(.menu-open) #help, body:not(.menu-open) #status:not(.error) { display: 
 
 .atv-text-input { box-sizing: border-box; border: 2px solid var(--atv-silver, #bcbcbc); background: #171717; color: #fff; border-radius: 4px; padding: 4px 12px; font: 600 18px sans-serif; touch-action: auto; }
 .atv-text-input:focus { outline: 2px solid var(--atv-gold, #e1c844); outline-offset: 2px; }
+
+/* Rust places the inspection cards and their 44px selection controls. */
+.model-view { position: absolute; z-index: 1; touch-action: none; }
+.model-view canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; border-radius: var(--atv-control-radius); }
+.model-view canvas:active { cursor: grabbing; }
+.model-view canvas:focus-visible { outline: 2px solid var(--atv-focus); outline-offset: -2px; }
+.model-view span { position: absolute; inset: 0; display: grid; place-items: center; color: var(--atv-text); font: 700 12px var(--atv-font-label); pointer-events: none; }
+.model-view span:empty { display: none; }
