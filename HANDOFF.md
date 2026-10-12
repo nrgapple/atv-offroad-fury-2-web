@@ -1,6 +1,7 @@
 # Implementation handoff
 
-Latest continuation host gate: source-verified spring torque now preserves the
+Latest verified public gameplay gate: `f27869c84b1ea09a8425de50b6bdf50935d2ba54`,
+CI `38210131335` success. Source-verified spring torque now preserves the
 Model inverse-transform order. A single original static/ESB partition and 40/50ft
 cache supplies quad wheel/chassis candidates and recovery's plant-clearance gate.
 Physical vegetation proxies, exceptional categories/dynamic objects and the
@@ -11,7 +12,13 @@ Clippy/formatting, 39 JS tests, release/Worker checks, all eight maps, clean lan
 Nac Nac recovery, uneven turns, boundary launch/recovery, one-handed touch and
 desktop/portrait diagnostics. Recorded landing overlap is 0.392776ft across 199
 frames; this is not an identical before/after comparison or a clipping fix.
-This newer component is host-verified and pending public release. See
+Public HTTPS verification matched 26 authored files and 317 served objects
+(72 log entries and 64 screenshots before this verification entry). All eight
+maps, clean landing, wreck/recovery, boundary launch/recovery, one-handed mobile,
+dev-log filters and desktop/portrait diagnostics passed publicly. Full-batch
+public landing capture measured 0.392639ft overlap across 184 riding frames with
+none skipped. This is not an identical before/after comparison or a clipping fix.
+Rider shared-cache integration is the next implementation gate. See
 [coupled landing](research/COUPLED_LANDING.md) and
 [scene integration](research/SCENE_INTEGRATION.md).
 
@@ -80,7 +87,7 @@ The numerical audit covers entries, not unique assets. Binary decoding and an ad
 - Host: Apple Silicon arm64, macOS 27.0; private GitHub remote https://github.com/nrgapple/atv-offroad-fury-2-web with main CI checks and WASM builds.
 - Applicable parent instructions: `/Users/nrgapple/Projects/AGENTS.md`.
 - Original download was preserved at `/Users/adamgeiger/Downloads/ATV Offroad Fury 2 (USA) (v2.00).zip` during setup.
-- Public HTTPS production: `https://atv-offroad-fury-2.champtoday.workers.dev/`; screenshot log at `/devlog.html`. GitHub main checks/builds deploy authored application assets. A dedicated R2 bucket holds only validated runtime content and approved screenshots, uploaded separately from the private host. The active 15-minute heartbeat maintains that content/gallery and checks deployment identity; it must never publish uncommitted code/log entries or further Sites versions. See `research/DEPLOYMENT.md` for current status and release evidence. The ISO, BIOS, raw boot executable, unrelated disc data and reverse-engineering output remain private.
+- Public HTTPS production: `https://atv-offroad-fury-2.champtoday.workers.dev/`; screenshot log at `/devlog.html`. GitHub main checks/builds deploy authored application assets. A dedicated R2 bucket holds only validated runtime content and approved screenshots, uploaded separately from the private host at completed checkpoints. The publication heartbeat is retired; releases follow `research/CI_CHECKPOINTS.md`. See `research/DEPLOYMENT.md` for current status and release evidence. The ISO, BIOS, raw boot executable, unrelated disc data and reverse-engineering output remain private.
 - `make serve` is a foreground development process, not a persistent service. The server serves an explicit static-file allowlist, never `private/`, `references/`, or the repository root.
 
 ## Exact source build

@@ -413,3 +413,24 @@ explicitly unfinished. The host steering capture covers changing elevation and
 turning, but includes a scenery collision and is not an isolated incline proof.
 Native instruction comparisons establish the restored travel-stop actor and wreck
 camera components; these browser checks do not prove complete original handling.
+
+## Combined scene candidates and spring torque (2026-10-12)
+
+Gameplay `f27869c84b1ea09a8425de50b6bdf50935d2ba54` passed
+[CI 38210131335](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38210131335)
+and automatic production deployment. The separately uploaded R2 package and
+public HTTPS verification matched 26 authored files and 317 served objects,
+including 72 dev-log entries and 64 inspected screenshots before the verification
+entry. No game content or screenshots entered GitHub or CI.
+
+Public no-disc checks passed all eight maps, clean preload landing, failed Nac Nac
+separation/contact/recovery/driving, normal ENV04 boundary launch/recovery, saved
+one-handed touch controls, gallery filters and desktop/portrait diagnostics.
+The full-batch landing capture includes every delivered simulation step: 184
+riding frames, zero skipped, minimum tire clearance -0.39263916015625 feet.
+The host run's 199 frames follow a different trace, so this is not an improvement
+comparison or a clipping fix. Rider/camera cache consumers, physical plant proxies,
+dynamic/categories and complete original-game replay parity remain unfinished.
+
+The release workflow uses validated current-main CI artifacts and explicit
+checkpoint R2 uploads. The recurring publication heartbeat is retired.
