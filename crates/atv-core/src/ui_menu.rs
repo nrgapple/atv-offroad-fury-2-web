@@ -19,6 +19,8 @@ pub struct ControlRow {
 #[serde(deny_unknown_fields)]
 pub struct Request {
     pub page: String,
+    #[serde(default)]
+    pub loading_status: String,
     #[serde(default = "default_quad")]
     pub quad_id: u16,
     #[serde(default)]
@@ -107,6 +109,10 @@ pub enum Draw {
     },
     Artwork {
         image: &'static str,
+        rect: [f32; 4],
+    },
+    ModelPreview {
+        model: &'static str,
         rect: [f32; 4],
     },
     Preview {
@@ -246,6 +252,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         || request.lobby_status.len() > 256
         || !(1..=26).contains(&request.quad_id)
         || request.rider_id > 1
+        || request.loading_status.len() > 128
         || request.track_name.len() > 128
         || request.track_image.len() > 128
         || request.capture_label.len() > 128
@@ -331,6 +338,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         "multiplayer" => "Multiplayer",
         "lobby" => "Free Ride Lobby",
         "garage" => "Quad and Rider",
+        "loading" => "Loading",
         "tracks" => "Freestyle",
         "pause" => "Pause",
         "controls" => "Controls",
@@ -465,30 +473,122 @@ pub fn layout(request: Request) -> Result<Frame> {
         }
         "garage" => {
             let model = crate::player_models::selection(request.quad_id, request.rider_id)?;
-            f.text(&model.label, [30., 108.], 1.2, FONT, "255,255,255", list_w);
+            // Portrait stacks two equal model cards above the controls; landscape
+            // gives the previews the right-hand stage. Bounds are in Rust UI units.
+            let panel = if portrait {
+                [24., 98., w - 48., (h - 380.).clamp(100., 420.)]
+            } else {
+                [list_w + 44., 92., w - list_w - 68., h - 124.]
+            };
+            let card_w = (panel[2] - 12.) / 2.;
+            for (i, (kind, label)) in [("quad", model.label.as_str()), ("rider", model.rider_label)]
+                .iter()
+                .enumerate()
+            {
+                let x = panel[0] + i as f32 * (card_w + 12.);
+                f.rect(
+                    [x, panel[1], card_w, panel[3]],
+                    6.,
+                    "#292929",
+                    "#080808",
+                    "#b9b9b98c",
+                );
+                f.text(
+                    *label,
+                    [x + 10., panel[1] + 12.],
+                    0.85,
+                    FONT,
+                    "255,255,255",
+                    card_w - 20.,
+                );
+                f.draw.push(Draw::ModelPreview {
+                    model: kind,
+                    rect: [x + 6., panel[1] + 46., card_w - 12., panel[3] - 74.],
+                });
+                f.text(
+                    "Drag to rotate",
+                    [x + 10., panel[1] + panel[3] - 22.],
+                    0.65,
+                    FONT,
+                    "185,185,185",
+                    card_w - 20.,
+                );
+            }
+            let y = if portrait {
+                panel[1] + panel[3] + 12.
+            } else {
+                114.
+            };
+            let controls_w = if portrait { w - 48. } else { list_w };
+            let row_h = 54_f32.max(44. / scale);
             f.text(
-                model.rider_label,
-                [30., 148.],
-                1.,
+                format!("Quad {} / 26", request.quad_id),
+                [30., y],
+                0.85,
                 FONT,
-                "215,215,215",
-                list_w,
+                "229,211,96",
+                controls_w - 12.,
             );
-            let rows = [
+            for (i, (label, action)) in [
                 ("Previous quad", "quadprev"),
                 ("Next quad", "quadnext"),
                 ("Change rider", "riderchange"),
                 ("Done", "back"),
-            ];
-            for (i, (label, action)) in rows.iter().enumerate() {
+            ]
+            .iter()
+            .enumerate()
+            {
                 f.choices.push((*action).into());
                 f.button(
                     label,
                     action,
-                    [24., 194. + i as f32 * 54., list_w, 54.],
+                    [24., y + 30. + i as f32 * row_h, controls_w, row_h],
                     request.selection == i,
                 );
             }
+        }
+        "loading" => {
+            let photo_w = if portrait {
+                w - 48.
+            } else {
+                (w * 0.62).min((h - 205.) * 2.)
+            };
+            let photo_h = photo_w / 2.;
+            let x = (w - photo_w) / 2.;
+            let y = if portrait {
+                ((h - photo_h) * 0.35).max(96.)
+            } else {
+                88.
+            };
+            f.rect(
+                [x - 3., y - 3., photo_w + 6., photo_h + 6.],
+                4.,
+                "#b9b9b9",
+                "#343434",
+                "#e9e9e9",
+            );
+            if !request.track_image.is_empty() {
+                f.draw.push(Draw::Preview {
+                    image: request.track_image.clone(),
+                    rect: [x, y, photo_w, photo_h],
+                });
+            }
+            f.text(
+                &request.track_name,
+                [x, y + photo_h + 18.],
+                1.15,
+                HEADER_FONT,
+                "229,211,96",
+                photo_w,
+            );
+            f.text(
+                &request.loading_status,
+                [x, y + photo_h + 60.],
+                0.8,
+                FONT,
+                "222,222,222",
+                photo_w,
+            );
         }
         "multiplayer" => {
             for (action, label, value, y, max_length) in [
@@ -964,6 +1064,7 @@ mod tests {
     fn request(page: &str, w: f32, h: f32) -> Request {
         Request {
             page: page.into(),
+            loading_status: "Reading original ATV...".into(),
             quad_id: 1,
             rider_id: 0,
             room_code: String::new(),
@@ -1025,7 +1126,8 @@ mod tests {
             (768., 1024.),
         ] {
             for page in [
-                "title", "main", "single", "tracks", "pause", "controls", "bindings", "music",
+                "title", "main", "single", "tracks", "garage", "loading", "pause", "controls",
+                "bindings", "music",
             ] {
                 let f = layout(request(page, w, h)).unwrap();
                 let scale = w / f.width;

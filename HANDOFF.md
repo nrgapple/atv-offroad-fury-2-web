@@ -25,6 +25,21 @@ including the d9596d9 vegetation/transport proof and default-off funny crashes.
 Its responsible release chat reports CI 38320324826/deployment success, 32 authored
 files, 410 served objects, 106 runtime records and 124 gallery entries/104 images.
 The following near-material public proof remains release-scoped to d9596d9.
+## Model selection and original menu presentation: host checkpoint
+
+An isolated worktree adds all-26-quad inspection cards, original 32-node male/female
+menu rigs, original breathing/idle MOT sampling in an independent Rust runtime,
+dedicated stereo UI tunes and full Rust course loading with original track photos.
+The menu gate passes six viewport sizes, 44px controls, both input navigation paths,
+rotation, rapid selection, context restoration and selected-model course loading.
+Frontend and all-21-song regressions pass. The staged private R2 package has 107
+records/307 validated files; source resources and screenshots remain excluded
+from Git/CI. Native idle scheduling/transition rules, lighting/specular fidelity,
+outfits, hair and physical phones remain open. See research/MENU_SELECTION.md.
+Public application and R2 checks are pending the merged main CI release; the user
+requests delivery without waiting for deployments. Preserve other implementation
+lanes and use origin rather than the disabled No Mistakes remote.
+
 
 ## Optional funny crashes: verified host checkpoint
 

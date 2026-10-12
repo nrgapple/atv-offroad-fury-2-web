@@ -298,3 +298,24 @@ test('closing audio while a remote model config is pending prevents sample loadi
     assert.equal(samples,0);assert.equal(decodes,0);audio.remoteFrame([remotePeer(1,'idle1')]);assert.equal(sources.length,0);
   });
 });
+
+test('original stereo menu tune has one looping voice, silent engines and clean preview transitions', async () => {
+  const previousWindow=globalThis.window, sources=[];
+  class Context {
+    constructor(){this.state='suspended';this.destination={};this.currentTime=0;}
+    createGain(){return {gain:{value:1},connect(){},disconnect(){}};}
+    createBufferSource(){const source={connect(){},start(){this.started=true;},stop(){this.stopped=true;},disconnect(){}};sources.push(source);return source;}
+    async resume(){this.state='running';}async suspend(){this.state='suspended';}async close(){this.state='closed';}
+  }
+  globalThis.window={AudioContext:Context,addEventListener(){},removeEventListener(){}};
+  const audio=new GameAudio(async()=>{throw new Error('No engine simulation in menu');});
+  audio.menuTracks=Array.from({length:4},(_,i)=>({name:`UI/uitune${i+1}`,buffer:{length:128,numberOfChannels:2},info:[{sample_rate:100,loop_start:10,loop_end:100}]}));
+  try {
+    await audio.setActive(false);await audio.setMusicPreview(true,true);await audio.playMenuMusic();
+    assert.equal(sources.length,1);assert.equal(sources[0].loop,true);assert.equal(sources[0].loopStart,.1);assert.equal(sources[0].loopEnd,1);
+    assert.equal(audio.engineGain.gain.value,0);assert.equal(audio.commands,0);assert.equal(audio.snapshot().menuMusic.stereo,true);
+    await audio.setMusicPreview(true,true);assert.equal(sources.length,1,'Page navigation must not duplicate the loop');
+    await audio.setMusicPreview(false);assert.equal(sources[0].stopped,true);assert.equal(audio.context.state,'suspended');
+    await audio.setMusicPreview(true,false);assert.equal(audio.menuSource,null,'Soundtrack selector stops the dedicated menu tune');
+  } finally {audio.close();globalThis.window=previousWindow;}
+});

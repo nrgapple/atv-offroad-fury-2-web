@@ -13,6 +13,7 @@ use atv_core::{
 };
 use std::cell::RefCell;
 mod multiplayer;
+thread_local! { static MENU_RIDER: RefCell<Option<atv_core::menu_preview::Rider>> = const { RefCell::new(None) }; }
 
 #[derive(Default)]
 struct Buffers {
@@ -1472,6 +1473,29 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
     if op == 87 {
         return serde_json::to_vec(&EngineAudioConfig::parse(input, index as u32)?)
             .map_err(|e| e.to_string());
+    }
+    if op == 92 {
+        if index > 1 {
+            return Err("invalid menu rider".into());
+        }
+        let rider = atv_core::menu_preview::Rider::from_resource(input, index == 1)?;
+        let (clip, pose) = rider.pose(0.)?;
+        let output =
+            serde_json::to_vec(&serde_json::json!({"mesh":rider.mesh,"pose":pose,"clip":clip}))
+                .map_err(|e| e.to_string())?;
+        MENU_RIDER.with_borrow_mut(|slot| *slot = Some(rider));
+        return Ok(output);
+    }
+    if op == 93 {
+        if input.len() != 4 {
+            return Err("menu clock must be binary32".into());
+        }
+        let time = f32::from_le_bytes(input.try_into().map_err(|_| "invalid menu clock")?);
+        return MENU_RIDER.with_borrow(|slot| {
+            let (clip, pose) = slot.as_ref().ok_or("load menu rider first")?.pose(time)?;
+            serde_json::to_vec(&serde_json::json!({"clip":clip,"pose":pose}))
+                .map_err(|e| e.to_string())
+        });
     }
     if op == 89 {
         return serde_json::to_vec(&atv_core::player_models::selection(

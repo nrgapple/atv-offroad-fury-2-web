@@ -1,6 +1,6 @@
 {
-  "status": "Public Cloudflare release d9596d937907395440b61e78be61b2045d987d4 remains current. A host-only ordered vegetation billboard candidate now passes the all-nine map route and billboard checks, with bounded source-correlated color/geometry probes. The candidate and its inspected ENV08 capture are unpublished; full native visibility, viewport, wind/weather, GS/VU and game fidelity remain open.",
-  "working_on": "Continue validating host-only vegetation billboards against original callback visibility, camera/viewport mapping and per-row GS fog/depth behavior. Keep the candidate and screenshot private until validated current-main release evidence is available. Do not infer PS2 hardware or production performance from the bounded probes.",
+  "status": "Public Cloudflare release d9596d937907395440b61e78be61b2045d987d4 remains the verified release. Host-only candidate includes original selection previews, track-photo loading and menu audio; CI and R2 publication are pending.",
+  "working_on": "Finish current-main integration and follow the authorized release process for the selection-menu candidate. Menu playlist ordering and delay behavior still need verification.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -2013,6 +2013,49 @@
       "caption": "Public d9596d9 ENV07 capture with the near vegetation material path. This inspected PNG is held in private storage and has not been added to the public gallery."
     },
     {
+      "id": "original-quad-and-rider-selection-previews-ea766a26",
+      "timestamp": "2026-10-12T23:29:22.358798+00:00",
+      "recorded_at": "2026-10-12T23:33:49.842248+00:00",
+      "kind": "build",
+      "title": "Original quad and rider selection previews",
+      "summary": "The Rust browser port now opens an original-resource quad and rider selection screen with 26 vehicle models and animated male and female rider previews.",
+      "details": [
+        "The preview runtime loads original PAGE07 32-node male and female rigs and samples their body-breathing animation plus seven male and five female idle clips. Quad and rider panels support pointer orbit; keyboard and controller navigation handle selection, rapid switching and wraparound.",
+        "Actual-WASM browser checks exercised six viewport sizes from 320\u00d7568 through 1280\u00d7720, with at least 44-pixel controls and no overlap or overflow. Preview rendering recovered after graphics-context restoration; frontend regression also passed title/controller navigation, all nine environment choices, Tioga driving, pause/Controls and 390px Caribou."
+      ],
+      "limitation": "Host-only checkpoint. The selection UI uses authored Rust preview sampling and simple lighting; it does not establish native PS2 menu rendering or hardware fidelity. Full-game parity remains incomplete. New source resources await validated current-main CI and separate R2 publication.",
+      "image": "/devlog-images/original-quad-and-rider-selection-previews-ea766a26.png",
+      "caption": "Host browser: original quad and animated male rider previews in the portrait selection layout."
+    },
+    {
+      "id": "original-track-photos-return-during-loading-843326b6",
+      "timestamp": "2026-10-12T23:29:27.811311+00:00",
+      "recorded_at": "2026-10-12T23:33:49.914366+00:00",
+      "kind": "build",
+      "title": "Original track photos return during loading",
+      "summary": "The Rust browser port now renders the original track-photo loading screen while loading a selected environment.",
+      "details": [
+        "The host browser showed the Caribou Peak image and loading status in portrait and landscape. The actual-WASM route loaded the original photo through the ATV 6 female-rider drive, pause and return-to-menu flow without a file picker.",
+        "The viewport suite covered portrait and landscape loading layouts; the broader six-size selection-layout checks reported no control overlap or overflow and no JavaScript, HTTP or GL errors."
+      ],
+      "limitation": "Host-only checkpoint; public no-disc startup and resource delivery have not been reverified for this candidate. New extracted resources await validated current-main CI and the separate R2 release step.",
+      "image": "/devlog-images/original-track-photos-return-during-loading-843326b6.png",
+      "caption": "Host browser: original Caribou Peak track photo during loading in portrait layout."
+    },
+    {
+      "id": "original-tunes-play-in-the-menu-b3a214a2",
+      "timestamp": "2026-10-12T23:33:49.978282+00:00",
+      "recorded_at": "2026-10-12T23:33:49.978282+00:00",
+      "kind": "verification",
+      "title": "Original tunes play in the menu",
+      "summary": "The menu preview now decodes and plays the game's original interface music through the Rust/WebAssembly audio path.",
+      "details": [
+        "UIMUSIC.AUD contains four named tunes in eight mono stereo-pair VAG channels. The actual-WASM audio gate passed 63 chunks bounded to 65,536 bytes with zero underruns; the first source UI tune loops using its original VAG loop points.",
+        "The dedicated menu-audio test and combined verification gates passed: make check (315 core, 25 network, 3 relay, 13 bridge and 68 JavaScript tests), plus the separate audio test (69 JavaScript tests total), 18 release checks, 6 Worker checks, make verify and exclusion checks."
+      ],
+      "limitation": "Host-only evidence. Playlist ordering and delay-callback behavior remain unverified, and the tests do not establish native hardware audio fidelity. The 107-record, 307-file runtime package remains staged privately pending validated current-main CI and separate R2 publication."
+    },
+    {
       "id": "ordered-vegetation-billboards-pass-across-nine-host-ma-69a1b3a6",
       "timestamp": "2026-10-12T23:45:54.341982+00:00",
       "recorded_at": "2026-10-12T23:47:58.603731+00:00",
@@ -2030,7 +2073,7 @@
       "caption": "Host Chromium ENV08 capture of the ordered vegetation billboard checkpoint during normal driving; this is an inspected browser-port image, not a PS2 capture."
     }
   ],
-  "updated_at": "2026-10-12T23:47:58.603731+00:00",
+  "updated_at": "2026-10-12T23:33:49.978282+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
