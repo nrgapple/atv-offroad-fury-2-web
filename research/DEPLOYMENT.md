@@ -672,5 +672,34 @@ Four-client timing uses one Mac, headless Chromium Metal, 1280×896 and syntheti
 focus: 71.00–75.86 FPS, 25.9–27.2ms frame p95, 2.61–3.11ms render CPU,
 2.1–6.6ms physics round trips and 41–52ms relay RTT. Concurrent validation
 overlap was not measured. These are bounded measurements, not phone or general
-Internet guarantees. The earlier public nine-map/material/contact proofs remain
-scoped to their recorded release; later reflection/fog work stays isolated WIP.
+Internet guarantees. At this earlier checkpoint the reflection/fog work was
+isolated WIP; it was later publicly validated in e18a371e below.
+
+## Public fog/reflection release e18a371e (2026-10-12)
+
+Public main `e18a371e81b471137dd5fb1121b05d454584b1d0` passes
+[CI 38312395498](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38312395498).
+The validated current-main artifact matches 32 authored files and all 405
+served objects. The canonical R2 package contains 106 records, 306 referenced
+files and 406 approved objects across three changes. HTTPS verification
+matches every hash; the gallery has 118 entries and 99 screenshots.
+
+Public ENV01/ENV04/FREE05 fog checks match 3,000 GPU coverage samples with zero
+byte differences, and the tested screen-affine interpolation sample passes.
+The compressed-prelit packing comparison is source-correlated, not a complete
+VU/GS or PS2 hardware replay. Reflections draw ENV01's 88 groups/275 instances
+with 141,770 contributing pixels and FREE05's three groups/78 instances with
+236,380 pixels; 2,304 GPU comparisons have maximum UV error 7.15e-7.
+
+All nine maps pass. Material inspection reports 4,618 rain, 73,970 lava, 6,335
+waterflow and 115,571 ski-jump contributing pixels, with pause/context retention.
+Four wet maps plus 390px projection, dry-map behavior, Vancouver desktop/390px
+contact, frontend routes and copied-link FREE05 multiplayer pass. Vancouver
+draws 78 placements with 43 colliders, 123 wheel-support frames, 31 body-contact
+frames, takeoff at step 19 and later landing. The multiplayer pair renders 13
+remote draws with both rigs, audio and movement. No source vegetation-material
+or source tree-lighting completion is claimed in this release. Source vegetation
+work is again host-only WIP. Current ambient prototype evidence covers only
+supplied zero directional weights; the recently recovered global Sun matrices
+must be integrated before any lighting claim. Native terrain/water GS precision,
+other lighting/shadows/lens behavior, LOD and weather remain open.
