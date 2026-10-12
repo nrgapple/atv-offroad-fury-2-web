@@ -6,8 +6,14 @@ use crate::{
     wheel::{Vec3, cross, dot, scale, sub},
 };
 use serde::Serialize;
+#[path = "train_motion.rs"]
+mod motion;
 #[path = "train_wheels.rs"]
 mod wheels;
+pub use motion::MotionState;
+#[path = "train_list.rs"]
+mod list;
+pub use list::DynamicList;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Definition {
@@ -340,6 +346,7 @@ struct Car {
     last_height: f32,
     height_cached: bool,
     matrix: [f32; 16],
+    previous_matrix: [f32; 16],
     route_time: f32,
 }
 #[derive(Serialize)]
@@ -355,6 +362,7 @@ pub struct Runtime {
     pub time: f32,
     wheels: Option<(wheels::Motion, Vec<crate::mesh::Node>)>,
     shared_height: f32,
+    reciprocal_dt: f32,
 }
 impl Runtime {
     pub fn new(route: Route, definitions: Vec<Definition>) -> Result<Self> {
@@ -369,6 +377,7 @@ impl Runtime {
             time: 0.,
             wheels: None,
             shared_height: 0.,
+            reciprocal_dt: 0.,
             cars: definitions
                 .into_iter()
                 .map(|definition| Car {
@@ -379,6 +388,9 @@ impl Runtime {
                     last_height: -f32::MAX,
                     height_cached: false,
                     matrix: [
+                        1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+                    ],
+                    previous_matrix: [
                         1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
                     ],
                     route_time: 0.,
@@ -436,8 +448,10 @@ impl Runtime {
         if !dt.is_finite() || dt <= 0. || dt > 0.1 {
             return Err("invalid train update step".into());
         }
+        self.reciprocal_dt = 1. / dt;
         self.time = (self.time + dt) % self.route.duration();
         for (index, car) in self.cars.iter_mut().enumerate() {
+            car.previous_matrix = car.matrix;
             let height_was_cached = car.height_cached;
             let t = if car.definition.lag_distance > 0 {
                 self.route
@@ -505,6 +519,14 @@ impl Runtime {
             car.route_time = t;
         }
         self.frame()
+    }
+    ///Previous/current model cache consumed by native procedural velocity getters.
+    pub fn motion_state(&self, index: usize) -> Option<MotionState> {
+        self.cars.get(index).map(|car| MotionState {
+            current: car.matrix,
+            previous: car.previous_matrix,
+            reciprocal_dt: self.reciprocal_dt,
+        })
     }
     pub fn frame(&self) -> Result<Frame> {
         Ok(Frame {
