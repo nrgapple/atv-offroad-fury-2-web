@@ -61,7 +61,7 @@ pub struct RiderInput {
     pub throttle_pressed: bool,
     pub brake_pressed: bool,
     pub neutral: bool,
-    /// Original object +0x58 gate, supplied by gameplay code.
+    /// Original object +0x58 gate: main stunt mode 4, not held mode 5.
     pub half_air_control: bool,
     pub lateral_axis: f32,
     pub lean_axis: f32,
@@ -577,6 +577,61 @@ mod tests {
             q[i + 1] = s;
             let angles = body_angles(q, f32::atan2);
             assert!((angles[i] + 0.5).abs() < 0.00001);
+        }
+    }
+    #[test]
+    fn main_stunt_halves_input_moment_but_not_damping_or_side_force() {
+        // Nonzero angular velocity distinguishes halving input from halving
+        // the accumulated moment. Lateral input keeps auto-unroll inactive.
+        let input = RiderInput {
+            lateral_axis: 0.5,
+            lean_axis: 1.0,
+            local_angular_velocity: [0.25, -0.5, 0.75],
+            world_body_right: [1.0, 0.0, 0.0],
+            ..Default::default()
+        };
+        for (half_air_control, expected) in [
+            (false, [6.0, 22.75, 26.625]),
+            (true, [7.5, 22.375, 26.8125]),
+        ] {
+            let mut force = [2.0, 3.0, 4.0];
+            let mut moment = [10.0, 20.0, 30.0];
+            step(
+                config(),
+                &mut RiderState::default(),
+                RiderInput {
+                    half_air_control,
+                    ..input
+                },
+                1.0 / 60.0,
+                &mut force,
+                &mut moment,
+            )
+            .unwrap();
+            assert_eq!(force, [3.0, 3.0, 4.0]);
+            assert_eq!(moment, expected);
+        }
+    }
+    #[test]
+    fn stunt_slew_changes_only_airborne_filtered_axes() {
+        let config = AxisConfig {
+            normal_rate: [4.0; 2],
+            stunt_rate: [2.5; 2],
+            horizontal_dead_zone: 0.0,
+        };
+        let mut smoothed = [0.0; 2];
+        for (grounded, main_stunt, expected) in [
+            (false, false, 0.2),
+            (false, true, 0.325),
+            (false, false, 0.525),
+            (true, true, 0.725),
+        ] {
+            let raw =
+                smooth_axes(config, &mut smoothed, [1.0; 2], grounded, main_stunt, 0.05).unwrap();
+            assert_eq!(raw, [1.0; 2]);
+            for axis in smoothed {
+                assert!((axis - expected).abs() < 0.000001);
+            }
         }
     }
     #[test]

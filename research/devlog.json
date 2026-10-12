@@ -1,6 +1,6 @@
 {
-  "status": "The eight-map baseline 1e5c4fd remains the reference for earlier map, menu, terrain and touch evidence. Public commit 52534bbb (CI 38187838559) separately verifies one actual-content wreck/reset route and a clean preload landing. The start-screen Dev log link is host-verified and awaits a follow-up release. Crash and stunt behavior remain partial.",
-  "working_on": "Recover original ATV handling, airborne controls and trick transitions; improve crash and rider-contact fidelity using broader fixed-input comparisons. Publish the host-verified start-screen Dev log link in the follow-up release; then continue wreck-camera, center-of-gravity, prop/water contact and other crash-state work.",
+  "status": "The eight-map baseline 1e5c4fd remains the reference for map, terrain and earlier touch evidence. Public commit 52534bbb (CI 38187838559) separately verifies one actual-content wreck/reset route and a clean preload landing. Public commit 667f24bc707f5240d6927c49c65cdf6583728ad5 (CI 38188315671) verifies the start-screen Dev log link. New main-trick air-control, visual steering and animated-bounds center-of-gravity work remains host-tested candidate work; full handling, stunt and crash behavior remain partial.",
+  "working_on": "Verify the host-tested handling, trick-control and animated-bounds center-of-gravity candidate in the next public CI/deployment checks. Then broaden fixed-input comparisons and continue native wreck-camera, rider-versus-prop/water, trick-transition and crash-state work.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -633,17 +633,39 @@
       "recorded_at": "2026-10-12T00:30:34.171475+00:00",
       "kind": "verification",
       "title": "Dev log is reachable from the game start screen",
-      "summary": "The start screen now offers the Dev log beside Press START, with selection that works from a touch screen. That keeps the update trail one step away without adding a separate landing page.",
+      "summary": "The start screen offers Dev log beside Press START, with keyboard, controller and touch selection. The pictured host screen was later confirmed in public release 667f24bc (CI 38188315671), including return to the game.",
       "details": [
-        "Host frontend checks passed for title \u2192 Dev log, controller selection, keyboard focus in the main menu, the eight-map picker, driving and pause, plus mobile title navigation and return.",
-        "The menu is drawn by the Rust frontend and the Dev log route returns to the game title. This checkpoint is host-verified and is waiting for its follow-up release."
+        "Host frontend checks covered title \u2192 Dev log, controller selection, keyboard focus in the main menu, the eight-map picker, driving and pause, plus mobile title navigation and return.",
+        "Public commit 667f24bc707f5240d6927c49c65cdf6583728ad5 (CI 38188315671) separately verified the start-screen route and frontend navigation. The older eight-map baseline remains documented separately."
       ],
-      "limitation": "The screenshot shows the host build; the start-menu link has not yet been verified in a public release. Original scenic menu artwork and other unimplemented game features remain separate port work.",
+      "limitation": "The capture shows the host build and the menu is Rust-drawn; scenic original menu backgrounds, animated highlights and some original callbacks are still missing.",
       "image": "/devlog-images/dev-log-is-reachable-from-the-game-start-screen-52dafdf7.png",
-      "caption": "Host-verified mobile start screen, 390\u00d7844: Press START and Dev log are both visible and selectable."
+      "caption": "Host-verified mobile start screen, 390\u00d7844: Press START and Dev log are both visible and selectable.",
+      "release_verification": {
+        "commit": "667f24bc707f5240d6927c49c65cdf6583728ad5",
+        "ci_run": "38188315671",
+        "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+        "checks": [
+          "Start-screen Dev log link and return-to-game route passed public frontend verification."
+        ]
+      }
+    },
+    {
+      "id": "the-atv-now-distinguishes-tire-steering-from-trick-con-04e4afed",
+      "timestamp": "2026-10-12T00:40:32.698466+00:00",
+      "recorded_at": "2026-10-12T00:40:32.698466+00:00",
+      "kind": "discovery",
+      "title": "The ATV now distinguishes tire steering from trick control",
+      "summary": "Three small mechanics details turned out to be separate problems: the main trick needed its own original air-control gate, the handlebar should not simply mirror the tire angle, and a crashed rider's center of gravity must follow the animated body. Host checks now recover each distinction without adding guessed torque.",
+      "details": [
+        "The main-trick mode now uses the recovered stunt-axis slew rates and half-strength input angular moment; held and ordinary-air modes retain their existing response. The native instruction comparison matched all 60 varied cases. The old gate disagreed on 20 main-mode samples and the other 40 were unchanged.",
+        "Tire steering and the visual linkage now use separate angles. In main tricks the visual angle eases by 0.8 each update; held and ordinary-air states use the original 30-degree scale. A host browser check at 17.90 ft/s measured tire angle -0.488329 rad and handlebar angle -0.523599 rad.",
+        "The host candidate derives the crashed rider center of gravity from animated 13-point world bounds rather than a fixed pelvis. Five hundred synthetic cases matched the original instruction behavior; 1,694 original-pose samples and five detach/ground/reset cases passed. The final integrated host browser checks passed with this center-of-gravity update: real-touch Nac Nac \u2192 vertical wreck \u2192 separation/ground clip \u2192 terrain contact \u2192 automatic reset \u2192 drive; a separate clean landing stayed in Riding state."
+      ],
+      "limitation": "The integrated real-touch wreck/recovery and clean-landing browser checks now pass on the host after the visual-steering change. These mechanics additions are still host-only, not public proof or full PS2 gameplay parity. Broader trick transitions, native wreck camera, rider-versus-prop/water contacts, and wider fixed-input replay comparisons remain unfinished."
     }
   ],
-  "updated_at": "2026-10-12T00:30:34.171475+00:00",
+  "updated_at": "2026-10-12T00:40:32.698466+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The eight-map baseline and the separately recorded public wreck-loop check name their own commits and tests; neither implies a complete game or complete decompilation. Host-only candidates are labeled separately from public checks.",
     "public_release": {
@@ -653,7 +675,7 @@
     },
     "next_priorities": [
       "Recover original ATV handling, airborne controls and trick transitions; compare fixed inputs and outcomes against the recovered reference routines.",
-      "Complete crash, rider-contact and recovery fidelity, including the native wreck camera, center of gravity, and prop/water contacts.",
+      "Complete native wreck-camera behavior and rider-versus-prop/water contacts; extend animated-bounds center-of-gravity comparisons across more original crash and recovery states.",
       "Broaden deterministic fixed-input comparisons across steering, braking, takeoff, trick transitions and wreck cases before tuning further."
     ],
     "features": [
@@ -706,11 +728,20 @@
         "category": "Front end",
         "title": "Title, menus and map selection",
         "status": "PARTIAL",
-        "scope": "PUBLIC",
+        "scope": "PUBLIC \u00b7 TITLE-SCREEN DEVLOG LINK",
         "summary": "A Rust-drawn responsive route reaches Single Player \u2192 Freestyle \u2192 all eight environments. Recovered fonts and map imagery support original-style screens; this is not a pixel-exact recreation of every original page or callback.",
-        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449 \u00b7 title/menu, keyboard, controller and mobile checks",
+        "validation": "Earlier eight-map route evidence: main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449. The start-screen Dev log link has separate public verification on 667f24bc707f5240d6927c49c65cdf6583728ad5 \u00b7 CI 38188315671.",
         "evidence": "research/UI.md \u2014 connected route and page-layout evidence.",
-        "next_step": "Recover remaining original pages and callbacks, then replace authored panel geometry and missing menu art."
+        "next_step": "Recover remaining original menu pages and callbacks, then replace authored panel geometry and missing menu art.",
+        "release_verification": {
+          "commit": "667f24bc707f5240d6927c49c65cdf6583728ad5",
+          "ci_run": "38188315671",
+          "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+          "checks": [
+            "Public title screen routes to Dev log and returns to the game.",
+            "Public frontend regression covers controller and keyboard navigation, the eight-map picker, driving, pause, and mobile title navigation."
+          ]
+        }
       },
       {
         "id": "pause-controls",
@@ -795,10 +826,10 @@
         "title": "ATV handling and suspension",
         "status": "PARTIAL",
         "scope": "PUBLIC + HOST COMPONENT CHECKS",
-        "summary": "The Rust simulation drives, steers, brakes and animates suspension. Several contact and controller routines have component comparisons, but a full original-game replay match is not established.",
-        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449 \u00b7 component instruction comparisons are host checks, not PS2 hardware tests",
+        "summary": "The Rust simulation drives, steers, brakes and animates suspension. Host candidate work restores a separate main-trick air-control response and decouples physical tire steering from visual handlebar linkage; full original-game replay parity is not established.",
+        "validation": "Public drive/control evidence remains 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449. Host candidate comparisons: 60 varied air-kernel cases bit-identical; visual steering/browser pose check passed with finite 27-node matrices. Final host actual-content wreck/recovery and clean-landing browser tests passed after the steering change; these mechanics additions are not yet public-verified.",
         "evidence": "research/CONTACT.md; research/TOUCH.md; research/IMPLEMENTATION.md.",
-        "next_step": "Compare fixed-input position, speed, contact, jump and landing traces against an original execution."
+        "next_step": "Compare fixed-input steering, main-trick and ordinary-air position/rotation/landing traces against original execution; keep tire and handlebar responses separate."
       },
       {
         "id": "static-collision",
@@ -817,10 +848,10 @@
         "title": "Wrecks, rider separation and recovery",
         "status": "PARTIAL",
         "scope": "PUBLIC VERIFIED \u00b7 TESTED LOOP",
-        "summary": "On public commit 52534bbb, an actual-content Caribou preload hop into Nac Nac, vertical wreck, rider separation, terrain contact, automatic reset and driving again completed in 108 frames; the reset counter moved from 0 to 1. A separate clean preload landing kept every rider frame in Riding state with no reset.",
+        "summary": "Public commit 52534bbb verified an actual-content Caribou preload hop into Nac Nac, vertical wreck, rider separation, terrain contact, automatic reset and driving again; a separate clean landing kept every rider frame in Riding state. A newer host candidate makes the rider center of gravity follow animated 13-point world bounds.",
         "validation": "Public tools/test_wreck.mjs and tools/test_clean_landing.mjs passed on commit 52534bbb955277a31dfda30b5be65863d4388453 (CI 38187838559); both reported no JavaScript errors. The wreck loop reset once, while the clean landing did not reset.",
         "evidence": "research/WRECK.md \u2014 recovered rules, public browser tests and remaining camera/contact limits.",
-        "next_step": "Continue native wreck-camera behavior, rider-versus-prop and water contacts, and center-of-gravity matching; keep expanding crash-state coverage.",
+        "next_step": "Continue native wreck-camera behavior and rider-versus-prop/water contacts; compare the animated-bounds center of gravity across more original crash and recovery states.",
         "release_verification": {
           "commit": "52534bbb955277a31dfda30b5be65863d4388453",
           "ci_run": "38187838559",
@@ -830,7 +861,12 @@
             "tools/test_clean_landing.mjs: clean landing, all rider frames Riding, reset count 0"
           ]
         },
-        "limitation": "This verifies one actual-content wreck/reset route and a separate clean landing, not the full stunt or crash system. Native wreck-camera behavior, center-of-gravity matching, rider-versus-prop and water collisions, and other crash scenarios remain incomplete."
+        "limitation": "The public check covers one actual-content wreck/reset route and a separate clean landing, not the full stunt or crash system. Host candidate center-of-gravity checks are not public proof. Native wreck-camera behavior, rider-versus-prop and water contacts, and broader crash-state coverage remain incomplete.",
+        "host_candidate": {
+          "scope": "HOST COMPONENT CHECKS \u00b7 NOT PUBLICLY VERIFIED",
+          "validation": "500 synthetic center-of-gravity cases matched original instruction behavior using point-transform hooks; 1,694 original pose samples and five detach/ground/reset cases passed. Final host actual-content browser checks passed: real-touch Nac Nac \u2192 vertical wreck \u2192 rider separation/ground clip \u2192 terrain contact \u2192 automatic reset \u2192 drive, with animated center-of-gravity assertions; a separate clean jump stayed in Riding state. These candidate changes remain host-only.",
+          "evidence": "research/WRECK.md; research/ANIMATION.md"
+        }
       },
       {
         "id": "preload-touch",
@@ -848,11 +884,11 @@
         "category": "Vehicle",
         "title": "Stunt actions and trick animations",
         "status": "PARTIAL",
-        "scope": "HOST RESEARCH / PARTLY CONNECTED",
-        "summary": "Original main/hold stunt clips and selection rules have been recovered and sampled; only a subset of touch gestures is exposed, and complete landing/cancel transitions remain incomplete.",
-        "validation": "Host instruction and pose tests; public stunt catalog parity is not claimed.",
+        "scope": "HOST CANDIDATE \u00b7 PARTLY CONNECTED",
+        "summary": "Host candidate connects the original main-trick control gate: stunt-axis rates and half-strength input angular moment apply in main mode, while held and ordinary-air modes keep their existing response. Full gesture combinations, cancel/landing transitions and scoring remain incomplete.",
+        "validation": "Host original-instruction comparison: 60 varied force/state cases bit-identical; the former gate differed on 20 main-mode samples and the other 40 were unchanged. Final host tools/test_wreck.mjs and tools/test_clean_landing.mjs passed with real touch and the integrated candidate; no public stunt parity is claimed.",
         "evidence": "research/TOUCH.md \u2014 airborne stunts; research/ANIMATION.md \u2014 rider animation recovery.",
-        "next_step": "Connect all original modifier/direction paths and test their native cooldown, hold, release and landing transitions."
+        "next_step": "Cover all original modifier/direction paths, then compare trick entry, hold/release, landing and cancel traces against fixed-input reference runs."
       },
       {
         "id": "stunt-scoring",
@@ -871,10 +907,10 @@
         "title": "ATV and rider animation",
         "status": "PARTIAL",
         "scope": "PUBLIC + HOST CHECKS",
-        "summary": "Mechanical ATV linkage and normal rider states animate. Trick extension, crash poses, hand/foot IK, female hair and the full event system are still incomplete.",
-        "validation": "Public normal-rider animation checks plus host-only newer wreck/pose tests.",
+        "summary": "Mechanical ATV linkage and normal rider states animate. Host candidate work separates visual handlebar angle from tire steering: main-trick visuals ease by a factor of 0.8 each update while held/ordinary-air visuals use the original 30-degree scale. Hand/foot IK and full event behavior remain incomplete.",
+        "validation": "Normal riding animation has public checks. Host visual-steering check at 17.90 ft/s measured tire angle -0.488329 rad and visual handlebar angle -0.523599 rad, with finite 27-node matrices and no JavaScript errors. Final combined host actual-content wreck and clean-landing checks passed after the visual-steering change; no public verification is claimed for this candidate.",
         "evidence": "research/ANIMATION.md \u2014 normal riding and remaining work.",
-        "next_step": "Finish clip/event transitions and solve rider hand/foot attachment over the moving ATV."
+        "next_step": "Complete trick/crash clip transitions and solve rider hand/foot attachment over the moving ATV; compare visual linkage timing against original reference traces."
       },
       {
         "id": "camera",

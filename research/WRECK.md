@@ -85,8 +85,16 @@ in the outer frame. Clip selection uses the original random algorithm, with an
 independently seeded stream; the complete game's shared RNG call order is not yet
 reproduced. Pelvis anchoring and root-motion velocity are reconstructed, but their
 full native transform sequence has not been instruction-replayed end to end.
-The native body also updates its center of gravity from the animated contact-point
-bounds; the current detached body keeps its center at the pelvis, so that update
-remains to be connected.
+The detached body now updates its center of gravity from all 13 animated
+contact points. `00193b40` takes the midpoint of their world-axis bounds;
+`001ef690` transforms that point into body-local space. The port retains the
+rendered body origin and existing velocities when the pose changes, so this
+moves the contact lever arms without teleporting the rider or adding an impulse.
+This replaces the previous pelvis-only center. The Rust bounds kernel matches
+500 finite synthetic cases executed through the original `00193b40` instructions
+bit for bit; point-transform outputs are supplied by hooks and terrain queries
+are disabled in that comparison. The original-content probe still passes all
+1,694 clip samples and five detach/ground/recovery cases. These checks validate
+the bounds kernel and integration invariants, not complete original crash parity.
 The current follow camera can crop the detached rider while the quad rolls; the
 original wreck camera remains pending.

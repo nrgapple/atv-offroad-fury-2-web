@@ -51,6 +51,7 @@ pub struct Frame {
     pub world_matrix: [f32; 16],
     pub origin: Vec3,
     pub linear_velocity: Vec3,
+    pub center_of_mass: Vec3,
 }
 #[derive(Clone, Copy)]
 struct ContactPoint {
@@ -158,6 +159,7 @@ impl Animator {
     pub fn reset(&mut self) {
         self.active = false;
         self.body = None;
+        self.config.center_of_mass = [0.; 3];
         self.grounded = false;
         self.contact_count = 0;
     }
@@ -172,6 +174,7 @@ impl Animator {
         self.previous_root = self.current.pose(nodes)?.world_matrices[0];
         self.world = vehicle_world;
         self.body = None;
+        self.config.center_of_mass = [0.; 3];
         self.grounded = false;
         self.contact_count = 0;
         self.active = true;
@@ -226,6 +229,7 @@ impl Animator {
             world_matrix: self.world,
             origin: [self.world[12], self.world[13], self.world[14]],
             linear_velocity: self.body.as_ref().map_or([0.; 3], |b| b.linear_velocity),
+            center_of_mass: self.config.center_of_mass,
         })
     }
     /// Animation and independent rider-body step. `vehicle_world` is used only
@@ -311,6 +315,17 @@ impl Animator {
                 ),
                 current_root_inverse,
             );
+            //00193b40 bounds all animated contact points in world space;
+            //001ef690 transforms that center into the detached body's frame.
+            //Do not use only penetrating points, or average bone positions.
+            let center = contact_bounds_center(self.points.iter().map(|point| {
+                let local = crate::obstacle::transform_point(
+                    &pose.world_matrices[point.node],
+                    point.offset,
+                );
+                crate::obstacle::transform_point(&self.world, local)
+            }));
+            recenter_body(self.body.as_mut().unwrap(), &mut self.config, center);
             let contacts = self.terrain_points(&pose, terrain, materials)?;
             self.grounded = false;
             self.contact_count = 0;
@@ -393,6 +408,26 @@ impl Animator {
         }
         Ok(points)
     }
+}
+/// Native world-axis bounds midpoint, not a mass-weighted centroid. Callers
+/// supply the nonempty, finite animated contact-point list.
+pub(crate) fn contact_bounds_center(points: impl Iterator<Item = Vec3>) -> Vec3 {
+    let mut low = [f32::MAX; 3];
+    let mut high = [-f32::MAX; 3];
+    for point in points {
+        for axis in 0..3 {
+            low[axis] = low[axis].min(point[axis]);
+            high[axis] = high[axis].max(point[axis]);
+        }
+    }
+    std::array::from_fn(|axis| (high[axis] + low[axis]) * 0.5)
+}
+fn recenter_body(body: &mut BodyState, config: &mut BodyConfig, world_center: Vec3) {
+    let origin = body.origin(config);
+    config.center_of_mass = inverse_transform(body.basis(), sub(world_center, origin));
+    //001469e0 reconstructs center from the scene origin and new local CoG.
+    //Changing the pose must not translate the rendered rider or add velocity.
+    body.center = add(origin, transform(body.basis(), config.center_of_mass));
 }
 fn blend(a: &Channels, b: &Channels, t: f32) -> Channels {
     Channels {
@@ -532,6 +567,28 @@ fn quaternion(m: [f32; 16]) -> [f32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn animated_bounds_shift_contact_leverage_without_teleporting_the_rider() {
+        let points = [[-4., -2., -1.], [8., 6., 3.], [7., 5., 2.]];
+        let center = contact_bounds_center(points.into_iter());
+        assert_eq!(center, [2., 2., 1.]);
+        let mut config = BodyConfig::new(4., [3.; 3], [0.; 3]).unwrap();
+        let mut body = BodyState::new([30., 40., 50.], [0.5; 4], &config).unwrap();
+        body.linear_velocity = [1., 2., 3.];
+        body.local_angular_velocity = [0.1, 0.2, 0.3];
+        let origin = body.origin(&config);
+        let target = add(origin, transform(body.basis(), center));
+        recenter_body(&mut body, &mut config, target);
+        assert_eq!(config.center_of_mass, center);
+        assert_eq!(body.origin(&config), origin);
+        assert_eq!(body.center, target);
+        assert_eq!(body.linear_velocity, [1., 2., 3.]);
+        assert_eq!(body.local_angular_velocity, [0.1, 0.2, 0.3]);
+        body.apply_world_force([0., 10., 0.], target);
+        assert_eq!(body.local_torque, [0.; 3]);
+        body.apply_world_force([0., 10., 0.], origin);
+        assert_ne!(body.local_torque, [0.; 3]);
+    }
     #[test]
     fn attachment_motion_is_added_only_for_normal_separation() {
         let mut current = IDENTITY;

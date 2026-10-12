@@ -41,6 +41,7 @@ pub struct VehicleFrame {
     pub linear_velocity: Vec3,
     pub local_angular_velocity: Vec3,
     pub steering_angle: f32,
+    pub visual_steering_angle: f32,
     pub rpm: f32,
     pub gear: usize,
     pub wheel_angles: [f32; 4],
@@ -77,6 +78,7 @@ pub struct Vehicle {
     tire_friction: f32,
     steering_reduction: f32,
     steering_angle: f32,
+    visual_steering_angle: f32,
     steer_speed: [f32; 2],
     steer_scale: [f32; 2],
     airborne_gravity: f32,
@@ -103,6 +105,7 @@ pub struct Vehicle {
     normal_contact: ContactConfig,
     wreck: crate::wreck::State,
     stunt_landing_safe: bool,
+    stunt_state_four: bool,
     reset_origin: Vec3,
     reset_yaw: f32,
     reset_count: u32,
@@ -202,6 +205,7 @@ impl Vehicle {
             tire_friction: data.first_scalar("Tires", "TireFriction")?,
             steering_reduction: data.first_scalar("Steering", "SteeringReduction")?,
             steering_angle: 0.0,
+            visual_steering_angle: 0.0,
             steer_speed: [
                 data.first_scalar("Steering", "SteerSpeed1")?,
                 data.first_scalar("Steering", "SteerSpeed2")?,
@@ -239,6 +243,7 @@ impl Vehicle {
             normal_contact: ContactConfig::from_physics(data)?,
             wreck: crate::wreck::State::default(),
             stunt_landing_safe: true,
+            stunt_state_four: false,
             reset_origin: origin,
             reset_yaw: yaw,
             reset_count: 0,
@@ -266,6 +271,11 @@ impl Vehicle {
     }
     pub fn set_stunt_landing_safe(&mut self, safe: bool) {
         self.stunt_landing_safe = safe;
+    }
+    ///001e7940 reads the rider's previously selected mode. Only the main stunt
+    /// phase (4), not its held extension (5), limits airborne rider control.
+    pub fn set_rider_mode(&mut self, mode: Option<crate::rider_pose::Mode>) {
+        self.stunt_state_four = mode == Some(crate::rider_pose::Mode::Stunt);
     }
     pub fn begin_wreck(&mut self, kind: crate::wreck::Kind) {
         if self.wreck.phase != crate::wreck::Phase::Riding {
@@ -309,6 +319,7 @@ impl Vehicle {
         self.chassis_config = self.normal_contact;
         self.wreck = crate::wreck::State::default();
         self.stunt_landing_safe = true;
+        self.stunt_state_four = false;
         self.chassis_contact_count = 0;
         self.obstacle_contact_count = 0;
         self.reset_count = self.reset_count.wrapping_add(1);
@@ -403,6 +414,7 @@ impl Vehicle {
             linear_velocity: self.body.linear_velocity,
             local_angular_velocity: self.body.local_angular_velocity,
             steering_angle: self.steering_angle,
+            visual_steering_angle: self.visual_steering_angle,
             gear: self.engine.state.gear,
             wheel_angles: self.wheels.map(|w| w.angle),
             wheel_compression: self.suspension.map(|s| s.compression),
@@ -483,7 +495,7 @@ impl Vehicle {
             &mut self.smoothed_axes,
             [input.steer.clamp(-1., 1.), input.lean.clamp(-1., 1.)],
             self.contacts.iter().any(|c| c.grounded),
-            false,
+            self.stunt_state_four,
             dt,
         )?;
         let riding_center = rider_control::shifted_center(
@@ -527,7 +539,16 @@ impl Vehicle {
             //001e7940 decays the stored angle directly in wreck mode.
             let limit = self.axis_config.normal_rate[0] * dt;
             self.steering_angle += (-self.steering_angle).clamp(-limit, limit);
+            self.visual_steering_angle += (-self.visual_steering_angle).clamp(-limit, limit);
         } else {
+            //001e7940 keeps linkage angle +440 separate from tire angle +444.
+            //001d65c0 consumes +440 without the physical speed reduction.
+            if self.stunt_state_four {
+                self.visual_steering_angle *= 0.8;
+            } else {
+                self.visual_steering_angle =
+                    (self.smoothed_axes[0] * 30.0) * f32::from_bits(0x3c8efa34);
+            }
             self.steering_angle =
                 ((self.smoothed_axes[0] * 30.0) * f32::from_bits(0x3c8efa34)) * steer_scale;
         }
@@ -717,8 +738,7 @@ impl Vehicle {
                         throttle_pressed: throttle > 0.,
                         brake_pressed: brake > 0.,
                         neutral: engine.effective_direction == DriveDirection::Neutral,
-                        // Gameplay rider state4 gate is not yet reconstructed.
-                        half_air_control: false,
+                        half_air_control: self.stunt_state_four,
                         lateral_axis: raw_axes[0],
                         lean_axis: lean,
                         preload_axis: input.preload_axis.map(|axis| axis.clamp(-1.0, 1.0)),
@@ -922,6 +942,8 @@ mod tests {
         vehicle.body.linear_velocity = [5., 0., 0.];
         vehicle.body.local_angular_velocity = [1., 0., 0.];
         vehicle.steering_angle = 0.4;
+        vehicle.visual_steering_angle = 0.5;
+        vehicle.set_rider_mode(Some(crate::rider_pose::Mode::Stunt));
         vehicle.begin_wreck(crate::wreck::Kind::Front);
         vehicle
             .step(
@@ -939,6 +961,10 @@ mod tests {
         assert_eq!(
             vehicle.steering_angle,
             0.4 - (vehicle.axis_config.normal_rate[0] / 60.0).min(0.4)
+        );
+        assert_eq!(
+            vehicle.visual_steering_angle,
+            0.5 - vehicle.axis_config.normal_rate[0] / 60.0
         );
         assert_eq!(vehicle.body_config.center_of_mass, [0., 1.5, 0.]);
         assert_eq!(vehicle.chassis_config.friction_scale, 0.75);
@@ -965,6 +991,39 @@ mod tests {
             vehicle.normal_contact.friction_scale
         );
         assert_eq!(vehicle.wreck.phase, crate::wreck::Phase::Riding);
+        assert!(!vehicle.stunt_state_four);
+    }
+    #[test]
+    fn visual_steering_is_unscaled_and_decays_without_changing_tire_steering() {
+        use crate::rider_pose::Mode;
+        let (mut vehicle, terrain) = fixture();
+        vehicle.body =
+            BodyState::new([500., 100., 500.], [1., 0., 0., 0.], &vehicle.body_config).unwrap();
+        vehicle.body.linear_velocity = [0., 0., 100.];
+        vehicle.smoothed_axes = [0.5, 0.];
+        // No input moment keeps the physical comparison independent of body
+        // rotation; high speed selects the fixture's original 0.3 tire scale.
+        vehicle.rider_config.air_moment = 0.;
+        vehicle.rider_config.air_force = 0.;
+        let input = VehicleInput {
+            steer: 0.5,
+            ..Default::default()
+        };
+        let first = vehicle.step(&terrain, input, 1. / 60.).unwrap();
+        let unscaled = (0.5 * 30.0) * f32::from_bits(0x3c8efa34);
+        assert_eq!(first.visual_steering_angle, unscaled);
+        assert_eq!(first.steering_angle, unscaled * 0.3);
+        vehicle.set_rider_mode(Some(Mode::Stunt));
+        let main = vehicle.step(&terrain, input, 1. / 60.).unwrap();
+        assert_eq!(main.visual_steering_angle, unscaled * 0.8);
+        assert_eq!(main.steering_angle, first.steering_angle);
+        let second_main = vehicle.step(&terrain, input, 1. / 60.).unwrap();
+        assert_eq!(second_main.visual_steering_angle, (unscaled * 0.8) * 0.8);
+        assert_eq!(second_main.steering_angle, first.steering_angle);
+        vehicle.set_rider_mode(Some(Mode::Hold));
+        let held = vehicle.step(&terrain, input, 1. / 60.).unwrap();
+        assert_eq!(held.visual_steering_angle, unscaled);
+        assert_eq!(held.steering_angle, first.steering_angle);
     }
     #[test]
     fn unfinished_stunt_on_wheel_contact_enters_original_vertical_wreck() {
@@ -983,6 +1042,41 @@ mod tests {
             .unwrap();
         assert_eq!(frame.wreck.kind, Some(crate::wreck::Kind::Vertical));
         assert_eq!(frame.wreck.phase, crate::wreck::Phase::Falling);
+    }
+    #[test]
+    fn airborne_main_stunt_limits_control_but_held_stunt_matches_normal() {
+        use crate::rider_pose::Mode;
+        let mut traces = Vec::new();
+        for mode in [Mode::Air, Mode::Stunt, Mode::Hold] {
+            let (mut vehicle, terrain) = fixture();
+            vehicle.body =
+                BodyState::new([500., 100., 500.], [1., 0., 0., 0.], &vehicle.body_config).unwrap();
+            vehicle.set_rider_mode(Some(mode));
+            let input = VehicleInput {
+                lean: 1.,
+                steer: 0.5,
+                ..Default::default()
+            };
+            let dt = 1. / 60.;
+            vehicle.step(&terrain, input, dt).unwrap();
+            let rate = if mode == Mode::Stunt { 2.5 } else { 4.0 };
+            assert_eq!(vehicle.smoothed_axes, [rate * dt; 2]);
+            let mut trace = Vec::new();
+            for _ in 0..20 {
+                let frame = vehicle.step(&terrain, input, dt).unwrap();
+                assert!(frame.grounded.iter().all(|c| !c));
+                trace.push(frame.local_angular_velocity);
+            }
+            traces.push(trace);
+            vehicle.set_rider_mode(Some(Mode::Hold));
+            assert!(!vehicle.stunt_state_four);
+            vehicle.set_rider_mode(None);
+            assert!(!vehicle.stunt_state_four);
+        }
+        assert_eq!(traces[0], traces[2]);
+        for (normal, main) in traces[0].iter().zip(&traces[1]) {
+            assert!(normal[0] < main[0] && main[0] < 0.0);
+        }
     }
     use crate::{
         mesh::Node,

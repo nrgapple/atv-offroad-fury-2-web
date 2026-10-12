@@ -57,6 +57,10 @@ try {
   await touch('touchCancel');
   const frames = await page.evaluate(() => window.rampFrames);
   assert(frames.some(s => s.frame.stunt?.id === 0));
+  const detached = frames.map(s => s.frame.rider_wreck).filter(f => f && f.phase !== 'attached');
+  assert(detached.length > 0);
+  assert(detached.every(f => f.center_of_mass.every(Number.isFinite)));
+  assert(detached.some(f => Math.hypot(...f.center_of_mass) > 0.05), 'Detached rider must use animated contact bounds instead of a fixed pelvis center');
   assert.equal(start.wreck.kind, 'Vertical');
   await writeFile('work/verification/wreck-browser-trace.json',JSON.stringify({start,reset,frames,errors},null,2));
   assert.deepEqual(errors, []);

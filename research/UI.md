@@ -63,3 +63,13 @@ requests and hit-region bounds at five portrait/landscape sizes. Late worker
 layout responses are discarded after a route, selection or viewport change.
 The frontend also retains its poll loop correctly across persisted pagehide /
 pageshow; physical iOS Safari remains a separate validation target.
+
+## Direct start menu and development log
+
+Public main `667f24bc707f5240d6927c49c65cdf6583728ad5` (CI `38188315671`)
+opens directly at the title menu. Root bookmarks use replacement navigation to
+`play.html`, preserving their query and fragment without an extra landing page
+in Back history. Both title and main menus expose Dev log through Rust-owned
+choices/hit regions, keyboard and controller selection, and touch. Public
+frontend checks covered those links and return navigation, the eight-map picker,
+driving/pause and 390px input with no disc picker or browser errors.

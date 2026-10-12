@@ -154,7 +154,7 @@ fn simulation_frame(sim: &Simulation, frame: &atv_core::vehicle::VehicleFrame) -
         .as_ref()
         .ok_or("load original quad linkage first")?
         .sample(
-            frame.steering_angle,
+            frame.visual_steering_angle,
             frame.wheel_angles,
             frame.wheel_compression,
         )?;
@@ -297,6 +297,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     .is_none_or(|a| a.stunt_landing_safe());
                 let vehicle = sim.vehicle.as_mut().ok_or("start simulation first")?;
                 vehicle.set_stunt_landing_safe(safe);
+                vehicle.set_rider_mode(sim.rider_mode);
                 let frame = vehicle.step(terrain, input, dt)?;
                 if frame.wreck.phase != atv_core::wreck::Phase::Riding {
                     let nodes = &sim.rider_mesh.as_ref().ok_or("rider mesh missing")?.nodes;
