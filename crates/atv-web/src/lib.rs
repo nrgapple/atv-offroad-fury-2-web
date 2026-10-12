@@ -1311,6 +1311,23 @@ fn step_train_scene(sim: &mut Simulation, dt: f32) -> Result<Option<atv_core::tr
         .map(Some)
 }
 
+/// Embed already serialized operations without allocating a second JSON tree.
+/// RawValue validates the JSON and retains its original numeric representation.
+fn serialized_operation(bytes: Vec<u8>) -> Result<Box<serde_json::value::RawValue>> {
+    serde_json::value::RawValue::from_string(String::from_utf8(bytes).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize)]
+struct SimulationBatchFrame {
+    frame: Box<serde_json::value::RawValue>,
+    camera: Box<serde_json::value::RawValue>,
+    water: Option<atv_core::water_render::Frame>,
+    train: Option<atv_core::train::Frame>,
+    scenery_uv: std::collections::BTreeMap<String, [f32; 2]>,
+    scenery_textures: std::collections::BTreeMap<String, usize>,
+}
+
 fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
     let value: serde_json::Value = serde_json::from_slice(input).map_err(|e| e.to_string())?;
     let count = value
@@ -1334,10 +1351,8 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
     let mut frames = Vec::with_capacity(count as usize);
     for _ in 0..count {
         let train = SIMULATION.with_borrow_mut(|sim| step_train_scene(sim, 1.0 / 60.0))?;
-        let frame: serde_json::Value =
-            serde_json::from_slice(&simulation(&step, 24)?).map_err(|e| e.to_string())?;
-        let camera: serde_json::Value =
-            serde_json::from_slice(&simulation(&camera, 46)?).map_err(|e| e.to_string())?;
+        let frame = serialized_operation(simulation(&step, 24)?)?;
+        let camera = serialized_operation(simulation(&camera, 46)?)?;
         let water = SIMULATION
             .with_borrow(|sim| sim.water.as_ref().map(atv_core::water_render::Frame::new));
         let scenery_uv = SIMULATION.with_borrow_mut(|sim| {
@@ -1354,7 +1369,14 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
                 .map(|(name, clock)| (name.clone(), clock.tick(milliseconds)))
                 .collect::<std::collections::BTreeMap<_, _>>()
         });
-        frames.push(serde_json::json!({"frame":frame,"camera":camera,"water":water,"train":train,"scenery_uv":scenery_uv,"scenery_textures":scenery_textures}));
+        frames.push(SimulationBatchFrame {
+            frame,
+            camera,
+            water,
+            train,
+            scenery_uv,
+            scenery_textures,
+        });
     }
     serde_json::to_vec(&frames).map_err(|e| e.to_string())
 }
@@ -1737,6 +1759,15 @@ pub extern "C" fn run(op: u32, index: usize) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn batch_embeds_operation_numbers_and_events_without_reencoding() {
+        let bytes = br#"{"matrix":[-0.0,1.2345678901234567,1e-30],"event":{"sample":"a\\b\"c","play":true}}"#;
+        let raw = serialized_operation(bytes.to_vec()).unwrap();
+        assert_eq!(serde_json::to_vec(&raw).unwrap(), bytes);
+        for invalid in [b"{} trailing".as_slice(), b"{\"number\":NaN}", &[255]] {
+            assert!(serialized_operation(invalid.to_vec()).is_err());
+        }
+    }
     #[test]
     fn soundtrack_reload_preserves_shuffle_and_explicit_selection_is_validated() {
         let mut catalog = String::from(

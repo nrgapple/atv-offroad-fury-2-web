@@ -11,7 +11,7 @@ try {
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.addInitScript(()=>{
    window.initialPackets=[];window.orbitRequests=[];
-   const ops=new Set([20,21,22,23,26,27,28,29,44,45,46,47,48,49,51,52,53]);
+   const ops=new Set([20,21,22,23,26,27,28,29,44,45,46,47,48,49,51,52,53,64,65,67,69,91]);
    const post=Worker.prototype.postMessage;
    Worker.prototype.postMessage=function(data,...rest){
      if(ops.has(data.op)) window.initialPackets.push({op:data.op,index:data.index,bytes:data.bytes.slice()});
@@ -65,8 +65,7 @@ try {
        const sequential=invoke(instances[1],24,encode({dt:1/60,input}));
        invoke(instances[1],46,encode({dt:1/60,orbit:0}));
        const frame=frames[i].frame;
-       // op50 parses/re-serializes op24 JSON, which can change the last f64
-       // decimal digit. Compare every numeric field at its native f32 precision.
+       // Compare every numeric field at its native f32 precision.
        if(canonical(frame)!==canonical(sequential))throw Error(`batch/sequential f32 mismatch at ${batch*4+i}`);
        const grounded=previous.grounded.some(Boolean), applied=frame.applied_input;
        if(released&&previous.wreck.phase==='Riding'){
@@ -84,11 +83,13 @@ try {
    // Replay the exact same per-step inputs with each prefix phase at release,
    // then four-step batches. This finds takeoff inside a batch without any
    // pose/force modification or changing when the player released preload.
-   const resetPacket=window.initialPackets.findLast(p=>p.op===23);
    const releaseStart=packets.findIndex(p=>p.preload_axis===-1);
    let insideTakeoff=null;
    for(let phase=1;phase<=3;phase++){
-   invoke(instances[0],23,resetPacket.bytes,resetPacket.index);
+   // A player reset preserves world/effects clocks and increments placement
+   // epoch. Start a fresh loaded instance to replay the whole frame identically.
+   instances[0]=await WebAssembly.instantiateStreaming(fetch('atv_web.wasm'),{});
+   for(const packet of window.initialPackets)invoke(instances[0],packet.op,packet.bytes,packet.index);
    for(let offset=0;offset<packets.length;){
      const input=packets[offset];let count=offset===releaseStart?phase:Math.min(4,packets.length-offset);
      while(count>1&&JSON.stringify(packets[offset+count-1])!==JSON.stringify(input))count--;
