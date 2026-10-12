@@ -314,3 +314,32 @@ loaders, exact pending-buffer handling and moving-body response still need
 validation. The current placement transport lacks native runtime category and
 filter metadata. A captured coupled rail impact, original candidate order and
 full driving replay remain required before claiming driving or wreck parity.
+
+## Four-point terrain stop during riding and wrecks
+
+The independent four-point solver at quad `+0x184` remains active in the wreck
+path. Its query actor `+0x188` is created by `00193720`, which initializes collider
+and spoke-array pointers to zero. The exact `001e1fd0` caller passes both optional
+collider modes as zero to `00193830`. The supplied offset `[0,2.5,0]` is unused on
+that branch; it must not be interpreted as an active type-3 prop ray origin.
+This actor samples terrain planes only. Scene prop order and static segment queries
+do not supply its stop points.
+
+Its solver terrain flag remains enabled (`+0x48=1`), separately from the chassis
+terrain gate at up.Y<=0.4. Query flag `+0x68` only gates an optional collider and
+therefore does not disable terrain sampling here. `001dd830` samples these points
+once per outer frame, then runs solver `+0x184` after rider forces and before wheel
+suspension each active quad substep. `001e8a20`/`001e8d10` change the chassis wreck
+collider and response configuration but do not disable this stop actor/solver.
+The stop response performs velocity/force projection rather than a chassis
+impact impulse or positional correction; see the authored `wheel_stop` component.
+
+A private probe executes the original constructors, exact vehicle caller block,
+Model world getter, terrain query dispatcher and contact solver dispatcher for
+six riding/wreck/recovery and query-gate combinations (7,044 instructions).
+Every case samples four terrain points and dispatches four penetrating stop
+responses, without allocation of a collider or any prop query. Terrain values
+and the stop-response kernel are hooks in this dispatch check. Report:
+`private/reports/wreck/wheel-stop-query-validation.json`. This establishes setup
+and dispatch gates; it does not establish coupled incline/landing gameplay parity
+or prove that a deeply clipped quad can recover from an already invalid state.

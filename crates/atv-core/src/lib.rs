@@ -25,12 +25,15 @@ pub mod rider_control;
 pub mod rider_ik;
 pub mod rider_pose;
 pub mod scene;
+pub mod scene_candidates;
+pub mod scene_partition;
 pub mod sky;
 pub mod stunt;
 pub mod stunt_score;
 pub mod terrain;
 pub mod texture;
 pub mod water;
+pub mod water_surface;
 
 pub type Result<T> = std::result::Result<T, String>;
 
@@ -49,6 +52,7 @@ pub(crate) fn u16le(data: &[u8], at: usize) -> Result<u16> {
 }
 
 pub mod wheel;
+pub mod wheel_stop;
 pub mod wheel_support;
 pub mod wreck;
 

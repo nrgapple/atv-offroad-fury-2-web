@@ -37,6 +37,8 @@ pub struct Scene {
     pub fog_color: [f32; 3],
     pub models: Vec<StaticModel>,
     pub collision_models: Vec<CollisionModel>,
+    /// Original single-region static partition dimensions from Environment.
+    pub collision_partition: Option<crate::scene_partition::Config>,
 }
 fn value<'a>(data: &'a PhysicsData, section: &str, key: &str) -> Option<&'a str> {
     data.entries
@@ -91,6 +93,52 @@ fn color(data: &PhysicsData, section: &str) -> Result<[f32; 3]> {
         return Err("scene color outside byte range".into());
     }
     Ok(color)
+}
+
+///00202bd0: explicit bounds override the terrain dimensions plus border.
+/// Metadata-only documents without terrain bounds have no spatial partition.
+fn collision_partition(data: &PhysicsData) -> Result<Option<crate::scene_partition::Config>> {
+    let keys = [
+        "TerrainWidth",
+        "TerrainBreadth",
+        "Xmin",
+        "Xmax",
+        "Zmin",
+        "Zmax",
+    ];
+    if !keys
+        .iter()
+        .any(|key| value(data, "Environment", key).is_some())
+    {
+        return Ok(None);
+    }
+    let number = |key: &str, default: f32| -> Result<f32> {
+        let result = value(data, "Environment", key)
+            .map(|text| {
+                text.parse::<f32>()
+                    .map_err(|_| format!("invalid scene {key}"))
+            })
+            .transpose()?
+            .unwrap_or(default);
+        if !result.is_finite() {
+            return Err(format!("nonfinite scene {key}"));
+        }
+        Ok(result)
+    };
+    let border = number("TerrainBorderWidth", 0.)?;
+    let width = number("TerrainWidth", 0.)?;
+    let breadth = number("TerrainBreadth", 0.)?;
+    let width_scale = number("TerrainWidthScale", 0.)?;
+    let breadth_scale = number("TerrainBreadthScale", 0.)?;
+    let config = crate::scene_partition::Config {
+        min_x: number("Xmin", -border)?,
+        max_x: number("Xmax", border + (width * width_scale) * 256.)?,
+        min_z: number("Zmin", -border)?,
+        max_z: number("Zmax", border + (breadth * breadth_scale) * 256.)?,
+        cell_size: number("MinDivisionSize", 96.)?,
+    };
+    crate::scene_partition::StaticPartition::new(config, &[])?;
+    Ok(Some(config))
 }
 
 /// Indexed scene-parser preprocessing, 00142540: unquoted whitespace is
@@ -346,11 +394,63 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
         fog_color: color(&data, "Fog")?,
         models,
         collision_models,
+        collision_partition: collision_partition(&data)?,
     })
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn collision_grid_uses_environment_dimensions_border_and_explicit_overrides() {
+        assert!(
+            parse(SOURCE.as_bytes())
+                .unwrap()
+                .collision_partition
+                .is_none()
+        );
+        let source = SOURCE.replace("CubeFile=sample.cub", "CubeFile=sample.cub\nTerrainWidth=4\nTerrainBreadth=5\nTerrainWidthScale=4.5\nTerrainBreadthScale=4.5\nTerrainBorderWidth=20");
+        let grid = parse(source.as_bytes())
+            .unwrap()
+            .collision_partition
+            .unwrap();
+        assert_eq!(
+            [
+                grid.min_x,
+                grid.max_x,
+                grid.min_z,
+                grid.max_z,
+                grid.cell_size
+            ],
+            [-20., 4628., -20., 5780., 96.]
+        );
+        let explicit = source.replace(
+            "TerrainBorderWidth=20",
+            "TerrainBorderWidth=20\nXmin=-10\nXmax=1000\nZmin=5\nZmax=800\nMinDivisionSize=32",
+        );
+        let grid = parse(explicit.as_bytes())
+            .unwrap()
+            .collision_partition
+            .unwrap();
+        assert_eq!(
+            [
+                grid.min_x,
+                grid.max_x,
+                grid.min_z,
+                grid.max_z,
+                grid.cell_size
+            ],
+            [-10., 1000., 5., 800., 32.]
+        );
+        assert!(
+            parse(
+                explicit
+                    .replace("MinDivisionSize=32", "MinDivisionSize=0")
+                    .as_bytes()
+            )
+            .is_err()
+        );
+        assert!(parse(explicit.replace("Xmax=1000", "Xmax=NaN").as_bytes()).is_err());
+    }
     #[test]
     fn original_scene_whitespace_rules_resolve_visual_and_collision_names() {
         for (authored, expected) in [

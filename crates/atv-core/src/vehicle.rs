@@ -62,6 +62,7 @@ pub struct VehicleFrame {
     pub wheel_compression: [f32; 4],
     pub grounded: [bool; 4],
     pub wheel_obstacle_support: [bool; 4],
+    pub suspension_stop_contacts: usize,
     pub chassis_contact_count: usize,
     pub obstacle_contact_count: usize,
     pub preload_available: bool,
@@ -86,6 +87,8 @@ pub struct Vehicle {
     wheels: [WheelState; 4],
     wheel_config: [WheelConfig; 4],
     wheel_rest: [Vec3; 4],
+    wheel_stops: [Vec3; 4],
+    suspension_stop_contacts: usize,
     wheel_right: [Vec3; 4],
     linkage: Option<std::rc::Rc<crate::quad_pose::QuadPose>>,
     linkage_matrices: Option<Vec<[f32; 16]>>,
@@ -177,7 +180,18 @@ impl Vehicle {
         let bearing = (mass * f32::from_bits(0x4200cccd))
             * data.first_scalar("Tires", "BearingFriction")?.abs();
         let brake_configuration = data.first_scalar("Tires", "BrakeConfiguration")?;
+        let body_node = mesh
+            .nodes
+            .iter()
+            .find(|n| n.name.eq_ignore_ascii_case("body"))
+            .ok_or("missing quad body node")?;
+        let body_translation = [
+            body_node.local_matrix[12],
+            body_node.local_matrix[13],
+            body_node.local_matrix[14],
+        ];
         let mut configs = Vec::new();
+        let mut stops = Vec::new();
         let mut rest = Vec::new();
         let mut right = Vec::new();
         for (i, name) in [
@@ -209,6 +223,16 @@ impl Vehicle {
                 bearing,
                 if enabled { brake } else { 0.0 },
             )?);
+            stops.push(crate::wheel_stop::local_point(
+                [
+                    node.local_matrix[12],
+                    node.local_matrix[13],
+                    node.local_matrix[14],
+                ],
+                suspension_config.travel,
+                configs[i].radius,
+                body_translation,
+            ));
             rest.push([
                 node.world_matrix[12],
                 node.world_matrix[13],
@@ -226,7 +250,9 @@ impl Vehicle {
             body_config,
             engine: Drivetrain::new(EngineConfig::from_physics(data)?)?,
             wheels: [WheelState::default(); 4],
+            wheel_stops: stops.try_into().map_err(|_| "wheel stop count")?,
             wheel_config: configs.try_into().map_err(|_| "wheel count")?,
+            suspension_stop_contacts: 0,
             wheel_rest: rest.try_into().map_err(|_| "wheel count")?,
             wheel_right: right,
             linkage: None,
@@ -377,6 +403,7 @@ impl Vehicle {
         self.suspension = [SuspensionState::default(); 4];
         self.contacts = [SuspensionOutput::default(); 4];
         self.supports = [crate::wheel_support::Support::default(); 4];
+        self.suspension_stop_contacts = 0;
         self.forced_landing = false;
         self.rider_contact_cooldown = 2.;
         // The native reset also preserves the grip controller's cached rear
@@ -484,6 +511,7 @@ impl Vehicle {
             wheel_compression: self.suspension.map(|s| s.compression),
             grounded: self.contacts.map(|c| c.grounded),
             wheel_obstacle_support: self.supports.map(|s| s.obstacle),
+            suspension_stop_contacts: self.suspension_stop_contacts,
             chassis_contact_count: self.chassis_contact_count,
             obstacle_contact_count: self.obstacle_contact_count,
             preload_available: self.rider_state.preload_status,
@@ -676,6 +704,7 @@ impl Vehicle {
             b[0][0], b[0][1], b[0][2], 0., b[1][0], b[1][1], b[1][2], 0., b[2][0], b[2][1],
             b[2][2], 0., origin[0], origin[1], origin[2], 1.,
         ];
+        let stop_planes = crate::wheel_stop::sample(terrain, &ray_world, self.wheel_stops)?;
         for i in 0..4 {
             self.supports[i] = crate::wheel_support::sample(
                 terrain,
@@ -883,6 +912,21 @@ impl Vehicle {
                     &mut self.body.local_torque,
                 )?;
             }
+            let mut corrections = ContactCorrections::default();
+            self.suspension_stop_contacts = 0;
+            //001dd830 updates the separate four-point travel-stop actor before
+            // the wheel springs. It remains active while the chassis is upright.
+            for (&local, &plane) in self.wheel_stops.iter().zip(&stop_planes) {
+                let point = add(origin, transform(b, local));
+                if crate::wheel_stop::resolve(
+                    &mut self.body,
+                    plane,
+                    point,
+                    &mut corrections.velocity_delta,
+                )? {
+                    self.suspension_stop_contacts += 1;
+                }
+            }
             for (i, d) in drive.iter().enumerate() {
                 let wheel_center = add(origin, transform(b, self.wheel_rest[i]));
                 let support = self.supports[i];
@@ -921,7 +965,6 @@ impl Vehicle {
                 );
                 self.body.local_torque[0] += d.airborne_brake_torque;
             }
-            let mut corrections = ContactCorrections::default();
             self.chassis_contact_count = 0;
             for &(local, ground, normal, grip) in &chassis_planes {
                 let vertex = add(origin, transform(b, local));
@@ -1517,6 +1560,67 @@ mod tests {
             depth_cells: 128,
         };
         (v, t)
+    }
+    #[test]
+    fn suspension_travel_stops_catch_landings_before_springs_on_flat_and_side_slopes() {
+        for sloped in [false, true] {
+            let (mut vehicle, mut terrain) = fixture();
+            let normal = if sloped {
+                // Continuous authored synthetic plane y=x/2, including tile seams.
+                terrain.tiles.clear();
+                for leaf in &mut terrain.leaves {
+                    leaf.tile = terrain.tiles.len() as u16;
+                    leaf.height_scale = 0.5;
+                    terrain.tiles.push(TerrainTile {
+                        tag: 0,
+                        heights: std::array::from_fn(|i| (leaf.x + (i % 17) as u32) as u16),
+                        attributes: [u32::from_le_bytes([(-57_i8) as u8, 114, 0, 0]); 289],
+                    });
+                }
+                let angle = 0.5_f32.atan();
+                vehicle.body.orientation = [(angle / 2.).cos(), 0., 0., (angle / 2.).sin()];
+                [-angle.sin(), angle.cos(), 0.]
+            } else {
+                [0., 1., 0.]
+            };
+            let ground = terrain.contact(500., 500.).unwrap().unwrap().height;
+            let origin = [500., ground - 1.3, 500.];
+            vehicle.body.center = add(
+                origin,
+                transform(vehicle.body.basis(), vehicle.body_config.center_of_mass),
+            );
+            // Inward landing speed plus motion across the slope and into a turn.
+            let tangent = [normal[1] * 5., -normal[0] * 5., 15.];
+            vehicle.body.linear_velocity = add(tangent, scale(normal, -30.));
+            let frame = vehicle
+                .step(
+                    &terrain,
+                    VehicleInput {
+                        steer: 0.5,
+                        ..VehicleInput::default()
+                    },
+                    1. / 60.,
+                )
+                .unwrap();
+            assert_eq!(frame.suspension_stop_contacts, 4);
+            assert_eq!(
+                frame.chassis_contact_count, 0,
+                "upright stop must work without chassis terrain response"
+            );
+            assert!(
+                dot(frame.linear_velocity, normal) >= 0.,
+                "landing still moving into terrain: {frame:?}"
+            );
+            assert!(
+                dot(sub(frame.origin, origin), normal) >= 0.,
+                "bottomed suspension sank further: {frame:?}"
+            );
+            assert!(
+                frame.linear_velocity[2] > 10.,
+                "stop must preserve travel along the surface"
+            );
+            assert!(frame.grounded.iter().all(|&grounded| grounded));
+        }
     }
     #[test]
     fn obstacle_ray_contact_rejects_wall_penetration() {

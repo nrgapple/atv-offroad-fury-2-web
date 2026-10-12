@@ -468,6 +468,30 @@ pub struct StaticObstacle {
     pub world_matrix: [f32; 16],
 }
 
+impl StaticObstacle {
+    ///00330490: type-0 collision actor's world-axis bounds for registration.
+    pub fn world_bounds(&self) -> crate::Result<crate::scene_partition::Bounds> {
+        let root = self.mesh.nodes.first().ok_or("missing obstacle root")?;
+        let center = transform_point(&self.world_matrix, root.center);
+        let half = std::array::from_fn(|i| {
+            let x = ((self.world_matrix[i] * root.half_extents[0] + self.world_matrix[4 + i] * 0.)
+                + self.world_matrix[8 + i] * 0.)
+                .abs();
+            let y = ((self.world_matrix[i] * 0. + self.world_matrix[4 + i] * root.half_extents[1])
+                + self.world_matrix[8 + i] * 0.)
+                .abs();
+            let z = ((self.world_matrix[i] * 0. + self.world_matrix[4 + i] * 0.)
+                + self.world_matrix[8 + i] * root.half_extents[2])
+                .abs();
+            z + (x + y)
+        });
+        if !center.iter().chain(half.iter()).all(|v| v.is_finite()) {
+            return Err("nonfinite static scene bounds".into());
+        }
+        Ok(crate::scene_partition::Bounds { center, half })
+    }
+}
+
 /// Rigid inverse followed by multiplication, using0010c3f0 accumulation order.
 pub fn relative_transform(from: &[f32; 16], to: &[f32; 16]) -> [f32; 16] {
     let mut inverse = [0.0; 16];

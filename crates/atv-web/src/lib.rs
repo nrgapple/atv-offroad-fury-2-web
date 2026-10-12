@@ -726,12 +726,13 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         },
                     ];
                     if sim.wreck_camera.is_none() {
-                        sim.wreck_camera = Some(
-                            sim.camera
-                                .as_ref()
-                                .ok_or("camera missing")?
-                                .wreck_camera(actors)?,
-                        );
+                        let mut camera = sim
+                            .camera
+                            .as_ref()
+                            .ok_or("camera missing")?
+                            .wreck_camera(actors)?;
+                        camera.set_static_obstacles(sim.obstacles.clone().unwrap_or_default());
+                        sim.wreck_camera = Some(camera);
                     }
                     let frame = sim
                         .wreck_camera
@@ -744,6 +745,11 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         })?;
                     let mut output = serde_json::to_value(frame).map_err(|e| e.to_string())?;
                     output["mode"] = serde_json::json!("wreck");
+                    output["motion_blocked"] = serde_json::json!(
+                        sim.wreck_camera
+                            .as_ref()
+                            .is_some_and(|camera| camera.motion_blocked())
+                    );
                     return serde_json::to_vec(&output).map_err(|e| e.to_string());
                 }
                 sim.wreck_camera = None;

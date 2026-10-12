@@ -892,9 +892,58 @@
       "limitation": "Passing selected browser paths and object hashes does not establish complete original handling, crash/stunt parity, physical-device compatibility, racing or progression. The game remains an authored Rust/WebAssembly driving reconstruction.",
       "image": "/devlog-images/the-handling-and-wreck-checkpoint-passes-on-the-public-f075ffde.png",
       "caption": "Inspected public-test capture of the failed Nac Nac wreck route at 390px, showing the original HUD and failure-colored pending stunt display."
+    },
+    {
+      "id": "the-recovered-camera-now-holds-its-position-behind-an--cec29e6b",
+      "timestamp": "2026-10-12T03:09:50.429700+00:00",
+      "recorded_at": "2026-10-12T03:24:57.809706+00:00",
+      "kind": "build",
+      "title": "The recovered camera now holds its position behind an obstacle",
+      "summary": "The host camera uses the original ten-foot lookahead obstruction gate: when blocked, its output position holds while its target and field of view continue updating. This camera change is not public yet.",
+      "details": [
+        "Selected exact-build checks matched all 3,600 ray component bits across 600 obstruction cases and 51,900 original instructions.",
+        "A 240-frame full-camera comparison executed 390,723 original instructions; the largest measured difference was 0.00000763.",
+        "Validation passed 186 core and two web Rust tests, strict Clippy, the web build and the host touch wreck regression. The screenshot documents that regression rather than a controlled obstruction comparison."
+      ],
+      "limitation": "These host component and browser checks do not establish full camera or whole-game parity. Terrain clipping during landing and incline turns remains an open issue. Public release is pending.",
+      "image": "/devlog-images/the-recovered-camera-now-holds-its-position-behind-an--cec29e6b.png",
+      "caption": "Inspected host wreck-regression capture after camera integration. The obstruction comparison was measured separately; the camera change is not public yet."
+    },
+    {
+      "id": "a-clean-landing-still-pushes-tires-through-the-terrain-142a25d2",
+      "timestamp": "2026-10-12T03:23:33.327843+00:00",
+      "recorded_at": "2026-10-12T03:24:57.887180+00:00",
+      "kind": "issue",
+      "title": "A clean landing still pushes tires through the terrain",
+      "summary": "The reported terrain clipping is reproduced in the landing path and remains open. Avoiding a false wreck did not prove that the tires stayed above the surface.",
+      "details": [
+        "The clean-landing reproduction measured an actual wheel vertex 1.9423 feet below terrain while all four struts reported 0.95 feet at full compression.",
+        "The earlier clean-landing check verified that the rider did not enter a false wreck; it did not check mesh penetration. Incline turns are also part of the reported clipping issue.",
+        "The current public baseline remains 02fdf51. The suspension investigation and camera work are host-only; this entry records a defect, not a fix."
+      ],
+      "limitation": "A suspension and terrain-contact correction is still under investigation. No claim is made that landing or incline-turn clipping has been fixed.",
+      "image": "/devlog-images/a-clean-landing-still-pushes-tires-through-the-terrain-142a25d2.png",
+      "caption": "Inspected host reproduction before a fix: bottomed suspension during the landing path, with a measured wheel vertex below terrain."
+    },
+    {
+      "id": "the-missing-suspension-travel-stop-is-now-connected-e8549bf7",
+      "timestamp": "2026-10-12T03:31:06.504078+00:00",
+      "recorded_at": "2026-10-12T03:33:22.792154+00:00",
+      "kind": "build",
+      "title": "The missing suspension travel stop is now connected",
+      "summary": "The host Rust solver now runs the recovered four-point terrain travel stop before the wheel springs, during riding and wrecks. It reduces the reproduced landing penetration, but visible overlap is not fully resolved.",
+      "details": [
+        "The recovered stop removes inward linear velocity and force at its terrain contacts. It does not add an artificial ride-height clamp.",
+        "On the same clean ramp measurement, the worst actual tire-vertex clearance improved from -1.9423 feet to -0.48358 feet. A negative clearance still indicates overlap; this is not a perfect penetration or original-parity pass.",
+        "Exact-build comparisons covered 600 actor and 500 constructor blocks, executing 480,918 original instructions. All 2,400 contact decisions and 11,400 numeric components matched bits; six independent dispatch cases covered another 7,044 instructions.",
+        "A 100-pose visual comparison had maximum error 0.000000552, confirming the suspension animation was already connected. Validation passed 195 core and two WASM tests, formatting, strict Clippy, the web build, clean landing and Nac Nac wreck recovery."
+      ],
+      "limitation": "This checkpoint is host-only; public deployment and the current eight-map run are pending. Residual tire overlap and incline-turn behavior need further assessment. Level-grid and water-height modules have isolated verification but are not connected to live gameplay.",
+      "image": "/devlog-images/the-missing-suspension-travel-stop-is-now-connected-e8549bf7.png",
+      "caption": "Inspected host landing capture after connecting the recovered travel stop. Measured peak tire overlap is reduced but remains present; public release pending."
     }
   ],
-  "updated_at": "2026-10-12T03:02:53.434227+00:00",
+  "updated_at": "2026-10-12T03:33:22.792154+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

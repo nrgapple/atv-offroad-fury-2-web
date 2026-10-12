@@ -9,19 +9,34 @@ Priority order: wrecks/recovery, stunts, ATV/rider animation, HUD,
 terrain/static collisions, terrain detail/LOD, original vegetation placements.
 Full parity remains the goal; component checks do not establish whole-game parity.
 
-Latest public gate: gameplay91b60c4 plus CI-only6d31df3 deployed and passed
-public wreck/clean-landing/all-eight-map browser checks; 25 static hashes and
-301 served runtime/gallery objects verified. Current follow-on ownership:
-movement_audit recovers native dynamic water heights; wreck_parity recovers
-static scene candidate caching/order/categories; root studies wreck-camera
-motion obstruction. New probes stay private until verified implementation.
+Latest public gate: `02fdf5180ed3138db6b08196b0ec8a5e3dd7f706`, CI38198295882 successful; gameplay remains91b60c4. Public wreck/clean-landing/all-eight-map tests passed; 25 static hashes and302 served runtime/gallery objects verified (54log entries,49screenshots).
 
-Active claims for this thread (handling audit after user rail screenshot):
-- Wreck/collision agent: core wreck*.rs, obstacle.rs, collision.rs; type3 queries, rider-height impact and chassis terrain gates.
-- Stunt/animation agent: core stunt.rs, rider_pose.rs, rider_control.rs, stunt_score.rs, rider_ik.rs; hard-landing and reverse controller gates.
-- Movement agent: wheel_support.rs, research/MOVEMENT.md; coupled wheel/static-prop support and original controller field provenance.
-- Root: vehicle.rs, camera.rs, water.rs, HUD/WASM/game integration, narrow reverse-chord changes in web/bindings.js and relevant tests, verification and status.md.
-- Logger completed two inspected host-only HUD/wreck checkpoints in research/devlog.json; it will resume after a verified handling checkpoint.
+Latest user steering: ATV clips into terrain on landing and turning across
+inclined sides. The missing original four-point suspension travel-stop actor is
+now connected before the wheel springs. Original-instruction comparisons cover
+600 solver cases and 500 constructor cases (480918 instructions, all penetration
+decisions and 11400 numeric components match). Browser tire/terrain measurements
+improved from -1.9423ft to -0.4836ft minimum clearance in the clean ramp landing.
+Residual overlap remains; this is not complete penetration or handling parity.
+No speculative ride-height clamp was added.
+
+Follow-on host gate: 195 core + 2 WASM tests, strict Clippy, formatting, web build,
+31 JS tests, 10 release tests, Worker tests and setup/repository checks pass.
+Real-touch clean landing and failed Nac Nac → separation/contact/recovery/driving
+pass. All eight environments load and drive without JS/GL errors. The first run
+timed out loading env05; a fresh env05–08 run passed. Wreck-camera obstruction
+matches 600 original ray cases and 240 obstructed native frames. Static scene
+partition/cache, Environment bounds, obstacle world bounds and dynamic water
+height components have private instruction comparisons but are not yet connected
+to live scene collision/water. Native actor dt uses a smoothed frame timer; a fixed
+30Hz or 60Hz native tick has not been established.
+
+Active claims for this thread:
+- Wreck/collision agent: private coupled original-quad replay and remaining landing divergence.
+- Stunt/animation agent: native hand-axis initialization and foot-IK activation audit.
+- Movement agent: original water initialization, ripple and frame updates.
+- Root: vehicle.rs, camera.rs, scene/obstacle integration, WASM, browser verification and delivery.
+- Lighter logger completed three inspected host checkpoints, including before/after landing screenshots; public verification remains pending.
 
 The other thread committed audio/music/menu/browser changes as 0906822 and its public verification as 1de08b2. Preserve those changes.
 Coordinate before editing/staging atv-web/src/lib.rs, web/game.js,

@@ -47,9 +47,37 @@ A 240-frame synthetic sequence executes 396,390 original instructions, including
 both actors, stopped vertical motion and separation beyond 80 feet. Its Rust
 position/target/FOV outputs differ by at most 0.000011265 feet/degrees. Actor
 transforms, terrain height and host trigonometry are explicit oracle hooks; the
-interpreter is not PS2 hardware. The camera-position obstacle callback and secondary
-surface-height provider are not connected. Attached-rider collision-induced motion
-and the full original body-transform sequence remain separate parity gaps.
+interpreter is not PS2 hardware. The secondary water-height provider is not yet
+connected. Full coupled original body/camera replay remains a separate parity gap.
 Private probes/results are in `work/wreck-camera/`; no original instruction bytes
 or pseudocode enter source control. Browser/public verification is recorded in the
 dev log only after the corresponding tests pass.
+
+### Wreck-camera motion obstruction (next host checkpoint)
+
+`0031c880` creates a one-ray type-3 query for the wreck camera. After filtering and
+terrain clearance, `0031d190` casts from the previous rendered position ten feet
+along the normalized desired movement direction. The ray remains ten feet long
+even if this frame's movement is shorter. A collision latches camera `+334`;
+`0031cc90` then preserves the rendered position for the rest of that activation.
+Target, field of view and internal position filters continue advancing. Entering
+the next wreck camera clears the latch. This differs from a generic camera that
+slides continuously around obstacles.
+
+The authored camera now implements this guard against the loaded static props.
+Its native query has vegetation expansion disabled; ordinary enabled static props
+are eligible with the default category masks. Original custom masks/exclusions,
+dynamic scene actors and the normal following camera's separate behavior still
+require reconstruction. Water clearance remains pending the original wave field.
+
+Private instruction probes cover 600 actual `0031d190` executions (51,900
+instructions): all 3,600 ray coordinate bit patterns match Rust, including zero
+movement and the collision flag branch. The finite VRSQRT comparison uses a direct
+reciprocal-square-root result without an intermediate rounded binary32 square
+root; this is interpreter evidence, not PS2 VU hardware verification. A further
+240-frame `0031cc90` sequence executes 390,723 instructions with a synthetic
+overhead-plane scene hook. The query runs once before the latch, the output
+position stays fixed, and Rust target/FOV differ by at most 0.00000763. A coupled
+Rust regression uses an actual type-0 triangle query, confirms the ten-foot
+lookahead, and preserves the latch after removal while filters continue unchanged.
+Probe sources and data stay under ignored `work/camera-obstruction/`.

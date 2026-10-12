@@ -233,10 +233,12 @@ pub struct WreckActor {
     pub velocity: [f32; 3],
 }
 
-/// Single-player wreck camera,0031cc90 and its arithmetic helpers. The original
-/// camera-position collision callback is deliberately outside this component.
+/// Single-player wreck camera,0031cc90 and its arithmetic helpers.
 pub struct WreckCamera {
     frame: CameraFrame,
+    output_position: [f32; 3],
+    motion_blocked: bool,
+    obstacles: Vec<crate::obstacle::StaticObstacle>,
     angles: [f32; 2],
     direction: [f32; 3],
     last_velocity: [f32; 3],
@@ -264,6 +266,35 @@ fn normalized(v: [f32; 3]) -> [f32; 3] {
     }
 }
 
+/// 0031d190 checks ten feet ahead from the previous rendered camera position,
+/// along the desired movement direction, even when this frame moves less.
+pub fn wreck_camera_motion_ray(
+    previous: [f32; 3],
+    candidate: [f32; 3],
+) -> Result<crate::collision::CollisionRay> {
+    if previous
+        .iter()
+        .chain(candidate.iter())
+        .any(|v| !v.is_finite())
+    {
+        return Err("invalid wreck camera motion segment".into());
+    }
+    let delta: [f32; 3] = std::array::from_fn(|i| candidate[i] - previous[i]);
+    let squared = (delta[0] * delta[0] + delta[1] * delta[1]) + delta[2] * delta[2];
+    // VRSQRT produces Q directly; an intermediate rounded binary32 SQRT then
+    // DIV differs by one bit for some finite inputs in the instruction oracle.
+    let reciprocal = if squared == 0. {
+        0.
+    } else {
+        (1. / (squared as f64).sqrt()) as f32
+    };
+    let direction = delta.map(|value| value * reciprocal);
+    Ok(crate::collision::CollisionRay {
+        start: previous,
+        end: std::array::from_fn(|i| previous[i] + 10. * direction[i]),
+    })
+}
+
 impl WreckCamera {
     ///0031d2f0/0031d490 seed the filters from the outgoing camera, then0031d640
     /// measures its offset from the mean actor origin. Angles are azimuth/elevation.
@@ -288,6 +319,9 @@ impl WreckCamera {
         });
         Ok(Self {
             frame: previous,
+            output_position: previous.position,
+            motion_blocked: false,
+            obstacles: Vec::new(),
             angles: [angles[0].abs(), angles[1]],
             direction: normalized(offset),
             last_velocity: [0.; 3],
@@ -302,6 +336,14 @@ impl WreckCamera {
             })),
             included: 2,
         })
+    }
+
+    pub fn set_static_obstacles(&mut self, obstacles: Vec<crate::obstacle::StaticObstacle>) {
+        self.obstacles = obstacles;
+    }
+
+    pub fn motion_blocked(&self) -> bool {
+        self.motion_blocked
     }
 
     pub fn step(
@@ -456,7 +498,20 @@ impl WreckCamera {
         {
             return Err("nonfinite wreck-camera output".into());
         }
-        Ok(self.frame)
+        // 0031cc90 latches the collision flag for the rest of this wreck-camera
+        // activation. Filters/target/FOV continue; only the rendered position
+        // retains its previous value. Recovery constructs a fresh follow view.
+        if !self.motion_blocked {
+            let ray = wreck_camera_motion_ray(self.output_position, self.frame.position)?;
+            self.motion_blocked =
+                !crate::wreck::query_static_segments(&[ray], &self.obstacles, 1)?.is_empty();
+            if !self.motion_blocked {
+                self.output_position = self.frame.position;
+            }
+        }
+        let mut output = self.frame;
+        output.position = self.output_position;
+        Ok(output)
     }
 }
 
@@ -691,6 +746,55 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn wreck_obstruction_latches_position_while_filters_and_target_continue() {
+        let actors = [
+            WreckActor {
+                origin: [0., 4., 0.],
+                velocity: [3., 4., 18.],
+            },
+            WreckActor {
+                origin: [0., 6., 0.],
+                velocity: [15., 24., 16.8],
+            },
+        ];
+        let previous = CameraFrame {
+            position: [0., 12., -20.],
+            target: [0., 5., 0.],
+            fov: 85.,
+            preset: 0,
+        };
+        let mut open = WreckCamera::new(previous, [std::f32::consts::PI, 0.7], actors).unwrap();
+        let mut blocked = WreckCamera::new(previous, [std::f32::consts::PI, 0.7], actors).unwrap();
+        // The desired first-frame movement is shorter than one foot. Native
+        // nevertheless casts ten feet ahead and detects this overhead plane.
+        blocked.set_static_obstacles(vec![crate::wreck::tests::surface([
+            [-100., 13., -100.],
+            [100., 13., -100.],
+            [0., 13., 100.],
+        ])]);
+        for i in 0..40 {
+            let moving = open
+                .step(actors, [0., 0., 1.], 1. / 60., |_| Ok(0.))
+                .unwrap();
+            let fixed = blocked
+                .step(actors, [0., 0., 1.], 1. / 60., |_| Ok(0.))
+                .unwrap();
+            assert!(blocked.motion_blocked());
+            assert_eq!(fixed.position, previous.position);
+            assert_eq!(fixed.target, moving.target);
+            assert_eq!(fixed.fov, moving.fov);
+            assert_eq!(blocked.frame.position, open.frame.position);
+            if i == 0 {
+                assert!(moving.position[1] < 13.);
+                blocked.set_static_obstacles(Vec::new());
+            }
+        }
+        let stationary = wreck_camera_motion_ray(previous.position, previous.position).unwrap();
+        assert_eq!(stationary.start, stationary.end);
+        assert!(wreck_camera_motion_ray([f32::NAN, 0., 0.], [0.; 3]).is_err());
+    }
+
     #[test]
     fn stationary_wreck_retains_heading_and_clamps_stored_camera_to_ground() {
         let actors = [WreckActor {

@@ -98,3 +98,61 @@ brakes remain separate from the consumable Cross+Square combination.
 Private reproducible probes and source-derived results stay under
 `work/physics/` and `private/reports/`. No original bytes, instruction exports or
 source-derived asset traces belong in GitHub/CI.
+
+## Terrain suspension travel stop
+
+The clipping investigation identified a second, independent terrain-contact actor
+that was missing from the coupled vehicle. `001dcc70` creates solver `vehicle+184`
+with four points and enables only its `+78` response. It disables impulse,
+penetration correction and friction (`+58`, `+4c`, `+50` are zero). `001e1fd0`
+constructs each point from the wheel's **local** rest translation plus body-up
+multiplied by `(travel-radius)`, then adds the model body's local translation.
+These are fully compressed tire-bottom points, in front-left, front-right,
+rear-left, rear-right order. The registration margin is zero.
+
+Query actor `+188` captures a terrain plane at each point once per outer frame
+through `00193b40`/`0016ac10`. Its constructor's two obstacle-query arguments are
+zero, so this actor has no prop collider or spoke query. Its configured
+`[0,2.5,0]` offset is unused in this terrain-only path. It remains enabled when
+upright; the chassis `+17c` terrain gate does not control it. Original setup and
+phase-dispatch instruction probes also establish that riding, forced landing,
+and wreck phases retain this terrain stop.
+
+During every physics substep, after grip, engine, and rider force accumulation,
+`001dd830` runs this solver **before** all four wheel springs. `00194930`
+retransforms each local stop point against the frozen plane and tests strictly
+positive normal penetration. The selected response, `00196cf0`, removes only
+inward **body linear** velocity and force along that normal, records the velocity
+change in body `+180`, and leaves angular velocity and position unchanged. It
+does not use the generic contact-point velocity, reflection, positional
+correction, or friction kernels. This is source behavior, not a ride-height
+clamp. Fast crossings and angular motion still require coupled verification.
+
+`wheel_stop` implements this separate actor. Original-instruction comparison
+executes 600 complete four-point `00194930` stop solvers, including tilted
+transforms and varied slopes: 372,418 instructions, all 2,400 contact decisions
+and 5,400 velocity/force/impact components match Rust binary32 values. The
+unused generic point-velocity helper is hooked at its service boundary.
+Another 500 original constructor blocks execute 108,500 instructions and match
+all 2,000 stop points (6,000 components), including the registration margin,
+flags, and model binding. Private artifacts remain under `work/` and
+`private/reports/`; these tests do not establish a complete vehicle replay.
+
+## Outer frame timing remains a scheduling approximation
+
+Original `00105010` averages ten integer-millisecond frame deltas, resets a raw
+gap above0.1 seconds to0.033, and caps dispatched actor time at0.06 seconds.
+An optional debug setting caps it at0.03333. The root actor runs once per main
+render loop. Default display synchronization waits for one vertical event when
+none has elapsed; the debug SYNC30HZ command selects two. This does not establish
+a measured fixed30Hz or60Hz gameplay cadence. The browser's deterministic60Hz
+scheduler remains an approximation and was not changed based on a frame-rate
+guess. A private166-iteration timer probe executes37,529 original instructions.
+
+The suspension clipping fix is independent of that timing audit: it restores a
+missing original actor. Measured original-mesh tire vertices against the full
+terrain samples in the browser landing trace improved from -1.9423ft to
+-0.48358ft minimum clearance. The earlier clean-landing test only established
+no false wreck; it did not establish acceptable tire clearance. The restored
+stop leaves shallow overlap and does not establish complete original landing
+or slope-turn parity.
