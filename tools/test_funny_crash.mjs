@@ -1,0 +1,52 @@
+// Opt-in original-content severe-crash visual gate. Supplies authored throttle
+// and held-stunt inputs through the existing WASM input interface; never sets
+// velocity, pose, wreck state, damage or effects state. Results remain private.
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {mkdir,writeFile} from 'node:fs/promises';
+import {captureSimulation} from './capture_simulation.mjs';
+import {captureCrashIsolation,verifyCrashIsolation,captureCrashDraws} from './crash_isolation.mjs';
+const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
+const browser=await chromium.launch({headless:true});
+await mkdir('work/verification',{recursive:true});
+try {
+ const page=await browser.newPage({viewport:{width:Number(process.env.ATV_CRASH_WIDTH||1280),height:844}}),errors=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ await captureCrashIsolation(page);await captureCrashDraws(page);await captureSimulation(page,'crashFrames');
+ await page.addInitScript(()=>{
+  localStorage.setItem('atv-funny-crashes','true');
+  const post=Worker.prototype.postMessage;let held=false;
+  Worker.prototype.postMessage=function(message,...args){
+   if(message.op===50&&window.crashDriving){
+    const source=JSON.parse(new TextDecoder().decode(message.bytes)),f=window.atvTerrainStatus?.frame;
+    if(f?.speed_magnitude>55&&!f.grounded.some(Boolean)&&f.wreck.phase==='Riding')held=true;
+    if(f?.wreck.phase!=='Riding')held=false;
+    source.count=4;
+    source.input={...source.input,throttle:1,brake:0,steer:0,lean:0,reverse:false,touch_drive:null,preload_axis:null,stunt_modifiers:held?1:0,stunt_x:0,stunt_y:held?1:0};
+    message={...message,bytes:new TextEncoder().encode(JSON.stringify(source))};
+   }
+   return post.call(this,message,...args);
+  };
+ });
+ await page.goto(`${process.env.ATV_TEST_URL||'http://127.0.0.1:4182'}/play.html?drive=1&environment=env01`);
+ await page.waitForFunction(()=>window.atvTerrainStatus?.simulation,null,{timeout:120000});
+ assert.equal(await page.evaluate(()=>window.atvTerrainStatus.funnyCrashes),true);
+ await page.keyboard.press('Escape');
+ await page.getByRole('button',{name:'Reset ATV',exact:true}).waitFor();
+ await page.evaluate(()=>window.crashDriving=true);
+ await page.getByRole('button',{name:'Reset ATV',exact:true}).click();
+ await page.waitForFunction(()=>window.atvTerrainStatus.frame.funny_crash?.detached_parts===7&&window.atvTerrainStatus.frame.funny_crash.rider_node_matrices.length>0&&window.atvTerrainStatus.frame.funny_crash.age>.6,null,{timeout:60000});
+ await page.evaluate(()=>window.crashDriving=false);
+ const crash=await page.evaluate(()=>window.atvTerrainStatus.frame);
+ assert.equal(crash.funny_crash.detached_parts,7);
+ await page.waitForFunction(()=>crashDraws.quad>0&&crashDraws.rider>0);
+ if(process.env.ATV_CRASH_SCREENSHOT)await page.screenshot({path:process.env.ATV_CRASH_SCREENSHOT});
+ await page.waitForFunction(n=>window.atvTerrainStatus.frame.reset_count>n,crash.reset_count,{timeout:20000});
+ assert.equal(await page.evaluate(()=>window.atvTerrainStatus.frame.funny_crash??null),null);
+ const isolation=await verifyCrashIsolation(page);
+ const frames=await page.evaluate(()=>window.crashFrames);
+ assert(frames.every(s=>!s.frame.funny_crash||[...s.frame.funny_crash.quad_node_matrices.flat(),...s.frame.funny_crash.rider_node_matrices.flat()].every(Number.isFinite)));
+ assert.deepEqual(errors,[]);assert.equal(await page.evaluate(()=>window.atvTerrainStatus.glError),0);
+ await writeFile(process.env.ATV_CRASH_TRACE||'work/verification/funny-crash.json',JSON.stringify({crash,isolation,frames,errors}));
+ console.log('PASS: source driving/stunt inputs produce severe wreck, 7 rendered original mesh breakaway pieces, articulated rider, intact recovery and identical baseline gameplay.');
+} finally {await browser.close();}

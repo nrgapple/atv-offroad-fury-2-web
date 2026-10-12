@@ -1951,6 +1951,50 @@
       "caption": "Host ENV01 lighting test view with the bounded vegetation Sun path; this local candidate capture is not the public build or a PS2 framebuffer."
     },
     {
+      "id": "funny-crash-presentation-passes-host-toggle-and-recove-8d203001",
+      "timestamp": "2026-10-12T22:16:35.417517+00:00",
+      "recorded_at": "2026-10-12T22:18:09.322391+00:00",
+      "kind": "verification",
+      "title": "Funny crash presentation passes host toggle and recovery checks",
+      "summary": "Optional local crash effects now show a constrained rider ragdoll and two authored front-wheel debris pieces during ordinary failed Nac Nac crashes. Paired WASM traces preserve the compared baseline gameplay fields with effects enabled.",
+      "details": [
+        "The option defaults Off and persists as atv-funny-crashes. Desktop ATV01 male and 390px ATV26 female touch runs covered separation, pause freeze, Off mid-wreck, On again, automatic recovery, and resumed driving.",
+        "Mirror-WASM comparison after excluding effect payload/toggle echo: 415 desktop and 430 female-mobile steps, zero mismatches across gameplay, camera, water, train, and wheel fields.",
+        "make check passed: 312 core, 2 web, workspace net/relay tests, and 68 JavaScript tests. make verify passed; see work/check-final.txt."
+      ],
+      "limitation": "Host-only evidence. Ordinary failure captures show two front wheels; severe-impact seven-part debris is unit-tested but its full in-game visual remains unverified. No public release or public browser check is claimed. The ATV chassis mesh is monolithic, so arbitrary chassis/fender fracture is unsupported.",
+      "image": "/devlog-images/funny-crash-presentation-passes-host-toggle-and-recove-8d203001.png",
+      "caption": "Host desktop 1280px: ATV01 male rider separates during a failed Nac Nac; two authored front wheels break away. This is not a public-build capture."
+    },
+    {
+      "id": "female-rider-crash-capture-fits-the-390px-portrait-vie-b53cfcca",
+      "timestamp": "2026-10-12T22:17:21.109883+00:00",
+      "recorded_at": "2026-10-12T22:18:13.566470+00:00",
+      "kind": "verification",
+      "title": "Female rider crash capture fits the 390px portrait view",
+      "summary": "The optional crash layer also renders the female ATV26 rider and authored front-wheel debris in a 390px portrait host browser. Pause, toggle, and automatic recovery behavior are covered by the paired host interaction run.",
+      "details": [
+        "The female source rig has 27 nodes including hair; the male rig has 18. Both use the same bounded presentation layer, while gameplay state remains unchanged in the paired WASM comparison."
+      ],
+      "limitation": "Host-only screenshot. The narrow capture shows an ordinary failed Nac Nac, not the severe-impact debris set or a public deployment. No physical iOS Safari validation is claimed.",
+      "image": "/devlog-images/female-rider-crash-capture-fits-the-390px-portrait-vie-b53cfcca.png",
+      "caption": "Host 390px portrait: ATV26 female rider separates during a failed Nac Nac with two front wheels detached. This is not a public-build capture."
+    },
+    {
+      "id": "severe-funny-crash-sheds-all-seven-authored-parts-in-h-eb8c63ac",
+      "timestamp": "2026-10-12T22:21:36.538242+00:00",
+      "recorded_at": "2026-10-12T22:21:36.538242+00:00",
+      "kind": "verification",
+      "title": "Severe funny crash sheds all seven authored parts in host gameplay",
+      "summary": "A normal-input severe wreck now exercises the full optional breakaway set in the host WASM game: four wheels, handlebars, swingarm, and rear axle detach, GPU arrays stay finite, and the original intact recovery completes.",
+      "details": [
+        "tools/test_funny_crash.mjs applies throttle and held stunt inputs through the existing WASM interface; it does not inject velocity, pose, or wreck state.",
+        "Paired mirror trace compares 762 steps with zero mismatches in gameplay, camera, water, train, and wheel fields.",
+        "make check passes 312 core, 3 web, workspace net/relay tests, and 68 JavaScript tests; make verify passes. See work/check-final.txt."
+      ],
+      "limitation": "Host-only pending CI and public release. No screenshot is included because the available severe capture is obscured by branches. Original-game hardware parity is not claimed."
+    },
+    {
       "id": "near-vegetation-materials-pass-across-all-nine-public--f607f256",
       "timestamp": "2026-10-12T22:54:50.339172+00:00",
       "recorded_at": "2026-10-12T22:57:33.520392+00:00",

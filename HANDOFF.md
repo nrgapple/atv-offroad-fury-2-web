@@ -1,5 +1,25 @@
 # Implementation handoff
 
+## Optional funny crashes: verified host checkpoint
+
+The default-off Pause → Funny crashes option runs an authored Rust presentation
+layer on actual wreck/separation events: joint-limited rider tumbling and bouncing
+original wheels, handlebars, swingarm and rear axle. Local rider only; native
+vehicle/rider collision, score, recovery and camera remain unchanged. Recovery
+clears effects and restores intact models. Arbitrary chassis fracture and debris
+contacts against props/water are not implemented. See research/CRASH_EFFECTS.md.
+
+Host desktop ATV01/male and 390px ATV26/female failure routes pass rendered poses,
+pause, Off/On during a wreck and resumed driving. Mirrored exact-input WASM
+comparisons cover 415 + 430 ordinary and 762 severe-crash steps with zero compared
+gameplay/camera/water/train/wheel-field mismatches after excluding effects and the
+echoed option. The severe driving/stunt-input gate displays all seven pieces and
+recovers; the normal failure sheds two front wheels. Baseline Off also passes.
+312 core, 3 web, workspace net/relay and 68 JS tests, formatting, strict Clippy,
+WASM build and make verify pass. Host screenshots are inspected and recorded in
+the dev log, with publication pending validated main CI and the R2 gallery upload.
+This evidence is an optional presentation component, not original-game parity.
+
 ## Latest verified public near-material release
 
 Public main `d9596d937907395440b61e78be61b2045d987d4d` (PR #12) passed CI

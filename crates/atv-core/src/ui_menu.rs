@@ -70,6 +70,8 @@ pub struct Request {
     pub diagnostics_mode: String,
     #[serde(default)]
     pub one_handed_mobile: bool,
+    #[serde(default)]
+    pub funny_crashes: bool,
     #[serde(default = "default_steering_sensitivity")]
     pub mobile_steering_sensitivity: f32,
 }
@@ -660,6 +662,14 @@ pub fn layout(request: Request) -> Result<Frame> {
                 ("Controls", "controls"),
                 (diagnostics_label, "diagnostics"),
                 (mobile_label, "onehanded"),
+                (
+                    if request.funny_crashes {
+                        "Funny crashes: On"
+                    } else {
+                        "Funny crashes: Off"
+                    },
+                    "funnycrashes",
+                ),
             ];
             if request.music_ready {
                 choices.push(("Music", "music"));
@@ -673,8 +683,18 @@ pub fn layout(request: Request) -> Result<Frame> {
             } else {
                 ("Lobby", "lobby")
             });
-            let row = ((h - if portrait { 110. } else { 90. }) / choices.len() as f32)
-                .min(if portrait { 64. } else { 48. });
+            let columns = if !portrait && (h - 90.) / choices.len() as f32 * scale < 34. {
+                2
+            } else {
+                1
+            };
+            let rows = choices.len().div_ceil(columns);
+            let row = ((h - if portrait { 110. } else { 90. }) / rows as f32).min(if portrait {
+                64.
+            } else {
+                48.
+            });
+            let column_width = (w - if portrait { 60. } else { 108. }) / columns as f32;
             let selected = request.selection % choices.len();
             for (i, (label, action)) in choices.iter().enumerate() {
                 f.choices.push(action.to_string());
@@ -682,9 +702,9 @@ pub fn layout(request: Request) -> Result<Frame> {
                     label,
                     action,
                     [
-                        24.,
-                        (if portrait { 98. } else { 78. }) + i as f32 * row,
-                        if portrait { w - 60. } else { w - 108. },
+                        24. + (i % columns) as f32 * column_width,
+                        (if portrait { 98. } else { 78. }) + (i / columns) as f32 * row,
+                        column_width,
                         row,
                     ],
                     i == selected,
@@ -971,6 +991,7 @@ mod tests {
             menu_atv: true,
             diagnostics_mode: String::new(),
             one_handed_mobile: false,
+            funny_crashes: false,
             mobile_steering_sensitivity: 85.,
         }
     }
