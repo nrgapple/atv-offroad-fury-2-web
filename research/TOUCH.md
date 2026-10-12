@@ -95,3 +95,6 @@ Unit and actual-WASM Chromium touch checks cover stationary presses at multiple
 right-side positions, forward/reverse direction changes, release, cancellation,
 left-thumb isolation, secondary fingers, focus and pause. The controls page now
 explains press-to-drive and backward drag.
+
+
+The immediate-press route passed the public Chromium touch suite on release `0f074b4558f864ea4e4a8103b017b60e102c6690` (CI `38202065109`). This verifies the browser adaptation and cancellation paths, not physical iOS/controller equivalence or original handling parity.

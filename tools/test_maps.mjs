@@ -30,6 +30,13 @@ try {
       await page.waitForFunction(target => window.atvTerrainStatus.simulationSteps >= target, target, { timeout: 120000 });
       await page.keyboard.up('KeyW');
       const state = await page.evaluate(() => window.atvTerrainStatus);
+      if (['env04', 'env05', 'env07', 'env08'].includes(environment)) {
+        assert(state.water.signature_channels > 0, 'Original WaterFile must load its raw height signatures');
+        assert(Number.isFinite(state.frame.water_height) && state.frame.water_height !== -256, 'The shared animated field must feed the vehicle water-height cache');
+      } else {
+        assert.equal(state.water, null);
+        assert.equal(state.frame.water_height, -256, 'Dry scenes retain the original no-water sentinel');
+      }
       assert(state.frame.origin.every(Number.isFinite));
       assert(state.frame.orientation.every(Number.isFinite));
       assert(Number.isFinite(state.frame.speed));
@@ -42,7 +49,10 @@ try {
       }
       assert.deepEqual(errors, []);
       if (process.env.ATV_MAP_SCREENSHOTS) await page.screenshot({ path: `${process.env.ATV_MAP_SCREENSHOTS}-${environment}.png` });
-      console.log(JSON.stringify({ environment, ready: state.ready, terrainTriangles: state.triangles, terrainUpdates: state.terrainDetailUpdates, vegetation: state.vegetationPlacements, draws: state.vegetationDraws, sceneInstances: state.sceneInstances, unsupportedMeshes: state.unsupportedSceneMeshes, glError: state.glError }));
+      console.log(JSON.stringify({ environment, ready: state.ready, terrainTriangles: state.triangles, terrainUpdates: state.terrainDetailUpdates, vegetation: state.vegetationPlacements, draws: state.vegetationDraws, sceneInstances: state.sceneInstances, unsupportedMeshes: state.unsupportedSceneMeshes, water: state.water, waterHeight: state.frame.water_height, glError: state.glError }));
+    } catch (error) {
+      console.error(JSON.stringify({ environment, errors, status: await page.locator('#status').textContent().catch(() => null), state: await page.evaluate(() => ({ ready: window.atvTerrainStatus?.ready, simulation: window.atvTerrainStatus?.simulation })).catch(() => null) }));
+      throw error;
     } finally { await page.close(); }
   }
   console.log('PASS: all requested original environments load and drive, vegetation is batched, full-sample terrain follows the ATV, no browser/GL errors.');

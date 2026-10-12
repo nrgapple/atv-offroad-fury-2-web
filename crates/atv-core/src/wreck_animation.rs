@@ -1,7 +1,8 @@
 //! Original rider wreck clip tables (002d7dc0), phase selection (001ee990),
 //! detached-body constants (001ee090/001efad0) and terrain contact points.
 //! Static type-0 prop contacts share the native13 animated point spokes.
-//! Water and moving/compound-prop contacts remain separate integration work.
+//! Authored live water drives four torso points before each solid-contact pass.
+//! Moving/compound-prop contacts remain separate integration work.
 use crate::{
     Result,
     animation::{Channels, Pose},
@@ -50,6 +51,8 @@ pub struct Frame {
     pub grounded: bool,
     pub contact_count: usize,
     pub static_contact_count: usize,
+    pub water_touching: bool,
+    pub water_contact_count: usize,
     pub world_matrix: [f32; 16],
     pub origin: Vec3,
     pub linear_velocity: Vec3,
@@ -78,6 +81,15 @@ const CONTACT_POINTS: [(&str, Vec3); 13] = [
     ("FootR", [0., -0.3, 0.75]),
 ];
 
+//002d7dc0 registers these four low-speed points via0033dbd0; the high
+//point list is empty, so these points also serve high-speed rider contacts.
+const WATER_POINTS: [Vec3; 4] = [
+    [f32::from_bits(0x3eb95810), 0.5, 0.3],
+    [-f32::from_bits(0x3eb95810), 0.5, -0.3],
+    [f32::from_bits(0x3eb95810), 0.5, -0.3],
+    [-f32::from_bits(0x3eb95810), 0.5, 0.3],
+];
+
 #[derive(Clone, Copy)]
 pub struct VehicleMotion {
     pub world: [f32; 16],
@@ -94,6 +106,8 @@ pub struct Animator {
     time: f32,
     blend_time: f32,
     points: Vec<ContactPoint>,
+    water_points: [ContactPoint; 4],
+    water_config: crate::water::Config,
     body: Option<BodyState>,
     config: BodyConfig,
     world: [f32; 16],
@@ -105,10 +119,28 @@ pub struct Animator {
     grounded: bool,
     contact_count: usize,
     static_contact_count: usize,
+    water_touching: bool,
+    water_contact_count: usize,
     obstacles: Vec<crate::obstacle::StaticObstacle>,
     active: bool,
 }
 impl Animator {
+    /// Consecutive shared launch yaw, pitch, wreck direction and clip-variant
+    /// words. The local stream reproduces this order, not all game-wide RNG calls.
+    pub fn boundary_random_words(&mut self) -> [u32; 4] {
+        std::array::from_fn(|_| self.rng.next_u31())
+    }
+
+    /// Boundary launch raises both quad and rider limits before wreck entry;
+    ///001e8d10 restores both on recovery. Other detached-body settings persist.
+    pub fn set_boundary_flight(&mut self, active: bool) {
+        self.config.max_speed_squared = if active {
+            crate::boundary_launch::LAUNCH_MAX_SPEED_SQUARED
+        } else {
+            crate::boundary_launch::NORMAL_MAX_SPEED_SQUARED
+        };
+    }
+
     pub fn new(motions: Vec<Motion>, looping: Vec<bool>, nodes: &[Node]) -> Result<Self> {
         if motions.len() != SUFFIXES.len() || looping.len() != SUFFIXES.len() {
             return Err("wreck requires fourteen original clips".into());
@@ -149,6 +181,11 @@ impl Animator {
             clip: 8,
             time: 0.,
             blend_time: 0.,
+            water_points: WATER_POINTS.map(|offset| ContactPoint {
+                node: points[1].node,
+                offset,
+            }),
+            water_config: crate::water::Config::rider(mass)?,
             points,
             body: None,
             config,
@@ -161,6 +198,8 @@ impl Animator {
             grounded: false,
             contact_count: 0,
             static_contact_count: 0,
+            water_touching: false,
+            water_contact_count: 0,
             obstacles: Vec::new(),
             active: false,
         })
@@ -183,6 +222,8 @@ impl Animator {
         self.grounded = false;
         self.contact_count = 0;
         self.static_contact_count = 0;
+        self.water_touching = false;
+        self.water_contact_count = 0;
     }
     pub fn begin(
         &mut self,
@@ -207,6 +248,8 @@ impl Animator {
         self.grounded = false;
         self.contact_count = 0;
         self.static_contact_count = 0;
+        self.water_touching = false;
+        self.water_contact_count = 0;
         self.active = true;
         let clip = match kind {
             crate::wreck::Kind::Front => 8,
@@ -257,6 +300,8 @@ impl Animator {
             grounded: self.grounded,
             contact_count: self.contact_count,
             static_contact_count: self.static_contact_count,
+            water_touching: self.water_touching,
+            water_contact_count: self.water_contact_count,
             world_matrix: self.world,
             origin: [self.world[12], self.world[13], self.world[14]],
             linear_velocity: self.body.as_ref().map_or([0.; 3], |b| b.linear_velocity),
@@ -272,6 +317,19 @@ impl Animator {
         nodes: &[Node],
         terrain: &crate::terrain::Terrain,
         materials: &[crate::materials::TerrainMaterial; 8],
+    ) -> Result<()> {
+        self.step_with_water(dt, vehicle, nodes, terrain, materials, None)
+    }
+    ///001ef690 samples the current dynamic field in every physics substep.
+    ///The caller advances the water actor once before this outer rider step.
+    pub fn step_with_water(
+        &mut self,
+        dt: f32,
+        vehicle: VehicleMotion,
+        nodes: &[Node],
+        terrain: &crate::terrain::Terrain,
+        materials: &[crate::materials::TerrainMaterial; 8],
+        water: Option<&crate::water_animation::LiveField>,
     ) -> Result<()> {
         if !self.active {
             return Ok(());
@@ -289,13 +347,22 @@ impl Animator {
             self.select(self.phase, clip);
         }
         let pose = self.current.pose(nodes)?;
-        let last_contacts = self.step_body(dt, &pose, terrain, materials, !attached)?;
+        let last_contacts = self.step_body(dt, &pose, terrain, materials, !attached, water)?;
         let saved_pelvis = multiply(self.world, pose.world_matrices[0]);
         //001ee990 performs physics and saves Pelvis before advancing animation.
         //Category changes request the next clip on the following outer frame.
-        if !attached && self.phase == Phase::Air && last_contacts > 0 {
-            self.phase = Phase::Ground;
-            self.pending_clip = Some(self.random_four());
+        if !attached {
+            let next = detached_contact_phase(self.phase, last_contacts > 0, self.water_touching);
+            if next != self.phase {
+                self.phase = next;
+                self.pending_clip = Some(if next == Phase::Water {
+                    //The one-entry Swim table still consumes a random word.
+                    self.rng.next_u31();
+                    13
+                } else {
+                    self.random_four()
+                });
+            }
         }
         let pose = self.sample(nodes, dt)?;
         if attached {
@@ -307,8 +374,14 @@ impl Animator {
             //Native first enters Air when the clip window expires, then can
             //override it with Ground in the same frame. Preserve both sets of
             //random draws rather than skipping the first entry when touching.
-            if last_contacts > 0 {
+            if self.water_touching || last_contacts > 0 {
                 self.detach(saved_pelvis, current_pelvis, vehicle, dt, false)?;
+                if self.water_touching {
+                    //Attached phase prioritizes water over solid contacts.
+                    //detach's random draw also serves the one-entry Swim table.
+                    self.phase = Phase::Water;
+                    self.pending_clip = Some(13);
+                }
             }
         } else if self.anchor_pelvis
             || self.motions[self.clip].animation.duration - self.time <= dt
@@ -362,6 +435,7 @@ impl Animator {
         terrain: &crate::terrain::Terrain,
         materials: &[crate::materials::TerrainMaterial; 8],
         gravity: bool,
+        water: Option<&crate::water_animation::LiveField>,
     ) -> Result<usize> {
         //001469e0 obtains position/orientation from the Model scene on every
         //step. Root rebasing changes that scene basis without rotating stored
@@ -383,6 +457,8 @@ impl Animator {
         self.grounded = false;
         self.contact_count = 0;
         self.static_contact_count = 0;
+        self.water_touching = false;
+        self.water_contact_count = 0;
         let mut elapsed = 0.;
         let mut last_contacts = 0;
         while elapsed < dt {
@@ -396,6 +472,38 @@ impl Animator {
             } else {
                 self.world
             };
+            self.water_touching = false;
+            if let Some(water) = water {
+                let points = self.water_points.map(|point| {
+                    crate::obstacle::transform_point(
+                        &model,
+                        crate::obstacle::transform_point(
+                            &pose.world_matrices[point.node],
+                            point.offset,
+                        ),
+                    )
+                });
+                //00451470 initializes flow=[0,0,0,1], up=[0,1,0,1].
+                //These live profiles have WakeScale=0: ripple injection cannot
+                //change sampled heights; rendering wakes remains separate.
+                let result = crate::water::apply_contacts(
+                    body,
+                    self.water_config,
+                    dot(body.linear_velocity, body.linear_velocity).sqrt(),
+                    &[],
+                    &points,
+                    [0.; 3],
+                    [0., 1., 0.],
+                    |point| water.height(point, false),
+                    |_, _| {},
+                )?;
+                self.water_touching = result.touching;
+                self.water_contact_count += result.points;
+                if result.touching {
+                    self.grounded = true;
+                    self.integration_active = true;
+                }
+            }
             let mut corrections = crate::contact::ContactCorrections::default();
             last_contacts = 0;
             for (index, &(local, ground, normal, grip)) in contacts.iter().enumerate() {
@@ -502,6 +610,16 @@ impl Animator {
             }
         }
         Ok(points)
+    }
+}
+//001ee990 priorities depend on the current phase and the LAST substep's
+//contact flags. Once swimming, dry frames keep swimming until a solid hit.
+fn detached_contact_phase(phase: Phase, solid: bool, water: bool) -> Phase {
+    match phase {
+        Phase::Air if solid => Phase::Ground,
+        Phase::Air | Phase::Ground if water => Phase::Water,
+        Phase::Water if solid => Phase::Ground,
+        _ => phase,
     }
 }
 ///00193b40 puts each spoke start at the world-axis bounds midpoint and its
@@ -798,6 +916,149 @@ mod tests {
             braking: 0.,
         }; 8];
         (animator, nodes, terrain, materials)
+    }
+    fn water_fixture() -> crate::water_animation::LiveField {
+        //A deliberately small varying signature verifies the rider consumes
+        //the supplied live field; this is synthetic test data, not a scene.
+        let definition = crate::water_animation::Definition::parse(
+            b"[General Information]\nWaterBaseHeight = 24\nWakeScale = 0\nWaterHeightRange = 0\n",
+        )
+        .unwrap();
+        crate::water_animation::LiveField {
+            definition,
+            swell: crate::water_animation::SwellState::default(),
+            states: vec![],
+            waves: vec![crate::water_surface::SignatureWave {
+                origin: [0.; 2],
+                width: [100.; 2],
+                inverse_width: [0.01; 2],
+                dimension: 2,
+                row_stride: 2,
+                pixel_stride: 1,
+                tiled: true,
+                height_channel: true,
+                positive: true,
+                scale: 16.,
+                first_frame: vec![0, 32, 64, 128],
+                second_frame: vec![0, 32, 64, 128],
+            }],
+        }
+    }
+    fn start_fixture(animator: &mut Animator, nodes: &[Node]) -> VehicleMotion {
+        let mut world = IDENTITY;
+        world[12..15].copy_from_slice(&[50., 20., 50.]);
+        animator
+            .begin(
+                crate::wreck::Kind::Front,
+                animator.current.clone(),
+                world,
+                nodes,
+            )
+            .unwrap();
+        VehicleMotion {
+            world,
+            linear_velocity: [0.; 3],
+            local_angular_velocity: [0.; 3],
+        }
+    }
+    #[test]
+    fn water_only_contact_activates_rider_and_requests_swimming() {
+        let (mut animator, nodes, terrain, materials) = fixture();
+        let vehicle = start_fixture(&mut animator, &nodes);
+        let water = water_fixture();
+        animator
+            .step_with_water(
+                1. / 60.,
+                vehicle,
+                &nodes,
+                &terrain,
+                &materials,
+                Some(&water),
+            )
+            .unwrap();
+        let frame = animator.frame().unwrap();
+        assert_eq!(frame.phase, Phase::Water);
+        assert_eq!(animator.pending_clip, Some(13));
+        assert!(frame.grounded && frame.water_touching && animator.integration_active);
+        assert_eq!(frame.contact_count, 0);
+        assert_eq!(frame.static_contact_count, 0);
+        assert_eq!(frame.water_contact_count, 8); //four points, two substeps
+        //The attached→water detach resets velocity to the vehicle's velocity
+        //after this frame's water integration; its position still rose.
+        assert_eq!(frame.linear_velocity, [0.; 3]);
+        assert!(frame.origin[1] > 20.);
+        assert!(frame.linear_velocity.into_iter().all(f32::is_finite));
+        animator
+            .step_with_water(
+                1. / 60.,
+                vehicle,
+                &nodes,
+                &terrain,
+                &materials,
+                Some(&water),
+            )
+            .unwrap();
+        let frame = animator.frame().unwrap();
+        assert_eq!(frame.clip, "Swim");
+        assert!(frame.linear_velocity[1] > 0.);
+        assert!(frame.linear_velocity.into_iter().all(f32::is_finite));
+        //Recovery clears the frame latch; existing dry wrapper keeps the
+        //source swimming phase until solid contact but applies no water.
+        animator
+            .step(1. / 60., vehicle, &nodes, &terrain, &materials)
+            .unwrap();
+        let frame = animator.frame().unwrap();
+        assert_eq!(frame.phase, Phase::Water);
+        assert!(!frame.water_touching && !frame.grounded);
+        assert_eq!(frame.water_contact_count, 0);
+        animator.reset();
+        assert!(!animator.water_touching);
+    }
+    #[test]
+    fn dry_field_matches_the_existing_no_water_path() {
+        let (mut dry, nodes, terrain, materials) = fixture();
+        let (mut old, _, _, _) = fixture();
+        let vehicle = start_fixture(&mut dry, &nodes);
+        start_fixture(&mut old, &nodes);
+        let mut water = water_fixture();
+        water.definition.surface.base_height = -100.;
+        for _ in 0..120 {
+            dry.step_with_water(
+                1. / 60.,
+                vehicle,
+                &nodes,
+                &terrain,
+                &materials,
+                Some(&water),
+            )
+            .unwrap();
+            old.step(1. / 60., vehicle, &nodes, &terrain, &materials)
+                .unwrap();
+            let dry = dry.frame().unwrap();
+            let old = old.frame().unwrap();
+            assert_eq!(dry.phase, old.phase);
+            assert_eq!(dry.clip, old.clip);
+            assert_eq!(dry.time, old.time);
+            assert_eq!(dry.world_matrix, old.world_matrix);
+            assert_eq!(dry.linear_velocity, old.linear_velocity);
+            assert_eq!(dry.center_of_mass, old.center_of_mass);
+            assert_eq!(dry.grounded, old.grounded);
+            assert_eq!(dry.contact_count, old.contact_count);
+            assert_eq!(dry.water_contact_count, 0);
+        }
+    }
+    #[test]
+    fn detached_phase_priorities_match_native_last_substep_flags() {
+        for (phase, solid, water, expected) in [
+            (Phase::Air, true, true, Phase::Ground),
+            (Phase::Air, false, true, Phase::Water),
+            (Phase::Ground, true, true, Phase::Water),
+            (Phase::Ground, false, false, Phase::Ground),
+            (Phase::Water, true, true, Phase::Ground),
+            (Phase::Water, false, false, Phase::Water),
+        ] {
+            assert_eq!(detached_contact_phase(phase, solid, water), expected);
+        }
     }
     #[test]
     fn separation_keeps_model_axes_and_has_no_gravity_until_detachment() {

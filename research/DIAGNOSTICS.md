@@ -41,3 +41,6 @@ regression threshold, **not** original-game parity or acceptable final clearance
 Only recorded riding frames are measured; inter-frame extrema and wreck bodies
 require their own checks. Private assets, traces and screenshots remain outside
 Git and CI.
+
+
+Public release `0f074b4558f864ea4e4a8103b017b60e102c6690` (CI `38202065109`) passed the diagnostics suite for F3 repeat handling, Pause selection, persistence, actual telemetry, desktop/portrait bounds and pointer transparency. The public clean preload landing check also passed with Debug enabled. The inspected public portrait screenshot remains in ignored storage; its headless FPS is not a physical-device result. HTTPS verification matched 26 authored files and 308 served runtime/gallery objects before the new verification entry.

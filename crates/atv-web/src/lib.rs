@@ -43,6 +43,9 @@ struct Simulation {
     obstacle_rays: Option<std::rc::Rc<atv_core::collision::CollisionRayTree>>,
     obstacle_meshes: Vec<std::rc::Rc<atv_core::collision::CollisionMesh>>,
     obstacles: Option<Vec<atv_core::obstacle::StaticObstacle>>,
+    boundary_config: Option<atv_core::boundary_launch::Config>,
+    crowd_present: bool,
+    water: Option<atv_core::water_animation::LiveField>,
     camera: Option<atv_core::camera::FollowCamera>,
     wreck_camera: Option<atv_core::camera::WreckCamera>,
     hud: atv_core::hud::State,
@@ -276,6 +279,9 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 sim.obstacle_rays = None;
                 sim.obstacle_meshes.clear();
                 sim.obstacles = None;
+                sim.boundary_config = None;
+                sim.crowd_present = false;
+                sim.water = None;
             }
             21 => {
                 let physics = PhysicsData::parse(input)?;
@@ -315,6 +321,9 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 )?;
                 vehicle
                     .enable_wrecks(sim.physics.as_ref().ok_or("load original physics first")?)?;
+                if let Some(config) = sim.boundary_config {
+                    vehicle.set_boundary(config, sim.crowd_present)?;
+                }
                 vehicle.set_linkage(
                     sim.quad_pose
                         .as_ref()
@@ -323,6 +332,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 );
                 if let Some(wreck) = &mut sim.wreck_animator {
                     wreck.reset();
+                    wreck.set_boundary_flight(false);
                     wreck.set_static_obstacles(sim.obstacles.clone().unwrap_or_default());
                 }
                 vehicle.set_materials(
@@ -394,6 +404,9 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 };
                 let terrain = sim.terrain.as_ref().ok_or("load original terrain first")?;
                 let dt = json_number(&value, "dt")?;
+                if dt <= 0. || dt > 0.1 {
+                    return Err("invalid simulation time step".into());
+                }
                 let intent = raw
                     .get("touch_drive")
                     .filter(|v| !v.is_null())
@@ -440,7 +453,17 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 vehicle.set_stunt_landing_safe(safe);
                 vehicle.set_rider_mode(sim.rider_mode);
                 vehicle.set_forced_landing(forced_landing);
-                let frame = vehicle.step(terrain, input, dt)?;
+                let wreck = sim
+                    .wreck_animator
+                    .as_mut()
+                    .ok_or("load original wreck animations first")?;
+                if let Some(water) = &mut sim.water {
+                    water.advance(dt)?;
+                }
+                let frame =
+                    vehicle.step_with_scene(terrain, input, dt, sim.water.as_ref(), || {
+                        wreck.boundary_random_words()
+                    })?;
                 if let Some(input) = &mut sim.resolved_input {
                     let (throttle, brake, reverse) = vehicle.applied_drive_controls();
                     input["throttle"] = serde_json::json!(throttle);
@@ -456,6 +479,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         .as_mut()
                         .ok_or("load original wreck animations first")?;
                     if !wreck.active() {
+                        wreck.set_boundary_flight(frame.boundary_launch.active);
                         wreck.begin(
                             frame.wreck.kind.ok_or("missing wreck kind")?,
                             sim.rider_animator
@@ -470,7 +494,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                             .ok_or("rider animator missing")?
                             .reset(nodes)?;
                     }
-                    wreck.step(
+                    wreck.step_with_water(
                         dt,
                         atv_core::wreck_animation::VehicleMotion {
                             world: vehicle_world(&frame),
@@ -480,10 +504,12 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         nodes,
                         terrain,
                         sim.materials.as_ref().ok_or("missing terrain materials")?,
+                        sim.water.as_ref(),
                     )?;
                     let grounded = wreck.frame().is_some_and(|f| f.grounded);
                     if vehicle.advance_wreck(dt, grounded)? {
                         wreck.reset();
+                        wreck.set_boundary_flight(false);
                         sim.rider_animator
                             .as_mut()
                             .ok_or("rider animator missing")?
@@ -495,6 +521,9 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         sim.rider_mode = None;
                     }
                     let frame = vehicle.frame();
+                    if let Some(water) = &mut sim.water {
+                        water.prepare_surface()?;
+                    }
                     update_hud(sim, &frame, dt)?;
                     return simulation_frame(sim, &frame);
                 }
@@ -538,6 +567,9 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         stunt,
                         json_number(&value, "dt")?,
                     )?);
+                }
+                if let Some(water) = &mut sim.water {
+                    water.prepare_surface()?;
                 }
                 update_hud(sim, &frame, dt)?;
                 return simulation_frame(sim, &frame);
@@ -848,7 +880,10 @@ fn obstacle_input(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             return serde_json::to_vec(&result).map_err(|e| e.to_string());
         }
         let source: serde_json::Value = serde_json::from_slice(input).map_err(|e| e.to_string())?;
-        let placements = source.as_array().ok_or("collision placements need an array")?;
+        let placements = source.as_array().or_else(|| source.get("placements").and_then(serde_json::Value::as_array)).ok_or("collision placements need an array")?;
+        let boundary_config: Option<atv_core::boundary_launch::Config> = source.get("boundary_launch").filter(|v| !v.is_null()).map(|v| serde_json::from_value(v.clone()).map_err(|e| e.to_string())).transpose()?;
+        if let Some(config) = boundary_config { config.outside([0.; 3], false)?; }
+        let crowd_present = source.get("crowd_present").map(|v| v.as_bool().ok_or("invalid crowd flag")).transpose()?.unwrap_or(false);
         if placements.len() > 4096 { return Err("too many collision placements".into()); }
         let mut obstacles = Vec::with_capacity(placements.len());
         for placement in placements {
@@ -865,6 +900,8 @@ fn obstacle_input(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         }
         let result = serde_json::json!({"instances":obstacles.len(),"meshes":sim.obstacle_meshes.len()});
         sim.obstacles = Some(obstacles);
+        sim.boundary_config = boundary_config;
+        sim.crowd_present = crowd_present;
         sim.vehicle = None;
         serde_json::to_vec(&result).map_err(|e| e.to_string())
     })
@@ -927,6 +964,39 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
     }
     if op == 50 {
         return simulation_batch(input);
+    }
+    if op == 64 {
+        let resource = Resource::parse(input)?;
+        let member = resource
+            .members
+            .get(index)
+            .ok_or("water member index out of range")?;
+        let (directory, filename) = member
+            .name
+            .rsplit_once('/')
+            .ok_or("water resource has no directory")?;
+        if !filename.to_ascii_lowercase().ends_with(".wtt") {
+            return Err("water resource must be WTT".into());
+        }
+        let definition = atv_core::water_animation::Definition::parse(&resource.extract(index)?)?;
+        let field = atv_core::water_animation::LiveField::new(
+            definition,
+            &format!("{directory}/Sigs"),
+            |path| {
+                let index = resource
+                    .members
+                    .iter()
+                    .position(|member| member.name.eq_ignore_ascii_case(path))
+                    .ok_or_else(|| format!("missing water height resource {path}"))?;
+                resource.extract(index)
+            },
+        )?;
+        let result = serde_json::to_vec(&serde_json::json!({"signature_channels":field.waves.len(), "base_height":field.definition.surface.base_height})).map_err(|e| e.to_string())?;
+        SIMULATION.with_borrow_mut(|sim| {
+            sim.water = Some(field);
+            sim.vehicle = None;
+        });
+        return Ok(result);
     }
     if (48..=49).contains(&op) {
         return obstacle_input(input, op, index);

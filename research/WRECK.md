@@ -343,3 +343,17 @@ and the stop-response kernel are hooks in this dispatch check. Report:
 `private/reports/wreck/wheel-stop-query-validation.json`. This establishes setup
 and dispatch gates; it does not establish coupled incline/landing gameplay parity
 or prove that a deeply clipped quad can recover from an already invalid state.
+
+## Boundary launch connection
+
+The original map-edge branch forces the random wreck path and temporarily raises
+both quad and rider speed limits. Its verified thresholds, launch velocity,
+vegetation-query timing, RNG endpoint fallthrough and recovery obligations are
+recorded in [boundary launch evidence](BOUNDARY_LAUNCH.md). The rider Animator
+exposes consecutive launch-related RNG words and a boundary speed-limit setter.
+Vehicle/WASM now share those four draws, connect the limit and launch helpers,
+and permit terrain-projected recovery candidates during boundary flight. The
+acceptance helper matches432 native wrappers; checkpoint invocation remains the
+port's per-outer-update cadence with the original virtual caller still
+unverified. Vegetation clearance and complete launch/camera equivalence remain
+separate work.

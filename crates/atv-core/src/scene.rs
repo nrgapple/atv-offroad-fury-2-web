@@ -33,12 +33,15 @@ pub struct Scene {
     pub start_position: [f32; 3],
     pub start_direction: [f32; 3],
     pub cube_file: String,
+    pub water_file: Option<String>,
     pub lights: Vec<Light>,
     pub fog_color: [f32; 3],
     pub models: Vec<StaticModel>,
     pub collision_models: Vec<CollisionModel>,
     /// Original single-region static partition dimensions from Environment.
     pub collision_partition: Option<crate::scene_partition::Config>,
+    pub boundary_launch: Option<crate::boundary_launch::Config>,
+    pub crowd_present: bool,
 }
 fn value<'a>(data: &'a PhysicsData, section: &str, key: &str) -> Option<&'a str> {
     data.entries
@@ -86,6 +89,42 @@ fn boolean(data: &PhysicsData, section: &str, key: &str, default: bool) -> Resul
         Some("F" | "False" | "0") => Ok(false),
         Some(_) => Err(format!("unsupported scene boolean {key}")),
     }
+}
+///001421b0/00141fc0 accepts legacy boolean words before its numeric path.
+/// Shipped scenes use F/T. Only zero/nonzero is consumed by the boundary gate.
+fn crowd_present(data: &PhysicsData) -> bool {
+    let Some(text) = value(data, "Sounds", "CrowdPresent") else {
+        return false;
+    };
+    match text.as_bytes().first().map(u8::to_ascii_uppercase) {
+        Some(b'T' | b'Y') => return true,
+        Some(b'F' | b'N') => return false,
+        _ => {}
+    }
+    if text.eq_ignore_ascii_case("ON") {
+        return true;
+    }
+    if text.eq_ignore_ascii_case("OFF") {
+        return false;
+    }
+    let text = text.trim_start();
+    let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
+    let (digits, radix) = if let Some(hex) = digits
+        .strip_prefix("0x")
+        .or_else(|| digits.strip_prefix("0X"))
+    {
+        (hex, 16)
+    } else if let Some(octal) = digits.strip_prefix('0') {
+        (octal, 8)
+    } else {
+        (digits, 10)
+    };
+    // Stop at the first non-digit, as strtol(base0) does, without unbounded
+    // integer accumulation. Numeric overflow still denotes a nonzero value.
+    digits
+        .chars()
+        .map_while(|c| c.to_digit(radix))
+        .any(|d| d != 0)
 }
 fn color(data: &PhysicsData, section: &str) -> Result<[f32; 3]> {
     let color = required_vector(data, section, "ColorRGB")?;
@@ -138,6 +177,35 @@ fn collision_partition(data: &PhysicsData) -> Result<Option<crate::scene_partiti
         cell_size: number("MinDivisionSize", 96.)?,
     };
     crate::scene_partition::StaticPartition::new(config, &[])?;
+    Ok(Some(config))
+}
+
+fn boundary_launch(data: &PhysicsData) -> Result<Option<crate::boundary_launch::Config>> {
+    let keys = [
+        "TerrainWidth",
+        "TerrainBreadth",
+        "TerrainWidthScale",
+        "TerrainBreadthScale",
+    ];
+    if keys
+        .iter()
+        .all(|key| value(data, "Environment", key).is_none())
+    {
+        return Ok(None);
+    }
+    let number = |key| -> Result<f32> {
+        value(data, "Environment", key)
+            .ok_or_else(|| format!("missing boundary terrain {key}"))?
+            .parse()
+            .map_err(|_| format!("invalid boundary terrain {key}"))
+    };
+    let config = crate::boundary_launch::Config {
+        terrain_width: number(keys[0])?,
+        terrain_breadth: number(keys[1])?,
+        width_scale: number(keys[2])?,
+        breadth_scale: number(keys[3])?,
+    };
+    config.outside([0.; 3], false)?;
     Ok(Some(config))
 }
 
@@ -391,15 +459,41 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
         start_direction,
         cube_file,
         lights,
+        water_file: value(&data, "Environment", "WaterFile").map(str::to_owned),
         fog_color: color(&data, "Fog")?,
         models,
         collision_models,
         collision_partition: collision_partition(&data)?,
+        boundary_launch: boundary_launch(&data)?,
+        crowd_present: crowd_present(&data),
     })
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn boundary_metadata_retains_scaled_dimensions_and_original_crowd_words() {
+        let source = SOURCE.replace("CubeFile=sample.cub", "CubeFile=sample.cub\nTerrainWidth=4\nTerrainBreadth=5\nTerrainWidthScale=4.5\nTerrainBreadthScale=4.5");
+        for (word, expected) in [
+            ("F", false),
+            ("t", true),
+            ("Yes", true),
+            ("No", false),
+            ("on", true),
+            ("OFF", false),
+            ("0", false),
+            ("-2", true),
+            ("0x10", true),
+            ("010", true),
+        ] {
+            let scene =
+                parse(format!("{source}\n[Sounds]\nCrowdPresent={word}\n").as_bytes()).unwrap();
+            assert_eq!(scene.crowd_present, expected);
+            let boundary = scene.boundary_launch.unwrap();
+            assert!(!boundary.outside([495., 0., 5265.], false).unwrap());
+            assert!(boundary.outside([4114., 0., 500.], false).unwrap());
+        }
+    }
     #[test]
     fn collision_grid_uses_environment_dimensions_border_and_explicit_overrides() {
         assert!(

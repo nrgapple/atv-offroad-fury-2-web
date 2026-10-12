@@ -71,6 +71,9 @@ pub struct VehicleFrame {
     pub preload_strength: f32,
     pub wheelie_active: bool,
     pub wreck: crate::wreck::State,
+    pub boundary_launch: crate::boundary_launch::State,
+    pub skip_vegetation_query: bool,
+    pub water_height: f32,
     pub landing_action: Option<crate::rider_pose::Landing>,
     pub reset_count: u32,
 }
@@ -126,6 +129,12 @@ pub struct Vehicle {
     wreck_physics: Option<WreckPhysics>,
     normal_contact: ContactConfig,
     wreck: crate::wreck::State,
+    boundary_config: Option<crate::boundary_launch::Config>,
+    extended_boundary: bool,
+    boundary_launch: crate::boundary_launch::State,
+    skip_vegetation_query: bool,
+    boundary_random: crate::engine_audio::OriginalRandom,
+    water_height: f32,
     landing_action: Option<crate::rider_pose::Landing>,
     stunt_landing_safe: bool,
     stunt_state_four: bool,
@@ -302,6 +311,12 @@ impl Vehicle {
             wreck_physics: None,
             normal_contact: ContactConfig::from_physics(data)?,
             wreck: crate::wreck::State::default(),
+            boundary_config: None,
+            extended_boundary: false,
+            boundary_launch: crate::boundary_launch::State::default(),
+            skip_vegetation_query: false,
+            boundary_random: crate::engine_audio::OriginalRandom::with_seed(1),
+            water_height: -256.,
             landing_action: None,
             stunt_landing_safe: true,
             stunt_state_four: false,
@@ -336,6 +351,21 @@ impl Vehicle {
     }
     pub fn set_stunt_landing_safe(&mut self, safe: bool) {
         self.stunt_landing_safe = safe;
+    }
+    /// The current browser game is native mode11. CrowdPresent selects the
+    /// extended boundary; native mode6 will also select it when that mode exists.
+    pub fn set_boundary(
+        &mut self,
+        config: crate::boundary_launch::Config,
+        extended: bool,
+    ) -> Result<()> {
+        config.outside([0.; 3], extended)?;
+        if self.wreck_physics.is_none() {
+            return Err("boundary launch requires original wreck configuration".into());
+        }
+        self.boundary_config = Some(config);
+        self.extended_boundary = extended;
+        Ok(())
     }
     ///001e7940 reads the rider's previously selected mode. Only the main stunt
     /// phase (4), not its held extension (5), limits airborne rider control.
@@ -387,6 +417,9 @@ impl Vehicle {
             return Ok(false);
         }
         self.body_config.center_of_mass = self.base_center;
+        self.body_config.max_speed_squared = crate::boundary_launch::NORMAL_MAX_SPEED_SQUARED;
+        self.boundary_launch.reset();
+        self.skip_vegetation_query = false;
         self.body = BodyState::new(
             self.reset_origin,
             [
@@ -520,6 +553,9 @@ impl Vehicle {
             preload_strength: self.rider_state.preload_strength,
             wheelie_active: self.rider_state.wheelie_active,
             wreck: self.wreck,
+            boundary_launch: self.boundary_launch,
+            skip_vegetation_query: self.skip_vegetation_query,
+            water_height: self.water_height,
             landing_action: self.landing_action,
             reset_count: self.reset_count,
         }
@@ -552,6 +588,32 @@ impl Vehicle {
         terrain: &Terrain,
         input: VehicleInput,
         dt: f32,
+    ) -> Result<VehicleFrame> {
+        let mut random = self.boundary_random;
+        let result = self.step_with_boundary_random(terrain, input, dt, || {
+            std::array::from_fn(|_| random.next_u31())
+        });
+        self.boundary_random = random;
+        result
+    }
+    /// The browser shares the wreck animator's local RNG so edge spin, random
+    /// separation and later detached clips consume one consecutive stream.
+    pub fn step_with_boundary_random(
+        &mut self,
+        terrain: &Terrain,
+        input: VehicleInput,
+        dt: f32,
+        random: impl FnMut() -> [u32; 4],
+    ) -> Result<VehicleFrame> {
+        self.step_with_scene(terrain, input, dt, None, random)
+    }
+    pub fn step_with_scene(
+        &mut self,
+        terrain: &Terrain,
+        input: VehicleInput,
+        dt: f32,
+        water: Option<&crate::water_animation::LiveField>,
+        mut random: impl FnMut() -> [u32; 4],
     ) -> Result<VehicleFrame> {
         if ![
             dt,
@@ -1014,6 +1076,27 @@ impl Vehicle {
             self.body.center = add(self.body.center, corrections.translation);
             elapsed += step;
         }
+        //001e5260 runs edge launch after physics and before impact/wreck gates.
+        // Query bit0 excludes vegetation expansion, not terrain/static objects.
+        if self.boundary_launch.tick(dt, true)? {
+            self.skip_vegetation_query = false;
+        }
+        if !self.boundary_launch.active
+            && self.wreck.phase == crate::wreck::Phase::Riding
+            && let Some(config) = self.boundary_config
+            && config.outside(self.body.origin(&self.body_config), self.extended_boundary)?
+        {
+            let words = random();
+            let launch =
+                config.launch(self.body.origin(&self.body_config), [words[0], words[1]])?;
+            let kind = crate::boundary_launch::random_wreck_kind([words[2], words[3]])?;
+            self.body.linear_velocity = launch.linear_velocity;
+            self.body.local_angular_velocity = launch.local_angular_velocity;
+            self.body_config.max_speed_squared = crate::boundary_launch::LAUNCH_MAX_SPEED_SQUARED;
+            self.boundary_launch.begin();
+            self.skip_vegetation_query = true;
+            self.begin_wreck(kind);
+        }
         for i in 0..4 {
             self.suspension[i].visual_position(
                 self.suspension_config,
@@ -1026,57 +1109,72 @@ impl Vehicle {
             inverse_transform(self.body.basis(), self.body.linear_velocity)[1],
             dt,
         )?;
-        if !crashed {
-            if let Some(config) = &self.wreck_physics {
-                let angles = rider_control::body_angles(self.body.orientation, f32::atan2);
-                let local_impact = inverse_transform(self.body.basis(), impact);
-                let landing_candidate = config.landing.evaluate(local_impact, 1.0);
-                let rider_contact = crate::wreck::rider_height_allowed(
-                    crate::wreck::rider_height_contact(
-                        self.chassis_contact_count + self.obstacle_contact_count > 0,
-                        obstacle_contacts.first().map(|contact| contact.local_end),
-                    ),
-                    self.rider_contact_cooldown,
-                    landing_candidate.is_some(),
-                );
-                if let Some(kind) = config.rules.evaluate(crate::wreck::Input {
-                    local_impact,
-                    vertical_limit_scale: 1.0,
-                    pitch: angles[0],
-                    roll: angles[2],
-                    wheel_contact: self.contacts.iter().any(|c| c.grounded),
-                    body_contact: self.chassis_contact_count + self.obstacle_contact_count > 0,
-                    rider_contact,
-                    forward_speed: inverse_transform(self.body.basis(), self.body.linear_velocity)
-                        [2],
-                    stunt_landing_safe: self.stunt_landing_safe,
-                }) {
-                    self.begin_wreck(kind);
-                } else {
-                    self.landing_action = landing_candidate;
-                }
+        if self.wreck.phase == crate::wreck::Phase::Riding
+            && let Some(config) = &self.wreck_physics
+        {
+            let angles = rider_control::body_angles(self.body.orientation, f32::atan2);
+            let local_impact = inverse_transform(self.body.basis(), impact);
+            let landing_candidate = config.landing.evaluate(local_impact, 1.0);
+            let rider_contact = crate::wreck::rider_height_allowed(
+                crate::wreck::rider_height_contact(
+                    self.chassis_contact_count + self.obstacle_contact_count > 0,
+                    obstacle_contacts.first().map(|contact| contact.local_end),
+                ),
+                self.rider_contact_cooldown,
+                landing_candidate.is_some(),
+            );
+            if let Some(kind) = config.rules.evaluate(crate::wreck::Input {
+                local_impact,
+                vertical_limit_scale: 1.0,
+                pitch: angles[0],
+                roll: angles[2],
+                wheel_contact: self.contacts.iter().any(|c| c.grounded),
+                body_contact: self.chassis_contact_count + self.obstacle_contact_count > 0,
+                rider_contact,
+                forward_speed: inverse_transform(self.body.basis(), self.body.linear_velocity)[2],
+                stunt_landing_safe: self.stunt_landing_safe,
+            }) {
+                self.begin_wreck(kind);
+            } else {
+                self.landing_action = landing_candidate;
             }
-            // Recovered checkpoint gates: all wheels down and body-up >0.8.
-            // The original water/category gates are still separate. Preserve
-            // the eight horizontal clearance rays and downward platform support ray.
-            if self.wreck.phase == crate::wreck::Phase::Riding
-                && self.contacts.iter().all(|c| c.grounded)
-                && self.body.basis()[1][1] >= 0.8
-                && self.obstacle_contact_count == 0
-            {
-                let origin = self.body.origin(&self.body_config);
+        }
+        //001ea4d0 permits a terrain-projected boundary checkpoint during flight.
+        // Keep the port's outer-update sampling cadence; the original virtual
+        // caller's complete scheduling is still being recovered separately.
+        let origin = self.body.origin(&self.body_config);
+        if let Some(ground) = terrain.contact(origin[0], origin[2])? {
+            let (candidate, allowed) = crate::boundary_launch::checkpoint_candidate(
+                origin,
+                crate::boundary_launch::CheckpointGates {
+                    boundary_flight: self.boundary_launch.active,
+                    player_kind_two: false,
+                    forced: false,
+                    all_wheels_grounded: self.contacts.iter().all(|c| c.grounded),
+                    wrecked: self.wreck.phase != crate::wreck::Phase::Riding,
+                    body_up_y: self.body.basis()[1][1],
+                    terrain_height: ground.height,
+                    water_height: self.water_height,
+                },
+            )?;
+            if allowed {
                 let forward = self.body.basis()[2];
                 let yaw = forward[0].atan2(forward[2]);
                 let support = if self.wreck_physics.is_some() {
-                    crate::wreck::checkpoint_static_support(origin, yaw, &self.obstacles)?
+                    crate::wreck::checkpoint_static_support(candidate, yaw, &self.obstacles)?
                 } else {
-                    Some(origin)
+                    Some(candidate)
                 };
                 if let Some(support) = support {
                     self.reset_origin = support;
                     self.reset_yaw = yaw;
                 }
             }
+        }
+        //001e5260 caches the current point's dynamic water height late in the
+        // outer update. Earlier gates read the preceding update's cached value.
+        if let Some(field) = water {
+            self.water_height = field.height(self.body.origin(&self.body_config), false)?;
         }
         if let Some(linkage) = &self.linkage {
             let matrices = linkage.sample(
@@ -1094,6 +1192,106 @@ impl Vehicle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn boundary_flight_replaces_motion_once_and_restores_limits_on_recovery() {
+        let (mut vehicle, terrain) = fixture();
+        enable_test_wrecks(&mut vehicle);
+        let config = crate::boundary_launch::Config {
+            terrain_width: 4.,
+            terrain_breadth: 4.,
+            width_scale: 1.,
+            breadth_scale: 1.,
+        };
+        vehicle.set_boundary(config, false).unwrap();
+        vehicle.body =
+            BodyState::new([100., 100., 500.], [1., 0., 0., 0.], &vehicle.body_config).unwrap();
+        vehicle.body.linear_velocity = [-50., -10., 0.];
+        let mut draws = 0;
+        let frame = vehicle
+            .step_with_boundary_random(&terrain, VehicleInput::default(), 1. / 60., || {
+                draws += 1;
+                [0, 0, 0, 0]
+            })
+            .unwrap();
+        let expected = config.launch(frame.origin, [0, 0]).unwrap();
+        assert_eq!(frame.linear_velocity, expected.linear_velocity);
+        assert_eq!(
+            frame.local_angular_velocity,
+            expected.local_angular_velocity
+        );
+        assert!(
+            frame.origin[0] < 100.,
+            "outward physics must precede launch"
+        );
+        assert!(frame.origin[1] < 100., "launch must not teleport the body");
+        assert_eq!(frame.wreck.phase, crate::wreck::Phase::Falling);
+        assert_eq!(frame.wreck.kind, Some(crate::wreck::Kind::Front));
+        assert!(frame.boundary_launch.active && frame.skip_vegetation_query);
+        assert_eq!(frame.boundary_launch.elapsed, 0.);
+        assert_eq!(
+            vehicle.body_config.max_speed_squared,
+            crate::boundary_launch::LAUNCH_MAX_SPEED_SQUARED
+        );
+        for _ in 0..61 {
+            vehicle
+                .step_with_boundary_random(&terrain, VehicleInput::default(), 1. / 60., || {
+                    draws += 1;
+                    [0; 4]
+                })
+                .unwrap();
+        }
+        assert_eq!(
+            draws, 1,
+            "active boundary flight must not draw or launch again"
+        );
+        assert!(vehicle.frame().boundary_launch.active);
+        assert!(!vehicle.frame().skip_vegetation_query);
+        for _ in 0..600 {
+            if vehicle.advance_wreck(1. / 60., true).unwrap() {
+                break;
+            }
+        }
+        assert_eq!(vehicle.frame().reset_count, 1);
+        assert!(
+            vehicle.frame().origin[0] > frame.origin[0] + 50.,
+            "boundary recovery must follow the inward flight, not the old edge checkpoint"
+        );
+        assert_eq!(
+            vehicle.frame().origin[1],
+            0.,
+            "boundary checkpoint projects onto the dry terrain"
+        );
+        assert!(!vehicle.frame().boundary_launch.active);
+        assert_eq!(
+            vehicle.body_config.max_speed_squared,
+            crate::boundary_launch::NORMAL_MAX_SPEED_SQUARED
+        );
+    }
+    #[test]
+    fn crowd_boundary_allows_the_original_extended_margin() {
+        let (mut vehicle, terrain) = fixture();
+        enable_test_wrecks(&mut vehicle);
+        vehicle
+            .set_boundary(
+                crate::boundary_launch::Config {
+                    terrain_width: 4.,
+                    terrain_breadth: 4.,
+                    width_scale: 1.,
+                    breadth_scale: 1.,
+                },
+                true,
+            )
+            .unwrap();
+        vehicle.body =
+            BodyState::new([100., 100., 500.], [1., 0., 0., 0.], &vehicle.body_config).unwrap();
+        let frame = vehicle
+            .step_with_boundary_random(&terrain, VehicleInput::default(), 1. / 60., || {
+                panic!("inside extended bounds")
+            })
+            .unwrap();
+        assert!(!frame.boundary_launch.active);
+        assert_eq!(frame.wreck.phase, crate::wreck::Phase::Riding);
+    }
     #[test]
     fn reverse_chord_uses_cached_contact_speed_and_retains_brakes_during_landing() {
         for (cached_speed, forced, independent_brake, expected_reverse) in [

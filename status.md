@@ -9,7 +9,7 @@ Priority order: wrecks/recovery, stunts, ATV/rider animation, HUD,
 terrain/static collisions, terrain detail/LOD, original vegetation placements.
 Full parity remains the goal; component checks do not establish whole-game parity.
 
-Latest public gate: metadata4e1c575ee0e7bcdee85530f917e42cc8470cdf3e (CI38201082282), gameplayc0810ab92bb1529a8558a7edaf83d72a558495b2 (CI38200640787), both successful. Public wreck/clean-landing/all-eight-map tests passed; 25 static hashes and306 served runtime/gallery objects verified (58log entries,53screenshots). Public measured landing overlap is now0.4792ft; the user issue is improved, not fully solved.
+Latest public gate: `0f074b4558f864ea4e4a8103b017b60e102c6690` (CI `38202065109`, success). Public F3/Pause diagnostics, persistent mode, portrait layout and pointer transparency; immediate right-press throttle/touch cancellation; and Debug-enabled clean preload landing passed. HTTPS verification matched 26 static files and 308 runtime/gallery objects (60 entries, 55 screenshots before the new verification entry). Headless FPS is not a phone benchmark; residual tire overlap remains. Boundary launch is not part of this verified release.
 
 Latest user steering: ATV clips into terrain on landing and turning across
 inclined sides. The missing original four-point suspension travel-stop actor is
@@ -76,10 +76,13 @@ Host HUD, original Nac Nac failure/separation/recovery and clean ramp landing pa
 
 Handling checkpoint verified on host: all eight environments load and move without JS/GL errors; real-touch clean landing and failed Nac Nac → separation/contact/recovery/driving pass; remapped keyboard/controller bindings, native chord input, lifecycle cancellation and stale-preload replay pass. Core183 + WASM2 tests, strict workspace Clippy,31 JS tests,10 release tests, Worker tests, setup validation and Python syntax pass. Review corrected preservation of cached rear speed across recovery. Publishing this authored checkpoint through existing main CI next; no public verification claim yet. Remaining original-world collision order/categories, water and camera object clearance continue after checkpoint; full parity remains unfinished.
 
-Host checkpoint ready for publication: immediate primary right-touch throttle and
+Public checkpoint verified as 0f074b4: immediate primary right-touch throttle and
 back-drag brake/reverse; F3/permanent Pause Stats control; existing live physics
 diagnostics in portrait and desktop; native forward-axis suspension attenuation
 correction. Browser diagnostics/touch/landing/wreck routes, geometric clearance,
 Rust workspace, Clippy, formatting, JS and release checks pass. Remaining landing
 overlap is0.4971ft in this trace. Boundary and dynamic water components are being
 validated separately and are not connected to the published runtime yet.
+
+
+Host boundary follow-up: a normal ENV04 keyboard drive now passes edge crossing, inward/upward launch, rider separation and recovery about 1,379 feet inward. The regression requires more than 100 feet of inward return, one launch, query-flag clearing after the strict one-second gate and cleared recovery fields. This is not public yet; checkpoint callback cadence, vegetation collision coverage and full RNG/gameplay parity remain unverified. Host integration gates now pass touch Nac Nac → wreck/separation/ground/recovery/driving, clean preload landing with Debug, and F3/Pause persistence at desktop and portrait sizes; workspace 218 core + 2 WASM tests and strict Clippy pass. Map coverage comes from two runs: ENV01–04 passed before an undiagnosed ENV05 startup timeout; a fresh ENV05–08 run passed. Wet ENV04/05/07/08 load four live dynamic signature channels and finite changing heights; dry maps have a null field and cached -256 sentinel. Visible water surfaces and wakes remain absent, and complete water/rider parity is unclaimed. This build is host-verified and pending public release. See research/BOUNDARY_LAUNCH.md.

@@ -106,6 +106,9 @@ async function terrainFromContent(file, files, token, environment = "env01") {
   const modeIndex = entries.findIndex(entry => memberNamed(entry, `${environment}fr.toy`));
   const mode = modeIndex < 0 ? null : decoder.decode(await codec(3, resource, modeIndex));
   const sceneMetadata = await command(60, { scene: decoder.decode(await codec(3, resource, sceneIndex)), mode });
+  const waterIndex = sceneMetadata.water_file ? entries.findIndex(entry => memberNamed(entry, sceneMetadata.water_file.toLowerCase())) : -1;
+  if (sceneMetadata.water_file && waterIndex < 0) throw new Error('Original water definition is missing.');
+  const water = waterIndex < 0 ? null : { resource, index: waterIndex };
   const cameraIndex = entries.findIndex(entry => entry.name.split(/[\\/]/).at(-1).toLowerCase() === 'followcampresets.pb');
   if (cameraIndex < 0) throw new Error('Original camera presets are missing.');
   const cameraPresets = await codec(3, resource, cameraIndex);
@@ -222,7 +225,7 @@ async function terrainFromContent(file, files, token, environment = "env01") {
     if (!collisionMeshes.has(name)) collisionMeshes.set(name, await codec(3, resource, collisionIndex));
     collisionPlacements.push({ ...placement, name });
   }
-  return { bytes, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
+  return { bytes, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
 }
 async function baseTextures(mesh, materialArchive, materialEntries, cache = new Map()) {
   const findMaterial = name => materialEntries.findIndex(entry => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase());
@@ -784,12 +787,16 @@ async function startSimulation(source) {
   simReady = false; simFrame = undefined; cameraFrame = undefined; simAccumulator = 0; simGeneration++;
   if (!source.physics) return;
   await codec(20, source.bytes); await codec(21, source.physics); await codec(22, source.meshBytes); await codec(26, source.toy);
+  diagnostics.water = source.water ? await json(64, source.water.resource, source.water.index) : null;
   diagnostics.chassis = await json(44, source.chassis);
   const actor = await json(48, source.actorRays, 0), collisionIds = new Map();
   for (const [name, bytes] of source.collisions.meshes) {
     try { collisionIds.set(name, (await json(48, bytes, 1)).mesh); } catch (error) { throw new Error(`${name}: ${error.message}`); }
   }
-  const obstacles = await command(49, source.collisions.placements.map(placement => ({ mesh: collisionIds.get(placement.name), world_matrix: placement.world_matrix })));
+  const obstacles = await command(49, {
+    placements: source.collisions.placements.map(placement => ({ mesh: collisionIds.get(placement.name), world_matrix: placement.world_matrix })),
+    boundary_launch: source.world.metadata.boundary_launch, crowd_present: source.world.metadata.crowd_present,
+  });
   diagnostics.obstacles = { ...obstacles, rays: actor.rays };
   simStart = { origin: source.scene.position, yaw: source.scene.yaw };
   acceptFrame(await command(23, simStart));

@@ -8,8 +8,11 @@ The original selects one complete set of contact points based on speed, samples
 water height at each world point, caps penetration depth, and applies a spring
 and velocity damping force. Angular point velocity contributes to both force and
 ripple strength. Translational drag is applied once when any point is submerged.
-The rider's tuning comes from its constructor at `001ee090`; ATV tuning remains
-separate. Callers supply the original displaced surface heights and point sets.
+The rider's tuning comes from its constructor at `001ee090`. The recovered direct
+call graph has no other constructor/configuration caller for this buoyancy actor;
+no matching ATV buoyancy actor appears in `001dd830`. Do not apply the rider's
+float response to the ATV. Callers supply displaced heights and original point
+bindings.
 
 A private instruction interpreter executed 300 varied configurations and contact
 sets through the actual source routines: 192,299 instructions, with bit-identical
@@ -63,8 +66,8 @@ Their authored bases are 114.409/128/149.5/119.5 feet, respectively. All four WT
 use 0.75-foot base swell and period 1.5, and include animated/scrolling signature
 height maps. Native `00188680` advances elapsed time and computes sine of
 `elapsed / period` after angle wrapping; the period is a divisor in radians,
-not an invented full-cycle duration. Source sine-table backend, wave initialization,
-scroll/frame update, ripple propagation, runtime resource delivery and rendering
+not an invented full-cycle duration. The source sine-polynomial backend and one-frame signature initialization/update
+are now recovered below. Ripple propagation, live actor binding and rendering
 remain separate integration work. A flat-plane fallback is not a parity implementation.
 
 Rider update `001ef690` runs gravity, water response, then solid contacts during
@@ -75,3 +78,135 @@ wreck recovery grounded gate when live integration is added.
 
 Native inputs, source textures, original exports and result files remain in ignored
 `work/priority-water/` and `private/reports/`; no game content was added to source.
+
+
+## Staged dynamic surface for the connected scenes
+
+`water_animation` now provides a runtime-byte constructor and stateful height
+field. `Definition::parse` reads the WTT profile and
+`required_height_resources` returns its deduplicated raw height PST names.
+`LiveField::new` requires every required texture; it rejects unsupported animated
+frame profiles and nonzero wake/base-map contributions rather than replacing
+those fields with a flat plane. All four currently connected water WTTs explicitly
+use one-frame height maps, zero `WakeScale`, and zero `WaterHeightRange`.
+Those two zero scales make evolving ripple grids and the base displacement map
+irrelevant to **these physics height queries**, while their render effects remain
+separate work. The field now has live caller APIs for the connected scene profiles; browser checkpoint verification is reported separately.
+
+Each authored channel-zero wave expands into separate `HeightNeg` and `HeightPos`
+channels; bump-only waves omit both. `00198ca0` multiplies authored height scale
+by sixteen. Native `0030a9c0`/`0030acb0` starts the bitmap dimension at one;
+`00197410` then divides the initialized scrolling rates by the loaded bitmap
+width. Thus stored rate is `(VelocityX * widthX) / bitmapWidth`, likewise Z.
+It is not the authored VelocityX used directly as feet per second.
+`0030af00` advances time and signed `fmod` scrolling. `00197f10` separately
+publishes the height sampling origin as authored position plus scrolling during
+render preparation. The height query uses the last completed preparation's
+origin, while the current frame's water base swell is already updated.
+
+`001ab180` is a binary32 sine polynomial through the fifteenth power, with seven
+coefficients and a fixed multiplication/addition order. `SwellState::advance`
+implements the original elapsed/period division, signed remainder and angle
+wrapping, then the polynomial. No sine lookup table or host sine substitution is
+needed. The base-swell period remains a radians divisor, not a full-cycle duration.
+
+The source bitmap binding is also established. `00159f00` reads the stored
+8/16/32/64/128-pixel levels into indices 4/3/2/1/0, and stores the largest width
+as the base bitmap dimension. `0015d150`, the getter used by the water field,
+returns index-zero pixels and the base stride. `00197410` sets `DAT_00404868=0`
+while loading signatures, disabling the texture swizzle in `0015a340`.
+Therefore physics uses the largest level's unmodified raw palette-index bytes,
+not the smallest stored mip or displayed palette colors.
+
+The FR runtime archives already transported for ENV04/05/07/08 contain
+`tracks/env0N/env0N.wtt` and the two required textures:
+`tracks/env0N/Sigs/wave0000HeightNeg.pst` and
+`tracks/env0N/Sigs/wave0000HeightPos.pst`. Each PST is 22,940 bytes and supplies
+128 by 128 raw height pixels. Multiple authored waves reuse this pair.
+Look up resource member names case-insensitively; no new public source-code
+asset files or flat-plane metadata are required.
+
+Validation executes 480 complete staged surface frames from the actual four
+WTT/PST profiles: 11,520 composed height queries and 5,002,596 original
+instructions. It runs `00188680`/`001ab180`, `0018d760`/`00198080`/`0030af00`,
+`00197f10`, and `00199cd0`/`00192090`, checking both prior and newly prepared
+origins. Every queried height, swell state, scroll and published origin matches
+Rust binary32 results. Graphics emission, bitmap access and the libc remainder
+service are hooked at their service boundaries. Shared signature blend-clock
+provenance remains unresolved; this fixture supplies its zero-initialized value,
+and live scope explicitly requires one-frame signatures with authored fps zero.
+This is a dynamic **surface** replay, not a complete vehicle/water replay.
+
+Independent checks execute 600 varied wave updates (35,513 instructions), 600
+swell branches including the complete original polynomial (60,630), and 500
+wave constructors/bitmap-rate normalizers (104,000). All compared state values
+match Rust. The original PST loader/pixel-copy/getter executes another 1,158
+instructions for the positive and negative textures, verifying largest-mip
+binding and all 32,768 raw pixels. Targeted tests and strict core Clippy pass.
+
+Live integration should advance this shared field once per original outer frame,
+let the ATV and detached rider query it during their updates, then publish
+signature origins during the completed render-preparation phase. A vehicle
+recovery/reset must preserve the shared scene's swell/scroll clocks; loading a
+new scene constructs a fresh field. Keep terrain-solid and water-touching flags
+separate. The rider `+44` water actor runs before its solid solver and feeds the
+recovery contact latch. ATV `001e5260` stores water height in `+900` late in the
+outer update, so its earlier submerged tests read the previous outer value.
+Its `+994`/`+99c` effect categories become eight for a grounded corresponding
+front wheel when origin Y is strictly below cached height minus 0.5; this does
+not write the wheel's physical terrain material byte. The deeper cached-height
+minus-three test drives engine/audio state. The detached rider bindings and response are described below. Live water rendering remains separate work, and boundary/checkpoint gates require their own actor verification.
+
+
+## Detached rider water contacts
+
+`Animator::step_with_water` accepts an optional shared `LiveField`, preserving
+`step` as the existing no-water wrapper. `002d7dc0` registers four low-list
+water points on **UprTorso**, in this order: `[+x,0.5,+0.3]`,
+`[-x,0.5,-0.3]`, `[+x,0.5,-0.3]`, `[-x,0.5,+0.3]`, where x has binary32
+bits `0x3eb95810`. The high-speed point list is empty, so `0033dd90` selects
+these same four low-list points even above its speed threshold. The thirteen
+solid contacts remain a separate list and supply the bounds-based body center.
+
+The source global initializer `00451470` executes 32 instructions with no
+hooks, writing flow `[0,0,0,1]` at `004b84c0` and up `[0,1,0,1]` at
+`004b84e0`. XYZ therefore yields zero current and vertical buoyancy.
+The constructor is present in the contiguous static initializer pointer list
+at `004518f0`; these vectors are not guessed from the BSS zero state.
+
+Within every at-most-1/90-second substep, `001ef690` runs gravity (except
+while attached), then the water actor, then the solid contact solver, then the
+body integrator. Each water point samples the dynamic field and applies the
+already validated `0033dd90` force kernel. Any water or solid touch activates
+the detached body and latches the current outer frame's recovery contact flag.
+`Frame::grounded` exposes that latch; `water_touching` exposes the **last**
+substep's water flag, and `water_contact_count` counts point touches across the
+outer frame. Solid contact counts remain independent. Final linear damping
+runs only when the last substep has solid contacts, not for water-only contact.
+
+`001ee990` uses phase-specific last-substep priorities: attached prioritizes
+water over solid; airborne prioritizes solid over water; ground enters swimming
+on water contact; swimming enters ground on solid contact. A dry swimming frame
+retains its swimming phase. Swimming selects the original `Swim` motion, and
+its one-entry clip table still consumes one random word. Attached-to-water
+entry uses the ordinary no-motion detach path, including its three angular
+random draws and velocity reset, after the current frame's body integration.
+Clip requests are consumed on the next outer animation step.
+
+Native setup and phase-dispatch probes execute 3,084 instructions, proving the
+four offsets/node bindings/list layout and all sixteen phase/solid/water
+combinations. Another 64 original `001ef690` sequences execute 29,088
+instructions, proving dispatch order, substep sizes, body activation, recovery
+latch, last-water flag and solid-only damping. Allocation, node lookup,
+animation/resource loading, RNG services and actor kernels are hooks in these
+dispatch proofs. The force kernel's earlier 300-case instruction comparison and
+the dynamic height query replay remain independent proofs; this is **not** a
+complete instruction replay of coupled animation, buoyancy and solid collision.
+
+Integrated regressions use a synthetic varying signature to check water-only
+body activation, recovery contact, swimming entry and finite buoyancy, with no
+solid hits. A dry supplied field matches the old no-water path for 120 frames.
+Phase priorities and dry/reset flag lifecycle are also covered. Connected
+profiles have authored `WakeScale=0`, so the unconnected ripple-injection visual
+service cannot alter these physics heights. No rider buoyancy is applied to the
+ATV, and visible water/wakes remain separate rendering work.

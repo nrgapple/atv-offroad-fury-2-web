@@ -991,9 +991,55 @@
       "limitation": "This is host verification, not a public release or whole-game parity. Wreck frames are excluded from the tire-clearance measurement. The recovered boundary-launch path is not yet live.",
       "image": "/devlog-images/the-wheel-terrain-gate-now-uses-the-recovered-forward--ae5cd7c8.png",
       "caption": "Inspected host clean-landing capture with Debug enabled after the forward-axis correction. Measured tire overlap still reaches about half a foot."
+    },
+    {
+      "id": "public-stats-and-press-to-drive-touch-controls-pass-th-06c1ff89",
+      "timestamp": "2026-10-12T04:06:39.781987+00:00",
+      "recorded_at": "2026-10-12T04:09:47.521803+00:00",
+      "kind": "verification",
+      "title": "Public Stats and press-to-drive touch controls pass their checks",
+      "summary": "The public game now offers persistent Performance and Debug stats through F3 or Pause, and immediate throttle from a primary right-thumb press. Public portrait diagnostics, touch behavior and clean preload landing checks pass.",
+      "details": [
+        "Release 0f074b4558f864ea4e4a8103b017b60e102c6690 passed CI 38202065109. Public diagnostics checked hotkey repeat, persistence, actual render/WASM telemetry, layout and pointer transparency; the touch suite checked press-to-drive and cancellation behavior.",
+        "Public HTTPS verification matched 26 authored static files and 308 served runtime/gallery objects, with 60 existing log entries and 55 screenshots before this new entry. The approved R2 upload separately covered 309 objects and 273,828,250 bytes.",
+        "The public clean preload takeoff and landing test passed with Debug enabled. The displayed FPS comes from a headless browser; it is not a physical phone benchmark."
+      ],
+      "limitation": "Residual tire overlap remains, and complete handling parity and physical-device behavior are unproven. Boundary launch is being integrated separately and is not part of this verified release.",
+      "image": "/devlog-images/public-stats-and-press-to-drive-touch-controls-pass-th-06c1ff89.png",
+      "caption": "Inspected public portrait Debug capture with measured render/WASM timings and contact state. Headless FPS is not a phone benchmark."
+    },
+    {
+      "id": "crossing-the-map-edge-launches-the-quad-back-inward-8aa6fe92",
+      "timestamp": "2026-10-12T04:25:44.120112+00:00",
+      "recorded_at": "2026-10-12T04:27:10.542575+00:00",
+      "kind": "build",
+      "title": "Crossing the map edge launches the quad back inward",
+      "summary": "The host ENV04 keyboard drive now crosses the recovered boundary, launches upward and inward, separates the rider and recovers well inside the map. This fixes the measured return to an old edge checkpoint.",
+      "details": [
+        "The observed launch velocity was approximately 21.51, 112.15, -169.11 feet per second. Recovery occurred about 1,379 feet inward from the launch, rather than at the previous edge checkpoint.",
+        "The host browser regression passed one launch, airborne rider separation, the strict one-second query-flag clearing gate, recovery/reset fields and a recovery location more than 100 feet inward. The inspected screenshot shows the actual boundary flight with Debug enabled.",
+        "The implementation uses recovered boundary predicates, velocity writes, wreck selection and recovery checkpoint acceptance. It launches the quad rather than teleporting it; ordinary terrain and static contacts remain eligible."
+      ],
+      "limitation": "This is host-only verification; the last verified public release remains 0f074b4. Original checkpoint callback cadence, vegetation collision coverage, shared RNG ordering and whole-game boundary/camera parity remain unverified. Water loading and torso-contact integration are still under validation and are not claimed complete here.",
+      "image": "/devlog-images/crossing-the-map-edge-launches-the-quad-back-inward-8aa6fe92.png",
+      "caption": "Inspected host ENV04 capture during the inward boundary launch, with airborne quad and live Debug state. Headless FPS is not a physical-device benchmark."
+    },
+    {
+      "id": "boundary-and-dynamic-water-height-integration-pass-hos-4d15db85",
+      "timestamp": "2026-10-12T04:34:23.684321+00:00",
+      "recorded_at": "2026-10-12T04:34:23.684321+00:00",
+      "kind": "verification",
+      "title": "Boundary and dynamic water-height integration pass host checks",
+      "summary": "The pending host boundary build passes clean landing, wreck recovery and persistent diagnostics checks. All eight maps were verified across two browser runs; water-height fields are connected, while visible water and wakes remain absent.",
+      "details": [
+        "The first map run passed ENV01\u2013ENV04, then timed out starting ENV05 without a diagnosed cause. A fresh ENV05\u2013ENV08 run passed; this is coverage across two runs, not a single uninterrupted eight-map pass.",
+        "Wet maps ENV04/05/07/08 load four live dynamic signature channels with finite changing heights. Dry maps have no water field and retain the cached -256 sentinel. This verifies height connection, not complete water behavior or rendered surfaces.",
+        "Host touch Nac Nac \u2192 wreck \u2192 separation \u2192 ground contact \u2192 recovery \u2192 driving, clean preload takeoff/landing with Debug, and F3/Pause persistence at desktop and portrait sizes passed. The workspace passed 218 core and two WASM tests and strict Clippy."
+      ],
+      "limitation": "These changes remain host-only and are ready for a coherent release gate, not yet a verified public release. Visible water surfaces/wakes, complete rider-water behavior, original callback cadence, vegetation collision and full RNG/gameplay parity remain incomplete or unverified."
     }
   ],
-  "updated_at": "2026-10-12T03:59:54.020901+00:00",
+  "updated_at": "2026-10-12T04:34:23.684321+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

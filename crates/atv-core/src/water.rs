@@ -64,7 +64,8 @@ impl Config {
             drag,
         })
     }
-    /// Rider constructor001ee090; the ATV supplies its own PHY tuning.
+    /// Rider constructor001ee090. No generic ATV buoyancy actor is registered
+    /// by the recovered quad constructor; do not reuse these forces on the ATV.
     pub fn rider(mass: f32) -> Result<Self> {
         Self::new(
             mass,

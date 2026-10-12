@@ -1,6 +1,7 @@
 //! Exact-build format recovery. No game data or executable code is embedded.
 pub mod animation;
 pub mod audio;
+pub mod boundary_launch;
 pub mod browser_input;
 pub mod camera;
 pub mod collision;
@@ -33,6 +34,7 @@ pub mod stunt_score;
 pub mod terrain;
 pub mod texture;
 pub mod water;
+pub mod water_animation;
 pub mod water_surface;
 
 pub type Result<T> = std::result::Result<T, String>;
