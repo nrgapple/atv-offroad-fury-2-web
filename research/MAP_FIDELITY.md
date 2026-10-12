@@ -165,11 +165,20 @@ behavior, nor replay the complete GS/VU pipeline.
 The updated Vancouver desktop and 390px gate draws all 78 placements with zero
 skipped groups. Both traces report 43 colliders, 123 wheel-support frames, 31
 body-contact frames, takeoff at step 19, later ground contact, drag-light
-animation and unlocked menu access. `make check` passes 308 core tests, 22
-network tests, 11 relay tests, 3 bridge tests and 66 JavaScript tests. The wider
-all-nine-map, material and frontend regression is still running. This remains a
-host-only candidate; fog, lighting/lens effects, LOD, shadows and weather are not
-covered by this checkpoint.
+animation and unlocked menu access. The nine-map browser regression passes
+ENV01–ENV08 and FREE05 with terrain following, batched vegetation and no
+unsupported meshes or JS/GL errors. The four-map material regression passes with
+2,488 contributing rain pixels, 73,978 lava, 6,329 waterflow and 115,571
+ski-jump pixels, including source colors, UV motion, pause and context retention.
+The frontend route passes title/menu/controller/touch/pause, Tioga drive and
+Caribou reload without a disc picker or browser errors.
+
+`make check` passes 308 core tests, 22 network tests, 11 relay tests, 3 bridge
+tests and 66 JavaScript tests. `make verify`, `make web`, 17 release tests, 6
+Worker tests, source hygiene and `git diff --check` pass. The host reflection
+integration gate is complete. It remains unpublished and absent from the public
+f585991 release; public release is pending PR9 integration. Fog, lighting/lens
+effects, LOD, shadows and weather are not covered by this checkpoint.
 
 ## Remaining fidelity gates
 

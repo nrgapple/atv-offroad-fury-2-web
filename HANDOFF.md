@@ -39,9 +39,14 @@ transforms: 2,304 GPU comparisons across 5,376 interpreted instructions, with
 maximum UV difference 7.152557373046875e-7. The test supplies a pre-normalized
 finite local view direction and does not emulate PS2 accumulators, reciprocal
 behavior or the full pipeline. `make check` passes 308 core tests, 22 network
-tests, 11 relay tests, 3 bridge tests and 66 JavaScript tests; broader all-nine-map,
-materials and frontend runs are still pending. The candidate is host-only and not
-in public commit f585991; see
+tests, 11 relay tests, 3 bridge tests and 66 JavaScript tests. `make verify`,
+`make web`, 17 release tests and 6 Worker tests also pass. All nine maps pass
+terrain-following/vegetation checks; material tests report 2,488 rain, 73,978
+lava, 6,329 waterflow and 115,571 ski-jump contributing pixels with pause/context
+retention. Original menu/controller/touch/pause routes, Tioga drive and Caribou
+reload pass without a disc prompt or browser errors. The host regression is
+complete, but this candidate remains unpublished pending PR9 integration and is
+not in public commit f585991; see
 [map-fidelity evidence](research/MAP_FIDELITY.md). Keep the public Vancouver
 checkpoint and the separate multiplayer lane intact.
 
