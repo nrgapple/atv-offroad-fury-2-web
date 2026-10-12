@@ -215,12 +215,24 @@ zero JS/GL errors. `make check` passes 309 core, 22 network, 11 relay, 3 bridge
 and 66 JavaScript tests; `make verify`, `make web`, 17 release tests, 6 Worker
 tests and source hygiene pass.
 
-This is a host-only integration result and is absent from the current public
-`cef26f4` release (and historical f585991 predecessor). The packing validation does not establish a full
+This is a host-only integration result and is absent from current public
+`a4d3003` (CI `38309959773`) and historical releases `cef26f4` and `f585991`.
+The packing validation does not establish a full
 native VU or PS2 pipeline. Terrain/water GS precision, water reflection/froth,
 source-specific program precision, active-view overrides, weather callbacks,
 lighting, shadows, lens effects and LOD remain open. The inspected ENV04 image
 is a host candidate capture, not a public-build or PS2 framebuffer comparison.
+
+The combined current-main host gate also passes multiplayer integration checks.
+Two-client FREE05 and copied-link-pair routes draw 13 remote models. Four
+actual clients each render three remote quads/riders in 39 draws with three
+voices; all four movement drivers pass, and host departure clears remote
+models/voices. Cancellation during map loading passes. Timing was measured in
+one Mac headless Metal synthetic-focus run, so it does not establish physical
+device or Internet performance. Fog/reflection remain host-only candidates;
+this result does not add them to public `a4d3003`. The combined check passes 309
+core, 25 network, 3 relay, 12 bridge and 68 JavaScript tests, plus 17 release
+tests, 6 Worker tests, verify, web and source hygiene.
 
 ## Remaining fidelity gates
 

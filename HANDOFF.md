@@ -73,8 +73,16 @@ web, 17 release and 6 Worker tests. The disassembler's SUB broadcast label was
 corrected against execution: SUBAz writes ACC; the reflection XYZ comparisons
 are unchanged because the tested operation wrote W only.
 
-This remains unpublished host work and is absent from the current public
-`cef26f4` release (and its historical f585991 predecessor). Terrain and
+This remains unpublished host work and is absent from current public
+`a4d3003` (CI `38309959773`), as well as the historical `cef26f4` and `f585991`
+releases. The integrated multiplayer host checks also pass: two-client
+FREE05/link-pair routes draw 13 remote models; four actual clients each render
+three remotes in 39 draws with three voices, and every movement driver passes.
+Host departure clears remote models and voices; cancellation during map loading
+passes. Timing was measured in one Mac headless Metal synthetic-focus run and
+does not establish device or Internet performance. The combined gate passes
+309 core, 25 network, 3 relay, 12 bridge and 68 JavaScript tests, plus 17
+release tests, 6 Worker tests, verify, web and hygiene checks. Terrain and
 water GS precision, water reflection/froth, source-specific program precision,
 active-view overrides, weather callbacks, lighting, shadows, lens effects and
 LOD remain open. The host ENV04 screenshot in the dev log is not a public-build
