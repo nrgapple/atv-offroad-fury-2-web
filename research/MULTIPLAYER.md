@@ -34,21 +34,21 @@ cannot promise instant remote response or remove Internet latency. WebSockets
 also retain TCP head-of-line blocking. Datagram/WebRTC transport and host/server
 physics reconciliation remain later options once actual measurements justify them.
 
-The full 27-node ATV plus male18/female27 poses encode to 2,520/2,988 bytes. At the
+The full 27-node ATV plus male 18/female 27 poses encode to 2,520/2,988 bytes. At the
 20Hz target that is 50.4/59.76kB/s per sender before protocol/TLS overhead. Four
-participants can receive about179.28kB/s with three female peers. Browser transport
-drops unsent snapshots when buffered data reaches32KiB, allows one outstanding
-snapshot/presentation request and bounds incoming work to64 messages. It never
+participants can receive about 179.28 kB/s with three female peers. Browser transport
+drops unsent snapshots when buffered data reaches 32 KiB, allows one outstanding
+snapshot/presentation request and bounds incoming work to 64 messages. It never
 queues old drive inputs or PCM. Rust handles decoder bounds and server identity;
 browser JavaScript is socket, DOM/WebGL and Web Audio API glue.
 
 ## Models and sound
 
-The garage exposes all26 original in-race quads with their own PHY, AO/AR collision,
+The garage exposes all 26 original in-race quads with their own PHY, AO/AR collision,
 mechanical linkage and material resources, plus the male/female mesh and matching
 78-motion catalogs. This is a browser selection adaptation; original unlock/profile
-rules are not reconstructed. Exact25 labels and unlistedATV06 are documented in
-[model evidence](MULTIPLAYER_MODELS.md). The existing port's defaultATV01 is retained.
+rules are not reconstructed. Exact 25 labels and unlisted ATV06 are documented in
+[model evidence](MULTIPLAYER_MODELS.md). The existing port's default ATV01 is retained.
 
 Remote actors use separate GPU geometry/texture ownership and sender node poses,
 including the detached rider's independent world transform during a wreck. Audio
@@ -63,7 +63,7 @@ presets and original PS2 rendering/animation parity remain unverified.
 
 Pure protocol tests use synthetic malformed/bounded packets and clock/sequence
 rollover, quaternion/shear reconstruction, discontinuities and stale handling.
-Native private-resource probes cover all26 quads and both rigs'3,276 sampled poses.
+Native private-resource probes cover all 26 quads and both rigs’ 3,276 sampled poses.
 Rust adapter tests cover roster/model authority, pose lifetime and silent rendering.
 Browser bridge tests cover asynchronous session isolation, backpressure, cleanup,
 pause and audio lifecycle. Opt-in `tools/test_multiplayer_relay.mjs` exercises the

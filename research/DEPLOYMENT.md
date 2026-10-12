@@ -524,3 +524,28 @@ loading/driving covers 1,875 scene instances with zero unsupported meshes/JS/GL
 errors; normal menu/controller/Tioga/Controls and 390px Caribou reload pass with
 no disc picker. The four public train collision cases retain the same lift,
 launch and wreck/recovery results. See research/RAILS.md for evidence limits.
+
+
+## Deep water and Caribou ramp coverage (2026-10-12)
+
+Public main `b9a3a448d6d19103d63be8e6ec530974297b1870` succeeds in CI
+[38292520844](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38292520844)
+after PR #5 from the isolated water/snow branch. The current-main artifact and
+public deployment identity match. R2 validates 344 approved objects and uploads
+only two changes (inspected host snow PNG and gallery metadata); original runtime
+content is unchanged. HTTPS verification matches 30 authored files and 343 served
+objects, with 103 entries and 90 screenshots before the verification note. An
+initial object fetch has a transient connection reset; the complete retry passes.
+
+Public deep-water routes on ENV04/05/07 consume the original five-second clock
+and reset to a dry bank; ENV08 exercises shallower depth/wave clock clearing.
+All four wet maps show water-only rider buoyancy/Swim/recovery, also at 390px on
+ENV04. All six Caribou ramp/ski placements supply wheel/body contacts in 24
+desktop/390px approaches; the clean ramp launch/landing reaches 35.631ft/s upward.
+The existing authored collision geometry requires no added shape or offset.
+
+Public clean landing, Nac Nac wreck/recovery/driving, normal title/menu/controller
+and mobile map routes without disc selection, diagnostics persistence/layout,
+uninterrupted all-eight-map driving and dev-log filters pass without JS/GL errors.
+These are bounded original-resource routes and component proofs, not complete
+PS2/gameplay/physical-phone parity. See [water/snow evidence](WATER_SNOW_GATE.md).

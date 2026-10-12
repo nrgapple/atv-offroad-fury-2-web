@@ -1,6 +1,6 @@
 {
-  "status": "Host multiplayer lobby, two-browser driving, remote wreck presentation and spatial audio integration gates pass; current-main CI and public release are pending. The browser port remains incomplete.",
-  "working_on": "Complete the multiplayer protocol/integration handoff and release verification while continuing the other active gameplay and terrain/rendering lanes. Preserve the original single-player baseline and do not imply racing or authority parity.",
+  "status": "Water recovery and snow-ramp collision are publicly verified. The multiplayer lobby, two-browser driving, remote wreck presentation and spatial audio pass host integration checks; multiplayer current-main CI and public verification are pending. The browser port remains incomplete.",
+  "working_on": "Complete multiplayer current-main integration and public verification while continuing water presentation and wakes, rendering detail, and the other active original gameplay lanes. Preserve the single-player baseline; racing and authority parity remain unverified.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1640,6 +1640,39 @@
       "caption": "Fresh public HTTPS Chromium capture at 390\u00d7844 showing the Mobile steering sensitivity default of 85% in Pause \u2192 Controls."
     },
     {
+      "id": "water-recovery-and-snow-ramp-collisions-d6c4d382",
+      "timestamp": "2026-10-12T18:27:31.082535+00:00",
+      "recorded_at": "2026-10-12T18:29:17.222589+00:00",
+      "kind": "verification",
+      "title": "Water recovery and snow ramp collisions",
+      "summary": "The authored browser port now handles the recovered deep-water timer reset and rider water recovery, while existing original snow-ramp geometry produces wheel and body contact across tested approach routes.",
+      "details": [
+        "The ATV counts down five seconds while its origin stays more than three feet below the preceding cached surface. Expiration returns it to its recovery point on the next update; shallower water restores the timer. No forced water wreck or ATV floating force was added.",
+        "Rider buoyancy, Swim state and water-only recovery passed with original resources on ENV04 desktop/390px and ENV05/07; ENV08 desktop/390px passed shallow-water clock gating and water-only Swim/recovery, without a deep-water timer expiry route.",
+        "Snow collision uses the existing original e01ramp and five snowski1 placements: 194 placed faces and 776 tree-ray hits. Twenty-four browser approach routes across desktop and 390px produced wheel/body contact. The direction -1 ramp route supported a clean approach, airborne interval and landing while remaining in Riding; the measured upward speed was 35.63 ft/s.",
+        "Verification also passed the four-map water suite, all eight map routes, clean landing, Nac Nac recovery, native 144-case/6,160-instruction water-timer comparison, Rust bit-exact comparison, 301 core tests, 2 WASM tests, strict Clippy, formatting, 45 JavaScript tests, 13 release tests, 4 Worker tests, make verify and source exclusions."
+      ],
+      "limitation": "Host-verified only; not yet public. This is a partial authored port, not full source replay or PS2 hardware parity. ENV08 was not driven deep enough to expire its timer, and water rendering/wake behavior remains incomplete.",
+      "image": "/devlog-images/water-recovery-and-snow-ramp-collisions-d6c4d382.png",
+      "caption": "Host capture: the ATV airborne above the original snow ramp during a normal gameplay-camera run. Water behavior was verified in separate browser routes; this image documents the snow collision portion."
+    },
+    {
+      "id": "water-and-snow-checkpoint-verified-publicly-5598dbb8",
+      "timestamp": "2026-10-12T18:49:05.236529+00:00",
+      "recorded_at": "2026-10-12T18:49:05.236529+00:00",
+      "kind": "verification",
+      "title": "Water and snow checkpoint verified publicly",
+      "summary": "The water-recovery and snow-ramp checkpoint is live on the public Cloudflare build. The deployed identity matches commit b9a3a448d6d19103d63be8e6ec530974297b1870, and the public asset and dev-log checks pass.",
+      "details": [
+        "CI 38292520844 succeeded and the automatic Cloudflare deployment identity matches the commit. R2 validation covered 344 objects and uploaded two approved changes: the snow screenshot and gallery metadata; no runtime content changed. Public HTTPS verification passed for 30 authored files and 343 served objects, including 103 dev-log entries and 90 screenshots before this entry.",
+        "Public source-derived water routes passed on all four maps. ENV04 desktop/390px, ENV05, ENV07, and ENV08 shallow-water checks passed; deep routes on ENV04/05/07 expired and reset at frames 348/349, 345/346, and 337/338. ENV08 remained shallow and did not expire. Water-only rider buoyancy, Swim state, and recovery produced positive upward speed of 1.63\u20132.04 ft/s.",
+        "Twenty-four snow-ramp approaches across desktop and 390px contacted wheels or body on all six original placements. The ramp route had a clean takeoff and landing with upward speed of 35.63 ft/s. Public normal-touch clean landing and Nac Nac recovery also passed.",
+        "The public route checks also passed title/menu/controller navigation, Tioga and Controls, 390px Caribou reload without a disc prompt, F3/Pause Stats persistence and 390px layout, uninterrupted driving on all eight maps, and desktop/mobile dev-log filters and evidence expansion, with zero JavaScript or WebGL errors.",
+        "The first public hash-verifier attempt encountered a transient connection reset; a fresh complete retry passed."
+      ],
+      "limitation": "This verifies the public authored port on bounded original-resource routes and native component comparisons. It does not establish full PS2 gameplay parity, full-game source replay, or physical-phone parity. Water wakes and rendering details remain incomplete. The attached screenshot on the previous host checkpoint remains a host capture; this public verification has no new screenshot."
+    },
+    {
       "id": "two-browser-riders-share-a-rust-freeride-lobby-host-ve-b4c5fcb9",
       "timestamp": "2026-10-12T18:52:48.915645+00:00",
       "recorded_at": "2026-10-12T18:54:58.728310+00:00",
@@ -1669,9 +1702,24 @@
         "Native model/animation probes cover all 26 ATV models and both 78-clip rider catalogs; see the multiplayer gate logs under work/multiplayer/."
       ],
       "limitation": "This is host-only component evidence. It does not establish physical iOS input, low-latency internet behavior, four physical players, race systems, player collision resolution, server-authoritative physics, full-game parity or a public release. Current-main CI, deployment and public browser verification remain to be completed."
+    },
+    {
+      "id": "combined-multiplayer-water-and-snow-gate-passes-on-hos-f8a1c011",
+      "timestamp": "2026-10-12T19:04:50.599541+00:00",
+      "recorded_at": "2026-10-12T19:04:50.599541+00:00",
+      "kind": "verification",
+      "title": "Combined multiplayer, water and snow gate passes on host",
+      "summary": "The combined host integration gate passes multiplayer lobby, two-browser riding, remote crash/audio, original water recovery and bounded snow-ramp collision checks alongside the project verification suites.",
+      "details": [
+        "Combined build checks pass 303 core, 22 network, 3 relay, 11 WASM and 66 JavaScript tests, plus 15 release and 5 Worker checks.",
+        "A touch-driven failed Nac Nac replicated across 133 guest frames through Riding, Airborne and Wreck: crash serial 0\u21921, 56 detached-rider frames and 14 original impact-audio frames with changing spatial pan.",
+        "Source-derived wet-map routes pass for ENV04, ENV05 and ENV07 deep-water timer/reset plus water-only Swim/recovery; ENV08 shallow-water route passes without expiration.",
+        "Twenty-four original snow-ramp routes pass across desktop and 390px, with wheel/body contacts in both directions on the tested ramp placements."
+      ],
+      "limitation": "Host-only combined verification. Current-main CI, public deployment and public browser verification for multiplayer are pending. The bounded routes do not establish physical iOS parity, fast-internet or four-player behavior, race modes, player collision, host-authoritative physics, or full-game parity."
     }
   ],
-  "updated_at": "2026-10-12T18:54:58.764583+00:00",
+  "updated_at": "2026-10-12T19:04:50.599541+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

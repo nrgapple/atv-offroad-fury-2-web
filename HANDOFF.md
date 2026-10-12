@@ -11,22 +11,22 @@ collision resolution or competitive race authority yet. See
 [network implementation](research/MULTIPLAYER.md), [original multiplayer evidence](research/MULTIPLAYER_ORIGINAL.md)
 and [model census](research/MULTIPLAYER_MODELS.md).
 
-The garage adds all26 recovered in-race quads with their own PHY/AO/AR/linkage
-resources, and male18/female27-node rigs with their matching78-motion catalogs.
+The garage adds all 26 recovered in-race quads with their own PHY/AO/AR/linkage
+resources, and male 18/female 27-node rigs with their matching 78-motion catalogs.
 Original unlock/profile rules are not reconstructed. Networking preserves source
 node shear and detached rider poses; state switches/teleports are discontinuities.
-Host departure closes the event. Protocol/relay component commits are4fa8ad0 and
+Host departure closes the event. Protocol/relay component commits are 4fa8ad0 and
 53a0db4; browser integration and public release identity follow at the completed
 release checkpoint. No source disc/executable/unused VUT or first-person arms enter
 GitHub or the runtime package.
 
-Host gates pass299core+22net+3relay+11WASM+66JS tests, strict formatting/Clippy,
-15release+5Worker checks and makeverify. Actual two-browser code/link admission,
+Initial host gates pass 299 core + 22 net + 3 relay + 11 WASM + 66 JS tests, strict formatting/Clippy,
+15 release + 5 Worker checks and make verify. Actual two-browser code/link admission,
 different models/rigs, remote movement, engine voices and host departure pass.
 A hardware Metal touch-driven failed Nac Nac replicates Riding/Airborne/Wreck,
 crash serial, independent rider separation, original impact audio and recovery;
 local RTT measurements do not establish Internet or physical-phone performance.
-The private native probe covers all26 quads and both rigs'3,276 sampled poses.
+The private native probe covers all 26 quads and both rigs’ 3,276 sampled poses.
 
 The checked CI artifact now includes the compiled Rust relay, deployed before the
 main app service binding. `/multiplayer/version` reports its configured checked
@@ -35,6 +35,37 @@ commit/WASM hash. Expanded required resources are staged separately in
 artifact using `upload_cloudflare_content.py --content`; public release still needs
 CI, R2 publication and production browser verification. Preserve other agents'
 water/snow and UI lanes while integrating current main.
+
+The combined merge against water/snow main cec8a6d passes 303 core, 22 net,
+3 relay, 11 WASM and 66 JS tests, plus 15 release/5 Worker checks. Serial
+host browser gates retain multiplayer touch-wreck replication, all four wet-map
+reset/Swim routes and 24 desktop/390px snow collision approaches.
+## Verified public water and Caribou collision checkpoint
+
+Main `b9a3a448d6d19103d63be8e6ec530974297b1870`, CI `38292520844` success,
+is public on Cloudflare after PR #5 from `feature/water-snow-collisions` in the
+separate managed worktree. The original five-second deep-water reset uses the
+preceding cached surface and retained checkpoint. Public ENV04/05/07 routes
+expire/reset at 348/349, 345/346 and 337/338 and return above water to the dry bank.
+ENV08's shallower route exercises countdown clearing without expiration. All
+four wet maps pass water-only rider buoyancy, Swim and recovery; ENV04 passes
+at desktop/390px. Existing Caribou ramp and all five ski colliders needed no
+new shape/offset: 776 per-face tree rays and 24 public desktop/390px approaches
+cover wheel/body response and clean ramp launch/landing at 35.631ft/s upward.
+
+Public HTTPS verification matches 30 authored files and 343 served objects,
+with 103 dev-log entries / 90 inspected screenshots before the verification note.
+R2 validates 344 objects and uploads only the new approved host snow PNG and
+gallery metadata; no runtime resource changes. A first hash fetch resets its
+connection; the complete retry passes. Public clean touch landing, Nac Nac
+wreck/recovery/driving, title/menu/controller/Tioga/Controls/390px Caribou reload
+without a disc prompt, F3/Pause Stats persistence and portrait fit, uninterrupted
+ENV01–08 driving and dev-log filters/expandable evidence pass without JS/GL errors.
+302 core + 2 WASM tests, 47 JS tests, strict Clippy/fmt, setup, 13 release/4 Worker
+checks pass. The snow screenshot is a host capture; no public capture is claimed.
+See [water/snow evidence and limits](research/WATER_SNOW_GATE.md). These bounded
+source-resource routes and component probes do not prove complete gameplay,
+render/wake fidelity, physical-phone behavior or PS2 hardware parity.
 
 ## Latest verified public rail checkpoint
 
