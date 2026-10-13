@@ -2707,9 +2707,39 @@
       "limitation": "Host verification only at this checkpoint. Contacts remain an authored equal-mass proxy, not the original PS2 pair solver. The limited live log sample does not establish the disconnect cause or rule out earlier errors. Public release and public browser checks follow CI.",
       "image": "/devlog-images/smaller-player-indicators-pause-music-and-contact-cras-a2dd69ff.png",
       "caption": "Inspected host browser at 390px: smaller white outlined player label, smooth red overhead arrow and a red minimap dot."
+    },
+    {
+      "id": "public-portrait-gps-capture-on-commit-0787b32-23c7204a",
+      "timestamp": "2026-10-13T20:15:09.790450+00:00",
+      "recorded_at": "2026-10-13T20:18:50.951778+00:00",
+      "kind": "verification",
+      "title": "Public portrait GPS capture on commit 0787b32",
+      "summary": "A current public 390×844 portrait ride shows the GPS minimap and original snow course together on the deployed 0787b32 build.",
+      "details": [
+        "Captured from https://furyremastered.com/play.html?drive=1 at a 390×844 CSS viewport and DPR 3 (1170×2532 PNG). The frame shows the north-up terrain GPS, 400 ft scale and speed footer; it is a ready-state still at 0 mph.",
+        "The existing tools/test_minimap.mjs public route passed in the same deployed build with no page errors. Its checks cover actual Rust GPS following, size and On/Off persistence through reload, pause/blur suppression, off-mode release, bounded update rate and graphics-context restoration."
+      ],
+      "limitation": "Automated host Chromium on a public deployment, with synthetic focus; the screenshot is stationary and does not establish physical-phone behavior or performance.",
+      "image": "/devlog-images/public-portrait-gps-capture-on-commit-0787b32-23c7204a.png",
+      "caption": "Public HTTPS browser capture of the current build at 390×844 CSS / DPR 3. The portrait view shows the course, recovered-terrain GPS, 400 ft scale and speed display; captured before throttle input."
+    },
+    {
+      "id": "public-desktop-env02-gps-course-capture-on-0787b32-647d7edc",
+      "timestamp": "2026-10-13T20:17:02.458731+00:00",
+      "recorded_at": "2026-10-13T20:18:56.362168+00:00",
+      "kind": "verification",
+      "title": "Public desktop ENV02 GPS course capture on 0787b32",
+      "summary": "A current public landscape ride captures the ATV moving through ENV02 with the terrain GPS visible.",
+      "details": [
+        "Captured from https://furyremastered.com/play.html?drive=1 at 960×540 after the public tools/test_maps.mjs ENV02 route passed. The route confirmed the original environment archive, terrain detail, vegetation, scenery meshes, finite driving state, GPS bounds and zero WebGL errors.",
+        "The image shows the ATV at 27 mph and the circular aerial GPS. Both furyremastered.com/deployment.json and the legacy workers.dev deployment.json returned 0787b32b505ce8edc5d98bbf719514fce57b4ed9 before and after the route."
+      ],
+      "limitation": "Automated host Chromium on the public build; this route verifies one environment and a bounded browser drive, not complete map rendering, PS2 parity or physical-device performance.",
+      "image": "/devlog-images/public-desktop-env02-gps-course-capture-on-0787b32-647d7edc.png",
+      "caption": "Public HTTPS landscape capture of ENV02 at 960×540. The ATV is moving at 27 mph with the recovered-terrain GPS visible; this is one browser course checkpoint, not a full-map fidelity claim."
     }
   ],
-  "updated_at": "2026-10-13T19:38:54.869743+00:00",
+  "updated_at": "2026-10-13T20:18:56.362168+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
