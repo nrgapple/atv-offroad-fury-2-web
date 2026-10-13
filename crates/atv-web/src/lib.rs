@@ -12,7 +12,9 @@ use atv_core::{
     vehicle::{Vehicle, VehicleInput},
 };
 use std::cell::RefCell;
+mod cpu;
 mod motorcycles;
+use cpu::CpuRacer;
 mod multiplayer;
 thread_local! { static MENU_RIDER: RefCell<Option<atv_core::menu_preview::Rider>> = const { RefCell::new(None) }; }
 
@@ -73,62 +75,6 @@ struct Simulation {
     race_course: Option<atv_core::race::Course>,
     race: Option<atv_core::race::Race>,
     cpu_racers: Vec<CpuRacer>,
-}
-struct CpuRacer {
-    vehicle: Vehicle,
-    driver: atv_core::race_ai::Driver,
-    rider: atv_core::rider_pose::Animator,
-}
-fn create_cpu_racer(
-    sim: &Simulation,
-    mut origin: [f32; 3],
-    yaw: f32,
-    index: usize,
-    difficulty: u32,
-) -> Result<CpuRacer> {
-    let terrain = sim.terrain.as_ref().ok_or("CPU terrain missing")?;
-    origin[1] = terrain
-        .contact(origin[0], origin[2])?
-        .ok_or("CPU grid outside terrain")?
-        .height
-        + 2.5;
-    let mut vehicle = Vehicle::new(
-        sim.mesh.as_ref().ok_or("CPU mesh missing")?,
-        sim.physics.as_ref().ok_or("CPU physics missing")?,
-        origin,
-        yaw,
-    )?;
-    vehicle.set_linkage(sim.quad_pose.as_ref().ok_or("CPU linkage missing")?.clone());
-    vehicle.set_materials(sim.materials.ok_or("CPU materials missing")?);
-    vehicle.set_chassis_points(sim.chassis_points.as_ref().ok_or("CPU chassis missing")?)?;
-    vehicle.set_obstacles(
-        sim.obstacle_rays
-            .as_ref()
-            .ok_or("CPU rays missing")?
-            .clone(),
-        sim.obstacles.as_ref().ok_or("CPU scenery missing")?.clone(),
-    )?;
-    if let Some(config) = sim.scene_partition {
-        vehicle.set_scene_partition(config, sim.ecosystem.as_ref(), terrain)?;
-    }
-    if let Some(scene) = vehicle.scene_collision_mut() {
-        scene.set_mud_obstacles(sim.mud_obstacles.clone())?;
-    }
-    let rider = sim
-        .rider_animator
-        .as_ref()
-        .ok_or("CPU rider motions missing")?
-        .fork_normal(
-            &sim.rider_mesh
-                .as_ref()
-                .ok_or("CPU rider mesh missing")?
-                .nodes,
-        )?;
-    Ok(CpuRacer {
-        vehicle,
-        rider,
-        driver: atv_core::race_ai::Driver::new(index, difficulty),
-    })
 }
 struct TrainCollisionBinding {
     car: usize,
@@ -1497,43 +1443,59 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
                         .as_ref()
                         .ok_or("CPU rider mesh missing")?
                         .nodes;
+                    let snapshots: Vec<_> = sim
+                        .cpu_racers
+                        .iter()
+                        .map(|cpu| {
+                            let frame = cpu.vehicle.frame();
+                            atv_core::cpu_avoidance::Peer {
+                                origin: frame.origin,
+                                velocity: frame.linear_velocity,
+                            }
+                        })
+                        .collect();
+                    let dynamic = sim
+                        .vehicle
+                        .as_ref()
+                        .and_then(|v| v.scene_collision())
+                        .map_or_else(Vec::new, |s| s.dynamic().to_vec());
+                    let world = cpu::World {
+                        terrain,
+                        nodes,
+                        materials: sim.materials.as_ref().ok_or("CPU materials missing")?,
+                        water: sim.water.as_ref(),
+                        dynamic: &dynamic,
+                    };
                     for (index, cpu) in sim.cpu_racers.iter_mut().enumerate() {
                         if race.opponents()[index].finished {
                             continue;
                         }
-                        let before = cpu.vehicle.frame();
-                        let height = terrain
-                            .contact(before.origin[0], before.origin[2])?
-                            .map_or(before.origin[1], |hit| hit.height);
-                        let (input, decisions) = cpu.driver.step(
+                        let peers: Vec<_> = std::iter::once(atv_core::cpu_avoidance::Peer {
+                            origin: player.origin,
+                            velocity: player.linear_velocity,
+                        })
+                        .chain(
+                            snapshots
+                                .iter()
+                                .enumerate()
+                                .filter(|(i, _)| *i != index)
+                                .map(|(_, p)| *p),
+                        )
+                        .collect();
+                        let (frame, physical, repositioned) = cpu.step(
                             &race.course,
-                            &before,
                             &player,
+                            &peers,
                             race.progress_difference(index),
-                            1. / 60.,
-                            before.origin[1] - height,
+                            &world,
                         )?;
-                        let frame = cpu.vehicle.step(terrain, input, 1. / 60.)?;
-                        let (_, pose) =
-                            cpu.rider
-                                .step(nodes, cpu.vehicle.rider_pose_input(), 1. / 60.)?;
                         let [w, x, y, z] = frame.orientation;
                         let cpu_yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
-                        let physical = atv_core::race::CpuPose {
-                            orientation: frame.orientation,
-                            speed: frame.speed,
-                            grounded: frame.grounded,
-                            wheel_compression: frame.wheel_compression,
-                            wheel_angles: frame.wheel_angles,
-                            quad_matrices: cpu
-                                .vehicle
-                                .linkage_matrices()
-                                .ok_or("CPU linkage not evaluated")?
-                                .to_vec(),
-                            rider_matrices: pose.world_matrices,
-                            decisions,
-                        };
-                        race.observe_cpu(index, frame.origin, cpu_yaw, Some(physical));
+                        if repositioned {
+                            race.reposition_cpu(index, frame.origin, cpu_yaw, Some(physical));
+                        } else {
+                            race.observe_cpu(index, frame.origin, cpu_yaw, Some(physical));
+                        }
                     }
                 }
                 let race_frame = race.frame(yaw);
@@ -1626,7 +1588,13 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
                     .iter()
                     .enumerate()
                     .map(|(index, cpu)| {
-                        create_cpu_racer(sim, cpu.origin, cpu.yaw, index, integer("difficulty")?)
+                        cpu::create_cpu_racer(
+                            sim,
+                            cpu.origin,
+                            cpu.yaw,
+                            index,
+                            integer("difficulty")?,
+                        )
                     })
                     .collect::<Result<Vec<_>>>()?
             };

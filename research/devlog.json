@@ -2251,9 +2251,25 @@
       "limitation": "Host verification only; no public deployment is claimed. This responsive browser treatment does not establish original menu timing or callback fidelity, physical iOS Safari behavior, or Bluetooth controller behavior.",
       "image": "/devlog-images/responsive-menu-transitions-and-shared-loading-present-3376f3b1.png",
       "caption": "Caribou Peak course loading in the responsive red/silver panel at 390\u00d7844, with recovered preview art, status, and animated progress."
+    },
+    {
+      "id": "original-atv-cpu-avoidance-wrecks-and-recovery-3349bcad",
+      "timestamp": "2026-10-13T05:18:49.338751+00:00",
+      "recorded_at": "2026-10-13T05:19:04.463086+00:00",
+      "kind": "verification",
+      "title": "Original ATV CPU avoidance, wrecks, and recovery",
+      "summary": "A host-only original ATV race checkpoint now combines the vehicle CPU solver with peer and scene avoidance, detached-rider wrecks, recovery, and resumed racing. A 65-second actual-race browser gate observed five natural wrecks and recoveries across three CPUs, with neutral controls during wreck and no reset distance or lap awards.",
+      "details": [
+        "The 65.082756-second all-batch browser probe recorded 3,905 actual frames per CPU. Three CPUs wrecked and recovered five times total, including original Vertical, Left and Back wreck kinds; detached original riders registered contact, wrecked CPUs held zero controls, and every crashed CPU resumed racing. No recovery awarded distance or laps.",
+        "All peer, plant and real-scene queries ran with finite vehicle, quad and rider matrices. CPU travel was 3,180.7\u20133,728.7 ft. Eight original stunt starts were observed: Cordova, Heel Clicker, Disco Can, Nothing, Point Back, No Footed Can Can and Suicide No Hander among the recorded starts.",
+        "The native finite-binary32 VU model matched 9,000 cases across 1,184,803 original instructions with zero bit mismatches, covering ordinary peers, plant response, ray attenuation and low-air feedback. Strict formatting/Clippy, make check, WASM, make verify, source hygiene, 346 core, 25 protocol, 3 relay, 13 bridge and 4 release-tool Rust tests, 69 JavaScript tests, 8 Worker tests and 29 release Python tests (one skipped) passed. Race quad and motorcycle route preview, mobile held-touch utilities, responsive UI, and pause in portrait and landscape passed without JS or GL errors."
+      ],
+      "limitation": "Host verification only; these changes are not a verified public release. The screenshot is pack context captured at 4.85 simulated seconds: three CPUs are visible ahead while all are riding; it does not show a wreck. The finite-binary32 VU model is not PS2 hardware validation or full AI parity. Rider-to-rider collision impulses, global RNG/actor ordering/math tables, original grid/progression/finish rules, roster-specific tuning, remaining AI flags, and jump/preload helpers remain incomplete.",
+      "image": "/devlog-images/original-atv-cpu-avoidance-wrecks-and-recovery-3349bcad.png",
+      "caption": "390\u00d7844 host race on combined build bb9d1bee at 4.85 simulated seconds: the player reaches 51 mph with three CPU riders visible ahead and another close by. This frame shows the pack, not a wreck; natural wreck and recovery are covered by the separate all-batch gate."
     }
   ],
-  "updated_at": "2026-10-13T04:42:47.231768+00:00",
+  "updated_at": "2026-10-13T05:19:04.463086+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

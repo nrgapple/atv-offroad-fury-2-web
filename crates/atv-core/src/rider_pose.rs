@@ -258,6 +258,21 @@ impl Animator {
     pub fn fork_normal(&self, nodes: &[crate::mesh::Node]) -> Result<Self> {
         Self::new(self.motions.clone(), nodes)
     }
+    /// Independent race actor with the same recovered stunt/landing catalog.
+    /// Controller clocks and scores belong to the new rider.
+    pub fn fork_racer(&self, nodes: &[crate::mesh::Node]) -> Result<Self> {
+        let mut rider = self.fork_normal(nodes)?;
+        if !self.stunt_motions.is_empty() {
+            rider.set_stunts(self.stunt_motions.clone(), self.stunt_looping.clone())?;
+        }
+        if !self.landing_motions.is_empty() {
+            rider.set_landing_motions(self.landing_motions.clone())?;
+        }
+        if self.hand_ik.is_some() {
+            rider.configure_native_hand_ik(nodes)?;
+        }
+        Ok(rider)
+    }
     pub fn channels(&self) -> crate::animation::Channels {
         self.current.clone()
     }
@@ -408,6 +423,9 @@ impl Animator {
         self.stunt_motions = motions;
         self.stunt_looping = looping;
         Ok(())
+    }
+    pub fn request_cpu_stunt(&mut self, id: usize, input: crate::stunt::Input) -> bool {
+        !self.stunt_motions.is_empty() && self.stunt_state.request_direct(id, input)
     }
     pub fn stunt_frame(&self) -> Option<crate::stunt::Frame> {
         self.stunt_frame
