@@ -2129,6 +2129,36 @@
       "limitation": "This is a public authored race preview, not complete original race behavior. CPU motion follows authored deterministic routes; original CPU decisions/physical AI and rider-to-rider collision remain unrecovered. Full event progression, costumes and other race tracks remain incomplete. The results check is a render-only fixture."
     },
     {
+      "id": "local-release-queue-passes-host-verification-6d7058b7",
+      "timestamp": "2026-10-13T02:29:06.029289+00:00",
+      "recorded_at": "2026-10-13T02:29:06.029289+00:00",
+      "kind": "verification",
+      "title": "Local release queue passes host verification",
+      "summary": "The local Rust release queue and launchd installer now pass host verification. Disposable Git integration covers concurrent submissions, idempotent duplicate receipts, dirty edits kept outside the job, and a failed check blocking push and deployment; an actual queued public release is still pending.",
+      "details": [
+        "make check and the WASM build passed: 298 core, 2 bridge and 3 Rust queue tests; 47 JavaScript tests; formatting, Clippy and Python syntax checks.",
+        "The release rejection suite passed 21 tests; its host CLI test is normally skipped, and the compiled host CLI suite separately passed the concurrency integration test. Six Worker tests passed.",
+        "Disposable Git tests exercised two concurrent worktrees, duplicate submission returning the same receipt, a later dirty edit remaining outside the job, and a failed check preventing push/deploy.",
+        "Resource and devlog three-way merge, tamper, and review tests passed. Mocked R2 corruption prevented a success receipt.",
+        "Implementation includes a local Rust queue and launchd installation, per-release manifests and browser pins, and source-only GitHub Actions handling."
+      ],
+      "limitation": "Host-tested only; public end-to-end queued release is not yet verified. Operation requires a Mac with available storage and valid authentication. There is no automatic rollback or worktree pruning; conflicts require repair by the submitting chat. The CLI screenshot-review flag depends on agent inspection."
+    },
+    {
+      "id": "production-deployment-flow-restoration-underway-20261013",
+      "timestamp": "2026-10-13T04:02:59.043147+00:00",
+      "recorded_at": "2026-10-13T04:02:59.043297+00:00",
+      "kind": "issue",
+      "title": "Production deployment flow restoration is underway",
+      "summary": "A premature cutover to the experimental local release queue blocked work in other chats. The queue has been stopped, and the established GitHub Actions production deployment flow is being restored.",
+      "details": [
+        "The release queue has not passed end-to-end validation and is not ready to control production deployment.",
+        "The queue remains experimental and disabled pending isolated validation and a user-approved cutover.",
+        "Recovery work is restoring production deployment through GitHub Actions; this entry does not claim that recovery or a new production deployment has completed."
+      ],
+      "limitation": "Public deployment recovery remains in progress. The queue has only host-level evidence and has not completed a public end-to-end release."
+    },
+    {
       "id": "recovered-cpu-vehicle-updates-sustain-a-45-second-race-b89d9023",
       "timestamp": "2026-10-13T04:03:43.271199+00:00",
       "recorded_at": "2026-10-13T04:08:57.257173+00:00",
