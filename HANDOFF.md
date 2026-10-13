@@ -32,6 +32,15 @@ behavior and original crash/camera parity remain unverified. Existing source
 assets are reused; no new runtime resource additions are required. The selected screenshots still need the separate R2/gallery publication step. See
 [crash effects evidence](research/CRASH_EFFECTS.md).
 
+Follow-up host touch verification with ATV26/female at 390px passed Gorn rider
+separation, one mechanical-damage contact, switching to Original/Crazy, intact
+recovery and resumed driving: 607 paired WASM steps with zero gameplay/camera
+differences. The GPU reported 468 enhanced quad and 7,292 rider draws. A separate
+ATV1-to-ATV26 severe-route probe timed out after 60 seconds while waiting for all
+seven mechanical and five gore pieces; it did not reach that target. This is a
+route/severity coverage limit, not evidence of failed effects, and does not
+establish severe Gorn gore on the female ATV26 route.
+
 ## Uphill chase camera — public release (2026-10-13)
 
 PR #47 merged as `96e0ea04c1406a5adfeabbaec055b881b8c9dca7`; main CI/deploy

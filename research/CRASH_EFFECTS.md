@@ -190,3 +190,13 @@ checks and repository hygiene pass. This remains host verification pending
 current-main CI, deployment and public browser verification. Captures are
 1280×844 host Chromium Metal; physical-phone behavior and original-game crash or
 camera parity are unverified. No new runtime resource additions are needed; the selected screenshots still follow the separate R2/gallery publication step.
+
+Follow-up host touch verification at 390px with ATV26/female and Gorn passed
+rider separation, one contact/mechanical-damage transition, switching through
+Original and Crazy, intact recovery and resumed driving. The 607 paired WASM
+steps had zero gameplay/camera differences; GPU counts were 468 enhanced quad
+and 7,292 rider draws. A separate ATV1-to-ATV26 severe-route probe timed out
+after 60 seconds waiting for all seven mechanical and five gore pieces. The
+route did not attain its severe target, so this is a route/severity coverage
+limit rather than a failed-effects result. Severe Gorn gore on female ATV26
+remains unverified.
