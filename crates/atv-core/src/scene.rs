@@ -37,6 +37,8 @@ pub struct Scene {
     pub water_file: Option<String>,
     pub lights: Vec<Light>,
     pub ecosystem_lighting: crate::ecosystem::Lighting,
+    ///00202bd0 defaults the outer/inner near-model transition to180/120feet.
+    pub ecosystem_distances: [f32; 2],
     pub fog_color: [f32; 3],
     pub fog: Option<crate::fog::Fog>,
     pub models: Vec<StaticModel>,
@@ -491,12 +493,25 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
             .unwrap_or([100.; 3]),
         sun,
     )?;
+    let [near_distance, far_distance] =
+        [("EcoDistance3D", 120.), ("EcoDistance2D", 180.)].map(|(key, default)| {
+            value(&data, "Environment", key).map_or(Ok(default), |v| {
+                v.parse::<f32>().map_err(|_| "invalid ecosystem distance")
+            })
+        });
+    let ecosystem_distances = [near_distance?, far_distance?];
+    if !ecosystem_distances.iter().all(|v| v.is_finite() && *v > 0.)
+        || ecosystem_distances[0] >= ecosystem_distances[1]
+    {
+        return Err("unsupported ecosystem transition distances".into());
+    }
     Ok(Scene {
         start_position,
         start_direction,
         cube_file,
         lights,
         ecosystem_lighting,
+        ecosystem_distances,
         water_file: value(&data, "Environment", "WaterFile").map(str::to_owned),
         fog_color: color(&data, "Fog")?,
         fog: crate::fog::parse(&data)?,
@@ -510,6 +525,29 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ecosystem_transition_distances_use_native_defaults_and_environment_overrides() {
+        assert_eq!(
+            parse(SOURCE.as_bytes()).unwrap().ecosystem_distances,
+            [120., 180.]
+        );
+        let source = SOURCE.replace(
+            "CubeFile=sample.cub",
+            "CubeFile=sample.cub\nEcoDistance3D=80\nEcoDistance2D=160",
+        );
+        assert_eq!(
+            parse(source.as_bytes()).unwrap().ecosystem_distances,
+            [80., 160.]
+        );
+        assert!(
+            parse(
+                source
+                    .replace("EcoDistance2D=160", "EcoDistance2D=80")
+                    .as_bytes()
+            )
+            .is_err()
+        );
+    }
     #[test]
     fn empty_optional_water_file_is_absent_and_mode_start_wins() {
         let source = SOURCE.replace("CubeFile=sample.cub", "CubeFile=sample.cub\nWaterFile=");

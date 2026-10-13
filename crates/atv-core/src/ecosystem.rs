@@ -79,8 +79,40 @@ pub struct Species {
     pub model: String,
     pub billboard: String,
     pub parameters: [u32; 23],
+    pub atlas: Option<BillboardAtlas>,
     pub optional_name: Option<String>,
     pub proxies: Vec<[u32; 9]>,
+}
+/// 002fe140 packs U-left/center/right and V-top/bottom for EcoSystemCode2D.
+/// The center is authored independently; asymmetric trees retain their pivot.
+#[derive(Debug, Serialize)]
+pub struct BillboardAtlas {
+    pub u: [f32; 3],
+    pub v: [f32; 2],
+    /// Horizontal offsets in units of the placement's half width.
+    pub horizontal: [f32; 3],
+}
+impl BillboardAtlas {
+    pub fn from_parameters(parameters: &[u32; 23]) -> Result<Option<Self>> {
+        let f = parameters.map(f32::from_bits);
+        let u = [f[6], f[10], f[7]];
+        let v = [f[9], f[8]];
+        // Shipped Tropical PlantA has no atlas rectangle. Do not invent one.
+        if u == [0.; 3] && v == [0.; 2] {
+            return Ok(None);
+        }
+        if !u.iter().chain(v.iter()).all(|x| x.is_finite())
+            || !(u[0] < u[2] && u[0] <= u[1] && u[1] <= u[2] && v[0] < v[1])
+        {
+            return Err("invalid ESB billboard rectangle".into());
+        }
+        let extent = 2. / (u[2] - u[0]);
+        Ok(Some(Self {
+            u,
+            v,
+            horizontal: [-(extent * (u[1] - u[0])), 0., extent * (u[2] - u[1])],
+        }))
+    }
 }
 impl Species {
     /// 00127d20/00127d60 signed-byte interpolation. Width is a half extent.
@@ -107,6 +139,39 @@ pub struct Ecosystem {
     pub global_name: Option<String>,
     pub global_word: u32,
     pub placement_texture: Option<String>,
+    /// Browser acceleration only:64² cells in original packed X/Z space.
+    /// Stable source indices preserve asset identity and collision ordering.
+    pub visibility_index: VisibilityIndex,
+}
+#[derive(Debug, Default, Serialize)]
+pub struct VisibilityIndex {
+    pub offsets: Vec<u32>,
+    pub placements: Vec<u32>,
+}
+impl VisibilityIndex {
+    pub fn build(placements: &[Placement]) -> Self {
+        let cell = |p: &Placement| {
+            usize::from(p.coordinates[2] >> 10) * 64 + usize::from(p.coordinates[0] >> 10)
+        };
+        let mut offsets = vec![0u32; 4097];
+        for p in placements {
+            offsets[cell(p) + 1] += 1;
+        }
+        for i in 1..offsets.len() {
+            offsets[i] += offsets[i - 1];
+        }
+        let mut next = offsets[..4096].to_vec();
+        let mut indices = vec![0; placements.len()];
+        for (i, p) in placements.iter().enumerate() {
+            let at = &mut next[cell(p)];
+            indices[*at as usize] = i as u32;
+            *at += 1;
+        }
+        Self {
+            offsets,
+            placements: indices,
+        }
+    }
 }
 struct Reader<'a> {
     bytes: &'a [u8],
@@ -152,7 +217,8 @@ pub fn decode(bytes: &[u8]) -> Result<Ecosystem> {
         return Err("unsupported ESB version".into());
     }
     let mut species = Vec::new();
-    for slot in 0..256 {
+    let mut species_by_slot = [None; 256];
+    for (slot, species_index) in species_by_slot.iter_mut().enumerate() {
         if r.byte()? == 0 {
             continue;
         }
@@ -181,11 +247,14 @@ pub fn decode(bytes: &[u8]) -> Result<Ecosystem> {
             }
             proxies.push(p);
         }
+        *species_index = Some(species.len());
+        let atlas = BillboardAtlas::from_parameters(&parameters)?;
         species.push(Species {
             slot: slot as u8,
             model,
             billboard,
             parameters,
+            atlas,
             optional_name,
             proxies,
         });
@@ -209,10 +278,8 @@ pub fn decode(bytes: &[u8]) -> Result<Ecosystem> {
         r.at += 6;
         let height = r.byte()? as i8;
         let width = r.byte()? as i8;
-        let species = species
-            .iter()
-            .find(|s| s.slot == slot)
-            .ok_or("ESB placement references absent species")?;
+        let species = &species[species_by_slot[usize::from(slot)]
+            .ok_or("ESB placement references absent species")?];
         let [height, radius] = species.dimensions(height, width);
         if !height.is_finite() || !radius.is_finite() || height <= 0. || radius <= 0. {
             return Err("invalid ESB placement dimensions".into());
@@ -225,17 +292,58 @@ pub fn decode(bytes: &[u8]) -> Result<Ecosystem> {
             radius,
         });
     }
+    let visibility_index = VisibilityIndex::build(&placements);
     Ok(Ecosystem {
         species,
         placements,
         global_name,
         global_word,
         placement_texture,
+        visibility_index,
     })
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn atlas_preserves_an_asymmetric_pivot_and_absent_rectangle() {
+        let mut p = [0; 23];
+        assert!(BillboardAtlas::from_parameters(&p).unwrap().is_none());
+        p[6..11].copy_from_slice(&[0.25, 0.75, 0.9, 0.1, 0.375].map(f32::to_bits));
+        let atlas = BillboardAtlas::from_parameters(&p).unwrap().unwrap();
+        assert_eq!(atlas.u, [0.25, 0.375, 0.75]);
+        assert_eq!(atlas.v, [0.1, 0.9]);
+        assert_eq!(atlas.horizontal, [-0.5, 0., 1.5]);
+        p[10] = 1f32.to_bits();
+        assert!(BillboardAtlas::from_parameters(&p).is_err());
+    }
+    #[test]
+    fn packed_visibility_index_preserves_all_source_indices_and_cell_boundaries() {
+        let mut eco = decode(&sample()).unwrap();
+        for coordinates in [
+            [0, 0, 0],
+            [1023, 0, 1023],
+            [1024, 0, 1024],
+            [65535, 0, 65535],
+        ] {
+            eco.placements.push(Placement {
+                slot: 0,
+                resample_height: false,
+                coordinates,
+                height: 1.,
+                radius: 1.,
+            });
+        }
+        let index = VisibilityIndex::build(&eco.placements);
+        assert_eq!(&index.placements[..3], &[0, 1, 2]);
+        assert_eq!(index.offsets[1], 3);
+        assert_eq!(
+            &index.placements[index.offsets[65] as usize..index.offsets[66] as usize],
+            &[3]
+        );
+        assert_eq!(index.placements.last(), Some(&4));
+        assert_eq!(*index.offsets.last().unwrap(), eco.placements.len() as u32);
+    }
     #[test]
     fn near_packet_preserves_bias_rounding_sunlight_scaling_and_alpha() {
         let color = |ambient| {

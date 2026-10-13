@@ -1,5 +1,30 @@
 # Implementation handoff
 
+## Ordered vegetation: tested host release candidate
+
+The isolated map branch connects original distant atlases and source-correlated
+near/far phase, alpha/depth and retained-orientation behavior on all nine maps.
+One shared atlas uses two back-to-front billboard batches; total vegetation
+draws are 8–17/map. Rust prepares stable 64² visibility cells and direct species
+lookup; bounded browser selection matches a full scan, reducing starting-view
+placement checks by about 69–92%. The current browser visibility envelope remains
+provisional. Native billboard per-row fog/depth packing, callback order, exact
+camera/viewport mapping and GS/VU hardware behavior remain open.
+
+Host source-color comparisons pass 1,800 RGBA samples with zero byte differences;
+1,800 vertex comparisons have maximum error 0.0009765625 and exact UVs. All nine
+map driving and near/distant material gates, Vancouver desktop/390px, FREE05
+multiplayer and shared shader regressions pass. 317 core/25 net/3 relay/13 bridge/
+68 JS tests, formatting, Clippy, setup, 17 release and 6 Worker tests pass. The
+fresh ENV08 hero is inspected and private until this checkpoint passes current
+main CI/deployment. See research/MAP_FIDELITY.md and the host-only dev-log entry.
+No Mistakes is disabled; normal verification and origin/GitHub CI apply.
+
+The preceding public release is `e1afc2cb984db40a06ebf1138c56c895578c9280`,
+including the d9596d9 vegetation/transport proof and default-off funny crashes.
+Its responsible release chat reports CI 38320324826/deployment success, 32 authored
+files, 410 served objects, 106 runtime records and 124 gallery entries/104 images.
+The following near-material public proof remains release-scoped to d9596d9.
 ## Model selection and original menu presentation: host checkpoint
 
 An isolated worktree adds all-26-quad inspection cards, original 32-node male/female

@@ -32,7 +32,7 @@ const crashSettings = { get enabled() { return funnyCrashes; }, toggle() {
 } };
 
 let simReady = false, simBusy = false, simAccumulator = 0, simFrame, simStart, simGeneration = 0, orbit = 0, cameraFrame, cameraCycle = false;
-let sceneChunks = [], sceneDraws = [], skyChunks = [], ecoGroups = [];
+let sceneChunks = [], sceneDraws = [], skyChunks = [], ecoGroups = [], ecoBillboard;
 let waterRenderer;
 let trainRenderer;
 let wheelEffectsRenderer;
@@ -235,6 +235,8 @@ async function terrainFromContent(file, files, token, environment = "env01") {
       const decoded = await json(59, await codec(3, resource, member));
       models.set(species.slot, decoded);
       for (const [name, image] of await baseTextures(decoded.mesh, resource, entries, textures)) textures.set(name, image);
+      const material = species.billboard.replace(/\.[^.]+$/, '');
+      for (const [name, image] of await baseTextures({ materials: [material], lods: [{ groups: [{ material: 0 }] }] }, resource, entries, textures)) textures.set(name, image);
     }
     ecosystem = { ...data, bytes: ecoBytes, models, textures };
   }
@@ -313,10 +315,16 @@ layout(location=5) in vec2 ecoScale;
 layout(location=6) in vec4 vertexColor;
 layout(location=7) in vec3 reflectionPosition;
 layout(location=8) in vec3 reflectionNormal;
+layout(location=9) in vec3 ecoState;
+layout(location=10) in vec4 ecoAtlasHorizontal;
+layout(location=11) in vec4 ecoAtlasVertical;
 uniform int sceneryReflectionPlane;
 uniform vec2 sceneryUvOffset;
 out vec4 authoredColor;
 uniform bool useEcosystem;
+uniform bool ecoBillboard;
+uniform bool ecoPerInstance;
+flat out float ecoReference;
 uniform vec2 ecoRotation;
 uniform vec3 ecoAmbient;
 uniform vec3 ecoSunlight;
@@ -337,19 +345,40 @@ ${fogVertexShader}
 void main() {
   texcoord = uv + sceneryUvOffset;
   authoredColor = vertexColor;
+  ecoReference = 0.0;
   mat4 localPose = useQuadPose ? quadBones[int(quadNode)] : mat4(1.0);
   vec4 worldPosition = model * localPose * vec4(position, 1.0);
   if (useEcosystem) {
+    vec2 rotation = ecoBillboard || !ecoPerInstance ? ecoRotation : ecoState.xy;
     vec3 scaled = position * vec3(ecoScale.x, ecoScale.y, ecoScale.x);
-    worldPosition = vec4(ecoPosition + vec3(ecoRotation.x * scaled.x - ecoRotation.y * scaled.z, scaled.y, ecoRotation.y * scaled.x + ecoRotation.x * scaled.z), 1.0);
+    if (ecoBillboard) {
+      float horizontal = normal.x < 0.5 ? ecoAtlasHorizontal.x : normal.x < 1.5 ? 0.0 : ecoAtlasHorizontal.y;
+      scaled = vec3(horizontal*ecoScale.x,(position.y+ecoAtlasVertical.w)*ecoScale.y,0.0);
+      texcoord = vec2(normal.x < 0.5 ? ecoAtlasHorizontal.z : normal.x < 1.5 ? ecoAtlasVertical.x : ecoAtlasHorizontal.w,
+        position.y > 0.5 ? ecoAtlasVertical.y : ecoAtlasVertical.z);
+    }
+    worldPosition = vec4(ecoPosition + vec3(rotation.x * scaled.x - rotation.y * scaled.z, scaled.y, rotation.y * scaled.x + rotation.x * scaled.z), 1.0);
     // TriStripPrologue transforms the light through the scaled instance basis.
     // DiffuseCompressed retains authored normal magnitude and bias quantization.
-    vec3 localLight = vec3((ecoRotation.x * ecoScale.x) * ecoSunDirection.x + (ecoRotation.y * ecoScale.x) * ecoSunDirection.z,
-      ecoSunDirection.y * ecoScale.y, (-ecoRotation.y * ecoScale.x) * ecoSunDirection.x + (ecoRotation.x * ecoScale.x) * ecoSunDirection.z);
+    vec3 localLight = vec3((rotation.x * ecoScale.x) * ecoSunDirection.x + (rotation.y * ecoScale.x) * ecoSunDirection.z,
+      ecoSunDirection.y * ecoScale.y, (-rotation.y * ecoScale.x) * ecoSunDirection.x + (rotation.x * ecoScale.x) * ecoSunDirection.z);
     float weight = max((localLight.x * normal.x + localLight.y * normal.y) + localLight.z * normal.z, 0.0);
-    vec4 biased = vec4(8388608.0) + vec4(ecoAmbient,64.0);
+    float alpha = ecoPerInstance ? min(64.0,64.0-(ecoState.z-16.0)*1.3333334) : 64.0;
+    ecoReference = trunc(alpha) / 255.0;
+    vec4 biased = vec4(8388608.0) + vec4(ecoAmbient,alpha);
     biased = min(biased + vec4(ecoSunlight,ecoSunPresent ? 1.0 : 0.0) * weight,vec4(8388863.0));
     authoredColor = vec4(floatBitsToUint(biased) & uvec4(255u));
+    if (ecoBillboard) {
+      //002fea30 shades the left edge, center pivot and right edge separately.
+      vec3 look = vec3(-ecoRotation.y,0.0,ecoRotation.x);
+      vec3 lightNormal = normal.x < 0.5 ? vec3(-look.z+look.x*0.1,0.0,look.x+look.z*0.1)
+        : normal.x < 1.5 ? -look : vec3(look.z+look.x*0.1,0.0,-look.x+look.z*0.1);
+      vec2 horizontalSun = ecoSunDirection.xz;
+      float sunLength = length(horizontalSun);
+      vec3 sun = sunLength > 0.0 ? vec3(horizontalSun.x/sunLength,0.0,horizontalSun.y/sunLength) : vec3(0.0);
+      float diffuse = max(dot(normalize(lightNormal),sun),0.0);
+      authoredColor = vec4(trunc(min(ecoAmbient+ecoSunlight*diffuse,vec3(127.0))),min(64.0,trunc(ecoState.z*1.3333334)));
+    }
   }
   if (sceneryReflectionPlane != 0) {
     // TriStripPrologue transforms the world camera into each rigid node's
@@ -378,6 +407,9 @@ in vec2 texcoord;
 in vec2 worldXZ;
 in vec4 authoredColor;
 uniform bool useEcosystem;
+uniform bool ecoBillboard;
+uniform bool ecoPerInstance;
+flat in float ecoReference;
 uniform bool useVertexColor;
 uniform bool sceneryBlend;
 uniform bool alphaFailPass;
@@ -410,7 +442,9 @@ void main() {
   if (useTexture) {
     vec4 sampled = texture(baseTexture, texcoord);
     if (useVertexColor) sampled *= (useEcosystem ? authoredColor / fogInterpolation.y : authoredColor) / 128.0;
-    if (alphaFailPass ? sampled.a >= alphaCutoff : sampled.a < alphaCutoff) discard;
+    //002fe710 overrides TEST with GREATER/KEEP and a per-placement reference.
+    if (useEcosystem && ecoPerInstance) { if (sampled.a <= (ecoBillboard ? alphaCutoff : ecoReference)) discard; }
+    else if (alphaFailPass ? sampled.a >= alphaCutoff : sampled.a < alphaCutoff) discard;
     base = sampled.rgb;
     // GS source alpha uses 128 for unity, while decoded PST bytes use 255.
     sourceAlpha = sceneryBlend ? clamp(sampled.a * (255.0 / 128.0), 0.0, 1.0) : 1.0;
@@ -454,6 +488,7 @@ function initializeGl() {
   uniforms.fogPacking = gl.getUniformLocation(program, 'fogPacking');
   uniforms.fogEnabled = gl.getUniformLocation(program, 'fogEnabled');
   uniforms.ecoRotation = gl.getUniformLocation(program, 'ecoRotation');
+  for (const name of ['ecoBillboard','ecoPerInstance']) uniforms[name] = gl.getUniformLocation(program,name);
   for (const name of ['ecoAmbient','ecoSunlight','ecoSunDirection','ecoSunPresent']) uniforms[name] = gl.getUniformLocation(program,name);
   uniforms.alphaCutoff = gl.getUniformLocation(program, 'alphaCutoff');
   uniforms.useQuadPose = gl.getUniformLocation(program, 'useQuadPose');
@@ -478,7 +513,9 @@ function clearMesh() {
   for (const chunk of [...chunks, ...vehicleChunks, ...sceneChunks, ...skyChunks]) { gl.deleteVertexArray(chunk.vao); gl.deleteBuffer(chunk.vertices); gl.deleteBuffer(chunk.indices); }
   for (const texture of gpuTextures) gl.deleteTexture(texture);
   for (const group of ecoGroups) { gl.deleteBuffer(group.instances); for (const chunk of group.chunks) { gl.deleteVertexArray(chunk.vao); gl.deleteBuffer(chunk.vertices); gl.deleteBuffer(chunk.indices); } }
-  ecoGroups = [];
+  const billboard=ecoBillboard;
+  if(billboard){gl.deleteBuffer(billboard.instances);gl.deleteVertexArray(billboard.chunk.vao);gl.deleteBuffer(billboard.chunk.vertices);gl.deleteBuffer(billboard.chunk.indices);}
+  ecoGroups = []; ecoBillboard = null;
   gpuTextures = [];
   chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = [];
 }
@@ -668,6 +705,7 @@ function buildEcosystem() {
   diagnostics.vegetationPlacements = eco?.placements.length ?? 0;
   if (!eco) return;
   const scale = Math.max(terrain.sizeX, terrain.sizeZ) / 65536, textures = new Map();
+  eco.renderPlacements = new Array(eco.placements.length); eco.selection = []; eco.maxRadius = 0; eco.billboard = ecoBillboard = null;
   for (const [name, decoded] of eco.textures) {
     if (!decoded.rgba) continue;
     const gpu = texture(decoded); textures.set(name, gpu); gpuTextures.push(gpu);
@@ -675,13 +713,16 @@ function buildEcosystem() {
   for (const species of eco.species) {
     const { mesh, bounds } = eco.models.get(species.slot);
     if (!(bounds.half_extents[0] > 0 && bounds.half_extents[1] > 0)) throw new Error('Invalid vegetation mesh bounds.');
-    const placements = eco.placements.filter(p => p.slot === species.slot).map(p => {
+    const placements = [];
+    const group = { placements, chunks: [], instances: gl.createBuffer(), visible: new Float32Array(Math.min(1500, eco.placements.length) * 8), count: 0 };
+    eco.placements.forEach((p,index) => {
+      if (p.slot !== species.slot) return;
       const position = p.coordinates.map(c => c * scale);
       // 00129b70 quantizes an explicitly resampled height back to u16.
       if (p.resample_height) position[1] = (Math.trunc(terrainHeight(position[0], position[2]) / scale) & 65535) * scale;
-      return { position, scale: [p.radius / bounds.half_extents[0], p.height * .5 / bounds.half_extents[1]], radius: Math.max(p.radius, p.height) };
+      const placement = { group, index, position, coordinates: p.coordinates, scale: [p.radius / bounds.half_extents[0], p.height * .5 / bounds.half_extents[1]], dimensions:[p.radius,p.height], atlas:species.atlas, baseHeight:(bounds.center[1]-bounds.half_extents[1])*.5/bounds.half_extents[1], radius: Math.max(p.radius, p.height), near: false, rotation: [1,0], phase: 64, seen: -100, depth: 0 };
+      eco.renderPlacements[index] = placement; placements.push(placement); eco.maxRadius = Math.max(eco.maxRadius,placement.radius);
     });
-    const group = { placements, chunks: [], instances: gl.createBuffer(), visible: new Float32Array(Math.min(1500, placements.length) * 5), count: 0 };
     gl.bindBuffer(gl.ARRAY_BUFFER, group.instances); gl.bufferData(gl.ARRAY_BUFFER, group.visible.byteLength, gl.DYNAMIC_DRAW);
     for (const source of mesh.lods[0].groups) {
       if (source.vertices.length > 65536) throw new Error('Vegetation mesh exceeds index bounds.');
@@ -696,62 +737,147 @@ function buildEcosystem() {
       chunk.depthWrite = decoded?.pass?.depth_write ?? true;
       chunk.alphaFailure = decoded?.sceneAlphaFailure ?? 0;
       gl.bindVertexArray(chunk.vao); gl.bindBuffer(gl.ARRAY_BUFFER, group.instances);
-      gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 3, gl.FLOAT, false, 20, 0); gl.vertexAttribDivisor(4, 1);
-      gl.enableVertexAttribArray(5); gl.vertexAttribPointer(5, 2, gl.FLOAT, false, 20, 12); gl.vertexAttribDivisor(5, 1);
+      bindEcoInstances(group.instances);
       group.chunks.push(chunk);
     }
+    if (species.atlas && !eco.billboard) {
+      const order = [[1,0],[0,0],[0,1],[1,1],[2,1],[2,0]];
+      const vertices = new Float32Array(6*8);
+      order.forEach(([column,row],i) => vertices.set([0,row,0,column,1,0,0,0],i*8));
+      const chunk = upload(vertices,new Uint16Array([0,1,2,0,2,3,0,3,4,0,4,5]),true);
+      const material = species.billboard.replace(/\.[^.]+$/, ''), decoded = eco.textures.get(material);
+      if (!decoded?.rgba || decoded.shader !== 'EcoSystemCode2D') throw new Error(`Original vegetation atlas is unavailable: ${material}`);
+      chunk.texture = textures.get(material); chunk.fog = decoded.pass?.fog ?? true;
+      chunk.blend = decoded.pass?.blend ?? true; chunk.depthWrite = decoded.pass?.depth_write ?? true; chunk.alphaCutoff = decoded.alphaTest;
+      const instances=gl.createBuffer(),visible=new Float32Array(1500*16);
+      gl.bindVertexArray(chunk.vao);gl.bindBuffer(gl.ARRAY_BUFFER,instances);gl.bufferData(gl.ARRAY_BUFFER,visible.byteLength,gl.DYNAMIC_DRAW);
+      for(const [location,size,offset]of [[4,3,0],[5,2,12],[9,3,20],[10,4,32],[11,4,48]]){gl.enableVertexAttribArray(location);gl.vertexAttribPointer(location,size,gl.FLOAT,false,64,offset);gl.vertexAttribDivisor(location,1);}
+      eco.billboard=ecoBillboard={chunk,instances,visible,material};
+    }
+    if(species.atlas && eco.billboard.material.toLowerCase()!==species.billboard.replace(/\.[^.]+$/,'').toLowerCase())throw new Error('Mixed vegetation atlas families require separate ordered batches.');
     ecoGroups.push(group);
+  }
+}
+function bindEcoInstances(buffer) {
+  gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
+  for (const [location,size,offset] of [[4,3,0],[5,2,12],[9,3,20]]) {
+    gl.enableVertexAttribArray(location); gl.vertexAttribPointer(location,size,gl.FLOAT,false,32,offset); gl.vertexAttribDivisor(location,1);
+  }
+}
+// A reusable max heap selects the nearest projected depths without sorting every
+// plant or allocating candidate objects. The visibility envelope is provisional.
+function selectEco(heap,p) {
+  if (heap.length===1500 && p.depth>=heap[0].depth) return;
+  if (heap.length===1500) {
+    let i=0;
+    while (i*2+1<heap.length) {
+      let child=i*2+1;
+      if (child+1<heap.length && heap[child+1].depth>heap[child].depth) child++;
+      if (heap[child].depth<=p.depth) break;
+      heap[i]=heap[child];i=child;
+    }
+    heap[i]=p;
+  } else {
+    let i=heap.length;heap.push(p);
+    while (i>0) { const parent=(i-1)>>1;if (heap[parent].depth>=p.depth) break;heap[i]=heap[parent];i=parent; }
+    heap[i]=p;
   }
 }
 function drawEcosystem() {
   diagnostics.vegetationTriangles = 0;
   diagnostics.vegetationDraws = 0;
   if (!ecoGroups.length) return;
-  // Original placement, dimensions and model normalization; browser visibility
-  // selection is provisional. Batch repeated original meshes, not thousands of draws.
-  const forwardX = Math.sin(camera.yaw), forwardZ = Math.cos(camera.yaw), candidates = [];
-  for (const group of ecoGroups) {
-    group.count = 0;
-    for (const p of group.placements) {
-      const dx = p.position[0] - camera.x, dz = p.position[2] - camera.z, distance = dx * dx + dz * dz;
-      if (distance < 1800 * 1800 && dx * forwardX + dz * forwardZ > -p.radius) candidates.push({ group, p, distance });
-    }
-  }
-  candidates.sort((a, b) => a.distance - b.distance);
-  for (const { group, p } of candidates.slice(0, 1500)) group.visible.set([...p.position, ...p.scale], group.count++ * 5);
-  gl.uniform1i(uniforms.useEcosystem, true); gl.uniform1i(uniforms.unlit, true); gl.uniform1i(uniforms.useQuadPose, false);
-  // Global Sun matrices survive the near packet's ambient override. Billboard
-  // selection and transition alpha remain outside this near material path.
-  const lighting = terrain.world.metadata.ecosystem_lighting;
-  gl.uniform3fv(uniforms.ecoAmbient,lighting.ambient); gl.uniform3fv(uniforms.ecoSunlight,lighting.sunlight);
-  gl.uniform3fv(uniforms.ecoSunDirection,lighting.direction); gl.uniform1i(uniforms.ecoSunPresent,lighting.sun_present);
-  gl.uniform1i(uniforms.useVertexColor,true); diagnostics.vegetationLighting = lighting;
-  gl.uniformMatrix4fv(uniforms.model, false, identity);
-  // 002fe710 rotates the vegetation models about Y using the view basis.
-  gl.uniform2f(uniforms.ecoRotation, -Math.cos(camera.yaw), Math.sin(camera.yaw));
-  let draws = 0;
-  for (const group of ecoGroups) {
-    if (!group.count) continue;
-    gl.bindBuffer(gl.ARRAY_BUFFER, group.instances); gl.bufferSubData(gl.ARRAY_BUFFER, 0, group.visible.subarray(0, group.count * 5));
-    for (const chunk of group.chunks) {
-      gl.uniform1f(uniforms.alphaCutoff, chunk.alphaCutoff); gl.uniform1i(uniforms.useTexture, Boolean(chunk.texture));
-      gl.uniform1i(uniforms.fogEnabled,Boolean(terrain.world?.metadata.fog)&&chunk.fog);
-      gl.uniform1i(uniforms.sceneryBlend,chunk.blend); gl.depthMask(chunk.depthWrite);
-      if (chunk.blend) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA); } else gl.disable(gl.BLEND);
-      gl.bindTexture(gl.TEXTURE_2D, chunk.texture ?? fallbackTexture); gl.bindVertexArray(chunk.vao);
-      gl.drawElementsInstanced(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0, group.count); draws++;
-      if (chunk.alphaFailure === 1 && chunk.alphaCutoff > 0) {
-        gl.uniform1i(uniforms.alphaFailPass,true); gl.depthMask(false);
-        gl.drawElementsInstanced(gl.TRIANGLES,chunk.count,gl.UNSIGNED_SHORT,0,group.count); draws++;
-        gl.uniform1i(uniforms.alphaFailPass,false);
+  const eco = terrain.ecosystem, forwardX = Math.sin(camera.yaw), forwardZ = Math.cos(camera.yaw);
+  const inverse = 65536 / Math.max(terrain.sizeX,terrain.sizeZ), cellSize = Math.max(terrain.sizeX,terrain.sizeZ) / 64;
+  const far = terrain.world.metadata.fog?.end ?? 768, range = far+eco.maxRadius;
+  const clampCell = v => Math.max(0,Math.min(63,Math.floor(v/cellSize)));
+  const minX=clampCell(camera.x-range),maxX=clampCell(camera.x+range),minZ=clampCell(camera.z-range),maxZ=clampCell(camera.z+range);
+  const eyeX=Math.trunc(Math.fround(camera.x*inverse)),eyeZ=Math.trunc(Math.fround(camera.z*inverse));
+  const [nearDistance,farDistance]=terrain.world.metadata.ecosystem_distances;
+  const inner=Math.trunc(Math.fround(nearDistance*inverse)),outer=Math.trunc(Math.fround(farDistance*inverse));
+  const factor=Math.fround(64/(outer-inner));
+  const selected=eco.selection;selected.length=0;let scanned=0;
+  for(const group of ecoGroups){group.count=0;}
+  for(let z=minZ;z<=maxZ;z++)for(let x=minX;x<=maxX;x++) {
+    const cell=z*64+x, index=eco.visibility_index;
+    for(let i=index.offsets[cell];i<index.offsets[cell+1];i++) {
+      const p=eco.renderPlacements[index.placements[i]];scanned++;
+      const dx=p.position[0]-camera.x,dz=p.position[2]-camera.z;
+      p.depth=dx*forwardX+dz*forwardZ;
+      if(dx*dx+dz*dz>(far+p.radius)**2 || p.depth<=-p.radius)continue;
+      const qx=eyeX-p.coordinates[0],qz=eyeZ-p.coordinates[2],distance=qx*qx+qz*qz;
+      const near=distance<=outer*outer;
+      let phase=near ? distance<inner*inner ? 0 : Math.trunc(Math.fround(factor*Math.fround(Math.fround(Math.sqrt(distance))-inner))) : 64;
+      if(near&&!p.near) {
+        //0012a1c0 captures signed-short orientation only on distant→near entry.
+        p.rotation[0]=forwardZ===0 ? 1 : Math.trunc(Math.fround(forwardZ*32767))/32767;
+        p.rotation[1]=forwardZ===0 ? 0 : Math.trunc(Math.fround(-forwardX*32767))/32767;
       }
-      diagnostics.vegetationTriangles += chunk.count / 3 * group.count;
+      p.near=near;
+      if(near&&phase!==0&&frame-p.seen>3)phase=0;
+      p.phase=phase;selectEco(selected,p);
     }
   }
-  diagnostics.vegetationVisible = Math.min(candidates.length, 1500); diagnostics.vegetationDraws = draws;
-  gl.uniform1i(uniforms.useEcosystem, false); gl.uniform1f(uniforms.alphaCutoff, 0);
-  gl.uniform1i(uniforms.useVertexColor,false); gl.uniform1i(uniforms.sceneryBlend,false);
-  gl.disable(gl.BLEND); gl.depthMask(true);
+  selected.sort((a,b)=>b.depth-a.depth);
+  for(const p of selected) {
+    const group=p.group;p.seen=frame;
+    if(p.phase!==64)writeEco(group,p,group.count++);
+  }
+  gl.uniform1i(uniforms.useEcosystem,true);gl.uniform1i(uniforms.ecoPerInstance,true);
+  gl.uniform1i(uniforms.unlit,true);gl.uniform1i(uniforms.useQuadPose,false);
+  const lighting=terrain.world.metadata.ecosystem_lighting;
+  gl.uniform3fv(uniforms.ecoAmbient,lighting.ambient);gl.uniform3fv(uniforms.ecoSunlight,lighting.sunlight);
+  gl.uniform3fv(uniforms.ecoSunDirection,lighting.direction);gl.uniform1i(uniforms.ecoSunPresent,lighting.sun_present);
+  gl.uniform1i(uniforms.useVertexColor,true);diagnostics.vegetationLighting=lighting;
+  gl.uniformMatrix4fv(uniforms.model,false,identity);gl.uniform2f(uniforms.ecoRotation,forwardZ,-forwardX);
+  let draws=0,nearCount=0,farCount=0,transitionCount=0;
+  //0012af80 submits distant, depth-disabled transition, then near material queues.
+  gl.uniform1i(uniforms.ecoBillboard,true);
+  for(const transition of [false,true]) {
+    const billboard=eco.billboard;if(!billboard)continue;
+    const chunk=billboard.chunk;let count=0;
+    for(const p of selected)if(p.atlas&&p.phase!==0&&(p.phase<49)===transition)writeBillboard(billboard,p,count++);
+    if(!count)continue;
+    gl.bindBuffer(gl.ARRAY_BUFFER,billboard.instances);gl.bufferSubData(gl.ARRAY_BUFFER,0,billboard.visible.subarray(0,count*16));
+    gl.uniform1f(uniforms.alphaCutoff,transition?1/255:chunk.alphaCutoff);
+    ecoMaterial(chunk,transition?false:chunk.depthWrite);
+    gl.drawElementsInstanced(gl.TRIANGLES,chunk.count,gl.UNSIGNED_SHORT,0,count);draws++;
+    diagnostics.vegetationTriangles+=chunk.count/3*count;
+    if(transition)transitionCount=count;else farCount=count;
+  }
+  diagnostics.vegetationBillboardDraws=draws;
+  gl.uniform1i(uniforms.ecoBillboard,false);
+  for(const group of ecoGroups) {
+    if(!group.count)continue;
+    gl.bindBuffer(gl.ARRAY_BUFFER,group.instances);gl.bufferSubData(gl.ARRAY_BUFFER,0,group.visible.subarray(0,group.count*8));
+    for(const chunk of group.chunks) {
+      gl.uniform1f(uniforms.alphaCutoff,chunk.alphaCutoff);ecoMaterial(chunk,chunk.depthWrite);
+      gl.drawElementsInstanced(gl.TRIANGLES,chunk.count,gl.UNSIGNED_SHORT,0,group.count);draws++;
+      diagnostics.vegetationTriangles+=chunk.count/3*group.count;
+    }
+    nearCount+=group.count;
+  }
+  Object.assign(diagnostics,{vegetationVisible:selected.length,vegetationDraws:draws,vegetationNear:nearCount,vegetationFar:farCount,vegetationTransition:transitionCount,vegetationScanned:scanned});
+  gl.uniform1i(uniforms.useEcosystem,false);gl.uniform1i(uniforms.ecoPerInstance,false);gl.uniform1f(uniforms.alphaCutoff,0);
+  gl.uniform1i(uniforms.useVertexColor,false);gl.uniform1i(uniforms.sceneryBlend,false);gl.disable(gl.BLEND);gl.depthMask(true);
+}
+function writeEco(group,p,index) {
+  const offset=index*8,data=group.visible;
+  data[offset]=p.position[0];data[offset+1]=p.position[1];data[offset+2]=p.position[2];
+  data[offset+3]=p.scale[0];data[offset+4]=p.scale[1];data[offset+5]=p.rotation[0];data[offset+6]=p.rotation[1];data[offset+7]=p.phase;
+}
+function writeBillboard(billboard,p,index) {
+  const at=index*16,data=billboard.visible,atlas=p.atlas;
+  data[at]=p.position[0];data[at+1]=p.position[1];data[at+2]=p.position[2];
+  data[at+3]=p.dimensions[0];data[at+4]=p.dimensions[1];data[at+5]=p.rotation[0];data[at+6]=p.rotation[1];data[at+7]=p.phase;
+  data[at+8]=atlas.horizontal[0];data[at+9]=atlas.horizontal[2];data[at+10]=atlas.u[0];data[at+11]=atlas.u[2];
+  data[at+12]=atlas.u[1];data[at+13]=atlas.v[0];data[at+14]=atlas.v[1];data[at+15]=p.baseHeight;
+}
+function ecoMaterial(chunk,depthWrite) {
+  gl.uniform1i(uniforms.useTexture,Boolean(chunk.texture));gl.uniform1i(uniforms.fogEnabled,Boolean(terrain.world.metadata.fog)&&chunk.fog);
+  gl.uniform1i(uniforms.sceneryBlend,chunk.blend);gl.depthMask(depthWrite);
+  if(chunk.blend){gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);}else gl.disable(gl.BLEND);
+  gl.bindTexture(gl.TEXTURE_2D,chunk.texture??fallbackTexture);gl.bindVertexArray(chunk.vao);
 }
 function buildTerrainMesh() {
   for (const chunk of chunks) { gl.deleteVertexArray(chunk.vao); gl.deleteBuffer(chunk.vertices); gl.deleteBuffer(chunk.indices); }
@@ -1349,7 +1475,7 @@ document.addEventListener('visibilitychange', () => { clearInput(); syncAudio();
 canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; for(const model of remoteModels.values()){model.chunks=null;model.gpuTextures=[];} diagnostics.ready = false; clearInput(); syncAudio(); status('Graphics context lost; waiting for recovery.'); });
 // Every old GPU handle belongs to the lost context, including vegetation instances.
 // Discard those references before buildMesh runs its normal resource cleanup.
-canvas.addEventListener('webglcontextrestored', () => { try { lost = false; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
+canvas.addEventListener('webglcontextrestored', () => { try { lost = false; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
 window.addEventListener('pagehide', event => {
   cancelAnimationFrame(frame); frame = 0; clearInput();
   if (event.persisted) {

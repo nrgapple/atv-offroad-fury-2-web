@@ -2431,6 +2431,7 @@ mod tests {
                     slot: 0,
                     model: String::new(),
                     billboard: String::new(),
+                    atlas: None,
                     parameters: [0; 23],
                     optional_name: None,
                     proxies: vec![[1, 0, 0, 0, 0, 0, 0, 1f32.to_bits(), 5f32.to_bits()]],
@@ -2445,6 +2446,7 @@ mod tests {
                 global_name: None,
                 global_word: 0,
                 placement_texture: None,
+                visibility_index: Default::default(),
             };
             vehicle
                 .set_scene_partition(
@@ -2710,6 +2712,7 @@ mod tests {
                     slot: 0,
                     model: String::new(),
                     billboard: String::new(),
+                    atlas: None,
                     parameters: [0; 23],
                     optional_name: None,
                     proxies: vec![[0; 9]; proxy_count],
@@ -2724,6 +2727,7 @@ mod tests {
                 global_name: None,
                 global_word: 0,
                 placement_texture: None,
+                visibility_index: Default::default(),
             };
             vehicle
                 .set_scene_partition(
