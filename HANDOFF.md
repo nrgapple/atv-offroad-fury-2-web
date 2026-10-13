@@ -1,4 +1,4 @@
-## Active motorcycle correction checkpoint (2026-10-13)
+## Motorcycle correction — public gameplay verified (2026-10-13)
 
 The correction to public `8e1aa77` is documented in
 [research/MOTORCYCLES.md](research/MOTORCYCLES.md). Touch steering now follows
@@ -7,9 +7,12 @@ inclined fork axis and shared limb constraints correct rider fit. Continuous
 pose/camera blending and batch render interpolation address movement snaps.
 Garage IDs 27–46 offer 16 source designs/20 clearly labeled choices. Four source
 class profiles remain shared across brands. Original ATV solver is unchanged.
-Host gates pass all20 choices and actual touch left/right/contact checks,
-with exact funny Off/On baseline comparisons. Publication is pending main CI,
-validated-artifact R2 content/gallery upload and public browser checks.
+Public build `4fbb399` passes actual Mini/125/500 touch steering and rendered
+grip/peg contact (762 paired steps/1,760 GPU marker comparisons), all20 choices
+(1,543 paired steps), Honda race and mild bike wreck/recovery (308 paired steps).
+CI 38399468481 passed and deployed. The host severe MX500 breakaway/recovery
+passes 4,607 paired steps. Final current-main metadata/gallery publication and
+full R2 HTTPS verification follow the validated-artifact release flow.
 No complete original-game physics equivalence is claimed.
 
 # Implementation handoff

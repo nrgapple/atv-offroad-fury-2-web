@@ -2279,11 +2279,11 @@
         "The steering correction follows the recovered pi/256 quaternion lookup and the original \u00b1127 packed-axis range; host browser checks for selections 27, 29 and 33 confirm the screen-space sign.",
         "The rider uses the original Mini MXF bank with continuous source-pose blending. Fork steering follows its inclined axis, and shared arm/leg IK keeps hands and boots on the source grip and foot-peg markers; measured contact errors stay below 0.00004 feet.",
         "The garage presents 16 real motorcycle model designs across 20 selectable Race/Pro choices. Host gates cover all 20 loaded, riding, audio, clutch, dirt and reset paths, plus 1,906 paired funny-crash Off/On steps.",
-        "The actual-GPU touch replay now confirms the reversed-sign fix: a left-screen input produces -4.739 ft of steering response and a right-screen input +4.638 ft across 291 exact paired steps. GPU bone-to-source marker comparisons across 660 rendered frames measured maximum grip error 0.00000145 ft and maximum foot-peg error 0.0000284 ft.",
+        "The actual-GPU touch replay now confirms the reversed-sign fix: a left-screen input produces -4.739 ft of steering response and a right-screen input +4.638 ft across 291 exact paired steps. GPU bone-to-source checks recorded 660 rendered bone-marker comparisons, with maximum grip error 0.00000145 ft and maximum foot-peg error 0.0000284 ft.",
         "Host render interpolation is now verified: source pose, camera and motorcycle body uniforms share one blend clock across 2,508 intermediate body-uniform comparisons. Reset, pause, stunt and wreck transitions snap cleanly. This is host GPU evidence; it makes no timing or frame-rate claim.",
         "Additional host regressions passed: the MX 50 jump/stunt/wreck/separation/recovery route (310 paired steps; no severe breakaway in this mild trace), Honda 35 Race, the separate ATV severe-wreck route (1,187 paired steps, seven pieces), all 26 ATV garage choices, responsive layout, context restore and the front menu. The broader host gate passed 336 core, 25 network, 3 web, 13 relay and 72 JavaScript checks, 29 release checks with one credential-dependent skip, and 8 Cloudflare checks."
       ],
-      "limitation": "Host-only verification; these corrections and interpolation are not yet published. The authored motorcycle solver has no native whole-step physics equivalence claim, and no physical-phone test was run. The GPU captures show the bike and rider relatively small in the portrait frame. The mild MX 50 trace did not trigger severe breakaway. Public release and full motorcycle parity remain unverified.",
+      "limitation": "This entry records the original host verification; the later public checkpoint covers selected touch, rendered-contact, all-20 selection and race routes. These checks do not establish native whole-step physics parity or physical-phone behavior. The portrait images keep the bike and rider relatively small in frame. The mild MX 50 trace did not trigger severe breakaway; public breakaway remains unverified.",
       "image": "/devlog-images/motorcycle-touch-steering-and-rider-fit-are-corrected--5d67b69f-gpu-touch-left.png",
       "caption": "Host GPU portrait capture with left-screen steering applied and the motorcycle/rider interpolation active. Touch response and rendered pose were checked against source targets; this is not a physical-phone or public-release capture."
     },
@@ -2304,9 +2304,25 @@
       "limitation": "This board update changes evidence and wording, not game code. The public CPU run is a bounded Caribou behavior test, not a complete lap, native race-rule or PS2-hardware comparison. The 4d1e1c4 public motorcycle failure is historical; 4fbb399 remains host-only pending public verification. The screenshot is a board capture, not a game capture.",
       "image": "/devlog-images/feature-board-update-motorcycle-correction-scope-90e519ef.png",
       "caption": "Feature board after the 4fbb399 source correction: 20 separate-game motorcycle choices are labeled host-only; the 4d1e1c4 model-27 public failure remains historical pending a public re-test."
+    },
+    {
+      "id": "public-motorcycle-touch-steering-and-rider-contact-now-b584ab85",
+      "timestamp": "2026-10-13T12:52:56.796807+00:00",
+      "recorded_at": "2026-10-13T12:56:56.551724+00:00",
+      "kind": "verification",
+      "title": "Public motorcycle touch steering and rider contact now verify",
+      "summary": "The public Cloudflare build now confirms left/right screen steering and rider contact on Mini 50, RM125 and RM500 configurations. This closes the public touch-direction and rendered-pose correction gate for those three configurations.",
+      "details": [
+        "Public Workers commit 4fbb399 at https://atv-offroad-fury-2.champtoday.workers.dev/ passed 762 exact paired steps across Mini 50, RM125 and RM500 touch reports. Left-screen input turns left and right-screen input turns right; all three reports passed without errors.",
+        "Public GPU rendering checks recorded 545, 660 and 555 source-to-bone marker comparisons across the three reports (1,760 comparisons, not distinct frames). Maximum GPU hand/grip error was about 0.0000014 feet and maximum boot/peg error about 0.0000284 feet. The shared interpolation clock moves source pose, camera and motorcycle body uniforms together; the rider keeps the recovered Mini MXF bank and inclined fork steering axis.",
+        "The all-20 motorcycle selection/riding comparison passed 1,543 paired WASM gameplay/camera steps with enhancements Off/On. The public Honda 35 Race gate reported no errors with a five-rider field. A separate 308-step public crash smoke passed paired comparison but triggered no impact, so public breakaway verification remains pending."
+      ],
+      "limitation": "This verifies selected public touch and rendered-contact routes on the deployed browser build. It does not establish native whole-step physics parity, physical-phone behavior, timing or frame rate, a public crash/breakaway transition, or full game completion. The portrait capture shows visible touch direction and contact but the rider/bike remain relatively small in frame.",
+      "image": "/devlog-images/public-motorcycle-touch-steering-and-rider-contact-now-b584ab85.png",
+      "caption": "Public Cloudflare browser capture with left-screen motorcycle steering applied. The rider remains attached at the grips and pegs in the rendered pose; this is a browser-port verification, not a native PS2 capture."
     }
   ],
-  "updated_at": "2026-10-13T12:47:02.347261+00:00",
+  "updated_at": "2026-10-13T12:56:56.551724+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
