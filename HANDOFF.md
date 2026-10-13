@@ -1,3 +1,16 @@
+## Minimap cached-file consistency correction — 2026-10-13
+
+The user reproduced a padded dark square map in the old mid-right position,
+plus duplicate standalone speed, after the combined GPS release. Serving prior
+CSS/HUD modules with the new minimap reproduces that presentation. The release
+packager now versions all local CSS/JS references, transitive imports, Worker
+startup and WASM with the release commit. The real returning-browser regression
+retains the old HTTP cache and verifies the fresh release renders a circle in
+the top-right with zero padding/border and no duplicate speed. Freestyle's
+standalone speed now follows explicit minimap Off, including during map baking
+and temporary visibility suspension. This reproduces a cause; it does not
+inspect the user's physical browser cache. Public verification follows main CI.
+
 ## Full-lock motorcycle hand reach — host follow-up (2026-10-13)
 
 Public inward-bank/standing-menu checks passed, but a later Sano Mini full-lock
@@ -64,7 +77,7 @@ in ignored private screenshot storage until the validated release flow.
 Branch `feat/minimap-instrument` revises the GPS to default circular/top-right,
 with square and bottom-left options under HUD settings → Minimap configuration.
 It renders Rust speed/preload inside the map; the original speed block is
-suppressed only while the GPS is visible. Off/baking/Race retain original speed,
+suppressed whenever Freestyle GPS is enabled. Off/Race retain original speed,
 and the original stunt HUD stays active. Shape/size/corner reuse the cached
 aerial raster, with no additional scene draws. Host tests pass four viewports,
 both shapes/corners, toolbar clearance, 44px controls, persistence, no duplicate

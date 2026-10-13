@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from package_release import EXPECTED_FILES, ROOT, STATIC_FILES, validate_release
+from package_release import EXPECTED_FILES, ROOT, STATIC_FILES, validate_release, versioned_source
 from fetch_site_release import eligible_run
 
 COMMIT = 'a' * 40
@@ -24,6 +24,21 @@ def fixture(root):
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_release_versions_styles_modules_worker_and_wasm_together(self):
+        for name in STATIC_FILES:
+            if not name.endswith(('.html', '.js', '.css')):
+                continue
+            source = versioned_source((ROOT / 'web' / name).read_text(), COMMIT)
+            for quote, relative, target, version in re.findall(
+                    r'''(["'])(\./)?([a-z0-9_-]+\.(?:js|css|wasm))(\?v=[a-f0-9]+)?\1''', source):
+                if target in STATIC_FILES:
+                    self.assertEqual(version, '?v=' + COMMIT, f'{name} references unversioned {target}')
+        sample = 'import "./hud.js"; new Worker(\'worker.js\'); fetch("atv_web.wasm");'
+        self.assertEqual(versioned_source(sample, COMMIT).count('?v=' + COMMIT), 3)
+        self.assertIn(f'fetch("atv_web.wasm?v={COMMIT}")', versioned_source(sample, COMMIT))
+        self.assertIn(f'import "./hud.js?v={COMMIT}"', versioned_source(sample, COMMIT))
+        self.assertEqual(versioned_source("fetch('/content/manifest.json');", COMMIT), "fetch('/content/manifest.json');")
+
     def test_authored_module_dependencies_are_packaged(self):
         # A valid hash list alone cannot catch an omitted imported module.
         for name in STATIC_FILES:
