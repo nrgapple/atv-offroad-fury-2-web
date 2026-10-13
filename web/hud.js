@@ -94,7 +94,7 @@ export class HeadUpDisplay {
     if (height > 0 && width > 0) c.drawImage(image, at[0] + offset[0], y, width, height);
     c.restore();
   }
-  draw(hud, visible = true) {
+  draw(hud, visible = true, { speedVisible = true } = {}) {
     const rect = this.surface.getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 3);
     const width = Math.round(rect.width * dpr), height = Math.round(rect.height * dpr);
     if (this.canvas.width !== width || this.canvas.height !== height) { this.canvas.width = width; this.canvas.height = height; }
@@ -107,9 +107,12 @@ export class HeadUpDisplay {
     const speedAt = compact ? [this.logicalWidth - 24, 72] : [this.logicalWidth - 43, logicalHeight - 76];
     const speed = this.layout.get('OverlayObject-5');
     // Native draw depth: background (5), blue (4), orange (2), highlight (1).
-    this.icon(speedAt, speed, 2); this.icon(speedAt, speed, 1, { visible: hud.preload_visible, alpha: hud.preload_blue_alpha });
-    this.icon(speedAt, speed, 4, { visible: hud.preload_visible, fill: hud.preload_fill }); this.icon(speedAt, speed, 3);
-    this.text(hud.speed_text, speedAt, speed, 1); this.text(hud.units, speedAt, speed, 2);
+    if (speedVisible) {
+      this.icon(speedAt, speed, 2); this.icon(speedAt, speed, 1, { visible: hud.preload_visible, alpha: hud.preload_blue_alpha });
+      this.icon(speedAt, speed, 4, { visible: hud.preload_visible, fill: hud.preload_fill }); this.icon(speedAt, speed, 3);
+      this.text(hud.speed_text, speedAt, speed, 1); this.text(hud.units, speedAt, speed, 2);
+    }
+    this.canvas.dataset.speedVisible = String(speedVisible);
     if (hud.stunt_visible) {
       const stunt = this.layout.get('OverlayObject-12'), at = [this.logicalWidth / 2, compact ? logicalHeight * .62 : logicalHeight - 100];
       const common = { color: hud.stunt_color.join(','), alpha: hud.stunt_alpha };
