@@ -2985,9 +2985,26 @@
         "Final local make check and make verify passed with dedicated ignored SSD CARGO_TARGET_DIR=work/verification/native-target: 356 core tests plus remaining Rust, 98 JavaScript, Clippy and Python checks. The shared target had produced a CopyRideLink bounds-test failure and 357-versus-356 count mismatch while another worktree built; Rust source was unchanged. A fresh isolated WASM build finished in 11.52 seconds and matched the frozen host baseline byte-for-byte, SHA-256 5248c34fe1727149720c83a64a0536184fed6fae92dbb2892bfe3f15ad304116. This does not claim a byte-identical compiler artifact to public CI."
       ],
       "limitation": "These public checks verify the listed routes and deployed files, not whole-game parity or physical-phone behavior. Host benchmark results remain host-only and do not show a consistent CPU/FPS/battery gain. The separate private four-browser screenshot was not approved or published."
+    },
+    {
+      "id": "url-setup-and-direct-lobby-links-bab6e6d8",
+      "timestamp": "2026-10-13T22:29:35+00:00",
+      "recorded_at": "2026-10-13T22:30:20.795160+00:00",
+      "kind": "build",
+      "title": "URL setup and direct lobby links",
+      "summary": "URL parameters can preselect a ride or open a multiplayer invite, with safe defaults and explicit manual setup.",
+      "details": [
+        "Hosted content with a local Rust relay passed Chromium Metal checks at 1280\u00d7896 desktop and 390\u00d7844 portrait: links select quad/rider/course and Race settings, or open manual setup without starting a ride; play=0 also prevents automatic start.",
+        "URL choices override saved garage selections. Tests covered defaults, malformed, duplicate and unsupported parameters, nonexistent-room feedback, and verifying invalid links open no WebSocket or gameplay.",
+        "Create-lobby links started the selected host ride, and a copied direct invite admitted a late guest. Lobby course selection stayed authoritative over a guest URL course. The inspected pause-menu capture shows Copy ride link confirmation.",
+        "Verification: test_launch_links.mjs; 110 JavaScript tests; make check, make verify, make web, relay checks, 35 Python release tests (one intentional skip), 19 Worker JavaScript tests, and menu/controller/phone regression."
+      ],
+      "limitation": "Host-only evidence on one Mac using synthetic focus and a local relay proxy. Current-main integration, CI and public verification are pending. This does not establish physical-phone behavior, geographic latency, full original gameplay, multiplayer races or sound/fullscreen gesture parity.",
+      "image": "/devlog-images/url-setup-and-direct-lobby-links-bab6e6d8.png",
+      "caption": "Host capture: Tioga Valley paused after copying a ride invite link."
     }
   ],
-  "updated_at": "2026-10-13T22:30:03+00:00",
+  "updated_at": "2026-10-13T22:30:20.795160+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {

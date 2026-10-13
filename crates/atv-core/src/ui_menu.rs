@@ -568,6 +568,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                 (format!("Laps: {}", request.race_laps.max(1)), "racelaps"),
                 (format!("CPU riders: {}", request.race_cpu), "racecpu"),
                 ("Start Race".to_string(), "racestart"),
+                ("Copy ride link".to_string(), "copyride"),
             ];
             for (i, (label, action)) in rows.iter().enumerate() {
                 f.choices.push((*action).into());
@@ -963,6 +964,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             if request.fullscreen {
                 choices.push(("Fullscreen", "fullscreen"));
             }
+            choices.push(("Copy ride link", "copyride"));
             choices.push(("Dev log", "devlog"));
             choices.push(if request.lobby_status.is_empty() {
                 ("Quit to Main Menu", "main")
@@ -1455,7 +1457,7 @@ mod tests {
         r.race_available = true;
         assert_eq!(layout(r).unwrap().choices, ["tracks", "garage", "race"]);
         let f = layout(request("race", 844., 390.)).unwrap();
-        assert_eq!(f.choices, ["racelaps", "racecpu", "racestart"]);
+        assert_eq!(f.choices, ["racelaps", "racecpu", "racestart", "copyride"]);
         for (i, a) in f.hits.iter().enumerate() {
             for b in &f.hits[i + 1..] {
                 let [ax, ay, aw, ah] = a.rect;

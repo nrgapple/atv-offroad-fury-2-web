@@ -17,9 +17,9 @@ try{
  await a.context().grantPermissions(['clipboard-read','clipboard-write'],{origin:base});
  await button(a,'Copy invite link').click();
  const invite=await a.evaluate(()=>navigator.clipboard.readText());
- const inviteUrl=new URL(invite);assert.equal(inviteUrl.origin,new URL(base).origin);assert.equal(inviteUrl.pathname,'/play.html');assert.deepEqual([...inviteUrl.searchParams],[['room',code]]);
- await b.goto(invite);await b.getByRole('textbox',{name:'Rider name',exact:true}).fill('Guest',{timeout:90000});
- await button(b,'Quad and Rider').click();await button(b,'Next quad').click();await button(b,'Change rider').click();await button(b,'Done').click();await button(b,'Join lobby').click();
+ const inviteUrl=new URL(invite);assert.equal(inviteUrl.origin,new URL(base).origin);assert.equal(inviteUrl.pathname,'/play.html');assert.equal(inviteUrl.searchParams.get('room'),code);assert.equal(inviteUrl.searchParams.get('action'),'join');assert.equal(inviteUrl.searchParams.get('play'),'1');
+ inviteUrl.searchParams.set('player','Guest');inviteUrl.searchParams.set('quad','2');inviteUrl.searchParams.set('rider','1');
+ await b.goto(inviteUrl.href);
  await a.waitForFunction(()=>window.atvTerrainStatus.multiplayer?.state.lobby?.players.length===2,null,{timeout:15000});
  for(let selected=1;selected<map;selected++) {
    await button(a,'Next environment').click();

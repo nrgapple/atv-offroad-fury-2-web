@@ -1,3 +1,4 @@
+import { ENVIRONMENTS, buildRideUrl, copyRideUrl } from './launch.js';
 // Browser socket and drawing glue. Rust owns the protocol, identity validation,
 // pose smoothing, lobby state and audio decisions.
 export class Multiplayer {
@@ -86,7 +87,7 @@ export class Multiplayer {
       socket.onerror = () => {clearTimeout(timer);reject(new Error('Unable to connect to this lobby.'));};
     });
   }
-  async action(action, frontend) {
+  async action(action, frontend, setup) {
     if (action.startsWith('spawn:')) {
       await this.spawn(Number(action.slice(6))); frontend.resume();
     } else if (action === 'host') {
@@ -97,6 +98,7 @@ export class Multiplayer {
       const {code:createdCode,hostToken} = await response.json();
       try { globalThis.sessionStorage?.setItem('atv-host-session',JSON.stringify({code:createdCode,hostToken})); } catch { /* Memory-only host recovery remains available. */ }
       await frontend.show('lobby'); await this.connect(createdCode,frontend,hostToken);
+      if (setup) await this.configureLobby(setup.map,setup.start);
     } else if (action === 'join') {
       const code = frontend.roomCode.trim().toUpperCase();
       if(!/^[A-Z0-9]{8}$/.test(code)) throw new Error('Enter the 8-letter or number lobby code.');
@@ -104,9 +106,7 @@ export class Multiplayer {
       try {const saved=JSON.parse(globalThis.sessionStorage?.getItem('atv-host-session')??'null');if(saved?.code===code)token=saved.hostToken;} catch { /* Join as guest when no owner session is stored. */ }
       await frontend.show('lobby'); await this.connect(code,frontend,token);
     } else if (action === 'share') {
-      const url = new URL('/play.html',location.origin); url.searchParams.set('room',this.state.code);
-      try { await navigator.clipboard.writeText(url.href); frontend.notice.textContent = 'Invite link copied.'; }
-      catch { frontend.notice.textContent = url.href; }
+      await copyRideUrl(buildRideUrl(location.origin,{mode:'multiplayer',room:this.state.code,map:this.state.environment,quadId:frontend.quadId,riderId:frontend.riderId},{includePlayer:false}),frontend.notice,'Invite link');
     } else if (action === 'lobbymap') {
       const lobby = this.state.lobby; if (lobby) await this.control({SetLobby:{epoch:lobby.epoch,map:this.state.nextMap,started:false}});
     } else if (action === 'lobbystart') {
@@ -115,6 +115,18 @@ export class Multiplayer {
       try { globalThis.sessionStorage?.removeItem('atv-host-session'); } catch { /* Storage may be unavailable. */ }
       await this.disconnect(); await frontend.show('multiplayer');
     }
+  }
+  async configureLobby(environment, started) {
+    const map = ENVIRONMENTS.indexOf(environment) + 1;
+    if (!map) throw Error('Unsupported lobby map.');
+    const generation = this.generation, deadline = performance.now() + 10000;
+    // The socket opening does not mean Welcome/host admission has arrived.
+    while (this.generation===generation && !this.state.lobby && performance.now()<deadline) await new Promise(resolve=>setTimeout(resolve,25));
+    if (this.generation!==generation || !this.state.lobby) throw Error('Lobby admission failed or timed out.');
+    if (this.state.peer!==this.state.lobby.host) throw Error('Only the lobby host can set up a ride.');
+    await this.control({SetLobby:{epoch:this.state.lobby.epoch,map,started:Boolean(started)}});
+    while (this.generation===generation && (this.state.lobby?.map!==map || this.state.lobby?.started!==Boolean(started)) && performance.now()<deadline) await new Promise(resolve=>setTimeout(resolve,25));
+    if (this.generation!==generation || this.state.lobby?.map!==map || this.state.lobby?.started!==Boolean(started)) throw Error('Lobby setup failed or timed out.');
   }
   async disconnect(notify = true, preserveRecovery = false) {
     clearTimeout(this.retryTimer);this.retryTimer=null;

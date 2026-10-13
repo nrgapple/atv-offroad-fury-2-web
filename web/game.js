@@ -1690,12 +1690,15 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
       acceptFrame(await command(86,{peer,now:Math.floor(performance.now())}));
       await command(47,{}); orbit=0; acceptCameraFrame(await command(46,{dt:1/60,orbit}));
       await multiplayer.send();
-    },ready:()=>simReady,paused:simulationPaused,listener:()=>({position:[camera.x,camera.y,camera.z],forward:[Math.sin(camera.yaw)*Math.cos(camera.pitch),Math.sin(camera.pitch),Math.cos(camera.yaw)*Math.cos(camera.pitch)],velocity:simFrame?.linear_velocity??[0,0,0]}),audio:()=>audio,assets:remoteAssets,clearAssets:()=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();},report:message=>{diagnostics.multiplayerError=message;status(message,true);},onState:()=>{if(frontend){void frontend.refresh();}},onStart:async (environment,isCurrent)=>{if(!isCurrent())return;frontend.busy=true;frontend.notice.textContent='';try {await loadGame(null,environment);if(isCurrent())frontend.resume();}finally{if(isCurrent())frontend.busy=false;}},onLeave:message=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show('multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
+    },ready:()=>simReady,paused:simulationPaused,listener:()=>({position:[camera.x,camera.y,camera.z],forward:[Math.sin(camera.yaw)*Math.cos(camera.pitch),Math.sin(camera.pitch),Math.cos(camera.yaw)*Math.cos(camera.pitch)],velocity:simFrame?.linear_velocity??[0,0,0]}),audio:()=>audio,assets:remoteAssets,clearAssets:()=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();},report:message=>{diagnostics.multiplayerError=message;status(message,true);},onState:()=>{if(frontend){void frontend.refresh();}},onStart:async (environment,isCurrent)=>{
+      if(!isCurrent())return;
+      frontend.busy=true;frontend.notice.textContent='';
+      try {await loadGame(null,environment);if(isCurrent()){frontend.raceActive=false;frontend.resume();}}
+      catch(error){if(isCurrent()){await frontend.show('lobby');frontend.fail(error);throw error;}}
+      finally{if(isCurrent())frontend.busy=false;}
+    },onLeave:message=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show('multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
     frontend = new Frontend({minimapSettings,menuRider:menuRiderAssets,modelAssets:selectionAssets,crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => loadGame(null, environment,racing), active: open => { menuOpen = open; clearInput(); lastTime = 0; scheduleRender(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     hud = new HeadUpDisplay(frontend, canvas);
-    if (params.get('drive') === '1') {
-      menuOpen = false; $('frontend').hidden = true;
-      void frontend.init(false).then(() => loadGame(null, params.get('environment') ?? 'env01')).catch(error => status(error.message, true));
-    } else { document.body.classList.add('menu-open'); void frontend.init().then(()=>{if(params.has('room'))return frontend.show('join-lobby');}); }
+    document.body.classList.add('menu-open'); void frontend.init();
   } }
 catch (error) { $('loading-screen').hidden = true; status(error.message, true); $('menu-notice').textContent = error.message; }
