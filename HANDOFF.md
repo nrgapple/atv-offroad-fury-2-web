@@ -1,3 +1,27 @@
+## Enhanced one-handed second-touch controls — host checkpoint (2026-10-13)
+
+The saved **One-handed mobile: On/Off** preference and existing Off behavior are
+preserved. In On mode, the first touch anywhere on the game surface remains the
+primary steering/lean and drive/brace control. A second touch independently
+requests ground brake/reverse or, in the air, one of eight directional stunts or
+clockwise Cat Nac/counterclockwise Cordova. Secondary release resumes the held
+primary's forward drive/brace; primary release clears both. Further gameplay
+contacts are ignored, and Pause/Camera retain separate hit areas. See
+[touch behavior and evidence](research/TOUCH.md).
+
+The final enhanced mobile Chromium report passes portrait 390×844 and landscape
+844×390 ground reverse, primary-axis preservation, secondary release and
+cancellation, with no errors or touch camera orbit. A natural Caribou hop passes
+Nac Nac, Cat Nac and Cordova selection while primary drive/brace continues and
+the secondary stunt releases independently. Normal one-handed/touch/UI and
+mobile utility checks also pass. `make check` (349 core, 25 net, 3 relay, 4
+tools, 13 web and 79 JS), `make verify`, the WASM build, repository hygiene,
+29 release checks (one skipped) and 8 Worker checks pass. This is a host-only
+checkpoint pending current-main CI, deployment and public verification. Physical
+iOS Safari/controller behavior and full original stunt/game parity remain open.
+The inspected capture shows Nac Nac during the touch session; it is stored only
+in ignored private screenshot storage until the validated release flow.
+
 ## Freestyle GPS minimap checkpoint — 2026-10-13
 
 New SSD worktree `atv-offroad-fury-2-minimap`, branch `feat/freestyle-minimap`,

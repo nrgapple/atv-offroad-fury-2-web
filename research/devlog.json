@@ -2340,9 +2340,25 @@
       "limitation": "Host Chromium and serial host Mac verification only; this host screenshot predates CI and public verification for this minimap checkpoint. Physical iOS/Android hardware, GPU timing, dynamic map actors, and PS2 parity remain unverified.",
       "image": "/devlog-images/freestyle-minimap-and-configurable-hud-001c52cc.png",
       "caption": "Host Chromium screenshot at 390\u00d7844, DPR 3: portrait ride view with minimap and HUD; not a public deployment or physical-phone capture."
+    },
+    {
+      "id": "second-touch-adds-reverse-and-airborne-stunts-9f83254d",
+      "timestamp": "2026-10-13T15:07:43.187646+00:00",
+      "recorded_at": "2026-10-13T15:11:46.785430+00:00",
+      "kind": "build",
+      "title": "Second touch adds reverse and airborne stunts",
+      "summary": "One-handed mobile now accepts an optional second touch for ground reverse or airborne original stunt gestures while the primary touch keeps driving.",
+      "details": [
+        "The first touch anywhere on the game surface remains the primary steering/lean and drive/brace control; the saved One-handed mobile: On/Off preference and a saved Off are preserved.",
+        "A second touch requests ground braking/reverse or selects one of eight directional stunts, clockwise Cat Nac, or counterclockwise Cordova in the air. Releasing it resumes primary forward drive/brace; releasing the primary clears both.",
+        "Actual-content Chromium checks pass portrait 390x844 and landscape 844x390, including primary-axis preservation, cancellation, independent stunt release, and zero touch camera orbit."
+      ],
+      "limitation": "Host-only checkpoint pending current-main CI, deployment, and public verification. Physical iOS Safari/controller behavior and complete original stunt/game parity remain unverified.",
+      "image": "/devlog-images/second-touch-adds-reverse-and-airborne-stunts-9f83254d.png",
+      "caption": "Host Chromium capture of an airborne Nac Nac while the primary touch remains engaged; the full second-touch gesture gate is host-verified."
     }
   ],
-  "updated_at": "2026-10-13T13:10:34.342950+00:00",
+  "updated_at": "2026-10-13T15:11:46.785430+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {

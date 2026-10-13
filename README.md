@@ -96,11 +96,11 @@ flowchart TB
 The browser build has a portrait layout and touch controls. Open the [public game](https://atv-offroad-fury-2.champtoday.workers.dev/), enter **Single Player → Freestyle**, and pick a map.
 
 - **One finger by default:** touch anywhere to hold throttle and brace; drag sideways to steer and up/down to lean. Lift to coast and release preload through the recovered ramp rules. The same controls work in air. The small touch circle shows direction and a brief action cue.
-- **Two-finger option:** set **Pause → One-handed mobile: Off**. An existing saved Off is preserved. Left thumb steers/leans; right thumb holds throttle and braces, or drags down to brake and then reverse after slowing.
-- **Tricks with two fingers:** in the air, the right thumb switches to tricks. Swipe in eight directions or draw a clockwise/counterclockwise circle, then hold to extend the trick or lift to finish. A held thumb resumes drive on landing. See [gesture mappings](research/TOUCH.md).
+- **Optional second touch:** with **Pause → One-handed mobile: On**, the first touch stays primary anywhere on the game surface. A second touch brakes and then reverses on the ground. In the air, swipe in eight directions or draw a clockwise/counterclockwise circle to select a stunt while the first touch keeps driving/bracing. Lift the second touch to return to forward drive; lifting the primary clears both. More gameplay touches are ignored.
+- **Standard two-finger option:** set **Pause → One-handed mobile: Off**. A saved Off remains Off. The left thumb steers/leans; the right thumb holds throttle and braces, or drags down to brake and then reverse after slowing. Pause and Camera use their own on-screen buttons. See [gesture mappings](research/TOUCH.md).
 - **Pause and Camera:** use the on-screen buttons.
 
-Touch is a browser adaptation of the PS2 controls. Portrait and gesture checks pass in automated browsers; physical iOS Safari and Bluetooth-controller behavior remain unverified. The full original stunt system is still being rebuilt.
+Touch is a browser adaptation of the PS2 controls. Portrait and landscape gesture checks pass in automated Chromium; physical iOS Safari and Bluetooth-controller behavior remain unverified. The full original stunt system is still being rebuilt.
 
 <img src="https://atv-offroad-fury-2.champtoday.workers.dev/devlog-images/the-suspension-stop-and-obstruction-camera-are-verifie-3f22c762.png" width="300" alt="Portrait browser view of the ATV during the publicly verified suspension and landing checkpoint.">
 

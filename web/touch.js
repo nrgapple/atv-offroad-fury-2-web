@@ -13,10 +13,16 @@ const steeringAxis = (dx, sensitivity) => clamp(dx / 70 * sensitivity / 100);
 // Gesture mappings are browser adaptations of original modifier/direction inputs.
 export class TouchInput {
   constructor() { this.generation = 0; this.airborne = false; this.oneHanded = false; this.steeringSensitivity = 100; this.clear(); }
-  clear() { this.generation++; this.pointer = null; this.pendingSelection = null; this.sampled = false; this.releasePending = false; }
-  owns(id) { return this.pointer?.id === id; }
+  clear() { this.generation++; this.pointer = null; this.secondary = null; this.pendingSelection = null; this.sampled = false; this.releasePending = false; }
+  owns(id) { return this.pointer?.id === id || this.secondary?.owns(id) === true; }
   begin(id, x = 0, y = 0, airborne = this.airborne) {
-    if (this.pointer) return false;
+    if (this.pointer) {
+      if (!this.oneHanded || this.owns(id) || this.secondary?.pointer) return false;
+      // Reuse the established gesture recognizer with a separate origin/history.
+      this.secondary = new TouchInput();
+      return this.secondary.begin(id, x, y, airborne);
+    }
+    this.secondary = null;
     this.airborne = airborne;
     this.pointer = { id, x, y, currentX: x, currentY: y, axis: 1,
       mode: airborne && !this.oneHanded ? 'trick' : 'drive', points: [[x,y]], lastMove: Infinity, selection: null };
@@ -31,7 +37,7 @@ export class TouchInput {
     if (airborne === this.airborne) return;
     this.airborne = airborne;
     // One-handed controls do not change at takeoff or landing.
-    if (this.oneHanded) return;
+    if (this.oneHanded) { this.secondary?.setAirborne(airborne); return; }
     const pointer = this.pointer;
     if (pointer) {
       pointer.mode = airborne ? 'trick' : 'drive';
@@ -43,6 +49,7 @@ export class TouchInput {
     this.sampled = false; this.releasePending = false; this.pendingSelection = null; this.generation++;
   }
   move(id, x, y, now = performance.now()) {
+    if (this.secondary?.owns(id)) { this.secondary.move(id, x, y, now); return; }
     const pointer = this.pointer;
     if (pointer?.id !== id) return;
     pointer.currentX = x; pointer.currentY = y;
@@ -72,6 +79,7 @@ export class TouchInput {
       pointer.selection = { modifiers: 3, axes: [0, turn > 0 ? -1 : 1] };
   }
   end(id, cancelled = false) {
+    if (this.secondary?.owns(id)) { this.secondary.end(id, cancelled); return; }
     if (this.pointer?.id !== id) return;
     if (cancelled) { this.clear(); return; }
     if (this.pointer.mode === 'trick') {
@@ -80,7 +88,7 @@ export class TouchInput {
       if (!sent) this.pendingSelection = this.pointer.selection;
     }
     this.releasePending = this.sampled && this.pointer.mode === 'drive';
-    this.pointer = null; this.sampled = false;
+    this.pointer = null; this.secondary = null; this.sampled = false;
   }
   sample(now = performance.now()) {
     const pointer = this.pointer;
@@ -100,11 +108,16 @@ export class TouchInput {
     const steer = leaning ? steeringAxis(pointer.currentX-pointer.x, this.steeringSensitivity) : 0;
     const lean = leaning ? clamp((pointer.currentY-pointer.y)/70) : 0;
     const drive = { generation: this.generation, held: driving, axis: driving ? pointer.axis : 0, grounded_only: false };
-    if (this.oneHanded) drive.forward_only = true;
+    if (this.oneHanded) {
+      drive.forward_only = true;
+      // Rust resolves ground contact on EACH fixed step, including batch landing.
+      drive.reverse_held = Boolean(pointer && this.secondary?.pointer);
+    }
     let preload_axis = null;
     if (driving) { this.sampled = true; preload_axis = 1; }
     else if (this.releasePending) { this.releasePending = false; preload_axis = -1; }
-    const selection = pointer?.selection ?? this.pendingSelection;
+    const secondary = this.oneHanded && pointer && this.airborne ? this.secondary?.sample(now) : null;
+    const selection = secondary?.stunt_modifiers ? { modifiers: secondary.stunt_modifiers, axes: [secondary.stunt_x, secondary.stunt_y] } : pointer?.selection ?? this.pendingSelection;
     if (pointer?.selection) pointer.selectionSent = true;
     this.pendingSelection = null;
     return { drive, preload_axis, steer, lean, stunt_modifiers: selection?.modifiers ?? 0,
@@ -143,7 +156,7 @@ export function oneHandedFeedback(input, frame) {
   return {
     steer: pointer ? steeringAxis(pointer.currentX - pointer.x, input.steeringSensitivity) : 0,
     lean: pointer ? clamp((pointer.currentY - pointer.y) / 70) : 0,
-    cue: !pointer ? '' : frame?.preload_active ? 'PRELOADED' : frame?.preload_armed ? 'LIFT FOR PRELOAD' : current && applied.brake > 0 ? 'BRAKE · BRACE' : 'DRIVE · BRACE',
+    cue: !pointer ? '' : input.secondary?.pointer ? (input.airborne ? frame?.stunt?.name ?? 'SWIPE / CIRCLE' : current && applied.brake > 0 ? 'BRAKE → REVERSE' : 'REVERSE · BRACE') : frame?.preload_active ? 'PRELOADED' : frame?.preload_armed ? 'LIFT FOR PRELOAD' : current && applied.brake > 0 ? 'BRAKE · BRACE' : 'DRIVE · BRACE',
   };
 }
 
