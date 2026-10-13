@@ -370,3 +370,39 @@ water/rider gates are recorded in [water and snow verification](WATER_SNOW_GATE.
 ENV04/05/07 routes drown and return to the dry bank; ENV08's shallower route
 exercises wave/depth timer clearing. Public main `b9a3a44` / CI `38292520844` passes those routes and the separate
 HTTPS/content gates. These remain bounded checks, not whole-game or hardware parity.
+
+
+## Animated signature integration (host component gate, October 13)
+
+NAT01 requires eleven original `nat01waves` frames at 4 fps, mixed 64/128-pixel
+height/derivative maps and eight signed height channels. LiveField now loads every
+original frame, runs the recovered 0030af00 clock and publishes the current
+00198080 frame pair before the next origin preparation. Normal rendering follows
+00197f10/00197980 with independently rounded GS FIX weights for both frames.
+
+The GPU holds all deduplicated original frames in resident texture arrays.
+Smaller derivative maps repeat within a larger layer with UV scale adjustment;
+raw height queries retain their original integer dimension and byte samples.
+Ordinary frames change uniforms only, with one surface draw and no mesh/texture
+uploads. This is a browser storage optimization, not a recovered native atlas.
+
+Physics retains the existing explicit shared blend-clock weight 1/0. Original
+00192090 blends the sums of all first/second signed channels with 0018d760's
+shared clock, independently of per-signature normal weights. The source of that
+shared clock's water-node +ac frequency remains unresolved. Animated physics
+therefore selects changing authored first frames, while normals interpolate;
+this does not establish full NAT01 water-physics or native VU parity. Froth and
+reflection-coordinate parity remain unfinished.
+
+Host component checks pass the new frame-pair/previous-origin/wrap regression,
+20 focused water regressions, strict workspace Clippy and WASM build. A private
+original NAT01 resource fixture runs 45 prepared frames across all eleven source
+frames. Actual production GPU height sampling matches Rust at 2,970 points
+exactly, including negative coordinates, inclusive non-tiled edges and mixed
+sizes. The isolated 390×844 surface changes 239,235 pixels between original
+frames, retains identical held-frame pixels, costs 1,317,080 GPU bytes and one
+draw, and uploads no textures or mesh buffers during 45 ordinary frames. These
+are renderer work counts, not physical-phone timings. Existing four wet-map render gates and dry ENV01 pass, including portrait
+Arlington, unchanged banks/sky and zero GL/browser errors. Full new-map driving,
+pause/context and public verification belong to the integrating map checkpoint.
+Source-derived fixture and GPU reports stay under ignored private storage.

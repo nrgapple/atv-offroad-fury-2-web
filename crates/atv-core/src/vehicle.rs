@@ -1662,6 +1662,7 @@ mod tests {
             swell: crate::water_animation::SwellState::default(),
             states: vec![],
             waves: vec![],
+            frames: vec![],
         };
         let checkpoint = vehicle.reset_origin;
         vehicle.body =

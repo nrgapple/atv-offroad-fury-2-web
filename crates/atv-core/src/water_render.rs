@@ -137,6 +137,7 @@ pub struct HeightChannel {
     pub scale: f32,
     pub positive: bool,
     pub layer: usize,
+    pub layers: Vec<usize>,
 }
 #[derive(Debug, Serialize)]
 pub struct HeightAtlas {
@@ -153,6 +154,7 @@ pub struct GradientTexture {
 pub struct GradientWave {
     pub origin_channel: usize,
     pub layer: usize,
+    pub layers: Vec<usize>,
     pub scale: f32,
     pub fixed_alpha: i32,
 }
@@ -179,40 +181,41 @@ impl GradientAtlas {
             .enumerate()
             .filter(|(_, wave)| wave.height_channel && !wave.bump_only)
         {
-            if wave.frames != 1 || wave.frames_per_second != 0. {
-                return Err("portable water gradients require one-frame signatures".into());
+            let mut layers = Vec::with_capacity(wave.frames);
+            for frame in 0..wave.frames {
+                let mut pixels = vec![];
+                let mut dimension = 0;
+                for (component, suffix) in ["DxPos", "DxNeg", "DzPos", "DzNeg"].iter().enumerate() {
+                    let image = texture::decode_pst(&load(&format!(
+                        "{directory}/{}{:04}{suffix}.pst",
+                        wave.filename, frame
+                    ))?)?;
+                    if image.info.width != image.info.height {
+                        return Err("nonsquare water gradient signature".into());
+                    }
+                    if component == 0 {
+                        dimension = image.info.width as usize;
+                        pixels.resize(dimension * dimension * 4, 0);
+                    }
+                    if image.info.width as usize != dimension {
+                        return Err("water gradient channel dimensions differ".into());
+                    }
+                    for (pixel, rgba) in image.rgba.as_chunks::<4>().0.iter().enumerate() {
+                        pixels[pixel * 4 + component] = rgba[0];
+                    }
+                }
+                let layer = match textures
+                    .iter()
+                    .position(|texture| texture.dimension == dimension && texture.pixels == pixels)
+                {
+                    Some(i) => i,
+                    None => {
+                        textures.push(GradientTexture { dimension, pixels });
+                        textures.len() - 1
+                    }
+                };
+                layers.push(layer);
             }
-            let mut pixels = vec![];
-            let mut dimension = 0;
-            for (component, suffix) in ["DxPos", "DxNeg", "DzPos", "DzNeg"].iter().enumerate() {
-                let image = texture::decode_pst(&load(&format!(
-                    "{directory}/{}0000{suffix}.pst",
-                    wave.filename
-                ))?)?;
-                if image.info.width != image.info.height {
-                    return Err("nonsquare water gradient signature".into());
-                }
-                if component == 0 {
-                    dimension = image.info.width as usize;
-                    pixels.resize(dimension * dimension * 4, 0);
-                }
-                if image.info.width as usize != dimension {
-                    return Err("water gradient channel dimensions differ".into());
-                }
-                for (pixel, rgba) in image.rgba.as_chunks::<4>().0.iter().enumerate() {
-                    pixels[pixel * 4 + component] = rgba[0];
-                }
-            }
-            let layer = match textures
-                .iter()
-                .position(|texture| texture.dimension == dimension && texture.pixels == pixels)
-            {
-                Some(i) => i,
-                None => {
-                    textures.push(GradientTexture { dimension, pixels });
-                    textures.len() - 1
-                }
-            };
             let scale = scalar(
                 &data,
                 &format!("Signature Wave {}", index + 1),
@@ -221,18 +224,15 @@ impl GradientAtlas {
             )?;
             waves.push(GradientWave {
                 origin_channel: waves.len() * 2,
-                layer,
+                layer: layers[0],
+                layers,
                 scale,
                 // 00197980, single-frame weight=1: GS FIX rounds before blending.
                 fixed_alpha: (128. * scale + 0.5) as i32,
             });
         }
-        if textures.is_empty()
-            || textures
-                .iter()
-                .any(|texture| texture.dimension != textures[0].dimension)
-        {
-            return Err("portable water gradient atlas requires equal-size maps".into());
+        if textures.is_empty() {
+            return Err("water gradient atlas is empty".into());
         }
         Ok(Self { textures, waves })
     }
@@ -244,25 +244,28 @@ impl HeightAtlas {
         if field.waves.len() > 8 {
             return Err("portable water supports at most eight height channels".into());
         }
-        for wave in &field.waves {
-            if wave.first_frame != wave.second_frame
-                || wave.pixel_stride != 1
-                || wave.row_stride != wave.dimension
-            {
-                return Err("portable water requires one-frame packed height maps".into());
+        for (index, wave) in field.waves.iter().enumerate() {
+            if wave.pixel_stride != 1 || wave.row_stride != wave.dimension {
+                return Err("portable water requires packed height maps".into());
             }
-            let layer = match textures.iter().position(|texture| {
-                texture.dimension == wave.dimension && texture.pixels == wave.first_frame
-            }) {
-                Some(i) => i,
-                None => {
-                    textures.push(HeightTexture {
-                        dimension: wave.dimension,
-                        pixels: wave.first_frame.clone(),
-                    });
-                    textures.len() - 1
-                }
-            };
+            let fallback = vec![wave.first_frame.clone()];
+            let frames = field.frames.get(index).unwrap_or(&fallback);
+            let mut layers = vec![];
+            for pixels in frames {
+                let layer = match textures.iter().position(|texture| {
+                    texture.dimension == wave.dimension && texture.pixels == *pixels
+                }) {
+                    Some(i) => i,
+                    None => {
+                        textures.push(HeightTexture {
+                            dimension: wave.dimension,
+                            pixels: pixels.clone(),
+                        });
+                        textures.len() - 1
+                    }
+                };
+                layers.push(layer);
+            }
             channels.push(HeightChannel {
                 width: wave.width,
                 inverse_width: wave.inverse_width,
@@ -270,15 +273,11 @@ impl HeightAtlas {
                 tiled: wave.tiled,
                 scale: wave.scale,
                 positive: wave.positive,
-                layer,
+                layer: layers[0],
+                layers,
             });
         }
-        if textures
-            .iter()
-            .any(|t| t.dimension != textures[0].dimension)
-        {
-            return Err("portable water height atlas has mixed dimensions".into());
-        }
+
         Ok(Self { textures, channels })
     }
 }
@@ -286,6 +285,8 @@ impl HeightAtlas {
 pub struct Frame {
     pub base_height: f32,
     pub origins: Vec<[f32; 2]>,
+    pub signature_frames: Vec<[usize; 2]>,
+    pub first_frame_weights: Vec<f32>,
 }
 impl Frame {
     /// Completed render-preparation state, with no second visual clock or swell.
@@ -293,6 +294,16 @@ impl Frame {
         Self {
             base_height: field.definition.surface.base_height,
             origins: field.waves.iter().map(|wave| wave.origin).collect(),
+            signature_frames: field
+                .states
+                .iter()
+                .map(|state| [state.first_frame, state.second_frame])
+                .collect(),
+            first_frame_weights: field
+                .states
+                .iter()
+                .map(|state| state.first_frame_weight)
+                .collect(),
         }
     }
 }
@@ -388,6 +399,7 @@ mod tests {
             definition,
             swell: Default::default(),
             states: vec![],
+            frames: vec![vec![wave.first_frame.clone()]; 2],
             waves: vec![wave.clone(), wave],
         };
         let atlas = HeightAtlas::new(&field).unwrap();
