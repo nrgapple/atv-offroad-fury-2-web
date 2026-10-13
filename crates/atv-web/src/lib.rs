@@ -66,6 +66,8 @@ struct Simulation {
     placement_epoch: u32,
     wreck_camera: Option<atv_core::camera::WreckCamera>,
     hud: atv_core::hud::State,
+    race_course: Option<atv_core::race::Course>,
+    race: Option<atv_core::race::Race>,
 }
 struct TrainCollisionBinding {
     car: usize,
@@ -1364,6 +1366,8 @@ fn serialized_operation(bytes: Vec<u8>) -> Result<Box<serde_json::value::RawValu
 
 #[derive(serde::Serialize)]
 struct SimulationBatchFrame {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    race: Option<atv_core::race::Frame>,
     frame: Box<serde_json::value::RawValue>,
     camera: Box<serde_json::value::RawValue>,
     water: Option<atv_core::water_render::Frame>,
@@ -1395,7 +1399,41 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
     let mut frames = Vec::with_capacity(count as usize);
     for _ in 0..count {
         let train = SIMULATION.with_borrow_mut(|sim| step_train_scene(sim, 1.0 / 60.0))?;
-        let frame = serialized_operation(simulation(&step, 24)?)?;
+        let locked = SIMULATION.with_borrow(|sim| sim.race.as_ref().is_some_and(|r| r.locked()));
+        let bytes = if locked {
+            SIMULATION.with_borrow_mut(|sim| {
+                let player = sim
+                    .vehicle
+                    .as_ref()
+                    .ok_or("start simulation first")?
+                    .frame();
+                simulation_frame(sim, &player)
+            })?
+        } else {
+            simulation(&step, 24)?
+        };
+        let frame = serialized_operation(bytes)?;
+        let race = SIMULATION.with_borrow_mut(|sim| -> Result<Option<atv_core::race::Frame>> {
+            if let Some(race) = &mut sim.race {
+                let player = sim
+                    .vehicle
+                    .as_ref()
+                    .ok_or("start simulation first")?
+                    .frame();
+                race.step(player.origin, 1. / 60.);
+                let [w, x, y, z] = player.orientation;
+                let yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
+                let mut race_frame = race.frame(yaw);
+                let terrain = sim.terrain.as_ref().ok_or("missing terrain")?;
+                for cpu in &mut race_frame.opponents {
+                    cpu.origin[1] = terrain
+                        .contact(cpu.origin[0], cpu.origin[2])?
+                        .map_or(player.origin[1], |c| c.height + 2.5);
+                }
+                return Ok(Some(race_frame));
+            }
+            Ok(None)
+        })?;
         let camera = serialized_operation(simulation(&camera, 46)?)?;
         let water = SIMULATION
             .with_borrow(|sim| sim.water.as_ref().map(atv_core::water_render::Frame::new));
@@ -1414,6 +1452,7 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
                 .collect::<std::collections::BTreeMap<_, _>>()
         });
         frames.push(SimulationBatchFrame {
+            race,
             frame,
             camera,
             water,
@@ -1426,6 +1465,44 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
+    if op == 95 {
+        let course = atv_core::race::Course::parse(input)?;
+        let result = serde_json::to_vec(&course).map_err(|e| e.to_string())?;
+        SIMULATION.with_borrow_mut(|sim| {
+            sim.race_course = Some(course);
+            sim.race = None;
+        });
+        return Ok(result);
+    }
+    if op == 96 {
+        return SIMULATION.with_borrow_mut(|sim| {
+            let value: serde_json::Value =
+                serde_json::from_slice(input).map_err(|e| e.to_string())?;
+            if value.get("active").and_then(serde_json::Value::as_bool) == Some(false) {
+                sim.race = None;
+                sim.race_course = None;
+                return Ok(b"null".to_vec());
+            }
+            let integer = |key| {
+                value
+                    .get(key)
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|v| u32::try_from(v).ok())
+                    .ok_or_else(|| format!("invalid race {key}"))
+            };
+            let names: Vec<String> =
+                serde_json::from_value(value.get("names").ok_or("missing CPU names")?.clone())
+                    .map_err(|e| e.to_string())?;
+            sim.race = Some(atv_core::race::Race::new(
+                sim.race_course.clone().ok_or("load race course first")?,
+                integer("laps")?,
+                names,
+                integer("difficulty")?,
+            )?);
+            Ok(b"null".to_vec())
+        });
+    }
+
     if op == 90 {
         return serde_json::to_vec(&atv_core::scenery_material::parse(input)?)
             .map_err(|e| e.to_string());

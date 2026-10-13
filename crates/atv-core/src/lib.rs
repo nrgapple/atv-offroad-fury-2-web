@@ -81,3 +81,5 @@ pub mod vehicle;
 pub mod wreck_animation;
 
 pub mod player_models;
+
+pub mod race;

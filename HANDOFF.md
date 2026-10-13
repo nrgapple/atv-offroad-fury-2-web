@@ -1,5 +1,39 @@
 # Implementation handoff
 
+## Host race preview checkpoint (public release pending)
+
+The worktree race slice adds Single Player → Race → Caribou Peak National,
+1–5 laps, 0/3/5 CPU riders and three difficulty speeds. Original `env01natE.tdf`
+decodes 252 unique closed route points; AIRiders.pb supplies YUKARI, PANZER,
+MCNABB, BALS and ROBERTS. Rust owns countdown, ordered checkpoints, laps,
+current/best/total timing, rank, finish and CPU motion. The browser adds radar,
+next-point direction, wrong-way text, results and retry. The original National
+archive is added only to the separate ignored R2 package, never GitHub. Older
+public manifests hide Race until that archive is available.
+
+Host Chromium passes setup and driving at 1280×720, 390×844 and 844×390;
+44px setup actions, rotation, countdown input lock, pause, CPU motion and
+restart; existing Freestyle/menu/controller/portrait regression passes.
+Results UI uses a separate render-only fixture; full course laps are not
+claimed as browser replays. Synthetic Rust tests cover finish/shortcut rules.
+See research/RACING.md for verification updates. The user requested no
+deployment waits: public availability, CI and screenshot/content upload remain
+separate pending gates.
+
+The race slice now integrates main `c895ba4`. The combined gate passes 325 core,
+25 protocol, 3 relay, 13 bridge and 69 JS tests, strict Clippy/formatting,
+18 release/content tests, 6 Worker tests, WASM, setup/hygiene, race play,
+frontend and all-26-model regressions. Race ABI 95/96 preserves multiplayer
+80–85; race data accompanies the existing RawValue simulation batch transport.
+Temporary native/WASM caches avoided host SSD clone stalls; static browser
+artifacts remain on the SSD. Public/CI verification is still pending.
+
+This is a race preview, not recovered original racing: CPU actors follow the
+route with distinct deterministic speeds and shared neutral ATV/rider meshes.
+Original AI decisions/physics, rider-to-rider collisions, costume diversity,
+Lead timing, HUD toggles, other courses and progression remain incomplete.
+
+
 ## Ordered vegetation: tested host release candidate
 
 The isolated map branch connects original distant atlases and source-correlated
