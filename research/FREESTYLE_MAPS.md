@@ -121,14 +121,14 @@ no invented thumbnail.
 Six Sausalito hay-bale approaches at 390px supply both original wheel support and
 body responses (7–85 support frames and 12–104 body-contact frames per route).
 Actual Chromium touch events move the ATV, and the inspected portrait stadium
-capture shows 16 mph. Two clients select Sausalito map23, draw each other's rigs
-with 13 remote draws each, replicate 5.12 feet of host movement and clean up when
+capture shows the original stadium, rider and GPS. Two clients select Sausalito map23, draw each other's rigs
+with 13 remote draws each, replicate 8.18 feet of host movement and clean up when
 the host leaves. Sixteen relay checks pass, including map41 rejection on a real
 socket. These are bounded host browser checks, not physical phone or original PS2
 full-game equivalence.
 
-Setup, Rust workspace tests/formatting/strict Clippy, JavaScript tests, release
-tests (35 with one opt-in skip), Worker tests and the authored WASM build pass.
+After rebasing onto current main, setup, 422 Rust tests/formatting/strict
+Clippy, 120 JavaScript tests, eight build-cache tests, release tests (35 with one opt-in skip), Worker tests and the authored WASM build pass.
 The expanded private package validates 147 runtime records/347 content objects,
 350,272,729 resource bytes and no overlapping extents; four existing motorcycle
 archives retain their hashes and use virtual LBAs after source resources.
