@@ -50,7 +50,7 @@ class DomainStagingTests(unittest.TestCase):
                 fixture(release)
                 domains = [{'pattern': 'furyremastered.com', 'custom_domain': True}]
                 routes = domains + (['legacy.example/*'] if keep_standard_route else [])
-                source = {'routes': routes, 'assets': {}, 'vars': {
+                source = {'observability': {'enabled': True, 'head_sampling_rate': 1, 'logs': {'enabled': True, 'invocation_logs': False}}, 'routes': routes, 'assets': {}, 'vars': {
                     'GAME_ORIGINS': 'https://furyremastered.com,https://legacy.example'}}
                 (root / 'wrangler.jsonc').write_text(json.dumps(source))
                 with patch.object(stage_cloudflare, 'ROOT', root):
@@ -58,6 +58,7 @@ class DomainStagingTests(unittest.TestCase):
                 staged = json.loads((root / 'work/cloudflare/wrangler.jsonc').read_text())
                 self.assertEqual(staged['vars']['GAME_ORIGINS'], source['vars']['GAME_ORIGINS'])
                 self.assertEqual(staged['vars']['BUILD_COMMIT'], COMMIT)
+                self.assertEqual(staged['observability'], source['observability'])
                 self.assertEqual(staged.get('routes', []), ['legacy.example/*'] if keep_standard_route else [])
                 self.assertEqual(json.loads((root / 'wrangler.jsonc').read_text()), source)
                 self.assertTrue((root / 'work/cloudflare/relay/index_bg.wasm').is_file())
