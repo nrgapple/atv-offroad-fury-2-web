@@ -2559,7 +2559,7 @@
     {
       "id": "late-join-minimap-and-multiplayer-contacts-e994b016",
       "timestamp": "2026-10-13T18:11:52+00:00",
-      "recorded_at": "2026-10-13T18:15:00+00:00",
+      "recorded_at": "2026-10-13T18:14:28+00:00",
       "kind": "verification",
       "title": "Late join, minimap and multiplayer contacts",
       "summary": "A two-client host run now admits a late rider into an active Arlington Freeride room, renders player arrows and applies owner-local contacts.",
@@ -2572,7 +2572,7 @@
       ],
       "limitation": "Host-only verification; no public deployment, physical-phone testing, or geographically separated latency measurement. Player contact is an authored equal-mass six-foot swept-cylinder response applied by each owner; there is no server physics reconciliation. Recovered original compass art/colors do not make overhead labels original. The host pause freezes the shared train animation clock.",
       "image": "/devlog-images/late-join-minimap-and-multiplayer-contacts-e994b016-label-v2.png",
-      "caption": "Host-only 390×844 browser capture: larger white P1 Host distance label with a black outline and no background, above the original red compass arrow. The overhead label placement is authored."
+      "caption": "Host-only 1280×896 browser capture: larger white P1 Host distance label with a black outline and no background, above the original red compass arrow. The overhead label placement is authored."
     },
     {
       "id": "late-guest-spawn-control-in-players-menu-7fe7d31d",

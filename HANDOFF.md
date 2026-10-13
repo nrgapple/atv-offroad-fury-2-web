@@ -1053,3 +1053,9 @@ remains pending the validated current-main artifact and separate R2 gallery
 verification.
 See `research/MULTIPLAYER.md`; physical phones and geographically separated
 network behavior remain untested. Original PS2 multiplayer fidelity is not claimed.
+
+Latest multiplayer follow-up: separate Create/Join forms and optional custom
+eight-character codes pass the actual browser/relay gates. Labels are 22px white
+with black outline, no background. Final host run: 404 Rust/91 JS tests, 14 relay
+cases, four-client replication/cleanup, contacts 4/3 and 20 train samples with
+0.933ft maximum relative error. Public delivery is pending.
