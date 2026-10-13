@@ -9,13 +9,13 @@
   "theme_color": "#9c1414",
   "icons": [
     {
-      "src": "/app-icons/f5b2bdc04c2315310d72a59d7081da7ddf2d35ae6b42b959a0920d49af35a184.png",
+      "src": "/fury-remastered-home-192-v1.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/app-icons/2e09ec178a84406ed8d04efedb5ffffbca0b4a6772c0dab6a805b45c9b5057ed.png",
+      "src": "/fury-remastered-home-512-v1.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"

@@ -42,6 +42,9 @@ def stage(release, commit, release_scoped=False, preserve_custom_domains=False):
         config['vars']['APPLE_TOUCH_ICON_KEY'] = icon
         large = next(item['src'].lstrip('/') for item in manifest['icons'] if item.get('sizes') == '512x512' and item['src'].startswith('/app-icons/'))
         config['vars']['APP_ICON_512_KEY'] = large
+    if any(item.get('src') == '/fury-remastered-home-192-v1.png' for item in manifest.get('icons', [])):
+        config['vars']['APPLE_TOUCH_ICON_KEY'] = 'fury-remastered-home-180-v1.png'
+        config['vars']['APP_ICON_512_KEY'] = 'fury-remastered-home-512-v1.png'
     if release_scoped:
         config['vars']['RELEASE_COMMIT'] = commit
     (ROOT / 'work/cloudflare/wrangler.jsonc').write_text(json.dumps(config, indent=2) + '\n')

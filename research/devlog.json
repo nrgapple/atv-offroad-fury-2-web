@@ -2602,9 +2602,24 @@
         "The authenticated Rust relay passed 13 live cases, including capacity, map synchronization, packet validation, rate limits and host-loss cleanup."
       ],
       "limitation": "Host-only browser verification; no public deployment, physical-phone test, or geographically separated network measurement. The relay forwards owner-simulated state and does not reconcile physics."
+    },
+    {
+      "id": "fury-remastered-home-screen-icon-fda8f8ce",
+      "timestamp": "2026-10-13T18:31:28.458671+00:00",
+      "recorded_at": "2026-10-13T18:31:46.033609+00:00",
+      "kind": "build",
+      "title": "FURY REMASTERED home-screen icon",
+      "summary": "The authored FURY REMASTERED wordmark now supplies the browser app’s 180, 192 and 512 pixel home-screen icons, with the same identity used across page metadata and icon aliases. CI builds and validates the icon files from the source SVG so the app and icons travel together.",
+      "details": [
+        "Updated touch icons, favicon, install banner and dialog, manifest metadata, and conventional Safari aliases. Existing R2 icon files and old URL aliases remain available for prior links.",
+        "Host checks passed WASM make web, make verify, 12 Worker tests, 35 release tests (one skipped), two install-state tests, served identity/MIME/dimension/alias checks, and Python/JavaScript syntax checks."
+      ],
+      "limitation": "Host-only checkpoint; physical iOS behavior is unverified. A home-screen icon already saved on a device may need to be added again. No deployment verification is claimed.",
+      "image": "/devlog-images/fury-remastered-home-screen-icon-fda8f8ce.png",
+      "caption": "512×512 authored FURY REMASTERED home-screen icon preview, inspected on the host."
     }
   ],
-  "updated_at": "2026-10-13T18:00:16.046363+00:00",
+  "updated_at": "2026-10-13T18:31:46.033609+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
