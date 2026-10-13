@@ -13,7 +13,7 @@ await captureCrashIsolation(page);
 const button=name=>page.getByRole('button',{name,exact:true});
 const state=()=>page.evaluate(()=>window.atvTerrainStatus);
 let selected=1;
-const ids=process.env.ATV_MOTORCYCLE_IDS?.split(',').map(Number)??[27,28,29,30,31,32,33,34];
+const ids=process.env.ATV_MOTORCYCLE_IDS?.split(',').map(Number)??Array.from({length:20},(_,i)=>27+i);
 const report={models:[],errors};
 try {
  await page.goto(new URL('/play.html',base).href);
@@ -21,7 +21,7 @@ try {
  for (const id of ids) {
   console.log(`Motorcycle ${id}: selection and riding`);
   await button('Single Player').click();await button('Quad and Rider').click();
-  const next=(id-selected+34)%34,previous=(selected-id+34)%34;
+  const next=(id-selected+46)%46,previous=(selected-id+46)%46;
   for(let i=0;i<Math.min(next,previous);i++)await button(next<=previous?'Next quad':'Previous quad').click();
   selected=id;
   await page.waitForFunction(id=>[...document.querySelectorAll('.model-view canvas')].every(c=>c.dataset.selection===`${id}:0`),id);
@@ -38,6 +38,7 @@ try {
   assert(driven.frame.wheel_particles.total_emitted.some(n=>n>0));assert.equal(driven.frame.wreck.phase,'Riding');
   await page.keyboard.down('KeyA');await page.waitForFunction(()=>Math.abs(window.atvTerrainStatus.frame.steering_angle)>.05);await page.waitForTimeout(250);await page.keyboard.up('KeyA');
   const turned=await state();assert.notDeepEqual(turned.frame.orientation,driven.frame.orientation);
+  assert(turned.frame.rider_grip_errors.every(v=>v<.08),`Grip errors ${turned.frame.rider_grip_errors}`);
   await page.keyboard.down('KeyV');await page.waitForFunction(()=>window.atvTerrainStatus.frame.clutch_active);await page.keyboard.up('KeyV');await page.waitForFunction(()=>window.atvTerrainStatus.frame.clutch_boost>0);await page.keyboard.up('KeyW');
   const clothed=await state();assert(clothed.vehicleTextures>0 && clothed.riderTextures>0);
   if(process.env.ATV_MOTORCYCLE_SCREENSHOTS){await page.mouse.move(900,300);await page.mouse.down();await page.mouse.move(1200,300);await page.mouse.up();await page.waitForTimeout(100);await page.screenshot({path:`${process.env.ATV_MOTORCYCLE_SCREENSHOTS}-${id}.png`});}

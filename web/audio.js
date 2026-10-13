@@ -67,8 +67,9 @@ export class GameAudio {
       return { bytes, entries: await json(2, bytes) };
     };
     const motorcycle = quadId >= 27;
-    const size = [50,125,250,500][Math.floor((quadId-27)/2)];
-    const table = await archive(motorcycle ? `/MX/BIKE${size}.RES` : '/AUDIOTBL.RES');
+    const selection = motorcycle ? await json(89, new Uint8Array([0]), quadId) : null;
+    const size = motorcycle ? Number(selection.quad.match(/BIKE(\d+)\.RES$/)[1]) : null;
+    const table = await archive(motorcycle ? selection.quad : '/AUDIOTBL.RES');
     const tableIndex = table.entries.findIndex(entry => motorcycle ? entry.name.replaceAll('\\','/').split('/').at(-1).toLowerCase() === `vehicle_${size}a.aud` : /(^|[\\/])vehicle\.aud$/i.test(entry.name));
     if (tableIndex < 0) throw new Error('Original vehicle audio table is missing.');
     this.engineTable = await this.codec(3, table.bytes, tableIndex);

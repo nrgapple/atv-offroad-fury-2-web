@@ -12,6 +12,8 @@ use crate::{
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
+#[path = "motorcycle_pose.rs"]
+mod pose;
 type V = [f32; 3];
 type M = [f32; 16];
 fn mul(a: &M, b: &M) -> M {
@@ -69,14 +71,31 @@ pub fn member(resource: &Resource<'_>, leaf: &str) -> Result<Vec<u8>> {
     }
     resource.extract(indices[0])
 }
+pub const SELECTION_COUNT: u16 = 46;
+pub fn definition(id: u16) -> Result<(u16, bool, &'static str, &'static str)> {
+    let entry = match id {
+        27 | 28 => (50, "MXF_S_50_Fast50_01.sub", "Fast50"),
+        29 | 30 => (125, "MX_S_125_RM1251.sub", "Suzuki RM125"),
+        31 | 32 => (250, "MX_S_250_RM2501.sub", "Suzuki RM250"),
+        33 | 34 => (500, "MX_S_500_RM500XGX1.sub", "RM500 XGX"),
+        35 => (125, "MX_S_125_CR125RTHQ1.sub", "Honda CR125 THQ"),
+        36 => (125, "MX_S_125_YZ1251.sub", "Yamaha YZ125"),
+        37 => (125, "MX_S_125_KX1251.sub", "Kawasaki KX125"),
+        38 => (125, "MX_S_125_125SX1.sub", "KTM 125 SX"),
+        39 => (250, "MX_S_250_CR250RTHQ1.sub", "Honda CR250 THQ"),
+        40 => (250, "MX_S_250_YZ2501.sub", "Yamaha YZ250"),
+        41 => (250, "MX_S_250_KX2501.sub", "Kawasaki KX250"),
+        42 => (250, "MX_S_250_250SX1.sub", "KTM 250 SX"),
+        43 => (500, "MX_S_500_SX500XGX1.sub", "SX500 XGX"),
+        44 => (500, "MX_S_500_YZF500XGX1.sub", "YZF500 XGX"),
+        45 => (50, "MXF_S_50_Sano_01.sub", "Sano 50"),
+        46 => (50, "MXF_S_50_RedB_01.sub", "Red Baron 50"),
+        _ => return Err("unsupported motorcycle selection".into()),
+    };
+    Ok((entry.0, id <= 34 && id.is_multiple_of(2), entry.1, entry.2))
+}
 pub fn class(id: u16) -> Result<(u16, bool)> {
-    if !(27..=34).contains(&id) {
-        return Err("unsupported motorcycle selection".into());
-    }
-    Ok((
-        [50, 125, 250, 500][((id - 27) / 2) as usize],
-        (id - 27) % 2 == 1,
-    ))
+    definition(id).map(|(size, pro, _, _)| (size, pro))
 }
 fn remap(mesh: &mut Mesh, config: &PhysicsData) {
     for material in &mut mesh.materials {
@@ -168,17 +187,13 @@ pub struct Model {
     wheel_rest: [V; 2],
     pub size: u16,
     pub pro: bool,
+    steering_axis: V,
+    grips: [usize; 2],
 }
 impl Model {
     pub fn load(bytes: &[u8], id: u16) -> Result<Self> {
-        let (size, pro) = class(id)?;
+        let (size, pro, definition, _) = definition(id)?;
         let archive = Resource::parse(bytes)?;
-        let definition = match size {
-            50 => "MXF_S_50_Fast50_01.sub",
-            125 => "MX_S_125_RM1251.sub",
-            250 => "MX_S_250_RM2501.sub",
-            _ => "MX_S_500_RM500XGX1.sub",
-        };
         let mesh = assembly(
             &archive,
             definition,
@@ -196,6 +211,24 @@ impl Model {
         });
         let wheels = [wheels[0]?, wheels[1]?];
         let wheel_rest = wheels.map(|i| mesh.nodes[i].world_matrix[12..15].try_into().unwrap());
+        let bar = mesh
+            .nodes
+            .iter()
+            .find(|n| n.name == "Handlebars")
+            .ok_or("missing handlebars")?;
+        let axis = sub(bar.world_matrix[12..15].try_into().unwrap(), wheel_rest[0]);
+        let length = dot(axis, axis).sqrt();
+        if length <= 0. {
+            return Err("invalid motorcycle fork axis".into());
+        }
+        let steering_axis = scale(axis, 1. / length);
+        let grips = ["Dummy_Hand_L", "Dummy_Hand_R"].map(|name| {
+            mesh.nodes
+                .iter()
+                .position(|n| n.name.eq_ignore_ascii_case(name))
+                .ok_or("missing motorcycle grip")
+        });
+        let grips = [grips[0]?, grips[1]?];
         let tuning = cleaned(&member(
             &archive,
             &format!("mx_{}{size}P.phy", if pro { "Pro" } else { "Race" }),
@@ -214,7 +247,31 @@ impl Model {
                 motions.insert(name, animation::decode_mot(&archive.extract(i)?)?);
             }
         }
-        let config = cleaned(&member(&archive, "MX_Rider_Stunts.ini")?)?;
+        // Mini bikes have their own source riding/stunt bank and root offsets.
+        let bank = if size == 50 { "MXF" } else { "MX" };
+        for suffix in ["RiderMotions.mcf", "RiderStunts.mcf"] {
+            let catalog = cleaned(&member(&archive, &format!("{bank}_{suffix}"))?)?;
+            for entry in catalog
+                .entries
+                .iter()
+                .filter(|e| e.key.eq_ignore_ascii_case("VUE"))
+            {
+                let file = entry.value.trim_matches('"');
+                if let Ok(bytes) = member(&archive, file) {
+                    let name = catalog
+                        .first(&entry.section, "NAME")?
+                        .value
+                        .to_ascii_lowercase()
+                        .replace("mxf_", "mx_")
+                        .replace("mx_rider_", "mx_");
+                    motions.insert(name.clone(), animation::decode_mot(&bytes)?);
+                    if name == "mx_wreck_air_flail" {
+                        motions.insert("wreck_air_flail".into(), animation::decode_mot(&bytes)?);
+                    }
+                }
+            }
+        }
+        let config = cleaned(&member(&archive, &format!("{bank}_Rider_Stunts.ini"))?)?;
         let mut stunts = Vec::new();
         for i in 1..=46 {
             let section = format!("Stunt{i:02}");
@@ -250,6 +307,8 @@ impl Model {
             wheel_rest,
             size,
             pro,
+            steering_axis,
+            grips,
         })
     }
     pub fn pose(&self, steering: f32, angles: [f32; 2], compression: [f32; 2]) -> Vec<M> {
@@ -257,10 +316,12 @@ impl Model {
         for (i, n) in self.mesh.nodes.iter().enumerate() {
             let mut local = n.local_matrix;
             if n.name.eq_ignore_ascii_case("Handlebars") {
-                local = mul(&local, &rotation(1, steering));
+                local = mul(&local, &pose::axis_rotation(self.steering_axis, steering));
             }
             if n.name.eq_ignore_ascii_case("Shocks") {
-                local[13] += compression[0];
+                for j in 0..3 {
+                    local[12 + j] += self.steering_axis[j] * compression[0] / self.steering_axis[1];
+                }
             }
             if n.name.eq_ignore_ascii_case("SwingArm") {
                 local = mul(&local, &rotation(0, compression[1] / 2.));
@@ -388,6 +449,11 @@ pub struct Motorcycle {
     safe_origin: V,
     safe_yaw: f32,
     rider_body: Option<(M, V)>,
+    pose_controls: pose::Controls,
+    normal_pose: Option<animation::Pose>,
+    visual_steer: f32,
+    camera_origin: V,
+    camera_yaw: f32,
     frame: Frame,
     gear: usize,
     rpm: f32,
@@ -449,6 +515,11 @@ impl Motorcycle {
             safe_origin: origin,
             safe_yaw: yaw,
             rider_body: None,
+            pose_controls: pose::Controls::default(),
+            normal_pose: None,
+            visual_steer: 0.,
+            camera_origin: origin,
+            camera_yaw: yaw,
             frame: Frame::default(),
             gear: 1,
             rpm,
@@ -507,6 +578,11 @@ impl Motorcycle {
         self.wreck_time = 0.;
         self.reset_count = self.reset_count.wrapping_add(1);
         self.rider_body = None;
+        self.pose_controls = pose::Controls::default();
+        self.normal_pose = None;
+        self.visual_steer = 0.;
+        self.camera_origin = self.start;
+        self.camera_yaw = self.start_yaw;
         self.frame = Frame::default();
         self.last_input = VehicleInput::default();
         self.gear = 1;
@@ -526,6 +602,8 @@ impl Motorcycle {
             &self.body_config,
         )?;
         self.refresh();
+        self.camera_origin = self.frame.origin;
+        self.camera_yaw = yaw;
         Ok(())
     }
     pub fn rider_world(&self) -> M {
@@ -555,7 +633,7 @@ impl Motorcycle {
         self.frame.wheel_angles = self.angles;
         self.frame.wheel_compression = self.compression;
         self.frame.steering_angle = self.steer;
-        self.frame.visual_steering_angle = self.steer;
+        self.frame.visual_steering_angle = self.visual_steer;
         self.frame.reset_count = self.reset_count;
         self.frame.vehicle_kind = "motorcycle";
         self.frame.reconstruction =
@@ -609,6 +687,32 @@ impl Motorcycle {
         } else {
             self.rider_body = None;
         }
+        self.pose_controls.step(
+            input,
+            self.frame.speed.abs(),
+            self.frame.grounded.iter().any(|v| *v),
+            dt,
+        );
+        let (normal, visual) =
+            self.model
+                .normal_pose(self.pose_controls, self.angles, self.compression)?;
+        self.normal_pose = Some(normal);
+        self.visual_steer = visual;
+        let origin = self.body.origin(&self.body_config);
+        for (i, value) in origin.iter().enumerate() {
+            self.camera_origin[i] += (value - self.camera_origin[i]) * (1. - (-10. * dt).exp());
+        }
+        let b = self.body.basis();
+        let v = self.body.linear_velocity;
+        let yaw = if !self.frame.grounded.iter().any(|v| *v) && v[0] * v[0] + v[2] * v[2] > 9. {
+            v[0].atan2(v[2])
+        } else {
+            b[2][0].atan2(b[2][2])
+        };
+        let difference = (yaw - self.camera_yaw + std::f32::consts::PI)
+            .rem_euclid(std::f32::consts::TAU)
+            - std::f32::consts::PI;
+        self.camera_yaw += difference * (1. - (-6. * dt).exp());
         self.tick += 1;
         self.time += dt;
         self.refresh();
@@ -633,7 +737,7 @@ impl Motorcycle {
             self.motion_time = if grounded {
                 motion.duration * ((input.steer + 1.) * 0.5)
             } else {
-                self.time % motion.duration.max(0.001)
+                motion.duration * ((self.pose_controls.steer + 1.) * 0.5)
             };
         }
         Ok(())
@@ -653,7 +757,7 @@ impl Motorcycle {
         ];
         self.body.local_torque = [0.; 3];
         let wreck = self.frame.wreck.phase != crate::wreck::Phase::Riding;
-        let command = -input.steer
+        let command = input.steer
             * self.value("Front Tire", "MaxSteerAngle").to_radians()
             * (1. - 0.7 * (speed.abs() / 110.).min(1.));
         self.steer += (command - self.steer) * (dt * 12.).min(1.);
@@ -896,7 +1000,7 @@ impl Motorcycle {
         let roll = basis[0][1].atan2(basis[1][1]);
         if !wreck {
             if grounded {
-                let roll_command = input.steer
+                let roll_command = -input.steer
                     * self.value("Roll Control", "MaxRollCommand").to_radians()
                     * (speed.abs() / 45.).min(1.);
                 let yaw_rate = speed * self.steer.tan()
@@ -953,13 +1057,13 @@ impl Motorcycle {
                     self.body.local_torque[1] +=
                         self.value("Three Sixty", "MaxThreeSixtyTorqueY") * self.spin_command[1];
                 }
-                self.body.local_torque[1] -= input.steer * moment[1];
-                self.body.local_torque[2] -= input.steer * moment[2];
+                self.body.local_torque[1] += input.steer * moment[1];
+                self.body.local_torque[2] += input.steer * moment[2];
                 for j in 0..3 {
                     self.body.local_torque[j] -= self.body.local_angular_velocity[j]
                         * self.value("Airborne Control", "AirborneDamping");
                 }
-                self.frame.crossup = -input.steer
+                self.frame.crossup = input.steer
                     * self
                         .value("Airborne Control", "MaxCrossupAngle")
                         .to_radians();
@@ -1176,13 +1280,38 @@ impl Motorcycle {
     }
     pub fn matrices(&self) -> Vec<M> {
         self.model.pose(
-            self.steer + self.frame.crossup,
+            if self.frame.wreck.phase == crate::wreck::Phase::Riding {
+                self.visual_steer
+            } else {
+                self.steer + self.frame.crossup
+            },
             self.angles,
             self.compression,
         )
     }
     pub fn rider_matrices(&self) -> Result<Vec<M>> {
+        if self.stunt_name.is_none()
+            && self.frame.wreck.phase == crate::wreck::Phase::Riding
+            && let Some(pose) = &self.normal_pose
+        {
+            return Ok(pose.world_matrices.clone());
+        }
         self.model.rider_pose(&self.motion_name, self.motion_time)
+    }
+    pub fn grip_errors(&self, rider: &[M], bike: &[M]) -> Option<[f32; 2]> {
+        if self.stunt_name.is_some() || self.frame.wreck.phase != crate::wreck::Phase::Riding {
+            return None;
+        }
+        Some(self.model.grip_errors(rider, bike))
+    }
+    pub fn foot_errors(&self, rider: &[M], bike: &[M]) -> Option<[f32; 2]> {
+        if self.stunt_name.is_some() || self.frame.wreck.phase != crate::wreck::Phase::Riding {
+            return None;
+        }
+        Some(self.model.foot_errors(rider, bike))
+    }
+    pub fn render_front_center(&self, pose: &[M]) -> V {
+        pose[self.model.wheels[0]][12..15].try_into().unwrap()
     }
     pub fn world(&self) -> M {
         let b = self.body.basis();
@@ -1200,9 +1329,8 @@ impl Motorcycle {
         };
     }
     pub fn camera(&self, orbit: f32) -> Camera {
-        let b = self.body.basis();
-        let yaw = b[2][0].atan2(b[2][2]) + orbit;
-        let target = add(self.frame.origin, [0., 3., 0.]);
+        let yaw = self.camera_yaw + orbit;
+        let target = add(self.camera_origin, [0., 3., 0.]);
         let distance = [21., 12., 32.][self.camera_preset];
         let lift = [8., 5., 14.][self.camera_preset];
         Camera {
@@ -1221,7 +1349,8 @@ mod tests {
         assert_eq!(class(27).unwrap(), (50, false));
         assert_eq!(class(34).unwrap(), (500, true));
         assert!(class(26).is_err());
-        assert!(class(35).is_err());
+        assert_eq!(class(35).unwrap(), (125, false));
+        assert!(class(47).is_err());
     }
     #[test]
     fn comments_are_cleaned_before_numeric_loading() {

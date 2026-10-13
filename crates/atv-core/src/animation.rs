@@ -89,10 +89,11 @@ pub fn decode_mot(data: &[u8]) -> Result<Animation> {
     let version = match r.u32()? as i32 {
         -2 => 2,
         -3 => 3,
+        -6 => 6,
         -7 => 7,
         _ => return Err("unsupported MOT version".into()),
     };
-    if version == 7 && r.u32()? != 1 {
+    if version >= 6 && r.u32()? != 1 {
         return Err("unsupported MOT v7 flags".into());
     }
     let frame_count = r.u32()?;
@@ -100,7 +101,7 @@ pub fn decode_mot(data: &[u8]) -> Result<Animation> {
         return Err("invalid MOT frame count".into());
     }
     let mut bone_names = Vec::new();
-    if matches!(version, 3 | 7) {
+    if matches!(version, 3 | 6 | 7) {
         let count = r.u32()?;
         if count == 0 || count > 256 {
             return Err("invalid MOT bone-name count".into());
@@ -139,7 +140,7 @@ pub fn decode_mot(data: &[u8]) -> Result<Animation> {
     if translation_count > 256 || rotation_count > 256 {
         return Err("too many MOT controllers".into());
     }
-    if version == 7 && (r.u32()? != 0 || r.u32()? != 0) {
+    if version >= 6 && (r.u32()? != 0 || r.u32()? != 0) {
         return Err("unsupported MOT event controllers".into());
     }
     let mut total_keys = 0;
@@ -258,7 +259,9 @@ impl RotationKey {
     pub fn quaternion(&self) -> [f32; 4] {
         if let Some(value) = self.compressed_axis {
             let bytes = value.to_le_bytes();
-            let half = bytes[0] as f32 * std::f32::consts::PI / 255.;
+            // SLUS_211.04 table initializer 003b2924 uses 0x3c490fdb
+            // (pi/256), and 0x3c010204 (1/127) for signed axis bytes.
+            let half = bytes[0] as f32 * f32::from_bits(0x3c490fdb);
             let scale = half.sin() / 127.;
             return [
                 half.cos(),
@@ -540,7 +543,20 @@ mod tests {
         assert_eq!(a.version, 7);
         let q = a.rotations[0].keys[0].quaternion();
         assert!((q[0] * q[0] + q[2] * q[2] - 1.).abs() < 1e-6);
-        assert!(q[2] > 0.7 && q[0] > 0.7);
+        assert_eq!(
+            q[0].to_bits(),
+            (std::f32::consts::FRAC_PI_4).cos().to_bits()
+        );
+        assert_eq!(
+            q[2].to_bits(),
+            (std::f32::consts::FRAC_PI_4).sin().to_bits()
+        );
+        let mut v6 = data.clone();
+        v6[..4].copy_from_slice(&(-6i32).to_le_bytes());
+        assert_eq!(decode_mot(&v6).unwrap().version, 6);
+        for end in 0..v6.len() {
+            assert!(decode_mot(&v6[..end]).is_err());
+        }
         for end in 0..data.len() {
             assert!(decode_mot(&data[..end]).is_err());
         }

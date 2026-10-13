@@ -53,7 +53,7 @@ try {
     const views=await page.locator('.model-view canvas').evaluateAll(cs=>cs.map(c=>({key:c.dataset.selection,triangles:Number(c.dataset.triangles),gl:c.dataset.glError})));
     assert.ok(views.every(v=>v.triangles>1000&&v.gl==='0'));report.models.push({quad,views});
   }
-  await page.waitForFunction(()=>document.querySelectorAll('.model-view canvas')[1]?.dataset.clip?.startsWith('frider'));await shot('quad26-female');for(let i=0;i<9;i++)await button('Next quad').click();await ready('1:1');
+  await page.waitForFunction(()=>document.querySelectorAll('.model-view canvas')[1]?.dataset.clip?.startsWith('frider'));await shot('quad26-female');for(let i=0;i<21;i++)await button('Next quad').click();await ready('1:1');
   // Rapid changes cannot show a late response for an old selected model.
   for(let i=0;i<5;i++)await button('Next quad').click();await ready('6:1');
   const view=page.locator('.model-view canvas').first();

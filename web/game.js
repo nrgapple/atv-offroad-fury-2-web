@@ -12,6 +12,7 @@ import { WaterRenderer } from './water.js';
 import { fogVertexShader, fogFragmentShader } from './fog.js';
 import { loadTrain, TrainRenderer } from './train.js';
 import { loadWheelEffects, loadMotorcycleEffects, WheelEffectsRenderer } from './wheel-effects.js';
+import { MotorcyclePresentation } from './motorcycle-presentation.js';
 const $ = id => document.getElementById(id);
 const canvas = $('game');
 const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, powerPreference: 'high-performance' });
@@ -35,6 +36,8 @@ const crashSettings = { get enabled() { return funnyCrashes; }, toggle() {
 let raceSettings = null, raceCourse = null, cpuQuadMatrices, cpuRiderMatrices;
 const raceOverlay = new RaceOverlay({restart: async () => { await $('reset').onclick(); canvas.focus({preventScroll:true}); }, quit: () => frontend?.show('single')});
 let simReady = false, simBusy = false, simAccumulator = 0, simFrame, simStart, simGeneration = 0, orbit = 0, cameraFrame, cameraCycle = false;
+const motorcyclePresentation = new MotorcyclePresentation();
+let presentedFrame, presentedCamera;
 let sceneChunks = [], sceneDraws = [], skyChunks = [], ecoGroups = [], ecoBillboard;
 let waterRenderer;
 let trainRenderer;
@@ -1087,7 +1090,7 @@ function resetCamera() {
   }
   canvas.focus({ preventScroll: true });
 }
-function vehicleMatrix(actor = simFrame) {
+function vehicleMatrix(actor = presentedFrame ?? simFrame) {
   const [w, x, y, z] = actor?.orientation ?? [Math.cos(vehicle.yaw / 2), 0, Math.sin(vehicle.yaw / 2), 0];
   const position = actor?.origin ?? vehicle.position;
   return new Float32Array([
@@ -1166,6 +1169,7 @@ function acceptFrame(frame) {
   }
 }
 async function startSimulation(source) {
+  motorcyclePresentation.reset(); presentedFrame = presentedCamera = undefined;
   diagnostics.simulationSteps = 0;
   simReady = false; simFrame = undefined; cameraFrame = undefined; simAccumulator = 0; simGeneration++;
   if (!source.physics) return;
@@ -1233,6 +1237,7 @@ async function pumpSimulation() {
     diagnostics.physicsRoundTripMs = performance.now() - submitted;
     diagnostics.physicsBatchSteps = count;
     if (token !== simGeneration) return;
+    const previousFrame = simFrame, previousCamera = cameraFrame;
     for (const { frame, camera: cameraResult, water, train, scenery_uv, scenery_textures, race } of frames) {
       if(race)frame.race=race;
       acceptFrame(frame);
@@ -1243,6 +1248,7 @@ async function pumpSimulation() {
       acceptCameraFrame(cameraResult);
       void audio.update(1 / 60, frame.applied_input ?? input, frame, { train, camera: cameraResult });
     }
+    motorcyclePresentation.accept(previousFrame, simFrame, previousCamera, cameraFrame, performance.now(), focused && !document.hidden && !menuOpen && !cycle);
   } catch (error) {
     if (token === simGeneration) { simReady = false; status(`Simulation stopped: ${error.message}`, true); }
   } finally { simBusy = false; }
@@ -1254,7 +1260,7 @@ function acceptCameraFrame(frame) {
   diagnostics.followCamera = { ...frame, presetName: diagnostics.cameraPresets?.[frame.preset] };
 }
 function presentCameraFrame() {
-  const frame = cameraFrame;
+  const frame = presentedCamera ?? cameraFrame;
   // Keep the recovered landscape camera intact. A narrow viewport needs extra
   // distance and a higher sightline so the quad does not hide the next jump.
   const aspect = canvas.width / canvas.height;
@@ -1318,6 +1324,11 @@ function render(time) {
     const x = Math.max(0,Math.min(terrain.width-1,vehicle.position[0]/terrain.spacing)), z = Math.max(0,Math.min(terrain.depth-1,vehicle.position[2]/terrain.spacing));
     if (center && (Math.abs(x-center[0]) > 48 || Math.abs(z-center[1]) > 48)) buildTerrainMesh();
   }
+  const presentation = motorcyclePresentation.sample(simFrame, cameraFrame, time, focused && !lost && !menuOpen);
+  presentedFrame = presentation.frame; presentedCamera = presentation.camera;
+  diagnostics.motorcyclePresentation = simFrame?.vehicle_kind === 'motorcycle' ? { alpha: presentation.alpha, interpolated: presentation.interpolated, origin: presentedFrame.origin, orientation: presentedFrame.orientation } : null;
+  const smoothQuad = presentation.interpolated ? new Float32Array(presentedFrame.quad_node_matrices.flat()) : vehicle?.nodeMatrices;
+  const smoothRider = presentation.interpolated ? presentedFrame.rider_node_matrices : vehicle?.rider?.pose.world_matrices;
   gl.viewport(0, 0, width, height); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.useProgram(program);
   gl.uniform1f(uniforms.motorcycleMudAmount,0);
   gl.uniform1i(uniforms.useQuadPose, false); gl.uniform1i(uniforms.useEcosystem, false); gl.uniform1f(uniforms.alphaCutoff, 0);
@@ -1395,7 +1406,7 @@ function render(time) {
   drawEcosystem();
   gl.uniform1i(uniforms.unlit, false);
   if (vehicle) gl.uniformMatrix4fv(uniforms.model, false, vehicleMatrix());
-  if (vehicle) gl.uniformMatrix4fv(uniforms.quadBones, false, vehicle.nodeMatrices);
+  if (vehicle) gl.uniformMatrix4fv(uniforms.quadBones, false, smoothQuad);
   for (const chunk of vehicleChunks) {
     gl.activeTexture(gl.TEXTURE4);gl.bindTexture(gl.TEXTURE_2D,chunk.mudTexture ?? fallbackTexture);
     gl.uniform1f(uniforms.motorcycleMudAmount,simFrame?.vehicle_kind==='motorcycle' && chunk.mudTexture ? Math.max(...simFrame.mud_amount) : 0);
@@ -1403,8 +1414,8 @@ function render(time) {
     gl.uniform1i(uniforms.fogEnabled,Boolean(fog)&&chunk.fog);
     gl.uniformMatrix4fv(uniforms.model, false, chunk.rider && funnyCrashes && simFrame?.funny_crash?.rider_node_matrices.length ? identity : chunk.rider && simFrame?.rider_world_matrix ? new Float32Array(simFrame.rider_world_matrix) : vehicleMatrix());
     gl.uniform1i(uniforms.useQuadPose, Boolean(chunk.quad || chunk.rider));
-    if (chunk.quad) gl.uniformMatrix4fv(uniforms.quadBones, false, vehicle.nodeMatrices);
-    if (chunk.rider) gl.uniformMatrix4fv(uniforms.quadBones, false, new Float32Array(vehicle.rider.pose.world_matrices.flat()));
+    if (chunk.quad) gl.uniformMatrix4fv(uniforms.quadBones, false, smoothQuad);
+    if (chunk.rider) gl.uniformMatrix4fv(uniforms.quadBones, false, new Float32Array(smoothRider.flat()));
     gl.uniform1i(uniforms.useTexture, chunk.texture ? 1 : 0); gl.bindTexture(gl.TEXTURE_2D, chunk.texture ?? fallbackTexture);
     gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
   }
@@ -1536,7 +1547,7 @@ window.addEventListener('keydown', event => {
   if (bound) { event.preventDefault(); keys.add(event.code); if (simReady) gameplayBindings.observeKeys(keys, event.repeat ? null : event.code); }
 });
 window.addEventListener('keyup', event => { keys.delete(event.code); gameplayBindings.observeKeys(keys); });
-const clearInput = () => { keys.clear(); pointers.clear(); touchControls.clear(); touchLean.clear(); gameplayBindings.cancel(); simAccumulator = 0; cameraCycle = false; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
+const clearInput = () => { motorcyclePresentation.reset(); presentedFrame = presentedCamera = undefined; keys.clear(); pointers.clear(); touchControls.clear(); touchLean.clear(); gameplayBindings.cancel(); simAccumulator = 0; cameraCycle = false; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
 gameplayBindings.subscribe(clearInput);
 window.addEventListener('gamepaddisconnected', clearInput);
 let pageSuspended = false;
