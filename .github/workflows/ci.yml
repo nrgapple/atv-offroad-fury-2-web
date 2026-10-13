@@ -78,7 +78,7 @@ jobs:
             echo 'Cloudflare deployment requires the scoped CLOUDFLARE_API_TOKEN repository secret.'
             exit 1
           fi
-          python3 tools/stage_cloudflare.py --release work/release --commit "$GITHUB_SHA"
+          python3 tools/stage_cloudflare.py --release work/release --commit "$GITHUB_SHA" --preserve-custom-domains
           npx --yes wrangler@4.149.0 deploy --config work/cloudflare/wrangler.jsonc
       - name: Verify public commit, application hashes and dev log
         run: |
