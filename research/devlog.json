@@ -1,6 +1,6 @@
 {
-  "status": "Host-verified pause submenu checkpoint: six secondary screens pass responsive layout and navigation checks; controller remapping and live Lobby behavior are verified in host browsers. Current-main CI and public deployment remain pending.",
-  "working_on": "Integrate the pause submenu checkpoint through current-main CI, then verify the public deployment and browser routes.",
+  "status": "Pause submenu polish is publicly verified at c1a92fa after passing main CI/deploy and public actual-source browser checks. The newer second-finger trick-wheel checkpoint at e03bc2b still awaits current-main verification. The full R2/gallery hash audit and pause screenshot upload remain pending.",
+  "working_on": "Verify the combined current-main release and publish the inspected pause-menu screenshot through the validated R2 package.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -3084,9 +3084,23 @@
       "limitation": "Host-browser evidence on one Mac, including synthetic WebKit pointer events. Physical phones remain unverified. The wheel adapts authored input to ten existing animations and preserves original stunt gates; this is not full stunt, physics or whole-game parity.",
       "image": "/devlog-images/second-finger-selects-airborne-stunts-from-a-radial-wh-7ecb551c.png",
       "caption": "Host Chromium capture, 390\u00d7844: airborne Nac Nac preview on the radial wheel while the primary finger continues drive and brace."
+    },
+    {
+      "id": "public-pause-submenu-verification-3f1f26c0",
+      "timestamp": "2026-10-13T23:39:58.975312+00:00",
+      "recorded_at": "2026-10-13T23:39:58.975312+00:00",
+      "kind": "verification",
+      "title": "Public pause submenu verification",
+      "summary": "Pause submenu polish commit c1a92fa passed main CI and automatic deployment; public HTTPS checks passed for six secondary screens and the live two-client Lobby.",
+      "details": [
+        "PR #49 merged as c1a92fa8fdb8e7ae364a220d5d642614e85c9f0a. Main CI/deploy run 38484978361 passed, and public deployment.json identifies c1a92fa.",
+        "Public actual-source test_pause_menu covered all six secondary routes at 1280\u00d7896, 390\u00d7844, 320\u00d7568, 844\u00d7390, and 667\u00d7375; controller remapping, Escape cancellation/defaults, button 6 capture, D-pad navigation, music behavior, stable sliders, single-player freeze/resume, neutral input, and zero page errors passed.",
+        "The public actual-source two-client test verified Controls and Players alongside the active Lobby, neutral local input, live physics and peer rendering, continuing music, Leave cleanup, and no AudioContext suspension or title-music interruption. The host advanced 42 steps and observed 3.328 ft of guest movement; the guest advanced 41 steps and observed 3.272 ft of host movement."
+      ],
+      "limitation": "The full R2/gallery hash audit and upload of the inspected pause-menu screenshot are still pending as a separate release step. Automated public-browser results do not establish physical-device behavior, original pause-screen fidelity, or whole-game parity."
     }
   ],
-  "updated_at": "2026-10-13T23:24:27.241565+00:00",
+  "updated_at": "2026-10-13T23:39:58.975312+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
