@@ -15,7 +15,7 @@ also links the game, dev log and deployment history. No manual release or
 approval is required. GitHub's [environment documentation](https://docs.github.com/en/actions/concepts/workflows-and-actions/deployment-environments)
 describes this deployment history integration.
 
-Primary public HTTPS is https://furyremastered.com/; the original workers.dev address remains supported. CI verifies both addresses against the same checked artifact.
+Primary public HTTPS is https://furyremastered.com/; the original workers.dev address remains supported. CI verifies both addresses against the same checked artifact. Custom domains are provisioned in Cloudflare; CI uses --preserve-custom-domains to retain their DNS/TLS bindings without reprovisioning them.
 
 Production success requires the public commit, authored application file hashes,
 landing route and committed dev-log text to match the checked CI artifact.

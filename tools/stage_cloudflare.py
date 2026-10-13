@@ -7,7 +7,7 @@ from pathlib import Path
 from package_release import RELEASE_STATIC_FILES, RELAY_FILES, ROOT, validate_release
 
 
-def stage(release, commit, release_scoped=False):
+def stage(release, commit, release_scoped=False, preserve_custom_domains=False):
     metadata = validate_release(release, commit)
     target = ROOT / 'work/cloudflare/static'
     if target.exists():
@@ -22,6 +22,15 @@ def stage(release, commit, release_scoped=False):
     for name in sorted(RELAY_FILES):
         shutil.copy2(release / 'relay' / name, relay / name)
     config = json.loads((ROOT / 'wrangler.jsonc').read_text())
+    if preserve_custom_domains:
+        # Existing Cloudflare bindings survive code deployments when omitted.
+        # The scoped CI credential must not reprovision account-level DNS/TLS.
+        routes = [route for route in config.get('routes', [])
+                  if not isinstance(route, dict) or not route.get('custom_domain')]
+        if routes:
+            config['routes'] = routes
+        else:
+            config.pop('routes', None)
     config['main'] = str(ROOT / 'cloudflare/entry.mjs')
     config['assets']['directory'] = str(target)
     config.setdefault('vars', {}).update(BUILD_COMMIT=commit, BUILD_WASM_SHA=metadata['sha256']['relay/index_bg.wasm'])
@@ -36,5 +45,7 @@ if __name__ == '__main__':
     parser.add_argument('--release', required=True, type=Path)
     parser.add_argument('--commit', required=True)
     parser.add_argument('--release-scoped', action='store_true')
+    parser.add_argument('--preserve-custom-domains', action='store_true',
+                        help='Keep existing Cloudflare domain bindings without reprovisioning them')
     args = parser.parse_args()
-    stage(args.release, args.commit, args.release_scoped)
+    stage(args.release, args.commit, args.release_scoped, args.preserve_custom_domains)
