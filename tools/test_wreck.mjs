@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { captureSimulation } from './capture_simulation.mjs';
+import { captureMinimapTracking } from './minimap_tracking.mjs';
 import { captureCrashIsolation, verifyCrashIsolation, captureCrashDraws, verifyCrashImpacts } from './crash_isolation.mjs';
 const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
 await mkdir('work/verification', {recursive: true});
@@ -14,6 +15,7 @@ try {
   await page.addInitScript(enabled => { localStorage.setItem('atv-mobile-one-handed', 'false'); localStorage.setItem('atv-funny-crashes', String(enabled)); }, process.env.ATV_FUNNY_CRASHES === '1'); // Explicit optional two-finger mode.
   if (process.env.ATV_CRASH_ISOLATION === '1') await captureCrashIsolation(page);
   await captureCrashDraws(page);
+  await captureMinimapTracking(page);
   await captureSimulation(page, 'rampFrames');
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   const url = new URL('/play.html', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173');
@@ -66,6 +68,7 @@ try {
     await page.getByRole('button',{name:'Resume',exact:true}).click();
   }
   await page.waitForFunction(() => window.atvTerrainStatus.frame.rider_wreck?.grounded, null, {timeout: 10000,polling:'raf'});
+  await page.waitForFunction(() => window.minimapTracking.samples.some(s => s.actor !== 'vehicle'), null, { timeout: 10000 });
   await page.screenshot({path:`${screenshotPrefix}-ground.png`});
   await page.waitForFunction(count => window.atvTerrainStatus.frame.reset_count > count, start.reset_count, {timeout:15000,polling:'raf'});
   const reset = await page.evaluate(() => window.atvTerrainStatus.frame);
@@ -115,7 +118,11 @@ try {
   assert(cameras.every(camera => camera.scene_query.radius >= 0 && [...camera.scene_query.center,
     camera.scene_query.radius,
   ].every(Number.isFinite)), 'Direct camera bounds must remain finite');
-  await writeFile(process.env.ATV_WRECK_TRACE || 'work/verification/wreck-browser-trace.json',JSON.stringify({start,reset,frames,errors},null,2));
+  const tracking = await page.evaluate(() => window.minimapTracking);
+  assert(tracking.samples.some(s => s.actor === 'vehicle'));
+  assert(tracking.samples.some(s => s.actor === (process.env.ATV_FUNNY_CRASHES === '1' ? 'ragdoll rider' : 'rider')));
+  assert.deepEqual(tracking.errors, [], 'GPS center, bearing and aerial crop match actual GPU actor transforms');
+  await writeFile(process.env.ATV_WRECK_TRACE || 'work/verification/wreck-browser-trace.json',JSON.stringify({start,reset,frames,errors,tracking},null,2));
   if (process.env.ATV_CRASH_ISOLATION === '1') await verifyCrashIsolation(page);
   if (process.env.ATV_FUNNY_CRASHES === '1') console.log('Crash GPU draws',await page.evaluate(() => crashDraws));
   assert.deepEqual(errors, []);

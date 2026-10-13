@@ -79,7 +79,7 @@ north/scale lettering. It has no border or bevel. Its default footprint is
 160px, capped at 42% of viewport width and 34% of viewport height. Pause → HUD
 settings → Minimap configuration uses recovered menu glyphs, the existing gold range style, 44px
 hit regions and persisted visibility/96–224px sizing. Resizing preserves the
-768ft geographic range. See [implementation and performance](MINIMAP.md).
+geographic range controlled independently by zoom (25–200%, default 50% / 1,536ft across). See [implementation and performance](MINIMAP.md).
 
 ### Combined minimap and speed
 
@@ -89,6 +89,6 @@ users can switch to bottom-left. Speed uses compact italic outlined silver
 lettering without a backdrop near the bottom edge, with a compact source-driven orange/blue
 preload indicator. The small feet readout sits immediately above speed. North and all lettering stay inside the circular safe region.
 HUD settings links to a dedicated Minimap configuration group, keeping shape,
-corner, size, visibility and orientation together. Tap the map to toggle
+corner, size, zoom, visibility and orientation together. Tap the map to toggle
 north-up/heading-up while its footer remains upright. <=360px toolbar buttons keep 44px icon
 targets and accessible names while hiding labels to leave space for the map.

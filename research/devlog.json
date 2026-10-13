@@ -2523,9 +2523,27 @@
       "limitation": "Host checkpoint only. The iPhone platform is synthetic in Chromium/WebKit; actual iOS Safari Add to Home Screen, Open as Web App behavior and selected icon have not been verified on a physical device. No service worker or offline support is claimed. Public CI and R2 asset/gallery publication remain pending.",
       "image": "/devlog-images/fury-remastered-adds-a-home-screen-app-flow-245eee34.png",
       "caption": "Host Chromium capture at 390×844 with a synthetic iPhone platform; WebKit passed the same install-flow and safe-area gates. The banner shows the recovered ATV2 Home Screen icon above Fury Remastered title art. This browser image does not show an OS-level installation."
+    },
+    {
+      "id": "minimap-projection-now-matches-the-rendered-world-and--844bacd6",
+      "timestamp": "2026-10-13T17:36:42.329568+00:00",
+      "recorded_at": "2026-10-13T17:39:50.925122+00:00",
+      "kind": "verification",
+      "title": "Minimap projection now matches the rendered world and zoom is adjustable",
+      "summary": "Corrected the minimap’s mirrored horizontal projection so terrain, scenery and the player marker agree with the rendered world. Added persisted zoom control in Minimap Configuration.",
+      "details": [
+        "The renderer maps right to −X and north to +Z; the minimap now reflects X consistently across terrain, scenery and crop, with the corresponding heading-sign correction. Projection checks passed for a moving ATV and interpolated motorcycle, including saved zoom and position tracking. The map follows the rendered vehicle and remains aligned with a separately detached rider.",
+        "Native separated-rider wreck tracking completed 113 GPU/minimap tracking updates; enhanced ragdoll tracking completed 111 updates. Both reported zero tracking errors or mismatches.",
+        "Added persisted 25–200% minimap zoom, default 50% (1,536 ft range, twice the previous 768 ft). At 50%, the adaptive scale legend reads 400 ft. Zoom is grouped with minimap settings and reuses the existing cache without rebaking; the 1,024px, 20Hz and DPR caps remain unchanged.",
+        "Verification passed: make check (350 core Rust tests and 84 JavaScript tests plus workspace checks), make verify, make web, 31 release tests (one intentional skip), and 10 Worker tests. Chromium instrument checks passed at 390×844, 320×568, 844×390 and 1280×720; WebKit passed at 390×844 and 844×390. Orientation/touch, lifecycle, native separated-rider wreck and ragdoll checks passed.",
+        "At a 390×844 DPR3 viewport on the host Mac, map-update means were 0.102–0.109ms across requested sizes 96/160/224px, with 44–45 updates per 2.5 seconds (at or below 20Hz). Scene draws remained 471 with the map On and Off; Off performed zero map updates and used zero map backing bytes. Maximum authored pixel storage was 4,436,368 bytes."
+      ],
+      "limitation": "Host Mac browser evidence only; the browser runs were concurrent. These measurements do not represent physical-phone performance or isolated GPU timing, and no FPS improvement is claimed. Physical phones, production CI and the release owner’s R2/public verification are still pending.",
+      "image": "/devlog-images/minimap-projection-now-matches-the-rendered-world-and--844bacd6.png",
+      "caption": "Host Chromium capture at 390×844: wider terrain view with a circular, borderless GPS minimap and adaptive 400 ft scale at 50% zoom. Not a physical-phone or public-release capture."
     }
   ],
-  "updated_at": "2026-10-13T17:26:08.520733+00:00",
+  "updated_at": "2026-10-13T17:39:50.925122+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
