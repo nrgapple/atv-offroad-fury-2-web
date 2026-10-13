@@ -2543,6 +2543,35 @@
       "caption": "Host Chromium capture at 390×844: wider terrain view with a circular, borderless GPS minimap and adaptive 400 ft scale at 50% zoom. Not a physical-phone or public-release capture."
     },
     {
+      "id": "late-guest-spawn-control-in-players-menu-7fe7d31d",
+      "timestamp": "2026-10-13T17:56:59.943016+00:00",
+      "recorded_at": "2026-10-13T17:59:06.423183+00:00",
+      "kind": "verification",
+      "title": "Late guest spawn control in Players menu",
+      "summary": "A guest who joins an active room can open the paused Players screen and spawn near the host.",
+      "details": [
+        "The host-only 390×844 browser run measured the Spawn beside P1 Host button at 342×64 pixels, positioned at x=24, y=96.",
+        "The menu shows the late guest identity and the nearby-host spawn action. Physical phone input and layout remain untested."
+      ],
+      "limitation": "Host-only UI verification, not a public release or physical-device test. Spawn placement is an authored browser feature and does not establish original PS2 multiplayer menu behavior.",
+      "image": "/devlog-images/late-guest-spawn-control-in-players-menu-7fe7d31d.png",
+      "caption": "Paused Players screen for the late guest, with a nearby-host spawn action."
+    },
+    {
+      "id": "four-client-multiplayer-replication-and-cleanup-d96177ae",
+      "timestamp": "2026-10-13T17:58:40+00:00",
+      "recorded_at": "2026-10-13T18:00:16.046363+00:00",
+      "kind": "verification",
+      "title": "Four-client multiplayer replication and cleanup",
+      "summary": "A host-run four-browser session replicated every rider to the other clients and cleared remote state when the host ended the room.",
+      "details": [
+        "The clients selected quads 1, 14, 26 and 2. Each rendered 39 remote GL draws and three engine voices.",
+        "Each driver's movement reached the other three observers. Host departure removed remote riders, audio and loaded model state from every guest.",
+        "The authenticated Rust relay passed 13 live cases, including capacity, map synchronization, packet validation, rate limits and host-loss cleanup."
+      ],
+      "limitation": "Host-only browser verification; no public deployment, physical-phone test, or geographically separated network measurement. The relay forwards owner-simulated state and does not reconcile physics."
+    },
+    {
       "id": "worker-build-caching-is-bounded-and-validated-on-the-h-bd8c0938",
       "timestamp": "2026-10-13T18:01:09.439539+00:00",
       "recorded_at": "2026-10-13T18:01:09.439539+00:00",
@@ -2575,35 +2604,6 @@
       "caption": "Host-only 1280×896 browser capture: larger white P1 Host distance label with a black outline and no background, above the original red compass arrow. The overhead label placement is authored."
     },
     {
-      "id": "late-guest-spawn-control-in-players-menu-7fe7d31d",
-      "timestamp": "2026-10-13T17:56:59.943016+00:00",
-      "recorded_at": "2026-10-13T17:59:06.423183+00:00",
-      "kind": "verification",
-      "title": "Late guest spawn control in Players menu",
-      "summary": "A guest who joins an active room can open the paused Players screen and spawn near the host.",
-      "details": [
-        "The host-only 390×844 browser run measured the Spawn beside P1 Host button at 342×64 pixels, positioned at x=24, y=96.",
-        "The menu shows the late guest identity and the nearby-host spawn action. Physical phone input and layout remain untested."
-      ],
-      "limitation": "Host-only UI verification, not a public release or physical-device test. Spawn placement is an authored browser feature and does not establish original PS2 multiplayer menu behavior.",
-      "image": "/devlog-images/late-guest-spawn-control-in-players-menu-7fe7d31d.png",
-      "caption": "Paused Players screen for the late guest, with a nearby-host spawn action."
-    },
-    {
-      "id": "four-client-multiplayer-replication-and-cleanup-d96177ae",
-      "timestamp": "2026-10-13T17:58:40+00:00",
-      "recorded_at": "2026-10-13T18:00:16.046363+00:00",
-      "kind": "verification",
-      "title": "Four-client multiplayer replication and cleanup",
-      "summary": "A host-run four-browser session replicated every rider to the other clients and cleared remote state when the host ended the room.",
-      "details": [
-        "The clients selected quads 1, 14, 26 and 2. Each rendered 39 remote GL draws and three engine voices.",
-        "Each driver's movement reached the other three observers. Host departure removed remote riders, audio and loaded model state from every guest.",
-        "The authenticated Rust relay passed 13 live cases, including capacity, map synchronization, packet validation, rate limits and host-loss cleanup."
-      ],
-      "limitation": "Host-only browser verification; no public deployment, physical-phone test, or geographically separated network measurement. The relay forwards owner-simulated state and does not reconcile physics."
-    },
-    {
       "id": "fury-remastered-home-screen-icon-fda8f8ce",
       "timestamp": "2026-10-13T18:31:28.458671+00:00",
       "recorded_at": "2026-10-13T18:31:46.033609+00:00",
@@ -2617,6 +2617,21 @@
       "limitation": "Host-only checkpoint; physical iOS behavior is unverified. A home-screen icon already saved on a device may need to be added again. No deployment verification is claimed.",
       "image": "/devlog-images/fury-remastered-home-screen-icon-fda8f8ce.png",
       "caption": "512×512 authored FURY REMASTERED home-screen icon preview, inspected on the host."
+    },
+    {
+      "id": "multiplayer-late-join-and-rider-visibility-pass-public-15093498",
+      "timestamp": "2026-10-13T18:32:04.189818+00:00",
+      "recorded_at": "2026-10-13T18:32:04.189818+00:00",
+      "kind": "verification",
+      "title": "Multiplayer late join and rider visibility pass public verification",
+      "summary": "Main 551d7fd passes public late-join, custom-code, nearby-spawn, owner-local contact, moving-train and four-client multiplayer gates on Cloudflare.",
+      "details": [
+        "CI 38446510103 succeeded; deployment.json on both furyremastered.com and the Workers production URL identifies commit 551d7fd890946f18cc8ef8430c12f843138fe758. The deployed relay WASM SHA-256 is 8776744065b1b42d6ac9faf13034c0c39d7246202ea3476646400b622b634753.",
+        "The copied custom lobby code FV70MYWD was preserved. A late guest joined after the ride began; both clients rendered 13 remote draws. Measured host phases were 13.4333 and 13.404803 seconds. The paused Players menu spawn target measured 342×64 pixels at (24,96), placing the guest about 10 feet from the host.",
+        "Both owners recorded local contact responses (5 and 3). Across 20 moving-flatbed samples, maximum train-relative position error was 1.29715 feet. Host departure cleaned up the guests. The public relay suite passed 14 cases, including custom-code and duplicate-code handling.",
+        "The public four-browser run selected quads 1, 14, 26 and 2; each client rendered 39 remote draws and three engine voices. Every rider movement replicated to all observers, and host end cleared guest rooms, models and audio. No HTTP or page errors occurred."
+      ],
+      "limitation": "Automated public browser verification on the tested host/browser setup; physical phones, geographically separated latency, server-side physics reconciliation, competitive authority, host migration and full original-game parity are not established. The shared train clock freezes while its host is paused. The companion larger-label screenshot remains a host capture."
     },
     {
       "id": "responsive-pause-menu-and-live-multiplayer-941aa311",
@@ -2635,6 +2650,19 @@
       "caption": "Responsive pause panel over the host-verified ride"
     },
     {
+      "id": "lobby-recovery-and-reusable-closed-codes-c10743b9",
+      "timestamp": "2026-10-13T18:52:17.817199+00:00",
+      "recorded_at": "2026-10-13T18:52:17.817199+00:00",
+      "kind": "build",
+      "title": "Lobby recovery and reusable closed codes",
+      "summary": "Closed lobby codes can be recreated with fresh host authority. Brief host transport drops now preserve the room while the browser reconnects.",
+      "details": [
+        "Host verification: 16 live relay gates passed, including reuse, old-token rejection, replacement, recovery, and grace expiry with an active guest. Browser recovery completed in under a second without restarting Arlington; late join, minimap, spawning, contacts and train rider sync passed. Four-player movement and explicit host-end cleanup passed.",
+        "Structured lifecycle diagnostics are retained in Workers Logs; custom logs exclude names, credentials, packet bodies and raw URLs. Incoming old-pose bursts are bounded and dropped while reserving room for control messages."
+      ],
+      "limitation": "Pending CI and public verification. The original disconnect cause remains unproven. Recovery covers brief host transport failures; explicit leave, invalid traffic and the recovery deadline still end the room."
+    },
+    {
       "id": "pause-menu-verified-on-public-release-dbd67659",
       "timestamp": "2026-10-13T18:52:29.955225+00:00",
       "recorded_at": "2026-10-13T18:52:29.955225+00:00",
@@ -2647,34 +2675,6 @@
         "Release merge 6f24bc2e48872010d870be8cf33b8a20fc9ae519 passed CI 38449491125. The public asset-hash verification confirmed the deployed package for that commit."
       ],
       "limitation": "Public browser verification covers the tested menu and multiplayer flows; physical phones and complete original-game behavior remain unverified."
-    },
-    {
-      "id": "multiplayer-late-join-and-rider-visibility-pass-public-15093498",
-      "timestamp": "2026-10-13T18:32:04.189818+00:00",
-      "recorded_at": "2026-10-13T18:32:04.189818+00:00",
-      "kind": "verification",
-      "title": "Multiplayer late join and rider visibility pass public verification",
-      "summary": "Main 551d7fd passes public late-join, custom-code, nearby-spawn, owner-local contact, moving-train and four-client multiplayer gates on Cloudflare.",
-      "details": [
-        "CI 38446510103 succeeded; deployment.json on both furyremastered.com and the Workers production URL identifies commit 551d7fd890946f18cc8ef8430c12f843138fe758. The deployed relay WASM SHA-256 is 8776744065b1b42d6ac9faf13034c0c39d7246202ea3476646400b622b634753.",
-        "The copied custom lobby code FV70MYWD was preserved. A late guest joined after the ride began; both clients rendered 13 remote draws. Measured host phases were 13.4333 and 13.404803 seconds. The paused Players menu spawn target measured 342×64 pixels at (24,96), placing the guest about 10 feet from the host.",
-        "Both owners recorded local contact responses (5 and 3). Across 20 moving-flatbed samples, maximum train-relative position error was 1.29715 feet. Host departure cleaned up the guests. The public relay suite passed 14 cases, including custom-code and duplicate-code handling.",
-        "The public four-browser run selected quads 1, 14, 26 and 2; each client rendered 39 remote draws and three engine voices. Every rider movement replicated to all observers, and host end cleared guest rooms, models and audio. No HTTP or page errors occurred."
-      ],
-      "limitation": "Automated public browser verification on the tested host/browser setup; physical phones, geographically separated latency, server-side physics reconciliation, competitive authority, host migration and full original-game parity are not established. The shared train clock freezes while its host is paused. The companion larger-label screenshot remains a host capture."
-    },
-    {
-      "id": "lobby-recovery-and-reusable-closed-codes-c10743b9",
-      "timestamp": "2026-10-13T18:52:17.817199+00:00",
-      "recorded_at": "2026-10-13T18:52:17.817199+00:00",
-      "kind": "build",
-      "title": "Lobby recovery and reusable closed codes",
-      "summary": "Closed lobby codes can be recreated with fresh host authority. Brief host transport drops now preserve the room while the browser reconnects.",
-      "details": [
-        "Host verification: 16 live relay gates passed, including reuse, old-token rejection, replacement, recovery, and grace expiry with an active guest. Browser recovery completed in under a second without restarting Arlington; late join, minimap, spawning, contacts and train rider sync passed. Four-player movement and explicit host-end cleanup passed.",
-        "Structured lifecycle diagnostics are retained in Workers Logs; custom logs exclude names, credentials, packet bodies and raw URLs. Incoming old-pose bursts are bounded and dropped while reserving room for control messages."
-      ],
-      "limitation": "Pending CI and public verification. The original disconnect cause remains unproven. Recovery covers brief host transport failures; explicit leave, invalid traffic and the recovery deadline still end the room."
     },
     {
       "id": "public-host-recovery-verified-close-decisions-preserve-513a7702",
@@ -2724,6 +2724,36 @@
       "limitation": "Host-only synthetic focus/visibility run from a dirty development checkout. Final feature, train and reconnect gates were still running; no current-main CI or public deployment is claimed. Physical mobile behavior, geographic latency, large-room load, production network costs and whole-PS2 animation equivalence remain unverified. Protocol v3 requires old open tabs to reload.",
       "image": "/devlog-images/protocol-v3-multiplayer-efficiency-host-checkpoint-247c87d2.png",
       "caption": "Host Chromium Metal checkpoint with four riders; labels and a partial peer quad are visible, remote poses reconstructed locally. This screenshot predates production publication."
+    },
+    {
+      "id": "public-portrait-gps-capture-on-commit-0787b32-23c7204a",
+      "timestamp": "2026-10-13T20:15:09.790450+00:00",
+      "recorded_at": "2026-10-13T20:18:50.951778+00:00",
+      "kind": "verification",
+      "title": "Public portrait GPS capture on commit 0787b32",
+      "summary": "A current public 390×844 portrait ride shows the GPS minimap and original snow course together on the deployed 0787b32 build.",
+      "details": [
+        "Captured from https://furyremastered.com/play.html?drive=1 at a 390×844 CSS viewport and DPR 3 (1170×2532 PNG). The frame shows the north-up terrain GPS, 400 ft scale and speed footer; it is a ready-state still at 0 mph.",
+        "The existing tools/test_minimap.mjs public route passed in the same deployed build with no page errors. Its checks cover actual Rust GPS following, size and On/Off persistence through reload, pause/blur suppression, off-mode release, bounded update rate and graphics-context restoration."
+      ],
+      "limitation": "Automated host Chromium on a public deployment, with synthetic focus; the screenshot is stationary and does not establish physical-phone behavior or performance.",
+      "image": "/devlog-images/public-portrait-gps-capture-on-commit-0787b32-23c7204a.png",
+      "caption": "Public HTTPS browser capture of the current build at 390×844 CSS / DPR 3. The portrait view shows the course, recovered-terrain GPS, 400 ft scale and speed display; captured before throttle input."
+    },
+    {
+      "id": "public-desktop-env02-gps-course-capture-on-0787b32-647d7edc",
+      "timestamp": "2026-10-13T20:17:02.458731+00:00",
+      "recorded_at": "2026-10-13T20:18:56.362168+00:00",
+      "kind": "verification",
+      "title": "Public desktop ENV02 GPS course capture on 0787b32",
+      "summary": "A current public landscape ride captures the ATV moving through ENV02 with the terrain GPS visible.",
+      "details": [
+        "Captured from https://furyremastered.com/play.html?drive=1 at 960×540 after the public tools/test_maps.mjs ENV02 route passed. The route confirmed the original environment archive, terrain detail, vegetation, scenery meshes, finite driving state, GPS bounds and zero WebGL errors.",
+        "The image shows the ATV at 27 mph and the circular aerial GPS. Both furyremastered.com/deployment.json and the legacy workers.dev deployment.json returned 0787b32b505ce8edc5d98bbf719514fce57b4ed9 before and after the route."
+      ],
+      "limitation": "Automated host Chromium on the public build; this route verifies one environment and a bounded browser drive, not complete map rendering, PS2 parity or physical-device performance.",
+      "image": "/devlog-images/public-desktop-env02-gps-course-capture-on-0787b32-647d7edc.png",
+      "caption": "Public HTTPS landscape capture of ENV02 at 960×540. The ATV is moving at 27 mph with the recovered-terrain GPS visible; this is one browser course checkpoint, not a full-map fidelity claim."
     },
     {
       "id": "final-host-efficiency-probe-and-reconnect-gate-1d058521",
