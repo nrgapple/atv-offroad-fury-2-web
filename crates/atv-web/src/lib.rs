@@ -72,6 +72,63 @@ struct Simulation {
     hud: atv_core::hud::State,
     race_course: Option<atv_core::race::Course>,
     race: Option<atv_core::race::Race>,
+    cpu_racers: Vec<CpuRacer>,
+}
+struct CpuRacer {
+    vehicle: Vehicle,
+    driver: atv_core::race_ai::Driver,
+    rider: atv_core::rider_pose::Animator,
+}
+fn create_cpu_racer(
+    sim: &Simulation,
+    mut origin: [f32; 3],
+    yaw: f32,
+    index: usize,
+    difficulty: u32,
+) -> Result<CpuRacer> {
+    let terrain = sim.terrain.as_ref().ok_or("CPU terrain missing")?;
+    origin[1] = terrain
+        .contact(origin[0], origin[2])?
+        .ok_or("CPU grid outside terrain")?
+        .height
+        + 2.5;
+    let mut vehicle = Vehicle::new(
+        sim.mesh.as_ref().ok_or("CPU mesh missing")?,
+        sim.physics.as_ref().ok_or("CPU physics missing")?,
+        origin,
+        yaw,
+    )?;
+    vehicle.set_linkage(sim.quad_pose.as_ref().ok_or("CPU linkage missing")?.clone());
+    vehicle.set_materials(sim.materials.ok_or("CPU materials missing")?);
+    vehicle.set_chassis_points(sim.chassis_points.as_ref().ok_or("CPU chassis missing")?)?;
+    vehicle.set_obstacles(
+        sim.obstacle_rays
+            .as_ref()
+            .ok_or("CPU rays missing")?
+            .clone(),
+        sim.obstacles.as_ref().ok_or("CPU scenery missing")?.clone(),
+    )?;
+    if let Some(config) = sim.scene_partition {
+        vehicle.set_scene_partition(config, sim.ecosystem.as_ref(), terrain)?;
+    }
+    if let Some(scene) = vehicle.scene_collision_mut() {
+        scene.set_mud_obstacles(sim.mud_obstacles.clone())?;
+    }
+    let rider = sim
+        .rider_animator
+        .as_ref()
+        .ok_or("CPU rider motions missing")?
+        .fork_normal(
+            &sim.rider_mesh
+                .as_ref()
+                .ok_or("CPU rider mesh missing")?
+                .nodes,
+        )?;
+    Ok(CpuRacer {
+        vehicle,
+        rider,
+        driver: atv_core::race_ai::Driver::new(index, difficulty),
+    })
 }
 struct TrainCollisionBinding {
     car: usize,
@@ -567,6 +624,9 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
             20 => {
                 let terrain = terrain::decode_tr2(input)?;
                 sim.terrain = Some(terrain);
+                sim.cpu_racers.clear();
+                sim.race = None;
+
                 sim.motorcycle = None;
                 sim.motorcycle_model = None;
                 sim.vehicle = None;
@@ -1430,13 +1490,53 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
                 race.step(player.origin, 1. / 60.);
                 let [w, x, y, z] = player.orientation;
                 let yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
-                let mut race_frame = race.frame(yaw);
                 let terrain = sim.terrain.as_ref().ok_or("missing terrain")?;
-                for cpu in &mut race_frame.opponents {
-                    cpu.origin[1] = terrain
-                        .contact(cpu.origin[0], cpu.origin[2])?
-                        .map_or(player.origin[1], |c| c.height + 2.5);
+                if race.running() {
+                    let nodes = &sim
+                        .rider_mesh
+                        .as_ref()
+                        .ok_or("CPU rider mesh missing")?
+                        .nodes;
+                    for (index, cpu) in sim.cpu_racers.iter_mut().enumerate() {
+                        if race.opponents()[index].finished {
+                            continue;
+                        }
+                        let before = cpu.vehicle.frame();
+                        let height = terrain
+                            .contact(before.origin[0], before.origin[2])?
+                            .map_or(before.origin[1], |hit| hit.height);
+                        let (input, decisions) = cpu.driver.step(
+                            &race.course,
+                            &before,
+                            &player,
+                            race.progress_difference(index),
+                            1. / 60.,
+                            before.origin[1] - height,
+                        )?;
+                        let frame = cpu.vehicle.step(terrain, input, 1. / 60.)?;
+                        let (_, pose) =
+                            cpu.rider
+                                .step(nodes, cpu.vehicle.rider_pose_input(), 1. / 60.)?;
+                        let [w, x, y, z] = frame.orientation;
+                        let cpu_yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
+                        let physical = atv_core::race::CpuPose {
+                            orientation: frame.orientation,
+                            speed: frame.speed,
+                            grounded: frame.grounded,
+                            wheel_compression: frame.wheel_compression,
+                            wheel_angles: frame.wheel_angles,
+                            quad_matrices: cpu
+                                .vehicle
+                                .linkage_matrices()
+                                .ok_or("CPU linkage not evaluated")?
+                                .to_vec(),
+                            rider_matrices: pose.world_matrices,
+                            decisions,
+                        };
+                        race.observe_cpu(index, frame.origin, cpu_yaw, Some(physical));
+                    }
                 }
+                let race_frame = race.frame(yaw);
                 return Ok(Some(race_frame));
             }
             Ok(None)
@@ -1489,6 +1589,7 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         SIMULATION.with_borrow_mut(|sim| {
             sim.race_course = Some(course);
             sim.race = None;
+            sim.cpu_racers.clear();
         });
         return Ok(result);
     }
@@ -1499,6 +1600,7 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             if value.get("active").and_then(serde_json::Value::as_bool) == Some(false) {
                 sim.race = None;
                 sim.race_course = None;
+                sim.cpu_racers.clear();
                 return Ok(b"null".to_vec());
             }
             let integer = |key| {
@@ -1511,12 +1613,33 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             let names: Vec<String> =
                 serde_json::from_value(value.get("names").ok_or("missing CPU names")?.clone())
                     .map_err(|e| e.to_string())?;
-            sim.race = Some(atv_core::race::Race::new(
+            let mut race = atv_core::race::Race::new(
                 sim.race_course.clone().ok_or("load race course first")?,
                 integer("laps")?,
                 names,
                 integer("difficulty")?,
-            )?);
+            )?;
+            let racers = if sim.motorcycle.is_some() {
+                vec![]
+            } else {
+                race.opponents()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, cpu)| {
+                        create_cpu_racer(sim, cpu.origin, cpu.yaw, index, integer("difficulty")?)
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            };
+            for (index, cpu) in racers.iter().enumerate() {
+                race.observe_cpu(
+                    index,
+                    cpu.vehicle.frame().origin,
+                    race.opponents()[index].yaw,
+                    None,
+                );
+            }
+            sim.cpu_racers = racers;
+            sim.race = Some(race);
             Ok(b"null".to_vec())
         });
     }

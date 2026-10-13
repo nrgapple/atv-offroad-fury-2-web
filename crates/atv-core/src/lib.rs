@@ -86,3 +86,4 @@ pub mod wreck_animation;
 pub mod player_models;
 
 pub mod race;
+pub mod race_ai;

@@ -1412,11 +1412,13 @@ function render(time) {
   let cpuDraws = 0, cpuTriangles = 0;
   for (const cpu of simFrame?.race?.opponents ?? []) {
     if (Math.hypot(cpu.origin[0]-camera.x,cpu.origin[2]-camera.z) > 864) continue;
-    const transform = vehicleMatrix({origin:cpu.origin,orientation:[Math.cos(cpu.yaw/2),0,Math.sin(cpu.yaw/2),0]});
+    const transform = vehicleMatrix({origin:cpu.origin,orientation:cpu.physical?.orientation ?? [Math.cos(cpu.yaw/2),0,Math.sin(cpu.yaw/2),0]});
+    const quadMatrices = cpu.physical ? new Float32Array(cpu.physical.quad_matrices.flat()) : cpuQuadMatrices;
+    const riderMatrices = cpu.physical ? new Float32Array(cpu.physical.rider_matrices.flat()) : cpuRiderMatrices;
     for (const chunk of vehicleChunks) {
       gl.uniformMatrix4fv(uniforms.model,false,transform);
       gl.uniform1i(uniforms.useQuadPose,Boolean(chunk.quad || chunk.rider));
-      gl.uniformMatrix4fv(uniforms.quadBones,false,chunk.rider ? cpuRiderMatrices : cpuQuadMatrices);
+      gl.uniformMatrix4fv(uniforms.quadBones,false,chunk.rider ? riderMatrices : quadMatrices);
       gl.uniform1i(uniforms.useTexture,chunk.texture ? 1 : 0); gl.bindTexture(gl.TEXTURE_2D,chunk.texture ?? fallbackTexture);
       gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES,chunk.count,gl.UNSIGNED_SHORT,0); cpuDraws++; cpuTriangles += chunk.count/3;
     }

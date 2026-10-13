@@ -1,5 +1,50 @@
 # Implementation handoff
 
+## Original CPU drivers — tested host checkpoint
+
+Branch `feat/original-race-ai` replaces the preview's constant-speed route motion
+with four independent recovered Vehicle solvers, normal rider controllers and
+ATV linkage matrices. Exact-build National driver decisions now supply steering,
+lookahead, lane slew, TDF target speeds, throttle/brake deadband and ahead-only
+leader speed limiting. The field is YOU plus up to four CPUs; guessed difficulty
+speeds are removed. Ordered segment distance fixes start-line wrap in the leader
+gap. Current starting slots, checkpoint radii and race event rules remain authored.
+
+The merged host gate passes 339 core, 25 protocol, 3 relay, 13 bridge, 4
+release-tool Rust and 69 JS tests, formatting/strict Clippy, WASM, source/setup
+and repository hygiene, 29 release checks (one skipped) and 8 Worker tests. Private finite-binary32 comparisons pass 1,500 cases
+executing 124,410 original instructions with zero output-bit differences for
+leader speed, pedal deadband and lateral slew/clamp. This is selected-routine
+proof, not full-driver or PS2 replay equivalence.
+
+Caribou browser checks pass 1280×720, 390×844 and 844×390 setup/driving/rotation,
+countdown, pause, restart and touch cancellation. Independent CPUs roll wheels,
+compress suspension and publish 27 quad/18 rider transforms. A 45.05-second
+simulation run covers 2,435–2,466 feet per CPU, braking/coasting, ahead speed
+limiting, turns and elevation changes, with actual CPU GPU draws and no JS errors.
+Frontend/Freestyle/controller/portrait regression passes. Results UI remains a
+separate render-only fixture. A separate natural CPU run reaches the provisional
+finish radius for all four racers by 120.06s; native finish-line parity is unverified.
+
+A mobile utility regression also fixes real second-finger Pause/Camera taps while
+one-finger drive is held: the browser suppresses the secondary compatibility
+click, so utility touch release now invokes the existing button action once.
+Portrait/landscape checks cover independent driving capture, no stray throttle,
+drag-away/cancel, pause/freeze, neutral resume, 44px hit areas and mouse/keyboard.
+Physical iOS Safari and phone hardware remain unverified.
+
+Main motorcycle integration is preserved: its separate authored CPU route
+preview remains explicitly distinct from original ATV CPU vehicle simulation.
+Quad and motorcycle model 34 race regression both pass.
+
+CPU obstacle-avoidance decisions, rider-to-rider collisions, AI tricks, CPU wreck
+and recovery, low-clearance airborne feedback, dynamic obstacles, native grid
+placement, separate roster quads/costumes and original RNG/trigonometric tables
+remain open. The native grid helper 001f8410 is recovered privately for the next
+placement gate. Source exports/probes, content and screenshots remain ignored.
+See research/RACING.md and the dev log. This checkpoint is host verified; the
+last verified public release is a66bab9 until passing main CI publishes this work.
+
 ## Playable motorcycles checkpoint — 2026-10-13
 
 The motorcycle branch now connects garage choices 27–34 to the distinct two-wheel
@@ -775,4 +820,3 @@ Host boundary follow-up: a normal ENV04 keyboard drive now passes edge crossing,
 
 
 Historical host wheel-center checkpoint (subsequently released as `35d328e`): the first wheel velocity/spring substep now retains the preceding cached world center until integration; geometry, torque and the chassis contact solver keep their recovered new-center rules. A 600-case original `001ed330` replay executes 386,315 instructions with zero compared binary32 mismatches, versus 1,813 differing components from the former immediate-center input. Host clean landing, both-direction keyboard cross-slope turning and wreck/recovery pass; 222 core + 2 WASM tests, strict Clippy, formatting and `make verify` pass. Landing minimum clearance is unchanged at -0.4970245ft. Slope clearance is -0.3231964ft before/-0.3015594ft after over 14.457ft elevation, but props and 119 riding/30 wreck frame exclusions prevent isolated slope parity or causal-improvement claims. Three vegetation helper tests are registered but collision is not live. The inspected landing screenshot and evidence are recorded in `research/devlog.json`; no terrain-clipping fix was claimed at this host gate. The subsequent public verification is recorded above. See `research/MOVEMENT.md`.
-

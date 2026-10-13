@@ -147,11 +147,12 @@ export function oneHandedFeedback(input, frame) {
   };
 }
 
-export function mountTouchControls({ active, focus, surface, parent = document.body }) {
+export function mountTouchControls({ active, focus, surface, parent = document.body, utilities = document.querySelector('#toolbar') }) {
   const input = new TouchInput();
   input.setOneHanded(loadOneHandedPreference());
   input.steeringSensitivity = loadSteeringSensitivity();
   let touched = false, airborne = false, lastFrame = null;
+  const utilityPointers = new Map();
   const root = document.createElement('div'); root.id = 'touch-controls'; root.setAttribute('aria-hidden', 'true');
   root.innerHTML = '<div class="touch-rider-marker"><b class="touch-axis forward">FWD</b><b class="touch-axis back">BACK</b><b class="touch-axis left">L</b><b class="touch-axis right">R</b><em class="touch-direction"></em><i></i><span>PRELOAD</span></div>';
   parent.append(root);
@@ -176,7 +177,7 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
     document.body.classList.toggle('touch-driving', !root.hidden && (coarse.matches || touched));
     present();
   };
-  const clear = () => { input.clear(); lastFrame = null; root.classList.remove('held'); root.dataset.preload = 'idle'; refresh(); };
+  const clear = () => { input.clear(); utilityPointers.clear(); lastFrame = null; root.classList.remove('held'); root.dataset.preload = 'idle'; refresh(); };
   const down = event => {
     if (event.pointerType !== 'touch' || (!input.oneHanded && event.clientX < innerWidth / 2)) return;
     focus?.();
@@ -211,6 +212,40 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
   surface.addEventListener('touchmove', suppressNativeTouch, { passive: false });
   surface.addEventListener('pointerdown', down); surface.addEventListener('pointermove', move);
   for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) surface.addEventListener(type, end);
+  // A second finger does not produce a compatibility click while a riding
+  // touch is held. Activate utility buttons from their own touch release,
+  // independently of the captured riding pointer and its native-touch gate.
+  const utilityButton = target => target?.closest?.('button:not(:disabled)');
+  const utilityDown = event => {
+    const button = utilityButton(event.target);
+    if (event.pointerType !== 'touch' || !button || !utilities.contains(button)) return;
+    event.preventDefault(); event.stopPropagation();
+    utilityPointers.set(event.pointerId, { button, x: event.clientX, y: event.clientY, moved: false });
+    button.setPointerCapture(event.pointerId);
+  };
+  const utilityMove = event => {
+    const pointer = utilityPointers.get(event.pointerId);
+    if (!pointer) return;
+    if (Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 16) pointer.moved = true;
+    event.preventDefault(); event.stopPropagation();
+  };
+  const utilityEnd = event => {
+    const pointer = utilityPointers.get(event.pointerId);
+    if (!pointer) return;
+    utilityPointers.delete(event.pointerId);
+    event.preventDefault(); event.stopPropagation();
+    const hit = utilityButton(document.elementFromPoint(event.clientX, event.clientY));
+    const nearby = Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) <= 16;
+    if (event.type === 'pointerup' && !pointer.moved && nearby && hit === pointer.button && !pointer.button.disabled) pointer.button.click();
+  };
+  // Cancel native touch on utilities too, so a primary finger cannot activate
+  // once on pointer release and again through a synthesized mouse click.
+  const utilityNativeTouch = event => { if (utilityButton(event.target) && event.cancelable) event.preventDefault(); };
+  utilities?.addEventListener('touchstart', utilityNativeTouch, { passive: false });
+  utilities?.addEventListener('touchmove', utilityNativeTouch, { passive: false });
+  utilities?.addEventListener('pointerdown', utilityDown);
+  utilities?.addEventListener('pointermove', utilityMove);
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) utilities?.addEventListener(type, utilityEnd);
   const suppress = event => { if (!document.querySelector('#frontend')?.contains(event.target)) event.preventDefault(); };
   // Scoped to the game document. The separately loaded dev log remains selectable.
   document.addEventListener('selectstart', suppress); document.addEventListener('contextmenu', suppress);
@@ -247,6 +282,9 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
       surface.removeEventListener('touchstart', suppressNativeTouch); surface.removeEventListener('touchmove', suppressNativeTouch);
       surface.removeEventListener('pointerdown', down); surface.removeEventListener('pointermove', move);
       for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) surface.removeEventListener(type, end);
+      utilities?.removeEventListener('touchstart', utilityNativeTouch); utilities?.removeEventListener('touchmove', utilityNativeTouch);
+      utilities?.removeEventListener('pointerdown', utilityDown); utilities?.removeEventListener('pointermove', utilityMove);
+      for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) utilities?.removeEventListener(type, utilityEnd);
       document.removeEventListener('selectstart', suppress); document.removeEventListener('contextmenu', suppress);
       window.removeEventListener('blur', clear); window.removeEventListener('resize', clear); document.removeEventListener('visibilitychange', clear);
     },

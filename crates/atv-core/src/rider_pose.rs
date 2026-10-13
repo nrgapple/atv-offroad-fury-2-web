@@ -160,6 +160,7 @@ impl Clip {
 
 /// Original normal-riding controller evaluation. Tricks, IK, look-target
 /// acquisition and the crouch signal are intentionally supplied separately.
+#[derive(Clone)]
 pub struct Motion {
     pub animation: crate::animation::Animation,
     pub sampling: crate::animation::Sampling,
@@ -251,6 +252,11 @@ impl Animator {
             scoring_mode: None,
             hand_ik: None,
         })
+    }
+    /// Independent normal-pose controller sharing the same recovered motion data.
+    /// Gameplay/trick/scoring clocks are initialized for the new actor.
+    pub fn fork_normal(&self, nodes: &[crate::mesh::Node]) -> Result<Self> {
+        Self::new(self.motions.clone(), nodes)
     }
     pub fn channels(&self) -> crate::animation::Channels {
         self.current.clone()

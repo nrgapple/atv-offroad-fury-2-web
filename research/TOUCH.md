@@ -137,3 +137,26 @@ The immediate-press route passed the public Chromium touch suite on release `0f0
 ## Mobile steering response
 
 Pause → Controls offers a saved Mobile steering response from 50% to 150% in 5% steps, defaulting to 85%. It applies to both one- and two-finger touch modes. At 100%, steering matches the previous input response. The scale is applied to displacement before the unchanged full-lock clamp; it does not alter lean, brake or preload input. Keyboard and controller bindings are unaffected.
+
+## Mobile Pause and Camera touch ownership (2026-10-13)
+
+A held riding finger suppresses the browser's compatibility click for a second
+finger. Actual Chromium touches reproduced Camera staying on the same preset
+and Pause staying closed even though both utility buttons received pointer
+press/release events. Idle primary taps worked and both buttons remained
+uncovered 44-pixel hit areas, so changing their stacking order would not fix
+this failure.
+
+Toolbar buttons now handle touch release independently of the captured riding
+pointer and invoke their existing action once. Cancelling, dragging away or
+losing capture does not activate a button. Native touch is cancelled within the
+utility buttons to prevent a duplicate synthesized click; mouse and keyboard
+activation retain their usual click path. Camera leaves the riding finger held;
+Pause clears riding input, and Resume requires a fresh press.
+
+`tools/test_mobile_utilities.mjs` passes actual-content Chromium touch checks at
+390×844 portrait and 844×390 landscape: primary and held-finger utility taps,
+one activation per tap, cancellation/drag guards, visible 44px targets, pause
+freezing, neutral resume, mouse/keyboard activation and no browser errors.
+These are host browser checks; physical iOS Safari remains unverified. Selected
+screenshots stay in ignored private storage for the integrated dev-log gate.

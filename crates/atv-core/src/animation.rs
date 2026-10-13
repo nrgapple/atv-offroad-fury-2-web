@@ -4,14 +4,14 @@ use crate::{Result, slice, u16le, u32le};
 use serde::Serialize;
 use std::collections::BTreeSet;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TranslationKey {
     pub time: f32,
     pub value: [f32; 3],
     /// Stored incoming/outgoing cubic tangents for Hermite controllers.
     pub tangents: Option<[[f32; 3]; 2]>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RotationKey {
     pub time: f32,
     pub packed_angle: u16,
@@ -19,12 +19,12 @@ pub struct RotationKey {
     /// SLUS_211.04 angle byte plus three signed axis bytes.
     pub compressed_axis: Option<u32>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Track<T> {
     pub bone: u32,
     pub keys: Vec<T>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Animation {
     pub version: u32,
     pub frame_count: u32,
@@ -237,7 +237,7 @@ impl Default for Sampling {
         }
     }
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Pose {
     pub local_matrices: Vec<[f32; 16]>,
     pub world_matrices: Vec<[f32; 16]>,
