@@ -1084,3 +1084,26 @@ Contacts remain owner-local without server reconciliation, and the shared train
 clock freezes when its host pauses. Racing, authority, migration and full-game
 parity remain unfinished. See [multiplayer evidence](research/MULTIPLAYER.md) and
 [deployment record](research/DEPLOYMENT.md).
+
+## Multiplayer polish checkpoint (2026-10-13)
+
+Player markers now use smaller 18px outlined DOM labels and authored SVG arrows,
+with original slot colors; minimap peers are simple colored dots. Edge labels
+are clamped to fit mobile screens. The soundtrack remains active through pause
+and ride submenus while gameplay voices mute; resume does not suspend audio.
+Owner-local proxy impulses now enter the recovered per-quad directional wreck
+classifier. The equal-mass contact proxy is still authored, not recovered PS2
+pair collision or server-authoritative reconciliation.
+
+Host gates: make check (407 Rust, 94 JS, 8 cache tests), make verify, release
+tests (35 run, one opt-in skip), solo and multiplayer pause, and two-client
+late join/recovery/reload/train/contact tests. Both owners entered Front wrecks
+in a head-on impact and both observers received Wreck state/new crash serial.
+Solo pause/settings/resume and host/guest pause preserve song playback with zero
+AudioContext suspends. Inspected mobile image is recorded in the dev log.
+
+A limited live production capture saw a 1006 host socket close after 270145ms
+message silence and no server-requested lobby closure. Historical telemetry
+retrieval was denied by the existing OAuth credential; cause remains unproven.
+Sanitized evidence: private/reports/multiplayer-polish-log-review-2026-10-13.json.
+Public delivery must follow passing main CI and the normal R2/verification gate.

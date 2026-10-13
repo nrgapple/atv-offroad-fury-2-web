@@ -51,6 +51,12 @@ try {
  await b.waitForTimeout(200);let near=await state(b);const host=near.multiplayer.remote[0].position;
  assert(Math.hypot(...near.frame.origin.map((v,i)=>v-host[i]))<25);assert(Math.hypot(...near.frame.origin.map((v,i)=>v-host[i]))>5);
  console.log('SPAWN',JSON.stringify({origin:near.frame.origin,host}));
+ await b.setViewportSize({width:390,height:844});await b.waitForTimeout(350);
+ const labelBox=await b.locator('.player-indicator').boundingBox();assert(labelBox.x>=0&&labelBox.x+labelBox.width<=390,'edge label must fit mobile screen');
+ const view=await state(b);await a.evaluate(v=>testCommand(23,v),{origin:[view.frame.origin[0]+Math.sin(view.camera[3])*70,host[1],view.frame.origin[2]+Math.cos(view.camera[3])*70],yaw:0});
+ await b.waitForTimeout(350);
+ const indicator=await b.locator('.player-indicator').evaluate(n=>({font:parseFloat(getComputedStyle(n).fontSize),svg:parseFloat(getComputedStyle(n.querySelector('svg')).width),bitmap:n.querySelectorAll('canvas,img').length}));
+ assert.equal(indicator.font,18);assert.equal(indicator.svg,18);assert.equal(indicator.bitmap,0);
  if(process.env.ATV_MP_SCREENSHOT)await b.screenshot({path:process.env.ATV_MP_SCREENSHOT});
  await pause(b);await b.setViewportSize({width:390,height:844});await button(b,'Players').click();
  await b.waitForTimeout(400);const hit=await button(b,'Spawn beside P1 Host').boundingBox();console.log('MOBILE_HIT',JSON.stringify(hit));assert(hit.width>40&&hit.height>=40);assert(hit.x>=0&&hit.x+hit.width<=390);
@@ -97,6 +103,25 @@ try {
  const maxTrainError=Math.max(...trainSamples.map(s=>s.error));assert(maxTrainError<4,JSON.stringify(trainSamples));
  console.log('TRAIN_RIDER',JSON.stringify({trainSetup,samples:trainSamples.length,maxTrainError}));
  if(process.env.ATV_MP_SCREENSHOT)await b.screenshot({path:process.env.ATV_MP_SCREENSHOT.replace('.png','-train.png')});
+ // Opposing fast riders must enter the recovered native wreck flow on both
+ // owners, and observers must receive a detached rider plus a new crash serial.
+ await Promise.all(pages.map(p=>p.evaluate(()=>{window.testFreeze=true;})));await a.waitForTimeout(150);
+ const beforeCrashes=await Promise.all(pages.map(state));
+ await Promise.all(pages.map((p,i)=>p.evaluate(async({host,i})=>{
+   await testCommand(23,{origin:[host[0],host[1]+1,host[2]+(i?8:-8)],velocity:[0,0,i?-60:60],yaw:i?Math.PI:0});
+   window.testImpacts=[];window.testImpactTimer=setInterval(()=>{const s=window.atvTerrainStatus;window.testImpacts.push({wreck:s.frame.wreck,contacts:s.multiplayer.state.contacts,peer:s.multiplayer.remote[0]});},30);
+ },{host,i})));
+ await Promise.all(pages.map(p=>p.evaluate(()=>{window.testFreeze=false;})));
+ await a.waitForTimeout(2000);
+ const impacts=await Promise.all(pages.map(p=>p.evaluate(()=>{clearInterval(testImpactTimer);return testImpacts;})));
+ for(let i=0;i<impacts.length;i++) {
+   const samples=impacts[i],wreck=samples.find(s=>s.wreck.phase==='Falling'&&s.wreck.kind==='Front');
+   assert(wreck,`Owner ${i} should crash front-first: ${JSON.stringify(samples.map(s=>({wreck:s.wreck,contacts:s.contacts})))}`);
+   assert(samples.some(s=>s.contacts>beforeCrashes[i].multiplayer.state.contacts),'contact response must occur');
+   const remote=samples.find(s=>s.peer?.crash_serial>beforeCrashes[i].multiplayer.remote[0].crash_serial&&s.peer.rider_state!=='Riding');
+   assert(remote,`Observer ${i} should receive the crash`);
+   console.log('HEAD_ON_CRASH',JSON.stringify({owner:i,kind:wreck.wreck.kind,peerState:remote.peer.rider_state,serial:remote.peer.crash_serial}));
+ }
  // Reloading the owner's page uses the grace window; joining the same code
  // from this tab restores host authority from session storage.
  await a.reload();await button(a,'Press START').click({timeout:90000});await button(a,'Multiplayer').click();await button(a,'Join lobby').click();
@@ -106,5 +131,5 @@ try {
  // A paused guest must still receive current roster/poses. Departure removes it.
  await pause(b);await button(b,'Players').click();await pause(a);await button(a,'Lobby').click();await button(a,'Leave lobby').click();await a.close();
  await b.waitForFunction(()=>!window.atvTerrainStatus.multiplayer.state.code,null,{timeout:15000});assert.equal((await state(b)).multiplayer.remote.length,0);
- assert.deepEqual(errors,[]);console.log('PASS late admission / minimap / original arrows / pause roster / nearby spawn / contacts / departure');
+ assert.deepEqual(errors,[]);console.log('PASS late admission / minimap / smooth arrows / minimap dots / pause roster / nearby spawn / contacts / head-on wreck replication / departure');
 }finally{await browser.close();}

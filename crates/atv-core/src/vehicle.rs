@@ -675,8 +675,28 @@ impl Vehicle {
         else {
             return false;
         };
+        let delta_velocity = sub(response.velocity, self.body.linear_velocity);
         self.body.center = add(self.body.center, response.displacement);
         self.body.linear_velocity = response.velocity;
+        // Use actual owner impulse in the recovered per-quad impact classifier.
+        // Speed alone, penetration correction and tangential motion do not eject
+        // the rider. The proxy remains an authored equal-mass approximation.
+        if self.wreck.phase == crate::wreck::Phase::Riding
+            && let Some(config) = &self.wreck_physics
+            && let Some(kind) = config.rules.evaluate(crate::wreck::Input {
+                local_impact: inverse_transform(self.body.basis(), delta_velocity),
+                vertical_limit_scale: 1.,
+                pitch: 0.,
+                roll: 0.,
+                wheel_contact: false,
+                body_contact: true,
+                rider_contact: false,
+                forward_speed: 0.,
+                stunt_landing_safe: true,
+            })
+        {
+            self.begin_wreck(kind);
+        }
         true
     }
     pub fn network_platform(&self) -> Option<crate::train::MotionState> {
@@ -2068,6 +2088,47 @@ mod tests {
             center: [0., 1.5, 0.],
         });
     }
+    #[test]
+    fn peer_impulses_trigger_directional_wrecks_but_gentle_bumps_do_not() {
+        for (velocity, other_delta, other_velocity, expected) in [
+            (
+                [0., 0., 60.],
+                [0., 0., 5.],
+                [0., 0., -60.],
+                Some(crate::wreck::Kind::Front),
+            ),
+            (
+                [0.; 3],
+                [0., 0., -5.],
+                [0., 0., 60.],
+                Some(crate::wreck::Kind::Back),
+            ),
+            (
+                [60., 0., 0.],
+                [5., 0., 0.],
+                [0.; 3],
+                Some(crate::wreck::Kind::Right),
+            ),
+            ([0., 0., 5.], [0., 0., 5.], [0.; 3], None),
+            ([0., 0., 60.], [5., 0., 0.], [0.; 3], None),
+            ([0.; 3], [0.; 3], [0.; 3], None),
+        ] {
+            let (mut vehicle, _) = fixture();
+            enable_test_wrecks(&mut vehicle);
+            vehicle.wreck_physics.as_mut().unwrap().rules.impact_limit = [19., 84., 21.];
+            vehicle.body.linear_velocity = velocity;
+            let other = add(vehicle.body.origin(&vehicle.body_config), other_delta);
+            assert!(vehicle.peer_contact(other, other_velocity, 1. / 60., 1.));
+            assert_eq!(vehicle.wreck.kind, expected);
+            if expected.is_some() {
+                assert_eq!(vehicle.wreck.phase, crate::wreck::Phase::Falling);
+                let serial_phase = vehicle.wreck;
+                vehicle.peer_contact(other, other_velocity, 1. / 60., 1.);
+                assert_eq!(vehicle.wreck.kind, serial_phase.kind);
+            }
+        }
+    }
+
     #[test]
     fn wreck_uses_passive_body_and_recovers_only_after_rider_contact() {
         let (mut vehicle, terrain) = fixture();

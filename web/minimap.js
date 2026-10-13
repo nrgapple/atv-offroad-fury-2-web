@@ -189,16 +189,9 @@ export class FreestyleMinimap {
     const peerMarkers=[];
     for (const peer of peers) {
       if (peer.stale || !peer.position?.every(Number.isFinite)) continue;
-      const {dx,dy,edge,rotation}=mapPeerMarker(peer,pose,range,size,headingUp);
-      c.save();c.translate(size/2+dx,size/2+dy);c.beginPath();
-      if(edge){c.rotate(Math.atan2(dy,dx)+Math.PI/2);c.moveTo(0,-5);c.lineTo(4,4);c.lineTo(-4,4);c.closePath();}
-      else c.arc(0,0,4,0,Math.PI*2);
-      c.fillStyle=PLAYER_COLORS[peer.peer];c.strokeStyle=this.colors.ink;c.lineWidth=2;c.stroke();c.fill();c.restore();
-      if(this.peerArrows?.[peer.peer]) {
-        c.save();c.translate(size/2+dx,size/2+dy);c.rotate(edge?Math.atan2(dy,dx)+Math.PI/2:rotation);c.imageSmoothingEnabled=false;c.drawImage(this.peerArrows[peer.peer],-5,-5,10,10);c.restore();
-      }
-      c.font=`800 9px ${this.colors.font}`;c.lineWidth=3;c.strokeStyle=this.colors.ink;c.fillStyle=PLAYER_COLORS[peer.peer];
-      c.strokeText(String(peer.peer+1),size/2+dx+5,size/2+dy-3);c.fillText(String(peer.peer+1),size/2+dx+5,size/2+dy-3);
+      const {dx,dy,edge}=mapPeerMarker(peer,pose,range,size,headingUp);
+      c.beginPath();c.arc(size/2+dx,size/2+dy,3.5,0,Math.PI*2);
+      c.fillStyle=PLAYER_COLORS[peer.peer];c.strokeStyle=this.colors.ink;c.lineWidth=1.5;c.stroke();c.fill();
       peerMarkers.push({peer:peer.peer,x:size/2+dx,y:size/2+dy,edge});
     }
     this.metrics.peers=peerMarkers;

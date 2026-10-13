@@ -2689,9 +2689,27 @@
         "Follow-up passes 406 Rust tests, 94 browser-glue tests, 8 build-cache tests, 35 release tests with one expected skip, and 16 live host relay gates."
       ],
       "limitation": "The original disconnect cause remains unproven. At this checkpoint, the close-policy and query-redaction follow-up awaits public verification; the full public relay suite is not yet confirmed."
+    },
+    {
+      "id": "smaller-player-indicators-pause-music-and-contact-cras-a2dd69ff",
+      "timestamp": "2026-10-13T19:37:45.578209+00:00",
+      "recorded_at": "2026-10-13T19:38:54.869743+00:00",
+      "kind": "build",
+      "title": "Smaller player indicators, pause music and contact crashes",
+      "summary": "Host browser checks pass for smooth player arrows, minimap dots, uninterrupted pause music and multiplayer impact wrecks.",
+      "details": [
+        "Overhead labels use 18px white outlined text and smooth authored 18px SVG arrows in the original player-slot colors. Minimap peers are 7px colored dots. Mobile edge labels stay within the screen; the 390px screenshot was inspected.",
+        "Solo pause, settings and resume preserve the current soundtrack without suspending the audio context. Host and guest pause checks also preserve music while gameplay voices mute and multiplayer physics continue.",
+        "The owner-local collision impulse now uses recovered per-quad directional wreck thresholds. Native tests distinguish head-on, rear and side impacts from gentle, tangential and stationary contacts. Both browser owners entered Front wrecks and each observer received the other crash state and serial.",
+        "Late join, automatic recovery, owner reload, nearby spawn and train following passed; 20 train samples had a maximum relative error of 0.638 ft. make check passed 407 Rust, 94 JavaScript and 8 cache tests; setup verification passed; release tests passed with one opt-in check skipped.",
+        "The live production log sample captured one abnormal host WebSocket close after 270145 ms without a message, with no server-requested lobby closure in that sample. Historical retrieval was denied by the existing credential."
+      ],
+      "limitation": "Host verification only at this checkpoint. Contacts remain an authored equal-mass proxy, not the original PS2 pair solver. The limited live log sample does not establish the disconnect cause or rule out earlier errors. Public release and public browser checks follow CI.",
+      "image": "/devlog-images/smaller-player-indicators-pause-music-and-contact-cras-a2dd69ff.png",
+      "caption": "Inspected host browser at 390px: smaller white outlined player label, smooth red overhead arrow and a red minimap dot."
     }
   ],
-  "updated_at": "2026-10-13T19:10:52.960643+00:00",
+  "updated_at": "2026-10-13T19:38:54.869743+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {

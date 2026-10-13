@@ -17,12 +17,31 @@ const screen=async(p,name)=>{
 async function page() {
   const p=await browser.newPage({viewport:{width:1280,height:896},hasTouch:true,deviceScaleFactor:2});
   p.on('pageerror',e=>errors.push(e.message));
-  await p.addInitScript(()=>Object.defineProperty(document,'hasFocus',{value:()=>true}));
+  await p.addInitScript(()=>{
+    Object.defineProperty(document,'hasFocus',{value:()=>true});
+    window.testSuspends=0;const suspend=AudioContext.prototype.suspend;
+    AudioContext.prototype.suspend=function(...args){window.testSuspends++;return suspend.apply(this,args);};
+  });
   if(process.env.ATV_TEST_ASSET_ROOT) await p.route(`${base}/**`,async route=>{
     const name=new URL(route.request().url()).pathname.slice(1),path=resolve(process.env.ATV_TEST_ASSET_ROOT,name);
     if(name===basename(name)&&existsSync(path))await route.fulfill({path});else await route.continue();
   });
   await p.goto(base+'/play.html');await button(p,'Press START').click({timeout:90000});return p;
+}
+async function musicBefore(p) {
+  await p.waitForFunction(()=>window.atvTerrainStatus.audio.music.voices>0&&window.atvTerrainStatus.audio.context==='running',null,{timeout:30000});
+  return p.evaluate(()=>({audio:window.atvTerrainStatus.audio,suspends:window.testSuspends}));
+}
+async function musicContinues(p,before,paused) {
+  await p.waitForTimeout(700);
+  const after=await p.evaluate(()=>({audio:window.atvTerrainStatus.audio,suspends:window.testSuspends}));
+  assert.equal(after.suspends,before.suspends,'menu transition must not suspend the audio context');
+  assert.equal(after.audio.context,'running');assert.equal(after.audio.musicPreview,paused);
+  assert.equal(after.audio.music.playingIndex,before.audio.music.playingIndex,'pause keeps the current song');
+  assert(after.audio.music.positionSeconds>before.audio.music.positionSeconds+.3,'soundtrack advances through pause');
+  assert.equal(after.audio.menuMusic.voices,0,'ride menu must not start title music');
+  if(paused)assert.equal(after.audio.spatial.active,false,'game sounds stay muted');
+  console.log('MUSIC_CONTINUES',JSON.stringify({paused,seconds:after.audio.music.positionSeconds-before.audio.music.positionSeconds,suspends:after.suspends-before.suspends}));
 }
 async function openPause(p) {await button(p,'Pause').click();await screen(p,'pause');}
 async function running(p){await p.waitForFunction(()=>window.atvTerrainStatus.simulation&&document.querySelector('#frontend').hidden,null,{timeout:120000});}
@@ -31,7 +50,7 @@ try {
   console.log('START',base,multiplayer);const a=await page();console.log('MAIN');
   if(!multiplayer) {
     await button(a,'Single Player').click();await button(a,'Freestyle').click();await button(a,'Ride Caribou Peak').click();await running(a);
-    await a.keyboard.down('KeyW');await a.waitForTimeout(700);await openPause(a);await a.keyboard.up('KeyW');
+    const music=await musicBefore(a);await a.keyboard.down('KeyW');await a.waitForTimeout(700);await openPause(a);await musicContinues(a,music,true);await a.keyboard.up('KeyW');
     await a.waitForTimeout(200);const frozen=(await state(a)).simulationSteps;
     await a.waitForTimeout(400);assert.equal((await state(a)).simulationSteps,frozen,'single-player must remain paused');
     for(const size of [{width:1280,height:896},{width:390,height:844},{width:320,height:568},{width:844,height:390},{width:667,height:375}]) {
@@ -48,7 +67,7 @@ try {
       await button(a,'Resume').scrollIntoViewIfNeeded();
     }
     await a.setViewportSize({width:390,height:844});
-    await button(a,'Controls').click();await screen(a,'controls');await shot(a,'controls');await a.keyboard.press('Escape');await screen(a,'pause');
+    await button(a,'Controls').click();await screen(a,'controls');await musicContinues(a,music,true);await shot(a,'controls');await a.keyboard.press('Escape');await screen(a,'pause');
     assert.equal(await a.locator('.pause-panel').evaluate(n=>n.scrollTop),0,'reopening starts at Resume');
     await button(a,'HUD settings').click();await button(a,'Minimap configuration').click();await screen(a,'minimap-config');await shot(a,'minimap');
     const slider=a.getByRole('slider',{name:'Minimap size',exact:true});await slider.focus();await a.keyboard.press('ArrowRight');await a.waitForTimeout(100);assert.equal(await slider.inputValue(),'168');
@@ -59,7 +78,7 @@ try {
     await a.keyboard.press('Enter');await screen(a,'controls');await a.keyboard.press('Escape');await screen(a,'pause');
     // Native Tab focus and Enter must activate the same highlighted control.
     await button(a,'Resume').focus();await a.keyboard.press('Tab');await a.waitForTimeout(100);assert.equal(await a.evaluate(()=>document.activeElement.dataset.action),'reset');
-    await button(a,'Resume').click();await running(a);await a.waitForTimeout(200);assert.equal((await state(a)).frame.applied_input.throttle,0);
+    await button(a,'Resume').click();await running(a);await musicContinues(a,music,false);await a.waitForTimeout(200);assert.equal((await state(a)).frame.applied_input.throttle,0);
     console.log('PASS responsive layout, sharp DOM labels, scroll access, keyboard/Tab, settings sliders, single-player freeze and neutral resume');
   } else {
     await button(a,'Multiplayer').click();await button(a,'Create lobby').click();await a.getByRole('textbox',{name:'Rider name',exact:true}).fill('Pause Host');await button(a,'Create lobby').click();
@@ -70,7 +89,7 @@ try {
     for(const p of [a,b])await p.waitForFunction(()=>window.atvTerrainStatus.multiplayerDraws>0,null,{timeout:60000});
     for(const [menu,rider] of [[a,b],[b,a]]) {
       await menu.bringToFront();await menu.evaluate(()=>window.dispatchEvent(new Event('focus')));
-      await menu.keyboard.down('KeyW');await menu.waitForFunction(()=>window.atvTerrainStatus.frame.applied_input.throttle>.5);await openPause(menu);await menu.keyboard.up('KeyW');
+      const music=await musicBefore(menu);await menu.keyboard.down('KeyW');await menu.waitForFunction(()=>window.atvTerrainStatus.frame.applied_input.throttle>.5);await openPause(menu);await menu.keyboard.up('KeyW');await musicContinues(menu,music,true);
       assert.equal(await menu.locator('#pause-title').textContent(),'Ride menu');
       const before=(await state(menu)).simulationSteps;
       await menu.waitForFunction(before=>window.atvTerrainStatus.simulationSteps>before+15,before,{timeout:10000});
@@ -87,7 +106,7 @@ try {
       await menu.keyboard.press('Escape');await button(menu,'Resume').click();await running(menu);assert.equal((await state(menu)).frame.applied_input.throttle,0);
       console.log('LIVE_MENU',JSON.stringify({role:menu===a?'host':'guest',steps:s.simulationSteps-before,remoteMovement:Math.hypot(...s.multiplayer.remote[0].position.map((v,i)=>v-remoteBefore[i]))}));
     }
-    await openPause(b);await a.close();await b.waitForFunction(()=>!window.atvTerrainStatus.multiplayer.state.code,null,{timeout:15000});assert.equal((await state(b)).multiplayer.remote.length,0);
+    await openPause(b);await openPause(a);await button(a,'Lobby').click();await button(a,'Leave lobby').click();await a.close();await b.waitForFunction(()=>!window.atvTerrainStatus.multiplayer.state.code,null,{timeout:15000});assert.equal((await state(b)).multiplayer.remote.length,0);
     console.log('PASS both host/guest pause menus and settings keep physics/peers rendering, neutral input, and host departure cleanup');
   }
   assert.deepEqual(errors,[]);

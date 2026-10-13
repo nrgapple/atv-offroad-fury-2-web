@@ -148,7 +148,7 @@ export class Multiplayer {
 }
 
 // Participant order follows original CompassArrow tint slots (002e68e0);
-// recovered CompassArrow pixels are loaded from the separate content manifest.
+// The smaller overhead arrow is authored vector artwork for sharp display.
 export const PLAYER_COLORS = ['#ff0000', '#0000ff', '#00ff00', '#ffff00'];
 export function screenMarker(position, view, width, height) {
   if (!position?.every(Number.isFinite)) return null;
@@ -165,14 +165,6 @@ export class PlayerIndicators {
   constructor(parent=document.body) {
     this.root=document.createElement('div');this.root.id='player-indicators';this.root.setAttribute('aria-hidden','true');parent.append(this.root);this.nodes=new Map();
   }
-  setArtwork(image) {
-    this.arrows=PLAYER_COLORS.map(color=>{
-      const c=document.createElement('canvas');c.width=image.width;c.height=image.height;
-      const ctx=c.getContext('2d');ctx.drawImage(image,0,0);ctx.globalCompositeOperation='source-in';ctx.fillStyle=color;ctx.fillRect(0,0,c.width,c.height);return c;
-    });
-    for(const node of this.nodes.values())node.remove();this.nodes.clear();
-    return this.arrows;
-  }
   draw(peers, lobby, view, origin, visible) {
     this.root.hidden=!visible;
     const live=new Set();
@@ -182,11 +174,15 @@ export class PlayerIndicators {
       const marker=screenMarker(peer.position,view,innerWidth,innerHeight);if(!marker)continue;
       live.add(peer.peer);
       let node=this.nodes.get(peer.peer);
-      if(!node) { node=document.createElement('div');node.className='player-indicator';const label=document.createElement('span'),arrow=document.createElement('canvas');arrow.width=arrow.height=8;if(this.arrows)arrow.getContext('2d').drawImage(this.arrows[peer.peer],0,0);node.append(label,arrow);this.root.append(node);this.nodes.set(peer.peer,node); }
-      node.style.left=`${marker.x}px`;node.style.top=`${marker.y}px`;node.style.setProperty('--player-color',PLAYER_COLORS[peer.peer]);node.dataset.edge=String(marker.edge);
+      if(!node) { node=document.createElement('div');node.className='player-indicator';const label=document.createElement('span'),arrow=document.createElementNS('http://www.w3.org/2000/svg','svg');arrow.setAttribute('viewBox','0 0 24 24');const shape=document.createElementNS('http://www.w3.org/2000/svg','path');shape.setAttribute('d','M12 2 L21 21 L12 17 L3 21 Z');arrow.append(shape);node.append(label,arrow);this.root.append(node);this.nodes.set(peer.peer,node); }
+      node.style.setProperty('--player-color',PLAYER_COLORS[peer.peer]);node.dataset.edge=String(marker.edge);
       node.lastChild.style.transform=marker.edge?`rotate(${marker.angle+Math.PI/2}rad)`:'rotate(180deg)';
       const distance=Math.round(Math.hypot(...peer.position.map((v,i)=>v-origin[i])));
       node.firstChild.textContent=`P${peer.peer+1} ${player.name} · ${distance} ft`;
+      // Keep the whole label visible on narrow screens, including edge arrows.
+      const halfWidth=node.offsetWidth/2;
+      node.style.left=`${Math.max(halfWidth+6,Math.min(innerWidth-halfWidth-6,marker.x))}px`;
+      node.style.top=`${Math.max(node.offsetHeight+6,Math.min(innerHeight-6,marker.y))}px`;
     }
     for(const[id,node]of this.nodes)if(!live.has(id)){node.remove();this.nodes.delete(id);}
   }

@@ -185,7 +185,8 @@ export class Frontend {
   }
   fail(error) { this.setLoading(false); this.notice.textContent = error.message; this.busy = false; this.root.dataset.error = 'true'; }
   syncPreview() {
-    void this.audio?.()?.setMusicPreview(['title','main','single','tracks','garage','multiplayer','create-lobby','join-lobby','lobby','race','loading','music'].includes(this.page) && !this.root.hidden && !document.hidden && document.hasFocus(), this.page !== 'music').catch(error => this.fail(error));
+    const rideMenu = overlayPages.has(this.page);
+    void this.audio?.()?.setMusicPreview((rideMenu || ['title','main','single','tracks','garage','multiplayer','create-lobby','join-lobby','lobby','race','loading','music'].includes(this.page)) && !this.root.hidden && !document.hidden && document.hasFocus(), !rideMenu).catch(error => this.fail(error));
   }
   beginCapture(id) {
     const row = gameplayBindings.rows(this.bindingDevice).find(row => row.id === id);
@@ -214,7 +215,7 @@ export class Frontend {
     for (const atom of atoms) if (!this.capture.atoms.some(a => JSON.stringify(a) === JSON.stringify(atom) || ('axis' in atom && a.axis === atom.axis)) && this.capture.atoms.length < 4) this.capture.atoms.push(atom);
     if (!atoms.length && this.capture.atoms.length) this.finishCapture();
   }
-  resume() { this.animatePage(true); this.setLoading(false); this.clearModelViews(); this.cancelCapture(); void this.audio?.()?.setMusicPreview(false); this.root.hidden = true; this.active(false); }
+  resume() { this.animatePage(true); this.setLoading(false); this.clearModelViews(); this.cancelCapture(); this.root.hidden = true; this.active(false); void this.audio?.()?.setMusicPreview(false); }
   async show(page) {
     this.padBlocked = true;
     const previous = this.root.hidden ? null : this.canvas;
@@ -222,6 +223,9 @@ export class Frontend {
     this.cancelCapture();
     this.clearModelViews();
     delete this.root.dataset.error;
+    // Arm soundtrack streaming before silencing gameplay voices, avoiding a
+    // suspend/resume interruption on entry to the pause screen.
+    if (overlayPages.has(page)) void this.audio?.()?.setMusicPreview(!document.hidden && document.hasFocus(), false);
     this.busy = true; this.root.hidden = false; this.active(true); this.notice.textContent = ''; this.buttons.replaceChildren();
     try {
       if (page === 'tracks' || page === 'loading' || page === 'race') {
