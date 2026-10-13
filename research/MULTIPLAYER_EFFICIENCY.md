@@ -1,10 +1,10 @@
-# Multiplayer efficiency implementation and host evidence
+# Multiplayer efficiency implementation and verification evidence
 
-This records a host-only implementation checkpoint for the five authorized
-multiplayer efficiency changes. It is not a production or public-release result.
-The browser continues to run the authored Rust simulation and relay; the changes
-reduce redundant pose work and transport while retaining the player-owned motion
-model.
+This records the five authorized multiplayer efficiency changes, host
+implementation evidence, and bounded public multiplayer verification. This is
+not a whole-game or original-PS2 parity result. The browser continues to run the
+authored Rust simulation and relay; the changes reduce redundant pose work and
+transport while retaining the player-owned motion model.
 
 ## Implemented behavior
 
@@ -102,7 +102,62 @@ trip, and 1–5 ms relay round trip. These timings are not geographically
 representative. The frontend regression passed the original title/menu,
 controller, Tioga, portrait Caribou load, pause, and Controls routes with no file
 picker or page errors. All host gates now pass. No current-main CI or public
-deployment is claimed.
+verification is included in this host-only section; the separately verified
+public subset is documented below.
+
+## Public protocol-v3 multiplayer efficiency verification (2026-10-13)
+
+Main `8c0ace5b8c46a91bf2a50d49bd192a639d23b38b` passed GitHub CI and deploy
+verification in [run 38464469566](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38464469566),
+which checked both [furyremastered.com](https://furyremastered.com/) and
+[`atv-offroad-fury-2.champtoday.workers.dev`](https://atv-offroad-fury-2.champtoday.workers.dev/).
+A public browser probe on furyremastered.com passed and is recorded in
+`private/reports/multiplayer-efficiency-public-v3.json`.
+
+The probe sent 142 packets totaling 19,134 bytes over 10.0125 seconds
+(14.18227 packets/second); observed sizes were 135 and 117 bytes. Against the
+same-count 2,526-byte male v2 baseline (358,692 bytes), this is 94.6656% fewer
+payload bytes. Each synthetic suspended client sent two 135-byte presence
+updates over 11.0212 and 11.0226 seconds and remained fresh. Late join restored
+the host at zero feet of root-position error with 13 remote draws; active resume
+and a 5.5091-second solo interval with zero pose packets also passed.
+
+After a Wrangler refresh, the separate R2 uploader validated 453 approved
+objects totaling 342,573,301 bytes and uploaded two changed objects (screenshot
+and gallery). The full Workers verifier then passed for this commit, matching 42
+static files and 452 served R2 objects; the public gallery has 173 entries and
+137 screenshots.
+
+The actual public four-browser run also passed using models 1, 14, 26 and 2.
+Each client rendered three remote actors in 39 GPU draws and played three engine
+voices; every driver was seen moving by all three observers. Host-end cleanup
+cleared remote models and voices on all clients without HTTP or page errors. A
+same-Mac timing sample measured 73.41–73.94 FPS, 27.1–27.2 ms frame p95,
+2.35–2.56 ms render CPU, 2.0–3.7 ms physics round trip, and 41–63 ms relay round
+trip. These timings do not represent geographic latency or physical-phone
+performance. The run is recorded in
+`private/reports/multiplayer-efficiency-public-four-v3.json`.
+
+The public feature/contact/train/reconnect run also passed. Custom late admission
+and minimap labels worked; recovery after close 1012 preserved train-clock
+progress from 13.083305 to 14.033291. Nearby spawn and its 342×64 mobile target
+passed. Owner-local contacts reached [2, 10]. A head-on impact put both owners
+into Front wrecks and both observers received Wreck with crash serials 1 and 2.
+Owner reload retained the same room code and peer; departure cleanup passed.
+Across 20 train samples, maximum deck-relative error was 0.8996261966 feet.
+Evidence is in `work/verification/efficiency-public-features.log`.
+
+A separate public copied-invite test with male/female models 1/2 passed movement
+and host-departure cleanup, with 13 draws per client and no page errors. A real
+touch failed airborne Nac Nac produced 117 trace frames, including 51 detached
+rider frames and 14 impact-audio frames; crash serial advanced 0→1, spatial pan
+changed, and automatic recovery returned the remote rider to Riding. See
+`work/verification/efficiency-public-wreck.log`.
+
+These are bounded public browser routes on a synthetic host setup. The four-client
+timing values are from one Mac, not a geographically distributed latency result.
+Physical-phone behavior, original-PS2 animation/physics parity, server-authoritative
+contacts, racing rules, and host migration remain unverified.
 
 ## Limits and next gates
 
@@ -112,5 +167,7 @@ latency, large-room load, production bandwidth bills, or general device FPS.
 The reduction compares payload bytes per observed message against a same-count
 v2 baseline; it is not a complete server-cost or Internet-traffic measurement.
 Source animation blends are not whole-PS2 animation equivalence. Protocol v3 is
-incompatible with older open tabs, which must reload before joining. Require
-current-main CI and public verification before describing a public release.
+incompatible with older open tabs, which must reload before joining. Main CI,
+public object hashes, transport, four-client, feature, contact, train, and
+recovery routes passed as documented above. Full game parity, competitive
+authority, and host migration remain outside this checkpoint.

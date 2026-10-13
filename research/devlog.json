@@ -1,6 +1,6 @@
 {
-  "status": "All host multiplayer efficiency, feature/train/reconnect, four-client, and frontend gates passed. Current-main CI and public verification remain pending.",
-  "working_on": "Run current-main CI and public deployment verification, then describe the result from the validated artifact.",
+  "status": "Public protocol v3 transport, four-browser replication, and feature/train/contact/recovery routes are verified on main 8c0ace5; this is bounded component evidence, not whole-game parity.",
+  "working_on": "Continue the ATV2 port beyond this multiplayer checkpoint, including original race, physics, animation, and rendering parity.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -2799,29 +2799,57 @@
         "When a changed-block delta saves no bytes, the sender instead sends an independent 135-byte full snapshot; this avoids relay baseline reconstruction when all four blocks change. Partial deltas remain in use."
       ],
       "limitation": "All evidence is from host tests on a dirty development checkout. Same-Mac browser timing is not representative of geographical latency or general-device performance. Physical-mobile behavior, large-room load, production costs, and complete PS2 animation/gameplay equivalence remain unverified. Protocol v3 requires older open tabs to reload."
+    },
+    {
+      "id": "public-protocol-v3-multiplayer-verification-7dcdf25d",
+      "timestamp": "2026-10-13T20:49:00.972797+00:00",
+      "recorded_at": "2026-10-13T20:49:00.972797+00:00",
+      "kind": "verification",
+      "title": "Public protocol v3 multiplayer verification",
+      "summary": "Protocol v3 transport, four-browser replication, and host recovery/train/contact routes passed on public main 8c0ace5. This is bounded multiplayer evidence, not a whole-game parity result.",
+      "details": [
+        "GitHub CI/deploy run 38464469566 verified main 8c0ace5b8c46a91bf2a50d49bd192a639d23b38b at furyremastered.com and the workers.dev app. The full Workers verifier matched 42 static files and 452 served R2 objects; the public gallery contains 173 entries and 137 screenshots.",
+        "The public transport probe sent 142 packets / 19,134 bytes over 10.0125 seconds (14.18227 Hz; packet sizes 135 and 117 bytes), 94.6656% below the same-count 2,526-byte male v2 baseline. Both synthetic suspended clients sent two 135-byte updates in about 11.02 seconds and remained fresh. Late join restored the host root at zero positional error with 13 remote draws; resume passed; a 5.5091-second solo interval sent zero poses.",
+        "Four public browsers using quads 1/14/26/2 each rendered three remote actors in 39 GPU draws and played three engine voices. Every driver was observed by all peers; host end removed remote models/voices with no HTTP or page errors.",
+        "Public feature routes passed custom-code late admission, minimap labels, close-1012 host recovery with train time preserved (13.083305 to 14.033291), nearby spawn with a 342×64 mobile target, owner-local contacts [2, 10], both head-on Front wreck notifications with crash serials 1/2, owner reload retaining code/peer, and departure cleanup. Across 20 train samples, maximum deck-relative error was 0.8996261966 ft."
+      ],
+      "limitation": "The four-client timing sample is from one Mac and is not geographically representative. Physical-phone behavior, whole-PS2 parity, server-authoritative contacts, racing rules and host migration remain unverified."
+    },
+    {
+      "id": "public-touch-crash-recovery-route-passed-37166e68",
+      "timestamp": "2026-10-13T20:50:45.773994+00:00",
+      "recorded_at": "2026-10-13T20:50:45.773994+00:00",
+      "kind": "verification",
+      "title": "Public touch crash recovery route passed",
+      "summary": "A copied-invite public multiplayer run reproduced a real touch failed-airborne Nac Nac, remote detachment, impact audio and automatic recovery on the deployed protocol-v3 build.",
+      "details": [
+        "At furyremastered.com, male/female models 1/2 moved and cleaned up after host departure with 13 draws per client and no page errors.",
+        "The stunt trace contained 117 frames: 51 detached-rider frames and 14 impact-audio frames. Crash serial advanced 0→1, spatial pan changed, and the remote rider automatically returned to Riding.",
+        "Evidence: work/verification/efficiency-public-wreck.log. The public package and gallery snapshot preceding this text-only entry are recorded in port_status.public_release."
+      ],
+      "limitation": "This is a bounded automated browser route on the tested host environment, not physical-phone behavior, broad stunt coverage, geographic latency, or whole-PS2 animation and physics equivalence."
     }
   ],
-  "updated_at": "2026-10-13T20:23:44.281768+00:00",
+  "updated_at": "2026-10-13T20:50:45.773994+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
-      "commit": "4d1e1c4ca04703073cf41edb639d48b570bea69e",
-      "ci_run": "38351540401",
-      "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
-      "static_assets": 33,
-      "served_objects": 426,
-      "devlog_entries": 140,
-      "devlog_screenshots": 114,
-      "r2_approved_objects": 427,
+      "commit": "8c0ace5b8c46a91bf2a50d49bd192a639d23b38b",
+      "ci_run": "38464469566",
+      "url": "https://furyremastered.com/",
+      "static_assets": 42,
+      "served_objects": 452,
+      "devlog_entries": 173,
+      "devlog_screenshots": 137,
+      "r2_approved_objects": 453,
       "r2_upload_changes": 2,
       "checks": [
-        "GitHub Actions check/build and Deploy and verify production passed for 4d1e1c4 in CI 38351540401; the public deployment verifier confirms 33 authored/static files and the same deployment commit.",
-        "The validated R2 package contains 427 approved objects; two changed objects were uploaded, and public HTTPS verification matches 426 served objects by hash, size and MIME. The public log contains 140 entries and 114 screenshot references.",
-        "Public tools/test_cpu_behavior.mjs completed a 65.08-second Caribou National run: four independent CPU vehicles each produced 3,902 samples; the run recorded five natural wrecks and five recoveries, eight original stunt starts, finite state, preserved reset-distance/lap accounting and all four CPUs returned to Riding. Portrait and landscape pause behavior passed.",
-        "This is bounded component and route evidence. It is not a full lap, native start-grid/event/finish equivalence, full AI replay, PS2 hardware comparison or full-game completion.",
-        "On this 4d1e1c4 snapshot, a separate public motorcycle probe attempted garage model 27 and failed at MOT preview readiness with “unsupported MOT version” (no page JavaScript error). This predates the 4fbb399 host correction; no corrected public playable-motorcycle pass is claimed, and the result does not affect the ATV/CPU evidence."
+        "GitHub CI and deploy verification passed for main 8c0ace5b8c46a91bf2a50d49bd192a639d23b38b in run 38464469566; the public Workers verifier matched 42 static files and 452 served R2 objects at furyremastered.com.",
+        "The validated R2 package contained 453 approved objects; two changed objects were uploaded. The public gallery snapshot contained 173 entries and 137 screenshots.",
+        "Bounded public protocol-v3 checks passed: 142 packets / 19,134 bytes in 10.0125 seconds (14.18227 Hz), observed packet sizes 135 and 117 bytes, and 94.6656% fewer payload bytes than a same-count male v2 baseline. Synthetic suspended presence, late join, resume, and solo pose suppression also passed.",
+        "Four public browsers passed movement delivery and cleanup; feature, train, contact, reconnect, mobile-target, and a real touch failed-airborne-stunt crash/recovery route passed. These browser checks do not establish physical-phone behavior, geographic latency, large-room load, production bandwidth cost, or whole-game PS2 parity."
       ],
-      "snapshot_note": "Current public authored app and approved content/gallery package are verified at 4d1e1c4. CI and the public verifier confirm deployment identity/static hashes; the separate public CPU browser run confirms the bounded Caribou behavior above. The public motorcycle model-27 failure in this snapshot predates the 4fbb399 host correction; public re-test is pending. Counts describe the verified snapshot before this board-audit dev-log entry; it will appear in a later validated app build and any new screenshot requires its own approved upload."
+      "snapshot_note": "The fully verified public authored app and approved content/gallery package are at 8c0ace5b8c46a91bf2a50d49bd192a639d23b38b. CI and the public verifier confirm deployment identity and hashes; the bounded browser routes are separately recorded above and in the text-only multiplayer verification entry. Counts describe the content/gallery snapshot before that text-only verification entry; it adds no screenshot. Any new screenshot requires its own approved upload."
     },
     "next_priorities": [
       "Recover original ATV race event start slots, natural lap/finish/results transitions and progression; the public CPU run did not finish a full 6,811-foot lap.",

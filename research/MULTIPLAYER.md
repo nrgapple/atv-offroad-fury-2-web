@@ -317,3 +317,39 @@ passed the original title/menu, controller, Tioga, portrait Caribou load, pause,
 and Controls routes without a file picker or page errors. All host gates now
 pass; current-main CI and public verification remain pending.
 See [efficiency evidence and limits](MULTIPLAYER_EFFICIENCY.md).
+
+## Public protocol-v3 multiplayer efficiency verification (2026-10-13)
+
+Main `8c0ace5b8c46a91bf2a50d49bd192a639d23b38b` passed CI/deploy run
+[38464469566](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38464469566)
+and public verification at `furyremastered.com` and the workers.dev app. The
+Workers verifier matched 42 static files and 452 served R2 objects; the public
+gallery contains 173 entries and 137 screenshots.
+
+The public protocol-v3 probe sent 142 packets / 19,134 bytes in 10.0125 seconds
+(14.18227 Hz), with 135- and 117-byte packets. This is 94.6656% fewer payload
+bytes than a same-count 2,526-byte male v2 baseline. Two synthetic suspended
+clients each sent two 135-byte updates in about 11.02 seconds and remained fresh;
+late join restored the root at zero positional error, resume passed, and a
+5.5091-second solo interval sent no poses. Full and route details are in
+[multiplayer efficiency evidence](MULTIPLAYER_EFFICIENCY.md).
+
+Four public browsers using quads 1/14/26/2 each rendered three remote actors in
+39 GPU draws and played three engine voices. Every driver was seen moving by all
+observers; host end cleared remote state with no HTTP or page errors. Public
+feature checks also passed custom-code late admission, minimap labels, close-1012
+recovery with train time preserved, nearby spawn and its 342×64 mobile target,
+owner contacts [2, 10], both head-on wreck notifications, owner reload, and
+cleanup. Twenty train samples stayed within 0.8996261966 feet of deck-relative
+position.
+
+The recorded four-client timing is from one Mac and is not a geographic-latency
+or physical-phone result. These bounded multiplayer routes do not establish
+whole-game PS2 parity, authoritative contacts, racing rules, or host migration.
+
+A separate copied-invite public run with male/female models 1/2 passed movement
+and host-departure cleanup with 13 draws per client and no page errors. A real
+touch failed airborne Nac Nac produced 117 trace frames, including 51 detached
+rider frames and 14 impact-audio frames; crash serial advanced 0→1, spatial pan
+changed, and remote automatic recovery returned the rider to Riding. See
+`work/verification/efficiency-public-wreck.log`.

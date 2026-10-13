@@ -1,3 +1,40 @@
+## Multiplayer efficiency and public browser verification (2026-10-13)
+
+Main `8c0ace5b8c46a91bf2a50d49bd192a639d23b38b` passed GitHub CI/deploy run
+[38464469566](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38464469566)
+for `furyremastered.com` and the workers.dev app. The Workers verifier matched
+42 static files and 452 served R2 objects. The public gallery contains 173
+entries and 137 screenshots.
+
+At [furyremastered.com](https://furyremastered.com/), the public compact v3
+probe sent 142 packets / 19,134 bytes over 10.0125 seconds (14.18227 Hz), with
+135- and 117-byte packets. Payload bytes were 94.6656% below the same-count
+2,526-byte male v2 baseline. Two synthetic suspended clients each sent two
+135-byte updates in about 11.02 seconds and remained fresh. Late join restored
+the host root with zero positional error and 13 remote draws; resume passed; a
+5.5091-second solo interval sent no poses.
+
+Four actual public browsers using quads 1/14/26/2 each rendered three remote
+actors in 39 GPU draws and played three engine voices. All riders were observed
+moving by the other clients; host-end cleanup removed remote models and voices
+without HTTP or page errors. Custom-code late admission, minimap labels,
+close-1012 recovery with train time preserved, nearby spawn and its 342×64
+mobile target, owner contacts [2, 10], both head-on wreck notifications, owner
+reload, and departure cleanup passed. Across 20 train samples, maximum
+deck-relative error was 0.8996261966 feet.
+
+The four-client performance sample is from one Mac; its timing is not
+geographically representative. Physical phones, complete PS2 parity,
+server-authoritative contacts, racing rules and host migration remain
+unverified. See [protocol and measurements](research/MULTIPLAYER_EFFICIENCY.md)
+and [multiplayer evidence](research/MULTIPLAYER.md).
+
+A separate copied-invite male/female run also passed movement and cleanup with
+13 draws per client and no page errors. A real touch failed airborne Nac Nac
+produced 117 trace frames (51 detached rider, 14 impact-audio), advanced crash
+serial 0→1 with changing spatial pan, and recovered remotely to Riding. See
+`work/verification/efficiency-public-wreck.log`.
+
 ## Multiplayer efficiency — tested host checkpoint (2026-10-13)
 
 Branch `feat/multiplayer-efficiency` implements the five user-authorized changes:
