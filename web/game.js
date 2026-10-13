@@ -7,6 +7,7 @@ import { GameAudio } from './audio.js';
 import { openHostedContent } from './content.js';
 import { gameplayBindings } from './bindings.js';
 import { HeadUpDisplay } from './hud.js';
+import { FreestyleMinimap, MinimapSettings } from './minimap.js';
 import { DiagnosticsOverlay } from './diagnostics.js';
 import { WaterRenderer } from './water.js';
 import { fogVertexShader, fogFragmentShader } from './fog.js';
@@ -25,6 +26,8 @@ let requestId = 0, generation = 0, terrain, vehicle, program, uniforms, chunks =
 let focused = document.hasFocus(), gamepadsAvailable = true, menuOpen = true;
 let frontend, hostedContent, hud, multiplayer;
 const remoteModels = new Map();
+const minimapSettings = new MinimapSettings();
+const minimap = new FreestyleMinimap(minimapSettings);
 let funnyCrashes = true;
 try { funnyCrashes = localStorage.getItem('atv-funny-crashes') !== 'false'; } catch { /* Session preference. */ }
 const crashSettings = { get enabled() { return funnyCrashes; }, toggle() {
@@ -53,9 +56,9 @@ const touchControls = mountTouchControls({
 });
 const diagnostics = { ready: false, frames: 0, vertices: 0, triangles: 0, chunks: 0, glError: 0, camera: [], source: null };
 let audio = new GameAudio(codec, message => { diagnostics.audioError = message; status(`Audio: ${message}`, true); });
-const stats = new DiagnosticsOverlay({ snapshot: () => ({ ...diagnostics, frame: simFrame, paused: menuOpen, focused, resolution: [canvas.width, canvas.height] }) });
+const stats = new DiagnosticsOverlay({ snapshot: () => ({ ...diagnostics, minimap: minimap.snapshot(), frame: simFrame, paused: menuOpen, focused, resolution: [canvas.width, canvas.height] }) });
 // Read-only snapshot for verification; does not expose the locally opened file.
-Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, funnyCrashes, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()]} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
+Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, minimap: minimap.snapshot(), funnyCrashes, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()]} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
 worker.onmessage = ({ data }) => {
   if (data.startupError) { status(data.startupError, true); return; }
   const request = pending.get(data.id);
@@ -1311,6 +1314,7 @@ function render(time) {
   const started = performance.now();
   frame = requestAnimationFrame(render);
   touchControls.refresh();
+  minimap.draw(time, simFrame, simReady && !raceSettings && !lost && focused && !document.hidden && !menuOpen);
   hud?.draw(simFrame?.hud, simReady && !lost && !document.hidden && !menuOpen);
   raceOverlay.draw(simFrame?.race,simFrame,simReady && !lost && !document.hidden && !menuOpen);
   if (lost || !gl || !terrain || document.hidden || menuOpen) { lastTime = time; stats.sample(time, 0, false); return; }
@@ -1467,6 +1471,7 @@ async function loadGame(file = null, environment = "env01", racing = null) {
   const token = ++generation;
   if (frontend && !file) await frontend.beginLoading(environment);
   status('Opening terrain…'); diagnostics.ready = false;
+  minimap.setTerrain(null);
   audio.close(); audio = new GameAudio(codec, message => { diagnostics.audioError = message; status(`Audio: ${message}`, true); });
   frontend?.syncPreview();
   delete diagnostics.audioError; void audio.resume().catch(error => { diagnostics.audioError = error.message; });
@@ -1489,6 +1494,7 @@ async function loadGame(file = null, environment = "env01", racing = null) {
     let min = Infinity, max = -Infinity;
     for (let i = 0; i < heights.length; i++) { const value = view.getFloat32(i * 4, true); if (!Number.isFinite(value)) throw new Error('Nonfinite terrain height.'); heights[i] = value; min = Math.min(min, value); max = Math.max(max, value); }
     terrain = { width, depth, spacing: info.spacing, heights, min, max, sizeX: (width - 1) * info.spacing, sizeZ: (depth - 1) * info.spacing, textures: source.terrainTextures, world: source.world, sky: source.sky, ecosystem: source.ecosystem, trainSource: source.train, wheelEffectsSource: source.wheelEffects };
+    minimap.setTerrain(racing ? null : terrain);
     diagnostics.terrainTextures = 0;
     uploadTerrainTextures();
     if (hud && source.physics) await codec(63, await hud.init(environment));
@@ -1578,7 +1584,7 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
   else {
     hostedContent = openHostedContent();
     multiplayer = new Multiplayer({codec,command,ready:()=>simReady,paused:()=>menuOpen||!focused||document.hidden||lost||pageSuspended,listener:()=>({position:[camera.x,camera.y,camera.z],forward:[Math.sin(camera.yaw)*Math.cos(camera.pitch),Math.sin(camera.pitch),Math.cos(camera.yaw)*Math.cos(camera.pitch)],velocity:simFrame?.linear_velocity??[0,0,0]}),audio:()=>audio,assets:remoteAssets,clearAssets:()=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();},report:message=>{diagnostics.multiplayerError=message;status(message,true);},onState:()=>{if(frontend){frontend.layoutKey='';void frontend.refresh();}},onStart:async (environment,isCurrent)=>{if(!isCurrent())return;frontend.busy=true;frontend.notice.textContent='';try {await loadGame(null,environment);if(isCurrent())frontend.resume();}finally{if(isCurrent())frontend.busy=false;}},onLeave:message=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show('multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
-    frontend = new Frontend({menuRider:menuRiderAssets,modelAssets:selectionAssets,crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => loadGame(null, environment,racing), active: open => { menuOpen = open; clearInput(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
+    frontend = new Frontend({minimapSettings,menuRider:menuRiderAssets,modelAssets:selectionAssets,crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => loadGame(null, environment,racing), active: open => { menuOpen = open; clearInput(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     hud = new HeadUpDisplay(frontend, canvas);
     if (params.get('drive') === '1') {
       menuOpen = false; $('frontend').hidden = true;
