@@ -86,6 +86,8 @@ pub struct VehicleFrame {
     pub obstacle_contact_count: usize,
     pub dynamic_contact_count: usize,
     pub dynamic_secondary_contacts: usize,
+    /// Presentation-only closing speed of this step’s strongest actual ATV contact.
+    pub crash_impact_speed: f32,
     pub preload_available: bool,
     pub preload_armed: bool,
     pub preload_active: bool,
@@ -188,6 +190,7 @@ pub struct Vehicle {
     obstacle_contact_count: usize,
     dynamic_contact_count: usize,
     dynamic_secondary_contacts: usize,
+    crash_impact_speed: f32,
     ///Secondary nonstatic contacts occur after the final integrator. Native
     ///translation and impact delta remain until the next first integration.
     pending_contact_corrections: ContactCorrections,
@@ -385,6 +388,7 @@ impl Vehicle {
             obstacle_contact_count: 0,
             dynamic_contact_count: 0,
             dynamic_secondary_contacts: 0,
+            crash_impact_speed: 0.,
             pending_contact_corrections: ContactCorrections::default(),
             wreck_physics: None,
             normal_contact: ContactConfig::from_physics(data)?,
@@ -529,6 +533,7 @@ impl Vehicle {
             &self.body_config,
         )?;
         self.pending_contact_corrections = ContactCorrections::default();
+        self.crash_impact_speed = 0.;
         self.wheel_contact_points = [[0.; 3]; 4];
         self.wheel_world_angular_velocity = [0.; 3];
         self.wheels = [WheelState::default(); 4];
@@ -683,6 +688,7 @@ impl Vehicle {
             obstacle_contact_count: self.obstacle_contact_count,
             dynamic_contact_count: self.dynamic_contact_count,
             dynamic_secondary_contacts: self.dynamic_secondary_contacts,
+            crash_impact_speed: self.crash_impact_speed,
             preload_available: self.rider_state.preload_status,
             preload_armed: self.rider_state.preload_armed,
             preload_active: self.rider_state.preload_active,
@@ -777,6 +783,7 @@ impl Vehicle {
             self.reset_to_checkpoint()?;
         }
         self.landing_action = None;
+        self.crash_impact_speed = 0.;
         let crashed = self.wreck.phase != crate::wreck::Phase::Riding;
         // 001e5260 decrements this riding cooldown before physics. The current
         // Freestyle route has no native countdown/session-state-2 override.
@@ -1224,11 +1231,15 @@ impl Vehicle {
             } else {
                 ContactCorrections::default()
             };
+            // A secondary contact was already observed in the previous frame;
+            // only native translation/velocity corrections carry into this step.
+            corrections.closing_speed = 0.;
             self.suspension_stop_contacts = 0;
             //001dd830 updates the separate four-point travel-stop actor before
             // the wheel springs. It remains active while the chassis is upright.
             for (&local, &plane) in self.wheel_stops.iter().zip(&stop_planes) {
                 let point = add(origin, transform(b, local));
+                let closing_speed = -dot(self.body.linear_velocity, plane.normal);
                 if crate::wheel_stop::resolve(
                     &mut self.body,
                     plane,
@@ -1236,6 +1247,7 @@ impl Vehicle {
                     &mut corrections.velocity_delta,
                 )? {
                     self.suspension_stop_contacts += 1;
+                    self.crash_impact_speed = self.crash_impact_speed.max(closing_speed);
                 }
             }
             for (i, d) in drive.iter().enumerate() {
@@ -1248,6 +1260,16 @@ impl Vehicle {
                 if available {
                     self.wheel_contact_points[i] = point;
                 }
+                let point_velocity = sub(
+                    add(
+                        self.body.linear_velocity,
+                        wheel::cross(
+                            self.wheel_world_angular_velocity,
+                            sub(point, contact_center),
+                        ),
+                    ),
+                    ground_velocities[i],
+                );
                 let output = self.suspension[i].contact(
                     self.suspension_config,
                     SuspensionContact {
@@ -1258,21 +1280,14 @@ impl Vehicle {
                         radius: self.wheel_config[i].radius,
                         body_up: b[1],
                         body_forward: b[2],
-                        point_velocity: sub(
-                            add(
-                                self.body.linear_velocity,
-                                wheel::cross(
-                                    self.wheel_world_angular_velocity,
-                                    sub(point, contact_center),
-                                ),
-                            ),
-                            ground_velocities[i],
-                        ),
+                        point_velocity,
                         stiffness_scale: 1.0,
                         tilt_angle: dot(normal, b[1]).clamp(-1., 1.).acos(),
                     },
                 )?;
                 if output.grounded {
+                    self.crash_impact_speed =
+                        self.crash_impact_speed.max(-dot(point_velocity, normal));
                     apply_spring_world_force(
                         &mut self.body,
                         &self.body_config,
@@ -1349,6 +1364,7 @@ impl Vehicle {
                     }
                 }
             }
+            self.crash_impact_speed = self.crash_impact_speed.max(corrections.closing_speed);
             self.body.step(&self.body_config, step)?;
             self.wheel_world_angular_velocity = self.body.world_angular_velocity();
             for (value, next) in impact.iter_mut().zip(corrections.velocity_delta) {
@@ -1434,6 +1450,9 @@ impl Vehicle {
                 }
             }
         }
+        self.crash_impact_speed = self
+            .crash_impact_speed
+            .max(self.pending_contact_corrections.closing_speed);
         //001e5260 runs edge launch after physics and before impact/wreck gates.
         // Query bit0 excludes vegetation expansion, not terrain/static objects.
         if self.boundary_launch.tick(dt, true)? {

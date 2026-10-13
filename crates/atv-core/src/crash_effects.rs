@@ -146,8 +146,6 @@ pub struct Effects {
     enabled: bool,
     tick: u64,
     reset: u32,
-    was_wreck: bool,
-    speed: f32,
     age: f32,
     joints: Vec<Joint>,
     links: Vec<Link>,
@@ -168,7 +166,6 @@ impl Effects {
         if self.enabled != enabled {
             self.clear();
             self.enabled = enabled;
-            self.was_wreck = false;
         }
     }
     fn clear(&mut self) {
@@ -186,6 +183,7 @@ impl Effects {
         wreck: bool,
         detached: bool,
         velocity: V,
+        impact_speed: f32,
         world: M,
         quad: &[M],
         quad_nodes: &[Node],
@@ -212,52 +210,39 @@ impl Effects {
         if self.reset != reset || !wreck {
             self.clear();
             self.reset = reset;
-            self.was_wreck = false;
         }
         if tick != self.tick {
             self.tick = tick;
-            if !wreck {
-                self.speed = dot(velocity, velocity).sqrt();
-                self.was_wreck = false;
-            }
-            if wreck && !self.was_wreck {
-                self.was_wreck = true;
-                if self.speed.max(dot(velocity, velocity).sqrt()) >= 25. {
-                    let severe = self.speed.max(dot(velocity, velocity).sqrt()) >= 50.;
-                    for (i, node) in quad_nodes.iter().enumerate() {
-                        let name = node.name.to_ascii_lowercase();
-                        let wheel = name.starts_with("wheel") && !name.starts_with("wheelholder");
-                        let selected = wheel && (severe || name.contains("front"))
-                            || severe
-                                && (matches!(
-                                    name.as_str(),
-                                    "handlebars" | "swingarm" | "rearaxle"
-                                ));
-                        if selected && self.parts.len() < 8 {
-                            let initial = mul(&world, &quad[i]);
-                            let side = if pos(&quad[i])[0] < 0. { -1. } else { 1. };
-                            let kick = transform_point(
-                                &world,
-                                [
-                                    side * 11.,
-                                    10. + (i % 3) as f32 * 2.,
-                                    (i % 2) as f32 * 8. - 4.,
-                                ],
-                            );
-                            let v = add(scale(velocity, 0.7), sub(kick, pos(&world)));
-                            self.parts.push(Part {
-                                node: i,
-                                body: Particle::new(
-                                    pos(&initial),
-                                    v,
-                                    if wheel { 0.65 } else { 0.22 },
-                                ),
-                                initial,
-                                axis: unit([1., 0.3 + side, 0.6]),
-                                angle: 0.,
-                                spin: side * (8. + (i % 3) as f32),
-                            });
-                        }
+            // Rider separation can happen in flight. Mechanical damage waits for
+            // a real ATV contact, measured by inward speed rather than travel speed.
+            if wreck && impact_speed >= 25. {
+                let severe = impact_speed >= 50.;
+                for (i, node) in quad_nodes.iter().enumerate() {
+                    let name = node.name.to_ascii_lowercase();
+                    let wheel = name.starts_with("wheel") && !name.starts_with("wheelholder");
+                    let selected = wheel && (severe || name.contains("front"))
+                        || severe
+                            && (matches!(name.as_str(), "handlebars" | "swingarm" | "rearaxle"));
+                    if selected && self.parts.len() < 8 && !self.parts.iter().any(|p| p.node == i) {
+                        let initial = mul(&world, &quad[i]);
+                        let side = if pos(&quad[i])[0] < 0. { -1. } else { 1. };
+                        let kick = transform_point(
+                            &world,
+                            [
+                                side * 11.,
+                                10. + (i % 3) as f32 * 2.,
+                                (i % 2) as f32 * 8. - 4.,
+                            ],
+                        );
+                        let v = add(scale(velocity, 0.7), sub(kick, pos(&world)));
+                        self.parts.push(Part {
+                            node: i,
+                            body: Particle::new(pos(&initial), v, if wheel { 0.65 } else { 0.22 }),
+                            initial,
+                            axis: unit([1., 0.3 + side, 0.6]),
+                            angle: 0.,
+                            spin: side * (8. + (i % 3) as f32),
+                        });
                     }
                 }
             }
@@ -438,6 +423,7 @@ mod tests {
                     true,
                     true,
                     [40., 0., 0.],
+                    40.,
                     ID,
                     &q,
                     &nodes,
@@ -458,6 +444,7 @@ mod tests {
                     false,
                     false,
                     [40., 0., 0.],
+                    40.,
                     ID,
                     &q,
                     &nodes,
@@ -476,6 +463,7 @@ mod tests {
                 true,
                 true,
                 [40., 0., 0.],
+                40.,
                 ID,
                 &q,
                 &nodes,
@@ -494,6 +482,7 @@ mod tests {
                 true,
                 true,
                 [40., 0., 0.],
+                40.,
                 ID,
                 &q,
                 &nodes,
@@ -514,6 +503,7 @@ mod tests {
                     true,
                     true,
                     [0.; 3],
+                    0.,
                     ID,
                     &q,
                     &nodes,
@@ -550,6 +540,7 @@ mod tests {
                     false,
                     false,
                     [0.; 3],
+                    0.,
                     ID,
                     &q,
                     &nodes,
@@ -592,6 +583,7 @@ mod tests {
             false,
             false,
             [60., 0., 0.],
+            0.,
             ID,
             &q,
             &nodes,
@@ -608,6 +600,7 @@ mod tests {
                 true,
                 false,
                 [10., 0., 0.],
+                60.,
                 ID,
                 &q,
                 &nodes,
@@ -623,6 +616,84 @@ mod tests {
         assert_eq!(f.quad_node_matrices[9], q[9]);
         e.set_enabled(false);
         assert!(e.parts.is_empty());
+    }
+    #[test]
+    fn aerial_bailout_keeps_atv_intact_until_contact_and_can_escalate() {
+        let names = [
+            "body",
+            "wheelfrontleft",
+            "wheelfrontright",
+            "wheelrearleft",
+            "wheelrearright",
+            "handlebars",
+            "swingarm",
+            "rearaxle",
+        ];
+        let nodes: Vec<_> = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| node(name, if i == 0 { -1 } else { 0 }, [i as f32, 20., 0.]))
+            .collect();
+        let quad: Vec<_> = nodes.iter().map(|n| n.world_matrix).collect();
+        let rider = [
+            node("Pelvis", -1, [0., 22., 0.]),
+            node("Torso", 0, [0., 23., 0.]),
+        ];
+        let pose: Vec<_> = rider.iter().map(|n| n.world_matrix).collect();
+        let mut effects = Effects::default();
+        effects.set_enabled(true);
+        let mut tick = 0;
+        let mut step = |impact| {
+            tick += 1;
+            effects
+                .update(
+                    tick,
+                    0,
+                    1. / 60.,
+                    true,
+                    true,
+                    [80., -40., 0.],
+                    impact,
+                    ID,
+                    &quad,
+                    &nodes,
+                    ID,
+                    &pose,
+                    &rider,
+                    |_| None,
+                )
+                .unwrap()
+        };
+        for _ in 0..30 {
+            let frame = step(0.);
+            assert_eq!(
+                frame.detached_parts, 0,
+                "high-speed airborne bailout is not an impact"
+            );
+            assert_eq!(frame.quad_node_matrices, quad);
+            assert_eq!(frame.rider_node_matrices.len(), 2);
+        }
+        assert_eq!(
+            step(24.).detached_parts,
+            0,
+            "soft contact keeps the ATV intact"
+        );
+        assert_eq!(
+            step(40.).detached_parts,
+            2,
+            "hard contact can break front wheels later"
+        );
+        assert_eq!(
+            step(40.).detached_parts,
+            2,
+            "repeated contact must not duplicate pieces"
+        );
+        assert_eq!(
+            step(60.).detached_parts,
+            7,
+            "a later severe contact adds remaining pieces"
+        );
+        assert_eq!(step(0.).detached_parts, 7);
     }
     #[test]
     fn part_transform_stays_world_fixed_while_quad_moves() {

@@ -24,8 +24,8 @@ let requestId = 0, generation = 0, terrain, vehicle, program, uniforms, chunks =
 let focused = document.hasFocus(), gamepadsAvailable = true, menuOpen = true;
 let frontend, hostedContent, hud, multiplayer;
 const remoteModels = new Map();
-let funnyCrashes = false;
-try { funnyCrashes = localStorage.getItem('atv-funny-crashes') === 'true'; } catch { /* Session preference. */ }
+let funnyCrashes = true;
+try { funnyCrashes = localStorage.getItem('atv-funny-crashes') !== 'false'; } catch { /* Session preference. */ }
 const crashSettings = { get enabled() { return funnyCrashes; }, toggle() {
   funnyCrashes = !funnyCrashes;
   try { localStorage.setItem('atv-funny-crashes', String(funnyCrashes)); } catch { /* Session preference. */ }

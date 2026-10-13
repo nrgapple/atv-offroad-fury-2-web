@@ -464,6 +464,7 @@ fn simulation_frame(
             frame.wreck.phase != atv_core::wreck::Phase::Riding,
             detached,
             frame.linear_velocity,
+            frame.crash_impact_speed,
             vehicle_world(frame),
             &matrices,
             &mesh.nodes,

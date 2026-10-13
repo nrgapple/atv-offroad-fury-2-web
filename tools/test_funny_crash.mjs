@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {captureSimulation} from './capture_simulation.mjs';
-import {captureCrashIsolation,verifyCrashIsolation,captureCrashDraws} from './crash_isolation.mjs';
+import {captureCrashIsolation,verifyCrashIsolation,captureCrashDraws,verifyCrashImpacts} from './crash_isolation.mjs';
 const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
 const browser=await chromium.launch({headless:true});
 await mkdir('work/verification',{recursive:true});
@@ -14,7 +14,7 @@ try {
  page.on('pageerror',e=>errors.push(e.message));
  await captureCrashIsolation(page);await captureCrashDraws(page);await captureSimulation(page,'crashFrames');
  await page.addInitScript(()=>{
-  localStorage.setItem('atv-funny-crashes','true');
+  // Fresh browser uses the default-On crash setting.
   const post=Worker.prototype.postMessage;let held=false;
   Worker.prototype.postMessage=function(message,...args){
    if(message.op===50&&window.crashDriving){
@@ -45,8 +45,11 @@ try {
  assert.equal(await page.evaluate(()=>window.atvTerrainStatus.frame.funny_crash??null),null);
  const isolation=await verifyCrashIsolation(page);
  const frames=await page.evaluate(()=>window.crashFrames);
+ const impact=verifyCrashImpacts(frames);
+ assert(impact.aerial>0,'Bailout must show rider ragdoll with intact airborne ATV before its impact');
+ assert(impact.impacts>0);
  assert(frames.every(s=>!s.frame.funny_crash||[...s.frame.funny_crash.quad_node_matrices.flat(),...s.frame.funny_crash.rider_node_matrices.flat()].every(Number.isFinite)));
  assert.deepEqual(errors,[]);assert.equal(await page.evaluate(()=>window.atvTerrainStatus.glError),0);
- await writeFile(process.env.ATV_CRASH_TRACE||'work/verification/funny-crash.json',JSON.stringify({crash,isolation,frames,errors}));
+ await writeFile(process.env.ATV_CRASH_TRACE||'work/verification/funny-crash.json',JSON.stringify({crash,isolation,impact,frames,errors}));
  console.log('PASS: source driving/stunt inputs produce severe wreck, 7 rendered original mesh breakaway pieces, articulated rider, intact recovery and identical baseline gameplay.');
 } finally {await browser.close();}
