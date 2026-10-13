@@ -1,5 +1,29 @@
 # Implementation handoff
 
+## Motorcycle recovery: tested host component, gameplay unfinished
+
+The isolated motorcycle worktree starts at `c895ba4` and preserves all concurrent
+gameplay lanes. The supplied newer disc is MX vs. ATV Unleashed USA, SLUS_211.04
+v1.02. Its source media/module/decompiler observations remain private. The new
+Rust PSR reader matches all 20,391 directory records against an independent
+parser. A source-verified memory mapping adds the exact game module to private
+Ghidra analysis; candidate function boundaries still require review.
+
+Rust PSG v5 decoding now recovers the standard/50cc bike rigs and seven Suzuki
+body parts. Original parser instruction replay agrees on 42 geometry headers
+across 6,846 instructions. The optional funny-crash presentation accepts the
+motorcycle tire markers and carries geometry children below the nearest detached
+part, tested on a synthetic bike hierarchy. Existing ATV severe-crash rendering/
+recovery passes 855 paired WASM steps with identical baseline gameplay/camera.
+
+322 core/25 net/3 relay/13 bridge/69 JS tests, formatting, Clippy, WASM release,
+setup/hygiene and 18 release tests pass. The inspected dev-log image is a static
+flat-shaded resource inspection, not an assembled bike in the game. No motorcycles
+are yet selectable or drivable, and handling, rider/stunts, source audio/effects,
+crash/recovery and public R2 integration remain outstanding. No new source content
+has been published. Continue the integration gates in [motorcycles](research/MOTORCYCLES.md);
+do not substitute quad handling or claim full decompilation.
+
 ## Ordered vegetation: tested host release candidate
 
 The isolated map branch connects original distant atlases and source-correlated

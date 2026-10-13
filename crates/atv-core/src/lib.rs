@@ -23,6 +23,7 @@ pub mod motion_catalog;
 pub mod music;
 pub mod obstacle;
 pub mod physics_data;
+pub mod psr;
 pub mod quad_pose;
 pub mod resource;
 pub mod rider_control;

@@ -1,6 +1,6 @@
 {
-  "status": "Public Cloudflare release d9596d937907395440b61e78be61b2045d987d4 remains the verified release. Host-only candidate includes original selection previews, track-photo loading and menu audio; CI and R2 publication are pending.",
-  "working_on": "Finish current-main integration and follow the authorized release process for the selection-menu candidate. Menu playlist ordering and delay behavior still need verification.",
+  "status": "Public Cloudflare release d9596d937907395440b61e78be61b2045d987d4 remains the verified release. Host-only candidate now includes source-backed motorcycle format and mesh recovery plus menu asset work; motorcycles are not selectable or drivable. Current-main CI and separate R2 publication are pending.",
+  "working_on": "Finish current-main integration for the selection-menu and motorcycle-recovery candidate. Menu playlist ordering and delay behavior still need verification; motorcycles remain static decoded models without live game integration.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -2071,9 +2071,25 @@
       "limitation": "Evidence was collected on the host; public deployment is verified separately. No original PS2 hardware comparison. Original callback visibility/frustum/cache ordering, source camera and GS viewport mapping, wind/weather behavior, per-row billboard fog/depth packing and GS/VU timing remain unverified. The current shader shares per-corner fog handling. Full-map rendering, remaining native LOD/visibility details, point lights, shadows and complete game fidelity remain open.",
       "image": "/devlog-images/ordered-vegetation-billboards-pass-across-nine-host-ma-69a1b3a6.png",
       "caption": "Host Chromium ENV08 capture of the ordered vegetation billboard checkpoint during normal driving; this is an inspected browser-port image, not a PS2 capture."
+    },
+    {
+      "id": "motorcycle-asset-formats-and-models-are-recovered-479c12ef",
+      "timestamp": "2026-10-13T01:46:14.742118+00:00",
+      "recorded_at": "2026-10-13T01:50:41.794160+00:00",
+      "kind": "verification",
+      "title": "Motorcycle asset formats and models are recovered",
+      "summary": "A source-backed recovery checkpoint now decodes the MX vs. ATV Unleashed motorcycle format and several bike meshes in Rust. The captured bikes and Suzuki components are private host-side model inspection; they are not selectable or drivable in the browser port.",
+      "details": [
+        "The Rust PSR reader matches an independent parser across all 20,391 records and 751,972 header-plus-directory bytes. A native R5900 instruction replay of the original PSG header loader at 0x00166360 confirms the observed fields and file-read boundaries, including the first bike group over 163 instructions.",
+        "Loader evidence maps the exact 854,016-byte GAME_REL.BIN at 0x0045c580; every byte matched the source file. The Rust PSG v5 decoder produced Bike (22 nodes, 3 LODs, 2,470 finest-LOD triangles), Bike 50 (19 nodes, 4 LODs, 2,388 triangles), and seven Suzuki component meshes. An independent native geometry comparison passed 42 groups across nine decoded model files and 6,846 actual instructions, using only a bounded file reader and allocator.",
+        "The recovered records also identify Race and Pro physics profiles, sixteen tire surfaces, clutch, wheelie, stoppie, cross-up, flip, 360, stunt-catalog, audio and dirt resources. These are recovered resources and catalog evidence, not implemented mechanics. The full host checks passed: 322 core, 25 network, 3 relay and 13 bridge Rust tests; 69 JavaScript tests; formatting, strict Clippy, release WASM build, make verify, repository hygiene and 18 release checks. Existing optional funny-crash checks passed 855 exact paired WASM gameplay/camera steps with the option Off and On, seven rendered ATV pieces and intact recovery. New generic motorcycle marker/descendant handling has core coverage only and is not connected to a live motorcycle model."
+      ],
+      "limitation": "Host-only recovery evidence. Motorcycles are not selectable or drivable, and no motorcycle handling, rider integration, suspension, physics, audio playback, particles, stunts, crashes or gameplay parity is claimed. The screenshot is a static decoded-mesh inspection with illustrative flat shading. The candidate has not passed current-main CI or the separate public Cloudflare/R2 release checks; no game data or screenshot has been uploaded.",
+      "image": "/devlog-images/motorcycle-asset-formats-and-models-are-recovered-479c12ef.png",
+      "caption": "Private host model inspection: decoded Bike and Bike 50 LOD0 meshes plus seven Suzuki components. Static geometry only; no motorcycle is playable."
     }
   ],
-  "updated_at": "2026-10-12T23:33:49.978282+00:00",
+  "updated_at": "2026-10-13T01:50:41.794160+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

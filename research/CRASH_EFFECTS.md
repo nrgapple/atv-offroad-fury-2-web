@@ -33,6 +33,15 @@ remote players keep their native poses. The source ATV chassis is a monolithic
 mesh, so visual breakaway is limited to authored mechanical pieces rather than
 arbitrary chassis or fender fracture.
 
+Motorcycle resource recovery adds support for Unleashed's `TireFront/TireRear`
+markers. Their visible tire children and handlebar attachments inherit the
+nearest detached part's transformed pose; a separately detached rear wheel
+inside a detached swingarm retains its own motion. Synthetic hierarchy tests
+cover four severe-crash parts, child transforms, unchanged frame geometry and
+reset/Off. The existing ATV browser gate still passes 855 paired gameplay/camera
+steps and seven visible pieces. This is compatible presentation groundwork;
+playable motorcycle handling, rider and crash integration remain unfinished.
+
 Verified ordinary Nac Nac failure captures show the rider separating with two
 front wheels. This is not evidence for every breakaway threshold or vehicle.
 The configured severe-impact path (at least 50 ft/s) selects four wheels,
