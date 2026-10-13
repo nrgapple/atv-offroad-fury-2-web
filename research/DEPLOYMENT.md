@@ -736,3 +736,23 @@ and gallery reference remain in private storage for a later validated current-ma
 release. Weather callbacks, distant vegetation/LOD, point lights, shadows and
 native GS/full-frame behavior remain open. This release does not claim complete
 source tree lighting or whole-game/PS2 parity.
+
+## Public Caribou race preview — 2026-10-13
+
+Main `af3e6b5a7ac3fc4095477326597a27cfe84b97ce` passed CI and automatic
+production deployment in run [38333554805](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38333554805).
+The validated current-main artifact was fetched and its public deployment
+identity confirmed before R2 publication. The separate package validated 417
+approved objects and uploaded five changes: the National archive, expanded
+runtime audio, the inspected host portrait race image, manifest and gallery.
+It contains 108 runtime records; no source content or PNG entered GitHub/CI.
+
+Public HTTPS verification matches 33 authored files and 416 served objects by
+hash/size/MIME, with 129 log entries and 108 screenshots at this verification
+point. The public race test passes desktop/390px portrait/844px landscape,
+countdown input lock, pause, five named CPUs, player drive, touch steering and
+cancellation, restart, no disc selector and no JS/GL errors. The results card
+uses a separate render-only fixture; it is not proof of a complete original
+course replay. CPU route motion is authored; original AI physics, passing and
+rider collisions remain unfinished. The published picture retains its honest
+host-capture caption. See [race evidence](RACING.md).

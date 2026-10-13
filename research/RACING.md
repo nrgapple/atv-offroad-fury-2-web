@@ -53,3 +53,20 @@ regression passes nine-map selection, Tioga driving, keyboard/controller,
 portrait Caribou and pause/Controls. The menu-model regression passes six
 viewport sizes, all 26 quad inspections, female rider views, idle/music and
 selected-model course loading without JS/GL errors. These are host checks.
+
+## Verified public race release
+
+Public HTTPS `https://atv-offroad-fury-2.champtoday.workers.dev/` serves
+`af3e6b5a7ac3fc4095477326597a27cfe84b97ce`, CI 38333554805 successful.
+The R2 manifest now has 108 records including the National archive. Five changed
+objects were uploaded; HTTPS checks passed 33 authored files and 416 served
+runtime/gallery objects. The public log has 129 entries and 108 approved images
+at this verification point. The selected race picture is an inspected host
+capture, not a public screenshot or a PS2 parity comparison.
+
+The public race gate passes no-disc startup, all three viewports, five named
+CPU actors, actual player acceleration, one-finger steering/cancellation,
+countdown, pause, restart, radar and results render-only fixture controls.
+Sampled CPU distances are 70.53–80.96 feet; no JS/GL errors occur. Race CPU
+motion remains authored and provisional; original CPU physics/passing/collisions
+and whole-course browser replay equivalence remain unverified.

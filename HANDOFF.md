@@ -1,6 +1,6 @@
 # Implementation handoff
 
-## Host race preview checkpoint (public release pending)
+## Caribou race preview — public release verified
 
 The worktree race slice adds Single Player → Race → Caribou Peak National,
 1–5 laps, 0/3/5 CPU riders and three difficulty speeds. Original `env01natE.tdf`
@@ -16,9 +16,9 @@ Host Chromium passes setup and driving at 1280×720, 390×844 and 844×390;
 restart; existing Freestyle/menu/controller/portrait regression passes.
 Results UI uses a separate render-only fixture; full course laps are not
 claimed as browser replays. Synthetic Rust tests cover finish/shortcut rules.
-See research/RACING.md for verification updates. The user requested no
-deployment waits: public availability, CI and screenshot/content upload remain
-separate pending gates.
+See research/RACING.md for verification updates. The original implementation request skipped deployment waits; the user then
+requested publication. Public availability, CI and content/gallery upload now
+pass for af3e6b5, CI 38333554805.
 
 The race slice now integrates main `c895ba4`. The combined gate passes 325 core,
 25 protocol, 3 relay, 13 bridge and 69 JS tests, strict Clippy/formatting,
@@ -26,7 +26,9 @@ The race slice now integrates main `c895ba4`. The combined gate passes 325 core,
 frontend and all-26-model regressions. Race ABI 95/96 preserves multiplayer
 80–85; race data accompanies the existing RawValue simulation batch transport.
 Temporary native/WASM caches avoided host SSD clone stalls; static browser
-artifacts remain on the SSD. Public/CI verification is still pending.
+artifacts remain on the SSD. Public/CI verification now passes for af3e6b5: 33 authored files, 416 served
+objects, 108 runtime records and public race play at all three aspect ratios.
+The referenced race portrait remains an honestly labeled host capture.
 
 This is a race preview, not recovered original racing: CPU actors follow the
 route with distinct deterministic speeds and shared neutral ATV/rider meshes.
