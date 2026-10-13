@@ -28,7 +28,7 @@ try {
  await page.goto(`${process.env.ATV_TEST_URL||'http://127.0.0.1:4397'}/play.html`);
  const button=name=>page.getByRole('button',{name,exact:true});
  await button('Press START').click({timeout:120000});await button('Single Player').click();await button('Quad and Rider').click();
- for(let i=0;i<8;i++)await button('Previous quad').click(); // 27: MX 50 Race
+ for(let i=0;i<20;i++)await button('Previous quad').click(); // 27: MX 50 Race
  await page.waitForFunction(()=>[...document.querySelectorAll('.model-view canvas')].every(c=>c.dataset.selection==='27:0'));
  await button('Done').click();await button('Freestyle').click();await button('Ride Caribou Peak').click();
  await page.waitForFunction(()=>document.querySelector('#frontend').hidden&&window.atvTerrainStatus?.playerModel?.quad_id===27,null,{timeout:120000});

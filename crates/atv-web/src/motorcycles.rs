@@ -5,7 +5,8 @@ use atv_core::motorcycle::{Model, Motorcycle};
 pub fn load(input: &[u8], id: usize, install: bool) -> Result<Vec<u8>> {
     let id = u16::try_from(id).map_err(|_| "invalid motorcycle id")?;
     let model = Model::load(input, id)?;
-    let pose = model.rider_pose("mx_turn_still_mid", 0.)?;
+    let duration = model.motions["mx_turn_still_mid"].duration;
+    let pose = model.rider_pose("mx_turn_still_mid", duration * 0.5)?;
     let output=serde_json::to_vec(&serde_json::json!({"mesh":model.mesh,"riderMesh":model.rider,"riderPose":{"world_matrices":pose},"class":model.size,"pro":model.pro,"particleConfig":model.effects_config})).map_err(|e|e.to_string())?;
     if install {
         SIMULATION.with_borrow_mut(|sim| sim.motorcycle_model = Some(model));
@@ -22,6 +23,9 @@ fn frame(sim: &mut Simulation, raw: &serde_json::Value) -> Result<serde_json::Va
     let mut value = serde_json::to_value(f).map_err(|e| e.to_string())?;
     value["quad_node_matrices"] = serde_json::json!(pose);
     value["rider_node_matrices"] = serde_json::json!(rider);
+    value["rider_grip_errors"] = serde_json::json!(bike.grip_errors(&rider, &pose));
+    value["rider_foot_errors"] = serde_json::json!(bike.foot_errors(&rider, &pose));
+    value["front_wheel_local_position"] = serde_json::json!(bike.render_front_center(&pose));
     if f.wreck.phase != atv_core::wreck::Phase::Riding {
         value["rider_world_matrix"] = serde_json::json!(rider_world);
     }

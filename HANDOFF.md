@@ -1,3 +1,17 @@
+## Active motorcycle correction checkpoint (2026-10-13)
+
+The correction to public `8e1aa77` is documented in
+[research/MOTORCYCLES.md](research/MOTORCYCLES.md). Touch steering now follows
+screen direction; the source Mini rider bank, exact packed MOT angle lookup,
+inclined fork axis and shared limb constraints correct rider fit. Continuous
+pose/camera blending and batch render interpolation address movement snaps.
+Garage IDs 27–46 offer 16 source designs/20 clearly labeled choices. Four source
+class profiles remain shared across brands. Original ATV solver is unchanged.
+Host gates pass all20 choices and actual touch left/right/contact checks,
+with exact funny Off/On baseline comparisons. Publication is pending main CI,
+validated-artifact R2 content/gallery upload and public browser checks.
+No complete original-game physics equivalence is claimed.
+
 # Implementation handoff
 
 ## Playable motorcycles checkpoint — 2026-10-13

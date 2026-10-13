@@ -2190,9 +2190,28 @@
       "limitation": "Host-only verification; no current-main CI, public Cloudflare motorcycle route or R2 package verification yet. The authored two-wheel solver uses recovered source tuning but has not been shown instruction-equivalent to the original. Motorcycle severe breakaway, aerial ragdoll and damage are unverified. Source COLv2 collision, full stunt behavior, audio/effect scheduling, water and footprint tracks remain incomplete. Multiplayer continues to support ATV riders only; this is not a complete game port.",
       "image": "/devlog-images/source-tuned-motorcycles-now-ride-across-eight-configu-57ad9d3e.png",
       "caption": "Host browser capture: the authored MX 125 Race motorcycle and rider riding on a snowy course. This is the browser reconstruction, not a PS2 capture or public release."
+    },
+    {
+      "id": "motorcycle-touch-steering-and-rider-fit-are-corrected--5d67b69f",
+      "timestamp": "2026-10-13T05:21:55.860176+00:00",
+      "recorded_at": "2026-10-13T12:33:43.013958+00:00",
+      "kind": "verification",
+      "title": "Motorcycle touch steering and rider fit are corrected on host",
+      "summary": "Host checks now catch and correct two missed motorcycle-release defects: reversed screen-space touch steering and detached rider grips. Recovered source quaternion steering and shared limb IK keep steering response and rider contact aligned across the selectable motorcycle configurations.",
+      "details": [
+        "The steering correction follows the recovered pi/256 quaternion lookup and the original \u00b1127 packed-axis range; host browser checks for selections 27, 29 and 33 confirm the screen-space sign.",
+        "The rider uses the original Mini MXF bank with continuous source-pose blending. Fork steering follows its inclined axis, and shared arm/leg IK keeps hands and boots on the source grip and foot-peg markers; measured contact errors stay below 0.00004 feet.",
+        "The garage presents 16 real motorcycle model designs across 20 selectable Race/Pro choices. Host gates cover all 20 loaded, riding, audio, clutch, dirt and reset paths, plus 1,906 paired funny-crash Off/On steps.",
+        "The actual-GPU touch replay now confirms the reversed-sign fix: a left-screen input produces -4.739 ft of steering response and a right-screen input +4.638 ft across 291 exact paired steps. GPU bone-to-source marker comparisons across 660 rendered frames measured maximum grip error 0.00000145 ft and maximum foot-peg error 0.0000284 ft.",
+        "Host render interpolation is now verified: source pose, camera and motorcycle body uniforms share one blend clock across 2,508 intermediate body-uniform comparisons. Reset, pause, stunt and wreck transitions snap cleanly. This is host GPU evidence; it makes no timing or frame-rate claim.",
+        "Additional host regressions passed: the MX 50 jump/stunt/wreck/separation/recovery route (310 paired steps; no severe breakaway in this mild trace), Honda 35 Race, the separate ATV severe-wreck route (1,187 paired steps, seven pieces), all 26 ATV garage choices, responsive layout, context restore and the front menu. The broader host gate passed 336 core, 25 network, 3 web, 13 relay and 72 JavaScript checks, 29 release checks with one credential-dependent skip, and 8 Cloudflare checks."
+      ],
+      "limitation": "Host-only verification; these corrections and interpolation are not yet published. The authored motorcycle solver has no native whole-step physics equivalence claim, and no physical-phone test was run. The GPU captures show the bike and rider relatively small in the portrait frame. The mild MX 50 trace did not trigger severe breakaway. Public release and full motorcycle parity remain unverified.",
+      "image": "/devlog-images/motorcycle-touch-steering-and-rider-fit-are-corrected--5d67b69f-gpu-touch-left.png",
+      "caption": "Host GPU portrait capture with left-screen steering applied and the motorcycle/rider interpolation active. Touch response and rendered pose were checked against source targets; this is not a physical-phone or public-release capture."
     }
   ],
-  "updated_at": "2026-10-13T04:02:59.043299+00:00",
+  "updated_at": "2026-10-13T12:33:43.013958+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

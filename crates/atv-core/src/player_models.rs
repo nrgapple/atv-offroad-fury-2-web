@@ -22,11 +22,11 @@ pub struct Models {
 }
 
 pub fn selection(quad: u16, rider: u16) -> Result<Models> {
-    if !(1..=34).contains(&quad) || rider > 1 {
+    if !(1..=crate::motorcycle::SELECTION_COUNT).contains(&quad) || rider > 1 {
         return Err("unsupported player model".into());
     }
     if quad >= 27 {
-        let (size, pro) = crate::motorcycle::class(quad)?;
+        let (size, pro, _, name) = crate::motorcycle::definition(quad)?;
         let archive = format!("/MX/BIKE{size}.RES");
         return Ok(Models {
             quad_id: quad,
@@ -41,7 +41,7 @@ pub fn selection(quad: u16, rider: u16) -> Result<Models> {
             rider: archive,
             rider_mesh: "mrider.psg".into(),
             rider_catalog: "MX_RiderMotions.mcf".into(),
-            label: format!("MX {size} / {}", if pro { "Pro" } else { "Race" }),
+            label: format!("{name} / {} setup", if pro { "Pro" } else { "Race" }),
             rider_label: "MX THQ rider",
         });
     }
@@ -107,7 +107,8 @@ mod tests {
         assert_eq!(selection(14, 1).unwrap().quad, "/QUAD/BIKESB/ATV14.RES");
         assert_eq!(selection(26, 1).unwrap().rider_catalog, "frider.mcf");
         assert!(selection(0, 0).is_err());
-        assert!(selection(35, 0).is_err());
+        assert!(selection(47, 0).is_err());
+        assert!(selection(35, 0).unwrap().label.starts_with("Honda CR125"));
         assert!(selection(1, 2).is_err());
     }
 }

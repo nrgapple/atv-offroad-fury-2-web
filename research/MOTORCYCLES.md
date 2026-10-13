@@ -51,8 +51,11 @@ these differ from ATV2's current wheel-only implementation.
 
 ## Playable integration
 
-Single Player garage selections 27–34 are MX 50, 125, 250 and 500, each with Race
-and Pro source tuning. They use a separate authored two-wheel Rust controller:
+Single Player garage selections 27–46 contain 16 source bike designs and 20
+choices. The original Fast50/Suzuki choices 27–34 retain explicitly labeled Race
+and Pro setups; Honda, Yamaha, Kawasaki, KTM, Sano and Red Baron assemblies add
+distinct designs. The source has four 50/125/250/500 handling profiles; different
+brands sharing one profile do not imply independently recovered per-brand physics. They use a separate authored two-wheel Rust controller:
 front/rear suspension and sixteen-surface forces, source engine curves/gears,
 clutch boost, lean balance, wheelies/stoppies, preload, airborne gyro/control,
 crossup and flip/360 torque. Geometry preserves each SUB part hierarchy beneath
@@ -165,3 +168,46 @@ bike breakaway transition; the seven-piece severe visual regression is an ATV
 check, not evidence of a severe motorcycle impact. MX 125 Race passes the existing
 race countdown/pause/five-CPU/touch/restart gate. The 26-ATV garage with both rider
 rigs, responsive layout and context restore passes. Setup and 19 release tests pass.
+
+
+## Motorcycle correction gate — October 13, 2026
+
+The first playable release, `8e1aa77`, passed loading/finite-pose/movement checks
+but missed reversed steering relative to the rendered camera and detached hands.
+Those checks were insufficient for rider fit and turning quality.
+
+The correction follows the shared browser input convention (positive Rust steer
+is screen-left) in ground and airborne bike controls. Forks now turn around the
+source inclined steering axis through the front wheel, rather than world Y.
+The original `003b2924` initializer uses pi/256 and signed axis bytes /127 for
+packed MOT quaternions. The Mini MXF riding/stunt bank uses its own lower root
+pose, including bounded -6 clips; full-size MX clips cannot position a Mini rider
+correctly. Source NAME/VUE aliases also connect previously mismatched stunt names.
+
+Normal riding blends still/riding/air and forward/back source pose sweeps
+continuously. A two-link adaptation of the existing ATV arm solver keeps source
+hand/boot markers on the rotating grips and pegs. Stunts and wrecks bypass these
+constraints so intentional release remains possible. The chase camera filters
+body motion and follows airborne travel heading, avoiding backflip yaw whips.
+Render interpolation applies one clock to chassis, bike bones, rider bones and
+camera between delivered physics batches, and snaps on resets, camera changes,
+stunts, wrecks and cancellation. This is presentation only; Rust baseline and
+optional funny-crash comparisons remain exact.
+
+Host checks load/drive all 20 selections, with audio, clutch, particles and reset,
+and 1,906 exact paired Off/On steps. Actual 390px touch drags on Mini/125/500 bikes
+turn left/right on screen and preserve grip/peg markers (under 0.00004 ft).
+The smoothing test observes 2,508 intermediate model uniforms and 660 actual
+WebGL rider/bike bone contact comparisons, with maximum rendered hand error
+0.00000145 ft and boot error 0.0000284 ft. It also tests reset/pause/wreck
+boundaries. Bike50 touch jump/stunt/wreck/separation/recovery passes 310 paired
+steps; that mild trace has no severe breakaway. Honda35 race and the existing
+ATV severe-crash (1,187 paired steps/seven pieces), frontend and 26-model garage
+responsive/context-restore gates pass. Full checks pass 336 core, 25 net,
+3 web, 13 relay and 72 JS tests, strict formatting/Clippy, setup, 29 release tests
+(one credential-dependent skip) and eight Cloudflare tests.
+
+These are host correction gates pending validated main deployment and R2 upload.
+Native whole-controller/IK routing, COL-v2, all stunt linking/scoring and full
+original physics/audio timing still require recovery. Actual physical-phone and
+controller play remain unverified.

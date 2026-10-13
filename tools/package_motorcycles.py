@@ -8,8 +8,12 @@ import re
 from package_content import ROOT, Resource, config, pack_resource
 
 MX_BUILD = '4b74c0c76ffe0838e00c1b9f75b31e1bb91adae06ec9da1416355b363572102a'
-DEFINITIONS = {50: 'MXF_S_50_Fast50_01', 125: 'MX_S_125_RM1251',
-               250: 'MX_S_250_RM2501', 500: 'MX_S_500_RM500XGX1'}
+DEFINITIONS = {
+ 50: ['MXF_S_50_Fast50_01','MXF_S_50_Sano_01','MXF_S_50_RedB_01'],
+ 125: ['MX_S_125_RM1251','MX_S_125_CR125RTHQ1','MX_S_125_YZ1251','MX_S_125_KX1251','MX_S_125_125SX1'],
+ 250: ['MX_S_250_RM2501','MX_S_250_CR250RTHQ1','MX_S_250_YZ2501','MX_S_250_KX2501','MX_S_250_250SX1'],
+ 500: ['MX_S_500_RM500XGX1','MX_S_500_SX500XGX1','MX_S_500_YZF500XGX1'],
+}
 
 
 def main():
@@ -85,28 +89,36 @@ def main():
             name = f"Rider/Anim/{rider_config[f'subobject{i}']['slt']}.psg"
             rider[name] = source(name)
         materials(rider, rider_config.get('material changes', {}))
-        stunt_data = config(source('Rider/Anim/MX_Rider_Stunts.ini'))
-        connected = {'mx_' + fields['name'].lower() for section, fields in stunt_data.items()
-                     if section.startswith('stunt') and fields.get('defaultkeymapping', '')}
-        connected.update(('mx_backflip', 'mx_threesixtyl', 'mx_threesixtyr'))
-        # Only movement and reachable stunt clips enter the runtime package.
-        for catalog in ('MX_RiderMotions.mcf', 'MX_RiderStunts.mcf'):
-            name = f'Rider/Anim/{catalog}'
-            rider[name] = source(name)
-            data = config(rider[name])
-            for section, fields in data.items():
-                if section.startswith('motion ') and 'vue' in fields:
-                    name = 'Rider/Anim/' + fields['vue']
-                    if catalog == 'MX_RiderStunts.mcf' and Path(fields['vue']).stem.lower() not in connected:
+        rider_base = dict(rider)
+        def motion_bank(size):
+            bank = 'MXF' if size == 50 else 'MX'
+            result = dict(rider_base)
+            stunt_ini = f'Rider/Anim/{bank}_Rider_Stunts.ini'
+            stunt_data = config(source(stunt_ini))
+            connected = {'mx_' + fields['name'].lower() for section, fields in stunt_data.items()
+                         if section.startswith('stunt') and fields.get('defaultkeymapping', '')}
+            connected.update(('mx_backflip','mx_threesixtyl','mx_threesixtyr'))
+            for suffix in ('RiderMotions.mcf','RiderStunts.mcf'):
+                name = f'Rider/Anim/{bank}_{suffix}'
+                result[name] = source(name)
+                for section, fields in config(result[name]).items():
+                    if not section.startswith('motion ') or 'vue' not in fields:
                         continue
-                    rider[name] = source(name)
-        rider['Rider/Anim/MX_Rider_Stunts.ini'] = source('Rider/Anim/MX_Rider_Stunts.ini')
+                    alias = fields.get('name','').lower().replace('mxf_', 'mx_').replace('mx_rider_', 'mx_')
+                    if suffix == 'RiderStunts.mcf' and alias not in connected:
+                        continue
+                    name = 'Rider/Anim/' + fields['vue']
+                    result[name] = source(name)
+            result[stunt_ini] = source(stunt_ini)
+            return result
         records = [r for r in manifest['files'] if not r['path'].startswith('/MX/')]
         sector = max((r['lba'] * 2048 + r['bytes'] + 2047) // 2048 for r in records) + 1
         report = []
-        for size, definition in DEFINITIONS.items():
-            members = assemble(definition, 'bike50' if size == 50 else 'bike')
-            members.update(rider)
+        for size, definitions in DEFINITIONS.items():
+            members = {}
+            for definition in definitions:
+                members.update(assemble(definition, 'bike50' if size == 50 else 'bike'))
+            members.update(motion_bank(size))
             for stem in ('tiredust.emt','tirechunks.emt','tiredirtspray.emt','exhaust.emt','wreckdust.emt','FS01particles.prt'):
                 name=f'Part/{stem}'
                 members[name]=source(name)
