@@ -184,9 +184,9 @@ steps respectively, with no damage or gore. Settings persistence and 44px
 targets passed in 390×844 portrait and 844×390 landscape.
 
 `make check` passed 359 core, 27 net, 7 relay, 15 web, 6 tools and 4 release
-Rust tests; 120 JS tests; formatting, strict Clippy and eight cache tests.
+Rust tests; 122 JS tests, including denied localStorage getter handling and repeated-impact kick-upgrade coverage; formatting, strict Clippy and eight cache tests.
 `make verify`, `make web`, 35 release checks (one expected skip), 19 Worker
 checks and repository hygiene pass. This remains host verification pending
 current-main CI, deployment and public browser verification. Captures are
 1280×844 host Chromium Metal; physical-phone behavior and original-game crash or
-camera parity are unverified. No R2 content additions are needed.
+camera parity are unverified. No new runtime resource additions are needed; the selected screenshots still follow the separate R2/gallery publication step.

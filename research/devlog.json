@@ -1,6 +1,6 @@
 {
-  "status": "Host-verified pause submenu checkpoint: six secondary screens pass responsive layout and navigation checks; controller remapping and live Lobby behavior are verified in host browsers. Current-main CI and public deployment remain pending.",
-  "working_on": "Integrate the pause submenu checkpoint through current-main CI, then verify the public deployment and browser routes.",
+  "status": "Pause submenu checks are publicly verified. The smart camera shake and Gorn host checkpoint is recorded and awaits current-main CI and public deployment verification.",
+  "working_on": "Complete current-main CI and public verification for the smart camera shake and Gorn checkpoint; keep screenshot publication tied to the validated release.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -3086,6 +3086,20 @@
       "caption": "Host Chromium capture, 390\u00d7844: airborne Nac Nac preview on the radial wheel while the primary finger continues drive and brace."
     },
     {
+      "id": "public-pause-submenu-verification-3f1f26c0",
+      "timestamp": "2026-10-13T23:39:58.975312+00:00",
+      "recorded_at": "2026-10-13T23:39:58.975312+00:00",
+      "kind": "verification",
+      "title": "Public pause submenu verification",
+      "summary": "Pause submenu polish commit c1a92fa passed main CI and automatic deployment; public HTTPS checks passed for six secondary screens and the live two-client Lobby.",
+      "details": [
+        "PR #49 merged as c1a92fa8fdb8e7ae364a220d5d642614e85c9f0a. Main CI/deploy run 38484978361 passed, and public deployment.json identifies c1a92fa.",
+        "Public actual-source test_pause_menu covered all six secondary routes at 1280\u00d7896, 390\u00d7844, 320\u00d7568, 844\u00d7390, and 667\u00d7375; controller remapping, Escape cancellation/defaults, button 6 capture, D-pad navigation, music behavior, stable sliders, single-player freeze/resume, neutral input, and zero page errors passed.",
+        "The public actual-source two-client test verified Controls and Players alongside the active Lobby, neutral local input, live physics and peer rendering, continuing music, Leave cleanup, and no AudioContext suspension or title-music interruption. The host advanced 42 steps and observed 3.328 ft of guest movement; the guest advanced 41 steps and observed 3.272 ft of host movement."
+      ],
+      "limitation": "At the time of this browser checkpoint, the separate R2/gallery hash audit and inspected pause-menu screenshot upload had not yet run. Automated public-browser results do not establish physical-device behavior, original pause-screen fidelity, or whole-game parity."
+    },
+    {
       "id": "smart-camera-shake-and-gorn-crash-mode-d3e52a6d",
       "timestamp": "2026-10-13T23:46:41.746708+00:00",
       "recorded_at": "2026-10-13T23:48:22.557684+00:00",
@@ -3099,7 +3113,7 @@
         "Verified host crash route: 1,519 paired WASM steps with zero gameplay/camera mismatches and 101 more after reload; three aerial ragdoll frames with intact ATV, two real contact-damage transitions, seven mechanical pieces, five severed rider pieces, 90 droplets, one GPU blood draw, nonzero camera kick/energy and boom, then intact recovery.",
         "Crazy Nac Nac mode switch/recovery passed 581 paired steps with zero mismatches. Motorcycle Crazy (333 paired steps) and Gorn (302) mild-wreck touch/recovery routes passed without damage or gore. Saved settings reload and 390\u00d7844 / 844\u00d7390 44px targets passed."
       ],
-      "limitation": "Host-only checkpoint pending main CI, public deployment and public browser verification. Captures are from 1280\u00d7844 host Chromium Metal; no physical-phone behavior or original crash/camera parity is established. This is authored presentation, local-player only; source assets are reused with no R2 content additions.",
+      "limitation": "Host-only checkpoint pending main CI, public deployment and public browser verification. Captures are from 1280\u00d7844 host Chromium Metal; no physical-phone behavior or original crash/camera parity is established. This is authored presentation, local-player only; source assets are reused with no new runtime resource additions.",
       "image": "/devlog-images/smart-camera-shake-and-gorn-crash-mode-d3e52a6d.png",
       "caption": "Host Chromium Metal, 1280\u00d7844: severe Caribou tree crash with the detached rider and authored Gorn droplets. Host capture; not a public release."
     },

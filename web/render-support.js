@@ -149,12 +149,12 @@ export class RideEffectsSettings {
 // Read-only vehicle response; never alters the recovered camera or physics.
 export class VehicleShake {
   constructor() { this.reset(); }
-  reset() { this.previous = null; this.energy = 0; this.roughness = 0; this.time = 0; this.cooldown = 0; this.offset = [0,0,0,0]; this.impacts = 0; }
+  reset() { this.previous = null; this.energy = 0; this.roughness = 0; this.time = 0; this.cooldown = 0; this.offset = [0,0,0,0]; this.impacts = 0; this.lastSeverity = 0; }
   accept(actor, enabled = true) {
     const old = this.previous;
     this.previous = actor;
     if (!actor || !enabled || !old || old.reset_count !== actor.reset_count || Math.hypot(...actor.origin.map((v,i)=>v-old.origin[i])) > 40) {
-      this.energy = 0; this.roughness = 0; this.offset = [0,0,0,0]; return 0;
+      this.energy = 0; this.roughness = 0; this.offset = [0,0,0,0]; this.cooldown=0; this.lastSeverity=0; return 0;
     }
     const contact = Number.isFinite(actor.crash_impact_speed) ? actor.crash_impact_speed : 0;
     const rider = Math.hypot(...(actor.rider_wreck?.sampled_impact_delta ?? [0,0,0]));
@@ -165,9 +165,9 @@ export class VehicleShake {
     this.roughness += (desired - this.roughness) * .22;
     // One impulse per separated impact, rather than replaying every contact frame.
     const previousImpact = Math.max(old.crash_impact_speed ?? 0,Math.hypot(...(old.rider_wreck?.sampled_impact_delta ?? [0,0,0])));
-    if (severity > 16 && this.cooldown <= 0 && (previousImpact <= 16 || severity > previousImpact*1.35)) {
+    if (severity > 16 && (this.cooldown <= 0 || severity > this.lastSeverity*1.35) && (previousImpact <= 16 || severity > previousImpact*1.35)) {
       this.energy = Math.min(1, Math.max(this.energy, (severity-12)/55));
-      this.cooldown = .25; this.impacts++;
+      this.cooldown = .25; this.lastSeverity = severity; this.impacts++;
       return severity;
     }
     return 0;

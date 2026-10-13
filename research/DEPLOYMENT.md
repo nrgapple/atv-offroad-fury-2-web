@@ -916,3 +916,15 @@ was not published. The paired host
 `gl.finish` render-wall results remain separate from public gameplay checks and
 do not prove main-thread CPU, normal FPS, physical-phone, battery or thermal
 gains. See [performance evidence](PERFORMANCE.md).
+
+## Public pause submenu verification — 2026-10-13
+
+Pause submenu polish PR #49 merged as `c1a92fa8fdb8e7ae364a220d5d642614e85c9f0a`;
+main CI and automatic deployment passed in run `38484978361`, and the public
+deployment identity matched. Public actual-source browser checks passed all six
+secondary screens at five viewport sizes, controller capture/remapping and
+defaults, Escape cancellation, music and slider behavior, single-player
+freeze/resume, and a two-client Lobby session with neutral local input, live
+physics, remote movement, continuing audio, and leave cleanup. These checks ran
+without page errors. At the time of this browser checkpoint, the separate
+R2/gallery hash audit and inspected pause-menu screenshot upload had not yet run.

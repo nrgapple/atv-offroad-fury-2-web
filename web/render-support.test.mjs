@@ -130,3 +130,12 @@ test('blocked browser storage getter still permits session settings',()=>{
   const s=new RideEffectsSettings();assert.equal(s.mode,'crazy');s.toggle();s.toggleShake();assert.equal(s.mode,'gorn');assert.equal(s.shake,false);
  } finally {if(descriptor)Object.defineProperty(globalThis,'localStorage',descriptor);else delete globalThis.localStorage;}
 });
+
+test('a severe second contact overrides a soft-contact cooldown without repeating sustained impacts',()=>{
+ const s=new VehicleShake();s.accept(shakeActor);
+ assert.equal(s.accept({...shakeActor,crash_impact_speed:20}),20);s.update(shakeActor,1/60);
+ const mild=s.energy;const severe={...shakeActor,crash_impact_speed:80};
+ assert.equal(s.accept(severe),80);assert(s.energy>mild*5);
+ for(let i=0;i<60;i++){s.update(severe,1/60);assert.equal(s.accept(severe),0);}
+ assert.equal(s.impacts,2);
+});

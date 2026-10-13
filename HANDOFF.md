@@ -22,14 +22,14 @@ switch/recovery passed 581 paired steps without mismatches. Motorcycle Crazy
 (333 paired steps) and Gorn (302) mild wreck touch/recovery passed without damage
 or gore. Saved settings reload and 44px targets at 390×844 and 844×390 pass.
 `make check` passes 359 core, 27 net, 7 relay, 15 web, 6 tools and 4 release
-Rust tests; 120 JS tests; formatting and strict Clippy. `make verify`, `make web`,
+Rust tests; 122 JS tests, including denied localStorage getter handling and repeated-impact kick-upgrade coverage; formatting and strict Clippy. `make verify`, `make web`,
 35 release checks (one expected skip), 19 Worker checks and repository hygiene
 also pass. The hill-camera regression passed at 390×844 and 1280×720.
 
 This is host-only evidence pending current-main CI, deployment and public browser
 verification. Captures are from host Chromium Metal at 1280×844. Physical-phone
 behavior and original crash/camera parity remain unverified. Existing source
-assets are reused; no R2 content additions are required. See
+assets are reused; no new runtime resource additions are required. The selected screenshots still need the separate R2/gallery publication step. See
 [crash effects evidence](research/CRASH_EFFECTS.md).
 
 ## Uphill chase camera — public release (2026-10-13)

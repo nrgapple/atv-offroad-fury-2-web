@@ -142,3 +142,24 @@ evidence, not public deployment or physical-device verification. Native pause
 fidelity and full-game parity are not established. The dev log attaches the
 inspected 390-pixel Music capture; the desktop bindings and portrait Minimap
 captures are also retained privately for review.
+
+## Public pause submenu verification (2026-10-13)
+
+Pause submenu polish merged as `c1a92fa8fdb8e7ae364a220d5d642614e85c9f0a` in
+PR #49. Main CI and automatic deployment passed in run `38484978361`, and
+public `https://furyremastered.com/deployment.json` identified that commit.
+The public actual-source pause test covered all six secondary routes at
+1280×896, 390×844, 320×568, 844×390, and 667×375. Controller capture/remapping,
+Escape cancellation and defaults, button 6 input, D-pad navigation, music
+playback, slider stability, single-player freeze/resume, neutral input, and zero
+page errors passed.
+
+The public actual-source two-client test covered Controls and Players while the
+Lobby remained active. Neutral local input, live physics and peer rendering,
+continuing music, and Leave cleanup passed without suspending the AudioContext
+or interrupting title music. The host advanced 42 steps and observed 3.328 ft of
+guest movement; the guest advanced 41 steps and observed 3.272 ft of host
+movement. This is automated browser evidence, not physical-device or full-game
+parity verification. At the time of this browser checkpoint, the separate
+R2/gallery hash audit and upload of the inspected pause-menu screenshot had not
+yet run.
