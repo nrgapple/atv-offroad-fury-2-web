@@ -1,4 +1,6 @@
-# Local multi-worktree release queue
+# Experimental local multi-worktree release queue
+
+**Disabled for production.** The launchd worker is stopped. Continue the existing GitHub Actions build/deploy and checkpoint R2 publishing flow in CI_CHECKPOINTS.md. Do not start, require or cut over to this queue without successful isolated end-to-end validation and user approval. The commands below describe experimental tooling.
 
 The Mac owns production release execution. GitHub stores authored source/history
 and runs lightweight source checks; it does not build WASM or deploy the game.

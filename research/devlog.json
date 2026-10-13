@@ -2143,9 +2143,23 @@
         "Implementation includes a local Rust queue and launchd installation, per-release manifests and browser pins, and source-only GitHub Actions handling."
       ],
       "limitation": "Host-tested only; public end-to-end queued release is not yet verified. Operation requires a Mac with available storage and valid authentication. There is no automatic rollback or worktree pruning; conflicts require repair by the submitting chat. The CLI screenshot-review flag depends on agent inspection."
+    },
+    {
+      "id": "production-deployment-flow-restoration-underway-20261013",
+      "timestamp": "2026-10-13T04:02:59.043147+00:00",
+      "recorded_at": "2026-10-13T04:02:59.043297+00:00",
+      "kind": "issue",
+      "title": "Production deployment flow restoration is underway",
+      "summary": "A premature cutover to the experimental local release queue blocked work in other chats. The queue has been stopped, and the established GitHub Actions production deployment flow is being restored.",
+      "details": [
+        "The release queue has not passed end-to-end validation and is not ready to control production deployment.",
+        "The queue remains experimental and disabled pending isolated validation and a user-approved cutover.",
+        "Recovery work is restoring production deployment through GitHub Actions; this entry does not claim that recovery or a new production deployment has completed."
+      ],
+      "limitation": "Public deployment recovery remains in progress. The queue has only host-level evidence and has not completed a public end-to-end release."
     }
   ],
-  "updated_at": "2026-10-13T02:29:06.029289+00:00",
+  "updated_at": "2026-10-13T04:02:59.043299+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

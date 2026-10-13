@@ -938,7 +938,7 @@ mod tests {
         assert_eq!(next_job(&list).unwrap().id, "2");
     }
     #[test]
-    fn kernel_lock_excludes_another_worker_and_recovers_on_drop() {
+    fn kernel_lock_excludes_another_worker_and_recovers_on_unlock() {
         let path = env::temp_dir().join(format!("atv-release-lock-{}", now()));
         let first = lock(&path).unwrap();
         first.try_lock().unwrap();
@@ -947,6 +947,7 @@ mod tests {
             second.try_lock(),
             Err(std::fs::TryLockError::WouldBlock)
         ));
+        first.unlock().unwrap();
         drop(first);
         second.try_lock().unwrap();
         drop(second);

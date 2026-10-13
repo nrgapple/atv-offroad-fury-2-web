@@ -1,5 +1,15 @@
 # Implementation handoff
 
+## Deployment recovery — 2026-10-13
+
+The experimental local release queue was cut over before completing public
+end-to-end validation. The worker is now stopped and disabled in launchd;
+`make release` refuses production submission. GitHub Actions build/deploy and its
+production environment history are being restored. Follow
+`research/CI_CHECKPOINTS.md` for ordinary checkpoint delivery. Queue development
+must stay isolated until successful end-to-end validation and a user-approved
+cutover. This recovery checkpoint does not claim a completed public deployment.
+
 ## Caribou race preview — public release verified
 
 The worktree race slice adds Single Player → Race → Caribou Peak National,
