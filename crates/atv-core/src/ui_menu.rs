@@ -19,6 +19,22 @@ pub struct ControlRow {
 #[serde(deny_unknown_fields)]
 pub struct Request {
     pub page: String,
+    #[serde(default)]
+    pub loading_status: String,
+    #[serde(default = "default_quad")]
+    pub quad_id: u16,
+    #[serde(default)]
+    pub rider_id: u16,
+    #[serde(default)]
+    pub room_code: String,
+    #[serde(default)]
+    pub player_name: String,
+    #[serde(default)]
+    pub lobby_status: String,
+    #[serde(default)]
+    pub lobby_host: bool,
+    #[serde(default)]
+    pub lobby_started: bool,
     pub width: f32,
     pub height: f32,
     pub selection: usize,
@@ -66,8 +82,13 @@ pub struct Request {
     pub race_available: bool,
     #[serde(default)]
     pub race_active: bool,
+    #[serde(default)]
+    pub funny_crashes: bool,
     #[serde(default = "default_steering_sensitivity")]
     pub mobile_steering_sensitivity: f32,
+}
+fn default_quad() -> u16 {
+    1
 }
 fn default_steering_sensitivity() -> f32 {
     85.
@@ -100,6 +121,10 @@ pub enum Draw {
         image: &'static str,
         rect: [f32; 4],
     },
+    ModelPreview {
+        model: &'static str,
+        rect: [f32; 4],
+    },
     Preview {
         image: String,
         rect: [f32; 4],
@@ -124,6 +149,14 @@ pub struct Slider {
     pub selected: bool,
 }
 #[derive(Serialize)]
+pub struct TextInput {
+    pub action: &'static str,
+    pub label: &'static str,
+    pub rect: [f32; 4],
+    pub value: String,
+    pub max_length: usize,
+}
+#[derive(Serialize)]
 pub struct Frame {
     pub width: f32,
     pub height: f32,
@@ -131,6 +164,7 @@ pub struct Frame {
     pub hits: Vec<Hit>,
     pub choices: Vec<String>,
     pub sliders: Vec<Slider>,
+    pub inputs: Vec<TextInput>,
 }
 impl Frame {
     fn rect(
@@ -223,6 +257,12 @@ pub fn layout(request: Request) -> Result<Frame> {
         || !(240.0..=16384.0).contains(&request.height)
         || !request.mobile_steering_sensitivity.is_finite()
         || !(50.0..=150.0).contains(&request.mobile_steering_sensitivity)
+        || request.room_code.len() > 64
+        || request.player_name.len() > 32
+        || request.lobby_status.len() > 256
+        || !(1..=26).contains(&request.quad_id)
+        || request.rider_id > 1
+        || request.loading_status.len() > 128
         || request.track_name.len() > 128
         || request.track_image.len() > 128
         || request.capture_label.len() > 128
@@ -258,6 +298,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         hits: vec![],
         choices: vec![],
         sliders: vec![],
+        inputs: vec![],
     };
     if pause {
         f.rect([0., 0., w, h], 0., "#00000070", "#00000070", "");
@@ -304,6 +345,10 @@ pub fn layout(request: Request) -> Result<Frame> {
         "title" => "ATV Offroad Fury 2",
         "main" => "Main Menu",
         "single" => "Single Player",
+        "multiplayer" => "Multiplayer",
+        "lobby" => "Free Ride Lobby",
+        "garage" => "Quad and Rider",
+        "loading" => "Loading",
         "tracks" => "Freestyle",
         "race" => "Single Race",
         "pause" => "Pause",
@@ -376,15 +421,20 @@ pub fn layout(request: Request) -> Result<Frame> {
                 label,
                 action,
                 [20., 102., list_w, 58.],
-                request.selection.is_multiple_of(2),
+                request.selection == 0,
             );
-            if main {
-                f.choices.push("devlog".into());
+            let items: &[(&str, &str)] = if main {
+                &[("Multiplayer", "multiplayer"), ("Dev log", "devlog")]
+            } else {
+                &[("Quad and Rider", "garage")]
+            };
+            for (i, (label, action)) in items.iter().enumerate() {
+                f.choices.push((*action).into());
                 f.button(
-                    "Dev log",
-                    "devlog",
-                    [20., 160., list_w, 58.],
-                    request.selection % 2 == 1,
+                    label,
+                    action,
+                    [20., 160. + i as f32 * 58., list_w, 58.],
+                    request.selection == i + 1,
                 );
             }
             if !main && request.race_available {
@@ -392,11 +442,15 @@ pub fn layout(request: Request) -> Result<Frame> {
                 f.button(
                     "Race",
                     "race",
-                    [20., 160., list_w, 58.],
-                    request.selection % 2 == 1,
+                    [20., 218., list_w, 58.],
+                    request.selection == 2,
                 );
             }
-            let detail_y = 254.;
+            let detail_y = if main || request.race_available {
+                292.
+            } else {
+                236.
+            };
             f.rect(
                 [24., detail_y, list_w - 4., 72.],
                 6.,
@@ -404,12 +458,10 @@ pub fn layout(request: Request) -> Result<Frame> {
                 "#1c1717",
                 "#100b09",
             );
-            let detail = if request.selection % 2 == 1 {
-                if main {
-                    "Progress, screenshots and what is next."
-                } else {
-                    "Race CPU riders on Caribou Peak."
-                }
+            let detail = if !main && request.selection == 2 {
+                "Race CPU riders on Caribou Peak."
+            } else if main && request.selection == 2 {
+                "Progress, screenshots and what is next."
             } else {
                 detail
             };
@@ -485,6 +537,212 @@ pub fn layout(request: Request) -> Result<Frame> {
                 });
             }
             f.footer(true);
+        }
+        "garage" => {
+            let model = crate::player_models::selection(request.quad_id, request.rider_id)?;
+            // Portrait stacks two equal model cards above the controls; landscape
+            // gives the previews the right-hand stage. Bounds are in Rust UI units.
+            let panel = if portrait {
+                [24., 98., w - 48., (h - 380.).clamp(100., 420.)]
+            } else {
+                [list_w + 44., 92., w - list_w - 68., h - 124.]
+            };
+            let card_w = (panel[2] - 12.) / 2.;
+            for (i, (kind, label)) in [("quad", model.label.as_str()), ("rider", model.rider_label)]
+                .iter()
+                .enumerate()
+            {
+                let x = panel[0] + i as f32 * (card_w + 12.);
+                f.rect(
+                    [x, panel[1], card_w, panel[3]],
+                    6.,
+                    "#292929",
+                    "#080808",
+                    "#b9b9b98c",
+                );
+                f.text(
+                    *label,
+                    [x + 10., panel[1] + 12.],
+                    0.85,
+                    FONT,
+                    "255,255,255",
+                    card_w - 20.,
+                );
+                f.draw.push(Draw::ModelPreview {
+                    model: kind,
+                    rect: [x + 6., panel[1] + 46., card_w - 12., panel[3] - 74.],
+                });
+                f.text(
+                    "Drag to rotate",
+                    [x + 10., panel[1] + panel[3] - 22.],
+                    0.65,
+                    FONT,
+                    "185,185,185",
+                    card_w - 20.,
+                );
+            }
+            let y = if portrait {
+                panel[1] + panel[3] + 12.
+            } else {
+                114.
+            };
+            let controls_w = if portrait { w - 48. } else { list_w };
+            let row_h = 54_f32.max(44. / scale);
+            f.text(
+                format!("Quad {} / 26", request.quad_id),
+                [30., y],
+                0.85,
+                FONT,
+                "229,211,96",
+                controls_w - 12.,
+            );
+            for (i, (label, action)) in [
+                ("Previous quad", "quadprev"),
+                ("Next quad", "quadnext"),
+                ("Change rider", "riderchange"),
+                ("Done", "back"),
+            ]
+            .iter()
+            .enumerate()
+            {
+                f.choices.push((*action).into());
+                f.button(
+                    label,
+                    action,
+                    [24., y + 30. + i as f32 * row_h, controls_w, row_h],
+                    request.selection == i,
+                );
+            }
+        }
+        "loading" => {
+            let photo_w = if portrait {
+                w - 48.
+            } else {
+                (w * 0.62).min((h - 205.) * 2.)
+            };
+            let photo_h = photo_w / 2.;
+            let x = (w - photo_w) / 2.;
+            let y = if portrait {
+                ((h - photo_h) * 0.35).max(96.)
+            } else {
+                88.
+            };
+            f.rect(
+                [x - 3., y - 3., photo_w + 6., photo_h + 6.],
+                4.,
+                "#b9b9b9",
+                "#343434",
+                "#e9e9e9",
+            );
+            if !request.track_image.is_empty() {
+                f.draw.push(Draw::Preview {
+                    image: request.track_image.clone(),
+                    rect: [x, y, photo_w, photo_h],
+                });
+            }
+            f.text(
+                &request.track_name,
+                [x, y + photo_h + 18.],
+                1.15,
+                HEADER_FONT,
+                "229,211,96",
+                photo_w,
+            );
+            f.text(
+                &request.loading_status,
+                [x, y + photo_h + 60.],
+                0.8,
+                FONT,
+                "222,222,222",
+                photo_w,
+            );
+        }
+        "multiplayer" => {
+            for (action, label, value, y, max_length) in [
+                (
+                    "player-name",
+                    "Rider name",
+                    request.player_name.clone(),
+                    104.,
+                    24,
+                ),
+                (
+                    "room-code",
+                    "Lobby code",
+                    request.room_code.clone(),
+                    166.,
+                    8,
+                ),
+            ] {
+                f.text(label, [30., y - 23.], 0.8, FONT, "215,215,215", list_w);
+                f.inputs.push(TextInput {
+                    action,
+                    label,
+                    value,
+                    rect: [30., y, list_w - 12., 40.],
+                    max_length,
+                });
+            }
+            let rows = [
+                ("Create lobby", "host"),
+                ("Join code", "join"),
+                ("Quad and Rider", "garage"),
+            ];
+            for (i, (label, action)) in rows.iter().enumerate() {
+                f.choices.push((*action).into());
+                f.button(
+                    label,
+                    action,
+                    [24., 226. + i as f32 * 54., list_w, 54.],
+                    request.selection == i,
+                );
+            }
+            f.footer(true);
+        }
+        "lobby" => {
+            f.text(
+                format!("Code: {}", request.room_code),
+                [30., 100.],
+                1.15,
+                FONT,
+                "255,230,100",
+                list_w,
+            );
+            f.text(
+                &request.track_name,
+                [30., 140.],
+                1.,
+                FONT,
+                "235,235,235",
+                list_w,
+            );
+            f.text(
+                &request.lobby_status,
+                [30., 179.],
+                0.8,
+                FONT,
+                "210,210,210",
+                list_w,
+            );
+            let mut rows = vec![("Copy invite link", "share")];
+            if request.lobby_started {
+                rows.push(("Resume ride", "resume"));
+            } else if request.lobby_host {
+                rows.extend([
+                    ("Next environment", "lobbymap"),
+                    ("Ride together", "lobbystart"),
+                ]);
+            }
+            rows.push(("Leave lobby", "leave"));
+            for (i, (label, action)) in rows.iter().enumerate() {
+                f.choices.push((*action).into());
+                f.button(
+                    label,
+                    action,
+                    [24., 214. + i as f32 * 54., list_w, 54.],
+                    request.selection == i,
+                );
+            }
         }
         "tracks" => {
             let preview = if portrait {
@@ -578,6 +836,14 @@ pub fn layout(request: Request) -> Result<Frame> {
                 ("Controls", "controls"),
                 (diagnostics_label, "diagnostics"),
                 (mobile_label, "onehanded"),
+                (
+                    if request.funny_crashes {
+                        "Funny crashes: On"
+                    } else {
+                        "Funny crashes: Off"
+                    },
+                    "funnycrashes",
+                ),
             ];
             if request.music_ready {
                 choices.push(("Music", "music"));
@@ -585,9 +851,24 @@ pub fn layout(request: Request) -> Result<Frame> {
             if request.fullscreen {
                 choices.push(("Fullscreen", "fullscreen"));
             }
-            choices.extend([("Dev log", "devlog"), ("Quit to Main Menu", "main")]);
-            let row = ((h - if portrait { 110. } else { 90. }) / choices.len() as f32)
-                .min(if portrait { 64. } else { 48. });
+            choices.push(("Dev log", "devlog"));
+            choices.push(if request.lobby_status.is_empty() {
+                ("Quit to Main Menu", "main")
+            } else {
+                ("Lobby", "lobby")
+            });
+            let columns = if !portrait && (h - 90.) / choices.len() as f32 * scale < 34. {
+                2
+            } else {
+                1
+            };
+            let rows = choices.len().div_ceil(columns);
+            let row = ((h - if portrait { 110. } else { 90. }) / rows as f32).min(if portrait {
+                64.
+            } else {
+                48.
+            });
+            let column_width = (w - if portrait { 60. } else { 108. }) / columns as f32;
             let selected = request.selection % choices.len();
             for (i, (label, action)) in choices.iter().enumerate() {
                 f.choices.push(action.to_string());
@@ -595,9 +876,9 @@ pub fn layout(request: Request) -> Result<Frame> {
                     label,
                     action,
                     [
-                        24.,
-                        (if portrait { 98. } else { 78. }) + i as f32 * row,
-                        if portrait { w - 60. } else { w - 108. },
+                        24. + (i % columns) as f32 * column_width,
+                        (if portrait { 98. } else { 78. }) + (i / columns) as f32 * row,
+                        column_width,
                         row,
                     ],
                     i == selected,
@@ -857,6 +1138,14 @@ mod tests {
     fn request(page: &str, w: f32, h: f32) -> Request {
         Request {
             page: page.into(),
+            loading_status: "Reading original ATV...".into(),
+            quad_id: 1,
+            rider_id: 0,
+            room_code: String::new(),
+            player_name: String::new(),
+            lobby_status: String::new(),
+            lobby_host: false,
+            lobby_started: false,
             width: w,
             height: h,
             selection: 0,
@@ -877,6 +1166,7 @@ mod tests {
             menu_atv: true,
             diagnostics_mode: String::new(),
             one_handed_mobile: false,
+            funny_crashes: false,
             mobile_steering_sensitivity: 85.,
             race_laps: 3,
             race_cpu: 3,
@@ -889,11 +1179,11 @@ mod tests {
     fn supported_routes_have_no_unfinished_choices() {
         assert_eq!(
             layout(request("main", 1280., 720.)).unwrap().choices,
-            ["single", "devlog"]
+            ["single", "multiplayer", "devlog"]
         );
         assert_eq!(
             layout(request("single", 1280., 720.)).unwrap().choices,
-            ["tracks"]
+            ["tracks", "garage"]
         );
         let mut r = request("pause", 390., 844.);
         r.fullscreen = false;
@@ -909,7 +1199,7 @@ mod tests {
     fn race_availability_setup_and_restart_match_the_live_mode() {
         let mut r = request("single", 390., 844.);
         r.race_available = true;
-        assert_eq!(layout(r).unwrap().choices, ["tracks", "race"]);
+        assert_eq!(layout(r).unwrap().choices, ["tracks", "garage", "race"]);
         let f = layout(request("race", 844., 390.)).unwrap();
         assert_eq!(
             f.choices,
@@ -947,8 +1237,8 @@ mod tests {
             (768., 1024.),
         ] {
             for page in [
-                "title", "main", "single", "tracks", "race", "pause", "controls", "bindings",
-                "music",
+                "title", "main", "single", "race", "tracks", "garage", "loading", "pause",
+                "controls", "bindings", "music",
             ] {
                 let f = layout(request(page, w, h)).unwrap();
                 let scale = w / f.width;

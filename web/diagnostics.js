@@ -83,6 +83,7 @@ export class DiagnosticsOverlay {
       `Wreck ${f?.wreck?.phase ?? '—'}  Resets ${f?.reset_count ?? 0}`,
       `Boundary ${f?.boundary_launch?.active ? 'launch' : 'ready'} ${number(f?.boundary_launch?.elapsed ?? 0, 2)} s`,
       `Water ft ${s.water ? number(f?.water_height, 2) : 'none'}  Rider contacts ${f?.rider_wreck?.water_contact_count ?? 0}`,
+      `Deep water ${f?.water_failure?.submerged ? 'yes' : 'no'}  Reset in ${number(f?.water_failure?.remaining, 2)} s`,
       `Input T ${number(s.input?.throttle, 2)} B ${number(s.input?.brake, 2)} S ${number(s.input?.steer, 2)} L ${number(s.input?.lean, 2)}`,
       `Reverse ${s.input?.reverse ? 'on' : 'off'}  Rider ${s.riderMode ?? '—'}`,
       `Vegetation ${s.vegetationVisible ?? 0}/${s.vegetationPlacements ?? 0}  Batches ${s.vegetationDraws ?? 0}`,

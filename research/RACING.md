@@ -31,3 +31,25 @@ The National runtime archive and selected screenshot are pending the validated
 current-main R2 release procedure. The user requested no deployment waits.
 Race availability follows the content manifest so an older public package
 continues exposing working Freestyle until its National resource is published.
+
+## Integration with current main
+
+The race branch integrates `c895ba4` (including multiplayer, all-model selection,
+Vancouver, optional crash effects, fog and vegetation). Race ABI operations now
+use 95/96, preserving the multiplayer 80–85 range. The existing RawValue batch
+transport remains intact; an optional race field accompanies race batches and
+is omitted in Freestyle. Race start leaves an active multiplayer session.
+
+The combined native gate passes 325 core, 25 protocol, 3 relay and 13 bridge
+tests, strict Clippy, formatting, 69 JavaScript tests and Python syntax. The
+combined WASM build passes; 18 release/content and 6 Worker tests pass. Temporary
+native/WASM build caches avoided the host SSD clone stalls; browser artifacts
+were copied back to the existing SSD output. Production remains unverified.
+
+Final combined Chromium gates pass race play and all three layouts, actual
+one-finger steering/cancellation, player acceleration, countdown/pause/restart,
+radar and CPU motion, plus the separate results fixture. The existing frontend
+regression passes nine-map selection, Tioga driving, keyboard/controller,
+portrait Caribou and pause/Controls. The menu-model regression passes six
+viewport sizes, all 26 quad inspections, female rider views, idle/music and
+selected-model course loading without JS/GL errors. These are host checks.

@@ -6,15 +6,18 @@ pub mod browser_input;
 pub mod camera;
 pub mod collision;
 pub mod contact;
+pub mod crash_effects;
 pub mod drivetrain;
 pub mod ecosystem;
 pub mod elf;
 pub mod engine_audio;
+pub mod fog;
 pub mod grip;
 pub mod hud;
 pub mod ipu;
 pub mod iso;
 pub mod materials;
+pub mod menu_preview;
 pub mod mesh;
 pub mod motion_catalog;
 pub mod music;
@@ -29,6 +32,7 @@ pub mod scene;
 pub mod scene_candidates;
 pub mod scene_collision;
 pub mod scene_partition;
+pub mod scenery_material;
 pub mod sky;
 pub mod sound_effects;
 pub mod spatial_audio;
@@ -39,6 +43,7 @@ pub mod texture;
 pub mod train;
 pub mod water;
 pub mod water_animation;
+pub mod water_failure;
 pub mod water_render;
 pub mod water_surface;
 
@@ -74,5 +79,7 @@ pub mod vegetation_ray;
 pub mod vehicle;
 
 pub mod wreck_animation;
+
+pub mod player_models;
 
 pub mod race;

@@ -1,5 +1,6 @@
 // Original WTT/PSM inputs and the Rust physics field supply this portable pass.
 // Native PS2 VU tessellation/reflection coordinates and froth remain incomplete.
+import { fogVertexShader, fogFragmentShader } from './fog.js';
 export const heightQueryShader = `uniform float baseHeight;
 uniform int channelCount;
 uniform vec2 origins[8], inverseWidths[8], widths[8];
@@ -33,6 +34,7 @@ uniform vec3 eye, forward, right, up;
 uniform vec2 projection, screenBounds;
 uniform float farDistance;
 ${heightQueryShader}
+${fogVertexShader}
 void main() {
   vec2 screen = vec2(gridPoint.x, mix(screenBounds.x, screenBounds.y, gridPoint.y));
   vec3 direction = forward + right * screen.x * projection.x + up * screen.y * projection.y;
@@ -42,6 +44,7 @@ void main() {
   point.y = heightAt(point.xz);
   waterPoint = point;
   gl_Position = viewProjection * vec4(point, 1.0);
+  prepareFog(length(point - eye), gl_Position);
 }`;
 const fragmentSource = `#version 300 es
 precision highp float;
@@ -56,9 +59,9 @@ uniform highp sampler2DArray gradientMaps;
 uniform int gradientCount;
 uniform vec3 gradientWaves[4]; // prepared origin channel, atlas layer, GS FIX / 128
 uniform vec3 environmentColor, fogColor;
-uniform float fogDistance;
 out vec4 color;
 ${heightQueryShader}
+${fogFragmentShader}
 void main() {
   vec3 point = waterPoint;
   // Original Dx/Dz texture pairs and BumpScale supply the visual normals.
@@ -77,8 +80,7 @@ void main() {
   vec2 environmentUV = reflected.xz * 0.5 + 0.5;
   vec4 sampled = texture(environmentMap, environmentUV);
   vec3 surface = sampled.rgb * environmentColor;
-  float fog = 1.0 - exp(-pow(length(point - eye) / fogDistance, 2.0));
-  color = vec4(mix(surface, fogColor, min(0.94, fog)), clamp(sampled.a * (255.0 / 128.0), 0.0, 1.0));
+  color = vec4(mix(fogColor, surface, fogCoverage()), clamp(sampled.a * (255.0 / 128.0), 0.0, 1.0));
 }`;
 function compile(gl, kind, source) {
   const shader=gl.createShader(kind);gl.shaderSource(shader,source);gl.compileShader(shader);
@@ -98,7 +100,7 @@ export class WaterRenderer {
     const vertex=compile(gl,gl.VERTEX_SHADER,vertexSource),fragment=compile(gl,gl.FRAGMENT_SHADER,fragmentSource);
     this.program=gl.createProgram();gl.attachShader(this.program,vertex);gl.attachShader(this.program,fragment);gl.linkProgram(this.program);gl.deleteShader(vertex);gl.deleteShader(fragment);
     if (!gl.getProgramParameter(this.program,gl.LINK_STATUS)) throw new Error(`Water program: ${gl.getProgramInfoLog(this.program)}`);
-    this.uniforms=Object.fromEntries(['viewProjection','eye','forward','right','up','projection','screenBounds','baseHeight','farDistance','channelCount','origins[0]','inverseWidths[0]','widths[0]','channels[0]','tiled[0]','heightMaps','environmentMap','gradientMaps','gradientCount','gradientWaves[0]','environmentColor','fogColor','fogDistance'].map(name=>[name,gl.getUniformLocation(this.program,name)]));
+    this.uniforms=Object.fromEntries(['viewProjection','eye','forward','right','up','projection','screenBounds','baseHeight','farDistance','channelCount','origins[0]','inverseWidths[0]','widths[0]','channels[0]','tiled[0]','heightMaps','environmentMap','gradientMaps','gradientCount','gradientWaves[0]','environmentColor','fogColor','fogPacking','fogEnabled'].map(name=>[name,gl.getUniformLocation(this.program,name)]));
     this.vao=gl.createVertexArray();this.vertices=gl.createBuffer();this.indices=gl.createBuffer();
     // 00187bc0 quality1:334 projected subdivisions and3 stripgroups.
     // Portable topology differs from native VU generation; buffers remain static.
@@ -137,7 +139,7 @@ export class WaterRenderer {
     if (!frame || !Number.isFinite(frame.base_height) || frame.origins?.length!==this.channelCount || frame.origins.some(origin=>origin.length!==2 || !origin.every(Number.isFinite))) throw new Error('Invalid prepared shared water frame.');
     this.frame=frame;frame.origins.forEach((origin,i)=>this.origins.set(origin,i*2));
   }
-  draw({camera,viewProjection,focalLength,aspect,farDistance,fogColor,fogDistance}) {
+  draw({camera,viewProjection,focalLength,aspect,farDistance,fogColor,fog}) {
     const gl=this.gl,u=this.uniforms;this.draws=0;
     if (!this.frame) return;
     const started=performance.now();
@@ -164,7 +166,8 @@ export class WaterRenderer {
     gl.uniform2f(u.screenBounds,minimum,maximum);
     gl.uniform2f(u.projection,aspect/focalLength,1/focalLength);gl.uniform1f(u.baseHeight,this.frame.base_height);gl.uniform1f(u.farDistance,farDistance);
     gl.uniform1i(u.channelCount,this.channelCount);gl.uniform2fv(u['origins[0]'],this.origins);gl.uniform2fv(u['inverseWidths[0]'],this.inverseWidths);gl.uniform2fv(u['widths[0]'],this.widths);gl.uniform4fv(u['channels[0]'],this.channels);gl.uniform1iv(u['tiled[0]'],this.tiled);
-    gl.uniform3fv(u.environmentColor,this.material.environment_color);gl.uniform3fv(u.fogColor,fogColor);gl.uniform1f(u.fogDistance,fogDistance);
+    gl.uniform3fv(u.environmentColor,this.material.environment_color);gl.uniform3fv(u.fogColor,fogColor);
+    gl.uniform2f(u.fogPacking,fog?.encoded_bias??524288,fog?.coefficient??0);gl.uniform1i(u.fogEnabled,Boolean(fog)&&this.material.environment_fog);
     gl.activeTexture(gl.TEXTURE4);gl.bindTexture(gl.TEXTURE_2D_ARRAY,this.heightMaps);gl.uniform1i(u.heightMaps,4);
     gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,this.environment);gl.uniform1i(u.environmentMap,5);
     gl.activeTexture(gl.TEXTURE6);gl.bindTexture(gl.TEXTURE_2D_ARRAY,this.gradientMaps);gl.uniform1i(u.gradientMaps,6);

@@ -353,3 +353,20 @@ froth behavior. Public surface deployment and physical-device performance are
 not claimed by this host checkpoint. Probes, resource-derived fixtures,
 benchmarks and screenshots remain ignored under `work/water-render/` and
 `private/reports/water-render-*`.
+
+
+## Deep-water failure checkpoint
+
+The recovered ATV five-second reset clock is now connected in the authored port.
+It uses strict origin Y below the preceding cached surface minus three feet,
+decrements only while riding, restores five seconds in shallower water, and
+consumes expiration before the following update's physics. Recovery uses the
+retained dry checkpoint and resets rider/camera state. Detached riders retain
+the existing water-contact/Swim/solid recovery route and original buoyancy.
+There is no new ATV floating actor or invented head-submersion death.
+
+The 144-case native clock comparison and all-four-map source-resource browser
+water/rider gates are recorded in [water and snow verification](WATER_SNOW_GATE.md).
+ENV04/05/07 routes drown and return to the dry bank; ENV08's shallower route
+exercises wave/depth timer clearing. Public main `b9a3a44` / CI `38292520844` passes those routes and the separate
+HTTPS/content gates. These remain bounded checks, not whole-game or hardware parity.

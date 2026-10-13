@@ -186,3 +186,136 @@ test('missing original rider sample leaves engine and music available', async ()
     assert.deepEqual(reports, ['Rider effects: missing original sample']);
   } finally { audio.close(); globalThis.window = previousWindow; }
 });
+
+// Rust supplies deduplicated engine/impact selections; browser transport must
+// retain independent peer voices, obey pause and dispose stale/disconnected ones.
+async function withRemoteAudio(run) {
+  const previousWindow=globalThis.window, sources=[], nodes=[];
+  class Node {
+    constructor() {this.gain={value:1};this.playbackRate={value:1};this.connections=[];nodes.push(this);}
+    connect(...args) {this.connections.push(args);}
+    disconnect() {this.disconnected=true;}
+    start() {this.started=true;}
+    stop() {this.stopped=true;}
+  }
+  class Context {
+    constructor() {this.state='suspended';this.destination={};this.currentTime=0;}
+    createGain() {return new Node();}
+    createBufferSource() {const source=new Node();sources.push(source);return source;}
+    createChannelMerger() {return new Node();}
+    async resume() {this.state='running';}
+    async suspend() {this.state='suspended';}
+    async close() {this.state='closed';}
+  }
+  globalThis.window={AudioContext:Context,addEventListener(){},removeEventListener(){}};
+  const audio=new GameAudio(async()=>new Uint8Array());audio.music.update=async()=>{};
+  audio.ready=true;audio.config={samples:Array.from({length:10},()=>[])};
+  for(const name of ['idle1','idle2','drive','impact'])audio.buffers.set(name,{buffer:{duration:2},info:{channels:1,sample_rate:100,loop_start:20,loop_end:180}});
+  try {await audio.resume();await run({audio,sources,nodes});}
+  finally {audio.close();globalThis.window=previousWindow;}
+}
+const remotePeer=(peer,sample,extra={})=>({peer,stale:false,spatial:{left:25,right:75,pitch:4100},engine:sample?{sample,looping:true}:null,crash:null,...extra});
+
+test('remote engine changes preserve other peers and apply channels, loop points, pan and Doppler independently',async()=>{
+  await withRemoteAudio(async({audio,sources})=>{
+    audio.remoteFrame([remotePeer(1,'idle1'),remotePeer(2,'idle2')]);
+    assert.equal(audio.remoteVoices.size,2);assert.equal(audio.remoteStarts,2);
+    const first=audio.remoteVoices.get(1),second=audio.remoteVoices.get(2);
+    assert.equal(first.left.channelCount,1);assert.equal(first.right.channelCountMode,'explicit');
+    assert.equal(first.source.loopStart,.2);assert.equal(first.source.loopEnd,1.8);
+    assert.equal(first.left.gain.value,.25);assert.equal(first.right.gain.value,.75);assert.equal(first.source.playbackRate.value,4100/4096);
+    audio.context.currentTime=1;
+    assert.deepEqual(audio.remotePlaying(),[{peer:1,duration:2,playhead:1},{peer:2,duration:2,playhead:1}]);
+    audio.remoteFrame([remotePeer(1,'drive',{spatial:{left:100,right:0,pitch:4200}}),remotePeer(2,null)]);
+    assert(first.source.stopped);assert(first.source.disconnected);assert.equal(first.source.onended,null);
+    assert.equal(audio.remoteVoices.get(2),second);assert.equal(second.source.stopped,undefined);
+    assert.equal(audio.remoteVoices.get(1).sample,'drive');assert.equal(audio.remoteVoices.get(1).right.gain.value,0);
+    assert.equal(audio.remoteStarts,3);assert.equal(sources.length,3);
+  });
+});
+
+test('stale peers and departed slots stop all remote engine and impact nodes',async()=>{
+  await withRemoteAudio(async({audio,nodes})=>{
+    audio.remoteFrame([remotePeer(1,'idle1',{crash:{sample:'impact',spatial:{left:50,right:50,pitch:4096}}}),remotePeer(2,'idle2')]);
+    const engine=audio.remoteVoices.get(1),impact=audio.remoteEffects.get(1),survivor=audio.remoteVoices.get(2);
+    assert(engine&&impact);assert.equal(impact.source.loop,false);
+    audio.remoteFrame([remotePeer(1,null,{stale:true}),remotePeer(2,null)]);
+    assert.equal(audio.remoteVoices.size,1);assert.equal(audio.remoteEffects.size,0);
+    for(const voice of [engine,impact]) {assert(voice.source.stopped);assert(voice.left.disconnected);assert(voice.right.disconnected);assert(voice.merger.disconnected);}
+    assert.equal(audio.remoteVoices.get(2),survivor);
+    audio.remoteFrame([]);assert.equal(audio.remoteVoices.size,0);assert(survivor.source.stopped);
+    audio.remoteFrame([remotePeer(1,'drive')]);assert.equal(audio.remoteVoices.get(1).sample,'drive','reused slot starts a fresh voice');
+    audio.close();assert.equal(audio.remoteVoices.size,0);assert.equal(audio.remoteEffects.size,0);
+    assert(nodes.every(node=>!node.started||node.stopped));
+  });
+});
+
+test('remote audio drops locked and paused selections without replaying an impact backlog on resume',async()=>{
+  await withRemoteAudio(async({audio,sources})=>{
+    await audio.setActive(false);assert.equal(audio.context.state,'suspended');assert.equal(audio.engineGain.gain.value,0);
+    const event=remotePeer(1,'idle1',{crash:{sample:'impact',spatial:{left:25,right:75,pitch:4096}}});
+    for(let n=0;n<10;n++)audio.remoteFrame([event]);
+    assert.equal(sources.length,0);assert.equal(audio.remoteVoices.size,0);assert.equal(audio.remoteEffects.size,0);
+    await audio.setActive(true);audio.remoteFrame([remotePeer(1,null)]);
+    assert.equal(sources.length,0,'discarded events must not become delayed sounds');
+    audio.remoteFrame([remotePeer(1,'idle1')]);assert.equal(sources.length,1);
+    audio.context.state='suspended';audio.remoteFrame([event]);assert.equal(sources.length,1);
+    audio.remoteFrame([]);assert.equal(audio.remoteVoices.size,0,'leave cleanup still works while context is suspended');assert(sources[0].stopped);
+  });
+});
+
+test('remote one-shots release their slot and sample replacement does not replay cleared crash selections',async()=>{
+  await withRemoteAudio(async({audio,sources})=>{
+    audio.remoteFrame([remotePeer(1,'idle1',{crash:{sample:'impact',spatial:{left:10,right:90,pitch:4096}}})]);
+    const impact=audio.remoteEffects.get(1);assert.equal(impact.left.gain.value,.1);assert.equal(impact.right.gain.value,.9);
+    impact.source.onended();assert.equal(audio.remoteEffects.size,0);assert(impact.source.disconnected);
+    const before=sources.length;
+    audio.remoteFrame([remotePeer(1,null)]);assert.equal(sources.length,before);
+    audio.remoteFrame([remotePeer(1,'drive')]);assert.equal(sources.length,before+1);assert.equal(audio.remoteEffects.size,0);
+  });
+});
+
+test('simultaneous remote model requests share decoding work for duplicate ATV models',async()=>{
+  await withRemoteAudio(async({audio})=>{
+    let release;const wait=new Promise(resolve=>{release=resolve;});let configs=0,decoded=0;const samples=[];
+    audio.engineTable=new Uint8Array([1]);
+    audio.codec=async(op,bytes,index)=>{assert.equal(op,87);assert.equal(index,2);configs++;await wait;return new TextEncoder().encode(JSON.stringify({samples:[['idle1','idle1'],['drive']]}));};
+    audio.loadSample=async name=>samples.push(name);audio.decode=async()=>{decoded++;};
+    const players=[{id:1,atv_model:2},{id:2,atv_model:2}];
+    const a=audio.loadRemoteModels(players),b=audio.loadRemoteModels(players);
+    assert.equal(configs,1);release();await Promise.all([a,b]);
+    assert.deepEqual(samples,['idle1','drive']);assert.equal(decoded,1);assert.equal(audio.remoteLoaded.size,1);
+  });
+});
+
+test('closing audio while a remote model config is pending prevents sample loading and voice resurrection',async()=>{
+  await withRemoteAudio(async({audio,sources})=>{
+    let release;const pending=new Promise(resolve=>{release=resolve;});let samples=0,decodes=0;
+    audio.engineTable=new Uint8Array([1]);audio.codec=()=>pending;
+    audio.loadSample=async()=>{samples++;};audio.decode=async()=>{decodes++;};
+    const loading=audio.loadRemoteModels([{id:1,atv_model:2}]);audio.close();
+    release(new TextEncoder().encode(JSON.stringify({samples:[['idle1']]})));await loading;
+    assert.equal(samples,0);assert.equal(decodes,0);audio.remoteFrame([remotePeer(1,'idle1')]);assert.equal(sources.length,0);
+  });
+});
+
+test('original stereo menu tune has one looping voice, silent engines and clean preview transitions', async () => {
+  const previousWindow=globalThis.window, sources=[];
+  class Context {
+    constructor(){this.state='suspended';this.destination={};this.currentTime=0;}
+    createGain(){return {gain:{value:1},connect(){},disconnect(){}};}
+    createBufferSource(){const source={connect(){},start(){this.started=true;},stop(){this.stopped=true;},disconnect(){}};sources.push(source);return source;}
+    async resume(){this.state='running';}async suspend(){this.state='suspended';}async close(){this.state='closed';}
+  }
+  globalThis.window={AudioContext:Context,addEventListener(){},removeEventListener(){}};
+  const audio=new GameAudio(async()=>{throw new Error('No engine simulation in menu');});
+  audio.menuTracks=Array.from({length:4},(_,i)=>({name:`UI/uitune${i+1}`,buffer:{length:128,numberOfChannels:2},info:[{sample_rate:100,loop_start:10,loop_end:100}]}));
+  try {
+    await audio.setActive(false);await audio.setMusicPreview(true,true);await audio.playMenuMusic();
+    assert.equal(sources.length,1);assert.equal(sources[0].loop,true);assert.equal(sources[0].loopStart,.1);assert.equal(sources[0].loopEnd,1);
+    assert.equal(audio.engineGain.gain.value,0);assert.equal(audio.commands,0);assert.equal(audio.snapshot().menuMusic.stereo,true);
+    await audio.setMusicPreview(true,true);assert.equal(sources.length,1,'Page navigation must not duplicate the loop');
+    await audio.setMusicPreview(false);assert.equal(sources[0].stopped,true);assert.equal(audio.context.state,'suspended');
+    await audio.setMusicPreview(true,false);assert.equal(audio.menuSource,null,'Soundtrack selector stops the dedicated menu tune');
+  } finally {audio.close();globalThis.window=previousWindow;}
+});

@@ -20,11 +20,370 @@ See research/RACING.md for verification updates. The user requested no
 deployment waits: public availability, CI and screenshot/content upload remain
 separate pending gates.
 
+The race slice now integrates main `c895ba4`. The combined gate passes 325 core,
+25 protocol, 3 relay, 13 bridge and 69 JS tests, strict Clippy/formatting,
+18 release/content tests, 6 Worker tests, WASM, setup/hygiene, race play,
+frontend and all-26-model regressions. Race ABI 95/96 preserves multiplayer
+80–85; race data accompanies the existing RawValue simulation batch transport.
+Temporary native/WASM caches avoided host SSD clone stalls; static browser
+artifacts remain on the SSD. Public/CI verification is still pending.
+
 This is a race preview, not recovered original racing: CPU actors follow the
 route with distinct deterministic speeds and shared neutral ATV/rider meshes.
 Original AI decisions/physics, rider-to-rider collisions, costume diversity,
 Lead timing, HUD toggles, other courses and progression remain incomplete.
 
+
+## Ordered vegetation: tested host release candidate
+
+The isolated map branch connects original distant atlases and source-correlated
+near/far phase, alpha/depth and retained-orientation behavior on all nine maps.
+One shared atlas uses two back-to-front billboard batches; total vegetation
+draws are 8–17/map. Rust prepares stable 64² visibility cells and direct species
+lookup; bounded browser selection matches a full scan, reducing starting-view
+placement checks by about 69–92%. The current browser visibility envelope remains
+provisional. Native billboard per-row fog/depth packing, callback order, exact
+camera/viewport mapping and GS/VU hardware behavior remain open.
+
+Host source-color comparisons pass 1,800 RGBA samples with zero byte differences;
+1,800 vertex comparisons have maximum error 0.0009765625 and exact UVs. All nine
+map driving and near/distant material gates, Vancouver desktop/390px, FREE05
+multiplayer and shared shader regressions pass. 317 core/25 net/3 relay/13 bridge/
+68 JS tests, formatting, Clippy, setup, 17 release and 6 Worker tests pass. The
+fresh ENV08 hero is inspected and private until this checkpoint passes current
+main CI/deployment. See research/MAP_FIDELITY.md and the host-only dev-log entry.
+No Mistakes is disabled; normal verification and origin/GitHub CI apply.
+
+The preceding public release is `e1afc2cb984db40a06ebf1138c56c895578c9280`,
+including the d9596d9 vegetation/transport proof and default-off funny crashes.
+Its responsible release chat reports CI 38320324826/deployment success, 32 authored
+files, 410 served objects, 106 runtime records and 124 gallery entries/104 images.
+The following near-material public proof remains release-scoped to d9596d9.
+## Model selection and original menu presentation: host checkpoint
+
+An isolated worktree adds all-26-quad inspection cards, original 32-node male/female
+menu rigs, original breathing/idle MOT sampling in an independent Rust runtime,
+dedicated stereo UI tunes and full Rust course loading with original track photos.
+The menu gate passes six viewport sizes, 44px controls, both input navigation paths,
+rotation, rapid selection, context restoration and selected-model course loading.
+Frontend and all-21-song regressions pass. The staged private R2 package has 107
+records/307 validated files; source resources and screenshots remain excluded
+from Git/CI. Native idle scheduling/transition rules, lighting/specular fidelity,
+outfits, hair and physical phones remain open. See research/MENU_SELECTION.md.
+Public application and R2 checks are pending the merged main CI release; the user
+requests delivery without waiting for deployments. Preserve other implementation
+lanes and use origin rather than the disabled No Mistakes remote.
+
+
+## Optional funny crashes: verified host checkpoint
+
+The default-off Pause → Funny crashes option runs an authored Rust presentation
+layer on actual wreck/separation events: joint-limited rider tumbling and bouncing
+original wheels, handlebars, swingarm and rear axle. Local rider only; native
+vehicle/rider collision, score, recovery and camera remain unchanged. Recovery
+clears effects and restores intact models. Arbitrary chassis fracture and debris
+contacts against props/water are not implemented. See research/CRASH_EFFECTS.md.
+
+Host desktop ATV01/male and 390px ATV26/female failure routes pass rendered poses,
+pause, Off/On during a wreck and resumed driving. Mirrored exact-input WASM
+comparisons cover 415 + 430 ordinary and 762 severe-crash steps with zero compared
+gameplay/camera/water/train/wheel-field mismatches after excluding effects and the
+echoed option. The severe driving/stunt-input gate displays all seven pieces and
+recovers; the normal failure sheds two front wheels. Baseline Off also passes.
+312 core, 3 web, workspace net/relay and 68 JS tests, formatting, strict Clippy,
+WASM build and make verify pass. Host screenshots are inspected and recorded in
+the dev log, with publication pending validated main CI and the R2 gallery upload.
+This evidence is an optional presentation component, not original-game parity.
+
+## Latest verified public near-material release
+
+Public main `d9596d937907395440b61e78be61b2045d987d4d` (PR #12) passed CI
+`38318057407` and is deployed. Deployment identity matches the validated
+artifact. Canonical R2 retains 106 records and 306 references; the current upload
+validates 408 approved objects totaling 310,198,438 bytes. HTTPS verification
+matches all 32 authored files and 407 served objects by hash, size and MIME. The
+public gallery has 120 entries and 101 screenshots.
+
+The public near-vegetation material gate passes all nine maps; 600 actual-GPU
+RGBA comparisons have zero byte differences. Public transport validation passes
+1,200 steps with exact sequential frame and camera decimal outputs. No production
+timing benchmark was run. The public route regression passes all nine maps.
+Vancouver desktop/390px passes with 78 drawn placements, 43 colliders, 37,649
+plants, 123 wheel-support frames, 31 body-contact frames, takeoff at step 19,
+later landing, ATM frame 1 and the default-unlocked route. Public touch input
+matches batched/sequential behavior for 124 steps, including shifted release and
+cancellation. A public copied-link FREE05 pair passes with 13 remote draws per
+client, male/female rigs, one voice per client, host cleanup and a measured
+4.9307901763-foot remote distance. No public production timing benchmark was
+run; the transport microbenchmark is host-only. These are bounded component and
+route checks, not full-scene or PS2 equivalence. The selected ENV07 screenshot is
+inspected but remains in private storage until a later validated current-main
+artifact supports a gallery update. Weather callbacks, distant vegetation/LOD,
+point lights, shadows and native GS/full-frame behavior remain open.
+
+## Previous verified public fog/reflection release (e18a371e)
+
+Public main `e18a371e81b471137dd5fb1121b05d454584b1d0` passed CI
+`38312395498`. The validated artifact matches 32 authored files and all 405
+served objects. The canonical R2 package contains 106 records, 306 referenced
+files and 406 approved objects across three changes; the public gallery has 118
+entries and 99 screenshots. HTTPS/hash and public browser gates pass.
+
+Public ENV01/ENV04/FREE05 fog checks match 3,000 GPU coverage samples with zero
+byte differences; the tested screen-affine interpolation sample passes at 55.
+ENV01 reflections draw 88 groups/275 instances with 141,770 contributing pixels;
+FREE05 draws three groups/78 instances with 236,380 pixels. Across both maps,
+2,304 GPU comparisons have maximum UV error 7.15e-7. All nine maps pass. Public
+materials report 4,618 rain, 73,970 lava, 6,335 waterflow and 115,571 ski-jump
+contributing pixels, with pause/context retention. Four wet-map and 390px water
+checks, dry-map behavior, Vancouver desktop/390px contact traces, original
+frontend routes, and copied-link FREE05 multiplayer pass. The Vancouver traces
+draw all 78 placements with 43 colliders, 123 wheel-support frames, 31
+body-contact frames, takeoff at step 19 and later landing. The public multiplayer
+pair draws 13 remote models with both rigs, audio and movement.
+
+This verifies authored browser components and routes, not complete map/game
+parity or PS2 hardware behavior. Fog packing remains source-correlated; native
+terrain/water GS precision is unverified. The later d9596d9 release adds
+near-vegetation material and bounded transport checks, but does not complete
+source tree lighting. Global Sun/frame behavior, distant transitions, LOD, other
+lighting, shadows, lens behavior, weather callbacks, remaining modes and
+progression remain open. See [deployment evidence](research/DEPLOYMENT.md),
+[map evidence](research/MAP_FIDELITY.md) and the public
+[dev log](https://atv-offroad-fury-2.champtoday.workers.dev/devlog.html).
+
+## Historical public Vancouver Ridge map checkpoint (f585991)
+
+Public main `f585991579f8c44b098d6b137b1679eb8050e3fd` passed CI
+`38302626466`; HTTPS verification matches all 31 authored files and 399 served
+objects. The R2 package validates 400 approved objects, with six incremental
+changes totaling 305,224,223 bytes. The public gallery has 110 entries and 93
+screenshots. Vancouver Ridge/FREE05 is connected to Single Player → Freestyle
+under its original SPStunt6 name and two-part thumbnail, unlocked by default.
+
+Public desktop and 390px traces each cover the original terrain, 37,649 snow
+plants, 78 source scenery definitions/75 drawn, 43 placed colliders, 123
+wheel-support frames, 31 body-contact frames, flight at step 19, later ground
+contact, and drag-light frame 1. The bounded ramp route uses normal throttle
+without injected velocity, force or wreck state. The public ENV01–ENV08 plus
+FREE05 regression, source-material inspection and original title/menu/controller/
+touch/pause routes pass without JavaScript or GL errors or a disc prompt. These
+are browser component and route checks, not full map, hardware or game parity.
+Three Vancouver ice-reflection overlays, exact fog, 92 light/lens behaviors,
+projected terrain/vegetation LOD, shadows, weather, remaining modes and progression
+remain open. See [map evidence and limits](research/MAP_FIDELITY.md) and the
+[deployment record](research/DEPLOYMENT.md). Preserve the separate multiplayer
+integration lane. The newly inspected desktop public-ride screenshot is referenced
+in the local log but remains in ignored private storage pending the next validated
+R2 gallery upload.
+
+## Historical host reflection checkpoint, later released in e18a371e
+
+An uncommitted renderer candidate now draws ENV01's 88 original reflection groups
+across 275 instances and FREE05's three groups across all 78 instances, with no
+skipped groups. Host inspection records 152,862 and 236,566 contributing pixels.
+The updated Vancouver desktop and 390px traces draw all 78 placements with zero
+skipped groups; both have 43 colliders, 123 wheel-support frames and 31
+body-contact frames, plus takeoff at step 19, later ground contact, animation and
+menu checks. Expanded GPU transform feedback compares 768 original arithmetic
+cases across identity, translated/rotated placement and rotated child-node
+transforms: 2,304 GPU comparisons across 5,376 interpreted instructions, with
+maximum UV difference 7.152557373046875e-7. The test supplies a pre-normalized
+finite local view direction and does not emulate PS2 accumulators, reciprocal
+behavior or the full pipeline. `make check` passes 308 core tests, 22 network
+tests, 11 relay tests, 3 bridge tests and 66 JavaScript tests. `make verify`,
+`make web`, 17 release tests and 6 Worker tests also pass. All nine maps pass
+terrain-following/vegetation checks; material tests report 2,488 rain, 73,978
+lava, 6,329 waterflow and 115,571 ski-jump contributing pixels with pause/context
+retention. Original menu/controller/touch/pause routes, Tioga drive and Caribou
+reload pass without a disc prompt or browser errors. This earlier host
+reflection evidence was subsequently integrated and passed public verification
+in e18a371e; this f585991 checkpoint predates it. See
+[map-fidelity evidence](research/MAP_FIDELITY.md).
+
+## Historical host fog checkpoint, later released in e18a371e
+
+The integrated host candidate now reads source Fog Visibility and Haziness for
+ENV01/ENV04 (range 0–768, haziness 1) and FREE05 (352–768, haziness 0.5),
+with ENV01/ENV04 source haziness 1.2 clamped by Rust `min(1)` to 1, and following
+fog end for the view far clip. Compressed
+prelit materials use source-correlated 8-bit GS fog packing and the per-PSM
+fogging switch; the water base pass uses its source switch. The shared GPU
+coverage path uses screen-affine interpolation rather than the earlier guessed
+exponential curve. On the host GPU, 3,000 coverage samples match with zero byte
+difference; a triangle sample is 55 versus 55.25 affine and 96.25 perspective.
+
+Native range/coefficient checks cover 600 scalar cases and 35,393 original EE
+instructions with zero compared binary32 mismatches. The 3,000 packing samples
+are source-correlated expressions with finite distance supplied, not complete
+VU runs or hardware replay. The fog-integrated reflection test passes 2,304 GPU
+comparisons with maximum UV error 7.15e-7. Nine-map, materials, water, Vancouver
+desktop/390px contact and frontend regressions pass; `make check` passes 309
+core, 22 network, 11 relay, 3 bridge and 66 JavaScript tests, alongside verify,
+web, 17 release and 6 Worker tests. The disassembler's SUB broadcast label was
+corrected against execution: SUBAz writes ACC; the reflection XYZ comparisons
+are unchanged because the tested operation wrote W only.
+
+This host evidence was later released and publicly verified in e18a371e; it is
+absent from the historical `a4d3003`, `cef26f4` and `f585991` releases. The
+integrated multiplayer host checks also pass: two-client
+FREE05/link-pair routes draw 13 remote models; four actual clients each render
+three remotes in 39 draws with three voices, and every movement driver passes.
+Host departure clears remote models and voices; cancellation during map loading
+passes. Timing was measured in one Mac headless Metal synthetic-focus run and
+does not establish device or Internet performance. The combined gate passes
+309 core, 25 network, 3 relay, 12 bridge and 68 JavaScript tests, plus 17
+release tests, 6 Worker tests, verify, web and hygiene checks. Terrain and
+water GS precision, water reflection/froth, source-specific program precision,
+active-view overrides, weather callbacks, lighting, shadows, lens effects and
+LOD remain open. The host ENV04 screenshot in the dev log is not a public-build
+capture or an original PS2 framebuffer. Preserve the separate multiplayer
+release lane.
+
+## Verified public ninth-map Rust multiplayer
+
+The merge preserves the public map/scenery release and extends Rust's shared
+lobby catalog to `env01`–`env08` plus `free05`. IDs remain stable; map 9 wraps to 1,
+and invalid map 10 is rejected. Rust supplies both environment keys and next-map
+metadata to browser UI/socket glue. The packet layout and host/identity/rate
+controls are unchanged. Two actual public browsers copy/join an invite, cycle to
+Vancouver, load matching scenes, draw both rigs, exchange movement and engine
+voices, then end cleanly with host departure. A real close-during-load gate keeps
+a completed old load on the Multiplayer menu without resurrecting its room or
+resuming a disconnected ride. The original eight-map driving,
+touch-wreck, water/snow and public model proofs remain separate evidence.
+
+Combined host gates pass 307 core, 25 protocol, 3 relay, 12 WASM and 68 JS tests,
+17 release/content and 6 Worker checks, strict formatting/Clippy and 13 live relay
+cases. The 106-record runtime package preserves both lanes' required resources.
+Main `cef26f4495f0c5dbf6f8398133ea81bf4b78aed3` passes CI `38307658534`.
+Public HTTPS matches 31 authored files, the Rust relay identity/WASM hash and
+402 served objects (115 log entries/96 screenshots before this verification note).
+All 13 public relay cases, copied-link Vancouver play and host-close during loading
+pass. Four public clients each draw three remote peers in 39 draws with three
+engine voices; movement from all four riders reaches all observers, and host-end
+clears guest rooms, audio and GPU caches. A 390px failed-stunt replay records 403
+guest frames, 42 detached-rider frames and 14 spatial impact-audio frames, followed
+by recovery. No later WIP reflection work is included.
+
+All 26 garage choices pass again against this merged public renderer: 13 male and
+13 female selections load correct resources, produce actual animated GPU draws,
+drive 37.44–44.76ft and run their exact model engine configuration without browser,
+HTTP, worker or WebGL errors. The validated canonical private `hosted-content`
+manifest now has 106 records; prior manifests and old blobs are retained.
+
+The four-client 12-second sample uses one Mac, headless Chromium Metal, 1280×896
+and synthetic focus: 71.00–75.86 FPS, 25.9–27.2ms frame p95, 2.61–3.11ms render
+CPU, 2.1–6.6ms physics round trips and 41–52ms relay RTT. Concurrent validation
+workload overlap was not measured; these are bounded results, not device or
+Internet guarantees. Shared dynamic-world clocks, racing, player collision,
+host migration and server/host physics reconciliation remain unfinished.
+
+## Verified public Rust multiplayer checkpoint
+
+Isolated `feature/rust-multiplayer` adds four-player host-controlled Freeride
+lobbies, eight-character share codes/links and an authored Rust Cloudflare relay.
+Rust owns packet validation, sender identity, pose interpolation and per-peer
+spatial sound selection. Local driving remains immediate in its existing Rust
+simulation; this is owner-authoritative presentation, with no player-to-player
+collision resolution or competitive race authority yet. See
+[network implementation](research/MULTIPLAYER.md), [original multiplayer evidence](research/MULTIPLAYER_ORIGINAL.md)
+and [model census](research/MULTIPLAYER_MODELS.md).
+
+The garage adds all 26 recovered in-race quads with their own PHY/AO/AR/linkage
+resources, and male 18/female 27-node rigs with their matching 78-motion catalogs.
+Original unlock/profile rules are not reconstructed. Networking preserves source
+node shear and detached rider poses; state switches/teleports are discontinuities.
+Host departure closes the event. Protocol/relay component commits are 4fa8ad0 and
+53a0db4; browser integration is b96c702. Public main
+`ceee73d44bc69f940729c5fdf20b892e4394bb59` passes CI `38300517282`. No source disc/executable/unused VUT or first-person arms enter
+GitHub or the runtime package.
+
+Initial host gates pass 299 core + 22 net + 3 relay + 11 WASM + 66 JS tests, strict formatting/Clippy,
+15 release + 5 Worker checks and make verify. Actual two-browser code/link admission,
+different models/rigs, remote movement, engine voices and host departure pass.
+A hardware Metal touch-driven failed Nac Nac replicates Riding/Airborne/Wreck,
+crash serial, independent rider separation, original impact audio and recovery;
+local RTT measurements do not establish Internet or physical-phone performance.
+The private native probe covers all 26 quads and both rigs’ 3,276 sampled poses.
+
+The checked CI artifact includes the compiled Rust relay and the existing game
+Worker hosts its routes and Durable Object, preserving the scoped CI credential. `/multiplayer/version` reports its configured checked
+commit/WASM hash. Expanded required resources are staged separately in
+`private/reports/multiplayer-content` and must be uploaded from a validated current-main
+artifact using `upload_cloudflare_content.py --content`. That package is now public:
+396 approved R2 objects, with 59 incremental uploads. HTTPS verification matches
+31 authored/static hashes and all 395 served runtime/gallery objects, with 108
+log entries and 91 screenshots before the public verification note. The relay's
+configured commit/WASM hash matches its checked CI artifact. The original scoped
+CI token deploys the combined Worker; host upload authentication uses the existing
+Wrangler login (refresh an expired OAuth session with `wrangler whoami`).
+
+Public real-browser verification follows the actual copied invite link, starts
+ATV01/male and ATV02/female, draws remote rigs, exchanges movement and spatial
+engine sound, and ends cleanly with host departure. A 390px touch-driven failed
+Nac Nac produces 112 guest samples across Riding/Airborne/Wreck, 51 detached-rider
+frames, 13 original impact-audio frames with changing pan, then recovery. Sampled
+round trips are 38–51ms from this host through public Cloudflare, not a promise
+about other locations or physical devices. Normal public menus/controller,
+Tioga/pause and 390px Caribou reload also pass with no disc prompt or browser errors.
+
+The actual public four-browser gate also passes with ATVs 1/14/26/2 and both rigs.
+Each client draws three remote peers (39 draws) and starts three independent engine
+voices; each rider's keyboard movement reaches all three observers. Host departure
+clears all guest room/pose/audio/impact/GPU caches without browser or HTTP errors.
+A 12-second measurement on one Mac with Chromium Metal, 1280×896 and synthetic
+focus yields 71.59–74.14 FPS, 26.4–27.2ms frame p95, 2.47–2.92ms render CPU and
+2.1–4.3ms physics worker round trips. Relay RTT samples range 37–201ms, ending at
+42–47ms. These automation/device/workload conditions do not establish general
+Internet, physical-phone or multi-device performance. Repeat with
+`tools/test_multiplayer_four.mjs`; original-content garage coverage is repeatable
+through `tools/test_player_models.mjs`. Outputs remain in ignored private storage.
+
+All 26 garage choices also pass the public actual-UI single-player probe, with
+13 male and 13 female selections. Each loads its own expected model/physics/material
+paths, renders finite 27-node quad and 18/27-node rider poses, drives 37.21–45.45ft
+under throttle and runs its exact per-model engine configuration/voice. No HTTP,
+page, worker or WebGL errors occur. Public representative models 01/14/26 were
+inspected; this verifies the connected loading/driving path, not complete original
+handling, unlock, controller or physical-phone parity.
+
+The current component gate passes 303 core, 22 protocol, 3 relay, 11 WASM and 66 JS
+tests, 16 release/content checks, 6 Worker routing checks, formatting/Clippy and
+`make verify`. All 11 live public relay checks pass, including four-slot capacity,
+stale command resynchronization, sender identity, malformed-packet isolation,
+rate limits and host-end behavior. Preserve the integrated water/snow and UI lanes.
+
+The combined merge against water/snow main cec8a6d passes 303 core, 22 net,
+3 relay, 11 WASM and 66 JS tests, plus 15 release/5 Worker checks. Serial
+host browser gates retain multiplayer touch-wreck replication, all four wet-map
+reset/Swim routes and 24 desktop/390px snow collision approaches.
+## Verified public water and Caribou collision checkpoint
+
+Main `b9a3a448d6d19103d63be8e6ec530974297b1870`, CI `38292520844` success,
+is public on Cloudflare after PR #5 from `feature/water-snow-collisions` in the
+separate managed worktree. The original five-second deep-water reset uses the
+preceding cached surface and retained checkpoint. Public ENV04/05/07 routes
+expire/reset at 348/349, 345/346 and 337/338 and return above water to the dry bank.
+ENV08's shallower route exercises countdown clearing without expiration. All
+four wet maps pass water-only rider buoyancy, Swim and recovery; ENV04 passes
+at desktop/390px. Existing Caribou ramp and all five ski colliders needed no
+new shape/offset: 776 per-face tree rays and 24 public desktop/390px approaches
+cover wheel/body response and clean ramp launch/landing at 35.631ft/s upward.
+
+Public HTTPS verification matches 30 authored files and 343 served objects,
+with 103 dev-log entries / 90 inspected screenshots before the verification note.
+R2 validates 344 objects and uploads only the new approved host snow PNG and
+gallery metadata; no runtime resource changes. A first hash fetch resets its
+connection; the complete retry passes. Public clean touch landing, Nac Nac
+wreck/recovery/driving, title/menu/controller/Tioga/Controls/390px Caribou reload
+without a disc prompt, F3/Pause Stats persistence and portrait fit, uninterrupted
+ENV01–08 driving and dev-log filters/expandable evidence pass without JS/GL errors.
+302 core + 2 WASM tests, 47 JS tests, strict Clippy/fmt, setup, 13 release/4 Worker
+checks pass. The snow screenshot is a host capture; no public capture is claimed.
+See [water/snow evidence and limits](research/WATER_SNOW_GATE.md). These bounded
+source-resource routes and component probes do not prove complete gameplay,
+render/wake fidelity, physical-phone behavior or PS2 hardware parity.
 
 ## Latest verified public rail checkpoint
 

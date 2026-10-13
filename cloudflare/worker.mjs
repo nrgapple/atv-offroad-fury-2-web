@@ -31,7 +31,14 @@ async function gallery(request, env) {
 
 export default {
   async fetch(request, env) {
-    const path = new URL(request.url).pathname;
+    const url = new URL(request.url);
+    const path = url.pathname;
+    if (path.startsWith('/multiplayer/')) {
+      if (request.headers.get('Origin') !== (env.GAME_ORIGIN ?? url.origin)) return new Response('Origin denied', {status:403});
+      if (request.method !== 'GET' && request.method !== 'POST') return new Response('Method not allowed', {status:405});
+      if (!env.MULTIPLAYER) return new Response('Multiplayer unavailable', {status:503});
+      return env.MULTIPLAYER.fetch(request);
+    }
     if (request.method !== 'GET' && request.method !== 'HEAD') return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
     if (path === '/') {
       const index = new URL(request.url);

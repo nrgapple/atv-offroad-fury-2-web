@@ -524,3 +524,215 @@ loading/driving covers 1,875 scene instances with zero unsupported meshes/JS/GL
 errors; normal menu/controller/Tioga/Controls and 390px Caribou reload pass with
 no disc picker. The four public train collision cases retain the same lift,
 launch and wreck/recovery results. See research/RAILS.md for evidence limits.
+
+
+## Deep water and Caribou ramp coverage (2026-10-12)
+
+Public main `b9a3a448d6d19103d63be8e6ec530974297b1870` succeeds in CI
+[38292520844](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38292520844)
+after PR #5 from the isolated water/snow branch. The current-main artifact and
+public deployment identity match. R2 validates 344 approved objects and uploads
+only two changes (inspected host snow PNG and gallery metadata); original runtime
+content is unchanged. HTTPS verification matches 30 authored files and 343 served
+objects, with 103 entries and 90 screenshots before the verification note. An
+initial object fetch has a transient connection reset; the complete retry passes.
+
+Public deep-water routes on ENV04/05/07 consume the original five-second clock
+and reset to a dry bank; ENV08 exercises shallower depth/wave clock clearing.
+All four wet maps show water-only rider buoyancy/Swim/recovery, also at 390px on
+ENV04. All six Caribou ramp/ski placements supply wheel/body contacts in 24
+desktop/390px approaches; the clean ramp launch/landing reaches 35.631ft/s upward.
+The existing authored collision geometry requires no added shape or offset.
+
+Public clean landing, Nac Nac wreck/recovery/driving, normal title/menu/controller
+and mobile map routes without disc selection, diagnostics persistence/layout,
+uninterrupted all-eight-map driving and dev-log filters pass without JS/GL errors.
+These are bounded original-resource routes and component proofs, not complete
+PS2/gameplay/physical-phone parity. See [water/snow evidence](WATER_SNOW_GATE.md).
+
+## Public Vancouver Ridge and nine-map checkpoint (2026-10-12)
+
+Main commit `f585991579f8c44b098d6b137b1679eb8050e3fd` passed successful CI run
+[`38302626466`](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38302626466).
+The public deployment identity matches that commit. R2 validates 400 approved
+objects and uploaded six incremental changes totaling 305,224,223 bytes. HTTPS
+verification matches all 31 authored files and 399 served objects. At verification,
+the public log contained 110 entries and 93 screenshot references.
+
+The public Single Player → Freestyle route includes FREE05 Vancouver Ridge as the
+original SPStunt6 entry, unlocked by default with its original two-part thumbnail.
+Desktop and 390px source-derived ramp traces each record 78 model definitions,
+75 drawn, 43 solid colliders, 37,649 vegetation placements, 123 wheel-support
+frames, 31 body-contact frames, flight beginning at step 19, later ground contact
+and drag-light frame 1. The bounded test uses ordinary throttle without injected
+velocity, force or wreck state. This does not test every collision face or prove
+original hardware behavior.
+
+The uninterrupted public map regression passes ENV01–ENV08 and FREE05, with
+terrain following, batched vegetation, no unsupported meshes and zero JS/GL errors.
+Material inspection records 2,729 contributing ENV04 rain pixels, 73,978 ENV07
+lava pixels, 6,331 ENV08 waterflow pixels and 115,571 FREE05 ski-jump pixels.
+Prelit attributes, source UV animation, pause/context phase retention and the
+original title/menu/controller/touch/pause routes pass. The frontend test also
+reaches Tioga, reloads Caribou at 390px and sees no disc prompt or browser errors.
+
+The newly inspected desktop public-ride capture is recorded in the local dev log,
+but its PNG remains in ignored private storage pending the next validated R2
+gallery upload. The public screenshot count above predates that entry. Three
+Vancouver ice-reflection overlays, exact fog, 92 light/lens behaviors, projected
+terrain/vegetation LOD, shadows, weather, other modes and progression remain
+unfinished. The public checks establish these authored browser components and
+routes, not full-map or original-game parity.
+
+
+## Rust Freeride multiplayer release (2026-10-12)
+
+Main `ceee73d44bc69f940729c5fdf20b892e4394bb59` passes
+[CI 38300517282](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38300517282)
+and is verified on the existing public HTTPS game URL. The checked artifact now
+contains authored frontend assets and a compiled Rust room relay. The existing
+game Worker exports its Rust `LobbyRoom` Durable Object and delegates room routes
+to the Rust WorkerEntrypoint; no separate Worker or expanded CI credential is
+required. `/multiplayer/version` reports the checked commit and relay WASM hash.
+
+The private expanded R2 package includes 26 quad mesh/PHY/AO/AR/particle archives,
+both rider body rigs, their union of 140 used MOT clips, connected materials and
+per-model engine banks. Unused first-person arms and unreferenced animation clips
+are excluded. The uploader validates 396 approved objects and uploads 59 changes;
+HTTPS verification checks all 395 served runtime/manifest/PNG objects plus 31
+unchanged authored/static hashes. The gallery initially has 108 entries and 91
+screenshots; the public verification note follows separately. Source resources
+and screenshots remain outside GitHub and CI. If the existing host OAuth session
+has expired, `npx --yes wrangler@4.149.0 whoami` refreshes it before the R2 upload.
+
+Eleven live public Rust relay gates pass, including four-slot capacity, origin
+rejection, reserved host identity, stale command resynchronization, immutable
+active map/start, validated snapshots, safe slot reuse, malformed sender isolation,
+rate limits, model validation and host departure. The real two-browser Metal GPU
+gate uses the copied invite link and distinct ATV01/male and ATV02/female rigs.
+Remote movement, orientation, spatial engine audio, touch-driven crash/rider
+separation/impact sound/recovery and host-end all pass. The crash trace contains
+112 guest samples, 51 detached-rider frames and 13 impact-audio frames. Sampled
+public round trips are 38–51ms from one host through Cloudflare; no cross-location,
+physical-phone or general Internet performance claim is made.
+
+A second actual public gate starts four browser clients with ATVs 1/14/26/2 and
+both rider rigs. Each renders three finite remote actors (39 draws) with three
+engine voices. Movement from each of the four riders reaches every observer;
+host-end clears all guest room, pose, audio, impact and GPU caches. No page errors
+or failed HTTP responses occur. `tools/test_multiplayer_four.mjs` repeats this
+opt-in original-content check. On a single Mac with Chromium Metal at 1280×896
+and synthetic focus, a 12-second diagnostics sample reports 71.59–74.14 FPS,
+26.4–27.2ms frame p95, 2.47–2.92ms CPU draw and 2.1–4.3ms physics round trips.
+Relay RTT samples are 37–201ms (final 42–47ms). These are bounded measurements,
+not claims about other machines, phones, browser backends or locations.
+
+The public actual-UI garage probe selects and drives all 26 models, alternating
+13 male/13 female rigs. Expected source paths, animated GPU pose draws, finite
+Rust physics, per-model engine configurations and live voices pass without
+HTTP/page/worker/WebGL errors. Representative public models 01/14/26 are inspected. The repeatable authored
+garage gate is `tools/test_player_models.mjs`. The canonical private
+`hosted-content` package is refreshed to this verified 104-record manifest,
+preserving earlier blobs and a prior manifest backup; future packages must use
+the current content packager so multiplayer resources remain present.
+Public original title/menu/controller/Tioga/pause/390px Caribou reload passes
+without a file picker or JS/GL errors. This is an owner-authoritative shared
+Freeride baseline; racing, player collision, server/host physics reconciliation,
+host migration, split-screen and full original game parity remain incomplete.
+See [implementation and transport tradeoffs](MULTIPLAYER.md),
+[original multiplayer evidence](MULTIPLAYER_ORIGINAL.md) and
+[model census](MULTIPLAYER_MODELS.md).
+
+## Combined Vancouver and Rust multiplayer verification (2026-10-12)
+
+Main `cef26f4495f0c5dbf6f8398133ea81bf4b78aed3` passes
+[CI 38307658534](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38307658534).
+The public HTTPS app and Rust relay identity/WASM hash match that exact artifact.
+The 106-record runtime package preserves nine environments, all 26 quads and both
+rider catalogs. R2 validation covers 403 approved objects with four changes;
+HTTPS checks 31 authored/static files and all 402 served objects, with 115 dev-log
+entries and 96 screenshots before the final verification note.
+
+Thirteen live public relay checks pass, including all-four ninth-map selection
+and rejection of map 10. The copied-invite Vancouver pair loads matching scenes,
+draws both rider rigs, exchanges movement and spatial engine audio, and cleans up
+when the host leaves. Actual host closure during guest asset loading also passes.
+Four public browsers each draw three peers in 39 remote draws with three engine
+voices; every rider's movement reaches every observer, then host-end clears all
+guest rooms, models and sound. The 390px failed-stunt replay records 403 guest
+frames, 42 detached-rider frames and 14 spatial impact-audio frames, then recovery.
+All 26 actual garage selections pass against the merged renderer, alternating
+13 male and 13 female rigs: exact assets/physics/engine configurations, finite
+Rust state, animated GPU poses, live voices and 37.44–44.76ft of throttle movement
+without runtime/HTTP/WebGL errors. The canonical private `hosted-content` package
+is refreshed to the validated 106-record manifest with its prior manifests and
+older blobs retained; future uploads must preserve this complete dependency set.
+
+Four-client timing uses one Mac, headless Chromium Metal, 1280×896 and synthetic
+focus: 71.00–75.86 FPS, 25.9–27.2ms frame p95, 2.61–3.11ms render CPU,
+2.1–6.6ms physics round trips and 41–52ms relay RTT. Concurrent validation
+overlap was not measured. These are bounded measurements, not phone or general
+Internet guarantees. At this earlier checkpoint the reflection/fog work was
+isolated WIP; it was later publicly validated in e18a371e below.
+
+## Public fog/reflection release e18a371e (2026-10-12)
+
+Public main `e18a371e81b471137dd5fb1121b05d454584b1d0` passes
+[CI 38312395498](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38312395498).
+The validated current-main artifact matches 32 authored files and all 405
+served objects. The canonical R2 package contains 106 records, 306 referenced
+files and 406 approved objects across three changes. HTTPS verification
+matches every hash; the gallery has 118 entries and 99 screenshots.
+
+Public ENV01/ENV04/FREE05 fog checks match 3,000 GPU coverage samples with zero
+byte differences, and the tested screen-affine interpolation sample passes.
+The compressed-prelit packing comparison is source-correlated, not a complete
+VU/GS or PS2 hardware replay. Reflections draw ENV01's 88 groups/275 instances
+with 141,770 contributing pixels and FREE05's three groups/78 instances with
+236,380 pixels; 2,304 GPU comparisons have maximum UV error 7.15e-7.
+
+All nine maps pass. Material inspection reports 4,618 rain, 73,970 lava, 6,335
+waterflow and 115,571 ski-jump contributing pixels, with pause/context retention.
+Four wet maps plus 390px projection, dry-map behavior, Vancouver desktop/390px
+contact, frontend routes and copied-link FREE05 multiplayer pass. Vancouver
+draws 78 placements with 43 colliders, 123 wheel-support frames, 31 body-contact
+frames, takeoff at step 19 and later landing. The multiplayer pair renders 13
+remote draws with both rigs, audio and movement. No source tree-lighting completion
+is claimed in this release. Near-vegetation materials were later verified publicly
+across all nine maps in d9596d9, including the reconstructed Sun/ambient inputs.
+Those component checks do not establish the complete inherited callback or global
+frame path. Native terrain/water GS precision, other lighting/shadows/lens
+behavior, LOD and weather remain open.
+
+## Public near-vegetation material and transport gate d9596d9 (2026-10-12)
+
+Public main `d9596d937907395440b61e78be61b2045d987d4d` (PR #12) passed
+[CI 38318057407](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38318057407)
+and is deployed. The verified deployment identity matches the validated artifact.
+Canonical R2 retains 106 records and 306 references. The upload validates 408
+approved objects totaling 310,198,438 bytes; HTTPS verification matches all 32
+authored files and 407 served objects by hash, size and MIME. The gallery has
+120 entries and 101 screenshots.
+
+The public near-vegetation material check passes all nine maps. Six hundred
+actual-GPU RGBA cases have zero byte differences. Public transport validation
+covers 1,200 steps and exactly matches sequential frame/camera decimal outputs;
+no production timing benchmark was run. These results do not establish full
+scene rendering, distant vegetation transitions, LOD, PS2 GS/hardware or
+end-to-end performance equivalence.
+
+The public all-map route passes on ENV01–ENV08 and FREE05. Vancouver desktop and
+390px checks draw all 78 placements and retain 43 colliders and 37,649 plants;
+the ride records 123 wheel-support frames, 31 body-contact frames, takeoff at
+step 19, later landing and ATM frame 1, with the map unlocked by default. Public
+touch input matches batched and sequential simulation for 124 steps, including
+shifted release and cancellation. The public copied-link FREE05 pair passes with
+13 remote draws per client, male/female rigs, one voice per client, host cleanup
+and a measured remote distance of 4.9307901763 feet. These checks do not include
+a production FPS/timing claim; the transport microbenchmark is host-only.
+
+The inspected ENV07 hero is a capture from this public deployment, but its PNG
+and gallery reference remain in private storage for a later validated current-main
+release. Weather callbacks, distant vegetation/LOD, point lights, shadows and
+native GS/full-frame behavior remain open. This release does not claim complete
+source tree lighting or whole-game/PS2 parity.

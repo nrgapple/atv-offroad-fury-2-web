@@ -275,6 +275,7 @@ mod tests {
             slot: 0,
             model: String::new(),
             billboard: String::new(),
+            atlas: None,
             parameters,
             optional_name: None,
             proxies: vec![],
