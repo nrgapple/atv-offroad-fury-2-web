@@ -69,10 +69,12 @@ try {
   const last=await page.evaluate(()=>window.controlFrames.at(-1));
   const look=last.camera.target.map((v,i)=>v-last.camera.position[i]);
   const right=[-look[2],0,look[0]],len=Math.hypot(...right);right.forEach((v,i)=>right[i]=v/len);
-  await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{id:1,x:180+direction*50,y:620,radiusX:6,radiusY:6,force:1}]});
+  const fullLock=process.env.ATV_CONTROL_FULL_LOCK==='1';
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{id:1,x:180+direction*(fullLock?100:50),y:620,radiusX:6,radiusY:6,force:1}]});
   await page.waitForFunction(()=>Math.abs(window.atvTerrainStatus.input.steer)>.4);
   await page.waitForTimeout(450);
   const after=await state(),delta=after.frame.origin.map((v,i)=>v-before.frame.origin[i]);
+  if(fullLock)assert(Math.abs(after.input.steer)>.95,'Extended reach gate must actually request full steering');
   const [w,x,y,z]=after.frame.orientation,forward=[2*(x*z+w*y),2*(y*z-w*x),1-2*(x*x+y*y)];
   const side=delta.reduce((s,v,i)=>s+v*right[i],0),heading=forward.reduce((s,v,i)=>s+v*right[i],0);
   assert(side*direction>.15,`Touch ${direction}: on-screen side ${side}`);
@@ -80,8 +82,9 @@ try {
   const bank=await page.evaluate(()=>window.bikePresentationProbe.bank);
   assert(bank&&bank.body*direction>.025,`Rendered bike banks away from ${direction}: ${JSON.stringify(bank)}`);
   assert(bank.rider*direction>.025,`Rendered rider banks away from ${direction}: ${JSON.stringify(bank)}`);
-  report.turns.push({direction,side,heading,bank});
+  report.turns.push({direction,side,heading,bank,steer:after.input.steer});
   if(process.env.ATV_CONTROL_SCREENSHOTS)await page.screenshot({path:`${process.env.ATV_CONTROL_SCREENSHOTS}-${direction<0?'left':'right'}.png`});
+  if(fullLock)await page.waitForTimeout(1600); // Observe low-speed, full-lock reach after the initial turn.
   await cdp.send('Input.dispatchTouchEvent',{type:'touchCancel',touchPoints:[]});await page.waitForFunction(()=>!window.atvTerrainStatus.input.touch_drive.held);
   await page.waitForTimeout(250);
  }

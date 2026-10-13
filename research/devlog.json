@@ -2443,6 +2443,23 @@
       "limitation": "Host evidence only. The new-domain multiplayer code has not been deployed, and current-main CI plus public gameplay and multiplayer verification remain pending. A successful host HTTPS fetch does not verify public integration."
     },
     {
+      "id": "a-reachable-rider-pose-closes-the-mini-motorcycle-full-be709f3b",
+      "timestamp": "2026-10-13T15:24:38.204309+00:00",
+      "recorded_at": "2026-10-13T15:33:10.449069+00:00",
+      "kind": "verification",
+      "title": "A reachable rider pose closes the Mini motorcycle full-lock gap",
+      "summary": "A sustained full-lock check found that the source rider shoulder pose could put the Mini bike’s physical fork target beyond the fixed arm solver’s reach. An authored pose blend now keeps source arms and bike hand markers in reach while preserving rigid arm lengths and contact constraints.",
+      "details": [
+        "Earlier bank and hand-marker checks missed the held full-lock reach case. The Sano 50 Mini showed a 0.25177 ft normal-hand gap at full lock; a flat source-profile probe also reached 0.09533 ft of gap.",
+        "The adaptation finds the nearest reachable blend between the requested source rider pose and the original forward riding/air pose, with a 2% reach margin and eight bounded search steps. It does not stretch or teleport wrists, alter bike physics, or change source stunt and wreck poses.",
+        "All 720 source full-lock flat frames now keep hand error at or below 0.00000828 ft. Sustained full-lock gates across profiles 45, 29, 31 and 33 passed 1,730 exact paired steps and 3,415 GPU hand/foot contact comparisons; maximum rendered hand error was 0.0000267 ft and boot error 0.0000297 ft. A separate Mini repeat recorded actual steering inputs of +1 and -1 across 382 paired steps and 815 GPU contacts, with maximum hand error 0.00000147 ft and boot error 0.0000149 ft.",
+        "The host all-20 riding catalog also passed 1,588 paired steps covering audio, clutch, particles and reset. Air cross-up passed 537 paired steps with 24 frames and a maximum 0.510509 rad cross-up while retaining hand/foot contact. The four-profile stills show opposite touch indicators; the rear camera angle and Mini’s small frame obscure some contact points, so the GPU marker comparisons carry the contact evidence."
+      ],
+      "limitation": "Host-only checkpoint; no new public deployment is claimed. This adapts pose reachability around the authored motorcycle controller and does not establish native whole-controller physics parity. Source stunt and wreck poses retain their existing paths. Physical-phone behavior remains unverified.",
+      "image": "/devlog-images/a-reachable-rider-pose-closes-the-mini-motorcycle-full-be709f3b.png",
+      "caption": "Host Mini 50 sustained full-lock captures: left-screen input and right-screen input. The marker-contact gate passed separately; the small motorcycle and rear camera view make the hand joints difficult to judge from these stills alone."
+    },
+    {
       "id": "fury-remastered-supports-live-multiplayer-7acaea4d",
       "timestamp": "2026-10-13T15:40:05.634124+00:00",
       "recorded_at": "2026-10-13T15:41:44.358508+00:00",
