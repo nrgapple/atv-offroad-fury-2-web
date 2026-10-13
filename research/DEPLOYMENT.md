@@ -926,5 +926,5 @@ secondary screens at five viewport sizes, controller capture/remapping and
 defaults, Escape cancellation, music and slider behavior, single-player
 freeze/resume, and a two-client Lobby session with neutral local input, live
 physics, remote movement, continuing audio, and leave cleanup. These checks ran
-without page errors. The full R2/gallery hash audit and inspected pause-menu
-screenshot upload remain a separate pending release step.
+without page errors. At the time of this browser checkpoint, the separate
+R2/gallery hash audit and inspected pause-menu screenshot upload had not yet run.

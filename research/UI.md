@@ -160,5 +160,6 @@ continuing music, and Leave cleanup passed without suspending the AudioContext
 or interrupting title music. The host advanced 42 steps and observed 3.328 ft of
 guest movement; the guest advanced 41 steps and observed 3.272 ft of host
 movement. This is automated browser evidence, not physical-device or full-game
-parity verification. The complete R2/gallery hash audit and upload of the
-inspected pause-menu screenshot remain pending as a separate release step.
+parity verification. At the time of this browser checkpoint, the separate
+R2/gallery hash audit and upload of the inspected pause-menu screenshot had not
+yet run.
