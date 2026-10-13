@@ -10,7 +10,14 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
         Packet::Join { .. } => 1,
         Packet::Welcome { .. } => 2,
         Packet::Lobby(_) => 3,
-        Packet::Snapshot(_) => 4,
+        Packet::Snapshot(s) => {
+            if s.animation.is_some() {
+                9
+            } else {
+                4
+            }
+        }
+        Packet::Delta(_) => 10,
         Packet::Leave { .. } => 5,
         Packet::Ping { .. } => 6,
         Packet::Pong { .. } => 7,
@@ -46,6 +53,12 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
             w.u32(*epoch);
             w.u16(*map);
             w.byte(u8::from(*started));
+        }
+        Packet::Delta(d) => {
+            w.0.extend_from_slice(&crate::compact::encode(&d.snapshot, Some(d))?)
+        }
+        Packet::Snapshot(s) if s.animation.is_some() => {
+            w.0.extend_from_slice(&crate::compact::encode(s, None)?)
         }
         Packet::Snapshot(s) => {
             s.validate()?;
@@ -104,6 +117,10 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
         return Err(Error::InvalidLength);
     }
     let packet = match kind {
+        9 | 10 => {
+            let remaining = r.take(bytes.len() - HEADER)?;
+            crate::compact::decode(remaining, kind == 10)?
+        }
         1 => Packet::Join {
             code: r.room()?,
             player: r.participant()?,
@@ -120,6 +137,7 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
         3 => Packet::Lobby(r.lobby()?),
         4 => {
             let s = Snapshot {
+                animation: None,
                 peer: r.peer()?,
                 sequence: r.u32()?,
                 time_ms: r.u32()?,
@@ -161,7 +179,7 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
                 },
             };
             s.validate()?;
-            Packet::Snapshot(s)
+            Packet::Snapshot((s).into())
         }
         5 => Packet::Leave { peer: r.peer()? },
         6 => Packet::Ping { nonce: r.u32()? },

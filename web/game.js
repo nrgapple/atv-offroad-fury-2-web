@@ -59,7 +59,7 @@ const diagnostics = { ready: false, frames: 0, vertices: 0, triangles: 0, chunks
 let audio = new GameAudio(codec, message => { diagnostics.audioError = message; status(`Audio: ${message}`, true); });
 const stats = new DiagnosticsOverlay({ snapshot: () => ({ ...diagnostics, minimap: minimap.snapshot(), frame: simFrame, paused: simulationPaused(), menuOpen, focused, resolution: [canvas.width, canvas.height] }) });
 // Read-only snapshot for verification; does not expose the locally opened file.
-Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, minimap: minimap.snapshot(), funnyCrashes, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()],reconnecting:multiplayer.reconnecting,lastDisconnect:multiplayer.lastDisconnect,droppedSnapshots:multiplayer.droppedSnapshots} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
+Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, minimap: minimap.snapshot(), funnyCrashes, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()],reconnecting:multiplayer.reconnecting,lastDisconnect:multiplayer.lastDisconnect,droppedSnapshots:multiplayer.droppedSnapshots,networkAdapterRoundTripMs:multiplayer.networkEncodeMs,networkAdapterCalls:multiplayer.networkEncodeCalls} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
 worker.onmessage = ({ data }) => {
   if (data.startupError) { status(data.startupError, true); return; }
   const request = pending.get(data.id);
@@ -67,6 +67,11 @@ worker.onmessage = ({ data }) => {
   pending.delete(data.id);
   if (Number.isFinite(data.wasmBytes)) diagnostics.wasmBytes = data.wasmBytes;
   if (request.op === 50 && Number.isFinite(data.operationMs)) diagnostics.physicsBatchMs = data.operationMs;
+  if ([81,82,83].includes(request.op) && Number.isFinite(data.operationMs)) {
+    const meters=diagnostics.networkOperations ??= {};
+    const meter=meters[request.op] ??= {calls:0,totalMs:0,maxMs:0};
+    meter.calls++;meter.totalMs+=data.operationMs;meter.maxMs=Math.max(meter.maxMs,data.operationMs);
+  }
   data.error ? request.reject(new Error(data.error)) : request.resolve(data.bytes);
 };
 worker.onerror = event => {
@@ -678,7 +683,15 @@ function buildRemoteGpu(model) {
 }
 async function remoteAssets(quad, rider) {
   const key = `${quad}:${rider}`;
-  if (remoteModels.has(key)) return remoteModels.get(key).pending;
+  if (remoteModels.has(key)) {
+    const model=await remoteModels.get(key).pending;
+    if (multiplayer?.started && model.prepareAnimation) await model.prepareAnimation();
+    return model;
+  }
+  if(remoteModels.size>=8) {
+    const active=new Set((multiplayer?.state?.lobby?.players??[]).map(p=>`${p.atv_model}:${p.rider_model}`));
+    for(const [cachedKey,cached] of remoteModels) {if(!active.has(cachedKey)){disposeRemoteGpu(cached);remoteModels.delete(cachedKey);}}
+  }
   const model = {source:null,chunks:null,gpuTextures:[]}; remoteModels.set(key,model);
   model.pending = (async () => {
     const content = await (hostedContent ??= openHostedContent());
@@ -691,6 +704,22 @@ async function remoteAssets(quad, rider) {
     const riderMesh=bike?.riderMesh ?? await json(11,await member(riderArchive,selected.rider_mesh));
     const quadMaterials=await archive(selected.quad_materials), riderMaterials=selected.motorcycle ? riderArchive : await archive('/RIDER/RIDER_MT.RES');
     model.source={mesh,riderMesh,riderPose:bike?.riderPose,bikeArchive:bike?quadArchive.bytes:null,textures:await baseTextures(mesh,quadMaterials.bytes,quadMaterials.entries),riderTextures:await baseTextures(riderMesh,riderMaterials.bytes,riderMaterials.entries)};
+    if(!bike) {
+      model.prepareAnimation=async()=> {
+        const known=multiplayer?.state?.network?.rigKeys;
+        if(model.animationReady && (!known || (multiplayer.state.network.rigRevision??0)<model.readyRevision || known.includes(quad*2+rider)))return;
+        if(model.animationReady && known && !known.includes(quad*2+rider)) {model.animationPending=null;model.animationReady=false;}
+        model.animationPending ??= (async()=> {
+          const motions=await archive('/ANIMSRDR.RES');
+          const parts=[quadArchive.bytes,riderArchive.bytes,motions.bytes];
+          const bundle=new Uint8Array(12+parts.reduce((n,p)=>n+p.length,0)),view=new DataView(bundle.buffer);let at=12;
+          for(let i=0;i<parts.length;i++){view.setUint32(i*4,parts[i].length,true);bundle.set(parts[i],at);at+=parts[i].length;}
+          const installed=await json(104,bundle,quad*2+rider);model.readyRevision=installed.rigRevision;model.animationReady=true;
+        })();
+        await model.animationPending;
+      };
+      if(multiplayer?.started)await model.prepareAnimation();
+    }
     return model;
   })().catch(error=> {if(remoteModels.get(key)===model)remoteModels.delete(key);throw error;});
   return model.pending;

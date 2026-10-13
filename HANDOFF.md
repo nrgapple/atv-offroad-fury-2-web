@@ -1,3 +1,36 @@
+## Multiplayer efficiency — tested host checkpoint (2026-10-13)
+
+Branch `feat/multiplayer-efficiency` implements the five user-authorized changes:
+compact v3 snapshots/changed-block deltas, adaptive/idle/solo suppression, local
+recovered rider/linkage reconstruction and independent remote crash presentation,
+bounded rig/GPU caches, and byte/message/WASM-operation measurements. Local
+physics remains unchanged; online menu physics remains live. Actual suspended
+simulations use slow fresh presence and preserve the host train freeze.
+
+Typical independent state is 135 bytes, versus v2's 2,526/2,994 bytes. The final
+10.0114s host driving sample sent 133 packets / 17,901 bytes: 94.672% smaller
+per observed message against a same-count male v2 baseline. Both suspended
+clients sent two updates / 270 bytes in about 11s; solo about 5.5s sent zero poses;
+late join reproduced the suspended host root with zero measured distance.
+Positions remain exact binary32, with bounded smaller fields and exact escapes
+for rare extreme motion. Remote crash joint timing is intentionally independent,
+as requested; authoritative detached root and recovery still replicate.
+
+Host checks pass: 356 core, 33 net, 6 relay, 15 web and 4 release-crate tests;
+95 JS tests; formatting/strict Clippy; setup/hygiene; 35 Python release tests
+(one intended skip); 12 Worker tests; WASM/relay builds; copied invite, four
+clients/models, source touch crash/impact/recovery, train support/contacts,
+late join/spawn/mobile hit target, host reconnect/reload and frontend regression.
+Four clients each render three remote actors in 39 draws with three engine
+voices; every rider moves for every observer and host-end clears all caches.
+See [protocol, measurements and limits](research/MULTIPLAYER_EFFICIENCY.md).
+
+Current-main CI, automatic deployment and public/R2 gallery verification remain
+the release gate. Old open tabs must reload for v3. This is host evidence with
+synthetic focus/visibility, not physical-device, geographic, large-load or
+production-bill validation. Existing approved runtime content is reused; source
+assets and screenshots remain outside GitHub/CI.
+
 ## Minimap projection, rider tracking and zoom — host checkpoint (2026-10-13)
 
 The old map used +X screen-right, opposite the actual overhead camera basis

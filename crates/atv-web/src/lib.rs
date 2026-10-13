@@ -1553,6 +1553,9 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
+    if op == 104 {
+        return multiplayer::install_rig(input, index);
+    }
     if op == 86 {
         let request: serde_json::Value =
             serde_json::from_slice(input).map_err(|e| e.to_string())?;
@@ -1690,7 +1693,7 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         });
         return Ok(result);
     }
-    if (80..=85).contains(&op) {
+    if (80..=85).contains(&op) || op == 109 {
         return SIMULATION.with_borrow(|sim| multiplayer::dispatch(input, op, index, sim));
     }
     if op == 87 {

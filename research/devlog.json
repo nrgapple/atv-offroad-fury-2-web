@@ -1,6 +1,6 @@
 {
-  "status": "Responsive pause improvements are verified on the public release at furyremastered.com (commit 6f24bc2e); this does not establish full original-game fidelity.",
-  "working_on": "Continue the authored port beyond the verified pause-menu checkpoint.",
+  "status": "All host multiplayer efficiency, feature/train/reconnect, four-client, and frontend gates passed. Current-main CI and public verification remain pending.",
+  "working_on": "Run current-main CI and public deployment verification, then describe the result from the validated artifact.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -2707,9 +2707,71 @@
       "limitation": "Host verification only at this checkpoint. Contacts remain an authored equal-mass proxy, not the original PS2 pair solver. The limited live log sample does not establish the disconnect cause or rule out earlier errors. Public release and public browser checks follow CI.",
       "image": "/devlog-images/smaller-player-indicators-pause-music-and-contact-cras-a2dd69ff.png",
       "caption": "Inspected host browser at 390px: smaller white outlined player label, smooth red overhead arrow and a red minimap dot."
+    },
+    {
+      "id": "protocol-v3-multiplayer-efficiency-host-checkpoint-247c87d2",
+      "timestamp": "2026-10-13T20:15:39.515320+00:00",
+      "recorded_at": "2026-10-13T20:17:51.318072+00:00",
+      "kind": "verification",
+      "title": "Protocol v3 multiplayer efficiency host checkpoint",
+      "summary": "Host-only validation measured compact snapshots, adaptive cadence, idle suppression and local remote animation. Final feature, train and reconnect gates remain in progress; this is not current-main or public-release verification.",
+      "details": [
+        "Protocol v3 compact full snapshots measured 135 bytes (117-byte changed-block packet observed; moving-platform addition 20 bytes; no-change baseline patch 26 bytes). World positions remain exact binary32; orientation, velocity and animation weights are quantized.",
+        "Actual driving sent 140 packets / 18,864 bytes over 10.0131 seconds (13.98 Hz), 94.67% fewer payload bytes per observed message than the same-count 2,526-byte male v2 baseline. Both suspended clients sent two 135-byte updates over 11.02 seconds and stayed fresh; late-join root distance was exactly zero; a 5.5149-second solo interval sent no pose packets.",
+        "Two-browser male/female movement and audio passed. A touch failed-stunt run captured 119 frames, 51 detached-rider frames and 14 impact-audio frames before recovery. Four browsers using models 1, 14, 26 and 2 each recorded 39 GPU draws for three remote actors and three engine voices; movement reached all observers and host-end cleanup completed without page errors.",
+        "Codec checks covered 1,000 cases with exact root positions, quaternion component error <=5e-5 and angular-velocity error <=1/512 rad/s. Five malformed/delta/stale/wheel-wrap tests, existing 27 networking + 15 web + 6 relay tests, 23 JavaScript multiplayer tests, recipe reconstruction, make verify, and make check passed before the final cache adjustment."
+      ],
+      "limitation": "Host-only synthetic focus/visibility run from a dirty development checkout. Final feature, train and reconnect gates were still running; no current-main CI or public deployment is claimed. Physical mobile behavior, geographic latency, large-room load, production network costs and whole-PS2 animation equivalence remain unverified. Protocol v3 requires old open tabs to reload.",
+      "image": "/devlog-images/protocol-v3-multiplayer-efficiency-host-checkpoint-247c87d2.png",
+      "caption": "Host Chromium Metal checkpoint with four riders; labels and a partial peer quad are visible, remote poses reconstructed locally. This screenshot predates production publication."
+    },
+    {
+      "id": "final-host-efficiency-probe-and-reconnect-gate-1d058521",
+      "timestamp": "2026-10-13T20:21:48.093867+00:00",
+      "recorded_at": "2026-10-13T20:21:48.093867+00:00",
+      "kind": "verification",
+      "title": "Earlier host efficiency probe before full-snapshot tie-break",
+      "summary": "Intermediate host-only measurement before preferring independent full snapshots when a delta saves no bytes. Its 137-packet figures are superseded by the archived final v3 report.",
+      "details": [
+        "This earlier probe measured 137 packets and 18,459 bytes over 10.0095 seconds of driving (13.69 Hz; packet sizes 135 and 117 bytes), 94.666% fewer payload bytes than the same-count male v2 baseline. Both suspended clients sent two 135-byte updates in about 11.027 seconds and stayed fresh; late-join host root distance was zero; resume sent 24 packets in 2.5106 seconds; a 5.5147-second solo interval sent no pose packets.",
+        "During driving, encoder/scheduler counters were 204 calls / 4.4 ms total / 0.3 ms max; decoder 23 calls / 1.5 ms total / 0.5 ms max; remote presentation 666 calls / 186.6 ms total / 0.9 ms max. These are operation counters from one same-host run.",
+        "The feature/train/reconnect gate passed custom-code late join, host recovery after close 1012 and owner reload, nearby spawn with a 342×64 mobile target, owner-local contact counts 9 and 40, both head-on crash notifications, cleanup, and 20 train samples with maximum relative error 0.737246 feet.",
+        "The 1,000-case codec check, 33 networking tests, 356 core tests, 15 web tests, 6 relay tests, 23 JavaScript multiplayer tests, recipe reconstruction, make verify/check, and WASM/relay builds passed after final cache and exact-float quantization escape changes."
+      ],
+      "limitation": "Host-only results from a dirty development checkout; final four-client rerun is still in progress. This does not establish public deployment, general-device performance, physical-mobile behavior, geographic latency, production costs, large-room load, or whole-PS2 animation equivalence. Older open tabs must reload for protocol v3."
+    },
+    {
+      "id": "four-client-final-host-efficiency-rerun-passed-03365172",
+      "timestamp": "2026-10-13T20:22:58.664051+00:00",
+      "recorded_at": "2026-10-13T20:22:58.664051+00:00",
+      "kind": "verification",
+      "title": "Four-client final host efficiency rerun passed",
+      "summary": "The final four-browser host rerun passed movement delivery and cleanup with no HTTP or page errors. A same-host timing sample was recorded; the frontend regression is still running, with current-main CI and public verification pending.",
+      "details": [
+        "Each client recorded 39 GPU draws for three remote actors and three engine voices; movement reached all observers and host end cleared all clients.",
+        "The 12-second same-host sample measured 71.82–73.76 FPS, 27.0–27.2 ms frame p95, 2.03–2.30 ms render CPU, 2.0–3.2 ms physics round trip, and 1–5 ms relay round trip. This does not represent geographic latency or general device performance.",
+        "Final validation passed with 356 core, 33 networking, 15 web, 6 relay, 4 release-crate and 23 JavaScript multiplayer tests; release tools passed with one intentional skip and 12 Worker tests passed. make verify/check and WASM and relay builds passed."
+      ],
+      "limitation": "Host-only same-Mac browser tests from a dirty checkout. Frontend regression remains in progress; no current-main CI or public verification is claimed. Physical-mobile behavior, geographic latency, large-room load, production costs and complete PS2 parity remain unverified."
+    },
+    {
+      "id": "all-host-multiplayer-and-frontend-gates-passed-5b808dd8",
+      "timestamp": "2026-10-13T20:23:44.281768+00:00",
+      "recorded_at": "2026-10-13T20:23:44.281768+00:00",
+      "kind": "verification",
+      "title": "All host multiplayer and frontend gates passed",
+      "summary": "The final measured efficiency, feature/train/reconnect, four-client, and frontend gates passed on the host. Current-main CI and public verification remain pending.",
+      "details": [
+        "The final four-browser run recorded 39 GPU draws for three remote actors and three engine voices per client; all riders reached every observer and host-end cleanup completed with no HTTP or page errors. The same-host 12-second timing range was 71.82–73.76 FPS, 27.0–27.2 ms frame p95, 2.03–2.30 ms render CPU, 2.0–3.2 ms physics round trip, and 1–5 ms relay round trip.",
+        "The frontend regression passed original title/menu, controller, Tioga, portrait Caribou loading, pause, and Controls with no file picker or errors. Feature/train/reconnect checks passed custom-code late join, close-1012 host recovery and owner reload, nearby spawn with a 342×64 mobile target, owner contacts 9 and 40, both head-on crash notifications, cleanup, and 20 train samples with 0.737246 ft maximum relative error.",
+        "Final checks passed: 356 core, 33 networking, 15 web, 6 relay, 4 release-crate, and 95 JavaScript tests (23 multiplayer); 35 release-tool tests with one intentional skip; 12 Worker tests; make verify/check; and WASM/relay builds.",
+        "Latest archived host-only report private/reports/multiplayer-efficiency-host-v3.json: 133 packets / 17,901 bytes in 10.0114 seconds of driving (13.2849 Hz; 135- and 117-byte packets), 94.6717% fewer payload bytes than the same-count male v2 baseline. Both suspended clients sent two 135-byte presence packets in 11.0119/11.0137 seconds and stayed fresh; late join root distance was zero; a 5.5103-second solo interval sent no pose packets.",
+        "When a changed-block delta saves no bytes, the sender instead sends an independent 135-byte full snapshot; this avoids relay baseline reconstruction when all four blocks change. Partial deltas remain in use."
+      ],
+      "limitation": "All evidence is from host tests on a dirty development checkout. Same-Mac browser timing is not representative of geographical latency or general-device performance. Physical-mobile behavior, large-room load, production costs, and complete PS2 animation/gameplay equivalence remain unverified. Protocol v3 requires older open tabs to reload."
     }
   ],
-  "updated_at": "2026-10-13T19:38:54.869743+00:00",
+  "updated_at": "2026-10-13T20:23:44.281768+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {

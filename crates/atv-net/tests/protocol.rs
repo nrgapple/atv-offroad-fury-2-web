@@ -57,7 +57,7 @@ fn every_control_and_full_pose_roundtrips() {
             map: 4,
             started: true,
         },
-        Packet::Snapshot(snapshot(1, 100, 2.)),
+        Packet::Snapshot((snapshot(1, 100, 2.)).into()),
         Packet::Leave { peer: 3 },
         Packet::Ping { nonce: u32::MAX },
         Packet::Pong { nonce: u32::MAX },
@@ -69,16 +69,22 @@ fn every_control_and_full_pose_roundtrips() {
 #[test]
 fn pose_packet_budget_covers_all_character_models() {
     let mut s = snapshot(1, 0, 0.);
-    assert_eq!(encode(&Packet::Snapshot(s.clone())).unwrap().len(), 2526);
+    assert_eq!(
+        encode(&Packet::Snapshot((s.clone()).into())).unwrap().len(),
+        2526
+    );
     s.rider_nodes = vec![Transform::default(); 27];
-    assert_eq!(encode(&Packet::Snapshot(s.clone())).unwrap().len(), 2994);
+    assert_eq!(
+        encode(&Packet::Snapshot((s.clone()).into())).unwrap().len(),
+        2994
+    );
     s.rider_nodes = vec![Transform::default(); 64];
     s.atv_nodes = vec![Transform::default(); 64];
-    assert_eq!(encode(&Packet::Snapshot(s)).unwrap().len(), 6842);
+    assert_eq!(encode(&Packet::Snapshot((s).into())).unwrap().len(), 6842);
 }
 #[test]
 fn truncated_snapshot_never_decodes_or_panics() {
-    let bytes = encode(&Packet::Snapshot(snapshot(1, 0, 0.))).unwrap();
+    let bytes = encode(&Packet::Snapshot((snapshot(1, 0, 0.)).into())).unwrap();
     for len in 0..bytes.len() {
         let mut cut = bytes[..len].to_vec();
         if len >= 8 {
@@ -106,7 +112,7 @@ fn rejects_trailing_wrong_version_kind_magic_and_oversize() {
 }
 #[test]
 fn rejects_nonfinite_out_of_bounds_and_zero_quaternion() {
-    let packet = Packet::Snapshot(snapshot(1, 0, 0.));
+    let packet = Packet::Snapshot((snapshot(1, 0, 0.)).into());
     for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 1_000_001.] {
         let mut bytes = encode(&packet).unwrap();
         bytes[21..25].copy_from_slice(&invalid.to_le_bytes());
@@ -127,17 +133,17 @@ fn rejects_nonfinite_out_of_bounds_and_zero_quaternion() {
 }
 #[test]
 fn rejects_unbounded_node_count_before_allocation() {
-    let mut bytes = encode(&Packet::Snapshot(snapshot(1, 0, 0.))).unwrap();
+    let mut bytes = encode(&Packet::Snapshot((snapshot(1, 0, 0.)).into())).unwrap();
     bytes[97] = 65;
     assert_eq!(decode(&bytes), Err(Error::InvalidLength));
     let mut s = snapshot(1, 0, 0.);
     s.atv_nodes.push(Transform::default());
     s.atv_nodes.resize(65, Transform::default());
-    assert!(encode(&Packet::Snapshot(s)).is_err());
+    assert!(encode(&Packet::Snapshot((s).into())).is_err());
 }
 #[test]
 fn rejects_unknown_state_boolean_invalid_roster_and_room() {
-    let mut bytes = encode(&Packet::Snapshot(Snapshot::default())).unwrap();
+    let mut bytes = encode(&Packet::Snapshot((Snapshot::default()).into())).unwrap();
     bytes[99] = 4;
     assert_eq!(decode(&bytes), Err(Error::InvalidValue));
     let mut bytes = encode(&Packet::SetLobby {
@@ -467,7 +473,7 @@ fn qr_decomposition_preserves_affine_linkage_shear_and_interpolates_it() {
             }
         }
     }
-    let mut bytes = encode(&Packet::Snapshot(Snapshot::default())).unwrap();
+    let mut bytes = encode(&Packet::Snapshot((Snapshot::default()).into())).unwrap();
     bytes[61..65].copy_from_slice(&f32::NAN.to_le_bytes());
     assert_eq!(decode(&bytes), Err(Error::InvalidTransform));
 }
@@ -559,7 +565,7 @@ fn train_platform_roundtrip_and_untrusted_bounds() {
         car: 10,
         transform: Transform::default(),
     }));
-    let packet = Packet::Snapshot(s.clone());
+    let packet = Packet::Snapshot((s.clone()).into());
     assert_eq!(decode(&encode(&packet).unwrap()).unwrap(), packet);
     s.platform.as_mut().unwrap().car = 32;
     assert!(s.validate().is_err());

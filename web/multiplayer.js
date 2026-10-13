@@ -4,14 +4,15 @@ export class Multiplayer {
   constructor({ codec, command, onState, onStart, onLeave, ready, paused, listener, audio, assets, clearAssets, spawn, report }) {
     Object.assign(this, {codec,command,onState,onStart,onLeave,ready,paused,listener,audio,assets,clearAssets,spawn,report});
     this.state = {}; this.socket = null; this.remote = []; this.started = false; this.loading = false; this.generation = 0;
-    this.sendBusy = false; this.sampleBusy = false; this.receiveQueue = Promise.resolve(); this.pendingReceives = 0; this.droppedSnapshots = 0; this.lastDisconnect = null; this.reconnecting=false; this.reconnectUntil=0; this.reconnectAttempts=0; this.retryTimer=null;
+    this.sendBusy = false; this.sampleBusy = false; this.receiveQueue = Promise.resolve(); this.pendingReceives = 0; this.droppedSnapshots = 0; this.lastDisconnect = null; this.reconnecting=false; this.reconnectUntil=0; this.reconnectAttempts=0; this.retryTimer=null; this.lastTraffic=0; this.lastPing=0; this.networkEncodeMs=0; this.networkEncodeCalls=0;
     this.timer = setInterval(() => { void this.send(); if(this.paused?.()) void this.sample(); }, 50);
-    this.pingTimer = setInterval(() => { if (this.socket?.readyState === WebSocket.OPEN) void this.control({Ping:{nonce:Math.floor(performance.now())>>>0}}).catch(e=>this.report(e.message)); }, 2000);
+    this.pingTimer = setInterval(() => { if (this.socket?.readyState === WebSocket.OPEN && (performance.now()-this.lastTraffic>=10000 || performance.now()-this.lastPing>=30000 || (this.state.rttMs==null && performance.now()-this.lastPing>=2000))) void this.control({Ping:{nonce:Math.floor(performance.now())>>>0}}).catch(e=>this.report(e.message)); }, 2000);
   }
   async control(packet) {
     const socket=this.socket, generation=this.generation;
+    if(packet.Ping)this.lastPing=performance.now();
     const bytes = await this.codec(85, new TextEncoder().encode(JSON.stringify(packet)));
-    if (generation===this.generation && socket===this.socket && socket?.readyState === WebSocket.OPEN && socket.bufferedAmount < 32768) socket.send(bytes);
+    if (generation===this.generation && socket===this.socket && socket?.readyState === WebSocket.OPEN && socket.bufferedAmount < 32768) {socket.send(bytes);this.lastTraffic=performance.now();}
   }
   async connect(code, frontend, hostToken, resume=false, recovering=false) {
     await this.disconnect(false,recovering);
@@ -30,7 +31,7 @@ export class Multiplayer {
       // frames, leaving 16 queue slots for roster/control messages. Rust still
       // validates every admitted packet; this sniff only decides what to drop.
       const header=new Uint8Array(event.data);
-      if(this.pendingReceives>=48 && header.length>=8 && header[0]===65 && header[1]===84 && header[2]===86 && header[3]===77 && header[4]===2 && header[5]===4) { this.droppedSnapshots++; return; }
+      if(this.pendingReceives>=48 && header.length>=8 && header[0]===65 && header[1]===84 && header[2]===86 && header[3]===77 && ((header[4]===2 && header[5]===4)||(header[4]===3 && header[5]===9))) { this.droppedSnapshots++; return; }
       if(this.pendingReceives>=64) { socket.close(1008,'Control message backlog'); return; }
       const received = Math.floor(performance.now()); this.pendingReceives++;
       this.receiveQueue = this.receiveQueue.then(async () => {
@@ -125,7 +126,17 @@ export class Multiplayer {
   async send() {
     if (!this.started || this.loading || !this.ready() || this.state.peer == null || this.socket?.readyState !== WebSocket.OPEN || this.socket.bufferedAmount >= 32768 || this.sendBusy) return;
     this.sendBusy = true; const generation = this.generation;
-    try { const bytes = await this.codec(81,new Uint8Array([this.paused?.()?1:0]),Math.floor(performance.now())); if (generation === this.generation && this.socket?.readyState === WebSocket.OPEN && this.socket.bufferedAmount < 32768) this.socket.send(bytes); }
+    try {
+      const started=performance.now();
+      const bytes = await this.codec(81,new Uint8Array([this.paused?.()?1:0]),Math.floor(started));
+      this.networkEncodeMs+=performance.now()-started;this.networkEncodeCalls++;
+      if (bytes.length && generation === this.generation && this.socket?.readyState === WebSocket.OPEN && this.socket.bufferedAmount < 32768) {
+        this.socket.send(bytes);this.lastTraffic=performance.now();
+        // Baselines advance only after an actual send. Unsent/dropped frames
+        // can never become the reference for a later delta.
+        if(bytes[5]===9||bytes[5]===10) await this.codec(109,bytes);
+      }
+    }
     catch (e) {this.report(e.message);} finally {this.sendBusy=false;}
   }
   async sample() {

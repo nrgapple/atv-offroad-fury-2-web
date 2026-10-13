@@ -1,5 +1,7 @@
 //! Authored networking adapter. All packet validation, interpolation, session
 //! identity and spatial/sample decisions run in Rust; browsers transport bytes.
+#[path = "multiplayer_animation.rs"]
+mod animation;
 #[path = "multiplayer_world.rs"]
 mod world;
 use super::{EnginePlayback, Simulation, vehicle_world};
@@ -18,6 +20,19 @@ pub use world::{collide, spawn, synchronize_train};
 
 #[derive(Default)]
 struct Client {
+    rigs: BTreeMap<usize, animation::Rig>,
+    rig_revision: u64,
+    local_animations: BTreeMap<u8, animation::Local>,
+    baseline: Option<Snapshot>,
+    pending: Option<Snapshot>,
+    last_sent_ms: u32,
+    last_full_ms: u32,
+    force_full: bool,
+    sent_messages: u64,
+    full_messages: u64,
+    delta_messages: u64,
+    suppressed: u64,
+    last_packet_bytes: usize,
     peer: Option<u8>,
     code: String,
     lobby: Option<atv_net::Lobby>,
@@ -62,6 +77,7 @@ pub fn observe_wreck(wreck: bool) {
 fn mapped<T>(r: atv_net::Result<T>) -> Result<T> {
     r.map_err(|e| e.to_string())
 }
+#[cfg(test)]
 fn matrix_nodes(matrices: Vec<[f32; 16]>) -> Result<Vec<Transform>> {
     matrices
         .into_iter()
@@ -70,39 +86,23 @@ fn matrix_nodes(matrices: Vec<[f32; 16]>) -> Result<Vec<Transform>> {
 }
 fn snapshot(c: &mut Client, sim: &Simulation, now: u32, paused: bool) -> Result<Vec<u8>> {
     let peer = c.peer.ok_or("join multiplayer first")?;
+    if c.lobby.as_ref().is_some_and(|l| l.players.len() < 2) {
+        c.suppressed += 1;
+        return Ok(Vec::new());
+    }
     let frame = sim.vehicle.as_ref().ok_or("vehicle is not ready")?.frame();
-    let quad = if let Some(matrices) = sim.vehicle.as_ref().and_then(|v| v.linkage_matrices()) {
-        std::borrow::Cow::Borrowed(matrices)
-    } else {
-        std::borrow::Cow::Owned(sim.quad_pose.as_ref().ok_or("quad pose missing")?.sample(
-            frame.visual_steering_angle,
-            frame.wheel_angles,
-            frame.wheel_compression,
-        )?)
-    };
-    let nodes = &sim.rider_mesh.as_ref().ok_or("rider mesh missing")?.nodes;
     let atv = mapped(Transform::from_column_major(vehicle_world(&frame)))?;
-    let (rider, velocity, poses, state) =
+    let (rider, velocity, state) =
         if let Some(wreck) = sim.wreck_animator.as_ref().and_then(|a| a.frame()) {
             (
                 mapped(Transform::from_column_major(wreck.world_matrix))?,
                 wreck.linear_velocity,
-                sim.wreck_animator
-                    .as_ref()
-                    .unwrap()
-                    .pose(nodes)?
-                    .world_matrices,
                 RiderState::Wreck,
             )
         } else {
             (
                 atv,
                 frame.linear_velocity,
-                sim.rider_animator
-                    .as_ref()
-                    .ok_or("rider pose missing")?
-                    .pose(nodes)?
-                    .world_matrices,
                 if frame.wreck.phase == atv_core::wreck::Phase::Recovering {
                     RiderState::Recovering
                 } else if frame.grounded.iter().any(|v| *v) {
@@ -112,6 +112,11 @@ fn snapshot(c: &mut Client, sim: &Simulation, now: u32, paused: bool) -> Result<
                 },
             )
         };
+    let recipe = sim
+        .rider_animator
+        .as_ref()
+        .ok_or("rider pose missing")?
+        .recipe();
     c.sequence = c.sequence.wrapping_add(1);
     let basis = atv_core::dynamics::basis(frame.orientation);
     let angular_velocity = std::array::from_fn(|i| {
@@ -119,7 +124,7 @@ fn snapshot(c: &mut Client, sim: &Simulation, now: u32, paused: bool) -> Result<
             .map(|j| basis[j][i] * frame.local_angular_velocity[j])
             .sum()
     });
-    let output = mapped(atv_net::encode(&Packet::Snapshot(Snapshot {
+    let s = Snapshot {
         peer,
         sequence: c.sequence,
         time_ms: now,
@@ -132,8 +137,20 @@ fn snapshot(c: &mut Client, sim: &Simulation, now: u32, paused: bool) -> Result<
             frame.linear_velocity
         },
         angular_velocity: if paused { [0.; 3] } else { angular_velocity },
-        atv_nodes: matrix_nodes(quad.to_vec())?,
-        rider_nodes: matrix_nodes(poses)?,
+        animation: Some(Box::new(atv_net::AnimationState {
+            steering: frame.visual_steering_angle,
+            wheels: frame.wheel_angles,
+            compression: frame.wheel_compression,
+            clips: recipe.clips,
+            count: recipe.count,
+            phase: recipe.phase,
+            first_weight: recipe.first_weight,
+            pair_weight: recipe.pair_weight,
+            look_phase: recipe.look_phase,
+            paused,
+        })),
+        atv_nodes: Vec::new(),
+        rider_nodes: Vec::new(),
         rider_state: state,
         rider,
         rider_velocity: if paused { [0.; 3] } else { velocity },
@@ -151,8 +168,84 @@ fn snapshot(c: &mut Client, sim: &Simulation, now: u32, paused: bool) -> Result<
         train_time: sim.train.as_ref().map(|t| t.time),
         train_running: !paused,
         platform: world::platform(sim, &frame)?,
-    })))?;
-    c.sent += output.len() as u64;
+    };
+    let nearest = c
+        .buffers
+        .values()
+        .filter_map(|b| b.latest())
+        .map(|(p, _)| {
+            p.atv
+                .position
+                .iter()
+                .zip(s.atv.position)
+                .map(|(a, b)| (a - b) * (a - b))
+                .sum::<f32>()
+                .sqrt()
+        })
+        .fold(f32::INFINITY, f32::min);
+    let transition = c.baseline.as_ref().is_none_or(|b| {
+        b.rider_state != s.rider_state
+            || b.crash_serial != s.crash_serial
+            || b.animation.as_ref().is_some_and(|a| a.paused != paused)
+            || b.platform.as_ref().map(|p| p.car) != s.platform.as_ref().map(|p| p.car)
+            || b.atv
+                .position
+                .iter()
+                .zip(s.atv.position)
+                .map(|(a, b)| (a - b) * (a - b))
+                .sum::<f32>()
+                > 16. * 16.
+    });
+    let elapsed = now.wrapping_sub(c.last_sent_ms);
+    let moving = s
+        .velocity
+        .iter()
+        .chain(s.rider_velocity.iter())
+        .map(|v| v * v)
+        .sum::<f32>()
+        > 0.25;
+    let interval = if paused {
+        5000
+    } else if !moving && state == RiderState::Riding {
+        if peer == 0 && s.train_time.is_some() {
+            500
+        } else {
+            1000
+        }
+    } else if state == RiderState::Wreck
+        || state == RiderState::Airborne
+        || s.speed > 35.
+        || nearest < 40.
+    {
+        50
+    } else if nearest > 300. {
+        200
+    } else {
+        100
+    };
+    if !c.force_full && !transition && elapsed < interval {
+        c.suppressed += 1;
+        return Ok(Vec::new());
+    }
+    let full = c.force_full
+        || transition
+        || now.wrapping_sub(c.last_full_ms) >= 2000
+        || c.baseline.is_none();
+    let packet = if full {
+        Packet::Snapshot((s.clone()).into())
+    } else {
+        let patch = mapped(atv_net::delta(&s, c.baseline.as_ref().unwrap()))?;
+        // An all-block patch is no smaller than independent full state. Avoid
+        // baseline reconstruction work on the relay when it buys no bytes.
+        if patch.mask == 15 {
+            Packet::Snapshot(s.clone().into())
+        } else {
+            Packet::Delta(Box::new(patch))
+        }
+    };
+    let output = mapped(atv_net::encode(&packet))?;
+    c.pending = Some(s);
+    c.last_packet_bytes = output.len();
     Ok(output)
 }
 fn status(c: &Client) -> Value {
@@ -164,9 +257,14 @@ fn status(c: &Client) -> Value {
         .lobby
         .as_ref()
         .and_then(|lobby| atv_net::next_map(lobby.map));
-    json!({"peer":c.peer,"code":c.code,"lobby":c.lobby,"environment":environment,"nextMap":next_map,"receivedBytes":c.received,"sentBytes":c.sent,"rttMs":c.rtt_ms,"contacts":c.contacts})
+    json!({"peer":c.peer,"code":c.code,"lobby":c.lobby,"environment":environment,"nextMap":next_map,"receivedBytes":c.received,"sentBytes":c.sent,"rttMs":c.rtt_ms,"contacts":c.contacts,"network":{"messages":c.sent_messages,"full":c.full_messages,"delta":c.delta_messages,"suppressed":c.suppressed,"lastPacketBytes":c.last_packet_bytes,"animation":"local","protocol":atv_net::VERSION,"rigKeys":c.rigs.keys().collect::<Vec<_>>(),"rigRevision":c.rig_revision}})
 }
 fn lobby(c: &mut Client, value: atv_net::Lobby) {
+    if c.lobby.as_ref() != Some(&value) {
+        c.force_full = true;
+        c.baseline = None;
+        c.local_animations.clear();
+    }
     if c.lobby.as_ref().is_some_and(|old| {
         old.map != value.map || old.epoch != value.epoch || old.started != value.started
     }) {
@@ -300,7 +398,36 @@ fn presentation(c: &mut Client, input: &[u8], now: u64, sim: &Simulation) -> Res
         } else {
             Value::Null
         };
-        peers.push(json!({"peer":id,"atv_model":s.atv_model,"rider_model":s.rider_model,"world_matrix":s.atv.to_column_major(),"quad_node_matrices":s.atv_nodes.iter().map(|t|t.to_column_major()).collect::<Vec<_>>(),"rider_world_matrix":s.rider.to_column_major(),"rider_node_matrices":s.rider_nodes.iter().map(|t|t.to_column_major()).collect::<Vec<_>>(),"position":s.atv.position,"platform":s.platform.as_ref().map(|p|p.car),"rider_state":s.rider_state,"crash_serial":s.crash_serial,"rpm":s.rpm,"stale":pose.stale,"extrapolated_ms":pose.extrapolated_ms,"spatial":spatial,"engine":engine,"crash":crash}));
+        let matrices = if s.animation.is_some() {
+            let key = usize::from(s.atv_model) * 2 + usize::from(s.rider_model);
+            if let Some(rig) = c.rigs.get(&key) {
+                if let std::collections::btree_map::Entry::Vacant(e) = c.local_animations.entry(id)
+                {
+                    e.insert(animation::Local::new(rig)?);
+                }
+                Some(
+                    c.local_animations
+                        .get_mut(&id)
+                        .unwrap()
+                        .pose(rig, s, dt, pose.stale)?,
+                )
+            } else {
+                None
+            }
+        } else {
+            Some((
+                s.atv_nodes
+                    .iter()
+                    .map(|t| t.to_column_major())
+                    .collect::<Vec<_>>(),
+                s.rider_nodes
+                    .iter()
+                    .map(|t| t.to_column_major())
+                    .collect::<Vec<_>>(),
+            ))
+        };
+        let (quad_matrices, rider_matrices) = matrices.unwrap_or_default();
+        peers.push(json!({"peer":id,"atv_model":s.atv_model,"rider_model":s.rider_model,"world_matrix":s.atv.to_column_major(),"quad_node_matrices":quad_matrices,"rider_world_matrix":s.rider.to_column_major(),"rider_node_matrices":rider_matrices,"position":s.atv.position,"platform":s.platform.as_ref().map(|p|p.car),"rider_state":s.rider_state,"crash_serial":s.crash_serial,"rpm":s.rpm,"stale":pose.stale,"extrapolated_ms":pose.extrapolated_ms,"spatial":spatial,"engine":engine,"crash":crash}));
     }
     serde_json::to_vec(&json!({"state":status(c),"peers":peers})).map_err(|e| e.to_string())
 }
@@ -322,6 +449,27 @@ pub fn dispatch(input: &[u8], op: u32, index: usize, sim: &Simulation) -> Result
                 ..Default::default()
             };
             serde_json::to_vec(&status(c)).map_err(|e| e.to_string())
+        }
+        109 => {
+            let bytes = input.len();
+            if let Some(s) = c.pending.take() {
+                let kind = input.get(5).copied().unwrap_or(0);
+                if !matches!(kind, 9 | 10) || input.len() != c.last_packet_bytes {
+                    return Err("invalid snapshot send receipt".into());
+                }
+                c.last_sent_ms = s.time_ms;
+                if kind == 9 {
+                    c.last_full_ms = s.time_ms;
+                    c.full_messages += 1;
+                } else {
+                    c.delta_messages += 1;
+                }
+                c.force_full = false;
+                c.baseline = Some(s);
+                c.sent += bytes as u64;
+                c.sent_messages += 1;
+            }
+            Ok(b"null".to_vec())
         }
         81 => snapshot(c, sim, index as u32, input.first() == Some(&1)),
         82 => {
@@ -352,7 +500,7 @@ pub fn dispatch(input: &[u8], op: u32, index: usize, sim: &Simulation) -> Result
                             c.buffers
                                 .entry(s.peer)
                                 .or_default()
-                                .push(s.clone(), index as u64),
+                                .push(s.as_ref().clone(), index as u64),
                         )?;
                     }
                 }
@@ -376,6 +524,34 @@ pub fn dispatch(input: &[u8], op: u32, index: usize, sim: &Simulation) -> Result
             mapped(atv_net::encode(&packet))
         }
         _ => Err("unknown multiplayer adapter operation".into()),
+    })
+}
+
+pub fn install_rig(input: &[u8], key: usize) -> Result<Vec<u8>> {
+    let rig = animation::load(input, key)?;
+    CLIENT.with_borrow_mut(|c| {
+        if c.rigs.len() >= 8 && !c.rigs.contains_key(&key) {
+            let active = c
+                .lobby
+                .as_ref()
+                .map(|l| {
+                    l.players
+                        .iter()
+                        .map(|p| usize::from(p.atv_model) * 2 + usize::from(p.rider_model))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let victim = c
+                .rigs
+                .keys()
+                .find(|k| !active.contains(k))
+                .copied()
+                .ok_or("remote rig cache limit")?;
+            c.rigs.remove(&victim);
+        }
+        c.rigs.insert(key, rig);
+        c.rig_revision += 1;
+        serde_json::to_vec(&json!({"rigRevision":c.rig_revision})).map_err(|e| e.to_string())
     })
 }
 
@@ -529,29 +705,29 @@ mod tests {
     #[test]
     fn snapshots_require_started_roster_identity_and_model_match() {
         setup(false);
-        receive(Packet::Snapshot(remote(1, 0)), 0).unwrap();
+        receive(Packet::Snapshot((remote(1, 0)).into()), 0).unwrap();
         CLIENT.with_borrow(|c| assert!(c.buffers.is_empty()));
         receive(Packet::Lobby(roster(true)), 0).unwrap();
         let mut wrong = remote(1, 0);
         wrong.atv_model = 3;
-        receive(Packet::Snapshot(wrong), 0).unwrap();
+        receive(Packet::Snapshot((wrong).into()), 0).unwrap();
         let mut local = remote(1, 0);
         local.peer = 0;
         local.atv_model = 1;
         local.rider_model = 0;
-        receive(Packet::Snapshot(local), 0).unwrap();
+        receive(Packet::Snapshot((local).into()), 0).unwrap();
         let mut unknown = remote(1, 0);
         unknown.peer = 3;
-        receive(Packet::Snapshot(unknown), 0).unwrap();
+        receive(Packet::Snapshot((unknown).into()), 0).unwrap();
         CLIENT.with_borrow(|c| assert!(c.buffers.is_empty()));
-        receive(Packet::Snapshot(remote(1, 100)), 100).unwrap();
-        receive(Packet::Snapshot(remote(1, 100)), 120).unwrap();
+        receive(Packet::Snapshot((remote(1, 100)).into()), 100).unwrap();
+        receive(Packet::Snapshot((remote(1, 100)).into()), 120).unwrap();
         CLIENT.with_borrow(|c| assert_eq!(c.buffers.get(&1).unwrap().len(), 1));
     }
     #[test]
     fn leave_clears_slot_reuse_and_out_of_order_state() {
         setup(true);
-        receive(Packet::Snapshot(remote(100, 1000)), 1000).unwrap();
+        receive(Packet::Snapshot((remote(100, 1000)).into()), 1000).unwrap();
         CLIENT.with_borrow_mut(|c| {
             c.heard_crash.insert(1, 10);
         });
@@ -560,7 +736,7 @@ mod tests {
             assert!(!c.buffers.contains_key(&1));
             assert!(!c.heard_crash.contains_key(&1));
         });
-        receive(Packet::Snapshot(remote(1, 1)), 1020).unwrap();
+        receive(Packet::Snapshot((remote(1, 1)).into()), 1020).unwrap();
         CLIENT.with_borrow(|c| {
             assert_eq!(
                 c.buffers
@@ -578,7 +754,7 @@ mod tests {
     fn map_start_and_epoch_changes_clear_remote_presentation() {
         for mode in 0..3 {
             setup(true);
-            receive(Packet::Snapshot(remote(1, 0)), 0).unwrap();
+            receive(Packet::Snapshot((remote(1, 0)).into()), 0).unwrap();
             let mut changed = roster(true);
             match mode {
                 0 => changed.map = 5,
@@ -592,7 +768,7 @@ mod tests {
     #[test]
     fn silent_and_stale_players_render_without_audio_assets() {
         setup(true);
-        receive(Packet::Snapshot(remote(1, 100)), 100).unwrap();
+        receive(Packet::Snapshot((remote(1, 100)).into()), 100).unwrap();
         for (audible, now) in [(false, 100usize), (true, 1200usize)] {
             let bytes = dispatch(&request(audible), 83, now, &Simulation::default()).unwrap();
             let out: Value = serde_json::from_slice(&bytes).unwrap();
@@ -612,7 +788,7 @@ mod tests {
     #[test]
     fn malformed_packets_and_playback_history_reject() {
         setup(true);
-        let mut bytes = atv_net::encode(&Packet::Snapshot(remote(1, 100))).unwrap();
+        let mut bytes = atv_net::encode(&Packet::Snapshot((remote(1, 100)).into())).unwrap();
         bytes[4] = 255;
         assert!(dispatch(&bytes, 82, 100, &Simulation::default()).is_err());
         CLIENT.with_borrow(|c| assert!(c.buffers.is_empty()));

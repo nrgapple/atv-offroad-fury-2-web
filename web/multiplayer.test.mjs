@@ -283,3 +283,12 @@ test('intentional leave cancels a pending host recovery',async()=>{
   await f.mp.disconnect();assert.equal(f.timeouts.has(retry),false);assert.equal(f.mp.reconnecting,false);
  }finally{await f.cleanup();}
 });
+
+test('suppressed state produces no WebSocket frame and compact baseline receipt follows only actual sends',async()=>{
+ const f=fixture();try {
+  const socket=await f.connect();f.mp.started=true;f.mp.state={peer:0};
+  f.overrides.set(81,async()=>new Uint8Array());await f.mp.send();assert.equal(socket.sent.length,1);assert.equal(f.calls.filter(c=>c.op===109).length,0);
+  const bytes=new Uint8Array([65,84,86,77,3,9,0,0]);f.overrides.set(81,async()=>bytes);await f.mp.send();assert.equal(f.calls.filter(c=>c.op===109).length,1);assert.deepEqual([...socket.sent.at(-1)],[...bytes]);
+  const delayed=deferred();f.overrides.set(81,()=>delayed.promise);const sending=f.mp.send();socket.bufferedAmount=32768;delayed.resolve(bytes);await sending;assert.equal(f.calls.filter(c=>c.op===109).length,1,'dropped compact snapshot cannot advance delta baseline');
+ }finally{await f.cleanup();}
+});
