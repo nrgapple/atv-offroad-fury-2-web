@@ -2356,9 +2356,25 @@
       "limitation": "Host-only checkpoint pending current-main CI, deployment, and public verification. Physical iOS Safari/controller behavior and complete original stunt/game parity remain unverified.",
       "image": "/devlog-images/second-touch-adds-reverse-and-airborne-stunts-9f83254d.png",
       "caption": "Host Chromium capture of an airborne Nac Nac while the primary touch remains engaged; the full second-touch gesture gate is host-verified."
+    },
+    {
+      "id": "garage-and-freestyle-selections-persist-8e7c9757",
+      "timestamp": "2026-10-13T15:17:56.123573+00:00",
+      "recorded_at": "2026-10-13T15:20:02.129045+00:00",
+      "kind": "build",
+      "title": "Garage and Freestyle selections persist",
+      "summary": "The browser remembers the selected ride and returns the first Freestyle course picker to the last course that loaded successfully.",
+      "details": [
+        "Garage vehicle and rider choices restore after refresh, including supported motorcycle selections for Race.",
+        "Freestyle remembers the last successfully started course. Preview browsing, failed course loads and Race selection leave that Freestyle choice intact.",
+        "The actual-menu Chromium gate passes ATV/rider and motorcycle refresh, Tioga course restoration, preview browsing, Race preservation and zero browser errors; focused frontend cases cover unavailable storage and failed loads."
+      ],
+      "limitation": "Host-only checkpoint pending current-main CI, deployment and public verification. Local browser storage is required for selections to persist across reloads; physical-device behavior is unverified.",
+      "image": "/devlog-images/garage-and-freestyle-selections-persist-8e7c9757.png",
+      "caption": "Portrait host-browser menu capture from the selection-restoration check; course, Garage and Race persistence passed in the same actual-menu run."
     }
   ],
-  "updated_at": "2026-10-13T15:11:46.785430+00:00",
+  "updated_at": "2026-10-13T15:20:02.129045+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {

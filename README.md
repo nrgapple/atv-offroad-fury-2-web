@@ -128,6 +128,8 @@ Keyboard and controllers work too. **Pause → Controls** lets you remap keyboar
 
 Controller labels follow the browser's standard layout. For the complete mappings and original-control evidence, see [controls](research/CONTROLS.md) and [touch riding](research/TOUCH.md).
 
+Your Garage vehicle and rider selection is saved in this browser and restored after a refresh. The Race setup uses the saved ride when that vehicle is supported. The Freestyle course picker returns to the last course that started successfully; browsing a preview, a failed load, or a Race selection does not replace that Freestyle choice. If browser storage is unavailable, the game still runs but cannot retain these choices across reloads.
+
 ## Follow the rebuild
 
 The [screenshot dev log](https://atv-offroad-fury-2.champtoday.workers.dev/devlog.html) records discoveries, improvements, bugs, and the evidence behind each checkpoint. Screenshots above come from selected development checkpoints; their captions distinguish public captures from host test captures.

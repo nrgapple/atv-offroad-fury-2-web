@@ -1,3 +1,15 @@
+## Garage and Freestyle selections persist — host checkpoint (2026-10-13)
+
+Garage vehicle and rider choices are saved locally and restored after refresh.
+The first Freestyle environment picker restores the last successfully started
+course. Browsing another preview, a failed load, or selecting a Race course does
+not overwrite that Freestyle choice. Supported Race setup restores the saved
+vehicle/rider selection. The menu regression passes ATV/rider and motorcycle
+refresh, Tioga Freestyle restore, preview browsing, Race preservation and zero
+browser errors. Three focused frontend cases cover valid selection persistence,
+unavailable storage and load failure. The actual-menu check is host-only; no
+public deployment or physical-device verification is claimed.
+
 ## Enhanced one-handed second-touch controls — host checkpoint (2026-10-13)
 
 The saved **One-handed mobile: On/Off** preference and existing Off behavior are
