@@ -12,6 +12,24 @@ without adding requests or work per riding frame. The warm-cache regression
 retains old responses and proves the new document loads a consistent module
 graph without clearing the browser cache.
 
+## Fury Remastered domain (2026-10-13)
+
+The user registered `furyremastered.com` in the existing Cloudflare account.
+Its active zone is `ea0921ec471b2a7de78838cdbaeccb78`. The apex and `www` attach
+to the existing `atv-offroad-fury-2` Worker; Cloudflare manages DNS and TLS.
+Always Use HTTPS is enabled. The authored Worker redirects `www` to the apex
+with HTTP 308, preserving paths and invite queries. The original workers.dev
+address remains available. Existing browser saves stay on their original origin.
+
+`wrangler.jsonc` persists both custom-domain routes. `GAME_ORIGIN` and
+`CANONICAL_ORIGIN` use `https://furyremastered.com`; `GAME_ORIGINS` explicitly
+allows that origin and the existing workers.dev origin in both the JavaScript
+gateway and Rust relay. Missing, opaque, HTTP, foreign and lookalike origins remain
+rejected. No original content is moved or exposed beyond the existing approved
+R2 path allowlist. Main CI deploys and verifies authored files at both addresses.
+Public gameplay, multiplayer and full R2 verification evidence follow below once
+the checked main release is deployed.
+
 ## Production flow restored (2026-10-13)
 
 GitHub Actions checks/builds and automatically deploys authored application assets.

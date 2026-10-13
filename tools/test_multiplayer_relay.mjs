@@ -14,7 +14,7 @@ const codec = process.env.ATV_CODEC ?? path.join(JSON.parse(metadata.stdout).tar
 const base = process.env.ATV_RELAY_URL ?? 'http://127.0.0.1:8788';
 const origin = process.env.ATV_RELAY_ORIGIN ?? base;
 const verifierHeaders = { 'User-Agent': 'ATV-multiplayer-relay-verifier/1.0' };
-const report = { checks: [], relay: base, reachability: base === 'https://atv-offroad-fury-2.champtoday.workers.dev' ? 'public HTTPS' : 'host-only' };
+const report = { checks: [], relay: base, reachability: ['https://furyremastered.com', 'https://atv-offroad-fury-2.champtoday.workers.dev'].includes(base) ? 'public HTTPS' : 'host-only' };
 const sockets = [];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 function convert(mode, input) {

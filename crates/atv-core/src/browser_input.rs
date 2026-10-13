@@ -11,9 +11,12 @@ pub struct TouchIntent {
     /// Queue one-handed drive while airborne; apply at the first grounded step.
     #[serde(default)]
     pub grounded_only: bool,
-    /// One-handed touch supplies forward throttle only, even when rolling back.
+    /// One-handed forward drive; reverse_held overrides only on ground contact.
     #[serde(default)]
     pub forward_only: bool,
+    /// Enhanced one-finger mode: a second held finger requests ground reverse.
+    #[serde(default)]
+    pub reverse_held: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -48,7 +51,9 @@ impl TouchDrive {
             self.reset();
             self.generation = Some(intent.generation);
         }
-        if intent.forward_only {
+        let secondary_reverse =
+            intent.forward_only && intent.held && intent.reverse_held && grounded;
+        if intent.forward_only && !secondary_reverse {
             self.engaged = false;
             self.reverse = false;
             self.throttle = 0.;
@@ -76,7 +81,9 @@ impl TouchDrive {
             independent.lean = independent.lean.clamp(-1., 1.);
             return Ok(independent);
         }
-        let axis = if intent.held {
+        let axis = if secondary_reverse {
+            -1.
+        } else if intent.held {
             intent.axis.clamp(-1., 1.)
         } else {
             0.
@@ -129,6 +136,7 @@ mod tests {
             axis,
             grounded_only: false,
             forward_only: false,
+            reverse_held: false,
         })
     }
     fn released() -> Option<TouchIntent> {
@@ -138,10 +146,48 @@ mod tests {
             axis: 0.,
             grounded_only: false,
             forward_only: false,
+            reverse_held: false,
         })
     }
     fn channels(i: VehicleInput) -> (f32, f32, f32, bool) {
         (i.throttle, i.brake, i.lean, i.reverse)
+    }
+    #[test]
+    fn secondary_reverse_uses_each_steps_ground_contact_and_preserves_primary_lean() {
+        let mut touch = TouchDrive::default();
+        let mut held = intent(1.).unwrap();
+        held.forward_only = true;
+        held.reverse_held = true;
+        let primary = VehicleInput {
+            steer: 0.25,
+            lean: -0.5,
+            preload_axis: Some(1.),
+            ..Default::default()
+        };
+        // One unchanged packet spans takeoff/landing inside a four-step batch.
+        for (grounded, speed, expected) in [
+            (true, 20., (0., 1., -0.5, false)),
+            (false, 20., (1., 0., -0.5, false)),
+            (false, -5., (1., 0., -0.5, false)),
+            (true, 0., (1., 0., -0.5, true)),
+            (true, -10., (1., 0., -0.5, true)),
+        ] {
+            let result = touch.resolve(primary, Some(held), grounded, speed).unwrap();
+            assert_eq!(channels(result), expected);
+            assert_eq!(result.steer, primary.steer);
+            assert_eq!(result.preload_axis, primary.preload_axis);
+        }
+        held.reverse_held = false;
+        assert_eq!(
+            channels(touch.resolve(primary, Some(held), true, -10.).unwrap()),
+            (1., 0., -0.5, false)
+        );
+        held.reverse_held = true;
+        held.held = false;
+        assert_eq!(
+            channels(touch.resolve(primary, Some(held), true, -10.).unwrap()),
+            (0., 0., -0.5, false)
+        );
     }
     #[test]
     fn forward_only_touch_never_brakes_or_reverses_even_rolling_back_or_airborne() {
@@ -303,6 +349,7 @@ mod tests {
             axis: -1.,
             grounded_only: false,
             forward_only: false,
+            reverse_held: false,
         });
         assert_eq!(
             channels(

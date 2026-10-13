@@ -12,6 +12,11 @@ const errors = [], results = [];
 try {
   for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }, { width: 844, height: 390 }, { width: 1280, height: 720 }].filter(v => !process.env.ATV_MINIMAP_WIDTHS || process.env.ATV_MINIMAP_WIDTHS.split(',').includes(String(v.width)))) {
     const page = await browser.newPage({ viewport, hasTouch: true, deviceScaleFactor: 3 });
+    const graph = [];
+    page.on('request', request => {
+      const url = new URL(request.url());
+      if (url.origin === new URL(base).origin && /\.(js|css|wasm)$/.test(url.pathname)) graph.push({path:url.pathname,version:url.searchParams.get('v')});
+    });
     page.on('pageerror', e => errors.push(e.message));
     const state = () => page.evaluate(() => window.atvTerrainStatus);
     const click = name => page.getByRole('button', { name, exact: true }).click();
@@ -64,7 +69,10 @@ try {
     await page.keyboard.up('Space'); await page.keyboard.up('KeyW');
     assert.equal(await native.getAttribute('data-speed-visible'), 'false');
     assert.equal((await state()).glError, 0);
-    results.push({ viewport, state: (await state()).minimap }); await page.close();
+    if (process.env.ATV_RELEASE_COMMIT) {
+      assert(graph.length >= 12); assert(graph.every(r => r.version === process.env.ATV_RELEASE_COMMIT), 'Public CSS/module/Worker/WASM graph uses one release');
+    }
+    results.push({ viewport, state: (await state()).minimap, graph }); await page.close();
   }
   assert.deepEqual(errors, []);
   await writeFile(`${out}/results.json`, JSON.stringify({ results, errors }, null, 2));

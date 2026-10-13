@@ -27,7 +27,7 @@ for name in STATIC_FILES:
         shutil.copy2(source, out / name)
 `]);
 let upgraded = false;
-const mime = name => name.endsWith('.js') ? 'text/javascript' : name.endsWith('.css') ? 'text/css' : name.endsWith('.wasm') ? 'application/wasm' : name.endsWith('.json') ? 'application/json' : 'text/html';
+const mime = name => name.endsWith('.js') ? 'text/javascript' : name.endsWith('.css') ? 'text/css' : name.endsWith('.wasm') ? 'application/wasm' : name.endsWith('.svg') ? 'image/svg+xml' : name.endsWith('.png') ? 'image/png' : name.endsWith('.webmanifest') ? 'application/manifest+json' : name.endsWith('.json') ? 'application/json' : 'text/html';
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://host'), name = url.pathname.slice(1);
   requests.push({name, version:url.searchParams.get('v'), upgraded});
@@ -36,7 +36,7 @@ const server = createServer(async (req, res) => {
       res.setHeader('Content-Type', name.endsWith('.json') ? 'application/json' : 'application/octet-stream');
       res.end(await readFile(`private/reports/hosted-content/${name.slice(8)}`)); return;
     }
-    if (!/^[a-z0-9_-]+\.(html|css|js|wasm)$/.test(name)) {res.writeHead(404);res.end();return;}
+    if (!/^[a-z0-9_-]+\.(html|css|js|wasm|png|svg|webmanifest)$/.test(name)) {res.writeHead(404);res.end();return;}
     const path = upgraded ? `${fixture}/current/${name}` : ['game.css','hud.js'].includes(name) ? `${fixture}/old/${name}` : `web/dist/${name}`;
     res.setHeader('Content-Type', mime(name));
     res.setHeader('Cache-Control', /\.(css|js|wasm)$/.test(name) ? 'public, max-age=31536000' : 'no-store');
