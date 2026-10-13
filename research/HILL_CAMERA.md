@@ -69,3 +69,28 @@ Physical phones, isolated prop-ramp anticipation and object-aware follow-camera
 clearance remain unverified/open. Terrain look-ahead intentionally replaces the
 old chassis-pitch fallback; a tilted prop on otherwise flat terrain does not drive
 this adjustment. It is an authored adaptation, not recovered original camera parity.
+
+## Public release verification (2026-10-13)
+
+PR #47 merged as `96e0ea04c1406a5adfeabbaec055b881b8c9dca7`; main CI/deploy
+[38483204620](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38483204620)
+succeeded. The fetched validated current-main artifact matches the public
+`https://furyremastered.com/` deployment. Workers HTTPS verification matched all
+44 authored static files and 460 served R2 objects by hash, size and MIME. The
+approved portrait image was published in the validated 461-object R2 package
+(346,132,530 bytes); the public gallery has 188 entries and 145 screenshots.
+
+Public Chromium Metal drove Caribou Peak with W throttle, 2.5 seconds of E
+lean-back, then release and camera cycling at 390×844 and 1280×720. No disc
+picker or browser errors appeared. Portrait measured 0.203118654 radians of
+orbit and 1.093747071 pullback over 688 trace samples and 495 bounded Riding
+transitions; its largest observed orbit step was 0.019862291 radians. Desktop
+measured 0.207891486 radians and 1.095949917 pullback over 710 samples and 513
+transitions, with a largest step of 0.020239806 radians. These are public browser
+measurements on one Mac, not physical-device results.
+
+The public portrait → landscape → portrait viewport-rotation check passed with a
+1e-12 angle tolerance for negligible floating-point residue. No gameplay camera
+code changed for this test-only adjustment. Eight render-support tests passed
+again. Physical-phone behavior, original camera parity, isolated-prop
+anticipation and object-aware follow-camera clearance remain unverified or open.
