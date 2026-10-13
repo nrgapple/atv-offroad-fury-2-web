@@ -66,6 +66,12 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
             w.f32(s.throttle);
             w.f32(s.speed);
             w.u32(s.crash_serial);
+            w.f32(s.train_time.unwrap_or(-1.));
+            w.byte(u8::from(s.train_running));
+            w.byte(s.platform.as_ref().map_or(255, |p| p.car));
+            if let Some(p) = &s.platform {
+                w.transform(p.transform);
+            }
         }
         Packet::Leave { peer } => {
             peer_id(*peer)?;
@@ -137,6 +143,22 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
                 throttle: r.f32()?,
                 speed: r.f32()?,
                 crash_serial: r.u32()?,
+                train_time: {
+                    let t = r.f32()?;
+                    if t == -1. { None } else { Some(t) }
+                },
+                train_running: match r.byte()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(Error::InvalidValue),
+                },
+                platform: match r.byte()? {
+                    255 => None,
+                    car => Some(Box::new(crate::Platform {
+                        car,
+                        transform: r.transform()?,
+                    })),
+                },
             };
             s.validate()?;
             Packet::Snapshot(s)

@@ -667,6 +667,43 @@ impl Vehicle {
         self.wreck_rays = Some(rays);
         Ok(())
     }
+    /// Multiplayer owner applies only its response; remote poses remain immutable.
+    pub fn peer_contact(&mut self, origin: Vec3, velocity: Vec3, dt: f32, tie: f32) -> bool {
+        let own = self.body.origin(&self.body_config);
+        let Some(response) =
+            crate::peer_contact::resolve(own, self.body.linear_velocity, origin, velocity, dt, tie)
+        else {
+            return false;
+        };
+        self.body.center = add(self.body.center, response.displacement);
+        self.body.linear_velocity = response.velocity;
+        true
+    }
+    pub fn network_platform(&self) -> Option<crate::train::MotionState> {
+        self.supports
+            .iter()
+            .zip(&self.contacts)
+            .find_map(|(support, contact)| {
+                if contact.grounded {
+                    support.motion
+                } else {
+                    None
+                }
+            })
+    }
+    pub fn translate_network(&mut self, displacement: Vec3) {
+        self.body.center = add(self.body.center, displacement);
+        for point in &mut self.wheel_contact_points {
+            *point = add(*point, displacement);
+        }
+    }
+    pub fn set_network_velocity(&mut self, velocity: Vec3) -> Result<()> {
+        if velocity.iter().any(|v| !v.is_finite() || v.abs() > 1000.) {
+            return Err("invalid network velocity".into());
+        }
+        self.body.linear_velocity = velocity;
+        Ok(())
+    }
     pub fn frame(&self) -> VehicleFrame {
         VehicleFrame {
             origin: self.body.origin(&self.body_config),

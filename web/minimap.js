@@ -1,3 +1,4 @@
+import { PLAYER_COLORS } from './multiplayer.js';
 // Authored GPS cartography: orthographic +Z-up terrain/scenery, never a second
 // live scene render. Source pixels stay in memory and outside the source tree.
 export const MAP_RESOLUTION = 1024;
@@ -15,6 +16,18 @@ export function mapPose(frame) {
   const rider = ragdoll ?? frame.rider_world_matrix;
   return rider ? { origin: rider.slice(12, 15), heading: Math.atan2(-rider[8], rider[10]), actor: ragdoll ? 'ragdoll rider' : 'rider' }
     : { origin: frame.origin, heading: mapHeading(frame.orientation), actor: 'vehicle' };
+}
+export function mapPeerMarker(peer, center, range, size, headingUp) {
+  const pose = mapPose({ ...peer, origin: peer.position, orientation: [1,0,0,0] });
+  let dx = -(pose.origin[0] - center.origin[0]) / range * size;
+  let dy = -(pose.origin[2] - center.origin[2]) / range * size;
+  if (headingUp) {
+    const a = -center.heading;
+    [dx,dy] = [dx*Math.cos(a)-dy*Math.sin(a), dx*Math.sin(a)+dy*Math.cos(a)];
+  }
+  const radius = size * .40, distance = Math.hypot(dx,dy), edge = distance > radius;
+  if (edge) { dx *= radius / distance; dy *= radius / distance; }
+  return { dx, dy, edge, rotation: pose.heading - (headingUp ? center.heading : 0) };
 }
 export function instrumentFooter(size, shape, width, descent) {
   const radius = size / 2, halfWidth = width / 2 + 2;
@@ -157,7 +170,7 @@ export class FreestyleMinimap {
     this.metrics.buildMs += elapsed; this.metrics.buildSlices++; this.metrics.maxBuildSliceMs = Math.max(this.metrics.maxBuildSliceMs, elapsed);
     this.metrics.backingBytes = MAP_RESOLUTION * MAP_RESOLUTION * (build.pixels ? 8 : 4);
   }
-  draw(time, player, visible) {
+  draw(time, player, visible, peers = []) {
     if (!this.settings.enabled || !visible || !this.terrain || !player) { if (!this.root.hidden) this.root.hidden = true; return; }
     if (!this.base) { this.buildSlice(); return; }
     if (this.root.hidden) this.root.hidden = false;
@@ -173,6 +186,22 @@ export class FreestyleMinimap {
     const heading = pose.heading, headingUp = this.settings.orientation === 'heading-up', overscan = headingUp ? Math.SQRT2 : 1;
     c.save(); c.translate(size / 2, size / 2); if (headingUp) c.rotate(-heading);
     c.drawImage(this.base, px - sx * overscan / 2, py - sy * overscan / 2, sx * overscan, sy * overscan, -size * overscan / 2, -size * overscan / 2, size * overscan, size * overscan); c.restore();
+    const peerMarkers=[];
+    for (const peer of peers) {
+      if (peer.stale || !peer.position?.every(Number.isFinite)) continue;
+      const {dx,dy,edge,rotation}=mapPeerMarker(peer,pose,range,size,headingUp);
+      c.save();c.translate(size/2+dx,size/2+dy);c.beginPath();
+      if(edge){c.rotate(Math.atan2(dy,dx)+Math.PI/2);c.moveTo(0,-5);c.lineTo(4,4);c.lineTo(-4,4);c.closePath();}
+      else c.arc(0,0,4,0,Math.PI*2);
+      c.fillStyle=PLAYER_COLORS[peer.peer];c.strokeStyle=this.colors.ink;c.lineWidth=2;c.stroke();c.fill();c.restore();
+      if(this.peerArrows?.[peer.peer]) {
+        c.save();c.translate(size/2+dx,size/2+dy);c.rotate(edge?Math.atan2(dy,dx)+Math.PI/2:rotation);c.imageSmoothingEnabled=false;c.drawImage(this.peerArrows[peer.peer],-5,-5,10,10);c.restore();
+      }
+      c.font=`800 9px ${this.colors.font}`;c.lineWidth=3;c.strokeStyle=this.colors.ink;c.fillStyle=PLAYER_COLORS[peer.peer];
+      c.strokeText(String(peer.peer+1),size/2+dx+5,size/2+dy-3);c.fillText(String(peer.peer+1),size/2+dx+5,size/2+dy-3);
+      peerMarkers.push({peer:peer.peer,x:size/2+dx,y:size/2+dy,edge});
+    }
+    this.metrics.peers=peerMarkers;
     // A small pale/gold heading marker follows the quad, including wrecks/reset.
     c.save(); c.translate(size / 2, size / 2); if (!headingUp) c.rotate(heading);
     c.beginPath(); c.moveTo(0, -8); c.lineTo(6, 6); c.lineTo(0, 3); c.lineTo(-6, 6); c.closePath();

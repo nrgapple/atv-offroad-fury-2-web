@@ -15,7 +15,7 @@ pub use codec::{decode, encode};
 pub use smoothing::{PoseBuffer, SampledPose, SmoothingConfig};
 pub use transform::Transform;
 
-pub const VERSION: u8 = 1;
+pub const VERSION: u8 = 2;
 pub const MAX_PLAYERS: usize = 4;
 /// One-based lobby IDs reference this authored catalog; source resource keys
 /// remain stable even when their browser display names change.
@@ -50,13 +50,13 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Eight uppercase base-32 characters; ambiguous I/O/0/1 are excluded.
+/// Eight uppercase letters or digits. Generated codes omit ambiguous glyphs.
 pub fn valid_room_code(code: &RoomCode) -> bool {
     code.iter()
-        .all(|b| b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789".contains(b))
+        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
 }
 /// User-entered codes accept surrounding whitespace and ASCII lowercase. The
-/// on-wire and URL form remains exactly eight uppercase base-32 characters.
+/// on-wire and URL form remains exactly eight uppercase letters or digits.
 pub fn parse_room_code(value: &str) -> Result<RoomCode> {
     let uppercase = value.trim().to_ascii_uppercase();
     let code: RoomCode = uppercase
@@ -114,6 +114,12 @@ pub enum RiderState {
     Recovering = 3,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Platform {
+    pub car: u8,
+    /// Sender's platform transform at this snapshot, used to preserve relative pose.
+    pub transform: Transform,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub peer: PeerId,
     pub sequence: u32,
@@ -135,6 +141,12 @@ pub struct Snapshot {
     pub speed: f32,
     /// Increment once per crash; receivers deduplicate sound/particle events.
     pub crash_serial: u32,
+    #[serde(default)]
+    pub train_time: Option<f32>,
+    #[serde(default)]
+    pub train_running: bool,
+    #[serde(default)]
+    pub platform: Option<Box<Platform>>,
 }
 impl Default for Snapshot {
     fn default() -> Self {
@@ -156,6 +168,9 @@ impl Default for Snapshot {
             throttle: 0.,
             speed: 0.,
             crash_serial: 0,
+            train_time: None,
+            train_running: false,
+            platform: None,
         }
     }
 }
@@ -207,6 +222,18 @@ impl Snapshot {
             || self.speed.abs() > 100_000.
         {
             return Err(Error::InvalidValue);
+        }
+        if self
+            .train_time
+            .is_some_and(|t| !t.is_finite() || !(0. ..=86400.).contains(&t))
+        {
+            return Err(Error::InvalidValue);
+        }
+        if let Some(platform) = &self.platform {
+            if platform.car >= 32 || self.train_time.is_none() {
+                return Err(Error::InvalidValue);
+            }
+            platform.transform.validate()?;
         }
         self.atv.validate()?;
         self.rider.validate()?;

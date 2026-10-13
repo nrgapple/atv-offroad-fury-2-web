@@ -25,11 +25,11 @@ function convert(mode, input) {
 const encode = packet => Buffer.from(convert('encode', JSON.stringify(packet)), 'hex');
 const decode = bytes => JSON.parse(convert('decode', Buffer.from(bytes).toString('hex')));
 const check = name => report.checks.push(name);
-async function request(path, { method = 'GET', requestOrigin = origin } = {}) {
+async function request(path, { method = 'GET', requestOrigin = origin, body }  = {}) {
   return new Promise((resolve, reject) => {
     const url = new URL(base + path);
     const req = (url.protocol === 'https:' ? https : http).request(url, {
-      method, headers: { ...verifierHeaders, ...(requestOrigin ? { Origin: requestOrigin } : {}) },
+      method, headers: { ...verifierHeaders, ...(requestOrigin ? { Origin: requestOrigin } : {}), ...(body ? {'Content-Type':'application/json'} : {}) },
     }, response => {
       const parts = [];
       response.on('data', part => parts.push(part));
@@ -37,7 +37,7 @@ async function request(path, { method = 'GET', requestOrigin = origin } = {}) {
         json: async () => JSON.parse(Buffer.concat(parts).toString()) }));
     });
     req.on('error', reject);
-    req.end();
+    req.end(body);
   });
 }
 async function rejectedSocket(code, expected, token = '', requestOrigin = origin) {
@@ -97,11 +97,17 @@ try {
   const version = await request('/multiplayer/version');
   assert.equal(version.status, 200);
   const identity = await version.json();
-  assert.equal(identity.protocol, 1);
+  assert.equal(identity.protocol, 2);
   assert.ok(identity.commit && identity.wasmSha256);
   report.identity = identity;
   await rejectedSocket('ABCD2345', 404);
   check('Missing/foreign origins rejected; unknown code cannot create room');
+  const custom='T'+Date.now().toString(36).toUpperCase().slice(-7);
+  assert.equal((await request('/multiplayer/rooms',{method:'POST',body:JSON.stringify({code:'too long!'})})).status,400);
+  const named=await request('/multiplayer/rooms',{method:'POST',body:JSON.stringify({code:custom.toLowerCase()})});
+  assert.equal(named.status,201);assert.equal((await named.json()).code,custom);
+  assert.equal((await request('/multiplayer/rooms',{method:'POST',body:JSON.stringify({code:custom})})).status,409);
+  check('Custom code preserved/normalized, invalid codes rejected and duplicates cannot replace rooms');
   const creation = await request('/multiplayer/rooms', { method: 'POST' });
   assert.equal(creation.status, 201);
   const { code, hostToken } = await creation.json();

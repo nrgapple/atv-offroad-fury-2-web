@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MinimapSettings, mapHeading, mapPoint, mapPose, mapRange, mapScale, terrainTiles, rasterRow, instrumentFooter } from './minimap.js';
+import { MinimapSettings, mapPeerMarker, mapHeading, mapPoint, mapPose, mapRange, mapScale, terrainTiles, rasterRow, instrumentFooter } from './minimap.js';
 
 test('footer lettering and black outline fit the circular edge at minimum and maximum sizes', () => {
   for (const size of [96, 160, 224]) for (const width of [size * .3, size * .55]) {
@@ -77,4 +77,18 @@ test('orthographic terrain uses the actual 64-cell texture mapping and positive 
   assert(pixels[0] > pixels[3 * 4 * 4], 'Northern material appears above southern material');
   assert(pixels[4] < pixels[0], 'Positive X is screen-left, matching the overhead scene camera');
   for (let i = 3; i < pixels.length; i += 4) assert.equal(pixels[i], 255);
+});
+
+test('remote markers share scene handedness, zoom, rider tracking and heading-up rotation', () => {
+  const center = { origin: [100, 0, 100], heading: -Math.PI / 2 };
+  const matrix = [0,0,-1,0, 0,1,0,0, 1,0,0,0, 148,0,100,1];
+  const peer = { position: [900,0,900], rider_world_matrix: matrix };
+  const north = mapPeerMarker(peer, center, mapRange(100), 160, false);
+  assert.equal(north.dx, -10); assert.equal(Math.abs(north.dy), 0);
+  assert.equal(north.rotation, -Math.PI/2); assert.equal(north.edge, false);
+  assert.equal(mapPeerMarker(peer, center, mapRange(50), 160, false).dx, -5);
+  const heading = mapPeerMarker(peer, center, mapRange(100), 160, true);
+  assert(Math.abs(heading.dx)<1e-12); assert.equal(heading.dy,-10); assert.equal(heading.rotation,0);
+  const far = mapPeerMarker({position:[10000,0,100]},center,768,160,false);
+  assert.equal(far.edge,true); assert.equal(far.dx,-64);
 });

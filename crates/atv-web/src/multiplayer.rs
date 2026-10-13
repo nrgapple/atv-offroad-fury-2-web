@@ -1,5 +1,7 @@
 //! Authored networking adapter. All packet validation, interpolation, session
 //! identity and spatial/sample decisions run in Rust; browsers transport bytes.
+#[path = "multiplayer_world.rs"]
+mod world;
 use super::{EnginePlayback, Simulation, vehicle_world};
 use atv_core::{
     Result,
@@ -12,6 +14,7 @@ use atv_net::{Packet, PoseBuffer, RiderState, Snapshot, Transform};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap};
+pub use world::{collide, spawn, synchronize_train};
 
 #[derive(Default)]
 struct Client {
@@ -27,6 +30,7 @@ struct Client {
     engines: BTreeMap<u8, EnginePlayback>,
     heard_crash: BTreeMap<u8, u32>,
     last_sample: Option<u64>,
+    contacts: u64,
     received: u64,
     sent: u64,
     rtt_ms: Option<u32>,
@@ -144,6 +148,9 @@ fn snapshot(c: &mut Client, sim: &Simulation, now: u32, paused: bool) -> Result<
         },
         speed: if paused { 0. } else { frame.speed_magnitude },
         crash_serial: c.crash_serial,
+        train_time: sim.train.as_ref().map(|t| t.time),
+        train_running: !paused,
+        platform: world::platform(sim, &frame)?,
     })))?;
     c.sent += output.len() as u64;
     Ok(output)
@@ -157,7 +164,7 @@ fn status(c: &Client) -> Value {
         .lobby
         .as_ref()
         .and_then(|lobby| atv_net::next_map(lobby.map));
-    json!({"peer":c.peer,"code":c.code,"lobby":c.lobby,"environment":environment,"nextMap":next_map,"receivedBytes":c.received,"sentBytes":c.sent,"rttMs":c.rtt_ms})
+    json!({"peer":c.peer,"code":c.code,"lobby":c.lobby,"environment":environment,"nextMap":next_map,"receivedBytes":c.received,"sentBytes":c.sent,"rttMs":c.rtt_ms,"contacts":c.contacts})
 }
 fn lobby(c: &mut Client, value: atv_net::Lobby) {
     if c.lobby.as_ref().is_some_and(|old| {
@@ -191,7 +198,7 @@ struct Presentation {
     #[serde(default)]
     audible: bool,
 }
-fn presentation(c: &mut Client, input: &[u8], now: u64) -> Result<Vec<u8>> {
+fn presentation(c: &mut Client, input: &[u8], now: u64, sim: &Simulation) -> Result<Vec<u8>> {
     let req: Presentation = serde_json::from_slice(input).map_err(|e| e.to_string())?;
     if req.playing.len() > 4
         || req.playing.iter().any(|p| {
@@ -207,9 +214,10 @@ fn presentation(c: &mut Client, input: &[u8], now: u64) -> Result<Vec<u8>> {
     c.last_sample = Some(now);
     let mut peers = Vec::new();
     for (&id, buffer) in &c.buffers {
-        let Some(pose) = buffer.sample(now) else {
+        let Some(mut pose) = buffer.sample(now) else {
             continue;
         };
+        world::rebase(&mut pose.snapshot, sim)?;
         let s = &pose.snapshot;
         let spatial = command(
             Source {
@@ -292,7 +300,7 @@ fn presentation(c: &mut Client, input: &[u8], now: u64) -> Result<Vec<u8>> {
         } else {
             Value::Null
         };
-        peers.push(json!({"peer":id,"atv_model":s.atv_model,"rider_model":s.rider_model,"world_matrix":s.atv.to_column_major(),"quad_node_matrices":s.atv_nodes.iter().map(|t|t.to_column_major()).collect::<Vec<_>>(),"rider_world_matrix":s.rider.to_column_major(),"rider_node_matrices":s.rider_nodes.iter().map(|t|t.to_column_major()).collect::<Vec<_>>(),"position":s.atv.position,"rider_state":s.rider_state,"crash_serial":s.crash_serial,"rpm":s.rpm,"stale":pose.stale,"extrapolated_ms":pose.extrapolated_ms,"spatial":spatial,"engine":engine,"crash":crash}));
+        peers.push(json!({"peer":id,"atv_model":s.atv_model,"rider_model":s.rider_model,"world_matrix":s.atv.to_column_major(),"quad_node_matrices":s.atv_nodes.iter().map(|t|t.to_column_major()).collect::<Vec<_>>(),"rider_world_matrix":s.rider.to_column_major(),"rider_node_matrices":s.rider_nodes.iter().map(|t|t.to_column_major()).collect::<Vec<_>>(),"position":s.atv.position,"platform":s.platform.as_ref().map(|p|p.car),"rider_state":s.rider_state,"crash_serial":s.crash_serial,"rpm":s.rpm,"stale":pose.stale,"extrapolated_ms":pose.extrapolated_ms,"spatial":spatial,"engine":engine,"crash":crash}));
     }
     serde_json::to_vec(&json!({"state":status(c),"peers":peers})).map_err(|e| e.to_string())
 }
@@ -358,7 +366,7 @@ pub fn dispatch(input: &[u8], op: u32, index: usize, sim: &Simulation) -> Result
             }
             serde_json::to_vec(&json!({"state":status(c)})).map_err(|e| e.to_string())
         }
-        83 => presentation(c, input, index as u64),
+        83 => presentation(c, input, index as u64, sim),
         84 => {
             *c = Client::default();
             Ok(b"null".to_vec())

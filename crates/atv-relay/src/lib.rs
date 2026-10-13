@@ -104,7 +104,7 @@ fn send(ws: &WebSocket, packet: &Packet) -> Result<()> {
 }
 
 #[event(fetch)]
-pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
+pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
     if !same_origin(&req, &env)? {
         return Response::error("Origin denied", 403);
     }
@@ -117,10 +117,28 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     }
     let namespace = env.durable_object("LOBBIES")?;
     if req.path() == ROOT && req.method() == Method::Post {
+        let body = req.text().await?;
+        let requested = if body.is_empty() {
+            None
+        } else {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&body) else {
+                return Response::error("Invalid lobby request", 400);
+            };
+            match value.get("code").and_then(|v| v.as_str()) {
+                None | Some("") => None,
+                Some(code) => match atv_net::parse_room_code(code) {
+                    Ok(code) => Some(code),
+                    Err(_) => return Response::error("Use 8 letters or numbers", 400),
+                },
+            }
+        };
         // Name lookup is stable, but guessed codes must never create joinable rooms.
         // Initialization goes only through this creator route, with collision retry.
         for _ in 0..4 {
-            let code = random_code()?;
+            let code = match requested {
+                Some(code) => code,
+                None => random_code()?,
+            };
             let text = std::str::from_utf8(&code).expect("ASCII room code");
             let stub = namespace.id_from_name(text)?.get_stub()?;
             let token = random_token()?;
@@ -146,6 +164,9 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                     "code": text, "hostToken": token
                 }))?
                 .with_status(201));
+            }
+            if response.status_code() == 409 && requested.is_some() {
+                return Response::error("Lobby code is taken", 409);
             }
             if response.status_code() != 409 {
                 return Response::error("Room creation failed", 503);
@@ -388,8 +409,15 @@ impl DurableObject for LobbyRoom {
         if !connection.account(now(), bytes.len()) {
             return ws.close(Some(1008), Some("Message rate exceeded"));
         }
-        let Ok(packet) = atv_net::decode(&bytes) else {
-            return ws.close(Some(1008), Some("Invalid multiplayer packet"));
+        let packet = match atv_net::decode(&bytes) {
+            Ok(packet) => packet,
+            Err(atv_net::Error::UnsupportedVersion) => {
+                return ws.close(
+                    Some(1008),
+                    Some("Game updated. Reload the page to join multiplayer."),
+                );
+            }
+            Err(_) => return ws.close(Some(1008), Some("Invalid multiplayer packet")),
         };
         match packet {
             Packet::Join { code, mut player }
@@ -546,7 +574,7 @@ mod tests {
     }
 
     #[test]
-    fn route_rejects_traversal_extra_path_and_ambiguous_codes() {
+    fn route_rejects_traversal_extra_path_and_invalid_codes() {
         assert_eq!(
             code_from_path("/multiplayer/rooms/ABCD2345"),
             Some(*b"ABCD2345")
@@ -554,7 +582,7 @@ mod tests {
         for path in [
             "/multiplayer/rooms/ABCD2345/extra",
             "/multiplayer/rooms/ABCD234",
-            "/multiplayer/rooms/ABCD23IO",
+            "/multiplayer/rooms/ABCD23!O",
             "/multiplayer/rooms/../thing",
             "/another/rooms/ABCD2345",
         ] {

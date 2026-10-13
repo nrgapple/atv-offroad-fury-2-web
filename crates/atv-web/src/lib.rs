@@ -642,6 +642,11 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     origin,
                     json_number(&value, "yaw")?,
                 )?;
+                if let Some(velocity) = value.get("velocity") {
+                    vehicle.set_network_velocity(
+                        serde_json::from_value(velocity.clone()).map_err(|e| e.to_string())?,
+                    )?;
+                }
                 vehicle
                     .enable_wrecks(sim.physics.as_ref().ok_or("load original physics first")?)?;
                 if let Some(config) = sim.boundary_config {
@@ -1410,8 +1415,22 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
         simulation(br#"{"cycle":true}"#, 47)?;
     }
     let mut frames = Vec::with_capacity(count as usize);
-    for _ in 0..count {
-        let train = SIMULATION.with_borrow_mut(|sim| step_train_scene(sim, 1.0 / 60.0))?;
+    let now = value
+        .get("now")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    for step_index in 0..count {
+        let step_now = now.saturating_sub((count - 1 - step_index) * 1000 / 60);
+        let train = SIMULATION.with_borrow_mut(|sim| -> Result<_> {
+            let synced = multiplayer::synchronize_train(sim, step_now, 1. / 60.)?;
+            let frame = if synced {
+                sim.train.as_ref().map(|t| t.frame()).transpose()?
+            } else {
+                step_train_scene(sim, 1. / 60.)?
+            };
+            multiplayer::collide(sim, step_now, 1. / 60.)?;
+            Ok(frame)
+        })?;
         let locked = SIMULATION.with_borrow(|sim| sim.race.as_ref().is_some_and(|r| r.locked()));
         let bytes = if locked {
             SIMULATION.with_borrow_mut(|sim| {
@@ -1534,6 +1553,21 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
+    if op == 86 {
+        let request: serde_json::Value =
+            serde_json::from_slice(input).map_err(|e| e.to_string())?;
+        let id = request["peer"]
+            .as_u64()
+            .filter(|v| *v < 4)
+            .ok_or("invalid peer")? as u8;
+        let now = request["now"].as_u64().ok_or("missing spawn time")?;
+        let spawn = SIMULATION.with_borrow_mut(|sim| {
+            multiplayer::synchronize_train(sim, now, 1. / 60.)?;
+            multiplayer::spawn(sim, id, now)
+        })?;
+        return simulation(&serde_json::to_vec(&spawn).map_err(|e| e.to_string())?, 23);
+    }
+
     if op == 103 {
         return motorcycles::menu(input, index);
     }

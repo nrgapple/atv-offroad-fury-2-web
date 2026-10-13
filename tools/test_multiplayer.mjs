@@ -11,7 +11,7 @@ const button=(page,name)=>page.getByRole('button',{name,exact:true});
 const state=page=>page.evaluate(()=>window.atvTerrainStatus);
 const menu=async page=>{await page.goto(base+'/play.html');await button(page,'Press START').click({timeout:90000});await button(page,'Multiplayer').click();};
 try{
- await menu(a);await a.getByRole('textbox',{name:'Rider name',exact:true}).fill('Host');await button(a,'Create lobby').click();
+ await menu(a);await button(a,'Create lobby').click();await a.getByRole('textbox',{name:'Rider name',exact:true}).fill('Host');await button(a,'Create lobby').click();
  await a.waitForFunction(()=>window.atvTerrainStatus.multiplayer?.state.code,null,{timeout:15000});
  const code=(await state(a)).multiplayer.state.code;assert.match(code,/^[A-HJ-NP-Z2-9]{8}$/);
  await a.context().grantPermissions(['clipboard-read','clipboard-write'],{origin:base});
@@ -19,7 +19,7 @@ try{
  const invite=await a.evaluate(()=>navigator.clipboard.readText());
  const inviteUrl=new URL(invite);assert.equal(inviteUrl.origin,new URL(base).origin);assert.equal(inviteUrl.pathname,'/play.html');assert.deepEqual([...inviteUrl.searchParams],[['room',code]]);
  await b.goto(invite);await b.getByRole('textbox',{name:'Rider name',exact:true}).fill('Guest',{timeout:90000});
- await button(b,'Quad and Rider').click();await button(b,'Next quad').click();await button(b,'Change rider').click();await button(b,'Done').click();await button(b,'Join code').click();
+ await button(b,'Quad and Rider').click();await button(b,'Next quad').click();await button(b,'Change rider').click();await button(b,'Done').click();await button(b,'Join lobby').click();
  await a.waitForFunction(()=>window.atvTerrainStatus.multiplayer?.state.lobby?.players.length===2,null,{timeout:15000});
  for(let selected=1;selected<map;selected++) {
    await button(a,'Next environment').click();

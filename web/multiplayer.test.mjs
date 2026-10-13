@@ -216,3 +216,39 @@ test('host close invalidates the pending map loader before it can resume a ride'
     assert.equal(f.mp.state.code,undefined);
   }finally{await f.cleanup();}
 });
+
+test('active-room admission starts exactly once even when Welcome arrives during Join send',async()=>{
+ const f=fixture();try {
+   f.defaultState.lobby.started=true;
+   const pending=f.mp.connect('ABCD2345',f.frontend);
+   await flush();const socket=f.sockets.at(-1);
+   const nativeSend=socket.send.bind(socket);socket.send=bytes=>{nativeSend(bytes);socket.message();};
+   await socket.open();await pending;await flush();
+   assert.deepEqual(f.starts,['env01']);socket.message();await flush();assert.equal(f.starts.length,1);
+ }finally{await f.cleanup();}
+});
+test('join presents lobby before connecting so late-start loading cannot be covered afterwards',async()=>{
+ const f=fixture();try {
+   const order=[];f.frontend.roomCode='ABCD2345';f.frontend.show=async()=>order.push('lobby');
+   f.mp.connect=async()=>{order.push('connect');order.push('loading');};
+   await f.mp.action('join',f.frontend);assert.deepEqual(order,['lobby','connect','loading']);
+ }finally{await f.cleanup();}
+});
+test('spawn only resumes after the validated placement completes',async()=>{
+ const f=fixture();try {
+   let resumed=0;f.frontend.resume=()=>resumed++;f.mp.spawn=async()=>{throw Error('stale');};
+   await assert.rejects(f.mp.action('spawn:1',f.frontend),/stale/);assert.equal(resumed,0);
+   f.mp.spawn=async id=>assert.equal(id,1);await f.mp.action('spawn:1',f.frontend);assert.equal(resumed,1);
+ }finally{await f.cleanup();}
+});
+
+test('distant, offscreen and rear player indicators stay finite and inside viewport',async()=>{
+ const {screenMarker}=await import('./multiplayer.js');
+ const view=[1,0,0,0,0,1,0,0,0,0,1,-1,0,0,0,0];
+ for(const p of [[0,0,-100],[10000,0,-10],[0,0,100],[0,0,0]]) {
+   const m=screenMarker(p,view,390,844);assert(Object.values(m).every(v=>typeof v!=='number'||Number.isFinite(v)));
+   assert(m.x>=0&&m.x<=390&&m.y>=0&&m.y<=844);
+ }
+ assert.equal(screenMarker([NaN,0,0],view,390,844),null);
+ assert.equal(screenMarker([0,0,100],view,390,844).edge,true);
+});
