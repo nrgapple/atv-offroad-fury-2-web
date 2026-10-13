@@ -122,20 +122,6 @@
       "caption": "Browser checkpoint with the original sky, track, ATV and rider; original music was streaming during this capture."
     },
     {
-      "id": "public-browser-build-and-collision-recovery-c434721b",
-      "timestamp": "2026-10-11T20:41:18.066532+00:00",
-      "recorded_at": "2026-10-11T20:41:18.066532+00:00",
-      "kind": "verification",
-      "title": "Public browser build and collision recovery",
-      "summary": "The game build and screenshot log are now available on public Sites; Tailscale is no longer required.",
-      "details": [
-        "Public HTTPS checks loaded all eight existing log entries and seven screenshots, and streamed original music with no underruns.",
-        "Private GitHub Actions now builds the Rust/WASM release and checks code on main. A scheduled publisher is configured to check successful builds every 15 minutes; its first unattended run has not yet been observed.",
-        "The recovered chassis contact solver matched 1,400 instruction-interpreter cases; integration with the original collision hull is being verified in the browser."
-      ],
-      "limitation": "The browser build remains incomplete. Original obstacle contact generation, crash behavior, full animations, races and progression are still under reconstruction."
-    },
-    {
       "id": "original-chassis-hull-connected-970f5b48",
       "timestamp": "2026-10-11T20:41:10.578829+00:00",
       "recorded_at": "2026-10-11T20:41:43.970276+00:00",
@@ -151,6 +137,20 @@
       "limitation": "Track-object contact generation and crashes remain incomplete. Wheels still render in their bind pose; rider blending, race systems and progression are not finished.",
       "image": "/devlog-images/original-chassis-hull-connected-970f5b48.png",
       "caption": "Original hull connected to the Rust terrain-contact solver, with original sky and scene textures visible."
+    },
+    {
+      "id": "public-browser-build-and-collision-recovery-c434721b",
+      "timestamp": "2026-10-11T20:41:18.066532+00:00",
+      "recorded_at": "2026-10-11T20:41:18.066532+00:00",
+      "kind": "verification",
+      "title": "Public browser build and collision recovery",
+      "summary": "The game build and screenshot log are now available on public Sites; Tailscale is no longer required.",
+      "details": [
+        "Public HTTPS checks loaded all eight existing log entries and seven screenshots, and streamed original music with no underruns.",
+        "Private GitHub Actions now builds the Rust/WASM release and checks code on main. A scheduled publisher is configured to check successful builds every 15 minutes; its first unattended run has not yet been observed.",
+        "The recovered chassis contact solver matched 1,400 instruction-interpreter cases; integration with the original collision hull is being verified in the browser."
+      ],
+      "limitation": "The browser build remains incomplete. Original obstacle contact generation, crash behavior, full animations, races and progression are still under reconstruction."
     },
     {
       "id": "original-atv-suspension-moves-with-driving-9a7447c1",
@@ -305,21 +305,6 @@
       "caption": "Host-only local UI: Freestyle environment picker with the Caribou Peak scene preview."
     },
     {
-      "id": "freestyle-now-connects-two-original-environments-cfd6b170",
-      "timestamp": "2026-10-11T21:51:59.564434+00:00",
-      "recorded_at": "2026-10-11T21:53:08.948107+00:00",
-      "kind": "verification",
-      "title": "Freestyle now connects two original environments",
-      "summary": "The reconstructed title route now reaches the original Freestyle environment picker, and both Caribou Peak (ENV01) and Tioga Valley (ENV02) enter a driving scene in the local browser build.",
-      "details": [
-        "The full frontend check passed title \u2192 Main Menu \u2192 Single Player \u2192 Freestyle using keyboard and synthetic controller input. Start returns to the menu and pauses the Rust frame; on a 390-pixel touch viewport, selecting Caribou loads the scene and Escape returns without overflow or JavaScript errors.",
-        "The page uses decoded original menu layouts, fonts and artwork. Its map choice now changes between Caribou Peak (ENV01) and Tioga Valley (ENV02)."
-      ],
-      "limitation": "Host-only checkpoint; public v5 still starts directly on Caribou Peak. Only two environments and the Freestyle route are connected. Other modes, original menu callbacks, race HUD and full game flow remain unfinished; this is not whole-game PS2 equivalence.",
-      "image": "/devlog-images/freestyle-now-connects-two-original-environments-cfd6b170.png",
-      "caption": "Host-only capture of the recovered Freestyle environment picker on Tioga Valley."
-    },
-    {
       "id": "four-degenerate-tioga-faces-no-longer-stop-the-map-5baa3ade",
       "timestamp": "2026-10-11T21:49:55.341002+00:00",
       "recorded_at": "2026-10-11T21:53:08.984356+00:00",
@@ -333,6 +318,21 @@
       "limitation": "This is a targeted malformed-geometry recovery, not proof of complete collision equivalence or a PS2-hardware match. Public v5 does not yet include Tioga or the reconstructed menu; race flow and other environments remain incomplete.",
       "image": "/devlog-images/four-degenerate-tioga-faces-no-longer-stop-the-map-5baa3ade.png",
       "caption": "Local Tioga Valley driving scene after the targeted degenerate-face handling."
+    },
+    {
+      "id": "freestyle-now-connects-two-original-environments-cfd6b170",
+      "timestamp": "2026-10-11T21:51:59.564434+00:00",
+      "recorded_at": "2026-10-11T21:53:08.948107+00:00",
+      "kind": "verification",
+      "title": "Freestyle now connects two original environments",
+      "summary": "The reconstructed title route now reaches the original Freestyle environment picker, and both Caribou Peak (ENV01) and Tioga Valley (ENV02) enter a driving scene in the local browser build.",
+      "details": [
+        "The full frontend check passed title \u2192 Main Menu \u2192 Single Player \u2192 Freestyle using keyboard and synthetic controller input. Start returns to the menu and pauses the Rust frame; on a 390-pixel touch viewport, selecting Caribou loads the scene and Escape returns without overflow or JavaScript errors.",
+        "The page uses decoded original menu layouts, fonts and artwork. Its map choice now changes between Caribou Peak (ENV01) and Tioga Valley (ENV02)."
+      ],
+      "limitation": "Host-only checkpoint; public v5 still starts directly on Caribou Peak. Only two environments and the Freestyle route are connected. Other modes, original menu callbacks, race HUD and full game flow remain unfinished; this is not whole-game PS2 equivalence.",
+      "image": "/devlog-images/freestyle-now-connects-two-original-environments-cfd6b170.png",
+      "caption": "Host-only capture of the recovered Freestyle environment picker on Tioga Valley."
     },
     {
       "id": "the-title-screen-is-now-part-of-the-local-route-efc7fbb4",
@@ -364,6 +364,21 @@
       "caption": "Public v6 Tioga Valley scene reached through the recovered title and Freestyle menus."
     },
     {
+      "id": "a-real-pause-panel-now-sits-over-the-ride-33765b28",
+      "timestamp": "2026-10-11T22:11:50.293140+00:00",
+      "recorded_at": "2026-10-11T22:13:18.316681+00:00",
+      "kind": "build",
+      "title": "The pause menu now uses recovered overlay art",
+      "summary": "The local build now draws a pause menu from the game's original overlay resources instead of leaving the driving toolbar as the only way back to game controls.",
+      "details": [
+        "The recovered [Main Menu] overlay contributes 14 panel/navigation icons and three selection stretches, with original fonts and track textures. The authored panel offers Resume, Reset ATV, Controls, Fullscreen, Dev log and Quit to Main Menu.",
+        "The local frontend check confirmed the Rust simulation freezes while paused on desktop and 390-pixel layouts with 44-pixel targets. Resume, Controls/back and Quit were tested; only Pause and Camera stay on the driving toolbar."
+      ],
+      "limitation": "This is a web-authored pause panel using recovered game art, not the original pause callback implementation. Other pages and original game modes remain unfinished; this local panel is not in public v6.",
+      "image": "/devlog-images/a-real-pause-panel-now-sits-over-the-ride-33765b28.png",
+      "caption": "Local pause panel using recovered overlay art and selection texture over the frozen scene."
+    },
+    {
       "id": "a-touchscreen-release-follows-the-original-preload-gat-de0f97a3",
       "timestamp": "2026-10-11T22:13:14.183440+00:00",
       "recorded_at": "2026-10-11T22:13:14.214064+00:00",
@@ -379,21 +394,6 @@
       "limitation": "One Caribou ramp run is verified in host Chromium; it does not establish repeatability on other terrain. Physical iOS behavior, original trick modifiers, stunt scoring, IK and crash animation remain unverified or incomplete. The pause and touch updates are not in public v6.",
       "image": "/devlog-images/a-touchscreen-release-follows-the-original-preload-gat-de0f97a3.png",
       "caption": "Local mobile capture: PRELOADED feedback appears after release as the quad clears the Caribou ramp."
-    },
-    {
-      "id": "a-real-pause-panel-now-sits-over-the-ride-33765b28",
-      "timestamp": "2026-10-11T22:11:50.293140+00:00",
-      "recorded_at": "2026-10-11T22:13:18.316681+00:00",
-      "kind": "build",
-      "title": "The pause menu now uses recovered overlay art",
-      "summary": "The local build now draws a pause menu from the game's original overlay resources instead of leaving the driving toolbar as the only way back to game controls.",
-      "details": [
-        "The recovered [Main Menu] overlay contributes 14 panel/navigation icons and three selection stretches, with original fonts and track textures. The authored panel offers Resume, Reset ATV, Controls, Fullscreen, Dev log and Quit to Main Menu.",
-        "The local frontend check confirmed the Rust simulation freezes while paused on desktop and 390-pixel layouts with 44-pixel targets. Resume, Controls/back and Quit were tested; only Pause and Camera stay on the driving toolbar."
-      ],
-      "limitation": "This is a web-authored pause panel using recovered game art, not the original pause callback implementation. Other pages and original game modes remain unfinished; this local panel is not in public v6.",
-      "image": "/devlog-images/a-real-pause-panel-now-sits-over-the-ride-33765b28.png",
-      "caption": "Local pause panel using recovered overlay art and selection texture over the frozen scene."
     },
     {
       "id": "the-pause-panel-and-touch-controls-reach-the-public-bu-e2164de6",
@@ -554,21 +554,6 @@
       "caption": "Host-verified Freeport Harbor spawn on the original dirt road, with recovered vegetation and terrain."
     },
     {
-      "id": "a-phone-sized-map-menu-now-works-9f2e1444",
-      "timestamp": "2026-10-11T23:55:03.553178+00:00",
-      "recorded_at": "2026-10-12T00:02:31.005646+00:00",
-      "kind": "build",
-      "title": "A phone-sized map menu now works",
-      "summary": "The port now has a responsive Rust-drawn menu route from Single Player to Freestyle, with all eight environment choices and touch-sized controls.",
-      "details": [
-        "The menu uses recovered original fonts and map imagery, while Rust handles layout, focus, drawing, and hit testing. Keyboard, controller, and touch navigation passed the host frontend regression; the portrait picker has 44-pixel-or-larger targets.",
-        "Public Cloudflare verification on commit 1e5c4fd255a4979148bdda648e010e2fbb68221b (CI 38186584449) passed the title/menu flow, keyboard and controller navigation, mobile layout, and pause. The public test reported no disc prompt or JavaScript/WebGL errors."
-      ],
-      "limitation": "This is an original-style reconstruction, not a pixel-exact copy: scenic menu backdrops, animated highlights, some original callbacks, other modes, and the race HUD are still unfinished.",
-      "image": "/devlog-images/a-phone-sized-map-menu-now-works-9f2e1444.png",
-      "caption": "Host-verified portrait map picker: Freestyle at Caribou Peak, with large Previous, Next, Back, and Ride targets."
-    },
-    {
       "id": "the-camera-now-makes-room-for-portrait-play-3a61e706",
       "timestamp": "2026-10-11T23:53:22.015682+00:00",
       "recorded_at": "2026-10-12T00:02:37.468574+00:00",
@@ -582,6 +567,21 @@
       "limitation": "The adjustment changes camera framing only in portrait. Crash recovery and the remaining race behavior are unfinished.",
       "image": "/devlog-images/the-camera-now-makes-room-for-portrait-play-3a61e706.png",
       "caption": "Public Cloudflare capture: portrait chase framing shows more of the snowy course ahead of the ATV."
+    },
+    {
+      "id": "a-phone-sized-map-menu-now-works-9f2e1444",
+      "timestamp": "2026-10-11T23:55:03.553178+00:00",
+      "recorded_at": "2026-10-12T00:02:31.005646+00:00",
+      "kind": "build",
+      "title": "A phone-sized map menu now works",
+      "summary": "The port now has a responsive Rust-drawn menu route from Single Player to Freestyle, with all eight environment choices and touch-sized controls.",
+      "details": [
+        "The menu uses recovered original fonts and map imagery, while Rust handles layout, focus, drawing, and hit testing. Keyboard, controller, and touch navigation passed the host frontend regression; the portrait picker has 44-pixel-or-larger targets.",
+        "Public Cloudflare verification on commit 1e5c4fd255a4979148bdda648e010e2fbb68221b (CI 38186584449) passed the title/menu flow, keyboard and controller navigation, mobile layout, and pause. The public test reported no disc prompt or JavaScript/WebGL errors."
+      ],
+      "limitation": "This is an original-style reconstruction, not a pixel-exact copy: scenic menu backdrops, animated highlights, some original callbacks, other modes, and the race HUD are still unfinished.",
+      "image": "/devlog-images/a-phone-sized-map-menu-now-works-9f2e1444.png",
+      "caption": "Host-verified portrait map picker: Freestyle at Caribou Peak, with large Previous, Next, Back, and Ride targets."
     },
     {
       "id": "a-held-pullback-now-reaches-the-airborne-rider-pose-2b752c1d",
@@ -753,6 +753,31 @@
       "caption": "Fresh host touch crash test at 390px: the rider and rolling quad during the ground phase. The automated trace verifies wreck camera activation, contact and recovery; this image alone does not establish parity."
     },
     {
+      "id": "the-soundtrack-selector-remembers-where-the-shuffle-wa-d877a05b",
+      "timestamp": "2026-10-12T02:00:25.381532+00:00",
+      "recorded_at": "2026-10-12T02:02:50.693431+00:00",
+      "kind": "discovery",
+      "title": "A real quad image was hiding in the menu files",
+      "summary": "The public Main Menu now includes a small original ATV thumbnail recovered from the UI archive. The image fills an empty spot at its real source resolution; it does not recreate the whole menu.",
+      "details": [
+        "The thumbnail is an original 256\u00d7128 transparent ATV image from QUADINFO.RES. It appears from that source asset; it is not new high-resolution artwork.",
+        "The menu layout, panel geometry, most artwork and callbacks remain authored or incomplete; this is one recovered image, not a restored original menu page.",
+        "The public build also includes the 21-song selector; the separate Music checkpoint covers its playback and shuffle behavior."
+      ],
+      "limitation": "The thumbnail retains its original 256\u00d7128 source detail. Other original menu pages, artwork and callbacks are not fully reconstructed.",
+      "image": "/devlog-images/the-soundtrack-selector-remembers-where-the-shuffle-wa-d877a05b.png",
+      "caption": "Host capture of the public-verified Main Menu with an image from the original ATV thumbnail; other original menu art remains incomplete.",
+      "release_verification": {
+        "commit": "0906822adbc585f58e4a7309322f63f4cc3f7b6a",
+        "ci_run": "38194430965",
+        "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+        "checks": [
+          "Public title/menu frontend verification passed with keyboard/controller navigation and the Main Menu route containing the recovered ATV thumbnail.",
+          "The separate Music page test is documented in the soundtrack checkpoint; the thumbnail is one recovered asset, not full menu-art parity."
+        ]
+      }
+    },
+    {
       "id": "bindings-now-follow-you-from-keyboard-to-controller-b55f5d98",
       "timestamp": "2026-10-12T02:01:01.202984+00:00",
       "recorded_at": "2026-10-12T02:02:50.657306+00:00",
@@ -775,31 +800,6 @@
           "Public keyboard and controller settings captured keys, buttons and signed axes; mapped input drove the actual WASM vehicle and persisted after reload.",
           "Reverse/brake chords, stunt axes, once-only commands, disconnect/blur cancellation and the fresh Resume\u2192Escape path passed public browser checks.",
           "The public control suite exercised the 33-step stale-preload cancellation regression; physical controller/iOS equivalence and full-flip parity are not claimed."
-        ]
-      }
-    },
-    {
-      "id": "the-soundtrack-selector-remembers-where-the-shuffle-wa-d877a05b",
-      "timestamp": "2026-10-12T02:00:25.381532+00:00",
-      "recorded_at": "2026-10-12T02:02:50.693431+00:00",
-      "kind": "discovery",
-      "title": "A real quad image was hiding in the menu files",
-      "summary": "The public Main Menu now includes a small original ATV thumbnail recovered from the UI archive. The image fills an empty spot at its real source resolution; it does not recreate the whole menu.",
-      "details": [
-        "The thumbnail is an original 256\u00d7128 transparent ATV image from QUADINFO.RES. It appears from that source asset; it is not new high-resolution artwork.",
-        "The menu layout, panel geometry, most artwork and callbacks remain authored or incomplete; this is one recovered image, not a restored original menu page.",
-        "The public build also includes the 21-song selector; the separate Music checkpoint covers its playback and shuffle behavior."
-      ],
-      "limitation": "The thumbnail retains its original 256\u00d7128 source detail. Other original menu pages, artwork and callbacks are not fully reconstructed.",
-      "image": "/devlog-images/the-soundtrack-selector-remembers-where-the-shuffle-wa-d877a05b.png",
-      "caption": "Host capture of the public-verified Main Menu with an image from the original ATV thumbnail; other original menu art remains incomplete.",
-      "release_verification": {
-        "commit": "0906822adbc585f58e4a7309322f63f4cc3f7b6a",
-        "ci_run": "38194430965",
-        "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
-        "checks": [
-          "Public title/menu frontend verification passed with keyboard/controller navigation and the Main Menu route containing the recovered ATV thumbnail.",
-          "The separate Music page test is documented in the soundtrack checkpoint; the thumbnail is one recovered asset, not full menu-art parity."
         ]
       }
     },
@@ -1236,6 +1236,42 @@
       "caption": "Public f6353c capture during the failed Nac Nac, showing the rider separated above the quad. Cached rider queries are verified on this route; physical tree/proxy collision is not."
     },
     {
+      "id": "original-vegetation-proxies-contact-chassis-wheels-and-af15ad2c",
+      "timestamp": "2026-10-12T10:38:35Z",
+      "recorded_at": "2026-10-12T14:41:11.299190+00:00",
+      "kind": "build",
+      "title": "Original vegetation proxies contact chassis, wheels and wreck riders in host routes",
+      "summary": "The host build now records source-authored vegetation proxy contacts in normal ENV04W driving and a corrected steered boundary route. Chassis, wheel and active wreck-rider consumers receive contacts through the recovered scene path; public verification is pending.",
+      "details": [
+        "Source research documents all 40 shipped ESB proxy records as cylinders and their original type-specific dispatch. The 48-case native 0011f9a0 admission/dispatch probe executed 23,592 instructions; integration preserves the original mixed object/plant order, query gates, exclusions and callback rules without substituting generic colliders.",
+        "Normal ENV04W keyboard driving recorded a live chassis/plant contact at step 484 while still Riding: two vegetation candidates selected, five proxy queries, one chassis callback/contact, zero selected static objects, zero unsupported proxies and no cache refresh. The inspected screenshot is route context; it does not depict the contact moment.",
+        "The corrected steered ENV04 boundary route completed 2,126 frames, including 553 boundary frames, one launch, 710 cached rider frames, two resets and a return from Z\u22485266 ft to Z\u22483825 ft with paired flags cleared. Trace telemetry records 24 chassis/plant-hit frames, one wheel/plant-hit frame and eight active wreck-rider/plant-hit frames. These are verified browser callbacks on this route, not full collision or whole-game parity.",
+        "Host checks passed: 266 core and 2 WASM tests, 39 JavaScript tests, 10 release tests, 4 Worker tests, formatting, strict Clippy, setup and repository hygiene. A fresh serial run passed ENV01\u2013ENV08, diagnostics, one-handed controls, touch stunts and boundary checks with no JS/WebGL errors. The larger server backlog passed 48 simultaneous module requests and private/source paths returned 404; this does not prove the cause of earlier startup timeouts.",
+        "Clean landing remains at -0.393066 ft minimum clearance across 201 riding frames with zero skipped frames; no clipping improvement is claimed. Straight-throttle boundary routes previously timed out on ENV04 and ENV03; ENV03 became stranded tilted with no grounded wheels and no vegetation proxy records, so the failure is not attributed to tree geometry."
+      ],
+      "limitation": "Host-verified component only; the public release remains f6353c and this vegetation change is pending CI/deployment/public verification. The boundary failure on ENV03, wet-wreck coverage, full category/mode behavior, dynamic contacts, original parity and tire clipping remain open. The tested callbacks do not establish every shipped proxy or full-game contact equivalence.",
+      "image": "/devlog-images/original-vegetation-proxies-contact-chassis-wheels-and-af15ad2c.png",
+      "caption": "Host ENV04W riding through the vegetation corridor; the corresponding trace records a chassis proxy callback at step 484, though this frame does not show the contact itself."
+    },
+    {
+      "id": "source-authored-vegetation-contact-passes-public-check-1d348e7f",
+      "timestamp": "2026-10-12T11:10:06Z",
+      "recorded_at": "2026-10-12T15:17:40.256686+00:00",
+      "kind": "verification",
+      "title": "Source-authored vegetation contact passes public checks",
+      "summary": "Public release 0541085 confirms the ENV04W chassis vegetation contact and the established wreck/recovery loop. All eight environments, one-handed controls, touch stunts and diagnostics pass; a separate steering-only boundary follow-up still stalls after recovery.",
+      "details": [
+        "Commit 0541085b495fd9e8d0a0dae59ba6c8ea186f49cc passed CI 38264831246 and production deployment. The approved R2 package contains 324 objects with 2 changes; HTTPS verified 26 application files, 323 served objects, 79 dev-log entries and 70 screenshots before this new entry.",
+        "The public ENV04W drive repeated the source-authored chassis vegetation contact at step 484: two proxy candidates, five proxy queries, one chassis callback/contact while Riding, zero selected static candidates and zero unsupported proxies. The inspected screenshot shows the wooded route; the trace log, not this frame, establishes the contact.",
+        "The public boundary route passed 1,733 frames and recovered with paired flags cleared; it recorded 559 cached rider frames, three active wreck-rider vegetation hits and 60 query-suppressed frames. The public Nac Nac separation/contact/recovery route, landing, uninterrupted ENV01\u2013ENV08 map run, diagnostics, saved one-handed controls, touch-stunt check and dev-log layout checks passed.",
+        "Full-batch public landing measured 0.637466 ft tire overlap over 210 riding frames with no skipped frames. The host measurement was 0.393066 ft over 201 frames. The input traces and timing differ, so this is not a causal regression/improvement comparison and does not show a clipping fix.",
+        "A separate public steering-only follow-up returned to Riding near Z=5171 after recovery; the source angle audit stayed below auto-wreck thresholds. It does not show that the game should auto-wreck in that state. The temporary lean assist sent no lean input and was removed; only applied-input/body-contact diagnostics remain in the test."
+      ],
+      "limitation": "Public component verification only. Normal-riding rider collision, MUD/custom masks, dynamic contacts, physical plant coverage beyond tested routes, wet-wreck behavior, complete boundary recovery behavior, visible water, the ENV08 train, tire clipping and whole-game parity remain incomplete or unverified.",
+      "image": "/devlog-images/source-authored-vegetation-contact-passes-public-check-1d348e7f.png",
+      "caption": "Public 0541085 capture from the ENV04W tree corridor. The corresponding route trace records a chassis vegetation callback at step 484; the frame itself is route context, not a depiction of the contact."
+    },
+    {
       "id": "held-mobile-input-resumes-on-the-first-landing-step-0ef43fd5",
       "timestamp": "2026-10-12T12:58:42.573097+00:00",
       "recorded_at": "2026-10-12T12:59:31.576675+00:00",
@@ -1284,40 +1320,32 @@
       "limitation": "Host verification only; CI and public deployment are pending. Physical phone behavior and full-game parity remain unverified."
     },
     {
-      "id": "original-vegetation-proxies-contact-chassis-wheels-and-af15ad2c",
-      "timestamp": "2026-10-12T10:38:35Z",
-      "recorded_at": "2026-10-12T14:41:11.299190+00:00",
-      "kind": "build",
-      "title": "Original vegetation proxies contact chassis, wheels and wreck riders in host routes",
-      "summary": "The host build now records source-authored vegetation proxy contacts in normal ENV04W driving and a corrected steered boundary route. Chassis, wheel and active wreck-rider consumers receive contacts through the recovered scene path; public verification is pending.",
+      "id": "host-rendered-wet-terrain-streams-eae6b0ff",
+      "timestamp": "2026-10-12T15:25:24.852141+00:00",
+      "recorded_at": "2026-10-12T15:57:14.586728+00:00",
+      "kind": "verification",
+      "title": "Host-rendered wet terrain streams",
+      "summary": "The host build now renders source-supported water in all four wet environments, with a continuous stream visible on ENV08 beside the ATV. The shared live field provides matching water heights to the GPU surface across 7,680 sampled values.",
       "details": [
-        "Source research documents all 40 shipped ESB proxy records as cylinders and their original type-specific dispatch. The 48-case native 0011f9a0 admission/dispatch probe executed 23,592 instructions; integration preserves the original mixed object/plant order, query gates, exclusions and callback rules without substituting generic colliders.",
-        "Normal ENV04W keyboard driving recorded a live chassis/plant contact at step 484 while still Riding: two vegetation candidates selected, five proxy queries, one chassis callback/contact, zero selected static objects, zero unsupported proxies and no cache refresh. The inspected screenshot is route context; it does not depict the contact moment.",
-        "The corrected steered ENV04 boundary route completed 2,126 frames, including 553 boundary frames, one launch, 710 cached rider frames, two resets and a return from Z\u22485266 ft to Z\u22483825 ft with paired flags cleared. Trace telemetry records 24 chassis/plant-hit frames, one wheel/plant-hit frame and eight active wreck-rider/plant-hit frames. These are verified browser callbacks on this route, not full collision or whole-game parity.",
-        "Host checks passed: 266 core and 2 WASM tests, 39 JavaScript tests, 10 release tests, 4 Worker tests, formatting, strict Clippy, setup and repository hygiene. A fresh serial run passed ENV01\u2013ENV08, diagnostics, one-handed controls, touch stunts and boundary checks with no JS/WebGL errors. The larger server backlog passed 48 simultaneous module requests and private/source paths returned 404; this does not prove the cause of earlier startup timeouts.",
-        "Clean landing remains at -0.393066 ft minimum clearance across 201 riding frames with zero skipped frames; no clipping improvement is claimed. Straight-throttle boundary routes previously timed out on ENV04 and ENV03; ENV03 became stranded tilted with no grounded wheels and no vegetation proxy records, so the failure is not attributed to tree geometry."
+        "Host tests cover ENV04, ENV05, ENV07 and ENV08, dry ENV01 absence, finite 390px mobile projection, bank/sky rendering, and zero WebGL errors. The rendered surface uses one draw and 137,432 bytes; software-renderer frame timings were 9.63\u20139.94 ms at 960\u00d7540 and 18.25\u201318.59 ms at 585\u00d71266. A native derivative-rounding check covers 40 cases / 3,220 instructions."
       ],
-      "limitation": "Host-verified component only; the public release remains f6353c and this vegetation change is pending CI/deployment/public verification. The boundary failure on ENV03, wet-wreck coverage, full category/mode behavior, dynamic contacts, original parity and tire clipping remain open. The tested callbacks do not establish every shipped proxy or full-game contact equivalence.",
-      "image": "/devlog-images/original-vegetation-proxies-contact-chassis-wheels-and-af15ad2c.png",
-      "caption": "Host ENV04W riding through the vegetation corridor; the corresponding trace records a chassis proxy callback at step 484, though this frame does not show the contact itself."
+      "limitation": "Host-only; public release pending. Software-renderer timings do not represent phone GPU performance. Native VU water parity, reflection, froth and wakes remain unfinished. The capture uses a runtime test placement, not the native map spawn.",
+      "image": "/devlog-images/host-rendered-wet-terrain-streams-eae6b0ff.png",
+      "caption": "Host capture of the ENV08 runtime test placement, showing the rendered water surface and stream banks."
     },
     {
-      "id": "source-authored-vegetation-contact-passes-public-check-1d348e7f",
-      "timestamp": "2026-10-12T11:10:06Z",
-      "recorded_at": "2026-10-12T15:17:40.256686+00:00",
+      "id": "water-and-arlington-train-pass-public-release-checks-dad1c7b0",
+      "timestamp": "2026-10-12T15:25:24.852141+00:00",
+      "recorded_at": "2026-10-12T16:13:11.067856+00:00",
       "kind": "verification",
-      "title": "Source-authored vegetation contact passes public checks",
-      "summary": "Public release 0541085 confirms the ENV04W chassis vegetation contact and the established wreck/recovery loop. All eight environments, one-handed controls, touch stunts and diagnostics pass; a separate steering-only boundary follow-up still stalls after recovery.",
+      "title": "Water and Arlington train pass public release checks",
+      "summary": "Public release 629bc0a (CI 38275179626) verifies rendered water on ENV04, ENV05, ENV07 and ENV08, no water on dry ENV01, and a moving Arlington train in ENV08. The initial 5c3bef0 package omitted imports; the corrected 629 release adds the import allowlist and closure regression check.",
       "details": [
-        "Commit 0541085b495fd9e8d0a0dae59ba6c8ea186f49cc passed CI 38264831246 and production deployment. The approved R2 package contains 324 objects with 2 changes; HTTPS verified 26 application files, 323 served objects, 79 dev-log entries and 70 screenshots before this new entry.",
-        "The public ENV04W drive repeated the source-authored chassis vegetation contact at step 484: two proxy candidates, five proxy queries, one chassis callback/contact while Riding, zero selected static candidates and zero unsupported proxies. The inspected screenshot shows the wooded route; the trace log, not this frame, establishes the contact.",
-        "The public boundary route passed 1,733 frames and recovered with paired flags cleared; it recorded 559 cached rider frames, three active wreck-rider vegetation hits and 60 query-suppressed frames. The public Nac Nac separation/contact/recovery route, landing, uninterrupted ENV01\u2013ENV08 map run, diagnostics, saved one-handed controls, touch-stunt check and dev-log layout checks passed.",
-        "Full-batch public landing measured 0.637466 ft tire overlap over 210 riding frames with no skipped frames. The host measurement was 0.393066 ft over 201 frames. The input traces and timing differ, so this is not a causal regression/improvement comparison and does not show a clipping fix.",
-        "A separate public steering-only follow-up returned to Riding near Z=5171 after recovery; the source angle audit stayed below auto-wreck thresholds. It does not show that the game should auto-wreck in that state. The temporary lean assist sent no lean input and was removed; only applied-input/body-contact diagnostics remain in the test."
+        "Public deployment served 28 authored hashes and 328 R2 objects from a 329-object package. Public checks cover 390px water projection/banks/sky, train pixels (3,990 desktop / 1,710 mobile), route movement and wheel animation, pause/resume and context restoration, with zero page or WebGL errors. Gallery desktop/mobile checks pass."
       ],
-      "limitation": "Public component verification only. Normal-riding rider collision, MUD/custom masks, dynamic contacts, physical plant coverage beyond tested routes, wet-wreck behavior, complete boundary recovery behavior, visible water, the ENV08 train, tire clipping and whole-game parity remain incomplete or unverified.",
-      "image": "/devlog-images/source-authored-vegetation-contact-passes-public-check-1d348e7f.png",
-      "caption": "Public 0541085 capture from the ENV04W tree corridor. The corresponding route trace records a chassis vegetation callback at step 484; the frame itself is route context, not a depiction of the contact."
+      "limitation": "This records the verified water/train release; the screenshot is a previously inspected host capture at the ENV08 runtime test placement, not the native map spawn. Native water parity, reflection, froth and wakes remain unfinished. Train collision, audio and smoke remain unfinished. The compact touch correction is present in the source release but its final public behavior suite is pending.",
+      "image": "/devlog-images/water-and-arlington-train-pass-public-release-checks-dad1c7b0.png",
+      "caption": "Previously inspected host capture at the ENV08 runtime test placement; public verification for this release separately covers all four wet maps and train rendering."
     },
     {
       "id": "one-finger-mobile-feedback-is-host-verified-b2c3044e",
@@ -1332,20 +1360,6 @@
       "limitation": "Host verification only; this checkpoint is pending CI and public release. Physical iOS and Bluetooth input remain unverified. The older broad two-finger steady-ground test still fails against both this build and unchanged public 054, due to ground/air timing assumptions. The landing capture may show a later airborne bounce, so it records neutral-held controls after the verified landing route rather than a clean landing image.",
       "image": "/devlog-images/one-finger-mobile-feedback-is-host-verified-b2c3044e.png",
       "caption": "390px portrait gameplay with one-finger throttle and brace held while right steer and forward lean are each at 50%; the route and control vector are host-verified."
-    },
-    {
-      "id": "host-rendered-wet-terrain-streams-eae6b0ff",
-      "timestamp": "2026-10-12T15:25:24.852141+00:00",
-      "recorded_at": "2026-10-12T15:57:14.586728+00:00",
-      "kind": "verification",
-      "title": "Host-rendered wet terrain streams",
-      "summary": "The host build now renders source-supported water in all four wet environments, with a continuous stream visible on ENV08 beside the ATV. The shared live field provides matching water heights to the GPU surface across 7,680 sampled values.",
-      "details": [
-        "Host tests cover ENV04, ENV05, ENV07 and ENV08, dry ENV01 absence, finite 390px mobile projection, bank/sky rendering, and zero WebGL errors. The rendered surface uses one draw and 137,432 bytes; software-renderer frame timings were 9.63\u20139.94 ms at 960\u00d7540 and 18.25\u201318.59 ms at 585\u00d71266. A native derivative-rounding check covers 40 cases / 3,220 instructions."
-      ],
-      "limitation": "Host-only; public release pending. Software-renderer timings do not represent phone GPU performance. Native VU water parity, reflection, froth and wakes remain unfinished. The capture uses a runtime test placement, not the native map spawn.",
-      "image": "/devlog-images/host-rendered-wet-terrain-streams-eae6b0ff.png",
-      "caption": "Host capture of the ENV08 runtime test placement, showing the rendered water surface and stream banks."
     },
     {
       "id": "original-arlington-train-route-renders-on-host-ab908493",
@@ -1374,20 +1388,6 @@
       "limitation": "Host-verified only; public deployment is pending. Physical phone behavior is unverified.",
       "image": "/devlog-images/compact-one-finger-control-is-the-default-d0b05d12.png",
       "caption": "390px portrait view showing the compact compass/vector and small lift cue during one-finger input."
-    },
-    {
-      "id": "water-and-arlington-train-pass-public-release-checks-dad1c7b0",
-      "timestamp": "2026-10-12T15:25:24.852141+00:00",
-      "recorded_at": "2026-10-12T16:13:11.067856+00:00",
-      "kind": "verification",
-      "title": "Water and Arlington train pass public release checks",
-      "summary": "Public release 629bc0a (CI 38275179626) verifies rendered water on ENV04, ENV05, ENV07 and ENV08, no water on dry ENV01, and a moving Arlington train in ENV08. The initial 5c3bef0 package omitted imports; the corrected 629 release adds the import allowlist and closure regression check.",
-      "details": [
-        "Public deployment served 28 authored hashes and 328 R2 objects from a 329-object package. Public checks cover 390px water projection/banks/sky, train pixels (3,990 desktop / 1,710 mobile), route movement and wheel animation, pause/resume and context restoration, with zero page or WebGL errors. Gallery desktop/mobile checks pass."
-      ],
-      "limitation": "This records the verified water/train release; the screenshot is a previously inspected host capture at the ENV08 runtime test placement, not the native map spawn. Native water parity, reflection, froth and wakes remain unfinished. Train collision, audio and smoke remain unfinished. The compact touch correction is present in the source release but its final public behavior suite is pending.",
-      "image": "/devlog-images/water-and-arlington-train-pass-public-release-checks-dad1c7b0.png",
-      "caption": "Previously inspected host capture at the ENV08 runtime test placement; public verification for this release separately covers all four wet maps and train rendering."
     },
     {
       "id": "compact-one-finger-controls-pass-public-checks-0d6519df",
@@ -1444,18 +1444,6 @@
       "caption": "Host ENV04 desktop route showing the ATV with source-informed dry wheel dust/dirt effects during steering."
     },
     {
-      "id": "original-train-collision-routes-pass-host-scenarios-3ebb6c0d",
-      "timestamp": "2026-10-12T17:28:30.923543+00:00",
-      "recorded_at": "2026-10-12T17:28:30.923543+00:00",
-      "kind": "verification",
-      "title": "Original train collision routes pass host scenarios",
-      "summary": "All four source-route browser scenarios pass on the host: a front approach supports a rideable lift and landing; a head-on contact launches the ATV into wreck/recovery; side-body and top-drop encounters exercise dynamic contacts, wheel support and recovery.",
-      "details": [
-        "The head-on launch reaches 65.48 ft/s upward with 20 dynamic and six secondary contacts. The front landing stays Riding; side-body records 13 dynamic/four secondary contacts, and top-drop records 10/four. The bridge uses original train COL geometry, preserves native callback targeting/caps and queries, and adds the original secondary response path."
-      ],
-      "limitation": "Host-only, pending CI and public verification. These are four source-derived encounter scenarios, not complete train collision or whole-game parity. No collision-trigger or arbitrary launch behavior is claimed; PS2 hardware and broad loaded-scene coverage remain unverified."
-    },
-    {
       "id": "original-wet-wheel-roost-passes-host-checks-4db24c1e",
       "timestamp": "2026-10-12T17:25:19.041592+00:00",
       "recorded_at": "2026-10-12T17:28:46.599954+00:00",
@@ -1482,6 +1470,18 @@
       "limitation": "Host-only, pending CI/public verification. This validates the supplied ENV04 contact placement, not all MUD surfaces or game parity. Whole-game RNG order, exact GS/VU rendering, scene-visibility behavior and original body/tire effects remain incomplete.",
       "image": "/devlog-images/original-mud-wheel-roost-passes-host-checks-99b7171f.png",
       "caption": "Host capture at an original ENV04 MUD surface contact placement; this is a test route, not a normal map spawn."
+    },
+    {
+      "id": "original-train-collision-routes-pass-host-scenarios-3ebb6c0d",
+      "timestamp": "2026-10-12T17:28:30.923543+00:00",
+      "recorded_at": "2026-10-12T17:28:30.923543+00:00",
+      "kind": "verification",
+      "title": "Original train collision routes pass host scenarios",
+      "summary": "All four source-route browser scenarios pass on the host: a front approach supports a rideable lift and landing; a head-on contact launches the ATV into wreck/recovery; side-body and top-drop encounters exercise dynamic contacts, wheel support and recovery.",
+      "details": [
+        "The head-on launch reaches 65.48 ft/s upward with 20 dynamic and six secondary contacts. The front landing stays Riding; side-body records 13 dynamic/four secondary contacts, and top-drop records 10/four. The bridge uses original train COL geometry, preserves native callback targeting/caps and queries, and adds the original secondary response path."
+      ],
+      "limitation": "Host-only, pending CI and public verification. These are four source-derived encounter scenarios, not complete train collision or whole-game parity. No collision-trigger or arbitrary launch behavior is claimed; PS2 hardware and broad loaded-scene coverage remain unverified."
     },
     {
       "id": "train-body-impact-sound-passes-host-recovery-checks-378a49bd",
@@ -2342,25 +2342,6 @@
       "caption": "Host Chromium screenshot at 390\u00d7844, DPR 3: portrait ride view with minimap and HUD; not a public deployment or physical-phone capture."
     },
     {
-      "id": "motorcycle-banking-and-standing-menu-poses-now-pass-ho-d50992f3",
-      "timestamp": "2026-10-13T14:43:07.225818+00:00",
-      "recorded_at": "2026-10-13T14:47:11.330417+00:00",
-      "kind": "verification",
-      "title": "Motorcycle banking and standing menu poses now pass host checks",
-      "summary": "A host checkpoint now covers direction-correct motorcycle banking, recovered standing rider idle clips, and the Sano 50 Mini size label. It corrects two gaps missed by earlier touch-contact and static-menu checks; it remains an authored integration rather than full native physics parity.",
-      "details": [
-        "The left/right touch captures show the rider and motorcycle bank changing with the rendered heading and trajectory. The GPU gate covers profiles 45, 29, 31 and 33 over 1,061 paired steps and 2,455 source-to-bone contact comparisons; maximum grip error was 0.00000170 ft and boot/peg error 0.0000371 ft. Each touch direction was checked after a 450 ms hold. A still image shows the visible bank direction, while the paired runtime gate establishes the direction-response check.",
-        "Recovered source routine 0x004dbd10 applies ground bank by direct orientation, with a 45-degree limit at 35 mph and gain 5. The port now uses a recovered bank component with an authored roll-axis ownership adapter; the full native controller pipeline remains unrecovered.",
-        "All 20 motorcycle choices now pass the actual-GPU standing-menu gate: standing head height exceeds 4.8 ft and pelvis height exceeds 3 ft, with rendered pixels and GPU bones changing over 700 ms. Original UI_mrider.mcf breathing and idle1/idle2/idle3 clips run through the shared ATV menu animation engine, and returning to ATV restores mrider_body. The front-facing folded-arm pose is visible in the menu captures.",
-        "Sano 50 Mini uses the recovered source geometry unchanged: its wheel diameter is 14.91 in versus 28.88 in on the Suzuki 125, with no SUB wheel-scale override. The Mini label describes this source size difference.",
-        "The host all-20 driving catalog passed 1,536 paired steps including audio, clutch, particles and reset. Honda 35 Race passed its five-racer source field in portrait and landscape with touch, countdown and restart. The original 26-ATV garage passed six responsive viewports, male/female breathing, rapid selection and graphics-context restore. Host checks passed 348 core, 25 network, 3 web, 13 relay, 4 release Rust and 72 JavaScript tests; formatting, Clippy, make verify, hygiene, 29 release checks with one skip, and 8 Cloudflare checks also passed.",
-        "A normal-input MX 500 Vancouver backflip-to-wreck route passed over 1,297 paired steps with four intact airborne ragdoll frames, one contact damage transition, separation and recovery."
-      ],
-      "limitation": "Host-only checkpoint; not published. The source bank component and animation resources are recovered, while roll-axis ownership, contact/IK integration and the controller remain authored adapters or unfinished work. Earlier gates did not detect incorrect ground bank direction or the static menu pose. Full native whole-controller parity and physical-phone behavior are unverified. The touch captures show the rider arms spread and somewhat stiff, and the bike/rider remain small in portrait framing.",
-      "image": "/devlog-images/motorcycle-banking-and-standing-menu-poses-now-pass-ho-d50992f3.png",
-      "caption": "Host capture sheet: left and right touch-bank views above, front-facing standing RM125 Race and Sano 50 Mini menu poses below. Rendered direction and idle motion were checked on the host; this is not a public release."
-    },
-    {
       "id": "combined-gps-and-speed-minimap-layouts-6ed6b5c9",
       "timestamp": "2026-10-13T14:33:05.732301+00:00",
       "recorded_at": "2026-10-13T14:57:47.989682+00:00",
@@ -2382,6 +2363,25 @@
       "caption": "Host Chromium portrait capture at 390\u00d7844, DPR 3: circular GPS widget with the 200 ft map scale above the unbacked MPH footer. This image predates orientation-toggle verification; it is not a public or physical-phone capture."
     },
     {
+      "id": "motorcycle-banking-and-standing-menu-poses-now-pass-ho-d50992f3",
+      "timestamp": "2026-10-13T14:43:07.225818+00:00",
+      "recorded_at": "2026-10-13T14:47:11.330417+00:00",
+      "kind": "verification",
+      "title": "Motorcycle banking and standing menu poses now pass host checks",
+      "summary": "A host checkpoint now covers direction-correct motorcycle banking, recovered standing rider idle clips, and the Sano 50 Mini size label. It corrects two gaps missed by earlier touch-contact and static-menu checks; it remains an authored integration rather than full native physics parity.",
+      "details": [
+        "The left/right touch captures show the rider and motorcycle bank changing with the rendered heading and trajectory. The GPU gate covers profiles 45, 29, 31 and 33 over 1,061 paired steps and 2,455 source-to-bone contact comparisons; maximum grip error was 0.00000170 ft and boot/peg error 0.0000371 ft. Each touch direction was checked after a 450 ms hold. A still image shows the visible bank direction, while the paired runtime gate establishes the direction-response check.",
+        "Recovered source routine 0x004dbd10 applies ground bank by direct orientation, with a 45-degree limit at 35 mph and gain 5. The port now uses a recovered bank component with an authored roll-axis ownership adapter; the full native controller pipeline remains unrecovered.",
+        "All 20 motorcycle choices now pass the actual-GPU standing-menu gate: standing head height exceeds 4.8 ft and pelvis height exceeds 3 ft, with rendered pixels and GPU bones changing over 700 ms. Original UI_mrider.mcf breathing and idle1/idle2/idle3 clips run through the shared ATV menu animation engine, and returning to ATV restores mrider_body. The front-facing folded-arm pose is visible in the menu captures.",
+        "Sano 50 Mini uses the recovered source geometry unchanged: its wheel diameter is 14.91 in versus 28.88 in on the Suzuki 125, with no SUB wheel-scale override. The Mini label describes this source size difference.",
+        "The host all-20 driving catalog passed 1,536 paired steps including audio, clutch, particles and reset. Honda 35 Race passed its five-racer source field in portrait and landscape with touch, countdown and restart. The original 26-ATV garage passed six responsive viewports, male/female breathing, rapid selection and graphics-context restore. Host checks passed 348 core, 25 network, 3 web, 13 relay, 4 release Rust and 72 JavaScript tests; formatting, Clippy, make verify, hygiene, 29 release checks with one skip, and 8 Cloudflare checks also passed.",
+        "A normal-input MX 500 Vancouver backflip-to-wreck route passed over 1,297 paired steps with four intact airborne ragdoll frames, one contact damage transition, separation and recovery."
+      ],
+      "limitation": "Host-only checkpoint; not published. The source bank component and animation resources are recovered, while roll-axis ownership, contact/IK integration and the controller remain authored adapters or unfinished work. Earlier gates did not detect incorrect ground bank direction or the static menu pose. Full native whole-controller parity and physical-phone behavior are unverified. The touch captures show the rider arms spread and somewhat stiff, and the bike/rider remain small in portrait framing.",
+      "image": "/devlog-images/motorcycle-banking-and-standing-menu-poses-now-pass-ho-d50992f3.png",
+      "caption": "Host capture sheet: left and right touch-bank views above, front-facing standing RM125 Race and Sano 50 Mini menu poses below. Rendered direction and idle motion were checked on the host; this is not a public release."
+    },
+    {
       "id": "second-touch-adds-reverse-and-airborne-stunts-9f83254d",
       "timestamp": "2026-10-13T15:07:43.187646+00:00",
       "recorded_at": "2026-10-13T15:11:46.785430+00:00",
@@ -2396,22 +2396,6 @@
       "limitation": "Host-only checkpoint pending current-main CI, deployment, and public verification. Physical iOS Safari/controller behavior and complete original stunt/game parity remain unverified.",
       "image": "/devlog-images/second-touch-adds-reverse-and-airborne-stunts-9f83254d.png",
       "caption": "Host Chromium capture of an airborne Nac Nac while the primary touch remains engaged; the full second-touch gesture gate is host-verified."
-    },
-    {
-      "id": "garage-and-freestyle-selections-persist-8e7c9757",
-      "timestamp": "2026-10-13T15:17:56.123573+00:00",
-      "recorded_at": "2026-10-13T15:20:02.129045+00:00",
-      "kind": "build",
-      "title": "Garage and Freestyle selections persist",
-      "summary": "The browser remembers the selected ride and returns the first Freestyle course picker to the last course that loaded successfully.",
-      "details": [
-        "Garage vehicle and rider choices restore after refresh, including supported motorcycle selections for Race.",
-        "Freestyle remembers the last successfully started course. Preview browsing, failed course loads and Race selection leave that Freestyle choice intact.",
-        "The actual-menu Chromium gate passes ATV/rider and motorcycle refresh, Tioga course restoration, preview browsing, Race preservation and zero browser errors; focused frontend cases cover unavailable storage and failed loads."
-      ],
-      "limitation": "Host-only checkpoint pending current-main CI, deployment and public verification. Local browser storage is required for selections to persist across reloads; physical-device behavior is unverified.",
-      "image": "/devlog-images/garage-and-freestyle-selections-persist-8e7c9757.png",
-      "caption": "Portrait host-browser menu capture from the selection-restoration check; course, Garage and Race persistence passed in the same actual-menu run."
     },
     {
       "id": "atv-fury-2-home-screen-identity-be6eaa11",
@@ -2429,18 +2413,20 @@
       "caption": "Inspected 512px preview of the authored ATV Fury 2 app icon; host route and asset checks pass."
     },
     {
-      "id": "fury-remastered-custom-domain-routes-pass-host-checks-e1bec0d3",
-      "timestamp": "2026-10-13T15:27:09.633977+00:00",
-      "recorded_at": "2026-10-13T15:27:09.633977+00:00",
-      "kind": "verification",
-      "title": "Fury Remastered custom domain routes pass host checks",
-      "summary": "The furyremastered.com zone and registration are verified, both custom domains are attached to the existing production Worker, and a host HTTPS fetch to the apex returns 200 with a valid certificate. Domain routes and multiplayer origin allowlists pass host checks; new-domain gameplay and multiplayer remain pending current-main CI and deployment.",
+      "id": "garage-and-freestyle-selections-persist-8e7c9757",
+      "timestamp": "2026-10-13T15:17:56.123573+00:00",
+      "recorded_at": "2026-10-13T15:20:02.129045+00:00",
+      "kind": "build",
+      "title": "Garage and Freestyle selections persist",
+      "summary": "The browser remembers the selected ride and returns the first Freestyle course picker to the last course that loaded successfully.",
       "details": [
-        "Cloudflare zone ea0921ec471b2a7de78838cdbaeccb78 is active in the existing account and registry registration is verified. Both custom domains were attached through the Cloudflare API to the existing atv-offroad-fury-2 production Worker. A host HTTPS fetch to the apex returned 200 with a valid certificate, and Cloudflare UI confirms Always Use HTTPS is On.",
-        "All 10 authored worker tests pass: exact custom and legacy multiplayer origins are accepted; missing, null, HTTP, www, lookalike and foreign origins are rejected; www requests receive a 308 apex redirect that preserves path and invite query.",
-        "All 4 Rust relay origin tests pass, including the exact origin allowlist. Strict atv-relay Clippy and formatting pass; make verify passes source identity and exclusion checks; 29 release tests pass with one skipped."
+        "Garage vehicle and rider choices restore after refresh, including supported motorcycle selections for Race.",
+        "Freestyle remembers the last successfully started course. Preview browsing, failed course loads and Race selection leave that Freestyle choice intact.",
+        "The actual-menu Chromium gate passes ATV/rider and motorcycle refresh, Tioga course restoration, preview browsing, Race preservation and zero browser errors; focused frontend cases cover unavailable storage and failed loads."
       ],
-      "limitation": "Host evidence only. The new-domain multiplayer code has not been deployed, and current-main CI plus public gameplay and multiplayer verification remain pending. A successful host HTTPS fetch does not verify public integration."
+      "limitation": "Host-only checkpoint pending current-main CI, deployment and public verification. Local browser storage is required for selections to persist across reloads; physical-device behavior is unverified.",
+      "image": "/devlog-images/garage-and-freestyle-selections-persist-8e7c9757.png",
+      "caption": "Portrait host-browser menu capture from the selection-restoration check; course, Garage and Race persistence passed in the same actual-menu run."
     },
     {
       "id": "a-reachable-rider-pose-closes-the-mini-motorcycle-full-be709f3b",
@@ -2460,19 +2446,18 @@
       "caption": "Host Mini 50 sustained full-lock captures: left-screen input and right-screen input. The marker-contact gate passed separately; the small motorcycle and rear camera view make the hand joints difficult to judge from these stills alone."
     },
     {
-      "id": "fury-remastered-supports-live-multiplayer-7acaea4d",
-      "timestamp": "2026-10-13T15:40:05.634124+00:00",
-      "recorded_at": "2026-10-13T15:41:44.358508+00:00",
+      "id": "fury-remastered-custom-domain-routes-pass-host-checks-e1bec0d3",
+      "timestamp": "2026-10-13T15:27:09.633977+00:00",
+      "recorded_at": "2026-10-13T15:27:09.633977+00:00",
       "kind": "verification",
-      "title": "Fury Remastered supports live multiplayer",
-      "summary": "The public Fury Remastered app supports a copied-invite two-browser Freeride session on Vancouver Ridge. Both the custom HTTPS domain and legacy workers.dev origin pass the live Rust relay gates; remote movement, rendering and spatial engine audio pass in the bounded automated session.",
+      "title": "Fury Remastered custom domain routes pass host checks",
+      "summary": "The furyremastered.com zone and registration are verified, both custom domains are attached to the existing production Worker, and a host HTTPS fetch to the apex returns 200 with a valid certificate. Domain routes and multiplayer origin allowlists pass host checks; new-domain gameplay and multiplayer remain pending current-main CI and deployment.",
       "details": [
-        "Thirteen live Rust relay gates pass on both https://furyremastered.com and the legacy workers.dev origin.",
-        "Two Chromium Metal browsers on one Mac joined through a copied invite on Vancouver Ridge (map 9) with different ATV and rider rigs: ATV01/male and ATV02/female. Each client observed 10.687765 ft of remote movement, rendered 13 remote draws, and played one spatial engine voice. Host termination and cleanup passed with no page errors."
+        "Cloudflare zone ea0921ec471b2a7de78838cdbaeccb78 is active in the existing account and registry registration is verified. Both custom domains were attached through the Cloudflare API to the existing atv-offroad-fury-2 production Worker. A host HTTPS fetch to the apex returned 200 with a valid certificate, and Cloudflare UI confirms Always Use HTTPS is On.",
+        "All 10 authored worker tests pass: exact custom and legacy multiplayer origins are accepted; missing, null, HTTP, www, lookalike and foreign origins are rejected; www requests receive a 308 apex redirect that preserves path and invite query.",
+        "All 4 Rust relay origin tests pass, including the exact origin allowlist. Strict atv-relay Clippy and formatting pass; make verify passes source identity and exclusion checks; 29 release tests pass with one skipped."
       ],
-      "limitation": "This public gameplay check is bounded to two automated Chromium Metal clients sharing one Mac; it does not establish physical-phone, separate-device, or geographic-network performance. CI run 38422439105 failed only while reapplying existing custom-domain triggers after uploading the tested app. The game code works publicly, while final pipeline and current-main R2 verification remain pending.",
-      "image": "/devlog-images/fury-remastered-supports-live-multiplayer-7acaea4d.png",
-      "caption": "Public furyremastered.com Vancouver Ridge multiplayer test capture from commit 277e26f5f896678fbbb4b214da143f638d21f651. One of two Chromium Metal clients on one Mac; the copied-invite session passed movement, remote rendering, engine audio and host-cleanup gates."
+      "limitation": "Host evidence only. The new-domain multiplayer code has not been deployed, and current-main CI plus public gameplay and multiplayer verification remain pending. A successful host HTTPS fetch does not verify public integration."
     },
     {
       "id": "cache-versioning-prevents-mixed-minimap-and-hud-assets-6135d1c8",
@@ -2492,6 +2477,21 @@
       "limitation": "Host browser verification only. The reproduction establishes a plausible stale-cache cause for mixed UI, not the cache state of the user\u2019s device. The screenshot is not a public deployment or physical-phone capture. Public deployment verification remains future work; physical-device behavior and full native parity remain unverified.",
       "image": "/devlog-images/cache-versioning-prevents-mixed-minimap-and-hud-assets-6135d1c8.png",
       "caption": "Host Chromium capture after asset URL versioning: circular top-right minimap with integrated MPH and no duplicate native speed meter. Not a public deployment or physical-phone capture."
+    },
+    {
+      "id": "fury-remastered-supports-live-multiplayer-7acaea4d",
+      "timestamp": "2026-10-13T15:40:05.634124+00:00",
+      "recorded_at": "2026-10-13T15:41:44.358508+00:00",
+      "kind": "verification",
+      "title": "Fury Remastered supports live multiplayer",
+      "summary": "The public Fury Remastered app supports a copied-invite two-browser Freeride session on Vancouver Ridge. Both the custom HTTPS domain and legacy workers.dev origin pass the live Rust relay gates; remote movement, rendering and spatial engine audio pass in the bounded automated session.",
+      "details": [
+        "Thirteen live Rust relay gates pass on both https://furyremastered.com and the legacy workers.dev origin.",
+        "Two Chromium Metal browsers on one Mac joined through a copied invite on Vancouver Ridge (map 9) with different ATV and rider rigs: ATV01/male and ATV02/female. Each client observed 10.687765 ft of remote movement, rendered 13 remote draws, and played one spatial engine voice. Host termination and cleanup passed with no page errors."
+      ],
+      "limitation": "This public gameplay check is bounded to two automated Chromium Metal clients sharing one Mac; it does not establish physical-phone, separate-device, or geographic-network performance. CI run 38422439105 failed only while reapplying existing custom-domain triggers after uploading the tested app. The game code works publicly, while final pipeline and current-main R2 verification remain pending.",
+      "image": "/devlog-images/fury-remastered-supports-live-multiplayer-7acaea4d.png",
+      "caption": "Public furyremastered.com Vancouver Ridge multiplayer test capture from commit 277e26f5f896678fbbb4b214da143f638d21f651. One of two Chromium Metal clients on one Mac; the copied-invite session passed movement, remote rendering, engine audio and host-cleanup gates."
     },
     {
       "id": "fury-remastered-vector-branding-checkpoint-ad06cb56",
@@ -2543,6 +2543,35 @@
       "caption": "Host Chromium capture at 390\u00d7844: wider terrain view with a circular, borderless GPS minimap and adaptive 400 ft scale at 50% zoom. Not a physical-phone or public-release capture."
     },
     {
+      "id": "late-guest-spawn-control-in-players-menu-7fe7d31d",
+      "timestamp": "2026-10-13T17:56:59.943016+00:00",
+      "recorded_at": "2026-10-13T17:59:06.423183+00:00",
+      "kind": "verification",
+      "title": "Late guest spawn control in Players menu",
+      "summary": "A guest who joins an active room can open the paused Players screen and spawn near the host.",
+      "details": [
+        "The host-only 390\u00d7844 browser run measured the Spawn beside P1 Host button at 342\u00d764 pixels, positioned at x=24, y=96.",
+        "The menu shows the late guest identity and the nearby-host spawn action. Physical phone input and layout remain untested."
+      ],
+      "limitation": "Host-only UI verification, not a public release or physical-device test. Spawn placement is an authored browser feature and does not establish original PS2 multiplayer menu behavior.",
+      "image": "/devlog-images/late-guest-spawn-control-in-players-menu-7fe7d31d.png",
+      "caption": "Paused Players screen for the late guest, with a nearby-host spawn action."
+    },
+    {
+      "id": "four-client-multiplayer-replication-and-cleanup-d96177ae",
+      "timestamp": "2026-10-13T17:58:40+00:00",
+      "recorded_at": "2026-10-13T18:00:16.046363+00:00",
+      "kind": "verification",
+      "title": "Four-client multiplayer replication and cleanup",
+      "summary": "A host-run four-browser session replicated every rider to the other clients and cleared remote state when the host ended the room.",
+      "details": [
+        "The clients selected quads 1, 14, 26 and 2. Each rendered 39 remote GL draws and three engine voices.",
+        "Each driver's movement reached the other three observers. Host departure removed remote riders, audio and loaded model state from every guest.",
+        "The authenticated Rust relay passed 13 live cases, including capacity, map synchronization, packet validation, rate limits and host-loss cleanup."
+      ],
+      "limitation": "Host-only browser verification; no public deployment, physical-phone test, or geographically separated network measurement. The relay forwards owner-simulated state and does not reconcile physics."
+    },
+    {
       "id": "worker-build-caching-is-bounded-and-validated-on-the-h-bd8c0938",
       "timestamp": "2026-10-13T18:01:09.439539+00:00",
       "recorded_at": "2026-10-13T18:01:09.439539+00:00",
@@ -2575,33 +2604,19 @@
       "caption": "Host-only 1280\u00d7896 browser capture: larger white P1 Host distance label with a black outline and no background, above the original red compass arrow. The overhead label placement is authored."
     },
     {
-      "id": "late-guest-spawn-control-in-players-menu-7fe7d31d",
-      "timestamp": "2026-10-13T17:56:59.943016+00:00",
-      "recorded_at": "2026-10-13T17:59:06.423183+00:00",
-      "kind": "verification",
-      "title": "Late guest spawn control in Players menu",
-      "summary": "A guest who joins an active room can open the paused Players screen and spawn near the host.",
+      "id": "fury-remastered-home-screen-icon-fda8f8ce",
+      "timestamp": "2026-10-13T18:31:28.458671+00:00",
+      "recorded_at": "2026-10-13T18:31:46.033609+00:00",
+      "kind": "build",
+      "title": "FURY REMASTERED home-screen icon",
+      "summary": "The authored FURY REMASTERED wordmark now supplies the browser app\u2019s 180, 192 and 512 pixel home-screen icons, with the same identity used across page metadata and icon aliases. CI builds and validates the icon files from the source SVG so the app and icons travel together.",
       "details": [
-        "The host-only 390\u00d7844 browser run measured the Spawn beside P1 Host button at 342\u00d764 pixels, positioned at x=24, y=96.",
-        "The menu shows the late guest identity and the nearby-host spawn action. Physical phone input and layout remain untested."
+        "Updated touch icons, favicon, install banner and dialog, manifest metadata, and conventional Safari aliases. Existing R2 icon files and old URL aliases remain available for prior links.",
+        "Host checks passed WASM make web, make verify, 12 Worker tests, 35 release tests (one skipped), two install-state tests, served identity/MIME/dimension/alias checks, and Python/JavaScript syntax checks."
       ],
-      "limitation": "Host-only UI verification, not a public release or physical-device test. Spawn placement is an authored browser feature and does not establish original PS2 multiplayer menu behavior.",
-      "image": "/devlog-images/late-guest-spawn-control-in-players-menu-7fe7d31d.png",
-      "caption": "Paused Players screen for the late guest, with a nearby-host spawn action."
-    },
-    {
-      "id": "four-client-multiplayer-replication-and-cleanup-d96177ae",
-      "timestamp": "2026-10-13T17:58:40+00:00",
-      "recorded_at": "2026-10-13T18:00:16.046363+00:00",
-      "kind": "verification",
-      "title": "Four-client multiplayer replication and cleanup",
-      "summary": "A host-run four-browser session replicated every rider to the other clients and cleared remote state when the host ended the room.",
-      "details": [
-        "The clients selected quads 1, 14, 26 and 2. Each rendered 39 remote GL draws and three engine voices.",
-        "Each driver's movement reached the other three observers. Host departure removed remote riders, audio and loaded model state from every guest.",
-        "The authenticated Rust relay passed 13 live cases, including capacity, map synchronization, packet validation, rate limits and host-loss cleanup."
-      ],
-      "limitation": "Host-only browser verification; no public deployment, physical-phone test, or geographically separated network measurement. The relay forwards owner-simulated state and does not reconcile physics."
+      "limitation": "Host-only checkpoint; physical iOS behavior is unverified. A home-screen icon already saved on a device may need to be added again. No deployment verification is claimed.",
+      "image": "/devlog-images/fury-remastered-home-screen-icon-fda8f8ce.png",
+      "caption": "512\u00d7512 authored FURY REMASTERED home-screen icon preview, inspected on the host."
     },
     {
       "id": "multiplayer-late-join-and-rider-visibility-pass-public-15093498",
@@ -2617,6 +2632,22 @@
         "The public four-browser run selected quads 1, 14, 26 and 2; each client rendered 39 remote draws and three engine voices. Every rider movement replicated to all observers, and host end cleared guest rooms, models and audio. No HTTP or page errors occurred."
       ],
       "limitation": "Automated public browser verification on the tested host/browser setup; physical phones, geographically separated latency, server-side physics reconciliation, competitive authority, host migration and full original-game parity are not established. The shared train clock freezes while its host is paused. The companion larger-label screenshot remains a host capture."
+    },
+    {
+      "id": "responsive-pause-menu-and-live-multiplayer-941aa311",
+      "timestamp": "2026-10-13T18:35:38.374806+00:00",
+      "recorded_at": "2026-10-13T18:37:55.228109+00:00",
+      "kind": "verification",
+      "title": "Responsive pause menu and live multiplayer",
+      "summary": "A grouped, responsive pause panel keeps controls readable across tested viewports; multiplayer simulation and peer motion continue while its menu is open.",
+      "details": [
+        "Host Chromium layout and input checks passed at 1280\u00d7896, 390\u00d7844, 320\u00d7568, 844\u00d7390, and 667\u00d7375, including 44-pixel buttons, keyboard navigation, scrolling Quit access, and settings routes.",
+        "Single-player simulation freezes while paused and resumes with neutral input. In a two-client relay check, host and guest each advanced 39 simulation steps and observed remote rider movement while the menu was open; Controls and Players remained live and host departure cleared guest state.",
+        "All 91 JavaScript unit tests, the frontend browser regression, make web, make verify, and repository verification passed."
+      ],
+      "limitation": "Host Chromium verification using synthetic focus. No public deployment or physical-phone validation; hidden-tab and context-loss suspension remain separate behavior.",
+      "image": "/devlog-images/responsive-pause-menu-and-live-multiplayer-941aa311.png",
+      "caption": "Responsive pause panel over the host-verified ride"
     },
     {
       "id": "lobby-recovery-and-reusable-closed-codes-c10743b9",

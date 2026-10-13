@@ -85,3 +85,25 @@ The original transparent logo halves from PAGE01 are assembled as artwork inside
 The responsive menus now transition with authored 180 ms exit and 240 ms entry timings. Boot, course loading, model loading, and context recovery use a shared loading presentation; course loading includes the recovered preview image, course name, status, and animated progress bar. Reduced-motion behavior, load failure, rotation, touch controls at 390×844, 844×390, and 667×375, and animation cancellation with focus retention on resize were included in the host verification gate. The selected course-loading screenshot is recorded in the development log.
 
 This is an authored browser transition and loading treatment using authored red/silver panels and recovered course/font resources. The transition durations do not establish original-game timing or callback fidelity. Host Chromium checks do not establish physical iOS, Bluetooth controller, or public deployment behavior. See the handoff checkpoint for the complete verification scope.
+
+## Responsive pause and live multiplayer menu (host checkpoint, 2026-10-13)
+
+The pause screen now presents grouped Ride, Preferences, and Session actions in a
+sharp browser-native panel. Desktop uses two columns; narrow and short viewports
+reflow or scroll while retaining access to Quit. Rust still supplies available
+actions and stateful labels, and the menu supports keyboard focus and navigation.
+The desktop checkpoint screenshot is in the development log.
+
+Host Chromium checks covered 1280×896, 390×844, 320×568, 844×390, and 667×375.
+Bounds and button separation passed, all buttons met the 44-pixel minimum, and
+keyboard arrows, Tab, Enter, Controls/minimap routing, scrolling Quit access,
+single-player freeze/resume, and neutral-input resume passed. In a two-client
+relay run, both host and guest continued simulating and moving with the menu open;
+local menu/focus input was neutralized, Controls and Players remained live, and
+host departure cleared guest state. The browser menu suppresses local player
+indicators while online play continues.
+
+These are host Chromium checks with synthetic focus, not physical-phone or public
+deployment verification. Hidden-tab and context-loss suspension remain in effect;
+original pause-screen artwork, exact callback behavior, and full-game fidelity
+are not established by this checkpoint.

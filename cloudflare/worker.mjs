@@ -57,6 +57,10 @@ export default {
     }
     if (path === '/devlog.json') return gallery(request, env);
     const iconAliasKey = ['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png'].includes(path) ? env.APPLE_TOUCH_ICON_KEY : path === '/app-icon-512.png' ? env.APP_ICON_512_KEY : null;
+    if (/^fury-remastered-home-(180|512)-v1\.png$/.test(iconAliasKey ?? '')) {
+      const iconUrl = new URL(request.url); iconUrl.pathname = '/' + iconAliasKey;
+      return env.ASSETS.fetch(new Request(iconUrl, request));
+    }
     const appleIcon = /^app-icons\/[a-f0-9]{64}\.png$/.test(iconAliasKey ?? '');
     if (path === '/content/manifest.json' || MANIFEST.test(path) || BLOB.test(path) || IMAGE.test(path) || APP_ICON.test(path) || appleIcon) {
       const pinned = path.match(MANIFEST);

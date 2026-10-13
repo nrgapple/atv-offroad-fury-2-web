@@ -74,8 +74,11 @@ including the detached rider's independent world transform during a wreck. Audio
 uses the selected original per-quad engine banks and recovered spatial arithmetic
 for distance, stereo pan and Doppler. Rust selects samples; Web Audio transports
 local PCM. Crash serials drive original body-impact samples at the rider position.
-Pause/focus cancels local drive and publishes a stationary pose; stale/left peers
-lose voices. Per-rider vocal fidelity, original multiplayer mixer budget, clothing
+While a multiplayer ride is visible, opening the menu or losing focus clears local
+drive input and continues neutral-input simulation, so peers receive the moving
+rider state. Hidden tabs and context loss still suspend local simulation and mark
+outgoing snapshots as paused; stale/left peers lose voices. Per-rider vocal
+fidelity, original multiplayer mixer budget, clothing
 presets and original PS2 rendering/animation parity remain unverified.
 
 ## Original player indicator evidence

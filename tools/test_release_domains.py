@@ -27,6 +27,21 @@ class DomainStagingTests(unittest.TestCase):
             self.assertEqual(config['vars']['APPLE_TOUCH_ICON_KEY'], small.lstrip('/'))
             self.assertEqual(config['vars']['APP_ICON_512_KEY'], large.lstrip('/'))
 
+    def test_authored_home_icon_aliases_use_static_release_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); release = root / 'release'; fixture(release)
+            manifest = release / 'static/manifest.webmanifest'
+            manifest.write_text(json.dumps({'icons': [{'src': '/fury-remastered-home-192-v1.png', 'sizes': '192x192'}, {'src': '/fury-remastered-home-512-v1.png', 'sizes': '512x512'}]}))
+            metadata = json.loads((release / 'release.json').read_text())
+            metadata['sha256']['static/manifest.webmanifest'] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+            (release / 'release.json').write_text(json.dumps(metadata))
+            (root / 'wrangler.jsonc').write_text(json.dumps({'assets': {}}))
+            with patch.object(stage_cloudflare, 'ROOT', root):
+                stage_cloudflare.stage(release, COMMIT)
+            config = json.loads((root / 'work/cloudflare/wrangler.jsonc').read_text())
+            self.assertEqual(config['vars']['APPLE_TOUCH_ICON_KEY'], 'fury-remastered-home-180-v1.png')
+            self.assertEqual(config['vars']['APP_ICON_512_KEY'], 'fury-remastered-home-512-v1.png')
+
     def test_checked_release_keeps_origins_and_preserves_remote_domain_bindings(self):
         for keep_standard_route in (False, True):
             with self.subTest(keep_standard_route=keep_standard_route), tempfile.TemporaryDirectory() as temporary:

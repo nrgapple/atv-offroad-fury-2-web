@@ -139,3 +139,18 @@ test('www canonical redirect preserves game path and invite query without redire
     assert.equal((await worker.fetch(new Request(origin + '/play.html'), env)).status, 200);
   }
 });
+
+
+test('authored Home Screen icons use checked static assets including Safari aliases', async () => {
+  const reads = [];
+  const env = { APPLE_TOUCH_ICON_KEY: 'fury-remastered-home-180-v1.png', APP_ICON_512_KEY: 'fury-remastered-home-512-v1.png',
+    ASSETS: { fetch: async request => { reads.push([new URL(request.url).pathname, request.method]); return new Response(request.method === 'HEAD' ? null : 'png', {headers:{'Content-Type':'image/png'}}); } },
+    CONTENT: { get: async () => { throw Error('authored icon must not depend on R2'); } } };
+  for (const [path, expected] of [['/apple-touch-icon.png',180],['/apple-touch-icon-precomposed.png',180],['/app-icon-512.png',512],['/fury-remastered-home-192-v1.png',192]]) {
+    for (const method of ['GET','HEAD']) {
+      const response = await worker.fetch(new Request('https://game.example'+path,{method}),env);
+      assert.equal(response.status,200);assert.equal(response.headers.get('Content-Type'),'image/png');
+      assert.deepEqual(reads.at(-1),[`/fury-remastered-home-${expected}-v1.png`,method]);
+    }
+  }
+});

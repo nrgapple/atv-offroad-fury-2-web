@@ -1,5 +1,6 @@
-"""Original app icon pixels stay outside the authored CI artifact."""
+"""Authored icons ship atomically; historical recovered icons remain R2-only."""
 import hashlib
+import base64
 import json
 from pathlib import Path
 import struct
@@ -20,17 +21,23 @@ class AppIconTests(unittest.TestCase):
             icons.append({'size': size, 'sha256': digest, 'url': f'/app-icons/{digest}.png', 'bytes': len(data)})
         return {'version': 1, 'icons': icons}
 
-    def test_original_icon_references_match_manifest_and_html_but_pixels_are_not_packaged(self):
-        metadata = json.loads((ROOT / 'web/app-icon-assets.json').read_text())
+    def test_authored_icon_references_and_bytes_match_svg_manifest_and_html(self):
+        metadata = json.loads((ROOT / 'web/fury-app-icons.json').read_text())
+        self.assertEqual(metadata['source_sha256'], hashlib.sha256((ROOT / 'web/fury-remastered.svg').read_bytes()).hexdigest())
         icons = {item['size']: item for item in metadata['icons']}
+        self.assertEqual(set(icons), {180, 192, 512})
         manifest = json.loads((ROOT / 'web/manifest.webmanifest').read_text())
-        self.assertEqual([icon['src'] for icon in manifest['icons']], [icons[192]['url'], icons[512]['url']])
+        self.assertEqual([icon['src'] for icon in manifest['icons']], ['/' + icons[size]['file'] for size in [192, 512]])
         for name in ['index.html', 'play.html']:
-            self.assertIn(icons[180]['url'], (ROOT / 'web' / name).read_text())
-        self.assertTrue(all(not icon['url'].lstrip('/') in STATIC_FILES for icon in icons.values()))
-        self.assertNotIn('base64', json.dumps(metadata))
-        for alias in ['apple-touch-icon.png', 'apple-touch-icon-precomposed.png', 'app-icon-512.png', 'app-icon.svg']:
-            self.assertNotIn(alias, STATIC_FILES, 'R2 compatibility URLs must not collide with authored artifact hash checks')
+            self.assertIn('/' + icons[180]['file'], (ROOT / 'web' / name).read_text())
+        for size, icon in icons.items():
+            data = base64.b64decode(icon['base64'], validate=True)
+            self.assertEqual(hashlib.sha256(data).hexdigest(), icon['sha256'])
+            self.assertEqual(data[:8], b'\x89PNG\r\n\x1a\n')
+            self.assertEqual(struct.unpack('>II', data[16:24]), (size, size))
+            self.assertIn(icon['file'], STATIC_FILES)
+        original = json.loads((ROOT / 'web/app-icon-assets.json').read_text())
+        self.assertTrue(all(icon['url'].lstrip('/') not in STATIC_FILES for icon in original['icons']))
 
     def test_hash_mismatch_path_escape_and_symlink_are_rejected(self):
         with tempfile.TemporaryDirectory() as temp:

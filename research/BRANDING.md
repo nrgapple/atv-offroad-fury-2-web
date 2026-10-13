@@ -7,11 +7,14 @@ The red/orange face, metallic edge, forward slant and gold signature recall the
 original ATV Offroad Fury 2 identity without using its recovered raster logo.
 This is new branding, not an exact vector trace of the original mark.
 
-`web/app-icon.svg` uses the same F and palette at 512×512. The authored PNG sizes
-in `web/app-icons.json` are derived from it for Apple and manifest compatibility.
-Page titles, Apple app name and manifest use Fury Remastered; Apple icon query
-version 2 requests the replacement artwork. Existing installed shortcuts may
-need to be added again depending on device caching.
+Home Screen icons now use the full SVG wordmark on a red gradient, in authored
+180/192/512px PNG derivatives. `tools/build_fury_app_icons.mjs` regenerates
+`web/fury-app-icons.json` using Sharp; `SHARP_MODULE` can select an existing
+installation. The normal build verifies source/image hashes and produces the
+three static icons without any font or original-resource dependency. These ship
+atomically with the Apple, manifest, browser-icon and installation-banner links.
+The square F-only icon and the later recovered-ATV2 Home Screen choice are
+superseded by the user's request to use the new full Fury Remastered logo.
 
 The menu decodes the SVG once and draws it through the Rust artwork command.
 Failed image decoding keeps the FURY / REMASTERED text fallback. The title logo
@@ -24,11 +27,9 @@ tests, setup/source exclusions, JS/Python syntax, and served icon/manifest check
 Visual checks cover desktop 1280×720 and portrait 390×844, Start navigation and
 the dev-log header. These checks do not establish physical iOS behavior or any
 new gameplay fidelity.
-# Home Screen icon follow-up
+# Home Screen caching
 
-The Home Screen/PWA checkpoint keeps this authored Fury Remastered vector in
-the app's title/menu/dev-log presentation. The user's subsequent icon request
-specifically selects the original ATV Offroad Fury 2 logo on a red gradient for
-the Home Screen icon. That replaces the square authored F icon with private,
-validated R2 PNGs; original pixels are excluded from Git and CI. See [PWA.md](PWA.md)
-for icon delivery, install guidance and standalone safe-area presentation.
+Fresh icon filenames replace the former R2 URLs. Safari's conventional root
+aliases return the new 180px PNG, and the legacy large-icon alias returns 512px.
+Existing saved Home Screen apps may retain cached artwork until removed and
+added again. Physical iOS installation remains unverified. See [PWA.md](PWA.md).
