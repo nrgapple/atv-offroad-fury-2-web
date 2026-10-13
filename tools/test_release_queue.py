@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from package_content import SOURCE_SHA
-from release_resources import (copy_content, integrate, merge_devlog, merge_manifest,
+from release_resources import (cached_bytes, copy_content, integrate, merge_devlog, merge_manifest,
                                snapshot, verify_snapshot)
 
 
@@ -31,6 +31,21 @@ def git(root, *args):
 
 
 class QueueResources(unittest.TestCase):
+    def test_cache_deduplicates_snapshots_without_linking_mutable_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data = b'approved dependency bytes'
+            first, second = root / 'first.bin', root / 'second.bin'
+            cached_bytes(data, first, root / 'objects', '.bin')
+            cached_bytes(data, second, root / 'objects', '.bin')
+            self.assertEqual(first.stat().st_ino, second.stat().st_ino)
+            self.assertEqual(len(list((root / 'objects').iterdir())), 1)
+            self.assertEqual(first.stat().st_mode & 0o222, 0)
+            second.unlink()
+            cached_bytes(b'new dependency', second, root / 'objects', '.bin')
+            self.assertEqual(first.read_bytes(), data)
+            self.assertNotEqual(first.stat().st_ino, second.stat().st_ino)
+
     def test_parallel_resource_changes_preserve_both_and_conflicts_fail(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -123,10 +138,6 @@ class QueueResources(unittest.TestCase):
             finally:
                 os.chdir(previous)
 
-
-if __name__ == '__main__':
-    unittest.main()
-
 @unittest.skipUnless(os.environ.get('ATV_RELEASE_TEST_BIN'), 'host-only compiled Rust CLI integration')
 class RustQueueIntegration(unittest.TestCase):
     def test_concurrent_worktree_submission_duplicate_and_worker_gate_failure(self):
@@ -180,3 +191,23 @@ class RustQueueIntegration(unittest.TestCase):
             self.assertEqual(git(owner, 'rev-parse', 'main'), git(owner, 'rev-parse', 'origin/main'))
             self.assertEqual((worktrees[0] / 'one.txt').read_text(), 'later uncommitted work')
             self.assertFalse(any('wrangler' in path.read_text() for path in (queue / 'jobs').glob('*/worker.log')))
+            first = next(j for j in receipts if j['source'] == submitted[0]['source'])
+            first['status'] = 'failed'; first['stage'] = 'verifying'
+            first_path = queue / 'jobs' / first['id'] / 'job.json'
+            first_path.write_text(json.dumps(first))
+            unrelated = subprocess.run([binary, 'submit', '--supersede', first['id']], cwd=worktrees[1], capture_output=True, text=True)
+            self.assertNotEqual(unrelated.returncode, 0, 'repair must include old integrated commit')
+            git(worktrees[0], 'restore', 'one.txt')
+            git(worktrees[0], 'merge', '--no-ff', first['integrated'], '-m', 'Include failed integrated candidate')
+            (worktrees[0] / 'one.txt').write_text('committed repair')
+            git(worktrees[0], 'commit', '-am', 'repair')
+            repaired = subprocess.run([binary, 'submit', '--supersede', first['id']], cwd=worktrees[0], check=True, capture_output=True, text=True)
+            repaired = json.loads(repaired.stdout)
+            self.assertEqual(repaired['supersedes'], first['id'])
+            self.assertEqual(json.loads(first_path.read_text())['status'], 'superseded')
+            repeated = subprocess.run([binary, 'submit', '--supersede', first['id']], cwd=worktrees[0], check=True, capture_output=True, text=True)
+            self.assertEqual(json.loads(repeated.stdout)['id'], repaired['id'])
+
+
+if __name__ == '__main__':
+    unittest.main()

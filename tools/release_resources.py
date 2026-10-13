@@ -24,10 +24,30 @@ def load(path):
     return json.loads(Path(path).read_text())
 
 
-def copy_content(source, destination):
+def cached_bytes(data, destination, store, suffix):
+    """Deduplicate frozen dependency bytes without linking to mutable input files."""
+    store.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(data).hexdigest()
+    cached = store / (digest + suffix)
+    if cached.exists():
+        if cached.is_symlink() or hashlib.sha256(cached.read_bytes()).hexdigest() != digest:
+            raise ValueError('private dependency cache was altered')
+    else:
+        temporary = store / (digest + '.tmp')
+        temporary.write_bytes(data)
+        temporary.chmod(0o444)
+        os.replace(temporary, cached)
+    destination.unlink(missing_ok=True)
+    os.link(cached, destination)
+
+
+def copy_content(source, destination, store=None):
     destination.mkdir(parents=True, exist_ok=True)
     for path in validated_content(source):
-        shutil.copyfile(path, destination / path.name)
+        if store is not None and path.suffix == '.bin':
+            cached_bytes(path.read_bytes(), destination / path.name, store, '.bin')
+        else:
+            shutil.copyfile(path, destination / path.name)
     validated_content(destination)  # Verify the copied bytes, not only source bytes.
 
 
@@ -46,11 +66,13 @@ def image_bytes(path):
     return data
 
 
-def snapshot(source, commit, job, queue, content, images, reviewed=False):
+def snapshot(source, commit, job, queue, content, images, reviewed=False, superseded=None):
     log = json.loads(git('show', f'{commit}:research/devlog.json', cwd=source).stdout)
     published = queue / 'published'
+    if superseded is not None:
+        verify_snapshot(superseded)
     target = job / 'resources'
-    copy_content(content, target / 'content')
+    copy_content(content, target / 'content', queue / 'objects')
     shutil.copyfile(published / 'content/manifest.json', target / 'base-manifest.json')
     (target / 'images').mkdir()
     for entry in log['entries']:
@@ -62,13 +84,16 @@ def snapshot(source, commit, job, queue, content, images, reviewed=False):
         if not source_image.exists():
             source_image = previous
         data = image_bytes(source_image)
-        known = previous.exists() and image_bytes(previous) == data
+        inherited = superseded / 'resources/images' / name if superseded is not None else None
+        if inherited is not None and inherited.exists() and image_bytes(inherited) != data:
+            raise ValueError('staged screenshot URL is immutable; use a new image name')
+        known = (previous.exists() and image_bytes(previous) == data) or (inherited is not None and inherited.exists() and image_bytes(inherited) == data)
         if not known and not reviewed:
             raise ValueError(f'{name}: inspect new/changed pixels and submit with --reviewed-images')
         # Prevent changing a previously published image URL in-place.
         if previous.exists() and not known:
             raise ValueError('published screenshot bytes are immutable; use a new image name')
-        (target / 'images' / name).write_bytes(data)
+        cached_bytes(data, target / 'images' / name, queue / 'objects', '.png')
     (target / 'devlog.json').write_text(json.dumps(log, indent=2) + '\n')
     hashes = {path.relative_to(target).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
               for path in target.rglob('*') if path.is_file()}
@@ -166,8 +191,8 @@ def prepare(job, queue):
     for source in (published / 'content', resources / 'content'):
         for path in validated_content(source):
             if path.name != 'manifest.json':
-                shutil.copyfile(path, content / path.name)
-    (content / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+                cached_bytes(path.read_bytes(), content / path.name, queue / 'objects', '.bin')
+    (content / 'manifest.json').write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
     validated_content(content)
     destination = root / 'devlog-images'
     destination.mkdir(exist_ok=True)
@@ -184,7 +209,7 @@ def prepare(job, queue):
             data = image_bytes(available[0])
             if any(image_bytes(path) != data for path in available):
                 raise ValueError(f'screenshot conflict: {name}')
-            (destination / name).write_bytes(data)
+            cached_bytes(data, destination / name, queue / 'objects', '.png')
     print('Merged dependencies validated for integrated checkpoint')
 
 
@@ -192,13 +217,13 @@ def promote(queue, content=None):
     versions = queue / 'resource-versions'
     versions.mkdir(exist_ok=True)
     version = versions / str(time.time_ns())
-    copy_content(content or Path('private/reports/hosted-content'), version / 'content')
+    copy_content(content or Path('private/reports/hosted-content'), version / 'content', queue / 'objects')
     (version / 'images').mkdir()
     log = load('research/devlog.json')
     for entry in log['entries']:
         if entry.get('image'):
             name = image_name(entry['image'])
-            (version / 'images' / name).write_bytes(image_bytes(Path('private/reports/devlog-images') / name))
+            cached_bytes(image_bytes(Path('private/reports/devlog-images') / name), version / 'images' / name, queue / 'objects', '.png')
     (version / 'devlog.json').write_text(json.dumps(log, indent=2) + '\n')
     receipt = Path('private/reports/cloudflare-upload.json')
     if receipt.exists():
@@ -234,13 +259,13 @@ def initialize(queue, content=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['snapshot', 'integrate', 'prepare', 'promote', 'initialize'])
-    for name in ('source', 'job', 'queue', 'content', 'images'):
+    for name in ('source', 'job', 'queue', 'content', 'images', 'superseded'):
         parser.add_argument('--' + name, type=Path)
     parser.add_argument('--commit')
     parser.add_argument('--reviewed-images', action='store_true')
     args = parser.parse_args()
     if args.action == 'snapshot':
-        snapshot(args.source, args.commit, args.job, args.queue, args.content, args.images, args.reviewed_images)
+        snapshot(args.source, args.commit, args.job, args.queue, args.content, args.images, args.reviewed_images, args.superseded)
     elif args.action == 'integrate':
         integrate(args.commit)
     elif args.action == 'prepare':
