@@ -834,3 +834,59 @@ The shared train clock freezes when its host pauses, and contacts remain
 owner-local without server physics reconciliation. Racing, competitive authority,
 host migration and full original-game parity remain unfinished. See
 [implementation limits](MULTIPLAYER.md).
+
+## Public rendering optimization release — 2026-10-13
+
+Main `124b67bdac878dd1e1a481703c29fe2a5ecf00f3` passed CI and automatic
+production deployment in [run 38475701679](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38475701679).
+PR #42's final CI run [38475141913](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38475141913)
+passed before merge. The validated current-main artifact was fetched before the
+R2 update. Both `https://furyremastered.com/` and
+`https://atv-offroad-fury-2.champtoday.workers.dev/` report the same deployment
+commit. Full Cloudflare verification passed on both origins, matching 43
+authored files and 453 served objects by hash, size and MIME. The validated R2
+package contains 454 approved objects totaling 343,700,282 bytes; two changed
+objects were uploaded: the inspected gameplay screenshot and gallery. No runtime
+content changed. The public gallery snapshot at verification has 179 entries and
+138 screenshots. The published screenshot keeps its host-only Chromium Metal,
+390×844/DPR3 gameplay caption; it is not a public-browser or phone capture.
+
+Public Chromium checks passed no-disc startup without file selection, original
+title/controller/pause routes, 390px touch driving and reload, and all nine map
+loading/driving routes with terrain and vegetation. No JavaScript or WebGL errors
+were recorded. In the public two-second lifecycle probe, active play rendered 120
+frames at about 60 FPS, advanced 119 physics steps, submitted 14,520 draws and
+cleared the HUD zero times. Paused and synthetic blur-visible probes each had
+zero RAF callbacks, draws, HUD clears and physics steps; focus, driving and
+context restoration woke the game successfully. Public held-touch Nac Nac testing
+passed wreck separation, ground contact, automatic recovery and resumed driving.
+
+The public multiplayer feature retry passed late join with 13 remote draws per
+client, host recovery, nearby spawn at about 10 feet, the 342×64 mobile Players
+hit target, owner contacts (10 and 10), 20 train samples with at most 0.908207
+feet relative error, both head-on Front wrecks with peer replication, and
+departure cleanup. An initial run timed out because its fixture clicked Leave
+and immediately closed the host page before the explicit-close handshake
+finished. The test now waits for owner state to clear and its WebSocket to close,
+and waits for the guest room code to clear before destroying the host page. This
+resolved a harness ordering assumption against the existing 30-second recovery
+grace; no production transport code changed.
+
+Additional public protocol-v3 checks recorded 170 driving messages / 22,914
+bytes over 10.01 seconds using 135- and 117-byte packets. Suspended riders each
+sent two poses over about 11 seconds and remained fresh; late join restored the
+host at zero positional error, resume delivered 41 messages in 2.515 seconds,
+and a 5.518-second solo interval sent no snapshots. This confirms the deployed
+transport behavior and is not a new rendering-performance claim. The four-client
+route passed with quads 1/14/26/2: each client rendered three peers in 39 draws
+with three engine voices; all drivers' movement reached every observer, and
+explicit owner leave cleared guest codes, remotes, audio, impacts and models with
+zero page or HTTP errors. The abrupt-owner-close recovery-grace regression also
+passed: a copied-invite two-rig session cleared the guest after abrupt host
+closure within the existing 45-second test window, covering the 30-second
+recovery grace. It rendered 13 remote draws and one engine voice per client, with
+9.953 feet of remote movement. The four-browser screenshot remains private and
+was not published. The paired host
+`gl.finish` render-wall results remain separate from public gameplay checks and
+do not prove main-thread CPU, normal FPS, physical-phone, battery or thermal
+gains. See [performance evidence](PERFORMANCE.md).

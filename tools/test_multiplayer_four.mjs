@@ -18,10 +18,10 @@ import {dirname,join} from 'node:path';
 const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
 const base=(process.env.ATV_TEST_URL||'http://127.0.0.1:4186').replace(/\/$/,'');
-const reachability=new URL(base).origin==='https://atv-offroad-fury-2.champtoday.workers.dev'?'public HTTPS':['localhost','127.0.0.1','[::1]'].includes(new URL(base).hostname)?'host-only':'caller-provided URL';
+const reachability=['https://furyremastered.com','https://atv-offroad-fury-2.champtoday.workers.dev'].includes(new URL(base).origin)?'public HTTPS':['localhost','127.0.0.1','[::1]'].includes(new URL(base).hostname)?'host-only':'caller-provided URL';
 const gpuFlags=process.env.ATV_BROWSER_GPU==='metal'?['--enable-gpu','--use-angle=metal']:[];
-const output=join(root,'private/reports/multiplayer-four-browser.json');
-const image=join(root,'private/reports/devlog-images/multiplayer-four-browser.png');
+const output=process.env.ATV_MP_FOUR_REPORT||join(root,'private/reports/multiplayer-four-browser.json');
+const image=process.env.ATV_MP_FOUR_SCREENSHOT||join(root,'private/reports/devlog-images/multiplayer-four-browser.png');
 const report={started:new Date().toISOString(),base,reachability,expectedCommit:process.env.ATV_EXPECTED_COMMIT||null,conditions:{browser:'headless Chromium',gpuFlags,viewport:[1280,896],clients:4,documentHasFocusOverride:true,diagnostics:'performance',contention:'Other host workload is not measured; compare concurrent probe logs before attributing timing outliers.',timingScope:'Four automated clients on one Mac sharing CPU/GPU; not four separate player devices.'},models:[{quad:1,rider:0},{quad:14,rider:1},{quad:26,rider:0},{quad:2,rider:1}],errors:[],failedResponses:[],stages:[],movement:[],samples:[],limitations:['Physical phones/controllers, geographically separated machines and Internet latency diversity are not tested.','Focus events are dispatched before gathering each client so synthetic/background Chromium focus does not prevent normal app audio activation. Background-tab throttling remains possible.','Per-peer GL draw matching is disabled before the timing window; game diagnostics are enabled.']};
 const save=()=>writeFile(output,JSON.stringify(report,null,2)+'\n');
 await mkdir(join(root,'private/reports/devlog-images'),{recursive:true});
@@ -105,8 +105,10 @@ try {
  for(let tick=0;tick<12;tick++) {await pages[0].waitForTimeout(1000);const values=await Promise.all(pages.map(state));report.samples.push({at:new Date().toISOString(),clients:values.map(summary)});if(tick%4===3){await save();console.log('TIMING',tick,JSON.stringify(values.map(s=>({fps:s.performance.fps,p95:s.performance.p95Ms,cpu:s.performance.renderCpuMs,worker:s.physicsRoundTripMs,rtt:s.multiplayer.state.rttMs}))))}}
  report.final=report.samples.at(-1).clients;
  assert.deepEqual(report.errors,[]);assert.deepEqual(report.failedResponses,[]);
- await button(host,'Pause').click();await button(host,'Lobby').click();await button(host,'Leave lobby').click();await host.close();await Promise.all(pages.slice(1).map(page=>page.waitForFunction(()=>!window.atvTerrainStatus.multiplayer?.state.code,null,{timeout:20000})));
+ // Verify explicit Leave before page destruction can replace its clean close
+ // with the separate, intentional host-recovery grace path.
+ await button(host,'Pause').click();await button(host,'Lobby').click();await button(host,'Leave lobby').click();await Promise.all(pages.slice(1).map(page=>page.waitForFunction(()=>!window.atvTerrainStatus.multiplayer?.state.code,null,{timeout:20000})));await host.close();
  report.hostEnd=await Promise.all(pages.slice(1).map(state));report.hostEnd=report.hostEnd.map(s=>({remote:s.multiplayer.remote.length,voices:s.audio.multiplayer.voices,impacts:s.audio.multiplayer.impacts,code:s.multiplayer.state.code??null,models:s.multiplayer.models,notice:s.multiplayerError??null}));
  for(const s of report.hostEnd){assert.equal(s.remote,0);assert.equal(s.voices,0);assert.equal(s.impacts,0);assert.equal(s.code,null);assert.deepEqual(s.models,[]);}
- report.stages.push('closing host ends all three guests and disposes peer audio/GPU caches');report.passed=true;report.completed=new Date().toISOString();await save();console.log('PASS',JSON.stringify({movement:report.movement,final:report.final.map(s=>({quad:s.model.quad_id,rtt:s.net.rttMs,fps:s.performance.fps,p95:s.performance.p95Ms,cpu:s.performance.renderCpuMs,physicsRoundTripMs:s.physicsRoundTripMs})),hostEnd:report.hostEnd}));
+ report.stages.push('explicit host leave ends all three guests and disposes peer audio/GPU caches');report.passed=true;report.completed=new Date().toISOString();await save();console.log('PASS',JSON.stringify({movement:report.movement,final:report.final.map(s=>({quad:s.model.quad_id,rtt:s.net.rttMs,fps:s.performance.fps,p95:s.performance.p95Ms,cpu:s.performance.renderCpuMs,physicsRoundTripMs:s.physicsRoundTripMs})),hostEnd:report.hostEnd}));
 } catch(error) {report.passed=false;report.failure={message:error.message,stack:error.stack};report.failure.states=await Promise.all(pages.map(async page=>{try{return page.isClosed()?null:summary(await state(page));}catch{return null;}}));await save();console.error('FAIL',error);throw error;} finally {await browser.close();}

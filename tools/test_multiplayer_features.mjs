@@ -130,7 +130,11 @@ try {
  await Promise.all([ready(a),ready(b)]);assert.equal((await state(a)).multiplayer.state.peer,0);assert.equal((await state(b)).multiplayer.state.code,code);
  console.log('OWNER_RELOAD',JSON.stringify({code,peer:(await state(a)).multiplayer.state.peer}));
  // A paused guest must still receive current roster/poses. Departure removes it.
- await pause(b);await button(b,'Players').click();await pause(a);await button(a,'Lobby').click();await button(a,'Leave lobby').click();await a.close();
+ await pause(b);await button(b,'Players').click();await pause(a);await button(a,'Lobby').click();await button(a,'Leave lobby').click();
+ // Let the explicit Leave handshake complete before destroying its page. An
+ // abrupt page close exercises the existing 30-second host recovery grace.
+ await a.waitForFunction(()=>!window.atvTerrainStatus.multiplayer.state.code&&window.testSocket.readyState===WebSocket.CLOSED,null,{timeout:15000});
  await b.waitForFunction(()=>!window.atvTerrainStatus.multiplayer.state.code,null,{timeout:15000});assert.equal((await state(b)).multiplayer.remote.length,0);
+ await a.close();
  assert.deepEqual(errors,[]);console.log('PASS late admission / minimap / smooth arrows / minimap dots / pause roster / nearby spawn / contacts / head-on wreck replication / departure');
 }finally{await browser.close();}

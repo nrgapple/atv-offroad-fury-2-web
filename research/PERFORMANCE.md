@@ -10,16 +10,23 @@ output for the checked views and HUD fixtures. A matched `gl.finish` render-wall
 benchmark records lower median time in every checked map. Those dedicated
 measurements do not establish a main-thread CPU, normal frame-rate, or battery
 gain; see the separate live-callback comparison below. The 390×844/DPR3 viewport
-is a host simulation, not a physical phone. The candidate has passed its first
-PR CI run; final CI and public-release verification remain pending.
+is a host simulation, not a physical phone. The optimization is now publicly
+deployed and verified on both production origins at main commit
+`124b67bdac878dd1e1a481703c29fe2a5ecf00f3`; public behavior checks are listed
+below, including all documented multiplayer routes.
 
 ## Baseline and measurement scope
 
 The source baseline is commit `04759d7`. The cache-version-stripped public game
-script matches the source baseline used for this investigation. The optimization
-candidate preserves the recovered gameplay WASM hash `5248c34f…` and
-incorporates remote-main security checkpoint `b5fd793` via merge commit
-`99fd9aa`. Initial captures used host Chromium at 390×844 CSS pixels and device
+script matches the source baseline used for this investigation. The recorded
+baseline gameplay WASM hash is
+`5248c34fe1727149720c83a64a0536184fed6fae92dbb2892bfe3f15ad304116`. A fresh
+isolated host build reproduces the frozen host baseline byte-for-byte. This
+confirms the paired host game used the unchanged authored WASM; the public CI
+artifact is verified against its own checked artifact and is not claimed to have
+the same compiler-produced binary hash. The optimization candidate incorporates
+remote-main security checkpoint `b5fd793` via merge commit `99fd9aa`. Initial
+captures used host Chromium at 390×844 CSS pixels and device
 pixel ratio 3. This is a viewport simulation on the host Mac, not a physical
 phone. Counters describe submitted work and main-thread callback time; they do
 not measure GPU execution time.
@@ -136,12 +143,115 @@ assumption, with no Rust physics or input change. Baseline and candidate pass th
 real held-touch wreck route. The host regression gates also pass workspace
 checks and hygiene/security/release/Cloudflare checks, all-map driving,
 124-step touch, race AI, minimap, keyboard/gamepad, context restoration,
-Chromium/WebKit lifecycle, reflections/water, and multiplayer join/contact/train/
-reconnect/departure routes. Motorcycle controls also pass 178 paired WASM/camera
+Chromium/WebKit lifecycle, reflections/water, and host multiplayer
+join/contact/train/reconnect/departure routes. Motorcycle controls also pass 178 paired WASM/camera
 steps, portrait touch turns in both directions, grip and foot continuity, and
 interpolated presentation. Final `make check` and `make verify` pass after the
-last HUD visibility guard. PR #42's first CI run passed; its final CI result and
-public deployment are pending.
+last HUD visibility guard. PR #42 CI run `38475141913` passed; merge commit
+`124b67bdac878dd1e1a481703c29fe2a5ecf00f3` passed main CI and automatic
+deployment in run `38475701679`. Public verification is recorded below and in
+`research/DEPLOYMENT.md`. Public multiplayer feature, transport-v3, four-browser
+and abrupt-owner-close grace checks have passed; multiplayer transport figures
+are not rendering-performance gains.
+
+### Isolated build verification
+
+The shared native Cargo target produced an unexpected `CopyRideLink` bounds-test
+failure and a 357-versus-356 core-test count mismatch while another worktree was
+building. Rust source was unchanged. Re-running with the dedicated ignored SSD
+target `CARGO_TARGET_DIR=work/verification/native-target` passed `make check`
+(356 core tests plus the remaining Rust, 98 JavaScript, Clippy and Python checks)
+and `make verify`. A fresh isolated WASM build completed in 11.52 seconds and
+matched the frozen host baseline exactly: SHA-256
+`5248c34fe1727149720c83a64a0536184fed6fae92dbb2892bfe3f15ad304116`, with a
+byte-for-byte comparison passing. This host build comparison does not claim the
+public CI artifact has the same compiler-produced binary hash.
+
+### Source pointers for follow-up profiling
+
+The following are investigation targets, not established optimization wins.
+Line numbers can shift; use the named symbols when locating them again.
+
+- `web/game.js`: `drawEcosystem` (vegetation scan, selection/sort and instance
+  writes); `command`, `pumpSimulation` and `acceptFrame` (browser/WASM request,
+  fixed-rate simulation batching and frame/matrix conversion).
+- `web/worker.js`: Worker request handling, WASM `run`, output copying and
+  transferable response.
+- `crates/atv-web/src/lib.rs`: simulation frame construction and JSON
+  serialization, including HUD/particle fields and funny-crash JSON conversion;
+  `serialized_operation` and `SimulationBatchFrame` are related batching paths.
+- `crates/atv-core/src/hud.rs` and `web/hud.js` (`HeadUpDisplay`): Rust HUD frame
+  construction and browser canvas allocation, bounds, redraw and release.
+- `web/multiplayer.js` (`PlayerIndicators.draw`): peer-label DOM writes followed
+  by `offsetWidth`/`offsetHeight` reads, a possible forced-layout source.
+- `web/wheel-effects.js` (`WheelEffectsRenderer`) and
+  `crates/atv-core/src/wheel_effects.rs`: wet-particle lifetime filtering,
+  historical high-water draw range and frame production.
+
+Vegetation caching, reducing state serialization/matrix allocations, batching
+multiplayer label layout, and drawing only live wet particles remain backlog
+hypotheses. Any changes need paired workloads and output checks while preserving
+transparent ordering, reflections, input/event ordering, pause, multiplayer
+clock behavior, and context restoration.
+
+## Public release verification (2026-10-13)
+
+Main commit `124b67bdac878dd1e1a481703c29fe2a5ecf00f3` passed CI and automatic
+production deployment in [run 38475701679](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38475701679);
+PR #42's final CI run [38475141913](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38475141913)
+also passed. The validated current-main artifact was fetched before the separate
+R2 upload. Both public `deployment.json` responses identify the same commit, and
+full verification passed on [furyremastered.com](https://furyremastered.com/)
+and the [Workers origin](https://atv-offroad-fury-2.champtoday.workers.dev/).
+Verification matched 43 authored files and 453 served objects by hash, size and
+MIME. The approved R2 package contains 454 objects totaling 343,700,282 bytes;
+two objects changed (the inspected gameplay screenshot and gallery), with no
+runtime-content changes. The gallery snapshot at verification contains 179
+entries and 138 screenshots. The screenshot caption remains explicit that it is
+a host Chromium Metal gameplay capture, not a public-browser or physical-phone
+image.
+
+Public Chromium checks passed no-disc startup, original title/controller/pause
+flows, 390px touch driving and reload, and all nine map loading/driving routes
+with terrain and vegetation. They reported zero JavaScript or WebGL errors. In a
+two-second public active window the game rendered 120 frames at about 60 FPS,
+advanced 119 physics steps, submitted 14,520 draws and cleared the HUD zero
+times. Paused and synthetic blur-visible windows each recorded zero RAF callbacks,
+draws, HUD clears and physics steps; focus, driving and WebGL context restoration
+woke rendering successfully. A separate public held-touch Nac Nac route passed
+wreck separation, ground contact, automatic recovery and resumed driving.
+
+The public feature retry passed late join with 13 remote draws per client, host
+recovery, nearby spawn at about 10 feet, the 342×64 mobile Players hit target,
+owner contacts (10 and 10), 20 train samples with at most 0.908207 feet relative
+error, both head-on Front wrecks with peer replication, and departure cleanup.
+An initial run timed out because its fixture clicked Leave and immediately
+closed the host page before the explicit-close handshake finished. The test now
+waits for owner state to clear and its WebSocket to close, and waits for the guest
+room code to clear before destroying the host page. This resolved the harness
+ordering assumption against the existing 30-second recovery grace; no production
+transport code changed. Follow-up public transport-v3 checks passed: driving
+recorded 170 messages / 22,914 bytes over 10.01 seconds, using 135- and 117-byte
+packets; both suspended riders sent two poses in roughly 11 seconds and stayed
+fresh, with the tested quad/rider pose sets retained. Late join restored the
+host at zero positional error, resume delivered 41 messages in 2.515 seconds,
+and a 5.518-second solo interval sent no snapshots. This confirms existing
+transport behavior; it is not a new rendering gain.
+
+The public four-browser test also passed with quads 1/14/26/2. Every client drew
+three peers in 39 draws with three engine voices; all four drivers' movement
+reached every observer, and explicit owner leave cleared guest codes, remotes,
+audio, impacts and models with zero page or HTTP errors. These multiplayer
+telemetry samples are not used as rendering CPU/FPS evidence. The separate
+abrupt-owner-close recovery-grace regression also passed: a copied-invite two-rig
+session cleared the guest after abrupt host closure within the existing 45-second
+test window, covering the 30-second recovery grace. It rendered 13 remote draws
+and one engine voice per client, with 9.953 feet of remote movement. The
+four-browser screenshot remains private and was not published.
+These public routes verify deployment and the listed behaviors; they do not
+establish physical-phone behavior, whole-game parity, main-thread CPU savings or
+battery/thermal gains. Detailed release evidence is in
+`research/DEPLOYMENT.md` and the corresponding text-only dev-log entry.
 
 ## Benchmark method
 
@@ -275,7 +385,7 @@ particular:
 
 | Priority | Investigation | Status |
 | --- | --- | --- |
-| Host verified | Conservative terrain and scenery frustum culling | 45/45 camera/map pixel comparisons exact; dedicated render-wall medians lower in all nine maps; PR #42 final CI/public verification pending |
+| Publicly verified | Conservative terrain and scenery frustum culling | 45/45 camera/map pixel comparisons exact; dedicated render-wall medians lower in all nine maps; main CI and both-origin public verification passed |
 | Host verified | Reuse terrain GPU buffers and regenerate affected geometry | 18/18 terrain-center GPU-byte hashes match; original samples/topology/seams preserved; update bytes reduced at checked Caribou centers |
 | Host verified | Reduce HUD backing storage/redraws and sleep inactive single-player RAF | 48/48 HUD fixtures pixel-identical; 82.3% less portrait standalone-speed backing storage; active physics/FPS unchanged; paused/blurred RAF sleeps |
 | Next | Cache vegetation visibility by spatial cell/camera state and avoid per-frame sort/upload when unchanged | Candidate from code-path review; no measured gain |
@@ -295,9 +405,10 @@ particular:
 | HUD component comparison | 48 fixtures across four viewports | Pixel-identical; portrait standalone-speed storage 11,849,760→2,096,640 bytes (82.3%); no-content/paused storage 4 bytes |
 | Lifecycle comparison | Three two-second actual-game windows | Active 120 frames/steps and 60 FPS both runs; draws 71,760→14,520, HUD clears 120→0; paused/blur RAF 120→0 |
 | Live callback timing | Four actual-loop serial pairs, 2,401 samples each | See the scoped results above; callback wall includes driver wait, with no CPU/FPS/battery gain claim |
-| Integration and release | Host regression routes and PR #42 | Host gates pass with no gameplay/FPS regression detected; first CI run passed, final CI/public release pending; no public optimization claim |
+| Integration and release | PR #42 and main commit `124b67bd` | Final PR/main CI, both-origin application/R2 verification, all-map routes, lifecycle, wreck and multiplayer public checks passed; no CPU/FPS/battery gain is claimed |
 
-The inspected host screenshot is stored in ignored
-`private/reports/devlog-images/`; screenshot files never enter GitHub source. A
-public release claim requires the separately verified current-main artifact and
-public deployment gate.
+The approved gameplay screenshot remains stored in ignored
+`private/reports/devlog-images/` and was uploaded separately with the validated
+R2 package; screenshot files never enter GitHub source. Its public gallery caption
+identifies the actual capture as host Chromium Metal at 390×844/DPR3. No screenshot
+from the separate four-browser run was approved or published.
