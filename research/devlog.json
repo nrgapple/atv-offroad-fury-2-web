@@ -1,6 +1,6 @@
 {
-  "status": "Public protocol v3 transport, four-browser replication, and feature/train/contact/recovery routes are verified on main 8c0ace5; this is bounded component evidence, not whole-game parity.",
-  "working_on": "Continue the ATV2 port beyond this multiplayer checkpoint, including original race, physics, animation, and rendering parity.",
+  "status": "Public protocol v3 transport, four-browser replication, and feature/train/contact/recovery routes are verified on main 8c0ace5. Host Chromium performance findings are recorded; optimization outcomes are pending.",
+  "working_on": "Validate visibility culling, terrain-buffer reuse and HUD/inactive cleanup against the recorded host Chromium baseline while preserving 60 Hz physics and input/event ordering.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -2828,9 +2828,25 @@
         "Evidence: work/verification/efficiency-public-wreck.log. The public package and gallery snapshot preceding this text-only entry are recorded in port_status.public_release."
       ],
       "limitation": "This is a bounded automated browser route on the tested host environment, not physical-phone behavior, broad stunt coverage, geographic latency, or whole-PS2 animation and physics equivalence."
+    },
+    {
+      "id": "initial-browser-performance-findings-597dfd66",
+      "timestamp": "2026-10-13T21:14:58.567462+00:00",
+      "recorded_at": "2026-10-13T21:14:58.567462+00:00",
+      "kind": "discovery",
+      "title": "Initial browser performance findings",
+      "summary": "Host Chromium profiling identified large scene submission counts, a full terrain-grid rebuild during long rides, repeated vegetation processing, oversized HUD clears and render work while visibly blurred. No optimization gains have been measured yet.",
+      "details": [
+        "At 390×844 CSS pixels with DPR3, ENV01 submits 588 non-instanced and 10 vegetation draws, 205,952 terrain triangles and 275 static instances; ENV08 submits 758 non-instanced and 8 vegetation draws, 207,872 triangles and 314 static instances.",
+        "A Caribou terrain rebuild after 48 samples and 216 feet along an axis took 18.3 ms in the render callback, deleted 64 buffers, issued 64 bufferData uploads and uploaded 3,797,304 bytes.",
+        "The HUD backing canvas is 1170×2532 pixels and still clears when GPS owns speed and no stunt is visible. In a two-second visible-but-blurred simulation, each map rendered 25 full-scene frames and zero physics steps.",
+        "Driving serialization captured 5,098,129 bytes over 267 ENV01 steps and 5,466,238 bytes over 258 ENV08 steps. Vegetation uses a 64×64 grid, max heap and instancing but rescans 3,482–3,807 plants, sorts up to 1,500 placements and reuploads per frame, even with a frozen camera.",
+        "Code-review candidates include per-peer forced layout reads in multiplayer labels and submitting the full wet-particle high-water range (up to 10,800) while any particle remains alive."
+      ],
+      "limitation": "Host Chromium phone-sized viewport only; these results do not measure physical-phone timing, battery or thermals. Draw submission is not GPU execution. Visibility culling, terrain-buffer reuse and HUD/inactive cleanup are in progress; no gains are claimed."
     }
   ],
-  "updated_at": "2026-10-13T20:50:45.773994+00:00",
+  "updated_at": "2026-10-13T21:14:58.567462+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
