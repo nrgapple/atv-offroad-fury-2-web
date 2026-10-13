@@ -1,6 +1,6 @@
 {
-  "status": "Rendering optimization checkpoint 124b67bd is deployed and verified on both production origins. Public frontend, all-nine-map, lifecycle/wake, held-touch wreck, multiplayer feature/departure, transport-v3, four-browser and abrupt-owner-close grace routes pass. Dedicated host render-wall results improve in all nine maps, but live callback timing does not establish a CPU/FPS/battery gain. Physical-phone behavior and whole-game parity remain unverified.",
-  "working_on": "Continue paired profiling of vegetation, state serialization, peer-label layout and wet-particle drawing without claiming CPU or battery gains until measurements support them. Physical-phone timing and battery behavior remain untested.",
+  "status": "Rendering optimization checkpoint 124b67bd is deployed and verified on both production origins. Public frontend, all-nine-map, lifecycle/wake, held-touch wreck, multiplayer feature/departure, transport-v3, four-browser and abrupt-owner-close grace routes pass. Dedicated host render-wall results improve in all nine maps, but live callback timing does not establish a CPU/FPS/battery gain. Physical-phone behavior and whole-game parity remain unverified. Latest main iOS framing, uphill camera and crash-effects changes are integrated; their separate evidence remains in the appended checkpoints.",
+  "working_on": "Verify the combined current-main release and preserve the deferred performance investigations for later work.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -2895,6 +2895,76 @@
       "caption": "Host-only Chromium Metal gameplay capture on Caribou Peak (ENV01), 390\u00d7844 CSS viewport at DPR3, after keyboard driving; not a physical-phone image."
     },
     {
+      "id": "portrait-fullscreen-respects-safe-areas-3c8be410",
+      "timestamp": "2026-10-13T22:16:56.332020+00:00",
+      "recorded_at": "2026-10-13T22:19:33.862225+00:00",
+      "kind": "verification",
+      "title": "Portrait fullscreen respects safe areas",
+      "summary": "The game now fills the standalone portrait screen while keeping Pause and Camera controls inside the safe area.",
+      "details": [
+        "Chromium and WebKit host checks cover 390\u00d7844 \u2192 844\u00d7390 \u2192 390\u00d7844 with matching fullscreen canvas and backing-buffer sizes; portrait safe-area insets were 59px top and 34px bottom."
+      ],
+      "limitation": "Automated host captures use synthetic iOS standalone and safe-area signals. They do not verify physical iPhone Home Screen behavior or public deployment.",
+      "image": "/devlog-images/portrait-fullscreen-respects-safe-areas-3c8be410.png",
+      "caption": "Portrait gameplay fills the screen; Pause, Camera and HUD remain reachable."
+    },
+    {
+      "id": "landscape-fullscreen-survives-rotation-8c8224cc",
+      "timestamp": "2026-10-13T22:17:01.200225+00:00",
+      "recorded_at": "2026-10-13T22:19:33.937354+00:00",
+      "kind": "verification",
+      "title": "Landscape fullscreen survives rotation",
+      "summary": "Landscape fullscreen retains the game canvas across rotation, with interactive controls inside the safe area.",
+      "details": [
+        "Chromium and WebKit host checks cover both landscape and portrait return; landscape insets were 59px at each side and 21px at the bottom. Held-touch driving and Pause/Camera taps pass in both orientations."
+      ],
+      "limitation": "This is automated host-browser evidence with synthetic standalone signals, not physical iOS Safari or public-deployment verification.",
+      "image": "/devlog-images/landscape-fullscreen-survives-rotation-8c8224cc.png",
+      "caption": "WebKit landscape capture after rotation, with Pause, Camera and minimap visible."
+    },
+    {
+      "id": "chase-camera-lifts-on-uphill-approach-ffb9d01d",
+      "timestamp": "2026-10-13T22:17:07.017714+00:00",
+      "recorded_at": "2026-10-13T22:19:34.003890+00:00",
+      "kind": "verification",
+      "title": "Chase camera lifts on uphill approach",
+      "summary": "The default chase view raises its sightline on supported uphill terrain and returns smoothly after leaving the slope.",
+      "details": [
+        "Caribou throttle-camera replay changed rendered pitch from \u22120.3769404 to \u22120.0361075 radians with a 0.2208329-radian lift; cycling camera presets resets the lift."
+      ],
+      "limitation": "The uphill sightline is a browser adaptation. These host captures do not establish original-camera parity, physical iOS behavior or public deployment.",
+      "image": "/devlog-images/chase-camera-lifts-on-uphill-approach-ffb9d01d.png",
+      "caption": "Caribou uphill approach with the raised default chase sightline."
+    },
+    {
+      "id": "funny-crashes-keep-more-bounce-and-tumble-4ca9db76",
+      "timestamp": "2026-10-13T22:15:32.900625+00:00",
+      "recorded_at": "2026-10-13T22:19:34.068791+00:00",
+      "kind": "verification",
+      "title": "Funny crashes keep more bounce and tumble",
+      "summary": "Optional Funny Crashes now carries more launch momentum, clearer rider tumble and terrain rebound through recovery.",
+      "details": [
+        "The severe ATV route completed 1,197 paired enhanced/Off WASM steps with zero gameplay/camera mismatches, including three aerial ragdoll frames with the ATV intact, two impact-damage transitions and seven visible breakaway parts before intact recovery.",
+        "The 357-core, 27-net, 7-relay, 15-web, 6-tools and 4-release Rust suites passed (416 total), along with 100 JavaScript tests, 8 build-cache tests, 35 release tests (one opt-in skip), 19 Worker tests, make verify, formatting, strict Clippy and the WASM build."
+      ],
+      "limitation": "The enhanced ragdoll and debris are optional authored presentation, not recovered ATV2 crash behavior. This is host verification; public deployment and physical-phone behavior are not established.",
+      "image": "/devlog-images/funny-crashes-keep-more-bounce-and-tumble-4ca9db76.png",
+      "caption": "Caribou severe crash: rider and supported ATV parts tumble separately before recovery."
+    },
+    {
+      "id": "install-flow-and-motorcycle-recovery-pass-host-checks-20a89e04",
+      "timestamp": "2026-10-13T22:20:11.669829+00:00",
+      "recorded_at": "2026-10-13T22:20:11.669829+00:00",
+      "kind": "verification",
+      "title": "Install flow and motorcycle recovery pass host checks",
+      "summary": "Automated standalone install-flow coverage and the motorcycle touch crash route pass after the fullscreen and camera updates.",
+      "details": [
+        "Chromium and WebKit checks cover the synthetic Home Screen title, menu, decorative fill, rotation, install prompts and persistence.",
+        "The motorcycle touch/crash route completed 302 paired enhanced/Off WASM steps with zero mismatches across 251 observed frames; a mild crash recovered without damaging-part contacts."
+      ],
+      "limitation": "These are host-browser runs with synthetic standalone signals. They do not verify physical iOS, actual installation or public deployment."
+    },
+    {
       "id": "public-rendering-optimization-release-97e7f85c",
       "timestamp": "2026-10-13T22:30:03+00:00",
       "recorded_at": "2026-10-13T22:30:03+00:00",
@@ -2919,7 +2989,7 @@
   ],
   "updated_at": "2026-10-13T22:30:03+00:00",
   "port_status": {
-    "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not by itself prove gameplay routes or R2 content. The public_release block records the latest fully verified content/gallery package and bounded browser checks. Host-only timing evidence stays labeled separately; physical-device results are not inferred.",
+    "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
       "commit": "124b67bdac878dd1e1a481703c29fe2a5ecf00f3",
       "ci_run": "38475701679",

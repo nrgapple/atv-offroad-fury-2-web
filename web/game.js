@@ -1,5 +1,5 @@
 // Original content and vehicle component simulation run in the Rust worker.
-import { vertexBounds, worldBounds, viewPlanes, outsideView } from './render-support.js';
+import { vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline } from './render-support.js';
 import { Multiplayer, PlayerIndicators } from './multiplayer.js';
 import { Frontend } from './frontend.js';
 import { RaceOverlay } from './race.js';
@@ -43,6 +43,7 @@ let raceSettings = null, raceCourse = null, cpuQuadMatrices, cpuRiderMatrices;
 const raceOverlay = new RaceOverlay({restart: async () => { await $('reset').onclick(); canvas.focus({preventScroll:true}); }, quit: () => frontend?.show('single')});
 let simReady = false, simBusy = false, simAccumulator = 0, simFrame, simStart, simGeneration = 0, orbit = 0, cameraFrame, cameraCycle = false;
 const motorcyclePresentation = new MotorcyclePresentation();
+const uphillSightline = new UphillSightline();
 let presentedFrame, presentedCamera;
 let sceneChunks = [], sceneDraws = [], skyChunks = [], ecoGroups = [], ecoBillboard;
 let waterRenderer;
@@ -1334,13 +1335,12 @@ async function pumpSimulation() {
 function acceptCameraFrame(frame) {
   if (frame?.position?.length !== 3 || frame?.target?.length !== 3 || ![...frame.position, ...frame.target, frame.fov].every(Number.isFinite)) throw new Error('Simulation returned an invalid camera pose.');
   cameraFrame = frame;
-  presentCameraFrame();
+  presentCameraFrame(frame);
   diagnostics.followCamera = { ...frame, presetName: diagnostics.cameraPresets?.[frame.preset] };
 }
-function presentCameraFrame() {
-  const frame = presentedCamera ?? cameraFrame;
-  // Keep the recovered landscape camera intact. A narrow viewport needs extra
-  // distance and a higher sightline so the quad does not hide the next jump.
+function presentCameraFrame(frame = presentedCamera ?? cameraFrame) {
+  // Preserve the recovered camera position/FOV. A narrow viewport needs extra
+  // distance and a higher sightline; default chase also follows uphill ramps.
   const aspect = canvas.width / canvas.height;
   const portrait = Math.max(0, Math.min(1, (1 - aspect) / .5));
   const distanceScale = 1 + .35 * portrait;
@@ -1350,9 +1350,9 @@ function presentCameraFrame() {
   camera.y -= offset[1] * (distanceScale - 1);
   camera.z -= offset[2] * (distanceScale - 1);
   camera.yaw = Math.atan2(offset[0], offset[2]);
-  camera.pitch = Math.atan2(offset[1], Math.hypot(offset[0], offset[2])) + .12 * portrait;
+  camera.pitch = Math.atan2(offset[1], Math.hypot(offset[0], offset[2])) + .12 * portrait + uphillSightline.lift;
   const focalLength = (4 / 3) / Math.tan(frame.fov * Math.PI / 360) * (1 - .12 * portrait);
-  diagnostics.cameraPresentation = { aspect, portrait, distanceScale, pitchLift: .12 * portrait, focalLength };
+  diagnostics.cameraPresentation = { aspect, portrait, distanceScale, pitchLift: .12 * portrait, uphillLift: uphillSightline.lift, focalLength };
 }
 function followCamera(dt) {
   const pad = focused ? gamepad() : null;
@@ -1363,7 +1363,7 @@ function followCamera(dt) {
   orbit -= (amount('cameraRight') - amount('cameraLeft')) * dt * 1.7;
 }
 function updateCamera(dt) {
-  if (simReady) { followCamera(dt); return; }
+  if (simReady) { uphillSightline.update(presentedFrame ?? simFrame, presentedCamera ?? cameraFrame, dt, terrainHeight); followCamera(dt); return; }
   if (!focused || document.hidden) return;
   const pad = gamepad();
   let sideways = Number(keys.has('KeyD') || keys.has('ArrowRight')) - Number(keys.has('KeyA') || keys.has('ArrowLeft')) + deadzone(pad?.axes[0]);
@@ -1405,7 +1405,7 @@ function render(time) {
   raceOverlay.draw(simFrame?.race,simFrame,simReady && focused && !lost && !document.hidden && !menuOpen);
   if (lost || !gl || !terrain || document.hidden || (menuOpen && !liveMultiplayer())) { lastTime = time; stats.sample(time, 0, false); return; }
   const dt = Math.min(.05, Math.max(0, (time - (lastTime || time)) / 1000)); lastTime = time;
-  const ratio = Math.min(devicePixelRatio || 1, 1.5), width = Math.max(1, Math.round(innerWidth * ratio)), height = Math.max(1, Math.round(innerHeight * ratio));
+  const ratio = Math.min(devicePixelRatio || 1, 1.5), width = Math.max(1, Math.round(canvas.clientWidth * ratio)), height = Math.max(1, Math.round(canvas.clientHeight * ratio));
   if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
   if (!menuOpen) updateCamera(dt);
   if (simReady && !simulationPaused()) {

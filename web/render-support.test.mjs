@@ -25,3 +25,25 @@ test('unknown bounds and degenerate matrices fail open, float32 margins retain b
   assert(!outsideView({min:[1.00001,0,0],max:[1.00002,1,1]},planes));
   assert.equal(vertexBounds([]),null);
 });
+
+test('chase anticipates uphill terrain/props, smooths the crest and ignores airborne flips, reverse, wreck and other presets', async () => {
+  const { UphillSightline } = await import('./render-support.js');
+  const camera = { preset: 0 }, actor = { orientation: [1,0,0,0], origin: [0,1,0], grounded: [true,true,true,true], wreck: { phase: 'Riding' }, speed: 20, reset_count: 0 };
+  const slope = new UphillSightline();
+  for (let i = 0; i < 60; i++) slope.update(actor, camera, 1/60, (x,z) => z);
+  assert(slope.lift > .58 && slope.lift < .61, '45 degree incline raises the sightline');
+  const previous = slope.lift;
+  const flying = { ...actor, grounded: [false,false,false,false], orientation: [0,1,0,0] };
+  for (let i = 0; i < 12; i++) slope.update(flying, camera, 1/60, () => 0);
+  assert.equal(slope.lift, previous, 'takeoff holds view independent of flip');
+  for (let i = 0; i < 120; i++) slope.update(flying, camera, 1/60, () => 0);
+  assert(slope.lift < .02, 'airborne view settles');
+  const ramp = { ...actor, orientation: [Math.cos(Math.PI/8), -Math.sin(Math.PI/8),0,0] };
+  for (let i = 0; i < 60; i++) slope.update(ramp, camera, 1/60, () => 0);
+  assert(slope.lift > .58, 'tilted prop on flat terrain raises view');
+  for (const [a,c] of [[actor,{preset:1}],[actor,{preset:0,mode:'wreck'}],[{...actor,speed:-5},camera],[{...actor,wreck:{phase:'Front'}},camera]]) {
+    slope.update(a,c,1/60,()=>100); assert.equal(slope.lift,0);
+  }
+  for (let i = 0; i < 60; i++) slope.update(actor,camera,1/60,()=>0);
+  assert.equal(slope.lift,0,'flat ground preserves recovered framing');
+});

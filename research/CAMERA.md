@@ -23,13 +23,19 @@ Private reproduction scripts and results live under `work/physics/camera_*` and 
 Portrait view now pulls the recovered chase position back by up to 35%, raises
 the sightline by up to 0.12 radians and reduces focal length by up to 12%. The change
 blends from square to narrow portrait; landscape retains the exact recovered
-position, target-derived pitch and 85-degree native horizontal FOV projection.
+position, target-derived pitch and 85-degree native horizontal FOV projection,
+with the later uphill sightline lift applied as a separate default-chase browser
+adaptation on supported ground/ramp slopes.
 The renderer applies this from each untouched native camera frame, so rotating
 the device does not compound offsets. `tools/test_portrait_camera.mjs` verifies
 portrait→landscape→portrait behavior in the live renderer; before/after 390×844
 Caribou captures were inspected. This is an explicitly requested mobile adaptation,
 not a recovered original PS2 camera preset. The original single-player chase setup disables object obstruction queries; the
 portrait adaptation does not enable a different collision policy.
+
+The host-only uphill camera checkpoint records the ordinary Caribou route and
+measured pitch/lift in [iOS fullscreen and camera evidence](IOS_CAMERA_CRASH.md).
+It is not evidence of original uphill-camera parity or physical iOS behavior.
 
 ## Wreck camera (priority-parity host checkpoint)
 
