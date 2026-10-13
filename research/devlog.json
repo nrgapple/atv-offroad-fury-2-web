@@ -3002,9 +3002,25 @@
       "limitation": "Host-only evidence on one Mac using synthetic focus and a local relay proxy. Current-main integration, CI and public verification are pending. This does not establish physical-phone behavior, geographic latency, full original gameplay, multiplayer races or sound/fullscreen gesture parity.",
       "image": "/devlog-images/url-setup-and-direct-lobby-links-bab6e6d8.png",
       "caption": "Host capture: Tioga Valley paused after copying a ride invite link."
+    },
+    {
+      "id": "public-url-setup-and-invite-links-verified-03296429",
+      "timestamp": "2026-10-13T22:47:52+00:00",
+      "recorded_at": "2026-10-13T22:49:07.523783+00:00",
+      "kind": "verification",
+      "title": "Public URL setup and invite links verified",
+      "summary": "The public game accepts direct ride and multiplayer links, restores their settings safely, and lets a copied link admit a late guest.",
+      "details": [
+        "Verified against the public build at commit e4bfd91aab5351f284d850fd4d039ab888a887b0. Direct links selected Tioga Valley, ATV 14, female rider and the name Sam & Jo; reloading the copied link restored that ride. Defaults selected ATV 1 on Vancouver Ridge, and motorcycle 34 and Race quad 2/female with two laps and zero CPU riders also loaded.",
+        "Portrait setup-only links opened the manual ride flow without starting. Invalid, duplicate and unsupported parameters opened no WebSocket or gameplay; a missing room showed an error. Multiplayer create/start selected the host ATV and course, and a copied invite admitted a late ATV 26 guest; the host course remained authoritative. The two browsers rendered 14 and 12 remote draws. Preparing a course stayed unstarted, and a missing required quad resource returned safely to the lobby with a Leave option.",
+        "The complete public test_launch_links.mjs route passed without a disc or file picker and with no page errors. Production hash verification passed at the same commit: 44 authored static files, 458 R2 objects, and the then-current dev log with 186 entries and 143 screenshots. The screenshot is a public Chromium Metal capture from that build."
+      ],
+      "limitation": "This is automated public verification on one Mac using synthetic focus at desktop and portrait browser sizes. It does not establish physical-phone behavior, geographically distributed latency, complete original-game parity, multiplayer racing (Freeride only), race coverage beyond the Caribou Peak preview, or sound and fullscreen gesture parity.",
+      "image": "/devlog-images/public-url-setup-and-invite-links-verified-03296429.png",
+      "caption": "Public build e4bfd91, Chromium Metal at 1280\u00d7896: Tioga Valley paused after copying a ride link."
     }
   ],
-  "updated_at": "2026-10-13T22:30:20.795160+00:00",
+  "updated_at": "2026-10-13T22:49:07.523783+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
