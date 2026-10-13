@@ -1515,7 +1515,6 @@ async function loadGame(file = null, environment = "env01", racing = null) {
     uploadTerrainTextures();
     if (hud && source.physics) {
       await codec(63, await hud.init(environment));
-      minimap.peerArrows = playerIndicators.setArtwork(await frontend.image('CompassArrow'));
     }
     setVehicle(source); buildMesh(); await startSimulation(source); resetCamera();
     Object.assign(diagnostics, { ready: true, source: source.name, width, depth, min, max, frames: 0 });
