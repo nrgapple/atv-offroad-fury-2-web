@@ -2543,6 +2543,20 @@
       "caption": "Host Chromium capture at 390×844: wider terrain view with a circular, borderless GPS minimap and adaptive 400 ft scale at 50% zoom. Not a physical-phone or public-release capture."
     },
     {
+      "id": "worker-build-caching-is-bounded-and-validated-on-the-h-bd8c0938",
+      "timestamp": "2026-10-13T18:01:09.439539+00:00",
+      "recorded_at": "2026-10-13T18:01:09.439539+00:00",
+      "kind": "verification",
+      "title": "Worker build caching is bounded and validated on the host",
+      "summary": "A CI helper now caches only the pinned worker-build executable and its identity metadata, validating runner and Rust toolchain compatibility before reuse and forcing a locked install on a miss. Host tests pass; GitHub Actions cache restore and warm-run proof remain pending.",
+      "details": [
+        "The cache contains only the native worker-build executable and identity.json, pins worker-build 0.8.7, and keys compatibility by runner OS/architecture plus full rustc -Vv and cargo -V output. Cache hits are checked against SHA-256, tool version and compatibility; misses use cargo install with --locked --force.",
+        "Pull requests restore without saving. Trusted main pushes and workflow_dispatch may save only after the existing tests, build and artifact steps succeed. Cache-service errors are optional; required tool validation and installation remain in the workflow.",
+        "Eight cache unit tests, 34 release tests (one skipped), Python compilation, make verify and repository hygiene pass. On the installed Mac, worker-build 0.8.7 was present and the warm helper completed in 0.206 seconds. Earlier GitHub runs recorded cold worker-build installation times of 259 seconds (CI 38438794714) and 260 seconds (main CI 38439883981)."
+      ],
+      "limitation": "Host-only checkpoint. The 0.206-second result reused an already installed Mac executable; it is not evidence of a GitHub Actions cache restore, a cold installation, or measured build-time savings. Remote cold/warm restore behavior and save lifecycle remain unverified pending PR/main CI and rerun."
+    },
+    {
       "id": "late-join-minimap-and-multiplayer-contacts-e994b016",
       "timestamp": "2026-10-13T18:11:52+00:00",
       "recorded_at": "2026-10-13T18:15:00+00:00",

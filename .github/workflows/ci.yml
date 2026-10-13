@@ -32,8 +32,25 @@ jobs:
           make check CARGO="$(which cargo)"
           python3 -m unittest discover -s tools -p 'test_release*.py'
           node --test cloudflare/worker.test.mjs
-      - name: Install pinned Rust Worker build tool
-        run: cargo install worker-build --version 0.8.7 --locked
+      - name: Identify pinned deployment tool cache
+        id: worker-build-key
+        run: python3 tools/worker_build_cache.py key
+      - name: Restore pinned deployment tool
+        id: worker-build-cache
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ runner.temp }}/fury-worker-build/bin/worker-build
+            ${{ runner.temp }}/fury-worker-build/identity.json
+          key: ${{ steps.worker-build-key.outputs.key }}
+      - name: Validate or install pinned Rust Worker build tool
+        id: worker-build-tool
+        env:
+          WORKER_BUILD_CACHE_HIT: ${{ steps.worker-build-cache.outputs.cache-hit }}
+        run: |
+          python3 tools/worker_build_cache.py prepare --root "$RUNNER_TEMP/fury-worker-build" --cache-hit "$WORKER_BUILD_CACHE_HIT"
+          install -m 755 "$RUNNER_TEMP/fury-worker-build/bin/worker-build" "$HOME/.cargo/bin/worker-build"
       - name: Build browser release
         run: |
           make web
@@ -46,6 +63,18 @@ jobs:
           path: work/release/
           if-no-files-found: error
           retention-days: 14
+      - name: Save validated deployment tool for future builds
+        continue-on-error: true
+        if: >-
+          success() && github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+          steps.worker-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ runner.temp }}/fury-worker-build/bin/worker-build
+            ${{ runner.temp }}/fury-worker-build/identity.json
+          key: ${{ steps.worker-build-key.outputs.key }}
   deploy:
     name: Deploy and verify production
     needs: web
