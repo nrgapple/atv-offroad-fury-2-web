@@ -1,3 +1,5 @@
+# Implementation handoff
+
 ## Playable motorcycles checkpoint — 2026-10-13
 
 The motorcycle branch now connects garage choices 27–34 to the distinct two-wheel
@@ -14,8 +16,6 @@ Temporary ignored work/host-target and work/host-web avoid observed SSD open/
 hardlink/clone stalls; existing SSD source/build/private symlinks remain intact.
 The SSD UUID is verified before use. Host test server is not a remote handoff.
 
-# Implementation handoff
-
 ## Deployment recovery — 2026-10-13
 
 The experimental local release queue was cut over before completing public
@@ -26,7 +26,7 @@ production environment history are being restored. Follow
 must stay isolated until successful end-to-end validation and a user-approved
 cutover. This recovery checkpoint does not claim a completed public deployment.
 
-## Motorcycle recovery: tested host component, gameplay unfinished
+## Historical motorcycle recovery checkpoint (superseded above)
 
 The isolated motorcycle worktree starts at `c895ba4` and preserves all concurrent
 gameplay lanes. The supplied newer disc is MX vs. ATV Unleashed USA, SLUS_211.04
