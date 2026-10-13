@@ -218,3 +218,16 @@ flight records 24 cross-up frames, maximum 0.510509 radians, grip error below
 0.00000114 ft, boot error below 0.00000536 ft and 432 exact paired steps.
 The ordinary portrait contact and mild stunt/wreck/recovery gates pass again;
 this checks the connected movement, not original whole-controller equivalence.
+
+## Public correction verification
+
+Main `4fbb399` passes CI 38399468481 and is publicly deployed. Actual touch
+left/right, source rider fit and intermediate GPU pose/contact checks pass on
+Mini/125/500 profiles: 762 paired steps, 1,760 rendered bone-marker comparisons
+(not distinct frames), maximum rendered grip error 0.0000014 ft and peg error
+0.0000284 ft. All20 public choices load/drive with audio/clutch/particles/reset
+and 1,543 paired steps; Honda35 Race and the mild Mini stunt/wreck/recovery
+route (308 paired steps, no severe breakaway) pass. No browser/GL errors or
+disc selection are observed. The screenshot log preserves the source-tuned
+controller and physical-phone/native-fidelity limitations. Current-main
+metadata/gallery validation and full R2 HTTPS verification remain release steps.

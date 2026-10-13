@@ -1,6 +1,6 @@
 {
-  "status": "The minimap is host-verified on all nine environments, with authored Rust driving, persisted HUD settings, and bounded course baking. The ATV2 browser port remains incomplete; CI/publication and physical-device/GPU fidelity checks are still ahead.",
-  "working_on": "Verify physical-phone behavior, GPU timing, and dynamic map-actor cartography; continue recovering remaining original ATV2 systems and fidelity.",
+  "status": "The public build verifies selected motorcycle touch and rider-contact routes. The Freestyle minimap is host-verified across all nine environments using recovered terrain and static scenery; dynamic map actors, physical-device behavior, and GPU timing remain unverified. The authored ATV2 browser port remains incomplete, with whole-game and PS2 parity outstanding.",
+  "working_on": "Continue recovering original ATV2 behavior and verify dynamic map-actor cartography, physical-phone behavior, GPU timing, and broader fidelity.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -2279,11 +2279,11 @@
         "The steering correction follows the recovered pi/256 quaternion lookup and the original \u00b1127 packed-axis range; host browser checks for selections 27, 29 and 33 confirm the screen-space sign.",
         "The rider uses the original Mini MXF bank with continuous source-pose blending. Fork steering follows its inclined axis, and shared arm/leg IK keeps hands and boots on the source grip and foot-peg markers; measured contact errors stay below 0.00004 feet.",
         "The garage presents 16 real motorcycle model designs across 20 selectable Race/Pro choices. Host gates cover all 20 loaded, riding, audio, clutch, dirt and reset paths, plus 1,906 paired funny-crash Off/On steps.",
-        "The actual-GPU touch replay now confirms the reversed-sign fix: a left-screen input produces -4.739 ft of steering response and a right-screen input +4.638 ft across 291 exact paired steps. GPU bone-to-source marker comparisons across 660 rendered frames measured maximum grip error 0.00000145 ft and maximum foot-peg error 0.0000284 ft.",
+        "The actual-GPU touch replay now confirms the reversed-sign fix: a left-screen input produces -4.739 ft of steering response and a right-screen input +4.638 ft across 291 exact paired steps. GPU bone-to-source checks recorded 660 rendered bone-marker comparisons, with maximum grip error 0.00000145 ft and maximum foot-peg error 0.0000284 ft.",
         "Host render interpolation is now verified: source pose, camera and motorcycle body uniforms share one blend clock across 2,508 intermediate body-uniform comparisons. Reset, pause, stunt and wreck transitions snap cleanly. This is host GPU evidence; it makes no timing or frame-rate claim.",
         "Additional host regressions passed: the MX 50 jump/stunt/wreck/separation/recovery route (310 paired steps; no severe breakaway in this mild trace), Honda 35 Race, the separate ATV severe-wreck route (1,187 paired steps, seven pieces), all 26 ATV garage choices, responsive layout, context restore and the front menu. The broader host gate passed 336 core, 25 network, 3 web, 13 relay and 72 JavaScript checks, 29 release checks with one credential-dependent skip, and 8 Cloudflare checks."
       ],
-      "limitation": "Host-only verification; these corrections and interpolation are not yet published. The authored motorcycle solver has no native whole-step physics equivalence claim, and no physical-phone test was run. The GPU captures show the bike and rider relatively small in the portrait frame. The mild MX 50 trace did not trigger severe breakaway. Public release and full motorcycle parity remain unverified.",
+      "limitation": "This entry records the original host verification; the later public checkpoint covers selected touch, rendered-contact, all-20 selection and race routes. These checks do not establish native whole-step physics parity or physical-phone behavior. The portrait images keep the bike and rider relatively small in frame. The mild MX 50 trace did not trigger severe breakaway; public breakaway remains unverified.",
       "image": "/devlog-images/motorcycle-touch-steering-and-rider-fit-are-corrected--5d67b69f-gpu-touch-left.png",
       "caption": "Host GPU portrait capture with left-screen steering applied and the motorcycle/rider interpolation active. Touch response and rendered pose were checked against source targets; this is not a physical-phone or public-release capture."
     },
@@ -2306,6 +2306,22 @@
       "caption": "Feature board after the 4fbb399 source correction: 20 separate-game motorcycle choices are labeled host-only; the 4d1e1c4 model-27 public failure remains historical pending a public re-test."
     },
     {
+      "id": "public-motorcycle-touch-steering-and-rider-contact-now-b584ab85",
+      "timestamp": "2026-10-13T12:52:56.796807+00:00",
+      "recorded_at": "2026-10-13T12:56:56.551724+00:00",
+      "kind": "verification",
+      "title": "Public motorcycle touch steering and rider contact now verify",
+      "summary": "The public Cloudflare build now confirms left/right screen steering and rider contact on Mini 50, RM125 and RM500 configurations. This closes the public touch-direction and rendered-pose correction gate for those three configurations.",
+      "details": [
+        "Public Workers commit 4fbb399 at https://atv-offroad-fury-2.champtoday.workers.dev/ passed 762 exact paired steps across Mini 50, RM125 and RM500 touch reports. Left-screen input turns left and right-screen input turns right; all three reports passed without errors.",
+        "Public GPU rendering checks recorded 545, 660 and 555 source-to-bone marker comparisons across the three reports (1,760 comparisons, not distinct frames). Maximum GPU hand/grip error was about 0.0000014 feet and maximum boot/peg error about 0.0000284 feet. The shared interpolation clock moves source pose, camera and motorcycle body uniforms together; the rider keeps the recovered Mini MXF bank and inclined fork steering axis.",
+        "The all-20 motorcycle selection/riding comparison passed 1,543 paired WASM gameplay/camera steps with enhancements Off/On. The public Honda 35 Race gate reported no errors with a five-rider field. A separate 308-step public crash smoke passed paired comparison but triggered no impact, so public breakaway verification remains pending."
+      ],
+      "limitation": "This verifies selected public touch and rendered-contact routes on the deployed browser build. It does not establish native whole-step physics parity, physical-phone behavior, timing or frame rate, a public crash/breakaway transition, or full game completion. The portrait capture shows visible touch direction and contact but the rider/bike remain relatively small in frame.",
+      "image": "/devlog-images/public-motorcycle-touch-steering-and-rider-contact-now-b584ab85.png",
+      "caption": "Public Cloudflare browser capture with left-screen motorcycle steering applied. The rider remains attached at the grips and pegs in the rendered pose; this is a browser-port verification, not a native PS2 capture."
+    },
+    {
       "id": "freestyle-minimap-and-configurable-hud-001c52cc",
       "timestamp": "2026-10-13T13:04:34.570577+00:00",
       "recorded_at": "2026-10-13T13:06:27.142045+00:00",
@@ -2321,12 +2337,12 @@
         "All nine maps (ENV01\u201308 and FREE05) pass actual load and driving, with finite state, zero GL errors, visible minimap, and one minimap build per course. Serial host Mac measurements show 44.7\u201353.0ms total CPU bake across 23\u201327 slices, with maximum slices of 2.0\u20132.4ms. These measurements are from the host Mac and do not establish phone performance or PS2 parity.",
         "Existing frontend keyboard/controller/Tioga and portrait touch/Caribou reload checks pass without disc selection or errors. Chromium mobile UI checks also pass for 44px controls, utility taps, and touch cancellation. The later race regression also passed: tools/test_race.mjs exercised an actual 252-point, five-rider race through CPU movement, grounding, countdown, pause, restart, portrait and landscape, with no errors. A new assertion confirms the Freestyle minimap stays hidden in Race with zero bake slices."
       ],
-      "limitation": "Host Chromium and serial host Mac verification only; this host capture predates CI and public publication. Physical iOS/Android hardware, GPU timing, dynamic map actors, and PS2 parity remain unverified.",
+      "limitation": "Host Chromium and serial host Mac verification only; this host screenshot predates CI and public verification for this minimap checkpoint. Physical iOS/Android hardware, GPU timing, dynamic map actors, and PS2 parity remain unverified.",
       "image": "/devlog-images/freestyle-minimap-and-configurable-hud-001c52cc.png",
       "caption": "Host Chromium screenshot at 390\u00d7844, DPR 3: portrait ride view with minimap and HUD; not a public deployment or physical-phone capture."
     }
   ],
-  "updated_at": "2026-10-13T13:08:38.276480+00:00",
+  "updated_at": "2026-10-13T13:10:34.342950+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
@@ -2702,7 +2718,7 @@
         "title": "ATV selection and customization",
         "status": "PARTIAL",
         "scope": "PUBLIC \u00b7 ALL 26 ATV CHOICES; ORIGINAL CUSTOMIZATION PARTIAL",
-        "summary": "The public Single Player garage selects all 26 recovered in-race ATV models with male/female rider rigs and loads them into Caribou Freestyle. New host motorcycle choices 27\u201334 belong to a separate MX vs. ATV Unleashed extension, not the ATV2 baseline. Original ATV profile unlocks, tuning and customization remain incomplete.",
+        "summary": "The public Single Player garage selects all 26 recovered in-race ATV models with male/female rider rigs and loads them into Caribou Freestyle. New host motorcycle choices 27\u201346 (20 choices) belong to a separate MX vs. ATV Unleashed extension, not the ATV2 baseline. Original ATV profile unlocks, tuning and customization remain incomplete.",
         "validation": "Public cef26f4495f0c5dbf6f8398133ea81bf4b78aed3 \u00b7 CI 38307658534: one actual garage replay loaded all 26 choices into Caribou Freestyle, with deployment identity checked before and after the probe. The replay alternated 13 male and 13 female riders. All models used expected mesh/material/PHY paths, produced finite Rust state, pose-enabled 27-node quad and 18/27-node rider WebGL draws, moved 37.44\u201344.76 feet under throttle, and played their exact configured engine voices; zero page/console/HTTP/Worker/WebGL errors. Automated desktop Chromium Metal on one Mac; physical-device behavior and PS2 parity are not established.",
         "evidence": "research/MULTIPLAYER_MODELS.md; research/GEOMETRY.md; research/ANIMATION.md.",
         "next_step": "Recover original ATV selection, profile/unlock, tuning and persistence rules; keep motorcycle selection tracked as a separate game-source extension.",
