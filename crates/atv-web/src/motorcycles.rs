@@ -90,6 +90,7 @@ fn frame(sim: &mut Simulation, raw: &serde_json::Value) -> Result<serde_json::Va
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(true),
     );
+    sim.funny_crashes.set_rider_velocity(bike.rider_velocity());
     value["funny_crash"] = serde_json::to_value(sim.funny_crashes.update(
         bike.tick,
         f.reset_count,

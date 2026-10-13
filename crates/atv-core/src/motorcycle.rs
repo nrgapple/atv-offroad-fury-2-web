@@ -608,6 +608,11 @@ impl Motorcycle {
         self.camera_yaw = yaw;
         Ok(())
     }
+    pub fn rider_velocity(&self) -> V {
+        self.rider_body
+            .as_ref()
+            .map_or(self.frame.linear_velocity, |b| b.1)
+    }
     pub fn rider_world(&self) -> M {
         self.rider_body
             .as_ref()

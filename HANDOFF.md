@@ -1130,6 +1130,22 @@ with black outline, no background. Final host run: 404 Rust/91 JS tests, 14 rela
 cases, four-client replication/cleanup, contacts 4/3 and 20 train samples with
 0.933ft maximum relative error. Public delivery is pending.
 
+Host checkpoint (2026-10-13): iOS standalone fullscreen passed Chromium/WebKit
+automated 390×844 portrait → 844×390 landscape → portrait sizing with synthetic
+safe-area signals; HUD, held-touch driving and Pause/Camera stayed usable in
+both orientations. The default Caribou chase view lifts uphill (0.2208329 rad;
+render pitch −0.3769404 → −0.0361075 rad) and resets when Camera cycles. Optional
+Funny Crashes preserves more launch/tumble/rebound: a severe route passed 1,197
+paired enhanced/Off WASM steps with zero gameplay/camera mismatches, three
+aerial intact-ATV frames, two damage transitions, seven parts and intact
+recovery. The motorcycle touch/crash replay passed 302 paired steps with zero
+mismatches over 251 observed frames and mild-crash recovery. Host gates passed
+416 Rust, 100 JavaScript, 8 build-cache, 35 release
+(one opt-in skip), 19 Worker tests, make verify, formatting, strict Clippy and
+WASM build. This does not verify physical iOS or public deployment; the uphill
+camera and crash effects are browser adaptations. See [iOS/camera/crash
+evidence](research/IOS_CAMERA_CRASH.md).
+
 ## Public late-join and multiplayer visibility checkpoint
 
 Main `551d7fd890946f18cc8ef8430c12f843138fe758` passed CI 38446510103 and

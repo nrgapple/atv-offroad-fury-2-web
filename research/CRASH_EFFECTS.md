@@ -55,8 +55,19 @@ or escalate breakaway damage; an already detached piece is never spawned twice. 
 throttle and held stunt inputs through the existing WASM interface produce a
 severe wreck that sheds all seven pieces, keeps rendered GPU arrays finite,
 and reaches the original intact recovery. No velocity, pose, or wreck state is
-injected. The supplied severe desktop capture is obscured by branches and is
+injected. The earlier supplied severe desktop capture is obscured by branches and is
 not suitable for the dev log.
+
+The 2026-10-13 tuning retains more launch momentum, adds clearer torso/limb
+tumble and carries terrain rebound through joint solving. A fresh severe ATV
+route completed 1,197 paired enhanced/Off WASM steps with zero compared
+gameplay/camera mismatches, including three aerial ragdoll frames with the ATV
+intact, two contact-damage transitions, seven visible parts and intact recovery.
+The inspected Caribou capture is host evidence only; physical iOS and public
+deployment are not established. See [fullscreen, camera and crash evidence](IOS_CAMERA_CRASH.md).
+The separate motorcycle touch/crash replay completed 302 paired enhanced/Off
+steps with zero mismatches across 251 observed frames and mild-crash recovery;
+it produced no damaging-part contact case.
 
 ## Controls and compatibility
 

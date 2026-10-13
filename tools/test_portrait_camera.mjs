@@ -12,7 +12,7 @@ try {
   assert.equal(portrait.cameraPresentation.distanceScale, 1.35);
   assert.equal(portrait.cameraPresentation.pitchLift, .12);
   const nativePitch = frame => Math.atan2(frame.target[1] - frame.position[1], Math.hypot(frame.target[0] - frame.position[0], frame.target[2] - frame.position[2]));
-  assert(Math.abs(portrait.camera[4] - nativePitch(portrait.followCamera) - .12) < 1e-6);
+  assert(Math.abs(portrait.camera[4] - nativePitch(portrait.followCamera) - .12 - portrait.cameraPresentation.uphillLift) < 1e-6);
   assert(portrait.cameraPresentation.focalLength < (4 / 3) / Math.tan(portrait.followCamera.fov * Math.PI / 360));
   if (process.env.ATV_CAMERA_SCREENSHOT) await page.screenshot({ path: process.env.ATV_CAMERA_SCREENSHOT });
   await page.setViewportSize({ width: 1280, height: 720 });
@@ -20,10 +20,10 @@ try {
   const landscape = await page.evaluate(() => window.atvTerrainStatus);
   assert.equal(landscape.cameraPresentation.distanceScale, 1);
   assert.deepEqual(landscape.camera.slice(0, 3), landscape.followCamera.position);
-  assert.equal(landscape.camera[4], nativePitch(landscape.followCamera));
+  assert.equal(landscape.camera[4], nativePitch(landscape.followCamera) + landscape.cameraPresentation.uphillLift);
   assert.equal(landscape.cameraPresentation.focalLength, (4 / 3) / Math.tan(landscape.followCamera.fov * Math.PI / 360));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForFunction(() => window.atvTerrainStatus.cameraPresentation.distanceScale === 1.35);
   assert.deepEqual(errors, []);
-  console.log('PASS: portrait camera widens and lifts sightline; rotation restores the exact native landscape pose/FOV.');
+  console.log('PASS: portrait camera widens and lifts sightline; rotation restores native landscape position/FOV with the independent uphill sightline.');
 } finally { await browser.close(); }

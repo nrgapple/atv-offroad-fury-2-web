@@ -42,3 +42,34 @@ export function outsideView(bounds, planes) {
   }
   return false;
 }
+
+// Requested default chase adaptation. The recovered camera frame stays intact.
+export class UphillSightline {
+  constructor() { this.lift = 0; this.airTime = 0; this.resetCount = null; }
+  update(actor, camera, dt, height) {
+    if (!actor || camera?.preset !== 0 || camera.mode === 'wreck' || actor.wreck?.phase !== 'Riding' || actor.speed < -1) {
+      this.lift = 0; this.airTime = 0; return;
+    }
+    if (this.resetCount !== actor.reset_count) { this.lift = 0; this.airTime = 0; this.resetCount = actor.reset_count; }
+    let desired = this.lift;
+    if (actor.grounded.some(Boolean)) {
+      this.airTime = 0;
+      const [w, x, y, z] = actor.orientation;
+      const forward = [2 * (x*z + w*y), 2 * (y*z - w*x), 1 - 2 * (x*x + y*y)];
+      const horizontal = Math.hypot(forward[0], forward[2]);
+      // Ignore nearly vertical chassis; its pitch no longer describes a ramp.
+      const bodyPitch = horizontal > .2 ? Math.atan2(forward[1], horizontal) : 0;
+      const [ox, , oz] = actor.origin;
+      const dx = forward[0] / Math.max(horizontal, .2), dz = forward[2] / Math.max(horizontal, .2);
+      const grade = Math.atan2(height(ox + dx*12, oz + dz*12) - height(ox, oz), 12);
+      const uphill = Math.max(bodyPitch, grade);
+      desired = Number.isFinite(uphill) ? Math.min(.72, Math.max(0, uphill - .12) * .9) : 0;
+    } else {
+      this.airTime += dt;
+      // Carry the takeoff view through the ramp crest, never track aerial flips.
+      if (this.airTime > .35) desired = 0;
+    }
+    const blend = 1 - Math.exp(-Math.min(.05, Math.max(0, dt)) / (desired > this.lift ? .18 : .45));
+    this.lift += (desired - this.lift) * blend;
+  }
+}
