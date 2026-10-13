@@ -2,14 +2,23 @@
 
 Fury Remastered's authored manifest uses a stable `/` identity and scope, a
 `/play.html` start URL, standalone display, game category, description and PNG
-icons at 192 and 512 pixels and an explicit 180px Apple touch icon. Icons use the
-exact recovered two-part ATV2 title logo on a red gradient, exported by
-`tools/build_app_icons.mjs`. Their pixels remain in ignored private storage and
-the separate R2 package; only sizes, hashes and URLs enter Git/CI. Safari's
-app-title metadata names the installed app Fury Remastered;
-the concurrently merged Fury Remastered vector branding remains in the title,
-menus and dev log. The original ATV2 artwork is used specifically for the
-Home Screen icon, as requested in this task.
+icons at 192 and 512 pixels and an explicit 180px Apple touch icon. All current
+Home Screen icons use the full authored Fury Remastered SVG wordmark on a red
+gradient, matching the in-app branding. `tools/build_fury_app_icons.mjs` renders
+the three sizes from `web/fury-remastered.svg`; `web/fury-app-icons.json` stores
+those authored PNG derivatives with source/image hashes. The normal build checks
+and decodes them into the release, so icon pixels and page references deploy
+atomically through CI without waiting for a separate R2 upload. The new versioned
+filenames replace the earlier original-ATV2 URLs on both entry pages, the manifest,
+install banner and help dialog. Safari root aliases serve the 180px static icon;
+the legacy 512px alias serves the 512px static icon. Historical recovered icons
+stay in the separate R2 package for old links and are never copied into CI.
+
+Host verification for this update: WASM build, delivered identity/PNG dimensions,
+12 Worker tests, 35 release checks (one skipped), two install-state tests,
+setup/source exclusions and syntax checks pass. The 180px and 512px rendered
+wordmarks were inspected. Physical-device Home Screen icon caching is unverified;
+an existing saved app may need to be removed and added again after deployment.
 
 The title screen advertises adding the app on iPhone/iPad, including iPads that
 identify as a desktop Mac. The banner uses the shared metal/gold controls and
@@ -53,9 +62,9 @@ dimensions for Safari and Apple WebKit networking user agents; the OS fallback
 cannot be reproduced from those requests. New links use fresh hash URLs without
 query strings, and the Worker also serves conventional `/apple-touch-icon.png`
 and `/apple-touch-icon-precomposed.png` URLs from the same validated R2 package.
-The former `/app-icon-512.png` URL also resolves to the new original-logo icon.
-The rejected authored icon is removed from source and the CI artifact, so these
-R2 compatibility paths cannot conflict with authored-asset checksum verification.
+The former `/app-icon-512.png` URL now resolves to the authored Fury Remastered icon.
+The former F-only icon is no longer used. Current static compatibility aliases
+resolve to the same checked assets as the explicit icon links.
 Icons are checked for hash, size, PNG signature/dimensions and non-symlink paths
 before upload. Native iOS icon selection and cached install metadata still need
 physical-device confirmation after deployment.

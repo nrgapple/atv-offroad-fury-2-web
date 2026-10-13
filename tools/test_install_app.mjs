@@ -58,7 +58,7 @@ try {
   });
   assert.equal(metadata.name, 'Fury Remastered'); assert.equal(metadata.display, 'standalone'); assert.equal(metadata.start, '/play.html'); assert.equal(metadata.scope, '/'); assert.deepEqual(metadata.sizes, [180,192,512]); assert.equal(new URL(metadata.apple).search, '');
   for (const path of ['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png']) { const response = await page.request.get(base + path); assert.equal(response.status(), 200); assert.match(response.headers()['content-type'], /image\/png/); }
-  checks.push('manifest identity/start/scope, all three original-logo PNG responses and decoded sizes, conventional Safari root URLs');
+  checks.push('manifest identity/start/scope, all three Fury Remastered PNG responses and decoded sizes, conventional Safari root URLs');
   const rects = await page.evaluate(() => { const r = id => { const x = document.getElementById(id).getBoundingClientRect(); return { x: x.x, y: x.y, width: x.width, height: x.height, bottom: x.bottom }; }; return { banner: r('app-install-banner'), button: document.querySelector('#menu-buttons button').getBoundingClientRect().toJSON(), add: r('app-install-open'), dismiss: r('app-install-dismiss') }; });
   assert.ok(rects.banner.bottom < rects.button.y, 'promotion must not cover Press START');
   assert.ok(rects.add.height >= 44 && rects.dismiss.height >= 44, 'touch targets >=44px');
