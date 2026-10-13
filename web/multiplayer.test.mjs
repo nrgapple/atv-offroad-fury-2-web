@@ -292,3 +292,22 @@ test('suppressed state produces no WebSocket frame and compact baseline receipt 
   const delayed=deferred();f.overrides.set(81,()=>delayed.promise);const sending=f.mp.send();socket.bufferedAmount=32768;delayed.resolve(bytes);await sending;assert.equal(f.calls.filter(c=>c.op===109).length,1,'dropped compact snapshot cannot advance delta baseline');
  }finally{await f.cleanup();}
 });
+test('URL host setup waits for admission, then sends one atomic map/start command',async()=>{
+ const f=fixture();try {
+  const socket=await f.connect();f.mp.state={peer:null};const pending=f.mp.configureLobby('free05',true);
+  assert.equal(f.calls.filter(c=>c.op===85).length,1,'no setup command before Welcome');
+  f.mp.state={...f.defaultState};f.timeouts.values().next().value.fn();await flush();
+  assert.deepEqual(decode(socket.sent.at(-1)),{SetLobby:{epoch:1,map:9,started:true}});
+  f.mp.state={...f.defaultState,lobby:{...f.defaultState.lobby,map:9,started:true}};
+  f.timeouts.values().next().value.fn(); // first resolved timer remains in this fake registry
+  for(const timer of f.timeouts.values())timer.fn();await pending;
+ }finally{await f.cleanup();}
+});
+test('URL host setup cannot mutate a replacement session or a guest lobby',async()=>{
+ const f=fixture();try {
+  await f.connect();f.mp.state={peer:null};const pending=f.mp.configureLobby('env02',true);
+  f.mp.generation++;for(const timer of f.timeouts.values())timer.fn();await assert.rejects(pending,/admission/);
+  f.mp.state={...f.defaultState,peer:1};await assert.rejects(f.mp.configureLobby('env02',true),/host/);
+  await assert.rejects(f.mp.configureLobby('nope',true),/map/);
+ }finally{await f.cleanup();}
+});

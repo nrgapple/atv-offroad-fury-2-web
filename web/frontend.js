@@ -1,4 +1,5 @@
 import { gameplayBindings } from './bindings.js';
+import { parseLaunch, buildRideUrl, copyRideUrl } from './launch.js';
 // Rust owns menu labels, supported choices and canvas hit regions. This bridge
 // draws the original frontend and crisp browser overlays, and binds input.
 const base = name => name.replaceAll('\\', '/').split('/').at(-1).toLowerCase();
@@ -39,7 +40,7 @@ export class Frontend {
     this.assets = new Map(); this.images = new Map(); this.fonts = new Map();
     this.initialized = false; this.layoutKey = ''; this.layoutPending = false; this.loaded = new Set(); this.page = 'loading'; this.selection = 0; this.track = 0; this.busy = false; this.lastPad = new Set(); this.alive = true;
     const savedSelection = loadPlayerSelection();
-    this.quadId = savedSelection.quadId; this.riderId = savedSelection.riderId; this.lastFreestyleEnvironment = savedSelection.freestyleEnvironment; this.playerName = 'Rider'; this.roomCode = new URL(location.href).searchParams.get('room') ?? ''; this.createCode = ''; this.garageReturn = 'single';
+    this.quadId = savedSelection.quadId; this.riderId = savedSelection.riderId; this.lastFreestyleEnvironment = savedSelection.freestyleEnvironment; this.playerName = 'Rider'; this.roomCode = ''; this.createCode = ''; this.garageReturn = 'single';
     this.bindingDevice = 'keyboard'; this.bindingPage = 0; this.bindingRow = 0; this.musicPage = 0;
     this.capture = null; this.menuKeys = new Set();
     this.raceSettings={laps:3,cpu:3,difficulty:1};this.raceActive=false;this.raceAvailable=false;
@@ -180,8 +181,49 @@ export class Frontend {
       await this.audio?.()?.music.load({ ...content, read: this.read, isCurrent: () => this.alive });
       await this.audio?.()?.loadMenuMusic({ ...content, read: this.read, isCurrent: () => this.alive });
       this.initialized = true;
-      if (showTitle) await this.show('title');
+      if (showTitle) await this.openLaunch(location.search);
     } catch (error) { this.fail(error); }
+  }
+  async openLaunch(search) {
+    const setup = parseLaunch(search, this.tracks);
+    if (!setup.requested) return this.show('title');
+    if (setup.errors.length) { await this.show('main'); this.notice.textContent = `Cannot open ride link. ${setup.errors.join(' ')}`; return; }
+    Object.assign(this, {quadId:setup.quadId,riderId:setup.riderId,playerName:setup.playerName,roomCode:setup.room,createCode:setup.action==='create'?setup.room:''});
+    this.raceSettings = {...setup.raceSettings};
+    this.track = Math.max(0,this.tracks.findIndex(t=>t.id===setup.map));
+    const page = setup.mode==='multiplayer' ? (setup.action==='create'?'create-lobby':'join-lobby') : setup.activity==='race'?'race':'tracks';
+    await this.show(page);
+    this.lobbySetup = setup.mode==='multiplayer' && setup.action==='create' && !setup.play ? {map:setup.map,start:false} : undefined;
+    if (!setup.play) return;
+    try {
+      if (setup.mode==='multiplayer') {
+        await this.multiplayer.action(setup.action==='create'?'host':'join',this,setup.action==='create'?{map:setup.map,start:true}:undefined);
+      } else {
+        if (setup.activity==='race' && !this.raceAvailable) throw Error('Race resources are unavailable. Try Freestyle.');
+        await this.launchSingle(setup.map,setup.activity==='race'?setup.raceSettings:null);
+      }
+    } catch (error) {
+      if (setup.mode==='multiplayer') await this.multiplayer.disconnect();
+      await this.show(page); this.fail(error);
+    }
+  }
+  async launchSingle(environment, racing = null) {
+    await this.multiplayer?.disconnect(); this.busy = true;
+    try {
+      await this.start(environment,racing);
+      this.raceActive = Boolean(racing);
+      this.activeSetup = {map:environment,activity:racing?'race':'freestyle',quadId:this.quadId,riderId:this.riderId,raceSettings:racing?{...racing}:undefined};
+      if (!racing) this.lastFreestyleEnvironment = environment;
+      this.saveSelection(); this.resume();
+    } finally { this.busy = false; }
+  }
+  rideUrl() {
+    const room = this.multiplayer?.state?.code;
+    const racing = this.page==='race';
+    const setup = room ? {mode:'multiplayer',room,map:this.multiplayer.state.environment,quadId:this.quadId,riderId:this.riderId} :
+      overlayPages.has(this.page) && this.activeSetup ? this.activeSetup :
+      {map:racing?'env01':this.tracks[this.track].id,activity:racing?'race':'freestyle',quadId:this.quadId,riderId:this.riderId,raceSettings:this.raceSettings};
+    return buildRideUrl(location.origin,{...setup,playerName:this.playerName},{includePlayer:!room});
   }
   fail(error) { this.setLoading(false); this.notice.textContent = error.message; this.busy = false; this.root.dataset.error = 'true'; }
   syncPreview() {
@@ -275,7 +317,7 @@ export class Frontend {
       if (this.page === 'tracks') {
         const environment = this.tracks[this.track].id;
         this.busy = true;
-        try { await this.start(environment); this.lastFreestyleEnvironment = environment; this.saveSelection(); this.raceActive=false;this.resume(); }
+        try { await this.launchSingle(environment); }
         catch (error) { await this.show('tracks'); this.fail(error); }
         this.busy = false; return;
       }
@@ -286,16 +328,15 @@ export class Frontend {
   async run(action,direction=1) {
     if (this.busy) return;
     try {
+      if (action === 'copyride') return await copyRideUrl(this.rideUrl(),this.notice);
       if (action === 'garage') { this.garageReturn = this.page; return this.show('garage'); }
       if (action === 'quadprev' || action === 'quadnext') { const count = ['multiplayer','create-lobby','join-lobby','lobby'].includes(this.garageReturn) ? 26 : 46; this.quadId = ((this.quadId - 1 + (action === 'quadnext' ? 1 : count - 1)) % count) + 1; }
       else if (action === 'riderchange' && this.quadId < 27) this.riderId = 1 - this.riderId;
       else if (action.startsWith('spawn:')) { this.busy=true; try { await this.multiplayer.action(action,this); } finally {this.busy=false;} return; }
-      else if (['host','join','share','lobbymap','lobbystart','leave'].includes(action)) { if (['host','join'].includes(action) && this.quadId>=27) throw new Error('Choose an ATV for multiplayer. Motorcycles are available in Single Player.'); return await this.multiplayer.action(action, this); }
+      else if (['host','join','share','lobbymap','lobbystart','leave'].includes(action)) { if (['host','join'].includes(action) && this.quadId>=27) throw new Error('Choose an ATV for multiplayer. Motorcycles are available in Single Player.'); const setup = action==='host'?this.lobbySetup:undefined; this.lobbySetup=undefined; return await this.multiplayer.action(action, this, setup); }
       else if (['main','single','tracks','pause','players','hud-settings','minimap-config','controls','music','multiplayer','create-lobby','join-lobby','lobby','race'].includes(action)) return await this.show(action);
       if (action === 'racestart') {
-        await this.multiplayer?.disconnect();
-        this.busy = true;
-        try { await this.start('env01', {...this.raceSettings}); this.raceActive = true; this.resume(); }
+        try { await this.launchSingle('env01', {...this.raceSettings}); }
         catch(error) { await this.show('race');this.fail(error); } finally { this.busy = false; }
         return;
       }
@@ -563,7 +604,7 @@ export class Frontend {
     const groups = [
       ['Ride', ['resume','reset','players']],
       ['Preferences', ['controls','hud-settings','music','onehanded','funnycrashes','diagnostics','fullscreen']],
-      ['Session', ['devlog','main','lobby']],
+      ['Session', ['copyride','devlog','main','lobby']],
     ];
     const ordered = [];
     for (const [name, actions] of groups) {

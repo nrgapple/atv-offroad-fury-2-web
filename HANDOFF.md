@@ -1,3 +1,27 @@
+## Shareable URL setup — host checkpoint (2026-10-13)
+
+`feat/direct-play-links` adds deterministic URL setup/direct entry for all nine
+Freestyle maps, ATV1–26 and motorcycle27–46, rider/name, supported Race laps/CPU,
+room joining and explicit lobby creation. Existing drive/environment aliases and
+room-only invites work. `play=0` prepares setup without loading/admission; URL
+values override saved selections. Pause and Race setup copy reproducible links;
+lobby invites automatically join and omit owner capabilities/the inviter name.
+The room's map remains authoritative and host admission precedes atomic map/start.
+Malformed/conflicting/unsupported setups return a clear menu notice; failures
+recover to usable setup/lobby menus. See [contract/strategy](research/PLAY_LINKS.md).
+
+Host checks pass: `make check` (110 JS plus workspace Rust/fmt/strict Clippy),
+`make verify`, web/relay builds, 35 release tests (one expected skip), 19 Worker
+tests and repository hygiene. Actual hosted-content/Rust-relay Chromium Metal
+checks pass root forwarding, Tioga/ATV14female/copy/reload, default ATV1 Vancouver,
+motorcycle34, quad2female 2-lap/CPU0 Race, 390px setup, invalid no-network links,
+missing room recovery, direct create Vancouver + guest26female late join with
+host map precedence, and prepare/create Tioga without auto-start. Existing
+frontend/controller/mobile routes and copied-invite movement/audio/cleanup pass.
+Host screenshots stay private pending validated main CI/R2/public verification.
+Physical phone/audio-autoplay/geographic behavior and full original game parity
+are not established; URL setup only exposes currently implemented gameplay.
+
 ## Multiplayer efficiency and public browser verification (2026-10-13)
 
 Main `8c0ace5b8c46a91bf2a50d49bd192a639d23b38b` passed GitHub CI/deploy run

@@ -53,7 +53,7 @@ Touch, portrait/landscape layouts and install-flow behavior have automated Chrom
 
 ## Ride with friends
 
-Choose **Multiplayer → Create lobby**, enter a rider name, choose your quad/rider and leave the code blank for a random code or supply eight letters/digits. Share **Copy invite link** or the lobby code. Friends use **Join lobby**; the invite link pre-fills its code. The host selects a course and starts **Ride together**. Guests can also join after the ride starts.
+Choose **Multiplayer → Create lobby**, enter a rider name, choose your quad/rider and leave the code blank for a random code or supply eight letters/digits. Share **Copy invite link** or the lobby code. Friends can open the invite to join automatically, or use **Join lobby** with its code. The host selects a course and starts **Ride together**. Guests can also join after the ride starts.
 
 During a ride, **Pause → Players → Spawn beside** helps a late guest find another grounded rider. Overhead labels and colored minimap markers show where friends are. Brief host transport drops and same-tab reloads have a recovery window; explicitly leaving ends the room.
 
@@ -62,6 +62,12 @@ During a ride, **Pause → Players → Spawn beside** helps a late guest find an
 *Earlier public Vancouver Ridge checkpoint: two riders in the same Freeride room. The current build adds GPS player markers, overhead names and late-join controls.*
 
 This is an authored Rust multiplayer implementation using a Cloudflare room relay. Each rider simulates their own quad locally. Player contacts use an authored owner-local approximation; server physics reconciliation, competitive racing, host migration and local split-screen remain unfinished. Automated two- and four-client public checks pass, but geographically separated latency and physical-phone sessions remain unverified. See [multiplayer implementation and evidence](research/MULTIPLAYER.md).
+
+## Open a shared ride
+
+[Start Tioga with a Honda 250EX and female rider](https://furyremastered.com/?mode=single&map=env02&quad=14&rider=female), or use **Pause → Copy ride link** to share the setup you are riding. **Copy invite link** in a lobby joins that room automatically, including after the ride starts. Links can select map, vehicle, rider, player name, Single Player/Freeride, a multiplayer room, or the supported Race laps/CPU settings. Add `play=0` to open setup before starting.
+
+See the [URL parameter reference and examples](research/PLAY_LINKS.md). Multiplayer remains ATV Freeride; motorcycles and the Caribou Race preview are Single Player.
 
 ## Motorcycles in Single Player
 
