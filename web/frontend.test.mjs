@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {loadPlayerSelection,savePlayerSelection,Frontend} from './frontend.js';
+import {loadPlayerSelection,savePlayerSelection,Frontend,unlockedCourses} from './frontend.js';
+import {ENVIRONMENTS,courseResource} from './launch.js';
 const defaults={quadId:1,riderId:0,freestyleEnvironment:'env01'};
 test('saved vehicle, rider and last-played Freestyle course survive a storage roundtrip',()=>{
  for(const quadId of [1,26,27,46]) {
@@ -38,4 +39,15 @@ test('URL launch applies identity before loading, and invalid links do no gamepl
 test('direct load failures recover to a usable setup page',async()=>{
  const shown=[],menu={tracks:[{id:'env01'}],notice:{},show:async page=>shown.push(page),launchSingle:async()=>{throw Error('asset unavailable');},fail(error){this.notice.textContent=error.message;}};
  await Frontend.prototype.openLaunch.call(menu,'?map=env01');assert.deepEqual(shown,['tracks','tracks']);assert.equal(menu.notice.textContent,'asset unavailable');
+});
+
+test('all venues are selectable regardless of source access and points, with one entry per venue',()=>{
+ const records=ENVIRONMENTS.map(id=>[id.startsWith('env')?'unspnat'+Number(id.slice(-2)):id.startsWith('free')?'spstunt'+Number(id.slice(-2)):id.startsWith('nat')?'spnat'+Number(id.slice(-2)):id.startsWith('sx')?'prosx'+Number(id.slice(-2)):id==='training'?'train1':'hoc1',{scn:id,name:id,image:id+'_',access:'0',points:'1000'}]);
+ records.push(['lend1',{scn:'env01',name:'duplicated event'}],['freeride1',{scn:'env02',name:'debug record'}]);
+ const files=ENVIRONMENTS.map(id=>({path:courseResource(id).archive}));
+ const tracks=unlockedCourses(new Map(records),files);
+ assert.deepEqual(tracks.map(t=>t.id),ENVIRONMENTS);assert.equal(tracks.length,40);
+ assert.equal(tracks.find(t=>t.id==='training').image,'');
+ assert.deepEqual(unlockedCourses(new Map(records),files.slice(0,9)).map(t=>t.id),ENVIRONMENTS.slice(0,9));
+ for(const freestyleEnvironment of ENVIRONMENTS){let stored;savePlayerSelection({...defaults,freestyleEnvironment},v=>stored=v);assert.equal(loadPlayerSelection(()=>stored).freestyleEnvironment,freestyleEnvironment);}
 });

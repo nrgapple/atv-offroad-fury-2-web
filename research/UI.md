@@ -120,3 +120,25 @@ live, and host departure cleared guest state. Merge
 asset-hash audit matched its deployed package (42 static files and 448 served
 objects). The approved desktop screenshot is in the development log. This browser
 verification does not cover physical phones or establish original-game fidelity.
+
+## Pause secondary screens polish (host checkpoint, 2026-10-13)
+
+Ride overlays and the active multiplayer Lobby now share a charcoal browser
+panel with gold highlights, while Rust continues to supply actions, labels, and
+values. Host Chromium covered the six secondary screens—Controls, keyboard
+bindings, controller bindings, HUD, Minimap, and Music—at 1280×896, 390×844,
+320×568, 844×390, and 667×375. These screens had no horizontal clipping, and
+all controls met the 44 CSS pixel minimum while remaining reachable. F7
+remapping/defaults, binding pagination, song selection, music toggle and volume,
+and slider node identity were checked. Synthetic controller capture remapped
+Throttle to button 6 and saved it, Defaults restored the mapping, and D-pad Down
+moved DOM focus from Throttle to Brake. Single-player simulation stayed frozen
+while soundtrack playback advanced.
+
+A desktop two-client host relay run with browser route overrides kept both rides
+moving and simulation live while the Lobby overlay was open; Controls, Players,
+Lobby navigation, and leave cleanup worked. This is host-only authored-browser
+evidence, not public deployment or physical-device verification. Native pause
+fidelity and full-game parity are not established. The dev log attaches the
+inspected 390-pixel Music capture; the desktop bindings and portrait Minimap
+captures are also retained privately for review.

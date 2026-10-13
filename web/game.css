@@ -146,3 +146,41 @@ body:not(.menu-open) #help, body:not(.menu-open) #status:not(.error) { display: 
   .pause-panel header { padding-bottom: 12px; margin-bottom: 16px; }
   .pause-panel h1 { font-size: 26px; }
 }
+
+/* Every ride submenu shares the pause surface, typography and selection rules. */
+#frontend[data-pause-panel=true] { background: #080b10a6; }
+#frontend[data-pause-panel=true] #menu-canvas, #frontend[data-pause-panel=true] #menu-buttons { display: none; }
+.pause-panel { background: radial-gradient(ellipse at 0 0, #e3c86708, transparent 55%), #16191ef5; scrollbar-color: #51545c transparent; }
+.pause-panel[data-screen]:not([data-screen=pause]) { width: min(700px, calc(100% - 48px)); }
+.pause-content { display: grid; gap: 24px; }
+.pause-label { min-width: 0; display: grid; gap: 4px; overflow-wrap: anywhere; }
+.pause-detail { color: #b7bdc8; font-size: 12px; line-height: 1.5; }
+.pause-detail:empty { display: none; }
+.pause-panel button[data-playing=true] { box-shadow: inset 3px 0 #e7cd75; }
+.pause-panel button[data-playing=true] .pause-detail { color: #e7cd75; }
+.pause-tips { padding: 18px; background: #ffffff04; border: 1px solid #ffffff12; border-radius: 10px; }
+.pause-tips p, .pause-capture p { margin: 0; color: #b7bdc8; font-size: 14px; line-height: 1.65; }
+.pause-tips h2 { color: #e7cd75; }
+.pause-slider { display: grid; gap: 4px; padding: 14px; border: 1px solid #ffffff12; border-radius: 8px; background: #ffffff04; }
+.pause-slider:has(input[data-selected=true]) { border-color: #e3c8679c; }
+.pause-slider-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.pause-slider input { width: 100%; min-width: 0; }
+.pause-footer { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 18px; border-top: 1px solid #ffffff1c; }
+.pause-footer button { flex: 1 1 140px; width: auto; }
+.pause-footer button[data-action=back], .pause-footer button[data-action=pause], .pause-footer button[data-action=bindcancel] { border-color: #ffffff24; }
+.pause-pagination { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pause-page-count { grid-column: 1 / -1; text-align: center; color: #b7bdc8; font-size: 12px; margin-top: 4px; }
+.pause-player { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px; min-height: 48px; border-radius: 8px; background: #ffffff04; overflow-wrap: anywhere; }
+.pause-room { font-size: 28px; font-weight: 750; letter-spacing: .14em; color: #e7cd75; margin: 0; }
+.pause-capture { border: 1px solid #e3c86760; border-radius: 10px; background: #e3c86708; padding: 20px; }
+.pause-capture .pause-capture-label { color: #f4f5f7; font-size: 20px; font-weight: 650; }
+@media (max-width: 580px) {
+  .pause-panel[data-screen]:not([data-screen=pause]) { width: calc(100% - 24px); }
+  .pause-content { gap: 20px; }
+  .pause-footer button { flex-basis: 100%; }
+  .pause-slider-heading { font-size: 14px; }
+  .pause-value { max-width: 50%; overflow-wrap: anywhere; }
+}
+@media (max-height: 450px) and (min-width: 581px) {
+  .pause-panel[data-screen]:not([data-screen=pause]) { width: min(820px, calc(100% - 20px)); }
+}

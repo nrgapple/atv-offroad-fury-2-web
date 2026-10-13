@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TouchInput, TouchLeanIntent, oneHandedFeedback, loadOneHandedPreference, loadSteeringSensitivity, normalizeSteeringSensitivity, DEFAULT_STEERING_SENSITIVITY } from './touch.js';
+import { TouchInput, TouchLeanIntent, oneHandedFeedback, loadOneHandedPreference, loadSteeringSensitivity, normalizeSteeringSensitivity, DEFAULT_STEERING_SENSITIVITY, TRICK_WHEEL, trickWheelSelection } from './touch.js';
 
 test('ground right press drives, back drag brakes, release requests preload once', () => {
   const touch=new TouchInput();touch.begin(1,300,500);
@@ -161,27 +161,29 @@ test('sensitivity softens both touch modes without capping full lock or changing
 });
 
 
-test('enhanced mode second finger preserves primary axes and independently owns tricks', () => {
-  for (const [dx,dy,modifier,x,y] of [[0,-70,1,0,-1],[0,70,1,0,1],[-70,0,1,-1,0],[70,0,1,1,0],[-70,-70,2,0,-1],[70,-70,2,1,0],[-70,70,2,-1,0],[70,70,2,0,1]]) {
-    const t=new TouchInput();t.setOneHanded(true);t.begin(1,300,500,true);t.move(1,335,535);
-    const baseline=t.sample();assert(t.begin(2,60,500,true));assert(!t.begin(3,200,500,true));
-    t.move(2,60+dx,500+dy,0);assert.equal(t.sample(100).stunt_modifiers,0);
-    const s=t.sample(120);assert.equal(s.stunt_modifiers,modifier);assert.equal(s.stunt_x,x);assert.equal(s.stunt_y,y);
-    assert.equal(s.steer,baseline.steer);assert.equal(s.lean,baseline.lean);assert.equal(s.preload_axis,1);assert.equal(s.drive.axis,1);assert(s.drive.reverse_held);
-    t.move(1,265,465);assert.equal(t.sample(130).steer,-.5);assert.equal(t.sample(130).lean,-.5);
-    t.end(2);const ended=t.sample();assert.equal(ended.stunt_modifiers,0);assert(!ended.drive.reverse_held);assert.equal(ended.preload_axis,1);assert(t.owns(1));
+test('radial preview is reversible, commits all ten stunts only on release, and preserves primary axes', () => {
+  for (const [index, trick] of TRICK_WHEEL.entries()) {
+    const t = new TouchInput(); t.setOneHanded(true); t.begin(1, 300, 500, true); t.move(1, 335, 535);
+    const baseline = t.sample(); assert(t.begin(2, 100, 500, true)); assert(!t.begin(3, 200, 500, true));
+    const angle = index / TRICK_WHEEL.length * Math.PI * 2 - Math.PI / 2;
+    t.move(2, 100 + Math.cos(angle) * 90, 500 + Math.sin(angle) * 90);
+    assert.equal(t.secondary.pointer.selection.name, trick.name);
+    assert.equal(t.sample(10000).stunt_modifiers, 0, 'preview never starts a stunt');
+    t.move(2, 100, 500); assert.equal(t.secondary.pointer.selection, null, 'center cancels preview');
+    t.move(2, 190, 500); assert.notEqual(t.secondary.pointer.selection, null, 'can change mind');
+    t.move(2, 100 + Math.cos(angle) * 90, 500 + Math.sin(angle) * 90);
+    t.end(2); const committed = t.sample();
+    assert.equal(committed.stunt_modifiers, trick.modifiers); assert.equal(committed.stunt_x, trick.axes[0]); assert.equal(committed.stunt_y, trick.axes[1]);
+    assert.equal(committed.steer, baseline.steer); assert.equal(committed.lean, baseline.lean);
+    assert.equal(committed.preload_axis, 1); assert.equal(committed.drive.axis, 1); assert(!committed.drive.reverse_held);
+    assert.deepEqual(t.sample(), baseline, 'release selection is delivered once'); assert(t.owns(1));
   }
 });
 
-test('enhanced second finger circles use established clockwise/counterclockwise selection', () => {
-  for(const direction of [1,-1]) {
-    const t=new TouchInput();t.setOneHanded(true);t.begin(1,80,500,true);t.begin(2,340,500,true);
-    for(let i=1;i<=24;i++) {
-      const a=direction*i*Math.PI*2/24;t.move(2,300+40*Math.cos(a),500+40*Math.sin(a),i*10);
-      if(i<21)assert.equal(t.sample(i*10).stunt_modifiers,0);
-    }
-    const s=t.sample(240);assert.equal(s.stunt_modifiers,3);assert.equal(s.stunt_y,direction>0?-1:1);assert.equal(s.preload_axis,1);
-  }
+test('radial sectors include a neutral center and wrap cleanly at twelve oclock', () => {
+  assert.equal(trickWheelSelection(0, 0), null); assert.equal(trickWheelSelection(27, 0), null);
+  assert.equal(trickWheelSelection(NaN, 70), null); assert.equal(trickWheelSelection(0, Infinity), null);
+  assert.equal(trickWheelSelection(-1, -90).name, 'Nac Nac'); assert.equal(trickWheelSelection(1, -90).name, 'Nac Nac');
 });
 
 test('second ground contact requests reverse without altering brace or primary origin', () => {
@@ -189,17 +191,27 @@ test('second ground contact requests reverse without altering brace or primary o
   t.begin(2,300,500);t.move(2,370,570,0);let s=t.sample(120);assert(s.drive.reverse_held);assert.equal(s.stunt_modifiers,0);
   assert.equal(oneHandedFeedback(t).cue,'REVERSE · BRACE');
   t.setAirborne(true);s=t.sample(500);assert.equal(s.stunt_modifiers,0,'ground drag cannot become an air trick');assert.equal(s.steer,before.steer);assert.equal(s.lean,before.lean);
-  assert.equal(oneHandedFeedback(t).cue,'SWIPE / CIRCLE');
-  t.move(2,370,500,500);assert.equal(t.sample(620).stunt_modifiers,1);
+  assert.equal(oneHandedFeedback(t).cue,'DRIVE · BRACE');
+  t.move(2,370,500,500);assert.equal(t.secondary.pointer.selection.name,'Nac Nac');assert.equal(t.sample(620).stunt_modifiers,0);
   t.setAirborne(false);s=t.sample(1000);assert.equal(s.stunt_modifiers,0);assert(s.drive.reverse_held);
   t.end(2,true);assert.deepEqual(t.sample(),before);assert.equal(t.generation,gen,'secondary cancel cannot reset primary lean/preload history');
 });
 
-test('enhanced releases, quick swipes, jitter and mode changes cannot latch secondary input', () => {
+test('radial tap, center release, cancellation, primary release and mode changes discard selections', () => {
   const t=new TouchInput();t.setOneHanded(true);t.begin(1,80,500,true);t.sample();t.begin(2,300,500,true);
   t.move(2,302,503,0);assert.equal(t.sample(1000).stunt_modifiers,0);t.end(2);
-  t.begin(2,300,500,true);t.move(2,300,430);t.end(2);assert.equal(t.sample().stunt_modifiers,1);assert.equal(t.sample().stunt_modifiers,0);
+  t.begin(2,300,500,true);t.move(2,300,430);t.move(2,300,500);t.end(2);assert.equal(t.sample().stunt_modifiers,0);
   t.begin(2,300,500,true);t.move(2,300,430);t.end(2,true);assert.equal(t.sample().stunt_modifiers,0);assert(t.owns(1));
   t.begin(2,300,500,true);t.move(2,300,430);t.end(1);assert(!t.owns(2));let s=t.sample();assert.equal(s.stunt_modifiers,0);assert(!s.drive.held);assert(!s.drive.reverse_held);assert.equal(s.preload_axis,-1);
   t.begin(3,80,500,true);t.begin(4,300,500,true);t.setOneHanded(false);assert(!t.owns(3));assert(!t.owns(4));assert.equal(t.sample().stunt_modifiers,0);
+});
+
+
+test('landing discards both radial preview and unconsumed release, takeoff reanchors held second touch', () => {
+  for (const released of [false, true]) {
+    const t = new TouchInput(); t.setOneHanded(true); t.begin(1, 80, 500, true); t.begin(2, 300, 500, true);
+    t.move(2, 300, 430); if (released) t.end(2);
+    t.setAirborne(false); assert.equal(t.sample().stunt_modifiers, 0);
+    if (!released) { t.setAirborne(true); assert.equal(t.secondary.pointer.selection, null); t.end(2); assert.equal(t.sample().stunt_modifiers, 0); }
+  }
 });

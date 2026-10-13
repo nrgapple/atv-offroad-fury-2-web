@@ -649,7 +649,7 @@ mod tests {
         });
     }
     #[test]
-    fn ninth_lobby_map_publishes_rust_environment_and_wrapped_next_map() {
+    fn ninth_lobby_map_keeps_its_rust_environment_and_advances_to_appended_maps() {
         setup(false);
         let output = receive(
             Packet::Welcome {
@@ -665,7 +665,7 @@ mod tests {
         .unwrap();
         let value: Value = serde_json::from_slice(&output).unwrap();
         assert_eq!(value["state"]["environment"], "free05");
-        assert_eq!(value["state"]["nextMap"], 1);
+        assert_eq!(value["state"]["nextMap"], 10);
         let output = receive(
             Packet::Lobby(Lobby {
                 map: 1,

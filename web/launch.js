@@ -1,5 +1,22 @@
 // Public URL contract for authored gameplay. Never accepts asset URLs or owner tokens.
-export const ENVIRONMENTS = ['env01','env02','env03','env04','env05','env06','env07','env08','free05'];
+// Preserve the first nine lobby IDs for existing rooms and append every venue.
+export const ENVIRONMENTS = ['env01','env02','env03','env04','env05','env06','env07','env08','free05',
+  'free01','free02','free03','free04','free06',
+  ...Array.from({length:8},(_,i)=>`nat${String(i+1).padStart(2,'0')}`),
+  ...Array.from({length:16},(_,i)=>`sx${String(i+1).padStart(2,'0')}`),'training','game01'];
+export const COURSE_PREVIEWS = ['ANAT','PSTNT','PNAT','ASX','PSX','HOCK'].map(id=>`/UI/RESOURCE/TP/TP_${id}.RES`);
+export function courseResource(environment, racing = false) {
+  if (!ENVIRONMENTS.includes(environment) || (racing && environment !== 'env01')) throw new Error('Unsupported course.');
+  const number=environment.slice(-2), family=environment.replace(/\d+$/,'');
+  const prefix={env:'E',free:'F',nat:'N',sx:'S',game:'G'}[family];
+  const group=family==='sx'||family==='training'?'B':'A';
+  const suffix=racing?'NAT':family==='training'?'TR':family==='game'?'SO':'FR';
+  const stem=family==='training'?'T00':`${prefix}${number}`;
+  const sceneStem=family==='env'&&!racing?`${environment}fr`:environment;
+  return {archive:`/TRACKS/TRACKS${group}/${environment.toUpperCase()}/${stem}_${suffix}.RES`,
+    sceneStem,modeStem:racing?`${environment}nat`:sceneStem,
+    placements:family==='env'?`/TRACKS/TRACKSA/ENV${number}/E${number}_ENDL.RES`:null};
+}
 const aliases = {
   map:['map','environment'], quad:['quad','vehicle','atv'], rider:['rider'], player:['player','name'],
   mode:['mode'], activity:['activity'], action:['action'], room:['room','lobby'], play:['play','drive'],

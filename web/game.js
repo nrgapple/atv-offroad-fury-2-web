@@ -2,6 +2,7 @@
 import { vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation } from './render-support.js';
 import { Multiplayer, PlayerIndicators } from './multiplayer.js';
 import { Frontend } from './frontend.js';
+import { courseResource } from './launch.js';
 import { RaceOverlay } from './race.js';
 import { mountTouchControls, TouchLeanIntent } from './touch.js';
 import { GameAudio } from './audio.js';
@@ -124,16 +125,11 @@ async function discTerrain(file, token) {
   return terrainFromContent(file, files, token);
 }
 async function terrainFromContent(file, files, token, environment = "env01", racing = false) {
-  if (!["env01", "env02", "env03", "env04", "env05", "env06", "env07", "env08", "free05"].includes(environment)) throw new Error("Environment is not connected yet.");
-  const number = environment.slice(-2), vancouver = environment === 'free05';
-  const directory = vancouver ? 'FREE05' : `ENV${number}`;
-  const archiveStem = vancouver ? 'F05' : `E${number}`;
-  const sceneStem = racing ? environment : vancouver ? environment : `${environment}fr`;
-  const modeStem = racing ? `${environment}nat` : sceneStem;
+  const {archive:archivePath,sceneStem,modeStem,placements} = courseResource(environment,racing);
   const memberNamed = (entry, name) => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase();
   status('Loading original engine sounds…');
   await audio.load({ file, files, read, isCurrent: () => token === generation, quadId: frontend?.quadId ?? 1 });
-  const archive = files.find(entry => entry.path === `/TRACKS/TRACKSA/${directory}/${archiveStem}_${racing ? 'NAT' : 'FR'}.RES`);
+  const archive = files.find(entry => entry.path === archivePath);
   if (!archive) throw new Error(`Original ${environment.toUpperCase()} terrain archive is missing.`);
   status('Reading original terrain…');
   const resource = await read(file, archive.lba * 2048, archive.bytes);
@@ -187,7 +183,7 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
   let toyIndex = entries.findIndex(entry => memberNamed(entry, `${environment}.toy`)), toy;
   if (toyIndex >= 0) toy = await codec(3, resource, toyIndex);
   else {
-    const sceneArchiveFile = files.find(entry => entry.path === `/TRACKS/TRACKSA/ENV${number}/E${number}_ENDL.RES`);
+    const sceneArchiveFile = files.find(entry => entry.path === placements);
     if (!sceneArchiveFile) throw new Error('Original terrain materials are missing.');
     const sceneArchive = await read(file, sceneArchiveFile.lba * 2048, sceneArchiveFile.bytes), sceneEntries = await json(2, sceneArchive);
     toyIndex = sceneEntries.findIndex(entry => memberNamed(entry, `${environment}.toy`));
@@ -314,14 +310,17 @@ async function baseTextures(mesh, materialArchive, materialEntries, cache = new 
     const pass = materialIndex < 0 ? null : await json(90, new TextEncoder().encode(materialText));
     if (/refl|envmap/i.test(shader ?? '') && !pass?.reflection_plane) { const unsupported = { shader }; textures.set(material, unsupported); cache.set(material, unsupported); continue; }
     const textureIndex = findMaterial(`${binding}.pst`);
-    const atmIndex = pass?.texture_animation ? findMaterial(`${binding}.atm`) : -1;
-    if (textureIndex < 0 && atmIndex < 0) { if (materialIndex < 0) continue; throw new Error(`Original material texture is missing: ${binding}`); }
-    const pst = atmIndex >= 0 ? await codec(3, materialArchive, atmIndex) : await codec(3, materialArchive, textureIndex);
+    const atmIndex = pass?.texture_animation || textureIndex < 0 ? findMaterial(`${binding}.atm`) : -1;
+    const tgaIndex = textureIndex < 0 && atmIndex < 0 ? findMaterial(`${binding}.tga`) : -1;
+    if (textureIndex < 0 && atmIndex < 0 && tgaIndex < 0) { if (materialIndex < 0) continue; throw new Error(`Original material texture is missing: ${binding}`); }
+    const pst = await codec(3, materialArchive, atmIndex >= 0 ? atmIndex : tgaIndex >= 0 ? tgaIndex : textureIndex);
     let image;
     try {
-      const info = await json(atmIndex >= 0 ? 56 : 7, pst);
-      const animationFrames = atmIndex >= 0 ? await Promise.all(Array.from({length:info.frames},(_,index)=>codec(57,pst,index))) : null;
-      const rgba = animationFrames ? animationFrames[0] : await codec(8, pst);
+      const info = await json(atmIndex >= 0 ? 56 : tgaIndex >= 0 ? 97 : 7, pst);
+      const animationFrames = atmIndex >= 0 && pass?.texture_animation ? await Promise.all(Array.from({length:info.frames},(_,index)=>codec(57,pst,index))) : null;
+      // Reverse-looping crowd ATMs retain their original first frame until the
+      // native playback path is recovered. The material reports that limitation.
+      const rgba = animationFrames ? animationFrames[0] : await codec(atmIndex >= 0 ? 57 : tgaIndex >= 0 ? 98 : 8, pst, 0);
       const alphaMatch = materialText.match(/alphaReferenceValue\s*=\s*(\d+)/i);
       // Explicit GEQUAL cutout materials, including the original tower lattice.
       // FB_ONLY/source-alpha edge blending is not yet a complete GS match.

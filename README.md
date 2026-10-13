@@ -6,7 +6,7 @@ Fury Remastered is an ongoing **Rust/WebAssembly port of ATV Offroad Fury 2** fo
 
 Codex has helped with most of the implementation and reverse engineering. We work from the original PS2 disc, without the original source code, recovering the game's resources and behavior one system at a time. The original experience is the baseline; optional enhancements sit alongside the ongoing port.
 
-**You can play now:** nine environments, all 26 original in-race quads, one-handed touch controls, and online Freeride with up to four players. Single Player also has motorcycles and a Caribou Peak National race preview. The links above are **public HTTPS**. Required resources load automatically, with no installation or disc-selection step.
+**The latest host-verified checkpoint now exposes all 40 original venue families in Freestyle:** eight environments, six stunt venues, eight Nationals, sixteen Supercross stadiums, Training, and Coonce Arena. The public HTTPS build still has nine environments while the expanded app and content package await CI and release verification. The browser port also supports all 26 original in-race quads, one-handed touch controls, online Freeride with up to four players, motorcycles, and a Caribou Peak National race preview. Required resources load automatically, with no installation or disc-selection step.
 
 **This is still a work in progress.** Racing, progression, saves, and parts of the original physics, animation, audio and rendering remain incomplete. It is a playable reconstruction, not a completed decompilation or a finished port.
 
@@ -18,7 +18,7 @@ Codex has helped with most of the implementation and reverse engineering. We wor
 
 | Feature | Current public build |
 | --- | --- |
-| **Freestyle riding** | Nine environments, including Caribou Peak, Tioga Valley, Arlington and Vancouver Ridge. The original terrain, sky, scenery and vegetation are connected. |
+| **Freestyle riding** | Host checkpoint: all 40 original venue families are unlocked, including 16 Supercross stadiums, Training and Coonce Arena. Public release of the expanded roster is pending. The connected venues use their source terrain, sky, scenery and available vegetation; full environmental behavior and visual parity remain incomplete. |
 | **Quads and riders** | All 26 original in-race quads, with their own resources, tuning and engine banks; male and female rider choices. Garage selections are available without the original unlock progression. |
 | **Mobile controls** | One-handed throttle, steering and rider lean, with an optional second touch for braking/reverse and airborne tricks. A standard two-thumb layout is also available. |
 | **Online multiplayer** | Up to four ATV riders in Freeride. Create a lobby, share an invite link or eight-character code, and join an active ride. Remote riders have animated quads, spatial engine audio, overhead names and GPS markers. |
@@ -36,7 +36,7 @@ The renderer now connects recovered materials, animated UVs, fog coverage, ice-r
 Open [Fury Remastered](https://furyremastered.com/), choose **Single Player → Freestyle**, and select your ride and map.
 
 - **One finger by default:** touch anywhere on the game surface to hold throttle and brace. Drag sideways to steer and up/down to lean. Lift to coast and release preload through the original ramp gates.
-- **Optional second touch:** while the primary finger stays held, another touch brakes and then reverses on the ground. In the air, swipe in eight directions or draw a circle to select a stunt. Lift the second finger to finish; lifting the primary clears both.
+- **Optional second touch:** while the primary finger stays held, another touch brakes and then reverses on the ground. In the air, the second finger opens a trick wheel: drag to a named trick and release to perform it. Return to the center to cancel; lifting the primary clears both.
 - **Two-thumb layout:** set **Pause → One-handed mobile: Off**. The left thumb steers/leans; the right thumb accelerates/braces or drags down to brake/reverse. A saved Off is preserved.
 - **Adjust the feel:** **Pause → Controls** includes saved Mobile steering response from 50% to 150%, defaulting to 85%.
 - **Pause and Camera:** the on-screen buttons work independently, including a second-finger tap while driving. In multiplayer, opening the menu leaves the visible ride running; Single Player pauses its simulation.

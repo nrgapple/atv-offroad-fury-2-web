@@ -1,5 +1,5 @@
 import { gameplayBindings } from './bindings.js';
-import { parseLaunch, buildRideUrl, copyRideUrl } from './launch.js';
+import { parseLaunch, buildRideUrl, copyRideUrl, ENVIRONMENTS, COURSE_PREVIEWS, courseResource } from './launch.js';
 // Rust owns menu labels, supported choices and canvas hit regions. This bridge
 // draws the original frontend and crisp browser overlays, and binds input.
 const base = name => name.replaceAll('\\', '/').split('/').at(-1).toLowerCase();
@@ -12,13 +12,22 @@ const selectionKey = 'atv-player-selection';
 const normalizedSelection = value => ({
   quadId: Number.isInteger(value?.quadId) && value.quadId >= 1 && value.quadId <= 46 ? value.quadId : 1,
   riderId: value?.riderId === 1 ? 1 : 0,
-  freestyleEnvironment: typeof value?.freestyleEnvironment === 'string' && /^(env0[1-8]|free05)$/.test(value.freestyleEnvironment) ? value.freestyleEnvironment : 'env01',
+  freestyleEnvironment: ENVIRONMENTS.includes(value?.freestyleEnvironment) ? value.freestyleEnvironment : 'env01',
 });
 export function loadPlayerSelection(read = () => localStorage.getItem(selectionKey)) {
   try { return normalizedSelection(JSON.parse(read())); } catch { return normalizedSelection(null); }
 }
 export function savePlayerSelection(value, write = text => localStorage.setItem(selectionKey, text)) {
   try { write(JSON.stringify(normalizedSelection(value))); } catch { /* Session-only selection when storage is unavailable. */ }
+}
+export function unlockedCourses(tracks, files) {
+  const source = new Map();
+  for (const [section, f] of tracks) {
+    if (!/^(unspnat\d+|spnat\d+|amsx\d+|prosx\d+|spstunt\d+|train1|hoc1)$/.test(section)) continue;
+    if (ENVIRONMENTS.includes(f.scn) && !source.has(f.scn)) source.set(f.scn,f);
+  }
+  return ENVIRONMENTS.filter(id=>source.has(id) && files.some(f=>f.path===courseResource(id).archive))
+    .map(id=>({id,name:unquote(source.get(id).name),image:id==='training'?'':source.get(id).image}));
 }
 
 export class Frontend {
@@ -162,8 +171,8 @@ export class Frontend {
     try {
       await this.archive('/STARTAPP.RES');
       const tracks = await this.document('tracks.dat');
-      this.tracks = [...tracks.entries()].filter(([s, f]) => (/^(unspnat\d+|spstunt6)$/.test(s)) && ['env01','env02','env03','env04','env05','env06','env07','env08','free05'].includes(f.scn))
-        .map(([, f]) => ({ id: f.scn, name: unquote(f.name), image: f.image }));
+      const {files} = await this.content;
+      this.tracks = unlockedCourses(tracks,files);
       this.track = Math.max(0, this.tracks.findIndex(t => t.id === this.lastFreestyleEnvironment));
       for (const name of [fontName, 'tradegothic_boldcondensed_22soff', 'tradegothic_boldcondenseditalic_-1fs_32ds']) await this.font(name);
       await this.archive('/UI/RESOURCE/PAGEA/PAGE01.RES');
@@ -173,7 +182,6 @@ export class Frontend {
       try { await logo.decode(); this.images.set('brand-logo', logo); } catch { /* Rust text fallback */ }
       // The thumbnail arrives through a separately validated R2 package. Older
       // manifests can still open every menu while that content update publishes.
-      const {files} = await this.content;
       this.raceAvailable=files.some(f=>f.path==='/TRACKS/TRACKSA/ENV01/E01_NAT.RES');
       if (files.some(f => f.path === '/UI/RESOURCE/QUADINFO.RES')) { await this.archive('/UI/RESOURCE/QUADINFO.RES'); await this.image('multi_atv01'); }
       // The original catalog is available before a terrain/engine is loaded.
@@ -227,7 +235,7 @@ export class Frontend {
   }
   fail(error) { this.setLoading(false); this.notice.textContent = error.message; this.busy = false; this.root.dataset.error = 'true'; }
   syncPreview() {
-    const rideMenu = overlayPages.has(this.page);
+    const rideMenu = this.isPausePanel();
     void this.audio?.()?.setMusicPreview((rideMenu || ['title','main','single','tracks','garage','multiplayer','create-lobby','join-lobby','lobby','race','loading','music'].includes(this.page)) && !this.root.hidden && !document.hidden && document.hasFocus(), !rideMenu).catch(error => this.fail(error));
   }
   beginCapture(id) {
@@ -272,12 +280,12 @@ export class Frontend {
     try {
       if (page === 'tracks' || page === 'loading' || page === 'race') {
         if (!this.loaded.has('/UI/RESOURCE/TP/TP_ANAT.RES')) this.setLoading(true, 'Preparing course previews…');
-        await this.archive('/UI/RESOURCE/TP/TP_ANAT.RES');
-        await this.archive('/UI/RESOURCE/TP/TP_PSTNT.RES');
-        for (const track of this.tracks) { await this.image(`${track.image}a`); await this.image(`${track.image}b`); }
+        const {files} = await this.content;
+        for (const archive of COURSE_PREVIEWS) if (files.some(f=>f.path===archive)) await this.archive(archive);
+        for (const track of this.tracks) if (track.image) { await this.image(`${track.image}a`); await this.image(`${track.image}b`); }
       }
       this.page = page; this.selection = 0; this.layoutKey = '';
-      if (page === 'pause') this.resetPauseScroll = true;
+      if (this.isPausePanel()) this.resetPauseScroll = true;
       this.syncPreview();
       // A previous worker layout may still be in flight during rapid navigation.
       while (this.layoutPending) await new Promise(resolve => requestAnimationFrame(resolve));
@@ -292,7 +300,7 @@ export class Frontend {
       const order = this.page === 'pause' ? this.pauseOrder : this.frame.choices;
       const index = order.indexOf(this.frame.choices[this.selection]);
       this.selection = this.frame.choices.indexOf(order[(index + (action === 'up' ? -1 : 1) + order.length) % order.length]);
-      this.scrollPauseSelection = this.page === 'pause';
+      this.scrollPauseSelection = this.isPausePanel();
       if (this.page === 'bindings' && this.selection < 4) this.bindingRow = this.bindingPage * 4 + this.selection;
     } else if (action === 'back') {
       if (this.page === 'pause') return this.resume();
@@ -350,16 +358,16 @@ export class Frontend {
       if (action === 'bindcancel') return this.cancelCapture();
       if (['bindprev','bindnext','musicprev','musicnext'].includes(action)) {
         const music = action.startsWith('music'), rows = music ? (this.audio?.()?.music?.tracks ?? []) : gameplayBindings.rows(this.bindingDevice), pages = Math.max(1,Math.ceil(rows.length / 4)), prop = music ? 'musicPage' : 'bindingPage';
-        this[prop] = (this[prop] + (action.endsWith('prev') ? -1 : 1) + pages) % pages; this.selection = 0;
+        this[prop] = (this[prop] + (action.endsWith('prev') ? -1 : 1) + pages) % pages; this.selection = 0; this.scrollPauseSelection = true;
         if (!music) this.bindingRow = this.bindingPage * 4;
       } else if (action === 'bindclear') { const row = gameplayBindings.rows(this.bindingDevice)[this.bindingRow]; if (row) gameplayBindings.setBinding(this.bindingDevice,row.id,[]); }
       else if (action === 'bindreset') gameplayBindings.reset(this.bindingDevice);
       else if (action.startsWith('song:')) { const music = this.audio?.()?.music; music?.setEnabled(true); music?.select(Number(action.slice(5))); this.syncPreview(); }
       else if (action === 'musictoggle') { const music = this.audio?.()?.music; if (music) music.setEnabled(!music.snapshot().enabled); this.syncPreview(); }
       else if (action === 'musicvolume') { const music = this.audio?.()?.music; if (music) music.setVolume((Math.round(music.snapshot().volume * 4) + 1) % 5 / 4); }
-      else if (action === 'steering-sensitivity') { this.buttons.querySelector('input[type=range]')?.focus(); return; }
-      else if (action === 'minimap-zoom') { this.buttons.querySelector('input[data-setting="minimap-zoom"]')?.focus(); return; }
-      else if (action === 'minimap-size') { this.buttons.querySelector('input[data-setting="minimap-size"]')?.focus(); return; }
+      else if (action === 'steering-sensitivity') { this.pausePanel.querySelector('input[data-setting=steering-sensitivity]')?.focus(); return; }
+      else if (action === 'minimap-zoom') { this.pausePanel.querySelector('input[data-setting="minimap-zoom"]')?.focus(); return; }
+      else if (action === 'minimap-size') { this.pausePanel.querySelector('input[data-setting="minimap-size"]')?.focus(); return; }
       else if (action === 'minimap-orientation') this.minimapSettings?.toggleOrientation();
       else if (action === 'minimap-shape') this.minimapSettings?.toggleShape();
       else if (action === 'minimap-corner') this.minimapSettings?.toggleCorner();
@@ -398,7 +406,7 @@ export class Frontend {
       // Page/viewport can change while the worker handles the request. The next
       // frame requests fresh data, rather than applying a stale hit map.
       if ((this.minimapSettings?.zoom ?? 50) !== request.minimap_zoom || (this.minimapSettings?.orientation ?? 'north-up') !== request.minimap_orientation || (this.minimapSettings?.shape ?? 'circle') !== request.minimap_shape || (this.minimapSettings?.corner ?? 'top-right') !== request.minimap_corner || (this.minimapSettings?.enabled ?? true) !== request.minimap_enabled || (this.minimapSettings?.size ?? 160) !== request.minimap_size || this.raceSettings.laps!==request.race_laps || this.raceSettings.cpu!==request.race_cpu || this.raceSettings.difficulty!==request.race_difficulty || (this.mobileControls?.steeringSensitivity ?? 85) !== request.mobile_steering_sensitivity || (this.capture?.label ?? '') !== request.capture_label || this.bindingPage !== request.binding_page || this.musicPage !== request.music_page || this.page !== request.page || this.selection !== request.selection || this.quadId !== request.quad_id || this.riderId !== request.rider_id || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
-      this.frame = frame; this.layoutKey = key; this.draw(); this.rebuildButtons(); this.updateModelViews();
+      this.presentation = request; this.frame = frame; this.layoutKey = key; this.draw(); this.rebuildButtons(); this.updateModelViews();
     } catch (error) { this.fail(error); }
     finally { this.layoutPending = false; }
   }
@@ -427,7 +435,7 @@ export class Frontend {
   captureTransition(canvas = this.canvas) {
     for (const animation of this.transitions) animation.cancel();
     this.transitions = []; this.transitionGhost?.remove(); this.transitionGhost = null;
-    if (this.page === 'pause' || !canvas || !this.frame || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (this.isPausePanel() || !canvas || !this.frame || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const ghost = document.createElement('canvas'), rect = canvas.getBoundingClientRect();
     ghost.width = canvas.width; ghost.height = canvas.height; ghost.getContext('2d').drawImage(canvas, 0, 0);
     ghost.className = 'menu-transition'; ghost.setAttribute('aria-hidden', 'true');
@@ -511,9 +519,10 @@ export class Frontend {
     } catch (error) { if(token === this.modelToken) this.notice.textContent = `Rider animation: ${error.message}`; }
   }
   rebuildButtons() {
-    this.pausePanel.hidden = this.page !== 'pause';
+    this.pausePanel.hidden = !this.isPausePanel();
+    this.root.dataset.pausePanel = String(this.isPausePanel());
     this.root.dataset.page = this.page;
-    if (this.page === 'pause') { this.rebuildPausePanel(); return; }
+    if (this.isPausePanel()) { this.rebuildPausePanel(); return; }
     const focusedAction = this.buttons.contains(document.activeElement) ? document.activeElement.dataset.action : null;
     // Preserve native range nodes during input/redraw so dragging and keyboard
     // focus survive every Rust label update.
@@ -584,59 +593,145 @@ export class Frontend {
     this.root.dataset.musicPage = String(this.musicPage);
     this.root.dataset.bindingPage = String(this.bindingPage);
   }
+  isPausePanel() {
+    return overlayPages.has(this.page) || (this.page === 'lobby' && Boolean(this.multiplayer?.state?.lobby?.started));
+  }
   rebuildPausePanel() {
-    // Rust remains the source of available actions and stateful labels. Native
-    // text/layout keeps this browser overlay sharp and accessible at any zoom.
-    const activeAction = this.pausePanel.contains(document.activeElement) ? document.activeElement.dataset.action : null;
-    const scroll = this.resetPauseScroll ? 0 : this.pausePanel.scrollTop;
-    this.resetPauseScroll = false;
-    this.buttons.replaceChildren();
-    this.courseMeter?.remove(); this.courseMeter = null;
-    const header = document.createElement('header');
-    const eyebrow = document.createElement('p'); eyebrow.className = 'pause-eyebrow'; eyebrow.textContent = 'FURY REMASTERED';
-    const title = document.createElement('h1'); title.id = 'pause-title';
-    const online = Boolean(this.multiplayer?.state?.lobby?.started);
-    title.textContent = online ? 'Ride menu' : 'Paused';
-    const status = document.createElement('p'); status.className = 'pause-status';
-    status.textContent = online ? 'Multiplayer is live. The ride keeps going while this menu is open.' : 'Take a breather. Your ride is paused.';
-    header.append(eyebrow, title, status);
-    const body = document.createElement('div'); body.className = 'pause-groups';
-    const groups = [
-      ['Ride', ['resume','reset','players']],
-      ['Preferences', ['controls','hud-settings','music','onehanded','funnycrashes','diagnostics','fullscreen']],
-      ['Session', ['copyride','devlog','main','lobby']],
-    ];
-    const ordered = [];
-    for (const [name, actions] of groups) {
-      const section = document.createElement('section'); section.className = `pause-group pause-${name.toLowerCase()}`;
-      const heading = document.createElement('h2'); heading.textContent = name; section.append(heading);
-      for (const action of actions) {
-        const hit = this.frame.hits.find(hit => hit.action === action); if (!hit) continue;
-        ordered.push(action);
-        const button = document.createElement('button'); button.type = 'button'; button.dataset.action = action;
-        button.setAttribute('aria-label', hit.label);
-        const [label, ...value] = hit.label.split(': ');
-        const text = document.createElement('span'); text.textContent = label; button.append(text);
-        if (value.length) { const setting = document.createElement('span'); setting.className = 'pause-value'; setting.textContent = value.join(': '); button.append(setting); }
-        else { const arrow = document.createElement('span'); arrow.className = 'pause-arrow'; arrow.textContent = action === 'resume' ? '↗' : '›'; arrow.setAttribute('aria-hidden','true'); button.append(arrow); }
-        button.setAttribute('aria-current', String(this.frame.choices[this.selection] === action));
+    // Rust owns supported actions, labels and values. DOM owns responsive layout.
+    // Keep the same nodes for state updates so slider drags and focus survive.
+    const state = this.presentation, online = Boolean(state.lobby_started);
+    const listPage = ['bindings','music'].includes(this.page);
+    const players = state.lobby_players;
+    const structure = JSON.stringify([this.page, this.frame.choices, Boolean(this.capture), this.bindingDevice, ['players','lobby'].includes(this.page) ? players : []]);
+    const changed = structure !== this.panelStructure;
+    const element = (tag, className, text) => {
+      const node = document.createElement(tag); node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    };
+    const selectedAction = this.frame.choices[this.selection];
+    if (changed) {
+      this.panelStructure = structure;
+      this.buttons.replaceChildren(); this.courseMeter?.remove(); this.courseMeter = null;
+      const header = element('header', 'pause-header');
+      header.append(element('p','pause-eyebrow', this.page === 'pause' ? 'FURY REMASTERED' : `RIDE MENU / ${this.page === 'bindings' ? 'CONTROLS' : this.page === 'minimap-config' ? 'HUD SETTINGS' : ['players','lobby'].includes(this.page) ? 'SESSION' : 'PREFERENCES'}`));
+      const title = element('h1',''); title.id = 'pause-title';
+      header.append(title, element('p','pause-status'));
+      const body = element('div', this.page === 'pause' ? 'pause-groups' : 'pause-content');
+      const section = (name, className = '') => {
+        const group = element('section', `pause-group ${className}`);
+        if (name) group.append(element('h2','',name));
+        body.append(group); return group;
+      };
+      const focus = (node, action) => {
+        node.onfocus = () => {
+          const index = this.frame.choices.indexOf(action);
+          if (this.restoringPauseFocus || index < 0 || this.selection === index) return;
+          this.selection = index;
+          if (this.page === 'bindings' && action.startsWith('bind:')) this.bindingRow = this.bindingPage * 4 + index;
+          this.layoutKey = '';
+        };
+      };
+      const addButton = (parent, action) => {
+        const hit = this.frame.hits.find(hit => hit.action === action); if (!hit) return;
+        const button = element('button',''); button.type = 'button'; button.dataset.action = action;
+        const copy = element('span','pause-label'); copy.append(element('span','pause-label-text'), element('small','pause-detail'));
+        button.append(copy, element('span','pause-value'), element('span','pause-arrow', action === 'resume' ? '↗' : '›'));
+        button.lastChild.setAttribute('aria-hidden','true');
         button.onclick = () => { this.selection = this.frame.choices.indexOf(action); void this.run(action); };
-        button.onfocus = () => { const index = this.frame.choices.indexOf(action); if (!this.restoringPauseFocus && this.selection !== index) { this.selection = index; this.layoutKey = ''; } };
-        section.append(button);
+        focus(button, action); parent.append(button);
+      };
+      const addSlider = (parent, slider) => {
+        const label = element('label','pause-slider');
+        const heading = element('span','pause-slider-heading');
+        heading.append(element('span','',slider.label), element('output','pause-value'));
+        const input = element('input','atv-range'); input.type = 'range'; input.dataset.setting = slider.action;
+        input.min = slider.min; input.max = slider.max; input.step = slider.step;
+        input.setAttribute('aria-label',slider.label); focus(input,slider.action);
+        input.oninput = () => {
+          const value = Number(input.value);
+          if (slider.action === 'minimap-size') this.minimapSettings?.setSize(value);
+          else if (slider.action === 'minimap-zoom') this.minimapSettings?.setZoom(value);
+          else this.mobileControls?.setSteeringSensitivity(value);
+          this.layoutKey = ''; void this.refresh();
+        };
+        label.append(heading,input); parent.append(label);
+      };
+      if (this.page === 'pause') {
+        const groups = [['Ride',['resume','reset','players']],['Preferences',['controls','hud-settings','music','onehanded','funnycrashes','diagnostics','fullscreen']],['Session',['copyride','devlog','main','lobby']]];
+        this.pauseOrder = [];
+        for (const [name,actions] of groups) {
+          const group = section(name, `pause-${name.toLowerCase()}`);
+          for (const action of actions) if (this.frame.choices.includes(action)) { this.pauseOrder.push(action); addButton(group,action); }
+        }
+      } else {
+        if (this.page === 'controls') {
+          const tips = section(this.mobileControls?.oneHanded ? 'One-handed touch' : 'Two-thumb touch','pause-tips');
+          const lines = this.mobileControls?.oneHanded ? ['Hold anywhere to accelerate and brace for a jump.','Drag sideways to steer, and up or down to lean. Lift to coast and release preload.','Use a second finger to brake / reverse on the ground, or swipe / circle for tricks in the air.'] : ['Left thumb: steer and lean.','Right thumb: hold to accelerate and brace; drag back to brake / reverse. Lift to release preload.','In the air, swipe or circle with your right thumb for tricks.'];
+          for (const line of lines) tips.append(element('p','',line));
+        }
+        if (this.page === 'players') {
+          const roster = section('Riders in this lobby');
+          for (const player of players) if (player.value !== 'ready') {
+            const row = element('div','pause-player'); row.append(element('span','',player.label),element('span','pause-value',player.value === 'self' ? 'You' : 'Connecting')); roster.append(row);
+          }
+        }
+        if (this.page === 'lobby') {
+          const details = section('Your session'); details.append(element('p','pause-room',state.room_code),element('p','pause-status',state.track_name),element('p','pause-status',state.lobby_status));
+        }
+        if (this.capture) {
+          const capture = section('Listening for input','pause-capture');
+          capture.append(element('p','pause-capture-label',this.capture.label),element('p','','Press a key, controller button or move an axis. Hold several together for a combination. Release to save; Escape cancels.'));
+        }
+        const settings = section(({controls:'Response & bindings','hud-settings':'On-screen display','minimap-config':'Map preferences',bindings:'Actions',music:'Soundtrack',players:'Meet up',lobby:'Session actions'})[this.page]);
+        const footer = element('footer','pause-footer');
+        const paging = element('div','pause-pagination');
+        for (const action of this.frame.choices) {
+          const slider = this.frame.sliders.find(item => item.action === action);
+          if (slider) { addSlider(settings,slider); continue; }
+          if (['bindprev','bindnext','musicprev','musicnext'].includes(action)) addButton(paging,action);
+          else if (['back','pause','bindcancel','bindclear','bindreset','musictoggle','musicvolume'].includes(action)) addButton(footer,action);
+          else addButton(settings,action);
+        }
+        if (listPage && !this.capture) { paging.append(element('span','pause-page-count')); body.append(paging); }
+        if (footer.childElementCount) body.append(footer);
       }
-      body.append(section);
+      this.pausePanel.replaceChildren(header,body);
     }
-    this.pauseOrder = ordered;
-    this.pausePanel.replaceChildren(header, body); this.pausePanel.scrollTop = scroll;
+    this.pausePanel.dataset.screen = this.page;
+    this.pausePanel.querySelector('h1').textContent = ({pause:online ? 'Ride menu' : 'Paused',controls:'Controls','hud-settings':'HUD settings','minimap-config':'Minimap',bindings:this.bindingDevice === 'controller' ? 'Controller bindings' : 'Keyboard bindings',music:'Music',players:'Players',lobby:'Lobby'})[this.page];
+    this.pausePanel.querySelector('.pause-header .pause-status').textContent = ({pause:online ? 'Multiplayer is live. The ride keeps going while this menu is open.' : 'Take a breather. Your ride is paused.',controls:'Fine-tune your steering and make the controls your own.','hud-settings':'Keep the information you need in view.','minimap-config':'Set up your map for the way you ride.',bindings:this.bindingDevice === 'controller' ? 'Select an action to remap. Lean back, then forward at a ramp lip to preload.' : 'Select an action to remap. Changes are saved in this browser.',music:state.music_status,players:'The ride is live. Spawn beside a rider to meet up.',lobby:'Share your invite or head back to the ride.'})[this.page];
+    for (const button of this.pausePanel.querySelectorAll('button')) {
+      const action = button.dataset.action, hit = this.frame.hits.find(hit => hit.action === action);
+      if (!hit) continue;
+      const [label,...values] = hit.label.split(': '), value = values.join(': ');
+      const detail = listPage && /^(bind|song):/.test(action);
+      button.setAttribute('aria-label',hit.label); button.setAttribute('aria-current',String(action === selectedAction));
+      button.querySelector('.pause-label-text').textContent = label;
+      button.querySelector('.pause-detail').textContent = detail ? value : '';
+      const badge = button.querySelector('.pause-value'); badge.textContent = detail ? '' : value; badge.hidden = detail || !value;
+      button.querySelector('.pause-arrow').hidden = Boolean(value) && !detail;
+      if (action.startsWith('song:')) button.dataset.playing = String(Number(action.slice(5)) === this.audio?.()?.music?.snapshot().playingIndex && state.music_enabled);
+    }
+    for (const slider of this.frame.sliders) {
+      const input = this.pausePanel.querySelector(`input[data-setting="${slider.action}"]`); if (!input) continue;
+      input.value = slider.value; input.dataset.selected = String(slider.action === selectedAction);
+      input.setAttribute('aria-valuetext',`${slider.value}${slider.action === 'minimap-size' ? ' pixels' : '%'}`);
+      input.style.setProperty('--atv-range-fill',`${(slider.value-slider.min)/(slider.max-slider.min)*100}%`);
+      input.parentElement.querySelector('output').textContent = `${slider.value}${slider.action === 'minimap-size' ? ' px' : '%'}`;
+    }
+    const count = this.pausePanel.querySelector('.pause-page-count');
+    if (count) count.textContent = `Page ${(this.page === 'music' ? this.musicPage : this.bindingPage)+1} of ${Math.max(1,Math.ceil((this.page === 'music' ? state.music_rows : state.control_rows).length/4))}`;
     this.restoringPauseFocus = true;
-    if (activeAction) this.pausePanel.querySelector(`[data-action="${activeAction}"]`)?.focus({preventScroll:true});
-    if (this.scrollPauseSelection) {
-      const selected = this.pausePanel.querySelector('[aria-current="true"]');
-      selected?.focus({preventScroll:true}); selected?.scrollIntoView({block:'nearest'});
-      this.scrollPauseSelection = false;
+    if (this.resetPauseScroll || changed) this.pausePanel.scrollTop = 0;
+    if (this.scrollPauseSelection || this.resetPauseScroll || changed) {
+      const selected = this.pausePanel.querySelector(`[data-action="${selectedAction}"], input[data-setting="${selectedAction}"]`);
+      selected?.focus({preventScroll:true});
+      if (this.scrollPauseSelection) selected?.scrollIntoView({block:'nearest'});
     }
-    this.restoringPauseFocus = false;
+    this.resetPauseScroll = false; this.scrollPauseSelection = false; this.restoringPauseFocus = false;
     this.root.dataset.selection = String(this.selection); this.root.dataset.renderer = 'rust';
+    this.root.dataset.musicPage = String(this.musicPage); this.root.dataset.bindingPage = String(this.bindingPage);
   }
   text(text, x, y, name = fontName, color = '200,200,200', alpha = 255, justify = '') {
     const font = this.fonts.get(name.toLowerCase()); if (!font) return;
@@ -662,7 +757,7 @@ export class Frontend {
   }
   draw() {
     const frame = this.frame; if (!frame) return;
-    if (this.page === 'pause') { this.ctx.clearRect(0,0,this.canvas.width,this.canvas.height); if(this.backgroundCanvas)this.backgroundCanvas.hidden=true; return; }
+    if (this.isPausePanel()) { this.ctx.clearRect(0,0,this.canvas.width,this.canvas.height); if(this.backgroundCanvas)this.backgroundCanvas.hidden=true; return; }
     const c = this.ctx, stage = this.canvas.parentElement, dpr = Math.min(devicePixelRatio || 1,3, Math.sqrt(8_000_000 / Math.max(1,stage.clientWidth * stage.clientHeight)));
     this.canvas.width = Math.round(stage.clientWidth*dpr); this.canvas.height = Math.round(stage.clientHeight*dpr);
     c.setTransform(this.canvas.width/frame.width,0,0,this.canvas.height/frame.height,0,0);

@@ -21,8 +21,11 @@ pub const VERSION: u8 = 3;
 pub const MAX_PLAYERS: usize = 4;
 /// One-based lobby IDs reference this authored catalog; source resource keys
 /// remain stable even when their browser display names change.
-pub const MAP_ENVIRONMENTS: [&str; 9] = [
-    "env01", "env02", "env03", "env04", "env05", "env06", "env07", "env08", "free05",
+pub const MAP_ENVIRONMENTS: [&str; 40] = [
+    "env01", "env02", "env03", "env04", "env05", "env06", "env07", "env08", "free05", "free01",
+    "free02", "free03", "free04", "free06", "nat01", "nat02", "nat03", "nat04", "nat05", "nat06",
+    "nat07", "nat08", "sx01", "sx02", "sx03", "sx04", "sx05", "sx06", "sx07", "sx08", "sx09",
+    "sx10", "sx11", "sx12", "sx13", "sx14", "sx15", "sx16", "training", "game01",
 ];
 pub const MAX_MAP_ID: u16 = MAP_ENVIRONMENTS.len() as u16;
 pub const MAX_NODES: usize = 64;
