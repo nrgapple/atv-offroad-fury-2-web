@@ -3065,9 +3065,28 @@
         "Implementation is unchanged from validated main commit 96e0ea04. See research/HILL_CAMERA.md for strategy, bounded behavior, host evidence and public measurements."
       ],
       "limitation": "Automated public browser verification on one Mac does not establish physical-phone behavior or original ATV2 camera parity. Isolated-prop anticipation and object-aware follow-camera clearance remain open."
+    },
+    {
+      "id": "second-finger-selects-airborne-stunts-from-a-radial-wh-7ecb551c",
+      "timestamp": "2026-10-13T23:22:37.072629+00:00",
+      "recorded_at": "2026-10-13T23:23:21.598523+00:00",
+      "kind": "verification",
+      "title": "Second finger selects airborne stunts from a radial wheel",
+      "summary": "Enhanced one-handed touch mode now previews ten original stunts in a radial wheel while the primary finger keeps driving and bracing; lifting a selected sector submits the original input once.",
+      "details": [
+        "The final plain-text wheel capture shows the airborne Nac Nac preview alongside the held primary drive compass. Labels use white text with a black outline, a gold pointer and selection underline, without text backgrounds or button-like boxes.",
+        "Chromium real CDP multi-touch and WebKit synthetic pointer/capture-shim checks passed at 390\u00d7844, 844\u00d7390, 320\u00d7568 and 667\u00d7375. All ten release-only selections, neutral taps and center cancellation, edge placement, preserved primary axes, lifecycle cancellation, native gesture/selection suppression, and no zoom or scroll passed.",
+        "Natural Caribou hops passed Nac Nac, Cat Nac and Cordova checks: the wheel preview does not start a stunt; release submits the existing Rust input while primary drive/brace remains active. Standard One-handed Off Nac Nac entry and unfinished-landing native wreck also passed. Pause/Camera touch utility regression passed.",
+        "Verification: make check (416 Rust tests, 113 JavaScript tests, formatting, strict workspace Clippy and 8 build-cache tests); make verify; repository hygiene; 35 release tests (one opt-in skip); 19 Worker tests.",
+        "The full one-handed regression now passes: default and storage fallback, saved Off/On setting and persistence, cardinal and diagonal primary controls with their cues, coast, and held throttle/bracing across takeoff, airtime and landing.",
+        "The pause-menu assertion now checks its accessible aria-label, which remains correct when the visible label is split across spans."
+      ],
+      "limitation": "Host-browser evidence on one Mac, including synthetic WebKit pointer events. Physical phones remain unverified. The wheel adapts authored input to ten existing animations and preserves original stunt gates; this is not full stunt, physics or whole-game parity.",
+      "image": "/devlog-images/second-finger-selects-airborne-stunts-from-a-radial-wh-7ecb551c.png",
+      "caption": "Host Chromium capture, 390\u00d7844: airborne Nac Nac preview on the radial wheel while the primary finger continues drive and brace."
     }
   ],
-  "updated_at": "2026-10-13T23:23:30.525575+00:00",
+  "updated_at": "2026-10-13T23:24:27.241565+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {

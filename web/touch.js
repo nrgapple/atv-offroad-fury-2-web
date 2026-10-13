@@ -10,22 +10,39 @@ export function loadSteeringSensitivity(read = () => localStorage.getItem('atv-m
 }
 // Scale displacement BEFORE clipping so a larger drag can still reach full lock.
 const steeringAxis = (dx, sensitivity) => clamp(dx / 70 * sensitivity / 100);
+// Clockwise from twelve o'clock. These reuse the ten existing touch stunts.
+export const TRICK_WHEEL = [
+  { name: 'Nac Nac', modifiers: 1, axes: [0, -1] },
+  { name: 'Point Back', modifiers: 2, axes: [1, 0] },
+  { name: 'Bar Hop', modifiers: 1, axes: [1, 0] },
+  { name: 'Cat Nac', modifiers: 3, axes: [0, -1] },
+  { name: 'Cliff Hanger', modifiers: 2, axes: [0, 1] },
+  { name: 'No Footed Can Can', modifiers: 1, axes: [0, 1] },
+  { name: 'Nothing', modifiers: 2, axes: [-1, 0] },
+  { name: 'Cordova', modifiers: 3, axes: [0, 1] },
+  { name: 'Suicide No Hander', modifiers: 1, axes: [-1, 0] },
+  { name: 'Heel Clicker', modifiers: 2, axes: [0, -1] },
+];
+export function trickWheelSelection(dx, dy) {
+  if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.hypot(dx, dy) < 28) return null;
+  const turn = (Math.atan2(dy, dx) + Math.PI / 2 + Math.PI * 2) % (Math.PI * 2);
+  return TRICK_WHEEL[Math.round(turn / (Math.PI * 2) * TRICK_WHEEL.length) % TRICK_WHEEL.length];
+}
 // Gesture mappings are browser adaptations of original modifier/direction inputs.
 export class TouchInput {
-  constructor() { this.generation = 0; this.airborne = false; this.oneHanded = false; this.steeringSensitivity = 100; this.clear(); }
+  constructor({ radial = false } = {}) { this.radial = radial; this.generation = 0; this.airborne = false; this.oneHanded = false; this.steeringSensitivity = 100; this.clear(); }
   clear() { this.generation++; this.pointer = null; this.secondary = null; this.pendingSelection = null; this.sampled = false; this.releasePending = false; }
   owns(id) { return this.pointer?.id === id || this.secondary?.owns(id) === true; }
   begin(id, x = 0, y = 0, airborne = this.airborne) {
     if (this.pointer) {
       if (!this.oneHanded || this.owns(id) || this.secondary?.pointer) return false;
-      // Reuse the established gesture recognizer with a separate origin/history.
-      this.secondary = new TouchInput();
+      this.secondary = new TouchInput({ radial: true });
       return this.secondary.begin(id, x, y, airborne);
     }
     this.secondary = null;
     this.airborne = airborne;
     this.pointer = { id, x, y, currentX: x, currentY: y, axis: 1,
-      mode: airborne && !this.oneHanded ? 'trick' : 'drive', points: [[x,y]], lastMove: Infinity, selection: null };
+      mode: airborne && !this.oneHanded ? (this.radial ? 'radial' : 'trick') : 'drive', points: [[x,y]], lastMove: Infinity, selection: null };
     this.sampled = false; this.releasePending = false;
     return true;
   }
@@ -40,7 +57,7 @@ export class TouchInput {
     if (this.oneHanded) { this.secondary?.setAirborne(airborne); return; }
     const pointer = this.pointer;
     if (pointer) {
-      pointer.mode = airborne ? 'trick' : 'drive';
+      pointer.mode = airborne ? (this.radial ? 'radial' : 'trick') : 'drive';
       pointer.x = pointer.currentX; pointer.y = pointer.currentY;
       if (!airborne) pointer.axis = 1;
       pointer.points = [[pointer.x, pointer.y]]; pointer.selection = null; pointer.lastMove = Infinity;
@@ -53,6 +70,12 @@ export class TouchInput {
     const pointer = this.pointer;
     if (pointer?.id !== id) return;
     pointer.currentX = x; pointer.currentY = y;
+    if (pointer.mode === 'radial') {
+      // Preview is reversible. No modifier is submitted until pointer release.
+      const [startX, startY] = pointer.points[0];
+      pointer.selection = Math.hypot(x - startX, y - startY) < 8 ? null : trickWheelSelection(x - pointer.x, y - pointer.y);
+      return;
+    }
     if (pointer.mode === 'drive') {
       const back = y - pointer.y;
       pointer.axis = this.oneHanded ? 1 : back > 8 ? -clamp((back - 8) / 62) : 1;
@@ -82,6 +105,7 @@ export class TouchInput {
     if (this.secondary?.owns(id)) { this.secondary.end(id, cancelled); return; }
     if (this.pointer?.id !== id) return;
     if (cancelled) { this.clear(); return; }
+    if (this.pointer.mode === 'radial') this.pendingSelection = this.pointer.selection;
     if (this.pointer.mode === 'trick') {
       const sent = this.pointer.selectionSent;
       this.sample(performance.now()+120);
@@ -117,8 +141,8 @@ export class TouchInput {
     if (driving) { this.sampled = true; preload_axis = 1; }
     else if (this.releasePending) { this.releasePending = false; preload_axis = -1; }
     const secondary = this.oneHanded && pointer && this.airborne ? this.secondary?.sample(now) : null;
-    const selection = secondary?.stunt_modifiers ? { modifiers: secondary.stunt_modifiers, axes: [secondary.stunt_x, secondary.stunt_y] } : pointer?.selection ?? this.pendingSelection;
-    if (pointer?.selection) pointer.selectionSent = true;
+    const selection = secondary?.stunt_modifiers ? { modifiers: secondary.stunt_modifiers, axes: [secondary.stunt_x, secondary.stunt_y] } : (pointer?.mode === 'trick' ? pointer.selection : null) ?? this.pendingSelection;
+    if (pointer?.mode === 'trick' && pointer.selection) pointer.selectionSent = true;
     this.pendingSelection = null;
     return { drive, preload_axis, steer, lean, stunt_modifiers: selection?.modifiers ?? 0,
       stunt_x: selection?.axes[0] ?? 0, stunt_y: selection?.axes[1] ?? 0 };
@@ -156,7 +180,7 @@ export function oneHandedFeedback(input, frame) {
   return {
     steer: pointer ? steeringAxis(pointer.currentX - pointer.x, input.steeringSensitivity) : 0,
     lean: pointer ? clamp((pointer.currentY - pointer.y) / 70) : 0,
-    cue: !pointer ? '' : input.secondary?.pointer ? (input.airborne ? frame?.stunt?.name ?? 'SWIPE / CIRCLE' : current && applied.brake > 0 ? 'BRAKE → REVERSE' : 'REVERSE · BRACE') : frame?.preload_active ? 'PRELOADED' : frame?.preload_armed ? 'LIFT FOR PRELOAD' : current && applied.brake > 0 ? 'BRAKE · BRACE' : 'DRIVE · BRACE',
+    cue: !pointer ? '' : input.secondary?.pointer && !input.airborne ? (current && applied.brake > 0 ? 'BRAKE → REVERSE' : 'REVERSE · BRACE') : frame?.preload_active ? 'PRELOADED' : frame?.preload_armed ? 'LIFT FOR PRELOAD' : current && applied.brake > 0 ? 'BRAKE · BRACE' : 'DRIVE · BRACE',
   };
 }
 
@@ -170,9 +194,43 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
   root.innerHTML = '<div class="touch-rider-marker"><b class="touch-axis forward">FWD</b><b class="touch-axis back">BACK</b><b class="touch-axis left">L</b><b class="touch-axis right">R</b><em class="touch-direction"></em><i></i><span>PRELOAD</span></div>';
   parent.append(root);
   const marker = root.firstElementChild, label = marker.querySelector('span');
+  const wheel = document.createElement('div'); wheel.className = 'touch-trick-wheel'; wheel.hidden = true;
+  wheel.innerHTML = '<div class="touch-trick-ring"></div><div class="touch-trick-center">TRICKS<small>DRAG · RELEASE</small></div><i class="touch-trick-pointer"></i><span class="touch-trick-cue"></span>';
+  const choices = TRICK_WHEEL.map((trick, index) => {
+    const choice = document.createElement('b'); choice.className = 'touch-trick-choice'; choice.textContent = trick.name;
+    const angle = index / TRICK_WHEEL.length * Math.PI * 2 - Math.PI / 2;
+    choice.style.left = `${124 + Math.cos(angle) * 88}px`; choice.style.top = `${124 + Math.sin(angle) * 88}px`;
+    wheel.append(choice); return choice;
+  });
+  root.append(wheel);
+  let wheelKey = null;
+  const placeWheel = () => {
+    const pointer = input.secondary?.pointer;
+    if (pointer?.mode !== 'radial') return;
+    // The displayed origin also owns selection, making every label reachable
+    // near an edge. A stationary press never selects despite this adjustment.
+    pointer.x = Math.max(126, Math.min(innerWidth - 126, pointer.currentX));
+    pointer.y = Math.max(150, Math.min(innerHeight - 142, pointer.currentY));
+  };
+  const presentWheel = () => {
+    const pointer = input.secondary?.pointer;
+    const visible = input.oneHanded && input.pointer && pointer?.mode === 'radial';
+    wheel.hidden = !visible;
+    if (!visible) { wheelKey = null; return; }
+    const index = TRICK_WHEEL.indexOf(pointer.selection);
+    const key = [pointer.x, pointer.y, index].join('|');
+    if (key === wheelKey) return;
+    wheelKey = key;
+    wheel.style.left = `${pointer.x}px`; wheel.style.top = `${pointer.y}px`;
+    wheel.dataset.selected = String(index >= 0);
+    wheel.style.setProperty('--trick-angle', `${index / TRICK_WHEEL.length * Math.PI * 2 - Math.PI / 2}rad`);
+    choices.forEach((choice, i) => choice.classList.toggle('selected', i === index));
+    wheel.querySelector('.touch-trick-cue').textContent = pointer.selection ? `${pointer.selection.name} · RELEASE` : 'CENTER TO CANCEL';
+  };
   let presentationKey = null;
   const present = () => {
     root.dataset.oneHanded = String(input.oneHanded);
+    presentWheel();
     if (!input.oneHanded) return;
     const state = oneHandedFeedback(input, lastFrame);
     const key = [state.steer, state.lean, state.cue].join('|');
@@ -197,6 +255,7 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
     if (!active()) return;
     event.preventDefault(); event.stopImmediatePropagation(); touched = true;
     if (!input.begin(event.pointerId, event.clientX, event.clientY, airborne)) return;
+    if (input.secondary?.owns(event.pointerId)) placeWheel();
     surface.setPointerCapture(event.pointerId); root.classList.add('held');
     if (input.pointer?.id === event.pointerId) {
       // Keep the visual compass and labels on screen without moving the input origin.
@@ -204,7 +263,8 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
       marker.style.top = `${input.oneHanded ? Math.max(82, Math.min(innerHeight - 92, event.clientY)) : event.clientY}px`;
       marker.style.setProperty('--drive', '-30px');
     }
-    label.textContent = airborne && !input.oneHanded ? 'SWIPE / CIRCLE' : input.oneHanded ? 'BRACED' : 'PRELOAD'; refresh();
+    if (!input.oneHanded) label.textContent = airborne ? 'SWIPE / CIRCLE' : 'PRELOAD';
+    refresh();
   };
   const move = event => {
     if (!input.owns(event.pointerId)) return;
@@ -215,6 +275,7 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
   };
   const end = event => {
     if (!input.owns(event.pointerId)) return;
+    if (event.type === 'pointerup' && input.secondary?.pointer?.mode === 'radial' && input.secondary.owns(event.pointerId)) input.move(event.pointerId, event.clientX, event.clientY);
     event.preventDefault(); event.stopImmediatePropagation(); input.end(event.pointerId, event.type !== 'pointerup'); root.classList.toggle('held', Boolean(input.pointer)); present();
   };
   // WebKit's loupe can ignore CSS selection suppression. Cancel native touch
@@ -223,6 +284,8 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
   const suppressNativeTouch = event => { if (active() && event.cancelable) event.preventDefault(); };
   surface.addEventListener('touchstart', suppressNativeTouch, { passive: false });
   surface.addEventListener('touchmove', suppressNativeTouch, { passive: false });
+  const gestureTypes = ['gesturestart', 'gesturechange', 'gestureend'];
+  for (const type of gestureTypes) surface.addEventListener(type, suppressNativeTouch, { passive: false });
   surface.addEventListener('pointerdown', down); surface.addEventListener('pointermove', move);
   for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) surface.addEventListener(type, end);
   // A second finger does not produce a compatibility click while a riding
@@ -256,6 +319,7 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
   const utilityNativeTouch = event => { if (utilityButton(event.target) && event.cancelable) event.preventDefault(); };
   utilities?.addEventListener('touchstart', utilityNativeTouch, { passive: false });
   utilities?.addEventListener('touchmove', utilityNativeTouch, { passive: false });
+  for (const type of gestureTypes) utilities?.addEventListener(type, suppressNativeTouch, { passive: false });
   utilities?.addEventListener('pointerdown', utilityDown);
   utilities?.addEventListener('pointermove', utilityMove);
   for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) utilities?.addEventListener(type, utilityEnd);
@@ -281,7 +345,9 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
     feedback(frame) {
       lastFrame = frame;
       airborne = Boolean(frame.grounded?.length && frame.grounded.every(contact => !contact));
+      const wasAirborne = input.airborne;
       input.setAirborne(airborne);
+      if (airborne !== wasAirborne) placeWheel();
       const state = frame.preload_active ? 'active' : frame.preload_armed ? 'armed' : frame.preload_available ? 'available' : 'idle';
       root.dataset.preload = state;
       if (input.oneHanded) present();
@@ -293,9 +359,11 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
     destroy() {
       clear(); root.remove(); document.body.classList.remove('touch-driving');
       surface.removeEventListener('touchstart', suppressNativeTouch); surface.removeEventListener('touchmove', suppressNativeTouch);
+      for (const type of gestureTypes) surface.removeEventListener(type, suppressNativeTouch);
       surface.removeEventListener('pointerdown', down); surface.removeEventListener('pointermove', move);
       for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) surface.removeEventListener(type, end);
       utilities?.removeEventListener('touchstart', utilityNativeTouch); utilities?.removeEventListener('touchmove', utilityNativeTouch);
+      for (const type of gestureTypes) utilities?.removeEventListener(type, suppressNativeTouch);
       utilities?.removeEventListener('pointerdown', utilityDown); utilities?.removeEventListener('pointermove', utilityMove);
       for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) utilities?.removeEventListener(type, utilityEnd);
       document.removeEventListener('selectstart', suppress); document.removeEventListener('contextmenu', suppress);

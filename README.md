@@ -36,7 +36,7 @@ The renderer now connects recovered materials, animated UVs, fog coverage, ice-r
 Open [Fury Remastered](https://furyremastered.com/), choose **Single Player → Freestyle**, and select your ride and map.
 
 - **One finger by default:** touch anywhere on the game surface to hold throttle and brace. Drag sideways to steer and up/down to lean. Lift to coast and release preload through the original ramp gates.
-- **Optional second touch:** while the primary finger stays held, another touch brakes and then reverses on the ground. In the air, swipe in eight directions or draw a circle to select a stunt. Lift the second finger to finish; lifting the primary clears both.
+- **Optional second touch:** while the primary finger stays held, another touch brakes and then reverses on the ground. In the air, the second finger opens a trick wheel: drag to a named trick and release to perform it. Return to the center to cancel; lifting the primary clears both.
 - **Two-thumb layout:** set **Pause → One-handed mobile: Off**. The left thumb steers/leans; the right thumb accelerates/braces or drags down to brake/reverse. A saved Off is preserved.
 - **Adjust the feel:** **Pause → Controls** includes saved Mobile steering response from 50% to 150%, defaulting to 85%.
 - **Pause and Camera:** the on-screen buttons work independently, including a second-finger tap while driving. In multiplayer, opening the menu leaves the visible ride running; Single Player pauses its simulation.

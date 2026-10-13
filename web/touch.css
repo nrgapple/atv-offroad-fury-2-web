@@ -2,7 +2,7 @@
 html, body, #game, #toolbar, #toolbar *, #touch-controls, #touch-controls *, #status, #help { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 #game, #toolbar, #touch-controls { -webkit-tap-highlight-color: transparent; }
 #toolbar button, #toolbar a { touch-action: manipulation; }
-#touch-controls { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
+#touch-controls { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; touch-action: none; }
 #touch-controls[hidden], body.menu-open #touch-controls { display: none; }
 .touch-rider-marker {
   --touch-accent: var(--atv-gold);
@@ -22,10 +22,9 @@ html, body, #game, #toolbar, #toolbar *, #touch-controls, #touch-controls *, #st
 }
 .touch-rider-marker span {
   position: absolute; top: 82px; left: -20px; width: 112px;
-  padding: 1px 0; border-left: 2px solid var(--touch-accent); border-right: 2px solid var(--touch-accent);
-  border-radius: 2px; background: #080808d9; text-align: center;
+  padding: 1px 0; text-align: center;
   font: 800 10px/1.2 var(--atv-font-label); letter-spacing: var(--atv-label-tracking);
-  color: var(--atv-silver-light); text-shadow: 0 1px 2px #000;
+  color: #fff; -webkit-text-stroke: 2px #000; paint-order: stroke fill; text-shadow: 0 1px 2px #000;
 }
 #touch-controls[data-preload=armed] .touch-rider-marker { --touch-accent: var(--atv-orange); border-color: var(--atv-orange); }
 #touch-controls[data-preload=active] .touch-rider-marker { --touch-accent: var(--atv-gold-light); border-color: var(--atv-gold-light); }
@@ -57,3 +56,15 @@ body.touch-driving #status.error { top: max(84px, calc(env(safe-area-inset-top) 
   box-shadow: 0 1px 2px #000; transform-origin: left center; transform: rotate(var(--angle, 0rad));
 }
 #touch-controls[data-one-handed=true]:not(.held) .touch-rider-marker { opacity: 0; }
+/* A visual overlay only: the game surface retains both pointer captures. */
+.touch-trick-wheel { position: absolute; width: 248px; height: 248px; margin: -124px; color: #fff; font-family: var(--atv-font-label); -webkit-text-stroke: 2px #000; paint-order: stroke fill; text-shadow: 0 1px 2px #000; }
+.touch-trick-wheel[hidden] { display: none; }
+.touch-trick-ring { position: absolute; inset: 54px; border: 1px solid #b9b9b970; border-radius: 50%; background: radial-gradient(circle, #080808aa 27%, #22222265 29%, #08080890 69%, #b9b9b933 70%); box-shadow: 0 1px 6px #0008; }
+.touch-trick-choice { position: absolute; transform: translate(-50%, -50%); display: flex; align-items: center; justify-content: center; width: 64px; min-height: 28px; padding: 2px; box-sizing: border-box; font-size: 10px; line-height: 1.1; text-align: center; }
+.touch-trick-choice.selected { text-decoration: underline; text-underline-offset: 3px; }
+.touch-trick-center { position: absolute; left: 82px; top: 111px; width: 84px; text-align: center; font-size: 10px; font-weight: 800; }
+.touch-trick-center small { display: block; margin-top: 4px; font-size: 8px; font-weight: 600; }
+.touch-trick-pointer { display: none; position: absolute; left: 123px; top: 123px; width: 22px; height: 2px; background: var(--atv-gold); transform-origin: left center; transform: rotate(var(--trick-angle)) translateX(42px); box-shadow: 0 1px 2px #000; }
+.touch-trick-pointer::after { content: ''; position: absolute; right: -3px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--atv-gold-light); }
+.touch-trick-wheel[data-selected=true] .touch-trick-pointer { display: block; }
+.touch-trick-cue { position: absolute; top: 251px; left: 0; width: 248px; text-align: center; font-size: 9px; font-weight: 800; }
