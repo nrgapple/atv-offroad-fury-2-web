@@ -2677,7 +2677,7 @@
       "limitation": "Pending CI and public verification. The original disconnect cause remains unproven. Recovery covers brief host transport failures; explicit leave, invalid traffic and the recovery deadline still end the room."
     }
   ],
-  "updated_at": "2026-10-13T18:52:17.817199+00:00",
+  "updated_at": "2026-10-13T18:52:29.955225+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {

@@ -107,3 +107,16 @@ These are host Chromium checks with synthetic focus, not physical-phone or publi
 deployment verification. Hidden-tab and context-loss suspension remain in effect;
 original pause-screen artwork, exact callback behavior, and full-game fidelity
 are not established by this checkpoint.
+
+## Public pause-menu verification (2026-10-13)
+
+Public `https://furyremastered.com/` passed the single-player pause layout,
+navigation, settings routes, freeze, and neutral-input resume checks across five
+viewport sizes. A public two-client session kept both rides simulating with the
+menu open: the host advanced 41 steps and observed 3.337 ft of remote movement;
+the guest advanced 45 steps and observed 3.715 ft. Controls and Players remained
+live, and host departure cleared guest state. Merge
+`6f24bc2e48872010d870be8cf33b8a20fc9ae519` passed CI `38449491125`; the public
+asset-hash audit matched its deployed package (42 static files and 448 served
+objects). The approved desktop screenshot is in the development log. This browser
+verification does not cover physical phones or establish original-game fidelity.
