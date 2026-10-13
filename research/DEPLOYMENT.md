@@ -1,5 +1,13 @@
 # Private source repository and public Cloudflare hosting
 
+## Production flow restored (2026-10-13)
+
+GitHub Actions checks/builds and automatically deploys authored application assets.
+The validated checkpoint R2 upload remains a separate local release-agent step.
+The experimental local Rust queue is stopped and must not replace or block this
+production flow until its end-to-end validation passes and the user approves the
+cutover. Other chats should follow research/CI_CHECKPOINTS.md.
+
 ## Cloudflare migration (2026-10-11)
 
 The user authorized moving production hosting to their existing Cloudflare account.

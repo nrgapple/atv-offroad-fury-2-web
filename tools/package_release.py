@@ -42,7 +42,14 @@ def validate_release(root, expected_commit):
     return manifest
 
 
-def package(commit, destination):
+def scoped_content_source(source, commit):
+    marker = "fetch('/content/manifest.json')"
+    if source.count(marker) != 1:
+        raise ValueError('expected exactly one hosted manifest fetch to pin')
+    return source.replace(marker, f"fetch('/content/manifests/{commit}.json')")
+
+
+def package(commit, destination, release_scoped=False):
     if len(commit) != 40 or any(c not in '0123456789abcdef' for c in commit):
         raise ValueError('commit must be a complete lowercase Git SHA')
     if not destination.resolve().is_relative_to((ROOT / 'work').resolve()):
@@ -54,6 +61,9 @@ def package(commit, destination):
     (destination / 'static').mkdir(parents=True)
     for name in sorted(STATIC_FILES):
         shutil.copy2(ROOT / 'web/dist' / name, destination / 'static' / name)
+    if release_scoped:
+        source = destination / 'static/content.js'
+        source.write_text(scoped_content_source(source.read_text(), commit))
     (destination / 'relay').mkdir()
     for name in sorted(RELAY_FILES):
         shutil.copy2(ROOT / 'crates/atv-relay/build' / name, destination / 'relay' / name)
@@ -78,8 +88,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--commit', required=True)
     parser.add_argument('--destination', type=Path, default=ROOT / 'work/release')
+    parser.add_argument('--release-scoped', action='store_true')
     args = parser.parse_args()
-    package(args.commit, args.destination)
+    package(args.commit, args.destination, args.release_scoped)
 
 
 if __name__ == '__main__':

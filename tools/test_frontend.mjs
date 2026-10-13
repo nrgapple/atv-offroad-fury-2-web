@@ -17,9 +17,13 @@ try {
   };
   const pad = async (button, navigation = false) => {
     await page.evaluate(button => {
-      window.menuPad = { connected:true, axes:[0,0,0,0], buttons:Array.from({length:17},(_,i)=>({pressed:i===button,value:i===button?1:0})) };
+      window.menuPad = { connected:true, axes:[0,0,0,0], buttons:Array.from({length:17},()=>({pressed:false,value:0})) };
       Object.defineProperty(navigator,'getGamepads',{configurable:true,value:()=>[window.menuPad]});
     }, button);
+    // Every shown menu deliberately blocks held controller input until a
+    // neutral poll. Observe neutral frames before synthesizing a new press.
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await page.evaluate(button => { window.menuPad.buttons[button] = {pressed:true,value:1}; }, button);
     if (navigation) { await page.waitForURL(url => ['/play','/play.html'].includes(url.pathname)); return; }
     await page.waitForTimeout(120);
     await page.evaluate(()=>{if(window.menuPad) window.menuPad.buttons=window.menuPad.buttons.map(()=>({pressed:false,value:0}));});
