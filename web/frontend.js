@@ -389,12 +389,15 @@ export class Frontend {
     if (key === this.modelKey) return;
     cancelAnimationFrame(this.modelAnimation);
     this.modelKey = key; const token = ++this.modelToken;
-    for (const view of this.modelViews.values()) view.clear('Loading model...');
+    for (const view of this.modelViews.values()) {
+      view.clear('Loading model...');
+      delete view.canvas.dataset.clip; delete view.canvas.dataset.animationTime;
+    }
     void this.modelAssets(this.quadId, this.riderId).then(source => {
       if (token !== this.modelToken || this.page !== 'garage' || this.root.hidden) return;
       this.modelViews.get('quad').set(source.mesh, source.textures);
       this.modelViews.get('rider').set(source.riderMesh, source.riderTextures, source.riderPose?.world_matrices);
-      if (this.quadId < 27) void this.startMenuRider(token, key);
+      void this.startMenuRider(token, key);
       for (const view of this.modelViews.values()) view.canvas.dataset.selection = key;
     }).catch(error => {
       if (token !== this.modelToken) return;
@@ -404,9 +407,10 @@ export class Frontend {
   }
   async startMenuRider(token, key) {
     try {
-      const original = await this.menuRider(this.riderId, () => token === this.modelToken);
+      const original = await this.menuRider(this.riderId, () => token === this.modelToken, this.quadId);
       if (!original || token !== this.modelToken || this.page !== 'garage') return;
       const view = this.modelViews.get('rider');
+      view.yaw = original.previewYaw ?? -.6;
       view.set(original.mesh,original.textures,original.pose.world_matrices);
       view.canvas.dataset.selection = key; view.canvas.dataset.clip = original.clip;
       const start = performance.now(); let busy = false, last = 0;

@@ -12,7 +12,7 @@ try {
  page.on('pageerror',e=>errors.push(e.message));await captureCrashIsolation(page);await captureSimulation(page,'controlFrames');
  await page.addInitScript(()=>{
   window.bikePresentationProbe={draws:0,blends:0,maxOriginError:0,contacts:0,maxGrip:0,maxFoot:0};
-  const requests=new WeakMap(),post=Worker.prototype.postMessage;let model,quad,body=false;
+  const requests=new WeakMap(),post=Worker.prototype.postMessage;let model,quad,body=false,bodyMatrix;
   Worker.prototype.postMessage=function(message,...args){
    if(!requests.has(this)){
     const ids=new Set();requests.set(this,ids);
@@ -30,7 +30,7 @@ try {
     // The body model uniform must use the same presentation origin, not the
     // latest worker pose. Ignore identity/scenery/CPU uniforms.
     const error=Math.hypot(...p.origin.map((v,i)=>v-value[12+i]));
-    if(error<.001){body=true;window.bikePresentationProbe.draws++;window.bikePresentationProbe.blends++;window.bikePresentationProbe.maxOriginError=Math.max(window.bikePresentationProbe.maxOriginError,error);}
+    if(error<.001){body=true;bodyMatrix=Array.from(value);window.bikePresentationProbe.draws++;window.bikePresentationProbe.blends++;window.bikePresentationProbe.maxOriginError=Math.max(window.bikePresentationProbe.maxOriginError,error);}
    }
    if(body&&model&&locations.get(loc)==='quadBones[0]'){
     if(value.length===model.mesh.nodes.length*16)quad=Array.from(value);
@@ -39,6 +39,11 @@ try {
      const probe=window.bikePresentationProbe;probe.contacts++;
      probe.maxGrip=Math.max(probe.maxGrip,error('Dummy_hand_L','Dummy_Hand_L'),error('Dummy_hand_R','Dummy_Hand_R'));
      probe.maxFoot=Math.max(probe.maxFoot,error('Dummy_foot_L','Dummy_Foot_L'),error('Dummy_foot_R','Dummy_Foot_R'));
+     const head=model.riderMesh.nodes.findIndex(n=>n.name==='Head'),pelvis=model.riderMesh.nodes.findIndex(n=>n.name==='Pelvis');
+     const local=[0,1,2].map(i=>value[head*16+12+i]-value[pelvis*16+12+i]);
+     const world=[0,1,2].map(i=>bodyMatrix[i]*local[0]+bodyMatrix[4+i]*local[1]+bodyMatrix[8+i]*local[2]);
+     const yaw=status.camera[3],right=[-Math.cos(yaw),0,Math.sin(yaw)];
+     probe.bank={body:bodyMatrix[4]*right[0]+bodyMatrix[6]*right[2],rider:world[0]*right[0]+world[2]*right[2]};
     }
    }
    return mat.call(this,loc,transpose,value);
@@ -72,7 +77,10 @@ try {
   const side=delta.reduce((s,v,i)=>s+v*right[i],0),heading=forward.reduce((s,v,i)=>s+v*right[i],0);
   assert(side*direction>.15,`Touch ${direction}: on-screen side ${side}`);
   assert(heading*direction>.05,`Touch ${direction}: on-screen heading ${heading}`);
-  report.turns.push({direction,side,heading});
+  const bank=await page.evaluate(()=>window.bikePresentationProbe.bank);
+  assert(bank&&bank.body*direction>.025,`Rendered bike banks away from ${direction}: ${JSON.stringify(bank)}`);
+  assert(bank.rider*direction>.025,`Rendered rider banks away from ${direction}: ${JSON.stringify(bank)}`);
+  report.turns.push({direction,side,heading,bank});
   if(process.env.ATV_CONTROL_SCREENSHOTS)await page.screenshot({path:`${process.env.ATV_CONTROL_SCREENSHOTS}-${direction<0?'left':'right'}.png`});
   await cdp.send('Input.dispatchTouchEvent',{type:'touchCancel',touchPoints:[]});await page.waitForFunction(()=>!window.atvTerrainStatus.input.touch_drive.held);
   await page.waitForTimeout(250);
