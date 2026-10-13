@@ -90,6 +90,12 @@ def main():
             rider[name] = source(name)
         materials(rider, rider_config.get('material changes', {}))
         rider_base = dict(rider)
+        # Standalone original rider-selection animations, separate from riding.
+        for leaf in ['UI_mrider.mcf', 'UI_Rider_Select_Breathing.mot',
+                     'UI_Rider_Select_Idle1.mot', 'UI_Rider_Select_Idle2.mot',
+                     'UI_Rider_Select_Idle3.mot']:
+            name = f'Rider/Anim/{leaf}'
+            rider_base[name] = source(name)
         def motion_bank(size):
             bank = 'MXF' if size == 50 else 'MX'
             result = dict(rider_base)
