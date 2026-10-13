@@ -1,6 +1,6 @@
 //! Authored reconstruction of the National path driver's recovered decisions.
-//! Exact-build 0024f9d0 / 001f9690 / 002536b0; original obstacle avoidance and
-//! stunt selection remain separate, unconnected gates. Physics belongs to Vehicle.
+//! Exact-build 0024f9d0 / 001f9690 / 002536b0 with 00252080 direction
+//! avoidance and001e9650 clip eligibility. Physics belongs to Vehicle.
 use crate::{
     Result,
     race::Course,
@@ -138,8 +138,16 @@ pub fn leader_speed(
         target
     }
 }
+/// Ordinary airborne terrain-normal feedback, 00250814 branch. Constructor
+/// gains +400=10, +404=0.1; the native high/low clearance split is 20ft.
+pub fn low_clearance_lean(previous: f32, terrain_normal: [f32; 3], forward: [f32; 3]) -> f32 {
+    let target = 10. * -dot(terrain_normal, forward);
+    (previous * (1. - 0.1) + 0.1 * target).clamp(-1., 1.)
+}
 #[derive(serde::Serialize, Debug, Clone, Copy)]
 pub struct Decisions {
+    pub active: bool,
+    pub avoidance: crate::cpu_avoidance::Response,
     pub target: [f32; 3],
     pub desired_speed: f32,
     pub ahead_distance: f32,
@@ -152,11 +160,21 @@ pub struct Decisions {
     pub route_error: f32,
     pub lane_offset: f32,
 }
+pub struct Context<'a> {
+    pub peers: &'a [crate::cpu_avoidance::Peer],
+    pub scene: Option<&'a crate::scene_collision::SceneCollision>,
+    pub clearance: f32,
+    pub terrain_normal: [f32; 3],
+}
 pub struct Driver {
     random: crate::engine_audio::OriginalRandom,
     goal: f32,
     last_target: usize,
     lane: f32,
+    lean: f32,
+    trick_timer: f32,
+    air_timer: f32,
+    trick_attempted: bool,
 }
 impl Driver {
     pub fn new(index: usize, _difficulty: u32) -> Self {
@@ -167,7 +185,68 @@ impl Driver {
             goal,
             last_target: usize::MAX,
             lane: 0.,
+            lean: 0.,
+            trick_timer: 0.,
+            air_timer: 0.,
+            trick_attempted: false,
         }
+    }
+    pub fn repositioned(&mut self) {
+        self.last_target = usize::MAX;
+        self.lane = 0.;
+        self.lean = 0.;
+        self.air_timer = 0.;
+    }
+    /// Ordinary National gate: 10-second interval, flagged jump, 10% trial;
+    /// choose only main clips that fit the remaining TDF airtime minus0.5s.
+    /// Per-racer RNG and projected target lookup are integration adaptations.
+    pub fn stunt_choice(
+        &mut self,
+        course: &Course,
+        frame: &VehicleFrame,
+        in_stunt: bool,
+        durations: &[f32; 24],
+        dt: f32,
+    ) -> Option<usize> {
+        if frame.wreck.phase != crate::wreck::Phase::Riding {
+            return None;
+        }
+        let grounded = frame.grounded.iter().any(|v| *v);
+        let mut choice = None;
+        if grounded
+            || in_stunt
+            || course.flags.get(self.last_target).copied().unwrap_or(0) & 0x20 == 0
+        {
+            self.trick_timer += dt;
+        } else if self.trick_timer >= 10. {
+            let budget =
+                course.airtimes.get(self.last_target).copied().unwrap_or(0.) - self.air_timer - 0.5;
+            if self.random.next_u31() as f32 * 4.656613e-10 * 100. <= 10. {
+                let eligible: Vec<_> = durations
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, duration)| **duration <= budget)
+                    .map(|(id, _)| id)
+                    .collect();
+                if !eligible.is_empty() {
+                    let index = (eligible.len() as f32
+                        * self.random.next_u31() as f32
+                        * 4.656613e-10) as usize;
+                    choice = eligible.get(index).copied();
+                    self.trick_attempted = choice.is_some();
+                }
+            }
+        }
+        if grounded {
+            if self.trick_attempted {
+                self.trick_timer = 0.;
+                self.trick_attempted = false;
+            }
+            self.air_timer = 0.;
+        } else {
+            self.air_timer += dt;
+        }
+        choice
     }
     pub fn step(
         &mut self,
@@ -176,12 +255,32 @@ impl Driver {
         player: &VehicleFrame,
         progress_difference: f32,
         dt: f32,
-        clearance: f32,
+        context: Context<'_>,
     ) -> Result<(VehicleInput, Decisions)> {
         if !dt.is_finite() || dt <= 0. || dt > 0.1 || course.points.len() < 4 {
             return Err("invalid CPU driving step".into());
         }
         let p = course.project(frame.origin);
+        if frame.wreck.phase != crate::wreck::Phase::Riding {
+            return Ok((
+                VehicleInput::default(),
+                Decisions {
+                    active: false,
+                    avoidance: crate::cpu_avoidance::Response::default(),
+                    target: p.point,
+                    desired_speed: 0.,
+                    ahead_distance: progress_difference,
+                    throttle: 0.,
+                    brake: 0.,
+                    steer: 0.,
+                    lean: 0.,
+                    route_segment: p.segment,
+                    route_distance: p.distance,
+                    route_error: p.error,
+                    lane_offset: self.lane,
+                },
+            ));
+        }
         let on_track = p.error <= course.widths[p.segment] * 0.5;
         let lookahead = (25. + 4. * p.error).min(if on_track {
             60.
@@ -218,7 +317,20 @@ impl Driver {
             aim.point[1],
             aim.point[2] - lane * tangent[0],
         ];
-        let direction = normalize([target[0] - frame.origin[0], 0., target[2] - frame.origin[2]]);
+        let desired = normalize([target[0] - frame.origin[0], 0., target[2] - frame.origin[2]]);
+        let avoidance = crate::cpu_avoidance::direction(
+            frame.origin,
+            desired.map(|v| v * frame.speed_magnitude),
+            context.peers,
+            course.flags.get(p.segment).copied().unwrap_or(0),
+            context.scene,
+        )?;
+        // 0024f840 leaves the original heading when the correction is zero.
+        let direction = if avoidance.velocity[0] != 0. || avoidance.velocity[2] != 0. {
+            normalize([avoidance.velocity[0], 0., avoidance.velocity[2]])
+        } else {
+            desired
+        };
         let forward = rotate(frame.orientation, [0., 0., 1.]);
         let up = rotate(frame.orientation, [0., 1., 0.]);
         let horizontal = normalize([forward[0], 0., forward[2]]);
@@ -242,14 +354,14 @@ impl Driver {
         let (throttle, brake) = pedals(frame.speed_magnitude, desired_speed);
         // The ground route uses no guessed corner/braking lean. The airborne
         // feedback reconstructs the ordinary high-clearance 0024f9d0 branch;
-        // low-clearance terrain-normal feedback / native stunt gates stay open.
+        // low-clearance terrain-normal feedback is separate from native stunt choice.
         let corrected = normalize([
             tangent[0] + (target[0] - frame.origin[0]) * 0.05,
             0.,
             tangent[2] + (target[2] - frame.origin[2]) * 0.05,
         ]);
         let airborne = !frame.grounded.iter().any(|v| *v);
-        let lean = if airborne && clearance > 10. {
+        let lean = if airborne && context.clearance > 20. {
             let desired = [
                 corrected[0] * 0.9816,
                 -f32::from_bits(0x3e436113),
@@ -262,9 +374,12 @@ impl Driver {
             (1.5 * (pitch - desired_pitch))
                 .clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2)
                 .sin()
+        } else if airborne {
+            low_clearance_lean(self.lean, context.terrain_normal, forward)
         } else {
             0.
         };
+        self.lean = lean;
         let input = VehicleInput {
             throttle,
             brake,
@@ -275,6 +390,8 @@ impl Driver {
         Ok((
             input,
             Decisions {
+                active: true,
+                avoidance,
                 target,
                 desired_speed,
                 ahead_distance: progress_difference,
@@ -293,6 +410,13 @@ impl Driver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn landing_feedback_tracks_surface_pitch_and_saturates_without_ground_bias() {
+        assert_eq!(low_clearance_lean(0., [0., 1., 0.], [0., 0., 1.]), 0.);
+        assert!(low_clearance_lean(0., [0., 0.98, 0.2], [0., 0., 1.]) < 0.);
+        assert_eq!(low_clearance_lean(-1., [0., 0., 1.], [0., 0., 1.]), -1.);
+        assert_eq!(low_clearance_lean(1., [0., 0., -1.], [0., 0., 1.]), 1.);
+    }
     #[test]
     fn exact_deadband_and_ahead_only_speed_policy() {
         assert_eq!(pedals(48.999, 50.), (1., 0.));

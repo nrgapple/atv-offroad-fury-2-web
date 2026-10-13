@@ -107,6 +107,7 @@ pub struct State {
     accepted_mask: u8,
     ready: bool,
     pub cooldown: f32,
+    direct_started: bool,
 }
 impl Default for State {
     fn default() -> Self {
@@ -117,6 +118,7 @@ impl Default for State {
             accepted_mask: 0xff,
             ready: true,
             cooldown: 0.,
+            direct_started: false,
         }
     }
 }
@@ -141,6 +143,27 @@ pub fn direction_with_buttons(axes: [f32; 2], buttons: u8) -> Option<usize> {
     direction(axes).or_else(|| (0..4).find(|bit| buttons & (1 << bit) != 0))
 }
 impl State {
+    /// 002da6c0 direct actor request used by National AI; no synthetic buttons.
+    pub fn request_direct(&mut self, id: usize, input: Input) -> bool {
+        if id >= 24
+            || input.grounded
+            || input.crashed
+            || input.disabled
+            || self.cooldown > 0.
+            || input.horizontal_speed_squared <= 16.
+            || !input.horizontal_speed_squared.is_finite()
+            || self
+                .active
+                .is_some_and(|current| self.main_time < MIN_TIME[current])
+        {
+            return false;
+        }
+        self.active = Some(id);
+        self.main_time = 0.;
+        self.hold_time = 0.;
+        self.direct_started = true;
+        true
+    }
     pub fn reset(&mut self) {
         *self = Self {
             cooldown: 2.,
@@ -174,7 +197,7 @@ impl State {
         if self.cooldown > 0. {
             self.cooldown -= dt;
         }
-        let mut started = false;
+        let mut started = std::mem::take(&mut self.direct_started);
         let mut holding = false;
         let mask = input.modifiers;
         if self.accepted_mask != self.accepted_mask & mask || input.horizontal_speed_squared <= 16.
@@ -280,6 +303,35 @@ impl HoldNoise {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn direct_ai_request_obeys_airborne_reset_and_speed_gates_and_finishes_unheld() {
+        let mut state = State::default();
+        let mut input = Input {
+            horizontal_speed_squared: 25.,
+            ..Input::default()
+        };
+        input.grounded = true;
+        assert!(!state.request_direct(0, input));
+        input.grounded = false;
+        input.horizontal_speed_squared = 16.;
+        assert!(!state.request_direct(0, input));
+        input.horizontal_speed_squared = 25.;
+        state.reset();
+        assert!(!state.request_direct(0, input));
+        state.cooldown = 0.;
+        assert!(state.request_direct(2, input));
+        let frame = state.step(input, 0.1, &[1.2; 24]).unwrap().unwrap();
+        assert!(frame.started);
+        assert!(!frame.holding);
+        assert!(!state.request_direct(1, input));
+        for _ in 0..14 {
+            state.step(input, 0.1, &[1.2; 24]).unwrap();
+        }
+        assert!(state.active.is_none());
+        assert!(state.request_direct(1, input));
+        input.crashed = true;
+        assert!(state.step(input, 0.1, &[1.2; 24]).unwrap().is_none());
+    }
     #[test]
     fn digital_direction_fallback_has_original_priority_and_analog_precedence() {
         for buttons in 0..16 {

@@ -154,3 +154,22 @@ for all four ATV racers by 120.061 simulated seconds. Traveled distances are
 awards the lap before exact start/finish crossing; original TDF marker placement
 and native finish-line rules remain open. This verifies current preview route
 completion, not original event/lap or PS2 replay parity.
+
+## CPU avoidance and wreck strategy — active gate
+
+Use the exact SCUS_972.11 National call chain 0024f9d0 → 0024f840 →
+00252080. Port ordinary peer near/far relative-velocity correction and eight-ray
+static obstacle direction attenuation before steering; validate the peer loop
+and attenuation branches against bounded original instructions. Retain query
+category/order, VU precision and special aggression flags as separately scoped
+gates until they are reproduced. Do not add guessed braking or randomized crashes.
+
+Enable each CPU's recovered Vehicle wreck decision/passive-body path and its
+own cloned original wreck clips/detached-rider controller. Reuse the player
+ordering: vehicle step, wreck begin/body step, rider-contact recovery clock,
+then publish the appropriate independent rider world/pose. Feed live water and
+scene contacts without advancing shared water or train actors once per CPU.
+Recovery must resume route driving with refreshed driver state and retain
+ordered race progression, without awarding checkpoints for a reposition.
+Verify natural racing, peer/obstacle scenarios, natural impacts/rollovers,
+recovery and both phone orientations; injected wreck fixtures must stay labeled.

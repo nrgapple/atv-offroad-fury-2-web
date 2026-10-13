@@ -10,6 +10,7 @@ pub struct Course {
     pub widths: Vec<f32>,
     pub flags: Vec<u32>,
     pub speeds: Vec<f32>,
+    pub airtimes: Vec<f32>,
     pub lane_limit: f32,
     pub leader_policy: [f32; 4],
 }
@@ -20,6 +21,7 @@ impl Default for Course {
             widths: vec![],
             flags: vec![],
             speeds: vec![],
+            airtimes: vec![],
             lane_limit: 3.,
             leader_policy: [150., 0.9, 1.5, 0.5],
         }
@@ -44,6 +46,7 @@ impl Course {
         let mut widths = Vec::new();
         let mut flags = Vec::new();
         let mut speeds = Vec::new();
+        let mut airtimes = Vec::new();
         let mut lane_limit = 3.;
         let mut leader_policy = [150., 0.9, 1.5, 0.5];
         let mut edges = Vec::new();
@@ -136,6 +139,9 @@ impl Course {
                     }
                     speeds.push(speed);
                 }
+                26 if in_point && !in_tail => {
+                    airtimes.push(float(bytes, at)?);
+                }
                 19..=22 => {
                     leader_policy[(tag - 19) as usize] = float(bytes, at)?;
                 }
@@ -159,6 +165,7 @@ impl Course {
         }
         if flags.len() != points.len()
             || speeds.len() != points.len()
+            || airtimes.len() != points.len()
             || !(0. ..=30.).contains(&lane_limit)
             || leader_policy[0] <= 0.
             || leader_policy[1..].iter().any(|v| *v < 0. || *v > 3.)
@@ -169,6 +176,7 @@ impl Course {
         widths.pop();
         flags.pop();
         speeds.pop();
+        airtimes.pop();
         if widths
             .iter()
             .any(|w| !w.is_finite() || *w < 1. || *w > 2048.)
@@ -181,6 +189,7 @@ impl Course {
             widths,
             flags,
             speeds,
+            airtimes,
             lane_limit,
             leader_policy,
         })
@@ -291,6 +300,11 @@ pub struct CpuPose {
     pub wheel_angles: [f32; 4],
     pub quad_matrices: Vec<[f32; 16]>,
     pub rider_matrices: Vec<[f32; 16]>,
+    pub rider_world_matrix: Option<[f32; 16]>,
+    pub wreck: crate::wreck::State,
+    pub rider_wreck: Option<crate::wreck_animation::Frame>,
+    pub stunt: Option<crate::stunt::Frame>,
+    pub reset_count: u32,
     pub decisions: crate::race_ai::Decisions,
 }
 #[derive(Serialize)]
@@ -430,6 +444,20 @@ impl Race {
     }
     pub fn progress_difference(&self, index: usize) -> f32 {
         self.progress[index].distance(&self.course) - self.player.distance(&self.course)
+    }
+    /// Reposition cannot count traveled distance or award a swept checkpoint.
+    pub fn reposition_cpu(
+        &mut self,
+        index: usize,
+        origin: [f32; 3],
+        yaw: f32,
+        physical: Option<CpuPose>,
+    ) {
+        let opponent = &mut self.opponents[index];
+        opponent.origin = origin;
+        opponent.yaw = yaw;
+        opponent.physical = physical;
+        self.progress[index].last = origin;
     }
     pub fn observe_cpu(
         &mut self,
@@ -595,6 +623,21 @@ mod tests {
         assert!(r.opponents()[0].physical.is_none());
     }
     #[test]
+    fn wreck_reposition_preserves_progress_without_a_swept_or_radius_award() {
+        let mut r = Race::new(course(), 1, vec!["CPU".into()], 0).unwrap();
+        r.countdown = 0.;
+        r.step([0.; 3], 1.);
+        let prior_distance = r.opponents[0].distance;
+        r.reposition_cpu(0, [0., 0., 100.], 1., None);
+        assert_eq!(r.progress[0].next, 1);
+        assert_eq!(r.progress[0].completed, 0);
+        assert_eq!(r.opponents[0].distance, prior_distance);
+        // Ordinary driving after the recovery can earn this checkpoint.
+        r.observe_cpu(0, [0., 0., 101.], 1., None);
+        assert_eq!(r.progress[0].next, 2);
+        assert_eq!(r.opponents[0].distance, prior_distance + 1.);
+    }
+    #[test]
     fn opponents_complete_laps_and_rank_by_finish_time() {
         let mut r = Race::new(course(), 1, vec!["Slow".into(), "Fast".into()], 2).unwrap();
         r.countdown = 0.;
@@ -658,6 +701,7 @@ mod tests {
         assert_eq!(c.points.len(), 8);
         assert_eq!(c.points[1], [2304., 0., 2394.]);
         assert_eq!(c.widths[0], 27.);
+        assert_eq!(c.airtimes, vec![1.; 8]);
         for length in 0..data.len() {
             assert!(Course::parse(&data[..length]).is_err());
         }
