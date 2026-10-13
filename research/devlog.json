@@ -1,6 +1,6 @@
 {
-  "status": "Rendering optimization checkpoint 124b67bd is deployed and verified on both production origins. Public frontend, all-nine-map, lifecycle/wake, held-touch wreck, multiplayer feature/departure, transport-v3, four-browser and abrupt-owner-close grace routes pass. Dedicated host render-wall results improve in all nine maps, but live callback timing does not establish a CPU/FPS/battery gain. Physical-phone behavior and whole-game parity remain unverified. Latest main iOS framing, uphill camera and crash-effects changes are integrated; their separate evidence remains in the appended checkpoints.",
-  "working_on": "Verify the combined current-main release and preserve the deferred performance investigations for later work.",
+  "status": "Host-verified pause submenu checkpoint: six secondary screens pass responsive layout and navigation checks; controller remapping and live Lobby behavior are verified in host browsers. Current-main CI and public deployment remain pending.",
+  "working_on": "Integrate the pause submenu checkpoint through current-main CI, then verify the public deployment and browser routes.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -3034,6 +3034,22 @@
       "limitation": "Host-only candidate pending current-main CI and public verification. Physical-phone behavior and original camera parity remain unverified. Sampled terrain does not anticipate isolated props; follow-object clearance remains open.",
       "image": "/devlog-images/uphill-chase-camera-anticipation-d533fbbd.png",
       "caption": "Host Chromium Metal, Caribou Peak at 390\u00d7844: ATV held lower-center with the uphill terrain visible ahead."
+    },
+    {
+      "id": "pause-submenu-polish-host-checkpoint-3aed998d",
+      "timestamp": "2026-10-13T23:21:52.580372+00:00",
+      "recorded_at": "2026-10-13T23:23:13.981152+00:00",
+      "kind": "verification",
+      "title": "Pause submenu polish host checkpoint",
+      "summary": "Ride overlays and the active multiplayer Lobby now share a charcoal browser panel with gold highlights. Host Chromium verified six secondary screens across desktop, portrait, and landscape sizes, plus a desktop two-client live Lobby route.",
+      "details": [
+        "The six secondary screens\u2014Controls, keyboard bindings, controller bindings, HUD, Minimap, and Music\u2014had no horizontal clipping across 1280\u00d7896, 390\u00d7844, 320\u00d7568, 844\u00d7390, and 667\u00d7375; every control remained reachable at 44 CSS pixels or larger.",
+        "F7 remapping and defaults, binding pagination, soundtrack selection, music toggle and volume changes passed; slider interaction preserved its DOM node. Single-player simulation remained frozen while soundtrack playback advanced. Synthetic controller capture remapped Throttle to button 6 and saved it, Defaults restored the mapping, and controller D-pad Down moved DOM focus from Throttle to Brake.",
+        "A desktop two-client host relay browser check with local source overrides kept both rides moving and simulation live while the Lobby overlay was open; Controls, Players, Lobby navigation, and leave cleanup worked. The final extended pause-menu test passed without browser errors."
+      ],
+      "limitation": "Host-only authored-browser evidence; the multiplayer check used browser route overrides and is not a public deployment. Physical-device behavior, native pause fidelity, and full-game parity are not established.",
+      "image": "/devlog-images/pause-submenu-polish-host-checkpoint-3aed998d.png",
+      "caption": "Music submenu on a 390 px portrait viewport, with paginated soundtrack controls and visible Back, music, and volume actions."
     },
     {
       "id": "public-uphill-chase-camera-verification-afa2e8f9",
