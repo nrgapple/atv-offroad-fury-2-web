@@ -8,6 +8,8 @@
 use serde::{Deserialize, Serialize};
 
 mod codec;
+mod compact;
+pub use compact::{AnimationState, Delta, apply_delta, delta};
 mod smoothing;
 mod transform;
 
@@ -15,7 +17,7 @@ pub use codec::{decode, encode};
 pub use smoothing::{PoseBuffer, SampledPose, SmoothingConfig};
 pub use transform::Transform;
 
-pub const VERSION: u8 = 2;
+pub const VERSION: u8 = 3;
 pub const MAX_PLAYERS: usize = 4;
 /// One-based lobby IDs reference this authored catalog; source resource keys
 /// remain stable even when their browser display names change.
@@ -121,6 +123,8 @@ pub struct Platform {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
+    #[serde(default)]
+    pub animation: Option<Box<AnimationState>>,
     pub peer: PeerId,
     pub sequence: u32,
     pub time_ms: u32,
@@ -151,6 +155,7 @@ pub struct Snapshot {
 impl Default for Snapshot {
     fn default() -> Self {
         Self {
+            animation: None,
             peer: 0,
             sequence: 0,
             time_ms: 0,
@@ -191,7 +196,8 @@ pub enum Packet {
         map: u16,
         started: bool,
     },
-    Snapshot(Snapshot),
+    Snapshot(Box<Snapshot>),
+    Delta(Box<Delta>),
     Leave {
         peer: PeerId,
     },
@@ -234,6 +240,9 @@ impl Snapshot {
                 return Err(Error::InvalidValue);
             }
             platform.transform.validate()?;
+        }
+        if let Some(a) = &self.animation {
+            a.validate()?;
         }
         self.atv.validate()?;
         self.rider.validate()?;

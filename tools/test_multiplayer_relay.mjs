@@ -97,7 +97,7 @@ try {
   const version = await request('/multiplayer/version');
   assert.equal(version.status, 200);
   const identity = await version.json();
-  assert.equal(identity.protocol, 2);
+  assert.equal(identity.protocol, 3);
   assert.ok(identity.commit && identity.wasmSha256);
   report.identity = identity;
   await rejectedSocket('ABCD2345', 404);
@@ -179,7 +179,7 @@ try {
   check('Malformed binary packet closes only offender');
   const rate = await connect(code, player('Rate probe'));
   const ping = encode({ Ping: { nonce: 42 } });
-  for (let i = 0; i < 125; i++) rate.send(ping);
+  for (let i = 0; i < 500; i++) rate.send(ping);
   assert.equal((await closed(rate)).code, 1008);
   check('Live per-peer message rate limit enforced');
   guest.send(encode({ Snapshot: { ...snapshot, sequence: 8, atv_model: 1 } }));

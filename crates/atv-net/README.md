@@ -1,72 +1,114 @@
 # Authored Rust multiplayer core
 
-This crate is shared by the WASM game and Rust lobby relay. It implements a new
-browser multiplayer baseline, not the original PS2 network protocol. It contains
-no recovered game resources.
+This crate is shared by the WASM game and Rust lobby relay. It implements an
+authored browser multiplayer baseline, not the original PS2 network protocol.
+It contains no recovered game resources.
 
-Version 1 packets begin with `ATVM`, one-byte version and message kind, and a
-little-endian `u16` payload byte length. All remaining numbers are little-endian.
-The decoder rejects trailing bytes, unsupported versions/enums, nonfinite floats,
-invalid transforms, duplicate roster slots, invalid room codes and oversized
-allocations. Four players, 64 ATV nodes, 64 rider nodes and 8,192 bytes per packet
-are hard limits. Names are at most 32 UTF-8 bytes and exclude control characters.
-Room codes contain eight uppercase letters or digits; generated codes omit ambiguous glyphs. Lobby map IDs
-are bounded to 1–9, with source keys `env01` through `env08`, then `free05`
-(Vancouver Ridge). `map_environment` and `next_map` share this Rust catalog.
+## Protocol
+
+Protocol v3 packets begin with `ATVM`, a one-byte version and message kind, and a
+little-endian `u16` payload length. Remaining integers are little-endian. The
+decoder rejects trailing bytes, unsupported versions/enums, nonfinite floats,
+invalid transforms, duplicate roster slots, invalid room codes, and oversized
+allocations. Rooms allow four players, at most 64 ATV nodes, 64 rider nodes, and
+8,192 bytes per packet. Names are at most 32 UTF-8 bytes and exclude control
+characters. Room codes have eight uppercase letters or digits; generated codes
+omit ambiguous glyphs. Lobby map IDs are bounded to 1–9, with source keys
+`env01`–`env08`, then `free05` (Vancouver Ridge). `map_environment` and
+`next_map` share this Rust catalog.
 
 | Kind | Payload |
 | --- | --- |
 | 1 Join | room code, participant |
 | 2 Welcome | assigned peer, room code, lobby |
 | 3 Lobby | host, epoch, map, started, participants |
-| 4 Snapshot | peer, sequence, sender milliseconds, model IDs, ATV transform/velocities, ATV/rider node poses, rider state/transform/velocity, engine RPM/throttle/speed, crash serial |
+| 4 LegacySnapshot | full pose format retained for codec/relay regression fixtures |
 | 5 Leave | peer |
 | 6 Ping | nonce |
 | 7 Pong | nonce |
 | 8 SetLobby | expected host epoch, map, started |
+| 9 CompactSnapshot | independent compact full state |
+| 10 SnapshotDelta | changed blocks against an acknowledged baseline |
 
-A transform is thirteen binary32 values: position XYZ, rotation WXYZ, scale XYZ
-and three upper-triangular shear coefficients (XY, XZ, YZ).
-Node poses are **model-space**, as in the game's current pose renderer, rather
-than hierarchical local transforms. Matrix helpers use QR decomposition to preserve signed scale and source
-mechanical linkage shear; perspective and degenerate bases are rejected. Source-body quaternions use WXYZ; transport retains that
-order. Position and linear velocity use the game's feet and feet/second units;
-angular velocity uses world radians/second. The common 27 ATV + 18 rider pose is
-2,520 bytes. A 27-joint female rider makes it 2,988 bytes. At 20 Hz these are about
-50 and 60 KB/s per sender before WebSocket/TLS overhead. This baseline replicates
-visual poses; it does not introduce shared collision physics or race authority.
+Protocol v3 sends no per-node pose matrices. Compact full snapshots are 135 bytes;
+a moving-platform transform adds 20 bytes. Changed-block patches carry only
+changed state; a no-change baseline patch is 26 bytes. World positions remain
+exact binary32 values. Orientation, velocity, and animation weights are
+quantized. On each client, Rust samples its ATV mechanical linkage and rider
+animation recipe to reconstruct node poses. Remote Air/Bounce clips advance on
+independent local clocks while detached rider root, velocity, crash state, and
+recovery are replicated. This is an authored presentation approximation, not
+complete PS2 animation or physics equivalence.
 
-The relay must derive sender identity from the authenticated socket/room slot,
-check model IDs against its roster and authorize host commands. Syntactic packet
-validation is not an authority or anti-cheat policy. Reusing a peer slot requires
-clearing that peer's interpolation buffer.
+When a changed-block patch would save no bytes, such as when all four blocks
+change, the sender uses an independent full snapshot of the same 135-byte size.
+This avoids relay baseline reconstruction in the tie case; smaller partial
+patches remain in use.
 
-`PoseBuffer::push` validates a snapshot and rejects duplicates/older sequences,
-backward sender time and receiver clock regression. Sender sequence/time rollover
-is handled with wrapping arithmetic. Each buffer retains at most 32 snapshots.
-`sample` maps sender time onto a monotonic receiver clock, interpolates at an 80ms
-default delay with shortest-arc normalized quaternion slerp, and extrapolates
-linear/world-angular movement for at most 100ms. Stale peers are marked after
-one second. Crash/state/model transitions and large teleports snap at their
-presentation time rather than blending rider attachment or unrelated meshes.
-Audio consumers should mute stale peers and deduplicate crash serials per peer.
+Valid values outside a quantized field's representable range use an exact
+binary32 escape rather than clipping or rejecting the value.
+
+Delta baselines advance only after a packet send receipt. The relay caches
+canonical compact state in room attachments for late joins; it does not write
+pose records to SQL. Broadcasts are encoded once and that encoded payload is
+forwarded. Bounded Rust rig/GPU caches evict inactive models and track rig
+revisions. Older open clients use an incompatible packet schema and must reload
+before joining a v3 room.
+
+The sender suppresses unchanged state and sends no movement poses in a solo room.
+Cadence adapts to distance and movement, with up to 20 Hz for near/fast/airborne/
+wrecked movement, 10 Hz for ordinary movement, 5 Hz beyond 300 feet, 1 Hz while
+stationary, and 0.2 Hz during actual browser suspension. The near threshold is
+under 40 feet and fast is over 35 feet/second. Host train synchronization is
+2 Hz. Presence freshness is one second for moving peers, 2.5 seconds for
+stationary compact state, and 15 seconds for suspended compact state. Online
+Pause continues neutral-input physics and does not select the suspension
+cadence. The established train freeze behavior is preserved during actual
+suspension. Host implementation and gate evidence is documented in
+[`research/MULTIPLAYER_EFFICIENCY.md`](../../research/MULTIPLAYER_EFFICIENCY.md);
+the final-build measured probe and four-client rerun passed. The frontend
+regression also passed its title/menu, controller, Tioga, portrait Caribou,
+pause, and Controls routes without a file picker or page errors. Current-main CI
+and public verification remain pending for this checkpoint.
+
+The relay derives sender identity from the authenticated room slot, checks model
+IDs against the roster, and authorizes host commands. Packet syntax validation
+does not provide anti-cheat policy. Reusing a peer slot clears its interpolation
+buffer.
+
+`PoseBuffer::push` validates snapshots and rejects duplicates or older sequences,
+backward sender time, and receiver clock regression. Sequence and sender-time
+rollover use wrapping arithmetic. A buffer retains at most 32 snapshots. Sampling
+maps sender time to a monotonic receiver clock, interpolates at an 80 ms default
+delay with shortest-arc normalized quaternion slerp, and extrapolates linear and
+world-angular movement for at most 100 ms. Stale peers are marked after one
+second. Crash/state/model transitions and large teleports snap at presentation
+time rather than blending rider attachment or unrelated meshes. Audio consumers
+mute stale peers and deduplicate crash serials per peer.
 
 Integration API: `encode(&Packet)`, `decode(&[u8])`, `Snapshot::validate`,
 `Transform::from_column_major`, `Transform::to_column_major`, `parse_room_code`,
-`PoseBuffer::{push,sample,clear}`. Serializable Rust types are provided for control
-UI and renderer integration; the real-time wire format stays bounded binary.
+and `PoseBuffer::{push,sample,clear}`. Serializable Rust types support control UI
+and renderer integration; the real-time wire format remains bounded binary.
 
-Host verification on October 12, 2026: 22 protocol tests and nine adapter tests
-pass, including malformed input, clock/sequence rollover, bounded extrapolation,
-shortest-arc rotation, source affine shear, roster restrictions, slot reuse and
-silent/stale presentation. Strict Clippy, formatting and wasm32 compilation pass.
-An ignored native asset probe initializes all 26 original quad vehicle/wreck
-configurations, samples all 27-node linkages at three steering settings with
-compression, and validates codec round trips. It also samples all 78 selected
-clips at 21 times for each 18-node male and 27-node female rig (1,638 poses each)
-and initializes both complete rider animators through the existing Rust ABI.
-Maximum matrix reconstruction error is 2.69e-7 for quads and 5.37e-7 for riders.
-These checks cover resource compatibility and networking presentation transforms;
-they do not establish complete gameplay, network latency, browser rendering,
-public deployment or original PS2 multiplayer parity. Source assets, the probe
-harness and its detailed report stay in ignored private/work storage.
+## Host implementation evidence
+
+The October 13 host-only efficiency run is recorded in
+[`research/MULTIPLAYER_EFFICIENCY.md`](../../research/MULTIPLAYER_EFFICIENCY.md).
+It measured 133 packets / 17,901 bytes in 10.0114 seconds of driving, 0.2 Hz
+fresh presence during suspension, exact late-join root reconstruction, and no
+solo pose packets. The codec cases retained exact root positions with bounded
+quaternion and angular-velocity quantization error. The host feature/train/
+reconnect gate, final measured probe, final four-client rerun, and frontend
+regression passed. This evidence is not current-main CI or a public release.
+
+Earlier resource-compatibility checks initialized all 26 quad vehicle/wreck
+configurations and sampled the 27-node linkage at three steering settings with
+compression. They sampled all 78 selected clips at 21 times for both the 18-node
+male and 27-node female rig, then initialized both complete rider animators
+through the existing Rust ABI. Maximum matrix reconstruction error was
+2.69e-7 for quads and 5.37e-7 for riders. Those checks cover resource
+compatibility and presentation transforms; they do not establish complete
+gameplay, network latency, browser rendering, public deployment, or original PS2
+multiplayer parity. Source assets, the probe harness, and its detailed report
+remain in ignored private/work storage.

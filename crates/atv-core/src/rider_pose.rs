@@ -165,7 +165,31 @@ pub struct Motion {
     pub animation: crate::animation::Animation,
     pub sampling: crate::animation::Sampling,
 }
+/// Small presentation recipe; poses are reconstructed from already loaded clips.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Recipe {
+    pub clips: [u8; 4],
+    pub count: u8,
+    pub phase: f32,
+    pub first_weight: f32,
+    pub pair_weight: f32,
+    pub look_phase: f32,
+}
+impl Default for Recipe {
+    fn default() -> Self {
+        Self {
+            clips: [4, 0, 0, 0],
+            count: 1,
+            phase: 0.5,
+            first_weight: 0.,
+            pair_weight: 0.,
+            look_phase: -1.,
+        }
+    }
+}
 pub struct Animator {
+    recipe: Recipe,
+
     motions: Vec<Motion>,
     state: State,
     current: crate::animation::Channels,
@@ -232,6 +256,7 @@ impl Animator {
             .position(|node| node.name.eq_ignore_ascii_case("Head"))
             .ok_or("rider Head node is missing")?;
         Ok(Self {
+            recipe: Recipe::default(),
             motions,
             state: State::default(),
             saved: current.clone(),
@@ -272,6 +297,9 @@ impl Animator {
             rider.configure_native_hand_ik(nodes)?;
         }
         Ok(rider)
+    }
+    pub fn recipe(&self) -> Recipe {
+        self.recipe
     }
     pub fn channels(&self) -> crate::animation::Channels {
         self.current.clone()
@@ -512,6 +540,12 @@ impl Animator {
                 self.landing_phase * motion.animation.duration,
                 motion.sampling,
             )?;
+            self.recipe = Recipe {
+                clips: [62 + landing as u8, 0, 0, 0],
+                count: 1,
+                phase: self.landing_phase,
+                ..Recipe::default()
+            };
             self.apply(&target, self.state.snapshot_weight, None)?;
             return Ok(Mode::Landing);
         }
@@ -538,6 +572,12 @@ impl Animator {
             phase.clamp(0., 1.) * motion.animation.duration,
             motion.sampling,
         )?;
+        self.recipe = Recipe {
+            clips: [14 + index as u8, 0, 0, 0],
+            count: 1,
+            phase: phase.clamp(0., 1.),
+            ..Recipe::default()
+        };
         self.apply(&target, self.state.snapshot_weight, None)?;
         Ok(mode)
     }
@@ -597,6 +637,27 @@ impl Animator {
                 pair_weight,
             )?,
         };
+        let mut clips = [0; 4];
+        for (out, clip) in clips.iter_mut().zip(plan.blend.clips()) {
+            *out = *clip as u8;
+        }
+        let (first_weight, pair_weight) = match plan.blend {
+            Blend::Single(_) => (0., 0.),
+            Blend::Pair { first_weight, .. } => (first_weight, 0.),
+            Blend::Four {
+                first_weight,
+                pair_weight,
+                ..
+            } => (first_weight, pair_weight),
+        };
+        self.recipe = Recipe {
+            clips,
+            count: plan.blend.clips().len() as u8,
+            phase: plan.phase,
+            first_weight,
+            pair_weight,
+            look_phase: plan.head_look_phase.unwrap_or(-1.),
+        };
         self.apply(&target, plan.snapshot_weight, None)?;
         if let Some(phase) = plan.head_look_phase {
             let motion = &self.motions[Clip::LookLr as usize];
@@ -608,6 +669,68 @@ impl Animator {
             self.apply(&look, plan.snapshot_weight, Some(self.head))?;
         }
         Ok((plan, self.pose(nodes)?))
+    }
+    pub fn present(
+        &mut self,
+        nodes: &[crate::mesh::Node],
+        recipe: Recipe,
+        dt: f32,
+    ) -> Result<crate::animation::Pose> {
+        if !matches!(recipe.count, 1 | 2 | 4)
+            || recipe.clips.iter().any(|c| *c >= 64)
+            || ![recipe.phase, recipe.first_weight, recipe.pair_weight]
+                .iter()
+                .all(|v| v.is_finite() && (0. ..=1.).contains(v))
+            || !recipe.look_phase.is_finite()
+            || !(-1. ..=1.).contains(&recipe.look_phase)
+            || !dt.is_finite()
+            || dt < 0.
+        {
+            return Err("invalid remote animation recipe".into());
+        }
+        if recipe.clips != self.recipe.clips || recipe.count != self.recipe.count {
+            self.saved = self.current.clone();
+            self.state.snapshot_weight = 1.;
+        }
+        self.state.snapshot_weight = (self.state.snapshot_weight - dt * 4.).max(0.);
+        let motion = |id: u8| -> Result<&Motion> {
+            match id {
+                0..=13 => self.motions.get(id as usize),
+                14..=61 => self.stunt_motions.get(id as usize - 14),
+                62..=63 => self.landing_motions.get(id as usize - 62),
+                _ => None,
+            }
+            .ok_or_else(|| "remote motion is unavailable".into())
+        };
+        let time = motion(recipe.clips[0])?.animation.duration * recipe.phase;
+        let samples = recipe.clips[..recipe.count as usize]
+            .iter()
+            .map(|id| {
+                let m = motion(*id)?;
+                m.animation.sample_channels(nodes, time, m.sampling)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let target = match recipe.count {
+            1 => samples[0].clone(),
+            2 => pair(&samples[0], &samples[1], recipe.first_weight)?,
+            _ => pair(
+                &pair(&samples[0], &samples[1], recipe.first_weight)?,
+                &pair(&samples[2], &samples[3], recipe.first_weight)?,
+                recipe.pair_weight,
+            )?,
+        };
+        self.apply(&target, self.state.snapshot_weight, None)?;
+        if recipe.look_phase >= 0. {
+            let m = &self.motions[Clip::LookLr as usize];
+            let look = m.animation.sample_channels(
+                nodes,
+                recipe.look_phase * m.animation.duration,
+                m.sampling,
+            )?;
+            self.apply(&look, self.state.snapshot_weight, Some(self.head))?;
+        }
+        self.recipe = recipe;
+        self.pose(nodes)
     }
     fn apply(
         &mut self,
@@ -1317,6 +1440,40 @@ mod tests {
             .rotations
             .swap(0, 1);
         assert!(Animator::new(motions, &nodes).is_err());
+    }
+    #[test]
+    fn transmitted_recipe_reconstructs_steady_normal_poses_without_advancing_scores() {
+        let (motions, nodes) = fixture();
+        let mut source = Animator::new(motions, &nodes).unwrap();
+        let mut remote = source.fork_normal(&nodes).unwrap();
+        for (reverse, contact, speed) in [
+            (false, true, 0.),
+            (false, true, 50.),
+            (false, false, 20.),
+            (true, true, 2.),
+        ] {
+            let mut controls = input();
+            controls.reverse_gear = reverse;
+            controls.wheel_contact = contact;
+            controls.local_forward_speed = speed;
+            controls.axes = [0.35, -0.2];
+            controls.crouch = 0.7;
+            source.step(&nodes, controls, 0.25).unwrap();
+            let (_, expected) = source.step(&nodes, controls, 0.25).unwrap();
+            let actual = remote.present(&nodes, source.recipe(), 0.25).unwrap();
+            for (a, b) in actual
+                .world_matrices
+                .iter()
+                .flatten()
+                .zip(expected.world_matrices.iter().flatten())
+            {
+                assert!((a - b).abs() < 0.0001);
+            }
+            assert_eq!(remote.score_frame().committed_points, 0.);
+        }
+        let mut invalid = source.recipe();
+        invalid.clips[0] = 255;
+        assert!(remote.present(&nodes, invalid, 0.01).is_err());
     }
     fn input() -> Input {
         Input {

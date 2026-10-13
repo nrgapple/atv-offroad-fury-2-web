@@ -126,7 +126,16 @@ impl PoseBuffer {
     fn sample_delay(&self, now_ms: u64, delay_ms: u32) -> Option<SampledPose> {
         let first = self.samples.front()?;
         let last = self.samples.back()?;
-        let stale = now_ms.saturating_sub(last.received_ms) >= u64::from(self.config.stale_ms);
+        let freshness = if last.snapshot.animation.as_ref().is_some_and(|a| a.paused) {
+            15_000
+        } else if last.snapshot.animation.is_some()
+            && last.snapshot.velocity.iter().all(|v| v.abs() < 0.5)
+        {
+            2500
+        } else {
+            u64::from(self.config.stale_ms)
+        };
+        let stale = now_ms.saturating_sub(last.received_ms) >= freshness;
         let target = now_ms as f64 - self.offset_ms - f64::from(delay_ms);
         if target <= first.time_ms as f64 {
             return Some(SampledPose {
@@ -215,6 +224,24 @@ fn blend(a: &Snapshot, b: &Snapshot, t: f32) -> Snapshot {
     }
     if let (Some(a), Some(b), Some(out)) = (&a.platform, &b.platform, &mut out.platform) {
         out.transform = a.transform.blend(b.transform, t);
+    }
+    if let (Some(a), Some(b), Some(out)) = (&a.animation, &b.animation, &mut out.animation) {
+        out.steering = a.steering + (b.steering - a.steering) * t;
+        for i in 0..4 {
+            let arc = (b.wheels[i] - a.wheels[i] + std::f32::consts::PI)
+                .rem_euclid(std::f32::consts::TAU)
+                - std::f32::consts::PI;
+            out.wheels[i] = a.wheels[i] + arc * t;
+            out.compression[i] = a.compression[i] + (b.compression[i] - a.compression[i]) * t;
+        }
+        if a.clips == b.clips && a.count == b.count {
+            out.phase = a.phase + (b.phase - a.phase) * t;
+            out.first_weight = a.first_weight + (b.first_weight - a.first_weight) * t;
+            out.pair_weight = a.pair_weight + (b.pair_weight - a.pair_weight) * t;
+            if a.look_phase >= 0. && b.look_phase >= 0. {
+                out.look_phase = a.look_phase + (b.look_phase - a.look_phase) * t;
+            }
+        }
     }
     out.rpm = a.rpm + (b.rpm - a.rpm) * t;
     out.throttle = a.throttle + (b.throttle - a.throttle) * t;

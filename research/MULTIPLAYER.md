@@ -29,25 +29,55 @@ applies only its own response. It is not the original PS2 contact behavior and
 the relay does not reconcile physics. The updated packet schema is incompatible
 with earlier clients; clients must reload before joining a room on this version.
 
-Twenty snapshots per second include source mechanical and rider node matrices,
-quad/rider world poses and velocities, riding/air/crash states, engine telemetry
-and a deduplicated crash serial. QR decomposition retains original suspension
-shear. Rust interpolation uses shortest-arc quaternions and an 80ms presentation
-buffer, with a 100ms extrapolation cap and a one-second stale marker. State changes,
-large teleports, actor changes, slot reuse and lobby epochs reset interpolation.
-The design trades a small remote presentation delay for smoother motion; it
-cannot promise instant remote response or remove Internet latency. WebSockets
-also retain TCP head-of-line blocking. Datagram/WebRTC transport and host/server
-physics reconciliation remain later options once actual measurements justify them.
+Protocol v3 sends compact full snapshots and changed-block deltas rather than
+source node matrices. A full snapshot is 135 bytes; adding a moving-platform
+transform adds 20 bytes, and a no-change baseline patch is 26 bytes. Position
+remains exact binary32; orientation, velocities and animation weights are
+quantized, with an exact binary32 escape for valid values outside a quantized
+field's range. Production uses message kinds 9 (compact full snapshot) and 10
+(baseline delta); kind 4 remains a legacy full-pose format for codec and relay
+regression fixtures. When a changed-block patch would save no bytes, including
+when all four blocks change, the sender chooses an independent full snapshot of
+the same size to avoid relay baseline reconstruction; partial patches remain in
+use. Delta baselines advance only after an actual send receipt. The relay caches
+canonical compact states in room attachments for late joins and encodes each
+broadcast once. It does not store pose updates in SQL. Solo rooms send no
+movement poses.
 
-The full 27-node ATV plus male 18/female 27 poses encode to 2,526/2,994-byte
-snapshot packets. Attaching a moving-platform transform adds 52 bytes. At the
-20Hz target, the base packets are 50.52/59.88 kB/s per sender before protocol/TLS
-overhead; a receiver with three female peers receives about 179.64 kB/s. Browser
-transport drops unsent snapshots when buffered data reaches 32 KiB, allows one
-outstanding snapshot/presentation request and bounds incoming work to 64 messages.
-It never queues old drive inputs or PCM. Rust handles decoder bounds and server
-identity; browser JavaScript is socket, DOM/WebGL and Web Audio API glue.
+Cadence adapts to motion and distance: up to 20 Hz for near, fast, airborne or
+wrecked riders; 10 Hz for ordinary movement; 5 Hz beyond 300 feet; and 1 Hz while
+stationary. Near means under 40 feet; fast means over 35 feet/second. Actual
+browser suspension uses 0.2 Hz presence updates and host train synchronization
+uses 2 Hz. The online Pause menu keeps neutral-input physics running; opening it
+does not count as browser suspension. Presence remains fresh during actual
+suspension, with one-second moving, 2.5-second stationary, and 15-second
+suspended freshness windows; the existing train freeze behavior is retained in
+actual suspension. Unchanged state is suppressed, and resume/state changes
+trigger prompt delivery.
+
+Receiving Rust samples the recovered ATV linkage and rider animation recipes
+locally. Remote Air/Bounce crash clips run on independent local clocks while the
+detached rider root, velocity, crash and recovery states replicate. This reduces
+transport pose data while retaining local crash motion, but does not establish
+source animation-blend equivalence. Rust interpolation keeps shortest-arc
+quaternions, an 80ms presentation buffer, a 100ms extrapolation cap, and a
+one-second stale marker. State changes, large teleports, actor changes, slot
+reuse and lobby epochs reset interpolation. The delay smooths remote motion but
+cannot remove Internet latency; WebSockets retain TCP head-of-line blocking.
+Host/server physics reconciliation and datagram/WebRTC transport remain open.
+
+Counters report bytes, packet/full/delta/suppressed counts and WASM operation
+time separately from JavaScript round-trip time. An October 13 host-only run
+sent 133 packets / 17,901 bytes during 10.0114 seconds of driving (13.2849 Hz),
+with 135- and 117-byte packets. Payload bytes were 94.6717% below a same-count
+2,526-byte male v2 baseline. Each suspended client sent two 135-byte presence
+updates over 11.0119 and 11.0137 seconds and remained fresh; late join placed the
+guest at exactly zero feet from the host root, and a 5.5103-second solo interval
+sent zero pose packets.
+See [measured implementation and limits](MULTIPLAYER_EFFICIENCY.md). This is
+host-only evidence, not a production timing, bandwidth-bill, or public-release
+claim. Protocol v3 is incompatible with old tabs; reload before joining a v3
+room. JavaScript remains socket, DOM/WebGL and Web Audio API glue.
 
 ## Create and join flow
 
@@ -69,17 +99,22 @@ mechanical linkage and material resources, plus the male/female mesh and matchin
 rules are not reconstructed. Exact 25 labels and unlisted ATV06 are documented in
 [model evidence](MULTIPLAYER_MODELS.md). The existing port's default ATV01 is retained.
 
-Remote actors use separate GPU geometry/texture ownership and sender node poses,
-including the detached rider's independent world transform during a wreck. Audio
+Remote actors use separate GPU geometry/texture ownership and locally reconstructed
+node poses, including the detached rider's independently replicated world root
+during a wreck. Inactive model caches evict their bounded Rust/GPU state and rig
+revision changes invalidate old poses. Audio
 uses the selected original per-quad engine banks and recovered spatial arithmetic
 for distance, stereo pan and Doppler. Rust selects samples; Web Audio transports
 local PCM. Crash serials drive original body-impact samples at the rider position.
-While a multiplayer ride is visible, opening the menu or losing focus clears local
-drive input and continues neutral-input simulation, so peers receive the moving
-rider state. Hidden tabs and context loss still suspend local simulation and mark
-outgoing snapshots as paused; stale/left peers lose voices. Per-rider vocal
+While a multiplayer ride is visible, opening the online Pause menu or losing
+focus clears local drive input and continues neutral-input simulation, so peers
+receive the moving rider state. Actual hidden-tab/context suspension uses low-rate
+presence updates and freezes the shared train clock; it does not suspend into a
+pose-stale state. Stale/left peers lose voices. Per-rider vocal
 fidelity, original multiplayer mixer budget, clothing
-presets and original PS2 rendering/animation parity remain unverified.
+presets and original PS2 rendering/animation parity remain unverified. Host-only
+efficiency measurements and pending gates are recorded in
+[MULTIPLAYER_EFFICIENCY.md](MULTIPLAYER_EFFICIENCY.md).
 
 ## Original player indicator evidence
 
@@ -262,3 +297,23 @@ relative error). Public relay diagnostics exposed a Cloudflare callback returnin
 original recovery decision. Query strings are redacted from platform request
 metadata as well as omitted from custom logs. This follow-up passed 16 host relay
 gates and awaits public verification at this checkpoint.
+
+## Host-only efficiency gate (2026-10-13)
+
+The v3 compact/delta codec, adaptive cadence, idle suppression, locally sampled
+ATV/rider animation, and relay/cache efficiencies pass the host implementation
+checks. The final host feature/train/reconnect gate passed: late join retained a
+custom code; recovery after close 1012 and owner reload succeeded; nearby spawn
+and the 342×64 mobile target were present; owner-local contact counts reached 9
+and 40; both head-on crashes notified peers; and cleanup passed. Across 20 train
+samples, maximum relative position error was 0.737246 feet. The final-build
+measured probe and four-client rerun passed. Each client recorded 39 GPU draws
+for three remote actors and three engine voices; movement reached all observers
+and host end cleared all clients with no HTTP or page errors. The 12-second
+same-host timing sample recorded 71.82–73.76 FPS, 27.0–27.2 ms frame p95,
+2.03–2.30 ms render CPU, 2.0–3.2 ms physics round trip, and 1–5 ms relay round
+trip. These timings do not represent geographic latency. The frontend regression
+passed the original title/menu, controller, Tioga, portrait Caribou load, pause,
+and Controls routes without a file picker or page errors. All host gates now
+pass; current-main CI and public verification remain pending.
+See [efficiency evidence and limits](MULTIPLAYER_EFFICIENCY.md).

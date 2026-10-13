@@ -99,7 +99,12 @@ pub fn synchronize_train(sim: &mut Simulation, now: u64, dt: f32) -> Result<bool
             return None;
         }
         let (s, received) = c.buffers.get(&lobby.host)?.latest()?;
-        if now.saturating_sub(received) > 1000 {
+        let freshness = if s.animation.as_ref().is_some_and(|a| a.paused) {
+            15000
+        } else {
+            1000
+        };
+        if now.saturating_sub(received) > freshness {
             return None;
         }
         Some((

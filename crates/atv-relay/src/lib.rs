@@ -39,6 +39,8 @@ struct Connection {
     peer: u8,
     player: Option<Participant>,
     sequence: Option<u32>,
+    #[serde(default)]
+    snapshot: Option<atv_net::Snapshot>,
     last_seen_ms: f64,
     window_ms: f64,
     messages: u16,
@@ -527,6 +529,7 @@ impl DurableObject for LobbyRoom {
             peer,
             player: None,
             sequence: None,
+            snapshot: None,
             last_seen_ms: instant,
             window_ms: instant,
             messages: 0,
@@ -570,6 +573,19 @@ impl DurableObject for LobbyRoom {
             }
             Err(_) => return self.close_socket(&ws, 1008, "Invalid multiplayer packet"),
         };
+        let packet = match packet {
+            Packet::Delta(mut d) => {
+                d.snapshot.peer = connection.peer;
+                let Some(base) = connection.snapshot.as_ref() else {
+                    return self.close_socket(&ws, 1008, "Snapshot baseline missing");
+                };
+                match atv_net::apply_delta(&d, base) {
+                    Ok(s) => Packet::Snapshot((s).into()),
+                    Err(_) => return self.close_socket(&ws, 1008, "Invalid snapshot baseline"),
+                }
+            }
+            p => p,
+        };
         match packet {
             Packet::Join { code, mut player }
                 if connection.player.is_none() && code == room.code =>
@@ -604,6 +620,14 @@ impl DurableObject for LobbyRoom {
                     },
                 )?;
                 self.broadcast(&Packet::Lobby(lobby), Some(&ws))?;
+                // Give a late joiner current state even if all peers are paused.
+                for (peer, other) in self.connections()? {
+                    if peer != ws
+                        && let Some(s) = other.snapshot
+                    {
+                        send(&ws, &Packet::Snapshot(s.into()))?;
+                    }
+                }
             }
             Packet::Snapshot(mut snapshot) if connection.player.is_some() => {
                 if !room.started {
@@ -625,6 +649,8 @@ impl DurableObject for LobbyRoom {
                 {
                     connection.sequence = Some(snapshot.sequence);
                     snapshot.peer = connection.peer;
+                    // Persist only bounded attachment state; no SQL writes per pose.
+                    connection.snapshot = Some(snapshot.as_ref().clone());
                     self.broadcast(&Packet::Snapshot(snapshot), Some(&ws))?;
                 }
             }
@@ -840,6 +866,7 @@ mod tests {
             peer: 0,
             player: None,
             sequence: None,
+            snapshot: None,
             last_seen_ms: 0.,
             window_ms: 0.,
             messages: 0,
@@ -878,6 +905,7 @@ mod tests {
                 atv_model: 26,
                 rider_model: 1,
             }),
+            snapshot: None,
             sequence: Some(u32::MAX),
             last_seen_ms: 555.,
             window_ms: 500.,
