@@ -1,9 +1,10 @@
 // Opt-in real-content Rust/WASM + Rust/workerd multiplayer integration.
 import assert from 'node:assert/strict';
+import { ENVIRONMENTS } from '../web/launch.js';
 import {createRequire} from 'node:module';
 const{chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
 const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4186';
-const map=Number(process.env.ATV_MP_MAP||1);assert.ok(Number.isInteger(map)&&map>=1&&map<=9,'ATV_MP_MAP must be 1..9');
+const map=Number(process.env.ATV_MP_MAP||1);assert.ok(Number.isInteger(map)&&map>=1&&map<=ENVIRONMENTS.length,'ATV_MP_MAP must be 1..40');
 const browser=await chromium.launch({headless:true,args:process.env.ATV_BROWSER_GPU==='metal'?['--enable-gpu','--use-angle=metal']:[]});const errors=[];
 const a=await browser.newPage({viewport:{width:1280,height:896},hasTouch:true}),b=await browser.newPage({viewport:{width:1280,height:896},hasTouch:true});
 for(const page of[a,b]) {page.on('pageerror',e=>errors.push(e.message));await page.addInitScript(()=>{Object.defineProperty(document,'hasFocus',{value:()=>true});});}
@@ -25,7 +26,7 @@ try{
    await button(a,'Next environment').click();
    await a.waitForFunction(expected=>window.atvTerrainStatus.multiplayer?.state.lobby?.map===expected,selected+1,{timeout:15000});
  }
- assert.equal((await state(a)).multiplayer.state.environment,map===9?'free05':`env${String(map).padStart(2,'0')}`);
+ assert.equal((await state(a)).multiplayer.state.environment,ENVIRONMENTS[map-1]);
  if(process.env.ATV_MP_SCREENSHOT)await a.screenshot({path:process.env.ATV_MP_SCREENSHOT.replace('.png','-lobby.png')});
  await a.bringToFront();await button(a,'Ride together').click();
  if(process.env.ATV_MP_LEAVE_DURING_LOAD==='1') {
@@ -41,7 +42,7 @@ try{
  for(const page of[a,b])await page.waitForFunction(()=>window.atvTerrainStatus.multiplayer?.remote.length===1 && window.atvTerrainStatus.multiplayerDraws>0 || window.atvTerrainStatus.multiplayerError,null,{timeout:60000});
  console.log('CONNECTED',JSON.stringify([await state(a),await state(b)].map(s=>({model:s.playerModel,net:s.multiplayer.state,draws:s.multiplayerDraws,error:s.multiplayerError,peer:s.multiplayer.remote.map(p=>({id:p.peer,position:p.position,state:p.rider_state,nodes:p.rider_node_matrices.length}))}))));
  for(const page of[a,b]) {let s=await state(page);assert.equal(s.multiplayerError,undefined);assert.equal(s.glError,0);assert.equal(s.multiplayer.remote.length,1);assert.ok(s.multiplayerDraws>0);}
- for(const page of[a,b]) {const s=await state(page);assert.equal(s.multiplayer.state.lobby.map,map);assert.equal(s.multiplayer.state.environment,map===9?'free05':`env${String(map).padStart(2,'0')}`);if(map===9)assert.match(s.source,/free05/i);}
+ for(const page of[a,b]) {const s=await state(page);assert.equal(s.multiplayer.state.lobby.map,map);assert.equal(s.multiplayer.state.environment,ENVIRONMENTS[map-1]);if(map===9)assert.match(s.source,/free05/i);}
  if(process.env.ATV_MP_SCREENSHOT){await a.screenshot({path:process.env.ATV_MP_SCREENSHOT.replace('.png','-start.png')});await b.screenshot({path:process.env.ATV_MP_SCREENSHOT.replace('.png','-guest.png')});}
  const initial=(await state(b)).multiplayer.remote[0].position;
  await a.bringToFront();await a.evaluate(()=>window.dispatchEvent(new Event('focus')));await a.keyboard.down('KeyW');await a.waitForFunction(()=>window.atvTerrainStatus.frame?.applied_input?.throttle>.5,null,{timeout:15000}); await b.waitForFunction(initial=>{const p=window.atvTerrainStatus.multiplayer?.remote[0]?.position;return p&&Math.hypot(...p.map((v,i)=>v-initial[i]))>3;},initial,{timeout:30000});await a.keyboard.up('KeyW');await a.waitForTimeout(250);

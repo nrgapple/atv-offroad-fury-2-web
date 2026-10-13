@@ -479,7 +479,7 @@ fn qr_decomposition_preserves_affine_linkage_shear_and_interpolates_it() {
 }
 
 #[test]
-fn ninth_map_control_and_roster_roundtrip_without_changing_wire_layout() {
+fn all_map_control_and_roster_roundtrip_without_changing_wire_layout() {
     for map in 1..=MAX_MAP_ID {
         let control = Packet::SetLobby {
             epoch: 7,
@@ -506,7 +506,7 @@ fn ninth_map_control_and_roster_roundtrip_without_changing_wire_layout() {
 }
 #[test]
 fn unsupported_maps_are_rejected_by_encoder_and_untrusted_wire_decoder() {
-    for map in [0, 10, 255, u16::MAX] {
+    for map in [0, MAX_MAP_ID + 1, 255, u16::MAX] {
         assert!(!valid_map(map));
         assert_eq!(
             encode(&Packet::SetLobby {
@@ -549,8 +549,11 @@ fn environment_catalog_and_map_cycle_are_bounded_and_keep_source_keys() {
         assert_eq!(next_map(id), Some(id + 1));
     }
     assert_eq!(map_environment(9), Some("free05"));
-    assert_eq!(next_map(9), Some(1));
-    for invalid in [0, 10, u16::MAX] {
+    assert_eq!(next_map(9), Some(10));
+    assert_eq!(map_environment(40), Some("game01"));
+    assert_eq!(map_environment(39), Some("training"));
+    assert_eq!(next_map(40), Some(1));
+    for invalid in [0, MAX_MAP_ID + 1, u16::MAX] {
         assert_eq!(map_environment(invalid), None);
         assert_eq!(next_map(invalid), None);
     }

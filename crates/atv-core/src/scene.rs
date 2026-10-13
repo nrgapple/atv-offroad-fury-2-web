@@ -341,15 +341,38 @@ pub(crate) fn document(data: &[u8]) -> Result<PhysicsData> {
         return Err("invalid scene text extent".into());
     }
     let source = std::str::from_utf8(data).map_err(|_| "scene text is not UTF-8")?;
-    let clean = source
-        .lines()
-        .map(scene_line)
+    let mut lines = Vec::new();
+    let mut section = String::new();
+    for line in source.lines().map(scene_line) {
+        // NAT05 ships a bracketed header split by an inserted assignment.
+        // Consume the whole bracketed token as an unknown section, preserving
+        // default lookup behavior instead of inventing a valid TerrainZone2.
+        if !section.is_empty() {
+            section.push(' ');
+            section.push_str(&line);
+            if line.contains(']') {
+                lines.push(std::mem::take(&mut section));
+            }
+        } else if line.starts_with('[') && !line.contains(']') {
+            section = line;
+        } else {
+            lines.push(line);
+        }
+    }
+    if !section.is_empty() {
+        return Err("unterminated scene section".into());
+    }
+    let clean = lines
+        .into_iter()
         // Native indexed readers return their default for blank template keys.
         // FREE05 deliberately leaves WaterFile empty: it is a dry venue.
         .filter(|line| {
-            !line
-                .split_once('=')
-                .is_some_and(|(_, value)| value.is_empty())
+            // Shipped venue templates contain bare authoring notes. Indexed
+            // config lookup ignores those lines; keep the generic PHY strict.
+            (line.is_empty() || line.starts_with('[') || line.contains('='))
+                && !line
+                    .split_once('=')
+                    .is_some_and(|(_, value)| value.is_empty())
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -393,8 +416,10 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
         if name.is_empty() || name.len() > 50 || name.contains(['/', '\\', ':']) {
             return Err("unsupported scene model name".into());
         }
-        let position = required_vector(&data, &section, "Position")?;
-        let look = required_vector(&data, &section, "LookVector")?;
+        // 002064f0 supplies the 0044f120 vectors when model keys are absent.
+        // SX13 intentionally omits LookVector on several skyline buildings.
+        let position = optional_vector(&data, &section, "Position")?.unwrap_or([0.; 3]);
+        let look = optional_vector(&data, &section, "LookVector")?.unwrap_or([0., 0., 1.]);
         let up = optional_vector(&data, &section, "UpVector")?;
         models.push(StaticModel {
             name: name.to_owned(),
@@ -525,6 +550,59 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn scene_templates_ignore_bare_notes_without_relaxing_physics_assignments() {
+        let mode = b"[SceneInfo]\nBare authoring note\nDefaultStartPosition=5,6,7\nDefaultStartDirection=1,0,0\n";
+        let scene = parse_with_start(SOURCE.as_bytes(), Some(mode)).unwrap();
+        assert_eq!(scene.start_position, [5., 6., 7.]);
+        assert!(PhysicsData::parse(mode).is_err());
+        assert!(
+            document(b"[SceneInfo]\nDefaultStartPosition=NaN,0,0\n")
+                .unwrap()
+                .vector3("SceneInfo", "DefaultStartPosition")
+                .is_err()
+        );
+    }
+    #[test]
+    fn split_unknown_scene_section_does_not_repair_or_leak_zone_assignments() {
+        let source = b"[TerrainZone1]\nSurfaceFriction=0.7\n[TerrainZone2\nGenerateTireTrack=T]\nSurfaceFriction=0.2\n[TerrainZone3]\nSurfaceFriction=0.9\n";
+        let data = document(source).unwrap();
+        assert_eq!(
+            data.first_scalar("TerrainZone1", "SurfaceFriction")
+                .unwrap(),
+            0.7
+        );
+        assert!(
+            data.first_scalar("TerrainZone2", "SurfaceFriction")
+                .is_err()
+        );
+        assert_eq!(
+            data.first_scalar("TerrainZone3", "SurfaceFriction")
+                .unwrap(),
+            0.9
+        );
+        assert!(PhysicsData::parse(source).is_err());
+        assert!(document(b"[TerrainZone1\nSurfaceFriction=1").is_err());
+    }
+    #[test]
+    fn absent_static_model_vectors_use_native_reader_defaults() {
+        let source = SOURCE.replace("Position=3,4,5\nLookVector=0,0,-1\n", "");
+        let scene = parse(source.as_bytes()).unwrap();
+        assert_eq!(scene.models[0].position, [0.; 3]);
+        assert_eq!(scene.models[0].look, [0., 0., 1.]);
+        assert_eq!(
+            scene.models[0].world_matrix,
+            placement_matrix([0.; 3], [0., 0., 1.], [0., 1., 0.]).unwrap()
+        );
+        assert!(
+            parse(
+                SOURCE
+                    .replace("LookVector=0,0,-1", "LookVector=NaN,0,1")
+                    .as_bytes()
+            )
+            .is_err()
+        );
+    }
     #[test]
     fn ecosystem_transition_distances_use_native_defaults_and_environment_overrides() {
         assert_eq!(
