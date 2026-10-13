@@ -94,6 +94,12 @@ try {
  const maxTrainError=Math.max(...trainSamples.map(s=>s.error));assert(maxTrainError<4,JSON.stringify(trainSamples));
  console.log('TRAIN_RIDER',JSON.stringify({trainSetup,samples:trainSamples.length,maxTrainError}));
  if(process.env.ATV_MP_SCREENSHOT)await b.screenshot({path:process.env.ATV_MP_SCREENSHOT.replace('.png','-train.png')});
+ // Reloading the owner's page uses the grace window; joining the same code
+ // from this tab restores host authority from session storage.
+ await a.reload();await button(a,'Press START').click({timeout:90000});await button(a,'Multiplayer').click();await button(a,'Join lobby').click();
+ await a.getByRole('textbox',{name:'Rider name',exact:true}).fill('Host');await a.getByRole('textbox',{name:'Lobby code',exact:true}).fill(code);await button(a,'Join lobby').click();
+ await Promise.all([ready(a),ready(b)]);assert.equal((await state(a)).multiplayer.state.peer,0);assert.equal((await state(b)).multiplayer.state.code,code);
+ console.log('OWNER_RELOAD',JSON.stringify({code,peer:(await state(a)).multiplayer.state.peer}));
  // A paused guest must still receive current roster/poses. Departure removes it.
  await pause(b);await button(b,'Players').click();await pause(a);await button(a,'Lobby').click();await button(a,'Leave lobby').click();await a.close();
  await b.waitForFunction(()=>!window.atvTerrainStatus.multiplayer.state.code,null,{timeout:15000});assert.equal((await state(b)).multiplayer.remote.length,0);

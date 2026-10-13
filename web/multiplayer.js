@@ -140,7 +140,11 @@ export class Multiplayer {
       audio.remoteFrame(this.remote);
     } catch(e) {this.report(e.message);} finally {this.sampleBusy=false;}
   }
-  close() { clearInterval(this.timer);clearInterval(this.pingTimer);void this.disconnect(false); }
+  close(recoverable=false) {
+    clearInterval(this.timer);clearInterval(this.pingTimer);
+    if(recoverable) { this.generation++;this.socket?.close();this.socket=null; }
+    void this.disconnect(false);
+  }
 }
 
 // Participant order follows original CompassArrow tint slots (002e68e0);

@@ -1590,7 +1590,7 @@ window.addEventListener('pagehide', event => {
     // Back/forward cache retains this page. Its live Rust worker and audio
     // resources must survive too; closing them leaves a restored frozen ATV.
     pageSuspended = true; focused = false; syncAudio();
-  } else { multiplayer?.close(); audio.close(); worker.terminate(); }
+  } else { multiplayer?.close(true); audio.close(); worker.terminate(); }
 });
 window.addEventListener('pageshow', event => {
   if (!event.persisted || !pageSuspended) return;
