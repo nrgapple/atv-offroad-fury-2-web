@@ -9,7 +9,7 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1] / 'web/dist'
 PROJECT = Path(__file__).resolve().parents[1]
 CONTENT = PROJECT / 'private/reports/hosted-content'
-ALLOWED = {'app-icon.svg', 'apple-touch-icon.png', 'app-icon-512.png', 'manifest.webmanifest', 'index.html', 'landing.css', 'landing.js', 'play.html', 'design-system.css', 'game.css', 'game.js', 'race.js', 'multiplayer.js', 'water.js', 'fog.js', 'train.js', 'wheel-effects.js', 'motorcycle-presentation.js', 'hud.js', 'minimap.js', 'diagnostics.js', 'frontend.js', 'touch.js', 'touch.css', 'content.js', 'audio.js', 'music.js', 'deployment.json', 'devlog.html', 'devlog.css', 'devlog.js', 'devlog.json', 'workbench.html', 'style.css', 'app.js', 'worker.js', 'input.js', 'controls.js', 'bindings.js', 'atv_web.wasm'}
+ALLOWED = {'fury-remastered.svg', 'app-icon.svg', 'apple-touch-icon.png', 'app-icon-512.png', 'manifest.webmanifest', 'index.html', 'landing.css', 'landing.js', 'play.html', 'design-system.css', 'game.css', 'game.js', 'race.js', 'multiplayer.js', 'water.js', 'fog.js', 'train.js', 'wheel-effects.js', 'motorcycle-presentation.js', 'hud.js', 'minimap.js', 'diagnostics.js', 'frontend.js', 'touch.js', 'touch.css', 'content.js', 'audio.js', 'music.js', 'deployment.json', 'devlog.html', 'devlog.css', 'devlog.js', 'devlog.json', 'workbench.html', 'style.css', 'app.js', 'worker.js', 'input.js', 'controls.js', 'bindings.js', 'atv_web.wasm'}
 
 class StaticServer(ThreadingHTTPServer):
     # ES-module startup opens more connections than Python's default five-slot

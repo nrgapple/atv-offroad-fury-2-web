@@ -2492,9 +2492,24 @@
       "limitation": "Host browser verification only. The reproduction establishes a plausible stale-cache cause for mixed UI, not the cache state of the user’s device. The screenshot is not a public deployment or physical-phone capture. Public deployment verification remains future work; physical-device behavior and full native parity remain unverified.",
       "image": "/devlog-images/cache-versioning-prevents-mixed-minimap-and-hud-assets-6135d1c8.png",
       "caption": "Host Chromium capture after asset URL versioning: circular top-right minimap with integrated MPH and no duplicate native speed meter. Not a public deployment or physical-phone capture."
+    },
+    {
+      "id": "fury-remastered-vector-branding-checkpoint-ad06cb56",
+      "timestamp": "2026-10-13T17:11:30.300758+00:00",
+      "recorded_at": "2026-10-13T17:11:54.730334+00:00",
+      "kind": "build",
+      "title": "FURY REMASTERED vector branding checkpoint",
+      "summary": "A new path-only SVG wordmark gives the browser app a distinct FURY REMASTERED identity, with red/chrome/gold slanted lettering and a compact F icon. The branding is connected to the title/loading views, dev log and app metadata; the desktop title capture shows the updated start screen.",
+      "details": [
+        "Authored web/fury-remastered.svg and connected the mark, app icon, metadata and page styling across the game and dev log.",
+        "WASM release build, make verify, six ui_menu Rust tests, cargo fmt, nine release tests, app identity checks, and JavaScript/Python syntax checks passed. CUA verified title → Start → main and mobile layout fit."
+      ],
+      "limitation": "Host-only branding checkpoint. It does not claim gameplay changes or an exact reproduction of the original logo; physical iOS remains unverified. FURY REMASTERED is the working name pending user feedback.",
+      "image": "/devlog-images/fury-remastered-vector-branding-checkpoint-ad06cb56.png",
+      "caption": "Host Chromium title screen with the new FURY REMASTERED SVG wordmark and start control at 1280×720."
     }
   ],
-  "updated_at": "2026-10-13T15:44:36.469338+00:00",
+  "updated_at": "2026-10-13T17:11:54.730334+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
