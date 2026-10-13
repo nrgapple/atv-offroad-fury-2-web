@@ -354,14 +354,15 @@ pub fn decode_height_pst(data: &[u8]) -> Result<(usize, Vec<u8>)> {
     result.ok_or_else(|| "missing water height pixels".into())
 }
 
-/// Live surface for the connected scenes' one-frame, zero-wake/displacement
-/// profiles. Other authored profiles fail rather than silently losing their field.
+/// Live zero-wake/displacement surface. All authored height frames stay resident;
+/// only a changed source frame pair is copied into the physics sampler.
 #[derive(Debug, Clone)]
 pub struct LiveField {
     pub definition: Definition,
     pub swell: SwellState,
     pub states: Vec<WaveState>,
     pub waves: Vec<SignatureWave>,
+    pub frames: Vec<Vec<Vec<u8>>>,
 }
 impl LiveField {
     pub fn new(
@@ -374,21 +375,30 @@ impl LiveField {
         }
         let mut states = Vec::new();
         let mut waves = Vec::new();
+        let mut frames = Vec::new();
         for def in definition
             .waves
             .iter()
             .filter(|wave| wave.height_channel && !wave.bump_only)
         {
-            if def.frames != 1 || def.frames_per_second != 0. {
-                return Err("live water profile requires animated frame-blend integration".into());
-            }
             for (channel, positive) in [("HeightNeg", false), ("HeightPos", true)] {
-                let path = format!(
-                    "{}/{}0000{channel}.pst",
-                    directory.trim_end_matches(['/', '\\']),
-                    def.filename
-                );
-                let (dimension, pixels) = decode_height_pst(&load(&path)?)?;
+                let mut sequence = Vec::with_capacity(def.frames);
+                let mut dimension = 0;
+                for frame in 0..def.frames {
+                    let path = format!(
+                        "{}/{}{:04}{channel}.pst",
+                        directory.trim_end_matches(['/', '\\']),
+                        def.filename,
+                        frame
+                    );
+                    let (size, pixels) = decode_height_pst(&load(&path)?)?;
+                    if frame != 0 && dimension != size {
+                        return Err("water animation frame dimensions differ".into());
+                    }
+                    dimension = size;
+                    sequence.push(pixels);
+                }
+                let pixels = sequence[0].clone();
                 let state = WaveState::new(def, dimension)?;
                 waves.push(SignatureWave {
                     origin: state.sampled_origin,
@@ -405,6 +415,7 @@ impl LiveField {
                     second_frame: pixels,
                 });
                 states.push(state);
+                frames.push(sequence);
             }
         }
         if waves.is_empty() {
@@ -415,6 +426,7 @@ impl LiveField {
             swell: SwellState::default(),
             states,
             waves,
+            frames,
         })
     }
     /// Runs native update-stage clocks. The prepared signature origins remain
@@ -426,8 +438,27 @@ impl LiveField {
             self.definition.swell_period,
             dt,
         )?;
-        for (state, wave) in self.states.iter_mut().zip(&self.waves) {
-            state.advance(wave.width, 0., 1, dt, true)?;
+        let definitions = self
+            .definition
+            .waves
+            .iter()
+            .filter(|wave| wave.height_channel && !wave.bump_only)
+            .flat_map(|wave| [wave, wave]);
+        for (((state, wave), frames), def) in self
+            .states
+            .iter_mut()
+            .zip(&mut self.waves)
+            .zip(&self.frames)
+            .zip(definitions)
+        {
+            let previous = (state.first_frame, state.second_frame);
+            state.advance(wave.width, def.frames_per_second, def.frames, dt, true)?;
+            //00198080 publishes frame pointers at update time, before the next
+            //render preparation changes origins. No copies on ordinary steps.
+            if previous != (state.first_frame, state.second_frame) {
+                wave.first_frame.clone_from(&frames[state.first_frame]);
+                wave.second_frame.clone_from(&frames[state.second_frame]);
+            }
         }
         Ok(())
     }
@@ -480,6 +511,49 @@ mod tests {
         assert_eq!(state.sampled_origin, [0.; 2]);
         state.prepare_surface(def.position).unwrap();
         assert_eq!(state.sampled_origin, [-4.375, 7.703125]);
+    }
+    #[test]
+    fn live_animation_publishes_frame_pair_before_prepared_origin_and_wraps() {
+        let definition = Definition::parse(b"[General Information]\nWaterBaseHeight=20\nWakeScale=0\nWaterHeightRange=0\nNumSignatureWaves=1\n[Signature Wave 1]\nfilename=test\nwidthX=16\nwidthZ=16\nVelocityX=1\nnumFrames=3\nfps=4\nscale=16\n").unwrap();
+        let mut requested = vec![];
+        let mut field = LiveField::new(definition, "Sigs", |path| {
+            requested.push(path.to_owned());
+            let frame = path.split("test").nth(1).unwrap()[..4]
+                .parse::<u8>()
+                .unwrap();
+            let pixel = if path.contains("HeightPos") {
+                10 + frame * 10
+            } else {
+                0
+            };
+            let mut pst = vec![];
+            for word in [1u32, 1, 1] {
+                pst.extend_from_slice(&word.to_le_bytes());
+            }
+            pst.extend_from_slice(&[0; 1024]);
+            for word in [2u32, 2, 0, 0] {
+                pst.extend_from_slice(&word.to_le_bytes());
+            }
+            pst.extend_from_slice(&[pixel; 4]);
+            Ok(pst)
+        })
+        .unwrap();
+        assert_eq!(requested.len(), 6);
+        field.advance(0.375).unwrap();
+        assert_eq!(field.states[0].first_frame, 1);
+        assert_eq!(field.states[0].second_frame, 2);
+        assert_eq!(field.states[0].first_frame_weight, 0.5);
+        assert_eq!(field.waves[1].first_frame, [20; 4]);
+        assert_eq!(field.waves[1].second_frame, [30; 4]);
+        assert_eq!(field.waves[1].origin, [0.; 2]);
+        //Physics retains its shared weight1/0, independently of normal blending.
+        assert_eq!(field.height([0., 20., 0.], false).unwrap(), 21.25);
+        field.prepare_surface().unwrap();
+        assert_eq!(field.waves[1].origin, [3., 0.]);
+        field.advance(0.375).unwrap();
+        assert_eq!(field.states[0].first_frame, 0);
+        assert_eq!(field.states[0].second_frame, 1);
+        assert_eq!(field.waves[1].first_frame, [10; 4]);
     }
     #[test]
     fn no_height_bytes_are_optional_in_live_field() {
