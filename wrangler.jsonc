@@ -26,7 +26,9 @@
     }
   ],
   "vars": {
-    "GAME_ORIGIN": "https://atv-offroad-fury-2.champtoday.workers.dev"
+    "GAME_ORIGIN": "https://furyremastered.com",
+    "GAME_ORIGINS": "https://furyremastered.com,https://atv-offroad-fury-2.champtoday.workers.dev",
+    "CANONICAL_ORIGIN": "https://furyremastered.com"
   },
   "durable_objects": {
     "bindings": [
@@ -42,6 +44,18 @@
       "new_sqlite_classes": [
         "LobbyRoom"
       ]
+    }
+  ],
+  "routes": [
+    {
+      "pattern": "furyremastered.com",
+      "zone_id": "ea0921ec471b2a7de78838cdbaeccb78",
+      "custom_domain": true
+    },
+    {
+      "pattern": "www.furyremastered.com",
+      "zone_id": "ea0921ec471b2a7de78838cdbaeccb78",
+      "custom_domain": true
     }
   ]
 }

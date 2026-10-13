@@ -57,7 +57,7 @@ jobs:
       deployments: write
     environment:
       name: production
-      url: https://atv-offroad-fury-2.champtoday.workers.dev/
+      url: https://furyremastered.com/
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -83,6 +83,8 @@ jobs:
       - name: Verify public commit, application hashes and dev log
         run: |
           python3 tools/verify_ci_deployment.py --release work/release --commit "$GITHUB_SHA" \
+            --url https://furyremastered.com/
+          python3 tools/verify_ci_deployment.py --release work/release --commit "$GITHUB_SHA" \
             --url https://atv-offroad-fury-2.champtoday.workers.dev/
       - name: Record deployment links and result
         if: always()
@@ -93,7 +95,7 @@ jobs:
             echo "## Production deployment: $DEPLOYMENT_RESULT"
             echo "Commit: $GITHUB_SHA"
             echo ""
-            echo "[Public HTTPS game](https://atv-offroad-fury-2.champtoday.workers.dev/) · [Screenshot dev log](https://atv-offroad-fury-2.champtoday.workers.dev/devlog.html)"
+            echo "[Public HTTPS game](https://furyremastered.com/) · [Screenshot dev log](https://furyremastered.com/devlog.html)"
             echo ""
             echo "[GitHub deployment history](https://github.com/$GITHUB_REPOSITORY/deployments) · [This Actions run](https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
             echo ""

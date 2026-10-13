@@ -34,8 +34,16 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
+    if (env.CANONICAL_ORIGIN && url.hostname === `www.${new URL(env.CANONICAL_ORIGIN).hostname}`) {
+      const target = new URL(env.CANONICAL_ORIGIN);
+      target.pathname = path;
+      target.search = url.search;
+      return Response.redirect(target.href, 308);
+    }
     if (path.startsWith('/multiplayer/')) {
-      if (request.headers.get('Origin') !== (env.GAME_ORIGIN ?? url.origin)) return new Response('Origin denied', {status:403});
+      const origin = request.headers.get('Origin');
+      const allowed = (env.GAME_ORIGINS ?? env.GAME_ORIGIN ?? url.origin).split(',').map(value => value.trim()).filter(Boolean);
+      if (!origin || !allowed.includes(origin)) return new Response('Origin denied', {status:403});
       if (request.method !== 'GET' && request.method !== 'POST') return new Response('Method not allowed', {status:405});
       if (!env.MULTIPLAYER) return new Response('Multiplayer unavailable', {status:503});
       return env.MULTIPLAYER.fetch(request);

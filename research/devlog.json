@@ -2380,9 +2380,23 @@
       "limitation": "Host-only checkpoint; not published. The source bank component and animation resources are recovered, while roll-axis ownership, contact/IK integration and the controller remain authored adapters or unfinished work. Earlier gates did not detect incorrect ground bank direction or the static menu pose. Full native whole-controller parity and physical-phone behavior are unverified. The touch captures show the rider arms spread and somewhat stiff, and the bike/rider remain small in portrait framing.",
       "image": "/devlog-images/motorcycle-banking-and-standing-menu-poses-now-pass-ho-d50992f3.png",
       "caption": "Host capture sheet: left and right touch-bank views above, front-facing standing RM125 Race and Sano 50 Mini menu poses below. Rendered direction and idle motion were checked on the host; this is not a public release."
+    },
+    {
+      "id": "fury-remastered-custom-domain-routes-pass-host-checks-e1bec0d3",
+      "timestamp": "2026-10-13T15:27:09.633977+00:00",
+      "recorded_at": "2026-10-13T15:27:09.633977+00:00",
+      "kind": "verification",
+      "title": "Fury Remastered custom domain routes pass host checks",
+      "summary": "The furyremastered.com zone and registration are verified, both custom domains are attached to the existing production Worker, and a host HTTPS fetch to the apex returns 200 with a valid certificate. Domain routes and multiplayer origin allowlists pass host checks; new-domain gameplay and multiplayer remain pending current-main CI and deployment.",
+      "details": [
+        "Cloudflare zone ea0921ec471b2a7de78838cdbaeccb78 is active in the existing account and registry registration is verified. Both custom domains were attached through the Cloudflare API to the existing atv-offroad-fury-2 production Worker. A host HTTPS fetch to the apex returned 200 with a valid certificate, and Cloudflare UI confirms Always Use HTTPS is On.",
+        "All 10 authored worker tests pass: exact custom and legacy multiplayer origins are accepted; missing, null, HTTP, www, lookalike and foreign origins are rejected; www requests receive a 308 apex redirect that preserves path and invite query.",
+        "All 4 Rust relay origin tests pass, including the exact origin allowlist. Strict atv-relay Clippy and formatting pass; make verify passes source identity and exclusion checks; 29 release tests pass with one skipped."
+      ],
+      "limitation": "Host evidence only. The new-domain multiplayer code has not been deployed, and current-main CI plus public gameplay and multiplayer verification remain pending. A successful host HTTPS fetch does not verify public integration."
     }
   ],
-  "updated_at": "2026-10-13T15:00:55.649475+00:00",
+  "updated_at": "2026-10-13T15:27:09.633977+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
