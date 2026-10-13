@@ -108,7 +108,16 @@ export class Multiplayer {
     } else if (action === 'share') {
       await copyRideUrl(buildRideUrl(location.origin,{mode:'multiplayer',room:this.state.code,map:this.state.environment,quadId:frontend.quadId,riderId:frontend.riderId},{includePlayer:false}),frontend.notice,'Invite link');
     } else if (action === 'lobbymap') {
-      const lobby = this.state.lobby; if (lobby) await this.control({SetLobby:{epoch:lobby.epoch,map:this.state.nextMap,started:false}});
+      const lobby = this.state.lobby;
+      if (lobby) {
+        // Application and R2 updates publish separately. Cycle only courses in
+        // this browser's validated manifest while keeping stable wire IDs.
+        const available = new Set(frontend.tracks.map(track=>track.id));
+        let map = this.state.nextMap;
+        for (let i=0;i<ENVIRONMENTS.length && !available.has(ENVIRONMENTS[map-1]);i++) map=map%ENVIRONMENTS.length+1;
+        if (!available.has(ENVIRONMENTS[map-1])) throw new Error('No original lobby courses are available.');
+        await this.control({SetLobby:{epoch:lobby.epoch,map,started:false}});
+      }
     } else if (action === 'lobbystart') {
       const lobby = this.state.lobby; if (lobby) await this.control({SetLobby:{epoch:lobby.epoch,map:lobby.map,started:true}});
     } else if (action === 'leave') {

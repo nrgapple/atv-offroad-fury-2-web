@@ -13,6 +13,102 @@ pub struct Texture {
     pub rgba: Vec<u8>,
 }
 
+/// Training's four jumbotron images ship as uncompressed true-color TGA.
+/// Normalize BGR(A) and both origin bits to the top-left RGBA texture layout.
+/// Palette, RLE, interleaving and extension/developer areas remain unsupported.
+pub fn decode_tga(data: &[u8]) -> Result<Texture> {
+    let header = slice(data, 0, 18)?;
+    if data.len() > 128 * 1024 * 1024
+        || header[1] != 0
+        || header[2] != 2
+        || header[3..8].iter().any(|v| *v != 0)
+        || !matches!(header[16], 24 | 32)
+        || header[17] & 0xc0 != 0
+        || header[17] & 15 != if header[16] == 32 { 8 } else { 0 }
+    {
+        return Err("unsupported true-color TGA format".into());
+    }
+    let width = u16::from_le_bytes([header[12], header[13]]) as usize;
+    let height = u16::from_le_bytes([header[14], header[15]]) as usize;
+    if width == 0 || height == 0 || width > 4096 || height > 4096 {
+        return Err("unsupported TGA dimensions".into());
+    }
+    let stride = usize::from(header[16] / 8);
+    let start = 18 + usize::from(header[0]);
+    let pixels = slice(data, start, width * height * stride)?;
+    let end = start + pixels.len();
+    if data.len() != end {
+        let footer = slice(data, end, 26)?;
+        if data.len() != end + 26 || footer[..8] != [0; 8] || &footer[8..] != b"TRUEVISION-XFILE.\0"
+        {
+            return Err("unsupported TGA trailing data".into());
+        }
+    }
+    let mut rgba = vec![0; width * height * 4];
+    for y in 0..height {
+        for x in 0..width {
+            let target_x = if header[17] & 16 != 0 {
+                width - x - 1
+            } else {
+                x
+            };
+            let target_y = if header[17] & 32 == 0 {
+                height - y - 1
+            } else {
+                y
+            };
+            let source = (y * width + x) * stride;
+            let target = (target_y * width + target_x) * 4;
+            rgba[target..target + 4].copy_from_slice(&[
+                pixels[source + 2],
+                pixels[source + 1],
+                pixels[source],
+                if stride == 4 { pixels[source + 3] } else { 255 },
+            ]);
+        }
+    }
+    Ok(Texture {
+        info: TextureInfo {
+            width: width as u32,
+            height: height as u32,
+        },
+        rgba,
+    })
+}
+
+#[cfg(test)]
+mod tga_tests {
+    use super::*;
+    #[test]
+    fn true_color_channels_origins_and_bounds() {
+        let mut data = vec![0; 18];
+        data[2] = 2;
+        data[12] = 2;
+        data[14] = 1;
+        data[16] = 32;
+        data[17] = 8;
+        data.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(decode_tga(&data).unwrap().rgba, [3, 2, 1, 4, 7, 6, 5, 8]);
+        data[17] |= 16;
+        assert_eq!(decode_tga(&data).unwrap().rgba, [7, 6, 5, 8, 3, 2, 1, 4]);
+        data[12] = 1;
+        data[14] = 2;
+        data[17] = 8;
+        assert_eq!(decode_tga(&data).unwrap().rgba, [7, 6, 5, 8, 3, 2, 1, 4]);
+        data[17] |= 32;
+        assert_eq!(decode_tga(&data).unwrap().rgba, [3, 2, 1, 4, 7, 6, 5, 8]);
+        assert!(decode_tga(&data[..25]).is_err());
+        data.extend_from_slice(&[0; 8]);
+        data.extend_from_slice(b"TRUEVISION-XFILE.\0");
+        assert!(decode_tga(&data).is_ok());
+        data[2] = 10;
+        assert!(decode_tga(&data).is_err());
+        data[2] = 2;
+        data[13] = 255;
+        assert!(decode_tga(&data).is_err());
+    }
+}
+
 pub fn decode_pst(data: &[u8]) -> Result<Texture> {
     if u32le(data, 0)? == 0x00020002 {
         return decode_mx_pst(data);

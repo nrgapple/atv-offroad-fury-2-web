@@ -37,6 +37,13 @@ STARTUP = (
     '/UI/RESOURCE/TITLE.RES', '/UI/RESOURCE/PAGEA/PAGE01.RES',
     '/UI/RESOURCE/PAGEA/PAGE02.RES', '/UI/RESOURCE/PAGEA/PAGE06.RES',
 )
+# Original Freeride versions of all remaining venues, including locked courses.
+STARTUP += tuple(f'/TRACKS/TRACKSA/FREE{i:02}/F{i:02}_FR.RES' for i in (1,2,3,4,6))
+STARTUP += tuple(f'/TRACKS/TRACKSA/NAT{i:02}/N{i:02}_FR.RES' for i in range(1,9))
+STARTUP += tuple(f'/TRACKS/TRACKSB/SX{i:02}/S{i:02}_FR.RES' for i in range(1,17))
+STARTUP += ('/TRACKS/TRACKSB/TRAINING/T00_TR.RES', '/TRACKS/TRACKSA/GAME01/G01_SO.RES')
+STARTUP += tuple(f'/UI/RESOURCE/TP/TP_{group}.RES' for group in ('PNAT','ASX','PSX','HOCK'))
+
 STARTUP += tuple(path for i in range(2, 27) for path in (
     f'/QUAD/BIKES{"A" if i <= 13 else "B"}/ATV{i:02}.RES',
     f'/QUAD/BIKES{"A" if i <= 13 else "B"}/ATV{i:02}_MT.RES'))
@@ -331,6 +338,23 @@ def compact_vancouver_thumbnail(data):
     return pack_resource(selected)
 
 
+def shared_freestyle_overlays(data, environment_archive):
+    """Common jump HUD art for Freestyle on venues such as the hockey arena.
+
+    The arena's SO archive intentionally lacks jump HUD textures. Aggregate the
+    five original ENV01 preload images into the small shared overlay archive
+    instead of fetching a second full environment just for those images.
+    """
+    archive, environment = Resource(data), Resource(environment_archive)
+    names = {'preloadblue.pst', 'preloadbkg.pst', 'preloadhighlight.pst',
+             'preloadorange.pst', 'preloadblocker3.pst'}
+    members = [(name, archive.extract(i)) for i, (name, _, _) in enumerate(archive.members)]
+    available = {name.lower().rsplit('/', 1)[-1] for name, _ in members}
+    for name in sorted(names - available):
+        members.append((f'textures/{name}', environment.named(name)))
+    return pack_resource(members)
+
+
 MX_SOURCE_SHA = '4b74c0c76ffe0838e00c1b9f75b31e1bb91adae06ec9da1416355b363572102a'
 
 
@@ -449,13 +473,13 @@ def main():
                 data = compact_player_archive(data, path)
             elif path == '/UI/RESOURCE/PAGEA/PAGE07.RES':
                 data = compact_menu_riders(data, source('/UI/RESOURCE/RIDEINFO.RES'), source('/AUDIO/UI/UIMUSIC.AUD'))
+            elif path == '/OVERLAYS.RES':
+                data = shared_freestyle_overlays(data, originals['/TRACKS/TRACKSA/ENV01/E01_FR.RES'])
             elif path == '/ANIMSRDR.RES':
                 catalogs = [Resource(originals[f'/RIDER/{stem}.RES']).named(stem.lower() + '.mcf') for stem in ('MRIDER', 'FRIDER')]
                 data = compact_rider_motions(data, catalogs)
             elif path.endswith('_ENDL.RES'):
                 data = compact_map_placements(data, path.split('/')[-2])
-            elif path == '/UI/RESOURCE/TP/TP_PSTNT.RES':
-                data = compact_vancouver_thumbnail(data)
             elif path == '/RIDER/RIDER_MT.RES':
                 data = compact_rider_materials(originals['/RIDER/MRIDER.RES'], data, (originals['/RIDER/FRIDER.RES'],))
             record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith('/QUAD/') or path in ('/RIDER/FRIDER.RES',), **blob(data)}

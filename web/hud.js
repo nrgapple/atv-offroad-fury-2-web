@@ -1,5 +1,6 @@
 // Draw original runtime HUD layouts/glyphs. All changing values and animation
 // clocks arrive from authored Rust; this bridge never derives scores from input.
+import { courseResource } from './launch.js';
 const unquote = value => (value ?? '').replace(/^"/, '').replace(/"$/, '');
 const numbers = value => value?.split(',').map(s => Number(s.trim()));
 const fontDefault = 'tradegothic_boldcondensed_22s';
@@ -37,13 +38,14 @@ export class HeadUpDisplay {
   }
   async init(environment) {
     this.ready = false; this.lastKey = ''; this.clear();
-    const env = /^env(0[1-8])$/i.exec(environment)?.[1];
-    if (!env && environment !== 'free05') throw new Error('Unsupported original HUD environment');
     const f = this.frontend;
     // Each authorized Freestyle runtime archive contains the original HUD art
     // and layout. Reuse the resource cache also used by the frontend.
     await f.archive('/STARTEVT.RES');
-    await f.archive(environment === 'free05' ? '/TRACKS/TRACKSA/FREE05/F05_FR.RES' : `/TRACKS/TRACKSA/ENV${env}/E${env}_FR.RES`);
+    await f.archive(courseResource(environment).archive);
+    // Small shared ENV01 jump-HUD images support Freestyle on Coonce's hockey
+    // venue, whose original SO archive has no preload display assets.
+    await f.archive('/OVERLAYS.RES');
     for (const name of ['OverlayObject-5', 'OverlayObject-12']) {
       const sections = await f.document('Overlays.pb', name);
       this.layout.set(name, sections.get(name.toLowerCase()));

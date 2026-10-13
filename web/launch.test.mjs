@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseLaunch,buildRideUrl,copyRideUrl,ENVIRONMENTS} from './launch.js';
+import {parseLaunch,buildRideUrl,copyRideUrl,ENVIRONMENTS,courseResource} from './launch.js';
 const parse = search=>parseLaunch(search);
 test('ordinary and cache/marketing-only visits retain the title',()=>{
  for(const q of ['', '?v=123&utm_source=test','#room=ABCD1234']) assert.equal(parse(q).requested,false);
@@ -37,4 +37,19 @@ test('invite serialization removes name, owner secrets and unrelated location st
 });
 test('blocked clipboard displays the whole usable URL',async()=>{
  const notice={};await copyRideUrl('https://example.test/play.html?map=env02',notice);assert.equal(notice.textContent,'https://example.test/play.html?map=env02');
+});
+
+test('all venue resource paths match family naming and reject unsupported race routes',()=>{
+ assert.equal(new Set(ENVIRONMENTS).size,40);
+ for(const [id,path,scene,mode] of [
+  ['env02','/TRACKS/TRACKSA/ENV02/E02_FR.RES','env02fr','env02fr'],
+  ['free01','/TRACKS/TRACKSA/FREE01/F01_FR.RES','free01','free01'],
+  ['nat08','/TRACKS/TRACKSA/NAT08/N08_FR.RES','nat08','nat08'],
+  ['sx16','/TRACKS/TRACKSB/SX16/S16_FR.RES','sx16','sx16'],
+  ['training','/TRACKS/TRACKSB/TRAINING/T00_TR.RES','training','training'],
+  ['game01','/TRACKS/TRACKSA/GAME01/G01_SO.RES','game01','game01']]) {
+   const r=courseResource(id);assert.equal(r.archive,path);assert.equal(r.sceneStem,scene);assert.equal(r.modeStem,mode);
+  }
+ assert.equal(courseResource('env01',true).archive,'/TRACKS/TRACKSA/ENV01/E01_NAT.RES');
+ for(const id of ['nat01','sx01','unknown'])assert.throws(()=>courseResource(id,true));
 });

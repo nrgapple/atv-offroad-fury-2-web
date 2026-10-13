@@ -13,8 +13,9 @@ invalid transforms, duplicate roster slots, invalid room codes, and oversized
 allocations. Rooms allow four players, at most 64 ATV nodes, 64 rider nodes, and
 8,192 bytes per packet. Names are at most 32 UTF-8 bytes and exclude control
 characters. Room codes have eight uppercase letters or digits; generated codes
-omit ambiguous glyphs. Lobby map IDs are bounded to 1–9, with source keys
-`env01`–`env08`, then `free05` (Vancouver Ridge). `map_environment` and
+omit ambiguous glyphs. Lobby map IDs are bounded to 1–40, preserving IDs 1–9 with source keys
+`env01`–`env08`, then `free05` (Vancouver Ridge). IDs 10–40 append the other five stunt venues,
+eight Nationals, sixteen Supercross stadiums, Training and Coonce Arena. `map_environment` and
 `next_map` share this Rust catalog.
 
 | Kind | Payload |

@@ -49,7 +49,7 @@ try {
   assert(await page.evaluate(()=>window.orbitRequests.every(v=>v===0)));
   results.push({viewport,groundReverse:true,primaryAxesPreserved:true,secondaryRelease:true,cancel:true});await page.close();
  }
- for(const gesture of (process.env.ATV_ENHANCED_GESTURE ? [process.env.ATV_ENHANCED_GESTURE] : ['up','circle-cw','circle-ccw'])) {
+ for(const gesture of (process.env.ATV_ENHANCED_GESTURE ? [process.env.ATV_ENHANCED_GESTURE] : ['up','cat-nac','cordova'])) {
   const {page,touch}=await setup({width:390,height:844});
   const primary={id:1,x:310,y:530},second={id:2,x:80,y:530};
   await touch('touchStart',[primary]);
@@ -58,20 +58,23 @@ try {
   await page.waitForFunction(()=>window.rideFrames.some(s=>s.frame.preload_active),null,{timeout:5000,polling:'raf'});
   await page.waitForFunction(()=>!window.atvTerrainStatus.frame.grounded.some(Boolean),null,{timeout:5000,polling:'raf'});
   await touch('touchStart',[primary,second]);
-  let swipe={...second,y:second.y-70};
-  if(gesture.startsWith('circle')) {
-   const direction=gesture==='circle-cw'?1:-1;
-   for(let i=1;i<=8;i++){const a=direction*i*Math.PI*2/8;swipe={...second,x:second.x-30+30*Math.cos(a),y:second.y+30*Math.sin(a)};await touch('touchMove',[primary,swipe]);}
-  } else await touch('touchMove',[primary,swipe]);
-  const id=gesture==='up'?0:gesture==='circle-cw'?8:9;
+  const index=gesture==='up'?0:gesture==='cat-nac'?3:7;
+  const target=await page.locator('.touch-trick-choice').nth(index).boundingBox();
+  const swipe={...second,x:target.x+target.width/2,y:target.y+target.height/2};
+  await touch('touchMove',[primary,swipe]);
+  const preview=await page.evaluate(()=>({input:window.atvTerrainStatus.input,selected:document.querySelector('.touch-trick-choice.selected')?.textContent}));
+  assert.equal(preview.input.stunt_modifiers,0,'preview must not start a stunt');
+  assert.equal(preview.selected,gesture==='up'?'Nac Nac':gesture==='cat-nac'?'Cat Nac':'Cordova');
+  await page.screenshot({path:`${output}/${gesture}-wheel.png`});
+  await touch('touchEnd',[swipe]);
+  const id=gesture==='up'?0:gesture==='cat-nac'?8:9;
   try { await page.waitForFunction(id=>window.rideFrames.some(s=>s.frame.stunt?.id===id&&s.frame.stunt.main_time>.05),id,{timeout:5000,polling:'raf'}); } catch(e) { writeFileSync(`${output}/failed-${gesture}.json`,JSON.stringify(await page.evaluate(()=>window.rideFrames))); throw e; }
   const stunt=await page.evaluate(id=>window.rideFrames.find(s=>s.frame.stunt?.id===id&&s.frame.stunt.main_time>.05),id);
   assert.equal(stunt.frame.rider_mode,'stunt');assert.equal(stunt.input.touch_drive.held,true);assert.equal(stunt.input.throttle,1);assert.equal(stunt.input.reverse,false);assert.equal(stunt.input.preload_axis,1);assert.equal(stunt.input.steer,0);assert.equal(stunt.input.lean,0);
   await page.screenshot({path:`${output}/${gesture}.png`});
-  await touch('touchEnd',[swipe]);
   await page.waitForFunction(()=>window.atvTerrainStatus.input.stunt_modifiers===0&&window.atvTerrainStatus.input.touch_drive.held);
   assert(await page.evaluate(()=>window.orbitRequests.every(v=>v===0)));
-  results.push({gesture,stunt:stunt.frame.stunt.name,primaryDriveAndBrace:true,independentRelease:true});
+  results.push({gesture,stunt:stunt.frame.stunt.name,primaryDriveAndBrace:true,previewWithoutStunt:true,releaseStartsStunt:true,independentRelease:true});
   await touch('touchCancel');await page.close();
  }
  assert.deepEqual(errors,[]);writeFileSync(`${output}/report.json`,JSON.stringify({results,errors},null,2));console.log(JSON.stringify({gate:'enhanced-mobile',results,errors}));

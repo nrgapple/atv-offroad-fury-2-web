@@ -3049,6 +3049,85 @@
       "limitation": "Host-only component evidence. Native timed/random modes, visibility scheduling, moving attachments, full actor animation and scene-manager behavior remain incomplete. Type0/11/9/12 and other emitter families are not included in this gate; weather dispatch and full game parity remain unfinished. The portrait image is a host Chromium capture, not a physical-phone photo; no public release is claimed.",
       "image": "/devlog-images/original-static-spray-fire-and-smoke-emitters-host-che-b0e5c84c.png",
       "caption": "Host Chromium at 390\u00d7844 on San Jacinto Isles (ENV07): the natural follow view during the original volcanic smoke emitter pixel gate. The distant plume is subtle; this is not a physical-phone capture."
+    },
+    {
+      "id": "pause-submenu-polish-host-checkpoint-3aed998d",
+      "timestamp": "2026-10-13T23:21:52.580372+00:00",
+      "recorded_at": "2026-10-13T23:23:13.981152+00:00",
+      "kind": "verification",
+      "title": "Pause submenu polish host checkpoint",
+      "summary": "Ride overlays and the active multiplayer Lobby now share a charcoal browser panel with gold highlights. Host Chromium verified six secondary screens across desktop, portrait, and landscape sizes, plus a desktop two-client live Lobby route.",
+      "details": [
+        "The six secondary screens\u2014Controls, keyboard bindings, controller bindings, HUD, Minimap, and Music\u2014had no horizontal clipping across 1280\u00d7896, 390\u00d7844, 320\u00d7568, 844\u00d7390, and 667\u00d7375; every control remained reachable at 44 CSS pixels or larger.",
+        "F7 remapping and defaults, binding pagination, soundtrack selection, music toggle and volume changes passed; slider interaction preserved its DOM node. Single-player simulation remained frozen while soundtrack playback advanced. Synthetic controller capture remapped Throttle to button 6 and saved it, Defaults restored the mapping, and controller D-pad Down moved DOM focus from Throttle to Brake.",
+        "A desktop two-client host relay browser check with local source overrides kept both rides moving and simulation live while the Lobby overlay was open; Controls, Players, Lobby navigation, and leave cleanup worked. The final extended pause-menu test passed without browser errors."
+      ],
+      "limitation": "Host-only authored-browser evidence; the multiplayer check used browser route overrides and is not a public deployment. Physical-device behavior, native pause fidelity, and full-game parity are not established.",
+      "image": "/devlog-images/pause-submenu-polish-host-checkpoint-3aed998d.png",
+      "caption": "Music submenu on a 390 px portrait viewport, with paginated soundtrack controls and visible Back, music, and volume actions."
+    },
+    {
+      "id": "public-uphill-chase-camera-verification-afa2e8f9",
+      "timestamp": "2026-10-13T23:23:30.525575+00:00",
+      "recorded_at": "2026-10-13T23:23:30.525575+00:00",
+      "kind": "verification",
+      "title": "Public uphill chase-camera verification",
+      "summary": "The uphill chase-camera fix passed main CI and public Chromium Metal driving checks on the production game.",
+      "details": [
+        "PR #47 merged as 96e0ea04c1406a5adfeabbaec055b881b8c9dca7. Main CI/deploy run 38483204620 succeeded; the fetched validated current-main artifact matches the public furyremastered.com deployment.",
+        "Workers HTTPS verification matched all 44 authored static files and 460 served R2 objects by hash, size and MIME. The approved portrait screenshot was published to R2; the validated package contains 461 objects totaling 346,132,530 bytes. The gallery now contains 188 entries and 145 screenshots.",
+        "Public Chromium Metal Caribou Peak drive with W then 2.5 seconds of E lean-back and camera cycling passed at 390\u00d7844 and 1280\u00d7720, with no disc picker or browser errors. Portrait: 0.203118654 rad orbit, 1.093747071 pullback, 688 samples, 495 bounded Riding transitions, maximum orbit step 0.019862291 rad. Desktop: 0.207891486 rad, 1.095949917 pullback, 710 samples, 513 transitions, maximum step 0.020239806 rad. Camera cycling passed in the driving route. Portrait \u2192 landscape \u2192 portrait viewport rotation passed after the assertion used a 1e-12 angle tolerance for negligible floating-point residue; no gameplay camera code changed.",
+        "Implementation is unchanged from validated main commit 96e0ea04. See research/HILL_CAMERA.md for strategy, bounded behavior, host evidence and public measurements."
+      ],
+      "limitation": "Automated public browser verification on one Mac does not establish physical-phone behavior or original ATV2 camera parity. Isolated-prop anticipation and object-aware follow-camera clearance remain open."
+    },
+    {
+      "id": "second-finger-selects-airborne-stunts-from-a-radial-wh-7ecb551c",
+      "timestamp": "2026-10-13T23:22:37.072629+00:00",
+      "recorded_at": "2026-10-13T23:23:21.598523+00:00",
+      "kind": "verification",
+      "title": "Second finger selects airborne stunts from a radial wheel",
+      "summary": "Enhanced one-handed touch mode now previews ten original stunts in a radial wheel while the primary finger keeps driving and bracing; lifting a selected sector submits the original input once.",
+      "details": [
+        "The final plain-text wheel capture shows the airborne Nac Nac preview alongside the held primary drive compass. Labels use white text with a black outline, a gold pointer and selection underline, without text backgrounds or button-like boxes.",
+        "Chromium real CDP multi-touch and WebKit synthetic pointer/capture-shim checks passed at 390\u00d7844, 844\u00d7390, 320\u00d7568 and 667\u00d7375. All ten release-only selections, neutral taps and center cancellation, edge placement, preserved primary axes, lifecycle cancellation, native gesture/selection suppression, and no zoom or scroll passed.",
+        "Natural Caribou hops passed Nac Nac, Cat Nac and Cordova checks: the wheel preview does not start a stunt; release submits the existing Rust input while primary drive/brace remains active. Standard One-handed Off Nac Nac entry and unfinished-landing native wreck also passed. Pause/Camera touch utility regression passed.",
+        "Verification: make check (416 Rust tests, 113 JavaScript tests, formatting, strict workspace Clippy and 8 build-cache tests); make verify; repository hygiene; 35 release tests (one opt-in skip); 19 Worker tests.",
+        "The full one-handed regression now passes: default and storage fallback, saved Off/On setting and persistence, cardinal and diagonal primary controls with their cues, coast, and held throttle/bracing across takeoff, airtime and landing.",
+        "The pause-menu assertion now checks its accessible aria-label, which remains correct when the visible label is split across spans."
+      ],
+      "limitation": "Host-browser evidence on one Mac, including synthetic WebKit pointer events. Physical phones remain unverified. The wheel adapts authored input to ten existing animations and preserves original stunt gates; this is not full stunt, physics or whole-game parity.",
+      "image": "/devlog-images/second-finger-selects-airborne-stunts-from-a-radial-wh-7ecb551c.png",
+      "caption": "Host Chromium capture, 390\u00d7844: airborne Nac Nac preview on the radial wheel while the primary finger continues drive and brace."
+    },
+    {
+      "id": "all-40-freestyle-venues-unlocked-host-checkpoint-614372d3",
+      "timestamp": "2026-10-13T23:41:25.551059+00:00",
+      "recorded_at": "2026-10-13T23:43:57.963165+00:00",
+      "kind": "verification",
+      "title": "All 40 Freestyle venues unlocked \u2014 host checkpoint",
+      "summary": "The host-verified branch exposes all 40 original venue families in Freestyle: eight ENV, six FREE, eight NAT, sixteen SX, Training and Coonce Arena. A continuous source-content run loaded and drove all 40; selectors and mobile pause/reload were checked, and two clients replicated a Sausalito SX01 ride.",
+      "details": [
+        "The existing nine map IDs remain stable; 31 venues were appended. Six Sausalito hay-bale approaches at 390px produced original wheel-support and body-contact responses; two clients each drew 13 remote peer elements, replicated 8.18 ft of movement and cleaned up when the host left.",
+        "Validation after rebase: 422 Rust tests, 120 JavaScript tests, eight build-cache tests, 35 release tests (one opt-in skip), 19 Worker tests, formatting, strict Clippy, make verify and WASM build passed. The private content package validated 147 runtime records, 347 content objects and 350,272,729 bytes."
+      ],
+      "limitation": "Host-only checkpoint; current-main CI, R2 publication and public HTTPS verification remain pending. Venue availability does not complete racing, Training objectives, hockey rules, weather dispatch, ambient emitters, reverse crowd animation, or original-game parity. Screenshots are host browser captures, not device photos.",
+      "image": "/devlog-images/all-40-freestyle-venues-unlocked-host-checkpoint-614372d3.png",
+      "caption": "Host Chromium at 390px: Sausalito SX01 Freestyle ride at 16 mph with the original stadium, ATV, and GPS HUD."
+    },
+    {
+      "id": "sausalito-sx01-multiplayer-ride-host-checkpoint-0c020f9b",
+      "timestamp": "2026-10-13T23:41:09.328230+00:00",
+      "recorded_at": "2026-10-13T23:43:58.049733+00:00",
+      "kind": "verification",
+      "title": "Sausalito SX01 multiplayer ride \u2014 host checkpoint",
+      "summary": "Two host browser clients rode the newly connected Sausalito Supercross stadium in Freestyle. Each client drew 13 remote peer elements, observed 8.18 ft of host movement, and cleared the session when the host left.",
+      "details": [
+        "The inspected landscape capture shows the stadium, rider, GPS speed at 22 mph, and the guest's 23 ft overhead label. The separate 390px portrait capture shows touch-scale controls and a 16 mph stadium ride."
+      ],
+      "limitation": "Host Chromium captures only; this does not verify physical phones, geographically separated networking, native PS2 multiplayer, or full game parity. Public release is pending.",
+      "image": "/devlog-images/sausalito-sx01-multiplayer-ride-host-checkpoint-0c020f9b.png",
+      "caption": "Host Chromium multiplayer capture on Sausalito SX01: the ATV at 22 mph and P2 Guest label at 23 ft."
     }
   ],
   "updated_at": "2026-10-13T23:45:42.984128+00:00",

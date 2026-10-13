@@ -19,6 +19,7 @@ async function page() {
   p.on('pageerror',e=>errors.push(e.message));
   await p.addInitScript(()=>{
     Object.defineProperty(document,'hasFocus',{value:()=>true});
+    const pads=navigator.getGamepads.bind(navigator);Object.defineProperty(navigator,'getGamepads',{value:()=>window.pausePad ? [window.pausePad] : pads()});
     window.testSuspends=0;const suspend=AudioContext.prototype.suspend;
     AudioContext.prototype.suspend=function(...args){window.testSuspends++;return suspend.apply(this,args);};
   });
@@ -67,9 +68,57 @@ try {
       await button(a,'Resume').scrollIntoViewIfNeeded();
     }
     await a.setViewportSize({width:390,height:844});
-    await button(a,'Controls').click();await screen(a,'controls');await musicContinues(a,music,true);await shot(a,'controls');await a.keyboard.press('Escape');await screen(a,'pause');
+    const sizes=[{width:1280,height:896},{width:390,height:844},{width:320,height:568},{width:844,height:390},{width:667,height:375}];
+    async function submenuLayout(name) {
+      await screen(a,name);
+      for(const size of sizes) {
+        await a.setViewportSize(size);await a.waitForTimeout(120);
+        const panel=a.locator('.pause-panel'),box=await panel.boundingBox();
+        assert(box.x>=0&&box.y>=0&&box.x+box.width<=size.width&&box.y+box.height<=size.height);
+        assert.equal(await a.locator('#menu-canvas').isVisible(),false,'submenu uses sharp DOM text');
+        assert.equal(await panel.evaluate(n=>n.scrollWidth<=n.clientWidth),true,'no horizontal clipping');
+        for(const control of await panel.locator('button,input').all()) {
+          await control.scrollIntoViewIfNeeded();const b=await control.boundingBox();
+          assert(b.height>=44&&b.x>=box.x&&b.x+b.width<=box.x+box.width,`${name} ${size.width}: accessible control`);
+          assert(b.y>=box.y&&b.y+b.height<=box.y+box.height,`${name}: reachable scrolling`);
+        }
+        await panel.evaluate(n=>n.scrollTop=0);
+        if(size.width===390||size.width===1280)await shot(a,`${name}-${size.width}`);
+      }
+      await a.setViewportSize({width:390,height:844});
+    }
+    await button(a,'Controls').click();await submenuLayout('controls');await musicContinues(a,music,true);await shot(a,'controls');
+    const steering=a.getByRole('slider',{name:'Mobile steering sensitivity',exact:true});
+    await steering.evaluate(n=>n.dataset.identity='kept');await steering.focus();await a.keyboard.press('ArrowRight');
+    await a.waitForFunction(()=>document.querySelector('.pause-panel output').textContent==='90%');
+    assert.equal(await steering.getAttribute('data-identity'),'kept','range node survives value update');
+    await a.keyboard.press('Tab');await a.waitForTimeout(100);assert.equal(await a.evaluate(()=>document.activeElement.dataset.action),'keyboard');
+    await a.keyboard.press('Enter');await submenuLayout('bindings');
+    const firstBinding=a.locator('.pause-panel button[data-action^="bind:"]').first();
+    const original=await firstBinding.getAttribute('aria-label');await firstBinding.click();
+    await a.waitForSelector('.pause-capture');await shot(a,'capture');
+    await a.keyboard.press('Escape');await a.waitForSelector('.pause-capture',{state:'detached'});assert.equal(await firstBinding.getAttribute('aria-label'),original);
+    await firstBinding.click();await a.waitForSelector('.pause-capture');await a.keyboard.press('F7');await a.waitForSelector('.pause-capture',{state:'detached'});
+    assert.match(await firstBinding.getAttribute('aria-label'),/F7/);
+    await button(a,'Defaults').click();await a.waitForFunction(original=>document.querySelector('.pause-panel button[data-action^="bind:"]').getAttribute('aria-label')===original,original);
+    await button(a,'Next').click();await a.waitForFunction(()=>document.querySelector('.pause-page-count').textContent.startsWith('Page 2'));
+    await a.keyboard.press('Escape');await screen(a,'controls');await button(a,'Controller bindings').click();await submenuLayout('bindings');await shot(a,'controller');
+    await a.evaluate(()=>window.pausePad={connected:true,axes:[0,0,0,0],buttons:Array.from({length:17},()=>({pressed:false,value:0}))});
+    const controllerRow=a.locator('.pause-panel button[data-action^="bind:"]').first();await controllerRow.click();await a.waitForSelector('.pause-capture');
+    await a.waitForTimeout(100);await a.evaluate(()=>window.pausePad.buttons[6]={pressed:true,value:1});await a.waitForTimeout(100);
+    await a.evaluate(()=>window.pausePad.buttons[6]={pressed:false,value:0});await a.waitForSelector('.pause-capture',{state:'detached'});
+    assert.match(await controllerRow.getAttribute('aria-label'),/6|trigger/i);await button(a,'Defaults').click();await controllerRow.focus();await a.waitForTimeout(100);
+    await a.evaluate(()=>window.pausePad.buttons[13]={pressed:true,value:1});await a.waitForTimeout(100);
+    assert.equal(await a.evaluate(()=>document.activeElement.dataset.action),await a.locator('.pause-panel button[data-action^="bind:"]').nth(1).getAttribute('data-action'));
+    await a.evaluate(()=>window.pausePad=null);
+    await a.keyboard.press('Escape');await screen(a,'controls');await a.keyboard.press('Escape');await screen(a,'pause');
+    await button(a,'Music').click();await submenuLayout('music');
+    await button(a,'Next').click();await a.waitForFunction(()=>document.querySelector('.pause-page-count').textContent.startsWith('Page 2'));
+    await a.locator('.pause-panel button[data-action^="song:"]').first().click();await a.waitForFunction(()=>document.querySelector('.pause-panel button[data-playing=true]'));
+    await button(a,'Music off').click();await button(a,'Music on').click();await button(a,'Volume').click();
+    await a.keyboard.press('Escape');await screen(a,'pause');
     assert.equal(await a.locator('.pause-panel').evaluate(n=>n.scrollTop),0,'reopening starts at Resume');
-    await button(a,'HUD settings').click();await button(a,'Minimap configuration').click();await screen(a,'minimap-config');await shot(a,'minimap');
+    await button(a,'HUD settings').click();await submenuLayout('hud-settings');await button(a,'Minimap configuration').click();await submenuLayout('minimap-config');await shot(a,'minimap');
     const slider=a.getByRole('slider',{name:'Minimap size',exact:true});await slider.focus();await a.keyboard.press('ArrowRight');await a.waitForTimeout(100);assert.equal(await slider.inputValue(),'168');
     await a.keyboard.press('Escape');await screen(a,'hud-settings');await a.keyboard.press('Escape');await screen(a,'pause');
     await button(a,'Resume').focus();await a.keyboard.press('ArrowDown');await a.waitForTimeout(100);
@@ -78,8 +127,8 @@ try {
     await a.keyboard.press('Enter');await screen(a,'controls');await a.keyboard.press('Escape');await screen(a,'pause');
     // Native Tab focus and Enter must activate the same highlighted control.
     await button(a,'Resume').focus();await a.keyboard.press('Tab');await a.waitForTimeout(100);assert.equal(await a.evaluate(()=>document.activeElement.dataset.action),'reset');
-    await button(a,'Resume').click();await running(a);await musicContinues(a,music,false);await a.waitForTimeout(200);assert.equal((await state(a)).frame.applied_input.throttle,0);
-    console.log('PASS responsive layout, sharp DOM labels, scroll access, keyboard/Tab, settings sliders, single-player freeze and neutral resume');
+    const resumeMusic=await musicBefore(a);await button(a,'Resume').click();await running(a);await musicContinues(a,resumeMusic,false);await a.waitForTimeout(200);assert.equal((await state(a)).frame.applied_input.throttle,0);
+    console.log('PASS all six submenu routes at five viewports, remap/cancel/defaults/pagination/music, stable ranges, responsive layout, sharp DOM labels, scroll access, keyboard/Tab, settings sliders, single-player freeze and neutral resume');
   } else {
     await button(a,'Multiplayer').click();await button(a,'Create lobby').click();await a.getByRole('textbox',{name:'Rider name',exact:true}).fill('Pause Host');await button(a,'Create lobby').click();
     await a.waitForFunction(()=>window.atvTerrainStatus.multiplayer.state.code);const code=(await state(a)).multiplayer.state.code;console.log('ROOM',code);
@@ -101,12 +150,12 @@ try {
       await menu.bringToFront();await menu.evaluate(()=>window.dispatchEvent(new Event('focus')));await shot(menu,menu===a?'online-host':'online-guest');
       await button(menu,'Controls').click();await screen(menu,'controls');const settingsSteps=(await state(menu)).simulationSteps;
       await menu.waitForFunction(n=>window.atvTerrainStatus.simulationSteps>n+10,settingsSteps,{timeout:10000});
-      await menu.keyboard.press('Escape');await screen(menu,'pause');await button(menu,'Players').click();await screen(menu,'players');
+      await menu.keyboard.press('Escape');await screen(menu,'pause');await button(menu,'Players').click();await screen(menu,'players');await shot(menu,'players');
       const rosterSteps=(await state(menu)).simulationSteps;await menu.waitForFunction(n=>window.atvTerrainStatus.simulationSteps>n+10,rosterSteps,{timeout:10000});
       await menu.keyboard.press('Escape');await button(menu,'Resume').click();await running(menu);assert.equal((await state(menu)).frame.applied_input.throttle,0);
       console.log('LIVE_MENU',JSON.stringify({role:menu===a?'host':'guest',steps:s.simulationSteps-before,remoteMovement:Math.hypot(...s.multiplayer.remote[0].position.map((v,i)=>v-remoteBefore[i]))}));
     }
-    await openPause(b);await openPause(a);await button(a,'Lobby').click();await button(a,'Leave lobby').click();await a.close();await b.waitForFunction(()=>!window.atvTerrainStatus.multiplayer.state.code,null,{timeout:15000});assert.equal((await state(b)).multiplayer.remote.length,0);
+    await openPause(b);await openPause(a);await button(a,'Lobby').click();await screen(a,'lobby');assert.equal(await a.locator('.pause-panel').isVisible(),true);const lobbyMusic=await musicBefore(a),lobbySteps=(await state(a)).simulationSteps;await a.waitForFunction(n=>window.atvTerrainStatus.simulationSteps>n+10,lobbySteps);await musicContinues(a,lobbyMusic,true);await shot(a,'lobby');await button(a,'Leave lobby').click();await a.waitForFunction(()=>!window.atvTerrainStatus.multiplayer.state.code&&document.querySelector('#frontend').dataset.page==='multiplayer');await b.waitForFunction(()=>!window.atvTerrainStatus.multiplayer.state.code,null,{timeout:15000});await a.close();assert.equal((await state(b)).multiplayer.remote.length,0);
     console.log('PASS both host/guest pause menus and settings keep physics/peers rendering, neutral input, and host departure cleanup');
   }
   assert.deepEqual(errors,[]);

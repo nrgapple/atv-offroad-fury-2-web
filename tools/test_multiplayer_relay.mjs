@@ -227,13 +227,13 @@ try {
   const invalidRoom = await invalidCreation.json();
   const invalidHost = await connect(invalidRoom.code, player('Invalid map probe'), '?host=' + invalidRoom.hostToken);
   // Bypass the shared encoder deliberately: the untrusted socket must reject
-  // map10 even when the rest of the version1 control packet is valid.
+  // map41 even when the rest of the version3 control packet is valid.
   const invalidMap = encode({ SetLobby: { epoch: lastLobby(invalidHost).epoch, map: 9, started: false } });
-  invalidMap.writeUInt16LE(10, 12);
+  invalidMap.writeUInt16LE(41, 12);
   invalidHost.send(invalidMap);
   assert.equal((await closed(invalidHost)).code, 1008);
   await rejectedSocket(invalidRoom.code, 410);
-  check('Map10 rejected on the real socket; host termination cannot resurrect the invalid room');
+  check('Map41 rejected on the real socket; host termination cannot resurrect the invalid room');
   console.log(JSON.stringify(report, null, 2));
 } finally {
   for (const ws of sockets) if (ws.readyState < WebSocket.CLOSING) ws.close(1000,'Left lobby');
