@@ -74,11 +74,21 @@ See [selection and loading evidence](MENU_SELECTION.md) for asset and parity lim
 ## Freestyle GPS instrument
 
 The authored aerial minimap uses the recovered course terrain and static scenery
-in an orthographic north-up projection, with a small gold heading arrow, silver
-north/scale lettering and a GPS label. It has no border, no bevel, no interactive
-hit surface and the existing 4px utility corner radius. Its default footprint is
-160px, capped at 42% of viewport width and 34% of viewport height; portrait places
-it below the MPH meter, and landscape/desktop use the right side. Pause → HUD
-settings uses the recovered menu glyphs, existing gold native range style, 44px
+in an orthographic projection, with a small gold heading arrow and silver
+north/scale lettering. It has no border or bevel. Its default footprint is
+160px, capped at 42% of viewport width and 34% of viewport height. Pause → HUD
+settings → Minimap configuration uses recovered menu glyphs, the existing gold range style, 44px
 hit regions and persisted visibility/96–224px sizing. Resizing preserves the
 768ft geographic range. See [implementation and performance](MINIMAP.md).
+
+### Combined minimap and speed
+
+The minimap defaults to a borderless circle inset 8px plus safe-area offsets in
+the top-right corner. A square variant keeps the existing 4px corner radius;
+users can switch to bottom-left. Speed uses compact italic outlined silver
+lettering without a backdrop near the bottom edge, with a compact source-driven orange/blue
+preload indicator. The small feet readout sits immediately above speed. North and all lettering stay inside the circular safe region.
+HUD settings links to a dedicated Minimap configuration group, keeping shape,
+corner, size, visibility and orientation together. Tap the map to toggle
+north-up/heading-up while its footer remains upright. <=360px toolbar buttons keep 44px icon
+targets and accessible names while hiding labels to leave space for the map.

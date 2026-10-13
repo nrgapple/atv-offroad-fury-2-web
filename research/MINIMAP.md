@@ -14,9 +14,9 @@ request. Pause, hidden tabs, context loss, racing and Off suppress updates. Off
 releases raster/backing storage and cancels pending generation; re-enabling
 rebuilds once. Resizing changes the HUD footprint, not its geographic range.
 
-Settings live in Pause → HUD settings with persisted On/Off and 96–224px size,
-responsive caps, shared silver/gold/charcoal tokens, no frame border and no touch
-capture. Static geometry and terrain are approximate cartography; moving actors,
+Settings live in Pause → HUD settings → Minimap configuration with persisted On/Off and 96–224px size,
+responsive caps, shared silver/gold/charcoal tokens and no frame border. The map
+accepts a tap to change orientation. Static geometry and terrain are approximate cartography; moving actors,
 vegetation, live water, paths beneath bridges and native GPS behavior are not
 claimed. Physical phone performance requires device testing; report desktop and
 mobile-viewport measurements separately from actual mobile hardware.
@@ -65,3 +65,57 @@ release allowlists and Worker tests pass. No source asset, PNG or generated
 analysis enters GitHub/CI. Screenshot evidence is an inspected host capture;
 public release identity and gallery delivery follow the validated main CI path.
 Physical iOS/Android, thermals, battery cost and isolated GPU timing remain open.
+
+## Combined corner instrument revision
+
+The revised default is circular and inset 8px plus safe-area offsets at the
+top-right. The optional square and bottom-left placement are persisted together
+with visibility and size under Pause → HUD settings → Minimap configuration.
+The root HUD settings page has only a link to the minimap group and Back.
+Narrow (<=360px) utility buttons retain their 44px icon hit targets while hiding
+text so a top-right map cannot cover Pause/Camera.
+
+The map now renders the Rust HUD speed text/units and compact preload feedback
+inside its footprint. The separate original speed/preload block is suppressed
+only while this combined map is actually visible. Off, baking and Race retain
+the original speed block; stunt text/scoring remain on the original HUD canvas.
+Both shapes put compass/scale/type inside the circular safe region. This is an
+authored presentation adaptation, not a change to the underlying HUD clock,
+preload, scoring or vehicle physics.
+
+Shape, corner and size changes reuse the raster without rebaking or adding scene
+draws. Circle clipping is CSS; speed/preload draw with the existing capped 20Hz
+canvas update. Existing pixel-resolution/memory limits and Off behavior apply.
+
+The combined-instrument host timing gate passes settings/reload/rotation/pause/
+blur/context restoration and real Rust driving. Paired 96/160/224px windows
+measure 0.068–0.142ms mean CPU per update on the desktop viewport and
+0.089–0.136ms on the phone viewport, on one Mac with Chromium Metal. Scene draws
+remain 471 in every On/Off window, pixel buffers remain within the previous
+4.04–4.23MiB range and Off has zero updates/pixel storage. These observations
+include timer/scheduling noise and do not establish a physical-phone, GPU,
+thermals or causal FPS claim. The small added speed/type work stays inside the
+existing 20Hz canvas pass.
+
+The final footer revision removes the speed backdrop, places MPH close to the
+bottom edge and moves the small map-scale readout directly above it. Measured
+text width/descent chooses a baseline that keeps the black outlines inside the
+circle even at 96px; square uses a small bottom inset. No extra pixel buffer,
+update loop or scene rendering is introduced.
+
+Tap/click the map to switch north-up and heading-up; the choice persists and is
+also in the configuration group. In heading-up, a sqrt(2)-overscanned crop of
+the same raster rotates opposite vehicle yaw, the player marker faces up, and
+a small north pointer stays below N. Speed/scale lettering remains upright.
+The existing toolbar touch-release adapter handles this native button, including
+second-finger taps while driving, drag-away and cancel, with no duplicate click
+or riding-pointer interruption. No new scene render or raster build is needed.
+
+The final heading-up phone-viewport gate (390×844, DPR3 capped at 1.5) measures
+0.077/0.080/0.125ms mean CPU per update at requested 96/160/224px, respectively.
+Responsive caps limit the largest displayed diameter to about 164px. Each
+2.5-second On window has 44 updates and 471 scene draws; Off has the same scene
+draw count with zero map updates and zero retained authored pixel storage.
+The largest map buffer total is 4,436,368 bytes. Lifecycle, driving, persistence,
+pause/blur and context restoration pass. These are Chromium Metal measurements
+on one Mac, not physical-phone or isolated GPU measurements.

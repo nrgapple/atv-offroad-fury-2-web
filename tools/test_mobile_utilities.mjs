@@ -21,7 +21,7 @@ try {
   const cdp=await page.context().newCDPSession(page);
   const touch=(type,points=[])=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:points.map(p=>({...p,radiusX:6,radiusY:6,force:1}))});
   const point=async(selector,id=2)=>{const box=await page.locator(selector).boundingBox();return {id,x:box.x+box.width/2,y:box.y+box.height/2};};
-  const buttons=await page.locator('#toolbar button').evaluateAll(nodes=>nodes.map(button=>{
+  const buttons=await page.locator('#toolbar button:not(#freestyle-minimap)').evaluateAll(nodes=>nodes.map(button=>{
    const rect=button.getBoundingClientRect();return {name:button.getAttribute('aria-label'),rect:rect.toJSON(),hit:document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)?.closest('button')===button};
   }));
   assert.deepEqual(buttons.map(button=>button.name),['Pause','Camera']);

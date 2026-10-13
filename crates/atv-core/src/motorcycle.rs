@@ -12,6 +12,8 @@ use crate::{
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
+#[path = "motorcycle_balance.rs"]
+mod balance;
 #[path = "motorcycle_pose.rs"]
 mod pose;
 type V = [f32; 3];
@@ -697,7 +699,7 @@ impl Motorcycle {
             self.pose_controls,
             self.angles,
             self.compression,
-            self.frame.crossup,
+            self.steer + self.frame.crossup,
         )?;
         self.normal_pose = Some(normal);
         self.visual_steer = visual;
@@ -766,6 +768,7 @@ impl Motorcycle {
         self.steer += (command - self.steer) * (dt * 12.).min(1.);
         let mut contacts = 0;
         let mut slope = 0.;
+        let mut bank_normal = [0., 1., 0.];
         for i in 0..2 {
             let center = add(origin, dynamics::transform(basis, self.model.wheel_rest[i]));
             let tire = self.tires[i];
@@ -809,6 +812,9 @@ impl Motorcycle {
                     (compression - self.compression[i]).clamp(-rate * dt, rate * dt);
                 if depth > 0. {
                     self.frame.grounded[i] = true;
+                    if contacts == 0 {
+                        bank_normal = hit.normal;
+                    }
                     contacts += 1;
                     let velocity = dot(self.body.velocity_at(center), hit.normal);
                     let damping = if velocity < 0. {
@@ -844,7 +850,6 @@ impl Motorcycle {
                     let lateral_speed = dot(self.body.velocity_at(center), lateral);
                     let side = (-lateral_speed * mass * 8.)
                         .clamp(-force * tire.side[surface], force * tire.side[surface]);
-                    self.body.apply_world_force(scale(lateral, side), center);
                     let brake = if wreck { 0.1 } else { input.brake };
                     let braking = (-speed * mass * 10.).clamp(
                         -brake * tire.brake[surface] / tire.radius,
@@ -860,6 +865,8 @@ impl Motorcycle {
                             )?,
                         ),
                     );
+                    self.body
+                        .apply_world_force(scale(lateral, side), force_position);
                     self.body
                         .apply_world_force(scale(forward, braking), force_position);
                     if i == 1 && !wreck {
@@ -1001,11 +1008,20 @@ impl Motorcycle {
         let pitch =
             (-basis[2][1]).atan2((basis[2][0] * basis[2][0] + basis[2][2] * basis[2][2]).sqrt());
         let roll = basis[0][1].atan2(basis[1][1]);
+        let reference = self.bank_reference(bank_normal, speed);
+        let previous_bank = balance::angle(basis, reference);
+        let steer_limit = self.value("Front Tire", "MaxSteerAngle").to_radians()
+            * (1. - 0.7 * (speed.abs() / 110.).min(1.));
+        let bank_target = self.bank_target(
+            speed,
+            if steer_limit > 0. {
+                self.steer / steer_limit
+            } else {
+                0.
+            },
+        );
         if !wreck {
             if grounded {
-                let roll_command = -input.steer
-                    * self.value("Roll Control", "MaxRollCommand").to_radians()
-                    * (speed.abs() / 45.).min(1.);
                 let yaw_rate = speed * self.steer.tan()
                     / (self.model.wheel_rest[0][2] - self.model.wheel_rest[1][2])
                         .abs()
@@ -1014,9 +1030,6 @@ impl Motorcycle {
                     - self.body.local_angular_velocity[1])
                     * self.body_config.inertia[1]
                     * 8.;
-                self.body.local_torque[2] +=
-                    (roll_command - roll) * self.body_config.inertia[2] * 35.
-                        - self.body.local_angular_velocity[2] * self.body_config.inertia[2] * 9.;
                 let wheelie = input.lean > 0.3 && input.throttle > 0.3 && speed.abs() > 8.;
                 let stoppie = input.lean < -0.3
                     && input.brake > self.value("Pitch Control", "StoppieBrake")
@@ -1061,7 +1074,7 @@ impl Motorcycle {
                         self.value("Three Sixty", "MaxThreeSixtyTorqueY") * self.spin_command[1];
                 }
                 self.body.local_torque[1] += input.steer * moment[1];
-                self.body.local_torque[2] += input.steer * moment[2];
+                self.body.local_torque[2] -= input.steer * moment[2];
                 for j in 0..3 {
                     self.body.local_torque[j] -= self.body.local_angular_velocity[j]
                         * self.value("Airborne Control", "AirborneDamping");
@@ -1117,7 +1130,18 @@ impl Motorcycle {
                 drag * self.frame.speed_magnitude.max(1.),
             ),
         );
-        self.body.step(&self.body_config, dt)?;
+        // Normal ground bank has one owner. Free roll remains available for
+        // air and wrecks; the generic body's tire torque must not compete with
+        // the source orientation controller and bank away from the turn.
+        let controlled_bank = grounded && self.frame.wreck.phase == crate::wreck::Phase::Riding;
+        let rotation_axes = self.body_config.rotation_axes;
+        self.body_config.rotation_axes[2] &= !controlled_bank;
+        let stepped = self.body.step(&self.body_config, dt);
+        self.body_config.rotation_axes = rotation_axes;
+        stepped?;
+        if controlled_bank {
+            self.apply_bank(previous_bank, bank_target, reference, dt);
+        }
         if wreck && contacts > 0 && self.wreck_time > self.value("Wrecks", "MaxWreckTime").max(1.75)
         {
             self.recover()?;

@@ -689,7 +689,7 @@ async function remoteAssets(quad, rider) {
     const mesh=bike?.mesh ?? await json(11,await member(quadArchive,selected.quad_mesh));
     const riderMesh=bike?.riderMesh ?? await json(11,await member(riderArchive,selected.rider_mesh));
     const quadMaterials=await archive(selected.quad_materials), riderMaterials=selected.motorcycle ? riderArchive : await archive('/RIDER/RIDER_MT.RES');
-    model.source={mesh,riderMesh,riderPose:bike?.riderPose,textures:await baseTextures(mesh,quadMaterials.bytes,quadMaterials.entries),riderTextures:await baseTextures(riderMesh,riderMaterials.bytes,riderMaterials.entries)};
+    model.source={mesh,riderMesh,riderPose:bike?.riderPose,bikeArchive:bike?quadArchive.bytes:null,textures:await baseTextures(mesh,quadMaterials.bytes,quadMaterials.entries),riderTextures:await baseTextures(riderMesh,riderMaterials.bytes,riderMaterials.entries)};
     return model;
   })().catch(error=> {if(remoteModels.get(key)===model)remoteModels.delete(key);throw error;});
   return model.pending;
@@ -703,7 +703,14 @@ async function selectionAssets(quad, rider) {
   return model.source;
 }
 let menuRiderResource, menuRiderTextures;
-async function menuRiderAssets(rider, isCurrent) {
+async function menuRiderAssets(rider, isCurrent, quad = 1) {
+  if (quad >= 27) {
+    const source = await selectionAssets(quad, rider);
+    if (!isCurrent()) return null;
+    const original = await json(103, source.bikeArchive, quad);
+    // MX selection clips face the opposite way to the ATV menu rig.
+    return {...original, textures:source.riderTextures, previewYaw:Math.PI-.6};
+  }
   const content = await hostedContent;
   const file = content.files.find(f => f.path === '/UI/RESOURCE/PAGEA/PAGE07.RES');
   if (!file) return null;
@@ -1315,7 +1322,7 @@ function render(time) {
   frame = requestAnimationFrame(render);
   touchControls.refresh();
   minimap.draw(time, simFrame, simReady && !raceSettings && !lost && focused && !document.hidden && !menuOpen);
-  hud?.draw(simFrame?.hud, simReady && !lost && !document.hidden && !menuOpen);
+  hud?.draw(simFrame?.hud, simReady && !lost && !document.hidden && !menuOpen, { speedVisible: !minimap.visible });
   raceOverlay.draw(simFrame?.race,simFrame,simReady && !lost && !document.hidden && !menuOpen);
   if (lost || !gl || !terrain || document.hidden || menuOpen) { lastTime = time; stats.sample(time, 0, false); return; }
   const dt = Math.min(.05, Math.max(0, (time - (lastTime || time)) / 1000)); lastTime = time;

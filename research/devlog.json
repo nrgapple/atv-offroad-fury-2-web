@@ -1,6 +1,6 @@
 {
-  "status": "The public build verifies selected motorcycle touch and rider-contact routes. The Freestyle minimap is host-verified across all nine environments using recovered terrain and static scenery; dynamic map actors, physical-device behavior, and GPU timing remain unverified. The authored ATV2 browser port remains incomplete, with whole-game and PS2 parity outstanding.",
-  "working_on": "Continue recovering original ATV2 behavior and verify dynamic map-actor cartography, physical-phone behavior, GPU timing, and broader fidelity.",
+  "status": "The host-verified Freestyle minimap combines GPS, speed, and preload with persisted shape and corner settings plus north-up/heading-up toggle. The ATV2 browser port remains incomplete; physical-device behavior, GPU timing, and native parity remain unverified.",
+  "working_on": "Continue original ATV2 fidelity and physical-device validation; complete dynamic map actor/GPU checks and remaining motorcycle controller, pose, and menu integration.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -2342,6 +2342,46 @@
       "caption": "Host Chromium screenshot at 390\u00d7844, DPR 3: portrait ride view with minimap and HUD; not a public deployment or physical-phone capture."
     },
     {
+      "id": "combined-gps-and-speed-minimap-layouts-6ed6b5c9",
+      "timestamp": "2026-10-13T14:33:05.732301+00:00",
+      "recorded_at": "2026-10-13T14:57:47.989682+00:00",
+      "kind": "verification",
+      "title": "Combined GPS and speed minimap layouts",
+      "summary": "Freestyle combines map, heading, speed, and preload in one configurable GPS widget, with shape, corner, and tap-to-toggle north-up/heading-up options.",
+      "details": [
+        "Pause \u2192 HUD settings \u2192 Minimap configuration contains On/Off, 96\u2013224px size, circular/square shape, top-right/bottom-left corner, and north-up/heading-up orientation. These settings persist across reloads; tapping or clicking the map toggles its orientation.",
+        "With the map visible, the combined widget replaces native standalone speed/preload pixels. The final footer has no backdrop: MPH sits near the bottom edge, with the small 200 ft map scale above. Integrated preload follows actual Rust simulation state.",
+        "With the map Off or in Race fallback, original speed presentation returns and the stunt HUD remains available. Switching orientation changes actual terrain pixels without raster rebaking.",
+        "The native map button uses toolbar touch handling. Dedicated checks passed for a second-finger orientation toggle while the first finger keeps driving, drag-away cancellation, and keyboard input without throttle leakage.",
+        "Final footer Chromium checks passed at 1280\u00d7720, 390\u00d7844, 320\u00d7568, and 844\u00d7390. The final footer also passed 390\u00d7844 WebKit, actual touch wreck recovery, and frontend/race regressions. The footer geometry unit test verifies 96/160/224px circle and square layouts. Final WebKit button-root and mobile UI gates also passed: native mobile UI layouts at 390/320/844 viewports, 44px Pause/Camera controls, focus and touch teardown, and the combined instrument in 390px portrait after the button-root orientation change.",
+        "The latest make check passed 348 core and 76 JavaScript tests plus network/relay suites, formatting, and strict Clippy. Prior make verify, release, and Worker gates remain recorded from their earlier checkpoint.",
+        "Heading-up lifecycle/performance verification passed on one host Mac in Chromium Metal with synthetic focus. At 390\u00d7844 mobile viewport, mean map-update CPU was 0.077/0.080/0.125ms for 96/160/224px requests, with 44 updates per 2.5 seconds. Scene draws remained 471 with the map On and Off; maximum authored pixel storage was 4,436,368 bytes and Off used zero. These are host/browser measurements, not physical-phone results or isolated GPU timing.",
+        "The widget adds no 3D scene draws or source downloads; cached 1024px, 20Hz, and DPR 1.5 caps remain."
+      ],
+      "limitation": "Host-only verification; the retained hero is a 390\u00d7844 DPR3 Chromium capture of the final footer before orientation-toggle verification, not a public or physical-phone capture. Timing is from one host Mac/browser viewport and does not establish phone performance or isolated GPU timing. Physical phones, thermals, and full native parity remain unverified.",
+      "image": "/devlog-images/combined-gps-and-speed-minimap-layouts-6ed6b5c9.png",
+      "caption": "Host Chromium portrait capture at 390\u00d7844, DPR 3: circular GPS widget with the 200 ft map scale above the unbacked MPH footer. This image predates orientation-toggle verification; it is not a public or physical-phone capture."
+    },
+    {
+      "id": "motorcycle-banking-and-standing-menu-poses-now-pass-ho-d50992f3",
+      "timestamp": "2026-10-13T14:43:07.225818+00:00",
+      "recorded_at": "2026-10-13T14:47:11.330417+00:00",
+      "kind": "verification",
+      "title": "Motorcycle banking and standing menu poses now pass host checks",
+      "summary": "A host checkpoint now covers direction-correct motorcycle banking, recovered standing rider idle clips, and the Sano 50 Mini size label. It corrects two gaps missed by earlier touch-contact and static-menu checks; it remains an authored integration rather than full native physics parity.",
+      "details": [
+        "The left/right touch captures show the rider and motorcycle bank changing with the rendered heading and trajectory. The GPU gate covers profiles 45, 29, 31 and 33 over 1,061 paired steps and 2,455 source-to-bone contact comparisons; maximum grip error was 0.00000170 ft and boot/peg error 0.0000371 ft. Each touch direction was checked after a 450 ms hold. A still image shows the visible bank direction, while the paired runtime gate establishes the direction-response check.",
+        "Recovered source routine 0x004dbd10 applies ground bank by direct orientation, with a 45-degree limit at 35 mph and gain 5. The port now uses a recovered bank component with an authored roll-axis ownership adapter; the full native controller pipeline remains unrecovered.",
+        "All 20 motorcycle choices now pass the actual-GPU standing-menu gate: standing head height exceeds 4.8 ft and pelvis height exceeds 3 ft, with rendered pixels and GPU bones changing over 700 ms. Original UI_mrider.mcf breathing and idle1/idle2/idle3 clips run through the shared ATV menu animation engine, and returning to ATV restores mrider_body. The front-facing folded-arm pose is visible in the menu captures.",
+        "Sano 50 Mini uses the recovered source geometry unchanged: its wheel diameter is 14.91 in versus 28.88 in on the Suzuki 125, with no SUB wheel-scale override. The Mini label describes this source size difference.",
+        "The host all-20 driving catalog passed 1,536 paired steps including audio, clutch, particles and reset. Honda 35 Race passed its five-racer source field in portrait and landscape with touch, countdown and restart. The original 26-ATV garage passed six responsive viewports, male/female breathing, rapid selection and graphics-context restore. Host checks passed 348 core, 25 network, 3 web, 13 relay, 4 release Rust and 72 JavaScript tests; formatting, Clippy, make verify, hygiene, 29 release checks with one skip, and 8 Cloudflare checks also passed.",
+        "A normal-input MX 500 Vancouver backflip-to-wreck route passed over 1,297 paired steps with four intact airborne ragdoll frames, one contact damage transition, separation and recovery."
+      ],
+      "limitation": "Host-only checkpoint; not published. The source bank component and animation resources are recovered, while roll-axis ownership, contact/IK integration and the controller remain authored adapters or unfinished work. Earlier gates did not detect incorrect ground bank direction or the static menu pose. Full native whole-controller parity and physical-phone behavior are unverified. The touch captures show the rider arms spread and somewhat stiff, and the bike/rider remain small in portrait framing.",
+      "image": "/devlog-images/motorcycle-banking-and-standing-menu-poses-now-pass-ho-d50992f3.png",
+      "caption": "Host capture sheet: left and right touch-bank views above, front-facing standing RM125 Race and Sano 50 Mini menu poses below. Rendered direction and idle motion were checked on the host; this is not a public release."
+    },
+    {
       "id": "second-touch-adds-reverse-and-airborne-stunts-9f83254d",
       "timestamp": "2026-10-13T15:07:43.187646+00:00",
       "recorded_at": "2026-10-13T15:11:46.785430+00:00",
@@ -2358,6 +2398,21 @@
       "caption": "Host Chromium capture of an airborne Nac Nac while the primary touch remains engaged; the full second-touch gesture gate is host-verified."
     },
     {
+      "id": "atv-fury-2-home-screen-identity-be6eaa11",
+      "timestamp": "2026-10-13T15:14:50.533678+00:00",
+      "recorded_at": "2026-10-13T15:21:18.520314+00:00",
+      "kind": "build",
+      "title": "ATV Fury 2 home-screen identity",
+      "summary": "The landing and game pages now have a shared ATV Fury 2 app identity with authored home-screen icon assets and a standalone web-app manifest.",
+      "details": [
+        "Both pages advertise the short app name ATV Fury 2, the authored vector browser icon, a 180px Apple touch icon and a 512px app icon; the manifest opens the fullscreen game route.",
+        "The host app-identity browser gate passes both page links, manifest and icon serving, MIME types and expected image dimensions."
+      ],
+      "limitation": "Host-only checkpoint pending current-main CI, deployment and public verification. Physical iOS Home Screen installation remains unverified; an existing saved shortcut may need to be removed and added again to refresh its icon.",
+      "image": "/devlog-images/atv-fury-2-home-screen-identity-be6eaa11.png",
+      "caption": "Inspected 512px preview of the authored ATV Fury 2 app icon; host route and asset checks pass."
+    },
+    {
       "id": "garage-and-freestyle-selections-persist-8e7c9757",
       "timestamp": "2026-10-13T15:17:56.123573+00:00",
       "recorded_at": "2026-10-13T15:20:02.129045+00:00",
@@ -2372,21 +2427,6 @@
       "limitation": "Host-only checkpoint pending current-main CI, deployment and public verification. Local browser storage is required for selections to persist across reloads; physical-device behavior is unverified.",
       "image": "/devlog-images/garage-and-freestyle-selections-persist-8e7c9757.png",
       "caption": "Portrait host-browser menu capture from the selection-restoration check; course, Garage and Race persistence passed in the same actual-menu run."
-    },
-    {
-      "id": "atv-fury-2-home-screen-identity-be6eaa11",
-      "timestamp": "2026-10-13T15:14:50.533678+00:00",
-      "recorded_at": "2026-10-13T15:21:18.520314+00:00",
-      "kind": "build",
-      "title": "ATV Fury 2 home-screen identity",
-      "summary": "The landing and game pages now have a shared ATV Fury 2 app identity with authored home-screen icon assets and a standalone web-app manifest.",
-      "details": [
-        "Both pages advertise the short app name ATV Fury 2, the authored vector browser icon, a 180px Apple touch icon and a 512px app icon; the manifest opens the fullscreen game route.",
-        "The host app-identity browser gate passes both page links, manifest and icon serving, MIME types and expected image dimensions."
-      ],
-      "limitation": "Host-only checkpoint pending current-main CI, deployment and public verification. Physical iOS Home Screen installation remains unverified; an existing saved shortcut may need to be removed and added again to refresh its icon.",
-      "image": "/devlog-images/atv-fury-2-home-screen-identity-be6eaa11.png",
-      "caption": "Inspected 512px preview of the authored ATV Fury 2 app icon; host route and asset checks pass."
     }
   ],
   "updated_at": "2026-10-13T15:21:18.520314+00:00",

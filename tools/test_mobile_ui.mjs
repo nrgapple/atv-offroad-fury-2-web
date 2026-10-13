@@ -26,7 +26,7 @@ try {
   assert.deepEqual(native, { held: [true, true], inactive: false, destroyed: false });
   for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }, { width: 844, height: 390 }]) {
     await page.setViewportSize(viewport);
-    const boxes = await page.locator('#toolbar button').evaluateAll(buttons => buttons.map(el => {
+    const boxes = await page.locator('#toolbar button:not(#freestyle-minimap)').evaluateAll(buttons => buttons.map(el => {
       const box = el.getBoundingClientRect(), css = getComputedStyle(el);
       return { x: box.x, y: box.y, width: box.width, height: box.height, min: css.minHeight, name: el.getAttribute('aria-label') };
     }));

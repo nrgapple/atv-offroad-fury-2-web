@@ -47,6 +47,42 @@ iOS Safari/controller behavior and full original stunt/game parity remain open.
 The inspected capture shows Nac Nac during the touch session; it is stored only
 in ignored private screenshot storage until the validated release flow.
 
+## Combined minimap/speed and corner configuration — 2026-10-13
+
+Branch `feat/minimap-instrument` revises the GPS to default circular/top-right,
+with square and bottom-left options under HUD settings → Minimap configuration.
+It renders Rust speed/preload inside the map; the original speed block is
+suppressed only while the GPS is visible. Off/baking/Race retain original speed,
+and the original stunt HUD stays active. Shape/size/corner reuse the cached
+aerial raster, with no additional scene draws. Host tests pass four viewports,
+both shapes/corners, toolbar clearance, 44px controls, persistence, no duplicate
+speed pixels, actual preload and Off fallback. Timing/lifecycle/drive gates pass;
+combined map updates cost 0.068–0.142ms mean CPU on one Mac, not phone hardware.
+The final footer has no backdrop: outlined MPH sits near the bottom edge and
+the small 200 ft map-scale readout is directly above. Tap/click switches persisted
+north-up/heading-up without rebaking; held driving plus a second-finger toggle,
+drag-away cancellation and keyboard activation pass. The final heading-up phone
+viewport gate measures 0.077–0.125ms mean CPU/update, 471 unchanged scene draws
+and zero retained map pixels/updates when Off.
+See [minimap methods and limits](research/MINIMAP.md). The selected screenshot
+is a host capture; CI/public delivery are verified separately.
+
+## Motorcycle inward bank and standing menu — host correction (2026-10-13)
+
+The user found outward lean/static garage poses in the previous correction.
+Those earlier finite/turn/contact gates did not establish correct banking.
+The recovered ground-bank orientation approach now controls normal ground roll;
+source pose steering, physical fork steering and shared grip/peg constraints agree.
+Actual rendered Mini/125/250/500 touch checks pass in both directions, with
+1,061 exact paired Off/On steps and 2,455 GPU contacts. Original MX standing
+breathing/three idle clips play for all20 garage selections through the existing
+ATV menu animation engine; the original ATV bank returns correctly. The source
+Sano50 Mini has ~15-inch tires, versus ~29-inch full-size125 front tires; source
+geometry is retained and the Mini label makes the distinction explicit.
+The severe500 Vancouver wreck/separation/breakaway/recovery gate passes1,297
+paired steps. Native whole-controller and whole-physics parity remain open;
+see [motorcycle evidence](research/MOTORCYCLES.md). Publication is pending.
+
 ## Freestyle GPS minimap checkpoint — 2026-10-13
 
 New SSD worktree `atv-offroad-fury-2-minimap`, branch `feat/freestyle-minimap`,

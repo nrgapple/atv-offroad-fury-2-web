@@ -1,7 +1,6 @@
 //! Continuous source-MOT pose blending and source fork/grip geometry. The hand
 //! constraint adapts the existing two-link solver; MX controller parity is open.
 use super::*;
-use crate::wheel::cross;
 #[derive(Clone, Copy, Default)]
 pub(super) struct Controls {
     pub steer: f32,
@@ -109,7 +108,7 @@ impl Model {
                 .ok_or_else(|| format!("missing riding motion {name}"))?;
             a.sample_channels(
                 &self.rider.nodes,
-                a.duration * (c.steer + 1.) * 0.5,
+                a.duration * (1. - c.steer) * 0.5,
                 Default::default(),
             )
         };
@@ -124,7 +123,7 @@ impl Model {
         c: Controls,
         angles: [f32; 2],
         compression: [f32; 2],
-        crossup: f32,
+        steering: f32,
     ) -> Result<(animation::Pose, f32)> {
         let ground = blend(
             self.riding_channels("mx_turn_still", c)?,
@@ -141,21 +140,7 @@ impl Model {
                 .ok_or("missing rider grip marker")
         });
         let dummy = [dummy[0]?, dummy[1]?];
-        let position = |m: &M| [m[12], m[13], m[14]];
-        let rest = sub(
-            position(&self.mesh.nodes[self.grips[1]].world_matrix),
-            position(&self.mesh.nodes[self.grips[0]].world_matrix),
-        );
-        let desired = sub(
-            position(&pose.world_matrices[dummy[1]]),
-            position(&pose.world_matrices[dummy[0]]),
-        );
-        let project = |v: V| sub(v, scale(self.steering_axis, dot(v, self.steering_axis)));
-        let rest = project(rest);
-        let desired = project(desired);
-        let visual =
-            dot(self.steering_axis, cross(rest, desired)).atan2(dot(rest, desired)) + crossup;
-        let bike = self.pose(visual, angles, compression);
+        let bike = self.pose(steering, angles, compression);
         let hands = crate::rider_ik::Hands::bind_native(&self.rider.nodes)?;
         for (i, arm) in [&hands.left, &hands.right].into_iter().enumerate() {
             constrain(
@@ -187,7 +172,7 @@ impl Model {
                 .ok_or("missing motorcycle foot peg")?;
             constrain(&limb, &self.rider.nodes, &mut pose, marker, &bike[peg])?;
         }
-        Ok((pose, visual))
+        Ok((pose, steering))
     }
     pub(super) fn foot_errors(&self, rider: &[M], bike: &[M]) -> [f32; 2] {
         [

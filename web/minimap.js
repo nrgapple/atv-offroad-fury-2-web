@@ -6,15 +6,34 @@ export const MAP_INTERVAL = 50;
 export const clampMapSize = value => Number.isFinite(Number(value)) ? Math.round(Math.max(96, Math.min(224, Number(value))) / 8) * 8 : 160;
 export const mapHeading = ([w, x, y, z]) => Math.atan2(2 * (w * y + x * z), 1 - 2 * (y * y + x * x));
 export const mapPoint = (x, z, terrain, width, height) => [x / terrain.sizeX * width, (1 - z / terrain.sizeZ) * height];
+export function instrumentFooter(size, shape, width, descent) {
+  const radius = size / 2, halfWidth = width / 2 + 2;
+  const edge = shape === 'circle' ? radius + Math.sqrt(Math.max(0, radius * radius - halfWidth * halfWidth)) : size;
+  return edge - descent - 4;
+}
 
 export class MinimapSettings {
   constructor(storage) {
-    this.storage = storage; this.enabled = true; this.size = 160; this.changed = () => {};
-    try { this.storage ??= globalThis.localStorage; storage = this.storage; this.enabled = storage.getItem('atv-minimap-enabled') !== 'false'; const value = storage.getItem('atv-minimap-size'); if (value !== null) this.size = clampMapSize(value); } catch { /* Session fallback. */ }
+    this.storage = storage; this.enabled = true; this.size = 160; this.shape = 'circle'; this.corner = 'top-right'; this.orientation = 'north-up'; this.changed = () => {};
+    try {
+      this.storage ??= globalThis.localStorage; storage = this.storage;
+      this.enabled = storage.getItem('atv-minimap-enabled') !== 'false';
+      const value = storage.getItem('atv-minimap-size'); if (value !== null) this.size = clampMapSize(value);
+      if (storage.getItem('atv-minimap-shape') === 'square') this.shape = 'square';
+      if (storage.getItem('atv-minimap-corner') === 'bottom-left') this.corner = 'bottom-left';
+      if (storage.getItem('atv-minimap-orientation') === 'heading-up') this.orientation = 'heading-up';
+    } catch { /* Session fallback. */ }
   }
-  save() { try { this.storage.setItem('atv-minimap-enabled', String(this.enabled)); this.storage.setItem('atv-minimap-size', String(this.size)); } catch { /* Session fallback. */ } this.changed(); }
+  save() { try {
+    this.storage.setItem('atv-minimap-enabled', String(this.enabled)); this.storage.setItem('atv-minimap-size', String(this.size));
+    this.storage.setItem('atv-minimap-shape', this.shape); this.storage.setItem('atv-minimap-corner', this.corner);
+    this.storage.setItem('atv-minimap-orientation', this.orientation);
+  } catch { /* Session fallback. */ } this.changed(); }
   toggle() { this.enabled = !this.enabled; this.save(); }
   setSize(value) { this.size = clampMapSize(value); this.save(); }
+  toggleShape() { this.shape = this.shape === 'circle' ? 'square' : 'circle'; this.save(); }
+  toggleCorner() { this.corner = this.corner === 'top-right' ? 'bottom-left' : 'top-right'; this.save(); }
+  toggleOrientation() { this.orientation = this.orientation === 'north-up' ? 'heading-up' : 'north-up'; this.save(); }
 }
 
 // Match the terrain shader's 64-cell tile lookup and inset UVs. Store only the
@@ -71,17 +90,27 @@ function* sceneryTriangles(terrain) {
 }
 
 export class FreestyleMinimap {
-  constructor(settings, parent = document.body) {
+  constructor(settings, parent = document.getElementById('toolbar') ?? document.body) {
     this.settings = settings; this.terrain = null; this.updated = -Infinity;
-    this.root = document.createElement('div'); this.root.id = 'freestyle-minimap'; this.root.hidden = true;
-    this.canvas = document.createElement('canvas'); this.canvas.setAttribute('aria-label', 'Freestyle GPS map, north up'); this.canvas.setAttribute('role', 'img');
-    this.label = document.createElement('span'); this.label.textContent = 'GPS'; this.label.setAttribute('aria-hidden', 'true');
-    this.root.append(this.canvas, this.label); parent.append(this.root); this.ctx = this.canvas.getContext('2d');
+    this.root = document.createElement('button'); this.root.type = 'button'; this.root.id = 'freestyle-minimap'; this.root.hidden = true;
+    this.canvas = document.createElement('canvas'); this.canvas.setAttribute('aria-hidden', 'true');
+    this.root.append(this.canvas); parent.append(this.root); this.ctx = this.canvas.getContext('2d');
+    // The existing toolbar touch adapter owns touch release/cancel and suppresses
+    // compatibility clicks, including a second-finger tap during held driving.
+    this.root.onclick = () => { settings.toggleOrientation(); document.getElementById('game')?.focus({ preventScroll: true }); };
+    for (const type of ['keydown', 'keyup']) this.root.addEventListener(type, event => { if (event.code === 'Enter' || event.code === 'Space') event.stopPropagation(); });
     this.metrics = { updates: 0, builds: 0, buildMs: 0, buildSlices: 0, maxBuildSliceMs: 0, lastCpuMs: 0, totalCpuMs: 0, backingBytes: 0, ready: false };
-    settings.changed = () => { this.root.style.setProperty('--atv-minimap-size', `${settings.size}px`); this.updated = -Infinity; if (!settings.enabled) this.release(); };
+    settings.changed = () => {
+      this.root.style.setProperty('--atv-minimap-size', `${settings.size}px`);
+      this.root.dataset.shape = settings.shape; this.root.dataset.corner = settings.corner;
+      this.root.dataset.orientation = settings.orientation;
+      const mode = settings.orientation === 'north-up' ? 'North up' : 'Heading up';
+      this.root.setAttribute('aria-label', `Minimap orientation: ${mode}`); this.root.title = 'Tap to switch north up / heading up';
+      this.updated = -Infinity; if (!settings.enabled) this.release();
+    };
     settings.changed();
     const css = getComputedStyle(this.root);
-    this.colors = { ink: css.getPropertyValue('--atv-ink').trim(), gold: css.getPropertyValue('--atv-gold-light').trim(), silver: css.getPropertyValue('--atv-silver-light').trim(), font: css.getPropertyValue('--atv-font-label').trim() };
+    this.colors = { ink: css.getPropertyValue('--atv-ink').trim(), gold: css.getPropertyValue('--atv-gold-light').trim(), silver: css.getPropertyValue('--atv-silver-light').trim(), orange: css.getPropertyValue('--atv-orange').trim(), font: css.getPropertyValue('--atv-font-label').trim() };
   }
   release() {
     if (this.base) this.base.width = this.base.height = 1;
@@ -127,19 +156,53 @@ export class FreestyleMinimap {
     c.setTransform(pixels / size, 0, 0, pixels / size, 0, 0); c.clearRect(0, 0, size, size);
     c.fillStyle = this.colors.ink; c.fillRect(0, 0, size, size);
     const [px, py] = mapPoint(x, z, t, MAP_RESOLUTION, MAP_RESOLUTION), sx = MAP_RANGE / t.sizeX * MAP_RESOLUTION, sy = MAP_RANGE / t.sizeZ * MAP_RESOLUTION;
-    c.drawImage(this.base, px - sx / 2, py - sy / 2, sx, sy, 0, 0, size, size);
+    const heading = mapHeading(player.orientation), headingUp = this.settings.orientation === 'heading-up', overscan = headingUp ? Math.SQRT2 : 1;
+    c.save(); c.translate(size / 2, size / 2); if (headingUp) c.rotate(-heading);
+    c.drawImage(this.base, px - sx * overscan / 2, py - sy * overscan / 2, sx * overscan, sy * overscan, -size * overscan / 2, -size * overscan / 2, size * overscan, size * overscan); c.restore();
     // A small pale/gold heading marker follows the quad, including wrecks/reset.
-    c.save(); c.translate(size / 2, size / 2); c.rotate(mapHeading(player.orientation));
+    c.save(); c.translate(size / 2, size / 2); if (!headingUp) c.rotate(heading);
     c.beginPath(); c.moveTo(0, -8); c.lineTo(6, 6); c.lineTo(0, 3); c.lineTo(-6, 6); c.closePath();
     c.lineWidth = 3; c.strokeStyle = this.colors.ink; c.stroke(); c.fillStyle = this.colors.gold; c.fill(); c.restore();
     c.font = `italic 800 10px ${this.colors.font}`; c.lineWidth = 3; c.strokeStyle = this.colors.ink; c.fillStyle = this.colors.silver;
     c.strokeText('N', size / 2 - 4, 13); c.fillText('N', size / 2 - 4, 13);
-    const length = size * 200 / MAP_RANGE;
-    c.strokeStyle = this.colors.silver; c.lineWidth = 1.5; c.beginPath(); c.moveTo(9, size - 12); c.lineTo(9 + length, size - 12); c.stroke();
-    c.font = `700 9px ${this.colors.font}`; c.strokeStyle = this.colors.ink; c.lineWidth = 3; c.strokeText('200 ft', 9, size - 17); c.fillText('200 ft', 9, size - 17);
+    if (headingUp) {
+      c.save(); c.translate(size / 2, 22); c.rotate(-heading); c.beginPath(); c.moveTo(0, -4); c.lineTo(3, 3); c.lineTo(0, 1); c.lineTo(-3, 3); c.closePath(); c.lineWidth = 2; c.stroke(); c.fill(); c.restore();
+    }
+    // Both shapes keep lettering inside the circular safe region. Speed and
+    // preload values arrive from the same Rust HUD as the original meter.
+    const hud = player.hud;
+    let readoutY = size * .76;
+    if (hud) {
+      const fontSize = Math.max(16, size * .17), unitsSize = Math.max(9, size * .07);
+      c.font = `italic 800 ${fontSize}px Impact, ${this.colors.font}`;
+      const speedWidth = c.measureText(hud.speed_text).width;
+      c.font = `800 ${unitsSize}px ${this.colors.font}`;
+      const units = c.measureText(hud.units), unitsWidth = units.width, width = speedWidth + unitsWidth + 4;
+      const x = (size - width) / 2, y = instrumentFooter(size, this.settings.shape, width, units.actualBoundingBoxDescent || unitsSize * .25);
+      readoutY = y - fontSize - 5;
+      c.fillStyle = this.colors.silver; c.strokeStyle = this.colors.ink; c.lineWidth = 3;
+      c.font = `italic 800 ${fontSize}px Impact, ${this.colors.font}`;
+      c.strokeText(hud.speed_text, x, y); c.fillText(hud.speed_text, x, y);
+      c.font = `800 ${unitsSize}px ${this.colors.font}`;
+      c.strokeText(hud.units, x + speedWidth + 4, y); c.fillText(hud.units, x + speedWidth + 4, y);
+      if (hud.preload_visible) {
+        const width = size * .4, left = (size - width) / 2, top = size * .60;
+        c.fillStyle = this.colors.ink; c.fillRect(left, top, width, 3);
+        c.fillStyle = `rgba(100,160,255,${hud.preload_blue_alpha / 255})`; c.fillRect(left, top, width, 3);
+        c.fillStyle = this.colors.orange; c.fillRect(left, top, width * Math.max(0, Math.min(1, hud.preload_fill)), 3);
+      }
+      if (this.canvas.dataset.speed !== hud.speed_text) this.canvas.dataset.speed = hud.speed_text;
+      const preload = String(hud.preload_visible); if (this.canvas.dataset.preload !== preload) this.canvas.dataset.preload = preload;
+    }
+    const length = size * 200 / MAP_RANGE, left = (size - length) / 2;
+    c.strokeStyle = this.colors.silver; c.lineWidth = 1.5; c.beginPath(); c.moveTo(left, readoutY + 2); c.lineTo(left + length, readoutY + 2); c.stroke();
+    c.font = `700 9px ${this.colors.font}`; c.strokeStyle = this.colors.ink; c.lineWidth = 3;
+    const textX = (size - c.measureText('200 ft').width) / 2;
+    c.strokeText('200 ft', textX, readoutY); c.fillText('200 ft', textX, readoutY);
     this.metrics.lastCpuMs = performance.now() - started; this.metrics.totalCpuMs += this.metrics.lastCpuMs; this.metrics.updates++;
-    this.metrics.center = [x, z]; this.metrics.heading = mapHeading(player.orientation);
+    this.metrics.center = [x, z]; this.metrics.heading = heading; this.metrics.mapRotation = headingUp ? -heading : 0; this.metrics.markerRotation = headingUp ? 0 : heading;
     this.metrics.backingBytes = (MAP_RESOLUTION * MAP_RESOLUTION + pixels * pixels) * 4;
   }
-  snapshot() { return { ...this.metrics, enabled: this.settings.enabled, size: this.settings.size, visible: !this.root.hidden, resolution: this.canvas.width, rangeFeet: MAP_RANGE, maxHz: 1000 / MAP_INTERVAL, extraSceneDraws: 0 }; }
+  get visible() { return !this.root.hidden; }
+  snapshot() { return { ...this.metrics, enabled: this.settings.enabled, size: this.settings.size, shape: this.settings.shape, corner: this.settings.corner, orientation: this.settings.orientation, visible: this.visible, resolution: this.canvas.width, rangeFeet: MAP_RANGE, maxHz: 1000 / MAP_INTERVAL, extraSceneDraws: 0 }; }
 }

@@ -16,11 +16,13 @@ input[type=file] { position: absolute; inset: 0; width: 100%; opacity: 0; cursor
 
 #frontend { position: fixed; inset: 0; z-index: 2; background: #080606; display: grid; place-items: center; }
 #frontend[hidden] { display: none; }
-#freestyle-minimap { position: fixed; z-index: 2; right: max(14px, env(safe-area-inset-right)); top: max(82px, calc(50dvh - var(--atv-minimap-footprint) / 2)); width: var(--atv-minimap-footprint); height: var(--atv-minimap-footprint); --atv-minimap-footprint: min(var(--atv-minimap-size, 160px), 42vw, 34dvh); overflow: hidden; border: 0; border-radius: var(--atv-control-radius); pointer-events: none; opacity: .94; }
+#freestyle-minimap { position: fixed; z-index: 2; right: calc(8px + env(safe-area-inset-right)); top: calc(8px + env(safe-area-inset-top)); width: var(--atv-minimap-footprint); height: var(--atv-minimap-footprint); --atv-minimap-footprint: min(var(--atv-minimap-size, 160px), 42vw, 34dvh); overflow: hidden; padding: 0; margin: 0; background: transparent; box-shadow: none; border: 0; border-radius: 50%; pointer-events: auto; touch-action: manipulation; opacity: .94; }
+#freestyle-minimap[data-shape=square] { border-radius: var(--atv-control-radius); }
+#freestyle-minimap[data-corner=bottom-left] { right: auto; top: auto; left: calc(8px + env(safe-area-inset-left)); bottom: calc(8px + env(safe-area-inset-bottom)); }
 #freestyle-minimap[hidden], body.menu-open #freestyle-minimap { display: none; }
+#freestyle-minimap:focus-visible { outline: 2px solid var(--atv-focus); outline-offset: 2px; }
 #freestyle-minimap canvas { display: block; width: 100%; height: 100%; }
-#freestyle-minimap span { position: absolute; top: 6px; left: 8px; color: var(--atv-text); font: italic 800 9px var(--atv-font-label); letter-spacing: var(--atv-label-tracking); text-shadow: 0 1px 2px var(--atv-ink); }
-@media (max-width: 559px) { #freestyle-minimap { top: max(174px, calc(env(safe-area-inset-top) + 164px)); } }
+@media (max-width: 360px) { #toolbar .atv-control span { display: none; } }
 #menu-stage { position: absolute; inset: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 #menu-canvas { width: 100%; height: 100%; display: block; }
 #menu-buttons { position: absolute; inset: 0; }
@@ -34,7 +36,7 @@ body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none
 #toolbar { z-index: 3; }
 #menu { min-width: 44px; min-height: 44px; }
 body:not(.menu-open) #help, body:not(.menu-open) #status:not(.error) { display: none; }
-#frontend[data-page=pause], #frontend[data-page=hud-settings], #frontend[data-page=controls] { background: #0005; }
+#frontend[data-page=pause], #frontend[data-page=hud-settings], #frontend[data-page=minimap-config], #frontend[data-page=controls] { background: #0005; }
 #diagnostics-overlay { position: fixed; z-index: 3; top: max(14px, env(safe-area-inset-top)); right: max(14px, env(safe-area-inset-right)); max-width: calc(100vw - 28px); max-height: calc(100dvh - 100px); margin: 0; padding: 10px 12px; background: #06121de8; border: 1px solid #8ca7b655; color: #e5f7ff; font: 11px/1.55 ui-monospace, monospace; font-variant-numeric: tabular-nums; white-space: pre-wrap; overflow-wrap: anywhere; pointer-events: none; overflow: hidden; }
 #diagnostics-overlay[hidden], body.menu-open #diagnostics-overlay { display: none; }
 @media (max-width: 600px) { #diagnostics-overlay { top: max(72px, calc(env(safe-area-inset-top) + 58px)); font-size: 10px; padding: 8px; } }

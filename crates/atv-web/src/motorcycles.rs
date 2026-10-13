@@ -2,6 +2,42 @@
 //! the ATV game; does not invoke the four-wheel ATV solver for motorcycles.
 use super::*;
 use atv_core::motorcycle::{Model, Motorcycle};
+pub fn menu(input: &[u8], id: usize) -> Result<Vec<u8>> {
+    let model = Model::load(
+        input,
+        u16::try_from(id).map_err(|_| "invalid motorcycle id")?,
+    )?;
+    let mut clips = vec![];
+    for idle in 0..=3 {
+        let breathe = "ui_rider_select_breathing";
+        clips.push((
+            format!("{breathe}.mot"),
+            model
+                .motions
+                .get(breathe)
+                .ok_or("missing MX menu breathing")?
+                .clone(),
+        ));
+        if idle > 0 {
+            let name = format!("ui_rider_select_idle{idle}");
+            clips.push((
+                format!("{name}.mot"),
+                model
+                    .motions
+                    .get(&name)
+                    .ok_or("missing MX menu idle")?
+                    .clone(),
+            ));
+        }
+    }
+    let rider = atv_core::menu_preview::Rider::from_clips(model.rider, clips)?;
+    let (clip, pose) = rider.pose(0.)?;
+    let output =
+        serde_json::to_vec(&serde_json::json!({"mesh":rider.mesh,"pose":pose,"clip":clip}))
+            .map_err(|e| e.to_string())?;
+    MENU_RIDER.with_borrow_mut(|slot| *slot = Some(rider));
+    Ok(output)
+}
 pub fn load(input: &[u8], id: usize, install: bool) -> Result<Vec<u8>> {
     let id = u16::try_from(id).map_err(|_| "invalid motorcycle id")?;
     let model = Model::load(input, id)?;
