@@ -1,5 +1,7 @@
 //! Durable local release queue. Only the worker mutates upstream or production.
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::{
     env, fs,
     fs::File,
@@ -7,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -19,6 +21,8 @@ struct Config {
     target: PathBuf,
     playwright: PathBuf,
     url: String,
+    #[serde(skip)]
+    lock_fd: Option<i32>,
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct Job {
@@ -28,6 +32,8 @@ struct Job {
     stage: String,
     integrated: Option<String>,
     error: Option<String>,
+    #[serde(default)]
+    supersedes: Option<String>,
 }
 fn now() -> u128 {
     SystemTime::now()
@@ -67,6 +73,27 @@ fn output(cwd: &Path, program: &str, args: &[&str]) -> Result<String> {
     }
     Ok(String::from_utf8(output.stdout)?.trim().to_owned())
 }
+#[cfg(unix)]
+unsafe extern "C" {
+    fn fcntl(fd: i32, command: i32, ...) -> i32;
+}
+
+#[cfg(unix)]
+fn inherit_worker_lock(command: &mut Command, fd: i32) {
+    // F_SETFD=2 on this Unix/macOS host. Only the child changes its descriptor
+    // flags; its inherited flock keeps a restarted worker out until it exits.
+    // fcntl is async-signal-safe and performs no allocation in pre_exec.
+    unsafe {
+        command.pre_exec(move || {
+            if fcntl(fd, 2, 0) < 0 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        });
+    }
+}
+
 fn run(cwd: &Path, program: &str, args: &[&str], log: &File, config: &Config) -> Result<()> {
     let mut command = Command::new(program);
     command
@@ -77,9 +104,47 @@ fn run(cwd: &Path, program: &str, args: &[&str], log: &File, config: &Config) ->
         .stderr(log.try_clone()?)
         .env("CARGO_TARGET_DIR", &config.target)
         .env("PLAYWRIGHT_MODULE", &config.playwright)
-        .env("ATV_TEST_URL", &config.url);
+        .env("ATV_TEST_URL", &config.url)
+        .env("npm_config_cache", config.queue.join("npm-cache"))
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("PLAYWRIGHT_BROWSERS_PATH", config.queue.join("browsers"));
+    #[cfg(unix)]
+    command.process_group(0);
+    #[cfg(unix)]
+    if let Some(fd) = config.lock_fd {
+        inherit_worker_lock(&mut command, fd);
+    }
     writeln!(&*log, "\n$ {program} {}", args.join(" "))?;
-    if !command.status()?.success() {
+    let mut child = command.spawn()?;
+    let started = Instant::now();
+    let limit = Duration::from_secs(match program {
+        "make" => 1200,
+        "python3" => 600,
+        "npx" | "node" => 300,
+        _ => 120,
+    });
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() > limit {
+            #[cfg(unix)]
+            {
+                let _ = Command::new("/bin/kill")
+                    .args(["-KILL", "--", &format!("-{}", child.id())])
+                    .status();
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "{program} timed out after {} seconds; see job log",
+                limit.as_secs()
+            )
+            .into());
+        }
+        thread::sleep(Duration::from_millis(250));
+    };
+    if !status.success() {
         return Err(format!("{program} {} failed; see job log", args.join(" ")).into());
     }
     Ok(())
@@ -141,9 +206,41 @@ fn submit(config: &Config, args: &[String]) -> Result<()> {
     // Snapshot before enqueueing. The submit lock serializes baseline reads and receipts.
     let submit_lock = lock(&config.queue.join("submit.lock"))?;
     submit_lock.lock()?;
+    let superseded = if let Some(id) = option(args, "--supersede") {
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+            return Err("Invalid superseded job ID".into());
+        }
+        let previous: Job = read(&config.queue.join("jobs").join(&id).join("job.json"))?;
+        if !["failed", "superseded"].contains(&previous.status.as_str()) {
+            return Err("Supersede requires a failed job".into());
+        }
+        let integrated = previous
+            .integrated
+            .as_deref()
+            .ok_or("Failed job has no integrated commit")?;
+        output(
+            &root,
+            "git",
+            &["merge-base", "--is-ancestor", integrated, &commit],
+        )?;
+        Some(previous)
+    } else {
+        None
+    };
     for job in jobs(config)? {
         if job.source == commit && job.status != "cancelled" {
             println!("{}", serde_json::to_string(&job)?);
+            if let Some(mut previous) = superseded.clone() {
+                if job.supersedes.as_deref() != Some(previous.id.as_str()) {
+                    return Err("Existing job belongs to another submission".into());
+                }
+                previous.status = "superseded".into();
+                save(config, &previous)?;
+            }
+            drop(submit_lock);
+            if args.iter().any(|a| a == "--wait") {
+                wait(config, &job.id)?;
+            }
             return Ok(());
         }
     }
@@ -153,10 +250,32 @@ fn submit(config: &Config, args: &[String]) -> Result<()> {
     let log = File::create(staging.join("submit.log"))?;
     let content = option(args, "--content")
         .map(PathBuf::from)
-        .unwrap_or(config.queue.join("published/content"));
+        .unwrap_or_else(|| {
+            superseded
+                .as_ref()
+                .map(|j| {
+                    config
+                        .queue
+                        .join("jobs")
+                        .join(&j.id)
+                        .join("resources/content")
+                })
+                .unwrap_or(config.queue.join("published/content"))
+        });
     let images = option(args, "--images")
         .map(PathBuf::from)
-        .unwrap_or(root.join("private/reports/devlog-images"));
+        .unwrap_or_else(|| {
+            superseded
+                .as_ref()
+                .map(|j| {
+                    config
+                        .queue
+                        .join("jobs")
+                        .join(&j.id)
+                        .join("resources/images")
+                })
+                .unwrap_or(root.join("private/reports/devlog-images"))
+        });
     let mut helper = vec![
         text(&config.controller).to_owned(),
         "snapshot".into(),
@@ -176,9 +295,15 @@ fn submit(config: &Config, args: &[String]) -> Result<()> {
     if args.iter().any(|a| a == "--reviewed-images") {
         helper.push("--reviewed-images".into());
     }
+    if let Some(previous) = &superseded {
+        helper.extend([
+            "--superseded".into(),
+            text(&config.queue.join("jobs").join(&previous.id)).into(),
+        ]);
+    }
     // A submitted package can extend the runtime allowlist in its authored commit.
     // Read that validator from Git, never mutable worktree files.
-    if option(args, "--content").is_some() {
+    if option(args, "--content").is_some() || superseded.is_some() {
         let control = staging.join("control");
         fs::create_dir_all(&control)?;
         fs::copy(&config.controller, control.join("release_resources.py"))?;
@@ -210,10 +335,15 @@ fn submit(config: &Config, args: &[String]) -> Result<()> {
         stage: "submitted".into(),
         integrated: None,
         error: None,
+        supersedes: superseded.as_ref().map(|j| j.id.clone()),
     };
     atomic(&staging.join("job.json"), &job)?;
     fs::rename(&staging, config.queue.join("jobs").join(&id))?;
     File::open(config.queue.join("jobs"))?.sync_all()?;
+    if let Some(mut previous) = superseded {
+        previous.status = "superseded".into();
+        save(config, &previous)?;
+    }
     println!("{}", serde_json::to_string(&job)?);
     drop(submit_lock);
     if args.iter().any(|a| a == "--wait") {
@@ -396,8 +526,15 @@ fn process(config: &Config, job: &mut Job) -> Result<()> {
     step(config, job, "uploading")?;
     run(
         &checkout,
-        "npx",
-        &["--yes", "wrangler@4.149.0", "whoami"],
+        "node",
+        &[
+            text(
+                &config
+                    .queue
+                    .join("tooling/node_modules/wrangler/wrangler-dist/cli.js"),
+            ),
+            "whoami",
+        ],
         &log,
         config,
     )?;
@@ -441,10 +578,13 @@ fn process(config: &Config, job: &mut Job) -> Result<()> {
     step(config, job, "deploying")?;
     run(
         &checkout,
-        "npx",
+        "node",
         &[
-            "--yes",
-            "wrangler@4.149.0",
+            text(
+                &config
+                    .queue
+                    .join("tooling/node_modules/wrangler/wrangler-dist/cli.js"),
+            ),
             "deploy",
             "--config",
             "work/cloudflare/wrangler.jsonc",
@@ -533,6 +673,13 @@ fn worker(config: &Config, once: bool) -> Result<()> {
         Err(std::fs::TryLockError::WouldBlock) => return Ok(()),
         Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
     }
+    let mut inherited = config.clone();
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        inherited.lock_fd = Some(worker_lock.as_raw_fd());
+    }
+    let config = &inherited;
     loop {
         for mut job in jobs(config)? {
             let marker = config.queue.join("jobs").join(&job.id).join("retry");
@@ -637,7 +784,7 @@ fn install(args: &[String]) -> Result<()> {
     for name in ["release_resources.py", "package_content.py"] {
         fs::copy(source.join("tools").join(name), controller_dir.join(name))?;
     }
-    let config = Config {
+    let mut config = Config {
         owner: owner.clone(),
         queue: fs::canonicalize(&queue)?,
         controller,
@@ -646,6 +793,7 @@ fn install(args: &[String]) -> Result<()> {
             .unwrap_or(home_cache_target()?),
         playwright,
         url: "https://atv-offroad-fury-2.champtoday.workers.dev".into(),
+        lock_fd: None,
     };
     let log = File::create(queue.join("install.log"))?;
     if !queue.join("published").exists() {
@@ -666,6 +814,40 @@ fn install(args: &[String]) -> Result<()> {
             &config,
         )?;
     }
+    let version: serde_json::Value = read(&config.playwright.join("package.json"))?;
+    let version = version["version"]
+        .as_str()
+        .ok_or("Playwright package lacks version")?;
+    let tooling = queue.join("tooling");
+    run(
+        &owner,
+        "npm",
+        &[
+            "install",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+            "--save-exact",
+            "--prefix",
+            text(&tooling),
+            "wrangler@4.149.0",
+            &format!("playwright@{version}"),
+        ],
+        &log,
+        &config,
+    )?;
+    config.playwright = tooling.join("node_modules/playwright");
+    run(
+        &owner,
+        "node",
+        &[
+            text(&config.playwright.join("cli.js")),
+            "install",
+            "chromium",
+        ],
+        &log,
+        &config,
+    )?;
     atomic(&git.join("atv-release.json"), &config)?;
     let home = PathBuf::from(env::var("HOME")?);
     let binary = home.join(".local/bin/atv-release");
@@ -734,6 +916,7 @@ mod tests {
             stage: stage.into(),
             integrated: None,
             error: None,
+            supersedes: None,
         }
     }
     #[test]
@@ -765,6 +948,28 @@ mod tests {
             Err(std::fs::TryLockError::WouldBlock)
         ));
         drop(first);
+        second.try_lock().unwrap();
+        drop(second);
+        fs::remove_file(path).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn child_keeps_worker_lock_after_supervisor_drops_it() {
+        use std::os::fd::AsRawFd;
+        let path = env::temp_dir().join(format!("atv-release-child-lock-{}", now()));
+        let first = lock(&path).unwrap();
+        first.lock().unwrap();
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "sleep 0.3"]);
+        inherit_worker_lock(&mut command, first.as_raw_fd());
+        let mut child = command.spawn().unwrap();
+        drop(first);
+        let second = lock(&path).unwrap();
+        assert!(matches!(
+            second.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+        child.wait().unwrap();
         second.try_lock().unwrap();
         drop(second);
         fs::remove_file(path).unwrap();

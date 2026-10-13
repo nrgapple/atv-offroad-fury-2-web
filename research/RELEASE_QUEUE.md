@@ -26,7 +26,7 @@ are available from shared queue storage. `--reviewed-images` records the
 submitting agent's assertion that it inspected all new image pixels. It does not
 perform image inspection. Never supply it for uninspected screenshots.
 
-Submission snapshots only referenced, validated runtime blobs and PNGs, pins HEAD
+Submission snapshots only referenced, validated runtime blobs and PNGs. A private content-addressed cache shares read-only dependency bytes across jobs and resource versions, while manifests/receipts remain separate. Mutable input files are copied into that cache, never linked directly. Submission pins HEAD
 with a local Git ref, and atomically returns a durable job ID. Later edits, branch
 movement and worktree removal cannot alter the submitted revision/dependency bytes.
 Repeated submission of the same commit returns its existing job. Source changes
@@ -46,7 +46,7 @@ are no unsolicited messages to other chats.
 
 ## Worker behavior
 
-1. Serialize releases with an OS file lock; recover interrupted jobs after restart.
+1. Serialize releases with an OS file lock; recover interrupted jobs after restart. Mutating child commands inherit the lock, so a restarted worker cannot overtake an older deploy still running.
 2. Fetch `origin/main` and merge the pinned checkpoint in an isolated worktree.
    Independent dev-log entries merge by ID. Code conflicts and incompatible edits
    to the same entry fail for the submitting chat to resolve.
@@ -57,7 +57,7 @@ are no unsolicited messages to other chats.
    rejection tests and Worker tests. Build the authored WASM/app locally once.
 5. Package the exact integrated commit and pin the browser's manifest URL to it.
    Push only source via `origin`, with a normal fast-forward update to main.
-6. Refresh existing Wrangler auth, incrementally upload allowlisted R2 objects,
+6. Refresh existing Wrangler auth with the installed, pinned Wrangler CLI, incrementally upload allowlisted R2 objects,
    write release-specific manifest/gallery keys and verify staged R2 bytes.
 7. Recheck upstream identity and deploy the checked Worker/static assets selecting
    that release's manifests. No mutable live R2 pointer is changed by staging.
@@ -68,10 +68,24 @@ are no unsolicited messages to other chats.
 `complete` means public verification passed. A failed pre-push job leaves main
 and production untouched and other independent jobs can proceed. A failed job
 that might have pushed blocks later publication until an explicit `retry`.
-Retries retain source/resources and can repeat idempotent stages. They do not
+Retries retain source/resources and can repeat idempotent stages. Commands have deadlines (20 minutes for build/check commands, 10 for Python upload/verification, five for Node tools/browser checks and two for other commands); expiration terminates that child process group and records failure. They do not
 silently retry tests forever, rewrite source, resolve code conflicts, force-push,
 or mark an unverified deployment complete. If main changed after a push, the
 worker stops for reconciliation rather than releasing an older revision.
+
+For a source/test repair after a job pushed, include its integrated commit in the
+repair branch, commit the tested fix, and submit:
+
+```sh
+make release RELEASE_ARGS='--supersede FAILED_JOB_ID'
+```
+
+This explicitly supersedes the failed receipt and queues the repair with the
+failed job's frozen resources/screenshots by default. The old job keeps its error
+and never becomes `complete`. Ancestry and snapshot hashes are checked; a repair
+cannot omit the failed integrated commit. New dependencies/screenshots can still
+be supplied with the normal options. Repeating the repair submission is idempotent.
+The queue does not automatically override a failed release with unrelated work.
 
 R2 and Workers are separate services, not one transaction. Immutable per-release
 manifests plus upload-before-deploy protect the previous release during staging;
@@ -101,10 +115,10 @@ cargo build --locked --release -p atv-release
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.champtoday.atv-release.plist
 ```
 
-The CLI installs `~/.local/bin/atv-release`, a copied dependency helper, a shared
+The CLI installs `~/.local/bin/atv-release`, a copied dependency helper, pinned Wrangler and matching Playwright packages/Chromium in private queue storage, a shared
 configuration in the repository's common `.git/atv-release.json`, and the launchd
 plist. Every linked worktree discovers the same queue via the common Git directory.
-The service starts at login and restarts after crashes. Queue storage must be
+The service starts at login and restarts after crashes. It uses its own npm/browser caches and calls the installed Wrangler directly; release execution does not reinstall tool packages. npm install scripts are disabled for bootstrap. Queue storage must be
 private local storage outside tracked source; an SSD is suitable. Build cache can
 be on a separate local disk. The initialization gallery must match prior approved
 upload hashes. Use `--content` for the previously verified runtime package, especially when the shared default folder contains another chat's WIP. Initialization requires every blob/manifest and historical screenshot to match the prior upload receipt. Do not initialize from unverified/WIP dependency content.
@@ -119,7 +133,7 @@ operation; the installed worker polls without building when idle.
 `make check` covers the Rust queue lock/receipt/recovery-selection tests. The
 release rejection suite checks frozen snapshots, allowlists, screenshot approval,
 resource conflicts, real Git dev-log integration, immutable manifest routing,
-and staged R2 corruption. For the host-only compiled CLI concurrency test:
+and staged R2 corruption. For the host-only compiled CLI concurrency/superseding test:
 
 ```sh
 cargo build --locked -p atv-release
