@@ -693,9 +693,12 @@ impl Motorcycle {
             self.frame.grounded.iter().any(|v| *v),
             dt,
         );
-        let (normal, visual) =
-            self.model
-                .normal_pose(self.pose_controls, self.angles, self.compression)?;
+        let (normal, visual) = self.model.normal_pose(
+            self.pose_controls,
+            self.angles,
+            self.compression,
+            self.frame.crossup,
+        )?;
         self.normal_pose = Some(normal);
         self.visual_steer = visual;
         let origin = self.body.origin(&self.body_config);

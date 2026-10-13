@@ -124,6 +124,7 @@ impl Model {
         c: Controls,
         angles: [f32; 2],
         compression: [f32; 2],
+        crossup: f32,
     ) -> Result<(animation::Pose, f32)> {
         let ground = blend(
             self.riding_channels("mx_turn_still", c)?,
@@ -152,7 +153,8 @@ impl Model {
         let project = |v: V| sub(v, scale(self.steering_axis, dot(v, self.steering_axis)));
         let rest = project(rest);
         let desired = project(desired);
-        let visual = dot(self.steering_axis, cross(rest, desired)).atan2(dot(rest, desired));
+        let visual =
+            dot(self.steering_axis, cross(rest, desired)).atan2(dot(rest, desired)) + crossup;
         let bike = self.pose(visual, angles, compression);
         let hands = crate::rider_ik::Hands::bind_native(&self.rider.nodes)?;
         for (i, arm) in [&hands.left, &hands.right].into_iter().enumerate() {

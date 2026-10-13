@@ -211,3 +211,10 @@ These are host correction gates pending validated main deployment and R2 upload.
 Native whole-controller/IK routing, COL-v2, all stunt linking/scoring and full
 original physics/audio timing still require recovery. Actual physical-phone and
 controller play remain unverified.
+
+Final integration retains the authored airborne cross-up angle in the normal
+pose's fork target before solving hand contact. A normal-input Vancouver 500
+flight records 24 cross-up frames, maximum 0.510509 radians, grip error below
+0.00000114 ft, boot error below 0.00000536 ft and 432 exact paired steps.
+The ordinary portrait contact and mild stunt/wreck/recovery gates pass again;
+this checks the connected movement, not original whole-controller equivalence.
