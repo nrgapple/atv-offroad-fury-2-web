@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 
 from package_content import ROOT, validated_content
 from package_release import validate_release
+from app_icons import validated_icons
 
 ACCOUNT = '92b7e16fd24d5fb585f866f5832a032b'
 BUCKET = 'atv-offroad-fury-2-content'
@@ -40,9 +41,15 @@ def upload(release, commit, force=False, content=None, release_scoped=False):
     committed = subprocess.run(['git', 'show', f'{commit}:research/devlog.json'], cwd=ROOT,
                                check=True, capture_output=True, text=True)
     log = json.loads(committed.stdout)
+    icon_records = json.loads(subprocess.run(['git', 'show', f'{commit}:web/app-icon-assets.json'], cwd=ROOT,
+                              check=True, capture_output=True, text=True).stdout)
     files = validated_content(content)
     manifest_bytes = (content / 'manifest.json').read_bytes()
     uploads = [(f'content/{path.name}', path.read_bytes()) for path in files if path.name != 'manifest.json']
+    icon_directory = (ROOT / 'private/reports/app-icons').resolve()
+    if not icon_directory.is_relative_to((ROOT / 'private').resolve()):
+        raise ValueError('app icons must remain in private storage')
+    uploads.extend(validated_icons(icon_records, icon_directory))
     seen = set()
     for entry in log['entries']:
         image = entry.get('image')

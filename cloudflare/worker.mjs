@@ -1,5 +1,6 @@
 const BLOB = /^\/content\/[a-f0-9]{64}\.bin$/;
 const IMAGE = /^\/devlog-images\/[a-z0-9-]+\.png$/;
+const APP_ICON = /^\/app-icons\/[a-f0-9]{64}\.png$/;
 const MANIFEST = /^\/content\/manifests\/([a-f0-9]{40})\.json$/;
 
 function canonical(value) {
@@ -55,22 +56,23 @@ export default {
       return env.ASSETS.fetch(new Request(index, request));
     }
     if (path === '/devlog.json') return gallery(request, env);
-    if (path === '/content/manifest.json' || MANIFEST.test(path) || BLOB.test(path) || IMAGE.test(path)) {
+    const appleIcon = ['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png'].includes(path) && /^app-icons\/[a-f0-9]{64}\.png$/.test(env.APPLE_TOUCH_ICON_KEY ?? '');
+    if (path === '/content/manifest.json' || MANIFEST.test(path) || BLOB.test(path) || IMAGE.test(path) || APP_ICON.test(path) || appleIcon) {
       const pinned = path.match(MANIFEST);
-      const key = pinned ? `releases/${pinned[1]}/manifest.json` : path === '/content/manifest.json' && env.RELEASE_COMMIT ? `releases/${env.RELEASE_COMMIT}/manifest.json` : path.slice(1);
+      const key = appleIcon ? env.APPLE_TOUCH_ICON_KEY : pinned ? `releases/${pinned[1]}/manifest.json` : path === '/content/manifest.json' && env.RELEASE_COMMIT ? `releases/${env.RELEASE_COMMIT}/manifest.json` : path.slice(1);
       const object = request.method === 'HEAD' ? await env.CONTENT.head(key) : await env.CONTENT.get(key);
       if (!object) return new Response('Not found', { status: 404 });
       const headers = new Headers();
       object.writeHttpMetadata(headers);
-      headers.set('Content-Type', IMAGE.test(path) ? 'image/png' : path.endsWith('.json') ? 'application/json' : 'application/octet-stream');
+      headers.set('Content-Type', IMAGE.test(path) || APP_ICON.test(path) || appleIcon ? 'image/png' : path.endsWith('.json') ? 'application/json' : 'application/octet-stream');
       headers.set('ETag', object.httpEtag);
       headers.set('Content-Length', String(object.size));
-      headers.set('Cache-Control', BLOB.test(path) ? 'public, max-age=31536000, immutable' : IMAGE.test(path) ? 'public, max-age=3600' : 'no-cache');
+      headers.set('Cache-Control', BLOB.test(path) || APP_ICON.test(path) ? 'public, max-age=31536000, immutable' : IMAGE.test(path) ? 'public, max-age=3600' : 'no-cache');
       headers.set('X-Content-Type-Options', 'nosniff');
       if (request.headers.get('If-None-Match') === object.httpEtag) return new Response(null, { status: 304, headers });
       return new Response(request.method === 'HEAD' ? null : object.body, { headers });
     }
-    if (path.startsWith('/content/') || path.startsWith('/devlog-images/')) return new Response('Not found', { status: 404 });
+    if (path.startsWith('/content/') || path.startsWith('/devlog-images/') || path.startsWith('/app-icons/')) return new Response('Not found', { status: 404 });
     return env.ASSETS.fetch(request);
   },
 };

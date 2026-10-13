@@ -11,12 +11,28 @@ const object = (body) => ({
 test('only approved object path shapes are accessible; writes are rejected', async () => {
   let reads = 0;
   const env = { CONTENT: { get: async () => { reads++; return object('safe'); } }, ASSETS: { fetch: async () => new Response('asset') } };
-  for (const path of ['/content/source.iso', '/content/SCUS_972.11', '/content/manifest.json/other', '/devlog-images/unapproved.jpg']) {
+  for (const path of ['/content/source.iso', '/content/SCUS_972.11', '/content/manifest.json/other', '/devlog-images/unapproved.jpg', '/app-icons/private.png', '/app-icons/source.iso']) {
     assert.equal((await worker.fetch(request(path), env)).status, 404);
   }
   assert.equal(reads, 0);
   assert.equal((await worker.fetch(request('/content/manifest.json', { method: 'PUT', body: 'bad' }), env)).status, 405);
   assert.equal(reads, 0);
+});
+
+test('original-logo icons use R2 PNG responses and a conventional Safari root fallback', async () => {
+  const key = `app-icons/${'b'.repeat(64)}.png`, reads = [];
+  const env = { APPLE_TOUCH_ICON_KEY: key, CONTENT: { get: async name => { reads.push(name); return object('png'); }, head: async () => object('png') } };
+  const hashed = await worker.fetch(request('/' + key), env);
+  assert.equal(hashed.headers.get('Content-Type'), 'image/png');
+  assert.match(hashed.headers.get('Cache-Control'), /immutable/);
+  for (const name of ['apple-touch-icon.png', 'apple-touch-icon-precomposed.png']) {
+    const response = await worker.fetch(request('/' + name), env);
+    assert.equal(response.status, 200); assert.equal(response.headers.get('Content-Type'), 'image/png');
+    assert.equal(response.headers.get('Cache-Control'), 'no-cache');
+  }
+  assert.deepEqual(reads, [key, key, key]);
+  assert.equal(await (await worker.fetch(request('/' + key, { method: 'HEAD' }), env)).text(), '');
+  assert.equal((await worker.fetch(request('/' + key, { method: 'PUT', body: 'bad' }), env)).status, 405);
 });
 
 test('hashed blobs preserve cache, MIME, length, conditional and HEAD semantics', async () => {

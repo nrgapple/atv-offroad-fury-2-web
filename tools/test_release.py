@@ -18,6 +18,7 @@ def fixture(root):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b'\0asm\x01\0\0\0' if path.suffix == '.wasm' else b'authored content')
     (root / 'static/deployment.json').write_text(json.dumps({'commit': COMMIT}))
+    (root / 'static/manifest.webmanifest').write_text(json.dumps({'icons': []}))
     hashes = {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
               for name in EXPECTED_FILES - {'release.json'}}
     (root / 'release.json').write_text(json.dumps({'commit': COMMIT, 'sha256': hashes}))
