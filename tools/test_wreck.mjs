@@ -4,14 +4,14 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { captureSimulation } from './capture_simulation.mjs';
-import { captureCrashIsolation, verifyCrashIsolation, captureCrashDraws } from './crash_isolation.mjs';
+import { captureCrashIsolation, verifyCrashIsolation, captureCrashDraws, verifyCrashImpacts } from './crash_isolation.mjs';
 const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
 await mkdir('work/verification', {recursive: true});
 const screenshotPrefix = process.env.ATV_WRECK_SCREENSHOT_PREFIX || 'work/verification/rider-wreck';
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: Number(process.env.ATV_WRECK_WIDTH || 390), height: 844 }, hasTouch: true, isMobile: true });
-  await page.addInitScript(enabled => { localStorage.setItem('atv-mobile-one-handed', 'false'); if (enabled) localStorage.setItem('atv-funny-crashes', 'true'); }, process.env.ATV_FUNNY_CRASHES === '1'); // Explicit optional two-finger mode.
+  await page.addInitScript(enabled => { localStorage.setItem('atv-mobile-one-handed', 'false'); localStorage.setItem('atv-funny-crashes', String(enabled)); }, process.env.ATV_FUNNY_CRASHES === '1'); // Explicit optional two-finger mode.
   if (process.env.ATV_CRASH_ISOLATION === '1') await captureCrashIsolation(page);
   await captureCrashDraws(page);
   await captureSimulation(page, 'rampFrames');
@@ -85,7 +85,7 @@ try {
   assert.equal(await page.locator('#native-hud').getAttribute('data-renderer'), 'rust');
   if (process.env.ATV_FUNNY_CRASHES === '1') {
     const effects = frames.map(s => s.frame.funny_crash).filter(Boolean);
-    assert(effects.some(f => f.detached_parts >= 2), 'Hard wreck must shed original mesh wheels');
+    verifyCrashImpacts(frames);
     assert(effects.some(f => f.rider_node_matrices.length > 0), 'Detached rider must become articulated ragdoll');
     assert(effects.every(f => [...f.quad_node_matrices.flat(), ...f.rider_node_matrices.flat()].every(Number.isFinite)));
     assert(!reset.funny_crash, 'Recovery must rebuild the intact quad and rider');

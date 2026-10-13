@@ -75,7 +75,32 @@ requests delivery without waiting for deployments. Preserve other implementation
 lanes and use origin rather than the disabled No Mistakes remote.
 
 
-## Optional funny crashes: verified host checkpoint
+## Impact-triggered funny crashes: host verification
+
+The user requested Funny crashes On by default. Fresh browsers and unavailable
+storage now start On; an existing saved Off remains Off. Pause toggles persist
+through reload and restore original crash presentation when disabled.
+
+Mechanical breakup now observes actual inward ATV contact speed, independently
+of rider separation and travel speed. Terrain/suspension, static obstacle and
+moving-obstacle contacts feed a read-only diagnostic; no native forces, wreck
+classification, recovery, RNG or camera logic change. An airborne rider can
+ragdoll while the ATV remains intact. Contacts of at least 25 ft/s shed front
+wheels; at least 50 ft/s shed all seven supported parts. Later impacts can
+escalate damage without duplicating parts. Recovery restores the intact model.
+
+Host severe-input verification records three intact-ATV aerial ragdoll frames,
+then actual obstacle contacts at 27.420 ft/s (two parts) and 50.855 ft/s (seven).
+All parts reached actual GPU draws and recovery; 1,199 paired WASM steps have
+zero compared gameplay/camera mismatches. Actual-touch ATV26/female at 390px
+passes pause, Off/On during wreck, recovery and driving, with 439 paired steps
+and zero mismatches. Explicit Off passes the original touch wreck route.
+Fresh defaults, saved Off/On across reload and blocked-storage session toggles
+pass at 844×390. `make check` passes: 327 core, 3 web, 25 net, 13 relay,
+69 JavaScript tests, formatting and strict Clippy. WASM build and `make verify`
+pass. This is host evidence, pending current-main CI/public checks.
+
+## Historical initial optional funny-crashes host checkpoint
 
 The default-off Pause → Funny crashes option runs an authored Rust presentation
 layer on actual wreck/separation events: joint-limited rider tumbling and bouncing

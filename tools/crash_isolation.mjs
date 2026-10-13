@@ -64,3 +64,21 @@ export async function captureCrashDraws(page) {
   p.drawElements=function(...args){if(kind)crashDraws[kind]++;return draw.apply(this,args);};
  });
 }
+
+// Validate each mechanical damage transition against its actual contact step.
+export function verifyCrashImpacts(frames) {
+ let previous=0, reset=null, aerial=0, impacts=0;
+ for(const {frame} of frames) {
+  if(frame.reset_count!==reset) { reset=frame.reset_count; previous=0; }
+  const parts=frame.funny_crash?.detached_parts??0;
+  if(parts>previous) {
+   assert(frame.crash_impact_speed>=(parts>2?50:25), 'New breakaway pieces require a hard actual ATV impact');
+   impacts++;
+  }
+  if(frame.funny_crash?.rider_node_matrices.length&&parts===0&&frame.crash_impact_speed===0&&!frame.grounded.some(Boolean)) aerial++;
+  if(frame.wreck.phase==='Riding')assert.equal(parts,0,'Recovery restores intact mechanical parts');
+  previous=parts;
+ }
+ console.log(`PASS: ${aerial} intact-ATV aerial ragdoll frames; ${impacts} contact-triggered damage transitions.`);
+ return {aerial,impacts};
+}

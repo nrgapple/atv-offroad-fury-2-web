@@ -36,6 +36,9 @@ pub struct StaticContact {
 }
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ContactCorrections {
+    /// Presentation-only strongest inward point speed at a resolved contact.
+    /// Never participates in native response, wreck classification or recovery.
+    pub closing_speed: f32,
     /// Applied after the body integrator, once per substep.
     pub translation: Vec3,
     /// Original body+0x180 impact accumulator, used by later wreck detection.
@@ -218,6 +221,7 @@ fn resolve_with_velocity_and_scale(
     let effective_mass =
         1.0 / ((0.0 + 0.0 + inverse_mass) + dot(local_normal, cross(rotational, arm)));
     let normal_velocity = dot(velocity, normal);
+    corrections.closing_speed = corrections.closing_speed.max(-normal_velocity);
     if normal_velocity < 0.0 {
         let impulse = scale(
             normal,
@@ -286,6 +290,41 @@ mod tests {
         assert_eq!(d, [1., 3., 0.]);
     }
     #[test]
+    fn crash_signal_requires_penetration_and_measures_inward_normal_speed() {
+        let cfg = BodyConfig::new(10., [20.; 3], [0.; 3]).unwrap();
+        let config = ContactConfig {
+            reflection: 0.,
+            angular_impulse_scale: 0.,
+            friction_scale: 0.,
+            friction_torque_scale: 0.,
+        };
+        for (normal, velocity, penetration, expected) in [
+            ([0., 1., 0.], [90., -5., 0.], 1., 5.),  // fast soft landing
+            ([0., 1., 0.], [90., 5., 0.], 1., 0.),   // leaving a contact
+            ([0., 1., 0.], [0., -60., 0.], 0., 0.),  // airborne
+            ([0., 1., 0.], [0., -60., 0.], 1., 60.), // hard ground impact
+            ([-1., 0., 0.], [60., 0., 0.], 1., 60.), // obstacle impact
+        ] {
+            let mut body = BodyState::new([0.; 3], [1., 0., 0., 0.], &cfg).unwrap();
+            body.linear_velocity = velocity;
+            let mut corrections = ContactCorrections::default();
+            resolve_static(
+                &mut body,
+                &cfg,
+                config,
+                StaticContact {
+                    point: [0.; 3],
+                    normal,
+                    penetration,
+                    material_grip: 1.,
+                },
+                &mut corrections,
+            )
+            .unwrap();
+            assert_eq!(corrections.closing_speed, expected);
+        }
+    }
+    #[test]
     fn static_contact_stops_inward_speed_and_defers_position() {
         let cfg = BodyConfig::new(10., [20.; 3], [0.; 3]).unwrap();
         let mut b = BodyState::new([0.; 3], [1., 0., 0., 0.], &cfg).unwrap();
@@ -310,6 +349,7 @@ mod tests {
             &mut c,
         )
         .unwrap();
+        assert_eq!(c.closing_speed, 10.);
         assert_eq!(b.linear_velocity, [0.; 3]);
         assert_eq!(b.center, [0.; 3]);
         assert!((c.translation[1] - 0.3).abs() < 1e-6);

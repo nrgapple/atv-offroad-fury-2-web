@@ -2096,9 +2096,23 @@
       "limitation": "Host-only checkpoint; no CI or public deployment is claimed. CPU movement remains authored deterministic route motion using the shared quad/rider mesh and neutral pose. Original CPU decision-making and physical AI, rider-to-rider collision, costumes, progression and other tracks, lead-gap behavior and HUD toggles remain unfinished. WebKit mobile host execution stalled and was stopped after about five minutes; it is not a passing check. Physical Safari/phone behavior remains unverified.",
       "image": "/devlog-images/host-verified-race-integration-on-caribou-national-bca6da66.png",
       "caption": "Combined host capture of the Caribou National race preview after origin/main integration, showing the accelerated rider, route map, race HUD and CPU standings with the updated fog and vegetation renderer."
+    },
+    {
+      "id": "crash-breakup-now-waits-for-hard-atv-impacts-6771874e",
+      "timestamp": "2026-10-13T01:59:22.089940+00:00",
+      "recorded_at": "2026-10-13T01:59:22.089940+00:00",
+      "kind": "verification",
+      "title": "Crash breakup now waits for hard ATV impacts",
+      "summary": "Funny crashes now default On while preserving a saved Off choice. The rider can ragdoll in the air while the ATV stays intact until a real hard terrain, suspension, or obstacle impact; a later stronger impact can shed additional authored parts.",
+      "details": [
+        "At 844x390, fresh default, Pause Off/On, reload persistence, and unavailable-storage behavior passed. A source-input severe route showed three aerial ragdoll frames with the ATV intact, two parts detaching on actual obstacle contact at 27.420 ft/s, then all seven at 50.855 ft/s, followed by original recovery.",
+        "Paired WASM comparison: 1,199 source-input steps and 439 actual ATV26/female 390px touch steps, zero mismatches in compared gameplay/camera fields. Touch pause, Off/On, recovery and resumed driving passed; the explicit original-Off touch route also passed.",
+        "make check passed: 327 core, 3 web, 25 net, 13 relay, and 69 JavaScript tests; formatting and strict Clippy passed. make verify and the WASM build passed."
+      ],
+      "limitation": "Host verification only, pending main CI and public validation. Effects are presentation-only and do not change the original solver or crash classifier. The source chassis is monolithic, so arbitrary chassis fracture is unsupported."
     }
   ],
-  "updated_at": "2026-10-13T01:34:02Z",
+  "updated_at": "2026-10-13T01:59:22.089940+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
