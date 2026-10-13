@@ -1,6 +1,6 @@
 {
-  "status": "Public Cloudflare release d9596d937907395440b61e78be61b2045d987d4 remains the verified release. Host-only candidate now includes source-backed motorcycle format and mesh recovery plus menu asset work; motorcycles are not selectable or drivable. Current-main CI and separate R2 publication are pending.",
-  "working_on": "Finish current-main integration for the selection-menu and motorcycle-recovery candidate. Menu playlist ordering and delay behavior still need verification; motorcycles remain static decoded models without live game integration.",
+  "status": "Public Cloudflare release af3e6b5a7ac3fc4095477326597a27cfe84b97ce is verified. The browser port remains incomplete.",
+  "working_on": "Continue recovering original CPU AI, rider collisions, race progression, additional tracks and original HUD behavior.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -2073,6 +2073,62 @@
       "caption": "Host Chromium ENV08 capture of the ordered vegetation billboard checkpoint during normal driving; this is an inspected browser-port image, not a PS2 capture."
     },
     {
+      "id": "host-verified-race-integration-on-caribou-national-bca6da66",
+      "timestamp": "2026-10-13T01:30:53.726049Z",
+      "recorded_at": "2026-10-13T01:34:02Z",
+      "kind": "verification",
+      "title": "Host-verified race integration on Caribou National",
+      "summary": "The authored race flow now connects Caribou National route data to race setup, countdown, CPU riders, pause and restart, with responsive setup and driving HUD layouts verified on the host. This remains a partial race preview, not a complete port.",
+      "details": [
+        "tools/test_race.mjs passed: Caribou National TDF data decodes to 252 unique route points; setup exposes laps, CPU count and difficulty; five recovered rider names are YUKARI, PANZER, MCNABB, BALS and ROBERTS.",
+        "Race setup and HUD checks passed at portrait 390\u00d7844, landscape 844\u00d7390 and desktop 1280\u00d7720, including setup targets of at least 44 px and bounded HUD layout; no JavaScript or WebGL errors and no disc selector appeared.",
+        "tools/test_frontend.mjs also passed for Freestyle, keyboard/controller input, Tioga, portrait layout, pause and controls.",
+        "Host desktop and mobile filter checks passed without errors.",
+        "Build environment: native SSD build stalled in hard-link/clonefile system calls. A temporary nonincremental native cache completed tests in 5.1 seconds and Clippy in 2.36 seconds; WASM and render artifacts remain on the SSD.",
+        "The rerun also checked a render-only results-card fixture for portrait and landscape bounds and verified its Race Again and Single Player actions. This fixture validates presentation/actions only; it does not establish naturally completed race results or original event flow.",
+        "Combined integration gate after origin/main c895ba4 passed: 325 core, 25 protocol, 3 relay and 13 bridge tests; strict Clippy and formatting; 69 JavaScript tests; 18 release/content tests; 6 Worker tests; make verify and hygiene. The final combined WASM build passed.",
+        "The combined tools/test_race.mjs rerun passed the setup/layout/input/countdown/pause/restart/CPU checks and the render-only results fixture. CPU route distances in the latest sample were 84.33\u201396.80 ft. Race ABI 95/96 avoids multiplayer ABI 80\u201385; RawValue transport is preserved and starting Race leaves the active multiplayer session intact.",
+        "The render-only results-card fixture passed portrait/landscape bounds and Race Again/Single Player actions. This checks presentation and actions only; it does not establish naturally completed race results or original event flow.",
+        "Final combined frontend regression passed: 9-map picker, Tioga drive, keyboard/controller input, portrait Caribou, pause/controls and zero JavaScript/WebGL errors.",
+        "tools/test_menu_models.mjs passed at six viewport sizes, covering all 26 quads, female menu views, menu animation/music and selected-model course loading with zero JavaScript/WebGL errors.",
+        "The combined host race screenshot shows the final fog and vegetation renderer. CI and public release remain pending."
+      ],
+      "limitation": "Host-only checkpoint; no CI or public deployment is claimed. CPU movement remains authored deterministic route motion using the shared quad/rider mesh and neutral pose. Original CPU decision-making and physical AI, rider-to-rider collision, costumes, progression and other tracks, lead-gap behavior and HUD toggles remain unfinished. WebKit mobile host execution stalled and was stopped after about five minutes; it is not a passing check. Physical Safari/phone behavior remains unverified.",
+      "image": "/devlog-images/host-verified-race-integration-on-caribou-national-bca6da66.png",
+      "caption": "Combined host capture of the Caribou National race preview after origin/main integration, showing the accelerated rider, route map, race HUD and CPU standings with the updated fog and vegetation renderer."
+    },
+    {
+      "id": "crash-breakup-now-waits-for-hard-atv-impacts-6771874e",
+      "timestamp": "2026-10-13T01:59:22.089940+00:00",
+      "recorded_at": "2026-10-13T01:59:22.089940+00:00",
+      "kind": "verification",
+      "title": "Crash breakup now waits for hard ATV impacts",
+      "summary": "Funny crashes now default On while preserving a saved Off choice. The rider can ragdoll in the air while the ATV stays intact until a real hard terrain, suspension, or obstacle impact; a later stronger impact can shed additional authored parts.",
+      "details": [
+        "At 844x390, fresh default, Pause Off/On, reload persistence, and unavailable-storage behavior passed. A source-input severe route showed three aerial ragdoll frames with the ATV intact, two parts detaching on actual obstacle contact at 27.420 ft/s, then all seven at 50.855 ft/s, followed by original recovery.",
+        "Paired WASM comparison: 1,199 source-input steps and 439 actual ATV26/female 390px touch steps, zero mismatches in compared gameplay/camera fields. Touch pause, Off/On, recovery and resumed driving passed; the explicit original-Off touch route also passed.",
+        "make check passed: 327 core, 3 web, 25 net, 13 relay, and 69 JavaScript tests; formatting and strict Clippy passed. make verify and the WASM build passed."
+      ],
+      "limitation": "Host verification only, pending main CI and public validation. Effects are presentation-only and do not change the original solver or crash classifier. The source chassis is monolithic, so arbitrary chassis fracture is unsupported."
+    },
+    {
+      "id": "caribou-race-preview-passes-on-the-public-build-6d392b17",
+      "timestamp": "2026-10-13T02:02:05.018108+00:00",
+      "recorded_at": "2026-10-13T02:02:50Z",
+      "kind": "verification",
+      "title": "Caribou race preview passes on the public build",
+      "summary": "The published authored Rust/WebAssembly build now exposes a Caribou National race preview with setup, countdown, deterministic CPU route motion, driving, pause/restart and a results presentation fixture. Public race checks passed without a disc picker; the full original race system and CPU AI remain incomplete.",
+      "details": [
+        "Production main af3e6b5a7ac3fc4095477326597a27cfe84b97ce passed CI run 38333554805, including the web build and automatic deployment.",
+        "R2 publication completed with 417 objects and 5 changes, including the new NAT archive, expanded audio, approved portrait content, manifest and gallery. The public verifier confirmed 416 served objects, 33 authored files, 129 dev-log entries and 108 screenshots.",
+        "The public content manifest contains 108 records including E01_NAT.RES; the public browser started without a disc-selection step.",
+        "Public tools/test_race passed portrait, landscape and desktop layouts, setup targets, countdown/throttle lock, player acceleration, touch steering and cancel, pause, restart, five named CPU riders and zero JavaScript/WebGL errors. Latest sampled CPU route distances were 70.53\u201380.96 ft.",
+        "The results-card check used a render-only fixture and passed portrait/landscape bounds plus Race Again and Single Player actions; it does not demonstrate a naturally completed race or original event flow.",
+        "Public tools/test_frontend.mjs passed: 9-map picker, Tioga driving, keyboard/controller menu navigation, portrait Caribou reload, pause/Controls, mobile touch selection, no disc picker and no browser errors."
+      ],
+      "limitation": "This is a public authored race preview, not complete original race behavior. CPU motion follows authored deterministic routes; original CPU decisions/physical AI and rider-to-rider collision remain unrecovered. Full event progression, costumes and other race tracks remain incomplete. The results check is a render-only fixture."
+    },
+    {
       "id": "motorcycle-asset-formats-and-models-are-recovered-479c12ef",
       "timestamp": "2026-10-13T01:46:14.742118+00:00",
       "recorded_at": "2026-10-13T01:50:41.794160+00:00",
@@ -2089,20 +2145,27 @@
       "caption": "Private host model inspection: decoded Bike and Bike 50 LOD0 meshes plus seven Suzuki components. Static geometry only; no motorcycle is playable."
     }
   ],
-  "updated_at": "2026-10-13T01:50:41.794160+00:00",
+  "updated_at": "2026-10-13T02:02:50Z",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
-      "commit": "cef26f4495f0c5dbf6f8398133ea81bf4b78aed3",
-      "ci_run": "38307658534",
+      "commit": "af3e6b5a7ac3fc4095477326597a27cfe84b97ce",
+      "ci_run": "38333554805",
       "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
-      "devlog_entries": 115,
-      "devlog_screenshots": 96,
-      "r2_approved_objects": 403,
-      "r2_upload_changes": 4,
-      "static_assets": 31,
-      "served_objects": 402,
-      "snapshot_note": "Counts describe the verified cef26f4 deployment artifact: 115 entries, 96 screenshot references, 31 authored/static files and 402 served objects; the approved R2 upload had 403 objects and 4 changes. This new verification entry and its inspected screenshot postdate that artifact and await the next validated gallery publication."
+      "static_assets": 33,
+      "served_objects": 416,
+      "devlog_entries": 129,
+      "devlog_screenshots": 108,
+      "r2_approved_objects": 417,
+      "r2_upload_changes": 5,
+      "checks": [
+        "Automatic web build and production deployment passed in CI 38333554805.",
+        "R2 package contains 417 objects; the public verifier confirmed 416 served objects and 33 authored files.",
+        "Public manifest contains 108 records including E01_NAT.RES; the game starts without a disc picker.",
+        "Public race test passed at portrait, landscape and desktop sizes with setup, countdown/throttle lock, player driving, touch steering/cancel, pause/restart, five deterministic CPU route riders and zero JS/WebGL errors.",
+        "Results-card checks passed as a render-only fixture; natural race completion and original results behavior are not established."
+      ],
+      "snapshot_note": "Counts describe the verified af3e6b5 deployment artifact: 129 entries, 108 screenshot references, 33 authored/static files and 416 served objects; the approved R2 package contained 417 objects with 5 changes. This public verification entry postdates that artifact and will appear in a later validated build."
     },
     "next_priorities": [
       "Measure the public Rust Freeride baseline on separate devices and varied networks, preserving the measured single-Mac limits; continue recovering original multiplayer and race behavior.",
@@ -2312,25 +2375,39 @@
         "category": "Front end",
         "title": "In-race HUD",
         "status": "PARTIAL",
-        "scope": "PUBLIC \u00b7 SPEED/PRELOAD/STUNT/DIAGNOSTICS SUBSET",
-        "summary": "Original runtime speed, preload and stunt layouts, glyphs and art are drawn with authored Rust controllers. Public desktop and 390px dev-log filters pass; wheelie scoring callbacks are integrated through the HUD while the original disabled scoring flag yields no baseline wheelie awards. Race clocks, rank, laps, radar and multiplayer overlays remain unimplemented.",
-        "validation": "Public 0541085b495fd9e8d0a0dae59ba6c8ea186f49cc \u00b7 CI 38264831246: F3/Pause diagnostics passed desktop and portrait, and dev-log filters passed desktop/390px without overflow. Full race HUD fields and final PS2 presentation parity remain incomplete.",
+        "scope": "PUBLIC \u00b7 ORIGINAL SPEED/PRELOAD/STUNT/DIAGNOSTICS SUBSET + CARIBOU RACE PREVIEW",
+        "summary": "The public build draws the original runtime speed, preload and stunt layouts, glyphs and art with authored Rust controllers. A Caribou National race preview now displays authored race clocks, rank, laps, radar and standings. This is a partial authored preview and does not establish original race HUD logic or final PS2 presentation parity; multiplayer overlays remain incomplete.",
+        "validation": "Public af3e6b5a7ac3fc4095477326597a27cfe84b97ce \u00b7 CI 38333554805: race overlay/layout passed portrait, landscape and desktop checks without JS/WebGL errors. The results panel bounds/actions were checked with a render-only fixture. Original race HUD parity remains incomplete.",
         "evidence": "research/HUD.md; public wreck/landing captures and diagnostics logs.",
-        "next_step": "Connect remaining race/mode HUD state and verify score animation against original presentation.",
+        "next_step": "Compare race HUD fields and score presentation against original behavior; connect only verified source rules.",
         "release_verification": {
-          "commit": "0541085b495fd9e8d0a0dae59ba6c8ea186f49cc",
-          "ci_run": "38264831246",
+          "commit": "af3e6b5a7ac3fc4095477326597a27cfe84b97ce",
+          "ci_run": "38333554805",
           "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
-          "static_assets": 26,
-          "served_objects": 323,
-          "devlog_entries": 79,
-          "devlog_screenshots": 70,
-          "r2_approved_objects": 324,
-          "r2_upload_changes": 2,
+          "static_assets": 33,
+          "served_objects": 416,
+          "devlog_entries": 129,
+          "devlog_screenshots": 108,
+          "r2_approved_objects": 417,
+          "r2_upload_changes": 5,
           "checks": [
-            "Desktop/portrait F3/Pause diagnostics passed.",
-            "Desktop/390px dev-log filters passed without overflow.",
-            "Full race HUD and final visual parity remain incomplete."
+            "Automatic web build and production deployment passed in CI 38333554805.",
+            "R2 package contains 417 objects; the public verifier confirmed 416 served objects and 33 authored files.",
+            "Public manifest contains 108 records including E01_NAT.RES; the game starts without a disc picker.",
+            "Public race test passed at portrait, landscape and desktop sizes with setup, countdown/throttle lock, player driving, touch steering/cancel, pause/restart, five deterministic CPU route riders and zero JS/WebGL errors.",
+            "Results-card checks passed as a render-only fixture; natural race completion and original results behavior are not established."
+          ]
+        },
+        "host_verification": {
+          "scope": "Host-only Caribou National race preview; public speed/preload/stunt/diagnostics row remains historical.",
+          "checks": [
+            "Combined-WASM race rerun passed portrait 390\u00d7844, landscape 844\u00d7390 and desktop 1280\u00d7720 setup/HUD bounds; setup targets are at least 44 px.",
+            "Combined render-only results-card fixture passed portrait/landscape bounds and Race Again/Single Player actions; it does not demonstrate a naturally completed race or original results flow.",
+            "Host desktop and mobile feature-board filters passed without browser errors."
+          ],
+          "limitations": [
+            "The host overlay is authored preview behavior, not recovered original race HUD logic or final presentation parity.",
+            "Public release identity and checks remain the historical values in release_verification; no host candidate is represented as public."
           ]
         }
       },
@@ -2339,22 +2416,83 @@
         "category": "Game systems",
         "title": "Game modes and race flow",
         "status": "PARTIAL",
-        "scope": "PUBLIC",
-        "summary": "Freestyle is the one connected start-to-drive path. Race starts, finishes, laps, event transitions and mode-specific rules are not implemented as a full flow.",
-        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449 \u00b7 Freestyle route and driving only",
+        "scope": "PUBLIC FREESTYLE + CARIBOU NATIONAL RACE PREVIEW \u00b7 ORIGINAL SYSTEMS PARTIAL",
+        "summary": "Freestyle remains connected, and the public Caribou National preview now links setup, countdown, authored deterministic CPU route motion, player driving, pause/restart and a render-only results presentation check. The full original race flow remains incomplete, including CPU decisions, rider collisions, natural event progression and other tracks.",
+        "validation": "Public af3e6b5a7ac3fc4095477326597a27cfe84b97ce \u00b7 CI 38333554805: tools/test_race passed the public manifest/no-disc startup, three viewport layouts, setup targets, countdown/throttle lock, driving, touch steering/cancel, pause/restart, five CPU riders and zero JS/WebGL errors. The public tools/test_frontend regression also passed the 9-map picker, Tioga drive, keyboard/controller menu navigation, portrait Caribou reload, pause/Controls and no-disc/no-browser-error checks. Results presentation used a render-only fixture; full event flow is not established.",
         "evidence": "research/UI.md \u2014 supported menu route; research/IMPLEMENTATION.md \u2014 acceptance gates.",
-        "next_step": "Recover the original mode/state transitions and validate a complete event from start to results."
+        "next_step": "Recover original race transitions and rules, then validate natural event completion and results against original evidence.",
+        "host_verification": {
+          "scope": "Host-only initial Caribou race preview evidence; superseded for deployment status by public af3e6b5 verification.",
+          "checks": [
+            "Combined tools/test_race.mjs passed setup/layout/input/countdown/throttle lock, player acceleration, touch steering/cancel, pause, restart, CPU movement and results presentation fixture checks.",
+            "Race ABI 95/96 avoids multiplayer ABI 80\u201385; RawValue transport remains intact and starting Race disconnects the active multiplayer session.",
+            "Final combined frontend regression passed the 9-map picker, Tioga drive, keyboard/controller input, portrait Caribou, pause/controls and zero JS/WebGL errors.",
+            "tools/test_menu_models.mjs passed six viewport sizes, all 26 quads, female menu views, menu animation/music and selected-model course loading with zero JS/WebGL errors."
+          ],
+          "limitations": [
+            "Route motion and result-card fixture are authored preview behavior. Original CPU decisions, rider collisions, natural race completion, the full event flow, progression and additional tracks remain incomplete.",
+            "This is host verification only and does not imply CI or public deployment."
+          ]
+        },
+        "release_verification": {
+          "commit": "af3e6b5a7ac3fc4095477326597a27cfe84b97ce",
+          "ci_run": "38333554805",
+          "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+          "static_assets": 33,
+          "served_objects": 416,
+          "devlog_entries": 129,
+          "devlog_screenshots": 108,
+          "r2_approved_objects": 417,
+          "r2_upload_changes": 5,
+          "checks": [
+            "Automatic web build and production deployment passed in CI 38333554805.",
+            "R2 package contains 417 objects; the public verifier confirmed 416 served objects and 33 authored files.",
+            "Public manifest contains 108 records including E01_NAT.RES; the game starts without a disc picker.",
+            "Public race test passed at portrait, landscape and desktop sizes with setup, countdown/throttle lock, player driving, touch steering/cancel, pause/restart, five deterministic CPU route riders and zero JS/WebGL errors.",
+            "Results-card checks passed as a render-only fixture; natural race completion and original results behavior are not established."
+          ]
+        }
       },
       {
         "id": "opponents-ai",
         "category": "Game systems",
         "title": "Rivals and race AI",
         "status": "NEEDS RESEARCH",
-        "scope": "RESEARCH",
-        "summary": "No opponent spawning, racing behavior, passing logic or opponent collision behavior is connected.",
-        "validation": "No AI or rival browser test is claimed.",
-        "evidence": "research/IMPLEMENTATION.md \u2014 race-system acceptance gates.",
-        "next_step": "Locate opponent update routines and race-specific tuning, then identify a small testable behavior slice."
+        "scope": "PUBLIC DETERMINISTIC ROUTE-MOTION PREVIEW \u00b7 ORIGINAL CPU AI AND RIDER COLLISIONS UNRECOVERED",
+        "summary": "Five named riders move along authored deterministic routes in the public Caribou National preview. Their movement provides an opponent field for the preview but does not implement original CPU decisions, passing or physical AI. Rider-to-rider collision is not connected; original CPU AI remains unrecovered.",
+        "validation": "Public af3e6b5a7ac3fc4095477326597a27cfe84b97ce \u00b7 CI 38333554805: tools/test_race passed with five named CPU riders and sampled route distances of 70.53\u201380.96 ft. The test verifies authored deterministic motion only, not original AI or rider collision.",
+        "evidence": "research/RACING.md \u2014 TDF decoding strategy and preview limits; host-only Caribou race checkpoint.",
+        "next_step": "Recover original opponent update/tuning routines and physical interactions; compare decisions and passing against source evidence before claiming original CPU AI.",
+        "host_verification": {
+          "scope": "Host-only authored deterministic route motion; original CPU AI remains unrecovered. Origin/main status NEEDS RESEARCH is preserved.",
+          "checks": [
+            "Combined-WASM race rerun passed with five named opponents and 84.33\u201396.80 ft latest sampled route distances.",
+            "Countdown/throttle lock, player acceleration, pause and restart passed in the combined host race scenario.",
+            "Race ABI 95/96 avoided multiplayer ABI 80\u201385 and preserved the active multiplayer session."
+          ],
+          "limitations": [
+            "Shared quad/rider mesh and neutral pose are used; no original CPU decisions, rider-to-rider collision, costumes or progression are established.",
+            "The original CPU AI remains unrecovered; no public verification is claimed."
+          ]
+        },
+        "release_verification": {
+          "commit": "af3e6b5a7ac3fc4095477326597a27cfe84b97ce",
+          "ci_run": "38333554805",
+          "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
+          "static_assets": 33,
+          "served_objects": 416,
+          "devlog_entries": 129,
+          "devlog_screenshots": 108,
+          "r2_approved_objects": 417,
+          "r2_upload_changes": 5,
+          "checks": [
+            "Automatic web build and production deployment passed in CI 38333554805.",
+            "R2 package contains 417 objects; the public verifier confirmed 416 served objects and 33 authored files.",
+            "Public manifest contains 108 records including E01_NAT.RES; the game starts without a disc picker.",
+            "Public race test passed at portrait, landscape and desktop sizes with setup, countdown/throttle lock, player driving, touch steering/cancel, pause/restart, five deterministic CPU route riders and zero JS/WebGL errors.",
+            "Results-card checks passed as a render-only fixture; natural race completion and original results behavior are not established."
+          ]
+        }
       },
       {
         "id": "progression",

@@ -86,7 +86,8 @@ flowchart TB
 | **Making the quad feel right** | Recovered drivetrain, suspension, grip, rider lean, and static obstacle contacts are connected. Landing fixes have reduced tire burial, but some overlap remains. |
 | **Rider, tricks, and wipeouts** | ATV linkage, rider animation, stunt clips, and partial scoring/wreck/recovery behavior are connected. A failed Nac Nac through rider separation and recovery has passed public checks. Full flips, trick fidelity, and rider hand/foot placement remain unfinished. |
 | **Menus, sound, and controls** | Title → Main Menu → Single Player → Freestyle works, with pause settings, remapping, engine audio, and all 21 songs. More modes, HUD behavior, and original sound mixing remain to recover. |
-| **The complete game** | Full racing, progression, saves, remaining collision/water behavior, and original rendering fidelity are still ahead. Physical phones and Bluetooth controllers also need hands-on validation. |
+| **Racing preview** | A publicly verified Caribou Peak National race preview adds up to five CPU riders, laps, timing, radar and results through Single Player → Race. CPU route motion is authored; original AI physics/collisions, other courses and progression remain incomplete. |
+| **The complete game** | Full racing fidelity, progression, saves, remaining collision/water behavior, and original rendering fidelity are still ahead. Physical phones and Bluetooth controllers also need hands-on validation. |
 
 **Public evidence snapshot:** [`e18a371e`](https://github.com/nrgapple/atv-offroad-fury-2-web/commit/e18a371e81b471137dd5fb1121b05d454584b1d0), October 12, 2026, passes CI 38312395498 and public checks for nine-map driving, source-correlated fog coverage, Caribou/Vancouver ice reflections, materials, wet/dry water behavior, menus/controls and copied-link Vancouver multiplayer. HTTPS hashes match 32 authored files and 405 served objects; the gallery has 118 entries and 99 screenshots. These are component and route checks, not full-map, full-game or original-hardware equivalence. Audio still lacks broader map ambience/surface scheduling, and source tree lighting is not complete. The [handoff](HANDOFF.md), [deployment record](research/DEPLOYMENT.md), [map evidence](research/MAP_FIDELITY.md) and [audio notes](research/AUDIO.md) hold detailed evidence and limitations.
 
@@ -109,7 +110,7 @@ Touch is a browser adaptation of the PS2 controls. Portrait and gesture checks p
 
 *A host Chromium test capture of an unfinished Nac Nac. The recovered wreck/recovery sequence was subsequently checked publicly; this particular image comes from the host test.*
 
-**Optional funny crashes:** **Pause → Funny crashes: On** adds a floppy rider ragdoll and breakaway ATV wheels, handlebars and rear suspension on harder wrecks. It starts Off and remembers your choice. Recovery restores the whole ATV; original driving and scoring stay intact. The effects apply to your local rider.
+**Funny crashes:** Enabled by default, this adds a floppy rider ragdoll and breakaway ATV wheels, handlebars and rear suspension on hard ground or obstacle impacts. The ATV stays intact during an airborne bailout until it hits something. **Pause → Funny crashes: Off** returns to original crash behavior. It remembers your choice, including an existing saved Off. Recovery restores the whole ATV; original driving and scoring stay intact. The effects apply to your local rider.
 
 Keyboard and controllers work too. **Pause → Controls** lets you remap keyboard keys, controller buttons, analog directions, and button combinations; settings are saved in your browser.
 

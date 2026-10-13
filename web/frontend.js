@@ -18,6 +18,7 @@ export class Frontend {
     this.quadId = 1; this.riderId = 0; this.playerName = 'Rider'; this.roomCode = new URL(location.href).searchParams.get('room') ?? ''; this.garageReturn = 'single';
     this.bindingDevice = 'keyboard'; this.bindingPage = 0; this.bindingRow = 0; this.musicPage = 0;
     this.capture = null; this.menuKeys = new Set();
+    this.raceSettings={laps:3,cpu:3,difficulty:1};this.raceActive=false;this.raceAvailable=false;
     gameplayBindings.subscribe(() => { this.layoutKey = ''; });
     window.addEventListener('keydown', e => {
       if (!this.capture) return;
@@ -145,6 +146,7 @@ export class Frontend {
       // The thumbnail arrives through a separately validated R2 package. Older
       // manifests can still open every menu while that content update publishes.
       const {files} = await this.content;
+      this.raceAvailable=files.some(f=>f.path==='/TRACKS/TRACKSA/ENV01/E01_NAT.RES');
       if (files.some(f => f.path === '/UI/RESOURCE/QUADINFO.RES')) { await this.archive('/UI/RESOURCE/QUADINFO.RES'); await this.image('multi_atv01'); }
       // The original catalog is available before a terrain/engine is loaded.
       const content = await this.content;
@@ -156,7 +158,7 @@ export class Frontend {
   }
   fail(error) { this.notice.textContent = error.message; this.busy = false; this.root.dataset.error = 'true'; }
   syncPreview() {
-    void this.audio?.()?.setMusicPreview(['title','main','single','tracks','garage','multiplayer','lobby','loading','music'].includes(this.page) && !this.root.hidden && !document.hidden && document.hasFocus(), this.page !== 'music').catch(error => this.fail(error));
+    void this.audio?.()?.setMusicPreview(['title','main','single','tracks','garage','multiplayer','lobby','race','loading','music'].includes(this.page) && !this.root.hidden && !document.hidden && document.hasFocus(), this.page !== 'music').catch(error => this.fail(error));
   }
   beginCapture(id) {
     const row = gameplayBindings.rows(this.bindingDevice).find(row => row.id === id);
@@ -193,7 +195,7 @@ export class Frontend {
     delete this.root.dataset.error;
     this.busy = true; this.root.hidden = false; this.active(true); this.notice.textContent = ''; this.buttons.replaceChildren();
     try {
-      if (page === 'tracks' || page === 'loading') {
+      if (page === 'tracks' || page === 'loading' || page === 'race') {
         await this.archive('/UI/RESOURCE/TP/TP_ANAT.RES');
         await this.archive('/UI/RESOURCE/TP/TP_PSTNT.RES');
         for (const track of this.tracks) { await this.image(`${track.image}a`); await this.image(`${track.image}b`); }
@@ -206,18 +208,19 @@ export class Frontend {
   async action(action) {
     if (this.busy || this.root.hidden) return;
     this.notice.textContent = '';
-    if (['up','down'].includes(action) && ['title','main','single','garage','multiplayer','lobby','pause','controls','bindings','music'].includes(this.page)) {
+    if (['up','down'].includes(action) && ['title','main','single','garage','multiplayer','lobby','race','pause','controls','bindings','music'].includes(this.page)) {
       this.selection = (this.selection + (action === 'up' ? -1 : 1) + this.frame.choices.length) % this.frame.choices.length;
       if (this.page === 'bindings' && this.selection < 4) this.bindingRow = this.bindingPage * 4 + this.selection;
     } else if (action === 'back') {
       if (this.page === 'pause') return this.resume();
       if (this.page === 'garage') return this.show(this.garageReturn);
       if (this.page === 'lobby') return this.run('leave');
-      return this.show(({bindings:'controls',music:'pause',controls:'pause',main:'title',single:'main',tracks:'single',multiplayer:'main'})[this.page] ?? 'title');
+      return this.show(({bindings:'controls',music:'pause',controls:'pause',main:'title',single:'main',tracks:'single',race:'single',multiplayer:'main'})[this.page] ?? 'title');
     } else if (this.page === 'garage' && ['left','right'].includes(action)) {
       return this.run(action === 'left' ? 'quadprev' : 'quadnext');
     } else if (this.page === 'tracks' && ['left','right','up','down'].includes(action)) {
       this.track = (this.track + (['left','up'].includes(action) ? -1 : 1) + this.tracks.length) % this.tracks.length;
+    } else if (this.page === 'race' && ['left','right'].includes(action)) { return this.run(this.frame.choices[this.selection],action === 'left' ? -1 : 1);
     } else if (this.page === 'controls' && this.frame.choices[this.selection] === 'steering-sensitivity' && ['left','right'].includes(action)) {
       this.mobileControls?.setSteeringSensitivity(this.mobileControls.steeringSensitivity + (action === 'left' ? -5 : 5));
     } else if (['bindings','music'].includes(this.page) && ['left','right'].includes(action)) {
@@ -227,7 +230,7 @@ export class Frontend {
       if (this.page === 'tracks') {
         const environment = this.tracks[this.track].id;
         this.busy = true;
-        try { await this.start(environment); this.resume(); }
+        try { await this.start(environment); this.raceActive=false;this.resume(); }
         catch (error) { await this.show('tracks'); this.fail(error); }
         this.busy = false; return;
       }
@@ -235,14 +238,27 @@ export class Frontend {
     }
     await this.refresh();
   }
-  async run(action) {
+  async run(action,direction=1) {
     if (this.busy) return;
     try {
       if (action === 'garage') { this.garageReturn = this.page; return this.show('garage'); }
       if (action === 'quadprev' || action === 'quadnext') { this.quadId = ((this.quadId - 1 + (action === 'quadnext' ? 1 : 25)) % 26) + 1; }
       else if (action === 'riderchange') this.riderId = 1 - this.riderId;
       else if (['host','join','share','lobbymap','lobbystart','leave'].includes(action)) return await this.multiplayer.action(action, this);
-      else if (['main','single','tracks','controls','music','multiplayer','lobby'].includes(action)) return await this.show(action);
+      else if (['main','single','tracks','controls','music','multiplayer','lobby','race'].includes(action)) return await this.show(action);
+      if (action === 'racestart') {
+        await this.multiplayer?.disconnect();
+        await this.beginLoading('env01'); this.busy = true;
+        try { await this.start('env01', {...this.raceSettings}); this.raceActive = true; this.resume(); }
+        catch(error) { await this.show('race');this.fail(error); } finally { this.busy = false; }
+        return;
+      }
+      if (['racelaps','racecpu','racedifficulty'].includes(action)) {
+        if (action === 'racelaps') this.raceSettings.laps = (this.raceSettings.laps - 1 + direction + 5) % 5 + 1;
+        if (action === 'racecpu') { const options = [0,3,5]; this.raceSettings.cpu = options[(options.indexOf(this.raceSettings.cpu) + direction + 3) % 3]; }
+        if (action === 'racedifficulty') this.raceSettings.difficulty = (this.raceSettings.difficulty + direction + 3) % 3;
+        this.layoutKey = ''; await this.refresh(); return;
+      }
       if (['keyboard','controller'].includes(action)) { this.bindingDevice = action; this.bindingPage = 0; this.bindingRow = 0; return this.show('bindings'); }
       if (action.startsWith('bind:')) { const id = action.slice(5); this.selection = gameplayBindings.rows(this.bindingDevice).findIndex(row => row.id === id) % 4; return this.beginCapture(id); }
       if (action === 'bindcancel') return this.cancelCapture();
@@ -270,11 +286,11 @@ export class Frontend {
   }
   async refresh() {
     if (!this.initialized || this.root.hidden || (this.busy && this.page !== 'loading') || this.layoutPending) return;
-    const stage = this.canvas.parentElement, track = this.tracks[this.track];
+    const stage = this.canvas.parentElement, track = this.page === 'race' ? this.tracks.find(t=>t.id==='env01') : this.tracks[this.track];
     const music = this.audio?.()?.music, musicState = music?.snapshot();
     const lobby = this.multiplayer?.state?.lobby;
-    const request = {quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? this.roomCode,lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:(this.page === 'loading' ? this.loadingTrack?.name : this.page === 'lobby' ? this.tracks.find(t => t.id === this.multiplayer.state.environment)?.name : track?.name) ?? '',track_image:(this.page === 'loading' ? this.loadingTrack?.image : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
-      funny_crashes:this.crashSettings?.enabled ?? false,mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
+    const request = {race_laps:this.raceSettings.laps,race_cpu:this.raceSettings.cpu,race_difficulty:this.raceSettings.difficulty,race_available:this.raceAvailable,race_active:this.raceActive,quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? this.roomCode,lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:(this.page === 'loading' ? this.loadingTrack?.name : this.page === 'lobby' ? this.tracks.find(t => t.id === this.multiplayer.state.environment)?.name : track?.name) ?? '',track_image:(this.page === 'loading' ? this.loadingTrack?.image : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
+      funny_crashes:this.crashSettings?.enabled ?? true,mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
       music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
       music_page:this.musicPage,music_status:musicState ? `${musicState.enabled ? 'On' : 'Off'} / Volume ${Math.round(musicState.volume * 100)}% / ${musicState.title || 'Choose a song'}` : '',music_enabled:musicState?.enabled ?? true,music_volume:Math.round((musicState?.volume ?? .7)*100),menu_logo:this.images.has('original-logo'),menu_atv:this.images.has('multi_atv01')};
@@ -285,7 +301,7 @@ export class Frontend {
       const frame = await this.json(62,new TextEncoder().encode(key));
       // Page/viewport can change while the worker handles the request. The next
       // frame requests fresh data, rather than applying a stale hit map.
-      if ((this.mobileControls?.steeringSensitivity ?? 85) !== request.mobile_steering_sensitivity || (this.capture?.label ?? '') !== request.capture_label || this.bindingPage !== request.binding_page || this.musicPage !== request.music_page || this.page !== request.page || this.selection !== request.selection || this.quadId !== request.quad_id || this.riderId !== request.rider_id || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
+      if (this.raceSettings.laps!==request.race_laps || this.raceSettings.cpu!==request.race_cpu || this.raceSettings.difficulty!==request.race_difficulty || (this.mobileControls?.steeringSensitivity ?? 85) !== request.mobile_steering_sensitivity || (this.capture?.label ?? '') !== request.capture_label || this.bindingPage !== request.binding_page || this.musicPage !== request.music_page || this.page !== request.page || this.selection !== request.selection || this.quadId !== request.quad_id || this.riderId !== request.rider_id || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
       this.frame = frame; this.layoutKey = key; this.draw(); this.rebuildButtons(); this.updateModelViews();
     } catch (error) { this.fail(error); }
     finally { this.layoutPending = false; }

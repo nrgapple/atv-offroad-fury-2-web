@@ -24,6 +24,43 @@ crash/recovery and public R2 integration remain outstanding. No new source conte
 has been published. Continue the integration gates in [motorcycles](research/MOTORCYCLES.md);
 do not substitute quad handling or claim full decompilation.
 
+
+## Caribou race preview — public release verified
+
+The worktree race slice adds Single Player → Race → Caribou Peak National,
+1–5 laps, 0/3/5 CPU riders and three difficulty speeds. Original `env01natE.tdf`
+decodes 252 unique closed route points; AIRiders.pb supplies YUKARI, PANZER,
+MCNABB, BALS and ROBERTS. Rust owns countdown, ordered checkpoints, laps,
+current/best/total timing, rank, finish and CPU motion. The browser adds radar,
+next-point direction, wrong-way text, results and retry. The original National
+archive is added only to the separate ignored R2 package, never GitHub. Older
+public manifests hide Race until that archive is available.
+
+Host Chromium passes setup and driving at 1280×720, 390×844 and 844×390;
+44px setup actions, rotation, countdown input lock, pause, CPU motion and
+restart; existing Freestyle/menu/controller/portrait regression passes.
+Results UI uses a separate render-only fixture; full course laps are not
+claimed as browser replays. Synthetic Rust tests cover finish/shortcut rules.
+See research/RACING.md for verification updates. The original implementation request skipped deployment waits; the user then
+requested publication. Public availability, CI and content/gallery upload now
+pass for af3e6b5, CI 38333554805.
+
+The race slice now integrates main `c895ba4`. The combined gate passes 325 core,
+25 protocol, 3 relay, 13 bridge and 69 JS tests, strict Clippy/formatting,
+18 release/content tests, 6 Worker tests, WASM, setup/hygiene, race play,
+frontend and all-26-model regressions. Race ABI 95/96 preserves multiplayer
+80–85; race data accompanies the existing RawValue simulation batch transport.
+Temporary native/WASM caches avoided host SSD clone stalls; static browser
+artifacts remain on the SSD. Public/CI verification now passes for af3e6b5: 33 authored files, 416 served
+objects, 108 runtime records and public race play at all three aspect ratios.
+The referenced race portrait remains an honestly labeled host capture.
+
+This is a race preview, not recovered original racing: CPU actors follow the
+route with distinct deterministic speeds and shared neutral ATV/rider meshes.
+Original AI decisions/physics, rider-to-rider collisions, costume diversity,
+Lead timing, HUD toggles, other courses and progression remain incomplete.
+
+
 ## Ordered vegetation: tested host release candidate
 
 The isolated map branch connects original distant atlases and source-correlated
@@ -65,7 +102,32 @@ requests delivery without waiting for deployments. Preserve other implementation
 lanes and use origin rather than the disabled No Mistakes remote.
 
 
-## Optional funny crashes: verified host checkpoint
+## Impact-triggered funny crashes: host verification
+
+The user requested Funny crashes On by default. Fresh browsers and unavailable
+storage now start On; an existing saved Off remains Off. Pause toggles persist
+through reload and restore original crash presentation when disabled.
+
+Mechanical breakup now observes actual inward ATV contact speed, independently
+of rider separation and travel speed. Terrain/suspension, static obstacle and
+moving-obstacle contacts feed a read-only diagnostic; no native forces, wreck
+classification, recovery, RNG or camera logic change. An airborne rider can
+ragdoll while the ATV remains intact. Contacts of at least 25 ft/s shed front
+wheels; at least 50 ft/s shed all seven supported parts. Later impacts can
+escalate damage without duplicating parts. Recovery restores the intact model.
+
+Host severe-input verification records three intact-ATV aerial ragdoll frames,
+then actual obstacle contacts at 27.420 ft/s (two parts) and 50.855 ft/s (seven).
+All parts reached actual GPU draws and recovery; 1,199 paired WASM steps have
+zero compared gameplay/camera mismatches. Actual-touch ATV26/female at 390px
+passes pause, Off/On during wreck, recovery and driving, with 439 paired steps
+and zero mismatches. Explicit Off passes the original touch wreck route.
+Fresh defaults, saved Off/On across reload and blocked-storage session toggles
+pass at 844×390. `make check` passes: 327 core, 3 web, 25 net, 13 relay,
+69 JavaScript tests, formatting and strict Clippy. WASM build and `make verify`
+pass. This is host evidence, pending current-main CI/public checks.
+
+## Historical initial optional funny-crashes host checkpoint
 
 The default-off Pause → Funny crashes option runs an authored Rust presentation
 layer on actual wreck/separation events: joint-limited rider tumbling and bouncing
