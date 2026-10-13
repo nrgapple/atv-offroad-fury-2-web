@@ -1,5 +1,6 @@
-//! Authored race preview. TDF geometry is recovered; race rules and CPU motion
-//! are provisional and deliberately separate from the recovered vehicle physics.
+//! Race bookkeeping around recovered TDF geometry and independent CPU vehicles.
+//! Race event/progression rules remain provisional; source-correlated driver
+//! decisions live in race_ai and feed the recovered vehicle solver.
 use crate::{Result, slice, u32le};
 use serde::Serialize;
 
@@ -7,6 +8,24 @@ use serde::Serialize;
 pub struct Course {
     pub points: Vec<[f32; 3]>,
     pub widths: Vec<f32>,
+    pub flags: Vec<u32>,
+    pub speeds: Vec<f32>,
+    pub airtimes: Vec<f32>,
+    pub lane_limit: f32,
+    pub leader_policy: [f32; 4],
+}
+impl Default for Course {
+    fn default() -> Self {
+        Self {
+            points: vec![],
+            widths: vec![],
+            flags: vec![],
+            speeds: vec![],
+            airtimes: vec![],
+            lane_limit: 3.,
+            leader_policy: [150., 0.9, 1.5, 0.5],
+        }
+    }
 }
 fn float(bytes: &[u8], at: usize) -> Result<f32> {
     let v = f32::from_le_bytes(slice(bytes, at, 4)?.try_into().unwrap());
@@ -25,6 +44,11 @@ impl Course {
         let mut scale = None;
         let mut points = Vec::new();
         let mut widths = Vec::new();
+        let mut flags = Vec::new();
+        let mut speeds = Vec::new();
+        let mut airtimes = Vec::new();
+        let mut lane_limit = 3.;
+        let mut leader_policy = [150., 0.9, 1.5, 0.5];
         let mut edges = Vec::new();
         let mut in_point = false;
         let mut in_tail = false;
@@ -105,7 +129,26 @@ impl Course {
                     widths.push(distance(edges[0], edges[1]));
                     in_tail = true;
                 }
-                7 | 12 | 18..=22 | 26..=27 | 40 => {
+                23 if in_point && !in_tail => {
+                    flags.push(u32le(bytes, at)?);
+                }
+                18 if in_point && !in_tail => {
+                    let speed = float(bytes, at)?;
+                    if speed != -1. && !(0. ..=1000.).contains(&speed) {
+                        return Err("invalid TDF speed".into());
+                    }
+                    speeds.push(speed);
+                }
+                26 if in_point && !in_tail => {
+                    airtimes.push(float(bytes, at)?);
+                }
+                19..=22 => {
+                    leader_policy[(tag - 19) as usize] = float(bytes, at)?;
+                }
+                40 => {
+                    lane_limit = float(bytes, at)?;
+                }
+                7 | 12 | 26..=27 => {
                     float(bytes, at)?;
                 }
                 _ => {}
@@ -120,8 +163,20 @@ impl Course {
         {
             return Err("invalid or open TDF course".into());
         }
+        if flags.len() != points.len()
+            || speeds.len() != points.len()
+            || airtimes.len() != points.len()
+            || !(0. ..=30.).contains(&lane_limit)
+            || leader_policy[0] <= 0.
+            || leader_policy[1..].iter().any(|v| *v < 0. || *v > 3.)
+        {
+            return Err("invalid TDF AI configuration".into());
+        }
         points.pop();
         widths.pop();
+        flags.pop();
+        speeds.pop();
+        airtimes.pop();
         if widths
             .iter()
             .any(|w| !w.is_finite() || *w < 1. || *w > 2048.)
@@ -129,7 +184,15 @@ impl Course {
         {
             return Err("invalid TDF route dimensions".into());
         }
-        Ok(Self { points, widths })
+        Ok(Self {
+            points,
+            widths,
+            flags,
+            speeds,
+            airtimes,
+            lane_limit,
+            leader_policy,
+        })
     }
     pub fn start(&self) -> ([f32; 3], f32) {
         let a = self.points[0];
@@ -193,13 +256,29 @@ impl Progress {
         }
         self.last = p;
     }
-    fn score(&self, course: &Course) -> f32 {
+    // Restrict interpolation to the ordered checkpoint segment. Global nearest
+    // projection wraps a rider just behind the start to the end of the lap and
+    // can also award apparent distance across neighboring sections of a course.
+    fn distance(&self, course: &Course) -> f32 {
         let previous = (self.next + course.points.len() - 1) % course.points.len();
-        let fraction = (1.
-            - distance(self.last, course.points[self.next])
-                / distance(course.points[previous], course.points[self.next]).max(1.))
-        .clamp(0., 0.999);
-        self.completed as f32 * course.points.len() as f32 + previous as f32 + fraction
+        let a = course.points[previous];
+        let b = course.points[self.next];
+        let dx = b[0] - a[0];
+        let dz = b[2] - a[2];
+        let segment = distance(a, b);
+        let fraction = (((self.last[0] - a[0]) * dx + (self.last[2] - a[2]) * dz)
+            / (segment * segment).max(0.0001))
+        .clamp(0., 1.);
+        let mut length = 0.;
+        let mut prefix = 0.;
+        for (i, point) in course.points.iter().enumerate() {
+            let segment = distance(*point, course.points[(i + 1) % course.points.len()]);
+            length += segment;
+            if i < previous {
+                prefix += segment;
+            }
+        }
+        self.completed as f32 * length + prefix + fraction * segment
     }
 }
 #[derive(Serialize, Clone)]
@@ -209,6 +288,24 @@ pub struct Opponent {
     pub yaw: f32,
     pub distance: f32,
     pub finished: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub physical: Option<CpuPose>,
+}
+#[derive(Serialize, Clone)]
+pub struct CpuPose {
+    pub orientation: [f32; 4],
+    pub speed: f32,
+    pub grounded: [bool; 4],
+    pub wheel_compression: [f32; 4],
+    pub wheel_angles: [f32; 4],
+    pub quad_matrices: Vec<[f32; 16]>,
+    pub rider_matrices: Vec<[f32; 16]>,
+    pub rider_world_matrix: Option<[f32; 16]>,
+    pub wreck: crate::wreck::State,
+    pub rider_wreck: Option<crate::wreck_animation::Frame>,
+    pub stunt: Option<crate::stunt::Frame>,
+    pub reset_count: u32,
+    pub decisions: crate::race_ai::Decisions,
 }
 #[derive(Serialize)]
 pub struct Standing {
@@ -243,7 +340,7 @@ pub struct Race {
     player: Progress,
     opponents: Vec<Opponent>,
     progress: Vec<Progress>,
-    speeds: Vec<f32>,
+    preview_speeds: Vec<f32>,
 }
 impl Race {
     pub fn new(course: Course, laps: u32, names: Vec<String>, difficulty: u32) -> Result<Self> {
@@ -256,7 +353,7 @@ impl Race {
             return Err("invalid race course".into());
         }
         if !(1..=5).contains(&laps)
-            || names.len() > 5
+            || names.len() > 4
             || difficulty > 2
             || names.iter().any(|n| n.len() > 40)
         {
@@ -269,19 +366,20 @@ impl Race {
             .map(|(i, name)| Opponent {
                 name,
                 origin: [
-                    start[0] + yaw.cos() * (i as f32 - 2.) * 6.,
+                    start[0] + yaw.cos() * [-2., -1., 1., 2.][i] * 8.,
                     start[1],
-                    start[2] - yaw.sin() * (i as f32 - 2.) * 6.,
+                    start[2] - yaw.sin() * [-2., -1., 1., 2.][i] * 8.,
                 ],
                 yaw,
                 distance: 0.,
                 finished: false,
+                physical: None,
             })
             .collect();
-        let progress = opponents.iter().map(|o| Progress::new(o.origin)).collect();
-        let speeds = (0..opponents.len())
+        let preview_speeds = (0..opponents.len())
             .map(|i| [32., 46., 60.][difficulty as usize] + i as f32 * 1.7)
             .collect();
+        let progress = opponents.iter().map(|o| Progress::new(o.origin)).collect();
         Ok(Self {
             course,
             laps,
@@ -290,7 +388,7 @@ impl Race {
             player: Progress::new(start),
             opponents,
             progress,
-            speeds,
+            preview_speeds,
         })
     }
     pub fn locked(&self) -> bool {
@@ -307,11 +405,18 @@ impl Race {
         }
         self.elapsed += dt;
         self.player.update(p, &self.course, self.elapsed, self.laps);
+    }
+    /// Preserve the separate authored motorcycle race preview. Original ATV
+    /// racers use observe_cpu after independent Vehicle steps, never this path.
+    pub fn step_motorcycle_preview_cpus(&mut self, dt: f32) {
+        if !self.running() {
+            return;
+        }
         for ((o, progress), speed) in self
             .opponents
             .iter_mut()
             .zip(&mut self.progress)
-            .zip(&self.speeds)
+            .zip(&self.preview_speeds)
         {
             if progress.finish.is_some() {
                 continue;
@@ -325,13 +430,53 @@ impl Race {
                 o.origin[2] += o.yaw.cos() * travel;
                 o.distance += travel;
             }
-            // CPU route points are reached exactly; their progress uses the same
-            // ordered checkpoint bookkeeper but advances only near the center.
             if delta <= travel + 1. {
                 progress.update(o.origin, &self.course, self.elapsed, self.laps);
             }
             o.finished = progress.finish.is_some();
         }
+    }
+    pub fn opponents(&self) -> &[Opponent] {
+        &self.opponents
+    }
+    pub fn running(&self) -> bool {
+        self.countdown == 0. && self.elapsed > 0. && self.player.finish.is_none()
+    }
+    pub fn progress_difference(&self, index: usize) -> f32 {
+        self.progress[index].distance(&self.course) - self.player.distance(&self.course)
+    }
+    /// Reposition cannot count traveled distance or award a swept checkpoint.
+    pub fn reposition_cpu(
+        &mut self,
+        index: usize,
+        origin: [f32; 3],
+        yaw: f32,
+        physical: Option<CpuPose>,
+    ) {
+        let opponent = &mut self.opponents[index];
+        opponent.origin = origin;
+        opponent.yaw = yaw;
+        opponent.physical = physical;
+        self.progress[index].last = origin;
+    }
+    pub fn observe_cpu(
+        &mut self,
+        index: usize,
+        origin: [f32; 3],
+        yaw: f32,
+        physical: Option<CpuPose>,
+    ) {
+        let o = &mut self.opponents[index];
+        let p = &mut self.progress[index];
+        if p.finish.is_some() {
+            return;
+        }
+        o.distance += distance(o.origin, origin);
+        o.origin = origin;
+        o.yaw = yaw;
+        o.physical = physical;
+        p.update(origin, &self.course, self.elapsed, self.laps);
+        o.finished = p.finish.is_some();
     }
     pub fn frame(&self, yaw: f32) -> Frame {
         let mut order: Vec<_> = std::iter::once(("YOU".to_string(), &self.player))
@@ -346,7 +491,10 @@ impl Race {
             (Some(a), Some(b)) => a.total_cmp(&b),
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
-            _ => b.1.score(&self.course).total_cmp(&a.1.score(&self.course)),
+            _ => {
+                b.1.distance(&self.course)
+                    .total_cmp(&a.1.distance(&self.course))
+            }
         });
         let position = order
             .iter()
@@ -407,6 +555,7 @@ mod tests {
                 [100., 0., 0.],
             ],
             widths: vec![30.; 4],
+            ..Course::default()
         }
     }
     #[test]
@@ -435,12 +584,80 @@ mod tests {
         assert_eq!(r.player.next, 1);
     }
     #[test]
+    fn leader_gap_uses_ordered_distance_at_start_and_lap_wrap() {
+        let mut r = Race::new(course(), 2, vec!["CPU".into()], 1).unwrap();
+        r.countdown = 0.;
+        // A rider who drifts backwards over the start must not appear almost
+        // one lap ahead, disabling the original CPU speed limiting policy.
+        r.step([5., 0., 0.], 1.);
+        r.observe_cpu(0, [0., 0., 50.], 0., None);
+        assert_eq!(r.progress_difference(0), 50.);
+        for p in [[0., 0., 100.], [100., 0., 100.], [100., 0., 0.]] {
+            r.step([5., 0., 0.], 1.);
+            r.observe_cpu(0, p, 0., None);
+        }
+        r.observe_cpu(0, [30., 0., 0.], 0., None);
+        assert_eq!(r.progress_difference(0), 370.);
+        r.observe_cpu(0, [0.; 3], 0., None);
+        assert_eq!(r.progress_difference(0), 400.);
+        r.observe_cpu(0, [0., 0., 10.], 0., None);
+        assert_eq!(r.progress_difference(0), 410.);
+        // A reset to another segment cannot create a lap or course-length gap.
+        r.step([100., 0., 0.], 1.);
+        assert_eq!(r.player.completed, 0);
+        assert_eq!(r.player.distance(&r.course), 0.);
+    }
+    #[test]
+    fn physical_cpus_require_observation_and_motorcycle_preview_is_explicit() {
+        let mut r = Race::new(course(), 1, vec!["CPU".into()], 1).unwrap();
+        let start = r.opponents()[0].origin;
+        r.step_motorcycle_preview_cpus(1. / 60.);
+        assert_eq!(r.opponents()[0].origin, start);
+        r.countdown = 0.;
+        r.step([0.; 3], 1. / 60.);
+        assert_eq!(r.opponents()[0].origin, start);
+        assert_eq!(r.opponents()[0].distance, 0.);
+        r.step_motorcycle_preview_cpus(1. / 60.);
+        assert_ne!(r.opponents()[0].origin, start);
+        assert!(r.opponents()[0].distance > 0.);
+        assert!(r.opponents()[0].physical.is_none());
+    }
+    #[test]
+    fn wreck_reposition_preserves_progress_without_a_swept_or_radius_award() {
+        let mut r = Race::new(course(), 1, vec!["CPU".into()], 0).unwrap();
+        r.countdown = 0.;
+        r.step([0.; 3], 1.);
+        let prior_distance = r.opponents[0].distance;
+        r.reposition_cpu(0, [0., 0., 100.], 1., None);
+        assert_eq!(r.progress[0].next, 1);
+        assert_eq!(r.progress[0].completed, 0);
+        assert_eq!(r.opponents[0].distance, prior_distance);
+        // Ordinary driving after the recovery can earn this checkpoint.
+        r.observe_cpu(0, [0., 0., 101.], 1., None);
+        assert_eq!(r.progress[0].next, 2);
+        assert_eq!(r.opponents[0].distance, prior_distance + 1.);
+    }
+    #[test]
     fn opponents_complete_laps_and_rank_by_finish_time() {
         let mut r = Race::new(course(), 1, vec!["Slow".into(), "Fast".into()], 2).unwrap();
         r.countdown = 0.;
-        for _ in 0..2000 {
-            r.step([0.; 3], 1. / 60.);
+        for (n, p) in [[0., 0., 100.], [100., 0., 100.], [100., 0., 0.], [0.; 3]]
+            .into_iter()
+            .enumerate()
+        {
+            r.step([0.; 3], 1.);
+            r.observe_cpu(1, p, 0., None);
+            if n > 0 {
+                r.observe_cpu(
+                    0,
+                    [[0., 0., 100.], [100., 0., 100.], [100., 0., 0.]][n - 1],
+                    0.,
+                    None,
+                );
+            }
         }
+        r.step([0.; 3], 1.);
+        r.observe_cpu(0, [0.; 3], 0., None);
         let f = r.frame(0.);
         assert!(f.opponents.iter().all(|o| o.finished));
         assert_eq!(f.position, 3);
@@ -484,6 +701,7 @@ mod tests {
         assert_eq!(c.points.len(), 8);
         assert_eq!(c.points[1], [2304., 0., 2394.]);
         assert_eq!(c.widths[0], 27.);
+        assert_eq!(c.airtimes, vec![1.; 8]);
         for length in 0..data.len() {
             assert!(Course::parse(&data[..length]).is_err());
         }

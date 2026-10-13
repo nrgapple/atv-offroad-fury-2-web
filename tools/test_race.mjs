@@ -36,11 +36,11 @@ try {
  await page.setViewportSize({width:390,height:844});
  await page.getByRole('button',{name:'Laps: 3',exact:true}).tap();await page.getByRole('button',{name:'Laps: 4',exact:true}).waitFor();
  await page.keyboard.press('ArrowLeft');await page.getByRole('button',{name:'Laps: 3',exact:true}).waitFor();
- await page.getByRole('button',{name:'CPU riders: 3',exact:true}).tap();await page.getByRole('button',{name:'CPU riders: 5',exact:true}).waitFor();
+ await page.getByRole('button',{name:'CPU riders: 3',exact:true}).tap();await page.getByRole('button',{name:'CPU riders: 4',exact:true}).waitFor();
  await page.getByRole('button',{name:'Start Race',exact:true}).tap();
  await page.waitForFunction(()=>document.querySelector('#frontend').hidden&&window.atvTerrainStatus.frame?.race?.phase==='countdown',null,{timeout:120000});
- let s=await state();assert.equal(s.frame.race.field,6);assert.equal(s.frame.race.checkpoints,252);
- assert.deepEqual(s.frame.race.opponents.map(o=>o.name),['YUKARI','PANZER','MCNABB','BALS','ROBERTS']);
+ let s=await state();assert.equal(s.frame.race.field,5);assert.equal(s.frame.race.checkpoints,252);
+ assert.deepEqual(s.frame.race.opponents.map(o=>o.name),['YUKARI','PANZER','MCNABB','BALS']);
  const startOrigin=s.frame.origin;
  await page.keyboard.down('KeyW');await page.waitForTimeout(500);s=await state();assert.deepEqual(s.frame.origin,startOrigin,'Countdown blocks throttle');
  await page.getByRole('button',{name:'Pause',exact:true}).tap();await screen('pause');
@@ -58,7 +58,22 @@ try {
  await page.waitForFunction(()=>Math.abs(window.atvTerrainStatus.input?.steer)>0.05);
  await cdp.send('Input.dispatchTouchEvent',{type:'touchCancel',touchPoints:[]});
  await page.waitForFunction(()=>!window.atvTerrainStatus.input?.touch_drive?.held);
- s=await state();assert(s.frame.race.elapsed>1);assert(s.frame.race.opponents.every(o=>o.distance>40));assert.equal(s.glError,0);
+ await page.waitForFunction(()=>window.atvTerrainStatus.frame.race.elapsed>=4,null,{timeout:30000});
+ s=await state();assert(s.frame.race.elapsed>=4);assert(s.frame.race.opponents.every(o=>o.distance>40));assert.equal(s.glError,0);
+ if(Number(process.env.ATV_RACE_MODEL||1)<27) {
+ for(const cpu of s.frame.race.opponents){
+  assert(cpu.physical,'CPU must use an independent physical quad');
+  const p=cpu.physical;assert(p.orientation.every(Number.isFinite));assert(p.speed>1,'CPU accelerates through drivetrain');
+  assert(p.wheel_angles.some(a=>Math.abs(a)>0.1),'CPU wheels must roll');
+  assert.equal(p.quad_matrices.length,27);assert.equal(p.rider_matrices.length,18);
+  assert(p.quad_matrices.flat().every(Number.isFinite));assert(p.rider_matrices.flat().every(Number.isFinite));
+  assert(p.decisions.desired_speed>=0);assert(p.decisions.route_error<40,'CPU must follow track');
+ }
+ assert(s.frame.race.opponents.some(o=>o.physical.wheel_compression.some(c=>Math.abs(c)>0.01)),'CPU suspension responds to terrain');
+ } else {
+  assert(s.frame.race.opponents.every(o=>!o.physical),'Motorcycle opponents retain their explicitly authored route preview');
+ }
+
  for(const [name,size] of [['portrait',{width:390,height:844}],['landscape',{width:844,height:390}],['desktop',{width:1280,height:720}]]){
   await page.setViewportSize(size);await page.waitForTimeout(500);
   assert(await page.locator('#race-overlay').isVisible());
@@ -92,5 +107,5 @@ try {
  await page.getByRole('button',{name:'Single Player',exact:true}).click();
  assert.deepEqual(await page.evaluate(()=>window.raceActions),['retry','quit']);
  assert.deepEqual(errors,[]);
- console.log(JSON.stringify({gate:'race',coursePoints:s.frame.race.checkpoints,field:s.frame.race.field,CPU:s.frame.race.opponents.map(o=>({name:o.name,distance:o.distance})),errors}));
+ console.log(JSON.stringify({gate:'race',coursePoints:s.frame.race.checkpoints,field:s.frame.race.field,CPU:s.frame.race.opponents.map(o=>({name:o.name,distance:o.distance,speed:o.physical?.speed,grounded:o.physical?.grounded,steer:o.physical?.decisions.steer,lane:o.physical?.decisions.lane_offset})),errors}));
 }finally{await browser.close();}

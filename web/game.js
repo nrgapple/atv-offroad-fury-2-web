@@ -16,7 +16,7 @@ import { MotorcyclePresentation } from './motorcycle-presentation.js';
 const $ = id => document.getElementById(id);
 const canvas = $('game');
 const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, powerPreference: 'high-performance' });
-const status = (text, error = false) => { frontend?.loadingStage(text); $('status').textContent = text; $('status').classList.toggle('error', error); };
+const status = (text, error = false) => { if (!error) frontend?.loadingStage(text); else frontend?.setLoading(false); $('status').textContent = text; $('status').classList.toggle('error', error); };
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 const worker = new Worker('worker.js', { type: 'module' });
@@ -1423,11 +1423,14 @@ function render(time) {
   let cpuDraws = 0, cpuTriangles = 0;
   for (const cpu of simFrame?.race?.opponents ?? []) {
     if (Math.hypot(cpu.origin[0]-camera.x,cpu.origin[2]-camera.z) > 864) continue;
-    const transform = vehicleMatrix({origin:cpu.origin,orientation:[Math.cos(cpu.yaw/2),0,Math.sin(cpu.yaw/2),0]});
+    const transform = vehicleMatrix({origin:cpu.origin,orientation:cpu.physical?.orientation ?? [Math.cos(cpu.yaw/2),0,Math.sin(cpu.yaw/2),0]});
+    const riderTransform = cpu.physical?.rider_world_matrix ? new Float32Array(cpu.physical.rider_world_matrix) : transform;
+    const quadMatrices = cpu.physical ? new Float32Array(cpu.physical.quad_matrices.flat()) : cpuQuadMatrices;
+    const riderMatrices = cpu.physical ? new Float32Array(cpu.physical.rider_matrices.flat()) : cpuRiderMatrices;
     for (const chunk of vehicleChunks) {
-      gl.uniformMatrix4fv(uniforms.model,false,transform);
+      gl.uniformMatrix4fv(uniforms.model,false,chunk.rider ? riderTransform : transform);
       gl.uniform1i(uniforms.useQuadPose,Boolean(chunk.quad || chunk.rider));
-      gl.uniformMatrix4fv(uniforms.quadBones,false,chunk.rider ? cpuRiderMatrices : cpuQuadMatrices);
+      gl.uniformMatrix4fv(uniforms.quadBones,false,chunk.rider ? riderMatrices : quadMatrices);
       gl.uniform1i(uniforms.useTexture,chunk.texture ? 1 : 0); gl.bindTexture(gl.TEXTURE_2D,chunk.texture ?? fallbackTexture);
       gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES,chunk.count,gl.UNSIGNED_SHORT,0); cpuDraws++; cpuTriangles += chunk.count/3;
     }
@@ -1552,10 +1555,10 @@ const syncAudio = () => { void audio.setActive(focused && !document.hidden && !l
 window.addEventListener('blur', () => { focused = false; clearInput(); syncAudio(); });
 window.addEventListener('focus', () => { focused = true; syncAudio(); });
 document.addEventListener('visibilitychange', () => { clearInput(); syncAudio(); });
-canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; for(const model of remoteModels.values()){model.chunks=null;model.gpuTextures=[];} diagnostics.ready = false; clearInput(); syncAudio(); status('Graphics context lost; waiting for recovery.'); });
+canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; for(const model of remoteModels.values()){model.chunks=null;model.gpuTextures=[];} diagnostics.ready = false; clearInput(); syncAudio(); frontend?.setLoading(true, 'Restoring graphics…'); status('Restoring graphics…'); });
 // Every old GPU handle belongs to the lost context, including vegetation instances.
 // Discard those references before buildMesh runs its normal resource cleanup.
-canvas.addEventListener('webglcontextrestored', () => { try { lost = false; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
+canvas.addEventListener('webglcontextrestored', () => { try { lost = false; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
 window.addEventListener('pagehide', event => {
   cancelAnimationFrame(frame); frame = 0; clearInput();
   if (event.persisted) {
@@ -1571,10 +1574,10 @@ window.addEventListener('pageshow', event => {
   if (!frame) frame = requestAnimationFrame(render);
 });
 try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); initializeGl(); frame = requestAnimationFrame(render); const params = new URLSearchParams(location.search);
-  if (params.get('source') === 'disc') { menuOpen = false; $('frontend').hidden = true; }
+  if (params.get('source') === 'disc') { $('loading-screen').hidden = true; menuOpen = false; $('frontend').hidden = true; }
   else {
     hostedContent = openHostedContent();
-    multiplayer = new Multiplayer({codec,command,ready:()=>simReady,paused:()=>menuOpen||!focused||document.hidden||lost||pageSuspended,listener:()=>({position:[camera.x,camera.y,camera.z],forward:[Math.sin(camera.yaw)*Math.cos(camera.pitch),Math.sin(camera.pitch),Math.cos(camera.yaw)*Math.cos(camera.pitch)],velocity:simFrame?.linear_velocity??[0,0,0]}),audio:()=>audio,assets:remoteAssets,clearAssets:()=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();},report:message=>{diagnostics.multiplayerError=message;status(message,true);},onState:()=>{if(frontend){frontend.layoutKey='';void frontend.refresh();}},onStart:async (environment,isCurrent)=>{if(!isCurrent())return;frontend.busy=true;frontend.notice.textContent='Loading shared environment…';try {await loadGame(null,environment);if(isCurrent())frontend.resume();}finally{if(isCurrent())frontend.busy=false;}},onLeave:message=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show('multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
+    multiplayer = new Multiplayer({codec,command,ready:()=>simReady,paused:()=>menuOpen||!focused||document.hidden||lost||pageSuspended,listener:()=>({position:[camera.x,camera.y,camera.z],forward:[Math.sin(camera.yaw)*Math.cos(camera.pitch),Math.sin(camera.pitch),Math.cos(camera.yaw)*Math.cos(camera.pitch)],velocity:simFrame?.linear_velocity??[0,0,0]}),audio:()=>audio,assets:remoteAssets,clearAssets:()=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();},report:message=>{diagnostics.multiplayerError=message;status(message,true);},onState:()=>{if(frontend){frontend.layoutKey='';void frontend.refresh();}},onStart:async (environment,isCurrent)=>{if(!isCurrent())return;frontend.busy=true;frontend.notice.textContent='';try {await loadGame(null,environment);if(isCurrent())frontend.resume();}finally{if(isCurrent())frontend.busy=false;}},onLeave:message=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show('multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
     frontend = new Frontend({menuRider:menuRiderAssets,modelAssets:selectionAssets,crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => loadGame(null, environment,racing), active: open => { menuOpen = open; clearInput(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     hud = new HeadUpDisplay(frontend, canvas);
     if (params.get('drive') === '1') {
@@ -1582,4 +1585,4 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
       void frontend.init(false).then(() => loadGame(null, params.get('environment') ?? 'env01')).catch(error => status(error.message, true));
     } else { document.body.classList.add('menu-open'); void frontend.init().then(()=>{if(params.has('room'))return frontend.show('multiplayer');}); }
   } }
-catch (error) { status(error.message, true); $('menu-notice').textContent = error.message; }
+catch (error) { $('loading-screen').hidden = true; status(error.message, true); $('menu-notice').textContent = error.message; }

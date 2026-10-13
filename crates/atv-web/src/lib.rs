@@ -12,7 +12,9 @@ use atv_core::{
     vehicle::{Vehicle, VehicleInput},
 };
 use std::cell::RefCell;
+mod cpu;
 mod motorcycles;
+use cpu::CpuRacer;
 mod multiplayer;
 thread_local! { static MENU_RIDER: RefCell<Option<atv_core::menu_preview::Rider>> = const { RefCell::new(None) }; }
 
@@ -72,6 +74,7 @@ struct Simulation {
     hud: atv_core::hud::State,
     race_course: Option<atv_core::race::Course>,
     race: Option<atv_core::race::Race>,
+    cpu_racers: Vec<CpuRacer>,
 }
 struct TrainCollisionBinding {
     car: usize,
@@ -567,6 +570,9 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
             20 => {
                 let terrain = terrain::decode_tr2(input)?;
                 sim.terrain = Some(terrain);
+                sim.cpu_racers.clear();
+                sim.race = None;
+
                 sim.motorcycle = None;
                 sim.motorcycle_model = None;
                 sim.vehicle = None;
@@ -1430,13 +1436,69 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
                 race.step(player.origin, 1. / 60.);
                 let [w, x, y, z] = player.orientation;
                 let yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
-                let mut race_frame = race.frame(yaw);
                 let terrain = sim.terrain.as_ref().ok_or("missing terrain")?;
-                for cpu in &mut race_frame.opponents {
-                    cpu.origin[1] = terrain
-                        .contact(cpu.origin[0], cpu.origin[2])?
-                        .map_or(player.origin[1], |c| c.height + 2.5);
+                if race.running() {
+                    let nodes = &sim
+                        .rider_mesh
+                        .as_ref()
+                        .ok_or("CPU rider mesh missing")?
+                        .nodes;
+                    let snapshots: Vec<_> = sim
+                        .cpu_racers
+                        .iter()
+                        .map(|cpu| {
+                            let frame = cpu.vehicle.frame();
+                            atv_core::cpu_avoidance::Peer {
+                                origin: frame.origin,
+                                velocity: frame.linear_velocity,
+                            }
+                        })
+                        .collect();
+                    let dynamic = sim
+                        .vehicle
+                        .as_ref()
+                        .and_then(|v| v.scene_collision())
+                        .map_or_else(Vec::new, |s| s.dynamic().to_vec());
+                    let world = cpu::World {
+                        terrain,
+                        nodes,
+                        materials: sim.materials.as_ref().ok_or("CPU materials missing")?,
+                        water: sim.water.as_ref(),
+                        dynamic: &dynamic,
+                    };
+                    for (index, cpu) in sim.cpu_racers.iter_mut().enumerate() {
+                        if race.opponents()[index].finished {
+                            continue;
+                        }
+                        let peers: Vec<_> = std::iter::once(atv_core::cpu_avoidance::Peer {
+                            origin: player.origin,
+                            velocity: player.linear_velocity,
+                        })
+                        .chain(
+                            snapshots
+                                .iter()
+                                .enumerate()
+                                .filter(|(i, _)| *i != index)
+                                .map(|(_, p)| *p),
+                        )
+                        .collect();
+                        let (frame, physical, repositioned) = cpu.step(
+                            &race.course,
+                            &player,
+                            &peers,
+                            race.progress_difference(index),
+                            &world,
+                        )?;
+                        let [w, x, y, z] = frame.orientation;
+                        let cpu_yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
+                        if repositioned {
+                            race.reposition_cpu(index, frame.origin, cpu_yaw, Some(physical));
+                        } else {
+                            race.observe_cpu(index, frame.origin, cpu_yaw, Some(physical));
+                        }
+                    }
                 }
+                let race_frame = race.frame(yaw);
                 return Ok(Some(race_frame));
             }
             Ok(None)
@@ -1489,6 +1551,7 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         SIMULATION.with_borrow_mut(|sim| {
             sim.race_course = Some(course);
             sim.race = None;
+            sim.cpu_racers.clear();
         });
         return Ok(result);
     }
@@ -1499,6 +1562,7 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             if value.get("active").and_then(serde_json::Value::as_bool) == Some(false) {
                 sim.race = None;
                 sim.race_course = None;
+                sim.cpu_racers.clear();
                 return Ok(b"null".to_vec());
             }
             let integer = |key| {
@@ -1511,12 +1575,39 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             let names: Vec<String> =
                 serde_json::from_value(value.get("names").ok_or("missing CPU names")?.clone())
                     .map_err(|e| e.to_string())?;
-            sim.race = Some(atv_core::race::Race::new(
+            let mut race = atv_core::race::Race::new(
                 sim.race_course.clone().ok_or("load race course first")?,
                 integer("laps")?,
                 names,
                 integer("difficulty")?,
-            )?);
+            )?;
+            let racers = if sim.motorcycle.is_some() {
+                vec![]
+            } else {
+                race.opponents()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, cpu)| {
+                        cpu::create_cpu_racer(
+                            sim,
+                            cpu.origin,
+                            cpu.yaw,
+                            index,
+                            integer("difficulty")?,
+                        )
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            };
+            for (index, cpu) in racers.iter().enumerate() {
+                race.observe_cpu(
+                    index,
+                    cpu.vehicle.frame().origin,
+                    race.opponents()[index].yaw,
+                    None,
+                );
+            }
+            sim.cpu_racers = racers;
+            sim.race = Some(race);
             Ok(b"null".to_vec())
         });
     }

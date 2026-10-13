@@ -14,6 +14,70 @@ No complete original-game physics equivalence is claimed.
 
 # Implementation handoff
 
+## Original CPU avoidance, wreck recovery and jump tricks — tested host checkpoint
+
+Implementation `eeadf09`, integrated with UI/main `2ef33ab` as `bb9d1bee`,
+connects source-correlated peer/scenery/vegetation avoidance, independent physical
+CPU wreck/detached-rider recovery, low-air terrain-normal feedback, and National
+TDF-airtime-gated original stunt selection. Recovery cannot count teleport distance
+or award a checkpoint/lap. See [racing evidence and remaining gates](research/RACING.md).
+
+The final 65.08s browser run observes 5 natural wrecks/5 recoveries, 8 original
+stunt starts, resumed racing, finite matrices and no errors/reset progress awards.
+ATV and motorcycle 34 race regression, mobile held-drive utilities and UI transitions
+pass with portrait/landscape coverage. Rust/JS, fmt/strict Clippy, WASM, setup,
+release/Worker checks pass. Private bounded original-instruction comparisons pass
+9,000 cases with zero output-bit differences under the finite-binary32 VU model.
+This checkpoint is host-only pending validated-main/public release verification.
+
+Rider-to-rider impulses, original global RNG/actor ordering/math tables, roster
+quad tuning, remaining AI flags/preload helper, native grid/progression/finish
+rules and physical phone/Safari verification remain open.
+
+## Previous original CPU driver checkpoint
+
+Branch `feat/original-race-ai` replaces the preview's constant-speed route motion
+with four independent recovered Vehicle solvers, normal rider controllers and
+ATV linkage matrices. Exact-build National driver decisions now supply steering,
+lookahead, lane slew, TDF target speeds, throttle/brake deadband and ahead-only
+leader speed limiting. The field is YOU plus up to four CPUs; guessed difficulty
+speeds are removed. Ordered segment distance fixes start-line wrap in the leader
+gap. Current starting slots, checkpoint radii and race event rules remain authored.
+
+The merged host gate passes 339 core, 25 protocol, 3 relay, 13 bridge, 4
+release-tool Rust and 69 JS tests, formatting/strict Clippy, WASM, source/setup
+and repository hygiene, 29 release checks (one skipped) and 8 Worker tests. Private finite-binary32 comparisons pass 1,500 cases
+executing 124,410 original instructions with zero output-bit differences for
+leader speed, pedal deadband and lateral slew/clamp. This is selected-routine
+proof, not full-driver or PS2 replay equivalence.
+
+Caribou browser checks pass 1280×720, 390×844 and 844×390 setup/driving/rotation,
+countdown, pause, restart and touch cancellation. Independent CPUs roll wheels,
+compress suspension and publish 27 quad/18 rider transforms. A 45.05-second
+simulation run covers 2,435–2,466 feet per CPU, braking/coasting, ahead speed
+limiting, turns and elevation changes, with actual CPU GPU draws and no JS errors.
+Frontend/Freestyle/controller/portrait regression passes. Results UI remains a
+separate render-only fixture. A separate natural CPU run reaches the provisional
+finish radius for all four racers by 120.06s; native finish-line parity is unverified.
+
+A mobile utility regression also fixes real second-finger Pause/Camera taps while
+one-finger drive is held: the browser suppresses the secondary compatibility
+click, so utility touch release now invokes the existing button action once.
+Portrait/landscape checks cover independent driving capture, no stray throttle,
+drag-away/cancel, pause/freeze, neutral resume, 44px hit areas and mouse/keyboard.
+Physical iOS Safari and phone hardware remain unverified.
+
+Main motorcycle integration is preserved: its separate authored CPU route
+preview remains explicitly distinct from original ATV CPU vehicle simulation.
+Quad and motorcycle model 34 race regression both pass.
+
+This previous driver checkpoint was publicly verified at main `7c8c591`.
+The newer checkpoint above connects avoidance, AI tricks, CPU wreck/recovery,
+low-air feedback and shared dynamic scene inputs. Rider-to-rider collisions,
+native grid placement, separate roster quads/costumes and original RNG/math
+remain open. The grid helper 001f8410 is recovered privately. Source exports,
+probes, content and screenshots remain ignored. See research/RACING.md.
+
 ## Playable motorcycles checkpoint — 2026-10-13
 
 The motorcycle branch now connects garage choices 27–34 to the distinct two-wheel
@@ -790,3 +854,7 @@ Host boundary follow-up: a normal ENV04 keyboard drive now passes edge crossing,
 
 Historical host wheel-center checkpoint (subsequently released as `35d328e`): the first wheel velocity/spring substep now retains the preceding cached world center until integration; geometry, torque and the chassis contact solver keep their recovered new-center rules. A 600-case original `001ed330` replay executes 386,315 instructions with zero compared binary32 mismatches, versus 1,813 differing components from the former immediate-center input. Host clean landing, both-direction keyboard cross-slope turning and wreck/recovery pass; 222 core + 2 WASM tests, strict Clippy, formatting and `make verify` pass. Landing minimum clearance is unchanged at -0.4970245ft. Slope clearance is -0.3231964ft before/-0.3015594ft after over 14.457ft elevation, but props and 119 riding/30 wreck frame exclusions prevent isolated slope parity or causal-improvement claims. Three vegetation helper tests are registered but collision is not live. The inspected landing screenshot and evidence are recorded in `research/devlog.json`; no terrain-clipping fix was claimed at this host gate. The subsequent public verification is recorded above. See `research/MOVEMENT.md`.
 
+
+UI transitions/loading host checkpoint (2026-10-13): authored menu transitions use 180 ms exits and 240 ms entries, with a shared loading presentation for boot, course/model loading, and graphics-context recovery. The course loader presents the recovered preview, course name, status, and animated progress bar. Browser checks cover reduced motion, load failure, rotation, touch at 390×844, 844×390 and 667×375, and resize cancellation with focus retention. The frontend regression also covers desktop/controller Tioga and portrait/Caribou. Validation reported 69 JavaScript tests, five Rust UI tests, formatting, strict atv-core Clippy, `make verify`, repository hygiene, and 29 release tests (one skipped). This remains host-only: these authored timings and visuals do not establish native UI timing/callback behavior, physical iOS/Bluetooth support, or public deployment. Screenshot evidence is in `research/devlog.json`; see `research/UI.md`.
+
+The UI checkpoint also passes the existing Caribou race gate: desktop/portrait/landscape setup, course loading, countdown, pause/resume, touch cancellation and restart, with no JavaScript errors.

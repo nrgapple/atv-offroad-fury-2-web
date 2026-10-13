@@ -151,6 +151,14 @@ pub struct Animator {
     active: bool,
 }
 impl Animator {
+    /// New detached actor; no player pose, contacts or wreck clock are copied.
+    /// Stream seeding is an integration choice, not original global RNG parity.
+    pub fn fork_racer(&self, nodes: &[Node], seed: u64) -> Result<Self> {
+        let mut rider = Self::new(self.motions.clone(), self.looping.clone(), nodes)?;
+        rider.water_config = self.water_config;
+        rider.rng = OriginalRandom::with_seed(seed);
+        Ok(rider)
+    }
     /// Consecutive shared launch yaw, pitch, wreck direction and clip-variant
     /// words. The local stream reproduces this order, not all game-wide RNG calls.
     pub fn boundary_random_words(&mut self) -> [u32; 4] {

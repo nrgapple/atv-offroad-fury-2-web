@@ -67,3 +67,27 @@ body:not(.menu-open) #help, body:not(.menu-open) #status:not(.error) { display: 
 .race-results button { min-height: 44px; margin: 4px; font: 15px system-ui, sans-serif; }
 @media (orientation: portrait) { .race-strip { padding-right: 70px; gap: 6px 14px; font-size: 16px; } .race-times { margin-top: 9px; font-size: 12px; } .race-guide canvas { width: 112px; height: 88px; } }
 @media (max-height: 450px) and (orientation: landscape) { #race-overlay { top: max(68px, calc(env(safe-area-inset-top) + 58px)); } .race-strip { font-size: 15px; } .race-times { font-size: 12px; } .race-guide canvas { width: 96px; height: 76px; } .race-order { font-size: 11px; columns: 2; column-gap: 22px; } .race-guide { margin-top: 7px; } }
+
+/* Authored panel motion follows the recovered red/silver frontend palette. */
+.menu-transition { position: fixed; z-index: 4; pointer-events: none; }
+#menu-stage { isolation: isolate; }
+#menu-notice { bottom: max(16px, env(safe-area-inset-bottom)); left: max(16px, env(safe-area-inset-left)); right: max(16px, env(safe-area-inset-right)); width: fit-content; max-width: calc(100% - 32px); margin: 0 auto; padding: 10px 18px; border-left: 3px solid #e1c844; background: #171717ed; color: #eee; box-shadow: 0 4px 24px #0008; }
+#frontend[data-error=true] #menu-notice { border-color: #db5348; }
+#status.error { border-left: 3px solid #db5348; background: #171717ed; box-shadow: 0 4px 24px #0008; }
+.loading-screen { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left)); background: radial-gradient(ellipse at 20% 45%, #661818 0, #260c0e 45%, #080606 85%); }
+.loading-screen[hidden] { display: none; }
+.loading-screen::before { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(115deg, transparent 18%, #a2282840 18.2%, #a2282800 47%, transparent 70%, #bcbcbc20 70.2%, #bcbcbc06 71%, transparent 71.2%); }
+.loading-panel { position: relative; width: min(560px, 100%); padding: clamp(24px, 5vw, 48px); border-top: 3px solid #ddd; border-bottom: 1px solid #6f2727; background: linear-gradient(135deg, #252020e8, #090909e8); box-shadow: 0 18px 65px #0008; }
+.loading-brand { margin: 0 0 clamp(16px, 4vh, 36px); font: italic 900 clamp(32px, 8vw, 54px)/1 Impact, 'Arial Narrow', sans-serif; color: #eee; text-shadow: 2px 3px #671515; }
+.loading-brand span { display: block; margin-top: 8px; font-size: .42em; letter-spacing: .06em; color: #e1c844; }
+.loading-panel h1 { margin: 0 0 8px; font: italic 700 clamp(24px, 5vw, 32px)/1.2 Impact, 'Arial Narrow', sans-serif; text-transform: uppercase; letter-spacing: .05em; }
+#loading-detail { margin: 0 0 22px; color: #c8c8c8; font: 600 14px/1.5 'Arial Narrow', sans-serif; }
+.loading-meter { height: 9px; overflow: hidden; background: #090909; border: 1px solid #aaa; transform: skewX(-14deg); }
+.loading-meter::after { content: ''; display: block; height: 100%; width: 40%; background: repeating-linear-gradient(110deg, #e1c844 0 8px, #b09935 8px 10px); animation: loading-sweep 1.4s ease-in-out infinite; }
+.course-load-meter { position: absolute; pointer-events: none; }
+.model-view.is-loading span { display: flex; flex-direction: column; justify-content: center; gap: 14px; font: italic 700 14px Impact, 'Arial Narrow', sans-serif; letter-spacing: .04em; text-transform: uppercase; }
+.model-view.is-loading span::after { content: ''; width: min(60%, 180px); height: 5px; background: repeating-linear-gradient(110deg, #e1c844 0 8px, #423b1e 8px 12px); background-size: 24px 100%; animation: loading-tread .7s linear infinite; }
+@keyframes loading-sweep { from { transform: translateX(-110%); } to { transform: translateX(360%); } }
+@keyframes loading-tread { to { background-position: 24px 0; } }
+@media (max-height: 450px) and (orientation: landscape) { .loading-panel { width: min(620px, 100%); padding: 20px 32px; } .loading-brand { margin-bottom: 14px; font-size: 32px; } #loading-detail { margin-bottom: 14px; } }
+@media (prefers-reduced-motion: reduce) { .loading-meter::after, .model-view.is-loading span::after { animation: none; } .loading-meter::after { width: 100%; opacity: .65; } }

@@ -70,3 +70,159 @@ countdown, pause, restart, radar and results render-only fixture controls.
 Sampled CPU distances are 70.53–80.96 feet; no JS/GL errors occur. Race CPU
 motion remains authored and provisional; original CPU physics/passing/collisions
 and whole-course browser replay equivalence remain unverified.
+
+## Original CPU driving reconstruction — next implementation gate
+
+The exact USA v2.00 executable now supplies the driving strategy. Private
+Ghidra exports retain matching source/load bytes for VehicleAI mode dispatch
+0024ee40, path driver 0024f9d0, constructor 0024ef20, race creation 001f9690,
+leader speed policy 002536b0, and Track loader/interpolation 00179680,
+0017d810/0017d980. This is original-instruction evidence, not recovered source
+code or whole-game equivalence. The stripped sequel remains the authority.
+
+Replace constant-speed CPU position updates with independent recovered quad
+physics. Supply recovered driver decisions: lookahead (25 + 4 × route error,
+limited to 60ft on track), lateral target variation/slew with the track's 3ft
+limit, tangent plus 0.05 target correction, signed heading gain 5 and sine
+saturation, and throttle/brake with a 1ft/s deadband. TDF tag18 stores target
+speed (sentinel -1 means 150ft/s), tag23 point flags, and tag40 lateral bound.
+Tags19–22 provide leader-distance/speed factors. Retain explicit limits for
+unconnected native obstacle-avoidance, trick choice, race transitions, roster
+cosmetics and full-course parity. Reusing the recovered vehicle solver does
+not make these missing AI decisions original.
+
+Validate scalar decision branches against bounded original-byte instruction
+probes; private content replay then covers independent acceleration, turning,
+suspension, wheel/rider animation, terrain response, pause/restart and phone
+layouts. Source pseudocode/instructions, private probes and images stay ignored.
+
+The National baseline uses the recovered 60ft/s reference floor and track
+leader policy. The preview's arbitrary Easy/Normal/Hard speed labels are removed;
+original difficulty/mode mapping remains a separate recovery gate. CPU selection
+now tops out at four opponents, consistent with the five-slot AIRiders selection
+loop in 0021f680. The provisional starting row uses Caribou's authored 8ft rider
+spacing and leaves the player lane clear; native start-marker/slot placement is
+still unverified. Original roster/quad diversity and costumes remain open.
+
+Private finite-binary32 probes of 002536b0, 002509ac and 0024fe4c execute
+124,410 original instructions across 1,500 cases with zero differing output
+bits for leader speed, throttle/brake deadband and lateral slew/clamp. These
+probes do not prove route localization, whole-driver behavior, PS2 trigonometric
+tables, obstacle avoidance or complete race replay equivalence. Route projection
+and ground/contact mapping are integration adaptations; trigonometry uses host
+Rust sine/atan2. CPU wreck/recovery, rider collisions, AI tricks, low-clearance
+air feedback, dynamic obstacles and separate quad tuning remain unconnected.
+
+The source grid helper 001f8410 has now been exported from the matching executable.
+National event cases 3–10 use event start nodes, slot ordering, rider spacing and
+a turn-side sign derived from neighboring tangents. Connecting those start
+records is a separate gate; the current symmetric row is an integration fallback.
+Race distance now interpolates along the ordered checkpoint segment rather than
+using a global wrapped projection. This fixes the start-line reverse-drift case
+that incorrectly disabled the original ahead-only speed policy. Checkpoint radii
+and event progression remain provisional rather than native RaceStatus parity.
+
+Host integration passes 330 core, 25 protocol, 3 relay, 13 bridge and 69 JS tests,
+formatting/strict Clippy, WASM, setup/source and repository hygiene, 18 release
+checks and 6 Worker tests. Race setup/driving passes desktop 1280×720, portrait
+390×844 and landscape 844×390, rotation, countdown, touch cancellation, pause
+and restart. Normal driving publishes 27 quad/18 rider transforms per CPU,
+rolling wheels and independent suspension. Frontend/Freestyle regression passes.
+The separate results fixture is render-only, not a complete race replay.
+
+The sustained browser gate passes 45.05 simulated seconds, 2,435–2,466ft per
+CPU, 64–69 observed braking decisions, 165–186 coasting/braking observations,
+809–814 ahead-speed limits and changing elevations. Maximum observed centerline
+error is 22.0–24.5ft; this is not whole-course adherence. CPU matrices reach 52
+GPU draw calls when the field is in rendering range. Distant CPUs are culled,
+not simulated through a constant-speed shortcut. Pause freezes the entire
+published frame and no browser exceptions occur. This remains a host checkpoint
+until its tested commit passes main CI and public deployment verification.
+
+The second main integration includes the separately authored motorcycle mode.
+Its existing CPU route preview is preserved through an explicit motorcycle-only
+step; the original ATV branch never invokes that kinematic path. Physical ATV
+CPUs still use Vehicle steps and observations. Quad and motorcycle 34 race gates
+pass all three layouts, pause/restart/input/results fixture and no browser errors.
+The merged gate passes 339 core, 25 protocol, 3 relay, 13 bridge, 4 release-tool
+Rust and 69 JS tests, strict Clippy/formatting, WASM, 29 release tests (one skipped)
+and 8 Worker tests.
+
+A separate untouched-physics CPU run reaches the current one-lap finish radius
+for all four ATV racers by 120.061 simulated seconds. Traveled distances are
+6,746.55–6,761.15ft versus a 6,811.33ft decoded closed route. The finish radius
+awards the lap before exact start/finish crossing; original TDF marker placement
+and native finish-line rules remain open. This verifies current preview route
+completion, not original event/lap or PS2 replay parity.
+
+## CPU avoidance and wreck strategy — completed host gate
+
+Use the exact SCUS_972.11 National call chain 0024f9d0 → 0024f840 →
+00252080. Port ordinary peer near/far relative-velocity correction and eight-ray
+static obstacle direction attenuation before steering; validate the peer loop
+and attenuation branches against bounded original instructions. Retain query
+category/order, VU precision and special aggression flags as separately scoped
+gates until they are reproduced. Do not add guessed braking or randomized crashes.
+
+Enable each CPU's recovered Vehicle wreck decision/passive-body path and its
+own cloned original wreck clips/detached-rider controller. Reuse the player
+ordering: vehicle step, wreck begin/body step, rider-contact recovery clock,
+then publish the appropriate independent rider world/pose. Feed live water and
+scene contacts without advancing shared water or train actors once per CPU.
+Recovery must resume route driving with refreshed driver state and retain
+ordered race progression, without awarding checkpoints for a reposition.
+Verify natural racing, peer/obstacle scenarios, natural impacts/rollovers,
+recovery and both phone orientations; injected wreck fixtures must stay labeled.
+
+The authored CPU avoidance now feeds the original near/far relative-velocity
+response, eight midpoint rays over pi/4, 100ft ray attenuation, and horizontal
+packed-coordinate vegetation response into the heading wrapper. Ordinary plants
+use the distinct original gains 1/200; peers use 0.65/100. The spatial query uses
+50ft half extents. No braking policy is inferred from corrected vector magnitude:
+the original wrapper normalizes heading while retaining TDF/leader target speed.
+Scene eligibility, native trig/VU precision and linked-actor update order remain
+integration limitations.
+
+Each CPU enables the recovered physical wreck decision/passive quad path and
+owns its original wreck clips, detached rider body, contact-gated recovery clock,
+normal/landing/stunt controller, and rider world matrix. It uses live water and
+current dynamic scene transforms without advancing shared actors again. Driving
+controls stop during wrecks; recovery refreshes route state and resumes driving.
+A reset publishes the new physical pose without calling race checkpoint update
+or counting teleport distance; subsequent normal movement can earn progress.
+
+Low-air feedback uses the source 20ft split, terrain normal sampled 0.5 seconds
+ahead, gains 10/0.1 and bounded lean. National trick requests now use the original
+10-second interval/10% trial, flagged jumps, TDF tag 26 airtime minus elapsed air
+time and 0.5-second margin, and selection among the 24 eligible main clip durations
+(001e9650). The rider accepts the direct request through its native airborne,
+speed/reset/minimum-time gates and runs the loaded original stunt clip without
+synthetic held buttons. The original flag 64 preload/jump helper, optional AI
+flags, global random stream and exact actor/controller update ordering are still
+separate gates.
+
+Private no-hook instruction comparisons pass 9,000 cases executing 1,184,803
+original instructions with zero differing binary32 outputs: 3,000 peer cases,
+3,000 plant cases, 1,500 ray attenuation cases and 1,500 low-air feedback cases.
+These bounded branches use the existing finite-binary32 VU approximation; they
+do not establish PS2 hardware math or complete National AI replay equivalence.
+
+The combined main integration passes 346 core, 25 protocol, 3 relay, 13 bridge,
+4 release-tool Rust and 69 JS tests, formatting/strict Clippy, WASM, source/setup
+and repository hygiene, 29 release checks (one skipped) and 8 Worker tests.
+The real-content race gate passes ATV and motorcycle 34, desktop/portrait/landscape,
+countdown/input/pause/restart and the separate render-only results fixture.
+Held-drive Pause/Camera passes both phone orientations; UI loading/transitions,
+reduced motion, rotation and touch targets pass. Freestyle/controller/portrait
+regression passes as well.
+
+An untouched-physics 65.08-second race observes 3,905 actual worker frames per CPU,
+5 natural wrecks and 5 recoveries across three riders, detached body contacts,
+neutral wreck controls, resumed driving and 8 original stunt starts. All four CPUs
+encounter peers, plants and real scenery rays and travel 3,180.7–3,728.7ft; matrices
+stay finite, reset distance/lap awards are absent, pause freezes the full frame
+in both phone orientations and browser errors are absent. This is a sustained
+host behavior gate, not a complete lap or original finish-line replay. The
+checkpoint remains host-only until its validated main artifact passes public
+release verification. Rider-to-rider collision impulses, roster-specific tuning,
+original start slots, race progression and finish rules remain open.

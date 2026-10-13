@@ -514,11 +514,9 @@ pub fn layout(request: Request) -> Result<Frame> {
                 "255,226,107",
                 w - 60.,
             );
-            let difficulty = ["Easy", "Normal", "Hard"][request.race_difficulty.min(2) as usize];
             let rows = [
                 (format!("Laps: {}", request.race_laps.max(1)), "racelaps"),
                 (format!("CPU riders: {}", request.race_cpu), "racecpu"),
-                (format!("Difficulty: {difficulty}"), "racedifficulty"),
                 ("Start Race".to_string(), "racestart"),
             ];
             for (i, (label, action)) in rows.iter().enumerate() {
@@ -527,7 +525,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                     label,
                     action,
                     [24., 154. + i as f32 * 56., list_w.max(290.), 54.],
-                    request.selection % 4 == i,
+                    request.selection % rows.len() == i,
                 );
             }
             if !portrait {
@@ -861,7 +859,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             } else {
                 ("Lobby", "lobby")
             });
-            let columns = if !portrait && (h - 90.) / choices.len() as f32 * scale < 34. {
+            let columns = if !portrait && (h - 90.) / choices.len() as f32 * scale < 44. {
                 2
             } else {
                 1
@@ -870,7 +868,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             let row = ((h - if portrait { 110. } else { 90. }) / rows as f32).min(if portrait {
                 64.
             } else {
-                48.
+                48_f32.max(44. / scale)
             });
             let column_width = (w - if portrait { 60. } else { 108. }) / columns as f32;
             let selected = request.selection % choices.len();
@@ -1205,10 +1203,7 @@ mod tests {
         r.race_available = true;
         assert_eq!(layout(r).unwrap().choices, ["tracks", "garage", "race"]);
         let f = layout(request("race", 844., 390.)).unwrap();
-        assert_eq!(
-            f.choices,
-            ["racelaps", "racecpu", "racedifficulty", "racestart"]
-        );
+        assert_eq!(f.choices, ["racelaps", "racecpu", "racestart"]);
         for (i, a) in f.hits.iter().enumerate() {
             for b in &f.hits[i + 1..] {
                 let [ax, ay, aw, ah] = a.rect;
@@ -1236,6 +1231,7 @@ mod tests {
         for (w, h) in [
             (390., 844.),
             (844., 390.),
+            (667., 375.),
             (1280., 720.),
             (320., 568.),
             (768., 1024.),
@@ -1254,6 +1250,9 @@ mod tests {
                         hit.label
                     );
                     assert!(height * scale >= 34., "landscape compact minimum");
+                    if page == "pause" {
+                        assert!(height * scale >= 44. - 0.001, "pause touch minimum");
+                    }
                     if h > w {
                         assert!(height * scale >= 44., "portrait minimum");
                     }

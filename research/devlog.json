@@ -2098,6 +2098,22 @@
       "caption": "Combined host capture of the Caribou National race preview after origin/main integration, showing the accelerated rider, route map, race HUD and CPU standings with the updated fog and vegetation renderer."
     },
     {
+      "id": "motorcycle-asset-formats-and-models-are-recovered-479c12ef",
+      "timestamp": "2026-10-13T01:46:14.742118+00:00",
+      "recorded_at": "2026-10-13T01:50:41.794160+00:00",
+      "kind": "verification",
+      "title": "Motorcycle asset formats and models are recovered",
+      "summary": "A source-backed recovery checkpoint now decodes the MX vs. ATV Unleashed motorcycle format and several bike meshes in Rust. The captured bikes and Suzuki components are private host-side model inspection; they are not selectable or drivable in the browser port.",
+      "details": [
+        "The Rust PSR reader matches an independent parser across all 20,391 records and 751,972 header-plus-directory bytes. A native R5900 instruction replay of the original PSG header loader at 0x00166360 confirms the observed fields and file-read boundaries, including the first bike group over 163 instructions.",
+        "Loader evidence maps the exact 854,016-byte GAME_REL.BIN at 0x0045c580; every byte matched the source file. The Rust PSG v5 decoder produced Bike (22 nodes, 3 LODs, 2,470 finest-LOD triangles), Bike 50 (19 nodes, 4 LODs, 2,388 triangles), and seven Suzuki component meshes. An independent native geometry comparison passed 42 groups across nine decoded model files and 6,846 actual instructions, using only a bounded file reader and allocator.",
+        "The recovered records also identify Race and Pro physics profiles, sixteen tire surfaces, clutch, wheelie, stoppie, cross-up, flip, 360, stunt-catalog, audio and dirt resources. These are recovered resources and catalog evidence, not implemented mechanics. The full host checks passed: 322 core, 25 network, 3 relay and 13 bridge Rust tests; 69 JavaScript tests; formatting, strict Clippy, release WASM build, make verify, repository hygiene and 18 release checks. Existing optional funny-crash checks passed 855 exact paired WASM gameplay/camera steps with the option Off and On, seven rendered ATV pieces and intact recovery. New generic motorcycle marker/descendant handling has core coverage only and is not connected to a live motorcycle model."
+      ],
+      "limitation": "Host-only recovery evidence. Motorcycles are not selectable or drivable, and no motorcycle handling, rider integration, suspension, physics, audio playback, particles, stunts, crashes or gameplay parity is claimed. The screenshot is a static decoded-mesh inspection with illustrative flat shading. The candidate has not passed current-main CI or the separate public Cloudflare/R2 release checks; no game data or screenshot has been uploaded.",
+      "image": "/devlog-images/motorcycle-asset-formats-and-models-are-recovered-479c12ef.png",
+      "caption": "Private host model inspection: decoded Bike and Bike 50 LOD0 meshes plus seven Suzuki components. Static geometry only; no motorcycle is playable."
+    },
+    {
       "id": "crash-breakup-now-waits-for-hard-atv-impacts-6771874e",
       "timestamp": "2026-10-13T01:59:22.089940+00:00",
       "recorded_at": "2026-10-13T01:59:22.089940+00:00",
@@ -2145,36 +2161,6 @@
       "limitation": "Host-tested only; public end-to-end queued release is not yet verified. Operation requires a Mac with available storage and valid authentication. There is no automatic rollback or worktree pruning; conflicts require repair by the submitting chat. The CLI screenshot-review flag depends on agent inspection."
     },
     {
-      "id": "production-deployment-flow-restoration-underway-20261013",
-      "timestamp": "2026-10-13T04:02:59.043147+00:00",
-      "recorded_at": "2026-10-13T04:02:59.043297+00:00",
-      "kind": "issue",
-      "title": "Production deployment flow restoration is underway",
-      "summary": "A premature cutover to the experimental local release queue blocked work in other chats. The queue has been stopped, and the established GitHub Actions production deployment flow is being restored.",
-      "details": [
-        "The release queue has not passed end-to-end validation and is not ready to control production deployment.",
-        "The queue remains experimental and disabled pending isolated validation and a user-approved cutover.",
-        "Recovery work is restoring production deployment through GitHub Actions; this entry does not claim that recovery or a new production deployment has completed."
-      ],
-      "limitation": "Public deployment recovery remains in progress. The queue has only host-level evidence and has not completed a public end-to-end release."
-    },
-    {
-      "id": "motorcycle-asset-formats-and-models-are-recovered-479c12ef",
-      "timestamp": "2026-10-13T01:46:14.742118+00:00",
-      "recorded_at": "2026-10-13T01:50:41.794160+00:00",
-      "kind": "verification",
-      "title": "Motorcycle asset formats and models are recovered",
-      "summary": "A source-backed recovery checkpoint now decodes the MX vs. ATV Unleashed motorcycle format and several bike meshes in Rust. The captured bikes and Suzuki components are private host-side model inspection; they are not selectable or drivable in the browser port.",
-      "details": [
-        "The Rust PSR reader matches an independent parser across all 20,391 records and 751,972 header-plus-directory bytes. A native R5900 instruction replay of the original PSG header loader at 0x00166360 confirms the observed fields and file-read boundaries, including the first bike group over 163 instructions.",
-        "Loader evidence maps the exact 854,016-byte GAME_REL.BIN at 0x0045c580; every byte matched the source file. The Rust PSG v5 decoder produced Bike (22 nodes, 3 LODs, 2,470 finest-LOD triangles), Bike 50 (19 nodes, 4 LODs, 2,388 triangles), and seven Suzuki component meshes. An independent native geometry comparison passed 42 groups across nine decoded model files and 6,846 actual instructions, using only a bounded file reader and allocator.",
-        "The recovered records also identify Race and Pro physics profiles, sixteen tire surfaces, clutch, wheelie, stoppie, cross-up, flip, 360, stunt-catalog, audio and dirt resources. These are recovered resources and catalog evidence, not implemented mechanics. The full host checks passed: 322 core, 25 network, 3 relay and 13 bridge Rust tests; 69 JavaScript tests; formatting, strict Clippy, release WASM build, make verify, repository hygiene and 18 release checks. Existing optional funny-crash checks passed 855 exact paired WASM gameplay/camera steps with the option Off and On, seven rendered ATV pieces and intact recovery. New generic motorcycle marker/descendant handling has core coverage only and is not connected to a live motorcycle model."
-      ],
-      "limitation": "Host-only recovery evidence. Motorcycles are not selectable or drivable, and no motorcycle handling, rider integration, suspension, physics, audio playback, particles, stunts, crashes or gameplay parity is claimed. The screenshot is a static decoded-mesh inspection with illustrative flat shading. The candidate has not passed current-main CI or the separate public Cloudflare/R2 release checks; no game data or screenshot has been uploaded.",
-      "image": "/devlog-images/motorcycle-asset-formats-and-models-are-recovered-479c12ef.png",
-      "caption": "Private host model inspection: decoded Bike and Bike 50 LOD0 meshes plus seven Suzuki components. Static geometry only; no motorcycle is playable."
-    },
-    {
       "id": "source-tuned-motorcycles-now-ride-across-eight-configu-57ad9d3e",
       "timestamp": "2026-10-13T04:00:58+00:00",
       "recorded_at": "2026-10-13T04:01:14.592641+00:00",
@@ -2190,6 +2176,97 @@
       "limitation": "Host-only verification; no current-main CI, public Cloudflare motorcycle route or R2 package verification yet. The authored two-wheel solver uses recovered source tuning but has not been shown instruction-equivalent to the original. Motorcycle severe breakaway, aerial ragdoll and damage are unverified. Source COLv2 collision, full stunt behavior, audio/effect scheduling, water and footprint tracks remain incomplete. Multiplayer continues to support ATV riders only; this is not a complete game port.",
       "image": "/devlog-images/source-tuned-motorcycles-now-ride-across-eight-configu-57ad9d3e.png",
       "caption": "Host browser capture: the authored MX 125 Race motorcycle and rider riding on a snowy course. This is the browser reconstruction, not a PS2 capture or public release."
+    },
+    {
+      "id": "production-deployment-flow-restoration-underway-20261013",
+      "timestamp": "2026-10-13T04:02:59.043147+00:00",
+      "recorded_at": "2026-10-13T04:02:59.043297+00:00",
+      "kind": "issue",
+      "title": "Production deployment flow restoration is underway",
+      "summary": "A premature cutover to the experimental local release queue blocked work in other chats. The queue has been stopped, and the established GitHub Actions production deployment flow is being restored.",
+      "details": [
+        "The release queue has not passed end-to-end validation and is not ready to control production deployment.",
+        "The queue remains experimental and disabled pending isolated validation and a user-approved cutover.",
+        "Recovery work is restoring production deployment through GitHub Actions; this entry does not claim that recovery or a new production deployment has completed."
+      ],
+      "limitation": "Public deployment recovery remains in progress. The queue has only host-level evidence and has not completed a public end-to-end release."
+    },
+    {
+      "id": "recovered-cpu-vehicle-updates-sustain-a-45-second-race-b89d9023",
+      "timestamp": "2026-10-13T04:03:43.271199+00:00",
+      "recorded_at": "2026-10-13T04:08:57.257173+00:00",
+      "kind": "verification",
+      "title": "Recovered CPU vehicle updates sustain a 45-second race run",
+      "summary": "A source-derived CPU vehicle update path now runs alongside independent quad and rider transforms. The sustained Caribou host race gate observed stable opponent motion through 45.05 simulated seconds, with braking, coasting, leader-speed limiting and route tracking.",
+      "details": [
+        "Scalar replay matched the reference across 1,500 cases and 124,410 instructions with zero bit mismatches.",
+        "The 45.049-second run observed 902 published frames per CPU; opponent travel ranged from 2,435.035 to 2,465.946 ft. Brake intervals measured 64\u201369 frames and coast intervals 165\u2013186 frames.",
+        "Leader-speed limiting was observed 809\u2013814 times, with maximum route error of 22.00\u201324.46 ft. GPU opponent draws were present at 5, 25 and 45 seconds; opponents beyond the 864 ft cull range were not drawn. Pause froze the full frame and the run reported no JavaScript errors."
+      ],
+      "limitation": "Host verification only; no public deployment is claimed. The combined host race gate now passes with the mobile touch-release fix integrated. Original opponent avoidance decisions and other native AI behavior, rider-to-rider collisions, tricks, wreck behavior, start-grid fidelity, separate rider skins and full-course parity remain unfinished. Physical Safari/phone behavior remains unverified.",
+      "image": "/devlog-images/recovered-cpu-vehicle-updates-sustain-a-45-second-race-b89d9023.png",
+      "caption": "Host race run with source-derived CPU vehicle updates on the Caribou course, portrait layout."
+    },
+    {
+      "id": "mobile-pause-and-camera-controls-respond-during-held-d-11962283",
+      "timestamp": "2026-10-13T04:09:10.236985+00:00",
+      "recorded_at": "2026-10-13T04:09:53.719881+00:00",
+      "kind": "verification",
+      "title": "Mobile pause and camera controls respond during held driving touch",
+      "summary": "A host-verified touch-release path now lets a second finger activate Pause or Camera while the primary finger continues driving. Resume clears held input, and cancelled or dragged touches avoid accidental activation.",
+      "details": [
+        "tools/test_mobile_utilities.mjs passed at 390\u00d7844 portrait and 844\u00d7390 landscape. Coverage includes second-finger Camera, Pause while the drive touch remains held, neutral input on resume, and 44px utility-button hit testing.",
+        "The same test covers cancelled and dragged taps, mouse and keyboard activation, and reports no errors."
+      ],
+      "limitation": "Host verification only; the integrated three-layout race gate now passes with the touch-release fix. No public deployment is claimed. Original opponent AI behavior and race parity remain incomplete, and physical Safari/phone behavior remains unverified.",
+      "image": "/devlog-images/mobile-pause-and-camera-controls-respond-during-held-d-11962283.png",
+      "caption": "Host mobile race view with the pause menu opened while another touch controls driving."
+    },
+    {
+      "id": "atv-cpu-field-reaches-a-provisional-one-lap-checkpoint-3fd7f424",
+      "timestamp": "2026-10-13T04:27:18.497815+00:00",
+      "recorded_at": "2026-10-13T04:27:18.497815+00:00",
+      "kind": "verification",
+      "title": "ATV CPU field reaches a provisional one-lap checkpoint",
+      "summary": "In the host Caribou race, all four CPU opponents completed the decoded route under the current provisional finish-radius rules. This confirms route completion for the authored ATV CPU vehicle-solver path; it does not establish the original game\u2019s finish-line or lap behavior.",
+      "details": [
+        "The one-lap run finished by 120.061 seconds. CPU route distances at completion ranged from 6,746.55 to 6,761.15 ft on a decoded 6,811.33 ft closed route.",
+        "Original ATV mode uses the physical CPU vehicle solvers. The motorcycle CPU route preview remains a separate authored extension and is not part of this ATV result."
+      ],
+      "limitation": "Host verification only; no public deployment is claimed. Completion currently triggers inside a provisional checkpoint radius, not from verified native finish-marker mapping. Original finish-line/lap parity and peer spacing remain open; native CPU avoidance and other original AI behavior are not established by this route-completion run."
+    },
+    {
+      "id": "responsive-menu-transitions-and-shared-loading-present-3376f3b1",
+      "timestamp": "2026-10-13T04:41:18.690675+00:00",
+      "recorded_at": "2026-10-13T04:42:47.231768+00:00",
+      "kind": "verification",
+      "title": "Responsive menu transitions and shared loading presentation",
+      "summary": "Authored menu transitions now use short exit and entry animations, and boot, course, model, and graphics-context recovery share a responsive loading presentation. The host browser checkpoint covers reduced motion, failure, rotation, portrait and landscape touch layouts, and animation cancellation with focus retained on resize.",
+      "details": [
+        "Transition timings are authored: 180 ms exit and 240 ms entry; they are not recovered original-game timings.",
+        "Course loading presents original-style authored red/silver panels, a course preview, course name, status text, and an animated progress bar. The screenshot shows Caribou Peak at a 390\u00d7844 viewport.",
+        "tools/test_ui_polish.mjs and tools/test_frontend.mjs passed, including startup/course/model/context recovery loading, reduced motion, failure, rotation, touch at 390\u00d7844, 844\u00d7390 and 667\u00d7375, desktop/controller Tioga, and portrait Caribou. Resize cancellation and focus retention reran successfully; five Rust UI tests passed again.",
+        "Reported gates also include 69 JavaScript tests, formatting, strict atv-core Clippy, make verify, repository hygiene, and 29 release tests (one skipped)."
+      ],
+      "limitation": "Host verification only; no public deployment is claimed. This responsive browser treatment does not establish original menu timing or callback fidelity, physical iOS Safari behavior, or Bluetooth controller behavior.",
+      "image": "/devlog-images/responsive-menu-transitions-and-shared-loading-present-3376f3b1.png",
+      "caption": "Caribou Peak course loading in the responsive red/silver panel at 390\u00d7844, with recovered preview art, status, and animated progress."
+    },
+    {
+      "id": "original-atv-cpu-avoidance-wrecks-and-recovery-3349bcad",
+      "timestamp": "2026-10-13T05:18:49.338751+00:00",
+      "recorded_at": "2026-10-13T05:19:04.463086+00:00",
+      "kind": "verification",
+      "title": "Original ATV CPU avoidance, wrecks, and recovery",
+      "summary": "A host-only original ATV race checkpoint now combines the vehicle CPU solver with peer and scene avoidance, detached-rider wrecks, recovery, and resumed racing. A 65-second actual-race browser gate observed five natural wrecks and recoveries across three CPUs, with neutral controls during wreck and no reset distance or lap awards.",
+      "details": [
+        "The 65.082756-second all-batch browser probe recorded 3,905 actual frames per CPU. Three CPUs wrecked and recovered five times total, including original Vertical, Left and Back wreck kinds; detached original riders registered contact, wrecked CPUs held zero controls, and every crashed CPU resumed racing. No recovery awarded distance or laps.",
+        "All peer, plant and real-scene queries ran with finite vehicle, quad and rider matrices. CPU travel was 3,180.7\u20133,728.7 ft. Eight original stunt starts were observed: Cordova, Heel Clicker, Disco Can, Nothing, Point Back, No Footed Can Can and Suicide No Hander among the recorded starts.",
+        "The native finite-binary32 VU model matched 9,000 cases across 1,184,803 original instructions with zero bit mismatches, covering ordinary peers, plant response, ray attenuation and low-air feedback. Strict formatting/Clippy, make check, WASM, make verify, source hygiene, 346 core, 25 protocol, 3 relay, 13 bridge and 4 release-tool Rust tests, 69 JavaScript tests, 8 Worker tests and 29 release Python tests (one skipped) passed. Race quad and motorcycle route preview, mobile held-touch utilities, responsive UI, and pause in portrait and landscape passed without JS or GL errors."
+      ],
+      "limitation": "Host verification only; these changes are not a verified public release. The screenshot is pack context captured at 4.85 simulated seconds: three CPUs are visible ahead while all are riding; it does not show a wreck. The finite-binary32 VU model is not PS2 hardware validation or full AI parity. Rider-to-rider collision impulses, global RNG/actor ordering/math tables, original grid/progression/finish rules, roster-specific tuning, remaining AI flags, and jump/preload helpers remain incomplete.",
+      "image": "/devlog-images/original-atv-cpu-avoidance-wrecks-and-recovery-3349bcad.png",
+      "caption": "390\u00d7844 host race on combined build bb9d1bee at 4.85 simulated seconds: the player reaches 51 mph with three CPU riders visible ahead and another close by. This frame shows the pack, not a wreck; natural wreck and recovery are covered by the separate all-batch gate."
     },
     {
       "id": "motorcycle-touch-steering-and-rider-fit-are-corrected--5d67b69f",

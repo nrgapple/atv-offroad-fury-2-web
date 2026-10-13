@@ -236,6 +236,7 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
         )?;
         let race = if let Some(race) = &mut sim.race {
             race.step(f.origin, 1. / 60.);
+            race.step_motorcycle_preview_cpus(1. / 60.);
             let b = atv_core::dynamics::basis(f.orientation);
             let mut state = race.frame(b[2][0].atan2(b[2][2]));
             for cpu in &mut state.opponents {
