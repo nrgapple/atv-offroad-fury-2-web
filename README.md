@@ -2,13 +2,13 @@
 
 We're bringing **ATV Offroad Fury 2** into the browser as a Rust game: the original trails, quads, music, and wonderfully reckless arcade riding, rebuilt one system at a time with AI-assisted reverse engineering.
 
-**[Play the current build](https://atv-offroad-fury-2.champtoday.workers.dev/) · [Follow the screenshot dev log](https://atv-offroad-fury-2.champtoday.workers.dev/devlog.html)**
+**[Play the current build](https://furyremastered.com/) · [Follow the screenshot dev log](https://furyremastered.com/devlog.html)**
 
 Both links are **public HTTPS**, accessible away from the development Mac. The game loads its required original resources automatically; you don't need to select a disc file.
 
 There is already a rideable browser reconstruction with nine environments. **This is still a work in progress, not the complete game or a finished decompilation.** The goal is to recover the original experience first, then offer optional graphics and physics upgrades.
 
-![ATV crossing a sunlit course with hills, vegetation, and utility towers.](https://atv-offroad-fury-2.champtoday.workers.dev/devlog-images/the-recovered-menus-and-tioga-valley-are-now-public-cfe7c40e.png)
+![ATV crossing a sunlit course with hills, vegetation, and utility towers.](https://furyremastered.com/devlog-images/the-recovered-menus-and-tioga-valley-are-now-public-cfe7c40e.png)
 
 *An earlier public course capture. The screenshots here show real development checkpoints, rather than a promise of finished-game fidelity.*
 
@@ -93,7 +93,7 @@ flowchart TB
 
 ## Yes, you can ride from your phone 📱
 
-The browser build has a portrait layout and touch controls. Open the [public game](https://atv-offroad-fury-2.champtoday.workers.dev/), enter **Single Player → Freestyle**, and pick a map.
+The browser build has a portrait layout and touch controls. Open the [public game](https://furyremastered.com/), enter **Single Player → Freestyle**, and pick a map.
 
 - **One finger by default:** touch anywhere to hold throttle and brace; drag sideways to steer and up/down to lean. Lift to coast and release preload through the recovered ramp rules. The same controls work in air. The small touch circle shows direction and a brief action cue.
 - **Two-finger option:** set **Pause → One-handed mobile: Off**. An existing saved Off is preserved. Left thumb steers/leans; right thumb holds throttle and braces, or drags down to brake and then reverse after slowing.
@@ -102,11 +102,11 @@ The browser build has a portrait layout and touch controls. Open the [public gam
 
 Touch is a browser adaptation of the PS2 controls. Portrait and gesture checks pass in automated browsers; physical iOS Safari and Bluetooth-controller behavior remain unverified. The full original stunt system is still being rebuilt.
 
-<img src="https://atv-offroad-fury-2.champtoday.workers.dev/devlog-images/the-suspension-stop-and-obstruction-camera-are-verifie-3f22c762.png" width="300" alt="Portrait browser view of the ATV during the publicly verified suspension and landing checkpoint.">
+<img src="https://furyremastered.com/devlog-images/the-suspension-stop-and-obstruction-camera-are-verifie-3f22c762.png" width="300" alt="Portrait browser view of the ATV during the publicly verified suspension and landing checkpoint.">
 
 *Portrait play during the preceding public landing/wreck checkpoint. Touch controls use the two halves of the screen.*
 
-<img src="https://atv-offroad-fury-2.champtoday.workers.dev/devlog-images/a-failed-nac-nac-now-follows-the-recovered-wreck-route-d0427758.png" width="300" alt="ATV and rider during a failed Nac Nac, with the trick name and failure-colored score visible.">
+<img src="https://furyremastered.com/devlog-images/a-failed-nac-nac-now-follows-the-recovered-wreck-route-d0427758.png" width="300" alt="ATV and rider during a failed Nac Nac, with the trick name and failure-colored score visible.">
 
 *A host Chromium test capture of an unfinished Nac Nac. The recovered wreck/recovery sequence was subsequently checked publicly; this particular image comes from the host test.*
 
@@ -130,7 +130,7 @@ Controller labels follow the browser's standard layout. For the complete mapping
 
 ## Follow the rebuild
 
-The [screenshot dev log](https://atv-offroad-fury-2.champtoday.workers.dev/devlog.html) records discoveries, improvements, bugs, and the evidence behind each checkpoint. Screenshots above come from selected development checkpoints; their captions distinguish public captures from host test captures.
+The [screenshot dev log](https://furyremastered.com/devlog.html) records discoveries, improvements, bugs, and the evidence behind each checkpoint. Screenshots above come from selected development checkpoints; their captions distinguish public captures from host test captures.
 
 Want to explore deeper? Start with the [implementation strategy](research/IMPLEMENTATION.md), [resource research](research/RESOURCES.md), and [recovered file formats](research/FORMATS.md). For a particular system, follow [movement](research/MOVEMENT.md), [collision](research/COLLISION.md), [wrecks](research/WRECK.md), or [audio](research/AUDIO.md).
 

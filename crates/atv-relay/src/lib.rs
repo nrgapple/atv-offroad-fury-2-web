@@ -77,9 +77,25 @@ fn random_token() -> Result<String> {
         .collect())
 }
 
+fn origin_allowed(origin: Option<&str>, allowed: &str) -> bool {
+    origin.is_some_and(|origin| {
+        !origin.is_empty()
+            && allowed
+                .split(',')
+                .map(str::trim)
+                .any(|candidate| !candidate.is_empty() && candidate == origin)
+    })
+}
+
 fn same_origin(req: &Request, env: &Env) -> Result<bool> {
-    Ok(req.headers().get("Origin")?.as_deref()
-        == Some(env.var("GAME_ORIGIN")?.to_string().as_str()))
+    let allowed = env
+        .var("GAME_ORIGINS")
+        .or_else(|_| env.var("GAME_ORIGIN"))?
+        .to_string();
+    Ok(origin_allowed(
+        req.headers().get("Origin")?.as_deref(),
+        &allowed,
+    ))
 }
 
 fn send(ws: &WebSocket, packet: &Packet) -> Result<()> {
@@ -500,6 +516,34 @@ impl DurableObject for LobbyRoom {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn game_origins_accept_only_explicit_hosts() {
+        let allowed =
+            "https://furyremastered.com, https://atv-offroad-fury-2.champtoday.workers.dev,";
+        for origin in [
+            "https://furyremastered.com",
+            "https://atv-offroad-fury-2.champtoday.workers.dev",
+        ] {
+            assert!(origin_allowed(Some(origin), allowed));
+        }
+        for origin in [
+            None,
+            Some(""),
+            Some("null"),
+            Some("http://furyremastered.com"),
+            Some("https://www.furyremastered.com"),
+            Some("https://furyremastered.com.evil.example"),
+            Some("https://foreign.example"),
+        ] {
+            assert!(!origin_allowed(origin, allowed));
+        }
+        assert!(origin_allowed(
+            Some("https://legacy.example"),
+            "https://legacy.example"
+        ));
+        assert!(!origin_allowed(Some(""), ""));
+    }
 
     #[test]
     fn route_rejects_traversal_extra_path_and_ambiguous_codes() {

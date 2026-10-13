@@ -15,6 +15,8 @@ also links the game, dev log and deployment history. No manual release or
 approval is required. GitHub's [environment documentation](https://docs.github.com/en/actions/concepts/workflows-and-actions/deployment-environments)
 describes this deployment history integration.
 
+Primary public HTTPS is https://furyremastered.com/; the original workers.dev address remains supported. CI verifies both addresses against the same checked artifact.
+
 Production success requires the public commit, authored application file hashes,
 landing route and committed dev-log text to match the checked CI artifact.
 Verification retries briefly for propagation and fails the job on a mismatch.
