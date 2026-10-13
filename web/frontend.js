@@ -1,10 +1,11 @@
 import { gameplayBindings } from './bindings.js';
-// Rust owns responsive menu geometry, labels, supported choices and hit regions.
-// This bridge draws commands with recovered glyph atlases and binds browser input.
+// Rust owns menu labels, supported choices and canvas hit regions. This bridge
+// draws the original frontend and crisp browser overlays, and binds input.
 const base = name => name.replaceAll('\\', '/').split('/').at(-1).toLowerCase();
 const unquote = value => (value ?? '').replace(/^"/, '').replace(/"$/, '');
 const fields = section => Object.fromEntries([...section.fields].reverse().map(f => [f.key.toLowerCase(), f.value]));
 const sections = doc => new Map(doc.sections.map(s => [s.name.toLowerCase(), fields(s)]));
+const overlayPages = new Set(['pause','players','hud-settings','minimap-config','controls','bindings','music']);
 const fontName = 'tradegothic_boldcondensed_22s';
 const selectionKey = 'atv-player-selection';
 const normalizedSelection = value => ({
@@ -25,6 +26,8 @@ export class Frontend {
     this.root = document.getElementById('frontend'); this.canvas = document.getElementById('menu-canvas');
     this.ctx = this.canvas.getContext('2d'); this.buttons = document.getElementById('menu-buttons');
     this.notice = document.getElementById('menu-notice');
+    this.pausePanel = document.createElement('section'); this.pausePanel.className = 'pause-panel'; this.pausePanel.hidden = true;
+    this.pausePanel.setAttribute('aria-labelledby', 'pause-title'); this.canvas.parentElement.append(this.pausePanel);
     this.loadingScreen = document.getElementById('loading-screen');
     this.installHelp = document.getElementById('app-install-help');
     this.backgroundCanvas = document.getElementById('menu-background');
@@ -228,6 +231,7 @@ export class Frontend {
         for (const track of this.tracks) { await this.image(`${track.image}a`); await this.image(`${track.image}b`); }
       }
       this.page = page; this.selection = 0; this.layoutKey = '';
+      if (page === 'pause') this.resetPauseScroll = true;
       this.syncPreview();
       // A previous worker layout may still be in flight during rapid navigation.
       while (this.layoutPending) await new Promise(resolve => requestAnimationFrame(resolve));
@@ -239,7 +243,10 @@ export class Frontend {
     if (this.busy || this.root.hidden) return;
     this.notice.textContent = '';
     if (['up','down'].includes(action) && ['title','main','single','garage','multiplayer','create-lobby','join-lobby','lobby','race','pause','players','hud-settings','minimap-config','controls','bindings','music'].includes(this.page)) {
-      this.selection = (this.selection + (action === 'up' ? -1 : 1) + this.frame.choices.length) % this.frame.choices.length;
+      const order = this.page === 'pause' ? this.pauseOrder : this.frame.choices;
+      const index = order.indexOf(this.frame.choices[this.selection]);
+      this.selection = this.frame.choices.indexOf(order[(index + (action === 'up' ? -1 : 1) + order.length) % order.length]);
+      this.scrollPauseSelection = this.page === 'pause';
       if (this.page === 'bindings' && this.selection < 4) this.bindingRow = this.bindingPage * 4 + this.selection;
     } else if (action === 'back') {
       if (this.page === 'pause') return this.resume();
@@ -375,7 +382,7 @@ export class Frontend {
   captureTransition(canvas = this.canvas) {
     for (const animation of this.transitions) animation.cancel();
     this.transitions = []; this.transitionGhost?.remove(); this.transitionGhost = null;
-    if (!canvas || !this.frame || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (this.page === 'pause' || !canvas || !this.frame || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const ghost = document.createElement('canvas'), rect = canvas.getBoundingClientRect();
     ghost.width = canvas.width; ghost.height = canvas.height; ghost.getContext('2d').drawImage(canvas, 0, 0);
     ghost.className = 'menu-transition'; ghost.setAttribute('aria-hidden', 'true');
@@ -459,6 +466,9 @@ export class Frontend {
     } catch (error) { if(token === this.modelToken) this.notice.textContent = `Rider animation: ${error.message}`; }
   }
   rebuildButtons() {
+    this.pausePanel.hidden = this.page !== 'pause';
+    this.root.dataset.page = this.page;
+    if (this.page === 'pause') { this.rebuildPausePanel(); return; }
     const focusedAction = this.buttons.contains(document.activeElement) ? document.activeElement.dataset.action : null;
     // Preserve native range nodes during input/redraw so dragging and keyboard
     // focus survive every Rust label update.
@@ -529,6 +539,60 @@ export class Frontend {
     this.root.dataset.musicPage = String(this.musicPage);
     this.root.dataset.bindingPage = String(this.bindingPage);
   }
+  rebuildPausePanel() {
+    // Rust remains the source of available actions and stateful labels. Native
+    // text/layout keeps this browser overlay sharp and accessible at any zoom.
+    const activeAction = this.pausePanel.contains(document.activeElement) ? document.activeElement.dataset.action : null;
+    const scroll = this.resetPauseScroll ? 0 : this.pausePanel.scrollTop;
+    this.resetPauseScroll = false;
+    this.buttons.replaceChildren();
+    this.courseMeter?.remove(); this.courseMeter = null;
+    const header = document.createElement('header');
+    const eyebrow = document.createElement('p'); eyebrow.className = 'pause-eyebrow'; eyebrow.textContent = 'FURY REMASTERED';
+    const title = document.createElement('h1'); title.id = 'pause-title';
+    const online = Boolean(this.multiplayer?.state?.lobby?.started);
+    title.textContent = online ? 'Ride menu' : 'Paused';
+    const status = document.createElement('p'); status.className = 'pause-status';
+    status.textContent = online ? 'Multiplayer is live. The ride keeps going while this menu is open.' : 'Take a breather. Your ride is paused.';
+    header.append(eyebrow, title, status);
+    const body = document.createElement('div'); body.className = 'pause-groups';
+    const groups = [
+      ['Ride', ['resume','reset','players']],
+      ['Preferences', ['controls','hud-settings','music','onehanded','funnycrashes','diagnostics','fullscreen']],
+      ['Session', ['devlog','main','lobby']],
+    ];
+    const ordered = [];
+    for (const [name, actions] of groups) {
+      const section = document.createElement('section'); section.className = `pause-group pause-${name.toLowerCase()}`;
+      const heading = document.createElement('h2'); heading.textContent = name; section.append(heading);
+      for (const action of actions) {
+        const hit = this.frame.hits.find(hit => hit.action === action); if (!hit) continue;
+        ordered.push(action);
+        const button = document.createElement('button'); button.type = 'button'; button.dataset.action = action;
+        button.setAttribute('aria-label', hit.label);
+        const [label, ...value] = hit.label.split(': ');
+        const text = document.createElement('span'); text.textContent = label; button.append(text);
+        if (value.length) { const setting = document.createElement('span'); setting.className = 'pause-value'; setting.textContent = value.join(': '); button.append(setting); }
+        else { const arrow = document.createElement('span'); arrow.className = 'pause-arrow'; arrow.textContent = action === 'resume' ? '↗' : '›'; arrow.setAttribute('aria-hidden','true'); button.append(arrow); }
+        button.setAttribute('aria-current', String(this.frame.choices[this.selection] === action));
+        button.onclick = () => { this.selection = this.frame.choices.indexOf(action); void this.run(action); };
+        button.onfocus = () => { const index = this.frame.choices.indexOf(action); if (!this.restoringPauseFocus && this.selection !== index) { this.selection = index; this.layoutKey = ''; } };
+        section.append(button);
+      }
+      body.append(section);
+    }
+    this.pauseOrder = ordered;
+    this.pausePanel.replaceChildren(header, body); this.pausePanel.scrollTop = scroll;
+    this.restoringPauseFocus = true;
+    if (activeAction) this.pausePanel.querySelector(`[data-action="${activeAction}"]`)?.focus({preventScroll:true});
+    if (this.scrollPauseSelection) {
+      const selected = this.pausePanel.querySelector('[aria-current="true"]');
+      selected?.focus({preventScroll:true}); selected?.scrollIntoView({block:'nearest'});
+      this.scrollPauseSelection = false;
+    }
+    this.restoringPauseFocus = false;
+    this.root.dataset.selection = String(this.selection); this.root.dataset.renderer = 'rust';
+  }
   text(text, x, y, name = fontName, color = '200,200,200', alpha = 255, justify = '') {
     const font = this.fonts.get(name.toLowerCase()); if (!font) return;
     let atlas = font.tints.get(color);
@@ -553,6 +617,7 @@ export class Frontend {
   }
   draw() {
     const frame = this.frame; if (!frame) return;
+    if (this.page === 'pause') { this.ctx.clearRect(0,0,this.canvas.width,this.canvas.height); if(this.backgroundCanvas)this.backgroundCanvas.hidden=true; return; }
     const c = this.ctx, stage = this.canvas.parentElement, dpr = Math.min(devicePixelRatio || 1,3, Math.sqrt(8_000_000 / Math.max(1,stage.clientWidth * stage.clientHeight)));
     this.canvas.width = Math.round(stage.clientWidth*dpr); this.canvas.height = Math.round(stage.clientHeight*dpr);
     c.setTransform(this.canvas.width/frame.width,0,0,this.canvas.height/frame.height,0,0);
@@ -569,6 +634,12 @@ export class Frontend {
       if (['text','artwork','preview','model_preview'].includes(command.kind)) decoration = false;
       if (command.kind === 'model_preview') continue;
       if (command.kind === 'text') {
+        if (overlayPages.has(this.page)) {
+          const screenScale = stage.clientWidth / frame.width;
+          const size = Math.min(command.font.includes('italic') ? 30 : 22, (command.font.includes('italic') ? 30 : 20) * command.scale * screenScale) / screenScale;
+          c.save(); c.font = `600 ${size}px system-ui, sans-serif`; c.textBaseline = 'top';
+          c.fillStyle = `rgb(${command.color})`; c.fillText(command.text, ...command.at, command.max_width); c.restore(); continue;
+        }
         // The font is still the original CEL/PST glyph atlas, not a screenshot
         // of a page. Rust owns text content, positioning and maximum bounds.
         const font = this.fonts.get(command.font), width = [...command.text].reduce((width,char) => {

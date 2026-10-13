@@ -1,6 +1,6 @@
 {
-  "status": "Multiplayer late join, player indicators and owner-local contacts pass host verification; this checkpoint is not deployed publicly.",
-  "working_on": "Continue multiplayer integration and host-only validation; verify public behavior only after a validated release.",
+  "status": "The authored port continues through host-verified UI and multiplayer integration checkpoints; this checkpoint is not deployed publicly.",
+  "working_on": "Continue implementation and host validation; verify public behavior after a validated release.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -2617,9 +2617,25 @@
       "limitation": "Host-only checkpoint; physical iOS behavior is unverified. A home-screen icon already saved on a device may need to be added again. No deployment verification is claimed.",
       "image": "/devlog-images/fury-remastered-home-screen-icon-fda8f8ce.png",
       "caption": "512×512 authored FURY REMASTERED home-screen icon preview, inspected on the host."
+    },
+    {
+      "id": "responsive-pause-menu-and-live-multiplayer-941aa311",
+      "timestamp": "2026-10-13T18:35:38.374806+00:00",
+      "recorded_at": "2026-10-13T18:37:55.228109+00:00",
+      "kind": "verification",
+      "title": "Responsive pause menu and live multiplayer",
+      "summary": "A grouped, responsive pause panel keeps controls readable across tested viewports; multiplayer simulation and peer motion continue while its menu is open.",
+      "details": [
+        "Host Chromium layout and input checks passed at 1280×896, 390×844, 320×568, 844×390, and 667×375, including 44-pixel buttons, keyboard navigation, scrolling Quit access, and settings routes.",
+        "Single-player simulation freezes while paused and resumes with neutral input. In a two-client relay check, host and guest each advanced 39 simulation steps and observed remote rider movement while the menu was open; Controls and Players remained live and host departure cleared guest state.",
+        "All 91 JavaScript unit tests, the frontend browser regression, make web, make verify, and repository verification passed."
+      ],
+      "limitation": "Host Chromium verification using synthetic focus. No public deployment or physical-phone validation; hidden-tab and context-loss suspension remain separate behavior.",
+      "image": "/devlog-images/responsive-pause-menu-and-live-multiplayer-941aa311.png",
+      "caption": "Responsive pause panel over the host-verified ride"
     }
   ],
-  "updated_at": "2026-10-13T18:31:46.033609+00:00",
+  "updated_at": "2026-10-13T18:37:55.228109+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
