@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Multiplayer } from './multiplayer.js';
+import { ENVIRONMENTS } from './launch.js';
 
 const encode = value => new TextEncoder().encode(JSON.stringify(value));
 const decode = bytes => JSON.parse(new TextDecoder().decode(bytes));
@@ -37,7 +38,7 @@ function fixture() {
     return new Uint8Array();
   };
   const mp=new Multiplayer({codec,command:async()=>({peer:null}),onState:v=>states.push(v),onStart:async map=>starts.push(map),onLeave:v=>leaves.push(v),ready:()=>true,listener:()=>({position:[0,0,0],forward:[0,0,1],velocity:[0,0,0]}),audio:()=>sound,assets:async(q,r)=>assets.push([q,r]),clearAssets:()=>cleanups.push(true),report:v=>reports.push(v)});
-  const frontend={quadId:2,riderId:1,playerName:'Guest',notice:{},show:async()=>{}};
+  const frontend={quadId:2,riderId:1,playerName:'Guest',tracks:ENVIRONMENTS.map(id=>({id})),notice:{},show:async()=>{}};
   async function connect() {
     const pending=mp.connect('ABCD2345',frontend,'private-host-token');
     await flush();const socket=sockets.at(-1);assert(socket,'connection should construct socket');
@@ -203,6 +204,17 @@ test('Rust map metadata cycles to Vancouver, wraps, and starts its asset key',as
     socket.message();await f.mp.receiveQueue;
     assert.deepEqual(f.starts,['free05']);
   }finally{await f.cleanup();}
+});
+
+test('lobby selection skips courses absent from an older hosted manifest without changing wire IDs',async()=>{
+ const f=fixture();try {
+  const socket=await f.connect();f.mp.state={...f.defaultState,nextMap:10,lobby:{...f.defaultState.lobby,map:9}};
+  f.frontend.tracks=ENVIRONMENTS.slice(0,9).map(id=>({id}));
+  await f.mp.action('lobbymap',f.frontend);assert.equal(decode(socket.sent.at(-1)).SetLobby.map,1);
+  f.frontend.tracks=ENVIRONMENTS.map(id=>({id}));
+  await f.mp.action('lobbymap',f.frontend);assert.equal(decode(socket.sent.at(-1)).SetLobby.map,10);
+  f.frontend.tracks=[];await assert.rejects(f.mp.action('lobbymap',f.frontend),/No original lobby courses/);
+ }finally{await f.cleanup();}
 });
 
 test('host close invalidates the pending map loader before it can resume a ride',async()=>{
