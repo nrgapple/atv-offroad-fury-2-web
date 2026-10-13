@@ -117,6 +117,8 @@ For the implementation, start with [strategy](research/IMPLEMENTATION.md), [reso
 
 ## Working on the project
 
+**Each new chat that edits this repository must use its own worktree and task branch, based on freshly fetched `origin/main`.** This includes documentation and release notes. Keep the shared checkout on `main`; do not inherit its current feature branch or share another chat's checkout. Put worktrees on the external SSD under `~/Projects/atv-worktrees/`. See [agent instructions](AGENTS.md#chat-worktrees-and-branches) for setup, delivery, and cleanup rules.
+
 <details>
 <summary>Developer setup, checks, and repository map</summary>
 

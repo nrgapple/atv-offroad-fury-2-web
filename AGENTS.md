@@ -1,3 +1,13 @@
+# Chat worktrees and branches
+
+- Every new chat that changes this repository must use its own dedicated Git worktree and task branch before editing, including code, tests, documentation, and release notes. Create them as part of the authorized task without asking again. Read-only investigation may use the shared checkout.
+- Fetch `origin` and start new task branches from current `origin/main`, unless the user explicitly requests another base. Do not inherit whichever feature branch happens to be checked out in the shared directory.
+- Reuse a worktree only when it already belongs to this same chat/task. Inspect `git status` and `git worktree list` first; never reuse another chat's branch or checkout. A detached worktree must get its own task branch before edits.
+- Keep the shared `~/Projects/atv-offroad-fury-2-web` checkout on `main` for coordination. Do not switch its branch, commit task changes there, or check out `main` in a secondary worktree. If another chat is currently using the shared checkout, leave its state intact and do your work in your own worktree.
+- Put new worktrees on the verified external SSD, normally under `~/Projects/atv-worktrees/<task>`. Run all edits, builds, tests, commits, and pushes from that task's worktree. Link required ignored private resources locally and use SSD-backed build folders; keep private resources and generated files out of Git.
+- Continue the normal tested checkpoint, PR, merge, and deployment flow from the task branch. Worktree isolation does not require repeated permission or delay authorized delivery. Release documentation also belongs on this chat's own branch.
+- After delivery, prune merged task branches when safe. Preserve other chats' worktrees and all uncommitted or unmerged work; never force-remove a checkout to free a branch.
+
 # Working in this project
 
 - Read `README.md`, `HANDOFF.md`, and `research/RESOURCES.md` before making implementation choices.
