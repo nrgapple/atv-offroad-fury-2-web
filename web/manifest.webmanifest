@@ -1,11 +1,29 @@
 {
   "id": "/",
-  "name": "ATV Offroad Fury 2",
-  "short_name": "ATV Fury 2",
+  "name": "Fury Remastered",
+  "short_name": "Fury Remastered",
   "start_url": "/play.html",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#07122a",
-  "theme_color": "#07122a",
-  "icons": [{"src": "/app-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"}]
+  "background_color": "#210504",
+  "theme_color": "#9c1414",
+  "icons": [
+    {
+      "src": "/app-icons/f5b2bdc04c2315310d72a59d7081da7ddf2d35ae6b42b959a0920d49af35a184.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/app-icons/2e09ec178a84406ed8d04efedb5ffffbca0b4a6772c0dab6a805b45c9b5057ed.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "description": "ATV and motocross riding in your browser.",
+  "categories": [
+    "games"
+  ],
+  "lang": "en"
 }

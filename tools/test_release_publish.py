@@ -1,6 +1,9 @@
 """R2 staging cannot change live pointers or deploy unverified dependency bytes."""
 import io
 import json
+import hashlib
+import struct
+import zlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -28,6 +31,16 @@ class PublicationTests(unittest.TestCase):
     def upload_fixture(self, root, corrupt=False):
         commit = 'a' * 40
         content(root / 'private/reports/hosted-content')
+        icon_dir = root / 'private/reports/app-icons'
+        icon_dir.mkdir(parents=True)
+        icons = []
+        def chunk(kind, data):
+            return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+        for size in [180, 192, 512]:
+            png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress((b'\0' + b'\x99\x10\x10' * size) * size)) + chunk(b'IEND', b'')
+            digest = hashlib.sha256(png).hexdigest()
+            (icon_dir / (digest + '.png')).write_bytes(png)
+            icons.append({'size': size, 'sha256': digest, 'url': f'/app-icons/{digest}.png', 'bytes': len(png)})
         auth = root / 'Library/Preferences/.wrangler/config/default.toml'
         auth.parent.mkdir(parents=True)
         auth.write_text('oauth_token = "fixture-token"\n')
@@ -42,7 +55,7 @@ class PublicationTests(unittest.TestCase):
                 data += b'corrupt'
             return Response(data)
         def command(args, **kwargs):
-            return SimpleNamespace(stdout=json.dumps({'entries': []}) if args[0] == 'git' else commit)
+            return SimpleNamespace(stdout=json.dumps({'version': 1, 'icons': icons} if args[-1].endswith(':web/app-icon-assets.json') else {'entries': []}) if args[0] == 'git' else commit)
         with patch.object(uploader, 'ROOT', root), patch.object(uploader.Path, 'home', return_value=root), patch.object(uploader, 'validate_release'), patch.object(uploader.subprocess, 'run', side_effect=command), patch.object(uploader, 'urlopen', side_effect=network):
             uploader.upload(root / 'release', commit, release_scoped=True)
         return objects
@@ -55,6 +68,7 @@ class PublicationTests(unittest.TestCase):
             self.assertIn(f'releases/{"a" * 40}/gallery.json', objects)
             self.assertNotIn('content/manifest.json', objects)
             self.assertNotIn('devlog-gallery.json', objects)
+            self.assertEqual(sum(key.startswith('app-icons/') for key in objects), 3)
             self.assertTrue((root / 'private/reports/cloudflare-upload.json').exists())
 
     def test_bad_remote_bytes_prevent_success_receipt(self):
