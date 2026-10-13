@@ -26,6 +26,9 @@ export class Frontend {
     this.ctx = this.canvas.getContext('2d'); this.buttons = document.getElementById('menu-buttons');
     this.notice = document.getElementById('menu-notice');
     this.loadingScreen = document.getElementById('loading-screen');
+    this.installHelp = document.getElementById('app-install-help');
+    this.backgroundCanvas = document.getElementById('menu-background');
+    window.addEventListener('appdisplaychange', () => { this.layoutKey = ''; });
     this.transitions = []; this.transitionGhost = null;
     window.addEventListener('resize', () => this.captureTransition(null));
     matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => this.captureTransition(null));
@@ -80,6 +83,7 @@ export class Frontend {
     });
     this.poll = () => {
       if (!this.alive) return;
+      if (this.installHelp?.open) { this.padBlocked = true; this.lastPad.clear(); this.pollFrame = requestAnimationFrame(this.poll); return; }
       if (!document.hidden && document.hasFocus()) {
         let pads = []; try { pads = [...navigator.getGamepads()].filter(Boolean); } catch { /* browser without gamepad permission */ }
         if (this.capture) { this.pollCapture(pads.find(p => p.connected !== false)); this.pollFrame = requestAnimationFrame(this.poll); return; }
@@ -546,7 +550,17 @@ export class Frontend {
     const c = this.ctx, stage = this.canvas.parentElement, dpr = Math.min(devicePixelRatio || 1,3, Math.sqrt(8_000_000 / Math.max(1,stage.clientWidth * stage.clientHeight)));
     this.canvas.width = Math.round(stage.clientWidth*dpr); this.canvas.height = Math.round(stage.clientHeight*dpr);
     c.setTransform(this.canvas.width/frame.width,0,0,this.canvas.height/frame.height,0,0);
+    const fullBleed = document.documentElement.classList.contains('app-standalone') && !['pause','hud-settings','minimap-config','controls','bindings','music'].includes(this.page) && this.backgroundCanvas;
+    let decoration = true;
+    if (this.backgroundCanvas) {
+      this.backgroundCanvas.hidden = !fullBleed;
+      if (fullBleed) {
+        this.backgroundCanvas.width = Math.round(this.root.clientWidth*dpr); this.backgroundCanvas.height = Math.round(this.root.clientHeight*dpr);
+        this.backgroundCanvas.getContext('2d').setTransform(this.backgroundCanvas.width/frame.width,0,0,this.backgroundCanvas.height/frame.height,0,0);
+      }
+    }
     for (const command of frame.draw) {
+      if (['text','artwork','preview','model_preview'].includes(command.kind)) decoration = false;
       if (command.kind === 'model_preview') continue;
       if (command.kind === 'text') {
         // The font is still the original CEL/PST glyph atlas, not a screenshot
@@ -565,12 +579,13 @@ export class Frontend {
         const [x,y,w,h]=command.rect, total=a.width+b.width;
         c.drawImage(a,x,y,w*a.width/total,h); c.drawImage(b,x+w*a.width/total,y,w*b.width/total,h);
       } else {
+        const paintContext = fullBleed && decoration ? this.backgroundCanvas.getContext('2d') : c;
         const path = command.kind === 'path' ? new Path2D(command.d) : new Path2D();
         if (command.kind === 'rect') path.roundRect(...command.rect,command.radius);
         const y = command.rect?.[1] ?? 0, height = command.rect?.[3] ?? frame.height;
-        const paint=c.createLinearGradient(0,y,0,y+height); paint.addColorStop(0,command.color); paint.addColorStop(1,command.bottom);
-        c.fillStyle=paint;c.fill(path);
-        if (command.stroke) {c.strokeStyle=command.stroke;c.lineWidth=1.5;c.stroke(path);}
+        const paint=paintContext.createLinearGradient(0,y,0,y+height); paint.addColorStop(0,command.color); paint.addColorStop(1,command.bottom);
+        paintContext.fillStyle=paint;paintContext.fill(path);
+        if (command.stroke) {paintContext.strokeStyle=command.stroke;paintContext.lineWidth=1.5;paintContext.stroke(path);}
       }
     }
   }

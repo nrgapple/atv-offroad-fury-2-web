@@ -2507,9 +2507,25 @@
       "limitation": "Host-only branding checkpoint. It does not claim gameplay changes or an exact reproduction of the original logo; physical iOS remains unverified. FURY REMASTERED is the working name pending user feedback.",
       "image": "/devlog-images/fury-remastered-vector-branding-checkpoint-ad06cb56.png",
       "caption": "Host Chromium title screen with the new FURY REMASTERED SVG wordmark and start control at 1280×720."
+    },
+    {
+      "id": "fury-remastered-adds-a-home-screen-app-flow-245eee34",
+      "timestamp": "2026-10-13T17:26:08.520733+00:00",
+      "recorded_at": "2026-10-13T17:26:08.520733+00:00",
+      "kind": "verification",
+      "title": "Fury Remastered adds a home-screen app flow",
+      "summary": "The integrated home-screen flow preserves the new Fury Remastered title branding while using the recovered ATV Offroad Fury 2 logo for the red home-screen app icon. Combined-source Chromium and WebKit host gates pass install prompting, standalone display, safe-area layouts, branding identity and the game frontend; actual iOS installation remains unverified.",
+      "details": [
+        "The refreshed banner capture is host Chromium at 390×844 with a synthetic iPhone platform. The Add App banner shows the recovered ATV2 icon above the Fury Remastered title screen; the title logo is the new Fury Remastered artwork. WebKit confirms the same browser flow and safe-area layout. The manual instructions direct iPhone users through Safari Page Menu → Share → Add to Home Screen, then Open as Web App if offered → Add.",
+        "The Home Screen icon remains the exact recovered ATV2 artwork on red. Compatibility root and 512px icon aliases, plus the R2 asset manifest, resolve to the original icon; the earlier authored cartoon and F-square icons were removed from source and the tested artifact. The new 192px icon accompanies the retained 180px and 512px sizes.",
+        "Combined-source validation passes 96 JavaScript tests including 11 Worker tests, 34 release tests (one skipped), WASM build, setup checks and repository hygiene. Full frontend coverage and both Chromium/WebKit install-browser suites pass, including title/menu branding identity, native-prompt accepted/dismissed/failure/appinstalled paths, seven-day dismissal across reload, standalone suppression, iPad MacIntel behavior, narrow/safe-area layouts, blocked storage and Safari root URL fallbacks."
+      ],
+      "limitation": "Host checkpoint only. The iPhone platform is synthetic in Chromium/WebKit; actual iOS Safari Add to Home Screen, Open as Web App behavior and selected icon have not been verified on a physical device. No service worker or offline support is claimed. Public CI and R2 asset/gallery publication remain pending.",
+      "image": "/devlog-images/fury-remastered-adds-a-home-screen-app-flow-245eee34.png",
+      "caption": "Host Chromium capture at 390×844 with a synthetic iPhone platform; WebKit passed the same install-flow and safe-area gates. The banner shows the recovered ATV2 Home Screen icon above Fury Remastered title art. This browser image does not show an OS-level installation."
     }
   ],
-  "updated_at": "2026-10-13T17:11:54.730334+00:00",
+  "updated_at": "2026-10-13T17:26:08.520733+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
