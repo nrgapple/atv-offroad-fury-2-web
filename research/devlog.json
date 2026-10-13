@@ -1,6 +1,6 @@
 {
-  "status": "Rendering optimization checkpoint 124b67bd is deployed and verified on both production origins. Public frontend, all-nine-map, lifecycle/wake, held-touch wreck, multiplayer feature/departure, transport-v3, four-browser and abrupt-owner-close grace routes pass. Dedicated host render-wall results improve in all nine maps, but live callback timing does not establish a CPU/FPS/battery gain. Physical-phone behavior and whole-game parity remain unverified. Latest main iOS framing, uphill camera and crash-effects changes are integrated; their separate evidence remains in the appended checkpoints.",
-  "working_on": "Verify the combined current-main release and preserve the deferred performance investigations for later work.",
+  "status": "Host-verified component checkpoint: original static type2 spray and type8 fire/smoke emitters are connected, and natural-view ENV07 smoke changes rendered pixels at desktop and mobile viewport sizes. This does not establish full environmental or whole-game parity.",
+  "working_on": "Continue the host implementation for additional original emitter families and recover timing, visibility, RNG ordering, moving attachments and weather policy; keep source fidelity and public release claims bounded to verified gates.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -3034,9 +3034,24 @@
       "limitation": "Host-only candidate pending current-main CI and public verification. Physical-phone behavior and original camera parity remain unverified. Sampled terrain does not anticipate isolated props; follow-object clearance remains open.",
       "image": "/devlog-images/uphill-chase-camera-anticipation-d533fbbd.png",
       "caption": "Host Chromium Metal, Caribou Peak at 390\u00d7844: ATV held lower-center with the uphill terrain visible ahead."
+    },
+    {
+      "id": "original-static-spray-fire-and-smoke-emitters-host-che-b0e5c84c",
+      "timestamp": "2026-10-13T23:35:12.479217+00:00",
+      "recorded_at": "2026-10-13T23:45:42.984128+00:00",
+      "kind": "verification",
+      "title": "Original static spray, fire, and smoke emitters \u2014 host checkpoint",
+      "summary": "The browser port now interprets source static type2 spray and type8 fire/smoke emitters from the original TOY declarations and atlas. All nine existing map routes pass host browser load and drive checks; San Jacinto Isles (ENV07) natural-camera smoke changes rendered pixels at desktop and 390\u00d7844.",
+      "details": [
+        "A private interpreter compares 300 original type2/type8 birth cases: 119,615 EE instructions and 6,216 compared words/flags match with zero differences. Source declarations append in order, static attachments resolve to loaded scene instances, particles advance with the fixed simulation step, and pause/resume, ATV reset and graphics-context restoration preserve the tested state. A 600-particle cap, at most two instance draws and 286,192 GPU bytes bound the renderer.",
+        "The latest measured image contribution was 62 desktop pixels and 181 mobile pixels, varying with the emitter clock; this is visual gate evidence, not a performance improvement. The manager uses a separate generator seeded with 1, so original global RNG ordering is unresolved."
+      ],
+      "limitation": "Host-only component evidence. Native timed/random modes, visibility scheduling, moving attachments, full actor animation and scene-manager behavior remain incomplete. Type0/11/9/12 and other emitter families are not included in this gate; weather dispatch and full game parity remain unfinished. The portrait image is a host Chromium capture, not a physical-phone photo; no public release is claimed.",
+      "image": "/devlog-images/original-static-spray-fire-and-smoke-emitters-host-che-b0e5c84c.png",
+      "caption": "Host Chromium at 390\u00d7844 on San Jacinto Isles (ENV07): the natural follow view during the original volcanic smoke emitter pixel gate. The distant plume is subtle; this is not a physical-phone capture."
     }
   ],
-  "updated_at": "2026-10-13T23:10:25.880365+00:00",
+  "updated_at": "2026-10-13T23:45:42.984128+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
