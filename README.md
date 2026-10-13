@@ -26,7 +26,7 @@ Codex has helped with most of the implementation and reverse engineering. We wor
 | **Race preview** | Single Player → Race offers Caribou Peak National, with countdown, laps, timing, radar and results. The ATV field includes four independently simulated CPU riders with recovered driving decisions. Full original race rules and progression remain unfinished. |
 | **GPS and speed HUD** | A configurable minimap combines terrain, heading, speed and preload feedback. Choose shape, corner, size and zoom; tap it to switch north-up/heading-up. |
 | **Sound and settings** | All 21 original songs, per-quad engine audio, selected impact and train sounds, music selection and remappable keyboard/controller bindings. Music continues through the pause menu. |
-| **Optional funny crashes** | Rider ragdolls and breakaway vehicle parts on impacts, followed by recovery. Turn the effect off in Pause to use the port's baseline crash presentation. |
+| **Crash presentation and camera** | Pause offers Original, Crazy and opt-in Gorn crash modes, plus a saved Camera shake toggle. Gorn adds severed rider parts and bounded terrain droplets only on severe impacts; recovery and original vehicle handling remain intact. Settings are saved locally. |
 | **Quick return** | This browser remembers Garage selections, settings and the last successfully loaded Freestyle course. Home Screen app metadata and an install/help flow are included. |
 
 The renderer now connects recovered materials, animated UVs, fog coverage, ice-reflection overlays and near-vegetation colors, alongside water and wheel effects. These are incremental rendering improvements; original lighting, distant vegetation/LOD, shadows and full-scene fidelity still need work. See [map evidence](research/MAP_FIDELITY.md).

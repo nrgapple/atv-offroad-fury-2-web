@@ -3084,9 +3084,41 @@
       "limitation": "Host-browser evidence on one Mac, including synthetic WebKit pointer events. Physical phones remain unverified. The wheel adapts authored input to ten existing animations and preserves original stunt gates; this is not full stunt, physics or whole-game parity.",
       "image": "/devlog-images/second-finger-selects-airborne-stunts-from-a-radial-wh-7ecb551c.png",
       "caption": "Host Chromium capture, 390\u00d7844: airborne Nac Nac preview on the radial wheel while the primary finger continues drive and brace."
+    },
+    {
+      "id": "smart-camera-shake-and-gorn-crash-mode-d3e52a6d",
+      "timestamp": "2026-10-13T23:46:41.746708+00:00",
+      "recorded_at": "2026-10-13T23:48:22.557684+00:00",
+      "kind": "build",
+      "title": "Smart camera shake and Gorn crash mode",
+      "summary": "A saved camera response now follows vehicle motion and impacts, and the local crash menu adds an opt-in Gorn mode for severe impacts.",
+      "details": [
+        "Original, Crazy and Gorn are saved crash choices. Existing installations retain Crazy unless a saved Original choice is present; Gorn is opt-in.",
+        "Camera shake is an independent saved toggle, On by default unless reduced motion is requested. Engine, speed and grounded acceleration contribute vibration; impacts add a decaying severity-based camera kick and synthesized bass/noise boom.",
+        "Gorn keeps Crazy behavior until a severe actual ATV impact at 50 ft/s or above, or a rider terrain landing above 40 ft/s. It separates supported head, upper-arm and upper-leg joints, and batches up to 90 terrain-contact droplets in one draw.",
+        "Verified host crash route: 1,519 paired WASM steps with zero gameplay/camera mismatches and 101 more after reload; three aerial ragdoll frames with intact ATV, two real contact-damage transitions, seven mechanical pieces, five severed rider pieces, 90 droplets, one GPU blood draw, nonzero camera kick/energy and boom, then intact recovery.",
+        "Crazy Nac Nac mode switch/recovery passed 581 paired steps with zero mismatches. Motorcycle Crazy (333 paired steps) and Gorn (302) mild-wreck touch/recovery routes passed without damage or gore. Saved settings reload and 390\u00d7844 / 844\u00d7390 44px targets passed."
+      ],
+      "limitation": "Host-only checkpoint pending main CI, public deployment and public browser verification. Captures are from 1280\u00d7844 host Chromium Metal; no physical-phone behavior or original crash/camera parity is established. This is authored presentation, local-player only; source assets are reused with no R2 content additions.",
+      "image": "/devlog-images/smart-camera-shake-and-gorn-crash-mode-d3e52a6d.png",
+      "caption": "Host Chromium Metal, 1280\u00d7844: severe Caribou tree crash with the detached rider and authored Gorn droplets. Host capture; not a public release."
+    },
+    {
+      "id": "saved-crash-and-camera-settings-22415062",
+      "timestamp": "2026-10-13T23:46:51.318717+00:00",
+      "recorded_at": "2026-10-13T23:48:25.332307+00:00",
+      "kind": "verification",
+      "title": "Saved crash and camera settings",
+      "summary": "Pause settings expose the saved Original, Crazy and opt-in Gorn crash modes independently from the saved camera shake toggle.",
+      "details": [
+        "Host Chromium checks confirm setting persistence after reload, default camera shake behavior including reduced-motion preference, and 44px targets at 390\u00d7844 portrait and 844\u00d7390 landscape."
+      ],
+      "limitation": "Host-only UI capture at 1280\u00d7844, pending current-main CI and public verification. This screenshot shows Gorn selected and camera shake Off; it does not establish physical phone behavior or original-game parity.",
+      "image": "/devlog-images/saved-crash-and-camera-settings-22415062.png",
+      "caption": "Host Chromium Metal, 1280\u00d7844: Pause settings show Gorn selected and Camera shake Off. Host capture; pending release."
     }
   ],
-  "updated_at": "2026-10-13T23:24:27.241565+00:00",
+  "updated_at": "2026-10-13T23:48:25.332307+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {

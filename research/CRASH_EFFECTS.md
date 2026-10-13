@@ -155,3 +155,38 @@ the gore state and terrain contact; WebGL batches authored blood shapes. Effects
 clear at recovery, reset and mode changes. This is optional authored presentation,
 not recovered original behavior; terrain-only debris and local-player effects
 remain limitations.
+
+## Smart shake and Gorn host implementation (2026-10-13)
+
+Commit `7c6a29d` implements the strategy above. Pause now offers saved Original,
+Crazy and opt-in Gorn choices. Migration keeps the previous Crazy default and
+preserves an existing saved Original. The independent saved Camera shake toggle
+defaults On unless the browser requests reduced motion. Engine, speed and
+grounded acceleration provide continuous vibration; actual impact severity adds
+a bounded, decaying camera kick and synthesized bass/noise boom. These effects
+do not alter Rust camera output, vehicle handling, crash classification or
+recovery. Reset, camera cycles and lifecycle interruptions clear pending shake.
+
+Gorn activates its added gore only at an actual ATV impact of at least 50 ft/s
+or a rider terrain landing above 40 ft/s. Supported head, upper-arm and upper-leg
+joint connections split into independent groups; unsupported geometry remains
+intact. Terrain splashes use at most 90 droplets and a single GPU draw. The
+effect is local-player only and clears on recovery, reset and crash-mode changes.
+
+The host severe route passed 1,519 paired WASM steps with zero gameplay/camera
+mismatches and 101 additional steps after reload. It produced three aerial
+ragdoll frames with the ATV intact, two actual contact-damage transitions, seven
+mechanical parts, five severed rider parts and 90 droplets in one GPU blood draw,
+then intact recovery. Camera kick/energy and the crash boom were observed. Crazy
+Nac Nac mode switching and recovery passed 581 paired steps without mismatches.
+Motorcycle Crazy and Gorn mild-wreck touch/recovery passed 333 and 302 paired
+steps respectively, with no damage or gore. Settings persistence and 44px
+targets passed in 390×844 portrait and 844×390 landscape.
+
+`make check` passed 359 core, 27 net, 7 relay, 15 web, 6 tools and 4 release
+Rust tests; 120 JS tests; formatting, strict Clippy and eight cache tests.
+`make verify`, `make web`, 35 release checks (one expected skip), 19 Worker
+checks and repository hygiene pass. This remains host verification pending
+current-main CI, deployment and public browser verification. Captures are
+1280×844 host Chromium Metal; physical-phone behavior and original-game crash or
+camera parity are unverified. No R2 content additions are needed.
