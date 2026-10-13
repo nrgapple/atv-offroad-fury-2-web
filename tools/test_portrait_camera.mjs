@@ -20,7 +20,7 @@ try {
   const landscape = await page.evaluate(() => window.atvTerrainStatus);
   assert.equal(landscape.cameraPresentation.portraitDistanceScale, 1);
   if (landscape.cameraPresentation.requestedHillOrbit === 0) assert.deepEqual(landscape.camera.slice(0, 3), landscape.followCamera.position);
-  assert.equal(landscape.camera[4], nativePitch(landscape.followCamera) + landscape.cameraPresentation.uphillLift);
+  assert(Math.abs(landscape.camera[4] - nativePitch(landscape.followCamera) - landscape.cameraPresentation.uphillLift) < 1e-12, 'landscape pitch matches the presented hill rig within floating-point rounding');
   assert.equal(landscape.cameraPresentation.focalLength, (4 / 3) / Math.tan(landscape.followCamera.fov * Math.PI / 360));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForFunction(() => window.atvTerrainStatus.cameraPresentation.portraitDistanceScale === 1.35);

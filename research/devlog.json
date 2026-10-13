@@ -3036,6 +3036,21 @@
       "caption": "Host Chromium Metal, Caribou Peak at 390\u00d7844: ATV held lower-center with the uphill terrain visible ahead."
     },
     {
+      "id": "public-uphill-chase-camera-verification-afa2e8f9",
+      "timestamp": "2026-10-13T23:23:30.525575+00:00",
+      "recorded_at": "2026-10-13T23:23:30.525575+00:00",
+      "kind": "verification",
+      "title": "Public uphill chase-camera verification",
+      "summary": "The uphill chase-camera fix passed main CI and public Chromium Metal driving checks on the production game.",
+      "details": [
+        "PR #47 merged as 96e0ea04c1406a5adfeabbaec055b881b8c9dca7. Main CI/deploy run 38483204620 succeeded; the fetched validated current-main artifact matches the public furyremastered.com deployment.",
+        "Workers HTTPS verification matched all 44 authored static files and 460 served R2 objects by hash, size and MIME. The approved portrait screenshot was published to R2; the validated package contains 461 objects totaling 346,132,530 bytes. The gallery now contains 188 entries and 145 screenshots.",
+        "Public Chromium Metal Caribou Peak drive with W then 2.5 seconds of E lean-back and camera cycling passed at 390\u00d7844 and 1280\u00d7720, with no disc picker or browser errors. Portrait: 0.203118654 rad orbit, 1.093747071 pullback, 688 samples, 495 bounded Riding transitions, maximum orbit step 0.019862291 rad. Desktop: 0.207891486 rad, 1.095949917 pullback, 710 samples, 513 transitions, maximum step 0.020239806 rad. Camera cycling passed in the driving route. Portrait \u2192 landscape \u2192 portrait viewport rotation passed after the assertion used a 1e-12 angle tolerance for negligible floating-point residue; no gameplay camera code changed.",
+        "Implementation is unchanged from validated main commit 96e0ea04. See research/HILL_CAMERA.md for strategy, bounded behavior, host evidence and public measurements."
+      ],
+      "limitation": "Automated public browser verification on one Mac does not establish physical-phone behavior or original ATV2 camera parity. Isolated-prop anticipation and object-aware follow-camera clearance remain open."
+    },
+    {
       "id": "second-finger-selects-airborne-stunts-from-a-radial-wh-7ecb551c",
       "timestamp": "2026-10-13T23:22:37.072629+00:00",
       "recorded_at": "2026-10-13T23:23:21.598523+00:00",
