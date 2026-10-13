@@ -10,6 +10,7 @@ async function page(name) {
  const p=await browser.newPage({viewport:{width:1280,height:896},hasTouch:true});pages.push(p);p.on('pageerror',e=>errors.push(e.message));
  await p.addInitScript(()=>{
    Object.defineProperty(document,'hasFocus',{value:()=>true});
+   Object.defineProperty(document,'hidden',{get:()=>Boolean(window.testFreeze)});
    const NativeSocket=WebSocket;window.WebSocket=class extends NativeSocket {constructor(...args){super(...args);window.testSocket=this;}};
    const Native=Worker;let id=-1000;
    window.Worker=class extends Native {constructor(...args){super(...args);window.testWorker=this;this.pending=new Map();this.addEventListener('message',({data})=>{const r=this.pending.get(data.id);if(!r)return;this.pending.delete(data.id);data.error?r.reject(Error(data.error)):r.resolve(JSON.parse(new TextDecoder().decode(data.bytes)));});}};
@@ -65,6 +66,9 @@ try {
  // Place the host just above the recovered flatbed collision deck, then let
  // actual suspension contacts attach it. No fabricated network attachment.
  await pause(a);await pause(b);
+ // Online menus intentionally keep physics live. Freeze test clocks only while
+ // placing on the moving deck, so the placement/velocity share one train frame.
+ await Promise.all(pages.map(p=>p.evaluate(()=>{window.testFreeze=true;})));await a.waitForTimeout(150);
  const trainSetup=await a.evaluate(async()=>{
    const previous=await testCommand(68,null);const train=await testCommand(68,{dt:1/60});const car=train.cars.findIndex(c=>/flatbeda/i.test(c.model));const m=train.cars[car].matrix;
    const origin=[0,1,2].map(i=>m[12+i]+m[4+i]*17.+m[8+i]*10);
@@ -72,6 +76,7 @@ try {
    await testCommand(23,{origin,velocity,yaw:Math.atan2(m[8],m[10])});
    return {car,origin,model:train.cars[car].model};
  });
+ await Promise.all(pages.map(p=>p.evaluate(()=>{window.testFreeze=false;})));
  await button(a,'Resume').click();await button(b,'Resume').click();
  await b.waitForFunction(()=>window.atvTerrainStatus.multiplayer.remote[0]?.platform!=null,null,{timeout:15000});
  const trainSamples=[];

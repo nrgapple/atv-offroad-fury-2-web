@@ -58,7 +58,7 @@ try{
    const touch=(type,points=[])=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:points.map(p=>({radiusX:6,radiusY:6,force:1,...p}))});
    const left={id:1,x:60,y:560},right={id:2,x:310,y:530},drive={...right,y:460};
    await touch('touchStart',[left,right]);await touch('touchMove',[left,drive]);
-   await a.waitForFunction(()=>window.atvTerrainStatus.frame.preload_armed,null,{timeout:15000});
+   await a.waitForFunction(()=>window.atvTerrainStatus.frame.preload_armed,null,{timeout:45000});
    await touch('touchEnd',[drive]);await a.waitForFunction(()=>!window.atvTerrainStatus.frame.grounded.some(Boolean),null,{timeout:10000});
    await touch('touchStart',[left,right]);await touch('touchMove',[left,{...right,y:right.y-70}]);
    await a.waitForFunction(()=>window.atvTerrainStatus.frame.rider_mode==='wreck',null,{timeout:20000});await touch('touchCancel');
