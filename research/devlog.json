@@ -3018,9 +3018,25 @@
       "limitation": "This is automated public verification on one Mac using synthetic focus at desktop and portrait browser sizes. It does not establish physical-phone behavior, geographically distributed latency, complete original-game parity, multiplayer racing (Freeride only), race coverage beyond the Caribou Peak preview, or sound and fullscreen gesture parity.",
       "image": "/devlog-images/public-url-setup-and-invite-links-verified-03296429.png",
       "caption": "Public build e4bfd91, Chromium Metal at 1280\u00d7896: Tioga Valley paused after copying a ride link."
+    },
+    {
+      "id": "uphill-chase-camera-anticipation-d533fbbd",
+      "timestamp": "2026-10-13T23:09:25.490358+00:00",
+      "recorded_at": "2026-10-13T23:10:25.880365+00:00",
+      "kind": "verification",
+      "title": "Uphill chase-camera anticipation",
+      "summary": "The chase camera now follows uphill terrain smoothly without treating ATV chassis pitch as terrain grade, keeping the rider lower in frame with the climb ahead.",
+      "details": [
+        "Host Chromium Metal captures on Caribou Peak passed at 390\u00d7844 and 1280\u00d7720. Across 710 and 721 trace samples, the camera stayed within bounded Riding transitions; orbit reached 0.2001/0.2058 rad and pullback 1.0924/1.0950, with maximum orbit steps 0.02397/0.01565 rad.",
+        "Eight render-support tests pass, covering wheelies beyond vertical, grade/pitch independence, spike rejection, crest/air/reverse/reset behavior, 30/60/120 Hz timing, framing and terrain clearance. make check, make verify, make web, release tests, Worker tests and repository hygiene pass.",
+        "Anticipation uses three terrain spans (8/20/36 ft), smooth onset, 0.45 s rise and 0.8 s release, bounded to 0.52 rad with 24% extra pullback around rider-height focus. Heading uses the right axis to avoid reversal at 90\u00b0 pitch; airborne hold is 0.35 s. Existing presets and wreck camera remain unchanged."
+      ],
+      "limitation": "Host-only candidate pending current-main CI and public verification. Physical-phone behavior and original camera parity remain unverified. Sampled terrain does not anticipate isolated props; follow-object clearance remains open.",
+      "image": "/devlog-images/uphill-chase-camera-anticipation-d533fbbd.png",
+      "caption": "Host Chromium Metal, Caribou Peak at 390\u00d7844: ATV held lower-center with the uphill terrain visible ahead."
     }
   ],
-  "updated_at": "2026-10-13T22:49:07.523783+00:00",
+  "updated_at": "2026-10-13T23:10:25.880365+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {

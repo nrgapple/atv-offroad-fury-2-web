@@ -1,3 +1,9 @@
+## Uphill chase camera — host checkpoint (2026-10-13)
+
+The current branch adds terrain-grade anticipation that keeps the rider lower in frame and reveals the climb without reading chassis pitch as terrain slope. Host Chromium Metal checks passed at 390×844 and 1280×720, with bounded Riding transitions and smooth orbit/pullback traces. Eight render-support tests cover wheelies beyond vertical, grade/pitch independence, spike rejection, crest/air/reverse/reset, 30/60/120 Hz timing, framing and terrain clearance. `make check`, `make verify`, `make web`, release tests, Worker tests and repository hygiene pass. See [camera evidence](research/HILL_CAMERA.md).
+
+This is host-only pending current-main CI and public verification. Physical-phone behavior and original camera parity remain unverified; sampled terrain does not anticipate isolated props, and follow-object clearance remains open. Approved captures are private under `private/reports/devlog-images/`; the dev-log metadata checkpoint is recorded for later validated release publication.
+
 ## Public direct-play and lobby URL release (2026-10-13)
 
 PR #44 merged as `e4bfd91aab5351f284d850fd4d039ab888a887b0` and passed

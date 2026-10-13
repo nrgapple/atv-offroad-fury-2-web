@@ -45,31 +45,76 @@ export function outsideView(bounds, planes) {
 
 // Requested default chase adaptation. The recovered camera frame stays intact.
 export class UphillSightline {
-  constructor() { this.lift = 0; this.airTime = 0; this.resetCount = null; }
+  constructor() { this.lift = 0; this.pullback = 0; this.airTime = 0; this.resetCount = null; }
   update(actor, camera, dt, height) {
-    if (!actor || camera?.preset !== 0 || camera.mode === 'wreck' || actor.wreck?.phase !== 'Riding' || actor.speed < -1) {
-      this.lift = 0; this.airTime = 0; return;
+    if (!actor || camera?.preset !== 0 || camera.mode === 'wreck' || actor.wreck?.phase !== 'Riding') {
+      this.lift = 0; this.pullback = 0; this.airTime = 0; return;
     }
-    if (this.resetCount !== actor.reset_count) { this.lift = 0; this.airTime = 0; this.resetCount = actor.reset_count; }
+    if (this.resetCount !== actor.reset_count) { this.lift = 0; this.pullback = 0; this.airTime = 0; this.resetCount = actor.reset_count; }
+    const step = Number.isFinite(dt) ? Math.max(0, dt) : 0;
     let desired = this.lift;
-    if (actor.grounded.some(Boolean)) {
+    if (actor.speed < -1) {
+      desired = 0;
+    } else if (actor.grounded.some(Boolean)) {
       this.airTime = 0;
       const [w, x, y, z] = actor.orientation;
-      const forward = [2 * (x*z + w*y), 2 * (y*z - w*x), 1 - 2 * (x*x + y*y)];
-      const horizontal = Math.hypot(forward[0], forward[2]);
-      // Ignore nearly vertical chassis; its pitch no longer describes a ramp.
-      const bodyPitch = horizontal > .2 ? Math.atan2(forward[1], horizontal) : 0;
+      // Right-axis heading survives even a wheelie beyond vertical. Projecting
+      // chassis forward instead reverses heading as its pitch crosses 90 degrees.
+      const rx = 1 - 2 * (y*y + z*z), rz = 2 * (x*z - w*y);
+      const horizontal = Math.hypot(rx, rz);
       const [ox, , oz] = actor.origin;
-      const dx = forward[0] / Math.max(horizontal, .2), dz = forward[2] / Math.max(horizontal, .2);
-      const grade = Math.atan2(height(ox + dx*12, oz + dz*12) - height(ox, oz), 12);
-      const uphill = Math.max(bodyPitch, grade);
-      desired = Number.isFinite(uphill) ? Math.min(.72, Math.max(0, uphill - .12) * .9) : 0;
+      const ground = height(ox, oz);
+      const grades = horizontal > .2 ? [8, 20, 36].map(span =>
+        Math.atan2(height(ox - rz/horizontal*span, oz + rx/horizontal*span) - ground, span)) : [0, 0, 0];
+      const grade = grades.every(Number.isFinite) ? grades.sort((a,b) => a-b)[1] : 0;
+      // Smooth onset at gentle grades avoids threshold chatter. Cap the orbit
+      // and use a modest dolly rather than a large pitch-only turn away from ATV.
+      const amount = Math.max(0, Math.min(1, (grade - .10) / .75));
+      desired = .52 * amount * amount * (3 - 2 * amount);
     } else {
-      this.airTime += dt;
-      // Carry the takeoff view through the ramp crest, never track aerial flips.
+      this.airTime += step;
+      // Carry takeoff framing through short contact gaps; ignore aerial flips.
       if (this.airTime > .35) desired = 0;
     }
-    const blend = 1 - Math.exp(-Math.min(.05, Math.max(0, dt)) / (desired > this.lift ? .18 : .45));
+    const blend = 1 - Math.exp(-step / (desired > this.lift ? .45 : .80));
     this.lift += (desired - this.lift) * blend;
+    this.pullback = .24 * this.lift / .52;
   }
+}
+
+// Rotate both eye and aim about rider height, retaining its screen placement.
+// The terrain floor can reduce the orbit on steep ground; it takes precedence.
+export function chasePresentation(frame, actor, aspect, sightline, height) {
+  const portrait = Math.max(0, Math.min(1, (1 - aspect) / .5));
+  const portraitDistanceScale = 1 + .35 * portrait;
+  const uphillDistanceScale = 1 + sightline.pullback;
+  const distanceScale = portraitDistanceScale * uphillDistanceScale;
+  const offset = frame.target.map((value, i) => value - frame.position[i]);
+  const horizontal = Math.hypot(offset[0], offset[2]);
+  const yaw = Math.atan2(offset[0], offset[2]);
+  const nativePitch = Math.atan2(offset[1], horizontal);
+  const position = frame.position.map((value, i) => value - offset[i] * (distanceScale - 1));
+  let target = [...frame.target];
+  if (sightline.lift > 0 && actor && horizontal > 0) {
+    const pivot = [actor.origin[0], actor.origin[1] + 3, actor.origin[2]];
+    const dx = offset[0] / horizontal, dz = offset[2] / horizontal;
+    const c = Math.cos(sightline.lift), s = Math.sin(sightline.lift);
+    const orbit = point => {
+      const along = (point[0]-pivot[0])*dx + (point[2]-pivot[2])*dz;
+      const up = point[1]-pivot[1];
+      const shift = along*c - up*s - along;
+      return [point[0]+dx*shift, pivot[1]+up*c+along*s, point[2]+dz*shift];
+    };
+    position.splice(0, 3, ...orbit(position));
+    target = orbit(target);
+    position[1] = Math.max(position[1], height(position[0], position[2]) + 2);
+  }
+  const view = target.map((value,i) => value-position[i]);
+  const hillPitch = Math.atan2(view[1], Math.hypot(view[0],view[2]));
+  const pitchLift = .12 * portrait;
+  const focalLength = (4 / 3) / Math.tan(frame.fov * Math.PI / 360) * (1 - .12 * portrait);
+  return { position, yaw, pitch: hillPitch + pitchLift, presentation: {
+    aspect, portrait, distanceScale, portraitDistanceScale, uphillDistanceScale,
+    pitchLift, uphillLift: hillPitch-nativePitch, requestedHillOrbit: sightline.lift, focalLength,
+  } };
 }
