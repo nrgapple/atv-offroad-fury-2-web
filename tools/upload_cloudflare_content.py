@@ -23,7 +23,10 @@ ACCOUNT = '92b7e16fd24d5fb585f866f5832a032b'
 BUCKET = 'atv-offroad-fury-2-content'
 
 
-def upload(release, commit, force=False, release_scoped=False):
+def upload(release, commit, force=False, content=None, release_scoped=False):
+    content = (content or ROOT / 'private/reports/hosted-content').resolve()
+    if not content.is_relative_to((ROOT / 'private').resolve()):
+        raise ValueError('runtime package must remain under private storage')
     validate_release(release, commit)
     if not re.fullmatch(r'[a-f0-9]{40}', commit):
         raise ValueError('expected complete commit SHA')
@@ -37,8 +40,8 @@ def upload(release, commit, force=False, release_scoped=False):
     committed = subprocess.run(['git', 'show', f'{commit}:research/devlog.json'], cwd=ROOT,
                                check=True, capture_output=True, text=True)
     log = json.loads(committed.stdout)
-    files = validated_content(ROOT / 'private/reports/hosted-content')
-    manifest_bytes = (ROOT / 'private/reports/hosted-content/manifest.json').read_bytes()
+    files = validated_content(content)
+    manifest_bytes = (content / 'manifest.json').read_bytes()
     uploads = [(f'content/{path.name}', path.read_bytes()) for path in files if path.name != 'manifest.json']
     seen = set()
     for entry in log['entries']:
@@ -93,7 +96,7 @@ def upload(release, commit, force=False, release_scoped=False):
             if len(report) % 25 == 0:
                 print(f'Checked {len(report)}/{len(uploads)} blobs/screenshots', flush=True)
     # Publish pointers last; partial blob upload must never expose a new manifest.
-    if (ROOT / 'private/reports/hosted-content/manifest.json').read_bytes() != manifest_bytes:
+    if (content / 'manifest.json').read_bytes() != manifest_bytes:
         raise ValueError('manifest changed during upload; pointers were not published')
     require_current_main()
     manifest_key = f'releases/{commit}/manifest.json' if release_scoped else 'content/manifest.json'
@@ -123,5 +126,6 @@ if __name__ == '__main__':
     parser.add_argument('--commit', required=True)
     parser.add_argument('--force-upload', action='store_true', help='Repair remote drift by re-uploading all validated objects')
     parser.add_argument('--release-scoped', action='store_true', help='Stage immutable release manifests before Worker deployment')
+    parser.add_argument('--content', type=Path, help='Validated private runtime package')
     args = parser.parse_args()
-    upload(args.release, args.commit, args.force_upload, args.release_scoped)
+    upload(args.release, args.commit, args.force_upload, content=args.content, release_scoped=args.release_scoped)

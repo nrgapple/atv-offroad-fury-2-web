@@ -839,6 +839,7 @@ mod tests {
                     slot: slot as u8,
                     model: String::new(),
                     billboard: String::new(),
+                    atlas: None,
                     parameters: [0; 23],
                     optional_name: None,
                     proxies: vec![[0; 9]; count],
@@ -848,6 +849,7 @@ mod tests {
             global_name: None,
             global_word: 0,
             placement_texture: None,
+            visibility_index: Default::default(),
         }
     }
     fn plant(x: u16, z: u16, slot: u8) -> Placement {

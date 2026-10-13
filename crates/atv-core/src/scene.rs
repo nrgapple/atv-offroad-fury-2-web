@@ -21,6 +21,7 @@ pub struct Light {
     pub position: Option<[f32; 3]>,
     pub target: Option<[f32; 3]>,
     pub look: Option<[f32; 3]>,
+    pub emits_light: bool,
 }
 #[derive(Debug, Serialize)]
 pub struct CollisionModel {
@@ -35,7 +36,11 @@ pub struct Scene {
     pub cube_file: String,
     pub water_file: Option<String>,
     pub lights: Vec<Light>,
+    pub ecosystem_lighting: crate::ecosystem::Lighting,
+    ///00202bd0 defaults the outer/inner near-model transition to180/120feet.
+    pub ecosystem_distances: [f32; 2],
     pub fog_color: [f32; 3],
+    pub fog: Option<crate::fog::Fog>,
     pub models: Vec<StaticModel>,
     pub collision_models: Vec<CollisionModel>,
     /// Original single-region static partition dimensions from Environment.
@@ -331,7 +336,7 @@ pub fn parse(data: &[u8]) -> Result<Scene> {
     parse_with_start(data, None)
 }
 
-fn document(data: &[u8]) -> Result<PhysicsData> {
+pub(crate) fn document(data: &[u8]) -> Result<PhysicsData> {
     if data.len() > 1024 * 1024 || data.contains(&0) {
         return Err("invalid scene text extent".into());
     }
@@ -339,6 +344,13 @@ fn document(data: &[u8]) -> Result<PhysicsData> {
     let clean = source
         .lines()
         .map(scene_line)
+        // Native indexed readers return their default for blank template keys.
+        // FREE05 deliberately leaves WaterFile empty: it is a dry venue.
+        .filter(|line| {
+            !line
+                .split_once('=')
+                .is_some_and(|(_, value)| value.is_empty())
+        })
         .collect::<Vec<_>>()
         .join("\n");
     PhysicsData::parse(clean.as_bytes())
@@ -405,6 +417,7 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
             position: optional_vector(&data, &section, "Position")?,
             target: optional_vector(&data, &section, "TargetPosition")?,
             look: optional_vector(&data, &section, "LookVector")?,
+            emits_light: boolean(&data, &section, "EmitsLight", true)?,
         });
     }
     // 00201f60/00207a10: absent/-1 collision count reuses Model%d in
@@ -454,13 +467,54 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
             material: 0,
         });
     }
+    //001399f0 replaces the global ambient on each registration. The manager
+    // defaults to50 (00139600), equivalent to authored RGB100 before halving.
+    let sun = lights
+        .iter()
+        .rev()
+        .find(|light| light.emits_light && light.kind.eq_ignore_ascii_case("Directional"));
+    let sun = sun.map(|light| {
+        let look = light
+            .look
+            .or_else(|| {
+                light.target.map(|target| {
+                    std::array::from_fn(|i| target[i] - light.position.unwrap_or([0.; 3])[i])
+                })
+            })
+            .unwrap_or([0.; 3]);
+        (light.color, look)
+    });
+    let ecosystem_lighting = crate::ecosystem::Lighting::prepare(
+        lights
+            .iter()
+            .rev()
+            .find(|light| light.kind.eq_ignore_ascii_case("Ambient"))
+            .map(|light| light.color)
+            .unwrap_or([100.; 3]),
+        sun,
+    )?;
+    let [near_distance, far_distance] =
+        [("EcoDistance3D", 120.), ("EcoDistance2D", 180.)].map(|(key, default)| {
+            value(&data, "Environment", key).map_or(Ok(default), |v| {
+                v.parse::<f32>().map_err(|_| "invalid ecosystem distance")
+            })
+        });
+    let ecosystem_distances = [near_distance?, far_distance?];
+    if !ecosystem_distances.iter().all(|v| v.is_finite() && *v > 0.)
+        || ecosystem_distances[0] >= ecosystem_distances[1]
+    {
+        return Err("unsupported ecosystem transition distances".into());
+    }
     Ok(Scene {
         start_position,
         start_direction,
         cube_file,
         lights,
+        ecosystem_lighting,
+        ecosystem_distances,
         water_file: value(&data, "Environment", "WaterFile").map(str::to_owned),
         fog_color: color(&data, "Fog")?,
+        fog: crate::fog::parse(&data)?,
         models,
         collision_models,
         collision_partition: collision_partition(&data)?,
@@ -471,6 +525,41 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ecosystem_transition_distances_use_native_defaults_and_environment_overrides() {
+        assert_eq!(
+            parse(SOURCE.as_bytes()).unwrap().ecosystem_distances,
+            [120., 180.]
+        );
+        let source = SOURCE.replace(
+            "CubeFile=sample.cub",
+            "CubeFile=sample.cub\nEcoDistance3D=80\nEcoDistance2D=160",
+        );
+        assert_eq!(
+            parse(source.as_bytes()).unwrap().ecosystem_distances,
+            [80., 160.]
+        );
+        assert!(
+            parse(
+                source
+                    .replace("EcoDistance2D=160", "EcoDistance2D=80")
+                    .as_bytes()
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn empty_optional_water_file_is_absent_and_mode_start_wins() {
+        let source = SOURCE.replace("CubeFile=sample.cub", "CubeFile=sample.cub\nWaterFile=");
+        let scene = parse_with_start(
+            source.as_bytes(),
+            Some(b"[SceneInfo]\nDefaultStartPosition=5,6,7\nDefaultStartDirection=1,0,0\n"),
+        )
+        .unwrap();
+        assert!(scene.water_file.is_none());
+        assert_eq!(scene.start_position, [5., 6., 7.]);
+        assert_eq!(scene.start_direction, [1., 0., 0.]);
+    }
     #[test]
     fn boundary_metadata_retains_scaled_dimensions_and_original_crowd_words() {
         let source = SOURCE.replace("CubeFile=sample.cub", "CubeFile=sample.cub\nTerrainWidth=4\nTerrainBreadth=5\nTerrainWidthScale=4.5\nTerrainBreadthScale=4.5");
@@ -559,6 +648,16 @@ mod tests {
         assert_eq!(scene_line("[A section]"), "[A section]");
     }
     const SOURCE: &str = "[SceneInfo]\nDefaultStartPosition=1,2,3\nDefaultStartDirection=0,0,1\nStart1=4,5,6 ; authored override\n[Environment]\nCubeFile=sample.cub\n[Lights]\nNumberOfLights=1\n[Light1]\nType=Ambient\nColorRGB=20,30,40\n[Fog]\nColorRGB=80,90,100\n[StaticModels]\nNumberOfStaticModels=1\n[Model1]\nSLT=sample.slt\nPosition=3,4,5\nLookVector=0,0,-1\n";
+    #[test]
+    fn near_vegetation_uses_last_registered_ambient_and_emitting_sun() {
+        let mut data = SOURCE.replace("NumberOfLights=1", "NumberOfLights=5");
+        data.push_str("[Light2]\nType=Directional\nColorRGB=10,20,30\nLookVector=1,0,0\n[Light3]\nType=Ambient\nColorRGB=80,90,100\n[Light4]\nType=Directional\nColorRGB=90,100,110\nPosition=1,2,3\nTargetPosition=1,0,3\n[Light5]\nType=Directional\nColorRGB=200,200,200\nLookVector=1,0,0\nEmitsLight=F\n");
+        let light = parse(data.as_bytes()).unwrap().ecosystem_lighting;
+        assert_eq!(light.ambient, [40., 45., 50.]);
+        assert_eq!(light.sunlight, [45., 50., 55.]);
+        assert_eq!(light.direction, [-0., 1., -0.]);
+        assert!(light.sun_present);
+    }
     #[test]
     fn authored_overrides_names_and_flags() {
         let scene = parse(SOURCE.as_bytes()).unwrap();

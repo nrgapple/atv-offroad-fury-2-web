@@ -12,6 +12,8 @@ use atv_core::{
     vehicle::{Vehicle, VehicleInput},
 };
 use std::cell::RefCell;
+mod multiplayer;
+thread_local! { static MENU_RIDER: RefCell<Option<atv_core::menu_preview::Rider>> = const { RefCell::new(None) }; }
 
 #[derive(Default)]
 struct Buffers {
@@ -22,6 +24,7 @@ thread_local! { static BUFFERS: RefCell<Buffers> = RefCell::default(); }
 
 #[derive(Default)]
 struct Simulation {
+    funny_crashes: atv_core::crash_effects::Effects,
     terrain: Option<terrain::Terrain>,
     physics: Option<PhysicsData>,
     mesh: Option<mesh::Mesh>,
@@ -51,6 +54,9 @@ struct Simulation {
     water: Option<atv_core::water_animation::LiveField>,
     camera: Option<atv_core::camera::FollowCamera>,
     train: Option<atv_core::train::Runtime>,
+    scenery_uv: Vec<(String, atv_core::scenery_material::Scroll)>,
+    scenery_textures: Vec<(String, atv_core::scenery_material::TextureClock)>,
+    scenery_tick: u64,
     train_collision: Vec<TrainCollisionBinding>,
     train_collision_installed: bool,
     effects_time: f32,
@@ -60,6 +66,8 @@ struct Simulation {
     placement_epoch: u32,
     wreck_camera: Option<atv_core::camera::WreckCamera>,
     hud: atv_core::hud::State,
+    race_course: Option<atv_core::race::Course>,
+    race: Option<atv_core::race::Race>,
 }
 struct TrainCollisionBinding {
     car: usize,
@@ -165,6 +173,7 @@ thread_local! { static SOUND_EFFECTS: RefCell<Option<EffectPlayback>> = const { 
 fn sound_effects(input: &[u8], op: u32) -> Result<Vec<u8>> {
     SOUND_EFFECTS.with_borrow_mut(|slot| {
         if op == 76 {
+            multiplayer::effect_table(input)?;
             let config = atv_core::sound_effects::Config::parse(input)?;
             let result = serde_json::to_vec(&config).map_err(|e| e.to_string())?;
             *slot = Some(EffectPlayback {
@@ -291,6 +300,7 @@ fn music(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
 fn engine_audio(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
     ENGINE_AUDIO.with_borrow_mut(|slot| {
         if op == 32 {
+            multiplayer::audio_table(input);
             let config = EngineAudioConfig::parse(input, index as u32)?;
             let bytes = serde_json::to_vec(&config).map_err(|e| e.to_string())?;
             *slot = Some(EnginePlayback { config, state: EngineAudioState::default(), previous: [usize::MAX; 10], random: OriginalRandom::with_seed(1) });
@@ -339,7 +349,11 @@ fn vehicle_world(frame: &atv_core::vehicle::VehicleFrame) -> [f32; 16] {
     ]
 }
 
-fn simulation_frame(sim: &Simulation, frame: &atv_core::vehicle::VehicleFrame) -> Result<Vec<u8>> {
+fn simulation_frame(
+    sim: &mut Simulation,
+    frame: &atv_core::vehicle::VehicleFrame,
+) -> Result<Vec<u8>> {
+    multiplayer::observe_wreck(frame.wreck.phase != atv_core::wreck::Phase::Riding);
     let matrices = if let Some(matrices) = sim.vehicle.as_ref().and_then(|v| v.linkage_matrices()) {
         std::borrow::Cow::Borrowed(matrices)
     } else {
@@ -396,7 +410,7 @@ fn simulation_frame(sim: &Simulation, frame: &atv_core::vehicle::VehicleFrame) -
         .clone()
         .unwrap_or(serde_json::Value::Null);
     value["quad_node_matrices"] =
-        serde_json::to_value(matrices).map_err(|error| error.to_string())?;
+        serde_json::to_value(&matrices).map_err(|error| error.to_string())?;
     if let Some(animator) = &sim.rider_animator {
         let mesh = sim.rider_mesh.as_ref().ok_or("rider mesh missing")?;
         value["rider_node_matrices"] =
@@ -425,6 +439,41 @@ fn simulation_frame(sim: &Simulation, frame: &atv_core::vehicle::VehicleFrame) -
         value["rider_wreck"] = serde_json::to_value(wreck).map_err(|e| e.to_string())?;
         value["rider_mode"] = serde_json::json!("wreck");
         value["stunt"] = serde_json::Value::Null;
+    }
+    if sim.funny_crashes.enabled()
+        && let (Some(mesh), Some(rider_mesh), Some(terrain)) =
+            (&sim.mesh, &sim.rider_mesh, &sim.terrain)
+    {
+        let rider_pose: Vec<[f32; 16]> =
+            serde_json::from_value(value["rider_node_matrices"].clone())
+                .map_err(|e| e.to_string())?;
+        let rider_world = sim
+            .wreck_animator
+            .as_ref()
+            .and_then(|a| a.frame())
+            .map_or(vehicle_world(frame), |f| f.world_matrix);
+        let detached = sim
+            .wreck_animator
+            .as_ref()
+            .and_then(|a| a.frame())
+            .is_some_and(|f| f.phase != atv_core::wreck_animation::Phase::Attached);
+        value["funny_crash"] = serde_json::to_value(sim.funny_crashes.update(
+            sim.effects_tick,
+            frame.reset_count,
+            sim.effects_dt,
+            frame.wreck.phase != atv_core::wreck::Phase::Riding,
+            detached,
+            frame.linear_velocity,
+            frame.crash_impact_speed,
+            vehicle_world(frame),
+            &matrices,
+            &mesh.nodes,
+            rider_world,
+            &rider_pose,
+            &rider_mesh.nodes,
+            |p| terrain.contact(p[0], p[2]).ok().flatten().map(|h| h.height),
+        ))
+        .map_err(|e| e.to_string())?;
     }
     serde_json::to_vec(&value).map_err(|error| error.to_string())
 }
@@ -679,6 +728,11 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         .and_then(serde_json::Value::as_bool)
                         .ok_or("missing reverse input")?,
                 };
+                sim.funny_crashes.set_enabled(
+                    raw.get("funny_crashes")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                );
                 let terrain = sim.terrain.as_ref().ok_or("load original terrain first")?;
                 let dt = json_number(&value, "dt")?;
                 if dt <= 0. || dt > 0.1 {
@@ -741,6 +795,22 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     vehicle.step_with_scene(terrain, input, dt, sim.water.as_ref(), || {
                         wreck.boundary_random_words()
                     })?;
+                //Deep water can invoke001e35d0 before physics independently
+                //of advance_wreck. Reset attached presentation/camera state too.
+                if frame.reset_count != current.reset_count {
+                    wreck.reset();
+                    wreck.set_boundary_flight(false);
+                    sim.rider_animator
+                        .as_mut()
+                        .ok_or("rider animator missing")?
+                        .reset(&sim.rider_mesh.as_ref().ok_or("rider mesh missing")?.nodes)?;
+                    if let Some(camera) = &mut sim.camera {
+                        camera.reset();
+                    }
+                    sim.wreck_camera = None;
+                    sim.rider_mode = None;
+                    sim.touch_drive.reset();
+                }
                 //001e7600 publishes actor+290 before rider physics only while
                 //Riding/Attached; detached audio retains the last actor point.
                 if frame.wreck.phase == atv_core::wreck::Phase::Riding
@@ -911,10 +981,15 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
             }
             51 => {
                 let catalog = atv_core::motion_catalog::MotionCatalog::parse(input)?;
+                let prefix = if catalog.motions.iter().any(|m| m.name.starts_with("F_")) {
+                    "F"
+                } else {
+                    "M"
+                };
                 let mut selected = atv_core::rider_pose::Clip::ALL
                     .iter()
                     .map(|clip| {
-                        let name = format!("M_{}", clip.suffix());
+                        let name = format!("{prefix}_{}", clip.suffix());
                         catalog
                             .motions
                             .iter()
@@ -923,9 +998,9 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                             .ok_or_else(|| format!("missing rider motion {name}"))
                     })
                     .collect::<Result<Vec<_>>>()?;
-                for prefix in ["Stunt", "Hold"] {
+                for kind in ["Stunt", "Hold"] {
                     for suffix in atv_core::stunt::SUFFIXES {
-                        let name = format!("M_{prefix}{suffix}");
+                        let name = format!("{prefix}_{kind}{suffix}");
                         selected.push(
                             catalog
                                 .motions
@@ -937,7 +1012,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     }
                 }
                 for suffix in atv_core::wreck_animation::SUFFIXES {
-                    let name = format!("M_{suffix}");
+                    let name = format!("{prefix}_{suffix}");
                     selected.push(
                         catalog
                             .motions
@@ -948,7 +1023,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     );
                 }
                 for suffix in atv_core::rider_pose::Landing::SUFFIXES {
-                    let name = format!("M_{suffix}");
+                    let name = format!("{prefix}_{suffix}");
                     selected.push(
                         catalog
                             .motions
@@ -1283,6 +1358,25 @@ fn step_train_scene(sim: &mut Simulation, dt: f32) -> Result<Option<atv_core::tr
         .map(Some)
 }
 
+/// Embed already serialized operations without allocating a second JSON tree.
+/// RawValue validates the JSON and retains its original numeric representation.
+fn serialized_operation(bytes: Vec<u8>) -> Result<Box<serde_json::value::RawValue>> {
+    serde_json::value::RawValue::from_string(String::from_utf8(bytes).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize)]
+struct SimulationBatchFrame {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    race: Option<atv_core::race::Frame>,
+    frame: Box<serde_json::value::RawValue>,
+    camera: Box<serde_json::value::RawValue>,
+    water: Option<atv_core::water_render::Frame>,
+    train: Option<atv_core::train::Frame>,
+    scenery_uv: std::collections::BTreeMap<String, [f32; 2]>,
+    scenery_textures: std::collections::BTreeMap<String, usize>,
+}
+
 fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
     let value: serde_json::Value = serde_json::from_slice(input).map_err(|e| e.to_string())?;
     let count = value
@@ -1306,18 +1400,188 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
     let mut frames = Vec::with_capacity(count as usize);
     for _ in 0..count {
         let train = SIMULATION.with_borrow_mut(|sim| step_train_scene(sim, 1.0 / 60.0))?;
-        let frame: serde_json::Value =
-            serde_json::from_slice(&simulation(&step, 24)?).map_err(|e| e.to_string())?;
-        let camera: serde_json::Value =
-            serde_json::from_slice(&simulation(&camera, 46)?).map_err(|e| e.to_string())?;
+        let locked = SIMULATION.with_borrow(|sim| sim.race.as_ref().is_some_and(|r| r.locked()));
+        let bytes = if locked {
+            SIMULATION.with_borrow_mut(|sim| {
+                let player = sim
+                    .vehicle
+                    .as_ref()
+                    .ok_or("start simulation first")?
+                    .frame();
+                simulation_frame(sim, &player)
+            })?
+        } else {
+            simulation(&step, 24)?
+        };
+        let frame = serialized_operation(bytes)?;
+        let race = SIMULATION.with_borrow_mut(|sim| -> Result<Option<atv_core::race::Frame>> {
+            if let Some(race) = &mut sim.race {
+                let player = sim
+                    .vehicle
+                    .as_ref()
+                    .ok_or("start simulation first")?
+                    .frame();
+                race.step(player.origin, 1. / 60.);
+                let [w, x, y, z] = player.orientation;
+                let yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
+                let mut race_frame = race.frame(yaw);
+                let terrain = sim.terrain.as_ref().ok_or("missing terrain")?;
+                for cpu in &mut race_frame.opponents {
+                    cpu.origin[1] = terrain
+                        .contact(cpu.origin[0], cpu.origin[2])?
+                        .map_or(player.origin[1], |c| c.height + 2.5);
+                }
+                return Ok(Some(race_frame));
+            }
+            Ok(None)
+        })?;
+        let camera = serialized_operation(simulation(&camera, 46)?)?;
         let water = SIMULATION
             .with_borrow(|sim| sim.water.as_ref().map(atv_core::water_render::Frame::new));
-        frames.push(serde_json::json!({"frame":frame,"camera":camera,"water":water,"train":train}));
+        let scenery_uv = SIMULATION.with_borrow_mut(|sim| {
+            sim.scenery_uv
+                .iter_mut()
+                .map(|(name, scroll)| scroll.step(1. / 60.).map(|offset| (name.clone(), offset)))
+                .collect::<Result<std::collections::BTreeMap<_, _>>>()
+        })?;
+        let scenery_textures = SIMULATION.with_borrow_mut(|sim| {
+            let milliseconds = (sim.scenery_tick * 1000 / 60) as u32;
+            sim.scenery_tick += 1;
+            sim.scenery_textures
+                .iter_mut()
+                .map(|(name, clock)| (name.clone(), clock.tick(milliseconds)))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        });
+        frames.push(SimulationBatchFrame {
+            race,
+            frame,
+            camera,
+            water,
+            train,
+            scenery_uv,
+            scenery_textures,
+        });
     }
     serde_json::to_vec(&frames).map_err(|e| e.to_string())
 }
 
 fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
+    if op == 95 {
+        let course = atv_core::race::Course::parse(input)?;
+        let result = serde_json::to_vec(&course).map_err(|e| e.to_string())?;
+        SIMULATION.with_borrow_mut(|sim| {
+            sim.race_course = Some(course);
+            sim.race = None;
+        });
+        return Ok(result);
+    }
+    if op == 96 {
+        return SIMULATION.with_borrow_mut(|sim| {
+            let value: serde_json::Value =
+                serde_json::from_slice(input).map_err(|e| e.to_string())?;
+            if value.get("active").and_then(serde_json::Value::as_bool) == Some(false) {
+                sim.race = None;
+                sim.race_course = None;
+                return Ok(b"null".to_vec());
+            }
+            let integer = |key| {
+                value
+                    .get(key)
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|v| u32::try_from(v).ok())
+                    .ok_or_else(|| format!("invalid race {key}"))
+            };
+            let names: Vec<String> =
+                serde_json::from_value(value.get("names").ok_or("missing CPU names")?.clone())
+                    .map_err(|e| e.to_string())?;
+            sim.race = Some(atv_core::race::Race::new(
+                sim.race_course.clone().ok_or("load race course first")?,
+                integer("laps")?,
+                names,
+                integer("difficulty")?,
+            )?);
+            Ok(b"null".to_vec())
+        });
+    }
+
+    if op == 90 {
+        return serde_json::to_vec(&atv_core::scenery_material::parse(input)?)
+            .map_err(|e| e.to_string());
+    }
+    if op == 91 {
+        let sources: std::collections::BTreeMap<String, serde_json::Value> =
+            serde_json::from_slice(input).map_err(|e| e.to_string())?;
+        if sources.len() > 4096 || sources.keys().any(|name| name.len() > 128) {
+            return Err("scenery animation configuration exceeds limit".into());
+        }
+        let mut animations = Vec::new();
+        let mut textures = Vec::new();
+        for (name, source) in sources {
+            let text = source
+                .as_str()
+                .or_else(|| source.get("source").and_then(serde_json::Value::as_str))
+                .ok_or("missing scenery material source")?;
+            let pass = atv_core::scenery_material::parse(text.as_bytes())?;
+            if let Some(scroll) = pass.uv_scroll {
+                animations.push((name.clone(), scroll));
+            }
+            if let Some(config) = pass.texture_animation {
+                let count = source
+                    .get("frames")
+                    .and_then(serde_json::Value::as_u64)
+                    .filter(|count| (1..=512).contains(count))
+                    .ok_or("missing scenery ATM count")?;
+                textures.push((
+                    name,
+                    atv_core::scenery_material::TextureClock::new(config, count as usize)?,
+                ));
+            }
+        }
+        let result = serde_json::to_vec(&animations).map_err(|e| e.to_string())?;
+        SIMULATION.with_borrow_mut(|sim| {
+            sim.scenery_uv = animations;
+            sim.scenery_textures = textures;
+            sim.scenery_tick = 0;
+        });
+        return Ok(result);
+    }
+    if (80..=85).contains(&op) {
+        return SIMULATION.with_borrow(|sim| multiplayer::dispatch(input, op, index, sim));
+    }
+    if op == 87 {
+        return serde_json::to_vec(&EngineAudioConfig::parse(input, index as u32)?)
+            .map_err(|e| e.to_string());
+    }
+    if op == 92 {
+        if index > 1 {
+            return Err("invalid menu rider".into());
+        }
+        let rider = atv_core::menu_preview::Rider::from_resource(input, index == 1)?;
+        let (clip, pose) = rider.pose(0.)?;
+        let output =
+            serde_json::to_vec(&serde_json::json!({"mesh":rider.mesh,"pose":pose,"clip":clip}))
+                .map_err(|e| e.to_string())?;
+        MENU_RIDER.with_borrow_mut(|slot| *slot = Some(rider));
+        return Ok(output);
+    }
+    if op == 93 {
+        if input.len() != 4 {
+            return Err("menu clock must be binary32".into());
+        }
+        let time = f32::from_le_bytes(input.try_into().map_err(|_| "invalid menu clock")?);
+        return MENU_RIDER.with_borrow(|slot| {
+            let (clip, pose) = slot.as_ref().ok_or("load menu rider first")?.pose(time)?;
+            serde_json::to_vec(&serde_json::json!({"clip":clip,"pose":pose}))
+                .map_err(|e| e.to_string())
+        });
+    }
+    if op == 89 {
+        return serde_json::to_vec(&atv_core::player_models::selection(
+            index as u16,
+            if input.is_empty() { 0 } else { input[0] as u16 },
+        )?)
+        .map_err(|e| e.to_string());
+    }
     if (76..=78).contains(&op) {
         return sound_effects(input, op);
     }
@@ -1640,6 +1904,15 @@ pub extern "C" fn run(op: u32, index: usize) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn batch_embeds_operation_numbers_and_events_without_reencoding() {
+        let bytes = br#"{"matrix":[-0.0,1.2345678901234567,1e-30],"event":{"sample":"a\\b\"c","play":true}}"#;
+        let raw = serialized_operation(bytes.to_vec()).unwrap();
+        assert_eq!(serde_json::to_vec(&raw).unwrap(), bytes);
+        for invalid in [b"{} trailing".as_slice(), b"{\"number\":NaN}", &[255]] {
+            assert!(serialized_operation(invalid.to_vec()).is_err());
+        }
+    }
     #[test]
     fn soundtrack_reload_preserves_shuffle_and_explicit_selection_is_validated() {
         let mut catalog = String::from(

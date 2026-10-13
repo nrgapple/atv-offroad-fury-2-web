@@ -60,3 +60,13 @@ Rust owns the menu labels, layout and navigation choices. The browser input adap
 ### Public steering sensitivity checkpoint
 
 The setting is public in main commit `f5ee8cddd74bc7342cccd80b9700bbf63d9b07a9` (PR #3; CI run [38289087535](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38289087535)). Public Chromium and WebKit checks passed the default and range, three viewport sizes, keyboard/drag focus and reload persistence. Chromium also passed both touch modes, unchanged lean, full lock and cancellation. The fresh 390×844 public capture shows the 85% default. Physical phone response and native iOS loupe behavior remain unverified.
+
+## Model inspection and loading
+
+The Quad and Rider page uses Rust-owned charcoal/silver model cards and the same
+gold selection rows, with 44px physical targets across portrait and landscape.
+Original models and a Rust-sampled original rider idle occupy the cards; each
+view supports drag or focused left/right keys. Keep controls outside those views.
+Course loading uses the selected original track photograph and actual loading
+stages, with the existing condensed glyph atlas, red panel and silver photo rim.
+See [selection and loading evidence](MENU_SELECTION.md) for asset and parity limits.

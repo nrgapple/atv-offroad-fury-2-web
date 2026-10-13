@@ -7,11 +7,12 @@ from pathlib import Path
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
-STATIC_FILES = {'index.html', 'landing.css', 'landing.js', 'play.html', 'design-system.css', 'game.css', 'game.js', 'water.js', 'train.js', 'wheel-effects.js', 'hud.js', 'diagnostics.js', 'frontend.js', 'touch.js', 'touch.css', 'content.js', 'audio.js', 'devlog.html',
+STATIC_FILES = {'index.html', 'landing.css', 'landing.js', 'play.html', 'design-system.css', 'game.css', 'game.js', 'race.js', 'multiplayer.js', 'water.js', 'fog.js', 'train.js', 'wheel-effects.js', 'hud.js', 'diagnostics.js', 'frontend.js', 'touch.js', 'touch.css', 'content.js', 'audio.js', 'devlog.html',
                 'devlog.css', 'devlog.js', 'workbench.html', 'style.css', 'app.js',
                 'worker.js', 'input.js', 'controls.js', 'bindings.js', 'atv_web.wasm', 'music.js'}
 RELEASE_STATIC_FILES = STATIC_FILES | {'deployment.json', 'devlog.json'}
-EXPECTED_FILES = {'release.json'} | {'static/' + name for name in RELEASE_STATIC_FILES}
+RELAY_FILES = {'index.js', 'index_bg.wasm'}
+EXPECTED_FILES = {'release.json'} | {'static/' + name for name in RELEASE_STATIC_FILES} | {'relay/' + name for name in RELAY_FILES}
 
 
 def validate_release(root, expected_commit):
@@ -32,6 +33,8 @@ def validate_release(root, expected_commit):
             raise ValueError(f'release file too large: {name}')
         if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             raise ValueError(f'release checksum mismatch: {name}')
+    if (root / 'relay/index_bg.wasm').read_bytes()[:4] != b'\0asm':
+        raise ValueError('invalid relay WebAssembly header')
     if (root / 'static/atv_web.wasm').read_bytes()[:4] != b'\0asm':
         raise ValueError('invalid WebAssembly header')
     if json.loads((root / 'static/deployment.json').read_text())['commit'] != expected_commit:
@@ -61,6 +64,9 @@ def package(commit, destination, release_scoped=False):
     if release_scoped:
         source = destination / 'static/content.js'
         source.write_text(scoped_content_source(source.read_text(), commit))
+    (destination / 'relay').mkdir()
+    for name in sorted(RELAY_FILES):
+        shutil.copy2(ROOT / 'crates/atv-relay/build' / name, destination / 'relay' / name)
     (destination / 'static/deployment.json').write_text(json.dumps({'commit': commit}) + '\n')
     # The CI artifact excludes checkpoint screenshots. Public Sites can retain
     # an explicitly authorized gallery in their own separate hosting checkout.

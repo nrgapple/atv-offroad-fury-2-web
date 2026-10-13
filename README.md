@@ -6,7 +6,7 @@ We're bringing **ATV Offroad Fury 2** into the browser as a Rust game: the origi
 
 Both links are **public HTTPS**, accessible away from the development Mac. The game loads its required original resources automatically; you don't need to select a disc file.
 
-There is already a rideable browser reconstruction with eight environments. **This is still a work in progress, not the complete game or a finished decompilation.** The goal is to recover the original experience first, then offer optional graphics and physics upgrades.
+There is already a rideable browser reconstruction with nine environments. **This is still a work in progress, not the complete game or a finished decompilation.** The goal is to recover the original experience first, then offer optional graphics and physics upgrades.
 
 ![ATV crossing a sunlit course with hills, vegetation, and utility towers.](https://atv-offroad-fury-2.champtoday.workers.dev/devlog-images/the-recovered-menus-and-tioga-valley-are-now-public-cfe7c40e.png)
 
@@ -67,7 +67,7 @@ The milestones overlap: finding an animation doesn't finish the trick system, an
 ```mermaid
 flowchart TB
     recovered["FOUND THE PIECES<br/>resource formats, terrain, quads, sound"]
-    recovered --> riding["RIDING NOW<br/>eight environments, driving, menus, music"]
+    recovered --> riding["RIDING NOW<br/>nine environments, driving, menus, music"]
     riding --> rebuilding["CURRENT WORK<br/>handling, tricks, wrecks, animation, HUD"]
     rebuilding --> fullgame["STILL AHEAD<br/>races, progression, saves, full fidelity"]
     fullgame --> extras["AFTER THE BASELINE<br/>optional modern graphics and physics"]
@@ -82,13 +82,14 @@ flowchart TB
 | Part of the adventure | What works, and what remains |
 | --- | --- |
 | **Recovering the disc** | All 487 resource archives audited; 26 in-race quad meshes and 40 named terrains decode. These are recovery counts, not 40 playable maps. |
-| **Getting out on the trails** | Eight environments load and drive in the public build, including Caribou Peak, Tioga Valley, and Arlington. Original terrain, sky, props, and vegetation are connected; visibility and distant detail still need work. |
+| **Getting out on the trails** | Nine environments load and drive in the public build, including Caribou Peak, Tioga Valley, Arlington, and Vancouver Ridge. Original terrain, sky, props, and vegetation are connected; visibility and distant detail still need work. |
 | **Making the quad feel right** | Recovered drivetrain, suspension, grip, rider lean, and static obstacle contacts are connected. Landing fixes have reduced tire burial, but some overlap remains. |
 | **Rider, tricks, and wipeouts** | ATV linkage, rider animation, stunt clips, and partial scoring/wreck/recovery behavior are connected. A failed Nac Nac through rider separation and recovery has passed public checks. Full flips, trick fidelity, and rider hand/foot placement remain unfinished. |
 | **Menus, sound, and controls** | Title → Main Menu → Single Player → Freestyle works, with pause settings, remapping, engine audio, and all 21 songs. More modes, HUD behavior, and original sound mixing remain to recover. |
-| **The complete game** | Full racing, progression, saves, remaining collision/water behavior, and original rendering fidelity are still ahead. Physical phones and Bluetooth controllers also need hands-on validation. |
+| **Racing preview** | A publicly verified Caribou Peak National race preview adds up to five CPU riders, laps, timing, radar and results through Single Player → Race. CPU route motion is authored; original AI physics/collisions, other courses and progression remain incomplete. |
+| **The complete game** | Full racing fidelity, progression, saves, remaining collision/water behavior, and original rendering fidelity are still ahead. Physical phones and Bluetooth controllers also need hands-on validation. |
 
-**Public evidence snapshot:** [`841f11c`](https://github.com/nrgapple/atv-offroad-fury-2-web/commit/841f11c5d619cac92bc6033fe01e1e2d09cbdcc4), October 12, 2026, passes CI 38287671823 and public checks for all 12 restored curved rail sections, eight-map driving, menus/controls and train front/side/top encounters. The missing rails were loaded but rendered with their saved model root applied twice; static geometry now follows the original root-replacement rule. The preceding verified [`9ac7365`](https://github.com/nrgapple/atv-offroad-fury-2-web/commit/9ac73657ba94045aa319d3eaed6d481162f242fd) adds moving train collisions, original impact audio and desktop/390px dust, dirt, water and mud effects. Original front ramp geometry produces rideable lifts and higher-speed launches through ordinary physics. Full gameplay, rendering/wake fidelity and physical phone/controller parity remain unfinished. The [handoff](HANDOFF.md) and [deployment record](research/DEPLOYMENT.md) hold the detailed evidence.
+**Public evidence snapshot:** [`e18a371e`](https://github.com/nrgapple/atv-offroad-fury-2-web/commit/e18a371e81b471137dd5fb1121b05d454584b1d0), October 12, 2026, passes CI 38312395498 and public checks for nine-map driving, source-correlated fog coverage, Caribou/Vancouver ice reflections, materials, wet/dry water behavior, menus/controls and copied-link Vancouver multiplayer. HTTPS hashes match 32 authored files and 405 served objects; the gallery has 118 entries and 99 screenshots. These are component and route checks, not full-map, full-game or original-hardware equivalence. Audio still lacks broader map ambience/surface scheduling, and source tree lighting is not complete. The [handoff](HANDOFF.md), [deployment record](research/DEPLOYMENT.md), [map evidence](research/MAP_FIDELITY.md) and [audio notes](research/AUDIO.md) hold detailed evidence and limitations.
 
 ## Yes, you can ride from your phone 📱
 
@@ -108,6 +109,8 @@ Touch is a browser adaptation of the PS2 controls. Portrait and gesture checks p
 <img src="https://atv-offroad-fury-2.champtoday.workers.dev/devlog-images/a-failed-nac-nac-now-follows-the-recovered-wreck-route-d0427758.png" width="300" alt="ATV and rider during a failed Nac Nac, with the trick name and failure-colored score visible.">
 
 *A host Chromium test capture of an unfinished Nac Nac. The recovered wreck/recovery sequence was subsequently checked publicly; this particular image comes from the host test.*
+
+**Funny crashes:** Enabled by default, this adds a floppy rider ragdoll and breakaway ATV wheels, handlebars and rear suspension on hard ground or obstacle impacts. The ATV stays intact during an airborne bailout until it hits something. **Pause → Funny crashes: Off** returns to original crash behavior. It remembers your choice, including an existing saved Off. Recovery restores the whole ATV; original driving and scoring stay intact. The effects apply to your local rider.
 
 Keyboard and controllers work too. **Pause → Controls** lets you remap keyboard keys, controller buttons, analog directions, and button combinations; settings are saved in your browser.
 

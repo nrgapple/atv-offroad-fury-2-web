@@ -345,7 +345,7 @@ fn process(config: &Config, job: &mut Job) -> Result<()> {
         &log,
         config,
     )?;
-    run(&checkout, "make", &["web"], &log, config)?;
+    run(&checkout, "make", &["web", "relay"], &log, config)?;
     let release = checkout.join("work/release");
     run(
         &checkout,
@@ -429,7 +429,13 @@ fn process(config: &Config, job: &mut Job) -> Result<()> {
     run(
         &checkout,
         "npx",
-        &["--yes", "wrangler@4.149.0", "deploy"],
+        &[
+            "--yes",
+            "wrangler@4.149.0",
+            "deploy",
+            "--config",
+            "work/cloudflare/wrangler.jsonc",
+        ],
         &log,
         config,
     )?;

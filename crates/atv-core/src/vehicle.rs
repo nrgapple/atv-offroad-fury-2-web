@@ -86,6 +86,8 @@ pub struct VehicleFrame {
     pub obstacle_contact_count: usize,
     pub dynamic_contact_count: usize,
     pub dynamic_secondary_contacts: usize,
+    /// Presentation-only closing speed of this step’s strongest actual ATV contact.
+    pub crash_impact_speed: f32,
     pub preload_available: bool,
     pub preload_armed: bool,
     pub preload_active: bool,
@@ -95,6 +97,7 @@ pub struct VehicleFrame {
     pub boundary_launch: crate::boundary_launch::State,
     pub skip_vegetation_query: bool,
     pub water_height: f32,
+    pub water_failure: crate::water_failure::Clock,
     pub landing_action: Option<crate::rider_pose::Landing>,
     pub reset_count: u32,
     pub scene_query: SceneQueryFrame,
@@ -187,6 +190,7 @@ pub struct Vehicle {
     obstacle_contact_count: usize,
     dynamic_contact_count: usize,
     dynamic_secondary_contacts: usize,
+    crash_impact_speed: f32,
     ///Secondary nonstatic contacts occur after the final integrator. Native
     ///translation and impact delta remain until the next first integration.
     pending_contact_corrections: ContactCorrections,
@@ -199,6 +203,7 @@ pub struct Vehicle {
     skip_vegetation_query: bool,
     boundary_random: crate::engine_audio::OriginalRandom,
     water_height: f32,
+    water_failure: crate::water_failure::Clock,
     landing_action: Option<crate::rider_pose::Landing>,
     stunt_landing_safe: bool,
     stunt_state_four: bool,
@@ -383,6 +388,7 @@ impl Vehicle {
             obstacle_contact_count: 0,
             dynamic_contact_count: 0,
             dynamic_secondary_contacts: 0,
+            crash_impact_speed: 0.,
             pending_contact_corrections: ContactCorrections::default(),
             wreck_physics: None,
             normal_contact: ContactConfig::from_physics(data)?,
@@ -393,6 +399,7 @@ impl Vehicle {
             skip_vegetation_query: false,
             boundary_random: crate::engine_audio::OriginalRandom::with_seed(1),
             water_height: -256.,
+            water_failure: crate::water_failure::Clock::default(),
             landing_action: None,
             stunt_landing_safe: true,
             stunt_state_four: false,
@@ -506,6 +513,11 @@ impl Vehicle {
         if !self.wreck.step(dt, rider_grounded) {
             return Ok(false);
         }
+        self.reset_to_checkpoint()?;
+        Ok(true)
+    }
+    ///001e35d0 is shared by wreck recovery and the expired deep-water clock.
+    fn reset_to_checkpoint(&mut self) -> Result<()> {
         self.body_config.center_of_mass = self.base_center;
         self.body_config.max_speed_squared = crate::boundary_launch::NORMAL_MAX_SPEED_SQUARED;
         self.boundary_launch.reset();
@@ -521,6 +533,7 @@ impl Vehicle {
             &self.body_config,
         )?;
         self.pending_contact_corrections = ContactCorrections::default();
+        self.crash_impact_speed = 0.;
         self.wheel_contact_points = [[0.; 3]; 4];
         self.wheel_world_angular_velocity = [0.; 3];
         self.wheels = [WheelState::default(); 4];
@@ -532,6 +545,7 @@ impl Vehicle {
         self.suspension_stop_contacts = 0;
         self.forced_landing = false;
         self.rider_contact_cooldown = 2.;
+        self.water_failure = crate::water_failure::Clock::default();
         // The native reset also preserves the grip controller's cached rear
         // velocity until the next grounded substep overwrites it.
         self.engine.state = crate::drivetrain::EngineState::default();
@@ -548,7 +562,7 @@ impl Vehicle {
         self.chassis_contact_count = 0;
         self.obstacle_contact_count = 0;
         self.reset_count = self.reset_count.wrapping_add(1);
-        Ok(true)
+        Ok(())
     }
     ///002d87c0 copies this rider field without MPH conversion.
     pub fn set_rider_physics(&mut self, data: &PhysicsData) -> Result<()> {
@@ -674,6 +688,7 @@ impl Vehicle {
             obstacle_contact_count: self.obstacle_contact_count,
             dynamic_contact_count: self.dynamic_contact_count,
             dynamic_secondary_contacts: self.dynamic_secondary_contacts,
+            crash_impact_speed: self.crash_impact_speed,
             preload_available: self.rider_state.preload_status,
             preload_armed: self.rider_state.preload_armed,
             preload_active: self.rider_state.preload_active,
@@ -683,6 +698,7 @@ impl Vehicle {
             boundary_launch: self.boundary_launch,
             skip_vegetation_query: self.skip_vegetation_query,
             water_height: self.water_height,
+            water_failure: self.water_failure,
             landing_action: self.landing_action,
             reset_count: self.reset_count,
             scene_query: self.scene_query,
@@ -762,7 +778,12 @@ impl Vehicle {
         let materials = self
             .materials
             .ok_or("original terrain material table is required")?;
+        //001e5870 checks +814 before physics, even when the rider is wrecked.
+        if self.water_failure.reset_due() {
+            self.reset_to_checkpoint()?;
+        }
         self.landing_action = None;
+        self.crash_impact_speed = 0.;
         let crashed = self.wreck.phase != crate::wreck::Phase::Riding;
         // 001e5260 decrements this riding cooldown before physics. The current
         // Freestyle route has no native countdown/session-state-2 override.
@@ -1210,11 +1231,15 @@ impl Vehicle {
             } else {
                 ContactCorrections::default()
             };
+            // A secondary contact was already observed in the previous frame;
+            // only native translation/velocity corrections carry into this step.
+            corrections.closing_speed = 0.;
             self.suspension_stop_contacts = 0;
             //001dd830 updates the separate four-point travel-stop actor before
             // the wheel springs. It remains active while the chassis is upright.
             for (&local, &plane) in self.wheel_stops.iter().zip(&stop_planes) {
                 let point = add(origin, transform(b, local));
+                let closing_speed = -dot(self.body.linear_velocity, plane.normal);
                 if crate::wheel_stop::resolve(
                     &mut self.body,
                     plane,
@@ -1222,6 +1247,7 @@ impl Vehicle {
                     &mut corrections.velocity_delta,
                 )? {
                     self.suspension_stop_contacts += 1;
+                    self.crash_impact_speed = self.crash_impact_speed.max(closing_speed);
                 }
             }
             for (i, d) in drive.iter().enumerate() {
@@ -1234,6 +1260,16 @@ impl Vehicle {
                 if available {
                     self.wheel_contact_points[i] = point;
                 }
+                let point_velocity = sub(
+                    add(
+                        self.body.linear_velocity,
+                        wheel::cross(
+                            self.wheel_world_angular_velocity,
+                            sub(point, contact_center),
+                        ),
+                    ),
+                    ground_velocities[i],
+                );
                 let output = self.suspension[i].contact(
                     self.suspension_config,
                     SuspensionContact {
@@ -1244,21 +1280,14 @@ impl Vehicle {
                         radius: self.wheel_config[i].radius,
                         body_up: b[1],
                         body_forward: b[2],
-                        point_velocity: sub(
-                            add(
-                                self.body.linear_velocity,
-                                wheel::cross(
-                                    self.wheel_world_angular_velocity,
-                                    sub(point, contact_center),
-                                ),
-                            ),
-                            ground_velocities[i],
-                        ),
+                        point_velocity,
                         stiffness_scale: 1.0,
                         tilt_angle: dot(normal, b[1]).clamp(-1., 1.).acos(),
                     },
                 )?;
                 if output.grounded {
+                    self.crash_impact_speed =
+                        self.crash_impact_speed.max(-dot(point_velocity, normal));
                     apply_spring_world_force(
                         &mut self.body,
                         &self.body_config,
@@ -1335,6 +1364,7 @@ impl Vehicle {
                     }
                 }
             }
+            self.crash_impact_speed = self.crash_impact_speed.max(corrections.closing_speed);
             self.body.step(&self.body_config, step)?;
             self.wheel_world_angular_velocity = self.body.world_angular_velocity();
             for (value, next) in impact.iter_mut().zip(corrections.velocity_delta) {
@@ -1420,6 +1450,9 @@ impl Vehicle {
                 }
             }
         }
+        self.crash_impact_speed = self
+            .crash_impact_speed
+            .max(self.pending_contact_corrections.closing_speed);
         //001e5260 runs edge launch after physics and before impact/wreck gates.
         // Query bit0 excludes vegetation expansion, not terrain/static objects.
         if self.boundary_launch.tick(dt, true)? {
@@ -1441,6 +1474,14 @@ impl Vehicle {
             self.skip_vegetation_query = true;
             self.begin_wreck(kind);
         }
+        //001e5ff8 applies the deep-water clock after physics/edge launch and
+        //before the impact classifier. Its height sample is still last frame's.
+        self.water_failure.update(
+            self.body.origin(&self.body_config)[1],
+            self.water_height,
+            self.wreck.phase == crate::wreck::Phase::Riding,
+            dt,
+        );
         for i in 0..4 {
             self.suspension[i].visual_position(
                 self.suspension_config,
@@ -1552,6 +1593,80 @@ impl Vehicle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn deep_water_uses_cached_height_and_resets_to_retained_checkpoint() {
+        let (mut vehicle, terrain) = fixture();
+        // Synthetic constant field isolates the outer cached-height/reset gate.
+        let water = crate::water_animation::LiveField {
+            definition: crate::water_animation::Definition::parse(
+                b"[General Information]\nWaterBaseHeight=100\nWakeScale=0\nWaterHeightRange=0\n",
+            )
+            .unwrap(),
+            swell: crate::water_animation::SwellState::default(),
+            states: vec![],
+            waves: vec![],
+        };
+        let checkpoint = vehicle.reset_origin;
+        vehicle.body =
+            BodyState::new([700., 1., 500.], [1., 0., 0., 0.], &vehicle.body_config).unwrap();
+        let step = |vehicle: &mut Vehicle| {
+            vehicle
+                .step_with_scene(
+                    &terrain,
+                    VehicleInput::default(),
+                    1. / 60.,
+                    Some(&water),
+                    || panic!("water must not request a random wreck"),
+                )
+                .unwrap()
+        };
+        let first = step(&mut vehicle);
+        assert_eq!(first.water_height, 100.);
+        assert_eq!(first.water_failure.remaining, 5.);
+        assert!(!first.water_failure.submerged);
+        let second = step(&mut vehicle);
+        assert_eq!(second.water_failure.remaining, 5. - 1. / 60.);
+        assert!(second.water_failure.submerged);
+        let mut last = second;
+        while last.water_failure.remaining > 0. {
+            assert_eq!(last.reset_count, 0);
+            assert_eq!(last.wreck.phase, crate::wreck::Phase::Riding);
+            last = step(&mut vehicle);
+        }
+        assert_eq!(
+            last.reset_count, 0,
+            "late expiration waits until next update"
+        );
+        let reset = step(&mut vehicle);
+        assert_eq!(reset.reset_count, 1);
+        assert!((reset.origin[0] - checkpoint[0]).abs() < 0.001);
+        assert_eq!(
+            vehicle.reset_origin, checkpoint,
+            "water cannot replace the dry checkpoint"
+        );
+        assert_eq!(reset.wreck.phase, crate::wreck::Phase::Riding);
+        assert_eq!(reset.water_failure.remaining, 5. - 1. / 60.);
+        assert_eq!(
+            reset.water_height, 100.,
+            "reset preserves the shared surface cache"
+        );
+    }
+
+    #[test]
+    fn expired_water_clock_resets_wreck_state_before_physics() {
+        let (mut vehicle, terrain) = fixture();
+        enable_test_wrecks(&mut vehicle);
+        vehicle.begin_wreck(crate::wreck::Kind::Front);
+        vehicle.water_failure.remaining = 0.;
+        let frame = vehicle
+            .step(&terrain, VehicleInput::default(), 1. / 60.)
+            .unwrap();
+        assert_eq!(frame.reset_count, 1);
+        assert_eq!(frame.wreck.phase, crate::wreck::Phase::Riding);
+        assert_eq!(frame.water_failure.remaining, 5.);
+        assert!(!frame.water_failure.submerged);
+    }
+
     #[test]
     fn spring_force_retains_model_inverse_order_at_large_world_positions() {
         let config = BodyConfig::new(10., [2., 3., 4.], [0.125, 0.2, -0.25]).unwrap();
@@ -2335,6 +2450,7 @@ mod tests {
                     slot: 0,
                     model: String::new(),
                     billboard: String::new(),
+                    atlas: None,
                     parameters: [0; 23],
                     optional_name: None,
                     proxies: vec![[1, 0, 0, 0, 0, 0, 0, 1f32.to_bits(), 5f32.to_bits()]],
@@ -2349,6 +2465,7 @@ mod tests {
                 global_name: None,
                 global_word: 0,
                 placement_texture: None,
+                visibility_index: Default::default(),
             };
             vehicle
                 .set_scene_partition(
@@ -2614,6 +2731,7 @@ mod tests {
                     slot: 0,
                     model: String::new(),
                     billboard: String::new(),
+                    atlas: None,
                     parameters: [0; 23],
                     optional_name: None,
                     proxies: vec![[0; 9]; proxy_count],
@@ -2628,6 +2746,7 @@ mod tests {
                 global_name: None,
                 global_word: 0,
                 placement_texture: None,
+                visibility_index: Default::default(),
             };
             vehicle
                 .set_scene_partition(

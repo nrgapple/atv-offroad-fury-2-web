@@ -15,7 +15,7 @@ def verify(base, commit, release=None):
     release = release or ROOT / 'work/github-releases' / commit
     metadata = validate_release(release, commit)
     def get(path):
-        request = Request(base.rstrip('/') + '/' + path.lstrip('/'), headers={'User-Agent': 'ATV-release-verifier/1.0'})
+        request = Request(base.rstrip('/') + '/' + path.lstrip('/'), headers={'Origin': base.rstrip('/'), 'User-Agent': 'ATV-release-verifier/1.0'})
         with urlopen(request, timeout=90) as response:
             return response.read(), response.headers.get_content_type()
 
@@ -27,12 +27,16 @@ def verify(base, commit, release=None):
         raise ValueError('public landing page failed')
     static_files = 0
     for name, digest in metadata['sha256'].items():
-        if name == 'static/devlog.json':
+        if not name.startswith('static/') or name == 'static/devlog.json':
             continue  # The authorized R2 overlay adds approved image references.
         body, _ = get(name.removeprefix('static/'))
         if hashlib.sha256(body).hexdigest() != digest:
             raise ValueError(f'public authored asset differs: {name}')
         static_files += 1
+    body, _ = get('/multiplayer/version')
+    identity = json.loads(body)
+    if identity.get('commit') != commit or identity.get('wasmSha256') != metadata['sha256']['relay/index_bg.wasm']:
+        raise ValueError('public Rust multiplayer relay differs from checked artifact')
     report = json.loads((ROOT / 'private/reports/cloudflare-upload.json').read_text())
     if report['commit'] != commit:
         raise ValueError('upload receipt belongs to a different commit')

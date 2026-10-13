@@ -29,7 +29,7 @@ jobs:
           python3 tools/verify_repository.py
           python3 -m py_compile tools/*.py
           python3 -m unittest discover -s tools -p 'test_release*.py'
-          node --test cloudflare/worker.test.mjs web/input.test.mjs web/content.test.mjs web/touch.test.mjs web/bindings.test.mjs web/music.test.mjs web/audio.test.mjs web/diagnostics.test.mjs
+          node --test cloudflare/worker.test.mjs web/input.test.mjs web/content.test.mjs web/touch.test.mjs web/bindings.test.mjs web/music.test.mjs web/audio.test.mjs web/diagnostics.test.mjs web/multiplayer.test.mjs
       - name: Explain production ownership
         run: |
           echo 'The local Rust atv-release queue checks, builds and deploys exact committed checkpoints with their separate R2 dependencies. This workflow does not build WASM, upload resources or deploy production.' >> "$GITHUB_STEP_SUMMARY"
