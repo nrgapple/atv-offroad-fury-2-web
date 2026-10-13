@@ -54,8 +54,7 @@ Create accepts an optional custom code of exactly eight letters or digits; a
 blank code requests a random one, while a duplicate custom code is rejected.
 Join requires an eight-character code. Invite links open the Join form with the
 code prefilled, leaving the rider to submit the join action. This form flow is
-under host-browser recheck in the pending integration build; public delivery
-remains pending.
+verified in the host and public browser gates at 551d7fd.
 
 ## Models and sound
 
@@ -195,5 +194,34 @@ clocks and server/host physics reconciliation remained future work; that release
 relayed rider-owned simulations while scene animations and dynamic objects ran on
 each client's local clock. Later host-only checks now cover synchronized train
 timing and authored player contacts, but the shared train clock still freezes
-when its host pauses. These changes are not a public release. Competitive
+when its host pauses. These changes passed public verification at 551d7fd; see the follow-up below. Competitive
 authority, host migration and original online/race rules remain unfinished.
+
+## Public late join, visibility and contact follow-up (2026-10-13)
+
+Main `551d7fd890946f18cc8ef8430c12f843138fe758` passed CI
+[38446510103](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38446510103)
+and is verified on both `https://furyremastered.com/` and the
+[Workers production app](https://atv-offroad-fury-2.champtoday.workers.dev/). The
+validated artifact and `/deployment.json` identify that commit. Full HTTPS checks
+match 39 authored/static files and 446 served objects. The approved R2 package has
+447 objects totaling 338,648,873 bytes; three changes uploaded the larger-label
+host capture, Players capture and gallery. The gallery snapshot contains 160 log
+entries and 131 screenshots before this text-only verification entry.
+
+The public two-client route preserves custom code `FV70MYWD`, admits a late rider
+after the ride starts, and renders 13 remote draws on both clients. Paused Players
+spawn has a 342×64 target at (24,96), placing the guest about 10 feet from the
+host. Owner-local contact counts reached 5 and 3; across 20 moving-flatbed samples,
+maximum train-relative error was 1.29715 feet. Host departure cleaned up guests.
+Fourteen public relay cases pass, including custom and duplicate codes. The relay
+WASM SHA-256 is
+`8776744065b1b42d6ac9faf13034c0c39d7246202ea3476646400b622b634753`.
+
+The public four-browser run selected quads 1, 14, 26 and 2. Each client rendered
+39 remote draws and three engine voices; each rider's movement reached all
+observers, and host end cleared guest rooms, models and audio without HTTP or page
+errors. These automated routes do not establish physical-phone behavior or
+geographically distributed latency. The train clock freezes while its host is
+paused; local contacts have no server reconciliation. Racing, competitive
+authority, host migration and full original-game parity remain unfinished.

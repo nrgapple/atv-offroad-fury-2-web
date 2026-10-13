@@ -1,6 +1,6 @@
 {
-  "status": "Multiplayer late join, player indicators and owner-local contacts pass host verification; this checkpoint is not deployed publicly.",
-  "working_on": "Continue multiplayer integration and host-only validation; verify public behavior only after a validated release.",
+  "status": "Public main 551d7fd verifies multiplayer late join, rider visibility, local contacts, train following and four-client cleanup through HTTPS. This remains an authored Rust/WASM adaptation, not full ATV2 parity.",
+  "working_on": "Continue original ATV2 recovery and validate remaining gameplay, rendering and physical-device behavior; keep host-only claims distinct from public verification.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -2602,29 +2602,46 @@
         "The authenticated Rust relay passed 13 live cases, including capacity, map synchronization, packet validation, rate limits and host-loss cleanup."
       ],
       "limitation": "Host-only browser verification; no public deployment, physical-phone test, or geographically separated network measurement. The relay forwards owner-simulated state and does not reconcile physics."
+    },
+    {
+      "id": "multiplayer-late-join-and-rider-visibility-pass-public-15093498",
+      "timestamp": "2026-10-13T18:32:04.189818+00:00",
+      "recorded_at": "2026-10-13T18:32:04.189818+00:00",
+      "kind": "verification",
+      "title": "Multiplayer late join and rider visibility pass public verification",
+      "summary": "Main 551d7fd passes public late-join, custom-code, nearby-spawn, owner-local contact, moving-train and four-client multiplayer gates on Cloudflare.",
+      "details": [
+        "CI 38446510103 succeeded; deployment.json on both furyremastered.com and the Workers production URL identifies commit 551d7fd890946f18cc8ef8430c12f843138fe758. The deployed relay WASM SHA-256 is 8776744065b1b42d6ac9faf13034c0c39d7246202ea3476646400b622b634753.",
+        "The copied custom lobby code FV70MYWD was preserved. A late guest joined after the ride began; both clients rendered 13 remote draws. Measured host phases were 13.4333 and 13.404803 seconds. The paused Players menu spawn target measured 342×64 pixels at (24,96), placing the guest about 10 feet from the host.",
+        "Both owners recorded local contact responses (5 and 3). Across 20 moving-flatbed samples, maximum train-relative position error was 1.29715 feet. Host departure cleaned up the guests. The public relay suite passed 14 cases, including custom-code and duplicate-code handling.",
+        "The public four-browser run selected quads 1, 14, 26 and 2; each client rendered 39 remote draws and three engine voices. Every rider movement replicated to all observers, and host end cleared guest rooms, models and audio. No HTTP or page errors occurred."
+      ],
+      "limitation": "Automated public browser verification on the tested host/browser setup; physical phones, geographically separated latency, server-side physics reconciliation, competitive authority, host migration and full original-game parity are not established. The shared train clock freezes while its host is paused. The companion larger-label screenshot remains a host capture."
     }
   ],
-  "updated_at": "2026-10-13T18:00:16.046363+00:00",
+  "updated_at": "2026-10-13T18:32:04.189818+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
-      "commit": "4d1e1c4ca04703073cf41edb639d48b570bea69e",
-      "ci_run": "38351540401",
+      "commit": "551d7fd890946f18cc8ef8430c12f843138fe758",
       "url": "https://atv-offroad-fury-2.champtoday.workers.dev/",
-      "static_assets": 33,
-      "served_objects": 426,
-      "devlog_entries": 140,
-      "devlog_screenshots": 114,
-      "r2_approved_objects": 427,
-      "r2_upload_changes": 2,
+      "static_assets": 39,
+      "served_objects": 446,
+      "devlog_entries": 160,
+      "devlog_screenshots": 131,
+      "r2_approved_objects": 447,
+      "r2_upload_changes": 3,
       "checks": [
-        "GitHub Actions check/build and Deploy and verify production passed for 4d1e1c4 in CI 38351540401; the public deployment verifier confirms 33 authored/static files and the same deployment commit.",
-        "The validated R2 package contains 427 approved objects; two changed objects were uploaded, and public HTTPS verification matches 426 served objects by hash, size and MIME. The public log contains 140 entries and 114 screenshot references.",
-        "Public tools/test_cpu_behavior.mjs completed a 65.08-second Caribou National run: four independent CPU vehicles each produced 3,902 samples; the run recorded five natural wrecks and five recoveries, eight original stunt starts, finite state, preserved reset-distance/lap accounting and all four CPUs returned to Riding. Portrait and landscape pause behavior passed.",
-        "This is bounded component and route evidence. It is not a full lap, native start-grid/event/finish equivalence, full AI replay, PS2 hardware comparison or full-game completion.",
-        "On this 4d1e1c4 snapshot, a separate public motorcycle probe attempted garage model 27 and failed at MOT preview readiness with “unsupported MOT version” (no page JavaScript error). This predates the 4fbb399 host correction; no corrected public playable-motorcycle pass is claimed, and the result does not affect the ATV/CPU evidence."
+        "GitHub Actions CI 38446510103 passed for main 551d7fd890946f18cc8ef8430c12f843138fe758. The validated artifact and public deployment.json on both furyremastered.com and the Workers production URL identify this exact commit.",
+        "The approved R2 package contains 447 objects totaling 338,648,873 bytes; three changed objects were uploaded (the larger-label host screenshot, Players screenshot and gallery). Full HTTPS verification matches 39 authored/static files and all 446 served objects by hash, size and MIME. The verified gallery snapshot contains 160 entries and 131 screenshots before this new log entry.",
+        "The public two-client feature gate preserved custom code FV70MYWD, admitted a late guest after the ride began, rendered 13 remote draws on both clients, opened nearby-host spawn at a 342×64 target (x=24,y=96), recorded owner-local contacts 5/3 and stayed within 1.29715 feet of train-relative position over 20 moving-flatbed samples. Host departure cleaned up guests.",
+        "The public Rust relay passed 14 cases, including custom-code and duplicate-code handling. The deployed relay WASM SHA-256 is 8776744065b1b42d6ac9faf13034c0c39d7246202ea3476646400b622b634753.",
+        "The public four-browser gate selected quads 1, 14, 26 and 2. Each client rendered 39 remote draws and three engine voices; every rider movement reached all observers, and host end cleared guest rooms, models and audio without HTTP or page errors.",
+        "These are bounded automated browser routes on the tested host/browser setup, not physical-phone, geographically distributed latency, server-physics reconciliation, competitive authority, host migration or full-game parity evidence. The shared train clock freezes while its host is paused."
       ],
-      "snapshot_note": "Current public authored app and approved content/gallery package are verified at 4d1e1c4. CI and the public verifier confirm deployment identity/static hashes; the separate public CPU browser run confirms the bounded Caribou behavior above. The public motorcycle model-27 failure in this snapshot predates the 4fbb399 host correction; public re-test is pending. Counts describe the verified snapshot before this board-audit dev-log entry; it will appear in a later validated app build and any new screenshot requires its own approved upload."
+      "snapshot_note": "Public app and approved content/gallery snapshot verified at 551d7fd890946f18cc8ef8430c12f843138fe758 (CI 38446510103). deployment.json matches on furyremastered.com and the Workers production URL. Full HTTPS verification matches 39 authored/static files and all 446 served objects. R2 contains 447 approved objects totaling 338,648,873 bytes with three uploaded changes. The public two- and four-client gates, 14 relay cases and relay WASM hash are listed in checks. Gallery counts (160 entries, 131 screenshots) describe the verified snapshot before this new log entry; this text-only entry requires no screenshot upload.",
+      "ci_run": "38446510103",
+      "r2_approved_bytes": 338648873
     },
     "next_priorities": [
       "Recover original ATV race event start slots, natural lap/finish/results transitions and progression; the public CPU run did not finish a full 6,811-foot lap.",
