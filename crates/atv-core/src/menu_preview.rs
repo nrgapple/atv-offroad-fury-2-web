@@ -49,6 +49,19 @@ impl Rider {
             clip.sample_pose(&mesh.nodes, 0., Sampling::default())?;
             clips.push((name, clip));
         }
+        Self::from_clips(mesh, clips)
+    }
+    /// Shared menu playback for a recovered rig and its own original clips.
+    pub fn from_clips(mesh: Mesh, clips: Vec<(String, Animation)>) -> Result<Self> {
+        if clips.is_empty() || mesh.nodes.len() > 32 {
+            return Err("invalid menu rider playlist".into());
+        }
+        for (_, clip) in &clips {
+            if clip.duration <= 0. || !clip.duration.is_finite() {
+                return Err("menu clip has no duration".into());
+            }
+            clip.sample_pose(&mesh.nodes, 0., Sampling::default())?;
+        }
         let duration = clips.iter().map(|(_, clip)| clip.duration).sum();
         Ok(Self {
             mesh,

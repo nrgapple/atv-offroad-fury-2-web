@@ -231,3 +231,58 @@ route (308 paired steps, no severe breakaway) pass. No browser/GL errors or
 disc selection are observed. The screenshot log preserves the source-tuned
 controller and physical-phone/native-fidelity limitations. Current-main
 metadata/gallery validation and full R2 HTTPS verification remain release steps.
+
+
+## Ground bank and original standing menu correction (2026-10-13)
+
+The preceding correction did **not** verify bike/rider banking direction. The
+user reproduced outward lean on full-size bikes, and the previous source-pose
+hand sweep also independently controlled visible fork steering. Finite state,
+turning direction and attached grip markers were insufficient acceptance gates.
+
+The original GAME_REL ground-bank component directly approaches the commanded
+orientation around the existing forward axis. Its source profile uses a 45-degree
+maximum command at 35 mph and RollGain=5; contact-normal blending approaches the
+support plane between the source 10/30 mph stand-upright thresholds. The Rust
+component now uses that recovered bank behavior instead of the competing ground
+roll torque spring. Normal ground roll has one owner; free airborne and wreck
+roll remain active. The support-contact adapter, generic-body roll-axis ownership,
+host trigonometry and tire force routing are integration work, **not proof of
+native whole-step equivalence**. Original lateral CG disturbance handling and
+complete tire/actor update order still require recovery.
+
+Physical steering now supplies the visible inclined fork angle, including
+airborne cross-up, while the existing shared arm/leg constraint engine attaches
+normal hands and boots. The source pose sweep runs in the matching steering
+direction, so the rider leans into the turn. Actual touch tests now compare
+rendered body/rider bank against rendered heading and trajectory, in addition
+to grip/peg contact. Mini/125/250/500 gates pass 1,061 exact paired enhancement
+Off/On steps and 2,455 GPU bone-marker comparisons; maximum rendered hand error
+is below 0.00000170 ft and boot error below 0.0000371 ft. A normal-input 500
+Vancouver backflip/wreck/separation/breakaway/recovery gate passes 1,297 paired
+steps, four intact airborne ragdoll frames and one contact-triggered damage
+transition. These counts describe these host traces, not all possible play.
+
+Original UI_mrider selection breathing and three idle clips were found. All
+20 motorcycle selections now use those original standing clips through the
+same Rust menu playback and frontend animation engine as ATV riders. The
+actual GPU standing-pose, changing-pixel/bone, all-three-idles and return-to-ATV
+checks pass. Initial preview facing adapts the MX rig's opposite orientation.
+The ordered breathing/idle playlist remains an authored adaptation; native menu
+random selection and delay callbacks have not been reconstructed.
+
+The user's Sano 50 screenshot shows an original mini/pit bike. Its source SUB
+has no wheel-size override: visible tire geometry measures about 14.91 inches
+in diameter, versus about 28.88 inches for Suzuki RM125 front tires. Those source
+proportions are retained and 50cc selections now say **Mini**. Larger wheels belong
+to the selectable full-size 125/250/500 bikes.
+
+All20 selections also pass host drive/audio/clutch/particles/reset (1,536
+paired steps). The unchanged26-ATV garage passes responsive, male/female
+animation, rapid selection and context restoration checks. Full workspace
+tests, formatting, strict Clippy, source/setup and repository hygiene pass, as
+do29 release tests (one credential-dependent skip) and8 Cloudflare tests.
+
+These fixes are host-verified pending the validated-main release and R2 menu
+resource upload. Full original handling, animation/controller timing, stunt
+linking/scoring and physical iOS/controller fidelity remain unverified.

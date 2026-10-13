@@ -1,3 +1,19 @@
+## Motorcycle inward bank and standing menu — host correction (2026-10-13)
+
+The user found outward lean/static garage poses in the previous correction.
+Those earlier finite/turn/contact gates did not establish correct banking.
+The recovered ground-bank orientation approach now controls normal ground roll;
+source pose steering, physical fork steering and shared grip/peg constraints agree.
+Actual rendered Mini/125/250/500 touch checks pass in both directions, with
+1,061 exact paired Off/On steps and 2,455 GPU contacts. Original MX standing
+breathing/three idle clips play for all20 garage selections through the existing
+ATV menu animation engine; the original ATV bank returns correctly. The source
+Sano50 Mini has ~15-inch tires, versus ~29-inch full-size125 front tires; source
+geometry is retained and the Mini label makes the distinction explicit.
+The severe500 Vancouver wreck/separation/breakaway/recovery gate passes1,297
+paired steps. Native whole-controller and whole-physics parity remain open;
+see [motorcycle evidence](research/MOTORCYCLES.md). Publication is pending.
+
 ## Freestyle GPS minimap checkpoint — 2026-10-13
 
 New SSD worktree `atv-offroad-fury-2-minimap`, branch `feat/freestyle-minimap`,

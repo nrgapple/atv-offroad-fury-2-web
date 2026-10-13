@@ -1534,6 +1534,9 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
+    if op == 103 {
+        return motorcycles::menu(input, index);
+    }
     if matches!(op, 100 | 102) {
         return motorcycles::load(input, index, op == 100);
     }

@@ -41,7 +41,11 @@ pub fn selection(quad: u16, rider: u16) -> Result<Models> {
             rider: archive,
             rider_mesh: "mrider.psg".into(),
             rider_catalog: "MX_RiderMotions.mcf".into(),
-            label: format!("{name} / {} setup", if pro { "Pro" } else { "Race" }),
+            label: format!(
+                "{name}{} / {} setup",
+                if size == 50 { " Mini" } else { "" },
+                if pro { "Pro" } else { "Race" }
+            ),
             rider_label: "MX THQ rider",
         });
     }
