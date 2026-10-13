@@ -117,6 +117,15 @@ No complete original-game physics equivalence is claimed.
 
 # Implementation handoff
 
+## Fury Remastered domain setup (2026-10-13)
+
+The intended primary public HTTPS address is https://furyremastered.com/.
+Both apex and www custom domains target the existing Cloudflare Worker. The www
+route redirects to the apex; the previous workers.dev address remains supported.
+The explicit multiplayer origin allowlist covers both playable origins. Domain
+routes and origin settings are persisted in wrangler.jsonc, and main CI verifies
+both addresses. See research/DEPLOYMENT.md for the final public verification.
+
 ## Original CPU avoidance, wreck recovery and jump tricks — tested host checkpoint
 
 Implementation `eeadf09`, integrated with UI/main `2ef33ab` as `bb9d1bee`,

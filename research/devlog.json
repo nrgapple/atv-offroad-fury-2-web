@@ -2427,9 +2427,23 @@
       "limitation": "Host-only checkpoint pending current-main CI, deployment and public verification. Local browser storage is required for selections to persist across reloads; physical-device behavior is unverified.",
       "image": "/devlog-images/garage-and-freestyle-selections-persist-8e7c9757.png",
       "caption": "Portrait host-browser menu capture from the selection-restoration check; course, Garage and Race persistence passed in the same actual-menu run."
+    },
+    {
+      "id": "fury-remastered-custom-domain-routes-pass-host-checks-e1bec0d3",
+      "timestamp": "2026-10-13T15:27:09.633977+00:00",
+      "recorded_at": "2026-10-13T15:27:09.633977+00:00",
+      "kind": "verification",
+      "title": "Fury Remastered custom domain routes pass host checks",
+      "summary": "The furyremastered.com zone and registration are verified, both custom domains are attached to the existing production Worker, and a host HTTPS fetch to the apex returns 200 with a valid certificate. Domain routes and multiplayer origin allowlists pass host checks; new-domain gameplay and multiplayer remain pending current-main CI and deployment.",
+      "details": [
+        "Cloudflare zone ea0921ec471b2a7de78838cdbaeccb78 is active in the existing account and registry registration is verified. Both custom domains were attached through the Cloudflare API to the existing atv-offroad-fury-2 production Worker. A host HTTPS fetch to the apex returned 200 with a valid certificate, and Cloudflare UI confirms Always Use HTTPS is On.",
+        "All 10 authored worker tests pass: exact custom and legacy multiplayer origins are accepted; missing, null, HTTP, www, lookalike and foreign origins are rejected; www requests receive a 308 apex redirect that preserves path and invite query.",
+        "All 4 Rust relay origin tests pass, including the exact origin allowlist. Strict atv-relay Clippy and formatting pass; make verify passes source identity and exclusion checks; 29 release tests pass with one skipped."
+      ],
+      "limitation": "Host evidence only. The new-domain multiplayer code has not been deployed, and current-main CI plus public gameplay and multiplayer verification remain pending. A successful host HTTPS fetch does not verify public integration."
     }
   ],
-  "updated_at": "2026-10-13T15:21:18.520314+00:00",
+  "updated_at": "2026-10-13T15:27:09.633977+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
