@@ -514,11 +514,9 @@ pub fn layout(request: Request) -> Result<Frame> {
                 "255,226,107",
                 w - 60.,
             );
-            let difficulty = ["Easy", "Normal", "Hard"][request.race_difficulty.min(2) as usize];
             let rows = [
                 (format!("Laps: {}", request.race_laps.max(1)), "racelaps"),
                 (format!("CPU riders: {}", request.race_cpu), "racecpu"),
-                (format!("Difficulty: {difficulty}"), "racedifficulty"),
                 ("Start Race".to_string(), "racestart"),
             ];
             for (i, (label, action)) in rows.iter().enumerate() {
@@ -527,7 +525,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                     label,
                     action,
                     [24., 154. + i as f32 * 56., list_w.max(290.), 54.],
-                    request.selection % 4 == i,
+                    request.selection % rows.len() == i,
                 );
             }
             if !portrait {
@@ -1201,10 +1199,7 @@ mod tests {
         r.race_available = true;
         assert_eq!(layout(r).unwrap().choices, ["tracks", "garage", "race"]);
         let f = layout(request("race", 844., 390.)).unwrap();
-        assert_eq!(
-            f.choices,
-            ["racelaps", "racecpu", "racedifficulty", "racestart"]
-        );
+        assert_eq!(f.choices, ["racelaps", "racecpu", "racestart"]);
         for (i, a) in f.hits.iter().enumerate() {
             for b in &f.hits[i + 1..] {
                 let [ax, ay, aw, ah] = a.rect;

@@ -253,10 +253,9 @@ export class Frontend {
         catch(error) { await this.show('race');this.fail(error); } finally { this.busy = false; }
         return;
       }
-      if (['racelaps','racecpu','racedifficulty'].includes(action)) {
+      if (['racelaps','racecpu'].includes(action)) {
         if (action === 'racelaps') this.raceSettings.laps = (this.raceSettings.laps - 1 + direction + 5) % 5 + 1;
-        if (action === 'racecpu') { const options = [0,3,5]; this.raceSettings.cpu = options[(options.indexOf(this.raceSettings.cpu) + direction + 3) % 3]; }
-        if (action === 'racedifficulty') this.raceSettings.difficulty = (this.raceSettings.difficulty + direction + 3) % 3;
+        if (action === 'racecpu') { const options = [0,3,4]; this.raceSettings.cpu = options[(options.indexOf(this.raceSettings.cpu) + direction + 3) % 3]; }
         this.layoutKey = ''; await this.refresh(); return;
       }
       if (['keyboard','controller'].includes(action)) { this.bindingDevice = action; this.bindingPage = 0; this.bindingRow = 0; return this.show('bindings'); }
