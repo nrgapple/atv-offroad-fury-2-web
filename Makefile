@@ -35,6 +35,7 @@ check:
 	$(CARGO) clippy --locked --workspace --all-targets -- -D warnings
 	$(NODE) --test web/input.test.mjs web/content.test.mjs web/touch.test.mjs web/bindings.test.mjs web/music.test.mjs web/audio.test.mjs web/diagnostics.test.mjs web/multiplayer.test.mjs web/motorcycle-presentation.test.mjs web/minimap.test.mjs web/frontend.test.mjs web/install.test.mjs
 	python3 -m py_compile tools/*.py
+	python3 -m unittest discover -s tools -p 'test_worker_build_cache.py'
 
 web:
 	python3 tools/build_web.py
