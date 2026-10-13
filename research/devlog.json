@@ -2828,9 +2828,24 @@
         "Evidence: work/verification/efficiency-public-wreck.log. The public package and gallery snapshot preceding this text-only entry are recorded in port_status.public_release."
       ],
       "limitation": "This is a bounded automated browser route on the tested host environment, not physical-phone behavior, broad stunt coverage, geographic latency, or whole-PS2 animation and physics equivalence."
+    },
+    {
+      "id": "multiplayer-and-deployment-security-guardrails-2ad90d45",
+      "timestamp": "2026-10-13T21:10:27.955668+00:00",
+      "recorded_at": "2026-10-13T21:10:27.955668+00:00",
+      "kind": "verification",
+      "title": "Multiplayer and deployment security guardrails",
+      "summary": "Added bounded multiplayer admission and room cleanup, production browser security headers, loopback-only local proxy defaults, secret scanning, and owner/main deployment controls. Host security and frontend checks pass.",
+      "details": [
+        "Production config uses native per-IP limits, a 512-byte streaming body cap, fail-closed admission, serialized global room/connection budgets, and rollback of failed reservations. A real Wrangler rate-limit run sent 13 rapid creates for one custom code: [201, 11×409, 429], with only one room allocated.",
+        "Unique room identities release quota on retirement; 30-second alarms clear retired storage. The real Worker/Rust Durable Object check confirmed immediate closed-room 410, post-cleanup 404 after 35 seconds, and code reuse with a different owner capability. Cleanup rechecks identity after admission awaits, creation parses before ownership checks, and cleanup alarms retry on admission outages; unvisited legacy closed records are not globally swept.",
+        "Host validation passed security/Worker, relay, secret-scanner, release, frontend, WASM, and Rust relay checks; copied-invite two-client relay and host frontend checks passed. The actual rate-limit and cleanup runtime checks passed.",
+        "GitHub production environment restricts deployment to main. CODEOWNERS routes review to the repository owner but does not enforce approval while branch protection is unavailable. Cloudflare observability redacts query strings and disables invocation logs; the narrowly scoped native Chrome token policy was verified."
+      ],
+      "limitation": "Host-only checkpoint. Public CI, deployment and R2 verification are pending. GitHub rejected private-repository branch protection with HTTP 403 on the current plan; the repository remains private and this rule is not enforced. Resource budgets are not a complete DDoS defense."
     }
   ],
-  "updated_at": "2026-10-13T20:50:45.773994+00:00",
+  "updated_at": "2026-10-13T21:10:27.955668+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {

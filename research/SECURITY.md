@@ -1,0 +1,21 @@
+# Security controls and current evidence
+
+This page records deployment and multiplayer guardrails added in the 2026-10-13 host checkpoint. It describes defense-in-depth controls for the authored browser game and relay; it is not a security audit or a guarantee against denial of service.
+
+## Multiplayer admission and resource bounds
+
+Production room creation and connection use Cloudflare's native rate-limit bindings: 12 creates per IP per minute and 120 connections per IP per minute. Requests are rejected when the client IP, required binding, or serialized Durable Object admission service is unavailable. Streaming request bodies are capped at 512 bytes. The admission object enforces global leased-room and creation budgets (256 rooms, 120 creates/minute, 2,000 creates/day, 2,000 connections/minute, and 100,000 connections/day). Reservations roll back when room creation fails. A real Wrangler native-rate-limiter check sent 13 rapid create requests for one custom code and observed `[201, 11×409, 429]`; only one room was allocated.
+
+Each room has a unique 128-bit instance identity. Retiring a room releases its quota lease. A 30-second cleanup alarm clears retired room storage while serialized with requests through `blockConcurrencyWhile`. A real Wrangler Worker/Rust Durable Object check confirmed a closed room returns 410 immediately, 404 after 35 seconds, and permits reuse of its code with a different owner capability. Cleanup checks the room identity again after admission awaits, so a delayed cleanup cannot erase a newly reused room. Create requests parse their body before ownership checks to avoid concurrent code reuse, and cleanup alarms retry when admission is unavailable. A legacy closed-room record schedules cleanup when touched; unvisited old closed records are not globally swept. These budgets constrain application-level resource use but do not replace Cloudflare edge protections or establish a maximum-cost guarantee under all traffic patterns.
+
+## Deployment and browser controls
+
+The production Worker serves a Content Security Policy and security headers configured for the authored application, WebAssembly and multiplayer WebSockets. The local multiplayer test proxy binds to loopback by default. CI scans the working tree and broader Git history for secrets with redacted findings. `CODEOWNERS` routes review to the repository owner, but does not enforce approval until branch protection is available. Workflow checks and the production environment restrict deployment to the owner and `main`.
+
+The GitHub production environment is API-verified to restrict deployments to `main`. GitHub rejected the branch-protection API request with HTTP 403 because private-repository branch protection requires a higher plan (or a public repository). The repository remains private; branch protection is therefore still pending and is not claimed as enforced. Existing Cloudflare credentials were refreshed without adding scopes. Live Cloudflare observability settings were verified with query-string redaction enabled and invocation logs disabled. The native Chrome token policy was verified to have Account Settings Read and Individual Workers Editor access limited to `atv-offroad-fury-2`; no credential value was accessed, and no rotation was needed.
+
+## Host verification and limits
+
+The host checkpoint passed `make check` (workspace formatting, Rust tests and Clippy, and 95 frontend tests), `make verify`, WebAssembly and Rust relay builds, 19 security/Worker JavaScript tests, 7 relay Rust tests, 2 secret-scanner tests, and 35 release checks (one intentional skip). The hardened Worker frontend was exercised on the host with no CSP errors, keyboard/controller input, Tioga Valley, portrait Caribou Peak, and automatic no-disc resource loading. A copied-invite two-client relay session passed. These results establish host behavior only; production CI, deployment, R2 verification, geographic load, physical phones, and public multiplayer remain separate checks.
+
+The security scanner reduces accidental secret exposure in repository history; it does not inspect external services or guarantee that a secret was never used. Rate budgets and cleanup reduce abuse and stale-room accumulation but are not a complete DDoS defense. The unconfigured branch-protection rule remains a governance gap.

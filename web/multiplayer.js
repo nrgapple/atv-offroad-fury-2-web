@@ -93,7 +93,7 @@ export class Multiplayer {
       const code = (frontend.createCode ?? '').trim().toUpperCase();
       if(code && !/^[A-Z0-9]{8}$/.test(code)) throw new Error('Choose exactly 8 letters or numbers, or leave the code blank.');
       const response = await fetch('/multiplayer/rooms',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});
-      if (!response.ok) throw new Error(response.status===409?'That lobby code is taken. Choose another code.':`Lobby creation failed (${response.status}).`);
+      if (!response.ok) throw new Error(response.status===409?'That lobby code is taken. Choose another code.':response.status===429?'Too many lobby attempts or multiplayer is at capacity. Try again shortly.':`Lobby creation failed (${response.status}).`);
       const {code:createdCode,hostToken} = await response.json();
       try { globalThis.sessionStorage?.setItem('atv-host-session',JSON.stringify({code:createdCode,hostToken})); } catch { /* Memory-only host recovery remains available. */ }
       await frontend.show('lobby'); await this.connect(createdCode,frontend,hostToken);

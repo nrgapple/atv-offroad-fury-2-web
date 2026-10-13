@@ -97,12 +97,12 @@ test('open tabs can request their immutable historical manifest after another re
 
 test('multiplayer requests require same-origin and forward only to Rust service', async () => {
   let seen;
-  const env = {MULTIPLAYER:{fetch:async req=>{seen=req;return new Response('rust relay');}}};
+  const env = {MULTIPLAYER_GUARDS:"host-only",MULTIPLAYER:{fetch:async req=>{seen=req;return new Response('rust relay');}}};
   assert.equal((await worker.fetch(request('/multiplayer/rooms',{method:'POST'}),env)).status,403);
   assert.equal((await worker.fetch(request('/multiplayer/rooms',{method:'POST',headers:{Origin:'https://foreign.example'}}),env)).status,403);
   const req=request('/multiplayer/rooms',{method:'POST',headers:{Origin:'https://game.example'}});
   assert.equal(await (await worker.fetch(req,env)).text(),'rust relay');
-  assert.equal(seen,req);
+  assert.equal(seen.url, req.url); assert.equal(seen.method, req.method);
   assert.equal((await worker.fetch(request('/multiplayer/rooms',{method:'DELETE',headers:{Origin:'https://game.example'}}),env)).status,405);
 });
 

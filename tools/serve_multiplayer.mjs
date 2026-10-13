@@ -16,4 +16,4 @@ server.on('upgrade',(req,socket,head)=>{
   upstream.on('error',()=>socket.destroy());socket.on('error',()=>upstream.destroy());socket.on('close',()=>upstream.destroy());
  });proxy.on('response',response=>{socket.write(`HTTP/1.1 ${response.statusCode} Rejected\r\nConnection: close\r\n\r\n`);socket.end();});proxy.on('error',()=>socket.destroy());proxy.end();
 });
-server.listen(port,process.env.BIND??'0.0.0.0',()=>console.log(`Host-only multiplayer test proxy on port ${port}`));
+server.listen(port,process.env.BIND??'127.0.0.1',()=>console.log(`Host-only multiplayer test proxy on port ${port}`));
