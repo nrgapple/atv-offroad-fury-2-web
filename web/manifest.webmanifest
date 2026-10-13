@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "ATV Offroad Fury 2",
-  "short_name": "ATV Fury 2",
+  "name": "Fury Remastered",
+  "short_name": "Fury Remastered",
   "start_url": "/play.html",
   "scope": "/",
   "display": "standalone",

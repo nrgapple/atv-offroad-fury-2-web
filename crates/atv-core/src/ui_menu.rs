@@ -372,7 +372,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         f.rect([0., 24., edge - 8., 48.], 0., "#c8554b80", "#9c262c50", "");
     }
     let title = match request.page.as_str() {
-        "title" => "ATV Offroad Fury 2",
+        "title" => "Fury Remastered",
         "main" => "Main Menu",
         "single" => "Single Player",
         "multiplayer" => "Multiplayer",
@@ -410,13 +410,13 @@ pub fn layout(request: Request) -> Result<Frame> {
             if request.menu_logo {
                 let width = (w - 60.).min(540.);
                 f.draw.push(Draw::Artwork {
-                    image: "original-logo",
-                    rect: [30., y + 30., width, width / 3.],
+                    image: "brand-logo",
+                    rect: [30., (y + 15.).min(h - 157. - width / 3.), width, width / 3.],
                 });
             } else {
-                f.text("ATV", [34., y], 3.2, HEADER_FONT, "232,232,232", w - 68.);
+                f.text("FURY", [34., y], 3.2, HEADER_FONT, "232,232,232", w - 68.);
                 f.text(
-                    "OFFROAD FURY 2",
+                    "REMASTERED",
                     [36., y + 115.],
                     1.25,
                     HEADER_FONT,

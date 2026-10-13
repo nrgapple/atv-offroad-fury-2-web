@@ -159,9 +159,10 @@ export class Frontend {
       this.track = Math.max(0, this.tracks.findIndex(t => t.id === this.lastFreestyleEnvironment));
       for (const name of [fontName, 'tradegothic_boldcondensed_22soff', 'tradegothic_boldcondenseditalic_-1fs_32ds']) await this.font(name);
       await this.archive('/UI/RESOURCE/PAGEA/PAGE01.RES');
-      const logoA = await this.image('mmlogo01'), logoB = await this.image('mmlogo02');
-      const logo = document.createElement('canvas'); logo.width = logoA.width + logoB.width; logo.height = Math.max(logoA.height,logoB.height);
-      logo.getContext('2d').drawImage(logoA,0,0); logo.getContext('2d').drawImage(logoB,logoA.width,0); this.images.set('original-logo',logo);
+      // Authored vector branding is independent of recovered disc textures.
+      // Keep the text fallback usable if the static asset cannot be decoded.
+      const logo = new Image(); logo.src = 'fury-remastered.svg';
+      try { await logo.decode(); this.images.set('brand-logo', logo); } catch { /* Rust text fallback */ }
       // The thumbnail arrives through a separately validated R2 package. Older
       // manifests can still open every menu while that content update publishes.
       const {files} = await this.content;
@@ -328,7 +329,7 @@ export class Frontend {
       minimap_orientation:this.minimapSettings?.orientation ?? 'north-up',minimap_shape:this.minimapSettings?.shape ?? 'circle',minimap_corner:this.minimapSettings?.corner ?? 'top-right',minimap_enabled:this.minimapSettings?.enabled ?? true,minimap_size:this.minimapSettings?.size ?? 160,funny_crashes:this.crashSettings?.enabled ?? true,mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
       music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
-      music_page:this.musicPage,music_status:musicState ? `${musicState.enabled ? 'On' : 'Off'} / Volume ${Math.round(musicState.volume * 100)}% / ${musicState.title || 'Choose a song'}` : '',music_enabled:musicState?.enabled ?? true,music_volume:Math.round((musicState?.volume ?? .7)*100),menu_logo:this.images.has('original-logo'),menu_atv:this.images.has('multi_atv01')};
+      music_page:this.musicPage,music_status:musicState ? `${musicState.enabled ? 'On' : 'Off'} / Volume ${Math.round(musicState.volume * 100)}% / ${musicState.title || 'Choose a song'}` : '',music_enabled:musicState?.enabled ?? true,music_volume:Math.round((musicState?.volume ?? .7)*100),menu_logo:this.images.has('brand-logo'),menu_atv:this.images.has('multi_atv01')};
     const key = JSON.stringify(request);
     if (this.layoutKey === key) return;
     this.layoutPending = true;
