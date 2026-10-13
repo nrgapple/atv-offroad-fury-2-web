@@ -801,3 +801,36 @@ uses a separate render-only fixture; it is not proof of a complete original
 course replay. CPU route motion is authored; original AI physics, passing and
 rider collisions remain unfinished. The published picture retains its honest
 host-capture caption. See [race evidence](RACING.md).
+
+## Public late-join and multiplayer visibility release (2026-10-13)
+
+Main `551d7fd890946f18cc8ef8430c12f843138fe758` passed CI
+[38446510103](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38446510103).
+The validated artifact and `/deployment.json` identify the same commit on both
+`https://furyremastered.com/` and
+`https://atv-offroad-fury-2.champtoday.workers.dev/`. Full HTTPS verification
+matched 39 authored/static files and all 446 served objects by hash, size and
+MIME. The separately validated R2 package contains 447 approved objects totaling
+338,648,873 bytes; three changed objects were uploaded: the larger-label host
+capture, Players capture and gallery. The verified gallery snapshot contains
+160 entries and 131 screenshots before this text-only record.
+
+The public two-client feature run preserved custom lobby code `FV70MYWD`, joined
+a guest after play started, and rendered 13 remote draws on both clients. The
+paused Players spawn target measured 342×64 pixels at (24,96), placing the guest
+about 10 feet from the host. Owner-local contact counts reached 5 and 3. A moving
+flatbed run sampled 20 positions with a maximum train-relative error of 1.29715
+feet; host departure cleaned up guests. Fourteen public relay cases pass,
+including custom-code and duplicate-code handling. The deployed relay WASM
+SHA-256 is
+`8776744065b1b42d6ac9faf13034c0c39d7246202ea3476646400b622b634753`.
+
+The public four-browser route selected quads 1, 14, 26 and 2. Each rendered
+39 remote draws and three engine voices; every rider's movement reached all
+observers, and host end cleared guest rooms, models and audio without HTTP or page
+errors. These automated tests ran in the tested browser/host environment; they do
+not establish physical-phone behavior or geographically separate network latency.
+The shared train clock freezes when its host pauses, and contacts remain
+owner-local without server physics reconciliation. Racing, competitive authority,
+host migration and full original-game parity remain unfinished. See
+[implementation limits](MULTIPLAYER.md).

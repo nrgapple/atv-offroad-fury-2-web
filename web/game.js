@@ -59,7 +59,7 @@ const diagnostics = { ready: false, frames: 0, vertices: 0, triangles: 0, chunks
 let audio = new GameAudio(codec, message => { diagnostics.audioError = message; status(`Audio: ${message}`, true); });
 const stats = new DiagnosticsOverlay({ snapshot: () => ({ ...diagnostics, minimap: minimap.snapshot(), frame: simFrame, paused: simulationPaused(), menuOpen, focused, resolution: [canvas.width, canvas.height] }) });
 // Read-only snapshot for verification; does not expose the locally opened file.
-Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, minimap: minimap.snapshot(), funnyCrashes, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()]} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
+Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, minimap: minimap.snapshot(), funnyCrashes, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()],reconnecting:multiplayer.reconnecting,lastDisconnect:multiplayer.lastDisconnect,droppedSnapshots:multiplayer.droppedSnapshots} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
 worker.onmessage = ({ data }) => {
   if (data.startupError) { status(data.startupError, true); return; }
   const request = pending.get(data.id);
@@ -1590,7 +1590,7 @@ window.addEventListener('pagehide', event => {
     // Back/forward cache retains this page. Its live Rust worker and audio
     // resources must survive too; closing them leaves a restored frozen ATV.
     pageSuspended = true; focused = false; syncAudio();
-  } else { multiplayer?.close(); audio.close(); worker.terminate(); }
+  } else { multiplayer?.close(true); audio.close(); worker.terminate(); }
 });
 window.addEventListener('pageshow', event => {
   if (!event.persisted || !pageSuspended) return;

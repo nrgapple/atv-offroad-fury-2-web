@@ -1059,3 +1059,28 @@ eight-character codes pass the actual browser/relay gates. Labels are 22px white
 with black outline, no background. Final host run: 404 Rust/91 JS tests, 14 relay
 cases, four-client replication/cleanup, contacts 4/3 and 20 train samples with
 0.933ft maximum relative error. Public delivery is pending.
+
+## Public late-join and multiplayer visibility checkpoint
+
+Main `551d7fd890946f18cc8ef8430c12f843138fe758` passed CI 38446510103 and
+public verification on `furyremastered.com` and the Workers app. The validated
+artifact and deployment identity match. Full HTTPS verification matches 39
+authored/static files and 446 served objects; the R2 package contains 447
+approved objects totaling 338,648,873 bytes, with three uploads for the label-v2
+host capture, Players capture and gallery.
+
+Public two-client checks preserve custom code FV70MYWD, admit a late rider, render
+13 remote draws per client, spawn the guest about 10 feet from the host through a
+342×64 Players target, record owner-local contacts 5/3 and track a moving flatbed
+within 1.29715 feet across 20 samples. Fourteen relay cases pass, including custom
+and duplicate-code handling. The relay WASM SHA-256 is
+`8776744065b1b42d6ac9faf13034c0c39d7246202ea3476646400b622b634753`.
+
+Four public browsers using quads 1/14/26/2 each render 39 remote draws and three
+engine voices; every rider's movement reaches the other observers, and host end
+clears guest rooms, models and audio. No HTTP/page errors occurred. These are
+automated browser checks, not physical-phone or geographic-latency evidence.
+Contacts remain owner-local without server reconciliation, and the shared train
+clock freezes when its host pauses. Racing, authority, migration and full-game
+parity remain unfinished. See [multiplayer evidence](research/MULTIPLAYER.md) and
+[deployment record](research/DEPLOYMENT.md).

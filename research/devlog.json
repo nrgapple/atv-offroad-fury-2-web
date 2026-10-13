@@ -2647,6 +2647,34 @@
         "Release merge 6f24bc2e48872010d870be8cf33b8a20fc9ae519 passed CI 38449491125. The public asset-hash verification confirmed the deployed package for that commit."
       ],
       "limitation": "Public browser verification covers the tested menu and multiplayer flows; physical phones and complete original-game behavior remain unverified."
+    },
+    {
+      "id": "multiplayer-late-join-and-rider-visibility-pass-public-15093498",
+      "timestamp": "2026-10-13T18:32:04.189818+00:00",
+      "recorded_at": "2026-10-13T18:32:04.189818+00:00",
+      "kind": "verification",
+      "title": "Multiplayer late join and rider visibility pass public verification",
+      "summary": "Main 551d7fd passes public late-join, custom-code, nearby-spawn, owner-local contact, moving-train and four-client multiplayer gates on Cloudflare.",
+      "details": [
+        "CI 38446510103 succeeded; deployment.json on both furyremastered.com and the Workers production URL identifies commit 551d7fd890946f18cc8ef8430c12f843138fe758. The deployed relay WASM SHA-256 is 8776744065b1b42d6ac9faf13034c0c39d7246202ea3476646400b622b634753.",
+        "The copied custom lobby code FV70MYWD was preserved. A late guest joined after the ride began; both clients rendered 13 remote draws. Measured host phases were 13.4333 and 13.404803 seconds. The paused Players menu spawn target measured 342×64 pixels at (24,96), placing the guest about 10 feet from the host.",
+        "Both owners recorded local contact responses (5 and 3). Across 20 moving-flatbed samples, maximum train-relative position error was 1.29715 feet. Host departure cleaned up the guests. The public relay suite passed 14 cases, including custom-code and duplicate-code handling.",
+        "The public four-browser run selected quads 1, 14, 26 and 2; each client rendered 39 remote draws and three engine voices. Every rider movement replicated to all observers, and host end cleared guest rooms, models and audio. No HTTP or page errors occurred."
+      ],
+      "limitation": "Automated public browser verification on the tested host/browser setup; physical phones, geographically separated latency, server-side physics reconciliation, competitive authority, host migration and full original-game parity are not established. The shared train clock freezes while its host is paused. The companion larger-label screenshot remains a host capture."
+    },
+    {
+      "id": "lobby-recovery-and-reusable-closed-codes-c10743b9",
+      "timestamp": "2026-10-13T18:52:17.817199+00:00",
+      "recorded_at": "2026-10-13T18:52:17.817199+00:00",
+      "kind": "build",
+      "title": "Lobby recovery and reusable closed codes",
+      "summary": "Closed lobby codes can be recreated with fresh host authority. Brief host transport drops now preserve the room while the browser reconnects.",
+      "details": [
+        "Host verification: 16 live relay gates passed, including reuse, old-token rejection, replacement, recovery, and grace expiry with an active guest. Browser recovery completed in under a second without restarting Arlington; late join, minimap, spawning, contacts and train rider sync passed. Four-player movement and explicit host-end cleanup passed.",
+        "Structured lifecycle diagnostics are retained in Workers Logs; custom logs exclude names, credentials, packet bodies and raw URLs. Incoming old-pose bursts are bounded and dropped while reserving room for control messages."
+      ],
+      "limitation": "Pending CI and public verification. The original disconnect cause remains unproven. Recovery covers brief host transport failures; explicit leave, invalid traffic and the recovery deadline still end the room."
     }
   ],
   "updated_at": "2026-10-13T18:52:29.955225+00:00",

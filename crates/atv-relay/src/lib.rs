@@ -10,9 +10,16 @@ const ROOM_KEY: &str = "room";
 const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const MAX_AGE_MS: f64 = 12. * 60. * 60. * 1000.;
 const IDLE_MS: f64 = 60_000.;
+const HOST_GRACE_MS: f64 = 30_000.;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Room {
+    #[serde(default)]
+    generation: u32,
+    #[serde(default)]
+    host_disconnected_ms: Option<f64>,
+    #[serde(default)]
+    host_player: Option<Participant>,
     code: RoomCode,
     host_token: String,
     created_ms: f64,
@@ -24,6 +31,8 @@ struct Room {
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Connection {
+    #[serde(default)]
+    generation: u32,
     active: bool,
     peer: u8,
     player: Option<Participant>,
@@ -46,6 +55,18 @@ impl Connection {
         self.last_seen_ms = now;
         self.messages <= 120 && self.bytes <= 1024 * 1024
     }
+}
+
+fn recoverable_close(code: usize, reason: &str) -> bool {
+    matches!(code, 1001 | 1005 | 1006 | 1011 | 1012 | 1013)
+        || (code == 1000 && reason == "Connection timed out")
+}
+fn room_reusable(room: &Room, instant: f64) -> bool {
+    room.closed
+        || instant - room.created_ms > MAX_AGE_MS
+        || room
+            .host_disconnected_ms
+            .is_some_and(|t| instant - t >= HOST_GRACE_MS)
 }
 
 fn code_from_path(path: &str) -> Option<RoomCode> {
@@ -146,6 +167,9 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
             init.method = Method::Post;
             init.body = Some(
                 serde_json::to_string(&Room {
+                    generation: 0,
+                    host_disconnected_ms: None,
+                    host_player: None,
                     code,
                     host_token: token.clone(),
                     created_ms: now(),
@@ -196,6 +220,7 @@ pub struct LobbyRoom {
 
 impl LobbyRoom {
     fn connections(&self) -> Result<Vec<(WebSocket, Connection)>> {
+        let generation = self.room.borrow().as_ref().map_or(0, |r| r.generation);
         self.state
             .get_websockets()
             .into_iter()
@@ -206,7 +231,11 @@ impl LobbyRoom {
                 Ok((ws, connection))
             })
             .collect::<Result<Vec<_>>>()
-            .map(|all| all.into_iter().filter(|(_, c)| c.active).collect())
+            .map(|all| {
+                all.into_iter()
+                    .filter(|(_, c)| c.active && c.generation == generation)
+                    .collect()
+            })
     }
 
     fn lobby(&self, except: Option<&WebSocket>) -> Result<Lobby> {
@@ -218,6 +247,12 @@ impl LobbyRoom {
             .filter(|(ws, _)| except != Some(ws))
             .filter_map(|(_, connection)| connection.player)
             .collect::<Vec<_>>();
+        // Keep host identity valid while its authenticated socket recovers.
+        if !players.iter().any(|p| p.id == 0)
+            && let Some(player) = &room.host_player
+        {
+            players.push(player.clone());
+        }
         players.sort_by_key(|player| player.id);
         Ok(Lobby {
             host: 0,
@@ -228,13 +263,52 @@ impl LobbyRoom {
         })
     }
 
+    /// Lifecycle-only diagnostics: no names, credentials, packet bodies or URLs.
+    fn record(
+        &self,
+        event: &str,
+        ws: Option<&WebSocket>,
+        reason: &str,
+        code: Option<usize>,
+        clean: Option<bool>,
+    ) {
+        let room = self.room.borrow();
+        let connection =
+            ws.and_then(|socket| socket.deserialize_attachment::<Connection>().ok().flatten());
+        console_log!(
+            "{}",
+            serde_json::json!({
+                "service": "atv-multiplayer", "event": event,
+                "commit": self.env.var("BUILD_COMMIT").map(|v|v.to_string()).unwrap_or_else(|_|"host-only".into()),
+                "room": room.as_ref().map(|r| String::from_utf8_lossy(&r.code).into_owned()),
+                "started": room.as_ref().map(|r| r.started), "time_ms": now(),
+                "peer": connection.as_ref().map(|c| c.peer), "code": code, "clean": clean,
+                "reason": reason.chars().take(120).collect::<String>(),
+                "idle_ms": connection.as_ref().map(|c| (now()-c.last_seen_ms).max(0.)),
+                "window_messages": connection.as_ref().map(|c| c.messages),
+                "window_bytes": connection.as_ref().map(|c| c.bytes),
+                "last_sequence": connection.as_ref().and_then(|c| c.sequence)
+            })
+        );
+    }
+    fn close_socket(&self, ws: &WebSocket, code: u16, reason: &str) -> Result<()> {
+        self.record(
+            "socket_close_requested",
+            Some(ws),
+            reason,
+            Some(code as usize),
+            None,
+        );
+        ws.close(Some(code), Some(reason))
+    }
+
     fn broadcast(&self, packet: &Packet, except: Option<&WebSocket>) -> Result<()> {
         let bytes = atv_net::encode(packet).map_err(|e| Error::RustError(e.to_string()))?;
         for (ws, connection) in self.connections()? {
             if except != Some(&ws) && connection.player.is_some() {
                 // A failed peer send must not turn another rider's valid message into an error.
                 if ws.send_with_bytes(&bytes).is_err() {
-                    let _ = ws.close(Some(1011), Some("Send failed"));
+                    let _ = self.close_socket(&ws, 1011, "Send failed");
                 }
             }
         }
@@ -245,6 +319,7 @@ impl LobbyRoom {
         if self.room.borrow().as_ref().is_none_or(|room| room.closed) {
             return Ok(());
         }
+        self.record("room_closed", None, reason, None, None);
         let saved = {
             let mut room = self.room.borrow_mut();
             if let Some(room) = room.as_mut() {
@@ -262,18 +337,39 @@ impl LobbyRoom {
         Ok(())
     }
 
-    async fn departed(&self, ws: &WebSocket) -> Result<()> {
+    async fn departed(&self, ws: &WebSocket, recoverable: bool) -> Result<()> {
         if let Some(mut connection) = ws.deserialize_attachment::<Connection>()? {
             if !connection.active {
                 return Ok(());
             }
             connection.active = false;
             ws.serialize_attachment(&connection)?;
-            if self.room.borrow().as_ref().is_none_or(|room| room.closed) {
+            if self
+                .room
+                .borrow()
+                .as_ref()
+                .is_none_or(|room| room.closed || room.generation != connection.generation)
+            {
                 return Ok(());
             }
             if connection.peer == 0 {
-                return self.finish("Host left the room").await;
+                if !recoverable || connection.player.is_none() {
+                    return self.finish("Host left the room").await;
+                }
+                let mut room = self.room.borrow().clone().unwrap();
+                room.host_disconnected_ms = Some(now());
+                room.host_player = connection.player;
+                *self.room.borrow_mut() = Some(room.clone());
+                self.state.storage().put(ROOM_KEY, room).await?;
+                self.record(
+                    "host_reconnect_grace",
+                    Some(ws),
+                    "Waiting up to 30 seconds",
+                    None,
+                    None,
+                );
+                self.state.storage().set_alarm(5_000_i64).await?;
+                return Ok(());
             }
             self.bump_epoch().await?;
             self.broadcast(
@@ -315,12 +411,25 @@ impl DurableObject for LobbyRoom {
 
     async fn fetch(&self, mut req: Request) -> Result<Response> {
         if req.path() == "/create" && req.method() == Method::Post {
-            if self.room.borrow().is_some() {
+            let previous = self.room.borrow().clone();
+            if previous
+                .as_ref()
+                .is_some_and(|room| !room_reusable(room, now()))
+            {
+                self.record("connection_rejected", None, "Room exists", Some(409), None);
                 return Response::error("Room exists", 409);
             }
-            let room: Room = req.json().await?;
+            let mut room: Room = req.json().await?;
+            room.generation = previous
+                .as_ref()
+                .map_or(1, |r| r.generation.wrapping_add(1));
+            // Old close events must never terminate a newly reused code.
+            for socket in self.state.get_websockets() {
+                let _ = socket.close(Some(1000), Some("Room replaced"));
+            }
+            *self.room.borrow_mut() = Some(room.clone());
             self.state.storage().put(ROOM_KEY, &room).await?;
-            *self.room.borrow_mut() = Some(room);
+            self.record("room_created", None, "", None, None);
             self.state.storage().set_alarm(30_000_i64).await?;
             return Ok(Response::empty()?.with_status(201));
         }
@@ -333,7 +442,8 @@ impl DurableObject for LobbyRoom {
         let Some(room) = self.room.borrow().clone() else {
             return Response::error("Room does not exist", 404);
         };
-        if room.code != code || room.closed || now() - room.created_ms > MAX_AGE_MS {
+        if room.code != code || room_reusable(&room, now()) {
+            self.record("connection_rejected", None, "Room ended", Some(410), None);
             return Response::error("Room ended", 410);
         }
         if req
@@ -350,23 +460,48 @@ impl DurableObject for LobbyRoom {
             .query_pairs()
             .find(|(k, _)| k == "host")
             .map(|(_, v)| v.into_owned());
-        let connections = self.connections()?;
+        let mut connections = self.connections()?;
+        let is_host = host_token.as_deref() == Some(room.host_token.as_str());
+        if is_host {
+            // The owner capability can replace its broken connection, even if
+            // the old transport has not delivered a close callback yet.
+            for (socket, connection) in &mut connections {
+                if connection.peer == 0 {
+                    connection.active = false;
+                    socket.serialize_attachment(&connection)?;
+                    let _ = self.close_socket(socket, 1000, "Host connection replaced");
+                }
+            }
+            connections.retain(|(_, c)| c.active);
+        }
         if connections.len() >= MAX_PLAYERS {
+            self.record("connection_rejected", None, "Room is full", Some(409), None);
             return Response::error("Room is full", 409);
         }
-        let peer = if host_token.as_deref() == Some(room.host_token.as_str()) {
-            if connections.iter().any(|(_, c)| c.peer == 0) {
-                return Response::error("Host already connected", 409);
-            }
+        let peer = if is_host {
             0
         } else {
             if host_token.is_some() {
+                self.record(
+                    "connection_rejected",
+                    None,
+                    "Invalid host token",
+                    Some(403),
+                    None,
+                );
                 return Response::error("Invalid host token", 403);
             }
             if !connections
                 .iter()
                 .any(|(_, c)| c.peer == 0 && c.player.is_some())
             {
+                self.record(
+                    "connection_rejected",
+                    None,
+                    "Host is not connected",
+                    Some(409),
+                    None,
+                );
                 return Response::error("Host is not connected", 409);
             }
             (1..MAX_PLAYERS as u8)
@@ -376,6 +511,7 @@ impl DurableObject for LobbyRoom {
         let pair = WebSocketPair::new()?;
         let instant = now();
         pair.server.serialize_attachment(Connection {
+            generation: room.generation,
             active: true,
             peer,
             player: None,
@@ -395,40 +531,57 @@ impl DurableObject for LobbyRoom {
         message: WebSocketIncomingMessage,
     ) -> Result<()> {
         let Some(room) = self.room.borrow().clone().filter(|r| !r.closed) else {
-            return ws.close(Some(1000), Some("Room ended"));
+            return self.close_socket(&ws, 1000, "Room ended");
         };
         let WebSocketIncomingMessage::Binary(bytes) = message else {
-            return ws.close(Some(1003), Some("Binary protocol required"));
+            return self.close_socket(&ws, 1003, "Binary protocol required");
         };
         let Some(mut connection) = ws.deserialize_attachment::<Connection>()? else {
-            return ws.close(Some(1008), Some("Connection missing"));
+            return self.close_socket(&ws, 1008, "Connection missing");
         };
+        if connection.generation != room.generation {
+            return self.close_socket(&ws, 1000, "Room replaced");
+        }
         if !connection.active {
-            return ws.close(Some(1000), Some("Disconnected"));
+            return self.close_socket(&ws, 1000, "Disconnected");
         }
         if !connection.account(now(), bytes.len()) {
-            return ws.close(Some(1008), Some("Message rate exceeded"));
+            return self.close_socket(&ws, 1008, "Message rate exceeded");
         }
         let packet = match atv_net::decode(&bytes) {
             Ok(packet) => packet,
             Err(atv_net::Error::UnsupportedVersion) => {
-                return ws.close(
-                    Some(1008),
-                    Some("Game updated. Reload the page to join multiplayer."),
+                return self.close_socket(
+                    &ws,
+                    1008,
+                    "Game updated. Reload the page to join multiplayer.",
                 );
             }
-            Err(_) => return ws.close(Some(1008), Some("Invalid multiplayer packet")),
+            Err(_) => return self.close_socket(&ws, 1008, "Invalid multiplayer packet"),
         };
         match packet {
             Packet::Join { code, mut player }
                 if connection.player.is_none() && code == room.code =>
             {
                 if !(1..=26).contains(&player.atv_model) || player.rider_model > 1 {
-                    return ws.close(Some(1008), Some("Unknown actor model"));
+                    return self.close_socket(&ws, 1008, "Unknown actor model");
                 }
                 player.id = connection.peer;
-                connection.player = Some(player);
+                connection.player = Some(player.clone());
                 ws.serialize_attachment(&connection)?;
+                if connection.peer == 0 {
+                    if room.host_player.is_some() {
+                        // A resumed client starts its pose sequence at zero.
+                        // Clear observers' old buffers before its new snapshots.
+                        self.broadcast(&Packet::Leave { peer: 0 }, Some(&ws))?;
+                    }
+                    let mut resumed = room.clone();
+                    resumed.host_disconnected_ms = None;
+                    resumed.host_player = Some(player);
+                    *self.room.borrow_mut() = Some(resumed.clone());
+                    self.state.storage().put(ROOM_KEY, resumed).await?;
+                }
+                self.record("peer_joined", Some(&ws), "", None, None);
                 self.bump_epoch().await?;
                 let lobby = self.lobby(None)?;
                 send(
@@ -453,7 +606,7 @@ impl DurableObject for LobbyRoom {
                 if snapshot.atv_model != player.atv_model
                     || snapshot.rider_model != player.rider_model
                 {
-                    return ws.close(Some(1008), Some("Actor model changed"));
+                    return self.close_socket(&ws, 1008, "Actor model changed");
                 }
                 if connection
                     .sequence
@@ -473,7 +626,7 @@ impl DurableObject for LobbyRoom {
                 started,
             } if connection.peer == 0 && connection.player.is_some() => {
                 if !atv_net::valid_map(map) {
-                    return ws.close(Some(1008), Some("Unknown environment"));
+                    return self.close_socket(&ws, 1008, "Unknown environment");
                 }
                 if epoch != room.epoch || (room.started && (map != room.map || !started)) {
                     send(&ws, &Packet::Lobby(self.lobby(None)?))?;
@@ -486,10 +639,21 @@ impl DurableObject for LobbyRoom {
                 next.epoch = next.epoch.wrapping_add(1);
                 self.state.storage().put(ROOM_KEY, &next).await?;
                 *self.room.borrow_mut() = Some(next);
+                self.record(
+                    if started {
+                        "lobby_started"
+                    } else {
+                        "lobby_updated"
+                    },
+                    Some(&ws),
+                    "",
+                    None,
+                    None,
+                );
                 self.broadcast(&Packet::Lobby(self.lobby(None)?), None)?;
             }
-            Packet::Leave { .. } => return ws.close(Some(1000), Some("Left room")),
-            _ => return ws.close(Some(1008), Some("Message not permitted")),
+            Packet::Leave { .. } => return self.close_socket(&ws, 1000, "Left room"),
+            _ => return self.close_socket(&ws, 1008, "Message not permitted"),
         }
         ws.serialize_attachment(connection)?;
         Ok(())
@@ -498,17 +662,23 @@ impl DurableObject for LobbyRoom {
     async fn websocket_close(
         &self,
         ws: WebSocket,
-        _code: usize,
-        _reason: String,
-        _clean: bool,
+        code: usize,
+        reason: String,
+        clean: bool,
     ) -> Result<()> {
-        let _ = ws.close(Some(1000), Some("Disconnected"));
-        self.departed(&ws).await
+        self.record("socket_closed", Some(&ws), &reason, Some(code), Some(clean));
+        let recoverable = recoverable_close(code, &reason);
+        let _ = if recoverable {
+            ws.close(Some(1012), Some("Connection interrupted"))
+        } else {
+            ws.close(Some(1000), Some("Disconnected"))
+        };
+        self.departed(&ws, recoverable).await
     }
 
     async fn websocket_error(&self, ws: WebSocket, _error: Error) -> Result<()> {
-        let _ = ws.close(Some(1011), Some("Socket error"));
-        self.departed(&ws).await
+        let _ = self.close_socket(&ws, 1011, "Socket error");
+        self.departed(&ws, true).await
     }
 
     async fn alarm(&self) -> Result<Response> {
@@ -519,21 +689,39 @@ impl DurableObject for LobbyRoom {
             return Response::empty();
         }
         let instant = now();
-        if instant - room.created_ms > MAX_AGE_MS {
+        if room
+            .host_disconnected_ms
+            .is_some_and(|t| instant - t >= HOST_GRACE_MS)
+        {
+            self.finish("Host connection could not be restored").await?;
+        } else if instant - room.created_ms > MAX_AGE_MS {
             self.finish("Room expired").await?;
         } else {
             let connections = self.connections()?;
-            if connections.is_empty() && instant - room.created_ms > IDLE_MS {
+            if connections.is_empty()
+                && room.host_disconnected_ms.is_none()
+                && instant - room.created_ms > IDLE_MS
+            {
                 self.finish("Empty room expired").await?;
             } else {
                 for (ws, connection) in connections {
                     if instant - connection.last_seen_ms > IDLE_MS {
-                        let _ = ws.close(Some(1000), Some("Connection timed out"));
-                        self.departed(&ws).await?;
+                        let _ = self.close_socket(&ws, 1000, "Connection timed out");
+                        self.departed(&ws, true).await?;
                     }
                 }
                 if self.room.borrow().as_ref().is_some_and(|r| !r.closed) {
-                    self.state.storage().set_alarm(30_000_i64).await?;
+                    let delay = if self
+                        .room
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|r| r.host_disconnected_ms.is_some())
+                    {
+                        5_000_i64
+                    } else {
+                        30_000_i64
+                    };
+                    self.state.storage().set_alarm(delay).await?;
                 }
             }
         }
@@ -544,6 +732,41 @@ impl DurableObject for LobbyRoom {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_room_schema_and_reuse_deadlines_preserve_active_owners() {
+        let mut room: Room = serde_json::from_value(serde_json::json!({
+            "code": b"ABCD2345", "host_token":"secret", "created_ms":100.,
+            "closed":false,"epoch":1,"map":8,"started":true
+        }))
+        .unwrap();
+        assert_eq!(room.generation, 0);
+        assert!(room.host_player.is_none());
+        assert!(!room_reusable(&room, 101.));
+        room.host_disconnected_ms = Some(1000.);
+        assert!(!room_reusable(&room, 1000. + HOST_GRACE_MS - 1.));
+        assert!(room_reusable(&room, 1000. + HOST_GRACE_MS));
+        room.host_disconnected_ms = None;
+        assert!(room_reusable(&room, 101. + MAX_AGE_MS));
+        room.closed = true;
+        assert!(room_reusable(&room, 101.));
+    }
+
+    #[test]
+    fn only_transport_failures_allow_host_recovery() {
+        for code in [1001, 1005, 1006, 1011, 1012, 1013] {
+            assert!(recoverable_close(code, ""));
+        }
+        assert!(recoverable_close(1000, "Connection timed out"));
+        for (code, reason) in [
+            (1000, "Left lobby"),
+            (1000, ""),
+            (1008, "Rate limit"),
+            (1003, "Binary protocol required"),
+        ] {
+            assert!(!recoverable_close(code, reason));
+        }
+    }
 
     #[test]
     fn game_origins_accept_only_explicit_hosts() {
@@ -593,6 +816,7 @@ mod tests {
     #[test]
     fn per_connection_rate_budget_recovers_and_bytes_are_bounded() {
         let mut connection = Connection {
+            generation: 1,
             active: true,
             peer: 0,
             player: None,
@@ -613,6 +837,9 @@ mod tests {
     #[test]
     fn hibernation_metadata_roundtrip_preserves_authority_sequence_and_rate() {
         let room = Room {
+            generation: 1,
+            host_disconnected_ms: None,
+            host_player: None,
             code: *b"ABCD2345",
             host_token: "secret".into(),
             created_ms: 123.,
@@ -622,6 +849,7 @@ mod tests {
             started: true,
         };
         let connection = Connection {
+            generation: 1,
             active: true,
             peer: 2,
             player: Some(Participant {
