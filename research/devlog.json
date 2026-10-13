@@ -2843,9 +2843,24 @@
         "GitHub production environment restricts deployment to main. CODEOWNERS routes review to the repository owner but does not enforce approval while branch protection is unavailable. Cloudflare observability redacts query strings and disables invocation logs; the narrowly scoped native Chrome token policy was verified."
       ],
       "limitation": "Host-only checkpoint. Public CI, deployment and R2 verification are pending. GitHub rejected private-repository branch protection with HTTP 403 on the current plan; the repository remains private and this rule is not enforced. Resource budgets are not a complete DDoS defense."
+    },
+    {
+      "id": "public-multiplayer-security-and-deployment-verificatio-a505fff7",
+      "timestamp": "2026-10-13T21:25:51.537433+00:00",
+      "recorded_at": "2026-10-13T21:25:51.537433+00:00",
+      "kind": "verification",
+      "title": "Public multiplayer security and deployment verification",
+      "summary": "Security checkpoint 3928e38 is deployed on both public domains. Public frontend, relay, copied-invite multiplayer, request guardrails, and full Workers/custom-domain R2 verification passed.",
+      "details": [
+        "GitHub CI and production deployment run 38469544837 passed. Both public domains serve the same commit; live LobbyAdmission, required-guard, native rate-limit bindings, query redaction and disabled invocation logs were confirmed.",
+        "All 16 public relay checks and the copied-invite browser run passed: 13 remote draws per client, 4.924 ft movement, distinct quad/rider models, audio, host-exit cleanup and no page errors. Security response checks passed for headers, private paths (404), foreign origins (403), and an oversized 513-byte body (413).",
+        "R2 upload reported 453 objects with one changed. Full verification passed on both domains: 452 served objects, 42 static files, 176 log entries and 137 screenshots.",
+        "A paced 14-request public create test observed [201, twelve 409, 429] and allocated one room. Cloudflare documents the native counters as permissive and eventually consistent, so the per-IP threshold is not a strict global ceiling; exact serialized admission budgets remain the hard application-level ceilings."
+      ],
+      "limitation": "Automated public browser and deployment checks passed for this commit. Geographic load and physical-phone behavior remain unverified; native per-IP counters are approximate and Cloudflare-location scoped."
     }
   ],
-  "updated_at": "2026-10-13T21:10:27.955668+00:00",
+  "updated_at": "2026-10-13T21:25:51.537433+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
