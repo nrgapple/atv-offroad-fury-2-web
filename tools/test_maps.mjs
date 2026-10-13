@@ -29,7 +29,10 @@ try {
       const target = loaded.simulationSteps + (environment === 'env01' ? 480 : 60);
       await page.waitForFunction(target => window.atvTerrainStatus.simulationSteps >= target, target, { timeout: 120000 });
       await page.keyboard.up('KeyW');
+      await page.waitForFunction(() => window.atvTerrainStatus.minimap?.visible, null, {timeout:90000});
       const state = await page.evaluate(() => window.atvTerrainStatus);
+      assert.equal(state.minimap.extraSceneDraws, 0);
+      assert(state.minimap.backingBytes < 4.5 * 1048576, 'GPS pixel storage stays bounded');
       if (['env04', 'env05', 'env07', 'env08'].includes(environment)) {
         assert(state.water.signature_channels > 0, 'Original WaterFile must load its raw height signatures');
         assert(Number.isFinite(state.frame.water_height) && state.frame.water_height !== -256, 'The shared animated field must feed the vehicle water-height cache');
@@ -56,7 +59,7 @@ try {
       }
       assert.deepEqual(errors, []);
       if (process.env.ATV_MAP_SCREENSHOTS) await page.screenshot({ path: `${process.env.ATV_MAP_SCREENSHOTS}-${environment}.png` });
-      console.log(JSON.stringify({ environment, ready: state.ready, terrainTriangles: state.triangles, terrainUpdates: state.terrainDetailUpdates, vegetation: state.vegetationPlacements, draws: state.vegetationDraws, sceneInstances: state.sceneInstances, unsupportedMeshes: state.unsupportedSceneMeshes, water: state.water, waterHeight: state.frame.water_height, glError: state.glError }));
+      console.log(JSON.stringify({ environment, ready: state.ready, minimap: state.minimap, terrainTriangles: state.triangles, terrainUpdates: state.terrainDetailUpdates, vegetation: state.vegetationPlacements, draws: state.vegetationDraws, sceneInstances: state.sceneInstances, unsupportedMeshes: state.unsupportedSceneMeshes, water: state.water, waterHeight: state.frame.water_height, glError: state.glError }));
     } catch (error) {
       console.error(JSON.stringify({ environment, errors, status: await page.locator('#status').textContent().catch(() => null), state: await page.evaluate(() => ({ ready: window.atvTerrainStatus?.ready, simulation: window.atvTerrainStatus?.simulation })).catch(() => null) }));
       throw error;

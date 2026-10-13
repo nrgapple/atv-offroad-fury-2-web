@@ -1,6 +1,6 @@
 {
-  "status": "Public app/content package 4d1e1c4 is verified, including bounded Caribou CPU driving, wreck/recovery and stunt behavior. The ATV2 port remains incomplete.",
-  "working_on": "Recover original race start-grid and event/finish rules, rider-to-rider collision, actor/RNG ordering, roster tuning, remaining AI gates and full map/course behavior; validate the separate motorcycle extension on its own public route.",
+  "status": "The public build verifies selected motorcycle touch and rider-contact routes. The Freestyle minimap is host-verified across all nine environments using recovered terrain and static scenery; dynamic map actors, physical-device behavior, and GPU timing remain unverified. The authored ATV2 browser port remains incomplete, with whole-game and PS2 parity outstanding.",
+  "working_on": "Continue recovering original ATV2 behavior and verify dynamic map-actor cartography, physical-phone behavior, GPU timing, and broader fidelity.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -2320,6 +2320,26 @@
       "limitation": "This verifies selected public touch and rendered-contact routes on the deployed browser build. It does not establish native whole-step physics parity, physical-phone behavior, timing or frame rate, a public crash/breakaway transition, or full game completion. The portrait capture shows visible touch direction and contact but the rider/bike remain relatively small in frame.",
       "image": "/devlog-images/public-motorcycle-touch-steering-and-rider-contact-now-b584ab85.png",
       "caption": "Public Cloudflare browser capture with left-screen motorcycle steering applied. The rider remains attached at the grips and pegs in the rendered pose; this is a browser-port verification, not a native PS2 capture."
+    },
+    {
+      "id": "freestyle-minimap-and-configurable-hud-001c52cc",
+      "timestamp": "2026-10-13T13:04:34.570577+00:00",
+      "recorded_at": "2026-10-13T13:06:27.142045+00:00",
+      "kind": "verification",
+      "title": "Freestyle minimap and configurable HUD",
+      "summary": "The browser build adds a borderless orthographic minimap using recovered terrain and static scenery, with a north-up heading arrow and persisted HUD controls.",
+      "details": [
+        "Pause \u2192 HUD settings persists minimap On/Off and HUD size from 96\u2013224px with responsive caps; map range remains 768ft.",
+        "Host Chromium checks in tools/test_minimap.mjs cover actual Rust driving, varied terrain pixels, settings persistence/reload, rotation, 44px UI, pause, blur, context loss/restoration, and Off-mode bake skipping and canvas release.",
+        "make check passed: 348 core, 25 network, 3 relay, 4 release-tool, 13 bridge, and 75 JavaScript tests; formatting and strict Clippy passed. make verify passed; 29 release checks (one skipped) and 8 Worker checks passed.",
+        "Serial paired 96/160/224px host Metal timings: map CPU mean 0.052\u20130.076ms desktop and 0.052\u20130.091ms at phone viewport; 44\u201345 updates over 2.5 seconds (at most 20Hz). Scene draws stayed at 471; Off mode used 0 updates and 0 backing bytes. Cached pixel storage was about 4.04\u20134.23MiB, excluding browser/driver replicas; temporary bake buffers were 8MiB.",
+        "On/off frame rates were 69\u201378 FPS with no consistent direction; no mobile FPS or causal frame-rate improvement is claimed.",
+        "All nine maps (ENV01\u201308 and FREE05) pass actual load and driving, with finite state, zero GL errors, visible minimap, and one minimap build per course. Serial host Mac measurements show 44.7\u201353.0ms total CPU bake across 23\u201327 slices, with maximum slices of 2.0\u20132.4ms. These measurements are from the host Mac and do not establish phone performance or PS2 parity.",
+        "Existing frontend keyboard/controller/Tioga and portrait touch/Caribou reload checks pass without disc selection or errors. Chromium mobile UI checks also pass for 44px controls, utility taps, and touch cancellation. The later race regression also passed: tools/test_race.mjs exercised an actual 252-point, five-rider race through CPU movement, grounding, countdown, pause, restart, portrait and landscape, with no errors. A new assertion confirms the Freestyle minimap stays hidden in Race with zero bake slices."
+      ],
+      "limitation": "Host Chromium and serial host Mac verification only; this host screenshot predates CI and public verification for this minimap checkpoint. Physical iOS/Android hardware, GPU timing, dynamic map actors, and PS2 parity remain unverified.",
+      "image": "/devlog-images/freestyle-minimap-and-configurable-hud-001c52cc.png",
+      "caption": "Host Chromium screenshot at 390\u00d7844, DPR 3: portrait ride view with minimap and HUD; not a public deployment or physical-phone capture."
     },
     {
       "id": "motorcycle-banking-and-standing-menu-poses-now-pass-ho-d50992f3",
