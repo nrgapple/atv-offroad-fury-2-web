@@ -155,7 +155,7 @@ awards the lap before exact start/finish crossing; original TDF marker placement
 and native finish-line rules remain open. This verifies current preview route
 completion, not original event/lap or PS2 replay parity.
 
-## CPU avoidance and wreck strategy — active gate
+## CPU avoidance and wreck strategy — completed host gate
 
 Use the exact SCUS_972.11 National call chain 0024f9d0 → 0024f840 →
 00252080. Port ordinary peer near/far relative-velocity correction and eight-ray
@@ -173,3 +173,56 @@ Recovery must resume route driving with refreshed driver state and retain
 ordered race progression, without awarding checkpoints for a reposition.
 Verify natural racing, peer/obstacle scenarios, natural impacts/rollovers,
 recovery and both phone orientations; injected wreck fixtures must stay labeled.
+
+The authored CPU avoidance now feeds the original near/far relative-velocity
+response, eight midpoint rays over pi/4, 100ft ray attenuation, and horizontal
+packed-coordinate vegetation response into the heading wrapper. Ordinary plants
+use the distinct original gains 1/200; peers use 0.65/100. The spatial query uses
+50ft half extents. No braking policy is inferred from corrected vector magnitude:
+the original wrapper normalizes heading while retaining TDF/leader target speed.
+Scene eligibility, native trig/VU precision and linked-actor update order remain
+integration limitations.
+
+Each CPU enables the recovered physical wreck decision/passive quad path and
+owns its original wreck clips, detached rider body, contact-gated recovery clock,
+normal/landing/stunt controller, and rider world matrix. It uses live water and
+current dynamic scene transforms without advancing shared actors again. Driving
+controls stop during wrecks; recovery refreshes route state and resumes driving.
+A reset publishes the new physical pose without calling race checkpoint update
+or counting teleport distance; subsequent normal movement can earn progress.
+
+Low-air feedback uses the source 20ft split, terrain normal sampled 0.5 seconds
+ahead, gains 10/0.1 and bounded lean. National trick requests now use the original
+10-second interval/10% trial, flagged jumps, TDF tag 26 airtime minus elapsed air
+time and 0.5-second margin, and selection among the 24 eligible main clip durations
+(001e9650). The rider accepts the direct request through its native airborne,
+speed/reset/minimum-time gates and runs the loaded original stunt clip without
+synthetic held buttons. The original flag 64 preload/jump helper, optional AI
+flags, global random stream and exact actor/controller update ordering are still
+separate gates.
+
+Private no-hook instruction comparisons pass 9,000 cases executing 1,184,803
+original instructions with zero differing binary32 outputs: 3,000 peer cases,
+3,000 plant cases, 1,500 ray attenuation cases and 1,500 low-air feedback cases.
+These bounded branches use the existing finite-binary32 VU approximation; they
+do not establish PS2 hardware math or complete National AI replay equivalence.
+
+The combined main integration passes 346 core, 25 protocol, 3 relay, 13 bridge,
+4 release-tool Rust and 69 JS tests, formatting/strict Clippy, WASM, source/setup
+and repository hygiene, 29 release checks (one skipped) and 8 Worker tests.
+The real-content race gate passes ATV and motorcycle 34, desktop/portrait/landscape,
+countdown/input/pause/restart and the separate render-only results fixture.
+Held-drive Pause/Camera passes both phone orientations; UI loading/transitions,
+reduced motion, rotation and touch targets pass. Freestyle/controller/portrait
+regression passes as well.
+
+An untouched-physics 65.08-second race observes 3,905 actual worker frames per CPU,
+5 natural wrecks and 5 recoveries across three riders, detached body contacts,
+neutral wreck controls, resumed driving and 8 original stunt starts. All four CPUs
+encounter peers, plants and real scenery rays and travel 3,180.7–3,728.7ft; matrices
+stay finite, reset distance/lap awards are absent, pause freezes the full frame
+in both phone orientations and browser errors are absent. This is a sustained
+host behavior gate, not a complete lap or original finish-line replay. The
+checkpoint remains host-only until its validated main artifact passes public
+release verification. Rider-to-rider collision impulses, roster-specific tuning,
+original start slots, race progression and finish rules remain open.

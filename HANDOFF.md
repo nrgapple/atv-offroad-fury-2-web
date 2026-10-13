@@ -1,6 +1,26 @@
 # Implementation handoff
 
-## Original CPU drivers — tested host checkpoint
+## Original CPU avoidance, wreck recovery and jump tricks — tested host checkpoint
+
+Implementation `eeadf09`, integrated with UI/main `2ef33ab` as `bb9d1bee`,
+connects source-correlated peer/scenery/vegetation avoidance, independent physical
+CPU wreck/detached-rider recovery, low-air terrain-normal feedback, and National
+TDF-airtime-gated original stunt selection. Recovery cannot count teleport distance
+or award a checkpoint/lap. See [racing evidence and remaining gates](research/RACING.md).
+
+The final 65.08s browser run observes 5 natural wrecks/5 recoveries, 8 original
+stunt starts, resumed racing, finite matrices and no errors/reset progress awards.
+ATV and motorcycle 34 race regression, mobile held-drive utilities and UI transitions
+pass with portrait/landscape coverage. Rust/JS, fmt/strict Clippy, WASM, setup,
+release/Worker checks pass. Private bounded original-instruction comparisons pass
+9,000 cases with zero output-bit differences under the finite-binary32 VU model.
+This checkpoint is host-only pending validated-main/public release verification.
+
+Rider-to-rider impulses, original global RNG/actor ordering/math tables, roster
+quad tuning, remaining AI flags/preload helper, native grid/progression/finish
+rules and physical phone/Safari verification remain open.
+
+## Previous original CPU driver checkpoint
 
 Branch `feat/original-race-ai` replaces the preview's constant-speed route motion
 with four independent recovered Vehicle solvers, normal rider controllers and
@@ -37,13 +57,12 @@ Main motorcycle integration is preserved: its separate authored CPU route
 preview remains explicitly distinct from original ATV CPU vehicle simulation.
 Quad and motorcycle model 34 race regression both pass.
 
-CPU obstacle-avoidance decisions, rider-to-rider collisions, AI tricks, CPU wreck
-and recovery, low-clearance airborne feedback, dynamic obstacles, native grid
-placement, separate roster quads/costumes and original RNG/trigonometric tables
-remain open. The native grid helper 001f8410 is recovered privately for the next
-placement gate. Source exports/probes, content and screenshots remain ignored.
-See research/RACING.md and the dev log. This checkpoint is host verified; the
-last verified public release is a66bab9 until passing main CI publishes this work.
+This previous driver checkpoint was publicly verified at main `7c8c591`.
+The newer checkpoint above connects avoidance, AI tricks, CPU wreck/recovery,
+low-air feedback and shared dynamic scene inputs. Rider-to-rider collisions,
+native grid placement, separate roster quads/costumes and original RNG/math
+remain open. The grid helper 001f8410 is recovered privately. Source exports,
+probes, content and screenshots remain ignored. See research/RACING.md.
 
 ## Playable motorcycles checkpoint — 2026-10-13
 
