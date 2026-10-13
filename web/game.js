@@ -1321,7 +1321,9 @@ function render(time) {
   const started = performance.now();
   frame = requestAnimationFrame(render);
   touchControls.refresh();
-  minimap.draw(time, simFrame, simReady && !raceSettings && !lost && focused && !document.hidden && !menuOpen);
+  const presentation = motorcyclePresentation.sample(simFrame, cameraFrame, time, focused && !lost && !menuOpen);
+  presentedFrame = presentation.frame; presentedCamera = presentation.camera;
+  minimap.draw(time, presentedFrame, simReady && !raceSettings && !lost && focused && !document.hidden && !menuOpen);
   // Enabled Freestyle GPS owns speed even while its raster is warming up or
   // temporarily hidden. Only the explicit Off setting restores standalone MPH.
   hud?.draw(simFrame?.hud, simReady && !lost && !document.hidden && !menuOpen, { speedVisible: Boolean(raceSettings) || !minimapSettings.enabled });
@@ -1337,8 +1339,6 @@ function render(time) {
     const x = Math.max(0,Math.min(terrain.width-1,vehicle.position[0]/terrain.spacing)), z = Math.max(0,Math.min(terrain.depth-1,vehicle.position[2]/terrain.spacing));
     if (center && (Math.abs(x-center[0]) > 48 || Math.abs(z-center[1]) > 48)) buildTerrainMesh();
   }
-  const presentation = motorcyclePresentation.sample(simFrame, cameraFrame, time, focused && !lost && !menuOpen);
-  presentedFrame = presentation.frame; presentedCamera = presentation.camera;
   diagnostics.motorcyclePresentation = simFrame?.vehicle_kind === 'motorcycle' ? { alpha: presentation.alpha, interpolated: presentation.interpolated, origin: presentedFrame.origin, orientation: presentedFrame.orientation } : null;
   const smoothQuad = presentation.interpolated ? new Float32Array(presentedFrame.quad_node_matrices.flat()) : vehicle?.nodeMatrices;
   const smoothRider = presentation.interpolated ? presentedFrame.rider_node_matrices : vehicle?.rider?.pose.world_matrices;

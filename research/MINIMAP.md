@@ -1,5 +1,14 @@
 # Freestyle GPS minimap
 
+Projection/zoom correction strategy (2026-10-13): the live scene camera uses
+right = −X with north/up = +Z. The old +X-right map reflected that view. Use
+−X-right consistently for terrain raster sampling, scenery and crop coordinates,
+and derive marker bearing from the same projected forward vector. Follow the
+rendered actor rather than a different simulation/interpolation sample; detached
+rider poses take over the GPS center during wrecks. Add persisted 25–200% zoom,
+default 50% (1,536 feet across, twice the previous range), independently of size.
+Zoom only changes the crop of the same cache; use an adaptive feet scale.
+
 Release-consistency correction strategy (2026-10-13): reproduce the reported
 old rectangle/button padding plus duplicated speed by retaining the previous
 CSS/HUD module alongside the new minimap module. Version every deployed local
@@ -11,7 +20,7 @@ including during raster generation and temporary visibility suspension.
 
 Implementation strategy (2026-10-13): an optional authored orthographic X/Z
 projection of the recovered terrain colors/heights and static scenery, cached
-once per course. The GPS window follows the vehicle with north (+Z) up and a
+once per course. The GPS window follows the rendered vehicle or detached rider with north (+Z) up and a
 heading arrow. It does not alter the gameplay camera or simulation. This is a
 browser enhancement, not a recovered PS2 overlay.
 
@@ -23,7 +32,7 @@ request. Pause, hidden tabs, context loss, racing and Off suppress updates. Off
 releases raster/backing storage and cancels pending generation; re-enabling
 rebuilds once. Resizing changes the HUD footprint, not its geographic range.
 
-Settings live in Pause → HUD settings → Minimap configuration with persisted On/Off and 96–224px size,
+Settings live in Pause → HUD settings → Minimap configuration with persisted On/Off, 96–224px size and 25–200% zoom (50% default / 1,536ft across),
 responsive caps, shared silver/gold/charcoal tokens and no frame border. The map
 accepts a tap to change orientation. Static geometry and terrain are approximate cartography; moving actors,
 vegetation, live water, paths beneath bridges and native GPS behavior are not
@@ -129,3 +138,19 @@ draw count with zero map updates and zero retained authored pixel storage.
 The largest map buffer total is 4,436,368 bytes. Lifecycle, driving, persistence,
 pause/blur and context restoration pass. These are Chromium Metal measurements
 on one Mac, not physical-phone or isolated GPU measurements.
+
+## Projection/zoom verification (host, 2026-10-13)
+
+The independent GPU/crop observer passes 113 native-wreck and 111 enhanced-wreck
+GPS updates without position/heading/crop mismatch (0.002ft/0.0001rad thresholds).
+Moving ATV/interpolated-bike tracking, keyboard zoom and persisted zoom pass.
+Chromium validates four viewports and WebKit phone portrait/landscape, including
+both shapes/corners, nested settings, 44px targets, speed ownership and cache
+reuse. Rust checks both sliders including 390×568 and 667×375.
+
+The 390×844/DPR3 host A/B check observes 0.102–0.109ms per map update at 96/160/224px,
+44–45 updates per 2.5s (20Hz cap), identical 471 scene draws On/Off, maximum
+4,436,368 retained pixel bytes and zero updates/bytes when Off. Zoom extremes do
+not rebake or change storage/draw count. These samples came from a Mac with other
+browser checks running; they establish bounded work, not an FPS benefit or
+physical-phone performance. Earlier measurements above remain historical.
