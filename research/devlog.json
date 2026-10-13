@@ -2244,7 +2244,7 @@
       "summary": "Authored menu transitions now use short exit and entry animations, and boot, course, model, and graphics-context recovery share a responsive loading presentation. The host browser checkpoint covers reduced motion, failure, rotation, portrait and landscape touch layouts, and animation cancellation with focus retained on resize.",
       "details": [
         "Transition timings are authored: 180 ms exit and 240 ms entry; they are not recovered original-game timings.",
-        "Course loading presents recovered red/silver panel styling, a course preview, course name, status text, and an animated progress bar. The screenshot shows Caribou Peak at a 390\u00d7844 viewport.",
+        "Course loading presents original-style authored red/silver panels, a course preview, course name, status text, and an animated progress bar. The screenshot shows Caribou Peak at a 390\u00d7844 viewport.",
         "tools/test_ui_polish.mjs and tools/test_frontend.mjs passed, including startup/course/model/context recovery loading, reduced motion, failure, rotation, touch at 390\u00d7844, 844\u00d7390 and 667\u00d7375, desktop/controller Tioga, and portrait Caribou. Resize cancellation and focus retention reran successfully; five Rust UI tests passed again.",
         "Reported gates also include 69 JavaScript tests, formatting, strict atv-core Clippy, make verify, repository hygiene, and 29 release tests (one skipped)."
       ],
