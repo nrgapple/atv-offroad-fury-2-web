@@ -231,6 +231,7 @@ export class Frontend {
         for (const track of this.tracks) { await this.image(`${track.image}a`); await this.image(`${track.image}b`); }
       }
       this.page = page; this.selection = 0; this.layoutKey = '';
+      if (page === 'pause') this.resetPauseScroll = true;
       this.syncPreview();
       // A previous worker layout may still be in flight during rapid navigation.
       while (this.layoutPending) await new Promise(resolve => requestAnimationFrame(resolve));
@@ -542,7 +543,8 @@ export class Frontend {
     // Rust remains the source of available actions and stateful labels. Native
     // text/layout keeps this browser overlay sharp and accessible at any zoom.
     const activeAction = this.pausePanel.contains(document.activeElement) ? document.activeElement.dataset.action : null;
-    const scroll = this.pausePanel.scrollTop;
+    const scroll = this.resetPauseScroll ? 0 : this.pausePanel.scrollTop;
+    this.resetPauseScroll = false;
     this.buttons.replaceChildren();
     this.courseMeter?.remove(); this.courseMeter = null;
     const header = document.createElement('header');

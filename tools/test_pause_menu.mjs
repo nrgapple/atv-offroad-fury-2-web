@@ -49,6 +49,7 @@ try {
     }
     await a.setViewportSize({width:390,height:844});
     await button(a,'Controls').click();await screen(a,'controls');await shot(a,'controls');await a.keyboard.press('Escape');await screen(a,'pause');
+    assert.equal(await a.locator('.pause-panel').evaluate(n=>n.scrollTop),0,'reopening starts at Resume');
     await button(a,'HUD settings').click();await button(a,'Minimap configuration').click();await screen(a,'minimap-config');await shot(a,'minimap');
     const slider=a.getByRole('slider',{name:'Minimap size',exact:true});await slider.focus();await a.keyboard.press('ArrowRight');await a.waitForTimeout(100);assert.equal(await slider.inputValue(),'168');
     await a.keyboard.press('Escape');await screen(a,'hud-settings');await a.keyboard.press('Escape');await screen(a,'pause');
