@@ -2443,6 +2443,21 @@
       "limitation": "Host evidence only. The new-domain multiplayer code has not been deployed, and current-main CI plus public gameplay and multiplayer verification remain pending. A successful host HTTPS fetch does not verify public integration."
     },
     {
+      "id": "fury-remastered-supports-live-multiplayer-7acaea4d",
+      "timestamp": "2026-10-13T15:40:05.634124+00:00",
+      "recorded_at": "2026-10-13T15:41:44.358508+00:00",
+      "kind": "verification",
+      "title": "Fury Remastered supports live multiplayer",
+      "summary": "The public Fury Remastered app supports a copied-invite two-browser Freeride session on Vancouver Ridge. Both the custom HTTPS domain and legacy workers.dev origin pass the live Rust relay gates; remote movement, rendering and spatial engine audio pass in the bounded automated session.",
+      "details": [
+        "Thirteen live Rust relay gates pass on both https://furyremastered.com and the legacy workers.dev origin.",
+        "Two Chromium Metal browsers on one Mac joined through a copied invite on Vancouver Ridge (map 9) with different ATV and rider rigs: ATV01/male and ATV02/female. Each client observed 10.687765 ft of remote movement, rendered 13 remote draws, and played one spatial engine voice. Host termination and cleanup passed with no page errors."
+      ],
+      "limitation": "This public gameplay check is bounded to two automated Chromium Metal clients sharing one Mac; it does not establish physical-phone, separate-device, or geographic-network performance. CI run 38422439105 failed only while reapplying existing custom-domain triggers after uploading the tested app. The game code works publicly, while final pipeline and current-main R2 verification remain pending.",
+      "image": "/devlog-images/fury-remastered-supports-live-multiplayer-7acaea4d.png",
+      "caption": "Public furyremastered.com Vancouver Ridge multiplayer test capture from commit 277e26f5f896678fbbb4b214da143f638d21f651. One of two Chromium Metal clients on one Mac; the copied-invite session passed movement, remote rendering, engine audio and host-cleanup gates."
+    },
+    {
       "id": "a-reachable-rider-pose-closes-the-mini-motorcycle-full-be709f3b",
       "timestamp": "2026-10-13T15:24:38.204309+00:00",
       "recorded_at": "2026-10-13T15:33:10.449069+00:00",
@@ -2460,7 +2475,7 @@
       "caption": "Host Mini 50 sustained full-lock captures: left-screen input and right-screen input. The marker-contact gate passed separately; the small motorcycle and rear camera view make the hand joints difficult to judge from these stills alone."
     }
   ],
-  "updated_at": "2026-10-13T15:33:10.449069+00:00",
+  "updated_at": "2026-10-13T15:41:44.358508+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {

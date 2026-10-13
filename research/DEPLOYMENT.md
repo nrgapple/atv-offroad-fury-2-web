@@ -9,14 +9,21 @@ Always Use HTTPS is enabled. The authored Worker redirects `www` to the apex
 with HTTP 308, preserving paths and invite queries. The original workers.dev
 address remains available. Existing browser saves stay on their original origin.
 
-`wrangler.jsonc` persists both custom-domain routes. `GAME_ORIGIN` and
+`wrangler.jsonc` records both provisioned custom-domain routes. CI stages with
+`--preserve-custom-domains`, leaving the existing Cloudflare DNS/TLS bindings
+attached while updating the Worker code. The deployment credential remains
+scoped to the game Worker. `GAME_ORIGIN` and
 `CANONICAL_ORIGIN` use `https://furyremastered.com`; `GAME_ORIGINS` explicitly
 allows that origin and the existing workers.dev origin in both the JavaScript
 gateway and Rust relay. Missing, opaque, HTTP, foreign and lookalike origins remain
 rejected. No original content is moved or exposed beyond the existing approved
 R2 path allowlist. Main CI deploys and verifies authored files at both addresses.
-Public gameplay, multiplayer and full R2 verification evidence follow below once
-the checked main release is deployed.
+The first deployment of `277e26f` uploaded the checked application and origin
+changes but failed while reapplying custom-domain triggers (Cloudflare error
+10002). The bindings remained attached. Omitting their reprovisioning in CI
+addresses that deployment failure; the staging regression covers preserved
+origins, authored files and untouched source routing configuration. Public
+gameplay, multiplayer and full R2 verification evidence follow below.
 
 ## Production flow restored (2026-10-13)
 
