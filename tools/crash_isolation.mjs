@@ -14,7 +14,7 @@ export async function captureCrashIsolation(page) {
      if (data.error) crashIsolation.errors.push(data.error);
      if (this.meta.get(data.id) !== 50 || !data.bytes) return;
      const batches = JSON.parse(new TextDecoder().decode(data.bytes));
-     for (const item of batches) { delete item.frame.funny_crash; if (item.frame.applied_input) delete item.frame.applied_input.funny_crashes; }
+     for (const item of batches) { delete item.frame.funny_crash; if (item.frame.applied_input) { delete item.frame.applied_input.funny_crashes; delete item.frame.applied_input.crash_mode; } }
      store.set(data.id, JSON.stringify(batches));
      if (other.has(data.id)) {
       crashIsolation.compared += batches.length;
@@ -30,7 +30,7 @@ export async function captureCrashIsolation(page) {
     const mirror = {...message, bytes:message.bytes.slice()};
     if ([24,50].includes(message.op)) {
      const command=JSON.parse(new TextDecoder().decode(mirror.bytes));
-     command.input.funny_crashes=false; mirror.bytes=new TextEncoder().encode(JSON.stringify(command));
+     command.input.funny_crashes=false;command.input.crash_mode='original'; mirror.bytes=new TextEncoder().encode(JSON.stringify(command));
     }
     this.baseline.postMessage(mirror);
     return super.postMessage(message,...args);

@@ -149,6 +149,9 @@ struct Part {
 #[derive(Default)]
 pub struct Effects {
     enabled: bool,
+    gorn: bool,
+    severed: Vec<usize>,
+    blood: Vec<Particle>,
     tick: u64,
     reset: u32,
     age: f32,
@@ -158,8 +161,16 @@ pub struct Effects {
     rider_velocity: Option<V>,
 }
 #[derive(Serialize)]
+pub struct Blood {
+    pub position: V,
+    pub size: f32,
+    pub landed: bool,
+}
+#[derive(Serialize)]
 pub struct Frame {
     pub age: f32,
+    pub severed_nodes: Vec<usize>,
+    pub blood: Vec<Blood>,
     pub detached_parts: usize,
     pub rider_node_matrices: Vec<M>,
     pub quad_node_matrices: Vec<M>,
@@ -178,10 +189,25 @@ impl Effects {
             self.enabled = enabled;
         }
     }
+    pub fn set_mode(&mut self, mode: &str, legacy: bool) {
+        let enabled = if mode.is_empty() {
+            legacy
+        } else {
+            matches!(mode, "crazy" | "gorn")
+        };
+        let gorn = mode == "gorn";
+        if self.gorn != gorn {
+            self.clear();
+            self.gorn = gorn;
+        }
+        self.set_enabled(enabled);
+    }
     fn clear(&mut self) {
         self.joints.clear();
         self.links.clear();
         self.parts.clear();
+        self.severed.clear();
+        self.blood.clear();
         self.age = 0.;
     }
     #[allow(clippy::too_many_arguments)]
@@ -313,6 +339,9 @@ impl Effects {
                     }
                 }
             }
+            if self.gorn && detached && impact_speed >= 50. {
+                self.sever(rider_nodes);
+            }
             if !self.joints.is_empty() || !self.parts.is_empty() {
                 let steps = (dt * 120.).round().clamp(1., 12.) as usize;
                 for _ in 0..steps {
@@ -349,6 +378,18 @@ impl Effects {
                             joint.body.previous =
                                 sub(joint.body.p, [v[0] * 0.9, rebound, v[2] * 0.9]);
                         }
+                    }
+                    // A rider's hard landing can be severe even when the ATV misses it.
+                    if self.gorn
+                        && contacts
+                            .iter()
+                            .enumerate()
+                            .any(|(i, hit)| *hit && incoming[i][1] < -40. / 120.)
+                    {
+                        self.sever(rider_nodes);
+                    }
+                    for droplet in &mut self.blood {
+                        droplet.advance(&floor);
                     }
                     for part in &mut self.parts {
                         part.body.advance(&floor);
@@ -411,10 +452,76 @@ impl Effects {
         }
         Some(Frame {
             age: self.age,
+            severed_nodes: self.severed.clone(),
+            blood: self
+                .blood
+                .iter()
+                .map(|b| Blood {
+                    position: b.p,
+                    size: b.radius,
+                    landed: floor(b.p).is_some_and(|h| b.p[1] <= h + b.radius + 0.01),
+                })
+                .collect(),
             detached_parts: self.parts.len(),
             rider_node_matrices,
             quad_node_matrices,
         })
+    }
+    fn sever(&mut self, nodes: &[Node]) {
+        if !self.severed.is_empty() || self.joints.is_empty() {
+            return;
+        }
+        self.severed = nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, n)| {
+                matches!(
+                    n.name.to_ascii_lowercase().as_str(),
+                    "head" | "uprarml" | "uprarmr" | "uprlegl" | "uprlegr"
+                )
+                .then_some(i)
+            })
+            .collect();
+        let component = |mut i: usize| {
+            loop {
+                if self.severed.contains(&i) {
+                    return i + 1;
+                }
+                if let Some(p) = self.joints[i].parent {
+                    i = p;
+                } else {
+                    return 0;
+                }
+            }
+        };
+        self.links.retain(|l| component(l.a) == component(l.b));
+        for &i in &self.severed {
+            let p = self.joints[i].parent;
+            if let Some(p) = p
+                && self.joints[p].child == Some(i)
+            {
+                self.joints[p].child = None;
+            }
+            self.joints[i].parent = None;
+            let origin = self.joints[i].body.p;
+            let side = if i % 2 == 0 { -1. } else { 1. };
+            self.joints[i].body.previous =
+                sub(self.joints[i].body.previous, [side * 0.055, 0.035, 0.025]);
+            // Deterministic, bounded spray; no gameplay RNG calls.
+            for k in 0..18 {
+                let angle = k as f32 * 2.39996 + i as f32;
+                let velocity = [
+                    angle.cos() * (5. + (k % 5) as f32 * 2.),
+                    4. + (k % 7) as f32 * 2.,
+                    angle.sin() * 12.,
+                ];
+                self.blood.push(Particle::new(
+                    origin,
+                    velocity,
+                    0.045 + (k % 3) as f32 * 0.02,
+                ));
+            }
+        }
     }
     fn link(&mut self, a: usize, b: usize, angular: bool) {
         let d = sub(self.joints[a].body.p, self.joints[b].body.p);
@@ -454,6 +561,120 @@ mod tests {
             world_matrix: m,
             bounds: [0.; 7],
         }
+    }
+    #[test]
+    fn gorn_requires_severe_contact_and_clears_on_mode_recovery_and_reset() {
+        let rider = vec![
+            node("Pelvis", -1, [0., 20., 0.]),
+            node("UprTorso", 0, [0., 21., 0.]),
+            node("Head", 1, [0., 22., 0.]),
+            node("UprArmL", 1, [-1., 21., 0.]),
+            node("LwrArmL", 3, [-2., 21., 0.]),
+            node("HandL", 4, [-3., 21., 0.]),
+            node("UprArmR", 1, [1., 21., 0.]),
+            node("UprLegL", 0, [-0.5, 19., 0.]),
+            node("UprLegR", 0, [0.5, 19., 0.]),
+        ];
+        let pose: Vec<_> = rider.iter().map(|n| n.world_matrix).collect();
+        let mut e = Effects::default();
+        e.set_mode("gorn", false);
+        let step = |e: &mut Effects, tick, reset, wreck, impact| {
+            e.update(
+                tick,
+                reset,
+                1. / 60.,
+                wreck,
+                wreck,
+                [30., 0., 0.],
+                impact,
+                ID,
+                &[],
+                &[],
+                ID,
+                &pose,
+                &rider,
+                |_| None,
+            )
+        };
+        for tick in 1..8 {
+            let f = step(&mut e, tick, 0, true, 49.).unwrap();
+            assert!(f.severed_nodes.is_empty() && f.blood.is_empty());
+        }
+        let severe = step(&mut e, 8, 0, true, 65.).unwrap();
+        assert_eq!(severe.severed_nodes.len(), 5);
+        assert_eq!(severe.blood.len(), 90);
+        assert!(!e.links.iter().any(|l| l.a == 3 && (l.b == 1 || l.b == 0)));
+        assert!(e.links.iter().any(|l| l.a == 4 && l.b == 3));
+        assert_eq!(e.joints[3].parent, None);
+        for tick in 9..300 {
+            let f = step(&mut e, tick, 0, true, 65.).unwrap();
+            assert_eq!(f.blood.len(), 90);
+            assert!(
+                f.rider_node_matrices
+                    .iter()
+                    .flatten()
+                    .all(|v| v.is_finite())
+            );
+            assert!(
+                f.blood
+                    .iter()
+                    .all(|b| b.position.iter().all(|v| v.is_finite()))
+            );
+        }
+        e.set_mode("crazy", true);
+        assert!(e.blood.is_empty());
+        assert!(
+            step(&mut e, 300, 0, true, 65.)
+                .unwrap()
+                .severed_nodes
+                .is_empty()
+        );
+        e.set_mode("gorn", true);
+        step(&mut e, 301, 0, true, 65.);
+        assert!(!e.blood.is_empty());
+        assert!(step(&mut e, 302, 1, false, 0.).is_none());
+        assert!(e.blood.is_empty());
+        step(&mut e, 303, 1, true, 65.);
+        e.set_mode("original", true);
+        assert!(!e.enabled() && e.blood.is_empty());
+    }
+    #[test]
+    fn severe_rider_terrain_landing_creates_bounded_blood_without_quad_damage() {
+        let rider = vec![
+            node("Pelvis", -1, [0., 2., 0.]),
+            node("Head", 0, [0., 3., 0.]),
+        ];
+        let pose: Vec<_> = rider.iter().map(|n| n.world_matrix).collect();
+        let mut e = Effects::default();
+        e.set_mode("gorn", true);
+        e.set_rider_velocity([0., -70., 0.]);
+        let mut landed = false;
+        for tick in 1..120 {
+            let f = e
+                .update(
+                    tick,
+                    0,
+                    1. / 60.,
+                    true,
+                    true,
+                    [0.; 3],
+                    0.,
+                    ID,
+                    &[],
+                    &[],
+                    ID,
+                    &pose,
+                    &rider,
+                    |_| Some(0.),
+                )
+                .unwrap();
+            assert_eq!(f.detached_parts, 0);
+            assert!(f.blood.len() <= 18);
+            assert!(f.blood.iter().all(|b| b.position[1] >= b.size - 0.001));
+            landed |= f.blood.iter().any(|b| b.landed);
+        }
+        assert_eq!(e.severed.len(), 1);
+        assert!(landed);
     }
     #[test]
     fn rider_retains_detached_momentum_and_rebounds_after_constraint_solving() {

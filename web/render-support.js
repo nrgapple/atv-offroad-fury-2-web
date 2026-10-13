@@ -118,3 +118,83 @@ export function chasePresentation(frame, actor, aspect, sightline, height) {
     pitchLift, uphillLift: hillPitch-nativePitch, requestedHillOrbit: sightline.lift, focalLength,
   } };
 }
+
+// Saved authored options, including migration of the former boolean crash switch.
+export class RideEffectsSettings {
+  constructor(storage = globalThis.localStorage, reducedMotion = false) {
+    this.storage = storage; this.mode = 'crazy'; this.shake = !reducedMotion;
+    try {
+      const mode = storage?.getItem('atv-crash-mode');
+      this.mode = ['original','crazy','gorn'].includes(mode) ? mode : storage?.getItem('atv-funny-crashes') === 'false' ? 'original' : 'crazy';
+      const shake = storage?.getItem('atv-camera-shake');
+      if (shake === 'true' || shake === 'false') this.shake = shake === 'true';
+    } catch { /* Session settings. */ }
+  }
+  get enabled() { return this.mode !== 'original'; }
+  toggle() {
+    this.mode = ['original','crazy','gorn'][(['original','crazy','gorn'].indexOf(this.mode)+1)%3];
+    try { this.storage?.setItem('atv-crash-mode',this.mode); this.storage?.setItem('atv-funny-crashes',String(this.enabled)); } catch { /* Session settings. */ }
+    this.onChange?.();
+  }
+  toggleShake() {
+    this.shake = !this.shake;
+    try { this.storage?.setItem('atv-camera-shake',String(this.shake)); } catch { /* Session settings. */ }
+    this.onShakeChange?.();
+  }
+}
+
+// Read-only vehicle response; never alters the recovered camera or physics.
+export class VehicleShake {
+  constructor() { this.reset(); }
+  reset() { this.previous = null; this.energy = 0; this.roughness = 0; this.time = 0; this.cooldown = 0; this.offset = [0,0,0,0]; this.impacts = 0; }
+  accept(actor, enabled = true) {
+    const old = this.previous;
+    this.previous = actor;
+    if (!actor || !enabled || !old || old.reset_count !== actor.reset_count || Math.hypot(...actor.origin.map((v,i)=>v-old.origin[i])) > 40) {
+      this.energy = 0; this.roughness = 0; this.offset = [0,0,0,0]; return 0;
+    }
+    const contact = Number.isFinite(actor.crash_impact_speed) ? actor.crash_impact_speed : 0;
+    const rider = Math.hypot(...(actor.rider_wreck?.sampled_impact_delta ?? [0,0,0]));
+    const severity = Math.max(contact, rider);
+    const acceleration = Math.hypot(...(actor.linear_velocity ?? [0,0,0]).map((v,i)=>v-(old.linear_velocity?.[i] ?? v)));
+    const grounded = actor.grounded?.some(Boolean);
+    const desired = grounded && actor.wreck?.phase === 'Riding' ? Math.min(1, acceleration / 8) : 0;
+    this.roughness += (desired - this.roughness) * .22;
+    // One impulse per separated impact, rather than replaying every contact frame.
+    const previousImpact = Math.max(old.crash_impact_speed ?? 0,Math.hypot(...(old.rider_wreck?.sampled_impact_delta ?? [0,0,0])));
+    if (severity > 16 && this.cooldown <= 0 && (previousImpact <= 16 || severity > previousImpact*1.35)) {
+      this.energy = Math.min(1, Math.max(this.energy, (severity-12)/55));
+      this.cooldown = .25; this.impacts++;
+      return severity;
+    }
+    return 0;
+  }
+  update(actor, dt, enabled = true, active = true) {
+    this.cooldown = Math.max(0,this.cooldown-(Number.isFinite(dt) ? Math.max(0,Math.min(.05,dt)) : 0));
+    if (!enabled || !active) { this.energy=0; this.roughness=0; this.offset=[0,0,0,0]; return; }
+    dt = Number.isFinite(dt) ? Math.max(0,Math.min(.05,dt)) : 0;
+    this.time += dt;
+    this.energy *= Math.exp(-dt*5.2);
+    const riding = actor?.wreck?.phase === 'Riding', grounded = actor?.grounded?.some(Boolean);
+    const speed = Math.min(1,Math.abs(actor?.speed ?? 0)/70);
+    const engine = riding && grounded && speed > .015 ? .0008*Math.min(1,(actor.rpm ?? 0)/8000) : 0;
+    const vibration = riding && grounded ? .0025*speed + .007*this.roughness : 0;
+    const strength = vibration+engine;
+    const t = this.time, e = this.energy;
+    this.offset = [
+      Math.sin(t*83)*strength + Math.sin(t*41)*e*.055,
+      Math.sin(t*107+.7)*strength*.7 + Math.sin(t*47+.4)*e*.045,
+      Math.sin(t*67)*strength*2 + Math.sin(t*35)*e*.28,
+      e*.12,
+    ];
+  }
+  apply(view, height) {
+    const [yaw,pitch,up,dolly] = this.offset;
+    const position = [...view.position];
+    position[0] -= Math.sin(view.yaw)*dolly;
+    position[2] -= Math.cos(view.yaw)*dolly;
+    position[1] += up;
+    if (up || dolly) position[1]=Math.max(position[1],height(position[0],position[2])+1);
+    return {...view,position,yaw:view.yaw+yaw,pitch:view.pitch+pitch};
+  }
+}

@@ -58,17 +58,18 @@ try {
   if (process.env.ATV_FUNNY_CRASHES === '1') {
     await page.waitForFunction(() => crashDraws.quad > 0 && crashDraws.rider > 0);
     await page.keyboard.press('Escape');
-    await page.getByRole('button',{name:'Funny crashes: On',exact:true}).waitFor();
+    await page.getByRole('button',{name:'Crashes: Crazy',exact:true}).waitFor();
     const paused=await page.evaluate(() => window.atvTerrainStatus.frame.funny_crash);
     await page.waitForTimeout(250);
     assert.deepEqual(await page.evaluate(() => window.atvTerrainStatus.frame.funny_crash),paused,'Paused crash physics must freeze');
     const before=await page.evaluate(() => crashDraws.baseline);
-    await page.getByRole('button',{name:'Funny crashes: On',exact:true}).click();
+    await page.getByRole('button',{name:'Crashes: Crazy',exact:true}).click();
+    await page.getByRole('button',{name:'Crashes: Gorn (blood & limbs)',exact:true}).click();
     assert.equal(await page.evaluate(() => window.atvTerrainStatus.funnyCrashes),false);
     await page.getByRole('button',{name:'Resume',exact:true}).click();
     await page.waitForFunction(before => crashDraws.baseline > before, before);
     await page.keyboard.press('Escape');
-    await page.getByRole('button',{name:'Funny crashes: Off',exact:true}).click();
+    await page.getByRole('button',{name:'Crashes: Original',exact:true}).click();
     await page.getByRole('button',{name:'Resume',exact:true}).click();
   }
   await page.waitForFunction(() => window.atvTerrainStatus.frame.rider_wreck?.grounded, null, {timeout: 10000,polling:'raf'});
@@ -97,7 +98,8 @@ try {
     assert(effects.every(f => [...f.quad_node_matrices.flat(), ...f.rider_node_matrices.flat()].every(Number.isFinite)));
     assert(!reset.funny_crash, 'Recovery must rebuild the intact quad and rider');
     await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: 'Funny crashes: On', exact: true }).click();
+    await page.getByRole('button', { name: 'Crashes: Crazy', exact: true }).click();
+    await page.getByRole('button', { name: 'Crashes: Gorn (blood & limbs)', exact: true }).click();
     assert.equal(await page.evaluate(() => localStorage.getItem('atv-funny-crashes')), 'false');
     await page.getByRole('button', { name: 'Resume', exact: true }).click();
     await page.waitForFunction(() => !window.atvTerrainStatus.frame.funny_crash);

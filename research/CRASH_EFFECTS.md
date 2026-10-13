@@ -136,3 +136,22 @@ Explicit original Off passes the touch crash/recovery route. Fresh default On,
 saved Off/On after reload, and unavailable-storage defaults/session toggles pass
 at 844×390. These follow-up results are host verification, pending public release;
 earlier captures and evidence above describe the original default-Off checkpoint.
+
+## Smart shake and Gorn strategy (2026-10-13)
+
+Add independent saved camera shake after the recovered chase/hill presentation:
+read velocity changes, grounded state, RPM and actual contact speed, with bounded
+offsets and a decaying hard-impact kick. It never changes the Rust camera or
+physics. Add a short authored bass/noise crash accent through the gameplay audio
+bus. Off must immediately remove shake; resets, camera cycles and lifecycle
+interruptions clear pending energy.
+
+Crash choices become Original, Crazy and opt-in Gorn, migrating the saved funny
+crash boolean. Gorn retains Crazy's vehicle/ragdoll behavior until a severe actual
+impact, then breaks supported head/arm/leg joint connections into independent
+components and emits bounded red droplets/ground splashes. Existing source mesh
+segments provide the visible limbs; no new source content is required. Rust owns
+the gore state and terrain contact; WebGL batches authored blood shapes. Effects
+clear at recovery, reset and mode changes. This is optional authored presentation,
+not recovered original behavior; terrain-only debris and local-player effects
+remain limitations.

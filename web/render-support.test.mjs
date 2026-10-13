@@ -91,3 +91,34 @@ test('orbit and pullback keep the rider framed and the camera above terrain', ()
   }
   assert.deepEqual(frame.position,[0,10,-15],'recovered frame is not mutated');
 });
+
+const {RideEffectsSettings,VehicleShake}=await import('./render-support.js');
+test('effect preferences migrate saved Off, cycle three modes, persist and tolerate blocked storage',()=>{
+  const values=new Map([['atv-funny-crashes','false']]);
+  const store={getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)};
+  const settings=new RideEffectsSettings(store);assert.equal(settings.mode,'original');
+  settings.toggle();assert.equal(settings.mode,'crazy');settings.toggle();assert.equal(settings.mode,'gorn');
+  assert.equal(new RideEffectsSettings(store).mode,'gorn');settings.toggle();assert.equal(settings.enabled,false);
+  settings.toggleShake();assert.equal(new RideEffectsSettings(store).shake,false);
+  assert.equal(new RideEffectsSettings(null,true).shake,false);
+  const blocked=new RideEffectsSettings({getItem(){throw Error();},setItem(){throw Error();}});
+  assert.equal(blocked.mode,'crazy');blocked.toggle();blocked.toggleShake();assert.equal(blocked.mode,'gorn');assert.equal(blocked.shake,false);
+});
+const shakeActor={origin:[0,3,0],linear_velocity:[0,0,0],speed:0,rpm:1000,grounded:[true,true],wreck:{phase:'Riding'},reset_count:0,crash_impact_speed:0};
+test('vehicle shake scales with riding, smooths bumps, reacts once to hard impact and settles',()=>{
+  const s=new VehicleShake();s.accept(shakeActor);s.update(shakeActor,1/60);assert.deepEqual(s.offset,[0,0,0,0]);
+  const ride={...shakeActor,speed:60,rpm:7500,linear_velocity:[1,3,50]};s.accept(ride);s.update(ride,1/60);assert(s.roughness>0);assert(Math.abs(s.offset[0])>0);
+  const air={...ride,grounded:[false,false]};s.update(air,1/60);assert.deepEqual(s.offset,[0,0,0,0]);
+  const bad={...ride,crash_impact_speed:70,wreck:{phase:'Front'}};
+  assert.equal(s.accept(bad),70);s.update(bad,1/60);assert(s.energy>.8);assert.equal(s.accept(bad),0);
+  const view={position:[0,10,-15],yaw:0,pitch:-.3};const shown=s.apply(view,()=>0);assert.notDeepEqual(shown,view);assert.deepEqual(view.position,[0,10,-15]);
+  for(let i=0;i<180;i++)s.update(bad,1/60);assert(s.energy<1e-6);
+  assert.equal(s.accept({...bad,reset_count:1}),0);assert.equal(s.energy,0);
+});
+test('shake Off, pause, camera reset and terrain clearance are immediate',()=>{
+ const s=new VehicleShake();s.accept(shakeActor);s.accept({...shakeActor,crash_impact_speed:90});s.update(shakeActor,1/60);
+ assert(s.energy>0);s.update(shakeActor,1/60,false);assert.deepEqual(s.offset,[0,0,0,0]);assert.equal(s.energy,0);
+ s.cooldown=0;s.accept(shakeActor);s.accept({...shakeActor,crash_impact_speed:90});s.update(shakeActor,1/60);
+ assert(s.apply({position:[0,0,0],yaw:0,pitch:0},()=>10).position[1]>=11);
+ s.update(shakeActor,1/60,true,false);assert.deepEqual(s.offset,[0,0,0,0]);s.reset();assert.equal(s.previous,null);
+});
