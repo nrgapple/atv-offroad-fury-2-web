@@ -12,6 +12,10 @@ export class Frontend {
     this.root = document.getElementById('frontend'); this.canvas = document.getElementById('menu-canvas');
     this.ctx = this.canvas.getContext('2d'); this.buttons = document.getElementById('menu-buttons');
     this.notice = document.getElementById('menu-notice');
+    this.loadingScreen = document.getElementById('loading-screen');
+    this.transitions = []; this.transitionGhost = null;
+    window.addEventListener('resize', () => this.captureTransition(null));
+    matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => this.captureTransition(null));
     this.modelViews = new Map(); this.modelKey = ''; this.modelToken = 0; this.loadingStatus = '';
     this.assets = new Map(); this.images = new Map(); this.fonts = new Map();
     this.initialized = false; this.layoutKey = ''; this.layoutPending = false; this.loaded = new Set(); this.page = 'loading'; this.selection = 0; this.track = 0; this.busy = false; this.lastPad = new Set(); this.alive = true;
@@ -50,6 +54,7 @@ export class Frontend {
       if (action) { e.preventDefault(); void this.action(action); }
     });
     window.addEventListener('pagehide', event => {
+      this.captureTransition(null);
       void this.audio?.()?.setMusicPreview(false);
       cancelAnimationFrame(this.pollFrame); this.pollFrame = null; this.lastPad.clear();
       if (!event.persisted) this.alive = false;
@@ -156,7 +161,7 @@ export class Frontend {
       if (showTitle) await this.show('title');
     } catch (error) { this.fail(error); }
   }
-  fail(error) { this.notice.textContent = error.message; this.busy = false; this.root.dataset.error = 'true'; }
+  fail(error) { this.setLoading(false); this.notice.textContent = error.message; this.busy = false; this.root.dataset.error = 'true'; }
   syncPreview() {
     void this.audio?.()?.setMusicPreview(['title','main','single','tracks','garage','multiplayer','lobby','race','loading','music'].includes(this.page) && !this.root.hidden && !document.hidden && document.hasFocus(), this.page !== 'music').catch(error => this.fail(error));
   }
@@ -187,22 +192,28 @@ export class Frontend {
     for (const atom of atoms) if (!this.capture.atoms.some(a => JSON.stringify(a) === JSON.stringify(atom) || ('axis' in atom && a.axis === atom.axis)) && this.capture.atoms.length < 4) this.capture.atoms.push(atom);
     if (!atoms.length && this.capture.atoms.length) this.finishCapture();
   }
-  resume() { this.clearModelViews(); this.cancelCapture(); void this.audio?.()?.setMusicPreview(false); this.root.hidden = true; this.active(false); }
+  resume() { this.animatePage(true); this.setLoading(false); this.clearModelViews(); this.cancelCapture(); void this.audio?.()?.setMusicPreview(false); this.root.hidden = true; this.active(false); }
   async show(page) {
     this.padBlocked = true;
+    const previous = this.root.hidden ? null : this.canvas;
+    this.captureTransition(previous);
     this.cancelCapture();
     this.clearModelViews();
     delete this.root.dataset.error;
     this.busy = true; this.root.hidden = false; this.active(true); this.notice.textContent = ''; this.buttons.replaceChildren();
     try {
       if (page === 'tracks' || page === 'loading' || page === 'race') {
+        if (!this.loaded.has('/UI/RESOURCE/TP/TP_ANAT.RES')) this.setLoading(true, 'Preparing course previews…');
         await this.archive('/UI/RESOURCE/TP/TP_ANAT.RES');
         await this.archive('/UI/RESOURCE/TP/TP_PSTNT.RES');
         for (const track of this.tracks) { await this.image(`${track.image}a`); await this.image(`${track.image}b`); }
       }
-      this.page = page; this.selection = 0; this.busy = false; this.layoutKey = '';
+      this.page = page; this.selection = 0; this.layoutKey = '';
       this.syncPreview();
-      await this.refresh();
+      // A previous worker layout may still be in flight during rapid navigation.
+      while (this.layoutPending) await new Promise(resolve => requestAnimationFrame(resolve));
+      await this.refresh(true);
+      this.busy = false; this.setLoading(false); this.animatePage();
     } catch (error) { this.fail(error); }
   }
   async action(action) {
@@ -248,7 +259,7 @@ export class Frontend {
       else if (['main','single','tracks','controls','music','multiplayer','lobby','race'].includes(action)) return await this.show(action);
       if (action === 'racestart') {
         await this.multiplayer?.disconnect();
-        await this.beginLoading('env01'); this.busy = true;
+        this.busy = true;
         try { await this.start('env01', {...this.raceSettings}); this.raceActive = true; this.resume(); }
         catch(error) { await this.show('race');this.fail(error); } finally { this.busy = false; }
         return;
@@ -283,8 +294,8 @@ export class Frontend {
       this.layoutKey = ''; await this.refresh();
     } catch (error) { this.fail(error); }
   }
-  async refresh() {
-    if (!this.initialized || this.root.hidden || (this.busy && this.page !== 'loading') || this.layoutPending) return;
+  async refresh(force = false) {
+    if (!this.initialized || this.root.hidden || (this.busy && this.page !== 'loading' && !force) || this.layoutPending) return;
     const stage = this.canvas.parentElement, track = this.page === 'race' ? this.tracks.find(t=>t.id==='env01') : this.tracks[this.track];
     const music = this.audio?.()?.music, musicState = music?.snapshot();
     const lobby = this.multiplayer?.state?.lobby;
@@ -306,15 +317,49 @@ export class Frontend {
     finally { this.layoutPending = false; }
   }
   async beginLoading(environment) {
+    if (!this.initialized) this.setLoading(true, 'Preparing course…');
     this.loadingTrack = this.tracks.find(track => track.id === environment) ?? this.tracks[this.track];
-    this.loadingStatus = 'Opening course...';
+    this.loadingStatus = 'Preparing course…';
     await this.show('loading'); this.busy = true;
     // Yield a frame so the loading UI is painted before decoding/upload work.
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   }
   loadingStage(text) {
     if (this.page !== 'loading' || this.root.hidden) return;
-    this.loadingStatus = text; this.layoutKey = ''; void this.refresh();
+    // Keep decoder details in diagnostics; the player sees the actual loading phase.
+    this.loadingStatus = /engine|sound/i.test(text) ? 'Tuning sound…' : /ATV/i.test(text) ? 'Preparing your ride…' : /rider/i.test(text) ? 'Getting your rider ready…' : /texture|sky|model|vegetation/i.test(text) ? 'Building the scenery…' : /collision/i.test(text) ? 'Preparing the trail…' : /incomplete|Static terrain/i.test(text) ? 'Ready to ride' : 'Opening course…';
+    this.layoutKey = '';
+    this.courseMeter?.setAttribute('aria-label', this.loadingStatus); void this.refresh();
+  }
+  setLoading(visible, detail = 'Preparing menus…', title = 'Loading') {
+    if (!this.loadingScreen) return;
+    this.loadingScreen.hidden = !visible;
+    this.loadingScreen.setAttribute('aria-busy', String(visible));
+    document.getElementById('loading-title').textContent = title;
+    document.getElementById('loading-detail').textContent = detail;
+  }
+  captureTransition(canvas = this.canvas) {
+    for (const animation of this.transitions) animation.cancel();
+    this.transitions = []; this.transitionGhost?.remove(); this.transitionGhost = null;
+    if (!canvas || !this.frame || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const ghost = document.createElement('canvas'), rect = canvas.getBoundingClientRect();
+    ghost.width = canvas.width; ghost.height = canvas.height; ghost.getContext('2d').drawImage(canvas, 0, 0);
+    ghost.className = 'menu-transition'; ghost.setAttribute('aria-hidden', 'true');
+    Object.assign(ghost.style, {left:`${rect.left}px`,top:`${rect.top}px`,width:`${rect.width}px`,height:`${rect.height}px`});
+    document.body.append(ghost); this.transitionGhost = ghost;
+  }
+  animatePage(leaving = false) {
+    if (leaving) this.captureTransition();
+    const ghost = this.transitionGhost;
+    if (ghost) {
+      const exit = ghost.animate([{opacity:1,transform:'translateX(0)'},{opacity:0,transform:'translateX(-28px)'}], {duration:180,easing:'ease-in',fill:'forwards'});
+      this.transitions.push(exit); exit.finished.then(() => ghost.remove(), () => ghost.remove());
+      this.transitionGhost = null;
+    }
+    if (leaving || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const stage = this.canvas.parentElement;
+    const entry = stage.animate([{opacity:0,transform:'translateX(36px)'},{opacity:1,transform:'translateX(0)'}], {duration:240,easing:'cubic-bezier(.16,1,.3,1)'});
+    this.transitions.push(entry);
   }
   clearModelViews() {
     cancelAnimationFrame(this.modelAnimation);
@@ -376,6 +421,7 @@ export class Frontend {
     } catch (error) { if(token === this.modelToken) this.notice.textContent = `Rider animation: ${error.message}`; }
   }
   rebuildButtons() {
+    const focusedAction = this.buttons.contains(document.activeElement) ? document.activeElement.dataset.action : null;
     // Preserve native range nodes during input/redraw so dragging and keyboard
     // focus survive every Rust label update.
     for (const element of [...this.buttons.children]) if (element.tagName !== 'INPUT' || ![...this.frame.sliders, ...(this.frame.inputs ?? [])].some(item => item.action === element.dataset.setting)) element.remove();
@@ -423,6 +469,18 @@ export class Frontend {
       const [x,y,w,h] = field.rect;
       Object.assign(input.style, {position:'absolute',left:`${x/this.frame.width*100}%`,top:`${y/this.frame.height*100}%`,width:`${w/this.frame.width*100}%`,height:`${h/this.frame.height*100}%`});
       input.maxLength = field.max_length; input.setAttribute('aria-label', field.label);
+    }
+    if (focusedAction) [...this.buttons.children].find(element => element.dataset.action === focusedAction)?.focus({preventScroll:true});
+    this.courseMeter?.remove(); this.courseMeter = null;
+    if (this.page === 'loading') {
+      const preview = this.frame.draw.find(command => command.kind === 'preview');
+      if (preview) {
+        const [x,y,w,h] = preview.rect, meter = document.createElement('div');
+        meter.className = 'loading-meter course-load-meter'; meter.setAttribute('role', 'status');
+        meter.setAttribute('aria-label', this.loadingStatus);
+        Object.assign(meter.style, {left:`${x/this.frame.width*100}%`,top:`${(y+h+100)/this.frame.height*100}%`,width:`${w/this.frame.width*100}%`});
+        this.canvas.parentElement.append(meter); this.courseMeter = meter;
+      }
     }
     this.root.dataset.page = this.page; this.root.dataset.selection = String(this.selection);
     this.root.dataset.track = this.tracks[this.track]?.id ?? '';
@@ -501,7 +559,7 @@ class ModelView {
     this.canvas.addEventListener('pointermove', event => { if (this.pointer?.id !== event.pointerId) return; this.yaw += (event.clientX - this.pointer.x) * .015; this.pointer.x = event.clientX; this.render(); });
     for (const type of ['pointerup','pointercancel','lostpointercapture']) this.canvas.addEventListener(type, () => { this.pointer = null; });
     this.canvas.addEventListener('keydown', event => { if (!['ArrowLeft','ArrowRight'].includes(event.code)) return; event.preventDefault(); event.stopPropagation(); this.yaw += event.code === 'ArrowLeft' ? -.25 : .25; this.render(); });
-    this.canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); this.lost = true; delete this.canvas.dataset.ready; this.message.textContent = 'Restoring model...'; });
+    this.canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); this.lost = true; delete this.canvas.dataset.ready; this.message.textContent = 'Restoring model…'; this.element.classList.add('is-loading'); });
     this.canvas.addEventListener('webglcontextrestored', () => { this.lost = false; this.program = null; this.groups = []; this.textures = []; if (this.source) this.set(...this.source); });
   }
   place([x,y,w,h], frame) {
@@ -514,7 +572,7 @@ class ModelView {
       for (const texture of this.textures) gl.deleteTexture(texture);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     }
-    this.groups = []; this.textures = []; this.source = null; this.message.textContent = message; delete this.canvas.dataset.ready;
+    this.groups = []; this.textures = []; this.source = null; this.message.textContent = message; this.element.classList.toggle('is-loading', /Loading|Restoring/.test(message)); delete this.canvas.dataset.ready;
   }
   set(mesh, materials, pose = mesh.nodes.map(node => node.world_matrix)) {
     this.clear(); this.pose = pose; this.source = [mesh, materials, pose]; const gl = this.gl;

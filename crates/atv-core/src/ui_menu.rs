@@ -855,7 +855,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             } else {
                 ("Lobby", "lobby")
             });
-            let columns = if !portrait && (h - 90.) / choices.len() as f32 * scale < 34. {
+            let columns = if !portrait && (h - 90.) / choices.len() as f32 * scale < 44. {
                 2
             } else {
                 1
@@ -864,7 +864,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             let row = ((h - if portrait { 110. } else { 90. }) / rows as f32).min(if portrait {
                 64.
             } else {
-                48.
+                48_f32.max(44. / scale)
             });
             let column_width = (w - if portrait { 60. } else { 108. }) / columns as f32;
             let selected = request.selection % choices.len();
@@ -1227,6 +1227,7 @@ mod tests {
         for (w, h) in [
             (390., 844.),
             (844., 390.),
+            (667., 375.),
             (1280., 720.),
             (320., 568.),
             (768., 1024.),
@@ -1245,6 +1246,9 @@ mod tests {
                         hit.label
                     );
                     assert!(height * scale >= 34., "landscape compact minimum");
+                    if page == "pause" {
+                        assert!(height * scale >= 44. - 0.001, "pause touch minimum");
+                    }
                     if h > w {
                         assert!(height * scale >= 44., "portrait minimum");
                     }
