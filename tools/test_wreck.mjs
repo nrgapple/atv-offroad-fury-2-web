@@ -30,6 +30,10 @@ try {
   } else await page.goto(url.href);
   await page.waitForFunction(() => window.atvTerrainStatus?.simulation, null, { timeout: 90000 });
   await page.bringToFront(); await page.locator('#game').focus();
+  // Native actor reset starts a two-second stunt cooldown. Wait in simulation
+  // steps; renderer startup speed must not decide whether the gesture is legal.
+  const readyStep = await page.evaluate(() => window.atvTerrainStatus.simulationSteps);
+  await page.waitForFunction(step => window.atvTerrainStatus.simulationSteps >= step + 125, readyStep, { timeout: 10000 });
   const cdp = await page.context().newCDPSession(page);
   const touch = (type, points = []) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(point => ({ radiusX: 6, radiusY: 6, force: 1, ...point })) });
   const left = { id: 1, x: 60, y: 560 };
@@ -45,7 +49,7 @@ try {
   const swipe = { ...right, y: right.y - 70 };
   await touch('touchMove', [left, swipe]);
 
-  await page.waitForFunction(() => window.atvTerrainStatus.frame.rider_mode === 'wreck', null, {timeout: 15000,polling:'raf'});
+  await page.waitForFunction(() => window.atvTerrainStatus.frame.rider_mode === 'wreck', null, {timeout: 15000,polling:'raf'}).catch(async error=>{console.error('WRECK_DIAGNOSTIC',JSON.stringify(await page.evaluate(()=>({status:document.querySelector('#status').textContent,simulation:window.atvTerrainStatus.simulation,steps:window.atvTerrainStatus.simulationSteps,recent:window.rampFrames.slice(-10).map(s=>({step:s.step,input:s.input,grounded:s.frame.grounded,stunt:s.frame.stunt,origin:s.frame.origin,preload_active:s.frame.preload_active}))}))));throw error;});
   const start = await page.evaluate(() => window.atvTerrainStatus.frame);
   await touch('touchCancel');
   await page.waitForFunction(() => window.atvTerrainStatus.frame.rider_wreck && window.atvTerrainStatus.frame.rider_wreck.phase !== 'attached', null, {timeout: 10000,polling:'raf'});

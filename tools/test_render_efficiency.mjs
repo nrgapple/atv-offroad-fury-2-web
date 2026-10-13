@@ -7,16 +7,19 @@ const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'
 const before=process.env.ATV_PERF_BASELINE||'http://127.0.0.1:4328',after=process.env.ATV_TEST_URL||'http://127.0.0.1:4329';
 const out=process.env.ATV_PERF_OUTPUT||'work/verification/performance';await mkdir(out,{recursive:true});
 const browser=await chromium.launch({headless:true,args:['--use-angle=metal']});
-const report={scope:'One host Mac, Chromium Metal; matched fixed state/camera, serial alternating before/after; phone viewport is not physical mobile hardware or battery measurement',maps:[],hud:[]};
+const report={scope:'One host Mac, Chromium Metal; matched spawn patch/state/recovered follow camera; 4 serial alternating pairs of 80 frames after 20 warmups; render wall time includes gl.finish and excludes physics; phone viewport is not physical mobile hardware or battery measurement',maps:[],hud:[]};
 const hooks=`
+let auditSpawnCamera;
 window.__renderAudit = {
  draw(disable=false,yaw=null) {
    focused=true;menuOpen=false;keys.clear();pointers.clear();
+   if(yaw===null){auditSpawnCamera ??= cameraFrame;cameraFrame=auditSpawnCamera;}
    if(yaw!==null){cameraFrame=null;camera.x=simStart.origin[0];camera.y=simStart.origin[1]+30;camera.z=simStart.origin[2]+45;camera.yaw=yaw;camera.pitch=-.3;}
    window.__auditDisableCulling=disable; render(10000);
    const pixels=new Uint8Array(canvas.width*canvas.height*4);gl.readPixels(0,0,canvas.width,canvas.height,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
    return {pixels,resolution:[canvas.width,canvas.height],visibility:diagnostics.visibility,triangles:diagnostics.triangles,terrain:diagnostics.terrainMesh};
  },
+ restore(){vehicle.position=simStart.origin.slice();buildTerrainMesh();cameraFrame=auditSpawnCamera;},
  async geometry(x,z){
    vehicle.position=[x*terrain.spacing,vehicle.position[1],z*terrain.spacing];
    window.__auditCounts={uploads:0,bytes:0,deletes:0};const t=performance.now();buildTerrainMesh();const ms=performance.now()-t;
@@ -58,7 +61,7 @@ try{
    assert.deepEqual(next.hashes,old.hashes,`${env}/${center}: uploaded terrain samples/topology changed`);geometry.push({center,before:old,after:next});
   }
   // Restore the spawn patch/camera, then warm and alternate serial timings.
-  for(const {p}of[a,b])await p.evaluate(()=>{window.__renderAudit.draw(false,Math.PI);window.__renderAudit.draw(false,Math.PI);window.__auditCounts={uploads:0,bytes:0,deletes:0,draws:0,triangles:0};window.__renderAudit.timing(20);});
+  for(const {p}of[a,b])await p.evaluate(()=>{window.__renderAudit.restore();window.__renderAudit.draw(false,null);window.__renderAudit.draw(false,null);window.__auditCounts={uploads:0,bytes:0,deletes:0,draws:0,triangles:0};window.__renderAudit.timing(20);});
   const timings=[];
   for(let i=0;i<4;i++){
    const order=i%2?[b,a]:[a,b],pair={};for(const side of order){await side.p.evaluate(()=>window.__auditCounts={uploads:0,bytes:0,deletes:0,draws:0,triangles:0});pair[side===a?'before':'after']=await side.p.evaluate(()=>window.__renderAudit.timing(80));}timings.push(pair);

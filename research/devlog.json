@@ -1,6 +1,6 @@
 {
-  "status": "Public protocol v3 transport, four-browser replication, and feature/train/contact/recovery routes are verified on main 8c0ace5; this is bounded component evidence, not whole-game parity.",
-  "working_on": "Validate visibility culling, terrain-buffer reuse and HUD/inactive cleanup against the recorded host Chromium baseline while preserving 60 Hz physics and input/event ordering.",
+  "status": "The host optimization candidate passes component comparisons with exact checked pixels. Dedicated render-wall time is lower across nine maps; live callback timing does not establish a CPU/FPS/battery gain. PR #42 final CI and public verification are pending.",
+  "working_on": "Complete PR #42 final CI and public verification through the normal release gates.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -2874,9 +2874,28 @@
         "Code-review candidates include per-peer forced layout reads in multiplayer labels and submitting the full wet-particle high-water range (up to 10,800) while any particle remains alive."
       ],
       "limitation": "Host Chromium phone-sized viewport only; these results do not measure physical-phone timing, battery or thermals. Draw submission is not GPU execution. Visibility culling, terrain-buffer reuse and HUD/inactive cleanup are in progress; no gains are claimed."
+    },
+    {
+      "id": "host-rendering-optimization-checkpoint-37a3954f",
+      "timestamp": "2026-10-13T21:45:50.795142+00:00",
+      "recorded_at": "2026-10-13T21:54:06.846021+00:00",
+      "kind": "verification",
+      "title": "Host rendering optimization checkpoint",
+      "summary": "Host component comparisons keep checked pixels identical; dedicated render-wall medians fall in all nine maps and portrait standalone-speed HUD storage drops 82.3%. Actual-loop callback wall-time results vary by pair and include driver wait, with higher candidate p95s; no main-thread CPU, FPS, or battery gain is claimed.",
+      "details": [
+        "Matched Chromium Metal render-wall comparison on one host Mac at 390\u00d7844 CSS pixels, DPR3: four serial alternating pairs of 80 frames after 20 warmups, with gl.finish included and physics excluded. Median before\u2192candidate render-wall times: ENV01 1.771\u21920.877 ms, ENV02 2.101\u21920.868, ENV03 1.859\u21920.824, ENV04 2.285\u21920.571, ENV05 1.908\u21920.584, ENV06 2.266\u21920.647, ENV07 0.932\u21920.814, ENV08 2.259\u21920.838, FREE05 1.231\u21920.729.",
+        "All 45 matched camera/map pixel comparisons and 18 terrain-center GPU-byte hashes across ENV01/ENV04/FREE05 match. At Caribou interior centers (700,690)/(760,720), uploaded bytes fell 3,868,416\u21921,176,192 (69.6%) with zero deletes at those points; these are selected observations. A separate ENV04 geometry case needed six deletes. Buffer reuse updates affected coarse masks/fine vertices while preserving original samples, topology and seam interpolation.",
+        "All 48 HUD fixtures across four viewports are pixel-identical. The 390\u00d7844/DPR3 standalone-speed backing store falls 82.3% (11,849,760\u21922,096,640 bytes); animated stunts retain the full canvas, while hidden or paused no-content HUD backing is 1\u00d71 and unchanged states skip redraw.",
+        "In two-second lifecycle windows, active play remains 120 frames/120 physics steps at about 60 FPS; draw submissions fall 71,760\u219214,520 and HUD clears 120\u21920. Paused and blur-visible RAF callbacks fall 120\u21920. These are deterministic workload counts, not battery measurements.",
+        "Host gates pass all-nine-map driving, 124-step touch, race AI, minimap, keyboard/gamepad, context restoration, Chromium/WebKit lifecycle, reflections/water, multiplayer join/contact/train/reconnect/departure, and held-touch wreck on baseline and candidate. Motorcycle controls pass 178 paired WASM/camera steps, portrait touch turns both ways, grip/foot continuity, and interpolated presentation. Final make check/verify pass after the HUD visibility guard; no gameplay/FPS regression was detected. The wreck fixture waits 125 steps for the original two-second cooldown; no Rust physics or input change. Candidate incorporates remote-main security checkpoint b5fd793 via merge 99fd9aa; PR #42 first CI passed, final CI/public verification pending.",
+        "A separate live Caribou callback test ran four alternating serial pairs (2s warmup, 10s each, 2,401 samples per side). Aggregate mean callback elapsed wall was 1.702 ms before vs 1.769 ms candidate; candidate p95 was higher in all four pairs (2.8\u20132.9 ms vs 2.1\u20132.6 ms). Both ran near 60 FPS. This callback timer includes driver wait and does not isolate CPU execution, so no main-thread CPU/FPS/battery gain is claimed. One five-second profiler sample recorded about 337 ms non-idle before and 244 ms after, with about 3 ms attributed to culling; vegetation remained the largest profiled workload. That profile is diagnostic, not a CPU-benefit measurement."
+      ],
+      "limitation": "Host-only Chromium Metal evidence at a simulated phone viewport; no physical-phone timing, battery or thermal measurement. Dedicated gl.finish render-wall results are not main-thread CPU, normal gameplay frame-time or FPS gains. Live callback wall time includes graphics-driver wait and shows no consistent CPU benefit. Public deployment is pending.",
+      "image": "/devlog-images/host-rendering-optimization-checkpoint-37a3954f.png",
+      "caption": "Host-only Chromium Metal gameplay capture on Caribou Peak (ENV01), 390\u00d7844 CSS viewport at DPR3, after keyboard driving; not a physical-phone image."
     }
   ],
-  "updated_at": "2026-10-13T21:25:51.537433+00:00",
+  "updated_at": "2026-10-13T21:54:06.846021+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {

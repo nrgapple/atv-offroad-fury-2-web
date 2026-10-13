@@ -36,7 +36,7 @@ export class HeadUpDisplay {
     this.layout = new Map(); this.images = new Map(); this.tints = new Map();
   }
   async init(environment) {
-    this.ready = false; this.clear();
+    this.ready = false; this.lastKey = ''; this.clear();
     const env = /^env(0[1-8])$/i.exec(environment)?.[1];
     if (!env && environment !== 'free05') throw new Error('Unsupported original HUD environment');
     const f = this.frontend;
@@ -120,7 +120,8 @@ export class HeadUpDisplay {
   }
   release() {
     if (this.canvas.width !== 1 || this.canvas.height !== 1) this.canvas.width = this.canvas.height = 1;
-    this.canvas.hidden = true; this.painted = false; this.lastKey = '';
+    if (!this.canvas.hidden) this.canvas.hidden = true;
+    this.painted = false; this.lastKey = '';
   }
   snapshot() { return { draws: this.draws, clears: this.clears, backingBytes: this.canvas.width * this.canvas.height * 4 }; }
   draw(hud, visible = true, { speedVisible = true } = {}) {
@@ -135,29 +136,29 @@ export class HeadUpDisplay {
     if (width <= 0 || height <= 0) { this.release(); return; }
     const key = JSON.stringify([hud, speedVisible, rect.width, rect.height, dpr]);
     if (key === this.lastKey) return;
-    this.lastKey = key;
     const actual = this.ctx, list = new HudDrawList(); this.ctx = list;
     // Original logical frame is 640x448. Extend horizontal framing on wide
     // displays. Compact portrait phones move the meter above thumb driving.
     const compact = rect.width < 560, unit = compact ? Math.min(rect.width / 400, rect.height / 448) : rect.height / 448;
     this.logicalWidth = rect.width / unit; const logicalHeight = rect.height / unit;
-    const c = this.ctx; c.setTransform(unit * dpr, 0, 0, unit * dpr, 0, 0);
-    const speedAt = compact ? [this.logicalWidth - 24, 72] : [this.logicalWidth - 43, logicalHeight - 76];
-    const speed = this.layout.get('OverlayObject-5');
-    // Native draw depth: background (5), blue (4), orange (2), highlight (1).
-    if (speedVisible) {
-      this.icon(speedAt, speed, 2); this.icon(speedAt, speed, 1, { visible: hud.preload_visible, alpha: hud.preload_blue_alpha });
-      this.icon(speedAt, speed, 4, { visible: hud.preload_visible, fill: hud.preload_fill }); this.icon(speedAt, speed, 3);
-      this.text(hud.speed_text, speedAt, speed, 1); this.text(hud.units, speedAt, speed, 2);
-    }
-    this.canvas.dataset.speedVisible = String(speedVisible);
-    if (hud.stunt_visible) {
-      const stunt = this.layout.get('OverlayObject-12'), at = [this.logicalWidth / 2, compact ? logicalHeight * .62 : logicalHeight - 100];
-      const common = { color: hud.stunt_color.join(','), alpha: hud.stunt_alpha };
-      this.text(hud.stunt_name, at, stunt, 1, { ...common, offset: hud.stunt_offsets[0] });
-      this.text(hud.stunt_points, at, stunt, 2, { ...common, scale: hud.stunt_scale, offset: hud.stunt_offsets[1] });
-    }
-    this.ctx = actual;
+    try {
+      const c = this.ctx; c.setTransform(unit * dpr, 0, 0, unit * dpr, 0, 0);
+      const speedAt = compact ? [this.logicalWidth - 24, 72] : [this.logicalWidth - 43, logicalHeight - 76];
+      const speed = this.layout.get('OverlayObject-5');
+      // Native draw depth: background (5), blue (4), orange (2), highlight (1).
+      if (speedVisible) {
+        this.icon(speedAt, speed, 2); this.icon(speedAt, speed, 1, { visible: hud.preload_visible, alpha: hud.preload_blue_alpha });
+        this.icon(speedAt, speed, 4, { visible: hud.preload_visible, fill: hud.preload_fill }); this.icon(speedAt, speed, 3);
+        this.text(hud.speed_text, speedAt, speed, 1); this.text(hud.units, speedAt, speed, 2);
+      }
+      this.canvas.dataset.speedVisible = String(speedVisible);
+      if (hud.stunt_visible) {
+        const stunt = this.layout.get('OverlayObject-12'), at = [this.logicalWidth / 2, compact ? logicalHeight * .62 : logicalHeight - 100];
+        const common = { color: hud.stunt_color.join(','), alpha: hud.stunt_alpha };
+        this.text(hud.stunt_name, at, stunt, 1, { ...common, offset: hud.stunt_offsets[0] });
+        this.text(hud.stunt_points, at, stunt, 2, { ...common, scale: hud.stunt_scale, offset: hud.stunt_offsets[1] });
+      }
+    } finally { this.ctx = actual; }
     if (!list.commands.length) { this.release(); return; }
     const bounds = [Infinity, Infinity, -Infinity, -Infinity];
     for (const command of list.commands) {
@@ -179,6 +180,6 @@ export class HeadUpDisplay {
       else if (operation === 'alpha') actual.globalAlpha = args[0];
       else actual[operation](...args);
     }
-    this.painted = true; this.draws++;
+    this.painted = true; this.lastKey = key; this.draws++;
   }
 }
