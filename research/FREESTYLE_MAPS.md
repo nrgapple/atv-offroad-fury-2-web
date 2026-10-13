@@ -110,21 +110,26 @@ faithfully. Full racing, training objectives and hockey rules are separate work.
 
 ## Verification
 
-Host checkpoint: all 40 venues pass one continuous Chromium source-content
+Host checkpoint: all 40 unique venues pass one continuous Chromium source-content
 loading/driving run, including terrain dimensions/spacing, finite movement,
 zero unsupported scenery meshes, bounded original collision caches, batched
-vegetation, shared water fields and zero page/GL errors. The frontend gate visits
-all 40 unique unlocked choices with source previews, plus desktop/controller Tioga
-and portrait Caribou loading/pause/reload. Training retains its source title with
-no invented thumbnail.
+vegetation, shared water fields and zero page/GL errors. The roster includes all
+eight ENV, six FREE, eight NAT, sixteen SX, Training and Coonce; original IDs
+1–9 remain stable and 31 venues were appended. The frontend gate visits every
+unlocked choice with source previews, plus desktop/controller Tioga and portrait
+Caribou loading/pause/reload. Training retains its source title with no invented
+thumbnail. These are host results; the public app and expanded R2 content still
+await release verification.
 
 Six Sausalito hay-bale approaches at 390px supply both original wheel support and
 body responses (7–85 support frames and 12–104 body-contact frames per route).
-Actual Chromium touch events move the ATV, and the inspected portrait stadium
-capture shows the original stadium, rider and GPS. Two clients select Sausalito map23, draw each other's rigs
-with 13 remote draws each, replicate 8.18 feet of host movement and clean up when
-the host leaves. Sixteen relay checks pass, including map41 rejection on a real
-socket. These are bounded host browser checks, not physical phone or original PS2
+Actual Chromium touch events move the ATV. The inspected portrait stadium capture
+shows the original stadium, rider and GPS at 16 mph. Two clients select Sausalito
+map23; each draws 13 remote elements, replicates 8.18 feet of host movement, and
+cleans up when the host leaves. The landscape capture shows the host's 22 mph
+view and the P2 Guest marker at 23 feet; the guest vehicle is outside that camera
+view. Sixteen relay checks pass, including map41 rejection on a real socket.
+These are bounded host browser checks, not physical-phone or original PS2
 full-game equivalence.
 
 After rebasing onto current main, setup, 422 Rust tests/formatting/strict
