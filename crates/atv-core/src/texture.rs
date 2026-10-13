@@ -14,6 +14,9 @@ pub struct Texture {
 }
 
 pub fn decode_pst(data: &[u8]) -> Result<Texture> {
+    if u32le(data, 0)? == 0x00020002 {
+        return decode_mx_pst(data);
+    }
     let levels = u32le(data, 8)?;
     if u32le(data, 0)? != 1 || levels == 0 || levels > 16 {
         return Err("unsupported PST version/level count".into());
@@ -79,6 +82,81 @@ pub fn decode_pst(data: &[u8]) -> Result<Texture> {
         info: TextureInfo { width, height },
         rgba,
     })
+}
+
+/// Observed MX v2 indexed8 profile. Its explicit per-level byte count replaces
+/// ATV2's zero field. Other MX pixel profiles remain rejected.
+fn decode_mx_pst(data: &[u8]) -> Result<Texture> {
+    if data.len() > 128 * 1024 * 1024 || u32le(data, 4)? != 40 {
+        return Err("unsupported MX PST flags".into());
+    }
+    let palette = slice(data, 8, 1024)?;
+    let levels = u32le(data, 1032)?;
+    if !(1..=16).contains(&levels) {
+        return Err("invalid MX PST mip count".into());
+    }
+    let mut at = 1036;
+    let mut selected = (0, 0, 0, 0);
+    for _ in 0..levels {
+        let height = u32le(data, at)?;
+        let width = u32le(data, at + 4)?;
+        let count = u32le(data, at + 8)? as usize;
+        if width == 0
+            || height == 0
+            || width > 4096
+            || height > 4096
+            || count != (width * height) as usize
+            || u32le(data, at + 12)? != 0
+        {
+            return Err("invalid MX PST level extent".into());
+        }
+        at += 16;
+        slice(data, at, count)?;
+        if count > selected.3 {
+            selected = (width, height, at, count);
+        }
+        at += count;
+    }
+    if at != data.len() {
+        return Err("MX PST payload extent mismatch".into());
+    }
+    let (width, height, start, count) = selected;
+    let mut rgba = Vec::with_capacity(count * 4);
+    for &index in &data[start..start + count] {
+        let i = ((index & !24) | ((index & 8) << 1) | ((index & 16) >> 1)) as usize;
+        rgba.extend_from_slice(&palette[i * 4..i * 4 + 4]);
+    }
+    Ok(Texture {
+        info: TextureInfo { width, height },
+        rgba,
+    })
+}
+
+#[cfg(test)]
+mod mx_tests {
+    use super::*;
+    #[test]
+    fn indexed8_explicit_extents_and_clut_order() {
+        let mut data = Vec::new();
+        data.extend(0x00020002u32.to_le_bytes());
+        data.extend(40u32.to_le_bytes());
+        for i in 0..256 {
+            data.extend([i as u8, 0, 0, 128]);
+        }
+        data.extend(1u32.to_le_bytes());
+        for v in [1u32, 2, 2, 0] {
+            data.extend(v.to_le_bytes());
+        }
+        data.extend([8, 16]);
+        let texture = decode_pst(&data).unwrap();
+        assert_eq!(texture.info.width, 2);
+        assert_eq!(texture.rgba, [16, 0, 0, 128, 8, 0, 0, 128]);
+        for end in 0..data.len() {
+            assert!(decode_pst(&data[..end]).is_err());
+        }
+        data[1044..1048].copy_from_slice(&3u32.to_le_bytes());
+        assert!(decode_pst(&data).is_err());
+    }
 }
 
 /// Observed frontend ATM: version, frame count, zero flags, then complete

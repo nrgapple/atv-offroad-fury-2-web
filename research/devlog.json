@@ -2157,6 +2157,39 @@
         "Recovery work is restoring production deployment through GitHub Actions; this entry does not claim that recovery or a new production deployment has completed."
       ],
       "limitation": "Public deployment recovery remains in progress. The queue has only host-level evidence and has not completed a public end-to-end release."
+    },
+    {
+      "id": "motorcycle-asset-formats-and-models-are-recovered-479c12ef",
+      "timestamp": "2026-10-13T01:46:14.742118+00:00",
+      "recorded_at": "2026-10-13T01:50:41.794160+00:00",
+      "kind": "verification",
+      "title": "Motorcycle asset formats and models are recovered",
+      "summary": "A source-backed recovery checkpoint now decodes the MX vs. ATV Unleashed motorcycle format and several bike meshes in Rust. The captured bikes and Suzuki components are private host-side model inspection; they are not selectable or drivable in the browser port.",
+      "details": [
+        "The Rust PSR reader matches an independent parser across all 20,391 records and 751,972 header-plus-directory bytes. A native R5900 instruction replay of the original PSG header loader at 0x00166360 confirms the observed fields and file-read boundaries, including the first bike group over 163 instructions.",
+        "Loader evidence maps the exact 854,016-byte GAME_REL.BIN at 0x0045c580; every byte matched the source file. The Rust PSG v5 decoder produced Bike (22 nodes, 3 LODs, 2,470 finest-LOD triangles), Bike 50 (19 nodes, 4 LODs, 2,388 triangles), and seven Suzuki component meshes. An independent native geometry comparison passed 42 groups across nine decoded model files and 6,846 actual instructions, using only a bounded file reader and allocator.",
+        "The recovered records also identify Race and Pro physics profiles, sixteen tire surfaces, clutch, wheelie, stoppie, cross-up, flip, 360, stunt-catalog, audio and dirt resources. These are recovered resources and catalog evidence, not implemented mechanics. The full host checks passed: 322 core, 25 network, 3 relay and 13 bridge Rust tests; 69 JavaScript tests; formatting, strict Clippy, release WASM build, make verify, repository hygiene and 18 release checks. Existing optional funny-crash checks passed 855 exact paired WASM gameplay/camera steps with the option Off and On, seven rendered ATV pieces and intact recovery. New generic motorcycle marker/descendant handling has core coverage only and is not connected to a live motorcycle model."
+      ],
+      "limitation": "Host-only recovery evidence. Motorcycles are not selectable or drivable, and no motorcycle handling, rider integration, suspension, physics, audio playback, particles, stunts, crashes or gameplay parity is claimed. The screenshot is a static decoded-mesh inspection with illustrative flat shading. The candidate has not passed current-main CI or the separate public Cloudflare/R2 release checks; no game data or screenshot has been uploaded.",
+      "image": "/devlog-images/motorcycle-asset-formats-and-models-are-recovered-479c12ef.png",
+      "caption": "Private host model inspection: decoded Bike and Bike 50 LOD0 meshes plus seven Suzuki components. Static geometry only; no motorcycle is playable."
+    },
+    {
+      "id": "source-tuned-motorcycles-now-ride-across-eight-configu-57ad9d3e",
+      "timestamp": "2026-10-13T04:00:58+00:00",
+      "recorded_at": "2026-10-13T04:01:14.592641+00:00",
+      "kind": "verification",
+      "title": "Source-tuned motorcycles now ride across eight configurations",
+      "summary": "The host browser now drives and renders MX 50, 125, 250 and 500 motorcycles in Race and Pro configurations with an authored two-wheel solver using recovered source tuning. This is a playable gameplay component, not native instruction parity or a complete MX vs. ATV Unleashed port.",
+      "details": [
+        "Final drive verification covered MX 50, 125, 250 and 500 in Race and Pro configurations over 634 exact paired gameplay steps, Off and On, after preserving 21-node 50cc and 30-node 125/250/500 model structures. All eight routes passed driving, steering, clutch, rendering, audio, roost and reset checks with no isolation mismatches.",
+        "The MX 125 Race route passed desktop and 390-pixel portrait/landscape checks for countdown, pause, five CPU riders, touch input and restart. The complete 26-model ATV garage/rider/context-loss gate also passed. The ATV severe-crash regression remains a separate 1,191-step paired result.",
+        "The motorcycle crash route passed touch steering/cancellation, an airborne stunt, detached-rider ordinary wreck and safe recovery over 320 exact paired steps and 260 captured frames. No severe breakaway transition was observed; aerial-ragdoll and damage counters were zero, so those effects remain unverified for bikes.",
+        "The combined host gate passed 335 core, 25 network, 3 web, 13 relay and 69 JavaScript tests, plus make verify and 19 release checks."
+      ],
+      "limitation": "Host-only verification; no current-main CI, public Cloudflare motorcycle route or R2 package verification yet. The authored two-wheel solver uses recovered source tuning but has not been shown instruction-equivalent to the original. Motorcycle severe breakaway, aerial ragdoll and damage are unverified. Source COLv2 collision, full stunt behavior, audio/effect scheduling, water and footprint tracks remain incomplete. Multiplayer continues to support ATV riders only; this is not a complete game port.",
+      "image": "/devlog-images/source-tuned-motorcycles-now-ride-across-eight-configu-57ad9d3e.png",
+      "caption": "Host browser capture: the authored MX 125 Race motorcycle and rider riding on a snowy course. This is the browser reconstruction, not a PS2 capture or public release."
     }
   ],
   "updated_at": "2026-10-13T04:02:59.043299+00:00",

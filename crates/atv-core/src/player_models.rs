@@ -6,6 +6,7 @@ use serde::Serialize;
 #[derive(Debug, Serialize)]
 pub struct Models {
     pub quad_id: u16,
+    pub motorcycle: bool,
     pub rider_id: u16,
     pub quad: String,
     pub quad_materials: String,
@@ -21,8 +22,28 @@ pub struct Models {
 }
 
 pub fn selection(quad: u16, rider: u16) -> Result<Models> {
-    if !(1..=26).contains(&quad) || rider > 1 {
+    if !(1..=34).contains(&quad) || rider > 1 {
         return Err("unsupported player model".into());
+    }
+    if quad >= 27 {
+        let (size, pro) = crate::motorcycle::class(quad)?;
+        let archive = format!("/MX/BIKE{size}.RES");
+        return Ok(Models {
+            quad_id: quad,
+            rider_id: rider,
+            motorcycle: true,
+            quad: archive.clone(),
+            quad_materials: archive.clone(),
+            quad_mesh: if size == 50 { "bike50.psg" } else { "bike.psg" }.into(),
+            physics: format!("mx_{}{size}P.phy", if pro { "Pro" } else { "Race" }),
+            chassis: String::new(),
+            actor: String::new(),
+            rider: archive,
+            rider_mesh: "mrider.psg".into(),
+            rider_catalog: "MX_RiderMotions.mcf".into(),
+            label: format!("MX {size} / {}", if pro { "Pro" } else { "Race" }),
+            rider_label: "MX THQ rider",
+        });
     }
     let bank = if quad <= 13 { "A" } else { "B" };
     let stem = format!("ATV{quad:02}");
@@ -57,6 +78,7 @@ pub fn selection(quad: u16, rider: u16) -> Result<Models> {
     ];
     Ok(Models {
         quad_id: quad,
+        motorcycle: false,
         rider_id: rider,
         quad: format!("/QUAD/BIKES{bank}/{stem}.RES"),
         quad_materials: format!("/QUAD/BIKES{bank}/{stem}_MT.RES"),
@@ -85,7 +107,7 @@ mod tests {
         assert_eq!(selection(14, 1).unwrap().quad, "/QUAD/BIKESB/ATV14.RES");
         assert_eq!(selection(26, 1).unwrap().rider_catalog, "frider.mcf");
         assert!(selection(0, 0).is_err());
-        assert!(selection(27, 0).is_err());
+        assert!(selection(35, 0).is_err());
         assert!(selection(1, 2).is_err());
     }
 }

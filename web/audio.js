@@ -66,13 +66,15 @@ export class GameAudio {
       const bytes = await read(file, entry.lba * 2048, entry.bytes);
       return { bytes, entries: await json(2, bytes) };
     };
-    const table = await archive('/AUDIOTBL.RES');
-    const tableIndex = table.entries.findIndex(entry => /(^|[\\/])vehicle\.aud$/i.test(entry.name));
+    const motorcycle = quadId >= 27;
+    const size = [50,125,250,500][Math.floor((quadId-27)/2)];
+    const table = await archive(motorcycle ? `/MX/BIKE${size}.RES` : '/AUDIOTBL.RES');
+    const tableIndex = table.entries.findIndex(entry => motorcycle ? entry.name.replaceAll('\\','/').split('/').at(-1).toLowerCase() === `vehicle_${size}a.aud` : /(^|[\\/])vehicle\.aud$/i.test(entry.name));
     if (tableIndex < 0) throw new Error('Original vehicle audio table is missing.');
     this.engineTable = await this.codec(3, table.bytes, tableIndex);
-    this.config = await json(32, this.engineTable, quadId);
-    const sounds = await archive('/AUDIO/AUDIO.RES');
-    const normal = path => path.replaceAll('\\', '/').toLowerCase().replace(/^audio\//, '');
+    this.config = await json(motorcycle ? 101 : 32, this.engineTable, quadId);
+    const sounds = motorcycle ? table : await archive('/AUDIO/AUDIO.RES');
+    const normal = path => path.replaceAll('\\', '/').toLowerCase().replace(/^(?:audio|aud)\//, '');
     const lookup = new Map(sounds.entries.map((entry, index) => [normal(entry.name), index]));
     this.loadSample = async name => {
       if (this.buffers.has(name)) return;
@@ -85,13 +87,13 @@ export class GameAudio {
       this.buffers.set(name, { wave, info, buffer: null });
     };
     // Keep encoded WAV until a user gesture creates/unlocks the audio context.
-    for (const name of new Set(this.config.samples.flat())) {
+    for (const name of new Set([...this.config.samples.flat(),...(this.config.impact_samples ?? [])])) {
       if (!isCurrent() || this.closed) return;
       await this.loadSample(name);
     }
     const riderIndex = table.entries.findIndex(entry => /(^|[\\/])rider\.aud$/i.test(entry.name));
-    if (riderIndex < 0) throw new Error('Original rider sound table is missing.');
-    await this.loadEffects({ bytes: await this.codec(3, table.bytes, riderIndex), isCurrent });
+    if (!motorcycle && riderIndex < 0) throw new Error('Original rider sound table is missing.');
+    if (!motorcycle) await this.loadEffects({ bytes: await this.codec(3, table.bytes, riderIndex), isCurrent });
     if (!isCurrent() || this.closed) return;
     await this.music.load({ file, files, read, isCurrent });
     await this.loadMenuMusic({ file, files, read, isCurrent });
@@ -362,6 +364,13 @@ export class GameAudio {
       this.applySpatial(this.effectVoices.get(0), result.spatial);
     }
   }
+  oneShot(name) {
+    const sample=this.buffers.get(name);
+    if (!sample?.buffer || !this.context || this.context.state !== 'running') return;
+    const source=this.context.createBufferSource();source.buffer=sample.buffer;source.connect(this.engineGain);
+    const voice={source};this.sources.add(voice);
+    source.onended=()=>{this.sources.delete(voice);source.disconnect();};source.start();
+  }
   async update(dt, input, frame, scene) {
     if (!this.ready || !this.active || this.closed) return;
     this.captureSpatial(dt, scene);
@@ -374,6 +383,11 @@ export class GameAudio {
     try {
       if (!await this.decode()) return;
       if (generation !== this.generation) return;
+      if (frame.vehicle_kind === 'motorcycle') {
+        if (frame.impact_sample && frame.motorcycle_tick !== this.impactTick) {this.impactTick=frame.motorcycle_tick;this.oneShot(frame.impact_sample);}
+        if (input.clutch && !this.clutchWasDown) this.oneShot(this.config.samples[9][0]);
+        this.clutchWasDown=Boolean(input.clutch);
+      }
       await this.updateSpatial(generation);
       await this.updateEffects(generation);
       if (this.closed || !this.active || generation !== this.generation) return;

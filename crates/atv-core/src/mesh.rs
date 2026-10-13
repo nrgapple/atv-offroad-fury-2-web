@@ -1,4 +1,4 @@
-//! PSG v3/v4 rigid mesh recovery. Returns the stored bind pose, not animation or
+//! PSG v3/v4/v5 rigid mesh recovery. Returns the stored bind pose, not animation or
 //! the original VU rendering pipeline. Unsupported packet forms fail explicitly.
 use crate::{Result, slice, u16le, u32le};
 use serde::Serialize;
@@ -146,6 +146,7 @@ fn packet(
     material: u32,
     flags: u32,
     expected_vertices: usize,
+    sign_bit_restart: bool,
 ) -> Result<Group> {
     let mut group = Group {
         material,
@@ -196,7 +197,14 @@ fn packet(
                             };
                         }
                         let weight = components[3];
-                        let magnitude = weight.unsigned_abs();
+                        // Unleashed v5 marks strip restarts with the top bit,
+                        // retaining a positive rigid-node magnitude underneath.
+                        // ATV2 v3/v4 instead stores the negative magnitude.
+                        let magnitude = if sign_bit_restart {
+                            weight as u32 & if stride == 8 { 0x7fff } else { 0x7fff_ffff }
+                        } else {
+                            weight.unsigned_abs()
+                        };
                         if magnitude == 0 || magnitude % 16 != 0 {
                             return Err("unsupported PSG rigid node encoding".into());
                         }
@@ -301,9 +309,10 @@ fn decode_psg_root(data: &[u8], scene_root: bool) -> Result<Mesh> {
     }
     // 001b2d40 reads the version word at 001b3198, then uses the same node,
     // material and geometry readers without inspecting it. Both observed
-    // versions use this layout; retain explicit admission and packet checks
-    // rather than accepting arbitrary future versions.
-    if slice(data, 0, 4)? != b"psg\0" || !matches!(u32le(data, 4)?, 3 | 4) {
+    // versions share the node/material layout. Unleashed v5 has its own
+    // geometry policy/layer layout below; future versions still fail explicitly.
+    let version = u32le(data, 4)?;
+    if slice(data, 0, 4)? != b"psg\0" || !matches!(version, 3..=5) {
         return Err("unsupported PSG signature/version".into());
     }
     let count = u32le(data, 8)? as usize;
@@ -373,7 +382,13 @@ fn decode_psg_root(data: &[u8], scene_root: bool) -> Result<Mesh> {
         return Err("unsupported PSG vertex scale header".into());
     }
     at += 32;
-    let lod_count = u32le(data, at)?;
+    // SLUS_211.04 0018ab20 reads four separate bytes: LOD count, geometry
+    // policy bits, render policy bits, reserved byte. They are not a u32 count.
+    let lod_count = if version == 5 {
+        u32::from(slice(data, at, 4)?[0])
+    } else {
+        u32le(data, at)?
+    };
     at += 4;
     if lod_count == 0 || lod_count > 8 {
         return Err("unsupported PSG LOD count".into());
@@ -391,9 +406,27 @@ fn decode_psg_root(data: &[u8], scene_root: bool) -> Result<Mesh> {
         for _ in 0..group_count {
             let material = u32le(data, at)?;
             let flags = u32le(data, at + 4)?;
-            let vertices = (u32le(data, at + 12)? & 65535) as usize;
-            let size = u32le(data, at + 16)? as usize;
-            at += 20;
+            let (vertices, size) = if version == 5 {
+                // 0019f0c0 reads material; 00166360 reads flags, five bytes,
+                // per-layer source identifiers, two u16 counts and packet size.
+                // Layer identifiers are not node indices or Rust material IDs.
+                let policy = slice(data, at + 8, 5)?;
+                let layers = usize::from(policy[0]);
+                if !(1..=2).contains(&layers) || policy[1] != 0 {
+                    return Err("unsupported PSG v5 layers or referenced packet".into());
+                }
+                let counts = at + 13 + layers * 4;
+                slice(data, at + 13, layers * 4)?;
+                let vertices = usize::from(u16le(data, counts)?);
+                let size = u32le(data, counts + 4)? as usize;
+                at = counts + 8;
+                (vertices, size)
+            } else {
+                let vertices = (u32le(data, at + 12)? & 65535) as usize;
+                let size = u32le(data, at + 16)? as usize;
+                at += 20;
+                (vertices, size)
+            };
             if material as usize >= materials_count {
                 return Err("PSG group references missing material".into());
             }
@@ -408,6 +441,7 @@ fn decode_psg_root(data: &[u8], scene_root: bool) -> Result<Mesh> {
                 material,
                 flags,
                 vertices,
+                version == 5,
             )?);
             at += size;
         }
@@ -549,10 +583,42 @@ mod tests {
             }
         }
         assert!(
-            decode_psg(&synthetic_psg(5))
+            decode_psg(&synthetic_psg(6))
                 .unwrap_err()
                 .contains("signature/version")
         );
+    }
+    #[test]
+    fn v5_reads_packed_lod_policy_layer_header_and_restart_bits() {
+        let mut data = synthetic_psg(5);
+        let lod = 12 + 224 + 4 + 64 + 32;
+        data[lod + 1] = 1;
+        let group = lod + 4 + 8;
+        let size = u32le(&data, group + 16).unwrap();
+        let mut header = Vec::new();
+        header.extend(0u32.to_le_bytes());
+        header.extend(7u32.to_le_bytes());
+        header.extend([1, 0, 0, 0, 0]);
+        header.extend(0x12345678u32.to_le_bytes());
+        header.extend(3u16.to_le_bytes());
+        header.extend(1u16.to_le_bytes());
+        header.extend(size.to_le_bytes());
+        data.splice(group..group + 20, header);
+        let packet = group + 25;
+        for i in 0..2 {
+            data[packet + 4 + i * 8 + 6..packet + 4 + i * 8 + 8]
+                .copy_from_slice(&0x8010u16.to_le_bytes());
+        }
+        let mesh = decode_psg(&data).unwrap();
+        let g = &mesh.lods[0].groups[0];
+        assert_eq!(g.indices, [0, 1, 2]);
+        assert_eq!(g.vertices[0].node, 0);
+        assert_eq!(g.vertices[0].position, [-1., 0., 0.]);
+        for n in 0..data.len() {
+            assert!(decode_psg(&data[..n]).is_err());
+        }
+        data[group + 9] = 1;
+        assert!(decode_psg(&data).unwrap_err().contains("referenced packet"));
     }
     #[test]
     fn v4_retains_declared_vertex_and_packet_validation() {
@@ -623,20 +689,20 @@ mod tests {
             data.extend(color);
         }
         data.extend(0x17000000u32.to_le_bytes());
-        let mesh = packet(&data, &[identity()], &[0.5, 1., 1., 1.], 0, 0, 4).unwrap();
+        let mesh = packet(&data, &[identity()], &[0.5, 1., 1., 1.], 0, 0, 4, false).unwrap();
         assert_eq!(mesh.vertices[2].position, [0., 1., 0.]);
         assert_eq!(mesh.indices, [0, 1, 2, 2, 1, 3]);
         assert_eq!(mesh.vertices[0].color, Some([255, 128, 100, 0]));
         data[color_at..color_at + 4].copy_from_slice(&0x6e04800du32.to_le_bytes());
         assert!(
-            packet(&data, &[identity()], &[0.5, 1., 1., 1.], 0, 0, 4)
+            packet(&data, &[identity()], &[0.5, 1., 1., 1.], 0, 0, 4, false)
                 .unwrap_err()
                 .contains("destination")
         );
         data[color_at..color_at + 4].copy_from_slice(&0x6e04c00du32.to_le_bytes());
         data[10..12].copy_from_slice(&(-32i16).to_le_bytes());
         assert!(
-            packet(&data, &[identity()], &[0.5, 1., 1., 1.], 0, 0, 4)
+            packet(&data, &[identity()], &[0.5, 1., 1., 1.], 0, 0, 4, false)
                 .unwrap_err()
                 .contains("missing node")
         );

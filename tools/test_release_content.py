@@ -2,7 +2,7 @@
 import struct
 import unittest
 
-from package_content import Resource, compact_map_placements, compact_rider_materials, pack_resource, selected_train_names, selected_body_impact_names
+from package_content import Resource, compact_map_placements, compact_rider_materials, pack_resource, selected_train_names, selected_body_impact_names, validate_motorcycle_resource, MX_SOURCE_SHA
 
 
 def mesh(material):
@@ -11,6 +11,15 @@ def mesh(material):
 
 
 class ContentTests(unittest.TestCase):
+    def test_motorcycle_package_rejects_executable_and_wrong_source(self):
+        record = {'source_build_sha256': MX_SOURCE_SHA, 'repacked': True, 'member_count': 1}
+        validate_motorcycle_resource(record, pack_resource([('Veh/Anim/authored.psg', b'model')]))
+        for name in ['GAME_REL.BIN', 'Veh/Anim/boot.elf', 'Rider/../source.mot']:
+            with self.assertRaises(ValueError):
+                validate_motorcycle_resource(record, pack_resource([(name, b'bytes')]))
+        with self.assertRaisesRegex(ValueError, 'source build'):
+            validate_motorcycle_resource(dict(record, source_build_sha256='0'*64), pack_resource([('Veh/test.phy', b'config')]))
+
     def test_body_impact_selects_required_bank_only_and_rejects_invalid_paths(self):
         table = b'''[BodyImpact]
 NumSounds=2

@@ -63,6 +63,15 @@ export async function loadWheelEffects({resource,entries,quadArchive,quadEntries
   if(gpuTexture.width!==128||![64,256].includes(gpuTexture.height))throw new Error('Unsupported original wet particle atlas.');
   return{source,config,texture,gpuTexture,wetBirthHistory:[]};
 }
+export async function loadMotorcycleEffects({resource,entries,config,codec,json}) {
+  const name = config.atlas.texture.replace(/\.tga$/i,'.pst');
+  const index = entries.findIndex(entry => normalize(entry.name) === name.toLowerCase());
+  if (index < 0) throw new Error('Motorcycle particle atlas is missing.');
+  const bytes = await codec(3,resource,index);
+  const texture = {...await json(7,bytes),rgba:await codec(8,bytes)};
+  for (const frame of config.atlas.frames) if(frame.rect[2]>texture.width||frame.rect[3]>texture.height) throw new Error('Motorcycle particle rectangle exceeds atlas.');
+  return {config,texture,gpuTexture:texture,wetBirthHistory:[]};
+}
 export class WheelEffectsRenderer {
   constructor(gl,source) {
     this.gl=gl;this.source=source;this.draws=0;this.triangles=0;this.gpuBytes=(600+10800)*14*4+12*4+source.texture.rgba.length+source.gpuTexture.rgba.length;

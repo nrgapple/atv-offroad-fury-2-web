@@ -1,5 +1,21 @@
 # Implementation handoff
 
+## Playable motorcycles checkpoint — 2026-10-13
+
+The motorcycle branch now connects garage choices 27–34 to the distinct two-wheel
+Rust/WASM controller, source Race/Pro 50/125/250/500 profiles, assembled source
+parts/materials, THQ rider motion, engine/clutch/impact samples, dust/roost/exhaust,
+mud and detached-rider recovery with optional funny crash presentation. This
+is authored source-tuned behavior, not whole native-step parity or a complete
+decompilation. Multiplayer stays ATV-only. See research/MOTORCYCLES.md and
+tools/test_motorcycles.mjs / tools/test_motorcycle_crash.mjs. The four compact
+/MX/BIKE*.RES resources are generated only into ignored private hosted-content
+by tools/package_motorcycles.py; publish through the validated R2 workflow.
+
+Temporary ignored work/host-target and work/host-web avoid observed SSD open/
+hardlink/clone stalls; existing SSD source/build/private symlinks remain intact.
+The SSD UUID is verified before use. Host test server is not a remote handoff.
+
 ## Deployment recovery — 2026-10-13
 
 The experimental local release queue was cut over before completing public
@@ -9,6 +25,31 @@ production environment history are being restored. Follow
 `research/CI_CHECKPOINTS.md` for ordinary checkpoint delivery. Queue development
 must stay isolated until successful end-to-end validation and a user-approved
 cutover. This recovery checkpoint does not claim a completed public deployment.
+
+## Historical motorcycle recovery checkpoint (superseded above)
+
+The isolated motorcycle worktree starts at `c895ba4` and preserves all concurrent
+gameplay lanes. The supplied newer disc is MX vs. ATV Unleashed USA, SLUS_211.04
+v1.02. Its source media/module/decompiler observations remain private. The new
+Rust PSR reader matches all 20,391 directory records against an independent
+parser. A source-verified memory mapping adds the exact game module to private
+Ghidra analysis; candidate function boundaries still require review.
+
+Rust PSG v5 decoding now recovers the standard/50cc bike rigs and seven Suzuki
+body parts. Original parser instruction replay agrees on 42 geometry headers
+across 6,846 instructions. The optional funny-crash presentation accepts the
+motorcycle tire markers and carries geometry children below the nearest detached
+part, tested on a synthetic bike hierarchy. Existing ATV severe-crash rendering/
+recovery passes 855 paired WASM steps with identical baseline gameplay/camera.
+
+322 core/25 net/3 relay/13 bridge/69 JS tests, formatting, Clippy, WASM release,
+setup/hygiene and 18 release tests pass. The inspected dev-log image is a static
+flat-shaded resource inspection, not an assembled bike in the game. No motorcycles
+are yet selectable or drivable, and handling, rider/stunts, source audio/effects,
+crash/recovery and public R2 integration remain outstanding. No new source content
+has been published. Continue the integration gates in [motorcycles](research/MOTORCYCLES.md);
+do not substitute quad handling or claim full decompilation.
+
 
 ## Caribou race preview — public release verified
 
@@ -734,3 +775,4 @@ Host boundary follow-up: a normal ENV04 keyboard drive now passes edge crossing,
 
 
 Historical host wheel-center checkpoint (subsequently released as `35d328e`): the first wheel velocity/spring substep now retains the preceding cached world center until integration; geometry, torque and the chassis contact solver keep their recovered new-center rules. A 600-case original `001ed330` replay executes 386,315 instructions with zero compared binary32 mismatches, versus 1,813 differing components from the former immediate-center input. Host clean landing, both-direction keyboard cross-slope turning and wreck/recovery pass; 222 core + 2 WASM tests, strict Clippy, formatting and `make verify` pass. Landing minimum clearance is unchanged at -0.4970245ft. Slope clearance is -0.3231964ft before/-0.3015594ft after over 14.457ft elevation, but props and 119 riding/30 wreck frame exclusions prevent isolated slope parity or causal-improvement claims. Three vegetation helper tests are registered but collision is not live. The inspected landing screenshot and evidence are recorded in `research/devlog.json`; no terrain-clipping fix was claimed at this host gate. The subsequent public verification is recorded above. See `research/MOVEMENT.md`.
+

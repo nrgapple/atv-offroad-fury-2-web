@@ -11,7 +11,7 @@ import { DiagnosticsOverlay } from './diagnostics.js';
 import { WaterRenderer } from './water.js';
 import { fogVertexShader, fogFragmentShader } from './fog.js';
 import { loadTrain, TrainRenderer } from './train.js';
-import { loadWheelEffects, WheelEffectsRenderer } from './wheel-effects.js';
+import { loadWheelEffects, loadMotorcycleEffects, WheelEffectsRenderer } from './wheel-effects.js';
 const $ = id => document.getElementById(id);
 const canvas = $('game');
 const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, powerPreference: 'high-performance' });
@@ -158,16 +158,17 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
   const quadEntries = await json(2, quadArchive);
   const quadIndex = quadEntries.findIndex(entry => memberNamed(entry, model.quad_mesh));
   if (quadIndex < 0) throw new Error('Original ATV mesh is missing.');
-  const meshBytes = await codec(3, quadArchive, quadIndex), mesh = await json(11, meshBytes);
+  const bikeSource = model.motorcycle ? await json(102, quadArchive, model.quad_id) : null;
+  const meshBytes = await codec(3, quadArchive, quadIndex), mesh = bikeSource?.mesh ?? await json(11, meshBytes);
   const physicsIndex = quadEntries.findIndex(entry => memberNamed(entry, model.physics));
   if (physicsIndex < 0) throw new Error('Original ATV physics is missing.');
   const physics = await codec(3, quadArchive, physicsIndex);
   const chassisIndex = quadEntries.findIndex(entry => memberNamed(entry, model.chassis));
-  if (chassisIndex < 0) throw new Error('Original chassis collision is missing.');
-  const chassis = await codec(3, quadArchive, chassisIndex);
+  if (!model.motorcycle && chassisIndex < 0) throw new Error('Original chassis collision is missing.');
+  const chassis = model.motorcycle ? null : await codec(3, quadArchive, chassisIndex);
   const actorIndex = quadEntries.findIndex(entry => memberNamed(entry, model.actor));
-  if (actorIndex < 0) throw new Error('Original actor collision rays are missing.');
-  const actorRays = await codec(3, quadArchive, actorIndex);
+  if (!model.motorcycle && actorIndex < 0) throw new Error('Original actor collision rays are missing.');
+  const actorRays = model.motorcycle ? null : await codec(3, quadArchive, actorIndex);
   let toyIndex = entries.findIndex(entry => memberNamed(entry, `${environment}.toy`)), toy;
   if (toyIndex >= 0) toy = await codec(3, resource, toyIndex);
   else {
@@ -194,16 +195,22 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
     if (index < 0) throw new Error(`Original rider file is missing: ${suffix}`);
     return codec(3, archive.bytes, index);
   }
+  let riderMesh, pose, riderTextures;
+  if (bikeSource) {
+    riderMesh = bikeSource.riderMesh; pose = bikeSource.riderPose;
+    riderTextures = await baseTextures(riderMesh, quadArchive, quadEntries);
+  } else {
   const riderArchive = await archiveAt(model.rider), motions = await archiveAt('/ANIMSRDR.RES');
-  const riderMesh = await json(27, await member(riderArchive, '/' + model.rider_mesh));
+  riderMesh = await json(27, await member(riderArchive, '/' + model.rider_mesh));
   const riding = await json(51, await member(riderArchive, '/' + model.rider_catalog));
   for (let index = 0; index < riding.length; index++) {
     if (token !== generation) throw new Error('Opening cancelled.');
     await codec(52, await member(motions, '/' + riding[index].path.split('/').at(-1)), index);
   }
-  const pose = await codec(53, new Uint8Array()).then(bytes => JSON.parse(decoder.decode(bytes)));
+  pose = await codec(53, new Uint8Array()).then(bytes => JSON.parse(decoder.decode(bytes)));
   const riderMaterials = await archiveAt('/RIDER/RIDER_MT.RES');
-  const riderTextures = await baseTextures(riderMesh, riderMaterials.bytes, riderMaterials.entries);
+  riderTextures = await baseTextures(riderMesh, riderMaterials.bytes, riderMaterials.entries);
+  }
   status('Decoding original terrain textures…');
   const bytes = await codec(3, resource, index), layout = await json(30, bytes), images = [];
   for (const record of layout.records) {
@@ -267,10 +274,10 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
     if (!collisionMeshes.has(name)) collisionMeshes.set(name, await codec(3, resource, collisionIndex));
     collisionPlacements.push({ ...placement, name });
   }
-  const wheelEffects = await loadWheelEffects({ resource, entries, quadArchive, quadEntries, codec, json, scene: decoder.decode(await codec(3, resource, sceneIndex)), mode });
+  const wheelEffects = model.motorcycle ? await loadMotorcycleEffects({resource:quadArchive,entries:quadEntries,config:bikeSource.particleConfig,codec,json}) : await loadWheelEffects({ resource, entries, quadArchive, quadEntries, codec, json, scene: decoder.decode(await codec(3, resource, sceneIndex)), mode });
   const train = environment === 'env08' ? await loadTrain({ resource, entries, modeIndex, codec, json, baseTextures, isCurrent: () => token === generation }) : null;
   if (train && mode) await audio.loadSpatial({ toy: new TextEncoder().encode(mode), isCurrent: () => token === generation });
-  return { bytes, environment, course, cpuNames, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
+  return { motorcycle: model.motorcycle ? {archive:quadArchive,id:model.quad_id} : null, bytes, environment, course, cpuNames, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
 }
 async function baseTextures(mesh, materialArchive, materialEntries, cache = new Map()) {
   const findMaterial = name => materialEntries.findIndex(entry => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase());
@@ -303,6 +310,11 @@ async function baseTextures(mesh, materialArchive, materialEntries, cache = new 
         && /^\s*processingMethodWhenFailedInAlphaTest\s*=\s*[01]\s*$/mi.test(materialText);
       image = { ...info, rgba, animationFrames, shader, pass, materialText, alphaTest: /alphaTestOnOff\s*=\s*0/i.test(materialText) ? 0 : Number(alphaMatch?.[1] ?? 0) / 255, sceneAlphaFailure: sceneCutout ? Number(materialText.match(/processingMethodWhenFailedInAlphaTest\s*=\s*(\d+)/i)?.[1] ?? 0) : 0, sceneAlphaCutoff: sceneCutout ? Number(alphaMatch?.[1] ?? 0) / 255 : 0 };
     } catch (error) { image = { shader, error: error.message }; }
+    if (/MudAnimator/i.test(materialText)) {
+      const maps = [...materialText.matchAll(/^\s*TextureMap_1\s*=\s*([^\r\n;]+)/gmi)].map(m => m[1].trim().replaceAll('"',''));
+      const mudIndex = maps.length > 1 ? findMaterial(`${maps[1]}.pst`) : -1;
+      if (mudIndex >= 0) { const bytes=await codec(3,materialArchive,mudIndex); image.mud={...await json(7,bytes),rgba:await codec(8,bytes)}; }
+    }
     textures.set(material, image); cache.set(material, image);
   }
   return textures;
@@ -433,6 +445,8 @@ uniform vec2 heights;
 uniform vec3 surfaceColor;
 uniform sampler2D baseTexture;
 uniform bool useTexture;
+uniform sampler2D motorcycleMudTexture;
+uniform float motorcycleMudAmount;
 uniform float alphaCutoff;
 uniform bool useTerrainTexture;
 uniform highp sampler2DArray terrainColors;
@@ -462,6 +476,7 @@ void main() {
     if (useEcosystem && ecoPerInstance) { if (sampled.a <= (ecoBillboard ? alphaCutoff : ecoReference)) discard; }
     else if (alphaFailPass ? sampled.a >= alphaCutoff : sampled.a < alphaCutoff) discard;
     base = sampled.rgb;
+    if (motorcycleMudAmount > 0.0) {vec4 mud = texture(motorcycleMudTexture,texcoord); base = mix(base,mud.rgb,clamp(mud.a*(255.0/128.0)*motorcycleMudAmount,0.0,1.0));}
     // GS source alpha uses 128 for unity, while decoded PST bytes use 255.
     sourceAlpha = sceneryBlend ? clamp(sampled.a * (255.0 / 128.0), 0.0, 1.0) : 1.0;
   }
@@ -509,7 +524,11 @@ function initializeGl() {
   uniforms.alphaCutoff = gl.getUniformLocation(program, 'alphaCutoff');
   uniforms.useQuadPose = gl.getUniformLocation(program, 'useQuadPose');
   uniforms.quadBones = gl.getUniformLocation(program, 'quadBones[0]');
+  uniforms.motorcycleMudTexture = gl.getUniformLocation(program,'motorcycleMudTexture');
+  uniforms.motorcycleMudAmount = gl.getUniformLocation(program,'motorcycleMudAmount');
+  gl.useProgram(program);gl.uniform1i(uniforms.motorcycleMudTexture,4);
   fallbackTexture = texture({ width: 1, height: 1, rgba: new Uint8Array([255, 255, 255, 255]) });
+  gl.activeTexture(gl.TEXTURE4);gl.bindTexture(gl.TEXTURE_2D,fallbackTexture);gl.activeTexture(gl.TEXTURE0);
   terrainAtlas = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D_ARRAY, terrainAtlas);
   gl.texImage3D(gl.TEXTURE_2D_ARRAY, 0, gl.RGBA8, 1, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
   gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -660,10 +679,11 @@ async function remoteAssets(quad, rider) {
     const archive = async path => { const f=content.files.find(f=>f.path===path); if (!f) throw new Error(`Player resource unavailable: ${path}`); const bytes=await read(content.file,f.lba*2048,f.bytes); return {bytes,entries:await json(2,bytes)}; };
     const member = async (a,name) => { const index=a.entries.findIndex(e=>e.name.replaceAll('\\','/').split('/').at(-1).toLowerCase()===name.toLowerCase()); if(index<0) throw new Error('Remote player mesh missing.'); return codec(3,a.bytes,index); };
     const quadArchive=await archive(selected.quad), riderArchive=await archive(selected.rider);
-    const mesh=await json(11,await member(quadArchive,selected.quad_mesh));
-    const riderMesh=await json(11,await member(riderArchive,selected.rider_mesh));
-    const quadMaterials=await archive(selected.quad_materials), riderMaterials=await archive('/RIDER/RIDER_MT.RES');
-    model.source={mesh,riderMesh,textures:await baseTextures(mesh,quadMaterials.bytes,quadMaterials.entries),riderTextures:await baseTextures(riderMesh,riderMaterials.bytes,riderMaterials.entries)};
+    const bike=selected.motorcycle ? await json(102,quadArchive.bytes,quad) : null;
+    const mesh=bike?.mesh ?? await json(11,await member(quadArchive,selected.quad_mesh));
+    const riderMesh=bike?.riderMesh ?? await json(11,await member(riderArchive,selected.rider_mesh));
+    const quadMaterials=await archive(selected.quad_materials), riderMaterials=selected.motorcycle ? riderArchive : await archive('/RIDER/RIDER_MT.RES');
+    model.source={mesh,riderMesh,riderPose:bike?.riderPose,textures:await baseTextures(mesh,quadMaterials.bytes,quadMaterials.entries),riderTextures:await baseTextures(riderMesh,riderMaterials.bytes,riderMaterials.entries)};
     return model;
   })().catch(error=> {if(remoteModels.get(key)===model)remoteModels.delete(key);throw error;});
   return model.pending;
@@ -970,6 +990,8 @@ function buildMesh() {
     });
     const chunk = upload(vertices, new Uint16Array(group.indices), true, true);
     chunk.quad = true;
+    const mud=vehicle.textures.get(vehicle.materials[group.material])?.mud;
+    if (mud) {chunk.mudTexture=texture(mud);gpuTextures.push(chunk.mudTexture);}
     chunk.texture = materialTextures.get(vehicle.materials[group.material]);
     chunk.fog = vehicle.textures.get(vehicle.materials[group.material])?.pass?.fog ?? true;
     vehicleChunks.push(chunk);
@@ -989,6 +1011,8 @@ function buildMesh() {
       });
       const chunk = upload(vertices, new Uint16Array(group.indices), true, true);
       chunk.rider = true;
+      const mud=rider.textures.get(rider.mesh.materials[group.material])?.mud;
+      if (mud) {chunk.mudTexture=texture(mud);gpuTextures.push(chunk.mudTexture);}
       chunk.texture = riderTextures.get(rider.mesh.materials[group.material]);
       chunk.fog = rider.textures.get(rider.mesh.materials[group.material])?.pass?.fog ?? true;
       vehicleChunks.push(chunk); riderTriangles += group.indices.length / 3;
@@ -1145,15 +1169,15 @@ async function startSimulation(source) {
   diagnostics.simulationSteps = 0;
   simReady = false; simFrame = undefined; cameraFrame = undefined; simAccumulator = 0; simGeneration++;
   if (!source.physics) return;
-  await codec(20, source.bytes); await codec(21, source.physics); await codec(22, source.meshBytes); await codec(26, source.toy);
+  await codec(20, source.bytes); if (!source.motorcycle) { await codec(21, source.physics); await codec(22, source.meshBytes); } await codec(26, source.toy);
   await codec(65, source.ecosystem?.bytes ?? new Uint8Array());
   diagnostics.water = source.water ? await json(64, source.water.resource, source.water.index) : null;
   terrain.waterSource = source.water ? await json(66, source.water.resource, source.water.index) : null;
   waterRenderer?.dispose();
   waterRenderer = terrain.waterSource ? new WaterRenderer(gl, terrain.waterSource) : undefined;
   diagnostics.waterRender = waterRenderer ? { channels: waterRenderer.channelCount, gpuBytes: waterRenderer.gpuBytes, draws: 0, scope: terrain.waterSource.scope } : null;
-  diagnostics.chassis = await json(44, source.chassis);
-  const actor = await json(48, source.actorRays, 0), collisionIds = new Map();
+  diagnostics.chassis = source.motorcycle ? null : await json(44, source.chassis);
+  const actor = source.motorcycle ? {rays:0} : await json(48, source.actorRays, 0), collisionIds = new Map();
   for (const [name, bytes] of source.collisions.meshes) {
     try { collisionIds.set(name, (await json(48, bytes, 1)).mesh); } catch (error) { throw new Error(`${name}: ${error.message}`); }
   }
@@ -1168,16 +1192,18 @@ async function startSimulation(source) {
   const origin=source.scene.position.slice();
   if (multiplayer?.state.peer != null) { const slot=multiplayer.state.peer; origin[0]+=Math.cos(source.scene.yaw)*slot*8; origin[2]-=Math.sin(source.scene.yaw)*slot*8; }
   simStart = { origin, yaw: source.scene.yaw };
+  if (source.motorcycle) await json(100,source.motorcycle.archive,source.motorcycle.id);
   acceptFrame(await command(23, simStart));
   cpuQuadMatrices = vehicle.nodeMatrices.slice(); cpuRiderMatrices = new Float32Array(vehicle.rider.pose.world_matrices.flat());
   if (source.course) await command(96,{active:true,laps:raceSettings.laps,difficulty:raceSettings.difficulty,names:source.cpuNames.slice(0,raceSettings.cpu)});
   raceCourse = source.course;
   raceOverlay.setCourse(raceCourse);
   diagnostics.cameraPresets = (await json(45, source.cameraPresets)).map(preset => preset.name);
+  if (source.motorcycle) diagnostics.cameraPresets=['MX Chase','MX Close','MX Wide'];
   orbit = 0; acceptCameraFrame(await command(46, { dt: 1 / 60, orbit }));
   if (source.train) {
     source.train.frame = await json(67, source.train.resource, source.train.modeIndex);
-    diagnostics.trainCollision = await command(69, {});
+    diagnostics.trainCollision = source.motorcycle ? null : await command(69, {});
     trainRenderer?.accept(source.train.frame);
     diagnostics.train = { time: source.train.frame.time, duration: source.train.frame.duration, cars: source.train.frame.cars.filter(car => car.use_collision).length, wheelNodes: source.train.frame.wheel_matrices?.length ?? 0, frame: source.train.frame };
   } else diagnostics.train = null;
@@ -1293,6 +1319,7 @@ function render(time) {
     if (center && (Math.abs(x-center[0]) > 48 || Math.abs(z-center[1]) > 48)) buildTerrainMesh();
   }
   gl.viewport(0, 0, width, height); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.useProgram(program);
+  gl.uniform1f(uniforms.motorcycleMudAmount,0);
   gl.uniform1i(uniforms.useQuadPose, false); gl.uniform1i(uniforms.useEcosystem, false); gl.uniform1f(uniforms.alphaCutoff, 0);
   gl.uniform1i(uniforms.sceneryReflectionPlane, 0);
   gl.uniform1i(uniforms.useVertexColor, false); gl.uniform1i(uniforms.sceneryBlend, false); gl.uniform1i(uniforms.alphaFailPass, false); gl.uniform2f(uniforms.sceneryUvOffset, 0, 0);
@@ -1370,6 +1397,9 @@ function render(time) {
   if (vehicle) gl.uniformMatrix4fv(uniforms.model, false, vehicleMatrix());
   if (vehicle) gl.uniformMatrix4fv(uniforms.quadBones, false, vehicle.nodeMatrices);
   for (const chunk of vehicleChunks) {
+    gl.activeTexture(gl.TEXTURE4);gl.bindTexture(gl.TEXTURE_2D,chunk.mudTexture ?? fallbackTexture);
+    gl.uniform1f(uniforms.motorcycleMudAmount,simFrame?.vehicle_kind==='motorcycle' && chunk.mudTexture ? Math.max(...simFrame.mud_amount) : 0);
+    gl.activeTexture(gl.TEXTURE0);
     gl.uniform1i(uniforms.fogEnabled,Boolean(fog)&&chunk.fog);
     gl.uniformMatrix4fv(uniforms.model, false, chunk.rider && funnyCrashes && simFrame?.funny_crash?.rider_node_matrices.length ? identity : chunk.rider && simFrame?.rider_world_matrix ? new Float32Array(simFrame.rider_world_matrix) : vehicleMatrix());
     gl.uniform1i(uniforms.useQuadPose, Boolean(chunk.quad || chunk.rider));
@@ -1378,6 +1408,7 @@ function render(time) {
     gl.uniform1i(uniforms.useTexture, chunk.texture ? 1 : 0); gl.bindTexture(gl.TEXTURE_2D, chunk.texture ?? fallbackTexture);
     gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
   }
+  gl.uniform1f(uniforms.motorcycleMudAmount,0);
   let cpuDraws = 0, cpuTriangles = 0;
   for (const cpu of simFrame?.race?.opponents ?? []) {
     if (Math.hypot(cpu.origin[0]-camera.x,cpu.origin[2]-camera.z) > 864) continue;
