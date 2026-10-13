@@ -165,4 +165,4 @@ PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-check
 
 </details>
 
-GitHub holds authored code and shareable notes. Required recovered runtime resources and approved screenshots live separately in Cloudflare R2. The disc image, BIOS, raw executable, reverse-engineering outputs, and reference checkouts stay private and outside GitHub/CI. GitHub Actions checks the authored build and deploys it to the public Cloudflare app; content uploads follow their own validation path.
+GitHub holds authored code and shareable notes. Required recovered runtime resources and approved screenshots live separately in Cloudflare R2. The disc image, BIOS, raw executable, reverse-engineering outputs, and reference checkouts stay private and outside GitHub/CI. The local Rust release queue integrates completed worktrees, checks and builds the authored app, uploads its validated R2 dependencies, deploys it and verifies public startup. GitHub Actions retains lightweight source checks. From a clean committed worktree, `make release` submits the checkpoint; see [release queue](research/RELEASE_QUEUE.md).

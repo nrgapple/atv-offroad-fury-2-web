@@ -52,3 +52,29 @@ test('root serves the explicit landing asset while preserving request method', a
   assert.equal(new URL(fetched.url).pathname, '/index.html');
   assert.equal(fetched.method, 'HEAD');
 });
+
+test('release pins select matching manifest and gallery; internal storage keys stay private', async () => {
+  const commit = 'c'.repeat(40);
+  const reads = [];
+  const env = {
+    RELEASE_COMMIT: commit,
+    CONTENT: {
+      get: async key => { reads.push(key); return object(JSON.stringify(key.endsWith('gallery.json') ? { entries: [] } : { version: 1 })); },
+      head: async key => { reads.push(key); return object('head'); },
+    },
+    ASSETS: { fetch: async () => Response.json({ entries: [] }) },
+  };
+  await worker.fetch(request('/content/manifest.json'), env);
+  await worker.fetch(request('/content/manifest.json', { method: 'HEAD' }), env);
+  await worker.fetch(request('/devlog.json'), env);
+  assert.deepEqual(reads, [`releases/${commit}/manifest.json`, `releases/${commit}/manifest.json`, `releases/${commit}/gallery.json`]);
+  assert.equal(reads.includes('content/manifest.json'), false);
+});
+
+test('open tabs can request their immutable historical manifest after another release', async () => {
+  const old = 'd'.repeat(40), current = 'e'.repeat(40), reads = [];
+  const env = { RELEASE_COMMIT: current, CONTENT: { get: async key => { reads.push(key); return object('{}'); } } };
+  assert.equal((await worker.fetch(request(`/content/manifests/${old}.json`), env)).status, 200);
+  assert.deepEqual(reads, [`releases/${old}/manifest.json`]);
+  assert.equal((await worker.fetch(request('/content/manifests/source.iso'), env)).status, 404);
+});

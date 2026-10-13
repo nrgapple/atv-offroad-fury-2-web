@@ -4,8 +4,16 @@ ISO ?= private/source/ATV Offroad Fury 2 (USA) (v2.00).iso
 ELF ?= private/extracted/SCUS_972.11
 BIND ?= 127.0.0.1
 PORT ?= 4173
+ATV_RELEASE ?= $(HOME)/.local/bin/atv-release
+RELEASE_ARGS ?=
 
-.PHONY: verify verify-full inventory import check web serve audit code-map native-analyze browser-check
+.PHONY: verify verify-full inventory import check web serve audit code-map native-analyze browser-check release release-status
+
+release:
+	$(ATV_RELEASE) submit $(RELEASE_ARGS)
+
+release-status:
+	$(ATV_RELEASE) status
 
 verify:
 	python3 tools/verify_setup.py

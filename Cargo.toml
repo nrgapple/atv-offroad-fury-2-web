@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/atv-core", "crates/atv-web", "crates/atv-tools"]
+members = ["crates/atv-core", "crates/atv-web", "crates/atv-tools", "crates/atv-release"]
 resolver = "2"
 
 [workspace.package]

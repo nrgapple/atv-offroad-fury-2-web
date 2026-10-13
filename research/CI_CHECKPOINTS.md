@@ -1,55 +1,38 @@
-# Visible checkpoints and production deployments
+# Visible checkpoints and production releases
 
-Each coherent implementation checkpoint should include relevant passing checks,
-an evidence/limitations update and a dev-log entry through `tools/update_devlog.py`.
-Commit and push at completed component or integration gates. During longer work,
-report checkpoint status at least every 30 minutes: last commit, current gate,
-remaining checks and blockers. A passing host test is not a deployed checkpoint.
+Each coherent checkpoint includes relevant passing checks, evidence/limitations,
+and a dev-log entry through `tools/update_devlog.py`. Commit completed work before
+submission. During longer work, report the last commit, current gate, remaining
+checks and blockers at least every 30 minutes. Host checks are not a public release.
 
-The private repository's [Actions](https://github.com/nrgapple/atv-offroad-fury-2-web/actions)
-checks and packages authored source/WASM. On passing main builds, a separate
-**Deploy and verify production** job deploys the exact artifact to the
-`production` environment. [Deployment history](https://github.com/nrgapple/atv-offroad-fury-2-web/deployments)
-records the commit, job outcome and public HTTPS game link. Each run's summary
-also links the game, dev log and deployment history. No manual release or
-approval is required. GitHub's [environment documentation](https://docs.github.com/en/actions/concepts/workflows-and-actions/deployment-environments)
-describes this deployment history integration.
+The local Rust release queue now owns build, integration, source push, R2 upload,
+Worker deployment and public verification. From any clean project worktree:
 
-Production success requires the public commit, authored application file hashes,
-landing route and committed dev-log text to match the checked CI artifact.
-Verification retries briefly for propagation and fails the job on a mismatch.
-Deployments are serialized to avoid interrupting a deployment already in flight.
-This check has no private-disc dependencies and uploads no original resources.
+```sh
+make release
+make release-status
+```
 
-Screenshot PNGs and required runtime resources remain in the separate R2 package;
-none enter GitHub source or CI. There is no recurring publication heartbeat. At
-each completed checkpoint, the responsible release agent should:
+For new dependencies/screenshots, use the submission options in
+[RELEASE_QUEUE.md](RELEASE_QUEUE.md). One worker serializes releases and snapshots
+all job inputs. It builds the integrated commit locally, keeps original resources
+and screenshots outside GitHub, uploads and verifies release-specific R2 content
+before deployment, then checks public identity, file/object hashes and real
+no-disc browser startup. A job is complete only after public checks pass.
 
-1. Wait for passing current-main CI and its automatic production deployment. Fetch
-the validated current-main artifact with `python3 tools/fetch_site_release.py`
-without `--site-url`, then confirm the public `/deployment.json` identifies that
-same commit.
-2. Inspect each newly approved screenshot before publication and confirm its
-metadata is part of the validated commit. Keep image files in ignored private
-storage.
-3. Upload the validated runtime-content and approved-gallery package with
-`python3 tools/upload_cloudflare_content.py --release <validated-release> --commit <commit>`.
-4. After any R2 or public application change, run
-`python3 tools/verify_cloudflare.py --url https://atv-offroad-fury-2.champtoday.workers.dev --commit <commit>`.
-Confirm the deployment identity, authored hashes, served-object hashes/sizes/MIME,
-and gallery references; run relevant public browser checks as well.
+GitHub [Actions](https://github.com/nrgapple/atv-offroad-fury-2-web/actions) now runs
+lightweight source/release/JS checks. It neither builds WASM nor deploys production.
+The old successful-current-main CI artifact fetch/deploy procedure is historical.
+There is no publication heartbeat, Sites publication or No Mistakes gate.
 
-The fetch must represent passing current main, never an uncommitted checkout. Do
-not publish WIP, unreviewed screenshots, ISO/BIOS/raw executable, unrelated disc
-content, reverse-engineering output or reference repositories. CI verifying
-committed dev-log text does not establish screenshot freshness, gameplay parity
-or successful browser startup.
+Production is **public HTTPS**:
+https://atv-offroad-fury-2.champtoday.workers.dev/ and `/devlog.html`.
+Job receipts/logs, R2 upload receipts and public verification reports are retained
+in ignored local queue storage. `/deployment.json` identifies the released
+integrated source SHA, which can differ from the submitting worktree's SHA.
 
-On 2026-10-12 02:55 UTC, public and committed dev-log metadata matched main
-`1de08b210680c184217bda6b82d5e912a19a6dce`: 50 entries and 45 screenshots.
-The implementation checkout had three newer host-only entries for HUD, failed
-Nac Nac recovery and prop-ramp wheel support, all explicitly pending publication.
-Direct messaging to **Port core gameplay systems** failed with
-`already has an active writer`; its latest thread activity showed ongoing tests.
-The audit did not stop that writer or commit its dirty game files. These observations
-are historical evidence, not a claim that the newer implementation is deployed.
+Do not push/deploy independently while using the queue. Never submit WIP,
+uninspected screenshots, ISO/BIOS/raw executable, unrelated disc content,
+reverse-engineering output or reference repositories. See
+[RELEASE_QUEUE.md](RELEASE_QUEUE.md) for conflict/failure/recovery behavior and
+[DEPLOYMENT.md](DEPLOYMENT.md) for public checkpoint evidence.

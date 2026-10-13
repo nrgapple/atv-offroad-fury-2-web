@@ -1,6 +1,6 @@
 {
-  "status": "Host-verified one-handed mobile input checkpoint; CI and public release pending. The browser port remains incomplete.",
-  "working_on": "Audit other source-normalized PSG root placements and continue comparing terrain LOD, fog, distant blending and material behavior.",
+  "status": "Local release queue host verification passed; public end-to-end queued release remains pending. The browser port remains incomplete.",
+  "working_on": "Verify an actual queued release through the public release path, including inspected screenshots and public commit identity.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1638,9 +1638,25 @@
       "limitation": "Physical-phone steering response and native iOS loupe behavior remain unverified.",
       "image": "/devlog-images/steering-sensitivity-verified-in-the-public-build-33ee7a61.png",
       "caption": "Fresh public HTTPS Chromium capture at 390\u00d7844 showing the Mobile steering sensitivity default of 85% in Pause \u2192 Controls."
+    },
+    {
+      "id": "local-release-queue-passes-host-verification-6d7058b7",
+      "timestamp": "2026-10-13T02:29:06.029289+00:00",
+      "recorded_at": "2026-10-13T02:29:06.029289+00:00",
+      "kind": "verification",
+      "title": "Local release queue passes host verification",
+      "summary": "The local Rust release queue and launchd installer now pass host verification. Disposable Git integration covers concurrent submissions, idempotent duplicate receipts, dirty edits kept outside the job, and a failed check blocking push and deployment; an actual queued public release is still pending.",
+      "details": [
+        "make check and the WASM build passed: 298 core, 2 bridge and 3 Rust queue tests; 47 JavaScript tests; formatting, Clippy and Python syntax checks.",
+        "The release rejection suite passed 21 tests; its host CLI test is normally skipped, and the compiled host CLI suite separately passed the concurrency integration test. Six Worker tests passed.",
+        "Disposable Git tests exercised two concurrent worktrees, duplicate submission returning the same receipt, a later dirty edit remaining outside the job, and a failed check preventing push/deploy.",
+        "Resource and devlog three-way merge, tamper, and review tests passed. Mocked R2 corruption prevented a success receipt.",
+        "Implementation includes a local Rust queue and launchd installation, per-release manifests and browser pins, and source-only GitHub Actions handling."
+      ],
+      "limitation": "Host-tested only; public end-to-end queued release is not yet verified. Operation requires a Mac with available storage and valid authentication. There is no automatic rollback or worktree pruning; conflicts require repair by the submitting chat. The CLI screenshot-review flag depends on agent inspection."
     }
   ],
-  "updated_at": "2026-10-12T18:15:32.738689+00:00",
+  "updated_at": "2026-10-13T02:29:06.029289+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {

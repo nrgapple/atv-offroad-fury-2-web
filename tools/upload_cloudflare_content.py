@@ -23,7 +23,7 @@ ACCOUNT = '92b7e16fd24d5fb585f866f5832a032b'
 BUCKET = 'atv-offroad-fury-2-content'
 
 
-def upload(release, commit, force=False):
+def upload(release, commit, force=False, release_scoped=False):
     validate_release(release, commit)
     if not re.fullmatch(r'[a-f0-9]{40}', commit):
         raise ValueError('expected complete commit SHA')
@@ -96,8 +96,23 @@ def upload(release, commit, force=False):
     if (ROOT / 'private/reports/hosted-content/manifest.json').read_bytes() != manifest_bytes:
         raise ValueError('manifest changed during upload; pointers were not published')
     require_current_main()
-    report.append(put(('content/manifest.json', manifest_bytes)))
-    report.append(put(('devlog-gallery.json', json.dumps(log).encode())))
+    manifest_key = f'releases/{commit}/manifest.json' if release_scoped else 'content/manifest.json'
+    gallery_key = f'releases/{commit}/gallery.json' if release_scoped else 'devlog-gallery.json'
+    report.append(put((manifest_key, manifest_bytes)))
+    report.append(put((gallery_key, json.dumps(log).encode())))
+    if release_scoped:
+        # Storage is independent of Worker versions. Verify upload bytes before
+        # selecting them with a Worker deployment; local receipts are only hints.
+        def verify_object(item):
+            key = item['key']
+            url = f'https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/r2/buckets/{BUCKET}/objects/{quote(key, safe="/")}'
+            request = Request(url, headers={'Authorization': f'Bearer {token}'})
+            with urlopen(request, timeout=90) as response:
+                data = response.read()
+            if len(data) != item['bytes'] or hashlib.sha256(data).hexdigest() != item['sha256']:
+                raise ValueError(f'R2 staged object differs: {key}; retry with --force-upload to repair')
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            list(executor.map(verify_object, report))
     destination.write_text(json.dumps({'bucket': BUCKET, 'commit': commit, 'objects': report}, indent=2) + '\n')
     print(f'Validated {len(report)} approved R2 objects; uploaded {sum(item["uploaded"] for item in report)} changes ({sum(item["bytes"] for item in report)} total bytes)')
 
@@ -107,5 +122,6 @@ if __name__ == '__main__':
     parser.add_argument('--release', required=True, type=Path)
     parser.add_argument('--commit', required=True)
     parser.add_argument('--force-upload', action='store_true', help='Repair remote drift by re-uploading all validated objects')
+    parser.add_argument('--release-scoped', action='store_true', help='Stage immutable release manifests before Worker deployment')
     args = parser.parse_args()
-    upload(args.release, args.commit, args.force_upload)
+    upload(args.release, args.commit, args.force_upload, args.release_scoped)

@@ -1,4 +1,4 @@
-name: Check and build
+name: Source checks
 
 on:
   push:
@@ -10,51 +10,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-${{ github.ref }}
+  group: source-checks-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  web:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '24'
-      - name: Install Rust toolchain
-        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy --target wasm32-unknown-unknown
-      - name: Check repository and implementation
-        run: |
-          python3 tools/verify_repository.py
-          make check CARGO="$(which cargo)"
-          python3 -m unittest discover -s tools -p 'test_release*.py'
-          node --test cloudflare/worker.test.mjs
-      - name: Build browser release
-        run: |
-          make web
-          python3 tools/package_release.py --commit "$GITHUB_SHA"
-      - name: Upload asset-free release
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: web-release
-          path: work/release/
-          if-no-files-found: error
-          retention-days: 14
-  deploy:
-    name: Deploy and verify production
-    needs: web
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+  source:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      contents: read
-      deployments: write
-    environment:
-      name: production
-      url: https://atv-offroad-fury-2.champtoday.workers.dev/
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -62,38 +24,12 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
-      - name: Download checked release from this run
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: web-release
-          path: work/release/
-      - name: Deploy successful main build to Cloudflare
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      - name: Check source exclusions and release rejection tests
         run: |
-          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo 'Cloudflare deployment requires the scoped CLOUDFLARE_API_TOKEN repository secret.'
-            exit 1
-          fi
-          python3 tools/stage_cloudflare.py --release work/release --commit "$GITHUB_SHA"
-          npx --yes wrangler@4.149.0 deploy
-      - name: Verify public commit, application hashes and dev log
+          python3 tools/verify_repository.py
+          python3 -m py_compile tools/*.py
+          python3 -m unittest discover -s tools -p 'test_release*.py'
+          node --test cloudflare/worker.test.mjs web/input.test.mjs web/content.test.mjs web/touch.test.mjs web/bindings.test.mjs web/music.test.mjs web/audio.test.mjs web/diagnostics.test.mjs
+      - name: Explain production ownership
         run: |
-          python3 tools/verify_ci_deployment.py --release work/release --commit "$GITHUB_SHA" \
-            --url https://atv-offroad-fury-2.champtoday.workers.dev/
-      - name: Record deployment links and result
-        if: always()
-        env:
-          DEPLOYMENT_RESULT: ${{ job.status }}
-        run: |
-          {
-            echo "## Production deployment: $DEPLOYMENT_RESULT"
-            echo "Commit: $GITHUB_SHA"
-            echo ""
-            echo "[Public HTTPS game](https://atv-offroad-fury-2.champtoday.workers.dev/) · [Screenshot dev log](https://atv-offroad-fury-2.champtoday.workers.dev/devlog.html)"
-            echo ""
-            echo "[GitHub deployment history](https://github.com/$GITHUB_REPOSITORY/deployments) · [This Actions run](https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
-            echo ""
-            echo "Success requires public commit identity, all authored application hashes, and committed dev-log text to match this run's checked artifact."
-            echo "Runtime content and screenshot images are maintained separately in R2; full gameplay checks remain local/public browser checkpoints."
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo 'The local Rust atv-release queue checks, builds and deploys exact committed checkpoints with their separate R2 dependencies. This workflow does not build WASM, upload resources or deploy production.' >> "$GITHUB_STEP_SUMMARY"
