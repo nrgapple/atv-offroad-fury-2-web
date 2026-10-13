@@ -1,3 +1,15 @@
+## Full-lock motorcycle hand reach — host follow-up (2026-10-13)
+
+Public inward-bank/standing-menu checks passed, but a later Sano Mini full-lock
+turn exposed a0.25177 ft normal grip gap. Normal MX source-pose blending now
+accounts for the shared rigid arm solver's reach, selecting a feasible blend
+toward the original forward riding/air pose before applying hand/foot constraints.
+The source clips and joint lengths are preserved; this is an authored integration
+adaptation, not recovered native MX pose-controller logic. All720 flat full-input
+source frames, four sustained full-lock GPU touch profiles, all20 driving choices
+and airborne cross-up pass host checks. Publication is pending. See
+[the follow-up evidence and limitations](research/MOTORCYCLES.md).
+
 ## ATV Fury 2 home-screen identity — host checkpoint (2026-10-13)
 
 The landing page and game page now share the authored ATV Fury 2 identity: a

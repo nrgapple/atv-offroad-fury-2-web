@@ -286,3 +286,31 @@ do29 release tests (one credential-dependent skip) and8 Cloudflare tests.
 These fixes are host-verified pending the validated-main release and R2 menu
 resource upload. Full original handling, animation/controller timing, stunt
 linking/scoring and physical iOS/controller fidelity remain unverified.
+
+
+## Full-lock rigid-arm reach follow-up (2026-10-13)
+
+The four-profile public thumb gate above checked inward bank and normal contact,
+but the later full catalog run exposed a normal Sano Mini hand gap of 0.25177 ft
+at full steering. The shared original ATV two-link solver correctly preserves
+rigid joint lengths: a source turn pose could place the shoulder beyond reach of
+the physical fork's grip. A flat source-profile run also reproduced 0.09533 ft
+of separation; this was a real pose-integration defect, not an intentional stunt.
+
+Normal MX posing now keeps the requested original pose whenever both wrists are
+reachable. At the reach boundary it chooses a close feasible blend toward the
+original forward riding/air pose before applying the same arm/foot constraints.
+The bounded search retains rigid joint lengths and original source clip data.
+This is an **authored pose adaptation**, not recovered native MX pose-controller
+logic. Vehicle physics, original ATV pose routes, and intentional source stunt/
+wreck releases are unchanged.
+
+All720 flat full-input source-profile frames (four sizes/both directions) keep
+hand error below0.00000828 ft. Actual sustained full-lock Mini/125/250/500 touch
+gates pass1,730 paired steps and3,415 GPU marker comparisons, with maximum
+rendered grip error0.0000267 ft and boot error0.0000297 ft. A separate Mini repeat
+explicitly checks steering commands+1 and-1. The20-choice host drive/audio/
+clutch/particles/reset gate passes1,588 paired steps; airborne cross-up also
+passes24 normal air frames at0.510509 radians and537 paired steps. These are
+host checks pending validated-main/public verification. Full native controller
+parity, every control/terrain combination and physical-phone play remain open.

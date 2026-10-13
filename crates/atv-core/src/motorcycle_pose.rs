@@ -125,13 +125,16 @@ impl Model {
         compression: [f32; 2],
         steering: f32,
     ) -> Result<(animation::Pose, f32)> {
-        let ground = blend(
-            self.riding_channels("mx_turn_still", c)?,
-            self.riding_channels("mx_turn_riding", c)?,
-            c.moving,
-        );
-        let channels = blend(ground, self.riding_channels("mx_air", c)?, c.air);
-        let mut pose = channels.pose(&self.rider.nodes)?;
+        let channels = |c: Controls| -> Result<animation::Channels> {
+            let ground = blend(
+                self.riding_channels("mx_turn_still", c)?,
+                self.riding_channels("mx_turn_riding", c)?,
+                c.moving,
+            );
+            Ok(blend(ground, self.riding_channels("mx_air", c)?, c.air))
+        };
+        let desired = channels(c)?;
+        let mut pose = desired.pose(&self.rider.nodes)?;
         let dummy = ["Dummy_hand_L", "Dummy_hand_R"].map(|name| {
             self.rider
                 .nodes
@@ -142,6 +145,53 @@ impl Model {
         let dummy = [dummy[0]?, dummy[1]?];
         let bike = self.pose(steering, angles, compression);
         let hands = crate::rider_ik::Hands::bind_native(&self.rider.nodes)?;
+        // Full source pose sweeps can exceed the rigid arm's reach when adapted
+        // to the physical fork angle. Fade only input-dependent pose offsets
+        // toward the source forward riding/air pose; do not stretch or teleport
+        // the wrist. This reach adaptation is not a recovered MX controller.
+        let position = |m: &M| [m[12], m[13], m[14]];
+        let wrists = [0, 1].map(|i| {
+            mul(
+                &bike[self.grips[i]],
+                &inverse(&self.rider.nodes[dummy[i]].local_matrix),
+            )
+        });
+        let reachable = |pose: &animation::Pose| {
+            [&hands.left, &hands.right]
+                .into_iter()
+                .enumerate()
+                .all(|(i, arm)| {
+                    let offset = sub(
+                        position(&wrists[i]),
+                        position(&pose.world_matrices[arm.shoulder]),
+                    );
+                    dot(offset, offset).sqrt() <= arm.maximum_reach() * 0.98
+                })
+        };
+        if !reachable(&pose) {
+            let reference = channels(Controls {
+                steer: 0.,
+                lean: -1.,
+                ..c
+            })?;
+            let mut low = 0.;
+            let mut high = 1.;
+            let mut accepted = reference.pose(&self.rider.nodes)?;
+            if reachable(&accepted) {
+                for _ in 0..8 {
+                    let middle = (low + high) * 0.5;
+                    let candidate = blend(reference.clone(), desired.clone(), middle)
+                        .pose(&self.rider.nodes)?;
+                    if reachable(&candidate) {
+                        low = middle;
+                        accepted = candidate;
+                    } else {
+                        high = middle;
+                    }
+                }
+                pose = accepted;
+            }
+        }
         for (i, arm) in [&hands.left, &hands.right].into_iter().enumerate() {
             constrain(
                 arm,
