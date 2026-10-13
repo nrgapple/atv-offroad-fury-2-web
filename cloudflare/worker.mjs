@@ -1,5 +1,6 @@
 const BLOB = /^\/content\/[a-f0-9]{64}\.bin$/;
 const IMAGE = /^\/devlog-images\/[a-z0-9-]+\.png$/;
+const MANIFEST = /^\/content\/manifests\/([a-f0-9]{40})\.json$/;
 
 function canonical(value) {
   if (Array.isArray(value)) return JSON.stringify(value.map(item => JSON.parse(canonical(item))));
@@ -11,7 +12,7 @@ async function gallery(request, env) {
   const response = await env.ASSETS.fetch(new Request(request, { method: 'GET' }));
   if (!response.ok) return response;
   const log = await response.json();
-  const overlay = await env.CONTENT.get('devlog-gallery.json');
+  const overlay = await env.CONTENT.get(env.RELEASE_COMMIT ? `releases/${env.RELEASE_COMMIT}/gallery.json` : 'devlog-gallery.json');
   if (overlay) {
     const approved = new Map((await overlay.json()).entries.map(entry => [entry.id, entry]));
     for (const entry of log.entries) {
@@ -46,8 +47,10 @@ export default {
       return env.ASSETS.fetch(new Request(index, request));
     }
     if (path === '/devlog.json') return gallery(request, env);
-    if (path === '/content/manifest.json' || BLOB.test(path) || IMAGE.test(path)) {
-      const object = request.method === 'HEAD' ? await env.CONTENT.head(path.slice(1)) : await env.CONTENT.get(path.slice(1));
+    if (path === '/content/manifest.json' || MANIFEST.test(path) || BLOB.test(path) || IMAGE.test(path)) {
+      const pinned = path.match(MANIFEST);
+      const key = pinned ? `releases/${pinned[1]}/manifest.json` : path === '/content/manifest.json' && env.RELEASE_COMMIT ? `releases/${env.RELEASE_COMMIT}/manifest.json` : path.slice(1);
+      const object = request.method === 'HEAD' ? await env.CONTENT.head(key) : await env.CONTENT.get(key);
       if (!object) return new Response('Not found', { status: 404 });
       const headers = new Headers();
       object.writeHttpMetadata(headers);

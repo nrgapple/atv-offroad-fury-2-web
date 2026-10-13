@@ -1,5 +1,17 @@
 # Private source repository and public Cloudflare hosting
 
+## Current local release queue (2026-10-12)
+
+The local Rust `atv-release` queue supersedes the automatic GitHub build/deploy
+and subsequent separate R2 upload procedures below. Worktree chats submit one
+clean committed checkpoint with its validated private dependency snapshot using
+`make release`. One launchd worker integrates, checks, builds locally, pushes
+source to origin/main, stages and verifies R2, deploys and checks public startup.
+GitHub Actions performs lightweight source checks only. See
+[RELEASE_QUEUE.md](RELEASE_QUEUE.md) for commands, concurrency and failure recovery.
+The historical deployment descriptions below remain checkpoint evidence, not
+current operational instructions.
+
 ## Cloudflare migration (2026-10-11)
 
 The user authorized moving production hosting to their existing Cloudflare account.

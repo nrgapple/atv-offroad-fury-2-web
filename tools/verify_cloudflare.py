@@ -4,14 +4,15 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
+from pathlib import Path
 from urllib.request import Request, urlopen
 
 from package_content import ROOT
 from package_release import validate_release
 
 
-def verify(base, commit):
-    release = ROOT / 'work/github-releases' / commit
+def verify(base, commit, release=None):
+    release = release or ROOT / 'work/github-releases' / commit
     metadata = validate_release(release, commit)
     def get(path):
         request = Request(base.rstrip('/') + '/' + path.lstrip('/'), headers={'Origin': base.rstrip('/'), 'User-Agent': 'ATV-release-verifier/1.0'})
@@ -37,10 +38,18 @@ def verify(base, commit):
     if identity.get('commit') != commit or identity.get('wasmSha256') != metadata['sha256']['relay/index_bg.wasm']:
         raise ValueError('public Rust multiplayer relay differs from checked artifact')
     report = json.loads((ROOT / 'private/reports/cloudflare-upload.json').read_text())
-    expected = [item for item in report['objects'] if item['key'] != 'devlog-gallery.json']
+    if report['commit'] != commit:
+        raise ValueError('upload receipt belongs to a different commit')
+    if any(item['key'] == f'releases/{commit}/manifest.json' for item in report['objects']):
+        canonical, _ = get('content/manifest.json')
+        pinned, _ = get(f'content/manifests/{commit}.json')
+        if canonical != pinned:
+            raise ValueError('Worker manifest pin differs from release manifest')
+    expected = [item for item in report['objects'] if item['key'] not in ('devlog-gallery.json', f'releases/{commit}/gallery.json')]
 
     def check(item):
-        body, mime = get(item['key'])
+        served_key = 'content/manifest.json' if item['key'] == f'releases/{commit}/manifest.json' else item['key']
+        body, mime = get(served_key)
         if len(body) != item['bytes'] or hashlib.sha256(body).hexdigest() != item['sha256']:
             raise ValueError(f'public object differs: {item["key"]}')
         wanted = 'image/png' if item['key'].endswith('.png') else 'application/json' if item['key'].endswith('.json') else 'application/octet-stream'
@@ -71,7 +80,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--url', required=True)
     parser.add_argument('--commit', required=True)
+    parser.add_argument('--release', type=Path)
     args = parser.parse_args()
     if not args.url.startswith('https://'):
         parser.error('public verification requires HTTPS')
-    verify(args.url, args.commit)
+    verify(args.url, args.commit, args.release)
