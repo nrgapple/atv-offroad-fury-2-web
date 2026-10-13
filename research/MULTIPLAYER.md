@@ -254,3 +254,11 @@ and queue depth in `atv-last-disconnect` session storage and terrain status.
 The original user disconnect cause remains unproven; the prior deployment had no
 retained lifecycle diagnostics. This is host-tested implementation pending CI and
 public verification, not a claim that all network interruptions can be prevented.
+
+Public main `f1f561a` (CI38451585696) passed the actual browser recovery and owner
+reload gate, including 20 train samples after landing propagation (2.337ft maximum
+relative error). Public relay diagnostics exposed a Cloudflare callback returning
+1006 after a server-requested policy close1008; socket metadata now preserves the
+original recovery decision. Query strings are redacted from platform request
+metadata as well as omitted from custom logs. This follow-up passed 16 host relay
+gates and awaits public verification at this checkpoint.

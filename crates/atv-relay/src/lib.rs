@@ -33,6 +33,8 @@ struct Room {
 struct Connection {
     #[serde(default)]
     generation: u32,
+    #[serde(default)]
+    close_recoverable: Option<bool>,
     active: bool,
     peer: u8,
     player: Option<Participant>,
@@ -292,6 +294,14 @@ impl LobbyRoom {
         );
     }
     fn close_socket(&self, ws: &WebSocket, code: u16, reason: &str) -> Result<()> {
+        // Cloudflare can report 1006 after our own policy close. Persist the
+        // original decision so that callback cannot turn it into recovery.
+        if let Some(mut connection) = ws.deserialize_attachment::<Connection>()? {
+            connection
+                .close_recoverable
+                .get_or_insert(recoverable_close(code as usize, reason));
+            ws.serialize_attachment(connection)?;
+        }
         self.record(
             "socket_close_requested",
             Some(ws),
@@ -512,6 +522,7 @@ impl DurableObject for LobbyRoom {
         let instant = now();
         pair.server.serialize_attachment(Connection {
             generation: room.generation,
+            close_recoverable: None,
             active: true,
             peer,
             player: None,
@@ -667,7 +678,10 @@ impl DurableObject for LobbyRoom {
         clean: bool,
     ) -> Result<()> {
         self.record("socket_closed", Some(&ws), &reason, Some(code), Some(clean));
-        let recoverable = recoverable_close(code, &reason);
+        let recoverable = ws
+            .deserialize_attachment::<Connection>()?
+            .and_then(|c| c.close_recoverable)
+            .unwrap_or_else(|| recoverable_close(code, &reason));
         let _ = if recoverable {
             ws.close(Some(1012), Some("Connection interrupted"))
         } else {
@@ -678,7 +692,11 @@ impl DurableObject for LobbyRoom {
 
     async fn websocket_error(&self, ws: WebSocket, _error: Error) -> Result<()> {
         let _ = self.close_socket(&ws, 1011, "Socket error");
-        self.departed(&ws, true).await
+        let recoverable = ws
+            .deserialize_attachment::<Connection>()?
+            .and_then(|c| c.close_recoverable)
+            .unwrap_or(true);
+        self.departed(&ws, recoverable).await
     }
 
     async fn alarm(&self) -> Result<Response> {
@@ -817,6 +835,7 @@ mod tests {
     fn per_connection_rate_budget_recovers_and_bytes_are_bounded() {
         let mut connection = Connection {
             generation: 1,
+            close_recoverable: None,
             active: true,
             peer: 0,
             player: None,
@@ -850,6 +869,7 @@ mod tests {
         };
         let connection = Connection {
             generation: 1,
+            close_recoverable: None,
             active: true,
             peer: 2,
             player: Some(Participant {

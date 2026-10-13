@@ -2675,9 +2675,23 @@
         "Structured lifecycle diagnostics are retained in Workers Logs; custom logs exclude names, credentials, packet bodies and raw URLs. Incoming old-pose bursts are bounded and dropped while reserving room for control messages."
       ],
       "limitation": "Pending CI and public verification. The original disconnect cause remains unproven. Recovery covers brief host transport failures; explicit leave, invalid traffic and the recovery deadline still end the room."
+    },
+    {
+      "id": "public-host-recovery-verified-close-decisions-preserve-513a7702",
+      "timestamp": "2026-10-13T19:10:52.960643+00:00",
+      "recorded_at": "2026-10-13T19:10:52.960643+00:00",
+      "kind": "build",
+      "title": "Public host recovery verified; close decisions preserved",
+      "summary": "Main f1f561a is publicly deployed after CI38451585696. The public browser recovers a dropped host connection and a reloaded owner while guests remain in the room.",
+      "details": [
+        "Public browser gate passed late joining, host recovery, code preservation, 342 by 64 mobile spawn target, owner contacts, 20 steady train samples with 2.337ft maximum relative error, owner reload and explicit host leave.",
+        "Public relay checks confirmed closed-code reuse with fresh authority and cleanup after the host recovery deadline. Lifecycle logs exposed Cloudflare reporting 1006 after a server-requested 1008 policy close. The follow-up persists the original recovery decision and enables query-string redaction.",
+        "Follow-up passes 406 Rust tests, 94 browser-glue tests, 8 build-cache tests, 35 release tests with one expected skip, and 16 live host relay gates."
+      ],
+      "limitation": "The original disconnect cause remains unproven. At this checkpoint, the close-policy and query-redaction follow-up awaits public verification; the full public relay suite is not yet confirmed."
     }
   ],
-  "updated_at": "2026-10-13T18:52:29.955225+00:00",
+  "updated_at": "2026-10-13T19:10:52.960643+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {

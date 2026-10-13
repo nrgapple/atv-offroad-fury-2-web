@@ -50,7 +50,7 @@ class DomainStagingTests(unittest.TestCase):
                 fixture(release)
                 domains = [{'pattern': 'furyremastered.com', 'custom_domain': True}]
                 routes = domains + (['legacy.example/*'] if keep_standard_route else [])
-                source = {'observability': {'enabled': True, 'head_sampling_rate': 1, 'logs': {'enabled': True, 'invocation_logs': False}}, 'routes': routes, 'assets': {}, 'vars': {
+                source = {'observability': {'enabled': True, 'head_sampling_rate': 1, 'redact_query_string': True, 'logs': {'enabled': True, 'invocation_logs': False}}, 'routes': routes, 'assets': {}, 'vars': {
                     'GAME_ORIGINS': 'https://furyremastered.com,https://legacy.example'}}
                 (root / 'wrangler.jsonc').write_text(json.dumps(source))
                 with patch.object(stage_cloudflare, 'ROOT', root):

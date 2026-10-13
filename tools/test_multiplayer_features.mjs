@@ -79,6 +79,9 @@ try {
  await Promise.all(pages.map(p=>p.evaluate(()=>{window.testFreeze=false;})));
  await button(a,'Resume').click();await button(b,'Resume').click();
  await b.waitForFunction(()=>window.atvTerrainStatus.multiplayer.remote[0]?.platform!=null,null,{timeout:15000});
+ // Allow the landing transition and initial packets to reach the observer
+ // before comparing steady deck-relative pose (not simultaneous airborne poses).
+ await b.waitForTimeout(750);
  const trainSamples=[];
  for(let i=0;i<20;i++){
    const [own,observer]=await Promise.all([state(a),state(b)]);const peer=observer.multiplayer.remote[0];
