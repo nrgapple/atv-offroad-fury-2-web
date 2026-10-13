@@ -138,3 +138,19 @@ GPU draw calls when the field is in rendering range. Distant CPUs are culled,
 not simulated through a constant-speed shortcut. Pause freezes the entire
 published frame and no browser exceptions occur. This remains a host checkpoint
 until its tested commit passes main CI and public deployment verification.
+
+The second main integration includes the separately authored motorcycle mode.
+Its existing CPU route preview is preserved through an explicit motorcycle-only
+step; the original ATV branch never invokes that kinematic path. Physical ATV
+CPUs still use Vehicle steps and observations. Quad and motorcycle 34 race gates
+pass all three layouts, pause/restart/input/results fixture and no browser errors.
+The merged gate passes 339 core, 25 protocol, 3 relay, 13 bridge, 4 release-tool
+Rust and 69 JS tests, strict Clippy/formatting, WASM, 29 release tests (one skipped)
+and 8 Worker tests.
+
+A separate untouched-physics CPU run reaches the current one-lap finish radius
+for all four ATV racers by 120.061 simulated seconds. Traveled distances are
+6,746.55–6,761.15ft versus a 6,811.33ft decoded closed route. The finish radius
+awards the lap before exact start/finish crossing; original TDF marker placement
+and native finish-line rules remain open. This verifies current preview route
+completion, not original event/lap or PS2 replay parity.

@@ -169,3 +169,8 @@ PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-check
 </details>
 
 GitHub holds authored code and shareable notes. Required recovered runtime resources and approved screenshots live separately in Cloudflare R2. The disc image, BIOS, raw executable, reverse-engineering outputs, and reference checkouts stay private and outside GitHub/CI. GitHub Actions checks the authored build and deploys it to the public Cloudflare app; content uploads follow their own validation path. The local release queue remains experimental and is not the production delivery path.
+
+Single Player garage also includes MX 50/125/250/500 Race and Pro motorcycles.
+These use their own authored two-wheel Rust controller and recovered MX resources.
+Use V for clutch; existing lean, preload and stunt controls apply. See
+[implementation and fidelity limits](research/MOTORCYCLES.md).

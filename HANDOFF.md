@@ -10,9 +10,9 @@ leader speed limiting. The field is YOU plus up to four CPUs; guessed difficulty
 speeds are removed. Ordered segment distance fixes start-line wrap in the leader
 gap. Current starting slots, checkpoint radii and race event rules remain authored.
 
-Host checks pass 330 core, 25 protocol, 3 relay, 13 bridge and 69 JS tests,
-formatting/strict Clippy, WASM, source/setup and repository hygiene, 18 release
-checks and 6 Worker tests. Private finite-binary32 comparisons pass 1,500 cases
+The merged host gate passes 339 core, 25 protocol, 3 relay, 13 bridge, 4
+release-tool Rust and 69 JS tests, formatting/strict Clippy, WASM, source/setup
+and repository hygiene, 29 release checks (one skipped) and 8 Worker tests. Private finite-binary32 comparisons pass 1,500 cases
 executing 124,410 original instructions with zero output-bit differences for
 leader speed, pedal deadband and lateral slew/clamp. This is selected-routine
 proof, not full-driver or PS2 replay equivalence.
@@ -23,7 +23,8 @@ compress suspension and publish 27 quad/18 rider transforms. A 45.05-second
 simulation run covers 2,435–2,466 feet per CPU, braking/coasting, ahead speed
 limiting, turns and elevation changes, with actual CPU GPU draws and no JS errors.
 Frontend/Freestyle/controller/portrait regression passes. Results UI remains a
-separate render-only fixture; a natural whole-course race finish is unverified.
+separate render-only fixture. A separate natural CPU run reaches the provisional
+finish radius for all four racers by 120.06s; native finish-line parity is unverified.
 
 A mobile utility regression also fixes real second-finger Pause/Camera taps while
 one-finger drive is held: the browser suppresses the secondary compatibility
@@ -32,6 +33,10 @@ Portrait/landscape checks cover independent driving capture, no stray throttle,
 drag-away/cancel, pause/freeze, neutral resume, 44px hit areas and mouse/keyboard.
 Physical iOS Safari and phone hardware remain unverified.
 
+Main motorcycle integration is preserved: its separate authored CPU route
+preview remains explicitly distinct from original ATV CPU vehicle simulation.
+Quad and motorcycle model 34 race regression both pass.
+
 CPU obstacle-avoidance decisions, rider-to-rider collisions, AI tricks, CPU wreck
 and recovery, low-clearance airborne feedback, dynamic obstacles, native grid
 placement, separate roster quads/costumes and original RNG/trigonometric tables
@@ -39,6 +44,22 @@ remain open. The native grid helper 001f8410 is recovered privately for the next
 placement gate. Source exports/probes, content and screenshots remain ignored.
 See research/RACING.md and the dev log. This checkpoint is host verified; the
 last verified public release is a66bab9 until passing main CI publishes this work.
+
+## Playable motorcycles checkpoint — 2026-10-13
+
+The motorcycle branch now connects garage choices 27–34 to the distinct two-wheel
+Rust/WASM controller, source Race/Pro 50/125/250/500 profiles, assembled source
+parts/materials, THQ rider motion, engine/clutch/impact samples, dust/roost/exhaust,
+mud and detached-rider recovery with optional funny crash presentation. This
+is authored source-tuned behavior, not whole native-step parity or a complete
+decompilation. Multiplayer stays ATV-only. See research/MOTORCYCLES.md and
+tools/test_motorcycles.mjs / tools/test_motorcycle_crash.mjs. The four compact
+/MX/BIKE*.RES resources are generated only into ignored private hosted-content
+by tools/package_motorcycles.py; publish through the validated R2 workflow.
+
+Temporary ignored work/host-target and work/host-web avoid observed SSD open/
+hardlink/clone stalls; existing SSD source/build/private symlinks remain intact.
+The SSD UUID is verified before use. Host test server is not a remote handoff.
 
 ## Deployment recovery — 2026-10-13
 
@@ -49,6 +70,31 @@ production environment history are being restored. Follow
 `research/CI_CHECKPOINTS.md` for ordinary checkpoint delivery. Queue development
 must stay isolated until successful end-to-end validation and a user-approved
 cutover. This recovery checkpoint does not claim a completed public deployment.
+
+## Historical motorcycle recovery checkpoint (superseded above)
+
+The isolated motorcycle worktree starts at `c895ba4` and preserves all concurrent
+gameplay lanes. The supplied newer disc is MX vs. ATV Unleashed USA, SLUS_211.04
+v1.02. Its source media/module/decompiler observations remain private. The new
+Rust PSR reader matches all 20,391 directory records against an independent
+parser. A source-verified memory mapping adds the exact game module to private
+Ghidra analysis; candidate function boundaries still require review.
+
+Rust PSG v5 decoding now recovers the standard/50cc bike rigs and seven Suzuki
+body parts. Original parser instruction replay agrees on 42 geometry headers
+across 6,846 instructions. The optional funny-crash presentation accepts the
+motorcycle tire markers and carries geometry children below the nearest detached
+part, tested on a synthetic bike hierarchy. Existing ATV severe-crash rendering/
+recovery passes 855 paired WASM steps with identical baseline gameplay/camera.
+
+322 core/25 net/3 relay/13 bridge/69 JS tests, formatting, Clippy, WASM release,
+setup/hygiene and 18 release tests pass. The inspected dev-log image is a static
+flat-shaded resource inspection, not an assembled bike in the game. No motorcycles
+are yet selectable or drivable, and handling, rider/stunts, source audio/effects,
+crash/recovery and public R2 integration remain outstanding. No new source content
+has been published. Continue the integration gates in [motorcycles](research/MOTORCYCLES.md);
+do not substitute quad handling or claim full decompilation.
+
 
 ## Caribou race preview — public release verified
 

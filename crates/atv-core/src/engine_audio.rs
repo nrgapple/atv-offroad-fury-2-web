@@ -31,8 +31,57 @@ pub struct EngineAudioConfig {
     pub doppler_factor: f32,
     /// Index corresponds to EngineSound; strings are authored resource names.
     pub samples: [Vec<String>; 10],
+    pub impact_samples: Vec<String>,
 }
 impl EngineAudioConfig {
+    /// MX source banks have direct sections and SoundN keys. The shared ATV
+    /// transition controller remains a provisional browser playback adapter.
+    pub fn parse_mx(bytes: &[u8]) -> Result<Self> {
+        let data = crate::motorcycle::cleaned(bytes)?;
+        let mut samples: [Vec<String>; 10] = Default::default();
+        for (sound, name) in [
+            (EngineSound::Idle, "Idle"),
+            (EngineSound::LowAccel, "LowAccel"),
+            (EngineSound::HighAccel, "HighAccel"),
+            (EngineSound::Power, "Power"),
+            (EngineSound::Sputter, "Sputter"),
+            (EngineSound::Decel, "Decel"),
+            (EngineSound::Rev, "Panic"),
+            (EngineSound::Reset, "Clutch"),
+        ] {
+            let count = data.first_scalar(name, "NumSounds")?;
+            if !(0. ..=256.).contains(&count) || count.fract() != 0. {
+                return Err("invalid MX audio bank size".into());
+            }
+            for i in 1..=count as usize {
+                samples[sound as usize].push(data.first(name, &format!("Sound{i}"))?.value.clone());
+            }
+        }
+        let impact_count = data.first_scalar("Wreck", "NumSounds")? as usize;
+        if impact_count > 256 {
+            return Err("MX impact bank exceeds limit".into());
+        }
+        let impact_samples = (1..=impact_count)
+            .map(|i| {
+                data.first("Wreck", &format!("Sound{i}"))
+                    .map(|v| v.value.clone())
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let low = data.first_scalar("Params", "LowTorqueSpeed")? * 1.46666;
+        Ok(Self {
+            engine_set: "MX".into(),
+            stroke: 0,
+            low_torque_speed: low,
+            mid_torque_speed: low,
+            airborne_time_to_decel: data.first_scalar("Params", "AirborneTimeToDecel")?,
+            overlap_time: data.first_scalar("Params", "OverlapTime")?,
+            min_distance: data.first_scalar("Params", "MinAttenuationDistance")?,
+            max_distance: data.first_scalar("Params", "MaxAttenuationDistance")?,
+            doppler_factor: data.first_scalar("Params", "DopplerFactor")?,
+            samples,
+            impact_samples,
+        })
+    }
     /// Single-player authored set. Multiplayer may substitute shared engine sets
     /// to fit the original sound-memory budget (00213210).
     pub fn parse(bytes: &[u8], quad: u32) -> Result<Self> {
@@ -121,6 +170,7 @@ impl EngineAudioConfig {
             max_distance: data.first_scalar(&section, "MaxAttenuationDistance")?,
             doppler_factor: data.first_scalar(&section, "DopplerFactor")?,
             samples,
+            impact_samples: Vec::new(),
         };
         if result.overlap_time < 0. || result.airborne_time_to_decel < 0. {
             return Err("negative engine audio time".into());
@@ -328,6 +378,7 @@ mod tests {
             max_distance: 100.,
             doppler_factor: 1.,
             samples: std::array::from_fn(|_| vec!["test.vag".into()]),
+            impact_samples: Vec::new(),
         }
     }
     #[test]

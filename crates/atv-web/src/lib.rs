@@ -12,6 +12,7 @@ use atv_core::{
     vehicle::{Vehicle, VehicleInput},
 };
 use std::cell::RefCell;
+mod motorcycles;
 mod multiplayer;
 thread_local! { static MENU_RIDER: RefCell<Option<atv_core::menu_preview::Rider>> = const { RefCell::new(None) }; }
 
@@ -30,6 +31,9 @@ struct Simulation {
     mesh: Option<mesh::Mesh>,
     materials: Option<[TerrainMaterial; 8]>,
     vehicle: Option<Vehicle>,
+    motorcycle_model: Option<atv_core::motorcycle::Model>,
+    motorcycle: Option<atv_core::motorcycle::Motorcycle>,
+    motorcycle_effects: atv_core::motorcycle_effects::Effects,
     touch_drive: atv_core::browser_input::TouchDrive,
     input_generation: Option<u64>,
     resolved_input: Option<serde_json::Value>,
@@ -356,9 +360,9 @@ fn music(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
 
 fn engine_audio(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
     ENGINE_AUDIO.with_borrow_mut(|slot| {
-        if op == 32 {
-            multiplayer::audio_table(input);
-            let config = EngineAudioConfig::parse(input, index as u32)?;
+        if matches!(op,32|101) {
+            if op==32 {multiplayer::audio_table(input);}
+            let config = if op==101 {EngineAudioConfig::parse_mx(input)?}else{EngineAudioConfig::parse(input,index as u32)?};
             let bytes = serde_json::to_vec(&config).map_err(|e| e.to_string())?;
             *slot = Some(EnginePlayback { config, state: EngineAudioState::default(), previous: [usize::MAX; 10], random: OriginalRandom::with_seed(1) });
             return Ok(bytes);
@@ -622,6 +626,9 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 sim.terrain = Some(terrain);
                 sim.cpu_racers.clear();
                 sim.race = None;
+
+                sim.motorcycle = None;
+                sim.motorcycle_model = None;
                 sim.vehicle = None;
                 sim.obstacle_rays = None;
                 sim.obstacle_meshes.clear();
@@ -1565,6 +1572,17 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
+    if matches!(op, 100 | 102) {
+        return motorcycles::load(input, index, op == 100);
+    }
+    if op == 101 {
+        return engine_audio(input, op, index);
+    }
+    if matches!(op, 23 | 46 | 47 | 50)
+        && SIMULATION.with_borrow(|sim| sim.motorcycle_model.is_some() || sim.motorcycle.is_some())
+    {
+        return motorcycles::dispatch(input, op);
+    }
     if op == 95 {
         let course = atv_core::race::Course::parse(input)?;
         let result = serde_json::to_vec(&course).map_err(|e| e.to_string())?;
@@ -1601,14 +1619,17 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
                 names,
                 integer("difficulty")?,
             )?;
-            let racers = race
-                .opponents()
-                .iter()
-                .enumerate()
-                .map(|(index, cpu)| {
-                    create_cpu_racer(sim, cpu.origin, cpu.yaw, index, integer("difficulty")?)
-                })
-                .collect::<Result<Vec<_>>>()?;
+            let racers = if sim.motorcycle.is_some() {
+                vec![]
+            } else {
+                race.opponents()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, cpu)| {
+                        create_cpu_racer(sim, cpu.origin, cpu.yaw, index, integer("difficulty")?)
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            };
             for (index, cpu) in racers.iter().enumerate() {
                 race.observe_cpu(
                     index,

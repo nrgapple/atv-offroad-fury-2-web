@@ -1256,6 +1256,7 @@ mod tests {
                                 time: 0.,
                                 packed_angle: if *clip == Clip::LookLr { 1024 } else { 0 },
                                 packed_axis: [0, 32767, 0],
+                                compressed_axis: None,
                             }],
                         })
                         .collect(),

@@ -326,6 +326,7 @@ pub struct Race {
     player: Progress,
     opponents: Vec<Opponent>,
     progress: Vec<Progress>,
+    preview_speeds: Vec<f32>,
 }
 impl Race {
     pub fn new(course: Course, laps: u32, names: Vec<String>, difficulty: u32) -> Result<Self> {
@@ -361,6 +362,9 @@ impl Race {
                 physical: None,
             })
             .collect();
+        let preview_speeds = (0..opponents.len())
+            .map(|i| [32., 46., 60.][difficulty as usize] + i as f32 * 1.7)
+            .collect();
         let progress = opponents.iter().map(|o| Progress::new(o.origin)).collect();
         Ok(Self {
             course,
@@ -370,6 +374,7 @@ impl Race {
             player: Progress::new(start),
             opponents,
             progress,
+            preview_speeds,
         })
     }
     pub fn locked(&self) -> bool {
@@ -386,6 +391,36 @@ impl Race {
         }
         self.elapsed += dt;
         self.player.update(p, &self.course, self.elapsed, self.laps);
+    }
+    /// Preserve the separate authored motorcycle race preview. Original ATV
+    /// racers use observe_cpu after independent Vehicle steps, never this path.
+    pub fn step_motorcycle_preview_cpus(&mut self, dt: f32) {
+        if !self.running() {
+            return;
+        }
+        for ((o, progress), speed) in self
+            .opponents
+            .iter_mut()
+            .zip(&mut self.progress)
+            .zip(&self.preview_speeds)
+        {
+            if progress.finish.is_some() {
+                continue;
+            }
+            let target = self.course.points[progress.next];
+            let delta = distance(o.origin, target);
+            let travel = (speed * dt).min(delta);
+            if delta > 0.001 {
+                o.yaw = (target[0] - o.origin[0]).atan2(target[2] - o.origin[2]);
+                o.origin[0] += o.yaw.sin() * travel;
+                o.origin[2] += o.yaw.cos() * travel;
+                o.distance += travel;
+            }
+            if delta <= travel + 1. {
+                progress.update(o.origin, &self.course, self.elapsed, self.laps);
+            }
+            o.finished = progress.finish.is_some();
+        }
     }
     pub fn opponents(&self) -> &[Opponent] {
         &self.opponents
@@ -543,6 +578,21 @@ mod tests {
         r.step([100., 0., 0.], 1.);
         assert_eq!(r.player.completed, 0);
         assert_eq!(r.player.distance(&r.course), 0.);
+    }
+    #[test]
+    fn physical_cpus_require_observation_and_motorcycle_preview_is_explicit() {
+        let mut r = Race::new(course(), 1, vec!["CPU".into()], 1).unwrap();
+        let start = r.opponents()[0].origin;
+        r.step_motorcycle_preview_cpus(1. / 60.);
+        assert_eq!(r.opponents()[0].origin, start);
+        r.countdown = 0.;
+        r.step([0.; 3], 1. / 60.);
+        assert_eq!(r.opponents()[0].origin, start);
+        assert_eq!(r.opponents()[0].distance, 0.);
+        r.step_motorcycle_preview_cpus(1. / 60.);
+        assert_ne!(r.opponents()[0].origin, start);
+        assert!(r.opponents()[0].distance > 0.);
+        assert!(r.opponents()[0].physical.is_none());
     }
     #[test]
     fn opponents_complete_laps_and_rank_by_finish_time() {

@@ -144,6 +144,29 @@ fn run() -> Result<()> {
             let e=entries.iter().find(|e|e.name.eq_ignore_ascii_case(&a[2])).ok_or("disc file not found")?;
             write(&a[3],&read_range(&mut file,u64::from(e.lba)*iso::SECTOR,e.bytes)?)?;
         }
+        Some("psr-list" | "psr-extract") if a.len() == 3 || a.len() == 4 => {
+            let extract = a[0] == "psr-extract";
+            if extract != (a.len() == 4) { return Err("psr-list ISO REPORT | psr-extract ISO MEMBER OUTPUT".into()); }
+            let mut file = File::open(&a[1]).map_err(|e| e.to_string())?;
+            let entries = inventory(&mut file)?;
+            let psr = entries.iter().find(|e| e.name.eq_ignore_ascii_case("/MXVSATV.PSR"))
+                .ok_or("MXVSATV.PSR is missing")?;
+            let base = u64::from(psr.lba) * iso::SECTOR;
+            let header = read_range(&mut file, base, 24)?;
+            let size = u32::from_le_bytes(header[16..20].try_into().unwrap());
+            if size > 16 * 1024 * 1024 { return Err("PSR directory exceeds limit".into()); }
+            let prefix = read_range(&mut file, base, size + 24)?;
+            let directory = atv_core::psr::Directory::parse(&prefix, u64::from(psr.bytes))?;
+            if extract {
+                let member = directory.named(&a[2])?;
+                if member.bytes > 128 * 1024 * 1024 { return Err("PSR extraction exceeds limit".into()); }
+                write(&a[3], &read_range(&mut file, base + member.offset(), member.bytes)?)?;
+                println!("Extracted {}: {} bytes", member.name, member.bytes);
+            } else {
+                write(&a[2], &serde_json::to_vec_pretty(&directory).map_err(|e| e.to_string())?)?;
+                println!("{} PSR records; {} directory bytes", directory.entries.len(), directory.directory_bytes);
+            }
+        }
         Some("list") if a.len()==2 => {
             let b=fs::read(&a[1]).map_err(|e|e.to_string())?;
             println!("{}",serde_json::to_string_pretty(&Resource::parse(&b)?.members).unwrap());

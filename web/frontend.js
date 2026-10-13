@@ -242,9 +242,9 @@ export class Frontend {
     if (this.busy) return;
     try {
       if (action === 'garage') { this.garageReturn = this.page; return this.show('garage'); }
-      if (action === 'quadprev' || action === 'quadnext') { this.quadId = ((this.quadId - 1 + (action === 'quadnext' ? 1 : 25)) % 26) + 1; }
-      else if (action === 'riderchange') this.riderId = 1 - this.riderId;
-      else if (['host','join','share','lobbymap','lobbystart','leave'].includes(action)) return await this.multiplayer.action(action, this);
+      if (action === 'quadprev' || action === 'quadnext') { const count = this.garageReturn === 'multiplayer' || this.garageReturn === 'lobby' ? 26 : 34; this.quadId = ((this.quadId - 1 + (action === 'quadnext' ? 1 : count - 1)) % count) + 1; }
+      else if (action === 'riderchange' && this.quadId < 27) this.riderId = 1 - this.riderId;
+      else if (['host','join','share','lobbymap','lobbystart','leave'].includes(action)) { if (['host','join'].includes(action) && this.quadId>=27) throw new Error('Choose an ATV for multiplayer. Motorcycles are available in Single Player.'); return await this.multiplayer.action(action, this); }
       else if (['main','single','tracks','controls','music','multiplayer','lobby','race'].includes(action)) return await this.show(action);
       if (action === 'racestart') {
         await this.multiplayer?.disconnect();
@@ -341,8 +341,8 @@ export class Frontend {
     void this.modelAssets(this.quadId, this.riderId).then(source => {
       if (token !== this.modelToken || this.page !== 'garage' || this.root.hidden) return;
       this.modelViews.get('quad').set(source.mesh, source.textures);
-      this.modelViews.get('rider').set(source.riderMesh, source.riderTextures);
-      void this.startMenuRider(token, key);
+      this.modelViews.get('rider').set(source.riderMesh, source.riderTextures, source.riderPose?.world_matrices);
+      if (this.quadId < 27) void this.startMenuRider(token, key);
       for (const view of this.modelViews.values()) view.canvas.dataset.selection = key;
     }).catch(error => {
       if (token !== this.modelToken) return;

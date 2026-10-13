@@ -16,6 +16,14 @@ try {
  await page.goto(base);await screen('title');
  await page.getByRole('button',{name:'Press START',exact:true}).click();await screen('main');
  await page.getByRole('button',{name:'Single Player',exact:true}).click();await screen('single');
+ if(process.env.ATV_RACE_MODEL) {
+  const id=Number(process.env.ATV_RACE_MODEL);assert(id>=1&&id<=34);
+  await page.getByRole('button',{name:'Quad and Rider',exact:true}).click();
+  const next=id-1,previous=35-id;
+  for(let i=0;i<Math.min(next,previous);i++)await page.getByRole('button',{name:next<=previous?'Next quad':'Previous quad',exact:true}).click();
+  await page.waitForFunction(id=>[...document.querySelectorAll('.model-view canvas')].every(c=>c.dataset.selection===`${id}:0`),id);
+  await page.getByRole('button',{name:'Done',exact:true}).click();
+ }
  await page.getByRole('button',{name:'Race',exact:true}).click();await screen('race');
  for(const [name,size] of [['desktop',{width:1280,height:720}],['portrait',{width:390,height:844}],['landscape',{width:844,height:390}]]){
   await page.setViewportSize(size);await page.waitForTimeout(300);
@@ -52,6 +60,7 @@ try {
  await page.waitForFunction(()=>!window.atvTerrainStatus.input?.touch_drive?.held);
  await page.waitForFunction(()=>window.atvTerrainStatus.frame.race.elapsed>=4,null,{timeout:30000});
  s=await state();assert(s.frame.race.elapsed>=4);assert(s.frame.race.opponents.every(o=>o.distance>40));assert.equal(s.glError,0);
+ if(Number(process.env.ATV_RACE_MODEL||1)<27) {
  for(const cpu of s.frame.race.opponents){
   assert(cpu.physical,'CPU must use an independent physical quad');
   const p=cpu.physical;assert(p.orientation.every(Number.isFinite));assert(p.speed>1,'CPU accelerates through drivetrain');
@@ -61,6 +70,9 @@ try {
   assert(p.decisions.desired_speed>=0);assert(p.decisions.route_error<40,'CPU must follow track');
  }
  assert(s.frame.race.opponents.some(o=>o.physical.wheel_compression.some(c=>Math.abs(c)>0.01)),'CPU suspension responds to terrain');
+ } else {
+  assert(s.frame.race.opponents.every(o=>!o.physical),'Motorcycle opponents retain their explicitly authored route preview');
+ }
 
  for(const [name,size] of [['portrait',{width:390,height:844}],['landscape',{width:844,height:390}],['desktop',{width:1280,height:720}]]){
   await page.setViewportSize(size);await page.waitForTimeout(500);
@@ -95,5 +107,5 @@ try {
  await page.getByRole('button',{name:'Single Player',exact:true}).click();
  assert.deepEqual(await page.evaluate(()=>window.raceActions),['retry','quit']);
  assert.deepEqual(errors,[]);
- console.log(JSON.stringify({gate:'race',coursePoints:s.frame.race.checkpoints,field:s.frame.race.field,CPU:s.frame.race.opponents.map(o=>({name:o.name,distance:o.distance,speed:o.physical.speed,grounded:o.physical.grounded,steer:o.physical.decisions.steer,lane:o.physical.decisions.lane_offset})),errors}));
+ console.log(JSON.stringify({gate:'race',coursePoints:s.frame.race.checkpoints,field:s.frame.race.field,CPU:s.frame.race.opponents.map(o=>({name:o.name,distance:o.distance,speed:o.physical?.speed,grounded:o.physical?.grounded,steer:o.physical?.decisions.steer,lane:o.physical?.decisions.lane_offset})),errors}));
 }finally{await browser.close();}

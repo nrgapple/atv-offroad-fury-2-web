@@ -219,7 +219,8 @@ impl Effects {
                 let severe = impact_speed >= 50.;
                 for (i, node) in quad_nodes.iter().enumerate() {
                     let name = node.name.to_ascii_lowercase();
-                    let wheel = name.starts_with("wheel") && !name.starts_with("wheelholder");
+                    let wheel = name.starts_with("wheel") && !name.starts_with("wheelholder")
+                        || matches!(name.as_str(), "tirefront" | "tirerear");
                     let selected = wheel && (severe || name.contains("front"))
                         || severe
                             && (matches!(name.as_str(), "handlebars" | "swingarm" | "rearaxle"));
@@ -354,6 +355,31 @@ impl Effects {
             let mut m = mul(&rotation(part.axis, part.angle), &part.initial);
             m[12..15].copy_from_slice(&part.body.p);
             quad_node_matrices[part.node] = relative_transform(&m, &world);
+        }
+        // The GPU receives world-relative bone matrices, so moving a parent
+        // marker alone cannot move its geometry children. Preserve each child's
+        // original relative pose beneath its nearest detached ancestor. A rear
+        // wheel detached inside a detached swingarm keeps its own body.
+        for i in 0..quad_nodes.len() {
+            if self.parts.iter().any(|p| p.node == i) {
+                continue;
+            }
+            let mut parent = quad_nodes[i].parent;
+            let mut depth = 0;
+            while let Ok(index) = usize::try_from(parent) {
+                if index >= quad_nodes.len() || depth >= quad_nodes.len() {
+                    break;
+                }
+                if self.parts.iter().any(|p| p.node == index) {
+                    quad_node_matrices[i] = mul(
+                        &quad_node_matrices[index],
+                        &relative_transform(&quad[i], &quad[index]),
+                    );
+                    break;
+                }
+                parent = quad_nodes[index].parent;
+                depth += 1;
+            }
         }
         Some(Frame {
             age: self.age,
@@ -694,6 +720,90 @@ mod tests {
             "a later severe contact adds remaining pieces"
         );
         assert_eq!(step(0.).detached_parts, 7);
+    }
+    #[test]
+    fn motorcycle_markers_shed_once_and_geometry_follows_nearest_piece() {
+        let nodes = vec![
+            node("Bike", -1, [0., 3., 0.]),
+            node("Handlebars", 0, [0., 5., 2.]),
+            node("SwingArm", 0, [0., 2., -1.]),
+            node("TireFront", 1, [0., 1., 3.]),
+            node("Tire_Front", 3, [0.1, 1., 3.]),
+            node("TireRear", 2, [0., 1., -3.]),
+            node("Tire_Rear", 5, [0.1, 1., -3.]),
+            node("Front_Fender", 1, [0., 4., 3.]),
+            node("Frame", 0, [0., 3., 0.]),
+        ];
+        let q: Vec<_> = nodes.iter().map(|n| n.world_matrix).collect();
+        let mut e = Effects::default();
+        assert!(
+            e.update(
+                1,
+                0,
+                1. / 60.,
+                true,
+                false,
+                [60., 0., 0.],
+                60.,
+                ID,
+                &q,
+                &nodes,
+                ID,
+                &[],
+                &[],
+                |_| None
+            )
+            .is_none()
+        );
+        e.set_enabled(true);
+        let f = e
+            .update(
+                2,
+                0,
+                1. / 60.,
+                true,
+                false,
+                [60., 0., 0.],
+                60.,
+                ID,
+                &q,
+                &nodes,
+                ID,
+                &[],
+                &[],
+                |_| None,
+            )
+            .unwrap();
+        assert_eq!(f.detached_parts, 4);
+        for (child, parent) in [(4, 3), (6, 5), (7, 1)] {
+            let expected = mul(
+                &f.quad_node_matrices[parent],
+                &relative_transform(&q[child], &q[parent]),
+            );
+            assert_eq!(f.quad_node_matrices[child], expected);
+            assert_ne!(f.quad_node_matrices[child], q[child]);
+        }
+        assert_eq!(f.quad_node_matrices[8], q[8]);
+        assert!(
+            e.update(
+                3,
+                1,
+                1. / 60.,
+                false,
+                false,
+                [0.; 3],
+                0.,
+                ID,
+                &q,
+                &nodes,
+                ID,
+                &[],
+                &[],
+                |_| None
+            )
+            .is_none()
+        );
+        assert!(e.parts.is_empty());
     }
     #[test]
     fn part_transform_stays_world_fixed_while_quad_moves() {
