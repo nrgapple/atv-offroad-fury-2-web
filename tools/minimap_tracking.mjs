@@ -35,7 +35,7 @@ export async function captureMinimapTracking(page) {
             // Independent overhead basis: screen-right=-X, screen-up=+Z.
             const cropWorld = [width * (1 - (crop[0] + crop[2] / 2) / 1024), depth * (1 - (crop[1] + crop[3] / 2) / 1024)];
             const cropError = Math.hypot(cropWorld[0] - origin[0], cropWorld[1] - origin[1]);
-            const sample = { actor: map.actor, positionError, headingError, cropError, zoom: map.zoom, updates: map.updates };
+            const sample = { actor: map.actor, positionError, headingError, cropError, zoom: map.zoom, updates: map.updates, interpolated: Boolean(s.motorcyclePresentation?.interpolated) };
             minimapTracking.samples.push(sample); checked = map.updates;
             if (positionError > .002 || headingError > .0001 || cropError > .002) minimapTracking.errors.push(sample);
           }

@@ -1,3 +1,14 @@
+## Minimap motorcycle verification correction — 2026-10-13
+
+The original minimap browser regression mistakenly selected ATV ID 26 while
+claiming motorcycle coverage. It now selects motorcycle ID 27, asserts the
+selected model and two-wheel/vehicle-kind payload, and requires observed
+interpolated frames. Actual ID 27 checks pass on the host (53 GPS samples,
+48 interpolated) and public 106e937 (52 samples, 46 interpolated), with zero GPU
+position/bearing/crop mismatch. No application code or runtime assets changed.
+This test-only follow-up can be batched with the coordinator's CI-cache
+checkpoint; the 106e937 minimap public/R2 gate is complete.
+
 ## Minimap projection, rider tracking and zoom — host checkpoint (2026-10-13)
 
 The old map used +X screen-right, opposite the actual overhead camera basis

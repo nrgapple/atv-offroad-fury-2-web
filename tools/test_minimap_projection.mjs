@@ -8,13 +8,16 @@ const out = process.env.ATV_MINIMAP_OUTPUT || 'work/verification/minimap-project
 await mkdir(out, { recursive: true });
 const browser = await chromium.launch({ headless: true }), results = [];
 try {
-  for (const [quadId, environment] of [[1, 'env02'], [26, 'env01']]) {
+  for (const [quadId, environment] of [[1, 'env02'], [27, 'env01']]) {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
     const errors = []; page.on('pageerror', e => errors.push(e.message));
     await page.addInitScript(quadId => localStorage.setItem('atv-player-selection', JSON.stringify({ quadId, riderId: 0, freestyleEnvironment: 'env01' })), quadId);
     await captureMinimapTracking(page);
     await page.goto(`${base}/play.html?drive=1&environment=${environment}`);
     await page.waitForFunction(() => window.atvTerrainStatus?.minimap.visible, null, { timeout: 90000 });
+    assert.equal(await page.evaluate(() => window.atvTerrainStatus.playerModel.quad_id), quadId);
+    if (quadId === 27) assert.equal(await page.evaluate(() => window.atvTerrainStatus.frame.vehicle_kind), 'motorcycle');
+    assert.equal(await page.evaluate(() => window.atvTerrainStatus.frame.grounded.length), quadId === 27 ? 2 : 4);
     await page.locator('#game').focus();
     await page.keyboard.down('KeyW'); await page.keyboard.down('KeyD');
     await page.waitForTimeout(1800); await page.keyboard.up('KeyD'); await page.keyboard.up('KeyW');
@@ -33,6 +36,7 @@ try {
     await page.waitForFunction(() => window.minimapTracking.samples.some(s => s.zoom === 25));
     const movingTracking = await page.evaluate(() => window.minimapTracking);
     assert.deepEqual(movingTracking.errors, [], 'Moving actor GPS matches the rendered GPU pose and crop');
+    if (quadId === 27) assert(movingTracking.samples.some(s => s.interpolated), 'Observe actual motorcycle interpolation');
     await page.reload(); await page.waitForFunction(() => window.atvTerrainStatus?.minimap.visible, null, { timeout: 90000 });
     assert.equal(await zoom.count(), 0);
     assert.equal(await page.evaluate(() => window.atvTerrainStatus.minimap.zoom), 25);
