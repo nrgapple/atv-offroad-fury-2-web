@@ -51,11 +51,14 @@ dimensions for Safari and Apple WebKit networking user agents; the OS fallback
 cannot be reproduced from those requests. New links use fresh hash URLs without
 query strings, and the Worker also serves conventional `/apple-touch-icon.png`
 and `/apple-touch-icon-precomposed.png` URLs from the same validated R2 package.
+The former `/app-icon-512.png` URL also resolves to the new original-logo icon.
+The rejected authored icon is removed from source and the CI artifact, so these
+R2 compatibility paths cannot conflict with authored-asset checksum verification.
 Icons are checked for hash, size, PNG signature/dimensions and non-symlink paths
 before upload. Native iOS icon selection and cached install metadata still need
 physical-device confirmation after deployment.
 
-Host Chromium and WebKit verification: authored WASM build, 85 JavaScript tests, 33 release tests
+Host Chromium and WebKit verification: authored WASM build, 85 JavaScript tests, 34 release tests
 (one skip), source/setup verification and repository hygiene pass. The existing
 frontend browser gate passes title/menu/keyboard/controller navigation, Tioga
 driving, pause/Controls and portrait Caribou reload. The new

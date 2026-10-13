@@ -29,6 +29,8 @@ class AppIconTests(unittest.TestCase):
             self.assertIn(icons[180]['url'], (ROOT / 'web' / name).read_text())
         self.assertTrue(all(not icon['url'].lstrip('/') in STATIC_FILES for icon in icons.values()))
         self.assertNotIn('base64', json.dumps(metadata))
+        for alias in ['apple-touch-icon.png', 'apple-touch-icon-precomposed.png', 'app-icon-512.png', 'app-icon.svg']:
+            self.assertNotIn(alias, STATIC_FILES, 'R2 compatibility URLs must not collide with authored artifact hash checks')
 
     def test_hash_mismatch_path_escape_and_symlink_are_rejected(self):
         with tempfile.TemporaryDirectory() as temp:

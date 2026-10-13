@@ -35,9 +35,9 @@ class Handler(SimpleHTTPRequestHandler):
         return super().send_head()
 
     def translate_path(self, path):
-        if path in ['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png']:
+        if path in ['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png', '/app-icon-512.png']:
             icons = json.loads((PROJECT / 'web/app-icon-assets.json').read_text())['icons']
-            path = next(record['url'] for record in icons if record['size'] == 192)
+            path = next(record['url'] for record in icons if record['size'] == (512 if path == '/app-icon-512.png' else 192))
         if re.fullmatch(r'/app-icons/[a-f0-9]{64}\.png', path):
             return str(PROJECT / 'private/reports/app-icons' / path.rsplit('/', 1)[1])
         # Only the explicitly requested log and PNG checkpoint gallery are

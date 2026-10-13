@@ -56,10 +56,11 @@ export default {
       return env.ASSETS.fetch(new Request(index, request));
     }
     if (path === '/devlog.json') return gallery(request, env);
-    const appleIcon = ['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png'].includes(path) && /^app-icons\/[a-f0-9]{64}\.png$/.test(env.APPLE_TOUCH_ICON_KEY ?? '');
+    const iconAliasKey = ['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png'].includes(path) ? env.APPLE_TOUCH_ICON_KEY : path === '/app-icon-512.png' ? env.APP_ICON_512_KEY : null;
+    const appleIcon = /^app-icons\/[a-f0-9]{64}\.png$/.test(iconAliasKey ?? '');
     if (path === '/content/manifest.json' || MANIFEST.test(path) || BLOB.test(path) || IMAGE.test(path) || APP_ICON.test(path) || appleIcon) {
       const pinned = path.match(MANIFEST);
-      const key = appleIcon ? env.APPLE_TOUCH_ICON_KEY : pinned ? `releases/${pinned[1]}/manifest.json` : path === '/content/manifest.json' && env.RELEASE_COMMIT ? `releases/${env.RELEASE_COMMIT}/manifest.json` : path.slice(1);
+      const key = appleIcon ? iconAliasKey : pinned ? `releases/${pinned[1]}/manifest.json` : path === '/content/manifest.json' && env.RELEASE_COMMIT ? `releases/${env.RELEASE_COMMIT}/manifest.json` : path.slice(1);
       const object = request.method === 'HEAD' ? await env.CONTENT.head(key) : await env.CONTENT.get(key);
       if (!object) return new Response('Not found', { status: 404 });
       const headers = new Headers();

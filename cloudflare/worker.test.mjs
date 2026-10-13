@@ -21,16 +21,16 @@ test('only approved object path shapes are accessible; writes are rejected', asy
 
 test('original-logo icons use R2 PNG responses and a conventional Safari root fallback', async () => {
   const key = `app-icons/${'b'.repeat(64)}.png`, reads = [];
-  const env = { APPLE_TOUCH_ICON_KEY: key, CONTENT: { get: async name => { reads.push(name); return object('png'); }, head: async () => object('png') } };
+  const env = { APPLE_TOUCH_ICON_KEY: key, APP_ICON_512_KEY: key, CONTENT: { get: async name => { reads.push(name); return object('png'); }, head: async () => object('png') } };
   const hashed = await worker.fetch(request('/' + key), env);
   assert.equal(hashed.headers.get('Content-Type'), 'image/png');
   assert.match(hashed.headers.get('Cache-Control'), /immutable/);
-  for (const name of ['apple-touch-icon.png', 'apple-touch-icon-precomposed.png']) {
+  for (const name of ['apple-touch-icon.png', 'apple-touch-icon-precomposed.png', 'app-icon-512.png']) {
     const response = await worker.fetch(request('/' + name), env);
     assert.equal(response.status, 200); assert.equal(response.headers.get('Content-Type'), 'image/png');
     assert.equal(response.headers.get('Cache-Control'), 'no-cache');
   }
-  assert.deepEqual(reads, [key, key, key]);
+  assert.deepEqual(reads, [key, key, key, key]);
   assert.equal(await (await worker.fetch(request('/' + key, { method: 'HEAD' }), env)).text(), '');
   assert.equal((await worker.fetch(request('/' + key, { method: 'PUT', body: 'bad' }), env)).status, 405);
 });
