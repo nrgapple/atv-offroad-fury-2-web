@@ -22,6 +22,9 @@ async function setup(viewport) {
  await captureSimulation(page,'rideFrames');
  await page.goto(new URL('/play.html?drive=1',base).href);
  await page.waitForFunction(()=>window.atvTerrainStatus?.simulation&&!document.querySelector('#touch-controls').hidden,null,{timeout:90000});
+ // The original reposition/spawn gate blocks stunts for two simulated seconds.
+ // A fast cached startup must not spend the release pulse inside that gate.
+ await page.waitForFunction(()=>window.atvTerrainStatus.simulationSteps>=130);
  const cdp=await page.context().newCDPSession(page);
  const touch=(type,points=[])=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:points.map(p=>({radiusX:6,radiusY:6,force:1,...p}))});
  const steps=async()=>{const n=await page.evaluate(()=>window.atvTerrainStatus.simulationSteps);await page.waitForFunction(n=>window.atvTerrainStatus.simulationSteps>=n+4,n);};

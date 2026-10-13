@@ -3098,9 +3098,23 @@
         "The public actual-source two-client test verified Controls and Players alongside the active Lobby, neutral local input, live physics and peer rendering, continuing music, Leave cleanup, and no AudioContext suspension or title-music interruption. The host advanced 42 steps and observed 3.328 ft of guest movement; the guest advanced 41 steps and observed 3.272 ft of host movement."
       ],
       "limitation": "At the time of this browser checkpoint, the separate R2/gallery hash audit and inspected pause-menu screenshot upload had not yet run. Automated public-browser results do not establish physical-device behavior, original pause-screen fidelity, or whole-game parity."
+    },
+    {
+      "id": "public-enhanced-mobile-trick-wheel-verified-f2f660b1",
+      "timestamp": "2026-10-13T23:48:37.637144+00:00",
+      "recorded_at": "2026-10-13T23:48:37.637144+00:00",
+      "kind": "verification",
+      "title": "Public enhanced-mobile trick wheel verified",
+      "summary": "The public build verifies the enhanced one-handed radial selector and mobile utility controls in portrait and landscape, while preserving the original stunt entry gate.",
+      "details": [
+        "Main commit e03bc2b89a35cfd7048fbd69841105c61cd10444 passed CI/deployment run 38485063543. The validated current-main artifact matched public deployment identity; 463 R2 objects were checked/uploaded with three updates for the pause and wheel screenshots plus gallery, and apex verification matched 44 authored files and 462 served objects. The public log at verification contained 191 entries and 147 screenshots.",
+        "Public Chromium enhanced-mobile routes passed portrait and landscape ground reverse, preserved primary axes, secondary stunt release/cancel, and natural Caribou hops selecting Nac Nac, Cat Nac and Cordova only on release. Pause/Camera utility checks passed in portrait and landscape; there was no camera orbit, browser error or file picker.",
+        "An initial fast-cache test released at simulation step 117, before the original two-second reposition cooldown expired, and the game correctly declined stunt entry. The test setup was corrected to wait 130 simulation steps; the complete public retry then passed. Only the test fixture changed; the native gate stayed unchanged."
+      ],
+      "limitation": "Public automated browser verification on one Mac does not verify physical-phone touch behavior or full gameplay parity."
     }
   ],
-  "updated_at": "2026-10-13T23:39:58.975312+00:00",
+  "updated_at": "2026-10-13T23:48:37.637144+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
