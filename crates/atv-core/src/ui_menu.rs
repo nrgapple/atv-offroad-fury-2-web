@@ -32,6 +32,8 @@ pub struct Request {
     #[serde(default)]
     pub lobby_status: String,
     #[serde(default)]
+    pub lobby_players: Vec<ControlRow>,
+    #[serde(default)]
     pub lobby_host: bool,
     #[serde(default)]
     pub lobby_started: bool,
@@ -290,6 +292,12 @@ pub fn layout(request: Request) -> Result<Frame> {
         || request.room_code.len() > 64
         || request.player_name.len() > 32
         || request.lobby_status.len() > 256
+        || request.lobby_players.len() > 4
+        || request.lobby_players.iter().any(|p| {
+            p.id.parse::<u8>().map_or(true, |id| id >= 4)
+                || p.label.len() > 64
+                || !["self", "ready", "waiting"].contains(&p.value.as_str())
+        })
         || !(1..=crate::motorcycle::SELECTION_COUNT).contains(&request.quad_id)
         || request.rider_id > 1
         || request.loading_status.len() > 128
@@ -319,7 +327,7 @@ pub fn layout(request: Request) -> Result<Frame> {
     let portrait = h > w;
     let pause = matches!(
         request.page.as_str(),
-        "pause" | "hud-settings" | "minimap-config" | "controls" | "bindings" | "music"
+        "pause" | "players" | "hud-settings" | "minimap-config" | "controls" | "bindings" | "music"
     );
     let mut f = Frame {
         width: w,
@@ -382,6 +390,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         "tracks" => "Freestyle",
         "race" => "Single Race",
         "pause" => "Pause",
+        "players" => "Lobby Players",
         "hud-settings" => "HUD Settings",
         "minimap-config" => "Minimap Configuration",
         "controls" => "Controls",
@@ -846,6 +855,36 @@ pub fn layout(request: Request) -> Result<Frame> {
             f.hits.last_mut().unwrap().label = format!("Ride {}", request.track_name);
             f.footer(true);
         }
+        "players" => {
+            let row = ((h - 170.) / 5.).clamp(44., 64.);
+            for (i, player) in request.lobby_players.iter().enumerate() {
+                let y = 96. + i as f32 * row;
+                if player.value == "self" || player.value == "waiting" {
+                    let label = if player.value == "waiting" {
+                        format!("{} / waiting", player.label)
+                    } else {
+                        player.label.clone()
+                    };
+                    f.text(label, [30., y + 20.], 0.9, FONT, "210,210,210", w - 60.);
+                } else {
+                    let action = format!("spawn:{}", player.id);
+                    f.choices.push(action.clone());
+                    f.button(
+                        &format!("Spawn beside {}", player.label),
+                        &action,
+                        [24., y, w - 48., row],
+                        request.selection == f.choices.len() - 1,
+                    );
+                }
+            }
+            f.choices.push("pause".into());
+            f.button(
+                "Back",
+                "pause",
+                [24., h - 70., w - 48., 48.],
+                request.selection == f.choices.len() - 1,
+            );
+        }
         "pause" => {
             let diagnostics_label = match request.diagnostics_mode.as_str() {
                 "performance" => "Stats: Performance (F3)",
@@ -880,6 +919,9 @@ pub fn layout(request: Request) -> Result<Frame> {
                     "funnycrashes",
                 ),
             ];
+            if !request.lobby_status.is_empty() {
+                choices.insert(2, ("Players", "players"));
+            }
             if request.music_ready {
                 choices.push(("Music", "music"));
             }
@@ -1274,6 +1316,7 @@ mod tests {
             room_code: String::new(),
             player_name: String::new(),
             lobby_status: String::new(),
+            lobby_players: vec![],
             lobby_host: false,
             lobby_started: false,
             width: w,

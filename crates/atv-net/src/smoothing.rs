@@ -114,11 +114,20 @@ impl PoseBuffer {
     }
     /// No allocations beyond the returned bounded pose. Pauses and packet loss
     /// freeze after the extrapolation limit and mark the peer stale for UI/audio.
+    pub fn latest(&self) -> Option<(&Snapshot, u64)> {
+        self.samples.back().map(|s| (&s.snapshot, s.received_ms))
+    }
+    pub fn sample_current(&self, now_ms: u64) -> Option<SampledPose> {
+        self.sample_delay(now_ms, 0)
+    }
     pub fn sample(&self, now_ms: u64) -> Option<SampledPose> {
+        self.sample_delay(now_ms, self.config.delay_ms)
+    }
+    fn sample_delay(&self, now_ms: u64, delay_ms: u32) -> Option<SampledPose> {
         let first = self.samples.front()?;
         let last = self.samples.back()?;
         let stale = now_ms.saturating_sub(last.received_ms) >= u64::from(self.config.stale_ms);
-        let target = now_ms as f64 - self.offset_ms - f64::from(self.config.delay_ms);
+        let target = now_ms as f64 - self.offset_ms - f64::from(delay_ms);
         if target <= first.time_ms as f64 {
             return Some(SampledPose {
                 snapshot: first.snapshot.clone(),
@@ -138,6 +147,8 @@ impl PoseBuffer {
                     || left.snapshot.rider_model != right.snapshot.rider_model
                     || left.snapshot.rider_state != right.snapshot.rider_state
                     || left.snapshot.crash_serial != right.snapshot.crash_serial
+                    || left.snapshot.platform.as_ref().map(|p| p.car)
+                        != right.snapshot.platform.as_ref().map(|p| p.car)
                     || distance_squared(left.snapshot.atv.position, right.snapshot.atv.position)
                         > 100. * 100.
                 {
@@ -161,10 +172,15 @@ impl PoseBuffer {
         let mut snapshot = last.snapshot.clone();
         let dt = extra_ms as f32 / 1000.;
         for i in 0..3 {
+            if snapshot.platform.is_some() {
+                break;
+            }
             snapshot.atv.position[i] += snapshot.velocity[i] * dt;
             snapshot.rider.position[i] += snapshot.rider_velocity[i] * dt;
         }
-        snapshot.atv.rotation = advance(snapshot.atv.rotation, snapshot.angular_velocity, dt);
+        if snapshot.platform.is_none() {
+            snapshot.atv.rotation = advance(snapshot.atv.rotation, snapshot.angular_velocity, dt);
+        }
         Some(SampledPose {
             snapshot,
             stale,
@@ -196,6 +212,9 @@ fn blend(a: &Snapshot, b: &Snapshot, t: f32) -> Snapshot {
         {
             *out = a.blend(*b, t);
         }
+    }
+    if let (Some(a), Some(b), Some(out)) = (&a.platform, &b.platform, &mut out.platform) {
+        out.transform = a.transform.blend(b.transform, t);
     }
     out.rpm = a.rpm + (b.rpm - a.rpm) * t;
     out.throttle = a.throttle + (b.throttle - a.throttle) * t;

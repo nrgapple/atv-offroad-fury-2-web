@@ -995,3 +995,25 @@ Historical host wheel-center checkpoint (subsequently released as `35d328e`): th
 UI transitions/loading host checkpoint (2026-10-13): authored menu transitions use 180 ms exits and 240 ms entries, with a shared loading presentation for boot, course/model loading, and graphics-context recovery. The course loader presents the recovered preview, course name, status, and animated progress bar. Browser checks cover reduced motion, load failure, rotation, touch at 390×844, 844×390 and 667×375, and resize cancellation with focus retention. The frontend regression also covers desktop/controller Tioga and portrait/Caribou. Validation reported 69 JavaScript tests, five Rust UI tests, formatting, strict atv-core Clippy, `make verify`, repository hygiene, and 29 release tests (one skipped). This remains host-only: these authored timings and visuals do not establish native UI timing/callback behavior, physical iOS/Bluetooth support, or public deployment. Screenshot evidence is in `research/devlog.json`; see `research/UI.md`.
 
 The UI checkpoint also passes the existing Caribou race gate: desktop/portrait/landscape setup, course loading, countdown, pause/resume, touch cancellation and restart, with no JavaScript errors.
+
+## Multiplayer visibility, contacts and train synchronization — host checkpoint
+
+`feat/multiplayer-improvements` adds active-ride late admission, numbered player
+markers on the minimap, original CompassArrow pixels/colors with authored overhead
+name/distance labels, and Pause → Players → Spawn beside. Fresh grounded peers
+are required for spawning; nearby candidates check support, clearance and peers.
+Rust owner-local swept contact proxies let quads bump one another. The relay
+validates protocol 2 snapshots with host train phase and actual wheel-supported
+platform transforms; presentation preserves rider position relative to each car.
+Guests follow the host's train clock, which freezes while the host is paused.
+This is an authored multiplayer approximation without server physics reconciliation.
+
+Host tests pass actual late joining after Arlington's train has advanced, matching
+lobby code, minimap/overhead visibility, mobile roster/spawn, owner contacts and
+20 moving-flatbed samples (maximum relative presentation error 0.91 feet).
+Four-browser tests pass three remote models/voices per client, movement and
+host-end cleanup. Thirteen live relay cases, workspace tests, strict Clippy,
+87 JavaScript tests, release/Worker checks and setup/hygiene pass. Public delivery
+requires the validated current-main artifact and separate R2 gallery verification.
+See `research/MULTIPLAYER.md`; physical phones and geographically separated
+network behavior remain untested. Original PS2 multiplayer fidelity is not claimed.

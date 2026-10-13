@@ -97,7 +97,7 @@ try {
   const version = await request('/multiplayer/version');
   assert.equal(version.status, 200);
   const identity = await version.json();
-  assert.equal(identity.protocol, 1);
+  assert.equal(identity.protocol, 2);
   assert.ok(identity.commit && identity.wasmSha256);
   report.identity = identity;
   await rejectedSocket('ABCD2345', 404);

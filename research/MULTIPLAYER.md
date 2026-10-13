@@ -20,8 +20,11 @@ controls do not wait for a network round trip. The host owns the lobby's map and
 start. A Rust Cloudflare Durable Object authenticates the creator's private token,
 assigns participant slots, validates shared binary packets and relays snapshots.
 The room code and invite URL contain no host credential. Host departure ends the
-room; reconnect/migration, competitive authority and player-to-player collision
-resolution are not part of this first component.
+room; reconnect/migration and competitive authority are not implemented. A new
+authored equal-mass contact proxy uses swept six-foot cylinders and each owner
+applies only its own response. It is not the original PS2 contact behavior and
+the relay does not reconcile physics. The updated packet schema is incompatible
+with earlier clients; clients must reload before joining a room on this version.
 
 Twenty snapshots per second include source mechanical and rider node matrices,
 quad/rider world poses and velocities, riding/air/crash states, engine telemetry
@@ -34,13 +37,14 @@ cannot promise instant remote response or remove Internet latency. WebSockets
 also retain TCP head-of-line blocking. Datagram/WebRTC transport and host/server
 physics reconciliation remain later options once actual measurements justify them.
 
-The full 27-node ATV plus male 18/female 27 poses encode to 2,520/2,988 bytes. At the
-20Hz target that is 50.4/59.76kB/s per sender before protocol/TLS overhead. Four
-participants can receive about 179.28 kB/s with three female peers. Browser transport
-drops unsent snapshots when buffered data reaches 32 KiB, allows one outstanding
-snapshot/presentation request and bounds incoming work to 64 messages. It never
-queues old drive inputs or PCM. Rust handles decoder bounds and server identity;
-browser JavaScript is socket, DOM/WebGL and Web Audio API glue.
+The full 27-node ATV plus male 18/female 27 poses encode to 2,526/2,994-byte
+snapshot packets. Attaching a moving-platform transform adds 52 bytes. At the
+20Hz target, the base packets are 50.52/59.88 kB/s per sender before protocol/TLS
+overhead; a receiver with three female peers receives about 179.64 kB/s. Browser
+transport drops unsent snapshots when buffered data reaches 32 KiB, allows one
+outstanding snapshot/presentation request and bounds incoming work to 64 messages.
+It never queues old drive inputs or PCM. Rust handles decoder bounds and server
+identity; browser JavaScript is socket, DOM/WebGL and Web Audio API glue.
 
 ## Models and sound
 
@@ -58,6 +62,50 @@ local PCM. Crash serials drive original body-impact samples at the rider positio
 Pause/focus cancels local drive and publishes a stationary pose; stale/left peers
 lose voices. Per-rider vocal fidelity, original multiplayer mixer budget, clothing
 presets and original PS2 rendering/animation parity remain unverified.
+
+## Original player indicator evidence
+
+The exact USA v2.00 executable's compass initializer at `0x002e68e0`
+loads `CompassBkg` and `CompassArrow`, selects the current actor by participant
+index, and iterates the actor list to create indicators for other actors. Its
+source tint values map participant slots 0–3 to red, blue, green and yellow
+(`0xff0000`, `0x0000ff`, `0x00ff00`, `0xffff00`). The original
+`textures/compassarrow.pst` is an 8×8 white, alpha-masked arrow pointing up in
+its stored orientation; `textures/compassbkg.pst` is a 128×128 compass face.
+Both are present in the extracted ENV01 Freeride archive. A decoded, inspected
+preview is kept in ignored `work/verification/compassarrow.png`.
+
+This supports the original participant color mapping and compass indicator
+art. It does not establish an original overhead marker or nametag. Any browser
+marker drawn above remote riders uses authored placement and presentation; it
+should be described as such rather than as recovered PS2 placement behavior.
+
+## Host-only multiplayer feature gate
+
+On 2026-10-13, a local two-client browser run admitted a guest more than six
+seconds after Arlington Freeride had started, using the same room code; each
+client rendered 13 remote draws. The minimap and original compass arrows updated,
+and the paused Players screen offered the late guest a nearby-host spawn action.
+At 390×844 its measured hitbox was 342×64 pixels at `(24,96)`. The inspected
+captures are recorded in the dev log. Owner-local contact counters reached 3 and
+1, showing contact responses on both clients. A 20-sample moving flatbed check
+kept the rider within 0.908 ft of the train-relative position. Host departure
+cleaned up the guests.
+
+A separate four-browser host run selected quads 1, 14, 26 and 2. Each client
+rendered 39 remote GL draws and three remote engine voices. Each driver's motion
+reached the other three observers; host departure cleared remote models and audio
+on every guest. The relay gate passed 13 live cases. Current workspace checks
+passed 353 core, 27 protocol, 15 web, 4 relay and 4 release tests, plus 87
+JavaScript tests, formatting, strict Clippy, Worker checks, setup and repository
+hygiene. The release suite passed 31 tests with one skipped.
+
+These are host checks only. They do not establish public release, physical-phone
+input, geographically separated latency, authoritative collision or server-side
+physics reconciliation. The equal-mass six-foot swept-cylinder contacts and
+overhead player labels are authored browser behavior; the recovered original
+compass art and slot colors do not establish original overhead placement.
+The shared train animation clock currently freezes when its host pauses.
 
 ## Verification and deployment
 
@@ -126,7 +174,10 @@ headless Chromium Metal, 1280×896 and synthetic focus is 71.00–75.86 FPS,
 41–52ms relay RTT. Concurrent validation workload was not measured; this is not
 a general device or Internet performance claim.
 
-Shared dynamic-world clocks and server/host physics reconciliation remain future
-work: this baseline relays riders' owned simulations while scene animations and
-dynamic objects run on each client's local scene clock. Competitive authority,
-player collision, host migration and original online/race rules are unfinished.
+Historical note: at the public integration checkpoint above, shared dynamic-world
+clocks and server/host physics reconciliation remained future work; that release
+relayed rider-owned simulations while scene animations and dynamic objects ran on
+each client's local clock. Later host-only checks now cover synchronized train
+timing and authored player contacts, but the shared train clock still freezes
+when its host pauses. These changes are not a public release. Competitive
+authority, host migration and original online/race rules remain unfinished.

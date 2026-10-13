@@ -1,5 +1,5 @@
 // Original content and vehicle component simulation run in the Rust worker.
-import { Multiplayer } from './multiplayer.js';
+import { Multiplayer, PlayerIndicators } from './multiplayer.js';
 import { Frontend } from './frontend.js';
 import { RaceOverlay } from './race.js';
 import { mountTouchControls, TouchLeanIntent } from './touch.js';
@@ -28,6 +28,7 @@ let frontend, hostedContent, hud, multiplayer;
 const remoteModels = new Map();
 const minimapSettings = new MinimapSettings();
 const minimap = new FreestyleMinimap(minimapSettings);
+const playerIndicators = new PlayerIndicators();
 let funnyCrashes = true;
 try { funnyCrashes = localStorage.getItem('atv-funny-crashes') !== 'false'; } catch { /* Session preference. */ }
 const crashSettings = { get enabled() { return funnyCrashes; }, toggle() {
@@ -1243,7 +1244,7 @@ async function pumpSimulation() {
     const cycle = cameraCycle || actions.camera; cameraCycle = false;
     if (cycle) orbit = 0;
     const submitted = performance.now();
-    const frames = await command(50, { count, input, orbit, cycle });
+    const frames = await command(50, { count, input, orbit, cycle, now: Math.floor(performance.now()) });
     diagnostics.physicsRoundTripMs = performance.now() - submitted;
     diagnostics.physicsBatchSteps = count;
     if (token !== simGeneration) return;
@@ -1321,7 +1322,8 @@ function render(time) {
   const started = performance.now();
   frame = requestAnimationFrame(render);
   touchControls.refresh();
-  minimap.draw(time, simFrame, simReady && !raceSettings && !lost && focused && !document.hidden && !menuOpen);
+  minimap.draw(time, simFrame, simReady && !raceSettings && !lost && focused && !document.hidden && !menuOpen, multiplayer?.remote ?? []);
+  playerIndicators.root.hidden = !simReady || lost || document.hidden || menuOpen;
   // Enabled Freestyle GPS owns speed even while its raster is warming up or
   // temporarily hidden. Only the explicit Off setting restores standalone MPH.
   hud?.draw(simFrame?.hud, simReady && !lost && !document.hidden && !menuOpen, { speedVisible: Boolean(raceSettings) || !minimapSettings.enabled });
@@ -1348,6 +1350,7 @@ function render(time) {
   gl.uniform1i(uniforms.sceneryReflectionPlane, 0);
   gl.uniform1i(uniforms.useVertexColor, false); gl.uniform1i(uniforms.sceneryBlend, false); gl.uniform1i(uniforms.alphaFailPass, false); gl.uniform2f(uniforms.sceneryUvOffset, 0, 0);
   const viewProjection = matrix();
+  playerIndicators.draw(multiplayer?.remote ?? [], multiplayer?.state.lobby, viewProjection, simFrame?.origin ?? [0,0,0], simReady);
   gl.uniformMatrix4fv(uniforms.viewProjection, false, viewProjection); gl.uniform3f(uniforms.eye, camera.x, camera.y, camera.z);
   const fog=terrain.world?.metadata.fog;
   gl.uniform2f(uniforms.heights, terrain.min, terrain.max);
@@ -1506,7 +1509,10 @@ async function loadGame(file = null, environment = "env01", racing = null) {
     minimap.setTerrain(racing ? null : terrain);
     diagnostics.terrainTextures = 0;
     uploadTerrainTextures();
-    if (hud && source.physics) await codec(63, await hud.init(environment));
+    if (hud && source.physics) {
+      await codec(63, await hud.init(environment));
+      minimap.peerArrows = playerIndicators.setArtwork(await frontend.image('CompassArrow'));
+    }
     setVehicle(source); buildMesh(); await startSimulation(source); resetCamera();
     Object.assign(diagnostics, { ready: true, source: source.name, width, depth, min, max, frames: 0 });
     $('reset').disabled = false; $('camera').disabled = !simReady; $('help').hidden = false;
@@ -1592,7 +1598,12 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
   if (params.get('source') === 'disc') { $('loading-screen').hidden = true; menuOpen = false; $('frontend').hidden = true; }
   else {
     hostedContent = openHostedContent();
-    multiplayer = new Multiplayer({codec,command,ready:()=>simReady,paused:()=>menuOpen||!focused||document.hidden||lost||pageSuspended,listener:()=>({position:[camera.x,camera.y,camera.z],forward:[Math.sin(camera.yaw)*Math.cos(camera.pitch),Math.sin(camera.pitch),Math.cos(camera.yaw)*Math.cos(camera.pitch)],velocity:simFrame?.linear_velocity??[0,0,0]}),audio:()=>audio,assets:remoteAssets,clearAssets:()=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();},report:message=>{diagnostics.multiplayerError=message;status(message,true);},onState:()=>{if(frontend){frontend.layoutKey='';void frontend.refresh();}},onStart:async (environment,isCurrent)=>{if(!isCurrent())return;frontend.busy=true;frontend.notice.textContent='';try {await loadGame(null,environment);if(isCurrent())frontend.resume();}finally{if(isCurrent())frontend.busy=false;}},onLeave:message=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show('multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
+    multiplayer = new Multiplayer({codec,command,spawn:async peer=>{
+      simGeneration++; simAccumulator=0; clearInput();
+      acceptFrame(await command(86,{peer,now:Math.floor(performance.now())}));
+      await command(47,{}); orbit=0; acceptCameraFrame(await command(46,{dt:1/60,orbit}));
+      await multiplayer.send();
+    },ready:()=>simReady,paused:()=>menuOpen||!focused||document.hidden||lost||pageSuspended,listener:()=>({position:[camera.x,camera.y,camera.z],forward:[Math.sin(camera.yaw)*Math.cos(camera.pitch),Math.sin(camera.pitch),Math.cos(camera.yaw)*Math.cos(camera.pitch)],velocity:simFrame?.linear_velocity??[0,0,0]}),audio:()=>audio,assets:remoteAssets,clearAssets:()=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();},report:message=>{diagnostics.multiplayerError=message;status(message,true);},onState:()=>{if(frontend){void frontend.refresh();}},onStart:async (environment,isCurrent)=>{if(!isCurrent())return;frontend.busy=true;frontend.notice.textContent='';try {await loadGame(null,environment);if(isCurrent())frontend.resume();}finally{if(isCurrent())frontend.busy=false;}},onLeave:message=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show('multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
     frontend = new Frontend({minimapSettings,menuRider:menuRiderAssets,modelAssets:selectionAssets,crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => loadGame(null, environment,racing), active: open => { menuOpen = open; clearInput(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     hud = new HeadUpDisplay(frontend, canvas);
     if (params.get('drive') === '1') {

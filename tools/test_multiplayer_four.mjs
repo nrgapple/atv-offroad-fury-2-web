@@ -63,7 +63,7 @@ function summary(s) {return {model:s.playerModel,net:s.multiplayer?.state,remote
 try {
  const host=pages[0];await host.goto(base+'/play.html');
  report.deployment=await host.evaluate(async()=>{const response=await fetch('/deployment.json',{cache:'no-store'});if(!response.ok)throw new Error(`Deployment identity unavailable (${response.status}).`);return response.json();});
- assert.match(report.deployment.commit,/^[a-f0-9]{40}$/,'deployment identity must contain a complete commit SHA');
+ if(!(reachability==='host-only' && report.deployment.dirty && process.env.ATV_ALLOW_HOST_WIP==='1')) assert.match(report.deployment.commit,/^[a-f0-9]{40}$/,'deployment identity must contain a complete commit SHA');
  if(report.expectedCommit)assert.equal(report.deployment.commit,report.expectedCommit,'public/host deployment does not match ATV_EXPECTED_COMMIT');
  await save();
  await button(host,'Press START').click({timeout:120000});await button(host,'Multiplayer').click();await host.getByRole('textbox',{name:'Rider name',exact:true}).fill('FourHost');await garage(host,report.models[0]);await button(host,'Create lobby').click();

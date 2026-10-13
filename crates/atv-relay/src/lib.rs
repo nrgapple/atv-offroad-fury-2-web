@@ -388,8 +388,15 @@ impl DurableObject for LobbyRoom {
         if !connection.account(now(), bytes.len()) {
             return ws.close(Some(1008), Some("Message rate exceeded"));
         }
-        let Ok(packet) = atv_net::decode(&bytes) else {
-            return ws.close(Some(1008), Some("Invalid multiplayer packet"));
+        let packet = match atv_net::decode(&bytes) {
+            Ok(packet) => packet,
+            Err(atv_net::Error::UnsupportedVersion) => {
+                return ws.close(
+                    Some(1008),
+                    Some("Game updated. Reload the page to join multiplayer."),
+                );
+            }
+            Err(_) => return ws.close(Some(1008), Some("Invalid multiplayer packet")),
         };
         match packet {
             Packet::Join { code, mut player }

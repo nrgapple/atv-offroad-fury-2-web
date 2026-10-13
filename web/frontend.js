@@ -95,7 +95,7 @@ export class Frontend {
         }
         if (!held.size) this.padBlocked = false;
         if (!this.root.hidden && !this.padBlocked) for (const action of held) if (!this.lastPad.has(action)) {
-          if (action === 'pause' && ['pause','hud-settings','minimap-config','controls','bindings','music','multiplayer','lobby','garage'].includes(this.page) && !this.busy) this.resume();
+          if (action === 'pause' && ['pause','players','hud-settings','minimap-config','controls','bindings','music','multiplayer','lobby','garage'].includes(this.page) && !this.busy) this.resume();
           else void this.action(action === 'pause' ? 'accept' : action);
         }
         this.lastPad = held;
@@ -234,14 +234,14 @@ export class Frontend {
   async action(action) {
     if (this.busy || this.root.hidden) return;
     this.notice.textContent = '';
-    if (['up','down'].includes(action) && ['title','main','single','garage','multiplayer','lobby','race','pause','hud-settings','minimap-config','controls','bindings','music'].includes(this.page)) {
+    if (['up','down'].includes(action) && ['title','main','single','garage','multiplayer','lobby','race','pause','players','hud-settings','minimap-config','controls','bindings','music'].includes(this.page)) {
       this.selection = (this.selection + (action === 'up' ? -1 : 1) + this.frame.choices.length) % this.frame.choices.length;
       if (this.page === 'bindings' && this.selection < 4) this.bindingRow = this.bindingPage * 4 + this.selection;
     } else if (action === 'back') {
       if (this.page === 'pause') return this.resume();
       if (this.page === 'garage') return this.show(this.garageReturn);
       if (this.page === 'lobby') return this.run('leave');
-      return this.show(({bindings:'controls',music:'pause','hud-settings':'pause','minimap-config':'hud-settings',controls:'pause',main:'title',single:'main',tracks:'single',race:'single',multiplayer:'main'})[this.page] ?? 'title');
+      return this.show(({players:'pause',bindings:'controls',music:'pause','hud-settings':'pause','minimap-config':'hud-settings',controls:'pause',main:'title',single:'main',tracks:'single',race:'single',multiplayer:'main'})[this.page] ?? 'title');
     } else if (this.page === 'garage' && ['left','right'].includes(action)) {
       return this.run(action === 'left' ? 'quadprev' : 'quadnext');
     } else if (this.page === 'tracks' && ['left','right','up','down'].includes(action)) {
@@ -272,8 +272,9 @@ export class Frontend {
       if (action === 'garage') { this.garageReturn = this.page; return this.show('garage'); }
       if (action === 'quadprev' || action === 'quadnext') { const count = this.garageReturn === 'multiplayer' || this.garageReturn === 'lobby' ? 26 : 46; this.quadId = ((this.quadId - 1 + (action === 'quadnext' ? 1 : count - 1)) % count) + 1; }
       else if (action === 'riderchange' && this.quadId < 27) this.riderId = 1 - this.riderId;
+      else if (action.startsWith('spawn:')) { this.busy=true; try { await this.multiplayer.action(action,this); } finally {this.busy=false;} return; }
       else if (['host','join','share','lobbymap','lobbystart','leave'].includes(action)) { if (['host','join'].includes(action) && this.quadId>=27) throw new Error('Choose an ATV for multiplayer. Motorcycles are available in Single Player.'); return await this.multiplayer.action(action, this); }
-      else if (['main','single','tracks','hud-settings','minimap-config','controls','music','multiplayer','lobby','race'].includes(action)) return await this.show(action);
+      else if (['main','single','tracks','pause','players','hud-settings','minimap-config','controls','music','multiplayer','lobby','race'].includes(action)) return await this.show(action);
       if (action === 'racestart') {
         await this.multiplayer?.disconnect();
         this.busy = true;
@@ -325,7 +326,7 @@ export class Frontend {
     const stage = this.canvas.parentElement, track = this.page === 'race' ? this.tracks.find(t=>t.id==='env01') : this.tracks[this.track];
     const music = this.audio?.()?.music, musicState = music?.snapshot();
     const lobby = this.multiplayer?.state?.lobby;
-    const request = {race_laps:this.raceSettings.laps,race_cpu:this.raceSettings.cpu,race_difficulty:this.raceSettings.difficulty,race_available:this.raceAvailable,race_active:this.raceActive,quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? this.roomCode,lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:(this.page === 'loading' ? this.loadingTrack?.name : this.page === 'lobby' ? this.tracks.find(t => t.id === this.multiplayer.state.environment)?.name : track?.name) ?? '',track_image:(this.page === 'loading' ? this.loadingTrack?.image : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
+    const request = {lobby_players:(lobby?.players??[]).map(p=>({id:String(p.id),label:`P${p.id+1} ${p.name}${p.id===this.multiplayer.state.peer?' (You)':''}`,value:p.id===this.multiplayer.state.peer?'self':(this.multiplayer.remote.find(r=>r.peer===p.id && !r.stale)?'ready':'waiting')})),race_laps:this.raceSettings.laps,race_cpu:this.raceSettings.cpu,race_difficulty:this.raceSettings.difficulty,race_available:this.raceAvailable,race_active:this.raceActive,quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? this.roomCode,lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:(this.page === 'loading' ? this.loadingTrack?.name : this.page === 'lobby' ? this.tracks.find(t => t.id === this.multiplayer.state.environment)?.name : track?.name) ?? '',track_image:(this.page === 'loading' ? this.loadingTrack?.image : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
       minimap_orientation:this.minimapSettings?.orientation ?? 'north-up',minimap_shape:this.minimapSettings?.shape ?? 'circle',minimap_corner:this.minimapSettings?.corner ?? 'top-right',minimap_enabled:this.minimapSettings?.enabled ?? true,minimap_size:this.minimapSettings?.size ?? 160,funny_crashes:this.crashSettings?.enabled ?? true,mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
       music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],

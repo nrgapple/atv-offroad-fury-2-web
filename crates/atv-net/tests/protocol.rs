@@ -69,12 +69,12 @@ fn every_control_and_full_pose_roundtrips() {
 #[test]
 fn pose_packet_budget_covers_all_character_models() {
     let mut s = snapshot(1, 0, 0.);
-    assert_eq!(encode(&Packet::Snapshot(s.clone())).unwrap().len(), 2520);
+    assert_eq!(encode(&Packet::Snapshot(s.clone())).unwrap().len(), 2526);
     s.rider_nodes = vec![Transform::default(); 27];
-    assert_eq!(encode(&Packet::Snapshot(s.clone())).unwrap().len(), 2988);
+    assert_eq!(encode(&Packet::Snapshot(s.clone())).unwrap().len(), 2994);
     s.rider_nodes = vec![Transform::default(); 64];
     s.atv_nodes = vec![Transform::default(); 64];
-    assert_eq!(encode(&Packet::Snapshot(s)).unwrap().len(), 6836);
+    assert_eq!(encode(&Packet::Snapshot(s)).unwrap().len(), 6842);
 }
 #[test]
 fn truncated_snapshot_never_decodes_or_panics() {
@@ -90,7 +90,7 @@ fn truncated_snapshot_never_decodes_or_panics() {
 #[test]
 fn rejects_trailing_wrong_version_kind_magic_and_oversize() {
     let bytes = encode(&Packet::Ping { nonce: 1 }).unwrap();
-    for (offset, value) in [(0, 0), (4, 2), (5, 255)] {
+    for (offset, value) in [(0, 0), (4, 1), (5, 255)] {
         let mut bad = bytes.clone();
         bad[offset] = value;
         assert!(decode(&bad).is_err());
@@ -547,4 +547,43 @@ fn environment_catalog_and_map_cycle_are_bounded_and_keep_source_keys() {
         assert_eq!(map_environment(invalid), None);
         assert_eq!(next_map(invalid), None);
     }
+}
+
+#[test]
+fn train_platform_roundtrip_and_untrusted_bounds() {
+    let mut s = snapshot(1, 100, 12.);
+    s.train_time = Some(120.5);
+    s.train_running = true;
+    s.platform = Some(Box::new(Platform {
+        car: 10,
+        transform: Transform::default(),
+    }));
+    let packet = Packet::Snapshot(s.clone());
+    assert_eq!(decode(&encode(&packet).unwrap()).unwrap(), packet);
+    s.platform.as_mut().unwrap().car = 32;
+    assert!(s.validate().is_err());
+    s.platform.as_mut().unwrap().car = 1;
+    s.train_time = Some(f32::NAN);
+    assert!(s.validate().is_err());
+    s.train_time = None;
+    assert!(s.validate().is_err());
+}
+#[test]
+fn attached_rider_does_not_extrapolate_away_from_car_and_dismount_is_discrete() {
+    let mut s = snapshot(1, 100, 12.);
+    s.train_time = Some(10.);
+    s.platform = Some(Box::new(Platform {
+        car: 1,
+        transform: Transform::default(),
+    }));
+    let mut b = PoseBuffer::default();
+    b.push(s.clone(), 100).unwrap();
+    assert_eq!(b.sample(300).unwrap().snapshot.atv.position, s.atv.position);
+    s.sequence = 2;
+    s.time_ms = 150;
+    s.platform = None;
+    s.atv.position[0] = 15.;
+    b.push(s, 150).unwrap();
+    assert!(b.sample(200).unwrap().snapshot.platform.is_some());
+    assert!(b.sample(230).unwrap().snapshot.platform.is_none());
 }

@@ -1,6 +1,6 @@
 {
-  "status": "The host-verified Freestyle minimap combines GPS, speed, and preload with persisted shape and corner settings plus north-up/heading-up toggle. The ATV2 browser port remains incomplete; physical-device behavior, GPU timing, and native parity remain unverified.",
-  "working_on": "Continue original ATV2 fidelity and physical-device validation; complete dynamic map actor/GPU checks and remaining motorcycle controller, pose, and menu integration.",
+  "status": "Multiplayer late join, player indicators and owner-local contacts pass host verification; this checkpoint is not deployed publicly.",
+  "working_on": "Continue multiplayer integration and host-only validation; verify public behavior only after a validated release.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -2507,9 +2507,56 @@
       "limitation": "Host-only branding checkpoint. It does not claim gameplay changes or an exact reproduction of the original logo; physical iOS remains unverified. FURY REMASTERED is the working name pending user feedback.",
       "image": "/devlog-images/fury-remastered-vector-branding-checkpoint-ad06cb56.png",
       "caption": "Host Chromium title screen with the new FURY REMASTERED SVG wordmark and start control at 1280×720."
+    },
+    {
+      "id": "late-join-minimap-and-multiplayer-contacts-e994b016",
+      "timestamp": "2026-10-13T17:56:59.233331+00:00",
+      "recorded_at": "2026-10-13T17:58:59.831787+00:00",
+      "kind": "verification",
+      "title": "Late join, minimap and multiplayer contacts",
+      "summary": "A two-client host run now admits a late rider into an active Arlington Freeride room, renders player arrows and applies owner-local contacts.",
+      "details": [
+        "A guest joined more than six seconds after the host started, using the same room code; both clients rendered 13 remote draws.",
+        "The minimap and original participant compass arrows updated. The visible P1 Host distance label and overhead placement are authored browser presentation.",
+        "Owner-local contact counters reached 3 and 1. Host departure cleared guest state.",
+        "A moving flatbed rider stayed within 0.908 ft of train-relative position across 20 samples; the shared train clock still freezes when its host pauses.",
+        "Workspace validation passed: 403 Rust tests, 87 JavaScript tests, formatting, strict Clippy, and Python syntax checks. The live Rust relay gate passed 13 cases."
+      ],
+      "limitation": "Host-only verification; no public deployment, physical-phone testing, or geographically separated latency measurement. Player contact is an authored equal-mass six-foot swept-cylinder response applied by each owner; there is no server physics reconciliation. Recovered original compass art/colors do not make overhead labels original. The host pause freezes the shared train animation clock.",
+      "image": "/devlog-images/late-join-minimap-and-multiplayer-contacts-e994b016.png",
+      "caption": "Host-only two-client Arlington Freeride: a late guest, minimap, original compass arrows and authored nearby-player label."
+    },
+    {
+      "id": "late-guest-spawn-control-in-players-menu-7fe7d31d",
+      "timestamp": "2026-10-13T17:56:59.943016+00:00",
+      "recorded_at": "2026-10-13T17:59:06.423183+00:00",
+      "kind": "verification",
+      "title": "Late guest spawn control in Players menu",
+      "summary": "A guest who joins an active room can open the paused Players screen and spawn near the host.",
+      "details": [
+        "The host-only 390×844 browser run measured the Spawn beside P1 Host button at 342×64 pixels, positioned at x=24, y=96.",
+        "The menu shows the late guest identity and the nearby-host spawn action. Physical phone input and layout remain untested."
+      ],
+      "limitation": "Host-only UI verification, not a public release or physical-device test. Spawn placement is an authored browser feature and does not establish original PS2 multiplayer menu behavior.",
+      "image": "/devlog-images/late-guest-spawn-control-in-players-menu-7fe7d31d.png",
+      "caption": "Paused Players screen for the late guest, with a nearby-host spawn action."
+    },
+    {
+      "id": "four-client-multiplayer-replication-and-cleanup-d96177ae",
+      "timestamp": "2026-10-13T17:58:40+00:00",
+      "recorded_at": "2026-10-13T18:00:16.046363+00:00",
+      "kind": "verification",
+      "title": "Four-client multiplayer replication and cleanup",
+      "summary": "A host-run four-browser session replicated every rider to the other clients and cleared remote state when the host ended the room.",
+      "details": [
+        "The clients selected quads 1, 14, 26 and 2. Each rendered 39 remote GL draws and three engine voices.",
+        "Each driver's movement reached the other three observers. Host departure removed remote riders, audio and loaded model state from every guest.",
+        "The authenticated Rust relay passed 13 live cases, including capacity, map synchronization, packet validation, rate limits and host-loss cleanup."
+      ],
+      "limitation": "Host-only browser verification; no public deployment, physical-phone test, or geographically separated network measurement. The relay forwards owner-simulated state and does not reconcile physics."
     }
   ],
-  "updated_at": "2026-10-13T17:11:54.730334+00:00",
+  "updated_at": "2026-10-13T18:00:16.046363+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
