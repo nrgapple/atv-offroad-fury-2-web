@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { vertexBounds, worldBounds, viewPlanes, outsideView } from './render-support.js';
+import { vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation } from './render-support.js';
 const identity = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
 const planes = viewPlanes(identity);
 test('boxes crossing clip planes survive, including near-plane and camera-containing boxes', () => {
@@ -26,24 +26,68 @@ test('unknown bounds and degenerate matrices fail open, float32 margins retain b
   assert.equal(vertexBounds([]),null);
 });
 
-test('chase anticipates uphill terrain/props, smooths the crest and ignores airborne flips, reverse, wreck and other presets', async () => {
-  const { UphillSightline } = await import('./render-support.js');
-  const camera = { preset: 0 }, actor = { orientation: [1,0,0,0], origin: [0,1,0], grounded: [true,true,true,true], wreck: { phase: 'Riding' }, speed: 20, reset_count: 0 };
-  const slope = new UphillSightline();
-  for (let i = 0; i < 60; i++) slope.update(actor, camera, 1/60, (x,z) => z);
-  assert(slope.lift > .58 && slope.lift < .61, '45 degree incline raises the sightline');
-  const previous = slope.lift;
-  const flying = { ...actor, grounded: [false,false,false,false], orientation: [0,1,0,0] };
-  for (let i = 0; i < 12; i++) slope.update(flying, camera, 1/60, () => 0);
-  assert.equal(slope.lift, previous, 'takeoff holds view independent of flip');
-  for (let i = 0; i < 120; i++) slope.update(flying, camera, 1/60, () => 0);
-  assert(slope.lift < .02, 'airborne view settles');
-  const ramp = { ...actor, orientation: [Math.cos(Math.PI/8), -Math.sin(Math.PI/8),0,0] };
-  for (let i = 0; i < 60; i++) slope.update(ramp, camera, 1/60, () => 0);
-  assert(slope.lift > .58, 'tilted prop on flat terrain raises view');
-  for (const [a,c] of [[actor,{preset:1}],[actor,{preset:0,mode:'wreck'}],[{...actor,speed:-5},camera],[{...actor,wreck:{phase:'Front'}},camera]]) {
-    slope.update(a,c,1/60,()=>100); assert.equal(slope.lift,0);
+const actor = { orientation: [1,0,0,0], origin: [0,1,0], grounded: [true,true,true,true], wreck: { phase: 'Riding' }, speed: 20, reset_count: 0 };
+const camera = { preset: 0 };
+const advance = (sightline, a, height, seconds = 3, hz = 60) => {
+  for (let i=0;i<seconds*hz;i++) sightline.update(a,camera,1/hz,height);
+};
+test('flat-ground lean and wheelies never move the camera, even past vertical', () => {
+  const sightline = new UphillSightline();
+  for (const degrees of [0,30,80,89,90,91,110,150,-30]) {
+    const pitch = degrees*Math.PI/360;
+    const tilted = {...actor,orientation:[Math.cos(pitch),-Math.sin(pitch),0,0]};
+    advance(sightline,tilted,()=>0);
+    assert.equal(sightline.lift,0); assert.equal(sightline.pullback,0);
   }
-  for (let i = 0; i < 60; i++) slope.update(actor,camera,1/60,()=>0);
-  assert.equal(slope.lift,0,'flat ground preserves recovered framing');
+});
+test('hill anticipation ignores chassis pitch and rejects a single terrain spike', () => {
+  const slope = new UphillSightline(); advance(slope,actor,(x,z)=>z);
+  assert(slope.lift>.50 && slope.lift<.52);
+  assert(slope.pullback>.23 && slope.pullback<.24);
+  for (const degrees of [60,90,110]) {
+    const other = new UphillSightline(), pitch=degrees*Math.PI/360;
+    advance(other,{...actor,orientation:[Math.cos(pitch),-Math.sin(pitch),0,0]},(x,z)=>z);
+    assert(Math.abs(other.lift-slope.lift)<1e-10, 'pitch must not reverse terrain lookahead');
+  }
+  const spike = new UphillSightline(); advance(spike,actor,(x,z)=>z===20?100:0);
+  assert.equal(spike.lift,0);
+  const downhill = new UphillSightline(); advance(downhill,actor,(x,z)=>-z);
+  assert.equal(downhill.lift,0);
+});
+test('crest, wheel-contact gaps and reverse settle smoothly; airborne flips never steer the camera', () => {
+  const slope = new UphillSightline(); advance(slope,actor,(x,z)=>z);
+  const previous=slope.lift;
+  const flying={...actor,grounded:[false,false,false,false],orientation:[0,1,0,0]};
+  advance(slope,flying,()=>0,.2); assert.equal(slope.lift,previous);
+  advance(slope,flying,()=>0,3); assert(slope.lift<.02);
+  advance(slope,actor,(x,z)=>z);
+  const before=slope.lift; slope.update({...actor,speed:-5},camera,1/60,()=>0);
+  assert(slope.lift>before*.97 && slope.lift<before,'reverse releases without a snap');
+  advance(slope,actor,()=>0,4); assert(slope.lift<.005);
+  for(const [a,c] of [[actor,{preset:1}],[actor,{preset:0,mode:'wreck'}],[{...actor,wreck:{phase:'Front'}},camera],[{...actor,reset_count:1},camera]]) {
+    advance(slope,actor,(x,z)=>z); slope.update(a,c,1/60,()=>0);
+    assert.equal(slope.lift,0); assert.equal(slope.pullback,0);
+  }
+});
+test('damping has the same response across render rates and a delayed frame', () => {
+  const results=[30,60,120].map(hz=>{const s=new UphillSightline();advance(s,actor,(x,z)=>z,1,hz);return s.lift;});
+  assert(Math.max(...results)-Math.min(...results)<1e-12);
+  const delayed=new UphillSightline(); delayed.update(actor,camera,1,(x,z)=>z);
+  assert(Math.abs(delayed.lift-results[0])<1e-12);
+});
+test('orbit and pullback keep the rider framed and the camera above terrain', () => {
+  const frame={position:[0,10,-15],target:[0,3,0],fov:85,preset:0};
+  const level=chasePresentation(frame,actor,16/9,{lift:0,pullback:0},()=>0);
+  assert.deepEqual(level.position,frame.position); assert.equal(level.presentation.uphillLift,0);
+  for(const aspect of [16/9,390/844]) {
+    const baseline=chasePresentation(frame,actor,aspect,{lift:0,pullback:0},()=>-100);
+    const hill=chasePresentation(frame,actor,aspect,{lift:.50,pullback:.23},()=>-100);
+    const screenAngle=view=>Math.atan2(actor.origin[1]+3-view.position[1],Math.hypot(view.position[0],view.position[2]))-view.pitch;
+    assert(Math.abs(screenAngle(hill)-screenAngle(baseline))<.1,'rider screen angle remains stable while looking up');
+    assert(hill.presentation.distanceScale>baseline.presentation.distanceScale);
+    assert(Math.abs(hill.presentation.uphillLift-.50)<1e-12);
+    const obstructed=chasePresentation(frame,actor,aspect,{lift:.50,pullback:.23},()=>8);
+    assert(obstructed.position[1]>=10); assert(Number.isFinite(obstructed.pitch));
+  }
+  assert.deepEqual(frame.position,[0,10,-15],'recovered frame is not mutated');
 });

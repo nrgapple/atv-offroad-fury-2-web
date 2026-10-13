@@ -1,5 +1,5 @@
 // Original content and vehicle component simulation run in the Rust worker.
-import { vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline } from './render-support.js';
+import { vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation } from './render-support.js';
 import { Multiplayer, PlayerIndicators } from './multiplayer.js';
 import { Frontend } from './frontend.js';
 import { RaceOverlay } from './race.js';
@@ -1339,20 +1339,11 @@ function acceptCameraFrame(frame) {
   diagnostics.followCamera = { ...frame, presetName: diagnostics.cameraPresets?.[frame.preset] };
 }
 function presentCameraFrame(frame = presentedCamera ?? cameraFrame) {
-  // Preserve the recovered camera position/FOV. A narrow viewport needs extra
-  // distance and a higher sightline; default chase also follows uphill ramps.
-  const aspect = canvas.width / canvas.height;
-  const portrait = Math.max(0, Math.min(1, (1 - aspect) / .5));
-  const distanceScale = 1 + .35 * portrait;
-  [camera.x, camera.y, camera.z] = frame.position;
-  const offset = frame.target.map((value, i) => value - frame.position[i]);
-  camera.x -= offset[0] * (distanceScale - 1);
-  camera.y -= offset[1] * (distanceScale - 1);
-  camera.z -= offset[2] * (distanceScale - 1);
-  camera.yaw = Math.atan2(offset[0], offset[2]);
-  camera.pitch = Math.atan2(offset[1], Math.hypot(offset[0], offset[2])) + .12 * portrait + uphillSightline.lift;
-  const focalLength = (4 / 3) / Math.tan(frame.fov * Math.PI / 360) * (1 - .12 * portrait);
-  diagnostics.cameraPresentation = { aspect, portrait, distanceScale, pitchLift: .12 * portrait, uphillLift: uphillSightline.lift, focalLength };
+  const view = chasePresentation(frame, presentedFrame ?? simFrame, canvas.width / canvas.height, uphillSightline, terrainHeight);
+  [camera.x, camera.y, camera.z] = view.position;
+  camera.yaw = view.yaw;
+  camera.pitch = view.pitch;
+  diagnostics.cameraPresentation = view.presentation;
 }
 function followCamera(dt) {
   const pad = focused ? gamepad() : null;
