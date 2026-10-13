@@ -1,5 +1,6 @@
 // Original content and vehicle component simulation run in the Rust worker.
 import { Frontend } from './frontend.js';
+import { RaceOverlay } from './race.js';
 import { mountTouchControls, TouchLeanIntent } from './touch.js';
 import { GameAudio } from './audio.js';
 import { openHostedContent } from './content.js';
@@ -20,6 +21,8 @@ const pending = new Map();
 let requestId = 0, generation = 0, terrain, vehicle, program, uniforms, chunks = [], vehicleChunks = [], gpuTextures = [], fallbackTexture, terrainAtlas, terrainTextureMap, terrainDetailMap, frame = 0, lastTime = 0, lost = false;
 let focused = document.hasFocus(), gamepadsAvailable = true, menuOpen = true;
 let frontend, hostedContent, hud;
+let raceSettings = null, raceCourse = null, cpuQuadMatrices, cpuRiderMatrices;
+const raceOverlay = new RaceOverlay({restart: async () => { await $('reset').onclick(); canvas.focus({preventScroll:true}); }, quit: () => frontend?.show('single')});
 let simReady = false, simBusy = false, simAccumulator = 0, simFrame, simStart, simGeneration = 0, orbit = 0, cameraFrame, cameraCycle = false;
 let sceneChunks = [], sceneDraws = [], skyChunks = [], ecoGroups = [];
 let waterRenderer;
@@ -94,22 +97,22 @@ async function discTerrain(file, token) {
   if (hash !== '11b80faea827c5550df607d24c8c4f38a9e44cf55e3ecac9e1daeb3aca9d7c49') throw new Error('Disc executable does not match USA v2.00.');
   return terrainFromContent(file, files, token);
 }
-async function terrainFromContent(file, files, token, environment = "env01") {
+async function terrainFromContent(file, files, token, environment = "env01", racing = false) {
   if (!["env01", "env02", "env03", "env04", "env05", "env06", "env07", "env08"].includes(environment)) throw new Error("Environment is not connected yet.");
   const number = environment.slice(-2);
   const memberNamed = (entry, name) => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name;
   status('Loading original engine sounds…');
   await audio.load({ file, files, read, isCurrent: () => token === generation });
-  const archive = files.find(entry => entry.path === `/TRACKS/TRACKSA/ENV${number}/E${number}_FR.RES`);
+  const archive = files.find(entry => entry.path === `/TRACKS/TRACKSA/ENV${number}/E${number}_${racing ? 'NAT' : 'FR'}.RES`);
   if (!archive) throw new Error(`Original ${environment.toUpperCase()} terrain archive is missing.`);
   status('Reading original terrain…');
   const resource = await read(file, archive.lba * 2048, archive.bytes);
   const entries = await json(2, resource);
   const index = entries.findIndex(entry => memberNamed(entry, `${environment}.tr2`));
   if (index < 0) throw new Error('Original terrain is missing from the archive.');
-  const sceneIndex = entries.findIndex(entry => memberNamed(entry, `${environment}fr.scn`));
+  const sceneIndex = entries.findIndex(entry => memberNamed(entry, `${environment}${racing ? '' : 'fr'}.scn`));
   if (sceneIndex < 0) throw new Error('Original start position is missing.');
-  const modeIndex = entries.findIndex(entry => memberNamed(entry, `${environment}fr.toy`));
+  const modeIndex = entries.findIndex(entry => memberNamed(entry, `${environment}${racing ? 'nat' : 'fr'}.toy`));
   const mode = modeIndex < 0 ? null : decoder.decode(await codec(3, resource, modeIndex));
   const sceneMetadata = await command(60, { scene: decoder.decode(await codec(3, resource, sceneIndex)), mode });
   const waterIndex = sceneMetadata.water_file ? entries.findIndex(entry => memberNamed(entry, sceneMetadata.water_file.toLowerCase())) : -1;
@@ -119,6 +122,18 @@ async function terrainFromContent(file, files, token, environment = "env01") {
   if (cameraIndex < 0) throw new Error('Original camera presets are missing.');
   const cameraPresets = await codec(3, resource, cameraIndex);
   const scene = { position: sceneMetadata.start_position, yaw: Math.atan2(sceneMetadata.start_direction[0], sceneMetadata.start_direction[2]) };
+  let course = null, cpuNames = [];
+  if (racing) {
+    const tdf = entries.findIndex(entry => memberNamed(entry, `${environment}nate.tdf`));
+    if (tdf < 0) throw new Error('Original National course is missing.');
+    course = await json(79, await codec(3,resource,tdf));
+    const a=course.points[0], b=course.points[1]; scene.position=a.slice(); scene.yaw=Math.atan2(b[0]-a[0],b[2]-a[2]);
+    const ai = entries.findIndex(entry => memberNamed(entry,'airiders.pb'));
+    if (ai < 0) throw new Error('Original CPU roster is missing.');
+    const roster=await json(54,await codec(3,resource,ai));
+    cpuNames=roster.sections.filter(s => /^AI[1-5]$/i.test(s.name)).map(s => s.fields.find(f => f.key.toLowerCase()==='name')?.value).filter(Boolean);
+    if (cpuNames.length < 5) throw new Error('Original CPU names are incomplete.');
+  }
   const quadFile = files.find(entry => entry.path === '/QUAD/BIKESA/ATV01.RES');
   if (!quadFile) throw new Error('Original ATV archive is missing.');
   status('Reading original ATV…');
@@ -236,7 +251,7 @@ async function terrainFromContent(file, files, token, environment = "env01") {
   const wheelEffects = await loadWheelEffects({ resource, entries, quadArchive, quadEntries, codec, json, scene: decoder.decode(await codec(3, resource, sceneIndex)), mode });
   const train = environment === 'env08' ? await loadTrain({ resource, entries, modeIndex, codec, json, baseTextures, isCurrent: () => token === generation }) : null;
   if (train && mode) await audio.loadSpatial({ toy: new TextEncoder().encode(mode), isCurrent: () => token === generation });
-  return { bytes, environment, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
+  return { bytes, environment, course, cpuNames, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
 }
 async function baseTextures(mesh, materialArchive, materialEntries, cache = new Map()) {
   const findMaterial = name => materialEntries.findIndex(entry => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase());
@@ -727,9 +742,9 @@ function resetCamera() {
   }
   canvas.focus({ preventScroll: true });
 }
-function vehicleMatrix() {
-  const [w, x, y, z] = simFrame?.orientation ?? [Math.cos(vehicle.yaw / 2), 0, Math.sin(vehicle.yaw / 2), 0];
-  const position = simFrame?.origin ?? vehicle.position;
+function vehicleMatrix(actor = simFrame) {
+  const [w, x, y, z] = actor?.orientation ?? [Math.cos(vehicle.yaw / 2), 0, Math.sin(vehicle.yaw / 2), 0];
+  const position = actor?.origin ?? vehicle.position;
   return new Float32Array([
     1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y), 0,
     2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x), 0,
@@ -827,8 +842,15 @@ async function startSimulation(source) {
     scene_partition: source.world.metadata.collision_partition,
   });
   diagnostics.obstacles = { ...obstacles, rays: actor.rays };
+  if (source.course) {
+    source.scene.position[1] = terrainHeight(source.scene.position[0],source.scene.position[2]) + 2.5;
+  }
   simStart = { origin: source.scene.position, yaw: source.scene.yaw };
   acceptFrame(await command(23, simStart));
+  cpuQuadMatrices = vehicle.nodeMatrices.slice(); cpuRiderMatrices = new Float32Array(vehicle.rider.pose.world_matrices.flat());
+  if (source.course) await command(80,{active:true,laps:raceSettings.laps,difficulty:raceSettings.difficulty,names:source.cpuNames.slice(0,raceSettings.cpu)});
+  raceCourse = source.course;
+  raceOverlay.setCourse(raceCourse);
   diagnostics.cameraPresets = (await json(45, source.cameraPresets)).map(preset => preset.name);
   orbit = 0; acceptCameraFrame(await command(46, { dt: 1 / 60, orbit }));
   if (source.train) {
@@ -929,6 +951,7 @@ function render(time) {
   frame = requestAnimationFrame(render);
   touchControls.refresh();
   hud?.draw(simFrame?.hud, simReady && !lost && !document.hidden && !menuOpen);
+  raceOverlay.draw(simFrame?.race,simFrame,simReady && !lost && !document.hidden && !menuOpen);
   if (lost || !gl || !terrain || document.hidden || menuOpen) { lastTime = time; stats.sample(time, 0, false); return; }
   const dt = Math.min(.05, Math.max(0, (time - (lastTime || time)) / 1000)); lastTime = time;
   const ratio = Math.min(devicePixelRatio || 1, 1.5), width = Math.max(1, Math.round(innerWidth * ratio)), height = Math.max(1, Math.round(innerHeight * ratio));
@@ -1001,6 +1024,18 @@ function render(time) {
     gl.uniform1i(uniforms.useTexture, chunk.texture ? 1 : 0); gl.bindTexture(gl.TEXTURE_2D, chunk.texture ?? fallbackTexture);
     gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
   }
+  let cpuDraws = 0, cpuTriangles = 0;
+  for (const cpu of simFrame?.race?.opponents ?? []) {
+    if (Math.hypot(cpu.origin[0]-camera.x,cpu.origin[2]-camera.z) > 864) continue;
+    const transform = vehicleMatrix({origin:cpu.origin,orientation:[Math.cos(cpu.yaw/2),0,Math.sin(cpu.yaw/2),0]});
+    for (const chunk of vehicleChunks) {
+      gl.uniformMatrix4fv(uniforms.model,false,transform);
+      gl.uniform1i(uniforms.useQuadPose,Boolean(chunk.quad || chunk.rider));
+      gl.uniformMatrix4fv(uniforms.quadBones,false,chunk.rider ? cpuRiderMatrices : cpuQuadMatrices);
+      gl.uniform1i(uniforms.useTexture,chunk.texture ? 1 : 0); gl.bindTexture(gl.TEXTURE_2D,chunk.texture ?? fallbackTexture);
+      gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES,chunk.count,gl.UNSIGNED_SHORT,0); cpuDraws++; cpuTriangles += chunk.count/3;
+    }
+  }
   if (waterRenderer) {
     waterRenderer.draw({ camera, viewProjection, focalLength: cameraFrame ? diagnostics.cameraPresentation.focalLength : 1 / Math.tan(Math.PI / 6), aspect: canvas.width / canvas.height,
       farDistance: Math.max(terrain.sizeX, terrain.sizeZ) * 5, fogColor, fogDistance: Math.max(terrain.sizeX, terrain.sizeZ) * .85 });
@@ -1015,8 +1050,9 @@ function render(time) {
   }
   diagnostics.frames++;
   if (stats.mode !== 'off') {
-    diagnostics.drawCalls = chunks.length + sceneDraws.length + vehicleChunks.length + (terrain.sky ? skyChunks.length : 0) + diagnostics.vegetationDraws + (waterRenderer?.draws ?? 0) + (trainRenderer?.draws ?? 0) + (wheelEffectsRenderer?.draws ?? 0);
-    diagnostics.drawTriangles = (chunks.reduce((sum, c) => sum + c.count, 0) + sceneDraws.reduce((sum, d) => sum + d.chunk.count, 0) + vehicleChunks.reduce((sum, c) => sum + c.count, 0) + (terrain.sky ? skyChunks.reduce((sum, c) => sum + c.count, 0) : 0)) / 3 + diagnostics.vegetationTriangles + (trainRenderer?.triangles ?? 0) + (wheelEffectsRenderer?.triangles ?? 0);
+    diagnostics.cpuDraws = cpuDraws; diagnostics.cpuTriangles = cpuTriangles;
+    diagnostics.drawCalls = cpuDraws + chunks.length + sceneDraws.length + vehicleChunks.length + (terrain.sky ? skyChunks.length : 0) + diagnostics.vegetationDraws + (waterRenderer?.draws ?? 0) + (trainRenderer?.draws ?? 0) + (wheelEffectsRenderer?.draws ?? 0);
+    diagnostics.drawTriangles = cpuTriangles + (chunks.reduce((sum, c) => sum + c.count, 0) + sceneDraws.reduce((sum, d) => sum + d.chunk.count, 0) + vehicleChunks.reduce((sum, c) => sum + c.count, 0) + (terrain.sky ? skyChunks.reduce((sum, c) => sum + c.count, 0) : 0)) / 3 + diagnostics.vegetationTriangles + (trainRenderer?.triangles ?? 0) + (wheelEffectsRenderer?.triangles ?? 0);
   }
   if (diagnostics.frames === 1 || diagnostics.frames % 120 === 0) {
     diagnostics.glError = gl.getError();
@@ -1024,19 +1060,20 @@ function render(time) {
   }
   stats.sample(time, performance.now() - started, focused);
 }
-async function loadGame(file = null, environment = "env01") {
+async function loadGame(file = null, environment = "env01", racing = null) {
   if (!gl || lost) throw new Error('Graphics context is unavailable; wait for recovery.');
   const token = ++generation; status('Opening terrain…'); diagnostics.ready = false;
   audio.close(); audio = new GameAudio(codec, message => { diagnostics.audioError = message; status(`Audio: ${message}`, true); });
   delete diagnostics.audioError; void audio.resume().catch(error => { diagnostics.audioError = error.message; });
   simReady = false; simGeneration++; simAccumulator = 0; simFrame = undefined; $('disc').disabled = true;
   try {
+    raceSettings = racing; raceCourse = null; raceOverlay.setCourse(null); await command(80,{active:false});
     let source;
     if (file) source = file.name.toLowerCase().endsWith('.iso') ? await discTerrain(file, token) : { bytes: await read(file, 0, file.size), name: file.name };
     else {
       const content = await (hostedContent ??= openHostedContent());
       if (token !== generation) return;
-      source = await terrainFromContent(content.file, content.files, token, environment);
+      source = await terrainFromContent(content.file, content.files, token, environment,Boolean(racing));
     }
     diagnostics.contentSource = file ? 'local-file' : 'hosted-original';
     const info = await json(9, source.bytes), raw = await codec(10, source.bytes);
@@ -1062,6 +1099,7 @@ async function loadGame(file = null, environment = "env01") {
 $('disc').addEventListener('change', event => { const file = event.target.files[0]; if (file) void loadGame(file).catch(error => status(error.message, true)); });
 $('reset').onclick = async () => {
   if (!simStart || !vehicle) { resetCamera(); return; }
+  if (raceSettings) { await loadGame(null, 'env01', raceSettings); return; }
   simGeneration++; simReady = false; simAccumulator = 0; clearInput();
   try { await audio.reset(); acceptFrame(await command(23, simStart)); await command(47, {}); orbit = 0; acceptCameraFrame(await command(46, { dt: 1 / 60, orbit })); simReady = true; buildMesh(); resetCamera(); }
   catch (error) { status(error.message, true); }
@@ -1133,7 +1171,7 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
   if (params.get('source') === 'disc') { menuOpen = false; $('frontend').hidden = true; }
   else {
     hostedContent = openHostedContent();
-    frontend = new Frontend({codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: environment => loadGame(null, environment), active: open => { menuOpen = open; clearInput(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
+    frontend = new Frontend({codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => loadGame(null, environment,racing), active: open => { menuOpen = open; clearInput(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     hud = new HeadUpDisplay(frontend, canvas);
     if (params.get('drive') === '1') {
       menuOpen = false; $('frontend').hidden = true;

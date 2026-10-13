@@ -1,6 +1,6 @@
 {
-  "status": "Host-verified one-handed mobile input checkpoint; CI and public release pending. The browser port remains incomplete.",
-  "working_on": "Audit other source-normalized PSG root placements and continue comparing terrain LOD, fog, distant blending and material behavior.",
+  "status": "Host race and Freestyle verification complete; CI and public release pending. The browser port remains incomplete.",
+  "working_on": "Continue recovering original CPU race behavior, collisions, progression, additional tracks and HUD options.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -1638,9 +1638,34 @@
       "limitation": "Physical-phone steering response and native iOS loupe behavior remain unverified.",
       "image": "/devlog-images/steering-sensitivity-verified-in-the-public-build-33ee7a61.png",
       "caption": "Fresh public HTTPS Chromium capture at 390\u00d7844 showing the Mobile steering sensitivity default of 85% in Pause \u2192 Controls."
+    },
+    {
+      "id": "host-verified-race-integration-on-caribou-national-bca6da66",
+      "timestamp": "2026-10-13T01:20:33.008854Z",
+      "recorded_at": "2026-10-13T01:22:12Z",
+      "kind": "verification",
+      "title": "Host-verified race integration on Caribou National",
+      "summary": "The authored race flow now connects Caribou National route data to race setup, countdown, CPU riders, pause and restart, with responsive setup and driving HUD layouts verified on the host. This remains a partial race preview, not a complete port.",
+      "details": [
+        "tools/test_race.mjs passed: Caribou National TDF data decodes to 252 unique route points; setup exposes laps, CPU count and difficulty; five recovered rider names are YUKARI, PANZER, MCNABB, BALS and ROBERTS.",
+        "Race setup and HUD checks passed at portrait 390\u00d7844, landscape 844\u00d7390 and desktop 1280\u00d7720, including setup targets of at least 44 px and bounded HUD layout; no JavaScript or WebGL errors and no disc selector appeared.",
+        "tools/test_frontend.mjs also passed for Freestyle, keyboard/controller input, Tioga, portrait layout, pause and controls.",
+        "Final verification: make check passed with 305 core tests, strict Clippy, formatting, 47 JavaScript tests and Python syntax checks. make verify passed source and exclusion checks. The release suite passed 8 + 5 tests, and Worker checks passed 4 tests.",
+        "Host desktop and mobile filter checks passed without errors.",
+        "Build environment: native SSD build stalled in hard-link/clonefile system calls. A temporary nonincremental native cache completed tests in 5.1 seconds and Clippy in 2.36 seconds; WASM and render artifacts remain on the SSD.",
+        "The final host race rerun on the rebuilt WASM passed portrait 390\u00d7844, landscape 844\u00d7390 and desktop 1280\u00d7720 setup/HUD checks, including setup targets of at least 44 px. Five named CPUs appeared; latest sampled route distances were 82.03\u201394.16 ft. Countdown blocked throttle, player acceleration worked, one-finger touch steering and cancellation passed, pause froze state, restart reset the race, and no JavaScript/WebGL errors occurred.",
+        "The rerun also checked a render-only results-card fixture for portrait and landscape bounds and verified its Race Again and Single Player actions. This fixture validates presentation/actions only; it does not establish naturally completed race results or original event flow.",
+        "Final Freestyle, controller, menu and portrait regression checks passed again.",
+        "Final verification: make check passed with 305 core tests, strict Clippy, formatting, 47 JavaScript tests and Python syntax checks. make verify passed source and exclusion checks. The release suite passed 8 + 5 tests, and Worker checks passed 4 tests.",
+        "Host desktop and mobile filter checks passed without errors.",
+        "Build environment: native SSD build stalled in hard-link/clonefile system calls. A temporary nonincremental native cache completed tests in 5.1 seconds and Clippy in 2.36 seconds; WASM and render artifacts remain on the SSD."
+      ],
+      "limitation": "Host-only checkpoint; no CI or public deployment is claimed. CPU movement remains authored deterministic route motion using the shared quad/rider mesh and neutral pose. Original CPU decision-making and physical AI, rider-to-rider collision, costumes, progression and other tracks, lead-gap behavior and HUD toggles remain unfinished. WebKit mobile host execution stalled and was stopped after about five minutes; it is not a passing check. Physical Safari/phone behavior remains unverified.",
+      "image": "/devlog-images/host-verified-race-integration-on-caribou-national-bca6da66.png",
+      "caption": "Final host capture of the Caribou National race preview after the WASM rebuild, showing the accelerated rider, race HUD, route map and CPU standings in portrait layout."
     }
   ],
-  "updated_at": "2026-10-12T18:15:32.738689+00:00",
+  "updated_at": "2026-10-13T01:22:12Z",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior has evidence but may remain unconnected. The header names the latest verified public release; individual feature rows preserve their own narrower commit and test evidence. Neither source recovery nor a passing component test implies a complete game or complete decompilation. Host-only candidates are labeled separately.",
     "public_release": {
@@ -1858,11 +1883,11 @@
         "category": "Front end",
         "title": "In-race HUD",
         "status": "PARTIAL",
-        "scope": "PUBLIC \u00b7 SPEED/PRELOAD/STUNT/DIAGNOSTICS SUBSET",
-        "summary": "Original runtime speed, preload and stunt layouts, glyphs and art are drawn with authored Rust controllers. Public desktop and 390px dev-log filters pass; wheelie scoring callbacks are integrated through the HUD while the original disabled scoring flag yields no baseline wheelie awards. Race clocks, rank, laps, radar and multiplayer overlays remain unimplemented.",
-        "validation": "Public 0541085b495fd9e8d0a0dae59ba6c8ea186f49cc \u00b7 CI 38264831246: F3/Pause diagnostics passed desktop and portrait, and dev-log filters passed desktop/390px without overflow. Full race HUD fields and final PS2 presentation parity remain incomplete.",
+        "scope": "PUBLIC SPEED/PRELOAD/STUNT/DIAGNOSTICS \u00b7 HOST-ONLY CARIBOU RACE HUD PREVIEW",
+        "summary": "The public build draws the original runtime speed, preload and stunt layouts, glyphs and art with authored Rust controllers. A host-only Caribou National race preview now displays authored race clocks, rank, laps, radar and standings. The preview does not establish original race HUD behavior or PS2 presentation parity; multiplayer overlays remain unimplemented.",
+        "validation": "Historical public verification: 0541085b495fd9e8d0a0dae59ba6c8ea186f49cc \u00b7 CI 38264831246 covered F3/Pause diagnostics and desktop/390px dev-log filters. The final race HUD rerun and host desktop/mobile filters passed. The race HUD remains a host-only preview; no public race HUD release is claimed.",
         "evidence": "research/HUD.md; public wreck/landing captures and diagnostics logs.",
-        "next_step": "Connect remaining race/mode HUD state and verify score animation against original presentation.",
+        "next_step": "Complete the final host race-browser rerun, then compare race HUD fields and score animation against original behavior.",
         "release_verification": {
           "commit": "0541085b495fd9e8d0a0dae59ba6c8ea186f49cc",
           "ci_run": "38264831246",
@@ -1878,6 +1903,18 @@
             "Desktop/390px dev-log filters passed without overflow.",
             "Full race HUD and final visual parity remain incomplete."
           ]
+        },
+        "host_verification": {
+          "scope": "Host-only Caribou National race preview; public speed/preload/stunt/diagnostics row remains historical.",
+          "checks": [
+            "Final host race rerun rendered the HUD within portrait 390\u00d7844, landscape 844\u00d7390 and desktop 1280\u00d7720 bounds; setup targets were at least 44 px.",
+            "Host desktop and mobile feature-board filters passed without browser errors.",
+            "A render-only results-card fixture passed portrait/landscape bounds and Race Again/Single Player action checks; this is not evidence of a naturally completed race or original results flow."
+          ],
+          "limitations": [
+            "The host overlay is authored preview behavior, not recovered original race HUD logic or final presentation parity.",
+            "Public release identity and checks remain the historical values in release_verification; no host candidate is represented as public."
+          ]
         }
       },
       {
@@ -1885,22 +1922,45 @@
         "category": "Game systems",
         "title": "Game modes and race flow",
         "status": "PARTIAL",
-        "scope": "PUBLIC",
-        "summary": "Freestyle is the one connected start-to-drive path. Race starts, finishes, laps, event transitions and mode-specific rules are not implemented as a full flow.",
-        "validation": "PUBLIC \u00b7 main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449 \u00b7 Freestyle route and driving only",
+        "scope": "PUBLIC FREESTYLE BASELINE \u00b7 HOST-ONLY CARIBOU NATIONAL PREVIEW",
+        "summary": "Freestyle remains the public connected start-to-drive path. A host-only Caribou National preview now connects setup, countdown, authored deterministic CPU route motion, pause/restart and a partial race results presentation. This is not the full original race flow: original AI decisions, rider collisions, event transitions, progression, other tracks and mode-specific rules remain incomplete.",
+        "validation": "Historical public verification: main 1e5c4fd255a4979148bdda648e010e2fbb68221b \u00b7 CI 38186584449 covered Freestyle route and driving only. The final host race integration and Freestyle/controller/menu/portrait reruns passed. No CI or public race release is claimed.",
         "evidence": "research/UI.md \u2014 supported menu route; research/IMPLEMENTATION.md \u2014 acceptance gates.",
-        "next_step": "Recover the original mode/state transitions and validate a complete event from start to results."
+        "next_step": "Complete the final host browser rerun, recover original race state transitions and AI/collision behavior, then validate a complete event against original evidence.",
+        "host_verification": {
+          "scope": "Host-only partial race preview; no public race mode claim.",
+          "checks": [
+            "Final race browser rerun on rebuilt WASM passed portrait, landscape and desktop setup/HUD checks; the countdown blocked throttle, player acceleration worked, touch steering/cancel passed, pause froze state, restart reset countdown/time and no JavaScript/WebGL errors occurred.",
+            "A render-only results fixture passed bounds and retry/Single Player action checks; it does not demonstrate a naturally completed race.",
+            "Final Freestyle, controller, menu and portrait regression passed again."
+          ],
+          "limitations": [
+            "Route motion is authored deterministic preview behavior. The original full event flow, collision behavior, progression and additional tracks are not complete.",
+            "The final rerun remains pending; host checks do not imply CI or public deployment."
+          ]
+        }
       },
       {
         "id": "opponents-ai",
         "category": "Game systems",
         "title": "Rivals and race AI",
-        "status": "NEEDS RESEARCH",
-        "scope": "RESEARCH",
-        "summary": "No opponent spawning, racing behavior, passing logic or opponent collision behavior is connected.",
-        "validation": "No AI or rival browser test is claimed.",
-        "evidence": "research/IMPLEMENTATION.md \u2014 race-system acceptance gates.",
-        "next_step": "Locate opponent update routines and race-specific tuning, then identify a small testable behavior slice."
+        "status": "PARTIAL",
+        "scope": "HOST-ONLY DETERMINISTIC ROUTE-MOTION PREVIEW \u00b7 ORIGINAL CPU AI AND RIDER COLLISIONS PENDING",
+        "summary": "Five named CPU riders spawn in the host-only Caribou National preview and advance on authored deterministic routes at distinct speeds. This provides preview motion only: original CPU decision-making, passing logic, physical AI, rider-to-rider collision and broader rival behavior are not recovered or connected.",
+        "validation": "The final host race rerun observed five named opponents (YUKARI, PANZER, MCNABB, BALS and ROBERTS) with latest sampled route distances of 82.03\u201394.16 ft. This is authored deterministic route motion in a host preview, not original AI. No public AI test or release is claimed.",
+        "evidence": "research/RACING.md \u2014 TDF decoding strategy and preview limits; host-only Caribou race checkpoint.",
+        "next_step": "Recover original opponent update and tuning routines; compare decisions, passing and physical interactions against source evidence before claiming original CPU AI.",
+        "host_verification": {
+          "scope": "Host-only deterministic route-motion candidate; original CPU AI remains unrecovered.",
+          "checks": [
+            "Final rebuilt-WASM race rerun passed with five named opponents and 82.03\u201394.16 ft latest sampled route distances.",
+            "Countdown/throttle lock, player acceleration, pause and restart passed in the same host race scenario."
+          ],
+          "limitations": [
+            "Shared quad/rider mesh and neutral pose are used; no original CPU decisions, rider-to-rider collision, costumes or progression are established.",
+            "The feature remains partial and no public verification is claimed."
+          ]
+        }
       },
       {
         "id": "progression",

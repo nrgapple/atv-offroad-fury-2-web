@@ -36,3 +36,23 @@ body:not(.menu-open) #help, body:not(.menu-open) #status:not(.error) { display: 
 
 /* Utility controls sit above the non-interactive original HUD canvas. */
 #toolbar .atv-control { padding: 0 var(--atv-space-3); }
+
+#race-overlay { position: fixed; z-index: 2; top: max(76px, calc(env(safe-area-inset-top) + 66px)); left: max(14px, env(safe-area-inset-left)); right: max(14px, env(safe-area-inset-right)); pointer-events: none; font-family: Impact, 'Arial Narrow', sans-serif; font-variant-numeric: tabular-nums; color: #fff; text-shadow: 1px 2px 2px #000; }
+#race-overlay[hidden], .race-results[hidden] { display: none; }
+.race-strip { display: flex; flex-wrap: wrap; gap: 12px 28px; font-size: clamp(15px, 2vw, 23px); }
+.race-place, .race-lap { color: #ffe375; }
+.race-times { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 5px; font-size: 14px; }
+.race-guide { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; }
+.race-guide canvas { width: 140px; height: 110px; background: #171717b0; border: 1px solid #b5b5b555; border-radius: 8px; }
+.race-direction { color: #ffe375; font-size: 14px; }
+.race-order { margin: 5px 0 0; padding-left: 24px; font-size: 13px; }
+.race-order .is-player { color: #ffe375; }
+.race-guide small { display: block; margin-top: 5px; color: #ccc; font: 10px system-ui, sans-serif; }
+.race-countdown { position: fixed; inset: 36% 0 auto; text-align: center; font-size: clamp(60px, 16vw, 110px); color: #ffe375; }
+.race-results { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 36px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); overflow: auto; padding: 16px 20px; pointer-events: auto; background: #171717ed; border: 2px solid #d9d9d9; border-radius: 5px; text-shadow: none; }
+.race-results h2 { color: #ffe375; margin: 0 0 8px; }
+.race-results p { font: 14px system-ui, sans-serif; }
+.race-results ol { padding-left: 24px; font-size: 16px; line-height: 1.7; }
+.race-results button { min-height: 44px; margin: 4px; font: 15px system-ui, sans-serif; }
+@media (orientation: portrait) { .race-strip { padding-right: 70px; gap: 6px 14px; font-size: 16px; } .race-times { margin-top: 9px; font-size: 12px; } .race-guide canvas { width: 112px; height: 88px; } }
+@media (max-height: 450px) and (orientation: landscape) { #race-overlay { top: max(68px, calc(env(safe-area-inset-top) + 58px)); } .race-strip { font-size: 15px; } .race-times { font-size: 12px; } .race-guide canvas { width: 96px; height: 76px; } .race-order { font-size: 11px; columns: 2; column-gap: 22px; } .race-guide { margin-top: 7px; } }

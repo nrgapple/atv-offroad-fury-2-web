@@ -16,6 +16,7 @@ export class Frontend {
     this.layoutKey = ''; this.layoutPending = false; this.loaded = new Set(); this.page = 'loading'; this.selection = 0; this.track = 0; this.busy = false; this.lastPad = new Set(); this.alive = true;
     this.bindingDevice = 'keyboard'; this.bindingPage = 0; this.bindingRow = 0; this.musicPage = 0;
     this.capture = null; this.menuKeys = new Set();
+    this.raceSettings = {laps:3,cpu:3,difficulty:1}; this.raceActive = false; this.raceAvailable = false;
     gameplayBindings.subscribe(() => { this.layoutKey = ''; });
     window.addEventListener('keydown', e => {
       if (!this.capture) return;
@@ -73,7 +74,7 @@ export class Frontend {
         }
         if (!held.size) this.padBlocked = false;
         if (!this.root.hidden && !this.padBlocked) for (const action of held) if (!this.lastPad.has(action)) {
-          if (action === 'pause' && ['pause','controls','bindings','music'].includes(this.page) && !this.busy) this.resume();
+          if (action === 'pause' && ['pause','controls','bindings','music','race'].includes(this.page) && !this.busy) this.resume();
           else void this.action(action === 'pause' ? 'accept' : action);
         }
         this.lastPad = held;
@@ -143,6 +144,7 @@ export class Frontend {
       // The thumbnail arrives through a separately validated R2 package. Older
       // manifests can still open every menu while that content update publishes.
       const {files} = await this.content;
+      this.raceAvailable = files.some(f => f.path === '/TRACKS/TRACKSA/ENV01/E01_NAT.RES');
       if (files.some(f => f.path === '/UI/RESOURCE/QUADINFO.RES')) { await this.archive('/UI/RESOURCE/QUADINFO.RES'); await this.image('multi_atv01'); }
       if (showTitle) await this.show('title');
     } catch (error) { this.fail(error); }
@@ -186,7 +188,7 @@ export class Frontend {
     delete this.root.dataset.error;
     this.busy = true; this.root.hidden = false; this.active(true); this.notice.textContent = ''; this.buttons.replaceChildren();
     try {
-      if (page === 'tracks') {
+      if (page === 'tracks' || page === 'race') {
         await this.archive('/UI/RESOURCE/TP/TP_ANAT.RES');
         for (const track of this.tracks) { await this.image(`${track.image}a`); await this.image(`${track.image}b`); }
       }
@@ -198,23 +200,25 @@ export class Frontend {
   async action(action) {
     if (this.busy || this.root.hidden) return;
     this.notice.textContent = '';
-    if (['up','down'].includes(action) && ['title','main','single','pause','controls','bindings','music'].includes(this.page)) {
+    if (['up','down'].includes(action) && ['title','main','single','pause','controls','bindings','music','race'].includes(this.page)) {
       this.selection = (this.selection + (action === 'up' ? -1 : 1) + this.frame.choices.length) % this.frame.choices.length;
       if (this.page === 'bindings' && this.selection < 4) this.bindingRow = this.bindingPage * 4 + this.selection;
     } else if (action === 'back') {
       if (this.page === 'pause') return this.resume();
-      return this.show(({bindings:'controls',music:'pause',controls:'pause',main:'title',single:'main',tracks:'single'})[this.page] ?? 'title');
+      return this.show(({bindings:'controls',music:'pause',controls:'pause',main:'title',single:'main',tracks:'single',race:'single'})[this.page] ?? 'title');
     } else if (this.page === 'tracks' && ['left','right','up','down'].includes(action)) {
       this.track = (this.track + (['left','up'].includes(action) ? -1 : 1) + this.tracks.length) % this.tracks.length;
+    } else if (this.page === 'race' && ['left','right'].includes(action)) {
+      return this.run(this.frame.choices[this.selection], action === 'left' ? -1 : 1);
     } else if (this.page === 'controls' && this.frame.choices[this.selection] === 'steering-sensitivity' && ['left','right'].includes(action)) {
       this.mobileControls?.setSteeringSensitivity(this.mobileControls.steeringSensitivity + (action === 'left' ? -5 : 5));
-    } else if (['bindings','music'].includes(this.page) && ['left','right'].includes(action)) {
+    } else if (['bindings','music','race'].includes(this.page) && ['left','right'].includes(action)) {
       return this.run(`${this.page === 'music' ? 'music' : 'bind'}${action === 'left' ? 'prev' : 'next'}`);
     } else if (action === 'accept') {
       if (this.page === 'title') return this.run(this.frame.choices[this.selection]);
       if (this.page === 'tracks') {
         this.busy = true; this.notice.textContent = `Loading ${this.tracks[this.track].name}…`;
-        try { await this.start(this.tracks[this.track].id); this.resume(); }
+        try { await this.start(this.tracks[this.track].id); this.raceActive = false; this.resume(); }
         catch (error) { this.fail(error); }
         this.busy = false; return;
       }
@@ -222,10 +226,22 @@ export class Frontend {
     }
     await this.refresh();
   }
-  async run(action) {
+  async run(action, direction = 1) {
     if (this.busy) return;
     try {
-      if (['main','single','tracks','controls','music'].includes(action)) return await this.show(action);
+      if (['main','single','tracks','controls','music','race'].includes(action)) return await this.show(action);
+      if (action === 'racestart') {
+        this.busy = true; this.notice.textContent = 'Loading Caribou Peak race…';
+        try { await this.start('env01', {...this.raceSettings}); this.raceActive = true; this.resume(); }
+        finally { this.busy = false; }
+        return;
+      }
+      if (['racelaps','racecpu','racedifficulty'].includes(action)) {
+        if (action === 'racelaps') this.raceSettings.laps = (this.raceSettings.laps - 1 + direction + 5) % 5 + 1;
+        if (action === 'racecpu') { const options = [0,3,5]; this.raceSettings.cpu = options[(options.indexOf(this.raceSettings.cpu) + direction + 3) % 3]; }
+        if (action === 'racedifficulty') this.raceSettings.difficulty = (this.raceSettings.difficulty + direction + 3) % 3;
+        this.layoutKey = ''; await this.refresh(); return;
+      }
       if (['keyboard','controller'].includes(action)) { this.bindingDevice = action; this.bindingPage = 0; this.bindingRow = 0; return this.show('bindings'); }
       if (action.startsWith('bind:')) { const id = action.slice(5); this.selection = gameplayBindings.rows(this.bindingDevice).findIndex(row => row.id === id) % 4; return this.beginCapture(id); }
       if (action === 'bindcancel') return this.cancelCapture();
@@ -252,9 +268,9 @@ export class Frontend {
   }
   async refresh() {
     if (this.root.hidden || this.busy || this.layoutPending) return;
-    const stage = this.canvas.parentElement, track = this.tracks[this.track];
+    const stage = this.canvas.parentElement, track = this.page === 'race' ? this.tracks.find(t => t.id === 'env01') : this.tracks[this.track];
     const music = this.audio?.()?.music, musicState = music?.snapshot();
-    const request = {page:this.page,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:track?.name ?? '',track_image:track?.image ?? '',fullscreen:Boolean(document.fullscreenEnabled),
+    const request = {race_laps:this.raceSettings.laps,race_cpu:this.raceSettings.cpu,race_difficulty:this.raceSettings.difficulty,race_available:this.raceAvailable,race_active:this.raceActive,page:this.page,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:track?.name ?? '',track_image:track?.image ?? '',fullscreen:Boolean(document.fullscreenEnabled),
       mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
       music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
@@ -266,7 +282,7 @@ export class Frontend {
       const frame = await this.json(62,new TextEncoder().encode(key));
       // Page/viewport can change while the worker handles the request. The next
       // frame requests fresh data, rather than applying a stale hit map.
-      if ((this.mobileControls?.steeringSensitivity ?? 85) !== request.mobile_steering_sensitivity || (this.capture?.label ?? '') !== request.capture_label || this.bindingPage !== request.binding_page || this.musicPage !== request.music_page || this.page !== request.page || this.selection !== request.selection || this.tracks[this.track]?.image !== request.track_image || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
+      if (this.raceSettings.laps !== request.race_laps || this.raceSettings.cpu !== request.race_cpu || this.raceSettings.difficulty !== request.race_difficulty || (this.mobileControls?.steeringSensitivity ?? 85) !== request.mobile_steering_sensitivity || (this.capture?.label ?? '') !== request.capture_label || this.bindingPage !== request.binding_page || this.musicPage !== request.music_page || this.page !== request.page || this.selection !== request.selection || (this.page === 'race' ? this.tracks.find(t => t.id === 'env01') : this.tracks[this.track])?.image !== request.track_image || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
       this.frame = frame; this.layoutKey = key; this.draw(); this.rebuildButtons();
     } catch (error) { this.fail(error); }
     finally { this.layoutPending = false; }

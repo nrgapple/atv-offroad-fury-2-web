@@ -74,3 +74,5 @@ pub mod vegetation_ray;
 pub mod vehicle;
 
 pub mod wreck_animation;
+
+pub mod race;

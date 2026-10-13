@@ -56,6 +56,16 @@ pub struct Request {
     pub diagnostics_mode: String,
     #[serde(default)]
     pub one_handed_mobile: bool,
+    #[serde(default)]
+    pub race_laps: u32,
+    #[serde(default)]
+    pub race_cpu: u32,
+    #[serde(default)]
+    pub race_difficulty: u32,
+    #[serde(default)]
+    pub race_available: bool,
+    #[serde(default)]
+    pub race_active: bool,
     #[serde(default = "default_steering_sensitivity")]
     pub mobile_steering_sensitivity: f32,
 }
@@ -295,6 +305,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         "main" => "Main Menu",
         "single" => "Single Player",
         "tracks" => "Freestyle",
+        "race" => "Single Race",
         "pause" => "Pause",
         "controls" => "Controls",
         "bindings" => {
@@ -365,7 +376,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                 label,
                 action,
                 [20., 102., list_w, 58.],
-                !main || request.selection.is_multiple_of(2),
+                request.selection.is_multiple_of(2),
             );
             if main {
                 f.choices.push("devlog".into());
@@ -376,7 +387,16 @@ pub fn layout(request: Request) -> Result<Frame> {
                     request.selection % 2 == 1,
                 );
             }
-            let detail_y = if main { 254. } else { 190. };
+            if !main && request.race_available {
+                f.choices.push("race".into());
+                f.button(
+                    "Race",
+                    "race",
+                    [20., 160., list_w, 58.],
+                    request.selection % 2 == 1,
+                );
+            }
+            let detail_y = 254.;
             f.rect(
                 [24., detail_y, list_w - 4., 72.],
                 6.,
@@ -384,8 +404,12 @@ pub fn layout(request: Request) -> Result<Frame> {
                 "#1c1717",
                 "#100b09",
             );
-            let detail = if main && request.selection % 2 == 1 {
-                "Progress, screenshots and what is next."
+            let detail = if request.selection % 2 == 1 {
+                if main {
+                    "Progress, screenshots and what is next."
+                } else {
+                    "Race CPU riders on Caribou Peak."
+                }
             } else {
                 detail
             };
@@ -418,6 +442,47 @@ pub fn layout(request: Request) -> Result<Frame> {
                         ],
                     });
                 }
+            }
+            f.footer(true);
+        }
+        "race" => {
+            f.text(
+                "Caribou Peak - National",
+                [30., 96.],
+                1.,
+                FONT,
+                "255,255,255",
+                w - 60.,
+            );
+            f.text(
+                "Race preview",
+                [30., 132.],
+                0.8,
+                FONT,
+                "255,226,107",
+                w - 60.,
+            );
+            let difficulty = ["Easy", "Normal", "Hard"][request.race_difficulty.min(2) as usize];
+            let rows = [
+                (format!("Laps: {}", request.race_laps.max(1)), "racelaps"),
+                (format!("CPU riders: {}", request.race_cpu), "racecpu"),
+                (format!("Difficulty: {difficulty}"), "racedifficulty"),
+                ("Start Race".to_string(), "racestart"),
+            ];
+            for (i, (label, action)) in rows.iter().enumerate() {
+                f.choices.push((*action).into());
+                f.button(
+                    label,
+                    action,
+                    [24., 154. + i as f32 * 56., list_w.max(290.), 54.],
+                    request.selection % 4 == i,
+                );
+            }
+            if !portrait {
+                f.draw.push(Draw::Preview {
+                    image: request.track_image.clone(),
+                    rect: [w * 0.55, 100., w * 0.4, (h - 210.).min(w * 0.4 * 0.64)],
+                });
             }
             f.footer(true);
         }
@@ -502,7 +567,14 @@ pub fn layout(request: Request) -> Result<Frame> {
             };
             let mut choices = vec![
                 ("Resume", "resume"),
-                ("Reset ATV", "reset"),
+                (
+                    if request.race_active {
+                        "Restart Race"
+                    } else {
+                        "Reset ATV"
+                    },
+                    "reset",
+                ),
                 ("Controls", "controls"),
                 (diagnostics_label, "diagnostics"),
                 (mobile_label, "onehanded"),
@@ -806,6 +878,11 @@ mod tests {
             diagnostics_mode: String::new(),
             one_handed_mobile: false,
             mobile_steering_sensitivity: 85.,
+            race_laps: 3,
+            race_cpu: 3,
+            race_difficulty: 1,
+            race_available: false,
+            race_active: false,
         }
     }
     #[test]
@@ -829,6 +906,38 @@ mod tests {
         );
     }
     #[test]
+    fn race_availability_setup_and_restart_match_the_live_mode() {
+        let mut r = request("single", 390., 844.);
+        r.race_available = true;
+        assert_eq!(layout(r).unwrap().choices, ["tracks", "race"]);
+        let f = layout(request("race", 844., 390.)).unwrap();
+        assert_eq!(
+            f.choices,
+            ["racelaps", "racecpu", "racedifficulty", "racestart"]
+        );
+        for (i, a) in f.hits.iter().enumerate() {
+            for b in &f.hits[i + 1..] {
+                let [ax, ay, aw, ah] = a.rect;
+                let [bx, by, bw, bh] = b.rect;
+                assert!(
+                    ax + aw <= bx || bx + bw <= ax || ay + ah <= by || by + bh <= ay,
+                    "{} overlaps {}",
+                    a.label,
+                    b.label
+                );
+            }
+        }
+        let mut r = request("pause", 390., 844.);
+        r.race_active = true;
+        assert!(
+            layout(r)
+                .unwrap()
+                .hits
+                .iter()
+                .any(|h| h.label == "Restart Race")
+        );
+    }
+    #[test]
     fn touch_regions_fit_viewport_at_all_aspects() {
         for (w, h) in [
             (390., 844.),
@@ -838,7 +947,8 @@ mod tests {
             (768., 1024.),
         ] {
             for page in [
-                "title", "main", "single", "tracks", "pause", "controls", "bindings", "music",
+                "title", "main", "single", "tracks", "race", "pause", "controls", "bindings",
+                "music",
             ] {
                 let f = layout(request(page, w, h)).unwrap();
                 let scale = w / f.width;
@@ -887,7 +997,7 @@ mod tests {
     }
     #[test]
     fn invalid_menu_requests_are_rejected() {
-        assert!(layout(request("race", 390., 844.)).is_err());
+        assert!(layout(request("unknown", 390., 844.)).is_err());
         assert!(layout(request("main", f32::NAN, 844.)).is_err());
     }
 }
