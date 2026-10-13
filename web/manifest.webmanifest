@@ -1,7 +1,7 @@
 {
   "id": "/",
   "name": "Fury Remastered",
-  "short_name": "Fury",
+  "short_name": "Fury Remastered",
   "start_url": "/play.html",
   "scope": "/",
   "display": "standalone",

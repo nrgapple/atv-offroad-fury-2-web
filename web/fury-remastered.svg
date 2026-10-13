@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="320" viewBox="0 0 960 320" role="img" aria-labelledby="brand-title brand-desc">
+  <title id="brand-title">Fury Remastered</title>
+  <desc id="brand-desc">Forward-leaning red and orange FURY lettering with a chrome edge and gold REMASTERED signature. Transparent background.</desc>
+  <defs>
+    <linearGradient id="fire" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#ff8050"/><stop offset=".12" stop-color="#f23527"/><stop offset=".5" stop-color="#c90c25"/><stop offset=".51" stop-color="#9a0920"/><stop offset="1" stop-color="#eb3028"/>
+    </linearGradient>
+    <linearGradient id="chrome" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#fffdf4"/><stop offset=".42" stop-color="#c9cfce"/><stop offset=".5" stop-color="#5e6872"/><stop offset=".72" stop-color="#c5c9c9"/><stop offset="1" stop-color="#f2eee0"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#fff1b0"/><stop offset=".5" stop-color="#ffc342"/><stop offset="1" stop-color="#f08b13"/>
+    </linearGradient>
+    <g id="fury" fill-rule="evenodd"><path transform="translate(0)" d="M0 0H160V36H44V70H138V106H44V174H0Z"/><path transform="translate(185)" d="M0 0H44V132H112V0H156V144L126 174H30L0 144Z"/><path transform="translate(370)" d="M0 0H128L158 30V79L133 104L165 174H115L88 111H44V174H0ZM44 36V76H112V36Z"/><path transform="translate(565)" d="M0 0H48L84 65L120 0H168L106 106V174H62V106Z"/></g>
+    <g id="remastered" fill-rule="evenodd"><path transform="translate(0)" d="M0 0H24L31 7V17L24 24L33 40H23L15 25H8V40H0ZM8 7V18H23V7Z"/><path transform="translate(42)" d="M0 0H28V7H8V16H25V23H8V33H28V40H0Z"/><path transform="translate(84)" d="M0 40V0H9L18 17L27 0H36V40H28V14L18 31L8 14V40Z"/><path transform="translate(130)" d="M0 40L12 0H24L36 40H27L24 30H12L9 40ZM14 23H22L18 9Z"/><path transform="translate(176)" d="M0 6L6 0H30V7H8V16H24L30 22V34L24 40H0V33H22V23H6L0 17Z"/><path transform="translate(218)" d="M0 0H32V8H20V40H12V8H0Z"/><path transform="translate(260)" d="M0 0H28V7H8V16H25V23H8V33H28V40H0Z"/><path transform="translate(302)" d="M0 0H24L31 7V17L24 24L33 40H23L15 25H8V40H0ZM8 7V18H23V7Z"/><path transform="translate(344)" d="M0 0H28V7H8V16H25V23H8V33H28V40H0Z"/><path transform="translate(386)" d="M0 0H23L31 8V32L23 40H0ZM8 8V32H23V8Z"/></g>
+  </defs>
+  <!-- Angular extruded outline and bevel remain vectors at every size. -->
+  <g transform="translate(145 30) skewX(-15)" stroke-linejoin="miter" stroke-miterlimit="3">
+    <use href="#fury" transform="translate(8 12)" fill="#08090d" stroke="#08090d" stroke-width="20"/>
+    <use href="#fury" fill="#272b32" stroke="#272b32" stroke-width="19"/>
+    <use href="#fury" fill="none" stroke="url(#chrome)" stroke-width="12"/>
+    <use href="#fury" fill="url(#fire)" stroke="#690619" stroke-width="2"/>
+  </g>
+  <path d="M85 240H843L831 294H71Z" fill="#0b0d12" stroke="#626971" stroke-width="2"/>
+  <path d="M89 239H846L841 246H87Z" fill="url(#gold)"/>
+  <g transform="translate(209 254) skewX(-15) scale(1.22 .72)" fill="url(#gold)"><use href="#remastered"/></g>
+  <path d="M95 260H164L160 268H93ZM747 270H812L810 278H745Z" fill="#d85820"/>
+</svg>

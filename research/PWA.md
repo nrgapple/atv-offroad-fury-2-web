@@ -7,7 +7,9 @@ exact recovered two-part ATV2 title logo on a red gradient, exported by
 `tools/build_app_icons.mjs`. Their pixels remain in ignored private storage and
 the separate R2 package; only sizes, hashes and URLs enter Git/CI. Safari's
 app-title metadata names the installed app Fury Remastered;
-the reconstructed ATV Offroad Fury 2 title and menus retain their identity.
+the concurrently merged Fury Remastered vector branding remains in the title,
+menus and dev log. The original ATV2 artwork is used specifically for the
+Home Screen icon, as requested in this task.
 
 The title screen advertises adding the app on iPhone/iPad, including iPads that
 identify as a desktop Mac. The banner uses the shared metal/gold controls and
