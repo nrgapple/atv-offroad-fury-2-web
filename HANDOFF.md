@@ -1,3 +1,33 @@
+## Minimap projection, rider tracking and zoom — host checkpoint (2026-10-13)
+
+The old map used +X screen-right, opposite the actual overhead camera basis
+(−X screen-right, +Z screen-up). Terrain sampling, static scenery, crop center
+and marker heading now share the camera's handedness. GPS follows the same
+presented frame as the 3D vehicle, including motorcycle interpolation; during
+native or enhanced separation it follows the rendered rider root instead of
+the ATV. The independent browser observer compares the aerial crop/center and
+bearing against actual GPU actor transforms. Native wreck tracking passes 113
+samples; enhanced wreck tracking passes 111, with zero mismatches. Moving ATV
+and interpolated motorcycle checks also pass.
+
+Pause → HUD settings → Minimap configuration now includes a persisted 25–200%
+zoom control with a 50% default (1,536ft across, twice the previous range).
+Screen size remains separate, with an adaptive scale bar above MPH. The two
+sliders fit portrait/landscape layouts with 44px targets. Chromium checks four
+viewports; WebKit checks phone portrait and landscape. Shape/corner/zoom/size
+reuse the one 1024px raster and add no scene draws or pixel storage. The 390×844
+DPR3 host cost check observes 0.102–0.109ms per update, bounded 20Hz, identical 471
+scene draws On/Off, and zero retained map storage or updates when Off. This is
+a host Mac observation with concurrent browser activity, not physical-phone
+performance or an FPS improvement claim.
+
+make check (350 core Rust tests plus workspace; 84 JS), make verify, make web,
+31 release tests (one intentionally skipped queue case), 10 Worker tests and
+touch orientation/lifecycle checks pass. New screenshot/devlog metadata stays
+host-only until passing main CI, domain/PWA PR 32's separate publication and our
+own validated R2/public verification. No game data/screenshots enter source or
+CI. See [minimap strategy and limitations](research/MINIMAP.md).
+
 ## Minimap cached-file consistency correction — 2026-10-13
 
 The user reproduced a padded dark square map in the old mid-right position,
@@ -1010,10 +1040,16 @@ This is an authored multiplayer approximation without server physics reconciliat
 
 Host tests pass actual late joining after Arlington's train has advanced, matching
 lobby code, minimap/overhead visibility, mobile roster/spawn, owner contacts and
-20 moving-flatbed samples (maximum relative presentation error 0.91 feet).
-Four-browser tests pass three remote models/voices per client, movement and
-host-end cleanup. Thirteen live relay cases, workspace tests, strict Clippy,
-87 JavaScript tests, release/Worker checks and setup/hygiene pass. Public delivery
-requires the validated current-main artifact and separate R2 gallery verification.
+20 moving-flatbed samples (maximum relative presentation error 0.80435 feet).
+The merged-main projection gate confirms remote markers follow the rider's world
+pose with the minimap's -X handedness and zoom. Quad 1 on ENV02 and quad 26 on
+ENV01 passed 41 and 50 moving samples plus seven tracking samples each, with no
+projection errors. Four-browser tests pass quads 1/14/26/2, 39 remote GL draws
+and three voices per client, movement to every observer, and host-end cleanup.
+Thirteen live relay cases, 403 Rust tests, 91 JavaScript tests (102 including
+Worker tests), strict Clippy, setup/hygiene, and 34 release tests (one skipped)
+pass against the merge tree based on `origin/main` 106e937. Public delivery
+remains pending the validated current-main artifact and separate R2 gallery
+verification.
 See `research/MULTIPLAYER.md`; physical phones and geographically separated
 network behavior remain untested. Original PS2 multiplayer fidelity is not claimed.

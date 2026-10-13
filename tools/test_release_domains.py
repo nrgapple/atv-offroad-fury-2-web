@@ -1,5 +1,6 @@
 """CI stages a checked release without trying to reprovision existing domains."""
 import json
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -10,6 +11,22 @@ from test_release import COMMIT, fixture
 
 
 class DomainStagingTests(unittest.TestCase):
+    def test_safari_and_legacy_icon_aliases_are_bound_from_checked_manifest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); release = root / 'release'; fixture(release)
+            small, large = '/app-icons/' + '1' * 64 + '.png', '/app-icons/' + '2' * 64 + '.png'
+            manifest = release / 'static/manifest.webmanifest'
+            manifest.write_text(json.dumps({'icons': [{'src': small, 'sizes': '192x192'}, {'src': large, 'sizes': '512x512'}]}))
+            metadata = json.loads((release / 'release.json').read_text())
+            metadata['sha256']['static/manifest.webmanifest'] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+            (release / 'release.json').write_text(json.dumps(metadata))
+            (root / 'wrangler.jsonc').write_text(json.dumps({'assets': {}}))
+            with patch.object(stage_cloudflare, 'ROOT', root):
+                stage_cloudflare.stage(release, COMMIT, preserve_custom_domains=True)
+            config = json.loads((root / 'work/cloudflare/wrangler.jsonc').read_text())
+            self.assertEqual(config['vars']['APPLE_TOUCH_ICON_KEY'], small.lstrip('/'))
+            self.assertEqual(config['vars']['APP_ICON_512_KEY'], large.lstrip('/'))
+
     def test_checked_release_keeps_origins_and_preserves_remote_domain_bindings(self):
         for keep_standard_route in (False, True):
             with self.subTest(keep_standard_route=keep_standard_route), tempfile.TemporaryDirectory() as temporary:

@@ -90,6 +90,8 @@ pub struct Request {
     pub minimap_enabled: bool,
     #[serde(default = "default_minimap_size")]
     pub minimap_size: f32,
+    #[serde(default = "default_minimap_zoom")]
+    pub minimap_zoom: f32,
     #[serde(default = "default_minimap_shape")]
     pub minimap_shape: String,
     #[serde(default = "default_minimap_corner")]
@@ -104,6 +106,9 @@ fn default_quad() -> u16 {
 }
 fn default_minimap_size() -> f32 {
     160.
+}
+fn default_minimap_zoom() -> f32 {
+    50.
 }
 fn default_minimap_shape() -> String {
     "circle".into()
@@ -289,6 +294,8 @@ pub fn layout(request: Request) -> Result<Frame> {
         )
         || !request.minimap_size.is_finite()
         || !(96.0..=224.0).contains(&request.minimap_size)
+        || !request.minimap_zoom.is_finite()
+        || !(25.0..=200.0).contains(&request.minimap_zoom)
         || request.room_code.len() > 64
         || request.player_name.len() > 32
         || request.lobby_status.len() > 256
@@ -384,6 +391,8 @@ pub fn layout(request: Request) -> Result<Frame> {
         "main" => "Main Menu",
         "single" => "Single Player",
         "multiplayer" => "Multiplayer",
+        "create-lobby" => "Create lobby",
+        "join-lobby" => "Join lobby",
         "lobby" => "Free Ride Lobby",
         "garage" => "Quad and Rider",
         "loading" => "Loading",
@@ -701,6 +710,25 @@ pub fn layout(request: Request) -> Result<Frame> {
             );
         }
         "multiplayer" => {
+            for (i, (label, action)) in [
+                ("Create lobby", "create-lobby"),
+                ("Join lobby", "join-lobby"),
+            ]
+            .iter()
+            .enumerate()
+            {
+                f.choices.push((*action).into());
+                f.button(
+                    label,
+                    action,
+                    [24., 104. + i as f32 * 58., list_w, 58.],
+                    request.selection == i,
+                );
+            }
+            f.footer(true);
+        }
+        "create-lobby" | "join-lobby" => {
+            let creating = request.page == "create-lobby";
             for (action, label, value, y, max_length) in [
                 (
                     "player-name",
@@ -710,8 +738,12 @@ pub fn layout(request: Request) -> Result<Frame> {
                     24,
                 ),
                 (
-                    "room-code",
-                    "Lobby code",
+                    if creating { "create-code" } else { "room-code" },
+                    if creating {
+                        "Lobby code (8 letters/numbers, optional)"
+                    } else {
+                        "Lobby code"
+                    },
                     request.room_code.clone(),
                     166.,
                     8,
@@ -727,8 +759,11 @@ pub fn layout(request: Request) -> Result<Frame> {
                 });
             }
             let rows = [
-                ("Create lobby", "host"),
-                ("Join code", "join"),
+                if creating {
+                    ("Create lobby", "host")
+                } else {
+                    ("Join lobby", "join")
+                },
                 ("Quad and Rider", "garage"),
             ];
             for (i, (label, action)) in rows.iter().enumerate() {
@@ -980,7 +1015,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             f.choices.push("back".into());
         }
         "minimap-config" => {
-            let selected = request.selection % 6;
+            let selected = request.selection % 7;
             let columns = if h < 520. { 2 } else { 1 };
             let column_width = (w - 48.) / columns as f32;
             let row = 52_f32.max(44. / scale);
@@ -1035,26 +1070,53 @@ pub fn layout(request: Request) -> Result<Frame> {
                 f.choices.push((*action).into());
             }
             let y = 98. + 4_usize.div_ceil(columns) as f32 * (row + 4.) + 10.;
-            f.text(
-                format!("Minimap size: {} px", request.minimap_size as u32),
-                [30., y],
-                0.85,
-                FONT,
-                "255,226,107",
-                w - 60.,
-            );
-            f.sliders.push(Slider {
-                action: "minimap-size",
-                label: "Minimap size",
-                rect: [30., y + 26., w - 60., row],
-                value: request.minimap_size,
-                min: 96.,
-                max: 224.,
-                step: 8.,
-                selected: selected == 4,
-            });
-            f.choices.push("minimap-size".into());
-            f.button("Back", "back", [24., h - 68., 132., 56.], selected == 5);
+            for (i, (action, label, value, min, max, step, units)) in [
+                (
+                    "minimap-size",
+                    "Minimap size",
+                    request.minimap_size,
+                    96.,
+                    224.,
+                    8.,
+                    "px",
+                ),
+                (
+                    "minimap-zoom",
+                    "Minimap zoom",
+                    request.minimap_zoom,
+                    25.,
+                    200.,
+                    25.,
+                    "%",
+                ),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let x = 30. + (i % columns) as f32 * column_width;
+                let y = y + (i / columns) as f32 * (row + 36.);
+                let width = column_width - 12.;
+                f.text(
+                    format!("{label}: {} {units}", value as u32),
+                    [x, y],
+                    0.85,
+                    FONT,
+                    "255,226,107",
+                    width,
+                );
+                f.sliders.push(Slider {
+                    action,
+                    label,
+                    rect: [x, y + 26., width, row],
+                    value,
+                    min,
+                    max,
+                    step,
+                    selected: selected == 4 + i,
+                });
+                f.choices.push(action.into());
+            }
+            f.button("Back", "back", [24., h - 68., 132., 56.], selected == 6);
             f.choices.push("back".into());
         }
         "controls" => {
@@ -1342,6 +1404,7 @@ mod tests {
             funny_crashes: false,
             minimap_enabled: true,
             minimap_size: 160.,
+            minimap_zoom: 50.,
             minimap_shape: "circle".into(),
             minimap_corner: "top-right".into(),
             minimap_orientation: "north-up".into(),
@@ -1352,6 +1415,19 @@ mod tests {
             race_available: false,
             race_active: false,
         }
+    }
+    #[test]
+    fn multiplayer_intent_and_forms_are_separate() {
+        let menu = layout(request("multiplayer", 390., 844.)).unwrap();
+        assert!(menu.inputs.is_empty());
+        assert_eq!(menu.choices, ["create-lobby", "join-lobby"]);
+        let create = layout(request("create-lobby", 390., 844.)).unwrap();
+        assert_eq!(create.inputs.len(), 2);
+        assert_eq!(create.inputs[1].action, "create-code");
+        assert_eq!(create.choices, ["host", "garage"]);
+        let join = layout(request("join-lobby", 390., 844.)).unwrap();
+        assert_eq!(join.inputs[1].action, "room-code");
+        assert_eq!(join.choices, ["join", "garage"]);
     }
     #[test]
     fn supported_routes_have_no_unfinished_choices() {
@@ -1406,6 +1482,7 @@ mod tests {
     fn touch_regions_fit_viewport_at_all_aspects() {
         for (w, h) in [
             (390., 844.),
+            (390., 568.),
             (844., 390.),
             (667., 375.),
             (1280., 720.),
@@ -1484,6 +1561,7 @@ mod tests {
         for (w, h) in [
             (320., 568.),
             (390., 844.),
+            (390., 568.),
             (844., 390.),
             (667., 375.),
             (1280., 720.),
@@ -1497,22 +1575,45 @@ mod tests {
                     "minimap-corner",
                     "minimap-orientation",
                     "minimap-size",
+                    "minimap-zoom",
                     "back"
                 ]
             );
-            let slider = &frame.sliders[0];
-            let [x, y, width, height] = slider.rect;
-            assert!(x >= 0. && y >= 0. && x + width <= frame.width && y + height <= frame.height);
-            assert!(height * w / frame.width >= 44. - 0.001);
-            assert!(
-                frame
-                    .hits
-                    .iter()
-                    .all(|hit| y >= hit.rect[1] + hit.rect[3] || y + height <= hit.rect[1])
+            assert_eq!(frame.sliders.len(), 2);
+            for slider in &frame.sliders {
+                let [x, y, width, height] = slider.rect;
+                assert!(
+                    x >= 0. && y >= 0. && x + width <= frame.width && y + height <= frame.height
+                );
+                assert!(height * w / frame.width >= 44. - 0.001);
+                assert!(frame.hits.iter().all(|hit| x >= hit.rect[0] + hit.rect[2]
+                    || x + width <= hit.rect[0]
+                    || y >= hit.rect[1] + hit.rect[3]
+                    || y + height <= hit.rect[1]));
+            }
+            assert_eq!(
+                (
+                    frame.sliders[0].min,
+                    frame.sliders[0].max,
+                    frame.sliders[0].step,
+                    frame.sliders[0].value
+                ),
+                (96., 224., 8., 160.)
             );
             assert_eq!(
-                (slider.min, slider.max, slider.step, slider.value),
-                (96., 224., 8., 160.)
+                (
+                    frame.sliders[1].min,
+                    frame.sliders[1].max,
+                    frame.sliders[1].step,
+                    frame.sliders[1].value
+                ),
+                (25., 200., 25., 50.)
+            );
+            let [x, y, width, height] = frame.sliders[0].rect;
+            let [other_x, other_y, _, _] = frame.sliders[1].rect;
+            assert!(
+                x + width <= other_x || y + height <= other_y,
+                "sliders do not overlap"
             );
         }
         for size in [f32::NAN, 0., 225.] {
@@ -1526,6 +1627,11 @@ mod tests {
         let mut corner = request("minimap-config", 390., 844.);
         corner.minimap_corner = "center".into();
         assert!(layout(corner).is_err());
+        for zoom in [f32::NAN, 0., 201.] {
+            let mut r = request("minimap-config", 390., 844.);
+            r.minimap_zoom = zoom;
+            assert!(layout(r).is_err());
+        }
     }
     #[test]
     fn invalid_menu_requests_are_rejected() {

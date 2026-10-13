@@ -24,3 +24,11 @@ tests, setup/source exclusions, JS/Python syntax, and served icon/manifest check
 Visual checks cover desktop 1280×720 and portrait 390×844, Start navigation and
 the dev-log header. These checks do not establish physical iOS behavior or any
 new gameplay fidelity.
+# Home Screen icon follow-up
+
+The Home Screen/PWA checkpoint keeps this authored Fury Remastered vector in
+the app's title/menu/dev-log presentation. The user's subsequent icon request
+specifically selects the original ATV Offroad Fury 2 logo on a red gradient for
+the Home Screen icon. That replaces the square authored F icon with private,
+validated R2 PNGs; original pixels are excluded from Git and CI. See [PWA.md](PWA.md)
+for icon delivery, install guidance and standalone safe-area presentation.

@@ -14,17 +14,17 @@ async function page(name) {
    window.Worker=class extends Native {constructor(...args){super(...args);window.testWorker=this;this.pending=new Map();this.addEventListener('message',({data})=>{const r=this.pending.get(data.id);if(!r)return;this.pending.delete(data.id);data.error?r.reject(Error(data.error)):r.resolve(JSON.parse(new TextDecoder().decode(data.bytes)));});}};
    window.testCommand=(op,value)=>new Promise((resolve,reject)=>{const key=id--;testWorker.pending.set(key,{resolve,reject});testWorker.postMessage({id:key,op,index:0,bytes:new TextEncoder().encode(value==null?'':JSON.stringify(value))});});
  });
- await p.goto(base+'/play.html');await button(p,'Press START').click({timeout:90000});await button(p,'Multiplayer').click();await p.getByRole('textbox',{name:'Rider name',exact:true}).fill(name);return p;
+ await p.goto(base+'/play.html');await button(p,'Press START').click({timeout:90000});await button(p,'Multiplayer').click();assert.equal(await p.getByRole('textbox').count(),0);await button(p,name==='Host'?'Create lobby':'Join lobby').click();await p.getByRole('textbox',{name:'Rider name',exact:true}).fill(name);return p;
 }
 async function ready(p,count=1){await p.waitForFunction(n=>window.atvTerrainStatus.simulation&&window.atvTerrainStatus.multiplayer?.remote.length===n&&window.atvTerrainStatus.multiplayerDraws>0,count,{timeout:120000});assert.equal((await state(p)).multiplayerError,undefined);}
 async function pause(p){await button(p,'Pause').click();await button(p,'Resume').waitFor();await p.waitForTimeout(120);}
 try {
- const a=await page('Host');await button(a,'Create lobby').click();await a.waitForFunction(()=>window.atvTerrainStatus.multiplayer.state.code);
- const code=(await state(a)).multiplayer.state.code;
+ const a=await page('Host');const desired='F'+Date.now().toString(36).toUpperCase().slice(-7);await a.getByRole('textbox',{name:'Lobby code (8 letters/numbers, optional)',exact:true}).fill(desired);await button(a,'Create lobby').click();await a.waitForFunction(()=>window.atvTerrainStatus.multiplayer.state.code);
+ const code=(await state(a)).multiplayer.state.code;assert.equal(code,desired);
  for(let i=2;i<=8;i++){await button(a,'Next environment').click();await a.waitForFunction(i=>window.atvTerrainStatus.multiplayer.state.lobby.map===i,i);}
  await button(a,'Ride together').click();await a.waitForFunction(()=>window.atvTerrainStatus.simulation,null,{timeout:120000});
  await a.waitForFunction(()=>window.atvTerrainStatus.train?.time>6,null,{timeout:20000});
- const b=await page('Late Guest');await b.getByRole('textbox',{name:'Lobby code',exact:true}).fill(code);await button(b,'Join code').click();
+ const b=await page('Late Guest');await b.getByRole('textbox',{name:'Lobby code',exact:true}).fill(code);await button(b,'Join lobby').click();
  await Promise.all([ready(a),ready(b)]);
  await b.waitForFunction(()=>document.querySelector('#frontend').hidden,null,{timeout:15000});
  await Promise.all(pages.map(p=>p.waitForFunction(()=>window.atvTerrainStatus.minimap.peers?.length===1&&document.querySelectorAll('.player-indicator').length===1,null,{timeout:15000})));

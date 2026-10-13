@@ -62,11 +62,15 @@ export class Multiplayer {
     if (action.startsWith('spawn:')) {
       await this.spawn(Number(action.slice(6))); frontend.resume();
     } else if (action === 'host') {
-      const response = await fetch('/multiplayer/rooms',{method:'POST'});
-      if (!response.ok) throw new Error(`Lobby creation failed (${response.status}).`);
-      const {code,hostToken} = await response.json(); await frontend.show('lobby'); await this.connect(code,frontend,hostToken);
+      const code = (frontend.createCode ?? '').trim().toUpperCase();
+      if(code && !/^[A-Z0-9]{8}$/.test(code)) throw new Error('Choose exactly 8 letters or numbers, or leave the code blank.');
+      const response = await fetch('/multiplayer/rooms',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});
+      if (!response.ok) throw new Error(response.status===409?'That lobby code is taken. Choose another code.':`Lobby creation failed (${response.status}).`);
+      const {code:createdCode,hostToken} = await response.json(); await frontend.show('lobby'); await this.connect(createdCode,frontend,hostToken);
     } else if (action === 'join') {
-      const code = frontend.roomCode.trim().toUpperCase(); await frontend.show('lobby'); await this.connect(code,frontend);
+      const code = frontend.roomCode.trim().toUpperCase();
+      if(!/^[A-Z0-9]{8}$/.test(code)) throw new Error('Enter the 8-letter or number lobby code.');
+      await frontend.show('lobby'); await this.connect(code,frontend);
     } else if (action === 'share') {
       const url = new URL('/play.html',location.origin); url.searchParams.set('room',this.state.code);
       try { await navigator.clipboard.writeText(url.href); frontend.notice.textContent = 'Invite link copied.'; }

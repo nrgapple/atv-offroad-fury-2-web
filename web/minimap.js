@@ -5,8 +5,30 @@ export const MAP_RESOLUTION = 1024;
 export const MAP_RANGE = 768; // feet across, independent of HUD size
 export const MAP_INTERVAL = 50;
 export const clampMapSize = value => Number.isFinite(Number(value)) ? Math.round(Math.max(96, Math.min(224, Number(value))) / 8) * 8 : 160;
-export const mapHeading = ([w, x, y, z]) => Math.atan2(2 * (w * y + x * z), 1 - 2 * (y * y + x * x));
-export const mapPoint = (x, z, terrain, width, height) => [x / terrain.sizeX * width, (1 - z / terrain.sizeZ) * height];
+export const clampMapZoom = value => Number.isFinite(Number(value)) ? Math.round(Math.max(25, Math.min(200, Number(value))) / 25) * 25 : 50;
+export const mapRange = zoom => MAP_RANGE * 100 / zoom;
+export const mapScale = range => 200 * 2 ** Math.round(Math.log2(range / MAP_RANGE));
+// Same handedness as the scene's overhead camera: right=-X, up=+Z.
+export const mapHeading = ([w, x, y, z]) => Math.atan2(-2 * (w * y + x * z), 1 - 2 * (y * y + x * x));
+export const mapPoint = (x, z, terrain, width, height) => [(1 - x / terrain.sizeX) * width, (1 - z / terrain.sizeZ) * height];
+export function mapPose(frame) {
+  const ragdoll = frame.funny_crash?.rider_node_matrices?.[0];
+  const rider = ragdoll ?? frame.rider_world_matrix;
+  return rider ? { origin: rider.slice(12, 15), heading: Math.atan2(-rider[8], rider[10]), actor: ragdoll ? 'ragdoll rider' : 'rider' }
+    : { origin: frame.origin, heading: mapHeading(frame.orientation), actor: 'vehicle' };
+}
+export function mapPeerMarker(peer, center, range, size, headingUp) {
+  const pose = mapPose({ ...peer, origin: peer.position, orientation: [1,0,0,0] });
+  let dx = -(pose.origin[0] - center.origin[0]) / range * size;
+  let dy = -(pose.origin[2] - center.origin[2]) / range * size;
+  if (headingUp) {
+    const a = -center.heading;
+    [dx,dy] = [dx*Math.cos(a)-dy*Math.sin(a), dx*Math.sin(a)+dy*Math.cos(a)];
+  }
+  const radius = size * .40, distance = Math.hypot(dx,dy), edge = distance > radius;
+  if (edge) { dx *= radius / distance; dy *= radius / distance; }
+  return { dx, dy, edge, rotation: pose.heading - (headingUp ? center.heading : 0) };
+}
 export function instrumentFooter(size, shape, width, descent) {
   const radius = size / 2, halfWidth = width / 2 + 2;
   const edge = shape === 'circle' ? radius + Math.sqrt(Math.max(0, radius * radius - halfWidth * halfWidth)) : size;
@@ -15,11 +37,12 @@ export function instrumentFooter(size, shape, width, descent) {
 
 export class MinimapSettings {
   constructor(storage) {
-    this.storage = storage; this.enabled = true; this.size = 160; this.shape = 'circle'; this.corner = 'top-right'; this.orientation = 'north-up'; this.changed = () => {};
+    this.storage = storage; this.enabled = true; this.size = 160; this.zoom = 50; this.shape = 'circle'; this.corner = 'top-right'; this.orientation = 'north-up'; this.changed = () => {};
     try {
       this.storage ??= globalThis.localStorage; storage = this.storage;
       this.enabled = storage.getItem('atv-minimap-enabled') !== 'false';
       const value = storage.getItem('atv-minimap-size'); if (value !== null) this.size = clampMapSize(value);
+      const zoom = storage.getItem('atv-minimap-zoom'); if (zoom !== null) this.zoom = clampMapZoom(zoom);
       if (storage.getItem('atv-minimap-shape') === 'square') this.shape = 'square';
       if (storage.getItem('atv-minimap-corner') === 'bottom-left') this.corner = 'bottom-left';
       if (storage.getItem('atv-minimap-orientation') === 'heading-up') this.orientation = 'heading-up';
@@ -29,9 +52,11 @@ export class MinimapSettings {
     this.storage.setItem('atv-minimap-enabled', String(this.enabled)); this.storage.setItem('atv-minimap-size', String(this.size));
     this.storage.setItem('atv-minimap-shape', this.shape); this.storage.setItem('atv-minimap-corner', this.corner);
     this.storage.setItem('atv-minimap-orientation', this.orientation);
+    this.storage.setItem('atv-minimap-zoom', String(this.zoom));
   } catch { /* Session fallback. */ } this.changed(); }
   toggle() { this.enabled = !this.enabled; this.save(); }
   setSize(value) { this.size = clampMapSize(value); this.save(); }
+  setZoom(value) { this.zoom = clampMapZoom(value); this.save(); }
   toggleShape() { this.shape = this.shape === 'circle' ? 'square' : 'circle'; this.save(); }
   toggleCorner() { this.corner = this.corner === 'top-right' ? 'bottom-left' : 'top-right'; this.save(); }
   toggleOrientation() { this.orientation = this.orientation === 'north-up' ? 'heading-up' : 'north-up'; this.save(); }
@@ -53,7 +78,7 @@ export function rasterRow(terrain, tiles, pixels, row, width, height) {
   const { heights, spacing } = terrain;
   const gz = (1 - (row + .5) / height) * (terrain.depth - 1), iz = Math.floor(gz);
   for (let col = 0; col < width; col++) {
-    const gx = (col + .5) / width * (terrain.width - 1), ix = Math.floor(gx);
+    const gx = (1 - (col + .5) / width) * (terrain.width - 1), ix = Math.floor(gx);
     const h = (x, z) => heights[Math.max(0, Math.min(terrain.depth - 1, z)) * terrain.width + Math.max(0, Math.min(terrain.width - 1, x))];
     const dx = (h(ix + 1, iz) - h(ix - 1, iz)) / (2 * spacing), dz = (h(ix, iz + 1) - h(ix, iz - 1)) / (2 * spacing);
     const light = Math.max(.42, Math.min(1.15, .8 + (-dx * .4 + dz * .3 + .6) / Math.hypot(dx, dz, 1) * .35));
@@ -153,26 +178,24 @@ export class FreestyleMinimap {
     this.updated = time; const started = performance.now();
     const rect = this.root.getBoundingClientRect(), size = rect.width, dpr = Math.min(devicePixelRatio || 1, 1.5), pixels = Math.max(1, Math.round(size * dpr));
     if (this.canvas.width !== pixels) this.canvas.width = this.canvas.height = pixels;
-    const c = this.ctx, t = this.terrain, [x, , z] = player.origin;
+    const pose = mapPose(player), range = mapRange(this.settings.zoom);
+    const c = this.ctx, t = this.terrain, [x, , z] = pose.origin;
     c.setTransform(pixels / size, 0, 0, pixels / size, 0, 0); c.clearRect(0, 0, size, size);
     c.fillStyle = this.colors.ink; c.fillRect(0, 0, size, size);
-    const [px, py] = mapPoint(x, z, t, MAP_RESOLUTION, MAP_RESOLUTION), sx = MAP_RANGE / t.sizeX * MAP_RESOLUTION, sy = MAP_RANGE / t.sizeZ * MAP_RESOLUTION;
-    const heading = mapHeading(player.orientation), headingUp = this.settings.orientation === 'heading-up', overscan = headingUp ? Math.SQRT2 : 1;
+    const [px, py] = mapPoint(x, z, t, MAP_RESOLUTION, MAP_RESOLUTION), sx = range / t.sizeX * MAP_RESOLUTION, sy = range / t.sizeZ * MAP_RESOLUTION;
+    const heading = pose.heading, headingUp = this.settings.orientation === 'heading-up', overscan = headingUp ? Math.SQRT2 : 1;
     c.save(); c.translate(size / 2, size / 2); if (headingUp) c.rotate(-heading);
     c.drawImage(this.base, px - sx * overscan / 2, py - sy * overscan / 2, sx * overscan, sy * overscan, -size * overscan / 2, -size * overscan / 2, size * overscan, size * overscan); c.restore();
     const peerMarkers=[];
     for (const peer of peers) {
       if (peer.stale || !peer.position?.every(Number.isFinite)) continue;
-      let dx=(peer.position[0]-x)/MAP_RANGE*size, dy=-(peer.position[2]-z)/MAP_RANGE*size;
-      if(headingUp) { const a=-heading; [dx,dy]=[dx*Math.cos(a)-dy*Math.sin(a),dx*Math.sin(a)+dy*Math.cos(a)]; }
-      const radius=size*.40, distance=Math.hypot(dx,dy), edge=distance>radius;
-      if(edge){dx*=radius/distance;dy*=radius/distance;}
+      const {dx,dy,edge,rotation}=mapPeerMarker(peer,pose,range,size,headingUp);
       c.save();c.translate(size/2+dx,size/2+dy);c.beginPath();
       if(edge){c.rotate(Math.atan2(dy,dx)+Math.PI/2);c.moveTo(0,-5);c.lineTo(4,4);c.lineTo(-4,4);c.closePath();}
       else c.arc(0,0,4,0,Math.PI*2);
       c.fillStyle=PLAYER_COLORS[peer.peer];c.strokeStyle=this.colors.ink;c.lineWidth=2;c.stroke();c.fill();c.restore();
       if(this.peerArrows?.[peer.peer]) {
-        c.save();c.translate(size/2+dx,size/2+dy);c.rotate(edge?Math.atan2(dy,dx)+Math.PI/2:Math.atan2(peer.world_matrix?.[8]??0,peer.world_matrix?.[10]??1)-(headingUp?heading:0));c.imageSmoothingEnabled=false;c.drawImage(this.peerArrows[peer.peer],-5,-5,10,10);c.restore();
+        c.save();c.translate(size/2+dx,size/2+dy);c.rotate(edge?Math.atan2(dy,dx)+Math.PI/2:rotation);c.imageSmoothingEnabled=false;c.drawImage(this.peerArrows[peer.peer],-5,-5,10,10);c.restore();
       }
       c.font=`800 9px ${this.colors.font}`;c.lineWidth=3;c.strokeStyle=this.colors.ink;c.fillStyle=PLAYER_COLORS[peer.peer];
       c.strokeText(String(peer.peer+1),size/2+dx+5,size/2+dy-3);c.fillText(String(peer.peer+1),size/2+dx+5,size/2+dy-3);
@@ -214,15 +237,16 @@ export class FreestyleMinimap {
       if (this.canvas.dataset.speed !== hud.speed_text) this.canvas.dataset.speed = hud.speed_text;
       const preload = String(hud.preload_visible); if (this.canvas.dataset.preload !== preload) this.canvas.dataset.preload = preload;
     }
-    const length = size * 200 / MAP_RANGE, left = (size - length) / 2;
+    const scaleFeet = mapScale(range), scaleLabel = `${scaleFeet} ft`;
+    const length = size * scaleFeet / range, left = (size - length) / 2;
     c.strokeStyle = this.colors.silver; c.lineWidth = 1.5; c.beginPath(); c.moveTo(left, readoutY + 2); c.lineTo(left + length, readoutY + 2); c.stroke();
     c.font = `700 9px ${this.colors.font}`; c.strokeStyle = this.colors.ink; c.lineWidth = 3;
-    const textX = (size - c.measureText('200 ft').width) / 2;
-    c.strokeText('200 ft', textX, readoutY); c.fillText('200 ft', textX, readoutY);
+    const textX = (size - c.measureText(scaleLabel).width) / 2;
+    c.strokeText(scaleLabel, textX, readoutY); c.fillText(scaleLabel, textX, readoutY);
     this.metrics.lastCpuMs = performance.now() - started; this.metrics.totalCpuMs += this.metrics.lastCpuMs; this.metrics.updates++;
-    this.metrics.center = [x, z]; this.metrics.heading = heading; this.metrics.mapRotation = headingUp ? -heading : 0; this.metrics.markerRotation = headingUp ? 0 : heading;
+    this.metrics.center = [x, z]; this.metrics.actor = pose.actor; this.metrics.scaleFeet = scaleFeet; this.metrics.heading = heading; this.metrics.mapRotation = headingUp ? -heading : 0; this.metrics.markerRotation = headingUp ? 0 : heading;
     this.metrics.backingBytes = (MAP_RESOLUTION * MAP_RESOLUTION + pixels * pixels) * 4;
   }
   get visible() { return !this.root.hidden; }
-  snapshot() { return { ...this.metrics, enabled: this.settings.enabled, size: this.settings.size, shape: this.settings.shape, corner: this.settings.corner, orientation: this.settings.orientation, visible: this.visible, resolution: this.canvas.width, rangeFeet: MAP_RANGE, maxHz: 1000 / MAP_INTERVAL, extraSceneDraws: 0 }; }
+  snapshot() { return { ...this.metrics, enabled: this.settings.enabled, size: this.settings.size, zoom: this.settings.zoom, shape: this.settings.shape, corner: this.settings.corner, orientation: this.settings.orientation, visible: this.visible, resolution: this.canvas.width, rangeFeet: mapRange(this.settings.zoom), maxHz: 1000 / MAP_INTERVAL, extraSceneDraws: 0 }; }
 }

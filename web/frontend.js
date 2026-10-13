@@ -26,6 +26,9 @@ export class Frontend {
     this.ctx = this.canvas.getContext('2d'); this.buttons = document.getElementById('menu-buttons');
     this.notice = document.getElementById('menu-notice');
     this.loadingScreen = document.getElementById('loading-screen');
+    this.installHelp = document.getElementById('app-install-help');
+    this.backgroundCanvas = document.getElementById('menu-background');
+    window.addEventListener('appdisplaychange', () => { this.layoutKey = ''; });
     this.transitions = []; this.transitionGhost = null;
     window.addEventListener('resize', () => this.captureTransition(null));
     matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => this.captureTransition(null));
@@ -33,7 +36,7 @@ export class Frontend {
     this.assets = new Map(); this.images = new Map(); this.fonts = new Map();
     this.initialized = false; this.layoutKey = ''; this.layoutPending = false; this.loaded = new Set(); this.page = 'loading'; this.selection = 0; this.track = 0; this.busy = false; this.lastPad = new Set(); this.alive = true;
     const savedSelection = loadPlayerSelection();
-    this.quadId = savedSelection.quadId; this.riderId = savedSelection.riderId; this.lastFreestyleEnvironment = savedSelection.freestyleEnvironment; this.playerName = 'Rider'; this.roomCode = new URL(location.href).searchParams.get('room') ?? ''; this.garageReturn = 'single';
+    this.quadId = savedSelection.quadId; this.riderId = savedSelection.riderId; this.lastFreestyleEnvironment = savedSelection.freestyleEnvironment; this.playerName = 'Rider'; this.roomCode = new URL(location.href).searchParams.get('room') ?? ''; this.createCode = ''; this.garageReturn = 'single';
     this.bindingDevice = 'keyboard'; this.bindingPage = 0; this.bindingRow = 0; this.musicPage = 0;
     this.capture = null; this.menuKeys = new Set();
     this.raceSettings={laps:3,cpu:3,difficulty:1};this.raceActive=false;this.raceAvailable=false;
@@ -80,6 +83,7 @@ export class Frontend {
     });
     this.poll = () => {
       if (!this.alive) return;
+      if (this.installHelp?.open) { this.padBlocked = true; this.lastPad.clear(); this.pollFrame = requestAnimationFrame(this.poll); return; }
       if (!document.hidden && document.hasFocus()) {
         let pads = []; try { pads = [...navigator.getGamepads()].filter(Boolean); } catch { /* browser without gamepad permission */ }
         if (this.capture) { this.pollCapture(pads.find(p => p.connected !== false)); this.pollFrame = requestAnimationFrame(this.poll); return; }
@@ -95,7 +99,7 @@ export class Frontend {
         }
         if (!held.size) this.padBlocked = false;
         if (!this.root.hidden && !this.padBlocked) for (const action of held) if (!this.lastPad.has(action)) {
-          if (action === 'pause' && ['pause','players','hud-settings','minimap-config','controls','bindings','music','multiplayer','lobby','garage'].includes(this.page) && !this.busy) this.resume();
+          if (action === 'pause' && ['pause','players','hud-settings','minimap-config','controls','bindings','music','multiplayer','create-lobby','join-lobby','lobby','garage'].includes(this.page) && !this.busy) this.resume();
           else void this.action(action === 'pause' ? 'accept' : action);
         }
         this.lastPad = held;
@@ -178,7 +182,7 @@ export class Frontend {
   }
   fail(error) { this.setLoading(false); this.notice.textContent = error.message; this.busy = false; this.root.dataset.error = 'true'; }
   syncPreview() {
-    void this.audio?.()?.setMusicPreview(['title','main','single','tracks','garage','multiplayer','lobby','race','loading','music'].includes(this.page) && !this.root.hidden && !document.hidden && document.hasFocus(), this.page !== 'music').catch(error => this.fail(error));
+    void this.audio?.()?.setMusicPreview(['title','main','single','tracks','garage','multiplayer','create-lobby','join-lobby','lobby','race','loading','music'].includes(this.page) && !this.root.hidden && !document.hidden && document.hasFocus(), this.page !== 'music').catch(error => this.fail(error));
   }
   beginCapture(id) {
     const row = gameplayBindings.rows(this.bindingDevice).find(row => row.id === id);
@@ -234,14 +238,14 @@ export class Frontend {
   async action(action) {
     if (this.busy || this.root.hidden) return;
     this.notice.textContent = '';
-    if (['up','down'].includes(action) && ['title','main','single','garage','multiplayer','lobby','race','pause','players','hud-settings','minimap-config','controls','bindings','music'].includes(this.page)) {
+    if (['up','down'].includes(action) && ['title','main','single','garage','multiplayer','create-lobby','join-lobby','lobby','race','pause','players','hud-settings','minimap-config','controls','bindings','music'].includes(this.page)) {
       this.selection = (this.selection + (action === 'up' ? -1 : 1) + this.frame.choices.length) % this.frame.choices.length;
       if (this.page === 'bindings' && this.selection < 4) this.bindingRow = this.bindingPage * 4 + this.selection;
     } else if (action === 'back') {
       if (this.page === 'pause') return this.resume();
       if (this.page === 'garage') return this.show(this.garageReturn);
       if (this.page === 'lobby') return this.run('leave');
-      return this.show(({players:'pause',bindings:'controls',music:'pause','hud-settings':'pause','minimap-config':'hud-settings',controls:'pause',main:'title',single:'main',tracks:'single',race:'single',multiplayer:'main'})[this.page] ?? 'title');
+      return this.show(({players:'pause',bindings:'controls',music:'pause','hud-settings':'pause','minimap-config':'hud-settings',controls:'pause',main:'title',single:'main',tracks:'single',race:'single','create-lobby':'multiplayer','join-lobby':'multiplayer',multiplayer:'main'})[this.page] ?? 'title');
     } else if (this.page === 'garage' && ['left','right'].includes(action)) {
       return this.run(action === 'left' ? 'quadprev' : 'quadnext');
     } else if (this.page === 'tracks' && ['left','right','up','down'].includes(action)) {
@@ -249,6 +253,8 @@ export class Frontend {
     } else if (this.page === 'race' && ['left','right'].includes(action)) { return this.run(this.frame.choices[this.selection],action === 'left' ? -1 : 1);
     } else if (this.page === 'minimap-config' && this.frame.choices[this.selection] === 'minimap-size' && ['left','right'].includes(action)) {
       this.minimapSettings?.setSize(this.minimapSettings.size + (action === 'left' ? -8 : 8));
+    } else if (this.page === 'minimap-config' && this.frame.choices[this.selection] === 'minimap-zoom' && ['left','right'].includes(action)) {
+      this.minimapSettings?.setZoom(this.minimapSettings.zoom + (action === 'left' ? -25 : 25));
     } else if (this.page === 'controls' && this.frame.choices[this.selection] === 'steering-sensitivity' && ['left','right'].includes(action)) {
       this.mobileControls?.setSteeringSensitivity(this.mobileControls.steeringSensitivity + (action === 'left' ? -5 : 5));
     } else if (['bindings','music'].includes(this.page) && ['left','right'].includes(action)) {
@@ -270,11 +276,11 @@ export class Frontend {
     if (this.busy) return;
     try {
       if (action === 'garage') { this.garageReturn = this.page; return this.show('garage'); }
-      if (action === 'quadprev' || action === 'quadnext') { const count = this.garageReturn === 'multiplayer' || this.garageReturn === 'lobby' ? 26 : 46; this.quadId = ((this.quadId - 1 + (action === 'quadnext' ? 1 : count - 1)) % count) + 1; }
+      if (action === 'quadprev' || action === 'quadnext') { const count = ['multiplayer','create-lobby','join-lobby','lobby'].includes(this.garageReturn) ? 26 : 46; this.quadId = ((this.quadId - 1 + (action === 'quadnext' ? 1 : count - 1)) % count) + 1; }
       else if (action === 'riderchange' && this.quadId < 27) this.riderId = 1 - this.riderId;
       else if (action.startsWith('spawn:')) { this.busy=true; try { await this.multiplayer.action(action,this); } finally {this.busy=false;} return; }
       else if (['host','join','share','lobbymap','lobbystart','leave'].includes(action)) { if (['host','join'].includes(action) && this.quadId>=27) throw new Error('Choose an ATV for multiplayer. Motorcycles are available in Single Player.'); return await this.multiplayer.action(action, this); }
-      else if (['main','single','tracks','pause','players','hud-settings','minimap-config','controls','music','multiplayer','lobby','race'].includes(action)) return await this.show(action);
+      else if (['main','single','tracks','pause','players','hud-settings','minimap-config','controls','music','multiplayer','create-lobby','join-lobby','lobby','race'].includes(action)) return await this.show(action);
       if (action === 'racestart') {
         await this.multiplayer?.disconnect();
         this.busy = true;
@@ -300,6 +306,7 @@ export class Frontend {
       else if (action === 'musictoggle') { const music = this.audio?.()?.music; if (music) music.setEnabled(!music.snapshot().enabled); this.syncPreview(); }
       else if (action === 'musicvolume') { const music = this.audio?.()?.music; if (music) music.setVolume((Math.round(music.snapshot().volume * 4) + 1) % 5 / 4); }
       else if (action === 'steering-sensitivity') { this.buttons.querySelector('input[type=range]')?.focus(); return; }
+      else if (action === 'minimap-zoom') { this.buttons.querySelector('input[data-setting="minimap-zoom"]')?.focus(); return; }
       else if (action === 'minimap-size') { this.buttons.querySelector('input[data-setting="minimap-size"]')?.focus(); return; }
       else if (action === 'minimap-orientation') this.minimapSettings?.toggleOrientation();
       else if (action === 'minimap-shape') this.minimapSettings?.toggleShape();
@@ -326,8 +333,8 @@ export class Frontend {
     const stage = this.canvas.parentElement, track = this.page === 'race' ? this.tracks.find(t=>t.id==='env01') : this.tracks[this.track];
     const music = this.audio?.()?.music, musicState = music?.snapshot();
     const lobby = this.multiplayer?.state?.lobby;
-    const request = {lobby_players:(lobby?.players??[]).map(p=>({id:String(p.id),label:`P${p.id+1} ${p.name}${p.id===this.multiplayer.state.peer?' (You)':''}`,value:p.id===this.multiplayer.state.peer?'self':(this.multiplayer.remote.find(r=>r.peer===p.id && !r.stale)?'ready':'waiting')})),race_laps:this.raceSettings.laps,race_cpu:this.raceSettings.cpu,race_difficulty:this.raceSettings.difficulty,race_available:this.raceAvailable,race_active:this.raceActive,quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? this.roomCode,lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:(this.page === 'loading' ? this.loadingTrack?.name : this.page === 'lobby' ? this.tracks.find(t => t.id === this.multiplayer.state.environment)?.name : track?.name) ?? '',track_image:(this.page === 'loading' ? this.loadingTrack?.image : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
-      minimap_orientation:this.minimapSettings?.orientation ?? 'north-up',minimap_shape:this.minimapSettings?.shape ?? 'circle',minimap_corner:this.minimapSettings?.corner ?? 'top-right',minimap_enabled:this.minimapSettings?.enabled ?? true,minimap_size:this.minimapSettings?.size ?? 160,funny_crashes:this.crashSettings?.enabled ?? true,mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
+    const request = {lobby_players:(lobby?.players??[]).map(p=>({id:String(p.id),label:`P${p.id+1} ${p.name}${p.id===this.multiplayer.state.peer?' (You)':''}`,value:p.id===this.multiplayer.state.peer?'self':(this.multiplayer.remote.find(r=>r.peer===p.id && !r.stale)?'ready':'waiting')})),race_laps:this.raceSettings.laps,race_cpu:this.raceSettings.cpu,race_difficulty:this.raceSettings.difficulty,race_available:this.raceAvailable,race_active:this.raceActive,quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? (this.page==='create-lobby'?this.createCode:this.roomCode),lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:(this.page === 'loading' ? this.loadingTrack?.name : this.page === 'lobby' ? this.tracks.find(t => t.id === this.multiplayer.state.environment)?.name : track?.name) ?? '',track_image:(this.page === 'loading' ? this.loadingTrack?.image : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
+      minimap_orientation:this.minimapSettings?.orientation ?? 'north-up',minimap_shape:this.minimapSettings?.shape ?? 'circle',minimap_corner:this.minimapSettings?.corner ?? 'top-right',minimap_enabled:this.minimapSettings?.enabled ?? true,minimap_size:this.minimapSettings?.size ?? 160,minimap_zoom:this.minimapSettings?.zoom ?? 50,funny_crashes:this.crashSettings?.enabled ?? true,mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
       music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
       music_page:this.musicPage,music_status:musicState ? `${musicState.enabled ? 'On' : 'Off'} / Volume ${Math.round(musicState.volume * 100)}% / ${musicState.title || 'Choose a song'}` : '',music_enabled:musicState?.enabled ?? true,music_volume:Math.round((musicState?.volume ?? .7)*100),menu_logo:this.images.has('brand-logo'),menu_atv:this.images.has('multi_atv01')};
@@ -338,7 +345,7 @@ export class Frontend {
       const frame = await this.json(62,new TextEncoder().encode(key));
       // Page/viewport can change while the worker handles the request. The next
       // frame requests fresh data, rather than applying a stale hit map.
-      if ((this.minimapSettings?.orientation ?? 'north-up') !== request.minimap_orientation || (this.minimapSettings?.shape ?? 'circle') !== request.minimap_shape || (this.minimapSettings?.corner ?? 'top-right') !== request.minimap_corner || (this.minimapSettings?.enabled ?? true) !== request.minimap_enabled || (this.minimapSettings?.size ?? 160) !== request.minimap_size || this.raceSettings.laps!==request.race_laps || this.raceSettings.cpu!==request.race_cpu || this.raceSettings.difficulty!==request.race_difficulty || (this.mobileControls?.steeringSensitivity ?? 85) !== request.mobile_steering_sensitivity || (this.capture?.label ?? '') !== request.capture_label || this.bindingPage !== request.binding_page || this.musicPage !== request.music_page || this.page !== request.page || this.selection !== request.selection || this.quadId !== request.quad_id || this.riderId !== request.rider_id || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
+      if ((this.minimapSettings?.zoom ?? 50) !== request.minimap_zoom || (this.minimapSettings?.orientation ?? 'north-up') !== request.minimap_orientation || (this.minimapSettings?.shape ?? 'circle') !== request.minimap_shape || (this.minimapSettings?.corner ?? 'top-right') !== request.minimap_corner || (this.minimapSettings?.enabled ?? true) !== request.minimap_enabled || (this.minimapSettings?.size ?? 160) !== request.minimap_size || this.raceSettings.laps!==request.race_laps || this.raceSettings.cpu!==request.race_cpu || this.raceSettings.difficulty!==request.race_difficulty || (this.mobileControls?.steeringSensitivity ?? 85) !== request.mobile_steering_sensitivity || (this.capture?.label ?? '') !== request.capture_label || this.bindingPage !== request.binding_page || this.musicPage !== request.music_page || this.page !== request.page || this.selection !== request.selection || this.quadId !== request.quad_id || this.riderId !== request.rider_id || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
       this.frame = frame; this.layoutKey = key; this.draw(); this.rebuildButtons(); this.updateModelViews();
     } catch (error) { this.fail(error); }
     finally { this.layoutPending = false; }
@@ -472,6 +479,7 @@ export class Frontend {
         input.setAttribute('aria-label', slider.label);
         input.addEventListener('input', () => {
           if (input.dataset.setting === 'minimap-size') this.minimapSettings?.setSize(Number(input.value));
+          else if (input.dataset.setting === 'minimap-zoom') this.minimapSettings?.setZoom(Number(input.value));
           else this.mobileControls?.setSteeringSensitivity(Number(input.value));
           input.setAttribute('aria-valuetext', `${input.value}${input.dataset.setting === 'minimap-size' ? ' pixels' : '%'}`);
           input.style.setProperty('--atv-range-fill', `${(Number(input.value) - Number(input.min)) / (Number(input.max) - Number(input.min)) * 100}%`);
@@ -493,6 +501,7 @@ export class Frontend {
         input.autocomplete = 'off'; input.spellcheck = false; input.value = field.value;
         input.addEventListener('input', () => {
           if (field.action === 'player-name') this.playerName = input.value;
+          else if (field.action === 'create-code') this.createCode = input.value.toUpperCase().trim();
           else this.roomCode = input.value.toUpperCase().trim();
           this.layoutKey = '';
         });
@@ -547,7 +556,17 @@ export class Frontend {
     const c = this.ctx, stage = this.canvas.parentElement, dpr = Math.min(devicePixelRatio || 1,3, Math.sqrt(8_000_000 / Math.max(1,stage.clientWidth * stage.clientHeight)));
     this.canvas.width = Math.round(stage.clientWidth*dpr); this.canvas.height = Math.round(stage.clientHeight*dpr);
     c.setTransform(this.canvas.width/frame.width,0,0,this.canvas.height/frame.height,0,0);
+    const fullBleed = document.documentElement.classList.contains('app-standalone') && !['pause','hud-settings','minimap-config','controls','bindings','music'].includes(this.page) && this.backgroundCanvas;
+    let decoration = true;
+    if (this.backgroundCanvas) {
+      this.backgroundCanvas.hidden = !fullBleed;
+      if (fullBleed) {
+        this.backgroundCanvas.width = Math.round(this.root.clientWidth*dpr); this.backgroundCanvas.height = Math.round(this.root.clientHeight*dpr);
+        this.backgroundCanvas.getContext('2d').setTransform(this.backgroundCanvas.width/frame.width,0,0,this.backgroundCanvas.height/frame.height,0,0);
+      }
+    }
     for (const command of frame.draw) {
+      if (['text','artwork','preview','model_preview'].includes(command.kind)) decoration = false;
       if (command.kind === 'model_preview') continue;
       if (command.kind === 'text') {
         // The font is still the original CEL/PST glyph atlas, not a screenshot
@@ -566,12 +585,13 @@ export class Frontend {
         const [x,y,w,h]=command.rect, total=a.width+b.width;
         c.drawImage(a,x,y,w*a.width/total,h); c.drawImage(b,x+w*a.width/total,y,w*b.width/total,h);
       } else {
+        const paintContext = fullBleed && decoration ? this.backgroundCanvas.getContext('2d') : c;
         const path = command.kind === 'path' ? new Path2D(command.d) : new Path2D();
         if (command.kind === 'rect') path.roundRect(...command.rect,command.radius);
         const y = command.rect?.[1] ?? 0, height = command.rect?.[3] ?? frame.height;
-        const paint=c.createLinearGradient(0,y,0,y+height); paint.addColorStop(0,command.color); paint.addColorStop(1,command.bottom);
-        c.fillStyle=paint;c.fill(path);
-        if (command.stroke) {c.strokeStyle=command.stroke;c.lineWidth=1.5;c.stroke(path);}
+        const paint=paintContext.createLinearGradient(0,y,0,y+height); paint.addColorStop(0,command.color); paint.addColorStop(1,command.bottom);
+        paintContext.fillStyle=paint;paintContext.fill(path);
+        if (command.stroke) {paintContext.strokeStyle=command.stroke;paintContext.lineWidth=1.5;paintContext.stroke(path);}
       }
     }
   }

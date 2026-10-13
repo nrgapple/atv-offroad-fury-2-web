@@ -50,13 +50,13 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Eight uppercase base-32 characters; ambiguous I/O/0/1 are excluded.
+/// Eight uppercase letters or digits. Generated codes omit ambiguous glyphs.
 pub fn valid_room_code(code: &RoomCode) -> bool {
     code.iter()
-        .all(|b| b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789".contains(b))
+        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
 }
 /// User-entered codes accept surrounding whitespace and ASCII lowercase. The
-/// on-wire and URL form remains exactly eight uppercase base-32 characters.
+/// on-wire and URL form remains exactly eight uppercase letters or digits.
 pub fn parse_room_code(value: &str) -> Result<RoomCode> {
     let uppercase = value.trim().to_ascii_uppercase();
     let code: RoomCode = uppercase

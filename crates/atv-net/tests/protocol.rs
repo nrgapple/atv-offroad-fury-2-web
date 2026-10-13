@@ -406,7 +406,8 @@ fn non_affine_and_degenerate_matrices_rejected() {
 #[test]
 fn user_codes_normalize_but_invalid_characters_do_not_pass() {
     assert_eq!(parse_room_code(" abcd2345\n").unwrap(), *b"ABCD2345");
-    for code in ["ABCDEFG", "ABCDEFGHI", "ABC01234", "ABCDé234", "ABCD 234"] {
+    assert_eq!(parse_room_code(" fury2016 ").unwrap(), *b"FURY2016");
+    for code in ["ABCDEFG", "ABCDEFGHI", "ABC0!234", "ABCDé234", "ABCD 234"] {
         assert!(parse_room_code(code).is_err());
     }
 }

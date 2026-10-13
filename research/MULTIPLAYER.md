@@ -46,6 +46,17 @@ outstanding snapshot/presentation request and bounds incoming work to 64 message
 It never queues old drive inputs or PCM. Rust handles decoder bounds and server
 identity; browser JavaScript is socket, DOM/WebGL and Web Audio API glue.
 
+## Create and join flow
+
+The authored Multiplayer menu first offers separate **Create lobby** and
+**Join lobby** choices. Each form collects a rider name and offers the garage.
+Create accepts an optional custom code of exactly eight letters or digits; a
+blank code requests a random one, while a duplicate custom code is rejected.
+Join requires an eight-character code. Invite links open the Join form with the
+code prefilled, leaving the rider to submit the join action. This form flow is
+under host-browser recheck in the pending integration build; public delivery
+remains pending.
+
 ## Models and sound
 
 The garage exposes all 26 original in-race quads with their own PHY, AO/AR collision,
@@ -87,25 +98,30 @@ seconds after Arlington Freeride had started, using the same room code; each
 client rendered 13 remote draws. The minimap and original compass arrows updated,
 and the paused Players screen offered the late guest a nearby-host spawn action.
 At 390×844 its measured hitbox was 342×64 pixels at `(24,96)`. The inspected
-captures are recorded in the dev log. Owner-local contact counters reached 3 and
-1, showing contact responses on both clients. A 20-sample moving flatbed check
-kept the rider within 0.908 ft of the train-relative position. Host departure
-cleaned up the guests.
+captures are recorded in the dev log. The follow-up integrated run again passed
+late admission and spawn; owner-local contact counters reached 6 and 2. A
+20-sample moving flatbed check kept the rider within 0.80435 ft of the
+train-relative position. Host departure cleaned up the guests.
 
-A separate four-browser host run selected quads 1, 14, 26 and 2. Each client
-rendered 39 remote GL draws and three remote engine voices. Each driver's motion
-reached the other three observers; host departure cleared remote models and audio
-on every guest. The relay gate passed 13 live cases. Current workspace checks
-passed 353 core, 27 protocol, 15 web, 4 relay and 4 release tests, plus 87
-JavaScript tests, formatting, strict Clippy, Worker checks, setup and repository
-hygiene. The release suite passed 31 tests with one skipped.
+Peer indicators now follow remote rider world poses and share the minimap's `-X`
+orientation and zoom mapping. The projection gate covered quad 1 on ENV02 with
+41 moving and 7 tracking samples and quad 26 on ENV01 with 50 moving and 7
+tracking samples; all reported no errors. A four-browser host run selected quads
+1, 14, 26 and 2. Each client rendered 39 remote GL draws and three remote engine
+voices. Each driver's motion reached the other three observers; host departure
+cleared remote models and audio on every guest. The relay gate passed 13 live
+cases. The integrated workspace passed 403 Rust tests, 91 JavaScript tests (102
+including Worker tests), formatting, strict Clippy, Worker checks, setup and
+repository hygiene. The release suite passed 34 tests with one skipped.
 
 These are host checks only. They do not establish public release, physical-phone
 input, geographically separated latency, authoritative collision or server-side
 physics reconciliation. The equal-mass six-foot swept-cylinder contacts and
 overhead player labels are authored browser behavior; the recovered original
-compass art and slot colors do not establish original overhead placement.
-The shared train animation clock currently freezes when its host pauses.
+compass art and slot colors do not establish original overhead placement. The
+shared train animation clock currently freezes when its host pauses. The
+integrated main tree was checked against `origin/main` 106e937; public delivery
+is pending.
 
 ## Verification and deployment
 

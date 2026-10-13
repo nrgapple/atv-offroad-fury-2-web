@@ -1322,7 +1322,9 @@ function render(time) {
   const started = performance.now();
   frame = requestAnimationFrame(render);
   touchControls.refresh();
-  minimap.draw(time, simFrame, simReady && !raceSettings && !lost && focused && !document.hidden && !menuOpen, multiplayer?.remote ?? []);
+  const presentation = motorcyclePresentation.sample(simFrame, cameraFrame, time, focused && !lost && !menuOpen);
+  presentedFrame = presentation.frame; presentedCamera = presentation.camera;
+  minimap.draw(time, presentedFrame, simReady && !raceSettings && !lost && focused && !document.hidden && !menuOpen, multiplayer?.remote ?? []);
   playerIndicators.root.hidden = !simReady || lost || document.hidden || menuOpen;
   // Enabled Freestyle GPS owns speed even while its raster is warming up or
   // temporarily hidden. Only the explicit Off setting restores standalone MPH.
@@ -1339,8 +1341,6 @@ function render(time) {
     const x = Math.max(0,Math.min(terrain.width-1,vehicle.position[0]/terrain.spacing)), z = Math.max(0,Math.min(terrain.depth-1,vehicle.position[2]/terrain.spacing));
     if (center && (Math.abs(x-center[0]) > 48 || Math.abs(z-center[1]) > 48)) buildTerrainMesh();
   }
-  const presentation = motorcyclePresentation.sample(simFrame, cameraFrame, time, focused && !lost && !menuOpen);
-  presentedFrame = presentation.frame; presentedCamera = presentation.camera;
   diagnostics.motorcyclePresentation = simFrame?.vehicle_kind === 'motorcycle' ? { alpha: presentation.alpha, interpolated: presentation.interpolated, origin: presentedFrame.origin, orientation: presentedFrame.orientation } : null;
   const smoothQuad = presentation.interpolated ? new Float32Array(presentedFrame.quad_node_matrices.flat()) : vehicle?.nodeMatrices;
   const smoothRider = presentation.interpolated ? presentedFrame.rider_node_matrices : vehicle?.rider?.pose.world_matrices;
@@ -1609,6 +1609,6 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
     if (params.get('drive') === '1') {
       menuOpen = false; $('frontend').hidden = true;
       void frontend.init(false).then(() => loadGame(null, params.get('environment') ?? 'env01')).catch(error => status(error.message, true));
-    } else { document.body.classList.add('menu-open'); void frontend.init().then(()=>{if(params.has('room'))return frontend.show('multiplayer');}); }
+    } else { document.body.classList.add('menu-open'); void frontend.init().then(()=>{if(params.has('room'))return frontend.show('join-lobby');}); }
   } }
 catch (error) { $('loading-screen').hidden = true; status(error.message, true); $('menu-notice').textContent = error.message; }

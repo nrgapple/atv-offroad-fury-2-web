@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Serve ONLY the static web build. Never exposes private/, source, or references."""
 import argparse
+import json
 import re
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -9,7 +10,7 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1] / 'web/dist'
 PROJECT = Path(__file__).resolve().parents[1]
 CONTENT = PROJECT / 'private/reports/hosted-content'
-ALLOWED = {'fury-remastered.svg', 'app-icon.svg', 'apple-touch-icon.png', 'app-icon-512.png', 'manifest.webmanifest', 'index.html', 'landing.css', 'landing.js', 'play.html', 'design-system.css', 'game.css', 'game.js', 'race.js', 'multiplayer.js', 'water.js', 'fog.js', 'train.js', 'wheel-effects.js', 'motorcycle-presentation.js', 'hud.js', 'minimap.js', 'diagnostics.js', 'frontend.js', 'touch.js', 'touch.css', 'content.js', 'audio.js', 'music.js', 'deployment.json', 'devlog.html', 'devlog.css', 'devlog.js', 'devlog.json', 'workbench.html', 'style.css', 'app.js', 'worker.js', 'input.js', 'controls.js', 'bindings.js', 'atv_web.wasm'}
+ALLOWED = {'app-icon.svg', 'apple-touch-icon.png', 'app-icon-512.png', 'fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'play.html', 'design-system.css', 'game.css', 'game.js', 'race.js', 'multiplayer.js', 'water.js', 'fog.js', 'train.js', 'wheel-effects.js', 'motorcycle-presentation.js', 'hud.js', 'minimap.js', 'diagnostics.js', 'frontend.js', 'touch.js', 'touch.css', 'content.js', 'audio.js', 'music.js', 'deployment.json', 'devlog.html', 'devlog.css', 'devlog.js', 'devlog.json', 'workbench.html', 'style.css', 'app.js', 'worker.js', 'input.js', 'controls.js', 'bindings.js', 'atv_web.wasm'}
 
 class StaticServer(ThreadingHTTPServer):
     # ES-module startup opens more connections than Python's default five-slot
@@ -26,13 +27,19 @@ class Handler(SimpleHTTPRequestHandler):
         if path == '/': path = '/index.html'
         image = re.fullmatch(r'/devlog-images/[a-z0-9-]+\.png', path)
         content = re.fullmatch(r'/content/(?:manifest\.json|[a-f0-9]{64}\.bin)', path)
-        if (path.removeprefix('/') not in ALLOWED and not image and not content) or not path.startswith('/'):
+        app_icon = re.fullmatch(r'/app-icons/[a-f0-9]{64}\.png', path)
+        if (path.removeprefix('/') not in ALLOWED and not image and not content and not app_icon and path != '/apple-touch-icon-precomposed.png') or not path.startswith('/'):
             self.send_error(404)
             return None
         self.path = path
         return super().send_head()
 
     def translate_path(self, path):
+        if path in ['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png', '/app-icon-512.png']:
+            icons = json.loads((PROJECT / 'web/app-icon-assets.json').read_text())['icons']
+            path = next(record['url'] for record in icons if record['size'] == (512 if path == '/app-icon-512.png' else 192))
+        if re.fullmatch(r'/app-icons/[a-f0-9]{64}\.png', path):
+            return str(PROJECT / 'private/reports/app-icons' / path.rsplit('/', 1)[1])
         # Only the explicitly requested log and PNG checkpoint gallery are
         # exposed outside dist. Source media and other reports stay inaccessible.
         if re.fullmatch(r'/content/(?:manifest\.json|[a-f0-9]{64}\.bin)', path):
