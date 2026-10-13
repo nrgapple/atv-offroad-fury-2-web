@@ -34,6 +34,35 @@ fn text(s: &str) -> Result<PhysicsData> {
         .collect();
     PhysicsData::parse(s.as_bytes())
 }
+// The indexed TOY emitter reader selects only its own sections. Shipped
+// unrelated terrain sections can contain malformed multiline authoring headers.
+fn emitter_document(source: &str) -> Result<Option<PhysicsData>> {
+    if source.len() > 1024 * 1024 || source.contains('\0') {
+        return Err("invalid ambient TOY extent".into());
+    }
+    let mut selected = String::new();
+    let mut active = false;
+    for line in source.lines() {
+        let line = line.split(';').next().unwrap_or_default().trim();
+        if line.starts_with('[') {
+            let lower = line.to_lowercase();
+            active = lower == "[particleemitters]"
+                || lower
+                    .strip_prefix("[particleemitter")
+                    .and_then(|s| s.strip_suffix(']'))
+                    .is_some_and(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()));
+        }
+        if active && (line.starts_with('[') || line.contains('=')) {
+            selected.push_str(line);
+            selected.push('\n');
+        }
+    }
+    if selected.is_empty() {
+        Ok(None)
+    } else {
+        crate::scene::document(selected.as_bytes()).map(Some)
+    }
+}
 fn value<'a>(d: &'a PhysicsData, s: &str, k: &str) -> Option<&'a str> {
     d.entries
         .iter()
@@ -99,10 +128,8 @@ pub struct Plan {
     pub unresolved: Vec<String>,
 }
 pub fn plan(source: &Source) -> Result<Plan> {
-    let scene = crate::scene::parse_with_start(
-        source.scene.as_bytes(),
-        source.mode.as_deref().map(str::as_bytes),
-    )?;
+    // Particle mode sidecars do not supply a complete gameplay spawn.
+    let scene = crate::scene::parse(source.scene.as_bytes())?;
     let mut result = Plan {
         declared: 0,
         placements: vec![],
@@ -114,7 +141,9 @@ pub fn plan(source: &Source) -> Result<Plan> {
         .flatten()
         .filter(|s| !s.is_empty())
     {
-        let d = text(source_text)?;
+        let Some(d) = emitter_document(source_text)? else {
+            continue;
+        };
         let count = integer(&d, "ParticleEmitters", "NumberOfEmitters", 0, 256)?;
         result.declared += count;
         for i in 1..=count {
@@ -587,8 +616,8 @@ mod tests {
     #[test]
     fn common_and_mode_append_and_local_offsets_follow_model_basis() {
         let scene = "[SceneInfo]\nDefaultStartPosition=1,2,3\nDefaultStartDirection=0,0,1\n[Environment]\nCubeFile=synthetic.cub\n[Lights]\nNumberOfLights=1\n[Light1]\nType=Ambient\nColorRGB=1,2,3\n[Fog]\nColorRGB=0,0,0\n[StaticModels]\nNumberOfStaticModels=1\n[Model1]\nSLT=prop.slt\nPosition=10,20,30\nLookVector=1,0,0\n";
-        let common = "[ParticleEmitters]\nNumberOfEmitters=1\n[ParticleEmitter1]\nTypeID=8\nAttachToSoultree=prop.slt\nOffsetFromSoultree=0,5,0\nEmitterFilename=smoke.emt\nNumberOfInstances=2\n";
-        let mode = "[ParticleEmitters]\nNumberOfEmitters=1\n[ParticleEmitter1]\nTypeID=2\nPosition=9,8,7\nEmitterFilename=spray.emt\nStartOn=F\n";
+        let common = "[TerrainZone2\nGenerateTireTrack=T]\n[ParticleEmitters]\nNumberOfEmitters=1\n[ParticleEmitter1]\nTypeID=8\nAttachToSoultree=prop.slt\nOffsetFromSoultree=0,5,0\nEmitterFilename=smoke.emt\nNumberOfInstances=2\n";
+        let mode = "[SceneInfo]\nDefaultStartPosition=10,20,30\n[ParticleEmitters]\nNumberOfEmitters=1\n[ParticleEmitter1]\nTypeID=2\nPosition=9,8,7\nEmitterFilename=spray.emt\nStartOn=F\n";
         let source = Source {
             scene: scene.into(),
             common: common.into(),
