@@ -5,7 +5,7 @@ uses the original assets and source-correlated behavior. An asset census, a
 decoding pass, a working browser route and original-game equivalence are separate
 acceptance gates. Modern effects are not substitutes for an unrecovered baseline.
 
-## Host ordered vegetation checkpoint
+## Ordered vegetation host verification before PR15
 
 All nine connected maps now load their original `EcoSystemCode2D` materials and
 atlas textures from the existing hosted archives. Species retain authored U
@@ -55,7 +55,7 @@ Vancouver desktop/390px retains 78 scenery placements, 43 colliders, 37,649 plan
 ATM frame 1 and the unlocked route. FREE05 copied-link multiplayer retains 13
 remote draws, both rider rigs, one voice each, movement and host cleanup. Original
 material animation/context, fog and reflection regressions pass. These are host
-checks; this candidate is not yet a verified public release. Wind/weather,
+checks before release; the c895ba4 public proof appears below. Wind/weather,
 remaining lighting/shadows, exact visibility, other modes and full-map/game
 equivalence remain open.
 
@@ -442,3 +442,39 @@ ambient emitters and actors, shader families and gameplay modes remain incomplet
 Original dynamic assets and configuration presence do not establish that they
 interact, move or emit particles correctly. Continue through the source census
 and record those distinctions at each tested checkpoint.
+
+## Public ordered-billboard and nine-map release (c895ba4)
+
+Public main `c895ba435879c70a30aef72225f276694522af5c` (PR #15) passed
+CI `38326267540` and deployed. HTTPS verifies 32 authored files and 414 served
+objects. R2 has two changes, 415 approved objects and 314,152,134 bytes; its
+canonical manifest has 107 records and 307 references. The gallery has 128
+entries and 107 screenshots.
+
+The public nine-map driving and billboard gates pass. Each map renders distant
+vegetation through two shared-atlas batches in source back-to-front order; the
+bounded projected-depth selection matches the full-scan comparator. The driving
+test reports 8–17 total vegetation draws per map, no unsupported placed meshes,
+and zero JavaScript or GL errors. Source-correlated GPU checks cover 1,800 color
+samples with zero byte differences and 1,800 vertices with maximum position error
+0.0009765625 feet and zero UV error. The corrected near-material gate passes all
+nine maps with visible pixels and vehicle/rider state isolation. ENV01's separate
+600-case Sun/ambient RGBA comparison also has zero differing bytes. This does not
+prove full-frame rendering or original PS2 hardware equivalence.
+
+Vancouver desktop/390px draws all 78 scenery placements with 43 colliders and
+37,649 plants. The contact trace records 123 wheel-support frames, 31 body-contact
+frames, takeoff at step 19, later landing and ATM frame 1; the map is unlocked by
+default. The copied-link multiplayer pair renders 13 remote draws per client
+with both rider rigs, one voice per client, 7.99138 feet of movement and clean
+host departure. The public menu route passes all 26 quad previews, six layouts,
+animated riders, navigation, context recovery, loading photos and stereo UI tune
+1. The combined workspace gate passes 318 core, 25 network, 3 relay, 13 bridge
+and 69 JavaScript tests, 18 release checks and 6 Worker checks.
+
+The published billboard hero remains a host Chromium screenshot, as its caption
+states. A separate fresh ENV08 capture from public driving was inspected and
+remains private. Current limits include the original callback's visibility,
+frustum and cache ordering; camera/GS viewport mapping; per-row billboard
+fog/depth packing; wind/weather; GS/VU hardware timing; distant LOD; point lights;
+shadows; and full-map/game parity. No production FPS or timing claim is made.

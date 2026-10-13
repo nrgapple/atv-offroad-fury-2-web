@@ -1,6 +1,41 @@
 # Implementation handoff
 
-## Ordered vegetation: tested host release candidate
+## Latest verified public map and menu release
+
+Public main `c895ba435879c70a30aef72225f276694522af5c` (PR #15) passed CI
+`38326267540` and deployed. The validated HTTPS artifact matches 32 authored
+files and 414 served objects. The R2 update has two changes and 415 approved
+objects totaling 314,152,134 bytes; the canonical package has 107 records and
+307 referenced files. The public gallery has 128 entries and 107 screenshots.
+
+The public map route and ordered vegetation billboard checks pass on all nine
+maps, with two billboard batches per map, source back-to-front ordering, bounded
+selection matching the full-scan comparator, and zero JavaScript/GL errors.
+Actual shader checks compare 1,800 color samples with zero byte differences and
+1,800 geometry vertices with maximum position error 0.0009765625 feet and exact
+UVs. Public Vancouver desktop/390px checks draw all 78 scenery placements and
+retain 43 colliders and 37,649 plants; the ride records 123 wheel-support frames,
+31 body-contact frames, takeoff at step 19, later landing and ATM frame 1, with
+the map unlocked by default. The copied-link Vancouver multiplayer pair draws
+13 remote draws per client with both rider rigs, one voice per client, 7.99138
+feet of remote movement and clean host departure. Menu checks pass all 26 quads,
+six layouts, animated riders, navigation, context recovery, loading photos and
+stereo UI tune 1.
+
+These are bounded browser component and route checks, not PS2 or whole-game
+parity. The fresh public ENV08 driving capture is inspected but remains private;
+the gallery's ordered-billboard hero is a host Chromium capture, and its caption
+preserves that provenance. Per-row billboard fog/depth behavior, native callback
+visibility/frustum/cache order, camera/GS viewport mapping, wind/weather, GS/VU
+hardware timing, distant LOD, point lights and shadows remain open.
+
+The fresh near-material gate also passes all nine maps with visible near pixels,
+vehicle/rider state isolation and zero JavaScript/GL errors. ENV01's 600 original
+Sun/ambient RGBA comparisons have zero differing bytes. These are component
+checks, not complete callback or whole-scene lighting parity. No FPS or
+production performance claim is made.
+
+## Ordered vegetation: host verification before PR15
 
 The isolated map branch connects original distant atlases and source-correlated
 near/far phase, alpha/depth and retained-orientation behavior on all nine maps.
@@ -16,16 +51,17 @@ Host source-color comparisons pass 1,800 RGBA samples with zero byte differences
 map driving and near/distant material gates, Vancouver desktop/390px, FREE05
 multiplayer and shared shader regressions pass. 317 core/25 net/3 relay/13 bridge/
 68 JS tests, formatting, Clippy, setup, 17 release and 6 Worker tests pass. The
-fresh ENV08 hero is inspected and private until this checkpoint passes current
-main CI/deployment. See research/MAP_FIDELITY.md and the host-only dev-log entry.
+ordered-billboard ENV08 hero is a host Chromium capture included in the deployed
+gallery with its caption preserving that provenance. A separate fresh ENV08
+screenshot from the public driving test remains private. See research/MAP_FIDELITY.md
+and the host-only dev-log entry.
 No Mistakes is disabled; normal verification and origin/GitHub CI apply.
 
-The preceding public release is `e1afc2cb984db40a06ebf1138c56c895578c9280`,
+The preceding public release was `e1afc2cb984db40a06ebf1138c56c895578c9280`,
 including the d9596d9 vegetation/transport proof and default-off funny crashes.
-Its responsible release chat reports CI 38320324826/deployment success, 32 authored
-files, 410 served objects, 106 runtime records and 124 gallery entries/104 images.
-The following near-material public proof remains release-scoped to d9596d9.
-## Model selection and original menu presentation: host checkpoint
+It was superseded by the c895ba4 release above.
+
+## Model selection and original menu presentation: host checkpoint, later public
 
 An isolated worktree adds all-26-quad inspection cards, original 32-node male/female
 menu rigs, original breathing/idle MOT sampling in an independent Rust runtime,
@@ -34,11 +70,11 @@ The menu gate passes six viewport sizes, 44px controls, both input navigation pa
 rotation, rapid selection, context restoration and selected-model course loading.
 Frontend and all-21-song regressions pass. The staged private R2 package has 107
 records/307 validated files; source resources and screenshots remain excluded
-from Git/CI. Native idle scheduling/transition rules, lighting/specular fidelity,
-outfits, hair and physical phones remain open. See research/MENU_SELECTION.md.
-Public application and R2 checks are pending the merged main CI release; the user
-requests delivery without waiting for deployments. Preserve other implementation
-lanes and use origin rather than the disabled No Mistakes remote.
+from Git/CI. This menu work was later verified in the PR14/PR15 public builds:
+the public gate passed all 26 quads, six layouts, animated riders, navigation,
+context restoration, loading photos and stereo UI tune 1. Native idle
+scheduling/transition rules, lighting/specular fidelity, outfits, hair and
+physical phones remain open. See research/MENU_SELECTION.md.
 
 
 ## Optional funny crashes: verified host checkpoint
@@ -61,7 +97,7 @@ WASM build and make verify pass. Host screenshots are inspected and recorded in
 the dev log, with publication pending validated main CI and the R2 gallery upload.
 This evidence is an optional presentation component, not original-game parity.
 
-## Latest verified public near-material release
+## Previous verified public near-material release (d9596d9)
 
 Public main `d9596d937907395440b61e78be61b2045d987d4d` (PR #12) passed CI
 `38318057407` and is deployed. Deployment identity matches the validated

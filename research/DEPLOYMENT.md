@@ -736,3 +736,41 @@ and gallery reference remain in private storage for a later validated current-ma
 release. Weather callbacks, distant vegetation/LOD, point lights, shadows and
 native GS/full-frame behavior remain open. This release does not claim complete
 source tree lighting or whole-game/PS2 parity.
+
+## Public ordered vegetation, map and menu release c895ba4
+
+Public main `c895ba435879c70a30aef72225f276694522af5c` (PR #15) passed
+[CI 38326267540](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38326267540)
+and deployed. HTTPS verifies 32 authored files and 414 served objects. The R2
+update has two changes, 415 approved objects and 314,152,134 bytes; the canonical
+package has 107 records and 307 references. The public gallery has 128 entries
+and 107 screenshots.
+
+All nine public maps pass the driving route and ordered billboard gate. The
+renderer uses two shared-atlas billboard batches per map with source back-to-front
+ordering; the bounded projected-depth selection matches the full-scan comparator.
+The map route uses 8–17 total vegetation draws per map and reports no JavaScript
+or GL errors. The public shader probes compare 1,800 color samples with zero byte
+differences and 1,800 geometry vertices with maximum position error 0.0009765625
+feet and zero UV error. The rerun near-material gate passes all nine maps with
+visible near pixels, vehicle/rider state isolation and no JavaScript/GL errors;
+ENV01's 600 original Sun/ambient RGBA comparisons have zero differing bytes.
+These source-correlated comparisons do not replay the full native renderer.
+
+Public Vancouver desktop/390px checks draw all 78 scenery placements with 43
+colliders and 37,649 plants; the ride records 123 wheel-support frames, 31
+body-contact frames, takeoff at step 19, later landing and ATM frame 1, with the
+map unlocked by default. The copied-link Vancouver multiplayer pair draws both
+rider rigs and 13 remote draws per client, plays one voice per client, records
+7.99138 feet of remote movement and clears state after host departure. Public menu checks
+pass all 26 quad previews across six layouts, animated riders, navigation,
+context restoration, original loading photos and stereo UI tune 1.
+
+The already-published ordered-billboard gallery hero is a host Chromium capture;
+its caption retains that provenance. A separate fresh ENV08 screenshot from the
+public map test was inspected and remains in private storage, outside the gallery.
+These results establish bounded components and routes, not PS2 hardware or
+whole-game parity. Original callback visibility/frustum/cache ordering, source
+camera/GS viewport mapping, per-row billboard fog/depth packing, wind/weather,
+GS/VU timing, distant LOD, point lights, shadows and complete source tree lighting
+remain open. No FPS or production performance claim is made.
