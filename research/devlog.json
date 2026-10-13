@@ -1,6 +1,6 @@
 {
-  "status": "The public build verifies selected motorcycle touch and rider-contact routes. The Freestyle minimap is host-verified across all nine environments using recovered terrain and static scenery; dynamic map actors, physical-device behavior, and GPU timing remain unverified. The authored ATV2 browser port remains incomplete, with whole-game and PS2 parity outstanding.",
-  "working_on": "Continue recovering original ATV2 behavior and verify dynamic map-actor cartography, physical-phone behavior, GPU timing, and broader fidelity.",
+  "status": "The host-verified Freestyle minimap combines GPS, speed, and preload with persisted shape and corner settings plus north-up/heading-up toggle. The ATV2 browser port remains incomplete; physical-device behavior, GPU timing, and native parity remain unverified.",
+  "working_on": "Continue original ATV2 fidelity and physical-device validation; complete dynamic map actor/GPU checks and remaining motorcycle controller, pose, and menu integration.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -2342,6 +2342,27 @@
       "caption": "Host Chromium screenshot at 390\u00d7844, DPR 3: portrait ride view with minimap and HUD; not a public deployment or physical-phone capture."
     },
     {
+      "id": "combined-gps-and-speed-minimap-layouts-6ed6b5c9",
+      "timestamp": "2026-10-13T14:33:05.732301+00:00",
+      "recorded_at": "2026-10-13T14:57:47.989682+00:00",
+      "kind": "verification",
+      "title": "Combined GPS and speed minimap layouts",
+      "summary": "Freestyle combines map, heading, speed, and preload in one configurable GPS widget, with shape, corner, and tap-to-toggle north-up/heading-up options.",
+      "details": [
+        "Pause \u2192 HUD settings \u2192 Minimap configuration contains On/Off, 96\u2013224px size, circular/square shape, top-right/bottom-left corner, and north-up/heading-up orientation. These settings persist across reloads; tapping or clicking the map toggles its orientation.",
+        "With the map visible, the combined widget replaces native standalone speed/preload pixels. The final footer has no backdrop: MPH sits near the bottom edge, with the small 200 ft map scale above. Integrated preload follows actual Rust simulation state.",
+        "With the map Off or in Race fallback, original speed presentation returns and the stunt HUD remains available. Switching orientation changes actual terrain pixels without raster rebaking.",
+        "The native map button uses toolbar touch handling. Dedicated checks passed for a second-finger orientation toggle while the first finger keeps driving, drag-away cancellation, and keyboard input without throttle leakage.",
+        "Final footer Chromium checks passed at 1280\u00d7720, 390\u00d7844, 320\u00d7568, and 844\u00d7390. The final footer also passed 390\u00d7844 WebKit, actual touch wreck recovery, and frontend/race regressions. The footer geometry unit test verifies 96/160/224px circle and square layouts. Final WebKit button-root and mobile UI gates also passed: native mobile UI layouts at 390/320/844 viewports, 44px Pause/Camera controls, focus and touch teardown, and the combined instrument in 390px portrait after the button-root orientation change.",
+        "The latest make check passed 348 core and 76 JavaScript tests plus network/relay suites, formatting, and strict Clippy. Prior make verify, release, and Worker gates remain recorded from their earlier checkpoint.",
+        "Heading-up lifecycle/performance verification passed on one host Mac in Chromium Metal with synthetic focus. At 390\u00d7844 mobile viewport, mean map-update CPU was 0.077/0.080/0.125ms for 96/160/224px requests, with 44 updates per 2.5 seconds. Scene draws remained 471 with the map On and Off; maximum authored pixel storage was 4,436,368 bytes and Off used zero. These are host/browser measurements, not physical-phone results or isolated GPU timing.",
+        "The widget adds no 3D scene draws or source downloads; cached 1024px, 20Hz, and DPR 1.5 caps remain."
+      ],
+      "limitation": "Host-only verification; the retained hero is a 390\u00d7844 DPR3 Chromium capture of the final footer before orientation-toggle verification, not a public or physical-phone capture. Timing is from one host Mac/browser viewport and does not establish phone performance or isolated GPU timing. Physical phones, thermals, and full native parity remain unverified.",
+      "image": "/devlog-images/combined-gps-and-speed-minimap-layouts-6ed6b5c9.png",
+      "caption": "Host Chromium portrait capture at 390\u00d7844, DPR 3: circular GPS widget with the 200 ft map scale above the unbacked MPH footer. This image predates orientation-toggle verification; it is not a public or physical-phone capture."
+    },
+    {
       "id": "motorcycle-banking-and-standing-menu-poses-now-pass-ho-d50992f3",
       "timestamp": "2026-10-13T14:43:07.225818+00:00",
       "recorded_at": "2026-10-13T14:47:11.330417+00:00",
@@ -2361,7 +2382,7 @@
       "caption": "Host capture sheet: left and right touch-bank views above, front-facing standing RM125 Race and Sano 50 Mini menu poses below. Rendered direction and idle motion were checked on the host; this is not a public release."
     }
   ],
-  "updated_at": "2026-10-13T14:47:11.330417+00:00",
+  "updated_at": "2026-10-13T15:00:55.649475+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {

@@ -1322,7 +1322,7 @@ function render(time) {
   frame = requestAnimationFrame(render);
   touchControls.refresh();
   minimap.draw(time, simFrame, simReady && !raceSettings && !lost && focused && !document.hidden && !menuOpen);
-  hud?.draw(simFrame?.hud, simReady && !lost && !document.hidden && !menuOpen);
+  hud?.draw(simFrame?.hud, simReady && !lost && !document.hidden && !menuOpen, { speedVisible: !minimap.visible });
   raceOverlay.draw(simFrame?.race,simFrame,simReady && !lost && !document.hidden && !menuOpen);
   if (lost || !gl || !terrain || document.hidden || menuOpen) { lastTime = time; stats.sample(time, 0, false); return; }
   const dt = Math.min(.05, Math.max(0, (time - (lastTime || time)) / 1000)); lastTime = time;

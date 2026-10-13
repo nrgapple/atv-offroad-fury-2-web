@@ -88,6 +88,12 @@ pub struct Request {
     pub minimap_enabled: bool,
     #[serde(default = "default_minimap_size")]
     pub minimap_size: f32,
+    #[serde(default = "default_minimap_shape")]
+    pub minimap_shape: String,
+    #[serde(default = "default_minimap_corner")]
+    pub minimap_corner: String,
+    #[serde(default = "default_minimap_orientation")]
+    pub minimap_orientation: String,
     #[serde(default = "default_steering_sensitivity")]
     pub mobile_steering_sensitivity: f32,
 }
@@ -96,6 +102,15 @@ fn default_quad() -> u16 {
 }
 fn default_minimap_size() -> f32 {
     160.
+}
+fn default_minimap_shape() -> String {
+    "circle".into()
+}
+fn default_minimap_orientation() -> String {
+    "north-up".into()
+}
+fn default_minimap_corner() -> String {
+    "top-right".into()
 }
 fn default_steering_sensitivity() -> f32 {
     85.
@@ -264,6 +279,12 @@ pub fn layout(request: Request) -> Result<Frame> {
         || !(240.0..=16384.0).contains(&request.height)
         || !request.mobile_steering_sensitivity.is_finite()
         || !(50.0..=150.0).contains(&request.mobile_steering_sensitivity)
+        || !matches!(request.minimap_shape.as_str(), "circle" | "square")
+        || !matches!(request.minimap_corner.as_str(), "top-right" | "bottom-left")
+        || !matches!(
+            request.minimap_orientation.as_str(),
+            "north-up" | "heading-up"
+        )
         || !request.minimap_size.is_finite()
         || !(96.0..=224.0).contains(&request.minimap_size)
         || request.room_code.len() > 64
@@ -298,7 +319,7 @@ pub fn layout(request: Request) -> Result<Frame> {
     let portrait = h > w;
     let pause = matches!(
         request.page.as_str(),
-        "pause" | "hud-settings" | "controls" | "bindings" | "music"
+        "pause" | "hud-settings" | "minimap-config" | "controls" | "bindings" | "music"
     );
     let mut f = Frame {
         width: w,
@@ -362,6 +383,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         "race" => "Single Race",
         "pause" => "Pause",
         "hud-settings" => "HUD Settings",
+        "minimap-config" => "Minimap Configuration",
         "controls" => "Controls",
         "bindings" => {
             if request.binding_device == "controller" {
@@ -900,22 +922,81 @@ pub fn layout(request: Request) -> Result<Frame> {
             }
         }
         "hud-settings" => {
-            let selected = request.selection % 3;
             f.button(
-                if request.minimap_enabled {
-                    "Freestyle minimap: On"
-                } else {
-                    "Freestyle minimap: Off"
-                },
-                "minimap-toggle",
+                "Minimap configuration",
+                "minimap-config",
                 [24., 98., w - 48., 56.],
-                selected == 0,
+                request.selection.is_multiple_of(2),
             );
-            f.choices.push("minimap-toggle".into());
+            f.choices.push("minimap-config".into());
+            f.button(
+                "Back",
+                "back",
+                [24., h - 68., 132., 56.],
+                request.selection % 2 == 1,
+            );
+            f.choices.push("back".into());
+        }
+        "minimap-config" => {
+            let selected = request.selection % 6;
+            let columns = if h < 520. { 2 } else { 1 };
+            let column_width = (w - 48.) / columns as f32;
+            let row = 52_f32.max(44. / scale);
+            for (i, (label, action)) in [
+                (
+                    if request.minimap_enabled {
+                        "Freestyle minimap: On"
+                    } else {
+                        "Freestyle minimap: Off"
+                    },
+                    "minimap-toggle",
+                ),
+                (
+                    if request.minimap_shape == "circle" {
+                        "Shape: Circular"
+                    } else {
+                        "Shape: Square"
+                    },
+                    "minimap-shape",
+                ),
+                (
+                    if request.minimap_corner == "top-right" {
+                        "Position: Top right"
+                    } else {
+                        "Position: Bottom left"
+                    },
+                    "minimap-corner",
+                ),
+                (
+                    if request.minimap_orientation == "north-up" {
+                        "Orientation: North up"
+                    } else {
+                        "Orientation: Heading up"
+                    },
+                    "minimap-orientation",
+                ),
+            ]
+            .iter()
+            .enumerate()
+            {
+                f.button(
+                    label,
+                    action,
+                    [
+                        24. + (i % columns) as f32 * column_width,
+                        98. + (i / columns) as f32 * (row + 4.),
+                        column_width,
+                        row,
+                    ],
+                    selected == i,
+                );
+                f.choices.push((*action).into());
+            }
+            let y = 98. + 4_usize.div_ceil(columns) as f32 * (row + 4.) + 10.;
             f.text(
                 format!("Minimap size: {} px", request.minimap_size as u32),
-                [30., 174.],
-                0.9,
+                [30., y],
+                0.85,
                 FONT,
                 "255,226,107",
                 w - 60.,
@@ -923,31 +1004,15 @@ pub fn layout(request: Request) -> Result<Frame> {
             f.sliders.push(Slider {
                 action: "minimap-size",
                 label: "Minimap size",
-                rect: [30., 202., w - 60., 48_f32.max(44. / scale)],
+                rect: [30., y + 26., w - 60., row],
                 value: request.minimap_size,
                 min: 96.,
                 max: 224.,
                 step: 8.,
-                selected: selected == 1,
+                selected: selected == 4,
             });
             f.choices.push("minimap-size".into());
-            f.text(
-                "North up / follows your ride",
-                [30., 274.],
-                0.75,
-                FONT,
-                "222,222,222",
-                w - 60.,
-            );
-            f.text(
-                "Fits your screen. Size keeps the same map range.",
-                [30., 306.],
-                0.7,
-                FONT,
-                "222,222,222",
-                w - 60.,
-            );
-            f.button("Back", "back", [24., h - 68., 132., 56.], selected == 2);
+            f.button("Back", "back", [24., h - 68., 132., 56.], selected == 5);
             f.choices.push("back".into());
         }
         "controls" => {
@@ -1234,6 +1299,9 @@ mod tests {
             funny_crashes: false,
             minimap_enabled: true,
             minimap_size: 160.,
+            minimap_shape: "circle".into(),
+            minimap_corner: "top-right".into(),
+            minimap_orientation: "north-up".into(),
             mobile_steering_sensitivity: 85.,
             race_laps: 3,
             race_cpu: 3,
@@ -1312,6 +1380,7 @@ mod tests {
                 "pause",
                 "controls",
                 "hud-settings",
+                "minimap-config",
                 "bindings",
                 "music",
             ] {
@@ -1365,6 +1434,10 @@ mod tests {
     }
     #[test]
     fn minimap_settings_fit_and_validate_sizes() {
+        assert_eq!(
+            layout(request("hud-settings", 390., 844.)).unwrap().choices,
+            ["minimap-config", "back"]
+        );
         for (w, h) in [
             (320., 568.),
             (390., 844.),
@@ -1372,8 +1445,18 @@ mod tests {
             (667., 375.),
             (1280., 720.),
         ] {
-            let frame = layout(request("hud-settings", w, h)).unwrap();
-            assert_eq!(frame.choices, ["minimap-toggle", "minimap-size", "back"]);
+            let frame = layout(request("minimap-config", w, h)).unwrap();
+            assert_eq!(
+                frame.choices,
+                [
+                    "minimap-toggle",
+                    "minimap-shape",
+                    "minimap-corner",
+                    "minimap-orientation",
+                    "minimap-size",
+                    "back"
+                ]
+            );
             let slider = &frame.sliders[0];
             let [x, y, width, height] = slider.rect;
             assert!(x >= 0. && y >= 0. && x + width <= frame.width && y + height <= frame.height);
@@ -1394,6 +1477,12 @@ mod tests {
             r.minimap_size = size;
             assert!(layout(r).is_err());
         }
+        let mut shape = request("minimap-config", 390., 844.);
+        shape.minimap_shape = "triangle".into();
+        assert!(layout(shape).is_err());
+        let mut corner = request("minimap-config", 390., 844.);
+        corner.minimap_corner = "center".into();
+        assert!(layout(corner).is_err());
     }
     #[test]
     fn invalid_menu_requests_are_rejected() {

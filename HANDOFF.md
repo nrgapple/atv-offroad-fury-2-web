@@ -1,3 +1,23 @@
+## Combined minimap/speed and corner configuration — 2026-10-13
+
+Branch `feat/minimap-instrument` revises the GPS to default circular/top-right,
+with square and bottom-left options under HUD settings → Minimap configuration.
+It renders Rust speed/preload inside the map; the original speed block is
+suppressed only while the GPS is visible. Off/baking/Race retain original speed,
+and the original stunt HUD stays active. Shape/size/corner reuse the cached
+aerial raster, with no additional scene draws. Host tests pass four viewports,
+both shapes/corners, toolbar clearance, 44px controls, persistence, no duplicate
+speed pixels, actual preload and Off fallback. Timing/lifecycle/drive gates pass;
+combined map updates cost 0.068–0.142ms mean CPU on one Mac, not phone hardware.
+The final footer has no backdrop: outlined MPH sits near the bottom edge and
+the small 200 ft map-scale readout is directly above. Tap/click switches persisted
+north-up/heading-up without rebaking; held driving plus a second-finger toggle,
+drag-away cancellation and keyboard activation pass. The final heading-up phone
+viewport gate measures 0.077–0.125ms mean CPU/update, 471 unchanged scene draws
+and zero retained map pixels/updates when Off.
+See [minimap methods and limits](research/MINIMAP.md). The selected screenshot
+is a host capture; CI/public delivery are verified separately.
+
 ## Motorcycle inward bank and standing menu — host correction (2026-10-13)
 
 The user found outward lean/static garage poses in the previous correction.
