@@ -2372,9 +2372,24 @@
       "limitation": "Host-only checkpoint pending current-main CI, deployment and public verification. Local browser storage is required for selections to persist across reloads; physical-device behavior is unverified.",
       "image": "/devlog-images/garage-and-freestyle-selections-persist-8e7c9757.png",
       "caption": "Portrait host-browser menu capture from the selection-restoration check; course, Garage and Race persistence passed in the same actual-menu run."
+    },
+    {
+      "id": "atv-fury-2-home-screen-identity-be6eaa11",
+      "timestamp": "2026-10-13T15:14:50.533678+00:00",
+      "recorded_at": "2026-10-13T15:21:18.520314+00:00",
+      "kind": "build",
+      "title": "ATV Fury 2 home-screen identity",
+      "summary": "The landing and game pages now have a shared ATV Fury 2 app identity with authored home-screen icon assets and a standalone web-app manifest.",
+      "details": [
+        "Both pages advertise the short app name ATV Fury 2, the authored vector browser icon, a 180px Apple touch icon and a 512px app icon; the manifest opens the fullscreen game route.",
+        "The host app-identity browser gate passes both page links, manifest and icon serving, MIME types and expected image dimensions."
+      ],
+      "limitation": "Host-only checkpoint pending current-main CI, deployment and public verification. Physical iOS Home Screen installation remains unverified; an existing saved shortcut may need to be removed and added again to refresh its icon.",
+      "image": "/devlog-images/atv-fury-2-home-screen-identity-be6eaa11.png",
+      "caption": "Inspected 512px preview of the authored ATV Fury 2 app icon; host route and asset checks pass."
     }
   ],
-  "updated_at": "2026-10-13T15:20:02.129045+00:00",
+  "updated_at": "2026-10-13T15:21:18.520314+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {

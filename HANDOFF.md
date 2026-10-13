@@ -1,3 +1,16 @@
+## ATV Fury 2 home-screen identity — host checkpoint (2026-10-13)
+
+The landing page and game page now share the authored ATV Fury 2 identity: a
+custom vector browser icon, 180px Apple touch icon, 512px app icon, and standalone
+web-app manifest. The app label is **ATV Fury 2**, with `/play.html` as its start
+route. The SVG is authored source; its raster variants are text-encoded authored
+art decoded only into ignored build output. `tools/test_app_identity.mjs`
+confirms both pages' title/icon/manifest links and successful icon/manifest
+serving with expected MIME types and dimensions. These assets contain no game
+disc material. This is host verification pending current-main CI/deployment and
+public verification; physical iOS Home Screen behavior is still untested, and
+an existing saved shortcut can require removal/re-addition to refresh its icon.
+
 ## Garage and Freestyle selections persist — host checkpoint (2026-10-13)
 
 Garage vehicle and rider choices are saved locally and restored after refresh.
