@@ -94,4 +94,3 @@ The public portrait → landscape → portrait viewport-rotation check passed wi
 code changed for this test-only adjustment. Eight render-support tests passed
 again. Physical-phone behavior, original camera parity, isolated-prop
 anticipation and object-aware follow-camera clearance remain unverified or open.
-
