@@ -1834,6 +1834,25 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             serde_json::to_vec(&serde_json::json!({"bodies":count})).map_err(|e| e.to_string())
         });
     }
+    if op == 120 {
+        let request: serde_json::Value =
+            serde_json::from_slice(input).map_err(|e| e.to_string())?;
+        let common = request["common"]
+            .as_str()
+            .ok_or("missing Weather common TOY")?;
+        let mode = request["mode"].as_str().unwrap_or("");
+        let random = request["random"]
+            .as_u64()
+            .filter(|v| *v <= 0x7fff_ffff)
+            .ok_or("invalid Weather RNG sample")? as u32;
+        let players = request["players"]
+            .as_u64()
+            .filter(|v| (1..=4).contains(v))
+            .ok_or("invalid Weather player count")? as usize;
+        let definition = atv_core::weather::Definition::parse(common.as_bytes(), mode.as_bytes())?;
+        return serde_json::to_vec(&atv_core::weather::select(definition, random, players)?)
+            .map_err(|e| e.to_string());
+    }
     if op == 66 {
         let resource = Resource::parse(input)?;
         let wtt = resource.extract(index)?;

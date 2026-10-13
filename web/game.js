@@ -226,6 +226,11 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
   const riderMaterials = await archiveAt('/RIDER/RIDER_MT.RES');
   riderTextures = await baseTextures(riderMesh, riderMaterials.bytes, riderMaterials.entries);
   }
+  //00208cc0 reads the actual common/mode TOYs' [Weather], not legacy
+  //SCN[Rain]. Selection belongs to this scene load and survives ATV resets/GL.
+  const weather = await command(120, { common: decoder.decode(toy), mode: mode ?? '', random: Math.floor(Math.random() * 0x80000000), players: Math.max(1, Math.min(4, multiplayer?.state.lobby?.players?.length ?? 1)) });
+  if (weather.removed_model) sceneMetadata.models = sceneMetadata.models.filter(model => model.name.toLowerCase() !== weather.removed_model.toLowerCase());
+  diagnostics.weather = weather;
   status('Decoding original terrain textures…');
   const bytes = await codec(3, resource, index), layout = await json(30, bytes), images = [];
   for (const record of layout.records) {
@@ -292,7 +297,7 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
   const wheelEffects = model.motorcycle ? await loadMotorcycleEffects({resource:quadArchive,entries:quadEntries,config:bikeSource.particleConfig,codec,json}) : await loadWheelEffects({ resource, entries, quadArchive, quadEntries, codec, json, scene: decoder.decode(await codec(3, resource, sceneIndex)), mode });
   const train = environment === 'env08' ? await loadTrain({ resource, entries, modeIndex, codec, json, baseTextures, isCurrent: () => token === generation }) : null;
   if (train && mode) await audio.loadSpatial({ toy: new TextEncoder().encode(mode), isCurrent: () => token === generation });
-  return { motorcycle: model.motorcycle ? {archive:quadArchive,id:model.quad_id} : null, bytes, environment, course, cpuNames, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
+  return { weather, motorcycle: model.motorcycle ? {archive:quadArchive,id:model.quad_id} : null, bytes, environment, course, cpuNames, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
 }
 async function baseTextures(mesh, materialArchive, materialEntries, cache = new Map()) {
   const findMaterial = name => materialEntries.findIndex(entry => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase());
@@ -1138,7 +1143,7 @@ function buildMesh() {
       const groups = geometry.get(model.name);
       if (!groups?.length) continue;
       sceneInstances++;
-      for (const chunk of groups) { const matrix = new Float32Array(model.world_matrix); sceneDraws.push({ chunk, matrix, bounds: worldBounds(chunk.bounds, matrix), unlit: chunk.prelit || !model.use_lighting }); sceneTriangles += chunk.count / 3; }
+      for (const chunk of groups) { const matrix = new Float32Array(model.world_matrix); sceneDraws.push({ name: model.name, chunk, matrix, bounds: worldBounds(chunk.bounds, matrix), unlit: chunk.prelit || !model.use_lighting }); sceneTriangles += chunk.count / 3; }
     }
   }
   gl.bindVertexArray(null);
@@ -1469,30 +1474,43 @@ function render(time) {
   }
   gl.uniform1i(uniforms.useTerrainTexture, false); gl.uniform1i(uniforms.unlit, false); gl.activeTexture(gl.TEXTURE0);
   gl.uniform3f(uniforms.surfaceColor, .68, .70, .73);
-  for (const { chunk, matrix, unlit, bounds } of sceneDraws) {
-    if (outsideView(bounds, planes)) continue;
+  let previousSceneryChunk=null,previousSceneryUnlit=null,materialUpdates=0,rainDraws=0,rainVisibleInstances=0,rainMaterialUpdates=0;
+  const rainName=terrain.rainModelName;
+  for (const { name, chunk, matrix, unlit, bounds } of sceneDraws) {
+    if(outsideView(bounds,planes))continue;
+    const rain=name.toLowerCase()===rainName;
+    if(rain){rainDraws++;rainVisibleInstances++;}
     sceneryVisibleGroups++; sceneryDraws++; sceneryTriangles += chunk.count / 3;
-    gl.uniformMatrix4fv(uniforms.model, false, matrix); gl.uniform1i(uniforms.unlit, unlit);
-    gl.uniform1f(uniforms.alphaCutoff, chunk.alphaCutoff);
-    gl.uniform1i(uniforms.fogEnabled,Boolean(fog)&&chunk.fog);
-    gl.uniform1i(uniforms.useVertexColor, chunk.prelit); gl.uniform1i(uniforms.sceneryBlend, chunk.blend);
-    gl.uniform1i(uniforms.sceneryReflectionPlane, chunk.reflection);
-    if (chunk.reflectionNodes) gl.uniformMatrix4fv(uniforms.quadBones, false, chunk.reflectionNodes);
-    gl.uniform2fv(uniforms.sceneryUvOffset, diagnostics.sceneryUv?.[chunk.material] ?? [0,0]);
-    gl.depthMask(chunk.depthWrite);
-    if (chunk.blend) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); } else gl.disable(gl.BLEND);
-    const sceneTexture = chunk.animationFrames?.[diagnostics.sceneryTextureFrames?.[chunk.material] ?? 0] ?? chunk.texture;
-    gl.uniform1i(uniforms.useTexture, Boolean(sceneTexture)); gl.bindTexture(gl.TEXTURE_2D, sceneTexture ?? fallbackTexture);
-    gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
+    gl.uniformMatrix4fv(uniforms.model, false, matrix);
+    //Original rain uses FB_ONLY. Preserve its per-placement accepted/failed
+    //pass order; cache identical material state rather than reorder its pixels.
+    if(previousSceneryChunk!==chunk||previousSceneryUnlit!==unlit){
+      materialUpdates++;if(rain)rainMaterialUpdates++;
+      previousSceneryChunk=chunk;previousSceneryUnlit=unlit;
+      gl.uniform1i(uniforms.unlit, unlit);
+      gl.uniform1f(uniforms.alphaCutoff, chunk.alphaCutoff);
+      gl.uniform1i(uniforms.fogEnabled,Boolean(fog)&&chunk.fog);
+      gl.uniform1i(uniforms.useVertexColor, chunk.prelit); gl.uniform1i(uniforms.sceneryBlend, chunk.blend);
+      gl.uniform1i(uniforms.sceneryReflectionPlane, chunk.reflection);
+      if (chunk.reflectionNodes) gl.uniformMatrix4fv(uniforms.quadBones, false, chunk.reflectionNodes);
+      gl.uniform2fv(uniforms.sceneryUvOffset, diagnostics.sceneryUv?.[chunk.material] ?? [0,0]);
+      if (chunk.blend) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); } else gl.disable(gl.BLEND);
+      const sceneTexture = chunk.animationFrames?.[diagnostics.sceneryTextureFrames?.[chunk.material] ?? 0] ?? chunk.texture;
+      gl.uniform1i(uniforms.useTexture, Boolean(sceneTexture)); gl.bindTexture(gl.TEXTURE_2D, sceneTexture ?? fallbackTexture);
+      gl.bindVertexArray(chunk.vao);
+    }
+    gl.depthMask(chunk.depthWrite);gl.drawElements(gl.TRIANGLES,chunk.count,gl.UNSIGNED_SHORT,0);
     // GS FB_ONLY keeps failed fragments in the framebuffer without writing Z.
     // Split the mutually exclusive predicates so each source pixel blends once.
     if (chunk.alphaFailure === 1 && chunk.alphaCutoff > 0) {
       gl.uniform1i(uniforms.alphaFailPass, true); gl.depthMask(false);
-      sceneryDraws++; sceneryTriangles += chunk.count / 3;
+      sceneryDraws++; sceneryTriangles += chunk.count / 3;if(rain)rainDraws++;
       gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
       gl.uniform1i(uniforms.alphaFailPass, false);
     }
   }
+  diagnostics.sceneryMaterialUpdates=materialUpdates;
+  diagnostics.rainRender={sourceInstances:terrain.rainSourceInstances,visibleInstances:rainVisibleInstances,draws:rainDraws,materialUpdates:rainMaterialUpdates,avoidedMaterialUpdates:rainVisibleInstances-rainMaterialUpdates,scope:'original geometry/RGBA/UV/FB_ONLY pass order; cached material state, no added storm'};
   gl.uniform1f(uniforms.alphaCutoff, 0); gl.uniform1i(uniforms.useVertexColor, false); gl.uniform1i(uniforms.sceneryBlend, false);
   gl.uniform1i(uniforms.sceneryReflectionPlane, 0);
   gl.uniform2f(uniforms.sceneryUvOffset, 0, 0); gl.depthMask(true); gl.disable(gl.BLEND);
@@ -1584,7 +1602,9 @@ async function loadGame(file = null, environment = "env01", racing = null) {
     const heights = new Float32Array(width * depth), view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
     let min = Infinity, max = -Infinity;
     for (let i = 0; i < heights.length; i++) { const value = view.getFloat32(i * 4, true); if (!Number.isFinite(value)) throw new Error('Nonfinite terrain height.'); heights[i] = value; min = Math.min(min, value); max = Math.max(max, value); }
-    terrain = { width, depth, spacing: info.spacing, heights, min, max, sizeX: (width - 1) * info.spacing, sizeZ: (depth - 1) * info.spacing, textures: source.terrainTextures, world: source.world, sky: source.sky, ecosystem: source.ecosystem, trainSource: source.train, wheelEffectsSource: source.wheelEffects };
+    terrain = { weather: source.weather, width, depth, spacing: info.spacing, heights, min, max, sizeX: (width - 1) * info.spacing, sizeZ: (depth - 1) * info.spacing, textures: source.terrainTextures, world: source.world, sky: source.sky, ecosystem: source.ecosystem, trainSource: source.train, wheelEffectsSource: source.wheelEffects };
+    terrain.rainModelName=source.weather?.definition?.kind==='rain'?source.weather.definition.model.replace(/\.slt$/i,'').toLowerCase():null;
+    terrain.rainSourceInstances=source.world?.metadata.models.filter(model=>model.name.toLowerCase()===terrain.rainModelName).length ?? 0;
     minimap.setTerrain(racing ? null : terrain);
     diagnostics.terrainTextures = 0;
     uploadTerrainTextures();
