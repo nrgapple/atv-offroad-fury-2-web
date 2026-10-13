@@ -176,6 +176,20 @@ fn submit(config: &Config, args: &[String]) -> Result<()> {
     if args.iter().any(|a| a == "--reviewed-images") {
         helper.push("--reviewed-images".into());
     }
+    // A submitted package can extend the runtime allowlist in its authored commit.
+    // Read that validator from Git, never mutable worktree files.
+    if option(args, "--content").is_some() {
+        let control = staging.join("control");
+        fs::create_dir_all(&control)?;
+        fs::copy(&config.controller, control.join("release_resources.py"))?;
+        let validator = output(
+            &root,
+            "git",
+            &["show", &format!("{commit}:tools/package_content.py")],
+        )?;
+        fs::write(control.join("package_content.py"), validator)?;
+        helper[0] = text(&control.join("release_resources.py")).to_owned();
+    }
     let references: Vec<&str> = helper.iter().map(String::as_str).collect();
     if let Err(error) = run(&root, "python3", &references, &log, config) {
         return Err(format!("{error}: {}", staging.join("submit.log").display()).into());
@@ -301,7 +315,7 @@ fn process(config: &Config, job: &mut Job) -> Result<()> {
         &checkout,
         "python3",
         &[
-            text(&config.controller),
+            "tools/release_resources.py",
             "prepare",
             "--job",
             text(&directory),
@@ -354,7 +368,6 @@ fn process(config: &Config, job: &mut Job) -> Result<()> {
             "tools/package_release.py",
             "--commit",
             &commit,
-            "--release-scoped",
             "--release-scoped",
         ],
         &log,
@@ -471,13 +484,21 @@ fn process(config: &Config, job: &mut Job) -> Result<()> {
         &checkout,
         "python3",
         &[
-            text(&config.controller),
+            "tools/release_resources.py",
             "promote",
             "--queue",
             text(&config.queue),
         ],
         &log,
         config,
+    )?;
+    fs::copy(
+        checkout.join("tools/package_content.py"),
+        config
+            .controller
+            .parent()
+            .unwrap()
+            .join("package_content.py"),
     )?;
     job.status = "complete".into();
     job.error = None;
@@ -628,15 +649,19 @@ fn install(args: &[String]) -> Result<()> {
     };
     let log = File::create(queue.join("install.log"))?;
     if !queue.join("published").exists() {
+        let mut initialize = vec![
+            text(&config.controller).to_owned(),
+            "initialize".into(),
+            "--queue".into(),
+            text(&queue).into(),
+        ];
+        if let Some(content) = option(args, "--content") {
+            initialize.extend(["--content".into(), content]);
+        }
         run(
             &owner,
             "python3",
-            &[
-                text(&config.controller),
-                "initialize",
-                "--queue",
-                text(&queue),
-            ],
+            &initialize.iter().map(String::as_str).collect::<Vec<_>>(),
             &log,
             &config,
         )?;

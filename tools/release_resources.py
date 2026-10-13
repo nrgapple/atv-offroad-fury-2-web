@@ -188,11 +188,11 @@ def prepare(job, queue):
     print('Merged dependencies validated for integrated checkpoint')
 
 
-def promote(queue):
+def promote(queue, content=None):
     versions = queue / 'resource-versions'
     versions.mkdir(exist_ok=True)
     version = versions / str(time.time_ns())
-    copy_content(Path('private/reports/hosted-content'), version / 'content')
+    copy_content(content or Path('private/reports/hosted-content'), version / 'content')
     (version / 'images').mkdir()
     log = load('research/devlog.json')
     for entry in log['entries']:
@@ -209,10 +209,18 @@ def promote(queue):
     os.replace(pointer, queue / 'published')
 
 
-def initialize(queue):
+def initialize(queue, content=None):
     # Initial historical gallery must match the existing validated upload receipt.
     report = load('private/reports/cloudflare-upload.json')
     known = {record['key']: record for record in report['objects']}
+    for path in validated_content(content or Path('private/reports/hosted-content')):
+        key = 'content/' + path.name
+        if path.name == 'manifest.json' and key not in known:
+            key = f'releases/{report["commit"]}/manifest.json'
+        record = known.get(key, {})
+        data = path.read_bytes()
+        if record.get('sha256') != hashlib.sha256(data).hexdigest() or record.get('bytes') != len(data):
+            raise ValueError(f'initial content requires prior verified upload receipt: {path.name}')
     for entry in load('research/devlog.json')['entries']:
         if entry.get('image'):
             name = image_name(entry['image'])
@@ -220,7 +228,7 @@ def initialize(queue):
             record = known.get(entry['image'].lstrip('/'), {})
             if record.get('sha256') != hashlib.sha256(data).hexdigest() or record.get('bytes') != len(data):
                 raise ValueError(f'initial gallery requires prior approved upload receipt: {name}')
-    promote(queue)
+    promote(queue, content)
 
 
 def main():
@@ -240,7 +248,7 @@ def main():
     elif args.action == 'promote':
         promote(args.queue)
     else:
-        initialize(args.queue)
+        initialize(args.queue, args.content)
 
 
 if __name__ == '__main__':

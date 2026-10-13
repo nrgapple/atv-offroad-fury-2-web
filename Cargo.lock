@@ -35,14 +35,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "atv-release"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "atv-relay"
 version = "0.1.0"
 dependencies = [
@@ -51,6 +43,14 @@ dependencies = [
  "serde_json",
  "web-sys",
  "worker",
+]
+
+[[package]]
+name = "atv-release"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

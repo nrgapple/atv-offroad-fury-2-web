@@ -140,6 +140,8 @@ class RustQueueIntegration(unittest.TestCase):
             (owner / 'research').mkdir(); (owner / 'tools').mkdir()
             (owner / '.gitignore').write_text('/private/\n/work/\n/target/\n')
             (owner / 'research/devlog.json').write_text(json.dumps({'entries': [], 'updated_at': '0'}))
+            for helper in ('release_resources.py', 'package_content.py'):
+                (owner / 'tools' / helper).write_text((Path(__file__).parent / helper).read_text())
             (owner / 'tools/verify_repository.py').write_text("print('fixture hygiene passes')\n")
             (owner / 'Makefile').write_text('check:\n\tfalse\n')
             git(owner, 'add', '.'); git(owner, 'commit', '-m', 'baseline')

@@ -20,7 +20,7 @@ make release RELEASE_ARGS='--content /absolute/private/hosted-content --images /
 
 The content directory must be a complete package accepted by
 `tools/package_content.py`, not a disc/extraction directory. Omit `--content` to
-reuse the last publicly verified dependency package. Omit `--images` to use this
+reuse the last publicly verified dependency package. An explicit content package uses the allowlist validator from the submitted Git commit, so a checkpoint can introduce newly authorized runtime resource paths; the shared validator is refreshed after successful publication. Omit `--images` to use this
 worktree's ignored `private/reports/devlog-images/`; previously approved images
 are available from shared queue storage. `--reviewed-images` records the
 submitting agent's assertion that it inspected all new image pixels. It does not
@@ -96,6 +96,7 @@ cargo build --locked --release -p atv-release
 ./target/release/atv-release install \
   --storage '/absolute/private/queue-storage' \
   --target '/absolute/local/build-cache' \
+  --content '/absolute/private/verified-runtime-package' \
   --playwright '/absolute/node_modules/playwright'
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.champtoday.atv-release.plist
 ```
@@ -106,7 +107,7 @@ plist. Every linked worktree discovers the same queue via the common Git directo
 The service starts at login and restarts after crashes. Queue storage must be
 private local storage outside tracked source; an SSD is suitable. Build cache can
 be on a separate local disk. The initialization gallery must match prior approved
-upload hashes. Do not initialize from unverified/WIP dependency content.
+upload hashes. Use `--content` for the previously verified runtime package, especially when the shared default folder contains another chat's WIP. Initialization requires every blob/manifest and historical screenshot to match the prior upload receipt. Do not initialize from unverified/WIP dependency content.
 
 The Mac must be awake, the storage mounted, and GitHub/Cloudflare authentication
 valid to complete jobs. Submissions do not schedule Codex tasks or expose a new
