@@ -49,13 +49,41 @@ bike, with separate hold/safe/duration/link values. Particle definitions include
 tire dust/chunks/spray, exhaust, foot effects, and bike/rider wreck emitters;
 these differ from ATV2's current wheel-only implementation.
 
-## Status and acceptance
+## Playable integration
 
-Source identity, private extraction, PSR directory and bounded rigid PSG decoding
-are established. Mesh assembly and native gameplay-code recovery remain in progress.
-No selectable/playable motorcycle or complete decompilation is claimed. Full requested
-handling, movement, sound, dirt/mud, stunt, crash and funny-crash integration must
-pass its own component and public no-disc gates before delivery.
+Single Player garage selections 27–34 are MX 50, 125, 250 and 500, each with Race
+and Pro source tuning. They use a separate authored two-wheel Rust controller:
+front/rear suspension and sixteen-surface forces, source engine curves/gears,
+clutch boost, lean balance, wheelies/stoppies, preload, airborne gyro/control,
+crossup and flip/360 torque. Geometry preserves each SUB part hierarchy beneath
+its placement bone, with source materials, newer indexed PST textures and the
+THQ male rider. Standard riding and reachable configured stunt MOT clips drive
+rider poses. The newer -7 MOT packed-axis profile is decoded separately from
+ATV2's ShortAxis records. Steering, forks, swingarm and wheels animate.
+
+Keyboard W/S/A/D drives; Q/E shifts rider weight, Space holds/releases preload,
+V operates the motorcycle clutch, J/K/L plus direction selects stunts and
+L plus airborne backward/side input requests backflip/360 torque. Controls are
+remappable; the controller clutch defaults to left-stick press. Existing touch
+riding input reaches the motorcycle controller. Race preview uses the existing
+authored CPU route system. Motorcycles are restricted to Single Player because
+the multiplayer model protocol currently supports the 26 ATVs.
+
+Source engine/clutch/impact samples are decoded with the existing audio controller
+as an authored adapter. Bounded dust/chunks/spray/exhaust/wreck particles use
+source emitter ranges and atlas data. Source mud textures accumulate during
+forward riding and clear on reset. Crash thresholds initiate rider separation;
+recovery uses the last safe grounded location. Optional funny crashes add
+articulated ragdolls and contact-triggered breakaway pieces without altering
+baseline physics. Original ATV behavior remains on its existing solver.
+
+This is source-tuned authored gameplay, not a complete decompilation or verified
+native whole-step parity. Native tire curves/update order, collision-v2 dispatch,
+full stunt timing/linking/scoring, exact bike/rider animation coupling, original
+camera obstruction, audio scheduling, water/foot effects and tire tracks remain
+unfinished. Selected required runtime assets stay in the separate R2 package;
+boot/module/ISO/reverse-engineering output remain private. Publication requires
+the current-main CI artifact and public no-disc browser checks.
 
 ## Verified recovery component
 
@@ -114,19 +142,26 @@ internal host target avoids observed stalled SSD hard-link/clone operations;
 the configured SSD symlinks remain intact. The checkpoint is separate from public
 production; no new original runtime resources or source module have been uploaded.
 
-## Remaining integration gates
+## Verification and next fidelity gates
 
-1. Trace and compare tire suspension/parametric grip, drivetrain/clutch, roll/
-   pitch/air control and update cadence. ATV2's four-wheel vehicle cannot serve
-   as a motorcycle solver or establish this game's behavior.
-2. Connect a distinct two-wheel vehicle and source Race/Pro profiles to selection,
-   loading, collision, camera and recovery. Assemble source subobjects/materials
-   and animate steering/forks/swingarm/controls rather than drawing only the rig.
-3. Recover rider/bike animation coupling, all 46 configured stunt entries,
-   timing/linking/scoring and wheelie/stoppie/backflip/360 conditions.
-4. Connect the source 50/125/250/450/500 engine banks, clutch/impact/fall audio,
-   tire/exhaust/foot/wreck emitters and dirt/mud appearance. Discovered resources
-   and current ATV2 effects do not establish these bike mechanics.
-5. Verify ordinary and funny bike crashes/recovery, desktop/touch/controllers,
-   multiplayer compatibility and original ATV regression; package only required
-   resources for R2 and verify the public app's no-disc motorcycle route.
+The host implementation suite passes 335 core, 25 net, 3 web, 13 relay and 69 JS
+tests with strict formatting/Clippy, plus release/WASM checks. The normal-input
+browser gate selects, renders and drives all eight configurations, exercises
+steering/clutch/particles/reset, and compares optional crash presentation Off/On
+against the same Rust input stream. Reports remain under ignored work/verification.
+The original ATV frontend and severe crash regression also pass.
+
+The original recovery-only evidence above predates playable integration. Next
+fidelity work is instruction-correlated suspension/tire/drivetrain/controller
+kernels, source COL-v2 collision, stunt scoring/linking, full movement coupling
+and exact audio/particle scheduling. A working browser route does not close these
+native parity gates.
+
+Final host normal-input replay covers all eight options and 634 paired steps with
+no differences after retaining 21/30 source part nodes. A separate 390px route
+records 260 frames and 320 paired steps, airborne stunt poses, rider separation,
+touch steering/cancellation and safe recovery. That mild wreck produced no severe
+bike breakaway transition; the seven-piece severe visual regression is an ATV
+check, not evidence of a severe motorcycle impact. MX 125 Race passes the existing
+race countdown/pause/five-CPU/touch/restart gate. The 26-ATV garage with both rider
+rigs, responsive layout and context restore passes. Setup and 19 release tests pass.

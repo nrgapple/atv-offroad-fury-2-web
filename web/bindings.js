@@ -3,14 +3,14 @@ export const ACTIONS = [
   ['throttle','Throttle'], ['brake','Brake'], ['steerLeft','Steer left'], ['steerRight','Steer right'],
   ['leanForward','Lean forward'], ['leanBack','Lean back'], ['reverse','Reverse'],
   ['stuntCircle','Stunt Circle'], ['stuntTriangle','Stunt Triangle'], ['stuntL1','Stunt L1'],
-  ['preloadHold','Preload hold / release'], ['camera','Change camera'],
+  ['clutch','Motorcycle clutch'], ['preloadHold','Preload hold / release'], ['camera','Change camera'],
   ['cameraLeft','Camera orbit left'], ['cameraRight','Camera orbit right'], ['reset','Reset ATV'], ['pause','Pause'],
 ].map(([id,label])=>Object.freeze({id,label}));
 export const STORAGE_KEY = 'atv2-gameplay-bindings-v1';
 const key = key => ({key}), button = button => ({button}), axis = (axis,sign) => ({axis,sign});
 const DEFAULTS = {
-  keyboard: { throttle:[key('KeyW')], brake:[key('KeyS')], steerLeft:[key('KeyA'),key('ArrowLeft')], steerRight:[key('KeyD'),key('ArrowRight')], leanForward:[key('KeyQ'),key('ArrowUp')], leanBack:[key('KeyE'),key('ArrowDown')], reverse:[key('KeyR')], stuntCircle:[key('KeyJ')], stuntTriangle:[key('KeyK')], stuntL1:[key('KeyL')], preloadHold:[key('Space')], camera:[key('KeyC')], cameraLeft:[],cameraRight:[],reset:[key('Backspace')],pause:[key('Escape')] },
-  controller: {throttle:[button(0),button(7)],brake:[button(2),button(6)],steerLeft:[axis(0,-1),button(14)],steerRight:[axis(0,1),button(15)],leanForward:[axis(1,-1),button(12)],leanBack:[axis(1,1),button(13)],reverse:[{chord:[button(0),button(2)]}],stuntCircle:[button(1)],stuntTriangle:[button(3)],stuntL1:[button(4)],preloadHold:[],camera:[button(11)],cameraLeft:[axis(2,-1)],cameraRight:[axis(2,1)],reset:[{chord:[button(4),button(5)]}],pause:[button(9)]},
+  keyboard: { throttle:[key('KeyW')], brake:[key('KeyS')], steerLeft:[key('KeyA'),key('ArrowLeft')], steerRight:[key('KeyD'),key('ArrowRight')], leanForward:[key('KeyQ'),key('ArrowUp')], leanBack:[key('KeyE'),key('ArrowDown')], reverse:[key('KeyR')], stuntCircle:[key('KeyJ')], stuntTriangle:[key('KeyK')], stuntL1:[key('KeyL')], clutch:[key('KeyV')], preloadHold:[key('Space')], camera:[key('KeyC')], cameraLeft:[],cameraRight:[],reset:[key('Backspace')],pause:[key('Escape')] },
+  controller: {throttle:[button(0),button(7)],brake:[button(2),button(6)],steerLeft:[axis(0,-1),button(14)],steerRight:[axis(0,1),button(15)],leanForward:[axis(1,-1),button(12)],leanBack:[axis(1,1),button(13)],reverse:[{chord:[button(0),button(2)]}],stuntCircle:[button(1)],stuntTriangle:[button(3)],stuntL1:[button(4)],clutch:[button(10)],preloadHold:[],camera:[button(11)],cameraLeft:[axis(2,-1)],cameraRight:[axis(2,1)],reset:[{chord:[button(4),button(5)]}],pause:[button(9)]},
 };
 const clone = value => JSON.parse(JSON.stringify(value));
 const ids = new Set(ACTIONS.map(a=>a.id));
@@ -48,7 +48,7 @@ export class GameplayBindings {
     this.storage=storage;this.profile=clone(DEFAULTS);this.previous=new Set();this.blocked=new Set();this.preloadHeld=false;this.storageError=null;this.listeners=new Set();this.controllerIdentity=undefined;this.generation=0;this.keyboardHeld=new Set();this.queuedActions=new Set();
     try {
       const saved=JSON.parse(storage?.getItem(STORAGE_KEY)??'null');
-      if(saved) for(const device of ['keyboard','controller']) for(const {id} of ACTIONS) this.profile[device][id]=normalize(device,saved[device][id]);
+      if(saved) for(const device of ['keyboard','controller']) for(const {id} of ACTIONS) this.profile[device][id]=normalize(device,saved[device][id] ?? DEFAULTS[device][id]);
     } catch { this.profile=clone(DEFAULTS); }
   }
   save() { try {this.storage?.setItem(STORAGE_KEY,JSON.stringify(this.profile));this.storageError=null;}catch{this.storageError='Settings work for this session; browser storage is unavailable.';} }
@@ -92,7 +92,7 @@ export class GameplayBindings {
       for(const binding of this.profile[device].brake) if(!(binding.chord??[binding]).every(a=>consumed.includes(JSON.stringify(a)))) brake=Math.max(brake,amount(binding,keys,pad));
     }
     const x=values.steerRight-values.steerLeft,y=values.leanBack-values.leanForward;
-    const input={throttle:values.throttle,brake,steer:x,lean:y,reverse:values.reverse>.5,stunt_modifiers:Number(values.stuntCircle>.5)|(Number(values.stuntTriangle>.5)<<1)|(Number(values.stuntL1>.5)<<2),stunt_x:x,stunt_y:y};
+    const input={clutch:values.clutch>.5,throttle:values.throttle,brake,steer:x,lean:y,reverse:values.reverse>.5,stunt_modifiers:Number(values.stuntCircle>.5)|(Number(values.stuntTriangle>.5)<<1)|(Number(values.stuntL1>.5)<<2),stunt_x:x,stunt_y:y};
     if(reverseChord)input.reverse_chord_brake=values.brake;
     const actions={};
     for(const id of ['camera','reset','pause']) {

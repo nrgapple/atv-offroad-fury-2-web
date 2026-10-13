@@ -16,6 +16,14 @@ try {
  await page.goto(base);await screen('title');
  await page.getByRole('button',{name:'Press START',exact:true}).click();await screen('main');
  await page.getByRole('button',{name:'Single Player',exact:true}).click();await screen('single');
+ if(process.env.ATV_RACE_MODEL) {
+  const id=Number(process.env.ATV_RACE_MODEL);assert(id>=1&&id<=34);
+  await page.getByRole('button',{name:'Quad and Rider',exact:true}).click();
+  const next=id-1,previous=35-id;
+  for(let i=0;i<Math.min(next,previous);i++)await page.getByRole('button',{name:next<=previous?'Next quad':'Previous quad',exact:true}).click();
+  await page.waitForFunction(id=>[...document.querySelectorAll('.model-view canvas')].every(c=>c.dataset.selection===`${id}:0`),id);
+  await page.getByRole('button',{name:'Done',exact:true}).click();
+ }
  await page.getByRole('button',{name:'Race',exact:true}).click();await screen('race');
  for(const [name,size] of [['desktop',{width:1280,height:720}],['portrait',{width:390,height:844}],['landscape',{width:844,height:390}]]){
   await page.setViewportSize(size);await page.waitForTimeout(300);

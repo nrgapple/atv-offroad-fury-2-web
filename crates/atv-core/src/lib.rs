@@ -20,6 +20,8 @@ pub mod materials;
 pub mod menu_preview;
 pub mod mesh;
 pub mod motion_catalog;
+pub mod motorcycle;
+pub mod motorcycle_effects;
 pub mod music;
 pub mod obstacle;
 pub mod physics_data;

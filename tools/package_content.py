@@ -331,6 +331,22 @@ def compact_vancouver_thumbnail(data):
     return pack_resource(selected)
 
 
+MX_SOURCE_SHA = '4b74c0c76ffe0838e00c1b9f75b31e1bb91adae06ec9da1416355b363572102a'
+
+
+def validate_motorcycle_resource(record, payload):
+    if record.get('source_build_sha256') != MX_SOURCE_SHA or not record.get('repacked'):
+        raise ValueError('unsupported motorcycle source build')
+    archive = Resource(payload)
+    if record.get('member_count') != len(archive.members):
+        raise ValueError('motorcycle member count mismatch')
+    for name, _, _ in archive.members:
+        if not re.fullmatch(r'(?:Veh|Rider|Aud|Part)/[A-Za-z0-9_ /.-]+\.(?:sub|psg|psm|pst|mot|mcf|ini|phy|aud|vag|emt|prt)', name, re.I):
+            raise ValueError('unapproved motorcycle runtime member')
+        if '..' in name or name.startswith('/'):
+            raise ValueError('invalid motorcycle member path')
+
+
 def validated_content(directory):
     """Validate and return only manifest-authorized runtime files for Sites."""
     directory = Path(directory)
@@ -345,7 +361,7 @@ def validated_content(directory):
         raise ValueError('invalid hosted content count')
     allowed = {manifest}
     for record in records:
-        if record['path'] not in STARTUP and record['path'] != '/AUDIO/AUDIO.RES' and not re.fullmatch(r'/AUDIO/MUSIC/[A-Z0-9_]+\.VAG', record['path']):
+        if record['path'] not in STARTUP and record['path'] != '/AUDIO/AUDIO.RES' and not re.fullmatch(r'/MX/BIKE(?:50|125|250|500)\.RES', record['path']) and not re.fullmatch(r'/AUDIO/MUSIC/[A-Z0-9_]+\.VAG', record['path']):
             raise ValueError('unapproved hosted resource path')
         chunks = record.get('chunks', [dict(record, offset=0)])
         end = 0
@@ -363,6 +379,10 @@ def validated_content(directory):
             whole.update(payload)
             end += len(payload)
             allowed.add(path)
+        if record['path'].startswith('/MX/'):
+            if len(chunks) != 1:
+                raise ValueError('motorcycle runtime archive must be compact')
+            validate_motorcycle_resource(record, payload)
         if end != record['bytes'] or whole.hexdigest() != record['sha256']:
             raise ValueError('hosted resource digest mismatch')
     return sorted(allowed)

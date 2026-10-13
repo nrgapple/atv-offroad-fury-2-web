@@ -260,7 +260,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         || request.room_code.len() > 64
         || request.player_name.len() > 32
         || request.lobby_status.len() > 256
-        || !(1..=26).contains(&request.quad_id)
+        || !(1..=34).contains(&request.quad_id)
         || request.rider_id > 1
         || request.loading_status.len() > 128
         || request.track_name.len() > 128
@@ -589,7 +589,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             let controls_w = if portrait { w - 48. } else { list_w };
             let row_h = 54_f32.max(44. / scale);
             f.text(
-                format!("Quad {} / 26", request.quad_id),
+                format!("Vehicle {} / 34", request.quad_id),
                 [30., y],
                 0.85,
                 FONT,

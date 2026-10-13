@@ -16,6 +16,8 @@ pub struct RotationKey {
     pub time: f32,
     pub packed_angle: u16,
     pub packed_axis: [i16; 3],
+    /// SLUS_211.04 angle byte plus three signed axis bytes.
+    pub compressed_axis: Option<u32>,
 }
 #[derive(Debug, Serialize)]
 pub struct Track<T> {
@@ -87,14 +89,18 @@ pub fn decode_mot(data: &[u8]) -> Result<Animation> {
     let version = match r.u32()? as i32 {
         -2 => 2,
         -3 => 3,
+        -7 => 7,
         _ => return Err("unsupported MOT version".into()),
     };
+    if version == 7 && r.u32()? != 1 {
+        return Err("unsupported MOT v7 flags".into());
+    }
     let frame_count = r.u32()?;
     if frame_count == 0 || frame_count > 1_000_000 {
         return Err("invalid MOT frame count".into());
     }
     let mut bone_names = Vec::new();
-    if version == 3 {
+    if matches!(version, 3 | 7) {
         let count = r.u32()?;
         if count == 0 || count > 256 {
             return Err("invalid MOT bone-name count".into());
@@ -127,11 +133,14 @@ pub fn decode_mot(data: &[u8]) -> Result<Animation> {
     let translation_kind = r.u32()?;
     let translation_count = r.u32()?;
     let rotation_count = r.u32()?;
-    if rotation_kind != 1 || translation_kind > 1 {
+    if rotation_kind > 1 || translation_kind > 1 {
         return Err("unsupported MOT controller encoding".into());
     }
     if translation_count > 256 || rotation_count > 256 {
         return Err("too many MOT controllers".into());
+    }
+    if version == 7 && (r.u32()? != 0 || r.u32()? != 0) {
+        return Err("unsupported MOT event controllers".into());
     }
     let mut total_keys = 0;
     let mut translations = Vec::new();
@@ -164,12 +173,22 @@ pub fn decode_mot(data: &[u8]) -> Result<Animation> {
     let mut rotations = Vec::new();
     for _ in 0..rotation_count {
         let (count, bone) = r.track_header(bone_names.len(), &mut total_keys)?;
-        slice(data, r.at, count * 12)?;
+        slice(data, r.at, count * if rotation_kind == 0 { 8 } else { 12 })?;
         let mut keys = Vec::with_capacity(count);
         let mut previous = 0.;
         for _ in 0..count {
             let time = r.key_time(previous, duration)?;
             previous = time;
+            if rotation_kind == 0 {
+                let compressed_axis = Some(r.u32()?);
+                keys.push(RotationKey {
+                    time,
+                    packed_angle: 0,
+                    packed_axis: [0; 3],
+                    compressed_axis,
+                });
+                continue;
+            }
             let packed_angle = u16le(data, r.at)?;
             if packed_angle >= 4096 {
                 return Err("MOT short-axis angle exceeds lookup table".into());
@@ -184,6 +203,7 @@ pub fn decode_mot(data: &[u8]) -> Result<Animation> {
                 time,
                 packed_angle,
                 packed_axis,
+                compressed_axis: None,
             });
         }
         rotations.push(Track { bone, keys });
@@ -236,6 +256,17 @@ impl RotationKey {
     /// these constants and operations match its initializer, with host sin/cos.
     /// PS2 transcendental results have not been established as bit-identical.
     pub fn quaternion(&self) -> [f32; 4] {
+        if let Some(value) = self.compressed_axis {
+            let bytes = value.to_le_bytes();
+            let half = bytes[0] as f32 * std::f32::consts::PI / 255.;
+            let scale = half.sin() / 127.;
+            return [
+                half.cos(),
+                bytes[1] as i8 as f32 * scale,
+                bytes[2] as i8 as f32 * scale,
+                bytes[3] as i8 as f32 * scale,
+            ];
+        }
         let half_angle = self.packed_angle as f32 * f32::from_bits(0x3a490fdb);
         let scale = half_angle.sin() * f32::from_bits(0x38000100);
         [
@@ -493,6 +524,30 @@ mod tests {
         }
     }
     #[test]
+    fn mx_v7_compressed_axis_and_event_bounds() {
+        let mut data = Vec::new();
+        for value in [(-7i32) as u32, 1, 1, 1, 5] {
+            data.extend(value.to_le_bytes());
+        }
+        data.extend(b"root\0");
+        data.extend(1f32.to_le_bytes());
+        for value in [0u32, 0, 0, 1, 0, 0, 1, 0] {
+            data.extend(value.to_le_bytes());
+        }
+        data.extend(0f32.to_le_bytes());
+        data.extend([64, 0, 127, 0]);
+        let a = decode_mot(&data).unwrap();
+        assert_eq!(a.version, 7);
+        let q = a.rotations[0].keys[0].quaternion();
+        assert!((q[0] * q[0] + q[2] * q[2] - 1.).abs() < 1e-6);
+        assert!(q[2] > 0.7 && q[0] > 0.7);
+        for end in 0..data.len() {
+            assert!(decode_mot(&data[..end]).is_err());
+        }
+        data[4..8].copy_from_slice(&2u32.to_le_bytes());
+        assert!(decode_mot(&data).is_err());
+    }
+    #[test]
     fn short_axis_quarter_turn_and_shortest_arc() {
         assert_eq!(
             blend_rotation([1., 0., 0., 0.], [-1., 0., 0., 0.], 0.8),
@@ -503,6 +558,7 @@ mod tests {
             time: 0.,
             packed_angle: 1024,
             packed_axis: [0, 32767, 0],
+            compressed_axis: None,
         }
         .quaternion();
         let mut matrix = node("root", -1).local_matrix;
