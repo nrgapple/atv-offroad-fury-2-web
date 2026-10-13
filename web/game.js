@@ -1,4 +1,5 @@
 // Original content and vehicle component simulation run in the Rust worker.
+import { vertexBounds, worldBounds, viewPlanes, outsideView } from './render-support.js';
 import { Multiplayer, PlayerIndicators } from './multiplayer.js';
 import { Frontend } from './frontend.js';
 import { RaceOverlay } from './race.js';
@@ -23,6 +24,7 @@ const encoder = new TextEncoder();
 const worker = new Worker('worker.js', { type: 'module' });
 const pending = new Map();
 let requestId = 0, generation = 0, terrain, vehicle, program, uniforms, chunks = [], vehicleChunks = [], gpuTextures = [], fallbackTexture, terrainAtlas, terrainTextureMap, terrainDetailMap, frame = 0, lastTime = 0, lost = false;
+let pageSuspended = false;
 let focused = document.hasFocus(), gamepadsAvailable = true, menuOpen = true;
 let frontend, hostedContent, hud, multiplayer;
 const remoteModels = new Map();
@@ -53,13 +55,13 @@ const touchLean = new TouchLeanIntent(() => touchControls.steeringSensitivity);
 const touchControls = mountTouchControls({
   surface: canvas,
   active: () => simReady && focused && !document.hidden && !menuOpen && !lost,
-  focus: () => { focused = true; canvas.focus({ preventScroll: true }); syncAudio(); },
+  focus: () => { focused = true; canvas.focus({ preventScroll: true }); syncAudio(); scheduleRender(); },
 });
 const diagnostics = { ready: false, frames: 0, vertices: 0, triangles: 0, chunks: 0, glError: 0, camera: [], source: null };
 let audio = new GameAudio(codec, message => { diagnostics.audioError = message; status(`Audio: ${message}`, true); });
 const stats = new DiagnosticsOverlay({ snapshot: () => ({ ...diagnostics, minimap: minimap.snapshot(), frame: simFrame, paused: simulationPaused(), menuOpen, focused, resolution: [canvas.width, canvas.height] }) });
 // Read-only snapshot for verification; does not expose the locally opened file.
-Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, minimap: minimap.snapshot(), funnyCrashes, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()],reconnecting:multiplayer.reconnecting,lastDisconnect:multiplayer.lastDisconnect,droppedSnapshots:multiplayer.droppedSnapshots,networkAdapterRoundTripMs:multiplayer.networkEncodeMs,networkAdapterCalls:multiplayer.networkEncodeCalls} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
+Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, minimap: minimap.snapshot(), hud: hud?.snapshot(), funnyCrashes, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()],reconnecting:multiplayer.reconnecting,lastDisconnect:multiplayer.lastDisconnect,droppedSnapshots:multiplayer.droppedSnapshots,networkAdapterRoundTripMs:multiplayer.networkEncodeMs,networkAdapterCalls:multiplayer.networkEncodeCalls} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
 worker.onmessage = ({ data }) => {
   if (data.startupError) { status(data.startupError, true); return; }
   const request = pending.get(data.id);
@@ -627,6 +629,7 @@ function upload(vertices, indices, hasUv = false, hasNodes = false, hasColors = 
     gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 1, gl.FLOAT, false, stride, 72);
   }
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, chunk.indices); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+  chunk.bounds = vertexBounds(vertices, stride / 4);
   return chunk;
 }
 function terrainHeight(x, z) {
@@ -959,8 +962,7 @@ function ecoMaterial(chunk,depthWrite) {
   gl.bindTexture(gl.TEXTURE_2D,chunk.texture??fallbackTexture);gl.bindVertexArray(chunk.vao);
 }
 function buildTerrainMesh() {
-  for (const chunk of chunks) { gl.deleteVertexArray(chunk.vao); gl.deleteBuffer(chunk.vertices); gl.deleteBuffer(chunk.indices); }
-  chunks = [];
+  const reusable = chunks; chunks = [];
   const { width, depth, spacing, heights } = terrain;
   // Retain original samples near the rider and a bounded coarse far field.
   // This browser LOD is provisional; it does not alter terrain contacts.
@@ -978,12 +980,22 @@ function buildTerrainMesh() {
     z0: Math.max(0, Math.floor((centerZ - 96) / step) * step),
     z1: Math.min(depth - 1, Math.ceil((centerZ + 96) / step) * step),
   } : null;
-  let vertexCount = 0, triangleCount = 0;
+  let vertexCount = 0, triangleCount = 0, reused = 0, uploadedBytes = 0;
+  const started = performance.now();
   function grid(gridX, gridZ, fine = false) {
     const nx = gridX.length, nz = gridZ.length;
-    const vertices = new Float32Array(nx * nz * 6), indices = [];
+    const old = reusable[chunks.length], capacity = nx * nz * 6;
+    const sameGrid = old?.fine === fine && old.gridX === gridX[0] && old.gridZ === gridZ[0] && old.nx === nx && old.nz === nz;
+    const maskX0 = patch ? Math.max(gridX[0], patch.x0) : 0, maskX1 = patch ? Math.min(gridX.at(-1), patch.x1) : 0;
+    const maskZ0 = patch ? Math.max(gridZ[0], patch.z0) : 0, maskZ1 = patch ? Math.min(gridZ.at(-1), patch.z1) : 0;
+    const mask = maskX1 > maskX0 && maskZ1 > maskZ0 ? `${maskX0}:${maskX1}:${maskZ0}:${maskZ1}` : 'all';
+    if (!fine && sameGrid && old.mask === mask) {
+      chunks.push(old); reused++; vertexCount += capacity / 6; triangleCount += old.count / 3; return;
+    }
+    const vertices = !fine && sameGrid ? null : old?.cpuVertices?.length === capacity ? old.cpuVertices : new Float32Array(capacity);
+    const indices = fine && old?.fine && old.nx === nx && old.nz === nz ? null : [];
     let offset = 0;
-    for (let zi = 0; zi < nz; zi++) for (let xi = 0; xi < nx; xi++) {
+    if (vertices) for (let zi = 0; zi < nz; zi++) for (let xi = 0; xi < nx; xi++) {
       const x = gridX[xi], z = gridZ[zi], left = Math.max(0, x - 1), right = Math.min(width - 1, x + 1), back = Math.max(0, z - 1), front = Math.min(depth - 1, z + 1);
       const dx = (height(right, z) - height(left, z)) / ((right - left) * spacing);
       const dz = (height(x, front) - height(x, back)) / ((front - back) * spacing);
@@ -999,19 +1011,41 @@ function buildTerrainMesh() {
       }
       vertices.set([x * spacing, y, z * spacing, -dx / length, 1 / length, -dz / length], offset); offset += 6;
     }
-    for (let z = 0; z < nz - 1; z++) for (let x = 0; x < nx - 1; x++) {
+    if (indices) for (let z = 0; z < nz - 1; z++) for (let x = 0; x < nx - 1; x++) {
       if (!fine && patch && gridX[x] >= patch.x0 && gridX[x + 1] <= patch.x1 && gridZ[z] >= patch.z0 && gridZ[z + 1] <= patch.z1) continue;
       const a = z * nx + x, b = a + 1, c = a + nx, d = c + 1;
       indices.push(a, c, b, b, c, d);
     }
-    chunks.push(upload(vertices, new Uint16Array(indices))); vertexCount += vertices.length / 6; triangleCount += indices.length / 3;
+    const packed = indices ? new Uint16Array(indices) : old.cpuIndices;
+    let chunk;
+    if (old && old.fine === fine && old.vertexCapacity === capacity && old.indexCapacity >= packed.length) {
+      chunk = old; reused++;
+      gl.bindVertexArray(chunk.vao);
+      if (vertices) { gl.bindBuffer(gl.ARRAY_BUFFER, chunk.vertices); gl.bufferSubData(gl.ARRAY_BUFFER, 0, vertices); uploadedBytes += vertices.byteLength; chunk.bounds = vertexBounds(vertices); }
+      // Only coarse tiles overlapping a changed fine patch need a new mask.
+      let changed = packed.length !== old.count;
+      if (!changed && packed !== old.cpuIndices) for (let i = 0; i < packed.length; i++) if (packed[i] !== old.cpuIndices[i]) { changed = true; break; }
+      if (changed) { gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, chunk.indices); gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, 0, packed); uploadedBytes += packed.byteLength; }
+      chunk.count = packed.length;
+    } else {
+      if (old) { gl.deleteVertexArray(old.vao); gl.deleteBuffer(old.vertices); gl.deleteBuffer(old.indices); }
+      // Reserve full coarse topology; masks can grow again when the patch leaves.
+      const reserved = new Uint16Array((nx - 1) * (nz - 1) * 6); reserved.set(packed);
+      chunk = upload(vertices, reserved); chunk.count = packed.length;
+      chunk.vertexCapacity = capacity; chunk.indexCapacity = reserved.length;
+      uploadedBytes += vertices.byteLength + reserved.byteLength;
+    }
+    Object.assign(chunk, { fine, mask, gridX: gridX[0], gridZ: gridZ[0], nx, nz, cpuVertices: fine ? vertices : null, cpuIndices: packed });
+    chunks.push(chunk); vertexCount += capacity / 6; triangleCount += packed.length / 3;
   }
   for (let z0 = 0; z0 < zs.length - 1; z0 += 64) for (let x0 = 0; x0 < xs.length - 1; x0 += 64) grid(xs.slice(x0, x0 + 65), zs.slice(z0, z0 + 65));
   if (patch) {
     const fineX = Array.from({ length: patch.x1 - patch.x0 + 1 }, (_, i) => patch.x0 + i), fineZ = Array.from({ length: patch.z1 - patch.z0 + 1 }, (_, i) => patch.z0 + i);
     for (let z0 = 0; z0 < fineZ.length - 1; z0 += 64) for (let x0 = 0; x0 < fineX.length - 1; x0 += 64) grid(fineX.slice(x0,x0+65),fineZ.slice(z0,z0+65),true);
   }
+  for (const chunk of reusable.slice(chunks.length)) { gl.deleteVertexArray(chunk.vao); gl.deleteBuffer(chunk.vertices); gl.deleteBuffer(chunk.indices); }
   gl.bindVertexArray(null);
+  diagnostics.terrainMesh = { reused, uploadedBytes, updateCpuMs: performance.now() - started };
   Object.assign(diagnostics, { vertices: vertexCount, triangles: triangleCount, chunks: chunks.length, finePatch: patch, terrainGrid: [width,depth], terrainSampleSpacing: spacing, terrainFarStep: step, terrainLod: 'full stored samples nearby; provisional far grid', terrainDetailCenter: [centerX,centerZ], terrainDetailUpdates: (diagnostics.terrainDetailUpdates ?? 0)+1 });
 }
 function buildMesh() {
@@ -1103,7 +1137,7 @@ function buildMesh() {
       const groups = geometry.get(model.name);
       if (!groups?.length) continue;
       sceneInstances++;
-      for (const chunk of groups) { sceneDraws.push({ chunk, matrix: new Float32Array(model.world_matrix), unlit: chunk.prelit || !model.use_lighting }); sceneTriangles += chunk.count / 3; }
+      for (const chunk of groups) { const matrix = new Float32Array(model.world_matrix); sceneDraws.push({ chunk, matrix, bounds: worldBounds(chunk.bounds, matrix), unlit: chunk.prelit || !model.use_lighting }); sceneTriangles += chunk.count / 3; }
     }
   }
   gl.bindVertexArray(null);
@@ -1219,7 +1253,7 @@ async function startSimulation(source) {
   terrain.waterSource = source.water ? await json(66, source.water.resource, source.water.index) : null;
   waterRenderer?.dispose();
   waterRenderer = terrain.waterSource ? new WaterRenderer(gl, terrain.waterSource) : undefined;
-  diagnostics.waterRender = waterRenderer ? { channels: waterRenderer.channelCount, gpuBytes: waterRenderer.gpuBytes, draws: 0, scope: terrain.waterSource.scope } : null;
+  diagnostics.waterRender = waterRenderer ? { channels: waterRenderer.channelCount, gpuBytes: waterRenderer.gpuBytes, draws: 0, baseHeight: terrain.waterSource.frame.base_height, scope: terrain.waterSource.scope } : null;
   diagnostics.chassis = source.motorcycle ? null : await json(44, source.chassis);
   const actor = source.motorcycle ? {rays:0} : await json(48, source.actorRays, 0), collisionIds = new Map();
   for (const [name, bytes] of source.collisions.meshes) {
@@ -1351,9 +1385,15 @@ function updateCamera(dt) {
   camera.z = Math.max(-span, Math.min(terrain.sizeZ + span, camera.z));
   camera.y = Math.max(terrain.min - span * .2, Math.min(terrain.max + span * 2, camera.y));
 }
+function scheduleRender() {
+  if (!frame && !pageSuspended) frame = requestAnimationFrame(render);
+}
 function render(time) {
+  frame = 0;
   const started = performance.now();
-  frame = requestAnimationFrame(render);
+  // Menus have their own controller/animation loop. Wake this loop on lifecycle
+  // changes; a live shared ride keeps its original simulation clock advancing.
+  if (!document.hidden && !lost && terrain && (!menuOpen || liveMultiplayer()) && (focused || liveMultiplayer())) scheduleRender();
   touchControls.refresh();
   const presentation = motorcyclePresentation.sample(simFrame, cameraFrame, time, focused && !lost && !menuOpen);
   presentedFrame = presentation.frame; presentedCamera = presentation.camera;
@@ -1361,8 +1401,8 @@ function render(time) {
   playerIndicators.root.hidden = !simReady || lost || document.hidden || menuOpen;
   // Enabled Freestyle GPS owns speed even while its raster is warming up or
   // temporarily hidden. Only the explicit Off setting restores standalone MPH.
-  hud?.draw(simFrame?.hud, simReady && !lost && !document.hidden && !menuOpen, { speedVisible: Boolean(raceSettings) || !minimapSettings.enabled });
-  raceOverlay.draw(simFrame?.race,simFrame,simReady && !lost && !document.hidden && !menuOpen);
+  hud?.draw(simFrame?.hud, simReady && focused && !lost && !document.hidden && !menuOpen, { speedVisible: Boolean(raceSettings) || !minimapSettings.enabled });
+  raceOverlay.draw(simFrame?.race,simFrame,simReady && focused && !lost && !document.hidden && !menuOpen);
   if (lost || !gl || !terrain || document.hidden || (menuOpen && !liveMultiplayer())) { lastTime = time; stats.sample(time, 0, false); return; }
   const dt = Math.min(.05, Math.max(0, (time - (lastTime || time)) / 1000)); lastTime = time;
   const ratio = Math.min(devicePixelRatio || 1, 1.5), width = Math.max(1, Math.round(innerWidth * ratio)), height = Math.max(1, Math.round(innerHeight * ratio));
@@ -1374,6 +1414,12 @@ function render(time) {
     const x = Math.max(0,Math.min(terrain.width-1,vehicle.position[0]/terrain.spacing)), z = Math.max(0,Math.min(terrain.depth-1,vehicle.position[2]/terrain.spacing));
     if (center && (Math.abs(x-center[0]) > 48 || Math.abs(z-center[1]) > 48)) buildTerrainMesh();
   }
+  if (!focused) {
+    // Shared rides still consume remote poses/audio events while this window's
+    // expensive graphics are asleep. Physics and networking keep their clocks.
+    if (liveMultiplayer()) void multiplayer.sample();
+    playerIndicators.root.hidden = true; lastTime = time; stats.sample(time, 0, false); return;
+  }
   diagnostics.motorcyclePresentation = simFrame?.vehicle_kind === 'motorcycle' ? { alpha: presentation.alpha, interpolated: presentation.interpolated, origin: presentedFrame.origin, orientation: presentedFrame.orientation } : null;
   const smoothQuad = presentation.interpolated ? new Float32Array(presentedFrame.quad_node_matrices.flat()) : vehicle?.nodeMatrices;
   const smoothRider = presentation.interpolated ? presentedFrame.rider_node_matrices : vehicle?.rider?.pose.world_matrices;
@@ -1384,6 +1430,8 @@ function render(time) {
   gl.uniform1i(uniforms.useVertexColor, false); gl.uniform1i(uniforms.sceneryBlend, false); gl.uniform1i(uniforms.alphaFailPass, false); gl.uniform2f(uniforms.sceneryUvOffset, 0, 0);
   const viewProjection = matrix();
   playerIndicators.draw(multiplayer?.remote ?? [], multiplayer?.state.lobby, viewProjection, simFrame?.origin ?? [0,0,0], simReady && !menuOpen);
+  const planes = viewPlanes(viewProjection);
+  let terrainDraws = 0, terrainTriangles = 0, sceneryDraws = 0, sceneryTriangles = 0, sceneryVisibleGroups = 0;
   gl.uniformMatrix4fv(uniforms.viewProjection, false, viewProjection); gl.uniform3f(uniforms.eye, camera.x, camera.y, camera.z);
   const fog=terrain.world?.metadata.fog;
   gl.uniform2f(uniforms.heights, terrain.min, terrain.max);
@@ -1424,10 +1472,15 @@ function render(time) {
   // not a normal-based sun pass. Keep authored base colors free of our
   // provisional prop/vehicle lighting.
   gl.uniform1i(uniforms.unlit, Boolean(terrain.textures));
-  for (const chunk of chunks) { gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0); }
+  for (const chunk of chunks) {
+    if (!chunk.count || outsideView(chunk.bounds, planes)) continue;
+    gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0); terrainDraws++; terrainTriangles += chunk.count / 3;
+  }
   gl.uniform1i(uniforms.useTerrainTexture, false); gl.uniform1i(uniforms.unlit, false); gl.activeTexture(gl.TEXTURE0);
   gl.uniform3f(uniforms.surfaceColor, .68, .70, .73);
-  for (const { chunk, matrix, unlit } of sceneDraws) {
+  for (const { chunk, matrix, unlit, bounds } of sceneDraws) {
+    if (outsideView(bounds, planes)) continue;
+    sceneryVisibleGroups++; sceneryDraws++; sceneryTriangles += chunk.count / 3;
     gl.uniformMatrix4fv(uniforms.model, false, matrix); gl.uniform1i(uniforms.unlit, unlit);
     gl.uniform1f(uniforms.alphaCutoff, chunk.alphaCutoff);
     gl.uniform1i(uniforms.fogEnabled,Boolean(fog)&&chunk.fog);
@@ -1444,6 +1497,7 @@ function render(time) {
     // Split the mutually exclusive predicates so each source pixel blends once.
     if (chunk.alphaFailure === 1 && chunk.alphaCutoff > 0) {
       gl.uniform1i(uniforms.alphaFailPass, true); gl.depthMask(false);
+      sceneryDraws++; sceneryTriangles += chunk.count / 3;
       gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
       gl.uniform1i(uniforms.alphaFailPass, false);
     }
@@ -1498,11 +1552,12 @@ function render(time) {
     wheelEffectsRenderer.draw({ camera, viewProjection });
     diagnostics.wheelEffects.draws = wheelEffectsRenderer.draws; diagnostics.wheelEffects.triangles = wheelEffectsRenderer.triangles; diagnostics.wheelEffects.cpuMilliseconds = wheelEffectsRenderer.cpuMilliseconds; diagnostics.wheelEffects.wetLive = wheelEffectsRenderer.wetLive ?? 0;
   }
+  diagnostics.visibility = { terrainDraws, terrainTriangles, sceneryDraws, sceneryTriangles, terrainCulled: chunks.length - terrainDraws, sceneryCulled: sceneDraws.length - sceneryVisibleGroups };
   diagnostics.frames++;
   if (stats.mode !== 'off') {
     diagnostics.cpuDraws = cpuDraws; diagnostics.cpuTriangles = cpuTriangles;
-    diagnostics.drawCalls = cpuDraws + chunks.length + sceneDraws.length + vehicleChunks.length + (terrain.sky ? skyChunks.length : 0) + diagnostics.vegetationDraws + (waterRenderer?.draws ?? 0) + (trainRenderer?.draws ?? 0) + (wheelEffectsRenderer?.draws ?? 0);
-    diagnostics.drawTriangles = cpuTriangles + (chunks.reduce((sum, c) => sum + c.count, 0) + sceneDraws.reduce((sum, d) => sum + d.chunk.count, 0) + vehicleChunks.reduce((sum, c) => sum + c.count, 0) + (terrain.sky ? skyChunks.reduce((sum, c) => sum + c.count, 0) : 0)) / 3 + diagnostics.vegetationTriangles + (trainRenderer?.triangles ?? 0) + (wheelEffectsRenderer?.triangles ?? 0);
+    diagnostics.drawCalls = cpuDraws + terrainDraws + sceneryDraws + vehicleChunks.length + (terrain.sky ? skyChunks.length : 0) + diagnostics.vegetationDraws + (waterRenderer?.draws ?? 0) + (trainRenderer?.draws ?? 0) + (wheelEffectsRenderer?.draws ?? 0);
+    diagnostics.drawTriangles = cpuTriangles + (terrainTriangles * 3 + sceneryTriangles * 3 + vehicleChunks.reduce((sum, c) => sum + c.count, 0) + (terrain.sky ? skyChunks.reduce((sum, c) => sum + c.count, 0) : 0)) / 3 + diagnostics.vegetationTriangles + (trainRenderer?.triangles ?? 0) + (wheelEffectsRenderer?.triangles ?? 0);
   }
   if (diagnostics.frames === 1 || diagnostics.frames % 120 === 0) {
     diagnostics.glError = gl.getError();
@@ -1550,7 +1605,7 @@ async function loadGame(file = null, environment = "env01", racing = null) {
     $('reset').disabled = false; $('camera').disabled = !simReady; $('help').hidden = false;
     $('reset').textContent = simReady ? 'Reset ATV' : 'Reset view';
     $('help').textContent = simReady ? 'Pause → Controls: keyboard / controller bindings · left touch: steer / lean · right: drive / brake on ground; swipe, hold or circle in air' : 'Free camera · drag to look · WASD to move · Q/E up/down';
-    status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain. Open the disc to load the ATV.');
+    status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain. Open the disc to load the ATV.'); scheduleRender();
     if (directStart && frontend && !file) { frontend.busy = false; frontend.resume(); }
   } catch (error) { if (token === generation) status(error.message, true); throw error; }
   finally { if (token === generation) $('disc').disabled = false; }
@@ -1577,7 +1632,7 @@ canvas.addEventListener('pointerdown', event => {
   // An unclaimed right gameplay touch must never fall through to mouse orbit.
   if (simReady && event.pointerType === 'touch' && !left) return;
   if (left && !touchLean.begin(event.pointerId, event.clientX, event.clientY)) return;
-  focused = true; canvas.focus({ preventScroll: true }); syncAudio(); canvas.setPointerCapture(event.pointerId);
+  focused = true; canvas.focus({ preventScroll: true }); syncAudio(); scheduleRender(); canvas.setPointerCapture(event.pointerId);
   pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, dx: 0, dy: 0, touch: event.pointerType === 'touch', move: event.pointerType === 'touch' && event.clientX < innerWidth / 2 });
 });
 canvas.addEventListener('pointermove', event => {
@@ -1603,15 +1658,15 @@ window.addEventListener('keyup', event => { keys.delete(event.code); gameplayBin
 const clearInput = () => { motorcyclePresentation.reset(); presentedFrame = presentedCamera = undefined; keys.clear(); pointers.clear(); touchControls.clear(); touchLean.clear(); gameplayBindings.cancel(); simAccumulator = 0; cameraCycle = false; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
 gameplayBindings.subscribe(clearInput);
 window.addEventListener('gamepaddisconnected', clearInput);
-let pageSuspended = false;
 const syncAudio = () => { void audio.setActive(focused && !document.hidden && !lost && !menuOpen && !pageSuspended).catch(error => { diagnostics.audioError = error.message; }); };
-window.addEventListener('blur', () => { focused = false; clearInput(); syncAudio(); });
-window.addEventListener('focus', () => { focused = true; syncAudio(); });
-document.addEventListener('visibilitychange', () => { clearInput(); syncAudio(); });
+window.addEventListener('blur', () => { focused = false; clearInput(); syncAudio(); scheduleRender(); });
+window.addEventListener('focus', () => { focused = true; lastTime = 0; syncAudio(); scheduleRender(); });
+document.addEventListener('visibilitychange', () => { clearInput(); lastTime = 0; syncAudio(); scheduleRender(); });
+window.addEventListener('resize', () => { scheduleRender(); });
 canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; for(const model of remoteModels.values()){model.chunks=null;model.gpuTextures=[];} diagnostics.ready = false; clearInput(); syncAudio(); frontend?.setLoading(true, 'Restoring graphics…'); status('Restoring graphics…'); });
 // Every old GPU handle belongs to the lost context, including vegetation instances.
 // Discard those references before buildMesh runs its normal resource cleanup.
-canvas.addEventListener('webglcontextrestored', () => { try { lost = false; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
+canvas.addEventListener('webglcontextrestored', () => { try { lost = false; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); scheduleRender(); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
 window.addEventListener('pagehide', event => {
   cancelAnimationFrame(frame); frame = 0; clearInput();
   if (event.persisted) {
@@ -1636,7 +1691,7 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
       await command(47,{}); orbit=0; acceptCameraFrame(await command(46,{dt:1/60,orbit}));
       await multiplayer.send();
     },ready:()=>simReady,paused:simulationPaused,listener:()=>({position:[camera.x,camera.y,camera.z],forward:[Math.sin(camera.yaw)*Math.cos(camera.pitch),Math.sin(camera.pitch),Math.cos(camera.yaw)*Math.cos(camera.pitch)],velocity:simFrame?.linear_velocity??[0,0,0]}),audio:()=>audio,assets:remoteAssets,clearAssets:()=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();},report:message=>{diagnostics.multiplayerError=message;status(message,true);},onState:()=>{if(frontend){void frontend.refresh();}},onStart:async (environment,isCurrent)=>{if(!isCurrent())return;frontend.busy=true;frontend.notice.textContent='';try {await loadGame(null,environment);if(isCurrent())frontend.resume();}finally{if(isCurrent())frontend.busy=false;}},onLeave:message=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show('multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
-    frontend = new Frontend({minimapSettings,menuRider:menuRiderAssets,modelAssets:selectionAssets,crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => loadGame(null, environment,racing), active: open => { menuOpen = open; clearInput(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
+    frontend = new Frontend({minimapSettings,menuRider:menuRiderAssets,modelAssets:selectionAssets,crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => loadGame(null, environment,racing), active: open => { menuOpen = open; clearInput(); lastTime = 0; scheduleRender(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     hud = new HeadUpDisplay(frontend, canvas);
     if (params.get('drive') === '1') {
       menuOpen = false; $('frontend').hidden = true;

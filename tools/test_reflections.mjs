@@ -49,6 +49,13 @@ try {for(const environment of ['env01','free05']) {
       window.reflectionPixels=Math.max(window.reflectionPixels,changed);
     };
   });
+  // The inspection camera must reach both CPU visibility and GPU projection.
+  // Intercepting only the GL uniform would leave culling on a different camera.
+  await page.route('**/game.js*', async route => {
+    const response = await route.fetch();
+    const source = (await response.text()).replace('const viewProjection = matrix();', 'const viewProjection = window.reflectionView ?? matrix();');
+    await route.fulfill({ response, body: source });
+  });
   await page.goto(`${base}/play.html?drive=1&environment=${environment}`);
   await page.waitForFunction(()=>window.atvTerrainStatus?.ready||document.querySelector('#status')?.classList.contains('error'),null,{timeout:120000});
   assert(await page.evaluate(()=>window.atvTerrainStatus?.ready),await page.locator('#status').textContent());

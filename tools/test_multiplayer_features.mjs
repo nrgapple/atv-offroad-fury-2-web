@@ -74,7 +74,7 @@ try {
  await pause(a);await pause(b);
  // Online menus intentionally keep physics live. Freeze test clocks only while
  // placing on the moving deck, so the placement/velocity share one train frame.
- await Promise.all(pages.map(p=>p.evaluate(()=>{window.testFreeze=true;})));await a.waitForTimeout(150);
+ await Promise.all(pages.map(p=>p.evaluate(()=>{window.testFreeze=true;document.dispatchEvent(new Event('visibilitychange'));})));await a.waitForTimeout(150);
  const trainSetup=await a.evaluate(async()=>{
    const previous=await testCommand(68,null);const train=await testCommand(68,{dt:1/60});const car=train.cars.findIndex(c=>/flatbeda/i.test(c.model));const m=train.cars[car].matrix;
    const origin=[0,1,2].map(i=>m[12+i]+m[4+i]*17.+m[8+i]*10);
@@ -82,7 +82,7 @@ try {
    await testCommand(23,{origin,velocity,yaw:Math.atan2(m[8],m[10])});
    return {car,origin,model:train.cars[car].model};
  });
- await Promise.all(pages.map(p=>p.evaluate(()=>{window.testFreeze=false;})));
+ await Promise.all(pages.map(p=>p.evaluate(()=>{window.testFreeze=false;document.dispatchEvent(new Event('visibilitychange'));})));
  await button(a,'Resume').click();await button(b,'Resume').click();
  await b.waitForFunction(()=>window.atvTerrainStatus.multiplayer.remote[0]?.platform!=null,null,{timeout:15000});
  // Allow the landing transition and initial packets to reach the observer
@@ -105,17 +105,18 @@ try {
  if(process.env.ATV_MP_SCREENSHOT)await b.screenshot({path:process.env.ATV_MP_SCREENSHOT.replace('.png','-train.png')});
  // Opposing fast riders must enter the recovered native wreck flow on both
  // owners, and observers must receive a detached rider plus a new crash serial.
- await Promise.all(pages.map(p=>p.evaluate(()=>{window.testFreeze=true;})));await a.waitForTimeout(150);
+ await Promise.all(pages.map(p=>p.evaluate(()=>{window.testFreeze=true;document.dispatchEvent(new Event('visibilitychange'));})));await a.waitForTimeout(150);
  const beforeCrashes=await Promise.all(pages.map(state));
  await Promise.all(pages.map((p,i)=>p.evaluate(async({host,i})=>{
    await testCommand(23,{origin:[host[0],host[1]+1,host[2]+(i?8:-8)],velocity:[0,0,i?-60:60],yaw:i?Math.PI:0});
-   window.testImpacts=[];window.testImpactTimer=setInterval(()=>{const s=window.atvTerrainStatus;window.testImpacts.push({wreck:s.frame.wreck,contacts:s.multiplayer.state.contacts,peer:s.multiplayer.remote[0]});},30);
+   window.testImpacts=[];window.testImpactTimer=setInterval(()=>{const s=window.atvTerrainStatus;window.testImpacts.push({frames:s.frames,steps:s.simulationSteps,origin:s.frame.origin,speed:s.frame.speed,visible:!document.hidden,focused:document.hasFocus(),wreck:s.frame.wreck,contacts:s.multiplayer.state.contacts,peer:s.multiplayer.remote[0]});},30);
  },{host,i})));
- await Promise.all(pages.map(p=>p.evaluate(()=>{window.testFreeze=false;})));
+ await Promise.all(pages.map(p=>p.evaluate(()=>{window.testFreeze=false;document.dispatchEvent(new Event('visibilitychange'));})));
  await a.waitForTimeout(2000);
  const impacts=await Promise.all(pages.map(p=>p.evaluate(()=>{clearInterval(testImpactTimer);return testImpacts;})));
  for(let i=0;i<impacts.length;i++) {
    const samples=impacts[i],wreck=samples.find(s=>s.wreck.phase==='Falling'&&s.wreck.kind==='Front');
+   if(!wreck)console.error('HEAD_ON_DIAGNOSTIC',JSON.stringify({i,first:samples[0]&&{steps:samples[0].steps,origin:samples[0].origin,wreck:samples[0].wreck},last:samples.at(-1)&&{steps:samples.at(-1).steps,origin:samples.at(-1).origin,wreck:samples.at(-1).wreck}}));
    assert(wreck,`Owner ${i} should crash front-first: ${JSON.stringify(samples.map(s=>({wreck:s.wreck,contacts:s.contacts})))}`);
    assert(samples.some(s=>s.contacts>beforeCrashes[i].multiplayer.state.contacts),'contact response must occur');
    const remote=samples.find(s=>s.peer?.crash_serial>beforeCrashes[i].multiplayer.remote[0].crash_serial&&s.peer.rider_state!=='Riding');
