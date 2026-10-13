@@ -10,6 +10,7 @@ async function page(name) {
  const p=await browser.newPage({viewport:{width:1280,height:896},hasTouch:true});pages.push(p);p.on('pageerror',e=>errors.push(e.message));
  await p.addInitScript(()=>{
    Object.defineProperty(document,'hasFocus',{value:()=>true});
+   const NativeSocket=WebSocket;window.WebSocket=class extends NativeSocket {constructor(...args){super(...args);window.testSocket=this;}};
    const Native=Worker;let id=-1000;
    window.Worker=class extends Native {constructor(...args){super(...args);window.testWorker=this;this.pending=new Map();this.addEventListener('message',({data})=>{const r=this.pending.get(data.id);if(!r)return;this.pending.delete(data.id);data.error?r.reject(Error(data.error)):r.resolve(JSON.parse(new TextDecoder().decode(data.bytes)));});}};
    window.testCommand=(op,value)=>new Promise((resolve,reject)=>{const key=id--;testWorker.pending.set(key,{resolve,reject});testWorker.postMessage({id:key,op,index:0,bytes:new TextEncoder().encode(value==null?'':JSON.stringify(value))});});
@@ -32,6 +33,17 @@ try {
  await b.waitForTimeout(1200);
  const phases=await Promise.all(pages.map(async p=>(await state(p)).train.time));assert(Math.abs(phases[0]-phases[1])<.25,JSON.stringify(phases));
  console.log('LATE_JOIN',JSON.stringify({code,phases,draws:await Promise.all(pages.map(async p=>(await state(p)).multiplayerDraws))}));
+ // A code-less transport close must recover the owner without reloading the
+ // environment, resetting the ride or leaving observers on the old sequence.
+ const beforeRecovery=await state(a);
+ await a.evaluate(()=>window.testSocket.close());
+ await a.waitForFunction(()=>window.atvTerrainStatus.multiplayer.lastDisconnect&&window.atvTerrainStatus.multiplayer.state.peer===0&&!window.atvTerrainStatus.multiplayer.reconnecting,null,{timeout:15000});
+ await Promise.all([ready(a),ready(b)]);
+ await b.waitForFunction(()=>window.atvTerrainStatus.multiplayer.remote[0]?.stale===false,null,{timeout:15000});
+ const afterRecovery=await state(a);assert.equal(afterRecovery.multiplayer.state.code,code);
+ assert(afterRecovery.train.time>=beforeRecovery.train.time,'Recovery must preserve running environment');
+ assert.equal((await state(b)).multiplayer.state.code,code);
+ console.log('HOST_RECOVERY',JSON.stringify({close:afterRecovery.multiplayer.lastDisconnect,trainBefore:beforeRecovery.train.time,trainAfter:afterRecovery.train.time}));
  // Host stops at a safe ground position; guest spawns through the actual pause UI.
  await pause(a);await b.waitForFunction(()=>window.atvTerrainStatus.multiplayer.remote[0]?.rider_state==='Riding',null,{timeout:15000});
  await pause(b);await button(b,'Players').click();await button(b,'Spawn beside P1 Host').click();await b.waitForFunction(()=>document.querySelector('#frontend').hidden);
@@ -78,7 +90,7 @@ try {
  console.log('TRAIN_RIDER',JSON.stringify({trainSetup,samples:trainSamples.length,maxTrainError}));
  if(process.env.ATV_MP_SCREENSHOT)await b.screenshot({path:process.env.ATV_MP_SCREENSHOT.replace('.png','-train.png')});
  // A paused guest must still receive current roster/poses. Departure removes it.
- await pause(b);await button(b,'Players').click();await a.close();
+ await pause(b);await button(b,'Players').click();await pause(a);await button(a,'Lobby').click();await button(a,'Leave lobby').click();await a.close();
  await b.waitForFunction(()=>!window.atvTerrainStatus.multiplayer.state.code,null,{timeout:15000});assert.equal((await state(b)).multiplayer.remote.length,0);
  assert.deepEqual(errors,[]);console.log('PASS late admission / minimap / original arrows / pause roster / nearby spawn / contacts / departure');
 }finally{await browser.close();}

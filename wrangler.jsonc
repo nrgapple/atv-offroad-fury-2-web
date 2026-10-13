@@ -51,5 +51,13 @@
       "zone_id": "ea0921ec471b2a7de78838cdbaeccb78",
       "custom_domain": true
     }
-  ]
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false
+    }
+  }
 }

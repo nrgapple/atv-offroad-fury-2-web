@@ -58,7 +58,7 @@ try{
    const touch=(type,points=[])=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:points.map(p=>({radiusX:6,radiusY:6,force:1,...p}))});
    const left={id:1,x:60,y:560},right={id:2,x:310,y:530},drive={...right,y:460};
    await touch('touchStart',[left,right]);await touch('touchMove',[left,drive]);
-   await a.waitForFunction(()=>window.atvTerrainStatus.frame.preload_armed,null,{timeout:45000});
+   await a.waitForFunction(()=>window.atvTerrainStatus.frame.preload_armed,null,{timeout:15000});
    await touch('touchEnd',[drive]);await a.waitForFunction(()=>!window.atvTerrainStatus.frame.grounded.some(Boolean),null,{timeout:10000});
    await touch('touchStart',[left,right]);await touch('touchMove',[left,{...right,y:right.y-70}]);
    await a.waitForFunction(()=>window.atvTerrainStatus.frame.rider_mode==='wreck',null,{timeout:20000});await touch('touchCancel');
@@ -72,6 +72,6 @@ try{
  }
  if(process.env.ATV_MP_SCREENSHOT)await a.screenshot({path:process.env.ATV_MP_SCREENSHOT});
  const summary=[await state(a),await state(b)].map(s=>({model:s.playerModel.quad_id,rider:s.playerModel.rider_id,draws:s.multiplayerDraws,rtt:s.multiplayer.state.rttMs,sent:s.multiplayer.state.sentBytes,received:s.multiplayer.state.receivedBytes,remote:s.multiplayer.remote.map(p=>({position:p.position,state:p.rider_state,crash:p.crash_serial,nodes:p.rider_node_matrices.length})),audio:s.audio.multiplayer}));
- await a.close();await b.waitForFunction(()=>!window.atvTerrainStatus.multiplayer?.state.code,null,{timeout:15000});assert.equal((await state(b)).multiplayer.remote.length,0);assert.deepEqual(errors,[]);console.log(JSON.stringify({passed:true,code,remoteDistance:Math.hypot(...moved.map((v,i)=>v-initial[i])),summary}));
+ await a.close();await b.waitForFunction(()=>!window.atvTerrainStatus.multiplayer?.state.code,null,{timeout:45000});assert.equal((await state(b)).multiplayer.remote.length,0);assert.deepEqual(errors,[]);console.log(JSON.stringify({passed:true,code,remoteDistance:Math.hypot(...moved.map((v,i)=>v-initial[i])),summary}));
  }
 }finally{await browser.close();}

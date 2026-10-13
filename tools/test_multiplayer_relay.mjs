@@ -45,7 +45,7 @@ async function rejectedSocket(code, expected, token = '', requestOrigin = origin
     const ws = new WebSocket(base.replace('http', 'ws') + '/multiplayer/rooms/' + code + token, { origin: requestOrigin, headers: verifierHeaders });
     ws.on('unexpected-response', (_req, response) => { response.resume(); ws.terminate(); resolve(response.statusCode); });
     ws.on('error', () => {});
-    ws.on('open', () => { ws.close(); reject(new Error('Unexpected accepted socket')); });
+    ws.on('open', () => { ws.close(1000,'Left lobby'); reject(new Error('Unexpected accepted socket')); });
   });
   assert.equal(status, expected);
 }
@@ -115,10 +115,11 @@ try {
   assert.match(hostToken, /^[a-f0-9]{32}$/);
   await rejectedSocket(code, 409);
   await rejectedSocket(code, 403, '?host=incorrect');
-  const host = await connect(code, { ...player('Host'), id: 3 }, '?host=' + hostToken);
+  let host = await connect(code, { ...player('Host'), id: 3 }, '?host=' + hostToken);
   assert.equal(host.peer, 0);
   assert.equal(lastLobby(host).players[0].id, 0);
-  await rejectedSocket(code, 409, '?host=' + hostToken);
+  const replacedHost=host;host=await connect(code,player('Host'),'?host='+hostToken);
+  assert.equal((await closed(replacedHost)).reason,'Host connection replaced');
   check('Secure host reservation and server-assigned identity');
   const guest = await connect(code, player('Guest female', 26, 1));
   const guest2 = await connect(code, player('Guest 2'));
@@ -184,11 +185,43 @@ try {
   guest.send(encode({ Snapshot: { ...snapshot, sequence: 8, atv_model: 1 } }));
   assert.equal((await closed(guest)).code, 1008);
   check('Model substitution rejected');
-  host.close();
+  host.close(1000,'Left lobby');
   await closed(host);
   assert.match((await closed(replacement)).reason, /Host left/);
   await rejectedSocket(code, 410);
   check('Host departure terminates session; no join resurrection');
+  const reused=await request('/multiplayer/rooms',{method:'POST',body:JSON.stringify({code})});
+  assert.equal(reused.status,201);const renewed=await reused.json();assert.equal(renewed.code,code);assert.notEqual(renewed.hostToken,hostToken);
+  await rejectedSocket(code,403,'?host='+hostToken);
+  const recoveredHost=await connect(code,player('Reused host'),'?host='+renewed.hostToken);
+  const recoveryGuest=await connect(code,player('Recovery guest'));
+  await wait(recoveredHost,p=>p.Lobby?.players.length===2);
+  recoveredHost.send(encode({SetLobby:{epoch:lastLobby(recoveredHost).epoch,map:8,started:true}}));
+  await wait(recoveryGuest,p=>p.Lobby?.started);
+  recoveredHost.terminate();await sleep(500);
+  assert.equal(recoveryGuest.closed,undefined);
+  const restoredHost=await connect(code,player('Reused host'),'?host='+renewed.hostToken);
+  assert.equal(restoredHost.peer,0);assert.equal(lastLobby(restoredHost).started,true);assert.equal(lastLobby(restoredHost).map,8);
+  await wait(recoveryGuest,p=>p.Lobby?.started&&p.Lobby.players.length===2);
+  await sleep(100);assert.equal(restoredHost.closed,undefined,'Old socket close must not terminate replacement');
+  restoredHost.close(1000,'Left lobby');await closed(recoveryGuest);
+  check('Closed codes are reusable with fresh authority; abnormal host loss recovers the running room');
+  const abandonedCreation=await request('/multiplayer/rooms',{method:'POST'});
+  const abandoned=await abandonedCreation.json();
+  const abandonedHost=await connect(abandoned.code,player('Grace expiry host'),'?host='+abandoned.hostToken);
+  const abandonedGuest=await connect(abandoned.code,player('Grace expiry guest'));
+  abandonedHost.terminate();await sleep(500);assert.equal(abandonedGuest.closed,undefined);
+  // Keep the guest active so only the host's recovery deadline can close this room.
+  const keepalive=setInterval(()=>{if(abandonedGuest.readyState===WebSocket.OPEN)abandonedGuest.send(encode({Ping:{nonce:1}}));},2000);
+  try {await sleep(35000);assert.match((await closed(abandonedGuest)).reason,/Host connection could not be restored/);}
+  finally {clearInterval(keepalive);}
+  const afterExpiry=await request('/multiplayer/rooms',{method:'POST',body:JSON.stringify({code:abandoned.code})});
+  assert.equal(afterExpiry.status,201);
+  const expiryHost=await connect(abandoned.code,player('Fresh owner'),'?host='+(await afterExpiry.json()).hostToken);
+  expiryHost.close(1000,'Left lobby');await closed(expiryHost);
+  check('Unrecovered host grace expires and releases the code while guests are active');
+
+
   const invalidCreation = await request('/multiplayer/rooms', { method: 'POST' });
   assert.equal(invalidCreation.status, 201);
   const invalidRoom = await invalidCreation.json();
@@ -203,5 +236,5 @@ try {
   check('Map10 rejected on the real socket; host termination cannot resurrect the invalid room');
   console.log(JSON.stringify(report, null, 2));
 } finally {
-  for (const ws of sockets) if (ws.readyState < WebSocket.CLOSING) ws.close();
+  for (const ws of sockets) if (ws.readyState < WebSocket.CLOSING) ws.close(1000,'Left lobby');
 }

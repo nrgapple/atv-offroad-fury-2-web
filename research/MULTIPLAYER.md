@@ -19,8 +19,11 @@ Each player simulates their own quad in Rust at the established local cadence;
 controls do not wait for a network round trip. The host owns the lobby's map and
 start. A Rust Cloudflare Durable Object authenticates the creator's private token,
 assigns participant slots, validates shared binary packets and relays snapshots.
-The room code and invite URL contain no host credential. Host departure ends the
-room; reconnect/migration and competitive authority are not implemented. A new
+The room code and invite URL contain no host credential. Explicit host leave ends
+its room. Transport loss retains the room for 30 seconds while the browser retries
+the creator capability for up to 25 seconds, preserving the loaded ride. The same
+browser tab can recover its host identity after reload using session storage.
+Host migration and competitive authority are not implemented. A new
 authored equal-mass contact proxy uses swept six-foot cylinders and each owner
 applies only its own response. It is not the original PS2 contact behavior and
 the relay does not reconcile physics. The updated packet schema is incompatible
@@ -51,7 +54,9 @@ identity; browser JavaScript is socket, DOM/WebGL and Web Audio API glue.
 The authored Multiplayer menu first offers separate **Create lobby** and
 **Join lobby** choices. Each form collects a rider name and offers the garage.
 Create accepts an optional custom code of exactly eight letters or digits; a
-blank code requests a random one, while a duplicate custom code is rejected.
+blank code requests a random one, while an active duplicate custom code is rejected.
+Closed/expired rooms release their code. Reuse creates a fresh host capability and
+room generation, so old tokens and delayed old socket callbacks cannot affect it.
 Join requires an eight-character code. Invite links open the Join form with the
 code prefilled, leaving the rider to submit the join action. This form flow is
 verified in the host and public browser gates at 551d7fd.
@@ -225,3 +230,24 @@ errors. These automated routes do not establish physical-phone behavior or
 geographically distributed latency. The train clock freezes while its host is
 paused; local contacts have no server reconciliation. Racing, competitive
 authority, host migration and full original-game parity remain unfinished.
+
+## Host recovery and retained diagnostics (2026-10-13)
+
+Closed Durable Object room records previously rejected recreation forever, and
+any host socket departure immediately ended the room. Generation-aware recreation
+and the recovery window above address both failure paths. Host replacement sends
+a Leave/reset before the new roster, clearing observers' old pose sequence buffers.
+Explicit leave and protocol/rate violations still close the room immediately.
+Surplus incoming poses above 48 queued messages are discarded, preserving 16 slots
+for control traffic within the 64-message bound; a resume burst no longer closes a
+healthy session solely for too many old snapshots.
+
+Workers Logs now retain structured lifecycle events: room creation/closure,
+connection rejection, peer join, host recovery grace, close requests and actual
+close events, including code, reason, elapsed idle time and rate counters. Custom
+logs exclude names, capabilities, packet bodies and raw URLs. Invocation logs are
+disabled. Browser diagnostics retain the most recent close code/reason, visibility
+and queue depth in `atv-last-disconnect` session storage and terrain status.
+The original user disconnect cause remains unproven; the prior deployment had no
+retained lifecycle diagnostics. This is host-tested implementation pending CI and
+public verification, not a claim that all network interruptions can be prevented.

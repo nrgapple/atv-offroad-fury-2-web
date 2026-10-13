@@ -112,7 +112,7 @@ test('receive queue is bounded even when the worker is stalled and malformed fra
   const f=fixture();try {
     const socket=await f.connect();const pending=deferred();f.overrides.set(82,()=>pending.promise);
     for(let n=0;n<64;n++)socket.message();assert.equal(f.mp.pendingReceives,64);
-    socket.message();assert.equal(socket.closes.at(-1).code,1008);assert.equal(socket.closes.at(-1).reason,'Message limit');assert.equal(f.mp.pendingReceives,64);
+    socket.message();assert.equal(socket.closes.at(-1).code,1008);assert.equal(socket.closes.at(-1).reason,'Control message backlog');assert.equal(f.mp.pendingReceives,64);
     pending.resolve(encode({state:f.defaultState,event:{}}));await f.mp.receiveQueue;assert.equal(f.mp.pendingReceives,0);
     const next=await f.connect();next.message(new Uint8Array(8193).buffer);assert.equal(next.closes.at(-1).code,1008);
     const third=await f.connect();third.message('text packet');assert.equal(third.closes.at(-1).code,1008);
@@ -251,4 +251,35 @@ test('distant, offscreen and rear player indicators stay finite and inside viewp
  }
  assert.equal(screenMarker([NaN,0,0],view,390,844),null);
  assert.equal(screenMarker([0,0,100],view,390,844).edge,true);
+});
+
+test('a resumed browser discards old snapshot bursts without closing its lobby',async()=>{
+ const f=fixture();try {
+   const socket=await f.connect(),pending=deferred();f.overrides.set(82,()=>pending.promise);
+   const snapshot=new Uint8Array([65,84,86,77,2,4,0,0]).buffer;
+   for(let i=0;i<250;i++)socket.message(snapshot);
+   assert.equal(f.mp.pendingReceives,48);assert.equal(f.mp.droppedSnapshots,202);assert.equal(socket.closes.length,0);
+   socket.message();assert.equal(f.mp.pendingReceives,49,'A control message retains queue space');
+   pending.resolve(encode({state:f.defaultState,event:{}}));await f.mp.receiveQueue;
+   assert.equal(f.mp.pendingReceives,0);assert.equal(socket.closes.length,0);
+ }finally{await f.cleanup();}
+});
+
+test('host transport loss retries its capability without restarting the loaded ride',async()=>{
+ const f=fixture();try {
+  const socket=await f.connect();f.mp.state={...f.defaultState,lobby:{...f.defaultState.lobby,started:true}};f.mp.started=true;
+  socket.close(1006,'');assert.equal(f.leaves.length,0);assert.equal(f.mp.reconnecting,true);
+  f.timeouts.get(f.mp.retryTimer).fn();await flush();const next=f.sockets.at(-1);assert.notEqual(next,socket);
+  await next.open();f.overrides.set(82,()=>encode({state:{...f.defaultState,lobby:{...f.defaultState.lobby,started:true}},event:{}}));
+  next.message();await f.mp.receiveQueue;
+  assert.equal(f.mp.reconnecting,false);assert.equal(f.mp.started,true);assert.deepEqual(f.starts,[]);
+  assert.equal(new URL(next.url).searchParams.get('host'),'private-host-token');
+  assert.equal(f.mp.lastDisconnect.code,1006);
+ }finally{await f.cleanup();}
+});
+test('intentional leave cancels a pending host recovery',async()=>{
+ const f=fixture();try {
+  const socket=await f.connect();socket.close(1006,'');const retry=f.mp.retryTimer;assert(f.timeouts.has(retry));
+  await f.mp.disconnect();assert.equal(f.timeouts.has(retry),false);assert.equal(f.mp.reconnecting,false);
+ }finally{await f.cleanup();}
 });
