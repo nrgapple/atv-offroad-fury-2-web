@@ -151,6 +151,10 @@ impl Arm {
             angle_offset,
         })
     }
+    /// Largest shoulder-to-wrist distance allowed by the rigid hinge geometry.
+    pub fn maximum_reach(&self) -> f32 {
+        (self.projected_length_sum + 1. / self.inverse_projected_lengths).sqrt()
+    }
     /// Target and pose world matrices must share a coordinate frame. The native
     /// solver replaces elbow rotation, then rotates the shoulder toward target;
     /// hand translation remains the original rigid joint offset.
@@ -329,6 +333,14 @@ mod tests {
         arm.solve(&nodes, &mut pose, [100., 50., 0.]).unwrap();
         assert!(
             (length(sub(position(pose.world_matrices[arm.hand]), [0.; 3])) - 2.).abs() < 0.00001
+        );
+        assert!(
+            (length(sub(
+                position(pose.world_matrices[arm.hand]),
+                position(pose.world_matrices[arm.shoulder])
+            )) - arm.maximum_reach())
+            .abs()
+                < 0.00001
         );
         assert_eq!(pose.local_matrices[arm.hand], nodes[arm.hand].local_matrix);
         assert!(Arm::bind(&nodes, "Missing", [0., 0., 1.]).is_err());
