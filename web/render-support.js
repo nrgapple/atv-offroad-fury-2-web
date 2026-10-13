@@ -121,7 +121,10 @@ export function chasePresentation(frame, actor, aspect, sightline, height) {
 
 // Saved authored options, including migration of the former boolean crash switch.
 export class RideEffectsSettings {
-  constructor(storage = globalThis.localStorage, reducedMotion = false) {
+  constructor(storage, reducedMotion = false) {
+    if (storage === undefined) {
+      try { storage = globalThis.localStorage; } catch { storage = null; }
+    }
     this.storage = storage; this.mode = 'crazy'; this.shake = !reducedMotion;
     try {
       const mode = storage?.getItem('atv-crash-mode');

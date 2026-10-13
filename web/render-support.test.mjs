@@ -122,3 +122,11 @@ test('shake Off, pause, camera reset and terrain clearance are immediate',()=>{
  assert(s.apply({position:[0,0,0],yaw:0,pitch:0},()=>10).position[1]>=11);
  s.update(shakeActor,1/60,true,false);assert.deepEqual(s.offset,[0,0,0,0]);s.reset();assert.equal(s.previous,null);
 });
+
+test('blocked browser storage getter still permits session settings',()=>{
+ const descriptor=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
+ try {
+  Object.defineProperty(globalThis,'localStorage',{configurable:true,get(){throw new Error('Storage denied');}});
+  const s=new RideEffectsSettings();assert.equal(s.mode,'crazy');s.toggle();s.toggleShake();assert.equal(s.mode,'gorn');assert.equal(s.shake,false);
+ } finally {if(descriptor)Object.defineProperty(globalThis,'localStorage',descriptor);else delete globalThis.localStorage;}
+});
