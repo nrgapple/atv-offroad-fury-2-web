@@ -96,3 +96,30 @@ test('configured game origin remains strict through a local verification proxy',
   assert.equal((await worker.fetch(request('/multiplayer/version',{headers:{Origin:'https://game.example'}}),env)).status,403);
   assert.equal(await (await worker.fetch(request('/multiplayer/version',{headers:{Origin:'https://approved.example'}}),env)).text(),'rust');
 });
+
+test('custom and legacy multiplayer origins are exact and missing/foreign origins stay denied', async () => {
+  const env = {
+    GAME_ORIGIN: 'https://furyremastered.com',
+    GAME_ORIGINS: 'https://furyremastered.com, https://atv-offroad-fury-2.champtoday.workers.dev,',
+    MULTIPLAYER: { fetch: async () => new Response('rust') },
+  };
+  for (const origin of ['https://furyremastered.com', 'https://atv-offroad-fury-2.champtoday.workers.dev']) {
+    assert.equal((await worker.fetch(request('/multiplayer/version', { headers: { Origin: origin } }), env)).status, 200);
+  }
+  for (const origin of ['', 'null', 'http://furyremastered.com', 'https://www.furyremastered.com', 'https://furyremastered.com.evil.example', 'https://foreign.example']) {
+    assert.equal((await worker.fetch(request('/multiplayer/rooms', { method: 'POST', headers: { Origin: origin } }), env)).status, 403);
+  }
+  assert.equal((await worker.fetch(request('/multiplayer/rooms', { method: 'POST' }), env)).status, 403);
+});
+
+test('www canonical redirect preserves game path and invite query without redirecting legacy hosts', async () => {
+  const env = { CANONICAL_ORIGIN: 'https://furyremastered.com', ASSETS: { fetch: async () => new Response('game') } };
+  const response = await worker.fetch(new Request('https://www.furyremastered.com/play.html?room=ABCD2345'), env);
+  assert.equal(response.status, 308);
+  assert.equal(response.headers.get('Location'), 'https://furyremastered.com/play.html?room=ABCD2345');
+  const tricky = await worker.fetch(new Request('https://www.furyremastered.com//foreign.example/play.html?room=ABCD2345'), env);
+  assert.equal(tricky.headers.get('Location'), 'https://furyremastered.com//foreign.example/play.html?room=ABCD2345');
+  for (const origin of ['https://furyremastered.com', 'https://atv-offroad-fury-2.champtoday.workers.dev', 'https://www.furyremastered.com.evil.example']) {
+    assert.equal((await worker.fetch(new Request(origin + '/play.html'), env)).status, 200);
+  }
+});

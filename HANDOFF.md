@@ -10,6 +10,55 @@ source frames, four sustained full-lock GPU touch profiles, all20 driving choice
 and airborne cross-up pass host checks. Publication is pending. See
 [the follow-up evidence and limitations](research/MOTORCYCLES.md).
 
+## ATV Fury 2 home-screen identity — host checkpoint (2026-10-13)
+
+The landing page and game page now share the authored ATV Fury 2 identity: a
+custom vector browser icon, 180px Apple touch icon, 512px app icon, and standalone
+web-app manifest. The app label is **ATV Fury 2**, with `/play.html` as its start
+route. The SVG is authored source; its raster variants are text-encoded authored
+art decoded only into ignored build output. `tools/test_app_identity.mjs`
+confirms both pages' title/icon/manifest links and successful icon/manifest
+serving with expected MIME types and dimensions. These assets contain no game
+disc material. This is host verification pending current-main CI/deployment and
+public verification; physical iOS Home Screen behavior is still untested, and
+an existing saved shortcut can require removal/re-addition to refresh its icon.
+
+## Garage and Freestyle selections persist — host checkpoint (2026-10-13)
+
+Garage vehicle and rider choices are saved locally and restored after refresh.
+The first Freestyle environment picker restores the last successfully started
+course. Browsing another preview, a failed load, or selecting a Race course does
+not overwrite that Freestyle choice. Supported Race setup restores the saved
+vehicle/rider selection. The menu regression passes ATV/rider and motorcycle
+refresh, Tioga Freestyle restore, preview browsing, Race preservation and zero
+browser errors. Three focused frontend cases cover valid selection persistence,
+unavailable storage and load failure. The actual-menu check is host-only; no
+public deployment or physical-device verification is claimed.
+
+## Enhanced one-handed second-touch controls — host checkpoint (2026-10-13)
+
+The saved **One-handed mobile: On/Off** preference and existing Off behavior are
+preserved. In On mode, the first touch anywhere on the game surface remains the
+primary steering/lean and drive/brace control. A second touch independently
+requests ground brake/reverse or, in the air, one of eight directional stunts or
+clockwise Cat Nac/counterclockwise Cordova. Secondary release resumes the held
+primary's forward drive/brace; primary release clears both. Further gameplay
+contacts are ignored, and Pause/Camera retain separate hit areas. See
+[touch behavior and evidence](research/TOUCH.md).
+
+The final enhanced mobile Chromium report passes portrait 390×844 and landscape
+844×390 ground reverse, primary-axis preservation, secondary release and
+cancellation, with no errors or touch camera orbit. A natural Caribou hop passes
+Nac Nac, Cat Nac and Cordova selection while primary drive/brace continues and
+the secondary stunt releases independently. Normal one-handed/touch/UI and
+mobile utility checks also pass. `make check` (349 core, 25 net, 3 relay, 4
+tools, 13 web and 79 JS), `make verify`, the WASM build, repository hygiene,
+29 release checks (one skipped) and 8 Worker checks pass. This is a host-only
+checkpoint pending current-main CI, deployment and public verification. Physical
+iOS Safari/controller behavior and full original stunt/game parity remain open.
+The inspected capture shows Nac Nac during the touch session; it is stored only
+in ignored private screenshot storage until the validated release flow.
+
 ## Combined minimap/speed and corner configuration — 2026-10-13
 
 Branch `feat/minimap-instrument` revises the GPS to default circular/top-right,
@@ -79,6 +128,15 @@ full R2 HTTPS verification follow the validated-artifact release flow.
 No complete original-game physics equivalence is claimed.
 
 # Implementation handoff
+
+## Fury Remastered domain setup (2026-10-13)
+
+The intended primary public HTTPS address is https://furyremastered.com/.
+Both apex and www custom domains target the existing Cloudflare Worker. The www
+route redirects to the apex; the previous workers.dev address remains supported.
+The explicit multiplayer origin allowlist covers both playable origins. Domain
+routes and origin settings are persisted in wrangler.jsonc, and main CI verifies
+both addresses. See research/DEPLOYMENT.md for the final public verification.
 
 ## Original CPU avoidance, wreck recovery and jump tricks — tested host checkpoint
 

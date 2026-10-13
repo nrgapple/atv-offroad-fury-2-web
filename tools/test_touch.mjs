@@ -46,6 +46,11 @@ try {
   assert.equal(await page.locator('#touch-controls button').count(), 0, 'No separate action buttons');
   assert.equal(await page.evaluate(() => getComputedStyle(document.body).webkitUserSelect), 'none');
   for (const position of [{ x: 250, y: 240 }, { x: 340, y: 640 }, { x: 387, y: 420 }]) {
+    // Each stationary-press case needs a fresh grounded start. Accumulated
+    // driving can otherwise reach the ramp and correctly switch to air tricks
+    // during a later case's drive-only assertions. No vehicle state is injected.
+    await page.goto(new URL('/play.html?drive=1&environment=env02', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173').href);
+    await page.waitForFunction(() => window.atvTerrainStatus?.simulation, null, { timeout: 90000 });
     await page.waitForFunction(() => window.atvTerrainStatus.frame.grounded.some(Boolean), null, { timeout: 10000 });
     const right = { id: 1, ...position };
     await resetSamples(); await touch('touchStart', [right]); await steps(3);
@@ -61,6 +66,8 @@ try {
     assert.equal((await samples()).filter(s => s.input.preload_axis === -1).length, 1);
     assert.equal((await read()).input.lean, 0);
   }
+  await page.goto(new URL('/play.html?drive=1', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173').href);
+  await page.waitForFunction(() => window.atvTerrainStatus?.simulation && window.atvTerrainStatus.frame.grounded.some(Boolean), null, { timeout: 90000 });
   console.log('Anywhere on the right drives immediately and holds preload; back drag brakes without adding lean; release submits once.');
   const right = { id: 1, x: 310, y: 530 };
   await resetSamples(); await touch('touchStart', [right]); await steps(2); await touch('touchCancel'); await steps(3);

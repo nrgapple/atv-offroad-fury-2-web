@@ -2382,6 +2382,67 @@
       "caption": "Host capture sheet: left and right touch-bank views above, front-facing standing RM125 Race and Sano 50 Mini menu poses below. Rendered direction and idle motion were checked on the host; this is not a public release."
     },
     {
+      "id": "second-touch-adds-reverse-and-airborne-stunts-9f83254d",
+      "timestamp": "2026-10-13T15:07:43.187646+00:00",
+      "recorded_at": "2026-10-13T15:11:46.785430+00:00",
+      "kind": "build",
+      "title": "Second touch adds reverse and airborne stunts",
+      "summary": "One-handed mobile now accepts an optional second touch for ground reverse or airborne original stunt gestures while the primary touch keeps driving.",
+      "details": [
+        "The first touch anywhere on the game surface remains the primary steering/lean and drive/brace control; the saved One-handed mobile: On/Off preference and a saved Off are preserved.",
+        "A second touch requests ground braking/reverse or selects one of eight directional stunts, clockwise Cat Nac, or counterclockwise Cordova in the air. Releasing it resumes primary forward drive/brace; releasing the primary clears both.",
+        "Actual-content Chromium checks pass portrait 390x844 and landscape 844x390, including primary-axis preservation, cancellation, independent stunt release, and zero touch camera orbit."
+      ],
+      "limitation": "Host-only checkpoint pending current-main CI, deployment, and public verification. Physical iOS Safari/controller behavior and complete original stunt/game parity remain unverified.",
+      "image": "/devlog-images/second-touch-adds-reverse-and-airborne-stunts-9f83254d.png",
+      "caption": "Host Chromium capture of an airborne Nac Nac while the primary touch remains engaged; the full second-touch gesture gate is host-verified."
+    },
+    {
+      "id": "atv-fury-2-home-screen-identity-be6eaa11",
+      "timestamp": "2026-10-13T15:14:50.533678+00:00",
+      "recorded_at": "2026-10-13T15:21:18.520314+00:00",
+      "kind": "build",
+      "title": "ATV Fury 2 home-screen identity",
+      "summary": "The landing and game pages now have a shared ATV Fury 2 app identity with authored home-screen icon assets and a standalone web-app manifest.",
+      "details": [
+        "Both pages advertise the short app name ATV Fury 2, the authored vector browser icon, a 180px Apple touch icon and a 512px app icon; the manifest opens the fullscreen game route.",
+        "The host app-identity browser gate passes both page links, manifest and icon serving, MIME types and expected image dimensions."
+      ],
+      "limitation": "Host-only checkpoint pending current-main CI, deployment and public verification. Physical iOS Home Screen installation remains unverified; an existing saved shortcut may need to be removed and added again to refresh its icon.",
+      "image": "/devlog-images/atv-fury-2-home-screen-identity-be6eaa11.png",
+      "caption": "Inspected 512px preview of the authored ATV Fury 2 app icon; host route and asset checks pass."
+    },
+    {
+      "id": "garage-and-freestyle-selections-persist-8e7c9757",
+      "timestamp": "2026-10-13T15:17:56.123573+00:00",
+      "recorded_at": "2026-10-13T15:20:02.129045+00:00",
+      "kind": "build",
+      "title": "Garage and Freestyle selections persist",
+      "summary": "The browser remembers the selected ride and returns the first Freestyle course picker to the last course that loaded successfully.",
+      "details": [
+        "Garage vehicle and rider choices restore after refresh, including supported motorcycle selections for Race.",
+        "Freestyle remembers the last successfully started course. Preview browsing, failed course loads and Race selection leave that Freestyle choice intact.",
+        "The actual-menu Chromium gate passes ATV/rider and motorcycle refresh, Tioga course restoration, preview browsing, Race preservation and zero browser errors; focused frontend cases cover unavailable storage and failed loads."
+      ],
+      "limitation": "Host-only checkpoint pending current-main CI, deployment and public verification. Local browser storage is required for selections to persist across reloads; physical-device behavior is unverified.",
+      "image": "/devlog-images/garage-and-freestyle-selections-persist-8e7c9757.png",
+      "caption": "Portrait host-browser menu capture from the selection-restoration check; course, Garage and Race persistence passed in the same actual-menu run."
+    },
+    {
+      "id": "fury-remastered-custom-domain-routes-pass-host-checks-e1bec0d3",
+      "timestamp": "2026-10-13T15:27:09.633977+00:00",
+      "recorded_at": "2026-10-13T15:27:09.633977+00:00",
+      "kind": "verification",
+      "title": "Fury Remastered custom domain routes pass host checks",
+      "summary": "The furyremastered.com zone and registration are verified, both custom domains are attached to the existing production Worker, and a host HTTPS fetch to the apex returns 200 with a valid certificate. Domain routes and multiplayer origin allowlists pass host checks; new-domain gameplay and multiplayer remain pending current-main CI and deployment.",
+      "details": [
+        "Cloudflare zone ea0921ec471b2a7de78838cdbaeccb78 is active in the existing account and registry registration is verified. Both custom domains were attached through the Cloudflare API to the existing atv-offroad-fury-2 production Worker. A host HTTPS fetch to the apex returned 200 with a valid certificate, and Cloudflare UI confirms Always Use HTTPS is On.",
+        "All 10 authored worker tests pass: exact custom and legacy multiplayer origins are accepted; missing, null, HTTP, www, lookalike and foreign origins are rejected; www requests receive a 308 apex redirect that preserves path and invite query.",
+        "All 4 Rust relay origin tests pass, including the exact origin allowlist. Strict atv-relay Clippy and formatting pass; make verify passes source identity and exclusion checks; 29 release tests pass with one skipped."
+      ],
+      "limitation": "Host evidence only. The new-domain multiplayer code has not been deployed, and current-main CI plus public gameplay and multiplayer verification remain pending. A successful host HTTPS fetch does not verify public integration."
+    },
+    {
       "id": "a-reachable-rider-pose-closes-the-mini-motorcycle-full-be709f3b",
       "timestamp": "2026-10-13T15:24:38.204309+00:00",
       "recorded_at": "2026-10-13T15:33:10.449069+00:00",
