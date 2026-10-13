@@ -112,6 +112,8 @@ Touch is a browser adaptation of the PS2 controls. Portrait and gesture checks p
 
 **Funny crashes:** Enabled by default, this adds a floppy rider ragdoll and breakaway ATV wheels, handlebars and rear suspension on hard ground or obstacle impacts. The ATV stays intact during an airborne bailout until it hits something. **Pause → Funny crashes: Off** returns to original crash behavior. It remembers your choice, including an existing saved Off. Recovery restores the whole ATV; original driving and scoring stay intact. The effects apply to your local rider.
 
+**Freestyle GPS:** A compact north-up aerial minimap follows your ride on the right. **Pause → HUD settings** turns it On/Off and adjusts its size (96–224px, fitted to your screen). It uses the original terrain and static scenery with a gold heading arrow. See [performance and limits](research/MINIMAP.md).
+
 Keyboard and controllers work too. **Pause → Controls** lets you remap keyboard keys, controller buttons, analog directions, and button combinations; settings are saved in your browser.
 
 | Action | Keyboard default | Controller default |

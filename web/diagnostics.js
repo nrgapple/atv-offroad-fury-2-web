@@ -71,6 +71,7 @@ export class DiagnosticsOverlay {
       `Draws ${s.drawCalls ?? 0}  Triangles ${Math.round(s.drawTriangles ?? 0).toLocaleString('en-US')}`,
       `Resolution ${s.resolution?.join(' × ') ?? '—'}  WASM ${number(s.wasmBytes / 1048576)} MiB`,
     ];
+    if (s.minimap?.enabled) lines.push(`GPS ${s.minimap.ready ? `${s.minimap.resolution}px / 20Hz max` : 'building'}  CPU ${number(s.minimap.lastCpuMs, 2)} ms  Pixels ${number(s.minimap.backingBytes / 1048576, 2)} MiB`);
     if (this.mode === 'debug') lines.push(
       `Map ${s.source ?? '—'}  Step ${s.simulationSteps ?? 0}`,
       `Position ft ${vector(f?.origin)}`,

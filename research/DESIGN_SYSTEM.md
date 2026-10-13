@@ -70,3 +70,15 @@ view supports drag or focused left/right keys. Keep controls outside those views
 Course loading uses the selected original track photograph and actual loading
 stages, with the existing condensed glyph atlas, red panel and silver photo rim.
 See [selection and loading evidence](MENU_SELECTION.md) for asset and parity limits.
+
+## Freestyle GPS instrument
+
+The authored aerial minimap uses the recovered course terrain and static scenery
+in an orthographic north-up projection, with a small gold heading arrow, silver
+north/scale lettering and a GPS label. It has no border, no bevel, no interactive
+hit surface and the existing 4px utility corner radius. Its default footprint is
+160px, capped at 42% of viewport width and 34% of viewport height; portrait places
+it below the MPH meter, and landscape/desktop use the right side. Pause → HUD
+settings uses the recovered menu glyphs, existing gold native range style, 44px
+hit regions and persisted visibility/96–224px sizing. Resizing preserves the
+768ft geographic range. See [implementation and performance](MINIMAP.md).

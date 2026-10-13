@@ -39,7 +39,7 @@ try {
  await page.getByRole('button',{name:'CPU riders: 3',exact:true}).tap();await page.getByRole('button',{name:'CPU riders: 4',exact:true}).waitFor();
  await page.getByRole('button',{name:'Start Race',exact:true}).tap();
  await page.waitForFunction(()=>document.querySelector('#frontend').hidden&&window.atvTerrainStatus.frame?.race?.phase==='countdown',null,{timeout:120000});
- let s=await state();assert.equal(s.frame.race.field,5);assert.equal(s.frame.race.checkpoints,252);
+ let s=await state();assert.equal(s.minimap.visible,false,'Freestyle GPS stays out of Race');assert.equal(s.minimap.buildSlices,0,'Race does not generate GPS pixels');assert.equal(s.frame.race.field,5);assert.equal(s.frame.race.checkpoints,252);
  assert.deepEqual(s.frame.race.opponents.map(o=>o.name),['YUKARI','PANZER','MCNABB','BALS']);
  const startOrigin=s.frame.origin;
  await page.keyboard.down('KeyW');await page.waitForTimeout(500);s=await state();assert.deepEqual(s.frame.origin,startOrigin,'Countdown blocks throttle');

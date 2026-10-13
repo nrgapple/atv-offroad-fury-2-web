@@ -1,3 +1,18 @@
+## Freestyle GPS minimap checkpoint — 2026-10-13
+
+New SSD worktree `atv-offroad-fury-2-minimap`, branch `feat/freestyle-minimap`,
+adds a borderless orthographic north-up aerial GPS from recovered terrain/static
+scenery. Pause → HUD settings persists On/Off and 96–224px size with screen caps.
+One 1024px cached raster, <=20Hz small blits, no extra scene draws; Off cancels
+baking and shrinks both canvases. All nine actual course loading/driving gates,
+settings/reload/rotation/pause/blur/context restoration and normal frontend/touch
+regressions pass. Serial host map updates cost 0.05–0.09ms; course baking 45–53ms
+is spread across short slices, with observed maximum 2.4ms. Phone-sized Chromium
+runs are not physical-phone performance measurements. See
+[implementation, measurements and limits](research/MINIMAP.md).
+The inspected portrait capture is a host image; production identity and gallery
+publication are verified separately through current-main GitHub CI/R2.
+
 ## Motorcycle correction — public gameplay verified (2026-10-13)
 
 The correction to public `8e1aa77` is documented in
