@@ -6,6 +6,19 @@ const unquote = value => (value ?? '').replace(/^"/, '').replace(/"$/, '');
 const fields = section => Object.fromEntries([...section.fields].reverse().map(f => [f.key.toLowerCase(), f.value]));
 const sections = doc => new Map(doc.sections.map(s => [s.name.toLowerCase(), fields(s)]));
 const fontName = 'tradegothic_boldcondensed_22s';
+const selectionKey = 'atv-player-selection';
+const normalizedSelection = value => ({
+  quadId: Number.isInteger(value?.quadId) && value.quadId >= 1 && value.quadId <= 46 ? value.quadId : 1,
+  riderId: value?.riderId === 1 ? 1 : 0,
+  freestyleEnvironment: typeof value?.freestyleEnvironment === 'string' && /^(env0[1-8]|free05)$/.test(value.freestyleEnvironment) ? value.freestyleEnvironment : 'env01',
+});
+export function loadPlayerSelection(read = () => localStorage.getItem(selectionKey)) {
+  try { return normalizedSelection(JSON.parse(read())); } catch { return normalizedSelection(null); }
+}
+export function savePlayerSelection(value, write = text => localStorage.setItem(selectionKey, text)) {
+  try { write(JSON.stringify(normalizedSelection(value))); } catch { /* Session-only selection when storage is unavailable. */ }
+}
+
 export class Frontend {
   constructor({ codec, json, content, read, start, active, audio, diagnosticsOverlay, mobileControls, multiplayer, crashSettings, minimapSettings, modelAssets, menuRider }) {
     Object.assign(this, { codec, json, content, read, start, active, audio, diagnosticsOverlay, mobileControls, multiplayer, crashSettings, minimapSettings, modelAssets, menuRider });
@@ -19,7 +32,8 @@ export class Frontend {
     this.modelViews = new Map(); this.modelKey = ''; this.modelToken = 0; this.loadingStatus = '';
     this.assets = new Map(); this.images = new Map(); this.fonts = new Map();
     this.initialized = false; this.layoutKey = ''; this.layoutPending = false; this.loaded = new Set(); this.page = 'loading'; this.selection = 0; this.track = 0; this.busy = false; this.lastPad = new Set(); this.alive = true;
-    this.quadId = 1; this.riderId = 0; this.playerName = 'Rider'; this.roomCode = new URL(location.href).searchParams.get('room') ?? ''; this.garageReturn = 'single';
+    const savedSelection = loadPlayerSelection();
+    this.quadId = savedSelection.quadId; this.riderId = savedSelection.riderId; this.lastFreestyleEnvironment = savedSelection.freestyleEnvironment; this.playerName = 'Rider'; this.roomCode = new URL(location.href).searchParams.get('room') ?? ''; this.garageReturn = 'single';
     this.bindingDevice = 'keyboard'; this.bindingPage = 0; this.bindingRow = 0; this.musicPage = 0;
     this.capture = null; this.menuKeys = new Set();
     this.raceSettings={laps:3,cpu:3,difficulty:1};this.raceActive=false;this.raceAvailable=false;
@@ -142,7 +156,7 @@ export class Frontend {
       const tracks = await this.document('tracks.dat');
       this.tracks = [...tracks.entries()].filter(([s, f]) => (/^(unspnat\d+|spstunt6)$/.test(s)) && ['env01','env02','env03','env04','env05','env06','env07','env08','free05'].includes(f.scn))
         .map(([, f]) => ({ id: f.scn, name: unquote(f.name), image: f.image }));
-      this.track = this.tracks.findIndex(t => t.id === 'env01');
+      this.track = Math.max(0, this.tracks.findIndex(t => t.id === this.lastFreestyleEnvironment));
       for (const name of [fontName, 'tradegothic_boldcondensed_22soff', 'tradegothic_boldcondenseditalic_-1fs_32ds']) await this.font(name);
       await this.archive('/UI/RESOURCE/PAGEA/PAGE01.RES');
       const logoA = await this.image('mmlogo01'), logoB = await this.image('mmlogo02');
@@ -243,7 +257,7 @@ export class Frontend {
       if (this.page === 'tracks') {
         const environment = this.tracks[this.track].id;
         this.busy = true;
-        try { await this.start(environment); this.raceActive=false;this.resume(); }
+        try { await this.start(environment); this.lastFreestyleEnvironment = environment; this.saveSelection(); this.raceActive=false;this.resume(); }
         catch (error) { await this.show('tracks'); this.fail(error); }
         this.busy = false; return;
       }
@@ -298,8 +312,12 @@ export class Frontend {
         if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen();
       } else if (action === 'devlog') location.href = 'devlog.html';
       else if (!['quadprev','quadnext','riderchange'].includes(action)) return await this.action(action);
+      if (['quadprev','quadnext','riderchange'].includes(action)) this.saveSelection();
       this.layoutKey = ''; await this.refresh();
     } catch (error) { this.fail(error); }
+  }
+  saveSelection() {
+    savePlayerSelection({quadId:this.quadId, riderId:this.riderId, freestyleEnvironment:this.lastFreestyleEnvironment});
   }
   async refresh(force = false) {
     if (!this.initialized || this.root.hidden || (this.busy && this.page !== 'loading' && !force) || this.layoutPending) return;

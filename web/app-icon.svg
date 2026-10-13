@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>ATV Offroad Fury 2</title>
+  <defs>
+    <linearGradient id="night" x2=".8" y2="1"><stop stop-color="#172a48"/><stop offset="1" stop-color="#050a14"/></linearGradient>
+    <linearGradient id="gold" x2=".3" y2="1"><stop stop-color="#ffe789"/><stop offset="1" stop-color="#e9a82d"/></linearGradient>
+  </defs>
+  <path fill="url(#night)" d="M0 0h512v512H0z"/>
+  <path fill="#d74326" d="M0 0h118L0 118zM512 334v178H334z"/>
+  <path fill="#ffc85d" d="M0 112 112 0h20L0 132z"/>
+  <path fill="#ffffff" opacity=".05" d="M0 335 512 160v78L0 413z"/>
+  <text x="255" y="160" fill="#f8f5e8" text-anchor="middle" font-family="Arial,sans-serif" font-size="143" font-weight="900" font-style="italic" letter-spacing="-10">ATV</text>
+  <text x="256" y="204" fill="#f5c65e" text-anchor="middle" font-family="Arial,sans-serif" font-size="28" font-weight="800" letter-spacing="3">OFFROAD FURY</text>
+  <text x="375" y="441" fill="url(#gold)" text-anchor="middle" font-family="Arial,sans-serif" font-size="245" font-weight="900" font-style="italic">2</text>
+  <!-- Authored front-facing quad and helmet; no recovered game artwork. -->
+  <g stroke-linejoin="round" stroke-linecap="round">
+    <path d="M119 265h103l24 52-33 62h-88l-36-62z" fill="#bc3421" stroke="#ffcd69" stroke-width="7"/>
+    <path d="m125 280-27-20H70m142 20 26-20h24" fill="none" stroke="#f7f2df" stroke-width="10"/>
+    <path d="m146 265 4-30h45l8 30" fill="#e4ddca" stroke="#111e30" stroke-width="7"/>
+    <path d="M143 235q-4-38 30-38t30 38l-19 14h-26z" fill="url(#gold)" stroke="#0a1323" stroke-width="7"/>
+    <path d="m151 224 47-3-8 13h-28z" fill="#071324"/>
+    <path d="m136 310 78-2-16 43h-41z" fill="#111d30" stroke="#f7f2df" stroke-width="7"/>
+    <path d="m118 315-14 20m122-20 14 20" stroke="#ffde84" stroke-width="11"/>
+    <path d="m112 341 26 15m73 0 29-15" stroke="#ddd5c0" stroke-width="8"/>
+    <rect x="64" y="307" width="62" height="99" rx="22" fill="#050a12" stroke="#d9c58c" stroke-width="7"/>
+    <rect x="217" y="307" width="62" height="99" rx="22" fill="#050a12" stroke="#d9c58c" stroke-width="7"/>
+    <path d="m76 323 37 10m-37 11 37 10m-37 11 37 10m-37 11 37 10m116-73 37 10m-37 11 37 10m-37 11 37 10m-37 11 37 10" stroke="#374255" stroke-width="7"/>
+    <path d="m101 432 105-4m-79 20 70-2m-58 16 41-1" stroke="#c78c2d" stroke-width="6" opacity=".8"/>
+  </g>
+  <path d="M0 486h512v26H0z" fill="#070e1b"/>
+  <path d="M0 486h32v13H0zm64 0h32v13H64zm64 0h32v13h-32zm64 0h32v13h-32zm64 0h32v13h-32zm64 0h32v13h-32zm64 0h32v13h-32zm64 0h32v13h-32zM32 499h32v13H32zm64 0h32v13H96zm64 0h32v13h-32zm64 0h32v13h-32zm64 0h32v13h-32zm64 0h32v13h-32zm64 0h32v13h-32zm64 0h32v13h-32z" fill="#efe7d0" opacity=".65"/>
+</svg>

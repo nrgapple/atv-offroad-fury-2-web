@@ -1021,7 +1021,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                 if request.one_handed_mobile {
                     vec![
                         "Hold: drive / brace. Drag: steer / lean.",
-                        "Lift: coast / release preload.",
+                        "2nd: reverse; air swipe / circle tricks.",
                     ]
                 } else {
                     vec![
@@ -1034,7 +1034,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                     "One thumb anywhere: hold to drive and brace.",
                     "Drag left / right to steer; up / down to lean.",
                     "Lift: no throttle; releases preload, no brake.",
-                    "Same controls in air. No reverse or tricks.",
+                    "2nd finger: ground reverse; air swipe / circle tricks.",
                 ]
             } else {
                 vec![
