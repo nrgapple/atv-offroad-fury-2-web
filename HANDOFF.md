@@ -1,3 +1,22 @@
+## Uphill chase camera — public release (2026-10-13)
+
+PR #47 merged as `96e0ea04c1406a5adfeabbaec055b881b8c9dca7`; main CI/deploy
+[38483204620](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38483204620)
+passed. The validated current-main artifact matches public `furyremastered.com`.
+Workers HTTPS verification matched 44 authored static files and 460 served R2
+objects; the approved gallery package validated 461 objects (346,132,530 bytes)
+and uploaded two changes. The gallery contains 188 entries and 145 screenshots.
+
+Public Chromium Metal Caribou driving and lean-back camera cycling passed at
+390×844 and 1280×720 without a disc picker or browser errors. Portrait measured
+0.203118654 rad orbit / 1.093747071 pullback (688 samples, 495 bounded Riding
+transitions, 0.019862291 rad maximum orbit step); desktop measured 0.207891486 /
+1.095949917 (710 samples, 513 transitions, 0.020239806 rad maximum). Portrait → landscape → portrait rotation passed with 1e-12 tolerance for
+negligible floating-point residue; no camera code changed. Eight render-support
+tests passed again. Physical-phone behavior, original camera parity, isolated-prop
+anticipation and object-aware clearance remain open. See
+[hill camera evidence](research/HILL_CAMERA.md).
+
 ## Uphill chase camera — host checkpoint (2026-10-13)
 
 The current branch adds terrain-grade anticipation that keeps the rider lower in frame and reveals the climb without reading chassis pitch as terrain slope. Host Chromium Metal checks passed at 390×844 and 1280×720, with bounded Riding transitions and smooth orbit/pullback traces. Eight render-support tests cover wheelies beyond vertical, grade/pitch independence, spike rejection, crest/air/reverse/reset, 30/60/120 Hz timing, framing and terrain clearance. `make check`, `make verify`, `make web`, release tests, Worker tests and repository hygiene pass. See [camera evidence](research/HILL_CAMERA.md).
