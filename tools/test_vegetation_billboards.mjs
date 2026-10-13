@@ -12,8 +12,8 @@ try {for(const environment of (process.env.ATV_ECO_MAPS||'env01,env02,env03,env0
  page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/game.js',async route=>{
   const response=await route.fetch();
-  const oracle=`\nwindow.billboardSelectionCheck=()=>{
-   const eco=terrain.ecosystem,fx=Math.sin(camera.yaw),fz=Math.cos(camera.yaw),far=terrain.world.metadata.fog?.end??768;
+  const oracle=`\nconst sourceDrawEcosystem=drawEcosystem;drawEcosystem=()=>{window.billboardSelectionView={...camera};return sourceDrawEcosystem();};\nwindow.billboardSelectionCheck=()=>{
+   const camera=window.billboardSelectionView,eco=terrain.ecosystem,fx=Math.sin(camera.yaw),fz=Math.cos(camera.yaw),far=terrain.world.metadata.fog?.end??768;
    const start=performance.now(),brute=[];
    for(const p of eco.renderPlacements){const dx=p.position[0]-camera.x,dz=p.position[2]-camera.z,depth=dx*fx+dz*fz;
     if(dx*dx+dz*dz<=(far+p.radius)**2&&depth>-p.radius)brute.push({index:p.index,depth});}
