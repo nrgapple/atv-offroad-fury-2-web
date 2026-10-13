@@ -30,6 +30,7 @@ import:
 	python3 tools/import_disc.py "private/source/ATV Offroad Fury 2 (USA) (v2.00).zip"
 
 check:
+	python3 tools/check_secrets.py
 	$(CARGO) fmt --all -- --check
 	$(CARGO) test --locked --workspace
 	$(CARGO) clippy --locked --workspace --all-targets -- -D warnings

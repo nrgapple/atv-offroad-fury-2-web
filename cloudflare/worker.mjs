@@ -1,3 +1,4 @@
+import { multiplayerRequest, secureResponse } from './security.mjs';
 const BLOB = /^\/content\/[a-f0-9]{64}\.bin$/;
 const IMAGE = /^\/devlog-images\/[a-z0-9-]+\.png$/;
 const APP_ICON = /^\/app-icons\/[a-f0-9]{64}\.png$/;
@@ -31,8 +32,7 @@ async function gallery(request, env) {
   });
 }
 
-export default {
-  async fetch(request, env) {
+async function route(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
     if (env.CANONICAL_ORIGIN && url.hostname === `www.${new URL(env.CANONICAL_ORIGIN).hostname}`) {
@@ -47,7 +47,7 @@ export default {
       if (!origin || !allowed.includes(origin)) return new Response('Origin denied', {status:403});
       if (request.method !== 'GET' && request.method !== 'POST') return new Response('Method not allowed', {status:405});
       if (!env.MULTIPLAYER) return new Response('Multiplayer unavailable', {status:503});
-      return env.MULTIPLAYER.fetch(request);
+      return multiplayerRequest(request, env);
     }
     if (request.method !== 'GET' && request.method !== 'HEAD') return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
     if (path === '/') {
@@ -79,5 +79,6 @@ export default {
     }
     if (path.startsWith('/content/') || path.startsWith('/devlog-images/') || path.startsWith('/app-icons/')) return new Response('Not found', { status: 404 });
     return env.ASSETS.fetch(request);
-  },
-};
+}
+
+export default { async fetch(request, env) { return secureResponse(await route(request, env), request); } };

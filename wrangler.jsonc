@@ -22,13 +22,18 @@
   "vars": {
     "GAME_ORIGIN": "https://furyremastered.com",
     "GAME_ORIGINS": "https://furyremastered.com,https://atv-offroad-fury-2.champtoday.workers.dev",
-    "CANONICAL_ORIGIN": "https://furyremastered.com"
+    "CANONICAL_ORIGIN": "https://furyremastered.com",
+    "MULTIPLAYER_GUARDS": "required"
   },
   "durable_objects": {
     "bindings": [
       {
         "name": "LOBBIES",
         "class_name": "LobbyRoom"
+      },
+      {
+        "name": "ADMISSION",
+        "class_name": "LobbyAdmission"
       }
     ]
   },
@@ -37,6 +42,12 @@
       "tag": "rust-lobbies-v1",
       "new_sqlite_classes": [
         "LobbyRoom"
+      ]
+    },
+    {
+      "tag": "admission-budget-v1",
+      "new_sqlite_classes": [
+        "LobbyAdmission"
       ]
     }
   ],
@@ -60,5 +71,23 @@
       "invocation_logs": false
     },
     "redact_query_string": true
-  }
+  },
+  "ratelimits": [
+    {
+      "name": "ROOM_CREATE_LIMIT",
+      "namespace_id": "82401301",
+      "simple": {
+        "limit": 12,
+        "period": 60
+      }
+    },
+    {
+      "name": "ROOM_CONNECT_LIMIT",
+      "namespace_id": "82401302",
+      "simple": {
+        "limit": 120,
+        "period": 60
+      }
+    }
+  ]
 }

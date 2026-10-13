@@ -3,6 +3,7 @@
 import app from './worker.mjs';
 import RustRelay, { LobbyRoom } from '../work/cloudflare/relay/index.js';
 export { LobbyRoom };
+export { LobbyAdmission } from './security.mjs';
 export default class GameWorker extends RustRelay {
   fetch(request) {
     return app.fetch(request, {

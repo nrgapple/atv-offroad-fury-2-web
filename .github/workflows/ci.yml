@@ -21,6 +21,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
@@ -29,9 +30,11 @@ jobs:
       - name: Check repository and implementation
         run: |
           python3 tools/verify_repository.py
+          python3 tools/check_secrets.py --history
+          python3 -m unittest discover -s tools -p 'test_security.py'
           make check CARGO="$(which cargo)"
           python3 -m unittest discover -s tools -p 'test_release*.py'
-          node --test cloudflare/worker.test.mjs
+          node --test cloudflare/*.test.mjs
       - name: Identify pinned deployment tool cache
         id: worker-build-key
         run: python3 tools/worker_build_cache.py key
@@ -78,7 +81,7 @@ jobs:
   deploy:
     name: Deploy and verify production
     needs: web
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.repository == 'nrgapple/atv-offroad-fury-2-web' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.actor == github.repository_owner
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

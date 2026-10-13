@@ -11,9 +11,14 @@ const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const MAX_AGE_MS: f64 = 12. * 60. * 60. * 1000.;
 const IDLE_MS: f64 = 60_000.;
 const HOST_GRACE_MS: f64 = 30_000.;
+const CLEANUP_MS: i64 = 30_000;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Room {
+    #[serde(default)]
+    instance: String,
+    #[serde(default)]
+    admission_lease: Option<String>,
     #[serde(default)]
     generation: u32,
     #[serde(default)]
@@ -31,6 +36,8 @@ struct Room {
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Connection {
+    #[serde(default)]
+    instance: String,
     #[serde(default)]
     generation: u32,
     #[serde(default)]
@@ -71,6 +78,10 @@ fn room_reusable(room: &Room, instant: f64) -> bool {
         || room
             .host_disconnected_ms
             .is_some_and(|t| instant - t >= HOST_GRACE_MS)
+}
+
+fn same_room(room: &Room, connection: &Connection) -> bool {
+    room.generation == connection.generation && room.instance == connection.instance
 }
 
 fn code_from_path(path: &str) -> Option<RoomCode> {
@@ -143,6 +154,17 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
     let namespace = env.durable_object("LOBBIES")?;
     if req.path() == ROOT && req.method() == Method::Post {
         let body = req.text().await?;
+        if body.len() > 512 {
+            return Response::error("Lobby request too large", 413);
+        }
+        let admission_lease = req.headers().get("X-ATV-Admission-Lease")?;
+        if env
+            .var("MULTIPLAYER_GUARDS")
+            .is_ok_and(|v| v.to_string() == "required")
+            && admission_lease.is_none()
+        {
+            return Response::error("Admission required", 503);
+        }
         let requested = if body.is_empty() {
             None
         } else {
@@ -171,6 +193,8 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
             init.method = Method::Post;
             init.body = Some(
                 serde_json::to_string(&Room {
+                    instance: random_token()?,
+                    admission_lease: admission_lease.clone(),
                     generation: 0,
                     host_disconnected_ms: None,
                     host_player: None,
@@ -223,8 +247,27 @@ pub struct LobbyRoom {
 }
 
 impl LobbyRoom {
+    async fn release_lease(&self, room: &Room) -> Result<()> {
+        let Some(lease) = &room.admission_lease else {
+            return Ok(());
+        };
+        let mut init = RequestInit::new();
+        init.method = Method::Post;
+        init.body = Some(serde_json::json!({"lease": lease}).to_string().into());
+        let released = self
+            .env
+            .durable_object("ADMISSION")?
+            .id_from_name("global-budget-v1")?
+            .get_stub()?
+            .fetch_with_request(Request::new_with_init("https://admission/release", &init)?)
+            .await?;
+        if released.status_code() != 200 {
+            return Err(Error::RustError("Room retirement unavailable".into()));
+        }
+        Ok(())
+    }
     fn connections(&self) -> Result<Vec<(WebSocket, Connection)>> {
-        let generation = self.room.borrow().as_ref().map_or(0, |r| r.generation);
+        let room = self.room.borrow().clone();
         self.state
             .get_websockets()
             .into_iter()
@@ -237,7 +280,7 @@ impl LobbyRoom {
             .collect::<Result<Vec<_>>>()
             .map(|all| {
                 all.into_iter()
-                    .filter(|(_, c)| c.active && c.generation == generation)
+                    .filter(|(_, c)| c.active && room.as_ref().is_some_and(|r| same_room(r, c)))
                     .collect()
             })
     }
@@ -340,12 +383,22 @@ impl LobbyRoom {
             room.clone()
         };
         if let Some(room) = saved {
-            self.state.storage().put(ROOM_KEY, room).await?;
+            self.state.storage().put(ROOM_KEY, &room).await?;
         }
+
         for ws in self.state.get_websockets() {
+            if let Some(mut connection) = ws.deserialize_attachment::<Connection>()? {
+                connection.active = false;
+                ws.serialize_attachment(connection)?;
+            }
             let _ = ws.close(Some(1000), Some(reason));
         }
-        self.state.storage().delete_alarm().await?;
+        self.state.storage().set_alarm(CLEANUP_MS).await?;
+        let closed = self.room.borrow().clone();
+        if let Some(room) = closed {
+            // Retirement failure must not leave peers running; the alarm retries.
+            let _ = self.release_lease(&room).await;
+        }
         Ok(())
     }
 
@@ -360,7 +413,7 @@ impl LobbyRoom {
                 .room
                 .borrow()
                 .as_ref()
-                .is_none_or(|room| room.closed || room.generation != connection.generation)
+                .is_none_or(|room| room.closed || !same_room(room, &connection))
             {
                 return Ok(());
             }
@@ -423,6 +476,7 @@ impl DurableObject for LobbyRoom {
 
     async fn fetch(&self, mut req: Request) -> Result<Response> {
         if req.path() == "/create" && req.method() == Method::Post {
+            let mut room: Room = req.json().await?;
             let previous = self.room.borrow().clone();
             if previous
                 .as_ref()
@@ -431,7 +485,6 @@ impl DurableObject for LobbyRoom {
                 self.record("connection_rejected", None, "Room exists", Some(409), None);
                 return Response::error("Room exists", 409);
             }
-            let mut room: Room = req.json().await?;
             room.generation = previous
                 .as_ref()
                 .map_or(1, |r| r.generation.wrapping_add(1));
@@ -443,6 +496,11 @@ impl DurableObject for LobbyRoom {
             self.state.storage().put(ROOM_KEY, &room).await?;
             self.record("room_created", None, "", None, None);
             self.state.storage().set_alarm(30_000_i64).await?;
+            if let Some(old) = previous.as_ref().filter(|r| r.closed) {
+                // Install the replacement before any external admission await.
+                // A failed retirement remains bounded by the lease expiry.
+                let _ = self.release_lease(old).await;
+            }
             return Ok(Response::empty()?.with_status(201));
         }
         if !same_origin(&req, &self.env)? {
@@ -455,6 +513,10 @@ impl DurableObject for LobbyRoom {
             return Response::error("Room does not exist", 404);
         };
         if room.code != code || room_reusable(&room, now()) {
+            if room.closed {
+                // Also retire legacy closed records, which had no cleanup alarm.
+                self.state.storage().set_alarm(CLEANUP_MS).await?;
+            }
             self.record("connection_rejected", None, "Room ended", Some(410), None);
             return Response::error("Room ended", 410);
         }
@@ -523,6 +585,7 @@ impl DurableObject for LobbyRoom {
         let pair = WebSocketPair::new()?;
         let instant = now();
         pair.server.serialize_attachment(Connection {
+            instance: room.instance.clone(),
             generation: room.generation,
             close_recoverable: None,
             active: true,
@@ -553,7 +616,7 @@ impl DurableObject for LobbyRoom {
         let Some(mut connection) = ws.deserialize_attachment::<Connection>()? else {
             return self.close_socket(&ws, 1008, "Connection missing");
         };
-        if connection.generation != room.generation {
+        if !same_room(&room, &connection) {
             return self.close_socket(&ws, 1000, "Room replaced");
         }
         if !connection.active {
@@ -730,6 +793,27 @@ impl DurableObject for LobbyRoom {
             return Response::empty();
         };
         if room.closed {
+            // Keep retrying retirement even if admission has a prolonged outage.
+            self.state.storage().set_alarm(CLEANUP_MS).await?;
+            self.release_lease(&room).await?;
+            let storage = self.state.storage();
+            let cached = self.room.clone();
+            // Block code reuse until storage AND cached identity are cleared.
+            self.state
+                .block_concurrency_while(async move {
+                    // Admission awaits allow requests to reuse this code. Never
+                    // delete a replacement installed while retirement ran.
+                    if cached.borrow().as_ref().is_none_or(|current| {
+                        current.instance != room.instance || current.generation != room.generation
+                    }) {
+                        return Ok(());
+                    }
+                    storage.delete_alarm().await?;
+                    storage.delete_all().await?;
+                    *cached.borrow_mut() = None;
+                    Ok(())
+                })
+                .await?;
             return Response::empty();
         }
         let instant = now();
@@ -776,6 +860,26 @@ impl DurableObject for LobbyRoom {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fresh_identity_rejects_old_callbacks_after_storage_cleanup() {
+        let mut room: Room = serde_json::from_value(serde_json::json!({
+            "instance":"new-instance", "generation":1, "code":b"ABCD2345",
+            "host_token":"secret", "created_ms":0., "closed":false,
+            "epoch":1, "map":1, "started":false
+        }))
+        .unwrap();
+        let mut connection: Connection = serde_json::from_value(serde_json::json!({
+            "instance":"old-instance", "generation":1, "active":true, "peer":0,
+            "player":null, "sequence":null,"last_seen_ms":0., "window_ms":0.,
+            "messages":0,"bytes":0
+        }))
+        .unwrap();
+        assert!(!same_room(&room, &connection));
+        connection.instance = room.instance.clone();
+        assert!(same_room(&room, &connection));
+        room.generation += 1;
+        assert!(!same_room(&room, &connection));
+    }
 
     #[test]
     fn old_room_schema_and_reuse_deadlines_preserve_active_owners() {
@@ -860,6 +964,7 @@ mod tests {
     #[test]
     fn per_connection_rate_budget_recovers_and_bytes_are_bounded() {
         let mut connection = Connection {
+            instance: String::new(),
             generation: 1,
             close_recoverable: None,
             active: true,
@@ -883,6 +988,8 @@ mod tests {
     #[test]
     fn hibernation_metadata_roundtrip_preserves_authority_sequence_and_rate() {
         let room = Room {
+            instance: String::new(),
+            admission_lease: None,
             generation: 1,
             host_disconnected_ms: None,
             host_player: None,
@@ -895,6 +1002,7 @@ mod tests {
             started: true,
         };
         let connection = Connection {
+            instance: String::new(),
             generation: 1,
             close_recoverable: None,
             active: true,
