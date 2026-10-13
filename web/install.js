@@ -1,3 +1,31 @@
+// Installed iOS can expose a fixed/percentage viewport shorter than the screen.
+// Only compensate a small system-inset gap in a full-width, unzoomed app.
+export function gameViewport(win, standalone, apple) {
+  const vv = win.visualViewport, scale = vv?.scale ?? 1;
+  let width = scale === 1 ? (vv?.width ?? win.innerWidth) : win.innerWidth;
+  let height = scale === 1 ? (vv?.height ?? win.innerHeight) : win.innerHeight;
+  if (standalone && apple && scale === 1) {
+    const screen = win.screen;
+    const candidates = [[screen?.width, screen?.height], [screen?.height, screen?.width]];
+    const full = candidates.find(([w, h]) => Math.abs(w - width) <= 2 && h >= height && h - height <= 128);
+    if (full) [width, height] = full;
+  }
+  return { width: Math.max(1, Math.round(width)), height: Math.max(1, Math.round(height)) };
+}
+export function mountGameViewport(win = window, doc = document) {
+  if (!doc.getElementById('game')) return;
+  const update = () => {
+    const standalone = win.navigator.standalone === true || win.matchMedia('(display-mode: standalone)').matches || win.matchMedia('(display-mode: fullscreen)').matches;
+    const { width, height } = gameViewport(win, standalone, isAppleMobile(win.navigator));
+    const style = doc.documentElement.style;
+    style.setProperty('--app-width', `${width}px`);
+    style.setProperty('--app-height', `${height}px`);
+  };
+  for (const name of ['resize', 'orientationchange', 'pageshow', 'appdisplaychange']) win.addEventListener(name, update);
+  win.visualViewport?.addEventListener('resize', update);
+  update();
+}
+
 // iOS installation belongs to Safari's Share menu. Only offer a native prompt
 // after the browser supplies beforeinstallprompt; a Share API call cannot install.
 export const INSTALL_DISMISS_KEY = 'fury-app-install-dismissed-until';
@@ -79,4 +107,4 @@ export function mountInstallBanner(win = window, doc = document) {
   update();
   return { update };
 }
-if (typeof window !== 'undefined' && typeof document !== 'undefined') mountInstallBanner();
+if (typeof window !== 'undefined' && typeof document !== 'undefined') { mountGameViewport(); mountInstallBanner(); }

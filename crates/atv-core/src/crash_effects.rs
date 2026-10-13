@@ -96,15 +96,18 @@ impl Particle {
             radius,
         }
     }
-    fn advance(&mut self, floor: &impl Fn(V) -> Option<f32>) {
+    fn integrate(&mut self) {
         let raw = sub(self.p, self.previous);
         // At 120 Hz, one foot per substep caps presentation speed at 120 ft/s.
         let velocity = scale(raw, 0.995 / dot(raw, raw).sqrt().max(1.));
         self.previous = self.p;
         self.p = add(add(self.p, velocity), [0., -32.174 / 14400., 0.]);
+    }
+    fn advance(&mut self, floor: &impl Fn(V) -> Option<f32>) {
+        self.integrate();
         self.contact(floor, true);
     }
-    fn contact(&mut self, floor: &impl Fn(V) -> Option<f32>, bounce: bool) {
+    fn contact(&mut self, floor: &impl Fn(V) -> Option<f32>, bounce: bool) -> bool {
         if let Some(h) = floor(self.p) {
             let h = h + self.radius;
             if self.p[1] < h {
@@ -117,8 +120,10 @@ impl Particle {
                         self.p[2] - v[2] * 0.76,
                     ];
                 }
+                return true;
             }
         }
+        false
     }
 }
 struct Joint {
@@ -150,6 +155,7 @@ pub struct Effects {
     joints: Vec<Joint>,
     links: Vec<Link>,
     parts: Vec<Part>,
+    rider_velocity: Option<V>,
 }
 #[derive(Serialize)]
 pub struct Frame {
@@ -159,6 +165,10 @@ pub struct Frame {
     pub quad_node_matrices: Vec<M>,
 }
 impl Effects {
+    /// Detached actor momentum is independent of the already stopped vehicle.
+    pub fn set_rider_velocity(&mut self, velocity: V) {
+        self.rider_velocity = velocity.iter().all(|v| v.is_finite()).then_some(velocity);
+    }
     pub fn enabled(&self) -> bool {
         self.enabled
     }
@@ -255,14 +265,16 @@ impl Effects {
                     } else {
                         1.
                     };
-                    let v = add(
-                        scale(velocity, 0.65),
-                        [
-                            side * (i % 3) as f32 * 2.,
-                            8. + (i % 4) as f32 * 1.5,
-                            ((i % 5) as f32 - 2.) * 2.,
-                        ],
+                    let launch = self.rider_velocity.unwrap_or(velocity);
+                    let speed = dot(launch, launch).sqrt();
+                    // One coherent cartwheel impulse instead of unrelated limp limbs.
+                    let axis = unit([rider_world[0], rider_world[1], rider_world[2]]);
+                    let center = pos(&mul(&rider_world, &rider[0]));
+                    let spin = cross(
+                        scale(axis, 4.5 + (speed / 30.).min(3.)),
+                        sub(pos(&initial), center),
                     );
+                    let v = add(add(scale(launch, 0.9), spin), [side * 1.5, 12., 0.]);
                     self.joints.push(Joint {
                         body: Particle::new(
                             pos(&initial),
@@ -294,7 +306,7 @@ impl Effects {
                 for i in 0..self.joints.len() {
                     if let Some(p) = self.joints[i].parent {
                         self.link(i, p, false);
-                        // A grandparent brace limits folding, while leaving arms/legs floppy.
+                        // Firmer grandparent braces preserve readable limbs through tumbling.
                         if let Some(g) = self.joints[p].parent {
                             self.link(i, g, true);
                         }
@@ -305,8 +317,14 @@ impl Effects {
                 let steps = (dt * 120.).round().clamp(1., 12.) as usize;
                 for _ in 0..steps {
                     for joint in &mut self.joints {
-                        joint.body.advance(&floor);
+                        joint.body.integrate();
                     }
+                    let incoming: [V; 32] = std::array::from_fn(|i| {
+                        self.joints
+                            .get(i)
+                            .map_or([0.; 3], |j| sub(j.body.p, j.body.previous))
+                    });
+                    let mut contacts = [false; 32];
                     for _ in 0..10 {
                         for link in &self.links {
                             let delta = sub(self.joints[link.b].body.p, self.joints[link.a].body.p);
@@ -318,8 +336,18 @@ impl Effects {
                             self.joints[link.b].body.p =
                                 sub(self.joints[link.b].body.p, correction);
                         }
-                        for joint in &mut self.joints {
-                            joint.body.contact(&floor, false);
+                        for (i, joint) in self.joints.iter_mut().enumerate() {
+                            contacts[i] |= joint.body.contact(&floor, false);
+                        }
+                    }
+                    // Apply restitution AFTER constraints. Earlier contact response
+                    // was consumed by subsequent joint/floor projections.
+                    for (i, joint) in self.joints.iter_mut().enumerate() {
+                        if contacts[i] {
+                            let v = incoming[i];
+                            let rebound = if v[1] < -0.045 { -v[1] * 0.62 } else { 0. };
+                            joint.body.previous =
+                                sub(joint.body.p, [v[0] * 0.9, rebound, v[2] * 0.9]);
                         }
                     }
                     for part in &mut self.parts {
@@ -396,8 +424,10 @@ impl Effects {
             let one = sub(self.joints[a].body.p, self.joints[p].body.p);
             let two = sub(self.joints[p].body.p, self.joints[b].body.p);
             (
-                length * 0.55,
-                (dot(one, one).sqrt() + dot(two, two).sqrt()).max(length) * 0.98,
+                length * 0.82,
+                ((dot(one, one).sqrt() + dot(two, two).sqrt()) * 0.98)
+                    .min(length * 1.18)
+                    .max(length),
             )
         } else {
             (length, length)
@@ -424,6 +454,66 @@ mod tests {
             world_matrix: m,
             bounds: [0.; 7],
         }
+    }
+    #[test]
+    fn rider_retains_detached_momentum_and_rebounds_after_constraint_solving() {
+        let rider = vec![
+            node("Pelvis", -1, [0., 4., 0.]),
+            node("Torso", 0, [0., 5., 0.]),
+            node("Head", 1, [0., 6., 0.]),
+        ];
+        let pose: Vec<_> = rider.iter().map(|n| n.world_matrix).collect();
+        let mut effects = Effects::default();
+        effects.set_enabled(true);
+        // The vehicle has stopped; the independent detached rider is still moving.
+        effects.set_rider_velocity([30., -50., 0.]);
+        let mut rebounded = false;
+        for tick in 1..180 {
+            let frame = effects
+                .update(
+                    tick,
+                    0,
+                    1. / 60.,
+                    true,
+                    true,
+                    [0.; 3],
+                    0.,
+                    ID,
+                    &[],
+                    &[],
+                    ID,
+                    &pose,
+                    &rider,
+                    |_| Some(0.),
+                )
+                .unwrap();
+            assert!(
+                frame
+                    .rider_node_matrices
+                    .iter()
+                    .flatten()
+                    .all(|v| v.is_finite())
+            );
+            for j in &effects.joints {
+                assert!(j.body.p[1] >= j.body.radius - 1e-5);
+                if j.body.p[1] < 1. && j.body.p[1] - j.body.previous[1] > 0.08 {
+                    rebounded = true;
+                }
+            }
+            if tick == 1 {
+                assert!(
+                    effects.joints[0].body.p[0] > 0.3,
+                    "use detached momentum instead of stopped vehicle"
+                );
+                let brace = effects.links.iter().find(|l| l.a == 2 && l.b == 0).unwrap();
+                assert!((brace.min - 1.64).abs() < 1e-5);
+                assert!(brace.max <= 2.36);
+            }
+        }
+        assert!(
+            rebounded,
+            "joint projections must preserve readable terrain rebound"
+        );
     }
     #[test]
     fn baseline_and_repeated_reads_never_advance_effects() {

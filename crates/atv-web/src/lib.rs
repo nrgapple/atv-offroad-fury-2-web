@@ -464,6 +464,12 @@ fn simulation_frame(
             .as_ref()
             .and_then(|a| a.frame())
             .is_some_and(|f| f.phase != atv_core::wreck_animation::Phase::Attached);
+        sim.funny_crashes.set_rider_velocity(
+            sim.wreck_animator
+                .as_ref()
+                .and_then(|a| a.frame())
+                .map_or(frame.linear_velocity, |f| f.linear_velocity),
+        );
         value["funny_crash"] = serde_json::to_value(sim.funny_crashes.update(
             sim.effects_tick,
             frame.reset_count,
