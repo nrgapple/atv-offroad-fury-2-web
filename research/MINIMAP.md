@@ -1,5 +1,14 @@
 # Freestyle GPS minimap
 
+Release-consistency correction strategy (2026-10-13): reproduce the reported
+old rectangle/button padding plus duplicated speed by retaining the previous
+CSS/HUD module alongside the new minimap module. Version every deployed local
+CSS, module import, Worker and WASM reference with the release commit so a
+returning browser cannot reuse an earlier file from its stable URL cache.
+Keep the audited artifact filenames and hashed original-resource URLs unchanged.
+Freestyle standalone speed ownership follows the explicit minimap Off setting,
+including during raster generation and temporary visibility suspension.
+
 Implementation strategy (2026-10-13): an optional authored orthographic X/Z
 projection of the recovered terrain colors/heights and static scenery, cached
 once per course. The GPS window follows the vehicle with north (+Z) up and a
@@ -77,8 +86,9 @@ text so a top-right map cannot cover Pause/Camera.
 
 The map now renders the Rust HUD speed text/units and compact preload feedback
 inside its footprint. The separate original speed/preload block is suppressed
-only while this combined map is actually visible. Off, baking and Race retain
-the original speed block; stunt text/scoring remain on the original HUD canvas.
+whenever Freestyle minimap is enabled, including during baking or temporary
+hiding. Explicit Off restores it; Race keeps its existing HUD. Stunt
+text/scoring remain on the original HUD canvas.
 Both shapes put compass/scale/type inside the circular safe region. This is an
 authored presentation adaptation, not a change to the underlying HUD clock,
 preload, scoring or vehicle physics.

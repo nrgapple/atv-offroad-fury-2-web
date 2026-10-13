@@ -1,6 +1,6 @@
 {
-  "status": "The host-verified Freestyle minimap combines GPS, speed, and preload with persisted shape and corner settings plus north-up/heading-up toggle. The ATV2 browser port remains incomplete; physical-device behavior, GPU timing, and native parity remain unverified.",
-  "working_on": "Continue original ATV2 fidelity and physical-device validation; complete dynamic map actor/GPU checks and remaining motorcycle controller, pose, and menu integration.",
+  "status": "A host Chromium reproduction confirms that mixing cached older HUD assets with a new minimap can cause inconsistent presentation; versioned assets fix the host reproduction without clearing cache. The user's device cache state remains unverified, and the ATV2 browser port remains incomplete.",
+  "working_on": "Verify the cache correction in a public deployment and continue original ATV2 fidelity work.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -2380,9 +2380,28 @@
       "limitation": "Host-only checkpoint; not published. The source bank component and animation resources are recovered, while roll-axis ownership, contact/IK integration and the controller remain authored adapters or unfinished work. Earlier gates did not detect incorrect ground bank direction or the static menu pose. Full native whole-controller parity and physical-phone behavior are unverified. The touch captures show the rider arms spread and somewhat stiff, and the bike/rider remain small in portrait framing.",
       "image": "/devlog-images/motorcycle-banking-and-standing-menu-poses-now-pass-ho-d50992f3.png",
       "caption": "Host capture sheet: left and right touch-bank views above, front-facing standing RM125 Race and Sano 50 Mini menu poses below. Rendered direction and idle motion were checked on the host; this is not a public release."
+    },
+    {
+      "id": "cache-versioning-prevents-mixed-minimap-and-hud-assets-6135d1c8",
+      "timestamp": "2026-10-13T15:33:56.640363+00:00",
+      "recorded_at": "2026-10-13T15:39:15.629023+00:00",
+      "kind": "verification",
+      "title": "Cache versioning prevents mixed minimap and HUD assets",
+      "summary": "A host browser reproduced mixed minimap/HUD assets when old CSS and JavaScript were combined with the new minimap. Cache-safe asset versioning fixes the mismatch in warm-cache checks without clearing the browser cache.",
+      "details": [
+        "The forced mixed-version reproduction matched the reported layout: a padded dark square minimap, a separate native MPH meter, and speed inside the minimap. The fix query-versions HTML, CSS, transitive JavaScript, Worker and WASM assets so a browser session receives one consistent release graph.",
+        "The initial Chromium same-context warm-cache run passed without clearing cache or replacing the browser context. Turning the minimap Off alone restores the Freestyle speed display; blur does not restore speed. Existing On/Off preferences remain intact. The repeat using the self-contained persistent-profile harness also passed; see work/cache-chromium.log.",
+        "WebKit real persistent-browser HTTP-cache regression passed: the old cached CSS remained retrievable, the complete fresh asset graph was release-versioned, and the check required no cache clear or context replacement. See work/cache-webkit.log.",
+        "No additional rendering pass or per-update overhead was introduced; the change versions deployed asset URLs.",
+        "make check passed 349 core, 76 JavaScript, 25 network, 3 relay, 4 release-tool and 13 bridge tests, plus formatting and strict Clippy. make verify source validation passed; 8 Worker checks and 30 release checks passed with one skipped.",
+        "The persistent-profile Chromium warm-cache rerun passed; see work/cache-chromium.log."
+      ],
+      "limitation": "Host browser verification only. The reproduction establishes a plausible stale-cache cause for mixed UI, not the cache state of the user\u2019s device. The screenshot is not a public deployment or physical-phone capture. Public deployment verification remains future work; physical-device behavior and full native parity remain unverified.",
+      "image": "/devlog-images/cache-versioning-prevents-mixed-minimap-and-hud-assets-6135d1c8.png",
+      "caption": "Host Chromium capture after asset URL versioning: circular top-right minimap with integrated MPH and no duplicate native speed meter. Not a public deployment or physical-phone capture."
     }
   ],
-  "updated_at": "2026-10-13T15:00:55.649475+00:00",
+  "updated_at": "2026-10-13T15:39:15.629345+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {

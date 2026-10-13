@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import shutil
 
@@ -49,6 +50,20 @@ def scoped_content_source(source, commit):
     return source.replace(marker, f"fetch('/content/manifests/{commit}.json')")
 
 
+def versioned_source(source, commit):
+    """Give the whole CSS/module/Worker/WASM graph a fresh browser cache key.
+
+    Stable filenames are kept in the audited artifact; query versions apply to
+    references, including transitive module imports and Worker startup.
+    """
+    def replace(match):
+        quote, relative, name = match.groups()
+        if name not in STATIC_FILES:
+            return match.group(0)
+        return f'{quote}{relative or ""}{name}?v={commit}{quote}'
+    return re.sub(r'''(["'])(\./)?([a-z0-9_-]+\.(?:js|css|wasm))\1''', replace, source)
+
+
 def package(commit, destination, release_scoped=False):
     if len(commit) != 40 or any(c not in '0123456789abcdef' for c in commit):
         raise ValueError('commit must be a complete lowercase Git SHA')
@@ -61,6 +76,9 @@ def package(commit, destination, release_scoped=False):
     (destination / 'static').mkdir(parents=True)
     for name in sorted(STATIC_FILES):
         shutil.copy2(ROOT / 'web/dist' / name, destination / 'static' / name)
+        if name.endswith(('.html', '.js', '.css')):
+            path = destination / 'static' / name
+            path.write_text(versioned_source(path.read_text(), commit))
     if release_scoped:
         source = destination / 'static/content.js'
         source.write_text(scoped_content_source(source.read_text(), commit))

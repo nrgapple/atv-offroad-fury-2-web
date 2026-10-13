@@ -1,5 +1,17 @@
 # Private source repository and public Cloudflare hosting
 
+## Authored asset release keys (2026-10-13)
+
+The minimap regression reproduces old CSS and HUD code remaining in a returning
+browser while a new module draws its speed footer. `package_release.py` now
+adds the release commit query to local CSS/module/Worker/WASM references,
+including transitive module imports. The checksum-verified artifact keeps its
+stable allowlisted filenames; original resource URLs and their long-lived
+content-addressed caching remain unchanged. Browser cache keys differ by release
+without adding requests or work per riding frame. The warm-cache regression
+retains old responses and proves the new document loads a consistent module
+graph without clearing the browser cache.
+
 ## Production flow restored (2026-10-13)
 
 GitHub Actions checks/builds and automatically deploys authored application assets.
