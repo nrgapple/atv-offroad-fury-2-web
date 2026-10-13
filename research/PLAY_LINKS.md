@@ -100,3 +100,8 @@ missing rooms, automatic creation/late joining, host map authority, prepare/crea
 and ordinary title navigation. Browser evidence and release identity are recorded
 in HANDOFF.md and the dev log. Host Chromium captures do not establish physical
 phone or geographically separated multiplayer behavior.
+
+Public verification on 2026-10-13 passes at main `e4bfd91` (PR #44), including
+all opt-in launch routes above and injected resource-failure recovery. Main CI
+run38479468364 and the public hash verifier pass (44 static/458 served objects).
+See the deployment record for screenshot/gallery publication and evidence limits.

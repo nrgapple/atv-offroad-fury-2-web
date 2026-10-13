@@ -1,3 +1,29 @@
+## Public direct-play and lobby URL release (2026-10-13)
+
+PR #44 merged as `e4bfd91aab5351f284d850fd4d039ab888a887b0` and passed
+[main CI/deploy 38479468364](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38479468364).
+Public `furyremastered.com` identifies that commit. The validated current-main
+artifact was fetched before publication; the separately approved R2 package
+validated 459 objects and uploaded two changes (host screenshot/gallery).
+Full public HTTPS verification matched 44 authored static files and all 458
+served R2 objects by hash/size/MIME, with 186 entries and 143 screenshots.
+
+The actual public Chromium Metal URL gate passes root query forwarding, Tioga
+ATV14/female/name encoding/copy/reload, deterministic default ATV1 Vancouver,
+motorcycle34, ATV2/female two-lap/CPU0 Race, 390px prepared/manual entry, invalid
+and duplicate links with no admission/gameplay, missing room recovery, automatic
+Vancouver creation and copied late join. The host14/male and guest26/female each
+draw the peer (14/12 draws); the guest's env01 URL cannot override room map9.
+Prepared creation applies Tioga without starting. An injected missing quad resource
+returns to a usable lobby with an error and Leave; ordinary visits reach title.
+No file-selection step or page errors occur. See [URL contract](research/PLAY_LINKS.md).
+
+The inspected public screenshot records this deployed commit. Its metadata and
+PNG follow the next validated metadata checkpoint's CI/R2 publication. These
+are automated browser observations on one Mac with synthetic focus, not physical
+phone, geographic-latency or full original-game equivalence. Multiplayer remains
+ATV Freeride; Race remains Caribou National; sound/fullscreen need browser gestures.
+
 ## Shareable URL setup — host checkpoint (2026-10-13)
 
 `feat/direct-play-links` adds deterministic URL setup/direct entry for all nine
