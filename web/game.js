@@ -1,5 +1,5 @@
 // Original content and vehicle component simulation run in the Rust worker.
-import { vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, RideEffectsSettings, VehicleShake } from './render-support.js';
+import { vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, RideEffectsSettings, VehicleShake, severedIndices, meshNodeBounds, poseBounds, crashPresentation } from './render-support.js';
 import { Multiplayer, PlayerIndicators } from './multiplayer.js';
 import { Frontend } from './frontend.js';
 import { courseResource } from './launch.js';
@@ -37,6 +37,7 @@ let funnyCrashes = crashSettings.enabled;
 const cameraShake = new VehicleShake();
 crashSettings.onChange = () => {
   funnyCrashes = crashSettings.enabled;
+  if(crashSettings.mode==='gorn' && terrain && !bloodRenderer)bloodRenderer=new BloodRenderer(gl);
   if (simFrame) acceptFrame({...simFrame,funny_crash:null},false);
 };
 crashSettings.onShakeChange = () => { cameraShake.reset(); scheduleRender(); };
@@ -459,6 +460,8 @@ uniform bool sceneryBlend;
 uniform bool alphaFailPass;
 uniform vec2 heights;
 uniform vec3 surfaceColor;
+uniform vec3 eye;
+uniform vec4 crashFocus;
 uniform sampler2D baseTexture;
 uniform bool useTexture;
 uniform sampler2D motorcycleMudTexture;
@@ -479,6 +482,15 @@ uniform bool skyPass;
 out vec4 color;
 ${fogFragmentShader}
 void main() {
+  // Let both crash actors remain visible through foreground foliage. A stable
+  // screen-door fade keeps tree context without extra translucent draw passes.
+  if (useEcosystem && crashFocus.w > 0.0) {
+    vec3 ray = crashFocus.xyz - eye;
+    vec3 p = vec3(worldXZ.x,worldHeight,worldXZ.y) - eye;
+    float t = dot(p,ray) / max(dot(ray,ray),1.0);
+    if (t > 0.0 && t < 1.0 && length(p-ray*t) < crashFocus.w
+      && mod(gl_FragCoord.x + gl_FragCoord.y*3.0,8.0) > 0.5) discard;
+  }
   vec3 n = normalize(surfaceNormal);
   float altitude = clamp((worldHeight - heights.x) / max(1.0, heights.y - heights.x), 0.0, 1.0);
   vec3 base = mix(vec3(.29,.32,.22), vec3(.60,.54,.41), altitude);
@@ -529,7 +541,7 @@ function initializeGl() {
   program = gl.createProgram(); gl.attachShader(program, vertex); gl.attachShader(program, fragment); gl.linkProgram(program);
   gl.deleteShader(vertex); gl.deleteShader(fragment);
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
-  uniforms = Object.fromEntries(['viewProjection', 'model', 'eye', 'heights', 'surfaceColor', 'baseTexture', 'useTexture', 'useTerrainTexture', 'terrainColors', 'terrainMapping', 'terrainDetail', 'terrainDetailScale', 'terrainSpacing', 'ambientLight', 'sunlightColor', 'sunlightDirection', 'fogColor', 'unlit', 'skyPass', 'useVertexColor', 'sceneryBlend', 'sceneryUvOffset', 'alphaFailPass'].map(name => [name, gl.getUniformLocation(program, name)]));
+  uniforms = Object.fromEntries(['viewProjection', 'model', 'eye', 'heights', 'surfaceColor', 'baseTexture', 'useTexture', 'useTerrainTexture', 'terrainColors', 'terrainMapping', 'terrainDetail', 'terrainDetailScale', 'terrainSpacing', 'ambientLight', 'sunlightColor', 'sunlightDirection', 'fogColor', 'unlit', 'skyPass', 'useVertexColor', 'sceneryBlend', 'sceneryUvOffset', 'alphaFailPass', 'crashFocus'].map(name => [name, gl.getUniformLocation(program, name)]));
   uniforms.useEcosystem = gl.getUniformLocation(program, 'useEcosystem');
   uniforms.sceneryReflectionPlane = gl.getUniformLocation(program, 'sceneryReflectionPlane');
   uniforms.fogPacking = gl.getUniformLocation(program, 'fogPacking');
@@ -562,7 +574,7 @@ function clearMesh() {
   wheelEffectsRenderer?.dispose(); wheelEffectsRenderer = undefined;
   trainRenderer?.dispose(); trainRenderer = undefined;
   waterRenderer?.dispose(); waterRenderer = undefined;
-  for (const chunk of [...chunks, ...vehicleChunks, ...sceneChunks, ...skyChunks]) { gl.deleteVertexArray(chunk.vao); gl.deleteBuffer(chunk.vertices); gl.deleteBuffer(chunk.indices); }
+  for (const chunk of [...chunks, ...vehicleChunks, ...sceneChunks, ...skyChunks]) { gl.deleteVertexArray(chunk.vao); gl.deleteBuffer(chunk.vertices); gl.deleteBuffer(chunk.indices); if(chunk.cutBuffer)gl.deleteBuffer(chunk.cutBuffer); }
   for (const texture of gpuTextures) gl.deleteTexture(texture);
   for (const group of ecoGroups) { gl.deleteBuffer(group.instances); for (const chunk of group.chunks) { gl.deleteVertexArray(chunk.vao); gl.deleteBuffer(chunk.vertices); gl.deleteBuffer(chunk.indices); } }
   const billboard=ecoBillboard;
@@ -1053,6 +1065,8 @@ function buildTerrainMesh() {
 }
 function buildMesh() {
   clearMesh(); buildTerrainMesh(); buildEcosystem();
+  if(crashSettings.mode==='gorn')bloodRenderer=new BloodRenderer(gl);
+  if(vehicle) { vehicle.boundsByNode=meshNodeBounds(vehicle.groups,vehicle.nodes.length); vehicle.cutKey=null; }
   if (terrain.wheelEffectsSource) { wheelEffectsRenderer = new WheelEffectsRenderer(gl, terrain.wheelEffectsSource); wheelEffectsRenderer.accept(simFrame?.wheel_particles); }
   if (terrain.trainSource) trainRenderer = new TrainRenderer(gl, terrain.trainSource, { upload, texture, inverseDirection });
   diagnostics.wheelEffects = wheelEffectsRenderer ? { atlas: terrain.wheelEffectsSource.config.atlas.texture, frames: terrain.wheelEffectsSource.config.atlas.frames.length, particles: 0, draws: 0, gpuBytes: wheelEffectsRenderer.gpuBytes } : null;
@@ -1079,6 +1093,8 @@ function buildMesh() {
   let riderTriangles = 0, riderTextureCount = 0;
   if (vehicle?.rider) {
     const rider = vehicle.rider, riderTextures = new Map();
+    rider.boundsByNode=meshNodeBounds(rider.mesh.lods[0].groups,rider.mesh.nodes.length);
+    rider.gpuPose=new Float32Array(rider.pose.world_matrices.flat());
     for (const [name, decoded] of rider.textures) { if (!decoded.rgba) continue; const gpu = texture(decoded); riderTextures.set(name, gpu); gpuTextures.push(gpu); }
     riderTextureCount = riderTextures.size;
     for (const group of rider.mesh.lods[0].groups) {
@@ -1090,7 +1106,7 @@ function buildMesh() {
         vertices.set([...vertex.local_position, ...inverseDirection(bone.world_matrix, vertex.normal), ...vertex.uv, vertex.node], index * 9);
       });
       const chunk = upload(vertices, new Uint16Array(group.indices), true, true);
-      chunk.rider = true;
+      chunk.rider = true; chunk.group=group;
       const mud=rider.textures.get(rider.mesh.materials[group.material])?.mud;
       if (mud) {chunk.mudTexture=texture(mud);gpuTextures.push(chunk.mudTexture);}
       chunk.texture = riderTextures.get(rider.mesh.materials[group.material]);
@@ -1239,11 +1255,38 @@ function acceptFrame(frame, effects = true) {
   touchControls.feedback(frame);
   vehicle.position = frame.origin.slice();
   if (frame.quad_node_matrices?.length !== vehicle.nodes.length || frame.quad_node_matrices.some(matrix => matrix.length !== 16 || !matrix.every(Number.isFinite))) throw new Error('Simulation returned an invalid quad linkage pose.');
-  vehicle.nodeMatrices = new Float32Array((funnyCrashes && frame.funny_crash ? frame.funny_crash.quad_node_matrices : frame.quad_node_matrices).flat());
+  const quadPose=funnyCrashes && frame.funny_crash ? frame.funny_crash.quad_node_matrices : frame.quad_node_matrices;
+  vehicle.nodeMatrices ??= new Float32Array(quadPose.length*16);
+  quadPose.forEach((m,i)=>vehicle.nodeMatrices.set(m,i*16));
   diagnostics.animatedQuadNodes = frame.quad_node_matrices.length;
   if (vehicle.rider) {
     if (frame.rider_node_matrices?.length !== vehicle.rider.mesh.nodes.length || frame.rider_node_matrices.some(matrix => matrix.length !== 16 || !matrix.every(Number.isFinite))) throw new Error('Simulation returned an invalid rider pose.');
     vehicle.rider.pose.world_matrices = funnyCrashes && frame.funny_crash?.rider_node_matrices.length ? frame.funny_crash.rider_node_matrices : frame.rider_node_matrices;
+    vehicle.rider.gpuPose ??= new Float32Array(frame.rider_node_matrices.length*16);
+    vehicle.rider.pose.world_matrices.forEach((m,i)=>vehicle.rider.gpuPose.set(m,i*16));
+    const severed=funnyCrashes ? frame.funny_crash?.severed_nodes??[] : [];
+    const key=severed.join(',');
+    if(vehicle.cutKey!==key) {
+      vehicle.cutKey=key;
+      let removed=0;
+      for(const chunk of vehicleChunks)if(chunk.rider) {
+        chunk.cutCount=null;
+        if(severed.length) {
+          const indices=severedIndices(chunk.group,vehicle.rider.mesh.nodes,severed);
+          chunk.cutBuffer ??= gl.createBuffer();
+          gl.bindVertexArray(chunk.vao);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,chunk.cutBuffer);
+          gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,indices,gl.STATIC_DRAW);
+          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,chunk.indices);
+          chunk.cutCount=indices.length;removed+=(chunk.count-indices.length)/3;
+        }
+      }
+      gl.bindVertexArray(null);diagnostics.severedBridgeTriangles=removed;
+    }
+    if(funnyCrashes && frame.funny_crash) {
+      const quad=poseBounds(vehicle.boundsByNode,quadPose,vehicleMatrix());
+      const rider=poseBounds(vehicle.rider.boundsByNode,vehicle.rider.pose.world_matrices,frame.funny_crash.rider_node_matrices.length?null:frame.rider_world_matrix??vehicleMatrix());
+      vehicle.crashBounds=quad && rider ? {min:quad.min.map((v,i)=>Math.min(v,rider.min[i])),max:quad.max.map((v,i)=>Math.max(v,rider.max[i]))} : quad??rider;
+    } else vehicle.crashBounds=null;
     diagnostics.animatedRiderNodes = frame.rider_node_matrices.length;
     diagnostics.riderMode = frame.rider_mode;
     if (frame.rider_world_matrix && (frame.rider_world_matrix.length !== 16 || !frame.rider_world_matrix.every(Number.isFinite))) throw new Error('Simulation returned an invalid detached rider transform.');
@@ -1348,7 +1391,9 @@ function acceptCameraFrame(frame) {
   diagnostics.followCamera = { ...frame, presetName: diagnostics.cameraPresets?.[frame.preset] };
 }
 function presentCameraFrame(frame = presentedCamera ?? cameraFrame) {
-  const view = cameraShake.apply(chasePresentation(frame, presentedFrame ?? simFrame, canvas.width / canvas.height, uphillSightline, terrainHeight), terrainHeight);
+  const aspect=canvas.width/canvas.height;
+  const chase=chasePresentation(frame,presentedFrame??simFrame,aspect,uphillSightline,terrainHeight);
+  const view=cameraShake.apply(crashPresentation(chase,vehicle?.crashBounds,aspect,terrainHeight));
   [camera.x, camera.y, camera.z] = view.position;
   camera.yaw = view.yaw;
   camera.pitch = view.pitch;
@@ -1423,7 +1468,9 @@ function render(time) {
   }
   diagnostics.motorcyclePresentation = simFrame?.vehicle_kind === 'motorcycle' ? { alpha: presentation.alpha, interpolated: presentation.interpolated, origin: presentedFrame.origin, orientation: presentedFrame.orientation } : null;
   const smoothQuad = presentation.interpolated ? new Float32Array(presentedFrame.quad_node_matrices.flat()) : vehicle?.nodeMatrices;
-  const smoothRider = presentation.interpolated ? presentedFrame.rider_node_matrices : vehicle?.rider?.pose.world_matrices;
+  const smoothRider = presentation.interpolated ? new Float32Array(presentedFrame.rider_node_matrices.flat()) : vehicle?.rider?.gpuPose;
+  const quadWorld=vehicle ? vehicleMatrix() : identity;
+  const riderWorld=funnyCrashes && simFrame?.funny_crash?.rider_node_matrices.length ? identity : simFrame?.rider_world_matrix ? new Float32Array(simFrame.rider_world_matrix) : quadWorld;
   gl.viewport(0, 0, width, height); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.useProgram(program);
   gl.uniform1f(uniforms.motorcycleMudAmount,0);
   gl.uniform1i(uniforms.useQuadPose, false); gl.uniform1i(uniforms.useEcosystem, false); gl.uniform1f(uniforms.alphaCutoff, 0);
@@ -1434,6 +1481,9 @@ function render(time) {
   const planes = viewPlanes(viewProjection);
   let terrainDraws = 0, terrainTriangles = 0, sceneryDraws = 0, sceneryTriangles = 0, sceneryVisibleGroups = 0;
   gl.uniformMatrix4fv(uniforms.viewProjection, false, viewProjection); gl.uniform3f(uniforms.eye, camera.x, camera.y, camera.z);
+  const crashView=diagnostics.cameraPresentation?.crash;
+  if(crashView)gl.uniform4f(uniforms.crashFocus,...crashView.target,Math.hypot(...crashView.bounds.max.map((v,i)=>v-crashView.bounds.min[i]))/2+1);
+  else gl.uniform4f(uniforms.crashFocus,0,0,0,0);
   const fog=terrain.world?.metadata.fog;
   gl.uniform2f(uniforms.heights, terrain.min, terrain.max);
   gl.uniform2f(uniforms.fogPacking,fog?.encoded_bias??524288,fog?.coefficient??0);
@@ -1516,12 +1566,15 @@ function render(time) {
     gl.uniform1f(uniforms.motorcycleMudAmount,simFrame?.vehicle_kind==='motorcycle' && chunk.mudTexture ? Math.max(...simFrame.mud_amount) : 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.uniform1i(uniforms.fogEnabled,Boolean(fog)&&chunk.fog);
-    gl.uniformMatrix4fv(uniforms.model, false, chunk.rider && funnyCrashes && simFrame?.funny_crash?.rider_node_matrices.length ? identity : chunk.rider && simFrame?.rider_world_matrix ? new Float32Array(simFrame.rider_world_matrix) : vehicleMatrix());
+    gl.uniformMatrix4fv(uniforms.model, false, chunk.rider ? riderWorld : quadWorld);
     gl.uniform1i(uniforms.useQuadPose, Boolean(chunk.quad || chunk.rider));
     if (chunk.quad) gl.uniformMatrix4fv(uniforms.quadBones, false, smoothQuad);
-    if (chunk.rider) gl.uniformMatrix4fv(uniforms.quadBones, false, new Float32Array(smoothRider.flat()));
+    if (chunk.rider) gl.uniformMatrix4fv(uniforms.quadBones, false, smoothRider);
     gl.uniform1i(uniforms.useTexture, chunk.texture ? 1 : 0); gl.bindTexture(gl.TEXTURE_2D, chunk.texture ?? fallbackTexture);
-    gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
+    gl.bindVertexArray(chunk.vao);
+    if(chunk.rider && chunk.cutCount!==null && chunk.cutCount!==undefined)gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,chunk.cutBuffer);
+    gl.drawElements(gl.TRIANGLES, chunk.rider ? chunk.cutCount??chunk.count : chunk.count, gl.UNSIGNED_SHORT, 0);
+    if(chunk.rider && chunk.cutCount!==null && chunk.cutCount!==undefined)gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,chunk.indices);
   }
   gl.uniform1f(uniforms.motorcycleMudAmount,0);
   let cpuDraws = 0, cpuTriangles = 0;
@@ -1551,7 +1604,7 @@ function render(time) {
   }
   if (crashSettings.mode === 'gorn' && simFrame?.funny_crash?.blood?.length) {
     bloodRenderer ??= new BloodRenderer(gl);
-    bloodRenderer.draw(simFrame.funny_crash.blood, {camera,viewProjection});
+    bloodRenderer.draw(simFrame.funny_crash.blood, {camera,viewProjection,program});
   } else if (bloodRenderer) bloodRenderer.draws = 0;
   if (wheelEffectsRenderer) {
     wheelEffectsRenderer.draw({ camera, viewProjection });

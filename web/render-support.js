@@ -146,58 +146,132 @@ export class RideEffectsSettings {
   }
 }
 
-// Read-only vehicle response; never alters the recovered camera or physics.
+// Smooth deterministic gradient noise: independent channels, no per-frame random jumps.
+function impactNoise(x, seed) {
+  const cell = Math.floor(x), t = x-cell;
+  const gradient = n => {
+    let h = Math.imul(n ^ seed, 0x45d9f3b); h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
+    return ((h ^ (h >>> 16)) >>> 0) / 0xffffffff * 2 - 1;
+  };
+  const fade = t*t*t*(t*(t*6-15)+10);
+  return 2*((1-fade)*gradient(cell)*t + fade*gradient(cell+1)*(t-1));
+}
+// Event-only rotational impulses. GDC camera trauma squared with finite decay;
+// ordinary speed, engine RPM and suspension contacts never create shake.
 export class VehicleShake {
   constructor() { this.reset(); }
-  reset() { this.previous = null; this.energy = 0; this.roughness = 0; this.time = 0; this.cooldown = 0; this.offset = [0,0,0,0]; this.impacts = 0; this.lastSeverity = 0; }
-  accept(actor, enabled = true) {
-    const old = this.previous;
-    this.previous = actor;
-    if (!actor || !enabled || !old || old.reset_count !== actor.reset_count || Math.hypot(...actor.origin.map((v,i)=>v-old.origin[i])) > 40) {
-      this.energy = 0; this.roughness = 0; this.offset = [0,0,0,0]; this.cooldown=0; this.lastSeverity=0; return 0;
+  reset() {
+    this.previous=null; this.energy=0; this.roughness=0; this.time=0;
+    this.remaining=0; this.duration=0; this.strength=0; this.cooldown=0;
+    this.airTime=0; this.crashSeverity=0; this.lastSeverity=0; this.impacts=0;
+    this.offset=[0,0,0,0];
+  }
+  quiet() { this.energy=0; this.remaining=0; this.offset.fill(0); }
+  accept(actor, enabled=true) {
+    const old=this.previous; this.previous=actor;
+    if (!actor || !enabled || !old || old.reset_count!==actor.reset_count || Math.hypot(...actor.origin.map((v,i)=>v-old.origin[i]))>40) {
+      this.quiet(); this.airTime=0; this.crashSeverity=0; this.cooldown=0; return 0;
     }
-    const contact = Number.isFinite(actor.crash_impact_speed) ? actor.crash_impact_speed : 0;
-    const rider = Math.hypot(...(actor.rider_wreck?.sampled_impact_delta ?? [0,0,0]));
-    const severity = Math.max(contact, rider);
-    const acceleration = Math.hypot(...(actor.linear_velocity ?? [0,0,0]).map((v,i)=>v-(old.linear_velocity?.[i] ?? v)));
-    const grounded = actor.grounded?.some(Boolean);
-    const desired = grounded && actor.wreck?.phase === 'Riding' ? Math.min(1, acceleration / 8) : 0;
-    this.roughness += (desired - this.roughness) * .22;
-    // One impulse per separated impact, rather than replaying every contact frame.
-    const previousImpact = Math.max(old.crash_impact_speed ?? 0,Math.hypot(...(old.rider_wreck?.sampled_impact_delta ?? [0,0,0])));
-    if (severity > 16 && (this.cooldown <= 0 || severity > this.lastSeverity*1.35) && (previousImpact <= 16 || severity > previousImpact*1.35)) {
-      this.energy = Math.min(1, Math.max(this.energy, (severity-12)/55));
-      this.cooldown = .25; this.lastSeverity = severity; this.impacts++;
-      return severity;
+    const riding=actor.wreck?.phase==='Riding', grounded=actor.grounded?.some(Boolean);
+    if (riding && old.wreck?.phase!=='Riding') this.crashSeverity=0;
+    const airTime=this.airTime;
+    this.airTime=grounded?0:this.airTime+1/60;
+    const contact=actor.crash_impact_speed??0;
+    const body=(actor.chassis_contact_count??0)+(actor.obstacle_contact_count??0)+(actor.dynamic_contact_count??0)>0;
+    const delta=Math.hypot(...actor.linear_velocity.map((v,i)=>v-old.linear_velocity[i]));
+    const landing=grounded && !old.grounded?.some(Boolean) && airTime>=.18 && old.linear_velocity[1]<-12;
+    const rider=Math.hypot(...(actor.rider_wreck?.sampled_impact_delta??[0,0,0]));
+    const severity=Math.max(body && delta>=5 && contact>=30 ? contact : 0, landing ? Math.max(contact,-old.linear_velocity[1]) : 0, rider>=40 ? rider : 0);
+    // A crash gets one impulse and at most a meaningful severity upgrade. Its
+    // repeated bouncing cannot keep the camera moving throughout recovery.
+    const upgrade=severity>=50 && this.crashSeverity<50;
+    if (severity && (this.cooldown===0 || upgrade) && (riding || this.crashSeverity===0 || upgrade)) {
+      this.strength=Math.min(1,Math.max(.2,(severity-12)/65));
+      this.duration=severity>=50?.48:.26; this.remaining=this.duration;
+      this.energy=this.strength; this.cooldown=.30; this.lastSeverity=severity;
+      if (!riding || body) this.crashSeverity=Math.max(this.crashSeverity,severity);
+      this.impacts++; return severity;
     }
     return 0;
   }
-  update(actor, dt, enabled = true, active = true) {
-    this.cooldown = Math.max(0,this.cooldown-(Number.isFinite(dt) ? Math.max(0,Math.min(.05,dt)) : 0));
-    if (!enabled || !active) { this.energy=0; this.roughness=0; this.offset=[0,0,0,0]; return; }
-    dt = Number.isFinite(dt) ? Math.max(0,Math.min(.05,dt)) : 0;
-    this.time += dt;
-    this.energy *= Math.exp(-dt*5.2);
-    const riding = actor?.wreck?.phase === 'Riding', grounded = actor?.grounded?.some(Boolean);
-    const speed = Math.min(1,Math.abs(actor?.speed ?? 0)/70);
-    const engine = riding && grounded && speed > .015 ? .0008*Math.min(1,(actor.rpm ?? 0)/8000) : 0;
-    const vibration = riding && grounded ? .0025*speed + .007*this.roughness : 0;
-    const strength = vibration+engine;
-    const t = this.time, e = this.energy;
-    this.offset = [
-      Math.sin(t*83)*strength + Math.sin(t*41)*e*.055,
-      Math.sin(t*107+.7)*strength*.7 + Math.sin(t*47+.4)*e*.045,
-      Math.sin(t*67)*strength*2 + Math.sin(t*35)*e*.28,
-      e*.12,
-    ];
+  update(actor, dt, enabled=true, active=true) {
+    dt=Number.isFinite(dt)?Math.max(0,Math.min(.05,dt)):0;
+    this.cooldown=Math.max(0,this.cooldown-dt);
+    if (!enabled || !active) { this.quiet(); return; }
+    this.time+=dt; this.remaining=Math.max(0,this.remaining-dt);
+    if (!this.remaining) { this.quiet(); return; }
+    const attack=Math.min(1,(this.duration-this.remaining)/.012);
+    this.energy=this.strength*this.remaining/this.duration;
+    const amplitude=this.energy*this.energy*attack;
+    this.offset[0]=impactNoise(this.time*19,17)*amplitude*.025;
+    this.offset[1]=impactNoise(this.time*22,83)*amplitude*.035;
   }
-  apply(view, height) {
-    const [yaw,pitch,up,dolly] = this.offset;
-    const position = [...view.position];
-    position[0] -= Math.sin(view.yaw)*dolly;
-    position[2] -= Math.cos(view.yaw)*dolly;
-    position[1] += up;
-    if (up || dolly) position[1]=Math.max(position[1],height(position[0],position[2])+1);
-    return {...view,position,yaw:view.yaw+yaw,pitch:view.pitch+pitch};
+  apply(view) { return {...view,yaw:view.yaw+this.offset[0],pitch:view.pitch+this.offset[1]}; }
+}
+
+// Cut topology at severed joints. A triangle must belong to one connected
+// component; otherwise skinning it would bridge two independently moving limbs.
+export function severedIndices(group, nodes, severed) {
+  const cuts=new Set(severed);
+  const components=nodes.map((_,i)=>{
+    for(let depth=0;depth<nodes.length;depth++) {
+      if(cuts.has(i))return i+1;
+      const parent=nodes[i]?.parent;
+      if(!(parent>=0))return 0;
+      i=parent;
+    }
+    return 0;
+  });
+  const indices=[];
+  for(let i=0;i<group.indices.length;i+=3) {
+    const a=group.indices[i],b=group.indices[i+1],c=group.indices[i+2];
+    const component=components[group.vertices[a].node];
+    if(component===components[group.vertices[b].node] && component===components[group.vertices[c].node])indices.push(a,b,c);
   }
+  return new Uint16Array(indices);
+}
+
+export function poseBounds(bounds, matrices, world=null) {
+  const min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity];
+  for(let i=0;i<bounds.length;i++) {
+    const b=worldBounds(bounds[i],matrices[i]);
+    const transformed=world ? worldBounds(b,world) : b;
+    if(transformed)for(let a=0;a<3;a++){min[a]=Math.min(min[a],transformed.min[a]);max[a]=Math.max(max[a],transformed.max[a]);}
+  }
+  return min.every(Number.isFinite)?{min,max}:null;
+}
+
+// Fit BOTH visible actors, using posed mesh bounds rather than the native
+// rider's recovery animation. Safety margin also covers the small impact shake.
+export function crashPresentation(view, bounds, aspect, height) {
+  if(!bounds)return view;
+  const target=bounds.min.map((v,i)=>(v+bounds.max[i])/2);
+  const pitch=Math.max(-.55,Math.min(-.22,view.pitch)),yaw=view.yaw;
+  const forward=[Math.sin(yaw)*Math.cos(pitch),Math.sin(pitch),Math.cos(yaw)*Math.cos(pitch)];
+  const right=[-Math.cos(yaw),0,Math.sin(yaw)];
+  const up=[-Math.sin(yaw)*Math.sin(pitch),Math.cos(pitch),-Math.cos(yaw)*Math.sin(pitch)];
+  const f=view.presentation.focalLength;
+  let distance=24;
+  for(let corner=0;corner<8;corner++) {
+    const p=bounds.min.map((v,i)=>((corner&(1<<i))?bounds.max[i]:v)-target[i]);
+    const dot=v=>v.reduce((sum,x,i)=>sum+x*p[i],0),depth=dot(forward);
+    distance=Math.max(distance,Math.abs(dot(right))*f/aspect/.76-depth,Math.abs(dot(up))*f/.76-depth,2-depth);
+  }
+  const position=target.map((v,i)=>v-forward[i]*distance);
+  // If terrain raises the eye, pull back further using the new viewing basis.
+  const floor=height(position[0],position[2])+2;
+  if(position[1]<floor) {
+    position[1]=floor;
+    return crashPresentation({...view,position,pitch:Math.atan2(target[1]-floor,Math.hypot(target[0]-position[0],target[2]-position[2]))},bounds,aspect,()=>-Infinity);
+  }
+  return {...view,position,yaw,pitch,presentation:{...view.presentation,crash:{target,bounds,distance}}};
+}
+
+export function meshNodeBounds(groups, count) {
+  const bounds=Array.from({length:count},()=>null);
+  for(const group of groups)for(const v of group.vertices) {
+    const b=bounds[v.node]??={min:[Infinity,Infinity,Infinity],max:[-Infinity,-Infinity,-Infinity]};
+    for(let a=0;a<3;a++){b.min[a]=Math.min(b.min[a],v.local_position[a]);b.max[a]=Math.max(b.max[a],v.local_position[a]);}
+  }
+  return bounds;
 }
