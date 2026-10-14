@@ -1,0 +1,16 @@
+{
+  "id": "original-freeport-type12-fog-volume-recovers-persisten-9f9f6abded6c409a8db3861c7d6d84e7",
+  "timestamp": "2026-10-14T01:22:05.312172+00:00",
+  "recorded_at": "2026-10-14T01:26:35.611316+00:00",
+  "kind": "verification",
+  "title": "Original Freeport type12 fog volume recovers persistent sprite motion",
+  "summary": "The browser port now reconstructs Freeport's persistent type12 fog volume from its source EMT declaration and CPU sprite atlas. A 200-sprite volume advances with the original oscillator and near-camera fade, while sharing bounded CPU storage with placed rain.",
+  "details": [
+    "Native comparison gates passed 60 constructor cases (1,537 particles), 80 clock sequences (8,000 updates), 300 persistent-motion cases and 300 near-alpha cases: 660,486 executed finite EE instructions and 45,181 raw comparisons with zero differences.",
+    "The host gate observed the original fog contribution at 417,711 desktop and 202,553 portrait pixels; these counts vary with capture timing. The 200 sprites retain age, size, atlas frame and mirrors across multiple lifetimes; one instanced draw uses 286,192 GPU bytes, with pause, vehicle reset and graphics restoration preserving the source world frame. Motorcycle lifecycle also passed, with 575,622/271,167 fog pixels in its measured capture.",
+    "All 40 venue routes passed declaration and weather-loading checks with finite bounded frames. The inspected 390\u00d7844 host Chromium capture uses an explicit test-only start beside the Freeport fog placement; the ship, railing and rider remain visible through the fog. It is not a physical-phone capture."
+  ],
+  "limitation": "This component does not establish full source manager scheduling, shared global/date RNG order, complete lighting or GS transparency precision, or physical-phone performance. The map RNG remains independent with a fixed simulation timestep. Moving Arlington locomotive smoke, callback-gated hockey hats and other animated actor families remain unfinished; no public release is claimed.",
+  "image": "/devlog-images/original-freeport-type12-fog-volume-recovers-persisten-9f9f6abded6c409a8db3861c7d6d84e7.png",
+  "caption": "Host Chromium portrait (390\u00d7844), explicit test-only start beside the original Freeport fog placement: rider, ship and railing are visible through the persistent fog; not a physical-phone capture."
+}
