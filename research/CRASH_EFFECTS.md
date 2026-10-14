@@ -136,3 +136,81 @@ Explicit original Off passes the touch crash/recovery route. Fresh default On,
 saved Off/On after reload, and unavailable-storage defaults/session toggles pass
 at 844×390. These follow-up results are host verification, pending public release;
 earlier captures and evidence above describe the original default-Off checkpoint.
+
+## Smart shake and Gorn strategy (2026-10-13)
+
+Add independent saved camera shake after the recovered chase/hill presentation:
+read velocity changes, grounded state, RPM and actual contact speed, with bounded
+offsets and a decaying hard-impact kick. It never changes the Rust camera or
+physics. Add a short authored bass/noise crash accent through the gameplay audio
+bus. Off must immediately remove shake; resets, camera cycles and lifecycle
+interruptions clear pending energy.
+
+Crash choices become Original, Crazy and opt-in Gorn, migrating the saved funny
+crash boolean. Gorn retains Crazy's vehicle/ragdoll behavior until a severe actual
+impact, then breaks supported head/arm/leg joint connections into independent
+components and emits bounded red droplets/ground splashes. Existing source mesh
+segments provide the visible limbs; no new source content is required. Rust owns
+the gore state and terrain contact; WebGL batches authored blood shapes. Effects
+clear at recovery, reset and mode changes. This is optional authored presentation,
+not recovered original behavior; terrain-only debris and local-player effects
+remain limitations.
+
+## Smart shake and Gorn host implementation (2026-10-13)
+
+Commit `7c6a29d` implements the strategy above. Pause now offers saved Original,
+Crazy and opt-in Gorn choices. Migration keeps the previous Crazy default and
+preserves an existing saved Original. The independent saved Camera shake toggle
+defaults On unless the browser requests reduced motion. Engine, speed and
+grounded acceleration provide continuous vibration; actual impact severity adds
+a bounded, decaying camera kick and synthesized bass/noise boom. These effects
+do not alter Rust camera output, vehicle handling, crash classification or
+recovery. Reset, camera cycles and lifecycle interruptions clear pending shake.
+
+Gorn activates its added gore only at an actual ATV impact of at least 50 ft/s
+or a rider terrain landing above 40 ft/s. Supported head, upper-arm and upper-leg
+joint connections split into independent groups; unsupported geometry remains
+intact. Terrain splashes use at most 90 droplets and a single GPU draw. The
+effect is local-player only and clears on recovery, reset and crash-mode changes.
+
+The host severe route passed 1,519 paired WASM steps with zero gameplay/camera
+mismatches and 101 additional steps after reload. It produced three aerial
+ragdoll frames with the ATV intact, two actual contact-damage transitions, seven
+mechanical parts, five severed rider parts and 90 droplets in one GPU blood draw,
+then intact recovery. Camera kick/energy and the crash boom were observed. Crazy
+Nac Nac mode switching and recovery passed 581 paired steps without mismatches.
+Motorcycle Crazy and Gorn mild-wreck touch/recovery passed 333 and 302 paired
+steps respectively, with no damage or gore. Settings persistence and 44px
+targets passed in 390×844 portrait and 844×390 landscape.
+
+`make check` passed 359 core, 27 net, 7 relay, 15 web, 6 tools and 4 release
+Rust tests; 122 JS tests, including denied localStorage getter handling and repeated-impact kick-upgrade coverage; formatting, strict Clippy and eight cache tests.
+`make verify`, `make web`, 35 release checks (one expected skip), 19 Worker
+checks and repository hygiene pass. This remains host verification pending
+current-main CI, deployment and public browser verification. Captures are
+1280×844 host Chromium Metal; physical-phone behavior and original-game crash or
+camera parity are unverified. No new runtime resource additions are needed; the selected screenshots still follow the separate R2/gallery publication step.
+
+Follow-up host touch verification at 390px with ATV26/female and Gorn passed
+rider separation, one contact/mechanical-damage transition, switching through
+Original and Crazy, intact recovery and resumed driving. The 607 paired WASM
+steps had zero gameplay/camera differences; GPU counts were 468 enhanced quad
+and 7,292 rider draws. A separate ATV1-to-ATV26 severe-route probe timed out
+after 60 seconds waiting for all seven mechanical and five gore pieces. The
+route did not attain its severe target, so this is a route/severity coverage
+limit rather than a failed-effects result. Severe Gorn gore on female ATV26
+remains unverified.
+
+The final crash-timing fix remembers the worst actual ATV impact only during
+the current wreck. A hard collision of at least 50 ft/s before rider separation
+can therefore trigger Gorn when the rider detaches; recovery/reset clears the
+value so a later soft crash cannot inherit gore. A focused Rust regression
+covers delayed separation followed by a mild crash. The final Gorn route passed
+1,405 paired WASM gameplay/camera steps plus 101 after reload, with zero
+differences: three aerial ragdoll frames with the ATV intact, two contact
+transitions, seven mechanical pieces, five rider pieces, 90 droplets, nonzero
+shake and boom, and intact recovery. The earlier 1,519-step host run remains a
+valid checkpoint for that build. `make check` passes 360 core Rust and 122 JS
+tests, formatting and strict Clippy; `make web` passes. New CI and public
+verification remain pending. Existing approved captures remain accurate; this
+follow-up adds no screenshot.

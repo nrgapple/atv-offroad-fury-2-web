@@ -87,6 +87,10 @@ pub struct Request {
     #[serde(default)]
     pub funny_crashes: bool,
     #[serde(default)]
+    pub crash_mode: String,
+    #[serde(default)]
+    pub camera_shake: bool,
+    #[serde(default)]
     pub minimap_enabled: bool,
     #[serde(default = "default_minimap_size")]
     pub minimap_size: f32,
@@ -947,12 +951,22 @@ pub fn layout(request: Request) -> Result<Frame> {
                 (diagnostics_label, "diagnostics"),
                 (mobile_label, "onehanded"),
                 (
-                    if request.funny_crashes {
-                        "Funny crashes: On"
-                    } else {
-                        "Funny crashes: Off"
+                    match request.crash_mode.as_str() {
+                        "gorn" => "Crashes: Gorn (blood & limbs)",
+                        "original" => "Crashes: Original",
+                        "crazy" => "Crashes: Crazy",
+                        _ if request.funny_crashes => "Crashes: Crazy",
+                        _ => "Crashes: Original",
                     },
                     "funnycrashes",
+                ),
+                (
+                    if request.camera_shake {
+                        "Camera shake: On"
+                    } else {
+                        "Camera shake: Off"
+                    },
+                    "camera-shake",
                 ),
             ];
             if !request.lobby_status.is_empty() {
@@ -971,12 +985,9 @@ pub fn layout(request: Request) -> Result<Frame> {
             } else {
                 ("Lobby", "lobby")
             });
-            let columns =
-                if (h - if portrait { 110. } else { 90. }) / choices.len() as f32 * scale < 44. {
-                    2
-                } else {
-                    1
-                };
+            let available = h - if portrait { 110. } else { 90. };
+            let max_rows = ((available * scale / 44.).floor() as usize).max(1);
+            let columns = choices.len().div_ceil(max_rows);
             let rows = choices.len().div_ceil(columns);
             let row = ((h - if portrait { 110. } else { 90. }) / rows as f32).min(if portrait {
                 64.
@@ -1404,6 +1415,8 @@ mod tests {
             diagnostics_mode: String::new(),
             one_handed_mobile: false,
             funny_crashes: false,
+            crash_mode: String::new(),
+            camera_shake: true,
             minimap_enabled: true,
             minimap_size: 160.,
             minimap_zoom: 50.,

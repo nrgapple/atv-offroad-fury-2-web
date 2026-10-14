@@ -257,6 +257,23 @@ export class GameAudio {
     this.commands++;
     this.lastSound = sound;
   }
+  // Short authored bass/noise accent, only on severe actual contacts.
+  crashBoom(severity) {
+    if (!this.active || this.closed || !this.context || this.context.state !== 'running') return;
+    const now=this.context.currentTime;
+    if (now-(this.boomTime ?? -Infinity)<.3) return;
+    this.boomTime=now; this.boomStarts=(this.boomStarts ?? 0)+1;
+    const envelope=this.context.createGain();
+    envelope.gain.setValueAtTime(Math.min(.6,severity/150),now);
+    envelope.gain.exponentialRampToValueAtTime(.001,now+.48);
+    envelope.connect(this.engineGain);
+    const bass=this.context.createOscillator();bass.type='sine';bass.frequency.setValueAtTime(95,now);bass.frequency.exponentialRampToValueAtTime(28,now+.38);bass.connect(envelope);bass.start(now);bass.stop(now+.5);
+    const buffer=this.context.createBuffer(1,Math.ceil(this.context.sampleRate*.2),this.context.sampleRate),data=buffer.getChannelData(0);
+    let seed=73;for(let i=0;i<data.length;i++){seed=(Math.imul(seed,1664525)+1013904223)>>>0;data[i]=(seed/2147483648-1)*.5;}
+    const noise=this.context.createBufferSource();noise.buffer=buffer;
+    const filter=this.context.createBiquadFilter();filter.type='lowpass';filter.frequency.value=650;noise.connect(filter);filter.connect(envelope);noise.start(now);
+    bass.onended=()=>{bass.disconnect();noise.disconnect();filter.disconnect();envelope.disconnect();};
+  }
   stopSources() {
     for (const voice of this.sources) {
       voice.source.onended = null;
@@ -469,6 +486,7 @@ export class GameAudio {
         }) }, effects: { ready: this.effectsReady, voices: this.effectVoices.size, starts: this.effectStarts,
           selections: this.effectSelections, last: this.effectLast, queuedFrames: this.effectFrames.length,
           samples: this.effectsConfig?.body_impact.map(name => ({ name, decoded: Boolean(this.buffers.get(name)?.buffer) })) ?? [] },
+      crashBooms:this.boomStarts ?? 0,
       multiplayer: {voices:this.remoteVoices.size,impacts:this.remoteEffects.size,starts:this.remoteStarts,playing:this.remotePlaying()},
       music: this.music.snapshot() };
   }

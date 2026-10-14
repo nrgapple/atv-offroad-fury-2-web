@@ -85,7 +85,10 @@ fn frame(sim: &mut Simulation, raw: &serde_json::Value) -> Result<serde_json::Va
         |name| serde_json::json!({"name":name,"main_time":bike.stunt_timer}),
     );
     let terrain = sim.terrain.as_ref().ok_or("load terrain first")?;
-    sim.funny_crashes.set_enabled(
+    sim.funny_crashes.set_mode(
+        raw.get("crash_mode")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(""),
         raw.get("funny_crashes")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(true),

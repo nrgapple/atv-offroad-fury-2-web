@@ -28,6 +28,10 @@ try {
     return response.json();
   });
   const features = metadata.port_status?.features;
+  assert.equal(await desktop.locator('#entries > article').count(), metadata.entries.length, 'every aggregated checkpoint must render');
+  const latestRecorded = metadata.entries.at(-1);
+  assert.equal(await desktop.locator(`#checkpoint-${latestRecorded.id} h2`).textContent(), latestRecorded.title);
+  assert.match(await desktop.locator('#count').textContent(), new RegExp(`^${metadata.entries.length} recorded$`));
   assert.ok(Array.isArray(features) && features.length > 0, 'metadata must define feature areas');
   const featureCount = features.length;
   const trainFeature = features.find(feature => feature.id === 'arlington-train');
@@ -88,7 +92,7 @@ try {
   }
 
   assert.deepEqual(errors, [], `browser errors: ${errors.join('; ')}`);
-  console.log(JSON.stringify({ featureAreas: featureCount, trainStatus: trainFeature.status, trainScope: trainFeature.scope, desktopFilters: 'passed', expandableEvidence: 'passed', mobileFilters: 'passed', mobile: dimensions, errors }));
+  console.log(JSON.stringify({ checkpoints: metadata.entries.length, latestRecorded: latestRecorded.id, featureAreas: featureCount, trainStatus: trainFeature.status, trainScope: trainFeature.scope, desktopFilters: 'passed', expandableEvidence: 'passed', mobileFilters: 'passed', mobile: dimensions, errors }));
 } finally {
   await browser.close();
 }

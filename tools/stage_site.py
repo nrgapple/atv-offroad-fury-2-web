@@ -5,6 +5,7 @@ Never recursively copy the project or private directory into a public checkout.
 The Sites source helper owns source synchronization and publication afterward.
 """
 import argparse
+from devlog import read_devlog
 import json
 from pathlib import Path
 import re
@@ -46,7 +47,7 @@ def main():
         if source.is_symlink():
             raise ValueError('Refusing symlinked build input')
         shutil.copy2(source, dist / name)
-    local_log = json.loads((ROOT / 'research/devlog.json').read_text())
+    local_log = read_devlog(ROOT)
     if args.release:
         log = json.loads((build / 'devlog.json').read_text())
         approved = {entry['id']: entry for entry in local_log['entries']}
