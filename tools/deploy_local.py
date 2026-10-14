@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -20,7 +21,10 @@ URLS = ['https://furyremastered.com/', 'https://atv-offroad-fury-2.champtoday.wo
 
 
 def run(*args):
-    subprocess.run(args, cwd=ROOT, check=True)
+    # Isolate both test binaries and release artifacts even if a target symlink
+    # or inherited environment points at another checkout's compilation cache.
+    target = ROOT / 'target/local-release' / hashlib.sha256(str(ROOT.resolve()).encode()).hexdigest()[:16]
+    subprocess.run(args, cwd=ROOT, check=True, env={**os.environ, 'CARGO_TARGET_DIR': str(target)})
 
 
 def git(*args):
@@ -108,6 +112,8 @@ def deploy(commit, checkpoint, owner, reason):
             release = ROOT / 'work/local-releases' / commit
             package(commit, release)
             validate_release(release, commit)
+            smoke = ['node', 'tools/smoke_web_wasm.mjs', str(release / 'static/atv_web.wasm')]
+            run(*smoke); checks.append(smoke)
             stage(release, commit, preserve_custom_domains=True)
             run('npx', '--yes', 'wrangler@4.149.0', 'deploy', '--config', 'work/cloudflare/wrangler.jsonc')
             for url in URLS:

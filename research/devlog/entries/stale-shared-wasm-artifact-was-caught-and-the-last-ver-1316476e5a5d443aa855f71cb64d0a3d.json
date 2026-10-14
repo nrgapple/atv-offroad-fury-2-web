@@ -1,0 +1,14 @@
+{
+  "id": "stale-shared-wasm-artifact-was-caught-and-the-last-ver-1316476e5a5d443aa855f71cb64d0a3d",
+  "timestamp": "2026-10-14T05:03:56.419633+00:00",
+  "recorded_at": "2026-10-14T05:03:56.419633+00:00",
+  "kind": "verification",
+  "title": "Stale shared WASM artifact was caught and the last verified build restored",
+  "summary": "A local deployment exposed a mismatch between the new menu and an older cached WASM module: the module rejected the speed_rush settings field. The stale artifact was traced to two checkouts sharing a Cargo target and was rolled back to the verified d493be0 build.",
+  "details": [
+    "The restored build matched all 48 authored files and the relay hash. A fresh isolated build passed the actual compiled-WASM operation-62 smoke for desktop and portrait menus, the four settings sections, and all speed-effect choices.",
+    "The stale artifact now reproduces the unknown-field failure in a retained diagnostic. Fifty release tests passed with one existing skip, including a regression proving separate canonical checkout paths do not share compilation outputs through a target symlink.",
+    "The final isolated host browser gate passed 423 rendered samples, including one active airborne frame, native throttle input in four-input batches, saved-settings reload, and WebGL context loss/recovery. Pixel checks showed zero center difference, a summed absolute red-channel edge difference of 3,125,724, and exact Off output; the speed assertion now reads the same rendered frame rather than a newer asynchronous worker update."
+  ],
+  "limitation": "The repaired speed-rush build has not been published or verified live. The public site remains on restored d493be0; do not treat the speed effect as live until its corrected artifact passes the full runtime gate and publication checks."
+}

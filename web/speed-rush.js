@@ -6,7 +6,7 @@ export function speedRushAmount(speedFeetPerSecond, intensity = 'normal') {
   return t*t*(3-2*t)*({low:.45,normal:.75,high:1}[intensity]??0);
 }
 export class SpeedRush {
-  constructor(gl) { this.gl=gl;this.amount=0;this.draws=0;this.width=0;this.height=0;this.failed=false; }
+  constructor(gl) { this.gl=gl;this.speed=0;this.amount=0;this.draws=0;this.width=0;this.height=0;this.failed=false; }
   reset() { this.amount=0;this.draws=0; }
   prepare() {
     const gl=this.gl,shaders=[];
@@ -44,7 +44,7 @@ export class SpeedRush {
     finally{for(const shader of shaders)gl.deleteShader(shader);}
   }
   draw({speed,intensity,active,dt,width,height,focus=[.5,.35]}) {
-    this.draws=0;
+    this.draws=0;this.speed=speed;
     const desired=active?speedRushAmount(speed,intensity):0;
     // Off, pauses, crashes and low speed are truly free: no image copy/pass.
     if(!active||intensity==='off'||desired===0){this.reset();return;}
@@ -64,6 +64,6 @@ export class SpeedRush {
     gl.drawArrays(gl.TRIANGLES,0,3);this.draws=1;
     gl.bindVertexArray(null);gl.depthMask(true);gl.enable(gl.DEPTH_TEST);
   }
-  snapshot(){return {amount:this.amount,draws:this.draws,textureBytes:this.width*this.height*3,failed:this.failed,error:this.error??null};}
+  snapshot(){return {speed:this.speed,amount:this.amount,draws:this.draws,textureBytes:this.width*this.height*3,failed:this.failed,error:this.error??null};}
   dispose(){const g=this.gl;if(this.texture)g.deleteTexture(this.texture);if(this.vao)g.deleteVertexArray(this.vao);if(this.program)g.deleteProgram(this.program);this.texture=this.vao=this.program=null;this.width=this.height=0;this.reset();}
 }

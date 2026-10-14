@@ -1,4 +1,5 @@
-// Actual WebGL pixel proof plus native riding: no injected velocity or poses.
+// Actual WebGL pixel proof plus native throttle-input driving in four-tick batches.
+// Inputs remain held across resets; no injected velocity, pose or speed values.
 import assert from 'node:assert/strict';
 import {writeFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
@@ -9,7 +10,7 @@ const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4192';
 try {
  page=await browser.newPage({viewport:{width:Number(process.env.ATV_RUSH_WIDTH||1280),height:Number(process.env.ATV_RUSH_HEIGHT||720)}});const errors=[];
  page.on('pageerror',e=>errors.push(e.message));
- await page.addInitScript(()=>{const post=Worker.prototype.postMessage;Worker.prototype.postMessage=function(message,...args){if(message.op===50&&window.rushDriving){const source=JSON.parse(new TextDecoder().decode(message.bytes));source.count=4;message={...message,bytes:new TextEncoder().encode(JSON.stringify(source))};}return post.call(this,message,...args);};window.rushSamples=[];const sample=()=>{const s=window.atvTerrainStatus;if(s?.frame)window.rushSamples.push({rush:s.speedRush,speed:s.frame.speed_magnitude,phase:s.frame.wreck.phase,air:!s.frame.grounded.some(Boolean)});requestAnimationFrame(sample);};requestAnimationFrame(sample);});
+ await page.addInitScript(()=>{const post=Worker.prototype.postMessage;Worker.prototype.postMessage=function(message,...args){if(message.op===50&&window.rushDriving){const source=JSON.parse(new TextDecoder().decode(message.bytes));source.count=4;source.input={...source.input,throttle:1,brake:0,steer:0,lean:0,reverse:false,touch_drive:null,preload_axis:null,stunt_modifiers:0,stunt_x:0,stunt_y:0};message={...message,bytes:new TextEncoder().encode(JSON.stringify(source))};}return post.call(this,message,...args);};window.rushSamples=[];const sample=()=>{const s=window.atvTerrainStatus;if(s?.frame)window.rushSamples.push({rush:s.speedRush,speed:s.speedRush.speed,simulationSpeed:s.frame.speed_magnitude,phase:s.frame.wreck.phase,air:!s.frame.grounded.some(Boolean)});requestAnimationFrame(sample);};requestAnimationFrame(sample);});
  await page.goto(`${base}/play.html?mode=single&map=env01`);
  await page.waitForFunction(()=>window.atvTerrainStatus?.simulation&&document.querySelector('#frontend').hidden,null,{timeout:120000});
  const pixelProof=await page.evaluate(async()=>{
