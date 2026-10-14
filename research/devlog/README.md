@@ -49,3 +49,17 @@ release packaging and HTTP GET/HEAD aggregation:
 ```sh
 python3 -m unittest discover -s tools -p 'test_devlog.py'
 ```
+
+## Publication without another gameplay build
+
+Documentation-only PRs use the fast CI validation lane. Checkpoint JSON on main
+uses a checked application artifact with unchanged game/relay bytes, replacing
+only dev-log text and release identity; unavailable artifacts or runtime changes
+fall back to the full build. Batch public-verification notes or correct your own
+entry. Do not rerun full gameplay checks solely to publish their result.
+
+The named release owner performs one publication for the combined checkpoint,
+using the validated **deployed** artifact rather than repeatedly chasing main.
+`tools/release_checkpoint.py` records implementation-ready, merged, live and
+gallery-complete separately in ignored shared private storage. See
+[the release flow](../CI_CHECKPOINTS.md) for commands, ownership and evidence.

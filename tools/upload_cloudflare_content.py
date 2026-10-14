@@ -19,26 +19,41 @@ from urllib.request import Request, urlopen
 
 from package_content import ROOT, validated_content
 from package_release import validate_release
+from release_checkpoint import publication_lock, require_owner
+from reuse_site_release import public_commit
 from app_icons import validated_icons
 
 ACCOUNT = '92b7e16fd24d5fb585f866f5832a032b'
 BUCKET = 'atv-offroad-fury-2-content'
 
 
-def upload(release, commit, force=False, content=None, release_scoped=False):
+def upload(release, commit, force=False, content=None, release_scoped=False, checkpoint=None, owner=None):
+    with publication_lock(ROOT):
+        if checkpoint is not None:
+            require_owner(ROOT, checkpoint, owner)
+        return _upload(release, commit, force, content, release_scoped)
+
+
+def require_deployed_release(commit):
+    # A later docs-only merge must not invalidate a release already live. Pin to
+    # the deployed identity instead of asking every chat to chase current main.
+    from fetch_site_release import eligible_run, gh_json
+    repository = 'nrgapple/atv-offroad-fury-2-web'
+    runs = gh_json('gh', f'repos/{repository}/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=100')
+    if not eligible_run(runs['workflow_runs'], commit):
+        raise ValueError('publication requires a successful main release')
+    if public_commit() != commit:
+        raise ValueError('release is no longer deployed; the current release owner must publish its package')
+
+
+def _upload(release, commit, force=False, content=None, release_scoped=False):
     content = (content or ROOT / 'private/reports/hosted-content').resolve()
     if not content.is_relative_to((ROOT / 'private').resolve()):
         raise ValueError('runtime package must remain under private storage')
     validate_release(release, commit)
     if not re.fullmatch(r'[a-f0-9]{40}', commit):
         raise ValueError('expected complete commit SHA')
-    def require_current_main():
-        current = subprocess.run(['gh', 'api', 'repos/nrgapple/atv-offroad-fury-2-web/commits/main', '--jq', '.sha'],
-                                 check=True, capture_output=True, text=True).stdout.strip()
-        if current != commit:
-            raise ValueError('only the validated current-main release may update R2')
-
-    require_current_main()
+    require_deployed_release(commit)
     log = read_devlog(ROOT, commit)
     icon_records = json.loads(subprocess.run(['git', 'show', f'{commit}:web/app-icon-assets.json'], cwd=ROOT,
                               check=True, capture_output=True, text=True).stdout)
@@ -104,7 +119,7 @@ def upload(release, commit, force=False, content=None, release_scoped=False):
     # Publish pointers last; partial blob upload must never expose a new manifest.
     if (content / 'manifest.json').read_bytes() != manifest_bytes:
         raise ValueError('manifest changed during upload; pointers were not published')
-    require_current_main()
+    require_deployed_release(commit)
     manifest_key = f'releases/{commit}/manifest.json' if release_scoped else 'content/manifest.json'
     gallery_key = f'releases/{commit}/gallery.json' if release_scoped else 'devlog-gallery.json'
     report.append(put((manifest_key, manifest_bytes)))
@@ -126,12 +141,19 @@ def upload(release, commit, force=False, content=None, release_scoped=False):
     print(f'Validated {len(report)} approved R2 objects; uploaded {sum(item["uploaded"] for item in report)} changes ({sum(item["bytes"] for item in report)} total bytes)')
 
 
-if __name__ == '__main__':
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--release', required=True, type=Path)
     parser.add_argument('--commit', required=True)
     parser.add_argument('--force-upload', action='store_true', help='Repair remote drift by re-uploading all validated objects')
     parser.add_argument('--release-scoped', action='store_true', help='Stage immutable release manifests before Worker deployment')
     parser.add_argument('--content', type=Path, help='Validated private runtime package')
-    args = parser.parse_args()
-    upload(args.release, args.commit, args.force_upload, content=args.content, release_scoped=args.release_scoped)
+    parser.add_argument('--checkpoint', required=True, help='Combined checkpoint claimed by its single release owner')
+    parser.add_argument('--owner', required=True)
+    args = parser.parse_args(argv)
+    upload(args.release, args.commit, args.force_upload, content=args.content, release_scoped=args.release_scoped,
+           checkpoint=args.checkpoint, owner=args.owner)
+
+
+if __name__ == '__main__':
+    main()

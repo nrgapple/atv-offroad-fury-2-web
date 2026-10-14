@@ -100,6 +100,7 @@ class WorkerBuildCacheTests(unittest.TestCase):
         self.assertIn("github.event_name == 'push' || github.event_name == 'workflow_dispatch'", workflow)
         self.assertEqual(workflow.count('${{ runner.temp }}/fury-worker-build/bin/worker-build'), 2)
         self.assertEqual(workflow.count('${{ runner.temp }}/fury-worker-build/identity.json'), 2)
-        self.assertNotIn('restore-keys:', workflow)
+        worker_restore = workflow.split('      - name: Restore pinned deployment tool')[1].split('      - name:')[0]
+        self.assertNotIn('restore-keys:', worker_restore)
         for path in ['~/.cargo', '/private', '/target', '.wrangler']:
-            self.assertNotIn('            ' + path, workflow)
+            self.assertNotIn('            ' + path + '\n', workflow)

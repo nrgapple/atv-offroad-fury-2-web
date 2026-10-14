@@ -11,10 +11,15 @@ permissions:
 
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   web:
+    outputs:
+      publish: ${{ steps.plan.outputs.publish }}
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -22,23 +27,62 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Classify changed files
+        id: plan
+        run: python3 tools/ci_changes.py
+      - name: Validate documentation, metadata and repository hygiene
+        run: |
+          python3 tools/verify_repository.py
+          python3 tools/ci_changes.py --validate
+          python3 tools/check_secrets.py --history
+          python3 -m unittest discover -s tools -p 'test_devlog.py'
+          python3 -m unittest discover -s tools -p 'test_ci_changes.py'
+          python3 -m unittest discover -s tools -p 'test_release_workflow.py'
+      - name: Reuse checked application for dev-log publication
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_LANE: ${{ steps.plan.outputs.lane }}
+        run: python3 tools/reuse_site_release.py --lane "$RELEASE_LANE"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.prepare.outputs.build == 'true'
         with:
           node-version: '24'
       - name: Install Rust toolchain
+        if: steps.prepare.outputs.build == 'true'
         run: rustup toolchain install stable --profile minimal --component rustfmt,clippy --target wasm32-unknown-unknown
-      - name: Check repository and implementation
+      - name: Identify Rust application cache
+        if: steps.prepare.outputs.build == 'true'
+        id: rust-key
         run: |
-          python3 tools/verify_repository.py
-          python3 tools/check_secrets.py --history
+          python3 tools/worker_build_cache.py key
+      - name: Restore trusted Rust compilation and registry cache
+        if: steps.prepare.outputs.build == 'true'
+        id: rust-cache
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            target
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+          key: fury-rust-v1-${{ steps.rust-key.outputs.key }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}-${{ github.sha }}
+          restore-keys: |
+            fury-rust-v1-${{ steps.rust-key.outputs.key }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}-
+      - name: Check repository and implementation
+        if: steps.prepare.outputs.build == 'true'
+        run: |
           python3 -m unittest discover -s tools -p 'test_security.py'
           make check CARGO="$(which cargo)"
           python3 -m unittest discover -s tools -p 'test_release*.py'
           node --test cloudflare/*.test.mjs
       - name: Identify pinned deployment tool cache
+        if: steps.prepare.outputs.build == 'true'
         id: worker-build-key
         run: python3 tools/worker_build_cache.py key
       - name: Restore pinned deployment tool
+        if: steps.prepare.outputs.build == 'true'
         id: worker-build-cache
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -48,6 +92,7 @@ jobs:
             ${{ runner.temp }}/fury-worker-build/identity.json
           key: ${{ steps.worker-build-key.outputs.key }}
       - name: Validate or install pinned Rust Worker build tool
+        if: steps.prepare.outputs.build == 'true'
         id: worker-build-tool
         env:
           WORKER_BUILD_CACHE_HIT: ${{ steps.worker-build-cache.outputs.cache-hit }}
@@ -55,11 +100,13 @@ jobs:
           python3 tools/worker_build_cache.py prepare --root "$RUNNER_TEMP/fury-worker-build" --cache-hit "$WORKER_BUILD_CACHE_HIT"
           install -m 755 "$RUNNER_TEMP/fury-worker-build/bin/worker-build" "$HOME/.cargo/bin/worker-build"
       - name: Build browser release
+        if: steps.prepare.outputs.build == 'true'
         run: |
           make web
           make relay
           python3 tools/package_release.py --commit "$GITHUB_SHA"
       - name: Upload asset-free release
+        if: steps.plan.outputs.publish == 'true' && github.event_name != 'pull_request' || steps.prepare.outputs.build == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: web-release
@@ -69,7 +116,7 @@ jobs:
       - name: Save validated deployment tool for future builds
         continue-on-error: true
         if: >-
-          success() && github.ref == 'refs/heads/main' &&
+          success() && steps.prepare.outputs.build == 'true' && github.ref == 'refs/heads/main' &&
           (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
           steps.worker-build-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -78,10 +125,32 @@ jobs:
             ${{ runner.temp }}/fury-worker-build/bin/worker-build
             ${{ runner.temp }}/fury-worker-build/identity.json
           key: ${{ steps.worker-build-key.outputs.key }}
+      - name: Save trusted Rust application cache
+        continue-on-error: true
+        if: >-
+          success() && steps.prepare.outputs.build == 'true' && github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+          steps.rust-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            target
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+          key: fury-rust-v1-${{ steps.rust-key.outputs.key }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}-${{ github.sha }}
+      - name: Record selected validation and publication lane
+        if: always()
+        env:
+          RELEASE_LANE: ${{ steps.plan.outputs.lane }}
+          RUNTIME_BUILD: ${{ steps.prepare.outputs.build }}
+          REUSED_APPLICATION: ${{ steps.prepare.outputs.reused }}
+        run: |
+          echo "Lane: $RELEASE_LANE; Rust build: $RUNTIME_BUILD; reused checked application: $REUSED_APPLICATION" >> "$GITHUB_STEP_SUMMARY"
   deploy:
     name: Deploy and verify production
     needs: web
-    if: github.repository == 'nrgapple/atv-offroad-fury-2-web' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.actor == github.repository_owner
+    if: needs.web.outputs.publish == 'true' && github.repository == 'nrgapple/atv-offroad-fury-2-web' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.actor == github.repository_owner
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
