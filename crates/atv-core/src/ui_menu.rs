@@ -89,8 +89,6 @@ pub struct Request {
     #[serde(default)]
     pub crash_mode: String,
     #[serde(default)]
-    pub camera_shake: bool,
-    #[serde(default)]
     pub minimap_enabled: bool,
     #[serde(default = "default_minimap_size")]
     pub minimap_size: f32,
@@ -1002,14 +1000,6 @@ pub fn layout(request: Request) -> Result<Frame> {
                     },
                     "funnycrashes",
                 ),
-                (
-                    if request.camera_shake {
-                        "Camera shake: On"
-                    } else {
-                        "Camera shake: Off"
-                    },
-                    "camera-shake",
-                ),
             ];
             if !request.lobby_status.is_empty() {
                 choices.insert(2, ("Players", "players"));
@@ -1458,7 +1448,6 @@ mod tests {
             one_handed_mobile: false,
             funny_crashes: false,
             crash_mode: String::new(),
-            camera_shake: true,
             minimap_enabled: true,
             minimap_size: 160.,
             minimap_zoom: 50.,
