@@ -1225,7 +1225,7 @@ function drivingInput() {
 }
 function acceptFrame(frame, effects = true) {
   if (effects) {
-    const severity = cameraShake.accept(frame, true);
+    const severity = cameraShake.accept(frame, focused && !document.hidden && !menuOpen && !lost && !pageSuspended);
     if (severity >= 40) audio.crashBoom(severity);
     if (!crashSettings.shake) { cameraShake.energy = 0; cameraShake.offset = [0,0,0,0]; }
   }
