@@ -100,23 +100,26 @@ Connected terrain, sky, scenery, vegetation, source fog, prelit/animated UV
 materials, ice overlays, water field and tire dirt/wet effects are partial
 component implementations. They do not establish original full-scene parity.
 
-- Weather: weather dispatch callbacks and lens droplets are unconnected. Freeport's
-  scrolling rain cards are geometry/material animation, not that weather system.
-  Source rain chance declarations vary; no all-map snowstorm or day/night cycle
-  should be assumed from snow terrain or sky art alone.
-- Ambient particle emitters: source common TOYs declare Tioga campfire/smoke
-  and mining effects (3), Sonora grill smoke (2), Freeport fog/raindrops (2),
-  Prospect fountains (5), Rockbridge campfire/smoke (2), San Jacinto volcano
-  smoke (5), and Arlington waterfall/waterwheel/duct/spring spray (27).
-  Caribou and Vancouver common TOYs declare none. Wheel particles do not
-  run those placed emitters. Source declarations do not prove active runtime
-  policy. The other 31 venues need their own emitter census; St. Croix Sound,
-  for example, declares three volcano-smoke emitters and 52 animations including
-  seagulls. Inspect original dispatch/lifetimes before translating behavior.
+- Weather: source Weather selection, original rain material/audio lifecycle and
+  camera-relative Caribou Race Snow are connected in the browser port; see
+  [weather evidence and limits](WEATHER.md). Rain chance follows per-venue
+  declarations, and browser randomness remains independent of the recovered
+  native global RNG. Freeport's scrolling rain cards are geometry/material
+  animation, separate from Weather selection. ScreenRain lens/world droplets and
+  their original callbacks remain unconnected. Snow terrain or sky art does not
+  imply an all-map snowstorm or a day/night cycle.
+- Ambient particles: the source TOY census now covers all 40 venues. Placed
+  types 0, 2, 8, 11 and 12 have source-derived browser implementations; see
+  [ambient effect evidence and limits](AMBIENT_EFFECTS.md). This does not recover
+  every source manager policy: global/date RNG order, some visibility callbacks,
+  moving attachments, complete lighting/GS behavior and physical-device parity
+  remain open. Callback-gated type 9 hockey hats and Arlington train-attached
+  smoke are unfinished. Wheel particles remain separate from placed emitters.
 - Stadium crowds: reverse-looping original ATMs display their original first
   frame; reverse playback remains unimplemented and reported in diagnostics.
 - Moving actors: Arlington trains are connected, while other TOY/VUE animation
-  families and their interactions remain incomplete.
+  families and their interactions remain incomplete; train-attached smoke is
+  still unfinished.
 - Lighting: base Sun/ambient inputs and prelit colors are partially connected;
   point/spot lights, flares, shadows and complete lighting callbacks remain open.
 - Water: projected surface and vehicle water interaction are partial; exact
