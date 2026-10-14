@@ -6,6 +6,8 @@ In enhanced one-handed mode, keep the primary finger anywhere on the game surfac
 
 These are authored touch-input adaptations that reuse ten existing stunt animations and the original Rust stunt inputs. The existing airborne, speed, reposition-timer and main-motion gates remain in force; the wheel changes neither animation nor physics. Browser checks cover real Chromium multi-touch and a synthetic WebKit pointer/capture fixture across portrait, landscape and small viewports. Physical-phone behavior remains unverified.
 
+Public verification at `e03bc2b89a35cfd7048fbd69841105c61cd10444` passed CI/deployment run `38485063543`. Chromium checks on the public build passed portrait and landscape ground reverse, preserved primary axes, secondary release/cancel, natural-hop Nac Nac/Cat Nac/Cordova preview-and-release, and Pause/Camera utility touches, with no camera orbit, browser errors or file picker. The unchanged native two-second reposition gate correctly declined an early release at simulation step 117; after the test fixture waited 130 simulation steps, the public retry passed. This verifies browser behavior, not physical-phone input.
+
 The swipe and circle mappings below remain active when the explicit **One-handed Off** mode is selected. They are not the enhanced one-handed second-finger control described here.
 
 The left half is a floating steering/lean pad: horizontal motion steers, vertical motion leans forward/back on the ground and in the air. It never supplies throttle or brake. Its origin remains fixed while held, so takeoff cannot discard an existing pullback.
