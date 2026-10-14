@@ -435,8 +435,8 @@ impl Vehicle {
     pub fn set_stunt_landing_safe(&mut self, safe: bool) {
         self.stunt_landing_safe = safe;
     }
-    /// The current browser game is native mode11. CrowdPresent selects the
-    /// extended boundary; native mode6 will also select it when that mode exists.
+    /// CrowdPresent or native mode6 (Training) selects the extended boundary.
+    /// The browser course adapter retains that policy for the Training venue.
     pub fn set_boundary(
         &mut self,
         config: crate::boundary_launch::Config,

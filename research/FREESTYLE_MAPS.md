@@ -62,6 +62,26 @@ are uniform dark RGB backgrounds (the fourth also has an alpha mask), not the
 original live instructional/video screen contents. That dynamic content remains
 unimplemented.
 
+Training's source TOY start is `(124.07,89.75,636.57)`. Its 1×1 terrain
+with scale3 puts the ordinary Freestyle boundary inset at330..438 on each axis;
+applying that inset to the lesson start caused an immediate no-input launch.
+The original pause-label callback002de690 indexes its jump table at0043aa60;
+entry6 targets002de6c4 and loads the original `Restart Training` string from
+0043a9b0. The vehicle boundary block001e5c68–001e5ca4 reads that same mode field
+and chooses margin−1000 for mode6 independently of CrowdPresent. The browser
+course adapter now retains that Training venue boundary policy when exposing its
+TR resources in authored Freestyle. Its original start and crowd audio metadata
+stay intact; the source boundary still launches beyond the extended thresholds
+−3000..3768. This is a source-based venue adaptation, not recovered Training
+objectives, lesson callbacks or a complete original Training replay.
+The opt-in Training regression preserves its unmodified start through180 no-input
+steps (0.000035ft/s), actual390px touch movement and another180 idle steps after
+reset. Six source hay approaches observe18–56 wheel-support frames on four
+routes and9–222 body-contact frames across all six. A source-scaled position
+beyond3768 still triggers the extended boundary. The same no-input test fails on
+the preceding public build because boundary flight is active. These are host
+browser checks; public deployment is a separate gate.
+
 Coonce's original SO archive lacks the standard jump HUD images. To use this
 hockey venue in authored Freestyle, the required-runtime packager aggregates the
 five original ENV01 preload PSTs into the small shared OVERLAYS archive (42,385

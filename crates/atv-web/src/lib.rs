@@ -56,7 +56,7 @@ struct Simulation {
     scene_partition: Option<atv_core::scene_partition::Config>,
     ecosystem: Option<atv_core::ecosystem::Ecosystem>,
     boundary_config: Option<atv_core::boundary_launch::Config>,
-    crowd_present: bool,
+    extended_boundary: bool,
     water: Option<atv_core::water_animation::LiveField>,
     camera: Option<atv_core::camera::FollowCamera>,
     train: Option<atv_core::train::Runtime>,
@@ -590,7 +590,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 sim.scene_partition = None;
                 sim.ecosystem = None;
                 sim.boundary_config = None;
-                sim.crowd_present = false;
+                sim.extended_boundary = false;
                 sim.water = None;
                 sim.train = None;
                 sim.train_collision.clear();
@@ -657,7 +657,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 vehicle
                     .enable_wrecks(sim.physics.as_ref().ok_or("load original physics first")?)?;
                 if let Some(config) = sim.boundary_config {
-                    vehicle.set_boundary(config, sim.crowd_present)?;
+                    vehicle.set_boundary(config, sim.extended_boundary)?;
                 }
                 vehicle.set_linkage(
                     sim.quad_pose
@@ -1324,7 +1324,12 @@ fn obstacle_input(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         sim.mud_obstacles = mud_obstacles;
         sim.scene_partition = scene_partition;
         sim.boundary_config = boundary_config;
-        sim.crowd_present = crowd_present;
+        // Training's only shipped archive supplies a lesson start outside the
+        // ordinary 110-unit inset. Native mode6 (Training, 002de690) selects
+        // the -1000 margin in 001e5c68..001e5ca4 even without a crowd.
+        // Preserve that venue policy when exposing it in authored Freestyle;
+        // do not change its source start or its CrowdPresent audio metadata.
+        sim.extended_boundary = crowd_present || base.eq_ignore_ascii_case("training");
         sim.vehicle = None;
         serde_json::to_vec(&result).map_err(|e| e.to_string())
     })
