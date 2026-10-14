@@ -11,7 +11,7 @@ RELEASE_ARGS ?=
 .PHONY: verify verify-full inventory import check web relay serve audit code-map native-analyze browser-check release release-status
 
 release:
-	@echo "Experimental release queue disabled. Use the GitHub Actions deployment and checkpoint R2 flow in research/CI_CHECKPOINTS.md."
+	@echo "Experimental release queue disabled. Use checked Actions or tools/deploy_local.py fallback and checkpoint R2 flow in research/CI_CHECKPOINTS.md."
 	@exit 1
 
 release-status:

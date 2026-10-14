@@ -5,8 +5,9 @@ One named release owner handles a combined checkpoint's merge, public browser
 checks, R2 upload and gallery verification. Contributors provide their tested
 commit, required private resource package and inspected images to that owner.
 Do not start a second upload or repeat another owner's completed checks.
-The GitHub Actions application deployment remains automatic; the experimental
-local release queue and No Mistakes remain disabled.
+The GitHub Actions application deployment remains automatic when healthy. The
+checked local fallback below is authorized when Actions stalls or fails. The
+experimental daemon/release queue and No Mistakes remain disabled.
 
 ## Three CI lanes
 
@@ -104,3 +105,36 @@ Direct messaging to **Port core gameplay systems** failed with
 `already has an active writer`; its latest thread activity showed ongoing tests.
 The audit did not stop that writer or commit its dirty game files. These observations
 are historical evidence, not a claim that the newer implementation is deployed.
+
+## Local fallback when Actions stalls
+
+The release owner must not wait indefinitely for Actions. From their own clean
+worktree at the exact merged `origin/main` commit, run:
+
+```sh
+python3 tools/deploy_local.py --prefer-actions --commit <full-main-sha> \
+  --checkpoint <claimed-id> --owner <owner> --reason "Actions fallback"
+```
+
+This watches current run/step progress, falling back after ten minutes without
+progress, twenty minutes total, or a failed/cancelled run. For an already known
+stall or an explicitly requested local deployment, omit `--prefer-actions`.
+It acquires the shared publication lock, temporarily sets the repository variable
+`FURY_DEPLOYMENT_MODE=local`, cancels competing main runs and requires them to be
+terminal, then runs local implementation/security/release checks, source-resource
+verification, browser WASM and Rust relay builds. Commit relevant browser evidence
+before invoking it. It refuses dirty/unmerged/stale checkouts, uses the authored
+file allowlist, and deploys with pinned Wrangler using the existing host login.
+It preserves existing domain bindings and verifies all authored bytes and relay
+identity on both public HTTPS addresses. No manual CI success assertion is used.
+
+Successful checked artifacts and receipts persist under ignored shared
+`private/reports/local-releases/<sha>/`. `fetch_site_release.py --deployed`, the
+R2 publication guard, and host metadata reuse accept that verified artifact.
+Continue the same public browser, R2, gallery, and checkpoint milestone steps.
+The user-facing game and dev log must still be verified independently of host
+checks. Actions runs use a freshness gate so a delayed older build cannot replace
+newer main/local production. The temporary variable is restored after takeover;
+if cancellation cannot become terminal within two minutes, publication stops and
+the local guard remains in place for a retry. Inspect runs before restoring it.
+This is a foreground fallback command, not a new daemon or recurring job.

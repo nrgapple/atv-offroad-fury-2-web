@@ -37,6 +37,11 @@ def upload(release, commit, force=False, content=None, release_scoped=False, che
 def require_deployed_release(commit):
     # A later docs-only merge must not invalidate a release already live. Pin to
     # the deployed identity instead of asking every chat to chase current main.
+    from local_release import local_artifact
+    if local_artifact(commit, ROOT) is not None:
+        if public_commit() != commit:
+            raise ValueError('release is no longer deployed; the current release owner must publish its package')
+        return
     from fetch_site_release import eligible_run, gh_json
     repository = 'nrgapple/atv-offroad-fury-2-web'
     runs = gh_json('gh', f'repos/{repository}/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=100')

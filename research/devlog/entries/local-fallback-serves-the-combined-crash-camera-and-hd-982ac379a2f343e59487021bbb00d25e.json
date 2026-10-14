@@ -1,0 +1,13 @@
+{
+  "id": "local-fallback-serves-the-combined-crash-camera-and-hd-982ac379a2f343e59487021bbb00d25e",
+  "timestamp": "2026-10-14T04:52:55.005669+00:00",
+  "recorded_at": "2026-10-14T04:52:55.005669+00:00",
+  "kind": "verification",
+  "title": "Local fallback serves the combined crash camera and HD menu checkpoint",
+  "summary": "The combined camera and menu checkpoint at d493be00f4d5f115b00d87e1b2f4f27b71dbffa9 was checked through the local deployment fallback after hosted Actions stalled.",
+  "details": [
+    "The apex and Workers routes matched all 48 authored files plus the relay hash. The public actual-source Settings gate passed four viewports with 44-pixel touch targets, persistence, real driving and standalone HUD.",
+    "The public tight-crash gate passed 1,202 paired native gameplay/camera steps with zero mismatches. A single R2 package upload and full verification covered 525 served objects, 227 gallery entries and 175 screenshots; camera and UI gallery receipts were recorded."
+  ],
+  "limitation": "This checkpoint records the checked local fallback while Actions was stalled; it does not claim the speed-rush checkpoint is live. Speed-rush remains separately host-only pending its remaining verification and release."
+}

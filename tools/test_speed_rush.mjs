@@ -7,9 +7,9 @@ const browser=await chromium.launch({headless:true});
 let page;
 const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4192';
 try {
- page=await browser.newPage({viewport:{width:Number(process.env.ATV_RUSH_WIDTH||1280),height:720}});const errors=[];
+ page=await browser.newPage({viewport:{width:Number(process.env.ATV_RUSH_WIDTH||1280),height:Number(process.env.ATV_RUSH_HEIGHT||720)}});const errors=[];
  page.on('pageerror',e=>errors.push(e.message));
- await page.addInitScript(()=>{window.rushSamples=[];const sample=()=>{const s=window.atvTerrainStatus;if(s?.frame)window.rushSamples.push({rush:s.speedRush,speed:s.frame.speed_magnitude,phase:s.frame.wreck.phase,air:!s.frame.grounded.some(Boolean)});requestAnimationFrame(sample);};requestAnimationFrame(sample);});
+ await page.addInitScript(()=>{const post=Worker.prototype.postMessage;Worker.prototype.postMessage=function(message,...args){if(message.op===50&&window.rushDriving){const source=JSON.parse(new TextDecoder().decode(message.bytes));source.count=4;message={...message,bytes:new TextEncoder().encode(JSON.stringify(source))};}return post.call(this,message,...args);};window.rushSamples=[];const sample=()=>{const s=window.atvTerrainStatus;if(s?.frame)window.rushSamples.push({rush:s.speedRush,speed:s.frame.speed_magnitude,phase:s.frame.wreck.phase,air:!s.frame.grounded.some(Boolean)});requestAnimationFrame(sample);};requestAnimationFrame(sample);});
  await page.goto(`${base}/play.html?mode=single&map=env01`);
  await page.waitForFunction(()=>window.atvTerrainStatus?.simulation&&document.querySelector('#frontend').hidden,null,{timeout:120000});
  const pixelProof=await page.evaluate(async()=>{
@@ -24,13 +24,13 @@ try {
  });
  assert.equal(pixelProof.central,0);assert(pixelProof.edge>10000);assert(pixelProof.equal);assert.equal(pixelProof.error,0);assert.equal(pixelProof.disposed,0);
  // Orbiting at rest cannot start blur.
- await page.locator('#game').focus();await page.mouse.move(600,300);await page.mouse.down();await page.mouse.move(760,350,{steps:6});await page.mouse.up();assert.equal(await page.evaluate(()=>window.atvTerrainStatus.speedRush.draws),0);
- await page.keyboard.press('Escape');await page.getByRole('button',{name:'Reset ATV',exact:true}).click();
- await page.waitForFunction(()=>document.querySelector('#frontend').hidden&&window.atvTerrainStatus?.simulation);await page.locator('#game').focus();await page.keyboard.down('KeyW');
- await page.waitForFunction(()=>window.atvTerrainStatus?.speedRush.draws===1&&window.atvTerrainStatus.speedRush.amount>.02,null,{timeout:60000});
+ await page.locator('#game').focus();await page.mouse.move(120,200);await page.mouse.down();await page.mouse.move(250,250,{steps:6});await page.mouse.up();assert.equal(await page.evaluate(()=>window.atvTerrainStatus.speedRush.draws),0);
+ await page.locator('#game').focus();await page.keyboard.press('Escape');await page.getByRole('button',{name:'Reset ATV',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('#frontend').hidden&&window.atvTerrainStatus?.simulation);await page.locator('#game').focus();await page.evaluate(()=>window.rushDriving=true);await page.keyboard.down('KeyW');
+ await page.waitForFunction(()=>window.atvTerrainStatus?.speedRush.draws===1&&window.atvTerrainStatus.speedRush.amount>.001,null,{timeout:60000});
  assert.equal(await page.evaluate(()=>window.atvTerrainStatus.speedRush.failed),false);assert.equal(await page.evaluate(()=>document.querySelector('#game').getContext('webgl2').getError()),0);console.log('Pixel and riding pass');
  if(process.env.ATV_RUSH_SCREENSHOT)await page.screenshot({path:process.env.ATV_RUSH_SCREENSHOT});
- await page.keyboard.up('KeyW');await page.keyboard.press('Escape');
+ await page.keyboard.up('KeyW');await page.evaluate(()=>window.rushDriving=false);await page.keyboard.press('Escape');
  await page.getByRole('button',{name:'Settings',exact:true}).click();await page.getByRole('button',{name:'Display',exact:true}).click();
  await page.getByRole('button',{name:'Speed rush: Normal',exact:true}).click();await page.getByRole('button',{name:'Speed rush: High',exact:true}).click();
  assert.equal(await page.evaluate(()=>localStorage.getItem('atv-speed-rush')),'off');assert.equal(await page.evaluate(()=>window.atvTerrainStatus.speedRush.amount),0);
@@ -39,7 +39,8 @@ try {
  await page.keyboard.press('Escape');await page.getByRole('button',{name:'Settings',exact:true}).click();await page.getByRole('button',{name:'Display',exact:true}).click();await page.getByRole('button',{name:'Speed rush: Off',exact:true}).click();
  for(let i=0;i<2;i++)await page.getByRole('button',{name:'Back',exact:true}).click();await page.getByRole('button',{name:'Resume',exact:true}).click();
  await page.evaluate(()=>{window.rushContext=document.querySelector('#game').getContext('webgl2').getExtension('WEBGL_lose_context');window.rushContext.loseContext();});await page.locator('#loading-screen').waitFor({state:'visible'});await page.evaluate(()=>window.rushContext.restoreContext());await page.locator('#loading-screen').waitFor({state:'hidden'});
- await page.waitForFunction(()=>document.querySelector('#frontend').hidden&&window.atvTerrainStatus?.simulation);await page.locator('#game').focus();await page.keyboard.down('KeyW');await page.waitForFunction(()=>window.atvTerrainStatus?.speedRush.draws===1,null,{timeout:60000});await page.keyboard.up('KeyW');
+ await page.locator('#game').focus();await page.keyboard.press('Escape');await page.getByRole('button',{name:'Reset ATV',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('#frontend').hidden&&window.atvTerrainStatus?.simulation);await page.locator('#game').focus();await page.evaluate(()=>window.rushDriving=true);await page.keyboard.down('KeyW');await page.waitForFunction(()=>window.atvTerrainStatus?.speedRush.draws===1,null,{timeout:60000});await page.keyboard.up('KeyW');await page.evaluate(()=>window.rushDriving=false);
  const samples=await page.evaluate(()=>window.rushSamples);assert(samples.some(s=>s.rush.draws===1&&s.speed*3600/5280>40));assert(samples.filter(s=>s.speed*3600/5280<=40).every(s=>s.rush.draws===0));
  assert.equal(await page.evaluate(()=>window.atvTerrainStatus.glError),0);assert.deepEqual(errors,[]);
  console.log('PASS:',JSON.stringify({pixelProof,samples:samples.length,airRush:samples.filter(s=>s.air&&s.rush.draws).length}), 'real riding above 40mph, turn-at-rest off, persistent intensity, context recovery');

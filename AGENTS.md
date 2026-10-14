@@ -35,3 +35,8 @@
 
 
 - Production is `https://furyremastered.com/`; `https://www.furyremastered.com/` redirects to the apex, and the original `https://atv-offroad-fury-2.champtoday.workers.dev/` remains supported. GitHub Actions deploys checked authored application assets, reusing them for dev-log-only updates. Pure documentation does not deploy. No recurring publication heartbeat is active: the single release owner fetches the validated deployed artifact with tools/fetch_site_release.py --deployed, confirms the public commit, inspects new screenshots, uploads the pinned R2 content/gallery package with --checkpoint and --owner, and verifies publication. Do not chase newer main merely for unrelated documentation or repeat gameplay checks for notes-only updates. Batch verification notes or use the lightweight metadata lane. Never publish WIP. See `research/CI_CHECKPOINTS.md` and `research/DEPLOYMENT.md`. The previous Sites v8 is historical; do not publish further Sites versions.
+
+## Authorized local deployment fallback
+
+- On 2026-10-14 the user authorized checked local deployment when GitHub Actions stalls. Do not wait indefinitely for Actions: use `tools/deploy_local.py --prefer-actions` as the release owner; it falls back after ten minutes without step progress, twenty minutes overall, or failure. Omit `--prefer-actions` for a known stall or explicit local-deployment request.
+- Use the same clean merged task worktree, implementation/browser checks, allowlisted artifacts, one-owner lock, R2 gallery and public HTTPS verification. The tool cancels competing main runs, guards delayed CI publication, and records a validated local artifact receipt. See `research/CI_CHECKPOINTS.md`. No Mistakes and the experimental release queue remain disabled.
