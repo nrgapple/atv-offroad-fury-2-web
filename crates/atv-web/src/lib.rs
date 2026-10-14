@@ -63,6 +63,7 @@ struct Simulation {
     scenery_uv: Vec<(String, atv_core::scenery_material::Scroll)>,
     scenery_textures: Vec<(String, atv_core::scenery_material::TextureClock)>,
     scenery_tick: u64,
+    ambient: Option<atv_core::ambient_effects::Effects>,
     snow: Option<atv_core::weather::Snow>,
     train_collision: Vec<TrainCollisionBinding>,
     train_collision_installed: bool,
@@ -1405,6 +1406,7 @@ struct SimulationBatchFrame {
     camera: Box<serde_json::value::RawValue>,
     water: Option<atv_core::water_render::Frame>,
     train: Option<atv_core::train::Frame>,
+    ambient: Option<atv_core::ambient_effects::Frame>,
     scenery_uv: std::collections::BTreeMap<String, [f32; 2]>,
     scenery_textures: std::collections::BTreeMap<String, usize>,
     snow: Option<atv_core::weather::SnowFrame>,
@@ -1555,6 +1557,12 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
                 .map(|(name, clock)| (name.clone(), clock.tick(milliseconds)))
                 .collect::<std::collections::BTreeMap<_, _>>()
         });
+        let ambient = SIMULATION.with_borrow_mut(|sim| {
+            sim.ambient
+                .as_mut()
+                .map(|effects| effects.step(1. / 60.).cloned())
+                .transpose()
+        })?;
         let snow = SIMULATION.with_borrow_mut(|sim| -> Result<_> {
             let Some(snow) = sim.snow.as_mut() else {
                 return Ok(None);
@@ -1569,6 +1577,7 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
                 .map(Some)
         })?;
         frames.push(SimulationBatchFrame {
+            ambient,
             race,
             frame,
             camera,
@@ -1583,6 +1592,26 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
+    if matches!(op, 130 | 131) {
+        if input.len() > 4 * 1024 * 1024 {
+            return Err("ambient source exceeds limit".into());
+        }
+        let source: atv_core::ambient_effects::Source =
+            serde_json::from_slice(input).map_err(|e| e.to_string())?;
+        if op == 130 {
+            return serde_json::to_vec(&atv_core::ambient_effects::plan(&source)?)
+                .map_err(|e| e.to_string());
+        }
+        let (effects, metadata) = atv_core::ambient_effects::Effects::from_source(&source)?;
+        SIMULATION.with_borrow_mut(|sim| sim.ambient = Some(effects));
+        return serde_json::to_vec(&metadata).map_err(|e| e.to_string());
+    }
+    if op == 132 {
+        return SIMULATION.with_borrow(|sim| {
+            serde_json::to_vec(&sim.ambient.as_ref().map(|effects| effects.frame()))
+                .map_err(|e| e.to_string())
+        });
+    }
     if op == 104 {
         return multiplayer::install_rig(input, index);
     }

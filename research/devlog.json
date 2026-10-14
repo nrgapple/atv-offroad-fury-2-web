@@ -3175,6 +3175,34 @@
         "An initial fast-cache test released at simulation step 117, before the original two-second reposition cooldown expired, and the game correctly declined stunt entry. The test setup was corrected to wait 130 simulation steps; the complete public retry then passed. Only the test fixture changed; the native gate stayed unchanged."
       ],
       "limitation": "Public automated browser verification on one Mac does not verify physical-phone touch behavior or full gameplay parity."
+    },
+    {
+      "id": "original-static-spray-fire-and-smoke-emitters-host-che-b0e5c84c",
+      "timestamp": "2026-10-13T23:35:12.479217+00:00",
+      "recorded_at": "2026-10-13T23:45:42.984128+00:00",
+      "kind": "verification",
+      "title": "Original static spray, fire, and smoke emitters \u2014 host checkpoint",
+      "summary": "The browser port now interprets source static type2 spray and type8 fire/smoke emitters from the original TOY declarations and atlas. All nine existing map routes pass host browser load and drive checks; San Jacinto Isles (ENV07) natural-camera smoke changes rendered pixels at desktop and 390\u00d7844.",
+      "details": [
+        "A private interpreter compares 300 original type2/type8 birth cases: 119,615 EE instructions and 6,216 compared words/flags match with zero differences. Source declarations append in order, static attachments resolve to loaded scene instances, particles advance with the fixed simulation step, and pause/resume, ATV reset and graphics-context restoration preserve the tested state. A 600-particle cap, at most two instance draws and 286,192 GPU bytes bound the renderer.",
+        "The latest measured image contribution was 62 desktop pixels and 181 mobile pixels, varying with the emitter clock; this is visual gate evidence, not a performance improvement. The manager uses a separate generator seeded with 1, so original global RNG ordering is unresolved."
+      ],
+      "limitation": "Host-only component evidence. Native timed/random modes, visibility scheduling, moving attachments, full actor animation and scene-manager behavior remain incomplete. Type0/11/9/12 and other emitter families are not included in this gate; weather dispatch and full game parity remain unfinished. The portrait image is a host Chromium capture, not a physical-phone photo; no public release is claimed.",
+      "image": "/devlog-images/original-static-spray-fire-and-smoke-emitters-host-che-b0e5c84c.png",
+      "caption": "Host Chromium at 390\u00d7844 on San Jacinto Isles (ENV07): the natural follow view during the original volcanic smoke emitter pixel gate. The distant plume is subtle; this is not a physical-phone capture."
+    },
+    {
+      "id": "type0-dust-and-smoke-plus-original-emitter-timers-host-25f9a29b",
+      "timestamp": "2026-10-14T00:07:27.459367+00:00",
+      "recorded_at": "2026-10-14T00:07:27.459367+00:00",
+      "kind": "verification",
+      "title": "Type0 dust and smoke plus original emitter timers \u2014 host checkpoint",
+      "summary": "Host browser coverage now loads original common and mode ambient declarations across all 40 venues. The port adds source-derived static type0 blowing dust/smoke and native delay, one-shot, random on/off, and timed activation behavior. The all-venue census has 105 raw sections; the original indexed count enables 80 and leaves 25 sections dormant.",
+      "details": [
+        "Finite original-instruction comparisons report zero differences across 300 type0 birth cases (7,272 compared words/flags) and 500 timer cases (2,000 state words). All 40 routes load their actual ambient declarations once, with bounded finite frames and source placement independent of gameplay starts. FREE06 reaches the 600-particle cap with 94 dropped births in the captured gate.",
+        "A test-only FREE06 start beside a source grill attachment changes 1,971 desktop and 1,455 portrait framebuffer pixels; it uses one sprite draw and 286,192 GPU bytes. Pause/resume, reset, and context restoration pass. Verification: 426 Rust tests, 121 JavaScript tests, eight cache tests, make verify, and nine release tests passed."
+      ],
+      "limitation": "Host-only component checkpoint; the FREE06 start is a test-only route and shipped gameplay spawn is unchanged. Native shared RNG ordering, moving attachments, actor visibility callbacks, lighting and transparency fidelity remain incomplete. Type11 fountains, type9 hats, type12 fog, full weather behavior, and whole-game parity are unfinished. No public release is claimed."
     }
   ],
   "updated_at": "2026-10-13T23:48:37.637144+00:00",

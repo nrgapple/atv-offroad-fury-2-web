@@ -1,0 +1,15 @@
+{
+  "id": "source-type11-fountain-streams-host-checkpoint-3b3b4d6ecd4e4d63943e6f8c54aa0f69",
+  "timestamp": "2026-10-14T00:26:48.836369+00:00",
+  "recorded_at": "2026-10-14T00:32:42.009501+00:00",
+  "kind": "verification",
+  "title": "Source type11 fountain streams \u2014 host checkpoint",
+  "summary": "Static source type11 fountains now produce separate ballistic streams with the original atlas, packet quantization and bounded one-draw rendering. All 40 original venue routes pass the latest host browser gate.",
+  "details": [
+    "Two hundred original fountain birth cases execute 490,018 EE instructions and compare 44,460 raw words with zero differences. Together with the existing type0/type2/type8/timer gates, the source comparisons total 59,948 with zero differences. The ENV05 test-only source-attachment start shows center and directional fountain spray: desktop/portrait gates record 24,026/22,168 changed source pixels, a single draw, a 4,800-slot ring, and at most two contiguous updates per frame.",
+    "Pause and reset preserve simulation state; graphics restoration reproduces the retained GPU-buffer hash, including pending uploads after the last worker response. Motorcycle27 lifecycle gates also pass at desktop and portrait sizes (22,336/25,294 changed pixels). Fountain-only storage is 515,120 GPU bytes."
+  ],
+  "limitation": "Host-only evidence. The screenshot uses a source-derived test start beside the fountain attachment, not an ordinary spawn or a physical-phone capture. Native shared manager/RNG ordering, camera-dependent fog overrides, moving attachments and complete VU/GS precision remain unverified. This does not claim public release, physical-device performance or PS2 hardware parity.",
+  "image": "/devlog-images/source-type11-fountain-streams-host-checkpoint-3b3b4d6ecd4e4d63943e6f8c54aa0f69.png",
+  "caption": "Host Chromium 390\u00d7844 portrait: source fountain center jet and directional spray beside a test-only ATV start near the original attachment. Browser capture, not a physical-phone photo."
+}

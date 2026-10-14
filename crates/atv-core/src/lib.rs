@@ -1,4 +1,5 @@
 //! Exact-build format recovery. No game data or executable code is embedded.
+pub mod ambient_effects;
 pub mod animation;
 pub mod audio;
 pub mod boundary_launch;
