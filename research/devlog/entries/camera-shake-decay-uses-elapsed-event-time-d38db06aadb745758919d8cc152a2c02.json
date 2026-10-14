@@ -1,0 +1,13 @@
+{
+  "id": "camera-shake-decay-uses-elapsed-event-time-d38db06aadb745758919d8cc152a2c02",
+  "timestamp": "2026-10-14T01:27:42.324137+00:00",
+  "recorded_at": "2026-10-14T01:27:42.324137+00:00",
+  "kind": "verification",
+  "title": "Camera shake decay uses elapsed event time",
+  "summary": "Camera impact shake now expires on a monotonic clock, so capped render/control frame deltas cannot stretch a short pulse into a prolonged shake at low frame rates.",
+  "details": [
+    "The renderer/control path caps frame dt at 50 ms; a 480 ms pulse could previously persist for about 1.9 seconds at 5 FPS because its decay advanced by frame time. Accepted impacts and cooldowns now use an injectable monotonic clock, and elapsed event time controls finite decay independently of frame count or capped dt. A newly delivered impact starts at delivery time rather than inheriting time elapsed while the frame was stalled.",
+    "Deterministic slow-frame and fresh-impact regression coverage passes, along with 19 render-support tests, make check, and the web build. The actual-resource Gorn gate passed 1,395 paired gameplay/camera steps plus 103 after reload; inspection covered 558 GPU draws with max NDC 0.64783, minimum clip W 19.414, and largest rider triangle edge 1.638 ft, three intact aerial frames, and two damage transitions."
+  ],
+  "limitation": "These are deterministic test and host-browser results; they do not guarantee a particular frame rate on physical devices. The previously approved public/Gorn images remain representative of the unchanged crash geometry; no new screenshot was captured for this timing correction."
+}
