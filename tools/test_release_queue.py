@@ -76,8 +76,8 @@ class QueueResources(unittest.TestCase):
             (queue / 'published/images').mkdir()
             (queue / 'published/content/secret.iso').write_bytes(b'never copied')
             log = {'entries': []}
-            with patch('release_resources.git') as mocked:
-                mocked.return_value.stdout = json.dumps(log)
+            with patch('release_resources.read_devlog') as mocked:
+                mocked.return_value = log
                 snapshot(source, 'a' * 40, job, queue, queue / 'published/content', source)
             verify_snapshot(job)
             self.assertFalse((job / 'resources/content/secret.iso').exists())
@@ -96,8 +96,8 @@ class QueueResources(unittest.TestCase):
             data = b'\x89PNG\r\n\x1a\nexample'
             (root / 'images/new.png').write_bytes(data)
             log = {'entries': [{'id': 'new', 'image': '/devlog-images/new.png'}]}
-            with patch('release_resources.git') as mocked:
-                mocked.return_value.stdout = json.dumps(log)
+            with patch('release_resources.read_devlog') as mocked:
+                mocked.return_value = log
                 with self.assertRaisesRegex(ValueError, 'inspect new/changed'):
                     snapshot(root, 'a' * 40, root / 'job1', root / 'queue', root / 'queue/published/content', root / 'images')
                 snapshot(root, 'a' * 40, root / 'job2', root / 'queue', root / 'queue/published/content', root / 'images', True)
@@ -151,7 +151,7 @@ class RustQueueIntegration(unittest.TestCase):
             (owner / 'research').mkdir(); (owner / 'tools').mkdir()
             (owner / '.gitignore').write_text('/private/\n/work/\n/target/\n')
             (owner / 'research/devlog.json').write_text(json.dumps({'entries': [], 'updated_at': '0'}))
-            for helper in ('release_resources.py', 'package_content.py'):
+            for helper in ('release_resources.py', 'package_content.py', 'devlog.py'):
                 (owner / 'tools' / helper).write_text((Path(__file__).parent / helper).read_text())
             (owner / 'tools/verify_repository.py').write_text("print('fixture hygiene passes')\n")
             (owner / 'Makefile').write_text('check:\n\tfalse\n')

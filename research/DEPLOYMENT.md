@@ -145,7 +145,8 @@ python3 tools/fetch_site_release.py
 
 Wait for a ready release, then confirm the public `/deployment.json` identifies
 its exact commit. Inspect newly approved screenshot pixels and ensure their image
-references are in the committed `research/devlog.json`; image files remain in
+references are in committed `research/devlog/entries/*.json` (and the historical
+`research/devlog.json`); release tools aggregate both from the validated commit. Image files remain in
 ignored `private/reports/devlog-images/`. After confirming the validated R2 content
 package and screenshots, publish them and verify the public result:
 
