@@ -1,6 +1,6 @@
 {
-  "status": "Pause secondary screens are public and browser-verified at c1a92fa: all six secondary routes passed five viewport sizes; controller remapping/navigation, single-player freeze/resume, neutral input, and two-client live Lobby/audio checks passed without page errors. The newer touch-wheel checkpoint is integrated; its evidence remains in its separate entry.",
-  "working_on": "Keep pause-menu regression coverage and screenshot publication tied to validated current-main releases.",
+  "status": "Host-verified: all 40 original venue families are selectable in Freestyle, including the 16 Supercross stadiums, Training, and Coonce Arena. Public release is pending current-main CI, approved R2 content publication, and browser verification. This remains an incomplete port.",
+  "working_on": "Complete the validated main CI and separate R2/public verification for the 40-venue checkpoint; continue original weather, ambient particle, and map-rendering recovery.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -3098,6 +3098,35 @@
         "The public actual-source two-client test verified Controls and Players alongside the active Lobby, neutral local input, live physics and peer rendering, continuing music, Leave cleanup, and no AudioContext suspension or title-music interruption. The host advanced 42 steps and observed 3.328 ft of guest movement; the guest advanced 41 steps and observed 3.272 ft of host movement."
       ],
       "limitation": "At the time of this browser checkpoint, the separate R2/gallery hash audit and inspected pause-menu screenshot upload had not yet run. Automated public-browser results do not establish physical-device behavior, original pause-screen fidelity, or whole-game parity."
+    },
+    {
+      "id": "sausalito-sx01-multiplayer-ride-host-checkpoint-0c020f9b",
+      "timestamp": "2026-10-13T23:41:09.328230+00:00",
+      "recorded_at": "2026-10-13T23:43:58.049733+00:00",
+      "kind": "verification",
+      "title": "Sausalito SX01 multiplayer ride \u2014 host checkpoint",
+      "summary": "Two host browser clients rode the newly connected Sausalito Supercross stadium in Freestyle. Each client drew 13 remote peer elements, observed 8.18 ft of host movement, and cleared the session when the host left.",
+      "details": [
+        "The inspected landscape capture shows the stadium, rider, GPS speed at 22 mph, and the guest's 23 ft overhead label. The separate 390px portrait capture shows touch-scale controls and a 16 mph stadium ride."
+      ],
+      "limitation": "Host Chromium captures only; this does not verify physical phones, geographically separated networking, native PS2 multiplayer, or full game parity. Public release is pending.",
+      "image": "/devlog-images/sausalito-sx01-multiplayer-ride-host-checkpoint-0c020f9b.png",
+      "caption": "Host Chromium multiplayer capture on Sausalito SX01: the ATV at 22 mph and P2 Guest label at 23 ft."
+    },
+    {
+      "id": "all-40-freestyle-venues-unlocked-host-checkpoint-614372d3",
+      "timestamp": "2026-10-13T23:41:25.551059+00:00",
+      "recorded_at": "2026-10-13T23:43:57.963165+00:00",
+      "kind": "verification",
+      "title": "All 40 Freestyle venues unlocked \u2014 host checkpoint",
+      "summary": "The host-verified branch exposes all 40 original venue families in Freestyle: eight ENV, six FREE, eight NAT, sixteen SX, Training and Coonce Arena. A continuous source-content run loaded and drove all 40; selectors and mobile pause/reload were checked, and two clients replicated a Sausalito SX01 ride.",
+      "details": [
+        "The existing nine map IDs remain stable; 31 venues were appended. Six Sausalito hay-bale approaches at 390px produced original wheel-support and body-contact responses; two clients each drew 13 remote peer elements, replicated 8.18 ft of movement and cleaned up when the host left.",
+        "Validation after rebase: 422 Rust tests, 120 JavaScript tests, eight build-cache tests, 35 release tests (one opt-in skip), 19 Worker tests, formatting, strict Clippy, make verify and WASM build passed. The private content package validated 147 runtime records, 347 content objects and 350,272,729 bytes."
+      ],
+      "limitation": "Host-only checkpoint; current-main CI, R2 publication and public HTTPS verification remain pending. Venue availability does not complete racing, Training objectives, hockey rules, weather dispatch, ambient emitters, reverse crowd animation, or original-game parity. Screenshots are host browser captures, not device photos.",
+      "image": "/devlog-images/all-40-freestyle-venues-unlocked-host-checkpoint-614372d3.png",
+      "caption": "Host Chromium at 390px: Sausalito SX01 Freestyle ride at 16 mph with the original stadium, ATV, and GPS HUD."
     },
     {
       "id": "public-enhanced-mobile-trick-wheel-verified-f2f660b1",

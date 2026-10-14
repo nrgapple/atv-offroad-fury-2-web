@@ -16,8 +16,10 @@ pub struct TerrainMaterial {
     pub braking: f32,
 }
 
-/// Reads all eight authored TerrainZone sections. Unrelated toy directives are
-/// ignored; incomplete material tables fail instead of receiving invented defaults.
+/// Reads the eight terrain slots used by the vehicle interface. Original
+/// 002028f0/00202770 initialize every slot before 00202950 looks up sections;
+/// absent sections retain grip/drive/powerslide/braking=1 and drag=0.
+/// Source found-section count is not yet exposed to the vehicle interface.
 /// Returned index zero corresponds to TerrainZone1.
 pub fn terrain_materials(data: &[u8]) -> Result<[TerrainMaterial; 8]> {
     if data.len() > 1024 * 1024 || data.contains(&0) {
@@ -56,13 +58,23 @@ pub fn terrain_materials(data: &[u8]) -> Result<[TerrainMaterial; 8]> {
         }
         selected.push('\n');
     }
-    if seen.iter().any(|s| !s) {
-        return Err("requires all eight authored terrain zone sections".into());
+    if !seen.iter().any(|s| *s) {
+        return Err("requires at least one authored terrain zone section".into());
     }
     let text = PhysicsData::parse(selected.as_bytes())?;
     let mut materials = Vec::with_capacity(8);
     for index in 1..=8 {
         let section = format!("TerrainZone{index}");
+        if !seen[index - 1] {
+            materials.push(TerrainMaterial {
+                grip: 1.,
+                drag: 0.,
+                drive: 1.,
+                powerslide: 1.,
+                braking: 1.,
+            });
+            continue;
+        }
         materials.push(TerrainMaterial {
             grip: text.first_scalar(&section, "SurfaceFriction")?,
             drag: text.first_scalar(&section, "SurfaceDrag")?,
@@ -102,10 +114,25 @@ mod tests {
         );
     }
     #[test]
-    fn incomplete_and_ambiguous_tables_fail() {
-        assert!(
-            terrain_materials(fixture().replace("[TerrainZone8]", "[Other]").as_bytes()).is_err()
+    fn absent_slots_keep_native_constructor_defaults_without_compacting_later_zones() {
+        let source = fixture().replace("[TerrainZone2]", "[TerrainZone2\nGenerateTireTrack=T]");
+        let materials = terrain_materials(source.as_bytes()).unwrap();
+        assert_eq!(
+            materials[1],
+            TerrainMaterial {
+                grip: 1.,
+                drag: 0.,
+                drive: 1.,
+                powerslide: 1.,
+                braking: 1.
+            }
         );
+        assert_eq!(materials[2].grip, 0.6);
+        assert_eq!(materials[7].drag, 0.02);
+        assert!(terrain_materials(b"[Other]\nSurfaceFriction=1").is_err());
+    }
+    #[test]
+    fn nonfinite_and_ambiguous_tables_fail() {
         assert!(
             terrain_materials(
                 fixture()
