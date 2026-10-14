@@ -1,0 +1,16 @@
+{
+  "id": "source-snow-steps-in-the-motorcycle-scene-batch-85fd475701c04050a6ae390df7472967",
+  "timestamp": "2026-10-14T00:57:49.667825+00:00",
+  "recorded_at": "2026-10-14T00:58:19.579645+00:00",
+  "kind": "verification",
+  "title": "Source Snow steps in the motorcycle scene batch",
+  "summary": "The shared source-camera Snow manager now advances within motorcycle scene batches on Caribou Race. Host browser checks retained the source scene texture and Snow state through pause, physical reset, fixed-clock operation, and graphics-context restoration.",
+  "details": [
+    "Across the combined build, all 40 venue routes loaded ambient declarations and weather selection metadata; seven rain lifecycle cases and ENV05 ATV/motorcycle fountain lifecycle and buffer checks passed. Source Caribou Race Snow ATV rechecks also passed in desktop and portrait.",
+    "For this host-only ATV2 scene Snow capture with the optional source-based motorcycle extension, desktop and 390\u00d7844 portrait runs each used 60 rings, 27 active emitters, one draw and 508,016 GPU bytes; render-only uploads were zero, and the fixed-clock reset and restored Snow framebuffer checks passed exactly. This run's changed-pixel counts were 43,621 desktop and 49,629 portrait; those clock/camera-dependent pixel areas are evidence of contribution, not a performance benchmark.",
+    "Snow continues to sample the scene GPU material and texture when the motorcycle tire atlas is loaded; it does not use the vehicle atlas for Snow. The inspected portrait screenshot is an automated host Chromium race-preview view with the GO overlay visible, not a physical-phone capture."
+  ],
+  "limitation": "The component remains bounded source-derived browser behavior, not full original weather or PS2 parity. Shared global RNG and render-queue provenance remain open; source fog type 12 and moving train smoke are unfinished. No public release is claimed here.",
+  "image": "/devlog-images/source-snow-steps-in-the-motorcycle-scene-batch-85fd475701c04050a6ae390df7472967.png",
+  "caption": "Host Chromium portrait (390\u00d7844): original Caribou Race Snow around the motorcycle scene, with the Race preview GO overlay; automated browser capture, not a physical phone."
+}
