@@ -1,0 +1,12 @@
+{
+  "id": "workflow-throughput-public-verification-75ffb31528394166a85b5b148b26d471",
+  "timestamp": "2026-10-14T04:13:07.054764+00:00",
+  "recorded_at": "2026-10-14T04:13:07.054764+00:00",
+  "kind": "build",
+  "title": "Workflow throughput public verification",
+  "summary": "Merged workflow changes reached production, and CI verified the deployment and public site identity on both supported addresses.",
+  "details": [
+    "PR #70 merged as 5daed8fc1c3c3bb1bafcac583409f8e7a728e8bc. CI run 38509727485 passed build, deployment, public identity/hash, and devlog checks on both public addresses. The trusted Rust app cache completed successfully from 04:10:43 to 04:10:51 UTC. Public tools/test_devlog.mjs passed with 222 checkpoints and 30 feature areas, desktop/mobile filters, no 390px overflow, and no browser errors. This verification exercises the metadata-only release lane; its speedup has not yet been measured."
+  ],
+  "limitation": "The warm Rust app-cache runtime speedup remains unmeasured; no new screenshot was captured for this tooling checkpoint."
+}

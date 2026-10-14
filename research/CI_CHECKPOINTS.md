@@ -62,12 +62,17 @@ The release owner then:
    publication; do not chase main in every implementation chat.
 2. Runs relevant public browser checks once, then records `--stage live`, the
    deployed commit and evidence. Host success alone never earns this stage.
-3. Inspects new screenshots and uploads the pinned runtime/gallery package:
+3. If runtime resources or screenshot references changed, inspects new screenshots
+   and uploads the pinned runtime/gallery package:
    `python3 tools/upload_cloudflare_content.py --release <artifact> --commit <live-sha> --checkpoint menu-polish --owner menu-release`.
    The uploader enforces ownership, takes one shared nonblocking publication lock,
    and checks successful-main provenance and the deployed identity before pointer
    publication. It never requires unrelated newer docs to rebuild the game.
-4. Runs `python3 tools/verify_cloudflare.py --url https://furyremastered.com --commit <live-sha> --release <artifact>`
+   For text-only metadata with unchanged runtime manifest and screenshot references,
+   skip the R2 upload: the checked text publication retains the approved image
+   overlay. Confirm the public text and unchanged image references instead of
+   downloading the unchanged runtime package again.
+4. After an R2/resource change, runs `python3 tools/verify_cloudflare.py --url https://furyremastered.com --commit <live-sha> --release <artifact>`
    and verifies the supported Workers address when required. Record
    `--stage gallery-complete` with evidence, including when no new PNGs were needed.
 5. Reads `python3 tools/release_checkpoint.py status --checkpoint menu-polish` to
