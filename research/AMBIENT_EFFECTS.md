@@ -6,14 +6,16 @@ and adapt original atlas sprite packets to bounded WebGL instance draws. Keep
 original resources in the separate R2 runtime package. A declaration, active
 simulation and original-game equivalence are separate gates.
 
-The all-venue FR/TR/SO census finds 105 emitter declarations and 435 actor
-animation records across 40 venues. These are source records, not 105 active
+The all-venue FR/TR/SO census finds 105 raw emitter sections and 435 actor
+animation records across 40 venues. Native NumberOfEmitters indexes 80 declarations: NAT06's
+13 additional cloud sections and Training's 12 objective sections are dormant.
+Declarations can expand to multiple attachments; neither count means active
 browser effects. The private report retains common and mode sidecars separately.
 FREE06 FR adds 13 dust-wall records, Arlington FR adds locomotive smoke, and
 Coonce SO adds four hat emitters. Training objectives and hockey callbacks do
 not become implemented by loading those archives.
 
-## Static type2/type8 component
+## Static type0/type2/type8 component
 
 Original `002427b0` appends successive TOY declarations. `00240eb0` reads
 TypeID, attachment or position, instance count and StartOn (default true).
@@ -34,12 +36,30 @@ random lifetime/growth, speed gate, original sequential atlas frames and mirrors
 `00143aa0` supplies age/growth/movement/gravity/ground bounce and set animation;
 `001451a0` supplies the 64/128 packet alpha and fade/nonlinear-growth rules.
 
+Static type0 blowing smoke/dust follows `0019c200`: its authored minimum/maximum
+emission, size and lifetime ranges, nonlinear lifetime noise, independent XYZ
+velocity noise, atlas frame selection and native fractional accumulator. That
+accumulator retains its source behavior below the strict one-particle threshold.
+The static birth path does not set type2/type8 random mirror flags. Moving
+emitter VU alignment remains unconnected.
+
+Original `0019a680` controls delay, one-shot, random on/off and timed modes;
+the constructor's first dirty frame does not emit. Random on/off ranges consume
+the same ambient generator as particle births. Strict time boundaries and the
+source timed-mode range selection are preserved. Actor visibility/event
+callbacks are outside this static route.
+
 A private finite interpreter executes 300 original type2/type8 birth cases:
 119,615 EE instructions and 6,216 compared Rust flags/words have zero differences.
 The active static attachment gate and original RNG service are supplied. This
 is a finite kernel comparison, not full native scheduling or PS2 hardware replay.
 The optional authored test reads private cases through ATV_AMBIENT_NATIVE_CASES;
-ordinary CI contains no source-derived fixture payload.
+ordinary CI contains no source-derived fixture payload. Another 300 static
+type0 cases execute 155,442 instructions with 7,272 compared words/flags and
+zero differences. Five hundred timer cases execute 24,425 instructions with
+2,000 compared state words and zero differences. Date-based native seeding and
+the native shared global service are supplied/initialized in those finite gates;
+the browser uses the deterministic independent map generator described below.
 
 The ambient manager uses a separate source RNG generator seeded with 1 for each
 loaded map. Native global RNG ordering with wheels, audio and gameplay is not
@@ -53,17 +73,22 @@ range, stable descending depth and at most two blend-family instance draws.
 An original 128×512 atlas plus instance/corner buffers uses 286,192 GPU bytes.
 This is an additional GPU texture copy; decoded atlas bytes share tire sources.
 
-GPU fountain streams (type11), blowing smoke/cloud/dust (type0), hat effects
+GPU fountain streams (type11), hat effects
 (type9), fog (type12), moving attachments and other actor animation families
-remain explicit diagnostics at this component gate. Timed/random emitter modes,
-visibility callback scheduling, lighting, GS transparency ordering/fog precision
+remain explicit diagnostics at this component gate. Visibility callback scheduling, lighting, GS transparency ordering/fog precision
 and original scene-level manager sharing remain incomplete.
 
 ## Host verification
 
-All nine existing map routes load and drive without JS/GL errors. The dedicated
+All 40 venue routes load their actual common/mode FX declarations exactly once,
+including NAT05's split terrain header and GAME01's partial mode-sidecar spawn.
+Particle placement reads static models independently of gameplay starts. Every
+frame is finite and stays within 600 particles/two sprite draws. FREE06 reaches
+the cap; dropped births remain visible in diagnostics (94 in the recorded gate). The dedicated
 ENV07 natural-camera gate verifies source volcano smoke changes actual pixels
 at desktop and 390×844, with bounded draws, pause/resume, ATV reset and graphics
-context restoration preserving state. Screenshots remain under ignored private
-storage. Browser timings and automated portrait checks do not establish sustained
+context restoration preserving state. The FREE06 type0 gate uses an explicit test-only start beside a source static
+grill attachment; it verifies framebuffer contribution and the same lifecycle
+checks on desktop and portrait. The shipped gameplay spawn is unchanged.
+Screenshots remain under ignored private storage. Browser timings and automated portrait checks do not establish sustained
 physical-phone performance or complete native environmental parity.

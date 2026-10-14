@@ -332,6 +332,43 @@ pub fn collision_placement_matrix(
         1.,
     ])
 }
+///002064f0/00206ba0 placement reader, independent of gameplay spawn metadata.
+pub fn static_models(data: &[u8]) -> Result<Vec<StaticModel>> {
+    static_models_from_document(&document(data)?)
+}
+fn static_models_from_document(data: &PhysicsData) -> Result<Vec<StaticModel>> {
+    let mut models = Vec::new();
+    for index in 1..=count(data, "StaticModels", "NumberOfStaticModels")? {
+        let section = format!("Model{index}");
+        if value(data, &section, "StaticType").is_some_and(|value| value != "Standard") {
+            return Err("unsupported scene static model type".into());
+        }
+        // 002064f0 truncates SLT at its first dot; 001b2d40 forces .psg.
+        let name = value(data, &section, "SLT")
+            .ok_or("missing scene model name")?
+            .split('.')
+            .next()
+            .unwrap_or("");
+        if name.is_empty() || name.len() > 50 || name.contains(['/', '\\', ':']) {
+            return Err("unsupported scene model name".into());
+        }
+        // 002064f0 supplies the 0044f120 vectors when model keys are absent.
+        // SX13 intentionally omits LookVector on several skyline buildings.
+        let position = optional_vector(data, &section, "Position")?.unwrap_or([0.; 3]);
+        let look = optional_vector(data, &section, "LookVector")?.unwrap_or([0., 0., 1.]);
+        let up = optional_vector(data, &section, "UpVector")?;
+        models.push(StaticModel {
+            name: name.to_owned(),
+            position,
+            look,
+            up,
+            use_lighting: boolean(data, &section, "UseLighting", true)?,
+            dynamic_lighting: boolean(data, &section, "UseDynamicLighting", false)?,
+            world_matrix: placement_matrix(position, look, up.unwrap_or([0., 1., 0.]))?,
+        });
+    }
+    Ok(models)
+}
 pub fn parse(data: &[u8]) -> Result<Scene> {
     parse_with_start(data, None)
 }
@@ -401,36 +438,7 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
     let cube_file = value(&data, "Environment", "CubeFile")
         .ok_or("missing scene cube file")?
         .to_owned();
-    let mut models = Vec::new();
-    for index in 1..=count(&data, "StaticModels", "NumberOfStaticModels")? {
-        let section = format!("Model{index}");
-        if value(&data, &section, "StaticType").is_some_and(|value| value != "Standard") {
-            return Err("unsupported scene static model type".into());
-        }
-        // 002064f0 truncates SLT at its first dot; 001b2d40 forces .psg.
-        let name = value(&data, &section, "SLT")
-            .ok_or("missing scene model name")?
-            .split('.')
-            .next()
-            .unwrap_or("");
-        if name.is_empty() || name.len() > 50 || name.contains(['/', '\\', ':']) {
-            return Err("unsupported scene model name".into());
-        }
-        // 002064f0 supplies the 0044f120 vectors when model keys are absent.
-        // SX13 intentionally omits LookVector on several skyline buildings.
-        let position = optional_vector(&data, &section, "Position")?.unwrap_or([0.; 3]);
-        let look = optional_vector(&data, &section, "LookVector")?.unwrap_or([0., 0., 1.]);
-        let up = optional_vector(&data, &section, "UpVector")?;
-        models.push(StaticModel {
-            name: name.to_owned(),
-            position,
-            look,
-            up,
-            use_lighting: boolean(&data, &section, "UseLighting", true)?,
-            dynamic_lighting: boolean(&data, &section, "UseDynamicLighting", false)?,
-            world_matrix: placement_matrix(position, look, up.unwrap_or([0., 1., 0.]))?,
-        });
-    }
+    let models = static_models_from_document(&data)?;
     let mut lights = Vec::new();
     for index in 1..=count(&data, "Lights", "NumberOfLights")? {
         let section = format!("Light{index}");

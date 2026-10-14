@@ -34,7 +34,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--output',type=Path,default=ROOT/'private/reports/ambient-particles/all-venues.json');args=p.parse_args()
     if not args.output.resolve().is_relative_to((ROOT/'private').resolve()):p.error('output must stay private')
     report=audit();args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(report,indent=2)+'\n')
-    print(json.dumps({'venues':len(report['maps']),'source_emitters':sum(len(m['emitters'])for m in report['maps']),'source_animations':sum(len(m['animations'])for m in report['maps'])}))
+    print(json.dumps({'venues':len(report['maps']),'raw_emitter_records':sum(len(m['emitters'])for m in report['maps']),'indexed_declarations':sum(int(t['declared'])for m in report['maps']for t in m['toys'].values()),'source_animations':sum(len(m['animations'])for m in report['maps'])}))
     for m in report['maps']:
         if m['emitters']:print(json.dumps({'map':m['map'],'emitters':len(m['emitters']),'types':sorted(set(e['config'].get('typeid','0')for e in m['emitters'])),'actors':len(m['animations'])}))
 if __name__=='__main__':main()

@@ -12,7 +12,7 @@ export async function loadAmbientEffects({resource,entries,codec,json,scene,comm
     return codec(3,resource,index);
   };
   source.emts={};
-  for(const name of new Set(plan.placements.filter(p=>[2,8].includes(p.type_id)).map(p=>p.filename))) source.emts[name]=new TextDecoder().decode(await read(name));
+  for(const name of new Set(plan.placements.filter(p=>[0,2,8].includes(p.type_id)).map(p=>p.filename))){if(entries.some(entry=>normalize(entry.name)===name))source.emts[name]=new TextDecoder().decode(await read(name));}
   const prt=entries.findIndex(entry=>/particles\.prt$/i.test(entry.name));
   source.prt=prt<0?'':new TextDecoder().decode(await codec(3,resource,prt));
   const config=await json(131,new TextEncoder().encode(JSON.stringify(source)));
@@ -57,19 +57,19 @@ void main(){
   if(sampled.a*255.0<3.0)discard;
   color=vec4(mix(fogColor,sampled.rgb*mix(vec3(1.0),lightColor,sprite.y),fogCoverage()),clamp(sampled.a*(255.0/128.0)*sprite.x,0.0,1.0));
 }`;
-export function visibleSprites(frame,camera,farDistance=768,workspace=[]) {
+export function visibleSprites(frame,camera,farDistance=768,workspace=[],pool=null) {
   workspace.length=0;if(!frame)return workspace;
   const far=Math.max(0,farDistance),fx=Math.sin(camera.yaw)*Math.cos(camera.pitch),fy=Math.sin(camera.pitch),fz=Math.cos(camera.yaw)*Math.cos(camera.pitch);
   for(let index=0;index<frame.particles.length;index++){
     const p=frame.particles[index],dx=p.position[0]-camera.x,dy=p.position[1]-camera.y,dz=p.position[2]-camera.z,depth=dx*fx+dy*fy+dz*fz;
-    if(dx*dx+dy*dy+dz*dz<=(far+p.size)**2&&depth>=-p.size)workspace.push({p,index,depth});
+    if(dx*dx+dy*dy+dz*dz<=(far+p.size)**2&&depth>=-p.size){const record=pool?.[index]??{p,index,depth};record.p=p;record.index=index;record.depth=depth;workspace.push(record);}
   }
   return workspace.sort((a,b)=>b.depth-a.depth||a.index-b.index);
 }
 export class AmbientEffectsRenderer {
   constructor(gl,source){
     this.gl=gl;this.source=source;this.frame=source.frame;this.draws=0;this.triangles=0;this.visible=0;
-    this.visibleScratch=[];this.instances=new Float32Array(source.config.capacity*10);this.gpuBytes=this.instances.byteLength+48+source.texture.rgba.length;
+    this.visibleScratch=[];this.sortRecords=Array.from({length:source.config.capacity},(_,index)=>({p:null,index,depth:0}));this.instances=new Float32Array(source.config.capacity*10);this.gpuBytes=this.instances.byteLength+48+source.texture.rgba.length;
     const shader=(kind,text)=>{const s=gl.createShader(kind);gl.shaderSource(s,text);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){const error=gl.getShaderInfoLog(s);gl.deleteShader(s);throw new Error(error);}return s;};
     const vertex=shader(gl.VERTEX_SHADER,vertexSource),fragment=shader(gl.FRAGMENT_SHADER,fragmentSource);
     this.program=gl.createProgram();gl.attachShader(this.program,vertex);gl.attachShader(this.program,fragment);gl.linkProgram(this.program);gl.deleteShader(vertex);gl.deleteShader(fragment);
@@ -90,7 +90,7 @@ export class AmbientEffectsRenderer {
   }
   draw({camera,viewProjection,farDistance=768,fogColor=[0,0,0],fog,lightColor=[1,1,1]}){
     const started=performance.now(),gl=this.gl;this.draws=0;this.triangles=0;
-    const sprites=visibleSprites(this.frame,camera,farDistance,this.visibleScratch);this.visible=sprites.length;
+    const sprites=visibleSprites(this.frame,camera,farDistance,this.visibleScratch,this.sortRecords);this.visible=sprites.length;
     if(!sprites.length){this.cpuMilliseconds=performance.now()-started;return;}
     const old={program:gl.getParameter(gl.CURRENT_PROGRAM),vao:gl.getParameter(gl.VERTEX_ARRAY_BINDING),buffer:gl.getParameter(gl.ARRAY_BUFFER_BINDING),blend:gl.isEnabled(gl.BLEND),depthMask:gl.getParameter(gl.DEPTH_WRITEMASK),src:gl.getParameter(gl.BLEND_SRC_RGB),dst:gl.getParameter(gl.BLEND_DST_RGB),srcAlpha:gl.getParameter(gl.BLEND_SRC_ALPHA),dstAlpha:gl.getParameter(gl.BLEND_DST_ALPHA),active:gl.getParameter(gl.ACTIVE_TEXTURE)};
     gl.activeTexture(gl.TEXTURE0);const oldTexture=gl.getParameter(gl.TEXTURE_BINDING_2D);
@@ -104,8 +104,8 @@ export class AmbientEffectsRenderer {
     for(const additive of [false,true]){
       let count=0;
       for(const {p}of sprites){if(p.additive!==additive)continue;const rect=this.source.config.atlas.frames[p.frame].rect,w=this.source.texture.width,h=this.source.texture.height;
-        const u=[(rect[0]+.5)/w,(rect[2]+.5)/w],v=[(rect[1]+.5)/h,(rect[3]+.5)/h];if(p.mirror[0])u.reverse();if(p.mirror[1])v.reverse();
-        this.instances.set([...p.position,p.size,u[0],v[0],u[1],v[1],p.alpha,Number(p.lit)],count++*10);
+        const offset=count++*10;this.instances[offset]=p.position[0];this.instances[offset+1]=p.position[1];this.instances[offset+2]=p.position[2];this.instances[offset+3]=p.size;
+        this.instances[offset+4]=(rect[p.mirror[0]?2:0]+.5)/w;this.instances[offset+5]=(rect[p.mirror[1]?3:1]+.5)/h;this.instances[offset+6]=(rect[p.mirror[0]?0:2]+.5)/w;this.instances[offset+7]=(rect[p.mirror[1]?1:3]+.5)/h;this.instances[offset+8]=p.alpha;this.instances[offset+9]=Number(p.lit);
       }
       if(!count)continue;gl.bufferSubData(gl.ARRAY_BUFFER,0,this.instances.subarray(0,count*10));gl.blendFunc(gl.SRC_ALPHA,additive?gl.ONE:gl.ONE_MINUS_SRC_ALPHA);gl.drawArraysInstanced(gl.TRIANGLES,0,6,count);this.draws++;this.triangles+=count*2;
     }

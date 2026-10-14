@@ -128,8 +128,8 @@ pub struct Plan {
     pub unresolved: Vec<String>,
 }
 pub fn plan(source: &Source) -> Result<Plan> {
-    // Particle mode sidecars do not supply a complete gameplay spawn.
-    let scene = crate::scene::parse(source.scene.as_bytes())?;
+    // Particle sidecars never supply the gameplay spawn.
+    let models = crate::scene::static_models(source.scene.as_bytes())?;
     let mut result = Plan {
         declared: 0,
         placements: vec![],
@@ -162,8 +162,7 @@ pub fn plan(source: &Source) -> Result<Plan> {
                 let name = attach.trim_end_matches(".slt");
                 let limit = integer(&d, &section, "NumberOfInstances", 1, 256)?;
                 let mut found = 0;
-                for model in scene
-                    .models
+                for model in models
                     .iter()
                     .filter(|m| m.name.eq_ignore_ascii_case(name))
                     .take(limit)
@@ -258,6 +257,69 @@ impl Atlas {
         })
     }
 }
+#[derive(Clone, Deserialize)]
+struct Smoke {
+    size: [f32; 2],
+    life: [f32; 2],
+    rate: [f32; 2],
+    percent: f32,
+    convergence: f32,
+    initial_age: f32,
+    noise: [[f32; 3]; 2],
+    minimum_speed: f32,
+}
+#[derive(Clone, Default)]
+struct Timer {
+    remaining: f32,
+    delay: f32,
+    on: bool,
+    emitted: bool,
+}
+impl Timer {
+    fn active(
+        &mut self,
+        mode: usize,
+        on_range: [f32; 2],
+        off_range: [f32; 2],
+        random_source: &mut OriginalRandom,
+        dt: f32,
+    ) -> bool {
+        if self.delay > 0. {
+            if self.on {
+                self.delay -= dt;
+            }
+            return false;
+        }
+        match mode {
+            1 => {
+                if !self.on {
+                    return false;
+                }
+                if self.remaining > 0. {
+                    self.remaining -= dt;
+                    return true;
+                }
+                if self.emitted {
+                    self.on = false;
+                    return false;
+                }
+            }
+            2 | 3 if self.remaining > 0. => {
+                self.remaining -= dt;
+                if self.remaining > 0. {
+                    return self.on;
+                }
+                self.on = !self.on;
+                let range = if self.on { on_range } else { off_range };
+                self.remaining = range[usize::from(mode == 3)]
+                    + (range[1] - range[0]) * if mode == 2 { random(random_source) } else { 0. };
+                return self.on;
+            }
+            _ => {}
+        }
+        self.on
+    }
+}
 #[derive(Clone)]
 struct Definition {
     base: Emitter,
@@ -271,6 +333,10 @@ struct Definition {
     lit: bool,
     additive: bool,
     emit_mode: usize,
+    smoke: Option<Smoke>,
+    on_range: [f32; 2],
+    off_range: [f32; 2],
+    delay: f32,
 }
 #[derive(Clone)]
 struct Runtime {
@@ -279,6 +345,7 @@ struct Runtime {
     phase: f32,
     first: bool,
     frame: usize,
+    timer: Timer,
 }
 #[derive(Clone)]
 struct Particle {
@@ -358,20 +425,24 @@ impl Effects {
             Some(Atlas::parse(&source.prt)?)
         };
         let mut runtime = vec![];
+        let mut random_source = OriginalRandom::with_seed(1);
         let mut unsupported = plan.unresolved.clone();
         for placement in &plan.placements {
-            // Freeport fog/raindrops belong to the camera weather path.
-            if ![2, 8].contains(&placement.type_id) {
+            // Placed raindrops are type8; weather policy/snow and type12 fog are separate.
+            if ![0, 2, 8].contains(&placement.type_id) {
                 unsupported.push(format!(
                     "{}: original emitter type{} not connected",
                     placement.filename, placement.type_id
                 ));
                 continue;
             }
-            let s = source
-                .emts
-                .get(&placement.filename)
-                .ok_or_else(|| format!("missing ambient EMT {}", placement.filename))?;
+            let Some(s) = source.emts.get(&placement.filename) else {
+                unsupported.push(format!(
+                    "{}: original EMT missing; native constructor fallback not connected",
+                    placement.filename
+                ));
+                continue;
+            };
             let d = text(s)?;
             let base = Emitter::parse(s.as_bytes(), 0)?;
             let group = integer(&d, "General Info", "ParticleGroup", 0, 127)?;
@@ -380,13 +451,58 @@ impl Effects {
                 .and_then(|a| a.groups.get(group))
                 .ok_or("ambient group outside original atlas")?;
             let emit_mode = integer(&d, "General Info", "EmitMode", 0, 3)?;
-            if emit_mode != 0 {
-                unsupported.push(format!(
-                    "{}: timed/random emitter mode{emit_mode} not connected",
-                    placement.filename
-                ));
-                continue;
-            }
+            let ranges = if emit_mode == 2 {
+                [
+                    [
+                        number(&d, "General Info", "RandomMinTimeOn", 0.)?,
+                        number(&d, "General Info", "RandomMaxTimeOn", 0.)?,
+                    ],
+                    [
+                        number(&d, "General Info", "RandomMinTimeOff", 0.)?,
+                        number(&d, "General Info", "RandomMaxTimeOff", 0.)?,
+                    ],
+                ]
+            } else {
+                [
+                    [number(
+                        &d,
+                        "General Info",
+                        if emit_mode == 1 {
+                            "OneShotTime"
+                        } else {
+                            "TimedTimeOn"
+                        },
+                        0.,
+                    )?; 2],
+                    [number(&d, "General Info", "TimedTimeOff", 0.)?; 2],
+                ]
+            };
+            let smoke = if placement.type_id == 0 {
+                Some(Smoke {
+                    size: [
+                        number(&d, "General Info", "MinimumInitialSize", 0.)?,
+                        number(&d, "General Info", "MaximumInitialSize", 5.)?,
+                    ],
+                    life: [
+                        number(&d, "General Info", "MinimumLife", 500.)?,
+                        number(&d, "General Info", "MaximumLife", 3500.)?,
+                    ],
+                    rate: [
+                        number(&d, "General Info", "MinimumEmitRate", 0.)?,
+                        number(&d, "General Info", "MaximumEmitRate", 10.)?,
+                    ],
+                    percent: number(&d, "General Info", "MinimumPercentLife", 0.5)?,
+                    convergence: number(&d, "General Info", "MinimumPercentLifeConvergance", 1.)?,
+                    initial_age: number(&d, "General Info", "InitialPercentage", 0.)?,
+                    noise: [
+                        vector(&d, "General Info", "MinimumVelocityNoise")?,
+                        vector(&d, "General Info", "MaximumVelocityNoise")?,
+                    ],
+                    minimum_speed: number(&d, "General Info", "MinimumEmissionSpeed", 0.)?,
+                })
+            } else {
+                None
+            };
             let definition = Definition {
                 base,
                 spread: [
@@ -407,6 +523,22 @@ impl Effects {
                 lit: boolean(&d, "Properties", "Lit", true)?,
                 additive: boolean(&d, "Properties", "Additive", false)?,
                 emit_mode,
+                smoke,
+                on_range: ranges[0],
+                off_range: ranges[1],
+                delay: number(&d, "General Info", "DelayTime", 0.)?,
+            };
+            let timer = Timer {
+                on: placement.start_on,
+                remaining: ranges[0][0]
+                    + (ranges[0][1] - ranges[0][0])
+                        * if emit_mode == 2 {
+                            random(&mut random_source)
+                        } else {
+                            0.
+                        },
+                delay: definition.delay,
+                emitted: false,
             };
             runtime.push(Runtime {
                 placement: placement.clone(),
@@ -414,6 +546,7 @@ impl Effects {
                 definition,
                 phase: 0.,
                 first: true,
+                timer,
             });
         }
         let metadata = Metadata {
@@ -427,7 +560,7 @@ impl Effects {
             Self {
                 runtime,
                 particles: Vec::with_capacity(CAPACITY),
-                random: OriginalRandom::with_seed(1),
+                random: random_source,
                 serial: 0,
                 time: 0.,
                 total: 0,
@@ -494,7 +627,13 @@ impl Effects {
                 r.first = false;
                 continue;
             } //0019a680 constructor dirty-position gate.
-            if !r.placement.start_on || r.definition.emit_mode != 0 {
+            if !r.timer.active(
+                r.definition.emit_mode,
+                r.definition.on_range,
+                r.definition.off_range,
+                &mut self.random,
+                dt,
+            ) {
                 continue;
             }
             let d = &r.definition;
@@ -511,11 +650,62 @@ impl Effects {
             } else {
                 1.
             };
-            let count = emission_count(&mut r.phase, base.rate * dt * factor);
+            let count = if let Some(smoke) = &d.smoke {
+                if smoke.minimum_speed > 0. {
+                    0
+                } else {
+                    let amount = smoke.rate[0] * dt + r.phase;
+                    if amount > 1. {
+                        let count = amount as usize;
+                        r.phase = amount - count as f32;
+                        count
+                    } else {
+                        r.phase += amount;
+                        0
+                    }
+                }
+            } else {
+                emission_count(&mut r.phase, base.rate * dt * factor)
+            };
+            if count > 0 {
+                r.timer.emitted = true;
+            }
             for _ in 0..count {
                 if self.particles.len() == CAPACITY {
                     self.dropped += 1;
                     break;
+                }
+                if let Some(smoke) = &d.smoke {
+                    let life = smoke.life[0] * smoke.percent
+                        + smoke.life[0]
+                            * (1. - smoke.percent)
+                            * (1. / (smoke.convergence * random(&mut self.random) + 1.));
+                    let mut velocity = base.velocity;
+                    for (axis, v) in velocity.iter_mut().enumerate() {
+                        *v += smoke.noise[0][axis]
+                            + (smoke.noise[1][axis] - smoke.noise[0][axis])
+                                * random(&mut self.random);
+                    }
+                    self.particles.push(Particle {
+                        position: r.placement.position,
+                        velocity,
+                        size: smoke.size[0],
+                        initial_size: smoke.size[0],
+                        growth: smoke.size[0] * base.growth,
+                        life,
+                        age: smoke.life[0] * smoke.initial_age,
+                        frame: r.frame,
+                        set_first: r.frame,
+                        emitter: index,
+                        mirror: [false; 2],
+                    });
+                    r.frame = d.group[0]
+                        + ((d.group[1] - d.group[0] + 1) as f32 * random(&mut self.random))
+                            as usize;
+                    r.timer.emitted = true;
+                    emitted += 1;
+                    self.total += 1;
+                    continue;
                 }
                 let rx = random(&mut self.random);
                 let ry = random(&mut self.random);
@@ -569,6 +759,7 @@ impl Effects {
                     emitter: index,
                     mirror: [d.mirror[0] && rx > 0.5, d.mirror[1] && ry > 0.5],
                 });
+                r.timer.emitted = true;
                 emitted += 1;
                 self.total += 1;
             }
@@ -615,7 +806,7 @@ mod tests {
     use super::*;
     #[test]
     fn common_and_mode_append_and_local_offsets_follow_model_basis() {
-        let scene = "[SceneInfo]\nDefaultStartPosition=1,2,3\nDefaultStartDirection=0,0,1\n[Environment]\nCubeFile=synthetic.cub\n[Lights]\nNumberOfLights=1\n[Light1]\nType=Ambient\nColorRGB=1,2,3\n[Fog]\nColorRGB=0,0,0\n[StaticModels]\nNumberOfStaticModels=1\n[Model1]\nSLT=prop.slt\nPosition=10,20,30\nLookVector=1,0,0\n";
+        let scene = "[Environment]\nCubeFile=synthetic.cub\n[Lights]\nNumberOfLights=1\n[Light1]\nType=Ambient\nColorRGB=1,2,3\n[Fog]\nColorRGB=0,0,0\n[StaticModels]\nNumberOfStaticModels=1\n[Model1]\nSLT=prop.slt\nPosition=10,20,30\nLookVector=1,0,0\n";
         let common = "[TerrainZone2\nGenerateTireTrack=T]\n[ParticleEmitters]\nNumberOfEmitters=1\n[ParticleEmitter1]\nTypeID=8\nAttachToSoultree=prop.slt\nOffsetFromSoultree=0,5,0\nEmitterFilename=smoke.emt\nNumberOfInstances=2\n";
         let mode = "[SceneInfo]\nDefaultStartPosition=10,20,30\n[ParticleEmitters]\nNumberOfEmitters=1\n[ParticleEmitter1]\nTypeID=2\nPosition=9,8,7\nEmitterFilename=spray.emt\nStartOn=F\n";
         let source = Source {
@@ -631,6 +822,26 @@ mod tests {
         assert_eq!(result.placements[0].position, [10., 25., 30.]);
         assert!(!result.placements[1].start_on);
         assert_eq!(result.unresolved, ["smoke.emt: 1/2 attachment prop.slt"]);
+    }
+    #[test]
+    fn timer_switches_keep_strict_native_boundary_and_reads_do_not_advance() {
+        let mut timer = Timer {
+            on: true,
+            remaining: 0.25,
+            ..Timer::default()
+        };
+        let mut random = OriginalRandom::with_seed(1);
+        assert!(timer.active(3, [0.25; 2], [0.25; 2], &mut random, 0.125));
+        assert!(!timer.active(3, [0.25; 2], [0.25; 2], &mut random, 0.125));
+        assert_eq!(timer.remaining, 0.25);
+        assert!(!timer.active(3, [0.25; 2], [0.25; 2], &mut random, 0.125));
+        assert!(timer.active(3, [0.25; 2], [0.25; 2], &mut random, 0.125));
+        let mut once = Timer {
+            on: true,
+            emitted: true,
+            ..Timer::default()
+        };
+        assert!(!once.active(1, [0.; 2], [0.; 2], &mut random, 1. / 60.));
     }
     #[test]
     fn native_fractional_emission_discards_remainder_and_retains_strict_gate() {
@@ -669,6 +880,8 @@ mod tests {
             flags: u32,
             expected: Vec<Vec<u32>>,
             out_phase: u32,
+            #[serde(default)]
+            smoke: Option<Smoke>,
         }
         #[derive(Deserialize)]
         struct Report {
@@ -690,7 +903,7 @@ mod tests {
                     gravity: 1.,
                 },
                 spread: c.spread,
-                group: [128, 151],
+                group: if c.kind == 0 { [152, 167] } else { [128, 151] },
                 frames_per_set: c.fps,
                 mirror: [true, true],
                 ground: None,
@@ -699,6 +912,10 @@ mod tests {
                 lit: false,
                 additive: false,
                 emit_mode: 0,
+                smoke: c.smoke,
+                on_range: [0.; 2],
+                off_range: [0.; 2],
+                delay: 0.,
             };
             let runtime = Runtime {
                 placement: Placement {
@@ -710,7 +927,11 @@ mod tests {
                 definition,
                 phase: c.phase,
                 first: false,
-                frame: 128,
+                frame: if c.kind == 0 { 152 } else { 128 },
+                timer: Timer {
+                    on: true,
+                    ..Timer::default()
+                },
             };
             let mut effects = Effects {
                 runtime: vec![runtime],
@@ -753,5 +974,60 @@ mod tests {
             }
         }
         println!("native ambient birth comparisons: {comparisons}");
+    }
+    #[test]
+    #[ignore = "requires private original timer instruction cases"]
+    fn private_original_timer_cases() {
+        #[derive(Deserialize)]
+        struct Case {
+            mode: usize,
+            on: bool,
+            emitted: bool,
+            remaining: f32,
+            delay: f32,
+            dt: f32,
+            on_range: [f32; 2],
+            off_range: [f32; 2],
+            seed: u64,
+            active: bool,
+            out_on: bool,
+            out_remaining: u32,
+            out_delay: u32,
+        }
+        #[derive(Deserialize)]
+        struct Report {
+            cases: Vec<Case>,
+        }
+        let report: Report = serde_json::from_slice(
+            &std::fs::read(std::env::var("ATV_AMBIENT_TIMER_CASES").unwrap()).unwrap(),
+        )
+        .unwrap();
+        let count = report.cases.len();
+        for (index, c) in report.cases.into_iter().enumerate() {
+            let mut timer = Timer {
+                remaining: c.remaining,
+                delay: c.delay,
+                on: c.on,
+                emitted: c.emitted,
+            };
+            let active = timer.active(
+                c.mode,
+                c.on_range,
+                c.off_range,
+                &mut OriginalRandom::with_seed(c.seed),
+                c.dt,
+            );
+            assert_eq!(
+                (
+                    active,
+                    timer.on,
+                    timer.remaining.to_bits(),
+                    timer.delay.to_bits()
+                ),
+                (c.active, c.out_on, c.out_remaining, c.out_delay),
+                "timer case{index}"
+            );
+        }
+        println!("native ambient timer comparisons: {}", count * 4);
     }
 }
