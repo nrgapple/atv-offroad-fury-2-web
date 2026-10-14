@@ -92,73 +92,33 @@ test('orbit and pullback keep the rider framed and the camera above terrain', ()
   assert.deepEqual(frame.position,[0,10,-15],'recovered frame is not mutated');
 });
 
-const {RideEffectsSettings,VehicleShake}=await import('./render-support.js');
-test('effect preferences migrate saved Off, cycle three modes, persist and tolerate blocked storage',()=>{
-  const values=new Map([['atv-funny-crashes','false']]);
-  const store={getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)};
-  const settings=new RideEffectsSettings(store);assert.equal(settings.mode,'original');
-  settings.toggle();assert.equal(settings.mode,'crazy');settings.toggle();assert.equal(settings.mode,'gorn');
-  assert.equal(new RideEffectsSettings(store).mode,'gorn');settings.toggle();assert.equal(settings.enabled,false);
-  settings.toggleShake();assert.equal(new RideEffectsSettings(store).shake,false);
-  assert.equal(new RideEffectsSettings(null,true).shake,false);
-  const blocked=new RideEffectsSettings({getItem(){throw Error();},setItem(){throw Error();}});
-  assert.equal(blocked.mode,'crazy');blocked.toggle();blocked.toggleShake();assert.equal(blocked.mode,'gorn');assert.equal(blocked.shake,false);
+const {RideEffectsSettings,ImpactEvents}=await import('./render-support.js');
+test('crash preferences persist, migrate and ignore obsolete shake preferences',()=>{
+ const values=new Map([['atv-funny-crashes','false'],['atv-camera-shake','true']]);
+ const store={getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)};
+ const settings=new RideEffectsSettings(store);assert.equal(settings.mode,'original');
+ settings.toggle();settings.toggle();assert.equal(new RideEffectsSettings(store).mode,'gorn');
+ assert.equal(settings.shake,undefined);assert.equal(settings.toggleShake,undefined);
+ const blocked=new RideEffectsSettings({getItem(){throw Error();},setItem(){throw Error();}});
+ blocked.toggle();assert.equal(blocked.mode,'gorn');
 });
-function createShake() {
- let seconds=0;const s=new VehicleShake(()=>seconds),update=s.update.bind(s);
- s.update=(actor,dt,...rest)=>{seconds+=Math.max(0,Number.isFinite(dt)?dt:0);update(actor,dt,...rest);};
- return s;
-}
-const shakeActor={origin:[0,3,0],linear_velocity:[0,0,0],speed:0,rpm:1000,grounded:[true,true],wreck:{phase:'Riding'},reset_count:0,crash_impact_speed:0};
-test('ordinary riding, RPM, acceleration and wheel contacts remain completely steady',()=>{
- const s=createShake();s.accept(shakeActor);
- for(let i=0;i<600;i++) {
-  const actor={...shakeActor,speed:70,rpm:8000,linear_velocity:[i%2?5:0,i%3,70],crash_impact_speed:35,suspension_stop_contacts:2};
-  assert.equal(s.accept(actor),0);s.update(actor,1/60);assert.deepEqual(s.offset,[0,0,0,0]);
- }
- assert.equal(s.impacts,0);
+test('impact audio retains contact gates without any camera transform',()=>{
+ let clock=0;const events=new ImpactEvents(()=>clock);
+ const actor={origin:[0,3,0],linear_velocity:[0,0,0],speed:0,rpm:1000,grounded:[true,true],wreck:{phase:'Riding'},reset_count:0,crash_impact_speed:0};
+ events.accept(actor);
+ for(let i=0;i<60;i++)assert.equal(events.accept({...actor,crash_impact_speed:35,suspension_stop_contacts:2}),0);
+ const mild={...actor,crash_impact_speed:40,obstacle_contact_count:1,linear_velocity:[0,0,-20],wreck:{phase:'Front'}};
+ assert.equal(events.accept(mild),40);
+ const severe={...mild,crash_impact_speed:80,linear_velocity:[0,0,0]};assert.equal(events.accept(severe),80);
+ for(let i=0;i<60;i++){clock+=1/60;assert.equal(events.accept({...severe,linear_velocity:[0,0,i%2?20:0]}),0);}
+ assert.equal(events.impacts,2);assert.equal(events.apply,undefined);
+ assert.equal(events.accept({...severe,reset_count:1}),0);
 });
-const collision={...shakeActor,crash_impact_speed:80,obstacle_contact_count:1,linear_velocity:[0,0,-20],wreck:{phase:'Front'}};
-test('a real crash has one bounded rotation pulse that ends exactly, without translation',()=>{
- const s=createShake();s.accept(shakeActor);assert.equal(s.accept(collision),80);
- const view={position:[0,10,-15],yaw:0,pitch:-.3};
- let moving=0;
- for(let i=0;i<180;i++) {
-  s.update(collision,1/60);assert.equal(s.accept(collision),0);
-  const shown=s.apply(view);assert.deepEqual(shown.position,view.position);
-  if(s.offset.some(Boolean))moving++;
-  assert(Math.abs(s.offset[0])<=.025 && Math.abs(s.offset[1])<=.035);
- }
- assert(moving>0 && moving<30);assert.equal(s.energy,0);assert.deepEqual(s.offset,[0,0,0,0]);assert.equal(s.impacts,1);
-});
-test('genuine airborne landing triggers; single wheel contact gaps do not',()=>{
- const s=createShake();s.accept(shakeActor);
- const air={...shakeActor,grounded:[false,false],linear_velocity:[0,-20,0]};
- s.accept(air);assert.equal(s.accept({...shakeActor,crash_impact_speed:35}),0);
- for(let i=0;i<15;i++)s.accept(air);
- assert.equal(s.accept({...shakeActor,crash_impact_speed:35}),35);
-});
-test('shake Off, pause and reset clear the pulse immediately',()=>{
- for(const clear of [s=>s.update(collision,1/60,false),s=>s.update(collision,1/60,true,false),s=>s.accept({...collision,reset_count:1}),s=>s.reset()]) {
-  const s=createShake();s.accept(shakeActor);s.accept(collision);s.update(collision,1/60);assert(s.energy>0);
-  clear(s);assert.equal(s.energy,0);assert.deepEqual(s.offset,[0,0,0,0]);
- }
-});
-
-test('blocked browser storage getter still permits session settings',()=>{
+test('blocked browser storage getter permits session crash settings',()=>{
  const descriptor=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
- try {
-  Object.defineProperty(globalThis,'localStorage',{configurable:true,get(){throw new Error('Storage denied');}});
-  const s=new RideEffectsSettings();assert.equal(s.mode,'crazy');s.toggle();s.toggleShake();assert.equal(s.mode,'gorn');assert.equal(s.shake,false);
+ try {Object.defineProperty(globalThis,'localStorage',{configurable:true,get(){throw Error('denied');}});
+ const s=new RideEffectsSettings();s.toggle();assert.equal(s.mode,'gorn');
  } finally {if(descriptor)Object.defineProperty(globalThis,'localStorage',descriptor);else delete globalThis.localStorage;}
-});
-
-test('a severe crash upgrades an earlier hit once without repeated bounce pulses',()=>{
- const s=createShake();s.accept(shakeActor);
- const mild={...collision,crash_impact_speed:40};assert.equal(s.accept(mild),40);s.update(mild,1/60);
- const severe={...collision,linear_velocity:[0,0,0]};assert.equal(s.accept(severe),80);
- for(let i=0;i<60;i++){s.update(severe,1/60);assert.equal(s.accept({...severe,linear_velocity:[0,0,i%2?20:0]}),0);}
- assert.equal(s.impacts,2);
 });
 const {severedIndices,meshNodeBounds,poseBounds,crashPresentation}=await import('./render-support.js');
 test('severing removes bridge triangles but preserves geometry within each connected limb',()=>{
@@ -167,18 +127,16 @@ test('severing removes bridge triangles but preserves geometry within each conne
  assert.deepEqual([...severedIndices(group,nodes,[])],group.indices);
  assert.deepEqual([...severedIndices(group,nodes,[1])],[1,2,4,0,3,0,2,4,5]);
 });
-test('crash framing encloses diverging ATV, rider and debris in landscape and portrait',()=>{
- const bounds={min:[-20,0,-12],max:[30,25,22]};
+test('crash shot stays tight, gives up a distant bike and clears terrain without dollying away',()=>{
  const original={position:[0,10,-15],yaw:.8,pitch:-.3,presentation:{focalLength:2.3}};
- for(const aspect of [.46,1.5,2.2])for(const floor of [0,80]) {
-  const v=crashPresentation(original,bounds,aspect,()=>floor);
-  assert(v.position[1]>=floor+2);
-  const forward=[Math.sin(v.yaw)*Math.cos(v.pitch),Math.sin(v.pitch),Math.cos(v.yaw)*Math.cos(v.pitch)];
-  const right=[-Math.cos(v.yaw),0,Math.sin(v.yaw)],up=[-Math.sin(v.yaw)*Math.sin(v.pitch),Math.cos(v.pitch),-Math.cos(v.yaw)*Math.sin(v.pitch)];
-  for(let c=0;c<8;c++) {
-   const p=bounds.min.map((x,i)=>((c&(1<<i))?bounds.max[i]:x)-v.position[i]);const dot=a=>a.reduce((sum,x,i)=>sum+x*p[i],0),z=dot(forward);
-   assert(z>1);assert(Math.abs(dot(right)*2.3/aspect/z)<=.77);assert(Math.abs(dot(up)*2.3/z)<=.77);
-  }
+ for(const aspect of [.46,1.5,2.2])for(const gap of [0,5,10,16,22,100,1000]) {
+  const subjects={rider:[0,3,0],bike:[gap,3,0]};
+  const v=crashPresentation(original,subjects,aspect,()=>0),c=v.presentation.crash;
+  assert(c.distance>=16&&c.distance<=32);assert(v.position.every(Number.isFinite));
+  assert(Math.hypot(...v.position.map((x,i)=>x-c.target[i]))<=32.01);
+  if(gap>=22){assert.deepEqual(c.target,subjects.rider);assert.equal(c.bikeWeight,0);}
+  const hill=crashPresentation(original,subjects,aspect,()=>80);
+  assert(hill.position[1]>=82);assert(hill.presentation.crash.distance<=32);
  }
  assert.deepEqual(original.position,[0,10,-15]);assert.equal(crashPresentation(original,null,1,()=>0),original);
 });
@@ -186,12 +144,4 @@ test('crash bounds follow the actual rendered node transforms',()=>{
  const m=[1,0,0,0,0,1,0,0,0,0,1,0,10,20,30,1];
  const bounds=meshNodeBounds([{vertices:[{node:0,local_position:[-1,-2,-3]},{node:0,local_position:[1,2,3]}]}],2);
  assert.deepEqual(poseBounds(bounds,[m,m]),{min:[9,18,27],max:[11,22,33]});
-});
-
-test('a slow frame cannot prolong an impulse and a fresh hit does not inherit earlier stalled time',()=>{
- let seconds=0;const s=new VehicleShake(()=>seconds);
- s.accept(shakeActor);seconds=2;assert.equal(s.accept(collision),80);
- s.update(collision,.05);assert(s.energy>0,'fresh impulse starts at delivery, even after a stalled frame');
- seconds+=.016;s.update(collision,.016);assert(s.offset.some(Boolean));
- seconds+=.50;s.update(collision,.05);assert.equal(s.energy,0);assert.deepEqual(s.offset,[0,0,0,0]);
 });

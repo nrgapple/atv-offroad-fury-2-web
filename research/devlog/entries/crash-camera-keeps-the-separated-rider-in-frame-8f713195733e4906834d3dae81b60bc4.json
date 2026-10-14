@@ -1,0 +1,16 @@
+{
+  "id": "crash-camera-keeps-the-separated-rider-in-frame-8f713195733e4906834d3dae81b60bc4",
+  "timestamp": "2026-10-14T04:23:09.870230+00:00",
+  "recorded_at": "2026-10-14T04:23:35.124762+00:00",
+  "kind": "build",
+  "title": "Crash camera keeps the separated rider in frame",
+  "summary": "A tight severe-crash camera now prioritizes the rider when the ATV separates, fitting only the rider torso and chassis while debris remains outside the framing target.",
+  "details": [
+    "Host gate: make check, make verify, and make web passed (Rust formatting/tests/strict Clippy, JavaScript 135 passed and 1 skipped, and Python checks).",
+    "The actual-WASM severe-crash browser route passed 1,202 paired native gameplay/camera steps with zero mismatches, three intact-ATV aerial ragdoll frames, two damage transitions, seven damaged parts, and recovery.",
+    "During rider separation the camera dolly stays within 16\u201332 feet; the bike fades out of focus at 8\u201322 feet, and terrain lifts the eye. A previously saved shake preference is ignored and the shake control is removed."
+  ],
+  "limitation": "Host-only evidence. Public deployment and browser verification are pending. Speed-triggered peripheral blur and the crisp HD UI are not implemented yet.",
+  "image": "/devlog-images/crash-camera-keeps-the-separated-rider-in-frame-8f713195733e4906834d3dae81b60bc4.png",
+  "caption": "Host Chromium severe-crash capture: rider centered after ATV separation"
+}

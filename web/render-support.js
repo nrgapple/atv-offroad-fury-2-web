@@ -121,16 +121,14 @@ export function chasePresentation(frame, actor, aspect, sightline, height) {
 
 // Saved authored options, including migration of the former boolean crash switch.
 export class RideEffectsSettings {
-  constructor(storage, reducedMotion = false) {
+  constructor(storage) {
     if (storage === undefined) {
       try { storage = globalThis.localStorage; } catch { storage = null; }
     }
-    this.storage = storage; this.mode = 'crazy'; this.shake = !reducedMotion;
+    this.storage = storage; this.mode = 'crazy';
     try {
       const mode = storage?.getItem('atv-crash-mode');
       this.mode = ['original','crazy','gorn'].includes(mode) ? mode : storage?.getItem('atv-funny-crashes') === 'false' ? 'original' : 'crazy';
-      const shake = storage?.getItem('atv-camera-shake');
-      if (shake === 'true' || shake === 'false') this.shake = shake === 'true';
     } catch { /* Session settings. */ }
   }
   get enabled() { return this.mode !== 'original'; }
@@ -139,40 +137,17 @@ export class RideEffectsSettings {
     try { this.storage?.setItem('atv-crash-mode',this.mode); this.storage?.setItem('atv-funny-crashes',String(this.enabled)); } catch { /* Session settings. */ }
     this.onChange?.();
   }
-  toggleShake() {
-    this.shake = !this.shake;
-    try { this.storage?.setItem('atv-camera-shake',String(this.shake)); } catch { /* Session settings. */ }
-    this.onShakeChange?.();
-  }
 }
 
-// Smooth deterministic gradient noise: independent channels, no per-frame random jumps.
-function impactNoise(x, seed) {
-  const cell = Math.floor(x), t = x-cell;
-  const gradient = n => {
-    let h = Math.imul(n ^ seed, 0x45d9f3b); h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
-    return ((h ^ (h >>> 16)) >>> 0) / 0xffffffff * 2 - 1;
-  };
-  const fade = t*t*t*(t*(t*6-15)+10);
-  return 2*((1-fade)*gradient(cell)*t + fade*gradient(cell+1)*(t-1));
-}
-// Event-only rotational impulses. GDC camera trauma squared with finite decay;
-// ordinary speed, engine RPM and suspension contacts never create shake.
-export class VehicleShake {
+// Impact audio event detection only. It never modifies the camera.
+export class ImpactEvents {
   constructor(clock=()=>performance.now()/1000) { this.clock=clock; this.reset(); }
-  reset() {
-    this.impulseAt=0; this.cooldownUntil=0;
-    this.previous=null; this.energy=0; this.roughness=0; this.time=0;
-    this.remaining=0; this.duration=0; this.strength=0; this.cooldown=0;
-    this.airTime=0; this.crashSeverity=0; this.lastSeverity=0; this.impacts=0;
-    this.offset=[0,0,0,0];
-  }
-  quiet() { this.energy=0; this.remaining=0; this.duration=0; this.offset.fill(0); }
+  reset() { this.previous=null; this.cooldownUntil=0; this.airTime=0; this.crashSeverity=0; this.impacts=0; }
   accept(actor, enabled=true) {
     const old=this.previous; this.previous=actor;
     const now=this.clock();
     if (!actor || !enabled || !old || old.reset_count!==actor.reset_count || Math.hypot(...actor.origin.map((v,i)=>v-old.origin[i]))>40) {
-      this.quiet(); this.airTime=0; this.crashSeverity=0; this.cooldown=0; this.cooldownUntil=0; return 0;
+      this.airTime=0; this.crashSeverity=0; this.cooldownUntil=0; return 0;
     }
     const riding=actor.wreck?.phase==='Riding', grounded=actor.grounded?.some(Boolean);
     if (riding && old.wreck?.phase!=='Riding') this.crashSeverity=0;
@@ -188,29 +163,12 @@ export class VehicleShake {
     // repeated bouncing cannot keep the camera moving throughout recovery.
     const upgrade=severity>=50 && this.crashSeverity<50;
     if (severity && (now>=this.cooldownUntil || upgrade) && (riding || this.crashSeverity===0 || upgrade)) {
-      this.strength=Math.min(1,Math.max(.2,(severity-12)/65));
-      this.duration=severity>=50?.48:.26; this.remaining=this.duration; this.impulseAt=now;
-      this.energy=this.strength; this.cooldown=.30; this.cooldownUntil=now+.30; this.lastSeverity=severity;
+      this.cooldownUntil=now+.30;
       if (!riding || body) this.crashSeverity=Math.max(this.crashSeverity,severity);
       this.impacts++; return severity;
     }
     return 0;
   }
-  update(actor, dt, enabled=true, active=true) {
-    const now=this.clock();
-    this.cooldown=Math.max(0,this.cooldownUntil-now);
-    if (!enabled || !active) { this.quiet(); return; }
-    // Physics/control dt is capped by the game loop. Impulse age must use the
-    // event's real clock, including a slow frame and a fresh late-delivered hit.
-    this.time=now; this.remaining=Math.max(0,this.duration-(now-this.impulseAt));
-    if (!this.remaining) { this.quiet(); return; }
-    const attack=Math.min(1,(this.duration-this.remaining)/.012);
-    this.energy=this.strength*this.remaining/this.duration;
-    const amplitude=this.energy*this.energy*attack;
-    this.offset[0]=impactNoise(this.time*19,17)*amplitude*.025;
-    this.offset[1]=impactNoise(this.time*22,83)*amplitude*.035;
-  }
-  apply(view) { return {...view,yaw:view.yaw+this.offset[0],pitch:view.pitch+this.offset[1]}; }
 }
 
 // Cut topology at severed joints. A triangle must belong to one connected
@@ -245,32 +203,46 @@ export function poseBounds(bounds, matrices, world=null) {
   return min.every(Number.isFinite)?{min,max}:null;
 }
 
-// Fit BOTH visible actors, using posed mesh bounds rather than the native
-// rider's recovery animation. Safety margin also covers the small impact shake.
-export function crashPresentation(view, bounds, aspect, height) {
-  if(!bounds)return view;
-  const target=bounds.min.map((v,i)=>(v+bounds.max[i])/2);
+// Only the central body participates: detached wheels/limbs must never zoom the
+// camera out. Model node names come from the decoded runtime mesh.
+export function crashSubjects(vehicle, frame, quadPose, actorWorld) {
+  const central = (bounds, nodes, pattern, matrices, world) => poseBounds(
+    bounds.map((b,i)=>pattern.test(nodes[i]?.name ?? '') ? b : null), matrices, world);
+  const riderWorld=frame.funny_crash?.rider_node_matrices.length ? null : frame.rider_world_matrix??actorWorld;
+  const torso=central(vehicle.rider.boundsByNode,vehicle.rider.mesh.nodes,/torso|pelvis/i,vehicle.rider.pose.world_matrices,riderWorld);
+  const bike=central(vehicle.boundsByNode,vehicle.nodes,/chassis|body|frame/i,quadPose,actorWorld);
+  const center=b=>b.min.map((v,i)=>(v+b.max[i])/2);
+  return { rider:torso ? center(torso) : (riderWorld ? [riderWorld[12],riderWorld[13]+2,riderWorld[14]] : frame.origin.map((v,i)=>v+(i===1?2:0))), bike:bike ? center(bike) : [...frame.origin] };
+}
+
+// Tight authored crash shot. Nearby centers share the frame; as they separate,
+// smoothly drop the bike and stay with the rider. Terrain raises the eye instead
+// of causing an unbounded backwards dolly.
+export function crashPresentation(view, subjects, aspect, height) {
+  if(!subjects)return view;
+  const {rider,bike}=subjects;
+  const separation=Math.hypot(...bike.map((v,i)=>v-rider[i]));
+  const t=Math.max(0,Math.min(1,(separation-8)/14));
+  const bikeWeight=.5*(1-t*t*(3-2*t));
+  const target=rider.map((v,i)=>v+(bike[i]-v)*bikeWeight);
   const pitch=Math.max(-.55,Math.min(-.22,view.pitch)),yaw=view.yaw;
   const forward=[Math.sin(yaw)*Math.cos(pitch),Math.sin(pitch),Math.cos(yaw)*Math.cos(pitch)];
   const right=[-Math.cos(yaw),0,Math.sin(yaw)];
   const up=[-Math.sin(yaw)*Math.sin(pitch),Math.cos(pitch),-Math.cos(yaw)*Math.sin(pitch)];
   const f=view.presentation.focalLength;
-  let distance=24;
-  for(let corner=0;corner<8;corner++) {
-    const p=bounds.min.map((v,i)=>((corner&(1<<i))?bounds.max[i]:v)-target[i]);
+  let distance=16;
+  const bounds={min:target.map(v=>v-2.5),max:target.map(v=>v+2.5)};
+  for(const [point,weight] of [[rider,1],[bike,bikeWeight*2]]) {
+    const p=point.map((v,i)=>(v-target[i])*weight);
     const dot=v=>v.reduce((sum,x,i)=>sum+x*p[i],0),depth=dot(forward);
-    distance=Math.max(distance,Math.abs(dot(right))*f/aspect/.76-depth,Math.abs(dot(up))*f/.76-depth,2-depth);
+    distance=Math.max(distance,(Math.abs(dot(right))+2.5)*f/aspect/.8-depth,(Math.abs(dot(up))+2.5)*f/.8-depth);
+    for(let i=0;i<3;i++){bounds.min[i]=Math.min(bounds.min[i],target[i]+p[i]-2.5);bounds.max[i]=Math.max(bounds.max[i],target[i]+p[i]+2.5);}
   }
-  let position=target.map((v,i)=>v-forward[i]*distance);
-  // Climb by pulling back along the same sightline, so terrain clearance never
-  // changes the fitted orientation or drops either actor outside the frustum.
-  for(let i=0;i<8;i++) {
-    const deficit=height(position[0],position[2])+2-position[1];
-    if(deficit<=0)break;
-    distance+=deficit / -forward[1] + 1;
-    position=target.map((v,i)=>v-forward[i]*distance);
-  }
-  return {...view,position,yaw,pitch,presentation:{...view.presentation,crash:{target,bounds,distance}}};
+  distance=Math.min(32,distance);
+  const position=target.map((v,i)=>v-forward[i]*distance);
+  position[1]=Math.max(position[1],height(position[0],position[2])+2);
+  const aimPitch=Math.atan2(target[1]-position[1],Math.hypot(target[0]-position[0],target[2]-position[2]));
+  return {...view,position,yaw,pitch:aimPitch,presentation:{...view.presentation,crash:{target,bounds,distance,separation,bikeWeight,rider,bike}}};
 }
 
 export function meshNodeBounds(groups, count) {
