@@ -1,0 +1,17 @@
+{
+  "id": "original-stadium-facade-and-animated-lamp-materials-ve-93d1d53c17ce4016a319bceb3ddf717c",
+  "timestamp": "2026-10-14T02:48:26.880462+00:00",
+  "recorded_at": "2026-10-14T02:55:18.592905+00:00",
+  "kind": "verification",
+  "title": "Stadium LED animation, lamp glow and facade passes verified on host",
+  "summary": "Restored the source stadium facade pass and additive lamp material while preserving original geometry, and verified the ten-frame LED clock and lifecycle on desktop and portrait.",
+  "details": [
+    "The original stadium lamp uses the source GS equation (Cs-0)*As+Cd, represented by SRC_ALPHA/ONE; the authored renderer retains its lamp mesh and texture. The building08sky14 reflection and diffuse facade passes render in source order over identical geometry with LEQUAL; reflection changes UVs, not vertex positions.",
+    "Original compressed ATM screens in SX05\u2013SX11 and SX14 decode ten frames with four mip levels each, begin at frame zero and loop forward at 10 fps. Pause/resume, placement reset and WebGL context restoration preserve the venue animation clock. The inspected portrait host capture shows the repaired facade; automated camera and legacy-material probes are test-only.",
+    "All40 host driving routes passed with no scenery texture decode errors. Reflection transform feedback matched 2,304 Rust comparisons across three model/node configurations with maximum UV error 7.152557373046875e-7. Host ATV1 desktop/portrait lamp contributions were 3,156/4,193 pixels and facade contributions 123,475/192,926 pixels; motorcycle27 desktop/portrait contributions were 7,940/9,969 lamp pixels and 222,801/316,455 facade pixels. Pixel counts vary with viewport and capture timing; lifecycle runs reported no page or GL errors.",
+    "A separate frozen host WebKit override over public assets passed its initial-frame, ten-frame, pause/reset and context-restoration checks. It remains a private candidate override, not the deployed renderer."
+  ],
+  "limitation": "This is host-only component evidence, not a public release, physical-phone capture, complete original GS/VU pixel parity, crowd animation recovery or live stadium-screen video. Camera/material overrides and frozen worker replay are test-only; production behavior and the complete draw schedule remain bounded.",
+  "image": "/devlog-images/original-stadium-facade-and-animated-lamp-materials-ve-93d1d53c17ce4016a319bceb3ddf717c.png",
+  "caption": "Host Chromium portrait capture (390\u00d7844): source stadium facade and surrounding scenery after restoring the ordered reflection and diffuse passes. The camera and material inspection setup are test-only; this is not a physical-phone capture."
+}

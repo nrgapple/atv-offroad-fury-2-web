@@ -12,6 +12,8 @@ pub struct Pass {
     pub reflection_plane: u8,
     pub fog: bool,
     pub blend: bool,
+    /// GS (Cs-0)*As+Cd; source-alpha additive rather than opaque fallback.
+    pub additive: bool,
     pub depth_write: bool,
     pub uv_scroll: Option<Scroll>,
     pub unsupported_animation: Option<String>,
@@ -152,14 +154,18 @@ pub fn parse(data: &[u8]) -> Result<Pass> {
         || shader.eq_ignore_ascii_case("TexTransformPrelitCompressed")
         || shader.eq_ignore_ascii_case("prelit")
         || reflection_plane != 0;
-    let blend = number("alphaBlendingOnOff", 0.)? != 0.
-        && ["inputColorA", "inputColorB", "inputAlphaC", "inputAlphaD"]
+    let enabled = number("alphaBlendingOnOff", 0.)? != 0.;
+    let blend_fields = if enabled {
+        ["inputColorA", "inputColorB", "inputAlphaC", "inputAlphaD"]
             .into_iter()
             .zip([0., 1., 0., 1.])
-            .map(|(k, v)| number(k, v).map(|n| n == v))
+            .map(|(key, default)| number(key, default))
             .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .all(|v| v);
+    } else {
+        vec![0., 1., 0., 1.]
+    };
+    let additive = enabled && blend_fields == [0., 2., 0., 1.];
+    let blend = enabled && (additive || blend_fields == [0., 1., 0., 1.]);
     // Legacy authored 'o' is accepted as the engine's strtol zero.
     let depth_write =
         !get("ZWriteDisabled").is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
@@ -230,6 +236,7 @@ pub fn parse(data: &[u8]) -> Result<Pass> {
         // override its GS PRIM bit through001b51d0.
         fog: number("foggingOnOff", 1.)? != 0.,
         blend,
+        additive,
         depth_write,
         uv_scroll,
         unsupported_animation,
@@ -240,6 +247,17 @@ pub fn parse(data: &[u8]) -> Result<Pass> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn source_lamp_additive_alpha_is_not_opaque() {
+        let source=b"[ShaderPass_1]\nmicroProgramName=PreLitCompressed\nalphaBlendingOnOff=1\ninputColorA=0\ninputColorB=2\ninputAlphaC=0\ninputAlphaD=1";
+        let pass = parse(source).unwrap();
+        assert!(pass.prelit && pass.blend && pass.additive);
+        assert!(
+            !parse(b"[ShaderPass_1]\nalphaBlendingOnOff=0\ninputColorB=2")
+                .unwrap()
+                .additive
+        );
+    }
     #[test]
     fn reflection_planes_preserve_prelit_blend_and_disabled_depth() {
         for (shader, plane) in [
