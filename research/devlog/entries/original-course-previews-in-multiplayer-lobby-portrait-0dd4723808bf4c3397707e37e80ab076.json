@@ -1,0 +1,15 @@
+{
+  "id": "original-course-previews-in-multiplayer-lobby-portrait-0dd4723808bf4c3397707e37e80ab076",
+  "timestamp": "2026-10-14T00:47:44.641089+00:00",
+  "recorded_at": "2026-10-14T00:52:03.220869+00:00",
+  "kind": "verification",
+  "title": "Original course previews in multiplayer lobby portrait",
+  "summary": "The multiplayer lobby course preview remains readable in the host portrait layout while the selected Sausalito name and artwork are synchronized across both clients.",
+  "details": [
+    "The same final host-browser gate passed all 40 map choices, with 39 original source preview pairs and an authored Training fallback. Both clients' names and artwork synchronized; viewport bounds passed across five sizes and three multiplayer roles.",
+    "The inspected 390\u00d7844 portrait capture shows the lobby, Sausalito course preview, player count and invite controls without clipped content. It is automated Chromium, not a physical phone."
+  ],
+  "limitation": "Host-only verification; this is the course-preview/UI checkpoint and does not establish full multiplayer or whole-game equivalence.",
+  "image": "/devlog-images/original-course-previews-in-multiplayer-lobby-portrait-0dd4723808bf4c3397707e37e80ab076.png",
+  "caption": "Host Chromium portrait (390\u00d7844): the Sausalito lobby preview and multiplayer controls fit the narrow layout; this is not a physical-phone capture."
+}

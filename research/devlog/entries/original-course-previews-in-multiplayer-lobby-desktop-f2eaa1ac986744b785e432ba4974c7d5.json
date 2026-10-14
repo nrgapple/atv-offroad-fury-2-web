@@ -1,0 +1,15 @@
+{
+  "id": "original-course-previews-in-multiplayer-lobby-desktop-f2eaa1ac986744b785e432ba4974c7d5",
+  "timestamp": "2026-10-14T00:47:44.609469+00:00",
+  "recorded_at": "2026-10-14T00:52:03.179782+00:00",
+  "kind": "verification",
+  "title": "Original course previews in multiplayer lobby desktop",
+  "summary": "The multiplayer lobby now displays the selected original course preview with the synchronized venue name for both clients. The host desktop browser gate covered all 40 venues, using 39 original source preview pairs plus the authored Training fallback.",
+  "details": [
+    "Final host-browser verification confirmed both clients' course names and preview artwork remain synchronized across all 40 choices. Desktop and portrait layouts passed at 1280\u00d7720 and 390\u00d7844; layout bounds were checked across five viewport sizes and three multiplayer roles.",
+    "The inspected desktop capture shows the Sausalito Free Ride Lobby card and source stadium scene. It is an automated host Chromium view, not a physical-device screenshot."
+  ],
+  "limitation": "Host-only verification. This entry records lobby preview rendering and layout, not multiplayer network or whole-game equivalence; Training's authored fallback is separately documented.",
+  "image": "/devlog-images/original-course-previews-in-multiplayer-lobby-desktop-f2eaa1ac986744b785e432ba4974c7d5.png",
+  "caption": "Host Chromium desktop (1280\u00d7720): Sausalito is selected in the multiplayer lobby and the original stadium preview is visible in its course card."
+}
