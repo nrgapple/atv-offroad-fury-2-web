@@ -68,6 +68,8 @@ try {
           for (let i = 0; i < size; i++) if ([0, 1, 2].some(component => before[i * 4 + component] !== after[i * 4 + component])) {
             changed++; if (i >= size - this.canvas.width * 10) topChanged++;
           }
+          const uniform = name => this.getUniform(program, this.getUniformLocation(program, name));
+          window.waterDrawFrame = { baseHeight: uniform('baseHeight'), origins: Array.from({ length: uniform('channelCount') }, (_, i) => Array.from(uniform(`origins[${i}]`))), channels: Array.from({ length: uniform('channelCount') }, (_, i) => Array.from(uniform(`channels[${i}]`))), gradients: Array.from({ length: uniform('gradientCount') }, (_, i) => [Array.from(uniform(`gradientWaves[${i}]`)), Array.from(uniform(`gradientSecond[${i}]`))]) };
           window.waterDrawInputs = { camera: { ...window.atvTerrainStatus.camera }, viewProjection: Array.from(this.getUniform(program, this.getUniformLocation(program, 'viewProjection'))), focalLength: 1 / this.getUniform(program, this.getUniformLocation(program, 'projection'))[1], aspect: this.canvas.width / this.canvas.height, farDistance: this.getUniform(program, this.getUniformLocation(program, 'farDistance')), fogColor: Array.from(this.getUniform(program, this.getUniformLocation(program, 'fogColor'))) };
           window.waterPixelEvidence = { changed, unchanged: size - changed, topChanged, width: this.canvas.width, height: this.canvas.height, indices: args[1], glError: this.getError() };
           window.captureWaterPixels = false;
@@ -112,7 +114,11 @@ try {
           if (process.env.ATV_WATER_SCREENSHOTS) await page.screenshot({ path: `${process.env.ATV_WATER_SCREENSHOTS}-${environment}${mobile ? '-mobile' : ''}.png` });
           console.log(JSON.stringify({ browser: browserName, environment, mobile, ...evidence, water: state.waterRender }));
           if (mobile) {
-            const frame = state.water;
+            //Let any batch already in flight settle before retaining the actual GPU frame.
+            await page.waitForTimeout(100);
+            await page.evaluate(() => { window.waterPixelEvidence = null; window.captureWaterPixels = true; });
+            await page.waitForFunction(() => window.waterPixelEvidence);
+            const frame = await page.evaluate(() => window.waterDrawFrame);
             await page.setViewportSize({ width: 844, height: 390 });
             await page.evaluate(() => { window.waterPixelEvidence = null; window.captureWaterPixels = true; });
             await page.waitForFunction(() => window.waterPixelEvidence?.width > window.waterPixelEvidence?.height);
@@ -129,7 +135,7 @@ try {
             await page.waitForFunction(() => window.waterPixelEvidence);
             assert.equal((await page.evaluate(() => window.waterPixelEvidence)).glError, 0);
             assert.equal((await page.evaluate(() => window.atvTerrainStatus.waterRender)).gpuBytes, bytes);
-            assert.deepEqual(await page.evaluate(() => window.atvTerrainStatus.water), frame, 'Restoration retains the completed shared field frame');
+            assert.deepEqual(await page.evaluate(() => window.waterDrawFrame), frame, 'Restoration retains completed live base, origins, signed frame layers and normal weights');
           }
         }
         assert(state.frame.origin.every(Number.isFinite)); assert.equal(state.glError, 0); assert.deepEqual(errors, []);
