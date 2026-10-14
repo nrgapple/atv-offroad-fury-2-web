@@ -56,7 +56,7 @@ class PublicationTests(unittest.TestCase):
             return Response(data)
         def command(args, **kwargs):
             return SimpleNamespace(stdout=json.dumps({'version': 1, 'icons': icons} if args[-1].endswith(':web/app-icon-assets.json') else {'entries': []}) if args[0] == 'git' else commit)
-        with patch.object(uploader, 'ROOT', root), patch.object(uploader.Path, 'home', return_value=root), patch.object(uploader, 'validate_release'), patch.object(uploader.subprocess, 'run', side_effect=command), patch.object(uploader, 'urlopen', side_effect=network):
+        with patch.object(uploader, 'ROOT', root), patch.object(uploader.Path, 'home', return_value=root), patch.object(uploader, 'validate_release'), patch.object(uploader, 'read_devlog', return_value={'entries': []}), patch.object(uploader.subprocess, 'run', side_effect=command), patch.object(uploader, 'urlopen', side_effect=network):
             uploader.upload(root / 'release', commit, release_scoped=True)
         return objects
 

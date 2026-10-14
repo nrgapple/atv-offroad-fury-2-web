@@ -5,6 +5,7 @@ Only referenced allowlisted runtime blobs and reviewed PNGs are copied. No disc,
 executable, analysis output, arbitrary directory tree or credential is staged.
 """
 import argparse
+from devlog import read_devlog
 import hashlib
 import json
 import os
@@ -67,7 +68,7 @@ def image_bytes(path):
 
 
 def snapshot(source, commit, job, queue, content, images, reviewed=False, superseded=None):
-    log = json.loads(git('show', f'{commit}:research/devlog.json', cwd=source).stdout)
+    log = read_devlog(source, commit)
     published = queue / 'published'
     if superseded is not None:
         verify_snapshot(superseded)
@@ -196,7 +197,7 @@ def prepare(job, queue):
     validated_content(content)
     destination = root / 'devlog-images'
     destination.mkdir(exist_ok=True)
-    log = load('research/devlog.json')
+    log = read_devlog(Path.cwd())
     if (published / 'upload.json').exists():
         shutil.copyfile(published / 'upload.json', root / 'cloudflare-upload.json')
     for entry in log['entries']:
@@ -219,7 +220,7 @@ def promote(queue, content=None):
     version = versions / str(time.time_ns())
     copy_content(content or Path('private/reports/hosted-content'), version / 'content', queue / 'objects')
     (version / 'images').mkdir()
-    log = load('research/devlog.json')
+    log = read_devlog(Path.cwd())
     for entry in log['entries']:
         if entry.get('image'):
             name = image_name(entry['image'])
@@ -246,7 +247,7 @@ def initialize(queue, content=None):
         data = path.read_bytes()
         if record.get('sha256') != hashlib.sha256(data).hexdigest() or record.get('bytes') != len(data):
             raise ValueError(f'initial content requires prior verified upload receipt: {path.name}')
-    for entry in load('research/devlog.json')['entries']:
+    for entry in read_devlog(Path.cwd())['entries']:
         if entry.get('image'):
             name = image_name(entry['image'])
             data = image_bytes(Path('private/reports/devlog-images') / name)

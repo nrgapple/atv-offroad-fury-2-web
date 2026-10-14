@@ -2,6 +2,8 @@
 """Serve ONLY the static web build. Never exposes private/, source, or references."""
 import argparse
 import json
+import io
+from devlog import read_devlog
 import re
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -31,6 +33,13 @@ class Handler(SimpleHTTPRequestHandler):
         if (path.removeprefix('/') not in ALLOWED and not image and not content and not app_icon and path != '/apple-touch-icon-precomposed.png') or not path.startswith('/'):
             self.send_error(404)
             return None
+        if path == '/devlog.json':
+            data = (json.dumps(read_devlog(PROJECT), indent=2) + '\n').encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            return io.BytesIO(data)
         self.path = path
         return super().send_head()
 
@@ -43,8 +52,6 @@ class Handler(SimpleHTTPRequestHandler):
         # exposed outside dist. Source media and other reports stay inaccessible.
         if re.fullmatch(r'/content/(?:manifest\.json|[a-f0-9]{64}\.bin)', path):
             return str(CONTENT / path.rsplit('/', 1)[1])
-        if path == '/devlog.json':
-            return str(PROJECT / 'research/devlog.json')
         if re.fullmatch(r'/devlog-images/[a-z0-9-]+\.png', path):
             return str(PROJECT / 'private/reports/devlog-images' / path.rsplit('/', 1)[1])
         return super().translate_path(path)

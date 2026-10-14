@@ -5,6 +5,7 @@ import os
 import base64
 import hashlib
 import json
+from devlog import read_devlog
 import struct
 import shutil
 import subprocess
@@ -15,6 +16,11 @@ target = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'target'))
 subprocess.run([cargo, 'build', '--locked', '--release', '-p', 'atv-web', '--target', 'wasm32-unknown-unknown', '--target-dir', str(target)], cwd=ROOT, check=True)
 dist = ROOT / 'web/dist'
 dist.mkdir(exist_ok=True)
+log = read_devlog(ROOT)
+for entry in log['entries']:
+    entry.pop('image', None)
+    entry.pop('caption', None)
+(dist / 'devlog.json').write_text(json.dumps(log, indent=2) + '\n')
 for name in ['fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'play.html', 'design-system.css', 'game.css', 'game.js', 'render-support.js', 'race.js', 'multiplayer.js', 'water.js', 'fog.js', 'train.js', 'wheel-effects.js', 'motorcycle-presentation.js', 'hud.js', 'minimap.js', 'diagnostics.js', 'frontend.js', 'launch.js', 'touch.js', 'touch.css', 'content.js', 'audio.js', 'music.js', 'devlog.html', 'devlog.css', 'devlog.js', 'workbench.html', 'style.css', 'app.js', 'worker.js', 'input.js', 'controls.js', 'bindings.js']:
     shutil.copy2(ROOT / 'web' / name, dist / name)
 shutil.copy2(target / 'wasm32-unknown-unknown/release/atv_web.wasm', dist / 'atv_web.wasm')
