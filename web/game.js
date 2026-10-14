@@ -1582,7 +1582,7 @@ function render(time) {
     diagnostics.waterRender.cpuMilliseconds = waterRenderer.cpuMilliseconds;
     diagnostics.waterRender.gpuMilliseconds = waterRenderer.gpuMilliseconds;
   }
-if(snowRenderer){snowRenderer.draw({camera,viewProjection});Object.assign(diagnostics.snow,{draws:snowRenderer.draws,uploadBytes:snowRenderer.uploadBytes});}
+  if(snowRenderer){snowRenderer.draw({camera,viewProjection});Object.assign(diagnostics.snow,{draws:snowRenderer.draws,uploadBytes:snowRenderer.uploadBytes});}
 if (crashSettings.mode === 'gorn' && simFrame?.funny_crash?.blood?.length) {
     bloodRenderer ??= new BloodRenderer(gl);
     bloodRenderer.draw(simFrame.funny_crash.blood, {camera,viewProjection});
