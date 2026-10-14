@@ -104,9 +104,14 @@ test('effect preferences migrate saved Off, cycle three modes, persist and toler
   const blocked=new RideEffectsSettings({getItem(){throw Error();},setItem(){throw Error();}});
   assert.equal(blocked.mode,'crazy');blocked.toggle();blocked.toggleShake();assert.equal(blocked.mode,'gorn');assert.equal(blocked.shake,false);
 });
+function createShake() {
+ let seconds=0;const s=new VehicleShake(()=>seconds),update=s.update.bind(s);
+ s.update=(actor,dt,...rest)=>{seconds+=Math.max(0,Number.isFinite(dt)?dt:0);update(actor,dt,...rest);};
+ return s;
+}
 const shakeActor={origin:[0,3,0],linear_velocity:[0,0,0],speed:0,rpm:1000,grounded:[true,true],wreck:{phase:'Riding'},reset_count:0,crash_impact_speed:0};
 test('ordinary riding, RPM, acceleration and wheel contacts remain completely steady',()=>{
- const s=new VehicleShake();s.accept(shakeActor);
+ const s=createShake();s.accept(shakeActor);
  for(let i=0;i<600;i++) {
   const actor={...shakeActor,speed:70,rpm:8000,linear_velocity:[i%2?5:0,i%3,70],crash_impact_speed:35,suspension_stop_contacts:2};
   assert.equal(s.accept(actor),0);s.update(actor,1/60);assert.deepEqual(s.offset,[0,0,0,0]);
@@ -115,7 +120,7 @@ test('ordinary riding, RPM, acceleration and wheel contacts remain completely st
 });
 const collision={...shakeActor,crash_impact_speed:80,obstacle_contact_count:1,linear_velocity:[0,0,-20],wreck:{phase:'Front'}};
 test('a real crash has one bounded rotation pulse that ends exactly, without translation',()=>{
- const s=new VehicleShake();s.accept(shakeActor);assert.equal(s.accept(collision),80);
+ const s=createShake();s.accept(shakeActor);assert.equal(s.accept(collision),80);
  const view={position:[0,10,-15],yaw:0,pitch:-.3};
  let moving=0;
  for(let i=0;i<180;i++) {
@@ -127,7 +132,7 @@ test('a real crash has one bounded rotation pulse that ends exactly, without tra
  assert(moving>0 && moving<30);assert.equal(s.energy,0);assert.deepEqual(s.offset,[0,0,0,0]);assert.equal(s.impacts,1);
 });
 test('genuine airborne landing triggers; single wheel contact gaps do not',()=>{
- const s=new VehicleShake();s.accept(shakeActor);
+ const s=createShake();s.accept(shakeActor);
  const air={...shakeActor,grounded:[false,false],linear_velocity:[0,-20,0]};
  s.accept(air);assert.equal(s.accept({...shakeActor,crash_impact_speed:35}),0);
  for(let i=0;i<15;i++)s.accept(air);
@@ -135,7 +140,7 @@ test('genuine airborne landing triggers; single wheel contact gaps do not',()=>{
 });
 test('shake Off, pause and reset clear the pulse immediately',()=>{
  for(const clear of [s=>s.update(collision,1/60,false),s=>s.update(collision,1/60,true,false),s=>s.accept({...collision,reset_count:1}),s=>s.reset()]) {
-  const s=new VehicleShake();s.accept(shakeActor);s.accept(collision);s.update(collision,1/60);assert(s.energy>0);
+  const s=createShake();s.accept(shakeActor);s.accept(collision);s.update(collision,1/60);assert(s.energy>0);
   clear(s);assert.equal(s.energy,0);assert.deepEqual(s.offset,[0,0,0,0]);
  }
 });
@@ -149,7 +154,7 @@ test('blocked browser storage getter still permits session settings',()=>{
 });
 
 test('a severe crash upgrades an earlier hit once without repeated bounce pulses',()=>{
- const s=new VehicleShake();s.accept(shakeActor);
+ const s=createShake();s.accept(shakeActor);
  const mild={...collision,crash_impact_speed:40};assert.equal(s.accept(mild),40);s.update(mild,1/60);
  const severe={...collision,linear_velocity:[0,0,0]};assert.equal(s.accept(severe),80);
  for(let i=0;i<60;i++){s.update(severe,1/60);assert.equal(s.accept({...severe,linear_velocity:[0,0,i%2?20:0]}),0);}
@@ -181,4 +186,12 @@ test('crash bounds follow the actual rendered node transforms',()=>{
  const m=[1,0,0,0,0,1,0,0,0,0,1,0,10,20,30,1];
  const bounds=meshNodeBounds([{vertices:[{node:0,local_position:[-1,-2,-3]},{node:0,local_position:[1,2,3]}]}],2);
  assert.deepEqual(poseBounds(bounds,[m,m]),{min:[9,18,27],max:[11,22,33]});
+});
+
+test('a slow frame cannot prolong an impulse and a fresh hit does not inherit earlier stalled time',()=>{
+ let seconds=0;const s=new VehicleShake(()=>seconds);
+ s.accept(shakeActor);seconds=2;assert.equal(s.accept(collision),80);
+ s.update(collision,.05);assert(s.energy>0,'fresh impulse starts at delivery, even after a stalled frame');
+ seconds+=.016;s.update(collision,.016);assert(s.offset.some(Boolean));
+ seconds+=.50;s.update(collision,.05);assert.equal(s.energy,0);assert.deepEqual(s.offset,[0,0,0,0]);
 });
