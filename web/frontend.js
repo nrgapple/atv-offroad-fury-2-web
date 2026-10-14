@@ -9,6 +9,7 @@ const sections = doc => new Map(doc.sections.map(s => [s.name.toLowerCase(), fie
 const overlayPages = new Set(['pause','players','hud-settings','minimap-config','controls','bindings','music']);
 const fontName = 'tradegothic_boldcondensed_22s';
 const selectionKey = 'atv-player-selection';
+const trainingPreview = 'training-map-preview';
 const normalizedSelection = value => ({
   quadId: Number.isInteger(value?.quadId) && value.quadId >= 1 && value.quadId <= 46 ? value.quadId : 1,
   riderId: value?.riderId === 1 ? 1 : 0,
@@ -157,6 +158,17 @@ export class Frontend {
     const bytes = await this.data(`${name}.pst`), info = await this.json(7, bytes), rgba = await this.codec(8, bytes);
     const image = this.bitmap(info, rgba); this.images.set(name, image); return image;
   }
+  async trainingMapPreview() {
+    // Training has no shipped TP preview pair. Use the approved browser capture
+    // of this same venue; resource publication can follow the authored app.
+    this.trainingPreviewPending ??= new Promise(resolve => {
+      const image = new Image();
+      image.onload = () => { this.images.set(trainingPreview, image); resolve(trainingPreview); };
+      image.onerror = () => resolve('');
+      image.src = `/devlog-images/${trainingPreview}.png`;
+    });
+    return this.trainingPreviewPending;
+  }
   bitmap(info, rgba) {
     const c = document.createElement('canvas'); c.width = info.width; c.height = info.height;
     c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rgba), info.width, info.height), 0, 0); return c;
@@ -278,11 +290,11 @@ export class Frontend {
     if (overlayPages.has(page)) void this.audio?.()?.setMusicPreview(!document.hidden && document.hasFocus(), false);
     this.busy = true; this.root.hidden = false; this.active(true); this.notice.textContent = ''; this.buttons.replaceChildren();
     try {
-      if (page === 'tracks' || page === 'loading' || page === 'race') {
+      if (page === 'tracks' || page === 'loading' || page === 'race' || page === 'lobby') {
         if (!this.loaded.has('/UI/RESOURCE/TP/TP_ANAT.RES')) this.setLoading(true, 'Preparing course previews…');
         const {files} = await this.content;
         for (const archive of COURSE_PREVIEWS) if (files.some(f=>f.path===archive)) await this.archive(archive);
-        for (const track of this.tracks) if (track.image) { await this.image(`${track.image}a`); await this.image(`${track.image}b`); }
+        if (page !== 'lobby') for (const track of this.tracks) if (track.image) { await this.image(`${track.image}a`); await this.image(`${track.image}b`); }
       }
       this.page = page; this.selection = 0; this.layoutKey = '';
       if (this.isPausePanel()) this.resetPauseScroll = true;
@@ -391,22 +403,28 @@ export class Frontend {
   }
   async refresh(force = false) {
     if (!this.initialized || this.root.hidden || (this.busy && this.page !== 'loading' && !force) || this.layoutPending) return;
-    const stage = this.canvas.parentElement, track = this.page === 'race' ? this.tracks.find(t=>t.id==='env01') : this.tracks[this.track];
+    const stage = this.canvas.parentElement, track = this.page === 'loading' ? this.loadingTrack : this.page === 'lobby' ? this.tracks.find(t=>t.id===this.multiplayer?.state?.environment) : this.page === 'race' ? this.tracks.find(t=>t.id==='env01') : this.tracks[this.track];
     const music = this.audio?.()?.music, musicState = music?.snapshot();
     const lobby = this.multiplayer?.state?.lobby;
-    const request = {lobby_players:(lobby?.players??[]).map(p=>({id:String(p.id),label:`P${p.id+1} ${p.name}${p.id===this.multiplayer.state.peer?' (You)':''}`,value:p.id===this.multiplayer.state.peer?'self':(this.multiplayer.remote.find(r=>r.peer===p.id && !r.stale)?'ready':'waiting')})),race_laps:this.raceSettings.laps,race_cpu:this.raceSettings.cpu,race_difficulty:this.raceSettings.difficulty,race_available:this.raceAvailable,race_active:this.raceActive,quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? (this.page==='create-lobby'?this.createCode:this.roomCode),lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:(this.page === 'loading' ? this.loadingTrack?.name : this.page === 'lobby' ? this.tracks.find(t => t.id === this.multiplayer.state.environment)?.name : track?.name) ?? '',track_image:(this.page === 'loading' ? this.loadingTrack?.image : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
+    const request = {lobby_players:(lobby?.players??[]).map(p=>({id:String(p.id),label:`P${p.id+1} ${p.name}${p.id===this.multiplayer.state.peer?' (You)':''}`,value:p.id===this.multiplayer.state.peer?'self':(this.multiplayer.remote.find(r=>r.peer===p.id && !r.stale)?'ready':'waiting')})),race_laps:this.raceSettings.laps,race_cpu:this.raceSettings.cpu,race_difficulty:this.raceSettings.difficulty,race_available:this.raceAvailable,race_active:this.raceActive,quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? (this.page==='create-lobby'?this.createCode:this.roomCode),lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:track?.name ?? '',track_image:(this.page === 'lobby' && track?.id === 'training' && this.images.has(trainingPreview) ? trainingPreview : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
       minimap_orientation:this.minimapSettings?.orientation ?? 'north-up',minimap_shape:this.minimapSettings?.shape ?? 'circle',minimap_corner:this.minimapSettings?.corner ?? 'top-right',minimap_enabled:this.minimapSettings?.enabled ?? true,minimap_size:this.minimapSettings?.size ?? 160,minimap_zoom:this.minimapSettings?.zoom ?? 50,funny_crashes:this.crashSettings?.enabled ?? true,crash_mode:this.crashSettings?.mode ?? 'crazy',camera_shake:this.crashSettings?.shake ?? true,mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
       music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
       music_page:this.musicPage,music_status:musicState ? `${musicState.enabled ? 'On' : 'Off'} / Volume ${Math.round(musicState.volume * 100)}% / ${musicState.title || 'Choose a song'}` : '',music_enabled:musicState?.enabled ?? true,music_volume:Math.round((musicState?.volume ?? .7)*100),menu_logo:this.images.has('brand-logo'),menu_atv:this.images.has('multi_atv01')};
-    const key = JSON.stringify(request);
+    let key = JSON.stringify(request);
     if (this.layoutKey === key) return;
     this.layoutPending = true;
     try {
+      if (this.page === 'lobby' && track?.id === 'training') {
+        request.track_image = await this.trainingMapPreview(); key = JSON.stringify(request);
+      } else if (this.page === 'lobby' && track?.image) {
+        await this.image(`${track.image}a`); await this.image(`${track.image}b`);
+      }
       const frame = await this.json(62,new TextEncoder().encode(key));
       // Page/viewport can change while the worker handles the request. The next
       // frame requests fresh data, rather than applying a stale hit map.
       if ((this.minimapSettings?.zoom ?? 50) !== request.minimap_zoom || (this.minimapSettings?.orientation ?? 'north-up') !== request.minimap_orientation || (this.minimapSettings?.shape ?? 'circle') !== request.minimap_shape || (this.minimapSettings?.corner ?? 'top-right') !== request.minimap_corner || (this.minimapSettings?.enabled ?? true) !== request.minimap_enabled || (this.minimapSettings?.size ?? 160) !== request.minimap_size || this.raceSettings.laps!==request.race_laps || this.raceSettings.cpu!==request.race_cpu || this.raceSettings.difficulty!==request.race_difficulty || (this.mobileControls?.steeringSensitivity ?? 85) !== request.mobile_steering_sensitivity || (this.capture?.label ?? '') !== request.capture_label || this.bindingPage !== request.binding_page || this.musicPage !== request.music_page || this.page !== request.page || this.selection !== request.selection || this.quadId !== request.quad_id || this.riderId !== request.rider_id || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
+      if (this.page === 'lobby' && this.multiplayer?.state?.environment !== track?.id) return;
       this.presentation = request; this.frame = frame; this.layoutKey = key; this.draw(); this.rebuildButtons(); this.updateModelViews();
     } catch (error) { this.fail(error); }
     finally { this.layoutPending = false; }
@@ -792,6 +810,8 @@ export class Frontend {
       } else if (command.kind === 'artwork') {
         const image = this.images.get(command.image); if (image) c.drawImage(image,...command.rect);
       } else if (command.kind === 'preview') {
+        const screenshot = this.images.get(command.image);
+        if (screenshot) { c.drawImage(screenshot,...command.rect); continue; }
         const a=this.images.get(`${command.image}a`), b=this.images.get(`${command.image}b`);
         if (!a || !b) continue;
         const [x,y,w,h]=command.rect, total=a.width+b.width;

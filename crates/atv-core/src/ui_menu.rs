@@ -783,30 +783,11 @@ pub fn layout(request: Request) -> Result<Frame> {
             f.footer(true);
         }
         "lobby" => {
-            f.text(
-                format!("Code: {}", request.room_code),
-                [30., 100.],
-                1.15,
-                FONT,
-                "255,230,100",
-                list_w,
-            );
-            f.text(
-                &request.track_name,
-                [30., 140.],
-                1.,
-                FONT,
-                "235,235,235",
-                list_w,
-            );
-            f.text(
-                &request.lobby_status,
-                [30., 179.],
-                0.8,
-                FONT,
-                "210,210,210",
-                list_w,
-            );
+            let list_w = if portrait {
+                list_w
+            } else {
+                list_w.min(w * 0.48 - 36.)
+            };
             let mut rows = vec![("Copy invite link", "share")];
             if request.lobby_started {
                 rows.push(("Resume ride", "resume"));
@@ -817,12 +798,73 @@ pub fn layout(request: Request) -> Result<Frame> {
                 ]);
             }
             rows.push(("Leave lobby", "leave"));
+            let mut details_y = 100.;
+            if !request.track_image.is_empty() {
+                let preview = if portrait {
+                    // Keep the source aspect ratio and room for all lobby actions
+                    // on short portrait screens as well as full-height phones.
+                    let photo_w = (w - 48.).min((h - 414.).max(34.) / 0.64);
+                    [0.5 * (w - photo_w), 90., photo_w, photo_w * 0.64]
+                } else {
+                    [
+                        w * 0.48,
+                        100.,
+                        w * 0.48 - 24.,
+                        (h - 156.).min((w * 0.48 - 24.) * 0.64),
+                    ]
+                };
+                f.rect(
+                    [
+                        preview[0] - 2.,
+                        preview[1] - 2.,
+                        preview[2] + 4.,
+                        preview[3] + 4.,
+                    ],
+                    0.,
+                    "#1b1111",
+                    "#1b1111",
+                    "#c2b6b0",
+                );
+                f.draw.push(Draw::Preview {
+                    image: request.track_image.clone(),
+                    rect: preview,
+                });
+                if portrait {
+                    details_y = preview[1] + preview[3] + 16.;
+                }
+            }
+            f.text(
+                format!("Code: {}", request.room_code),
+                [30., details_y],
+                1.15,
+                FONT,
+                "255,230,100",
+                list_w,
+            );
+            f.text(
+                &request.track_name,
+                [30., details_y + if portrait { 32. } else { 40. }],
+                1.,
+                FONT,
+                "235,235,235",
+                list_w,
+            );
+            f.text(
+                &request.lobby_status,
+                [30., details_y + if portrait { 64. } else { 79. }],
+                0.8,
+                FONT,
+                "210,210,210",
+                list_w,
+            );
+            let row_y = details_y + 114.;
+            let row_h = ((h - 20. - row_y) / rows.len() as f32).clamp(44., 54.);
             for (i, (label, action)) in rows.iter().enumerate() {
                 f.choices.push((*action).into());
                 f.button(
                     label,
                     action,
-                    [24., 214. + i as f32 * 54., list_w, 54.],
+                    [24., row_y + i as f32 * row_h, list_w, row_h],
                     request.selection == i,
                 );
             }
@@ -1443,6 +1485,53 @@ mod tests {
         let join = layout(request("join-lobby", 390., 844.)).unwrap();
         assert_eq!(join.inputs[1].action, "room-code");
         assert_eq!(join.choices, ["join", "garage"]);
+    }
+    #[test]
+    fn lobby_preview_leaves_visible_actions_on_short_and_full_screens() {
+        for (width, height) in [
+            (1280., 720.),
+            (844., 390.),
+            (390., 844.),
+            (390., 600.),
+            (390., 448.),
+        ] {
+            for (host, started) in [(true, false), (false, false), (true, true)] {
+                let mut input = request("lobby", width, height);
+                input.lobby_host = host;
+                input.lobby_started = started;
+                let frame = layout(input).unwrap();
+                let preview = frame
+                    .draw
+                    .iter()
+                    .find_map(|draw| match draw {
+                        Draw::Preview { image, rect } => {
+                            assert_eq!(image, "arlington");
+                            Some(*rect)
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                assert!((preview[3] / preview[2] - 0.64).abs() < 0.001);
+                for hit in &frame.hits {
+                    assert!(hit.rect[0] >= 0. && hit.rect[1] >= 0.);
+                    assert!(hit.rect[0] + hit.rect[2] <= frame.width);
+                    assert!(hit.rect[1] + hit.rect[3] <= frame.height);
+                    assert!(
+                        hit.rect[1] >= preview[1] + preview[3]
+                            || hit.rect[0] + hit.rect[2] <= preview[0]
+                    );
+                }
+            }
+        }
+        let mut training = request("lobby", 390., 844.);
+        training.track_image.clear();
+        assert!(
+            layout(training)
+                .unwrap()
+                .draw
+                .iter()
+                .all(|draw| !matches!(draw, Draw::Preview { .. }))
+        );
     }
     #[test]
     fn supported_routes_have_no_unfinished_choices() {
