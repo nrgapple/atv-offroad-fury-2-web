@@ -43,3 +43,22 @@ Plan an independently authored WebGL2 single-frame radial sample pass, gradual
 onset around 40 mph, protected central rider region, a bounded peripheral warp,
 and no HUD processing. Include Off/intensity choices, reduced-motion defaults,
 resize/context recovery and no processing cost when disabled or below threshold.
+
+## Menu and HUD checkpoint
+
+Main Menu and Pause now open the same Settings hub with four sections: Controls,
+Display, Audio and Extras. Back returns to the entry menu. Existing bindings,
+steering, touch, map and soundtrack preferences retain their storage keys; Extras
+adds a saved Tight/Original crash-camera option, with Tight as the default. The
+original choice uses the recovered camera without the authored crash framing.
+
+Canvas menu text and original-position HUD text now use vector type rasterized at
+device resolution. Original metrics retain HUD placement. DOM setting rows share
+the condensed typography, red/charcoal palette and gold selection accent; repeated
+pills, button backgrounds and boxed gameplay controls are removed. Main/single
+menus use the existing real-time vehicle preview in place of the small bitmap ATV
+thumbnail. Course photos and model textures remain their original source detail.
+
+Host checks cover four viewports, 2x DPR, keyboard entry, 44px settings targets,
+persistence across reload, actual driving, standalone HUD and main-preview
+rotation. Physical phones/controllers and exact original appearance are not proven.

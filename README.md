@@ -26,7 +26,7 @@ Codex has helped with most of the implementation and reverse engineering. We wor
 | **Race preview** | Single Player → Race offers Caribou Peak National, with countdown, laps, timing, radar and results. The ATV field includes four independently simulated CPU riders with recovered driving decisions. Full original race rules and progression remain unfinished. |
 | **GPS and speed HUD** | A configurable minimap combines terrain, heading, speed and preload feedback. Choose shape, corner, size and zoom; tap it to switch north-up/heading-up. |
 | **Sound and settings** | All 21 original songs, per-quad engine audio, selected impact and train sounds, music selection and remappable keyboard/controller bindings. Music continues through the pause menu. |
-| **Crash presentation and camera** | Pause offers Original, Crazy and opt-in Gorn crash modes, plus a saved Camera shake toggle. Gorn adds severed rider parts and bounded terrain droplets only on severe impacts; recovery and original vehicle handling remain intact. Settings are saved locally. |
+| **Crash presentation and camera** | Settings → Extras offers Original, Crazy and opt-in Gorn crash modes, plus Tight/Original crash-camera framing. Camera shake is removed. Gorn adds severed rider parts and bounded terrain droplets only on severe impacts; recovery and original vehicle handling remain intact. Settings are saved locally. |
 | **Quick return** | This browser remembers Garage selections, settings and the last successfully loaded Freestyle course. Home Screen app metadata and an install/help flow are included. |
 
 The renderer now connects recovered materials, animated UVs, fog coverage, ice-reflection overlays and near-vegetation colors, alongside water and wheel effects. These are incremental rendering improvements; original lighting, distant vegetation/LOD, shadows and full-scene fidelity still need work. See [map evidence](research/MAP_FIDELITY.md).
@@ -37,15 +37,15 @@ Open [Fury Remastered](https://furyremastered.com/), choose **Single Player → 
 
 - **One finger by default:** touch anywhere on the game surface to hold throttle and brace. Drag sideways to steer and up/down to lean. Lift to coast and release preload through the original ramp gates.
 - **Optional second touch:** while the primary finger stays held, another touch brakes and then reverses on the ground. In the air, the second finger opens a trick wheel: drag to a named trick and release to perform it. Return to the center to cancel; lifting the primary clears both.
-- **Two-thumb layout:** set **Pause → One-handed mobile: Off**. The left thumb steers/leans; the right thumb accelerates/braces or drags down to brake/reverse. A saved Off is preserved.
-- **Adjust the feel:** **Pause → Controls** includes saved Mobile steering response from 50% to 150%, defaulting to 85%.
+- **Two-thumb layout:** set **Pause → Settings → Controls → One-handed mobile: Off**. The left thumb steers/leans; the right thumb accelerates/braces or drags down to brake/reverse. A saved Off is preserved.
+- **Adjust the feel:** **Pause → Settings → Controls** includes saved Mobile steering response from 50% to 150%, defaulting to 85%.
 - **Pause and Camera:** the on-screen buttons work independently, including a second-finger tap while driving. In multiplayer, opening the menu leaves the visible ride running; Single Player pauses its simulation.
 
 <img src="https://furyremastered.com/devlog-images/public-portrait-gps-capture-on-commit-0787b32-23c7204a.png" width="300" alt="Current public Fury Remastered portrait view: ATV and rider on Caribou Peak with a circular GPS map and integrated speed display.">
 
 *October 13 public build in a 390×844 Chromium viewport: Caribou Peak with the combined GPS and speed HUD.*
 
-**GPS:** open **Pause → HUD settings → Minimap configuration** for visibility, circular/square shape, top-right/bottom-left placement, size (96–224px), zoom (25–200%) and orientation. The map follows the detached rider during a wreck; in multiplayer it also shows the other riders. See [GPS settings and performance evidence](research/MINIMAP.md).
+**GPS:** open **Pause → Settings → Display → Minimap configuration** for visibility, circular/square shape, top-right/bottom-left placement, size (96–224px), zoom (25–200%) and orientation. The map follows the detached rider during a wreck; in multiplayer it also shows the other riders. See [GPS settings and performance evidence](research/MINIMAP.md).
 
 **Home Screen:** on iPhone/iPad, open the game in Safari and use **Share → Add to Home Screen**, keeping **Open as Web App** enabled if offered. The shortcut launches **Fury Remastered** with its matching icon. Other browsers show an install prompt when they provide one. Existing saved icons may need to be added again to refresh them.
 
@@ -81,7 +81,7 @@ Use **V** for clutch on keyboard; existing lean, preload and stunt controls appl
 
 ## Keyboard and controllers
 
-**Pause → Controls** remaps keys, controller buttons, analog directions and combinations. Settings and Garage selections are stored in this browser; if storage is unavailable, the game still runs but those choices cannot persist across reloads.
+**Pause → Settings → Controls** remaps keys, controller buttons, analog directions and combinations. Settings and Garage selections are stored in this browser; if storage is unavailable, the game still runs but those choices cannot persist across reloads.
 
 | Action | Keyboard default | Controller default |
 | --- | --- | --- |

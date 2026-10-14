@@ -89,6 +89,8 @@ pub struct Request {
     #[serde(default)]
     pub crash_mode: String,
     #[serde(default)]
+    pub original_camera: bool,
+    #[serde(default)]
     pub minimap_enabled: bool,
     #[serde(default = "default_minimap_size")]
     pub minimap_size: f32,
@@ -236,26 +238,11 @@ impl Frame {
         let [x, y, w, h] = rect;
         if selected {
             self.rect(
-                [x, y + 7., w, h - 14.],
-                (h - 14.) / 2.,
-                "#514200",
-                "#171400",
-                "#0b0905",
-            );
-            self.rect(
-                [x + 2., y + 9., w - 4., h - 18.],
-                (h - 18.) / 2.,
+                [x + 8., y + h / 2. - 8., 4., 16.],
+                0.,
                 "#fffaa1",
-                "#a99900",
-                "#d0bc39",
-            );
-        } else {
-            self.rect(
-                [x + 8., y + h / 2. - 4., 8., 8.],
-                4.,
                 "#e5d360",
-                "#797024",
-                "#252008",
+                "",
             );
         }
         self.text(
@@ -263,7 +250,11 @@ impl Frame {
             [x + 30., y + (h - 24.) / 2.],
             1.,
             if selected { SELECTED_FONT } else { FONT },
-            if selected { "0,0,0" } else { "215,215,215" },
+            if selected {
+                "255,240,140"
+            } else {
+                "235,235,235"
+            },
             w - 46.,
         );
         self.hits.push(Hit {
@@ -336,7 +327,15 @@ pub fn layout(request: Request) -> Result<Frame> {
     let portrait = h > w;
     let pause = matches!(
         request.page.as_str(),
-        "pause" | "players" | "hud-settings" | "minimap-config" | "controls" | "bindings" | "music"
+        "settings"
+            | "extras"
+            | "pause"
+            | "players"
+            | "hud-settings"
+            | "minimap-config"
+            | "controls"
+            | "bindings"
+            | "music"
     );
     let mut f = Frame {
         width: w,
@@ -401,8 +400,10 @@ pub fn layout(request: Request) -> Result<Frame> {
         "tracks" => "Freestyle",
         "race" => "Single Race",
         "pause" => "Pause",
+        "settings" => "Settings",
+        "extras" => "Extras",
         "players" => "Lobby Players",
-        "hud-settings" => "HUD Settings",
+        "hud-settings" => "Display",
         "minimap-config" => "Minimap Configuration",
         "controls" => "Controls",
         "bindings" => {
@@ -412,7 +413,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                 "Keyboard"
             }
         }
-        "music" => "Music",
+        "music" => "Audio",
         _ => return Err("unknown menu page".into()),
     };
     if request.page != "title" {
@@ -476,7 +477,11 @@ pub fn layout(request: Request) -> Result<Frame> {
                 request.selection == 0,
             );
             let items: &[(&str, &str)] = if main {
-                &[("Multiplayer", "multiplayer"), ("Dev log", "devlog")]
+                &[
+                    ("Multiplayer", "multiplayer"),
+                    ("Settings", "settings"),
+                    ("Dev log", "devlog"),
+                ]
             } else {
                 &[("Quad and Rider", "garage")]
             };
@@ -498,28 +503,25 @@ pub fn layout(request: Request) -> Result<Frame> {
                     request.selection == 2,
                 );
             }
-            let detail_y = if main || request.race_available {
+            let detail_y = if main {
+                336.
+            } else if request.race_available {
                 292.
             } else {
                 236.
             };
-            f.rect(
-                [24., detail_y, list_w - 4., 72.],
-                6.,
-                "#292020",
-                "#1c1717",
-                "#100b09",
-            );
             let detail = if !main && request.selection == 2 {
                 "Race CPU riders on Caribou Peak."
             } else if main && request.selection == 2 {
+                "Controls, display, audio and extras."
+            } else if main && request.selection == 3 {
                 "Progress, screenshots and what is next."
             } else {
                 detail
             };
             f.text(
                 detail,
-                [38., detail_y + 22.],
+                [30., detail_y + 12.],
                 0.85,
                 FONT,
                 "205,205,205",
@@ -532,8 +534,8 @@ pub fn layout(request: Request) -> Result<Frame> {
                     (w * 0.43).min(380.)
                 };
                 if width >= 100. {
-                    f.draw.push(Draw::Artwork {
-                        image: "multi_atv01",
+                    f.draw.push(Draw::ModelPreview {
+                        model: "quad",
                         rect: [
                             if portrait {
                                 (w - width) / 2.
@@ -966,16 +968,6 @@ pub fn layout(request: Request) -> Result<Frame> {
             );
         }
         "pause" => {
-            let diagnostics_label = match request.diagnostics_mode.as_str() {
-                "performance" => "Stats: Performance (F3)",
-                "debug" => "Stats: Debug (F3)",
-                _ => "Stats: Off (F3)",
-            };
-            let mobile_label = if request.one_handed_mobile {
-                "One-handed mobile: On"
-            } else {
-                "One-handed mobile: Off"
-            };
             let mut choices = vec![
                 ("Resume", "resume"),
                 (
@@ -986,29 +978,10 @@ pub fn layout(request: Request) -> Result<Frame> {
                     },
                     "reset",
                 ),
-                ("Controls", "controls"),
-                ("HUD settings", "hud-settings"),
-                (diagnostics_label, "diagnostics"),
-                (mobile_label, "onehanded"),
-                (
-                    match request.crash_mode.as_str() {
-                        "gorn" => "Crashes: Gorn (blood & limbs)",
-                        "original" => "Crashes: Original",
-                        "crazy" => "Crashes: Crazy",
-                        _ if request.funny_crashes => "Crashes: Crazy",
-                        _ => "Crashes: Original",
-                    },
-                    "funnycrashes",
-                ),
+                ("Settings", "settings"),
             ];
             if !request.lobby_status.is_empty() {
                 choices.insert(2, ("Players", "players"));
-            }
-            if request.music_ready {
-                choices.push(("Music", "music"));
-            }
-            if request.fullscreen {
-                choices.push(("Fullscreen", "fullscreen"));
             }
             choices.push(("Copy ride link", "copyride"));
             choices.push(("Dev log", "devlog"));
@@ -1043,21 +1016,51 @@ pub fn layout(request: Request) -> Result<Frame> {
                 );
             }
         }
-        "hud-settings" => {
-            f.button(
-                "Minimap configuration",
-                "minimap-config",
-                [24., 98., w - 48., 56.],
-                request.selection.is_multiple_of(2),
-            );
-            f.choices.push("minimap-config".into());
-            f.button(
-                "Back",
-                "back",
-                [24., h - 68., 132., 56.],
-                request.selection % 2 == 1,
-            );
-            f.choices.push("back".into());
+        "settings" | "extras" | "hud-settings" => {
+            let crash_label = match request.crash_mode.as_str() {
+                "gorn" => "Crashes: Gorn (blood & limbs)",
+                "original" => "Crashes: Original",
+                _ => "Crashes: Crazy",
+            };
+            let diagnostics = match request.diagnostics_mode.as_str() {
+                "performance" => "Stats: Performance (F3)",
+                "debug" => "Stats: Debug (F3)",
+                _ => "Stats: Off (F3)",
+            };
+            let mut choices = match request.page.as_str() {
+                "settings" => vec![
+                    ("Controls", "controls"),
+                    ("Display", "hud-settings"),
+                    ("Audio", "music"),
+                    ("Extras", "extras"),
+                ],
+                "extras" => vec![
+                    (crash_label, "funnycrashes"),
+                    (
+                        if request.original_camera {
+                            "Crash camera: Original"
+                        } else {
+                            "Crash camera: Tight"
+                        },
+                        "crash-camera",
+                    ),
+                    (diagnostics, "diagnostics"),
+                ],
+                _ => vec![("Minimap configuration", "minimap-config")],
+            };
+            if request.page == "hud-settings" && request.fullscreen {
+                choices.push(("Fullscreen", "fullscreen"));
+            }
+            choices.push(("Back", "back"));
+            for (i, (label, action)) in choices.iter().enumerate() {
+                f.choices.push((*action).into());
+                f.button(
+                    label,
+                    action,
+                    [24., 92. + i as f32 * 54., w - 48., 54.],
+                    request.selection % choices.len() == i,
+                );
+            }
         }
         "minimap-config" => {
             let selected = request.selection % 7;
@@ -1165,79 +1168,10 @@ pub fn layout(request: Request) -> Result<Frame> {
             f.choices.push("back".into());
         }
         "controls" => {
-            let compact = portrait && h < 540.;
-            let touch_lines = if compact {
-                if request.one_handed_mobile {
-                    vec![
-                        "Hold: drive / brace. Drag: steer / lean.",
-                        "2nd: reverse; air swipe / circle tricks.",
-                    ]
-                } else {
-                    vec![
-                        "Left: steer / lean. Right: drive / brake.",
-                        "Hold: brace. Air: swipe / circle tricks.",
-                    ]
-                }
-            } else if request.one_handed_mobile {
-                vec![
-                    "One thumb anywhere: hold to drive and brace.",
-                    "Drag left / right to steer; up / down to lean.",
-                    "Lift: no throttle; releases preload, no brake.",
-                    "2nd finger: ground reverse; air swipe / circle tricks.",
-                ]
-            } else {
-                vec![
-                    "Left: steer and lean, on ground or in air.",
-                    "Right: press to drive; drag back to brake / reverse.",
-                    "Hold right to brace. Lift to release preload.",
-                    "In air: right thumb swipes / circles tricks.",
-                ]
-            };
-            let groups = [("TOUCH", touch_lines)];
-            let mut y = 96.;
-            for (index, (heading, lines)) in groups.into_iter().enumerate() {
-                let x = if portrait {
-                    30.
-                } else {
-                    30. + index as f32 * (w - 60.) / 3.
-                };
-                let width = if portrait { w - 60. } else { w * 0.55 - 60. };
-                if !portrait {
-                    y = 102.;
-                }
-                f.text(heading, [x, y], 1., FONT, "255,226,107", width);
-                y += 34.;
-                for line in lines {
-                    f.text(
-                        line,
-                        [x, y],
-                        if portrait { 0.80 } else { 0.72 },
-                        FONT,
-                        "222,222,222",
-                        width,
-                    );
-                    y += if portrait { 22. } else { 26. };
-                }
-                y += 18.;
-            }
-            let slider_x = if portrait { 30. } else { w * 0.57 };
-            let slider_y = if portrait { y - 4. } else { 110. };
-            let slider_width = if portrait { w - 60. } else { w * 0.43 - 30. };
-            f.text(
-                format!(
-                    "Mobile steering: {}%",
-                    request.mobile_steering_sensitivity as u32
-                ),
-                [slider_x, slider_y],
-                0.85,
-                FONT,
-                "255,226,107",
-                slider_width,
-            );
             f.sliders.push(Slider {
                 action: "steering-sensitivity",
                 label: "Mobile steering sensitivity",
-                rect: [slider_x, slider_y + 26., slider_width, 44.],
+                rect: [30., 100., w - 60., 44.],
                 value: request.mobile_steering_sensitivity,
                 min: 50.,
                 max: 150.,
@@ -1248,6 +1182,15 @@ pub fn layout(request: Request) -> Result<Frame> {
             for (i, (label, action)) in [
                 ("Keyboard bindings", "keyboard"),
                 ("Controller bindings", "controller"),
+                (
+                    if request.one_handed_mobile {
+                        "One-handed mobile: On"
+                    } else {
+                        "One-handed mobile: Off"
+                    },
+                    "onehanded",
+                ),
+                ("Back", "back"),
             ]
             .iter()
             .enumerate()
@@ -1255,18 +1198,11 @@ pub fn layout(request: Request) -> Result<Frame> {
                 f.button(
                     label,
                     action,
-                    [24., h - 182. + i as f32 * 54., w - 48., 54.],
+                    [24., 166. + i as f32 * 54., w - 48., 54.],
                     request.selection == i + 1,
                 );
                 f.choices.push((*action).into());
             }
-            f.button(
-                "Back",
-                "back",
-                [24., h - 68., 132., 56.],
-                request.selection == 3,
-            );
-            f.choices.push("back".into());
         }
         "bindings" | "music" => {
             let music = request.page == "music";
@@ -1448,6 +1384,7 @@ mod tests {
             one_handed_mobile: false,
             funny_crashes: false,
             crash_mode: String::new(),
+            original_camera: false,
             minimap_enabled: true,
             minimap_size: 160.,
             minimap_zoom: 50.,
@@ -1526,7 +1463,7 @@ mod tests {
     fn supported_routes_have_no_unfinished_choices() {
         assert_eq!(
             layout(request("main", 1280., 720.)).unwrap().choices,
-            ["single", "multiplayer", "devlog"]
+            ["single", "multiplayer", "settings", "devlog"]
         );
         assert_eq!(
             layout(request("single", 1280., 720.)).unwrap().choices,
@@ -1590,6 +1527,8 @@ mod tests {
                 "tracks",
                 "garage",
                 "loading",
+                "settings",
+                "extras",
                 "pause",
                 "controls",
                 "hud-settings",
@@ -1649,7 +1588,7 @@ mod tests {
     fn minimap_settings_fit_and_validate_sizes() {
         assert_eq!(
             layout(request("hud-settings", 390., 844.)).unwrap().choices,
-            ["minimap-config", "back"]
+            ["minimap-config", "fullscreen", "back"]
         );
         for (w, h) in [
             (320., 568.),

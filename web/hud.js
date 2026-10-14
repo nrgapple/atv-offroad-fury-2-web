@@ -1,11 +1,11 @@
-// Draw original runtime HUD layouts/glyphs. All changing values and animation
+// Draw original runtime HUD layouts with crisp HD text. All changing values and animation
 // clocks arrive from authored Rust; this bridge never derives scores from input.
 import { courseResource } from './launch.js';
 const unquote = value => (value ?? '').replace(/^"/, '').replace(/"$/, '');
 const numbers = value => value?.split(',').map(s => Number(s.trim()));
 const fontDefault = 'tradegothic_boldcondensed_22s';
 
-// Record the existing glyph/icon draws before sizing a tightly bounded canvas.
+// Record text/icon draws before sizing a tightly bounded canvas.
 // Replaying the original transforms preserves DPR, filtering and glyph placement.
 class HudDrawList {
   constructor() { this.commands = []; this.operations = []; this.stack = []; this.alpha = 1; }
@@ -16,6 +16,11 @@ class HudDrawList {
   restore() { [this.transform, this.alpha] = this.stack.pop(); this.operations.push(['restore']); }
   translate(x, y) { const t = this.transform; t[4] += t[0] * x; t[5] += t[3] * y; this.operations.push(['translate', x, y]); }
   scale(x, y) { this.transform[0] *= x; this.transform[3] *= y; this.operations.push(['scale', x, y]); }
+  drawText(text, x, y, width, height, color) {
+    const t=this.transform;
+    this.operations.push(['text',text,x,y,width,height,color]);
+    this.commands.push({bounds:[t[0]*(x-3)+t[4],t[3]*(y-3)+t[5],t[0]*(x+width+3)+t[4],t[3]*(y+height+4)+t[5]]});
+  }
   drawImage(image, ...args) {
     const [x, y, w, h] = args.length === 4 ? args : args.slice(4);
     if (!(w > 0 && h > 0) || !(this.globalAlpha > 0)) return;
@@ -75,19 +80,11 @@ export class HeadUpDisplay {
     const prefix = `text${index}`, name = unquote(layout[`${prefix}font`]) || fontDefault;
     const font = this.frontend.fonts.get(name.toLowerCase()); if (!font) return;
     color ??= layout[`${prefix}color`] || '255,255,255';
-    const key = `${name}:${color}`; let atlas = this.tints.get(key);
-    if (!atlas) {
-      atlas = document.createElement('canvas'); atlas.width = font.image.width; atlas.height = font.image.height;
-      const c = atlas.getContext('2d'); c.drawImage(font.image, 0, 0);
-      const pixels = c.getImageData(0, 0, atlas.width, atlas.height), tint = numbers(color);
-      for (let p = 0; p < pixels.data.length; p += 4) for (let ch = 0; ch < 3; ch++) pixels.data[p+ch] = pixels.data[p+ch] * tint[ch] / 255;
-      c.putImageData(pixels, 0, 0); this.tints.set(key, atlas);
-      // Failure colors change every tick. Bound tinted atlas memory across runs.
-      if (this.tints.size > 96) this.tints.delete(this.tints.keys().next().value);
-    }
-    const glyphs = [...String(text)].map(c => font.glyphs.get(c.charCodeAt(0))).filter(Boolean);
-    const advance = g => g.metrics ? g.metrics[0] + g.metrics[2] : (g.uv[2] - g.uv[0]) * atlas.width;
-    const width = glyphs.reduce((a, g) => a + advance(g), 0), height = Math.max(0, ...glyphs.map(g => g.metrics?.[3] ?? (g.uv[3] - g.uv[1]) * atlas.height));
+    // Preserve original placement and advances, but rasterize vector type at
+    // final display resolution rather than enlarging the source glyph atlas.
+    const glyphs=[...String(text)].map(c=>font.glyphs.get(c.charCodeAt(0))).filter(Boolean);
+    const width=glyphs.reduce((sum,g)=>sum+(g.metrics ? g.metrics[0]+g.metrics[2] : (g.uv[2]-g.uv[0])*font.image.width),0);
+    const height=Math.max(1,...glyphs.map(g=>g.metrics?.[3]??25));
     const position = numbers(layout[`${prefix}offset`]) || [0, 0];
     const alignment = (justify ?? layout[`${prefix}justification`] ?? 'L').toUpperCase();
     scale *= Number(layout[`${prefix}scale`] ?? 1);
@@ -98,12 +95,7 @@ export class HeadUpDisplay {
     c.globalAlpha = (alpha ?? Number(layout[`${prefix}alpha`] ?? 255)) / 255;
     let x = alignment === 'R' ? -width : alignment === 'H' || alignment === 'B' ? -width/2 : 0;
     const y = alignment === 'V' || alignment === 'B' ? -height/2 : 0;
-    for (const g of glyphs) {
-      const [l, t, r, b] = g.uv, m = g.metrics;
-      const sx = Math.round(l * (atlas.width - 1)), sy = Math.round(t * (atlas.height - 1));
-      const w = m?.[1] ?? (r - l) * atlas.width, h = m?.[3] ?? (b - t) * atlas.height;
-      c.drawImage(atlas, sx, sy, w, h, x, y, w, h); x += advance(g);
-    }
+    c.drawText(String(text),x,y,width,height,color);
     c.restore();
   }
   icon(at, layout, index, { visible = true, fill, alpha } = {}) {
@@ -179,6 +171,12 @@ export class HeadUpDisplay {
     this.clear();
     for (const [operation, ...args] of list.operations) {
       if (operation === 'setTransform') actual.setTransform(...args.slice(0, 4), args[4]-left, args[5]-top);
+      else if (operation === 'text') {
+        const [text,x,y,w,h,color]=args;
+        actual.save(); actual.font=`italic 800 ${h}px "Arial Narrow", "Helvetica Neue", Arial, sans-serif`;
+        actual.textBaseline='top'; actual.fillStyle=`rgb(${color})`; actual.strokeStyle='#080808bb'; actual.lineWidth=2;
+        actual.lineJoin='round'; actual.strokeText(text,x,y,w); actual.fillText(text,x,y,w); actual.restore();
+      }
       else if (operation === 'alpha') actual.globalAlpha = args[0];
       else actual[operation](...args);
     }

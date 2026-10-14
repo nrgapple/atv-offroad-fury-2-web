@@ -125,11 +125,17 @@ export class RideEffectsSettings {
     if (storage === undefined) {
       try { storage = globalThis.localStorage; } catch { storage = null; }
     }
-    this.storage = storage; this.mode = 'crazy';
+    this.storage = storage; this.mode = 'crazy'; this.camera = 'tight';
     try {
+      this.camera = storage?.getItem('atv-crash-camera') === 'original' ? 'original' : 'tight';
       const mode = storage?.getItem('atv-crash-mode');
       this.mode = ['original','crazy','gorn'].includes(mode) ? mode : storage?.getItem('atv-funny-crashes') === 'false' ? 'original' : 'crazy';
     } catch { /* Session settings. */ }
+  }
+  toggleCamera() {
+    this.camera = this.camera === 'tight' ? 'original' : 'tight';
+    try { this.storage?.setItem('atv-crash-camera',this.camera); } catch { /* Session settings. */ }
+    this.onCameraChange?.();
   }
   get enabled() { return this.mode !== 'original'; }
   toggle() {
