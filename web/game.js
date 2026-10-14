@@ -223,10 +223,13 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
   riderTextures = await baseTextures(riderMesh, riderMaterials.bytes, riderMaterials.entries);
   }
   //00208cc0 reads the actual common/mode TOYs' [Weather], not legacy
-  //SCN[Rain]. Selection belongs to this scene load and survives ATV resets/GL.
-  const weather = await command(120, { common: decoder.decode(toy), mode: mode ?? '', random: Math.floor(Math.random() * 0x80000000), players: Math.max(1, Math.min(4, multiplayer?.state.lobby?.players?.length ?? 1)) });
+  //SCN[Rain]. There is one local view per browser, including online rides;
+  //the original online versus local-player-count mapping is not established.
+  //Selection belongs to this scene load and survives ATV resets/GL.
+  const weather = await command(120, { common: decoder.decode(toy), mode: mode ?? '', random: Math.floor(Math.random() * 0x80000000), players: 1 });
   if (weather.removed_model) sceneMetadata.models = sceneMetadata.models.filter(model => model.name.toLowerCase() !== weather.removed_model.toLowerCase());
   diagnostics.weather = weather;
+  await audio.loadWeather({selection:weather,isCurrent:()=>token===generation});
   status('Decoding original terrain textures…');
   const bytes = await codec(3, resource, index), layout = await json(30, bytes), images = [];
   for (const record of layout.records) {
@@ -1405,6 +1408,9 @@ function render(time) {
   if (!menuOpen) updateCamera(dt);
   if (simReady && !simulationPaused()) {
     simAccumulator = Math.min(.1, simAccumulator + dt); void pumpSimulation();
+    //Reset/pause actions dispatch synchronously before the batch awaits. They
+    //clear interpolation state; finish this frame before reading that cleared pose.
+    if(!simReady||simulationPaused()||!presentedFrame){stats.sample(time,performance.now()-started,false);return;}
     const center = diagnostics.terrainDetailCenter;
     const x = Math.max(0,Math.min(terrain.width-1,vehicle.position[0]/terrain.spacing)), z = Math.max(0,Math.min(terrain.depth-1,vehicle.position[2]/terrain.spacing));
     if (center && (Math.abs(x-center[0]) > 48 || Math.abs(z-center[1]) > 48)) buildTerrainMesh();

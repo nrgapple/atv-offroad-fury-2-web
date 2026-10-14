@@ -29,7 +29,7 @@ try {
             }
           });
         }
-        postMessage(data, ...args) { this.ops.set(data.id, data.op); if (data.op === 50) window.materialPending++; super.postMessage(data, ...args); }
+        postMessage(data, ...args) { if(data.op===23&&window.sceneryModels?.[0]){const request=JSON.parse(new TextDecoder().decode(data.bytes)),position=window.sceneryModels[0].world_matrix.slice(12,15);request.origin=[position[0],position[1]+100,position[2]];request.yaw=0;data={...data,bytes:new TextEncoder().encode(JSON.stringify(request))};} this.ops.set(data.id, data.op); if (data.op === 50) window.materialPending++; super.postMessage(data, ...args); }
       };
       const names = new WeakMap(), getLocation = WebGL2RenderingContext.prototype.getUniformLocation;
       WebGL2RenderingContext.prototype.getUniformLocation = function (...args) { const location=getLocation.apply(this,args); if(location) names.set(location,args[1]); return location; };

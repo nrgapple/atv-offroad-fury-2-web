@@ -21,10 +21,12 @@ resource declarations, not observations from a PS2 framebuffer.
 is `chance < binary32(rand) * 2^-31`; equality selects Weather, including the
 very rare zero-RNG endpoint at chance zero. The dry branch removes matching SLT
 models. 00214d20 changes chance to zero when native player count exceeds one.
-The browser supplies one per-load RNG sample and the lobby's player count;
-its independent RNG and online-to-native player-count mapping are adaptations.
-Native game-wide random ordering and the original multiplayer event scheduling
-remain unrecovered. ATV reset and GL restoration retain the selected scene.
+The browser supplies one per-load RNG sample and one local view, including
+online rides; remote riders and race CPUs do not change that input. The original
+field's mapping between local human players, views and online participants remains
+unverified, so lobby size is not used as a substitute. Independent browser RNG,
+native game-wide random ordering and original multiplayer event scheduling remain
+unrecovered. ATV reset and GL restoration retain the selected scene.
 
 The three rain declarations have no Weather particle-emitter list or snow-ring
 flag, and their SLT name is not `screenrain`. Their wet branch therefore retains
@@ -40,8 +42,11 @@ relative to the active camera (00209dd0/00209310). Its Snow-specific VU birth,
 packed updates, fading and render callback remain unconnected. Original ScreenRain
 lens/world sprites and framebuffer-copy droplets are also unconnected; none of
 these inspected map Weather blocks selects ScreenRain. Rain audio initialization
-at 00213bf0 requests `rain.vag` with looping flag 0x81; live playback remains a
-separate follow-up at this checkpoint. No generic storm was added to dry maps.
+at 00213bf0 requests `rain.vag` with looping flag 0x81 and sets volume 100 at
+002c9cc0. The browser now plays that source sample as one looping voice through
+the engine gain, including the motorcycle path, which loads the ATV audio bank
+only when rain is selected. Pause mutes the voice; vehicle reset preserves it;
+map replacement/page departure closes it. No generic storm was added to dry maps.
 
 ## Host component gate
 
@@ -76,5 +81,18 @@ frame, not a measured physical-phone FPS gain. Test hooks and source-derived
 fixtures stay private; `tools/test_weather.mjs` is an opt-in host/public gate.
 
 Weather selection, rain rendering optimization, ambient placed emitters,
-Snow/ScreenRain, rain audio and complete PS2 weather fidelity are separate gates.
+Snow/ScreenRain and complete PS2 weather fidelity remain separate gates.
+
+Seven actual-resource browser cases cover rain/dry selection in all three rain
+venues, dry Caribou Freestyle, portrait ATV and motorcycle rain, pause/resume,
+reset, context restoration and departure. Rain retains one decoded voice and
+never restarts on reset. The original 19,500Hz sample decodes to 731,684 bytes
+of host 48kHz PCM. The incremental 147-record runtime package preserves all
+146 non-audio archives and adds only `rain.vag` to AUDIO.RES.
+
+The lifecycle gate also exposed an existing synchronous reset race: rendering
+could read a cleared interpolation frame after queuing the reset. Rendering
+now finishes that frame before touching the cleared pose. The scenery material
+gate uses a source-derived CPU start so CPU frustum selection and inspection
+camera agree; the previous camera-only hook failed on both prior and new builds.
 Public verification is pending integration and release.

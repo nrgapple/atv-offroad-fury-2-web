@@ -22,6 +22,7 @@ export class GameAudio {
     this.generation = 0;
     this.lastSound = null;
     this.remoteVoices = new Map(); this.remoteEffects = new Map(); this.remoteLoaded = new Map(); this.remoteStarts = 0;
+    this.weatherActive = false; this.weatherSource = null; this.weatherStarts = 0;
     this.spatialDefinitions = [];
     this.spatialVoices = new Map();
     this.spatialCommands = [];
@@ -58,6 +59,7 @@ export class GameAudio {
     if (this.musicPreview && this.menuMusicMode) void this.playMenuMusic();
   }
   async load({ file, files, read, isCurrent, quadId = 1 }) {
+    this.stopWeather();this.weatherActive=false;
     const text = new TextDecoder();
     const json = async (op, bytes, index = 0) => JSON.parse(text.decode(await this.codec(op, bytes, index)));
     const archive = async path => {
@@ -86,6 +88,16 @@ export class GameAudio {
       const wave = await this.codec(4, vag);
       if (!isCurrent() || this.closed) return;
       this.buffers.set(name, { wave, info, buffer: null });
+    };
+    this.loadWeatherSample = async () => {
+      if (this.buffers.has('rain.vag')) return;
+      //Motorcycles use their own engine bank, but Weather is still ATV2's scene.
+      if (!motorcycle) return this.loadSample('rain.vag');
+      const weatherBank=await archive('/AUDIO/AUDIO.RES');
+      const index=weatherBank.entries.findIndex(entry=>normal(entry.name)==='rain.vag');
+      if(index<0)throw new Error('Original rain sample is missing.');
+      const vag=await this.codec(3,weatherBank.bytes,index),info=await json(5,vag),wave=await this.codec(4,vag);
+      if(isCurrent()&&!this.closed)this.buffers.set('rain.vag',{wave,info,buffer:null});
     };
     // Keep encoded WAV until a user gesture creates/unlocks the audio context.
     for (const name of new Set([...this.config.samples.flat(),...(this.config.impact_samples ?? [])])) {
@@ -168,6 +180,21 @@ export class GameAudio {
     } catch (error) {
       if (isCurrent() && !this.closed) this.report(`Rider effects: ${error.message}`);
     }
+  }
+  async loadWeather({ selection, isCurrent }) {
+    this.stopWeather();this.weatherActive=Boolean(selection?.active&&selection.definition?.kind==='rain');
+    if(!this.weatherActive)return;
+    try {await this.loadWeatherSample();if(!isCurrent()||this.closed)this.weatherActive=false;}
+    catch(error){if(isCurrent()&&!this.closed){this.weatherActive=false;this.report(`Rain sound: ${error.message}`);}}
+  }
+  stopWeather(){if(this.weatherSource){this.weatherSource.stop();this.weatherSource.disconnect();this.weatherSource=null;}}
+  playWeather(){
+    const sample=this.buffers.get('rain.vag');
+    if(!this.weatherActive||this.weatherSource||!sample?.buffer||this.closed)return;
+    //00213bf0 requests rain.vag with0x81; 0x80 is the recovered looping bit.
+    const source=this.context.createBufferSource();source.buffer=sample.buffer;source.loop=true;
+    if(sample.info.loop_start!==null&&sample.info.loop_end!==null){source.loopStart=sample.info.loop_start/sample.info.sample_rate;source.loopEnd=sample.info.loop_end/sample.info.sample_rate;}
+    source.connect(this.engineGain);source.start();this.weatherSource=source;this.weatherStarts++;
   }
   async loadSpatial({ toy, isCurrent }) {
     try {
@@ -384,6 +411,7 @@ export class GameAudio {
     try {
       if (!await this.decode()) return;
       if (generation !== this.generation) return;
+      this.playWeather();
       if (frame.vehicle_kind === 'motorcycle') {
         if (frame.impact_sample && frame.motorcycle_tick !== this.impactTick) {this.impactTick=frame.motorcycle_tick;this.oneShot(frame.impact_sample);}
         if (input.clutch && !this.clutchWasDown) this.oneShot(this.config.samples[9][0]);
@@ -457,6 +485,7 @@ export class GameAudio {
   }
   snapshot() {
     return { ready: this.ready, context: this.context?.state ?? 'locked', samples: this.buffers.size,
+      weather: {active:this.weatherActive,muted:!this.active,voices:this.weatherSource?1:0,starts:this.weatherStarts,sample:'rain.vag',decoded:Boolean(this.buffers.get('rain.vag')?.buffer),sampleRate:this.buffers.get('rain.vag')?.info.sample_rate,loopStart:this.buffers.get('rain.vag')?.info.loop_start,loopEnd:this.buffers.get('rain.vag')?.info.loop_end,pcmBytes:this.buffers.get('rain.vag')?.buffer?this.buffers.get('rain.vag').buffer.length*this.buffers.get('rain.vag').buffer.numberOfChannels*4:0},
       menuMusic: {ready:this.menuTracks.length === 4,voices:this.menuSource ? 1 : 0,track:this.menuSource ? this.menuTracks[0].name : null,stereo:Boolean(this.menuTracks[0]?.buffer?.numberOfChannels === 2)},
       musicPreview: this.musicPreview, voices: this.sources.size, commands: this.commands, sound: this.lastSound,
       spatial: { ready: this.spatialReady, sources: this.spatialDefinitions.length, voices: this.spatialVoices.size,
@@ -482,7 +511,7 @@ export class GameAudio {
     this.ready = false;
     window.removeEventListener('pointerdown', this.unlock);
     window.removeEventListener('keydown', this.unlock);
-    this.stopSources();
+    this.stopSources();this.stopWeather();this.weatherActive=false;
     this.stopSpatial(this.remoteVoices);this.stopSpatial(this.remoteEffects);
     this.stopSpatial(); this.spatialReady = false; this.spatialPending = this.spatialHistory = null;
     this.stopSpatial(this.effectVoices); this.effectsReady = false; this.effectFrames.length = 0;
