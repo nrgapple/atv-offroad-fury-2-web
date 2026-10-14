@@ -13,7 +13,7 @@ export async function loadAmbientEffects({resource,entries,codec,json,scene,comm
     return codec(3,resource,index);
   };
   source.emts={};
-  for(const name of new Set(plan.placements.filter(p=>[0,2,8,11].includes(p.type_id)).map(p=>p.filename))){if(entries.some(entry=>normalize(entry.name)===name))source.emts[name]=new TextDecoder().decode(await read(name));}
+  for(const name of new Set(plan.placements.filter(p=>[0,2,8,11,12].includes(p.type_id)).map(p=>p.filename))){if(entries.some(entry=>normalize(entry.name)===name))source.emts[name]=new TextDecoder().decode(await read(name));}
   const prt=entries.findIndex(entry=>/particles\.prt$/i.test(entry.name));
   source.prt=prt<0?'':new TextDecoder().decode(await codec(3,resource,prt));
   const config=await json(131,new TextEncoder().encode(JSON.stringify(source)));
@@ -76,6 +76,12 @@ export function visibleSprites(frame,camera,farDistance=768,workspace=[],pool=nu
   }
   return workspace.sort((a,b)=>b.depth-a.depth||a.index-b.index);
 }
+//001451a0 persistent-particle near fade; preserve source float operation order.
+export function spriteAlpha(p,camera) {
+  if(!p.fade_distance)return p.alpha;
+  const f=Math.fround,dx=f(p.position[0]-camera.x),dy=f(p.position[1]-camera.y),dz=f(p.position[2]-camera.z),squared=f(f(f(dx*dx)+f(dy*dy))+f(dz*dz)),limit=f(p.fade_distance*p.fade_distance);
+  return squared<limit?f(p.alpha*f(squared*f(1/limit))):p.alpha;
+}
 export class AmbientEffectsRenderer {
   constructor(gl,source){
     this.gl=gl;this.source=source;this.frame=source.frame;this.draws=0;this.triangles=0;this.visible=0;
@@ -119,7 +125,7 @@ export class AmbientEffectsRenderer {
       let count=0;
       for(const {p}of sprites){if(p.additive!==additive)continue;const rect=this.source.config.atlas.frames[p.frame].rect,w=this.source.texture.width,h=this.source.texture.height;
         const offset=count++*10;this.instances[offset]=p.position[0];this.instances[offset+1]=p.position[1];this.instances[offset+2]=p.position[2];this.instances[offset+3]=p.size;
-        this.instances[offset+4]=(rect[p.mirror[0]?2:0]+.5)/w;this.instances[offset+5]=(rect[p.mirror[1]?3:1]+.5)/h;this.instances[offset+6]=(rect[p.mirror[0]?0:2]+.5)/w;this.instances[offset+7]=(rect[p.mirror[1]?1:3]+.5)/h;this.instances[offset+8]=p.alpha;this.instances[offset+9]=Number(p.lit);
+        this.instances[offset+4]=(rect[p.mirror[0]?2:0]+.5)/w;this.instances[offset+5]=(rect[p.mirror[1]?3:1]+.5)/h;this.instances[offset+6]=(rect[p.mirror[0]?0:2]+.5)/w;this.instances[offset+7]=(rect[p.mirror[1]?1:3]+.5)/h;this.instances[offset+8]=spriteAlpha(p,camera);this.instances[offset+9]=Number(p.lit);
       }
       if(!count)continue;gl.bufferSubData(gl.ARRAY_BUFFER,0,this.instances.subarray(0,count*10));gl.blendFunc(gl.SRC_ALPHA,additive?gl.ONE:gl.ONE_MINUS_SRC_ALPHA);gl.drawArraysInstanced(gl.TRIANGLES,0,6,count);this.draws++;this.triangles+=count*2;
     }
