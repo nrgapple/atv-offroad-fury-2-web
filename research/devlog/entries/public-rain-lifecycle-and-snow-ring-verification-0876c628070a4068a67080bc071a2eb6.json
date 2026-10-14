@@ -1,0 +1,14 @@
+{
+  "id": "public-rain-lifecycle-and-snow-ring-verification-0876c628070a4068a67080bc071a2eb6",
+  "timestamp": "2026-10-14T00:53:01.258102+00:00",
+  "recorded_at": "2026-10-14T00:53:01.258102+00:00",
+  "kind": "verification",
+  "title": "Public rain lifecycle and snow-ring verification",
+  "summary": "The authored weather checkpoint is deployed on the public app at commit 6935919481b8753d65e3de03851661061b12af3c. Public host verification covers seven rain lifecycle cases and isolated source-derived snow rendering on desktop and portrait browser viewports.",
+  "details": [
+    "Public HTTPS hash validation at https://furyremastered.com/ matched the deployment commit and verified 505 hosted objects and 45 authored static files; the public dev log contained 202 entries and 155 screenshots at the check.",
+    "Seven public browser lifecycle cases covered rain selection and chance-on/off behavior across ENV04, NAT06 and SX13, no-rain ENV01, one rain audio voice start/stop, and source rain state with quad 27. The checks completed without page errors.",
+    "The isolated Snow browser check changed 35,236 desktop pixels and 42,575 portrait pixels. Both runs showed 60 source-camera rings, one draw, 508,016 GPU bytes, zero render-only upload bytes, no page errors, and preserved frozen/reset/operation-23 clock behavior."
+  ],
+  "limitation": "This verifies the deployed authored implementation and these bounded browser routes only; it does not establish global native RNG/render-queue parity, original ScreenRain callbacks or complete weather behavior. The Snow and rain imagery remains captured in separate host-only entries; this public checkpoint has no new public screenshot."
+}
