@@ -23,7 +23,7 @@ try {
   await page.waitForFunction(()=>window.atvTerrainStatus.cameraPresentation.requestedHillOrbit>.20,null,{timeout:45000});
   const hill=await page.evaluate(()=>window.atvTerrainStatus);
   const native=Math.atan2(hill.followCamera.target[1]-hill.followCamera.position[1],Math.hypot(hill.followCamera.target[0]-hill.followCamera.position[0],hill.followCamera.target[2]-hill.followCamera.position[2]));
-  assert(Math.abs(hill.camera[4]-native-hill.cameraPresentation.pitchLift-hill.cameraPresentation.uphillLift-hill.cameraShake.offset[1])<1e-6);
+  assert(Math.abs(hill.camera[4]-native-hill.cameraPresentation.pitchLift-hill.cameraPresentation.uphillLift)<1e-6);
   assert(hill.cameraPresentation.uphillDistanceScale>1.09,'climb pulls back');
   if(process.env.ATV_HILL_SCREENSHOT)await page.screenshot({path:process.env.ATV_HILL_SCREENSHOT.replace('.png',`-${viewport.width}.png`)});
   await page.keyboard.down('KeyE'); await page.waitForTimeout(2500); await page.keyboard.up('KeyE');

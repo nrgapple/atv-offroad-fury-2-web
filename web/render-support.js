@@ -141,16 +141,23 @@ export function chasePresentation(frame, actor, aspect, sightline, height) {
 
 // Saved authored options, including migration of the former boolean crash switch.
 export class RideEffectsSettings {
-  constructor(storage) {
+  constructor(storage, reducedMotion = false) {
     if (storage === undefined) {
       try { storage = globalThis.localStorage; } catch { storage = null; }
     }
-    this.storage = storage; this.mode = 'crazy'; this.camera = 'tight';
+    this.storage = storage; this.mode = 'crazy'; this.camera = 'tight'; this.speed = reducedMotion ? 'off' : 'normal';
     try {
+      const speed = storage?.getItem('atv-speed-rush');
+      if (['off','low','normal','high'].includes(speed)) this.speed = speed;
       this.camera = storage?.getItem('atv-crash-camera') === 'original' ? 'original' : 'tight';
       const mode = storage?.getItem('atv-crash-mode');
       this.mode = ['original','crazy','gorn'].includes(mode) ? mode : storage?.getItem('atv-funny-crashes') === 'false' ? 'original' : 'crazy';
     } catch { /* Session settings. */ }
+  }
+  toggleSpeed() {
+    this.speed = ['off','low','normal','high'][(['off','low','normal','high'].indexOf(this.speed)+1)%4];
+    try { this.storage?.setItem('atv-speed-rush',this.speed); } catch { /* Session settings. */ }
+    this.onSpeedChange?.();
   }
   toggleCamera() {
     this.camera = this.camera === 'tight' ? 'original' : 'tight';

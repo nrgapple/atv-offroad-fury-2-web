@@ -1,3 +1,4 @@
+import { SpeedRush } from './speed-rush.js';
 // Original content and vehicle component simulation run in the Rust worker.
 import { sceneViewProjection, vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, RideEffectsSettings, ImpactEvents, severedIndices, meshNodeBounds, crashSubjects, crashPresentation } from './render-support.js';
 import { Multiplayer, PlayerIndicators } from './multiplayer.js';
@@ -38,6 +39,8 @@ const playerIndicators = new PlayerIndicators();
 const crashSettings = new RideEffectsSettings(undefined, matchMedia('(prefers-reduced-motion: reduce)').matches);
 let funnyCrashes = crashSettings.enabled;
 const impactEvents = new ImpactEvents();
+let speedRush = new SpeedRush(gl);
+crashSettings.onSpeedChange = () => { speedRush.reset(); scheduleRender(); };
 crashSettings.onChange = () => {
   funnyCrashes = crashSettings.enabled;
   if(crashSettings.mode==='gorn' && terrain && !lost && !bloodRenderer)bloodRenderer=new BloodRenderer(gl);
@@ -70,7 +73,7 @@ const diagnostics = { ready: false, frames: 0, vertices: 0, triangles: 0, chunks
 let audio = new GameAudio(codec, message => { diagnostics.audioError = message; status(`Audio: ${message}`, true); });
 const stats = new DiagnosticsOverlay({ snapshot: () => ({ ...diagnostics, minimap: minimap.snapshot(), frame: simFrame, paused: simulationPaused(), menuOpen, focused, resolution: [canvas.width, canvas.height] }) });
 // Read-only snapshot for verification; does not expose the locally opened file.
-Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, minimap: minimap.snapshot(), hud: hud?.snapshot(), funnyCrashes, crashMode: crashSettings.mode, impactAudio: { impacts: impactEvents.impacts }, blood: { draws: bloodRenderer?.draws ?? 0, count: crashSettings.mode === 'gorn' ? simFrame?.funny_crash?.blood?.length ?? 0 : 0 }, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()],reconnecting:multiplayer.reconnecting,lastDisconnect:multiplayer.lastDisconnect,droppedSnapshots:multiplayer.droppedSnapshots,networkAdapterRoundTripMs:multiplayer.networkEncodeMs,networkAdapterCalls:multiplayer.networkEncodeCalls} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
+Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, minimap: minimap.snapshot(), hud: hud?.snapshot(), funnyCrashes, crashMode: crashSettings.mode, speedRush: {...speedRush.snapshot(),setting:crashSettings.speed}, impactAudio: { impacts: impactEvents.impacts }, blood: { draws: bloodRenderer?.draws ?? 0, count: crashSettings.mode === 'gorn' ? simFrame?.funny_crash?.blood?.length ?? 0 : 0 }, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()],reconnecting:multiplayer.reconnecting,lastDisconnect:multiplayer.lastDisconnect,droppedSnapshots:multiplayer.droppedSnapshots,networkAdapterRoundTripMs:multiplayer.networkEncodeMs,networkAdapterCalls:multiplayer.networkEncodeCalls} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
 worker.onmessage = ({ data }) => {
   if (data.startupError) { status(data.startupError, true); return; }
   const request = pending.get(data.id);
@@ -591,6 +594,7 @@ function initializeGl() {
   gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE); gl.clearColor(.34, .43, .53, 1);
 }
 function clearMesh() {
+  speedRush.dispose();
   for (const model of remoteModels.values()) { disposeRemoteGpu(model); }
   bloodRenderer?.dispose(); bloodRenderer = undefined;
   wheelEffectsRenderer?.dispose(); wheelEffectsRenderer = undefined;
@@ -1654,11 +1658,17 @@ function render(time) {
     wheelEffectsRenderer.draw({ camera, viewProjection });
     diagnostics.wheelEffects.draws = wheelEffectsRenderer.draws; diagnostics.wheelEffects.triangles = wheelEffectsRenderer.triangles; diagnostics.wheelEffects.cpuMilliseconds = wheelEffectsRenderer.cpuMilliseconds; diagnostics.wheelEffects.wetLive = wheelEffectsRenderer.wetLive ?? 0;
   }
+  const actor=presentedFrame??simFrame;
+  const point=actor ? [actor.origin[0],actor.origin[1]+3,actor.origin[2],1] : [0,0,0,1];
+  const clip=[0,1,3].map(row=>point.reduce((sum,v,i)=>sum+v*viewProjection[i*4+row],0));
+  const rushFocus=clip[2]>0 ? [clip[0]/clip[2]*.5+.5,clip[1]/clip[2]*.5+.5] : [.5,.35];
+  speedRush.draw({speed:actor?.speed_magnitude??0,intensity:crashSettings.speed,
+    active:simReady && focused && !menuOpen && !lost && actor?.wreck?.phase==='Riding',dt,width,height,focus:rushFocus});
   diagnostics.visibility = { terrainDraws, terrainTriangles, sceneryDraws, sceneryTriangles, terrainCulled: chunks.length - terrainDraws, sceneryCulled: sceneDraws.length - sceneryVisibleGroups };
   diagnostics.frames++;
   if (stats.mode !== 'off') {
     diagnostics.cpuDraws = cpuDraws; diagnostics.cpuTriangles = cpuTriangles;
-    diagnostics.drawCalls = cpuDraws + terrainDraws + sceneryDraws + vehicleChunks.length + (terrain.sky ? skyChunks.length : 0) + diagnostics.vegetationDraws + (waterRenderer?.draws ?? 0) + (trainRenderer?.draws ?? 0) + (wheelEffectsRenderer?.draws ?? 0) + (ambientEffectsRenderer?.draws ?? 0) + (snowRenderer?.draws ?? 0);
+    diagnostics.drawCalls = speedRush.draws + cpuDraws + terrainDraws + sceneryDraws + vehicleChunks.length + (terrain.sky ? skyChunks.length : 0) + diagnostics.vegetationDraws + (waterRenderer?.draws ?? 0) + (trainRenderer?.draws ?? 0) + (wheelEffectsRenderer?.draws ?? 0) + (ambientEffectsRenderer?.draws ?? 0) + (snowRenderer?.draws ?? 0);
     diagnostics.drawTriangles = cpuTriangles + (terrainTriangles * 3 + sceneryTriangles * 3 + vehicleChunks.reduce((sum, c) => sum + c.count, 0) + (terrain.sky ? skyChunks.reduce((sum, c) => sum + c.count, 0) : 0)) / 3 + diagnostics.vegetationTriangles + (trainRenderer?.triangles ?? 0) + (wheelEffectsRenderer?.triangles ?? 0) + (ambientEffectsRenderer?.triangles ?? 0) + (snowRenderer?.triangles ?? 0);
   }
   if (diagnostics.frames === 1 || diagnostics.frames % 120 === 0) {
@@ -1760,7 +1770,7 @@ window.addEventListener('keydown', event => {
   if (bound) { event.preventDefault(); keys.add(event.code); if (simReady) gameplayBindings.observeKeys(keys, event.repeat ? null : event.code); }
 });
 window.addEventListener('keyup', event => { keys.delete(event.code); gameplayBindings.observeKeys(keys); });
-const clearInput = () => { motorcyclePresentation.reset(); presentedFrame = presentedCamera = undefined; keys.clear(); pointers.clear(); touchControls.clear(); touchLean.clear(); gameplayBindings.cancel(); simAccumulator = 0; cameraCycle = false; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
+const clearInput = () => { speedRush.reset(); motorcyclePresentation.reset(); presentedFrame = presentedCamera = undefined; keys.clear(); pointers.clear(); touchControls.clear(); touchLean.clear(); gameplayBindings.cancel(); simAccumulator = 0; cameraCycle = false; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
 gameplayBindings.subscribe(clearInput);
 window.addEventListener('gamepaddisconnected', clearInput);
 const syncAudio = () => { if (!focused || document.hidden || lost || menuOpen || pageSuspended) impactEvents.reset(); void audio.setActive(focused && !document.hidden && !lost && !menuOpen && !pageSuspended).catch(error => { diagnostics.audioError = error.message; }); };
@@ -1771,7 +1781,7 @@ window.addEventListener('resize', () => { scheduleRender(); });
 canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; for(const model of remoteModels.values()){model.chunks=null;model.gpuTextures=[];} diagnostics.ready = false; clearInput(); syncAudio(); frontend?.setLoading(true, 'Restoring graphics…'); status('Restoring graphics…'); });
 // Every old GPU handle belongs to the lost context, including vegetation instances.
 // Discard those references before buildMesh runs its normal resource cleanup.
-canvas.addEventListener('webglcontextrestored', () => { try { lost = false; snowRenderer=undefined; ambientEffectsRenderer=undefined; bloodRenderer = undefined; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); scheduleRender(); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
+canvas.addEventListener('webglcontextrestored', () => { try { lost = false; speedRush = new SpeedRush(gl); snowRenderer=undefined; ambientEffectsRenderer=undefined; bloodRenderer = undefined; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); scheduleRender(); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
 window.addEventListener('pagehide', event => {
   cancelAnimationFrame(frame); frame = 0; clearInput();
   if (event.persisted) {
