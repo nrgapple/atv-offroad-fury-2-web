@@ -118,8 +118,7 @@ eight ENV, six FREE, eight NAT, sixteen SX, Training and Coonce; original IDs
 1–9 remain stable and 31 venues were appended. The frontend gate visits every
 unlocked choice with source previews, plus desktop/controller Tioga and portrait
 Caribou loading/pause/reload. Training retains its source title with no invented
-thumbnail. These are host results; the public app and expanded R2 content still
-await release verification.
+thumbnail. These were host results before public release.
 
 Six Sausalito hay-bale approaches at 390px supply both original wheel support and
 body responses (7–85 support frames and 12–104 body-contact frames per route).
@@ -140,6 +139,39 @@ archives retain their hashes and use virtual LBAs after source resources.
 Multiplayer and solo selectors skip archives absent from an older validated
 manifest during the separate application/content publication stages.
 
-Public delivery remains pending current-main CI, inspected dev-log metadata,
-approved R2 upload and public HTTPS browser verification. Host-only screenshots
-and source resources remain ignored in private storage.
+## Public release verification (2026-10-13)
+
+The all-40 venue app passed main CI/deploy at `3b08d61`
+([run 38487888220](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38487888220)).
+The required runtime package was published separately through the approved R2
+manifest. The package validated 500 objects and uploaded 41 changes; the
+manifest lists 147 runtime entries. Public HTTPS hash verification on both
+[furyremastered.com](https://furyremastered.com/) and the
+[Workers origin](https://atv-offroad-fury-2.champtoday.workers.dev/) matched 44
+authored static files and 499 served content objects. The public gallery at the
+time contained 195 entries and 149 screenshots. A later `4c0d90c` deployment
+changed dev-log metadata only; map code and runtime content stayed the same.
+
+On the deployed public app, a single Chromium sweep loaded and drove all 40
+source venues. Every route was ready, all reported zero unsupported scenery
+meshes, and the sweep ended without JavaScript or WebGL errors. Public browser
+gates also passed the main title/menu and keyboard/controller routes, mobile
+touch map selection, Tioga driving, pause, and Caribou reload without a disc
+selection step. Six Sausalito/SX01 hay-bale approaches at 390px produced source
+wheel-support and body-contact responses; actual touch input moved the ATV.
+
+Two consecutive public two-client Sausalito/SX01 sessions passed with 13 remote
+draws per client, remote rider models, movement replication (5.07 ft and
+8.16 ft), and cleanup after host departure, without JavaScript or WebGL errors.
+An earlier attempt timed out after both simulations initialized while waiting
+for remote-render readiness; the cause remains unknown. The inspected public
+screenshots in `research/devlog/entries/` show the 390×844 portrait ride and the
+landscape host view with a P2 Guest marker; the guest vehicle is outside that
+camera view. These are automated Chromium captures, not physical-phone photos.
+
+Public verification proves the listed browser routes and connected venue
+content, not full PS2 or whole-game equivalence. Original race rules, Training
+objectives, hockey mode, complete weather/ambient behavior, crowd reverse
+playback, lighting, water interactions, and remaining rendering fidelity are
+still unfinished. Physical-device and geographically separated network behavior
+remain unverified.

@@ -6,7 +6,7 @@ Fury Remastered is an ongoing **Rust/WebAssembly port of ATV Offroad Fury 2** fo
 
 Codex has helped with most of the implementation and reverse engineering. We work from the original PS2 disc, without the original source code, recovering the game's resources and behavior one system at a time. The original experience is the baseline; optional enhancements sit alongside the ongoing port.
 
-**The latest host-verified checkpoint now exposes all 40 original venue families in Freestyle:** eight environments, six stunt venues, eight Nationals, sixteen Supercross stadiums, Training, and Coonce Arena. The public HTTPS build still has nine environments while the expanded app and content package await CI and release verification. The browser port also supports all 26 original in-race quads, one-handed touch controls, online Freeride with up to four players, motorcycles, and a Caribou Peak National race preview. Required resources load automatically, with no installation or disc-selection step.
+**The public HTTPS build now unlocks all 40 original venue families in Freestyle:** eight environments, six stunt venues, eight Nationals, sixteen Supercross stadiums, Training, and Coonce Arena. The all-venue release was verified on the public app with its separate runtime content package. The browser port also supports all 26 original in-race quads, one-handed touch controls, online Freeride with up to four players, motorcycles, and a Caribou Peak National race preview. Required resources load automatically, with no installation or disc-selection step.
 
 **This is still a work in progress.** Racing, progression, saves, and parts of the original physics, animation, audio and rendering remain incomplete. It is a playable reconstruction, not a completed decompilation or a finished port.
 
@@ -18,7 +18,7 @@ Codex has helped with most of the implementation and reverse engineering. We wor
 
 | Feature | Current public build |
 | --- | --- |
-| **Freestyle riding** | Host checkpoint: all 40 original venue families are unlocked, including 16 Supercross stadiums, Training and Coonce Arena. Public release of the expanded roster is pending. The connected venues use their source terrain, sky, scenery and available vegetation; full environmental behavior and visual parity remain incomplete. |
+| **Freestyle riding** | All 40 original venue families are publicly available: eight ENV, six FREE, eight NAT, sixteen SX, Training and Coonce Arena. Their source terrain, sky, scenery and available vegetation are connected; racing rules, environmental behavior and full visual parity remain incomplete. |
 | **Quads and riders** | All 26 original in-race quads, with their own resources, tuning and engine banks; male and female rider choices. Garage selections are available without the original unlock progression. |
 | **Mobile controls** | One-handed throttle, steering and rider lean, with an optional second touch for braking/reverse and airborne tricks. A standard two-thumb layout is also available. |
 | **Online multiplayer** | Up to four ATV riders in Freeride. Create a lobby, share an invite link or eight-character code, and join an active ride. Remote riders have animated quads, spatial engine audio, overhead names and GPS markers. |

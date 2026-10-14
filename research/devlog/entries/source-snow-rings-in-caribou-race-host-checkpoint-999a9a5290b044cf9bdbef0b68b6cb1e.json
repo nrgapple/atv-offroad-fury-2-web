@@ -1,0 +1,15 @@
+{
+  "id": "source-snow-rings-in-caribou-race-host-checkpoint-999a9a5290b044cf9bdbef0b68b6cb1e",
+  "timestamp": "2026-10-14T00:08:48.022119+00:00",
+  "recorded_at": "2026-10-14T00:30:32.764853+00:00",
+  "kind": "verification",
+  "title": "Source Snow rings in Caribou Race \u2014 host checkpoint",
+  "summary": "The Caribou National Race weather path selects 60 original Snow ring emitters from snow.emt and renders them through one instanced draw. The Caribou Freestyle scene remains dry.",
+  "details": [
+    "One hundred source birth cases compare Rust position, quantized velocity, mirror and half selection with zero differences across 24,460 EE/VU macroinstructions. Desktop and portrait source-pass captures measured 36,995 and 42,394 changed pixels; context restoration returned the Snow buffer byte-for-byte, render-only frames uploaded zero bytes, pause froze emission, and vehicle reset op23 preserved the Snow clock.",
+    "The source rings use radii 50/115/180/245 ft, 65 ft height and 4/8/16/32 divisions. The browser uses one draw and a bounded 10,800-slot allocation (508,016 GPU bytes), an implementation budget rather than a claim about original shared-bank size."
+  ],
+  "limitation": "Host-only component evidence pending merge and public R2 publication. The original shared random-table cursor/order, scene-bank overwrite order, native camera lookup/rounding, PS2 render queue and physical-device behavior remain unresolved. This does not establish complete weather or game parity.",
+  "image": "/devlog-images/source-snow-rings-in-caribou-race-host-checkpoint-999a9a5290b044cf9bdbef0b68b6cb1e.png",
+  "caption": "Host Chromium at 390\u00d7844 portrait: Caribou Race preview with source Snow visible, the ATV and the CPU field on the HUD. Browser capture, not a physical-phone photo."
+}

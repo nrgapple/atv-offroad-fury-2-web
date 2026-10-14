@@ -319,3 +319,24 @@ test('original stereo menu tune has one looping voice, silent engines and clean 
     await audio.setMusicPreview(true,false);assert.equal(audio.menuSource,null,'Soundtrack selector stops the dedicated menu tune');
   } finally {audio.close();globalThis.window=previousWindow;}
 });
+
+test('the original Rain loop has one scene voice, retains phase through ATV reset and mutes with gameplay', async () => {
+  const previousWindow=globalThis.window,nodes=[];
+  class Node{constructor(){this.gain={value:1};nodes.push(this);}connect(){}disconnect(){this.disconnected=true;}start(){this.started=true;}stop(){this.stopped=true;}}
+  class Context{constructor(){this.state='suspended';this.destination={};this.currentTime=0;}createGain(){return new Node();}createBufferSource(){return new Node();}async resume(){this.state='running';}async suspend(){this.state='suspended';}async close(){this.state='closed';}}
+  globalThis.window={AudioContext:Context,addEventListener(){},removeEventListener(){}};
+  const audio=new GameAudio(async op=>{if(op===33)return new TextEncoder().encode('null');if(op===34)return new Uint8Array();throw new Error(`Unexpected op${op}`);});
+  audio.ready=true;audio.config={samples:Array.from({length:10},()=>[])};audio.music.update=async()=>{};
+  let loads=0;audio.loadWeatherSample=async()=>{loads++;audio.buffers.set('rain.vag',{buffer:{duration:3},info:{sample_rate:100,loop_start:30,loop_end:230}});};
+  const selection={active:true,definition:{kind:'rain'}},frame={grounded:[false],speed_magnitude:0};
+  try{
+    await audio.loadWeather({selection,isCurrent:()=>true});await audio.resume();
+    await audio.update(1/60,{throttle:0},frame);await audio.update(1/60,{throttle:0},frame);
+    const voice=audio.weatherSource;assert(voice.loop);assert.equal(voice.loopStart,.3);assert.equal(voice.loopEnd,2.3);assert.equal(audio.weatherStarts,1);assert.equal(loads,1);
+    await audio.reset();assert.equal(audio.weatherSource,voice);assert(!voice.stopped);
+    await audio.setMusicPreview(true);await audio.setActive(false);assert.equal(audio.engineGain.gain.value,0);assert.equal(audio.weatherSource,voice);assert.equal(audio.context.state,'running');
+    await audio.setActive(true);await audio.update(1/60,{throttle:0},frame);assert.equal(audio.weatherStarts,1);
+    await audio.loadWeather({selection:{active:false,definition:{kind:'rain'}},isCurrent:()=>true});assert(voice.stopped);assert.equal(audio.weatherSource,null);assert.equal(loads,1);
+    await audio.loadWeather({selection,isCurrent:()=>true});await audio.update(1/60,{throttle:0},frame);const second=audio.weatherSource;assert.equal(audio.weatherStarts,2);audio.close();assert(second.stopped);assert.equal(audio.weatherSource,null);assert(nodes.filter(node=>node.started).every(node=>node.stopped));
+  }finally{audio.close();globalThis.window=previousWindow;}
+});

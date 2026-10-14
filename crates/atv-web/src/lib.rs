@@ -64,6 +64,7 @@ struct Simulation {
     scenery_textures: Vec<(String, atv_core::scenery_material::TextureClock)>,
     scenery_tick: u64,
     ambient: Option<atv_core::ambient_effects::Effects>,
+    snow: Option<atv_core::weather::Snow>,
     train_collision: Vec<TrainCollisionBinding>,
     train_collision_installed: bool,
     effects_time: f32,
@@ -1403,6 +1404,7 @@ struct SimulationBatchFrame {
     ambient: Option<atv_core::ambient_effects::Frame>,
     scenery_uv: std::collections::BTreeMap<String, [f32; 2]>,
     scenery_textures: std::collections::BTreeMap<String, usize>,
+    snow: Option<atv_core::weather::SnowFrame>,
 }
 
 fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
@@ -1556,6 +1558,19 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
                 .map(|effects| effects.step(1. / 60.).cloned())
                 .transpose()
         })?;
+        let snow = SIMULATION.with_borrow_mut(|sim| -> Result<_> {
+            let Some(snow) = sim.snow.as_mut() else {
+                return Ok(None);
+            };
+            let view: serde_json::Value =
+                serde_json::from_str(camera.get()).map_err(|e| e.to_string())?;
+            let position: [f32; 3] =
+                serde_json::from_value(view["position"].clone()).map_err(|e| e.to_string())?;
+            let target: [f32; 3] =
+                serde_json::from_value(view["target"].clone()).map_err(|e| e.to_string())?;
+            snow.step(position, std::array::from_fn(|i| target[i] - position[i]))
+                .map(Some)
+        })?;
         frames.push(SimulationBatchFrame {
             ambient,
             race,
@@ -1565,6 +1580,7 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
             train,
             scenery_uv,
             scenery_textures,
+            snow,
         });
     }
     serde_json::to_vec(&frames).map_err(|e| e.to_string())
@@ -1865,6 +1881,46 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             sim.train_collision_installed = true;
             serde_json::to_vec(&serde_json::json!({"bodies":count})).map_err(|e| e.to_string())
         });
+    }
+    if op == 121 {
+        let value: serde_json::Value = serde_json::from_slice(input).map_err(|e| e.to_string())?;
+        return SIMULATION.with_borrow_mut(|sim| {
+            sim.snow = None;
+            if value["active"].as_bool() != Some(true) {
+                return Ok(b"null".to_vec());
+            }
+            let definition: atv_core::weather::Definition =
+                serde_json::from_value(value["definition"].clone()).map_err(|e| e.to_string())?;
+            let config = atv_core::weather::SnowConfig::parse(
+                &definition,
+                value["emitter"]
+                    .as_str()
+                    .ok_or("missing Snow emitter")?
+                    .as_bytes(),
+            )?;
+            let result = serde_json::to_vec(&config).map_err(|e| e.to_string())?;
+            sim.snow = Some(atv_core::weather::Snow::new(config));
+            Ok(result)
+        });
+    }
+    if op == 120 {
+        let request: serde_json::Value =
+            serde_json::from_slice(input).map_err(|e| e.to_string())?;
+        let common = request["common"]
+            .as_str()
+            .ok_or("missing Weather common TOY")?;
+        let mode = request["mode"].as_str().unwrap_or("");
+        let random = request["random"]
+            .as_u64()
+            .filter(|v| *v <= 0x7fff_ffff)
+            .ok_or("invalid Weather RNG sample")? as u32;
+        let players = request["players"]
+            .as_u64()
+            .filter(|v| (1..=4).contains(v))
+            .ok_or("invalid Weather player count")? as usize;
+        let definition = atv_core::weather::Definition::parse(common.as_bytes(), mode.as_bytes())?;
+        return serde_json::to_vec(&atv_core::weather::select(definition, random, players)?)
+            .map_err(|e| e.to_string());
     }
     if op == 66 {
         let resource = Resource::parse(input)?;
