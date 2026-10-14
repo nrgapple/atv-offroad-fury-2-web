@@ -179,19 +179,21 @@ export class BloodRenderer {
     for(const [index,size,offset] of [[1,4,0],[2,1,16]]) {gl.enableVertexAttribArray(index);gl.vertexAttribPointer(index,size,gl.FLOAT,false,20,offset);gl.vertexAttribDivisor(index,1);}
     gl.bindVertexArray(null);
   }
-  draw(drops,{camera,viewProjection}) {
+  draw(drops,{camera,viewProjection,program}) {
     const gl=this.gl,count=Math.min(96,drops.length);this.draws=0;
     if(!count)return;
-    for(let i=0;i<count;i++) {
-      const p=drops[i];this.data.set([p.position[0],p.position[1]-(p.landed?p.size-.025:0),p.position[2],p.size*(p.landed?5:1.8),Number(p.landed)],i*5);
+    const changed=this.drops!==drops;this.drops=drops;
+    if(changed)for(let i=0;i<count;i++) {
+      const p=drops[i],k=i*5;
+      this.data[k]=p.position[0];this.data[k+1]=p.position[1]-(p.landed?p.size-.025:0);this.data[k+2]=p.position[2];
+      this.data[k+3]=p.size*(p.landed?5:1.8);this.data[k+4]=Number(p.landed);
     }
-    const previous=gl.getParameter(gl.CURRENT_PROGRAM);
     gl.useProgram(this.program);gl.uniformMatrix4fv(this.uniforms.viewProjection,false,viewProjection);
     gl.uniform3fv(this.uniforms.right,[-Math.cos(camera.yaw),0,Math.sin(camera.yaw)]);
     gl.uniform3fv(this.uniforms.up,[-Math.sin(camera.yaw)*Math.sin(camera.pitch),Math.cos(camera.pitch),-Math.cos(camera.yaw)*Math.sin(camera.pitch)]);
-    gl.bindVertexArray(this.vao);gl.bindBuffer(gl.ARRAY_BUFFER,this.buffer);gl.bufferSubData(gl.ARRAY_BUFFER,0,this.data.subarray(0,count*5));
+    gl.bindVertexArray(this.vao);gl.bindBuffer(gl.ARRAY_BUFFER,this.buffer);if(changed)gl.bufferSubData(gl.ARRAY_BUFFER,0,this.data.subarray(0,count*5));
     gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);gl.drawArraysInstanced(gl.TRIANGLES,0,6,count);
-    gl.depthMask(true);gl.disable(gl.BLEND);gl.bindVertexArray(null);gl.useProgram(previous);this.draws=1;
+    gl.depthMask(true);gl.disable(gl.BLEND);gl.bindVertexArray(null);gl.useProgram(program);this.draws=1;
   }
   dispose(){const gl=this.gl;gl.deleteVertexArray(this.vao);gl.deleteBuffer(this.corners);gl.deleteBuffer(this.buffer);gl.deleteProgram(this.program);}
 }

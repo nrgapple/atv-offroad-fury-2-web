@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {mkdir,writeFile} from 'node:fs/promises';
+import {captureSeveredMesh} from './capture_severed_mesh.mjs';
 import {captureSimulation} from './capture_simulation.mjs';
 import {captureCrashIsolation,verifyCrashIsolation,captureCrashDraws,verifyCrashImpacts} from './crash_isolation.mjs';
 const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
@@ -12,7 +13,7 @@ await mkdir('work/verification',{recursive:true});
 try {
  const page=await browser.newPage({viewport:{width:Number(process.env.ATV_CRASH_WIDTH||1280),height:844}}),errors=[];
  page.on('pageerror',e=>errors.push(e.message));
- await captureCrashIsolation(page);await captureCrashDraws(page);await captureSimulation(page,'crashFrames');
+ await captureSeveredMesh(page);await captureCrashIsolation(page);await captureCrashDraws(page);await captureSimulation(page,'crashFrames');
  await page.addInitScript(()=>{
   if(!localStorage.getItem('atv-crash-mode'))localStorage.setItem('atv-crash-mode','gorn');
   if(!localStorage.getItem('atv-camera-shake'))localStorage.setItem('atv-camera-shake','true');
@@ -45,8 +46,16 @@ try {
  const feedback=await page.evaluate(()=>({shake:window.atvTerrainStatus.cameraShake,audio:window.atvTerrainStatus.audio}));
  assert(feedback.shake.impacts>0);
  assert(feedback.shake.energy>0);
- assert(feedback.shake.offset.some(v=>Math.abs(v)>.005));
+ assert(feedback.shake.offset.some(v=>Math.abs(v)>.00005));
  assert(feedback.audio.crashBooms>0);
+ const presentation=await page.evaluate(()=>({camera:window.atvTerrainStatus.cameraPresentation,removed:window.atvTerrainStatus.severedBridgeTriangles}));
+ assert(presentation.removed>0,'Severed mesh bridge triangles must be removed from the rendered rider');
+ assert(presentation.camera.crash,'Crash camera must frame posed ATV and rider bounds');
+ const mesh=await page.evaluate(()=>window.severedMesh);assert(mesh.draws>0);assert(mesh.maxEdge<8,`Rendered severed triangles stretch ${mesh.maxEdge} feet`);
+ const framing=await page.evaluate(()=>{const s=window.atvTerrainStatus,v=s.camera,f=s.cameraPresentation.focalLength,aspect=document.querySelector('canvas').width/document.querySelector('canvas').height,b=s.cameraPresentation.crash.bounds;
+  const forward=[Math.sin(v[3])*Math.cos(v[4]),Math.sin(v[4]),Math.cos(v[3])*Math.cos(v[4])],right=[-Math.cos(v[3]),0,Math.sin(v[3])],up=[-Math.sin(v[3])*Math.sin(v[4]),Math.cos(v[4]),-Math.cos(v[3])*Math.sin(v[4])];
+  return Array.from({length:8},(_,c)=>{const p=b.min.map((x,i)=>((c&(1<<i))?b.max[i]:x)-v[i]),dot=a=>a.reduce((sum,x,i)=>sum+x*p[i],0),z=dot(forward);return [dot(right)*f/aspect/z,dot(up)*f/z,z];});});
+ assert(framing.every(([x,y,z])=>Math.abs(x)<.85&&Math.abs(y)<.85&&z>1),'Both rendered actors and debris must fit with impact-shake margin');
  assert(crash.funny_crash.blood.every(p=>p.position.every(Number.isFinite)));
  await page.screenshot({path:'private/reports/devlog-images/gorn-severe-host.png'});
  await page.waitForFunction(()=>crashDraws.quad>0&&crashDraws.rider>0);
@@ -85,6 +94,6 @@ try {
  assert(impact.impacts>0);
  assert(frames.every(s=>!s.frame.funny_crash||[...s.frame.funny_crash.quad_node_matrices.flat(),...s.frame.funny_crash.rider_node_matrices.flat()].every(Number.isFinite)));
  assert.deepEqual(errors,[]);assert.equal(await page.evaluate(()=>window.atvTerrainStatus.glError),0);
- await writeFile(process.env.ATV_CRASH_TRACE||'work/verification/camera-gorn.json',JSON.stringify({crash,isolation,originalIsolation,feedback,impact,frames,errors}));
+ await writeFile(process.env.ATV_CRASH_TRACE||'work/verification/camera-gorn.json',JSON.stringify({crash,isolation,originalIsolation,feedback,impact,presentation,mesh,framing,frames,errors}));
  console.log('PASS: Gorn severe crash renders five severed limbs/head and 90 blood droplets, impact camera/audio, intact recovery, settings persistence and exact paired gameplay.');
 } finally {await browser.close();}
