@@ -1,0 +1,13 @@
+// Original-content crash profiler: authored throttle/stunt input only.
+// Compare old/new builds sequentially with ATV_TEST_URL and ATV_CRASH_PROFILE.
+// Includes no isolation worker or GPU interception; headless host timings are
+// observations, not a guaranteed frame rate on mobile devices.
+import {createRequire} from 'node:module';
+import {mkdir,writeFile} from 'node:fs/promises';
+const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
+await mkdir('work/verification',{recursive:true});
+const output=process.env.ATV_CRASH_PROFILE || 'work/verification/crash-profile.json';
+const b=await chromium.launch({headless:true,args:['--use-angle=metal']});
+try {const p=await b.newPage({viewport:{width:1280,height:844}});
+await p.addInitScript(()=>{localStorage.setItem('atv-crash-mode','gorn');localStorage.setItem('atv.diagnostics.v1','performance');window.profile=[];const post=Worker.prototype.postMessage;let held=false;Worker.prototype.postMessage=function(m,...args){if(m.op===50&&window.driving){const c=JSON.parse(new TextDecoder().decode(m.bytes)),f=window.atvTerrainStatus?.frame;if(f?.speed_magnitude>55&&!f.grounded.some(Boolean)&&f.wreck.phase==='Riding')held=true;if(f?.wreck.phase!=='Riding')held=false;c.count=4;c.input={...c.input,throttle:1,brake:0,steer:0,lean:0,reverse:false,touch_drive:null,preload_axis:null,stunt_modifiers:held?1:0,stunt_x:0,stunt_y:held?1:0};m={...m,bytes:new TextEncoder().encode(JSON.stringify(c))};}return post.call(this,m,...args);};setInterval(()=>{if(!window.profiling)return;const s=window.atvTerrainStatus;if(s?.frame)profile.push({phase:s.frame.wreck.phase,age:s.frame.funny_crash?.age,blood:s.blood.count,frame:s.performance.frameMs,p95:s.performance.p95Ms,cpu:s.performance.renderCpuMs,batch:s.physicsBatchMs,steps:s.physicsBatchSteps,shake:s.cameraShake,crashCamera:s.cameraPresentation?.crash});},50);});
+await p.goto(`${process.env.ATV_TEST_URL || 'http://127.0.0.1:4195'}/play.html?drive=1&environment=env01`);await p.waitForFunction(()=>window.atvTerrainStatus?.simulation,null,{timeout:120000});await p.keyboard.press('Escape');await p.evaluate(()=>window.driving=window.profiling=true);await p.getByRole('button',{name:'Reset ATV',exact:true}).click();await p.waitForFunction(()=>window.atvTerrainStatus.frame.funny_crash?.severed_nodes.length>=5,null,{timeout:60000});await p.evaluate(()=>window.driving=false);await p.waitForFunction(()=>window.profile.filter(s=>s.blood>0).length>=20,null,{timeout:15000});await writeFile(output,JSON.stringify(await p.evaluate(()=>profile)));console.log('profile saved',output);}finally{await b.close();}

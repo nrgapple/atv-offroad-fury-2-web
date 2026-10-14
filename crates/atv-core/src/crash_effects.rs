@@ -87,6 +87,8 @@ struct Particle {
     p: V,
     previous: V,
     radius: f32,
+    floor_height: Option<f32>,
+    settled: bool,
 }
 impl Particle {
     fn new(p: V, v: V, radius: f32) -> Self {
@@ -94,6 +96,8 @@ impl Particle {
             p,
             previous: sub(p, scale(v, 1. / 120.)),
             radius,
+            floor_height: None,
+            settled: false,
         }
     }
     fn integrate(&mut self) {
@@ -108,7 +112,11 @@ impl Particle {
         self.contact(floor, true);
     }
     fn contact(&mut self, floor: &impl Fn(V) -> Option<f32>, bounce: bool) -> bool {
-        if let Some(h) = floor(self.p) {
+        self.contact_height(floor(self.p), bounce)
+    }
+    fn contact_height(&mut self, height: Option<f32>, bounce: bool) -> bool {
+        self.floor_height = height;
+        if let Some(h) = height {
             let h = h + self.radius;
             if self.p[1] < h {
                 let v = sub(self.p, self.previous);
@@ -359,7 +367,11 @@ impl Effects {
                             .map_or([0.; 3], |j| sub(j.body.p, j.body.previous))
                     });
                     let mut contacts = [false; 32];
-                    for _ in 0..10 {
+                    // Reuse each joint's floor during solver projections. Requery
+                    // at the final corrected X/Z so slope contact stays exact.
+                    let heights: [Option<f32>; 32] =
+                        std::array::from_fn(|i| self.joints.get(i).and_then(|j| floor(j.body.p)));
+                    for iteration in 0..10 {
                         for link in &self.links {
                             let delta = sub(self.joints[link.b].body.p, self.joints[link.a].body.p);
                             let d = dot(delta, delta).sqrt().max(1e-6);
@@ -371,7 +383,12 @@ impl Effects {
                                 sub(self.joints[link.b].body.p, correction);
                         }
                         for (i, joint) in self.joints.iter_mut().enumerate() {
-                            contacts[i] |= joint.body.contact(&floor, false);
+                            let height = if iteration == 9 {
+                                floor(joint.body.p)
+                            } else {
+                                heights[i]
+                            };
+                            contacts[i] |= joint.body.contact_height(height, false);
                         }
                     }
                     // Apply restitution AFTER constraints. Earlier contact response
@@ -394,7 +411,18 @@ impl Effects {
                         self.sever(rider_nodes);
                     }
                     for droplet in &mut self.blood {
-                        droplet.advance(&floor);
+                        if !droplet.settled {
+                            droplet.advance(&floor);
+                            let motion = sub(droplet.p, droplet.previous);
+                            if droplet
+                                .floor_height
+                                .is_some_and(|h| droplet.p[1] <= h + droplet.radius + 0.01)
+                                && dot(motion, motion) < 0.0001
+                            {
+                                droplet.previous = droplet.p;
+                                droplet.settled = true;
+                            }
+                        }
                     }
                     for part in &mut self.parts {
                         part.body.advance(&floor);
@@ -464,7 +492,9 @@ impl Effects {
                 .map(|b| Blood {
                     position: b.p,
                     size: b.radius,
-                    landed: floor(b.p).is_some_and(|h| b.p[1] <= h + b.radius + 0.01),
+                    landed: b
+                        .floor_height
+                        .is_some_and(|h| b.p[1] <= h + b.radius + 0.01),
                 })
                 .collect(),
             detached_parts: self.parts.len(),
@@ -565,6 +595,50 @@ mod tests {
             local_matrix: m,
             world_matrix: m,
             bounds: [0.; 7],
+        }
+    }
+    #[test]
+    fn solver_bounds_terrain_queries_and_keeps_final_slope_contact_exact() {
+        use std::cell::Cell;
+        let rider = [
+            node("Pelvis", -1, [0., 1., 0.]),
+            node("Head", 0, [0., 2., 0.]),
+        ];
+        let pose: Vec<_> = rider.iter().map(|n| n.world_matrix).collect();
+        let mut effects = Effects::default();
+        effects.set_mode("crazy", true);
+        let queries = Cell::new(0);
+        for tick in 1..120 {
+            queries.set(0);
+            let frame = effects
+                .update(
+                    tick,
+                    0,
+                    1. / 60.,
+                    true,
+                    true,
+                    [8., -5., 0.],
+                    0.,
+                    ID,
+                    &[],
+                    &[],
+                    ID,
+                    &pose,
+                    &rider,
+                    |p| {
+                        queries.set(queries.get() + 1);
+                        Some(p[0] * 0.2)
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                queries.get(),
+                8,
+                "two terrain queries per joint per 120 Hz substep"
+            );
+            for m in frame.rider_node_matrices {
+                assert!(m[13] >= m[12] * 0.2 + 0.16 - 0.001);
+            }
         }
     }
     #[test]

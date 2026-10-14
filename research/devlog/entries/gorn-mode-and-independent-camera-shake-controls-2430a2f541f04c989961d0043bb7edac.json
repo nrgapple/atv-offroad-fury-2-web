@@ -1,0 +1,14 @@
+{
+  "id": "gorn-mode-and-independent-camera-shake-controls-2430a2f541f04c989961d0043bb7edac",
+  "timestamp": "2026-10-14T00:44:11.204641+00:00",
+  "recorded_at": "2026-10-14T00:46:25.228102+00:00",
+  "kind": "verification",
+  "title": "Gorn mode and independent camera-shake controls",
+  "summary": "The host pause menu shows the Gorn crash mode and camera shake independently selectable, with camera shake Off in this captured state.",
+  "details": [
+    "Host Chromium Metal capture at 1280\u00d7844 shows the saved crash-mode choice as Gorn (blood & limbs) and the separate Camera shake setting as Off. The severe crash capture is a separate checkpoint image; this settings image records the visible control state only."
+  ],
+  "limitation": "Host-only settings evidence. It does not establish persistence on the public deployment or physical-device behavior; validated public release is pending.",
+  "image": "/devlog-images/gorn-mode-and-independent-camera-shake-controls-2430a2f541f04c989961d0043bb7edac.png",
+  "caption": "Host pause menu at 1280\u00d7844: Gorn crash effects selected and camera shake Off. Host capture; public release pending."
+}

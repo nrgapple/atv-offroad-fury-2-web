@@ -42,7 +42,7 @@ pub fn create_cpu_racer(
             .clone(),
     )?;
     if let Some(config) = sim.boundary_config {
-        vehicle.set_boundary(config, sim.crowd_present)?;
+        vehicle.set_boundary(config, sim.extended_boundary)?;
     }
     vehicle.set_linkage(sim.quad_pose.as_ref().ok_or("CPU linkage missing")?.clone());
     vehicle.set_materials(sim.materials.ok_or("CPU materials missing")?);
