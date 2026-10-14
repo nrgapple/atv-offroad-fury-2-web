@@ -151,3 +151,12 @@ The 147-record weather content package changes only the repacked AUDIO.RES from
 446 to 447 members, adding rain.vag. The earlier map package is insufficient for
 Rain audio. These are host integration checks; public delivery is a separate
 gate owned by the release coordinator. Source fog12 remains unconnected.
+
+The same configured camera-relative Snow manager now steps in motorcycle
+batches using their existing camera position/target. The motorcycle
+Caribou Race gate passes at desktop/390px: 42,569/46,540 Snow pixels, 60 rings,
+27 active emitters, one draw, 508,016 GPU bytes, and exact frozen restoration.
+Its physical vehicle reset preserves the scene clock. Snow resolves the scene
+GPU material/texture when a motorcycle's tire atlas is present; it does not use
+that vehicle atlas as Snow. Original ATV inputs and supplied scene atlas are
+unchanged.

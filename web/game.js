@@ -304,7 +304,7 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
   const ambientModeIndex=entries.findIndex(entry=>memberNamed(entry,`${environment}${environment==='game01'?'so':'fr'}.toy`));
   const ambientMode=ambientModeIndex>=0&&ambientModeIndex!==toyIndex?decoder.decode(await codec(3,resource,ambientModeIndex)):modeIndex!==toyIndex?mode:null;
   const ambientEffects = await loadAmbientEffects({resource,entries,codec,json,scene:decoder.decode(await codec(3,resource,sceneIndex)),common:decoder.decode(toy),mode:ambientMode,wheelEffects});
-  const snow=await loadSnow({selection:weather,resource,entries,codec,json,gpuTexture:wheelEffects?.gpuTexture});
+  const snow=await loadSnow({selection:weather,resource,entries,codec,json,gpuTexture:model.motorcycle?null:wheelEffects?.gpuTexture});
   const train = environment === 'env08' ? await loadTrain({ resource, entries, modeIndex, codec, json, baseTextures, isCurrent: () => token === generation }) : null;
   if (train && mode) await audio.loadSpatial({ toy: new TextEncoder().encode(mode), isCurrent: () => token === generation });
   return { weather, snow, motorcycle: model.motorcycle ? {archive:quadArchive,id:model.quad_id} : null, bytes, environment, course, cpuNames, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, ambientEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };

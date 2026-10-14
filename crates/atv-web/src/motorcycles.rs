@@ -318,7 +318,15 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
             .as_mut()
             .map(|effects| effects.step(1. / 60.).cloned())
             .transpose()?;
-        frames.push(serde_json::json!({"frame":driving_frame,"camera":camera,"water":water,"train":train,"race":race,"scenery_uv":scenery_uv,"scenery_textures":scenery_textures,"ambient":ambient}));
+        let snow = if let Some(snow) = sim.snow.as_mut() {
+            Some(snow.step(
+                camera.position,
+                std::array::from_fn(|i| camera.target[i] - camera.position[i]),
+            )?)
+        } else {
+            None
+        };
+        frames.push(serde_json::json!({"frame":driving_frame,"camera":camera,"water":water,"train":train,"race":race,"scenery_uv":scenery_uv,"scenery_textures":scenery_textures,"ambient":ambient,"snow":snow}));
     }
     serde_json::to_vec(&frames).map_err(|e| e.to_string())
 }

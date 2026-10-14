@@ -34,7 +34,17 @@ export async function loadSnow({selection,resource,entries,codec,json,gpuTexture
  const index=entries.findIndex(entry=>entry.name.replaceAll('\\','/').split('/').at(-1).toLowerCase()==='snow.emt');
  if(index<0)throw new Error('Original Snow emitter is missing.');
  const emitter=new TextDecoder().decode(await codec(3,resource,index));
- if(!gpuTexture)throw new Error('Original Snow GPU particle texture is missing.');
+ if(!gpuTexture){
+  // Motorcycles supply a vehicle tire atlas. Snow uses the selected scene's
+  // original GPU material binding, as the ATV scene manager does.
+  const named=name=>entries.findIndex(e=>e.name.replaceAll('\\','/').split('/').at(-1).toLowerCase()===name.toLowerCase());
+  const material=entries.findIndex(e=>/(?:^|[/\\])(?:particle_gpu|env\d+particles_gpu)\.psm$/i.test(e.name));
+  if(material<0)throw new Error('Original Snow GPU material is missing.');
+  const binding=new TextDecoder().decode(await codec(3,resource,material)).match(/^\s*TextureMap_1\s*=\s*([A-Za-z0-9_]+)\s*$/mi)?.[1];
+  const texture=binding?named(`${binding}.pst`):-1;
+  if(texture<0)throw new Error('Original Snow GPU particle texture is missing.');
+  const bytes=await codec(3,resource,texture);gpuTexture={...await json(7,bytes),rgba:await codec(8,bytes)};
+ }
  //Configuration is installed after scene initialization, which replaces Rust state.
  return {selection,emitter,texture:gpuTexture,history:[],frame:null,config:null};
 }
