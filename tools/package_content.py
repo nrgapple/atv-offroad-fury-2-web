@@ -494,7 +494,8 @@ def main():
         if len(body_names) != 4:
             raise ValueError('exact-build rider BodyImpact bank expected four samples')
         menu_names = {f'ui/uitune{i}{channel}.vag' for i in range(1, 5) for channel in 'lr'}
-        names = engine_names | train_names | body_names | menu_names
+        weather_names = {'rain.vag'} #00213bf0, only the active scene Rain loop.
+        names = engine_names | train_names | body_names | menu_names | weather_names
         audio = Resource(source('/AUDIO/AUDIO.RES'))
         samples = [(name, audio.extract(i)) for i, (name, _, _) in enumerate(audio.members) if name.lower().removeprefix('audio/') in names]
         if len(samples) != len(names):
@@ -513,7 +514,7 @@ def main():
                 raise ValueError('music source is not VAG')
             chunks = [{'offset': offset, **blob(data[offset:offset + CHUNK])} for offset in range(0, len(data), CHUNK)]
             records.append({'path': entry['path'], 'lba': entry['lba'], 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(), 'directory': False, 'lazy': True, 'chunks': chunks})
-        manifest = {'version': 1, 'build': 'USA v2.00', 'source_build_sha256': SOURCE_SHA, 'engine_sample_count': len(engine_names), 'train_sample_count': len(train_names), 'rider_body_sample_count': len(body_names), 'music_song_count': count, 'files': records}
+        manifest = {'version': 1, 'build': 'USA v2.00', 'source_build_sha256': SOURCE_SHA, 'engine_sample_count': len(engine_names), 'train_sample_count': len(train_names), 'rider_body_sample_count': len(body_names), 'weather_sample_count': len(weather_names), 'music_song_count': count, 'files': records}
         temporary = output / 'manifest.json.tmp'
         temporary.write_text(json.dumps(manifest, indent=2) + '\n')
         temporary.replace(output / 'manifest.json')

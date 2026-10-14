@@ -1,0 +1,15 @@
+{
+  "id": "original-rain-material-caching-host-checkpoint-2231277bd75d4331b68eb740c17e2bad",
+  "timestamp": "2026-10-14T00:29:30.139870+00:00",
+  "recorded_at": "2026-10-14T00:30:32.804516+00:00",
+  "kind": "verification",
+  "title": "Original rain material caching \u2014 host checkpoint",
+  "summary": "Three source rain venues retain the original rain-card geometry, alpha and ordering while caching consecutive material state. The inspected Freeport (ENV04) view comes from a deterministic test-only start beside an original rain placement.",
+  "details": [
+    "Seven original-resource browser cases pass selection and lifecycle coverage. Desktop draws 30 visible source rain placements in 60 source-ordered passes, with one material update replacing 30 complete updates; portrait draws 27 placements in 54 passes, with one update replacing 27. The previous and cached renderers match every desktop (2,073,600) and portrait (1,316,640) framebuffer byte. Pause mutes the one looping rain voice; vehicle reset does not restart it, and map/page departure closes it.",
+    "The screenshot hook used the source rain model/position, NativeWorker operations 60 and 23, and a fixed 90-step clock. Rain geometry is subtle; no generic storm, postprocessing or lens droplets were added."
+  ],
+  "limitation": "Host-only source inspection, not a normal gameplay spawn or physical-phone capture. The comparison proves identical pixels and fewer material-uniform updates, not an FPS/battery improvement. Native shared RNG ordering, PS2 transparency queue behavior, ScreenRain callbacks and complete weather scheduling remain unverified; public release is pending.",
+  "image": "/devlog-images/original-rain-material-caching-host-checkpoint-2231277bd75d4331b68eb740c17e2bad.png",
+  "caption": "Host Chromium at 390\u00d7844 on the Freeport (ENV04) source-rain inspection route: test-only position near an original rain placement after 90 fixed steps, with harbor water, foggy skyline, rider and GPS. This is not a normal spawn or physical-phone photo."
+}
