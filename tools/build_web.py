@@ -15,7 +15,7 @@ target = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'target'))
 subprocess.run([cargo, 'build', '--locked', '--release', '-p', 'atv-web', '--target', 'wasm32-unknown-unknown', '--target-dir', str(target)], cwd=ROOT, check=True)
 dist = ROOT / 'web/dist'
 dist.mkdir(exist_ok=True)
-for name in ['fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'play.html', 'design-system.css', 'game.css', 'game.js', 'render-support.js', 'race.js', 'multiplayer.js', 'water.js', 'fog.js', 'train.js', 'wheel-effects.js', 'motorcycle-presentation.js', 'hud.js', 'minimap.js', 'diagnostics.js', 'frontend.js', 'launch.js', 'touch.js', 'touch.css', 'content.js', 'audio.js', 'music.js', 'devlog.html', 'devlog.css', 'devlog.js', 'workbench.html', 'style.css', 'app.js', 'worker.js', 'input.js', 'controls.js', 'bindings.js']:
+for name in ['fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'play.html', 'design-system.css', 'game.css', 'game.js', 'render-support.js', 'race.js', 'multiplayer.js', 'water.js', 'fog.js', 'train.js', 'wheel-effects.js', 'weather.js', 'motorcycle-presentation.js', 'hud.js', 'minimap.js', 'diagnostics.js', 'frontend.js', 'launch.js', 'touch.js', 'touch.css', 'content.js', 'audio.js', 'music.js', 'devlog.html', 'devlog.css', 'devlog.js', 'workbench.html', 'style.css', 'app.js', 'worker.js', 'input.js', 'controls.js', 'bindings.js']:
     shutil.copy2(ROOT / 'web' / name, dist / name)
 shutil.copy2(target / 'wasm32-unknown-unknown/release/atv_web.wasm', dist / 'atv_web.wasm')
 icons = json.loads((ROOT / 'web/fury-app-icons.json').read_text())

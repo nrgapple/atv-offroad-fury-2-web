@@ -38,8 +38,14 @@ owns the placed Type 8 effect.
 
 The active Snow branch generates 4/8/16/32 emitters (60 total), at the source
 ring heights/radii, enables camera-facing hemispheres and moves enabled emitters
-relative to the active camera (00209dd0/00209310). Its Snow-specific VU birth,
-packed updates, fading and render callback remain unconnected. Original ScreenRain
+relative to the active camera (00209dd0/00209310). The Rust SnowEmitter runtime
+now creates those rings from the selected mode
+TOY and original `snow.emt`, uses the camera-facing test, and emits the source
+ceil(max(minimum, rate*dt)) birth count at each fixed simulation step. A single
+WebGL instanced draw uses the original GPU particle texture and the previously
+recovered mode2 velocity/alpha contract. Snow clears gravity, uses minimum Y
+−10,000, source color/alpha and lifetime jitter, source X/Z velocity spread,
+mirroring and source half-atlas selection. Original ScreenRain
 lens/world sprites and framebuffer-copy droplets are also unconnected; none of
 these inspected map Weather blocks selects ScreenRain. Rain audio initialization
 at 00213bf0 requests `rain.vag` with looping flag 0x81 and sets volume 100 at
@@ -96,3 +102,55 @@ now finishes that frame before touching the cleared pose. The scenery material
 gate uses a source-derived CPU start so CPU frustum selection and inspection
 camera agree; the previous camera-only hook failed on both prior and new builds.
 Public verification is pending integration and release.
+
+
+## Snow component and mobile work budget
+
+Caribou Race selects 60 ring emitters at radii 50/115/180/245 feet, height 65,
+with 4/8/16/32 divisions. Caribou Freestyle remains dry. Native 00369120 returns
+1 at zero angle (cosine); portable host trig still differs from original lookup
+and rounding at some boundaries. Camera position/target supply the portable
+forward direction; presentation-camera adjustments are not recovered native
+camera state. Source `001a1ba0` birth, `001d1910` packet quantization and `001d2280`
+mode2 packet submission correlate the connected path. A private interpreter
+executes 100 controlled birth cases (24,460 actual EE/VU macro instructions).
+Rust position, quantized velocity, mirror and half selection match those cases
+with zero differences. The fixture supplies the original random-table inputs;
+it does not establish the native global RNG initialization/order.
+
+The portable Snow manager uses 10,800 resident slots, matching the already
+supported wheel GPU allocation extent as a bounded backend choice; the original
+Snow scene's shared-bank capacity and overwrite order remain unproven. The
+current camera keeps roughly 27 emitters active and the source 7-second maximum
+jittered lifetime produces around 5,500 live flakes, within that budget. No density
+or lifetime reduction is applied on mobile. Its buffers and 128×64 source texture
+use 508,016 GPU bytes. Births upload 44 bytes each, coalesced into adjacent slot
+ranges. GLSL moves/fades flakes on the Rust fixed clock, so ordinary render-only
+frames have no particle updates or uploads. Live birth history reconstructs
+slots after context loss; map replacement configures a fresh manager. This
+reduces CPU work and driver submission, not a measured physical-phone FPS claim.
+
+Snow uses an independent source-algorithm 600-entry random table with a fixed
+portable seed. The original shared table/cursor and its interaction with other
+emitters remain unconnected. Portable billboard projection, shared GPU packet
+batch lifetime/UV ordering, PS2 render queue/GS rounding and hardware parity are
+still limits. Freeport's placed type 12 fog and ScreenRain lens/world droplets
+remain unconnected; ambient owns its independent placed type 8 raindrops.
+
+
+The native Snow birth timestamp is zero; `001d1910` encodes bank clock minus
+that timestamp into packet position W. Mode2 at `003b9b90` subtracts packet W
+from current global clock, producing time since packet creation for these Snow
+births. The portable per-birth timestamp implements that connected interpretation;
+shared-bank update order, callback cadence and binary32 millisecond accumulation
+remain gaps. This component advances at the port's fixed 60Hz scene clock and
+makes no claim about complete original frame scheduling.
+
+Desktop and 390×844 portrait actual-source gates show 17,149/34,729 changed pixels
+when the Snow draw is removed. The gate then isolates the production Snow pass
+and holds its camera uniforms/physics results to separate it from the settling
+presentation camera. All frozen Snow framebuffer bytes restore exactly after
+context loss, with zero uploads on subsequent render-only frames and zero GL or
+page errors. Real pause stops births and scene time. Physical vehicle reset op23
+preserves Snow time/emission IDs; existing Race Backspace performs a full race
+reload/map replacement, which intentionally starts a fresh manager.
