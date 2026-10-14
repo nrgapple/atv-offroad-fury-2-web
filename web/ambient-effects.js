@@ -1,3 +1,4 @@
+import { cameraAxes } from './render-support.js';
 // Original placed TOY effects are simulated in Rust; this bounded renderer
 // adapts their sprite packets into two depth-tested, atlas-instanced GL draws.
 import {AmbientStreamsRenderer} from './ambient-streams.js';
@@ -116,7 +117,7 @@ export class AmbientEffectsRenderer {
     gl.activeTexture(gl.TEXTURE0);const oldTexture=gl.getParameter(gl.TEXTURE_BINDING_2D);
     gl.useProgram(this.program);gl.bindVertexArray(this.vao);gl.bindBuffer(gl.ARRAY_BUFFER,this.buffer);
     gl.uniformMatrix4fv(this.uniforms.viewProjection,false,viewProjection);
-    gl.uniform3fv(this.uniforms.eye,[camera.x,camera.y,camera.z]);gl.uniform3fv(this.uniforms.right,[-Math.cos(camera.yaw),0,Math.sin(camera.yaw)]);
+    gl.uniform3fv(this.uniforms.eye,[camera.x,camera.y,camera.z]);gl.uniform3fv(this.uniforms.right,cameraAxes(camera.yaw,0).right);
     gl.uniform3fv(this.uniforms.up,[-Math.sin(camera.yaw)*Math.sin(camera.pitch),Math.cos(camera.pitch),-Math.cos(camera.yaw)*Math.sin(camera.pitch)]);
     gl.uniform3fv(this.uniforms.lightColor,lightColor);gl.uniform3fv(this.uniforms.fogColor,fogColor);gl.uniform2f(this.uniforms.fogPacking,fog?.encoded_bias??524288,fog?.coefficient??0);gl.uniform1i(this.uniforms.fogEnabled,Boolean(fog));
     gl.uniform1i(this.uniforms.ambientAtlas,0);gl.bindTexture(gl.TEXTURE_2D,this.texture);gl.enable(gl.BLEND);gl.depthMask(false);

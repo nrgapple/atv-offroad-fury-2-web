@@ -97,7 +97,7 @@ try {
   await page.waitForTimeout(600);
   const gamepad = await read(); finite(gamepad);
   assert.notDeepEqual(gamepad.frame.rider_node_matrices, loaded.frame.rider_node_matrices, 'Original rider controllers must respond to driving input');
-  assert.equal(gamepad.input.throttle, 1); assert(gamepad.input.steer < 0, 'Right input converts to original left-positive steering scalar');
+  assert.equal(gamepad.input.throttle, 1); assert(gamepad.input.steer > 0, 'Right input follows source +X screen-right steering');
   await page.evaluate(() => { window.testPad.buttons[11] = { value: 1, pressed: true }; });
   await page.waitForFunction(() => window.atvTerrainStatus.followCamera.preset === 2);
   await steps(15);
@@ -137,7 +137,7 @@ try {
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point(1, 105, 440), point(2, 290, 380)] });
   await page.waitForTimeout(500);
   const during = await read(); finite(during);
-  assert(during.input.throttle > .5 && during.input.steer < 0);
+  assert(during.input.throttle > .5 && during.input.steer > 0);
   assert.equal(during.input.preload_axis, 1, 'Right touch holds preload without orbiting the camera');
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
   await page.waitForTimeout(100);

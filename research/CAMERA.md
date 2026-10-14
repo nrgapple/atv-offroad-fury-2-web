@@ -153,3 +153,23 @@ CARGO_TARGET_DIR=work/terrain-contact-target ~/.cargo/bin/cargo test --locked \
 CARGO_TARGET_DIR=work/terrain-contact-target ~/.cargo/bin/cargo check --locked \
   -p atv-web
 ```
+
+## World horizontal orientation correction
+
+The exact-build camera constructor `0011a3e0` defaults to +Z look and +Y up.
+`0013be20` constructs the horizontal basis from up × look; `00325c10` builds
+the view transform, and `00325d50` uses positive-forward homogeneous depth.
+The source therefore projects +X to screen-right. The former browser view used
+the opposite horizontal basis, reflecting every scene, including signage and
+vehicle numbers. Preserve the native horizontal basis while converting forward
+depth to WebGL's −Z convention. The shared `cameraAxes` helper supplies the
+scene, water ray reconstruction and screen-facing particle renderers. GPS and
+browser steering follow the corrected source orientation. Source geometry,
+textures, placements and collision data are unchanged.
+
+`tools/test_world_orientation.mjs` observes the actual GPU projection and tests
+both steering directions through keyboard, controller and touch in the live Rust
+quad simulation. `tools/test_motorcycle_controls.mjs` separately verifies both
+motorcycle touch turn/bank directions and rider attachment. Inspected SX01
+captures show readable AXO banners and the quad's 99 plate. This is a coordinate
+correction, not a claim of complete original camera or scene fidelity.

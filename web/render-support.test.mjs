@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation } from './render-support.js';
+import { cameraAxes, sceneViewProjection, vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation } from './render-support.js';
 const identity = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
 const planes = viewPlanes(identity);
 test('boxes crossing clip planes survive, including near-plane and camera-containing boxes', () => {
@@ -144,4 +144,27 @@ test('crash bounds follow the actual rendered node transforms',()=>{
  const m=[1,0,0,0,0,1,0,0,0,0,1,0,10,20,30,1];
  const bounds=meshNodeBounds([{vertices:[{node:0,local_position:[-1,-2,-3]},{node:0,local_position:[1,2,3]}]}],2);
  assert.deepEqual(poseBounds(bounds,[m,m]),{min:[9,18,27],max:[11,22,33]});
+});
+
+// Asymmetric source coordinates catch a global mirror even when depth and
+// ordinary driving smoke checks still pass. Reference: native +Z look/+Y up.
+test('source camera puts +X on the right and preserves depth, pitch and clipping', () => {
+  const dot=(a,b)=>a.reduce((sum,v,i)=>sum+v*b[i],0);
+  for(const yaw of [0,.7,-1.8,Math.PI])for(const pitch of [0,-.45,.8]) {
+    const camera={x:240,y:35,z:110,yaw,pitch},axes=cameraAxes(yaw,pitch);
+    const nativeRight=[Math.cos(yaw),0,-Math.sin(yaw)];
+    assert(dot(axes.right,nativeRight)>.99999);
+    assert(Math.abs(dot(axes.right,axes.up))<1e-12);
+    const m=sceneViewProjection(camera,16/9,1.2,1,1000);
+    const point=(side,vertical,depth)=>[camera.x,camera.y,camera.z].map((v,i)=>v+nativeRight[i]*side+axes.up[i]*vertical+axes.forward[i]*depth);
+    const project=p=>[0,1,2,3].map(row=>m[row]*p[0]+m[4+row]*p[1]+m[8+row]*p[2]+m[12+row]);
+    const center=project(point(0,0,20)),right=project(point(4,0,20)),up=project(point(0,3,20));
+    assert(center[3]>0&&Math.abs(center[0])<.0001&&Math.abs(center[1])<.0001);
+    assert(right[0]/right[3]>.1,'Asymmetric landmark stays on original screen-right');
+    assert(up[1]/up[3]>.1);
+    const planes=viewPlanes(m);
+    const tiny=p=>({min:p.map(v=>v-.01),max:p.map(v=>v+.01)});
+    assert(!outsideView(tiny(point(4,0,20)),planes));
+    assert(outsideView(tiny(point(0,0,-20)),planes));
+  }
 });

@@ -1,0 +1,14 @@
+{
+  "id": "world-orientation-correction-host-checkpoint-e4c200068ae0442193ff8ce5d3fbbb35",
+  "timestamp": "2026-10-14T04:32:41.041132+00:00",
+  "recorded_at": "2026-10-14T04:34:54.637465+00:00",
+  "kind": "verification",
+  "title": "World orientation correction \u2014 host checkpoint",
+  "summary": "The shared world-rendering path now uses the original game\u2019s horizontal right direction, fixing reversed map lettering while preserving intended left/right driving response. Representative camera, minimap, water, ATV and motorcycle paths were checked on the host.",
+  "details": [
+    "Source comparison identified the native camera basis: routine 0013be20 forms the horizontal axis from up \u00d7 look, and the projection uses positive X focal scale and positive-forward homogeneous W. The browser camera and dependent signs now follow that convention. The inspected SX01 quad screenshot shows AXO stadium banners reading left to right and the ATV 99 plate; the browser reported zero page errors. Host gates passed: 439 Rust tests including doc tests, 137 JavaScript tests, 8 build-cache tests, 24 dev-log tests, 3 CI-change tests, 8 release-workflow tests, make verify source identity and repository hygiene, and a WASM build. GPU +X-right was exercised through 641 uploads with zero projection-direction errors. Six ATV keyboard/controller/touch left/right-turn cases passed. Motorcycle 29 touch turning, banking and attachment passed 329 paired steps with zero gameplay mismatches. Minimap projection was checked for representative ATV and motorcycle model/course cases. Water rendering passed dry and wet environments across desktop, portrait, rotation and context recovery with no GL errors."
+  ],
+  "limitation": "Host verification only; public deployment is pending. Full original-game visual and handling fidelity and physical-phone behavior remain unverified.",
+  "image": "/devlog-images/world-orientation-correction-host-checkpoint-e4c200068ae0442193ff8ce5d3fbbb35.png",
+  "caption": "Host SX01 capture after the world-orientation correction: stadium AXO banners and the ATV 99 plate read left to right."
+}

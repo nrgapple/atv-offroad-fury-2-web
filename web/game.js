@@ -1,5 +1,5 @@
 // Original content and vehicle component simulation run in the Rust worker.
-import { vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, RideEffectsSettings, ImpactEvents, severedIndices, meshNodeBounds, crashSubjects, crashPresentation } from './render-support.js';
+import { sceneViewProjection, vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, RideEffectsSettings, ImpactEvents, severedIndices, meshNodeBounds, crashSubjects, crashPresentation } from './render-support.js';
 import { Multiplayer, PlayerIndicators } from './multiplayer.js';
 import { Frontend } from './frontend.js';
 import { courseResource } from './launch.js';
@@ -1225,20 +1225,12 @@ function vehicleMatrix(actor = presentedFrame ?? simFrame) {
 }
 function matrix() {
   if (cameraFrame) presentCameraFrame();
-  const { x, y, z, yaw, pitch } = camera;
-  const forward = [Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)];
-  const right = [-Math.cos(yaw), 0, Math.sin(yaw)];
-  const up = [-Math.sin(yaw) * Math.sin(pitch), Math.cos(pitch), -Math.cos(yaw) * Math.sin(pitch)];
-  const view = new Float32Array([right[0], up[0], -forward[0], 0, right[1], up[1], -forward[1], 0, right[2], up[2], -forward[2], 0, -(right[0] * x + right[2] * z), -(up[0] * x + up[1] * y + up[2] * z), forward[0] * x + forward[1] * y + forward[2] * z, 1]);
   // Original00325e80 uses horizontal FOV. Preserve the4:3 vertical framing
   // while extending the view horizontally on widescreen displays.
   // 0012b360 applies the active fog end to the view's far clipping plane.
   const near = 1, far = terrain.world?.metadata.fog?.end ?? Math.max(terrain.sizeX, terrain.sizeZ) * 5;
   const f = cameraFrame ? diagnostics.cameraPresentation.focalLength : 1 / Math.tan(Math.PI / 6);
-  const projection = new Float32Array([f / (canvas.width / canvas.height), 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) / (near - far), -1, 0, 0, 2 * far * near / (near - far), 0]);
-  const result = new Float32Array(16);
-  for (let column = 0; column < 4; column++) for (let row = 0; row < 4; row++) for (let k = 0; k < 4; k++) result[column * 4 + row] += projection[k * 4 + row] * view[column * 4 + k];
-  return result;
+  return sceneViewProjection(camera, canvas.width / canvas.height, f, near, far);
 }
 function deadzone(value) { return Number.isFinite(value) && Math.abs(value) > .15 ? Math.sign(value) * (Math.abs(value) - .15) / .85 : 0; }
 function gamepad() {
@@ -1265,8 +1257,8 @@ function drivingInput() {
   if (touch.stunt_modifiers) Object.assign(input, { stunt_modifiers: touch.stunt_modifiers, stunt_x: touch.stunt_x, stunt_y: touch.stunt_y });
   if (touch.preload_axis !== null) input.preload_axis = touch.preload_axis;
   input.throttle = Math.max(0, clamp(input.throttle)); input.brake = Math.max(0, clamp(input.brake));
-  // Browser axes point right; the recovered steering scalar points left.
-  input.steer = -clamp(input.steer); // Rust clamps the combined physical lean; one-handed touch also supplies lean.
+  // Source +X is screen-right; preserve the native steering sign.
+  input.steer = clamp(input.steer); // Rust clamps the combined physical lean; one-handed touch also supplies lean.
   return { input, actions };
 }
 function acceptFrame(frame, effects = true) {
@@ -1449,7 +1441,7 @@ function updateCamera(dt) {
   let sideways = Number(keys.has('KeyD') || keys.has('ArrowRight')) - Number(keys.has('KeyA') || keys.has('ArrowLeft')) + deadzone(pad?.axes[0]);
   let forward = Number(keys.has('KeyW') || keys.has('ArrowUp')) - Number(keys.has('KeyS') || keys.has('ArrowDown')) - deadzone(pad?.axes[1]);
   let vertical = Number(keys.has('KeyE')) - Number(keys.has('KeyQ')) + (pad?.buttons[7]?.value ?? 0) - (pad?.buttons[6]?.value ?? 0);
-  camera.yaw -= deadzone(pad?.axes[2]) * dt * 1.7;
+  camera.yaw += deadzone(pad?.axes[2]) * dt * 1.7;
   camera.pitch -= deadzone(pad?.axes[3]) * dt * 1.3;
   for (const pointer of pointers.values()) if (pointer.move) { sideways += pointer.dx / 70; forward -= pointer.dy / 70; }
   camera.pitch = Math.max(-1.45, Math.min(1.45, camera.pitch));
@@ -1457,8 +1449,8 @@ function updateCamera(dt) {
   const speed = Math.max(vehicle ? 12 : 30, Math.min(Math.max(terrain.sizeX, terrain.sizeZ) * .09, aboveGround * .6)) * (keys.has('ShiftLeft') ? 3 : 1) * dt;
   const length = Math.max(1, Math.hypot(sideways, forward, vertical));
   sideways /= length; forward /= length; vertical /= length;
-  camera.x += (Math.sin(camera.yaw) * forward - Math.cos(camera.yaw) * sideways) * speed;
-  camera.z += (Math.cos(camera.yaw) * forward + Math.sin(camera.yaw) * sideways) * speed;
+  camera.x += (Math.sin(camera.yaw) * forward + Math.cos(camera.yaw) * sideways) * speed;
+  camera.z += (Math.cos(camera.yaw) * forward - Math.sin(camera.yaw) * sideways) * speed;
   camera.y += (Math.sin(camera.pitch) * forward + vertical) * speed;
   const span = Math.max(terrain.sizeX, terrain.sizeZ);
   camera.x = Math.max(-span, Math.min(terrain.sizeX + span, camera.x));
@@ -1754,7 +1746,7 @@ canvas.addEventListener('pointermove', event => {
   pointer.dx = Math.max(-70, Math.min(70, event.clientX - pointer.startX)); pointer.dy = Math.max(-70, Math.min(70, event.clientY - pointer.startY));
   if (!pointer.move) {
     if (simReady) { if (!pointer.touch) orbit -= (event.clientX - pointer.x) * .004; }
-    else { camera.yaw -= (event.clientX - pointer.x) * .004; camera.pitch -= (event.clientY - pointer.y) * .004; }
+    else { camera.yaw += (event.clientX - pointer.x) * .004; camera.pitch -= (event.clientY - pointer.y) * .004; }
   }
   pointer.x = event.clientX; pointer.y = event.clientY;
 });

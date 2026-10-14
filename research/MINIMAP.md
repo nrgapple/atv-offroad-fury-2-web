@@ -1,13 +1,14 @@
 # Freestyle GPS minimap
 
-Projection/zoom correction strategy (2026-10-13): the live scene camera uses
-right = −X with north/up = +Z. The old +X-right map reflected that view. Use
-−X-right consistently for terrain raster sampling, scenery and crop coordinates,
-and derive marker bearing from the same projected forward vector. Follow the
-rendered actor rather than a different simulation/interpolation sample; detached
-rider poses take over the GPS center during wrecks. Add persisted 25–200% zoom,
-default 50% (1,536 feet across, twice the previous range), independently of size.
-Zoom only changes the crop of the same cache; use an adaptive feet scale.
+World orientation correction (2026-10-14): the original camera uses +X-right
+with north/up = +Z. The former WebGL −X-right camera reflected the entire world;
+the October 13 GPS alignment matched that incorrect view. The corrected camera
+and GPS now use +X-right for terrain raster sampling, scenery, crop coordinates,
+marker bearing and multiplayer peers. Follow the rendered actor rather than a
+different simulation/interpolation sample; detached rider poses take over the
+GPS center during wrecks. Persisted 25–200% zoom defaults to 50% (1,536 feet
+across), independently of size. Zoom changes the same cache's crop with an
+adaptive feet scale.
 
 Release-consistency correction strategy (2026-10-13): reproduce the reported
 old rectangle/button padding plus duplicated speed by retaining the previous
