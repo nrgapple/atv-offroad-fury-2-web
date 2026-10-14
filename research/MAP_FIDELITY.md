@@ -144,8 +144,8 @@ subtracts them. Freeport's static `rain` cards use authored V velocity 2; Arling
 waterduct `waterflow` uses .983. These are texture animation on existing original
 geometry, not the random weather/lens-drop system. Scene loading initializes the
 phase; ATV reset and graphics restoration preserve it. Fixed simulation batches
-advance it once per step and pause stops it. Unsupported rotation/shear/frame
-sequencing is reported rather than silently passed off as recovered animation.
+advance it once per step and pause stops it. Unsupported rotation/shear and reverse crowd frame
+sequencing are reported rather than silently passed off as recovered animation.
 
 Verification at the first host gate:
 
@@ -159,6 +159,22 @@ Verification at the first host gate:
   prelit draw contributions: rain 4,977 pixels, lava 73,978, waterflow 6,334.
   Animated offsets, pause and context phase retention pass. These contributions
   are not before/after improvement metrics or a PS2 framebuffer comparison.
+
+## Stadium material correction checkpoint
+
+Original stadium LED advertisements now decode their ten compressed ATM frames
+and use the source 10fps clock. The Ventura opaque ovals were `stlightadditive`
+lamp glows; they now use the original additive ALPHA equation. Skyline materials
+retain their original reflection and diffuse passes in order, restoring facade
+textures. Model sizes, placement and original UVs are preserved.
+
+Host desktop/portrait checks cover original frame0, all ten LED frames, visible
+source lamp/facade pixels and pause/placement-reset/context clock retention,
+including motorcycle selection27. All40 venues load and drive without scenery
+texture decode errors. Independent WebKit checks used a private three-file
+candidate override over public source assets; they do not establish a published
+release. Full draw-queue/GS/VU equivalence and reverse crowd playback remain open.
+See [STADIUM_MATERIALS.md](STADIUM_MATERIALS.md) for evidence and scope.
 
 ## Public Vancouver and nine-map checkpoint
 

@@ -17,6 +17,7 @@ import { loadTrain, TrainRenderer } from './train.js';
 import { loadAmbientEffects, AmbientEffectsRenderer } from './ambient-effects.js';
 import { loadWheelEffects, loadMotorcycleEffects, WheelEffectsRenderer, BloodRenderer } from './wheel-effects.js';
 import {loadSnow,SnowRenderer} from './weather.js';
+import {materialPassSources,materialPassKey} from './scenery-materials.js';
 import { MotorcyclePresentation } from './motorcycle-presentation.js';
 const $ = id => document.getElementById(id);
 const canvas = $('game');
@@ -266,7 +267,7 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
     try {
       // Static scene setters replace the PSG root; upload root-relative geometry.
       const model = await json(11, await codec(3, resource, modelIndex), 1);
-      const textures = await baseTextures(model, resource, entries, sceneTextures);
+      const textures = await baseTextures(model, resource, entries, sceneTextures, true);
       for (const [name, texture] of textures) sceneTextures.set(name, texture);
       sceneMeshes.set(name, model);
     } catch (error) { unsupported.push({ name, error: error.message }); }
@@ -310,20 +311,23 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
   if (train && mode) await audio.loadSpatial({ toy: new TextEncoder().encode(mode), isCurrent: () => token === generation });
   return { weather, snow, motorcycle: model.motorcycle ? {archive:quadArchive,id:model.quad_id} : null, bytes, environment, course, cpuNames, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, ambientEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
 }
-async function baseTextures(mesh, materialArchive, materialEntries, cache = new Map()) {
+async function baseTextures(mesh, materialArchive, materialEntries, cache = new Map(), multiPass = false) {
   const findMaterial = name => materialEntries.findIndex(entry => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase());
   const textures = new Map();
   for (const material of new Set(mesh.lods[0].groups.map(group => mesh.materials[group.material]))) {
-    if (cache.has(material)) { textures.set(material, cache.get(material)); continue; }
+    if (cache.has(material)) {const first=cache.get(material);for(const key of multiPass?first.passKeys??[material]:[material])textures.set(key,cache.get(key));continue;}
     const materialIndex = findMaterial(`${material}.psm`);
-    const materialText = materialIndex < 0 ? '' : decoder.decode(await codec(3, materialArchive, materialIndex));
+    const originalText = materialIndex < 0 ? '' : decoder.decode(await codec(3, materialArchive, materialIndex));
+    const sources=multiPass?materialPassSources(originalText):[originalText],passKeys=[];
+    for(const [passIndex,materialText] of sources.entries()) {
+    const passKey=materialPassKey(material,passIndex);passKeys.push(passKey);
     //001bf430 ->001b5080 binds the same texture stem with coordinate set0
     // when no authored PSM exists. Dynamic runtime replacements are separate.
     const binding = materialIndex < 0 ? material : textureBinding(materialText);
     if (!binding) continue;
     const shader = materialText.split(/\r?\n/).map(line => line.split(';')[0].trim()).find(line => /^microProgramName\s*=/i.test(line))?.split('=')[1].trim();
     const pass = materialIndex < 0 ? null : await json(90, new TextEncoder().encode(materialText));
-    if (/refl|envmap/i.test(shader ?? '') && !pass?.reflection_plane) { const unsupported = { shader }; textures.set(material, unsupported); cache.set(material, unsupported); continue; }
+    if (/refl|envmap/i.test(shader ?? '') && !pass?.reflection_plane) { const unsupported = { shader }; textures.set(passKey, unsupported); cache.set(passKey, unsupported); continue; }
     const textureIndex = findMaterial(`${binding}.pst`);
     const atmIndex = pass?.texture_animation || textureIndex < 0 ? findMaterial(`${binding}.atm`) : -1;
     const tgaIndex = textureIndex < 0 && atmIndex < 0 ? findMaterial(`${binding}.tga`) : -1;
@@ -349,7 +353,9 @@ async function baseTextures(mesh, materialArchive, materialEntries, cache = new 
       const mudIndex = maps.length > 1 ? findMaterial(`${maps[1]}.pst`) : -1;
       if (mudIndex >= 0) { const bytes=await codec(3,materialArchive,mudIndex); image.mud={...await json(7,bytes),rgba:await codec(8,bytes)}; }
     }
-    textures.set(material, image); cache.set(material, image);
+    textures.set(passKey, image); cache.set(passKey, image);
+    }
+    if(multiPass&&textures.has(material))textures.get(material).passKeys=passKeys.filter(key=>textures.has(key));
   }
   return textures;
 }
@@ -1154,7 +1160,9 @@ function buildMesh() {
     for (const [name, mesh] of world.meshes) {
       const groups = [];
       for (const group of mesh.lods[0].groups) {
-        const material = mesh.materials[group.material], decoded = world.textures.get(material);
+        const baseMaterial = mesh.materials[group.material];
+        for(const [passIndex,material] of (world.textures.get(baseMaterial)?.passKeys??[baseMaterial]).entries()) {
+        const decoded = world.textures.get(material);
         const reflection = decoded?.pass?.reflection_plane ?? 0;
         if (/refl|envmap/i.test(decoded?.shader ?? '') && !reflection) { skippedSceneGroups++; continue; }
         const prelit = decoded?.pass?.prelit ?? false;
@@ -1167,10 +1175,11 @@ function buildMesh() {
         chunk.reflectionNodes = reflection ? new Float32Array(mesh.nodes.flatMap(node => node.world_matrix)) : null;
         chunk.texture = textures.get(material); chunk.alphaCutoff = decoded?.sceneAlphaCutoff ?? 0;
         chunk.animationFrames = decoded?.animationFrames?.map(rgba => { const gpu = texture({...decoded,rgba}); gpuTextures.push(gpu); return gpu; });
-        chunk.prelit = prelit; chunk.material = material; chunk.blend = decoded?.pass?.blend ?? false; chunk.alphaFailure = decoded?.sceneAlphaFailure ?? 0;
+        chunk.prelit = prelit; chunk.material = material; chunk.passIndex=passIndex; chunk.additive=decoded?.pass?.additive??false; chunk.blend = decoded?.pass?.blend ?? false; chunk.alphaFailure = decoded?.sceneAlphaFailure ?? 0;
         chunk.depthWrite = decoded?.pass?.depth_write ?? true;
         chunk.fog = decoded?.pass?.fog ?? true;
         groups.push(chunk); sceneChunks.push(chunk);
+        }
       }
       geometry.set(name, groups);
     }
@@ -1579,9 +1588,10 @@ function render(time) {
       gl.uniform1i(uniforms.fogEnabled,Boolean(fog)&&chunk.fog);
       gl.uniform1i(uniforms.useVertexColor, chunk.prelit); gl.uniform1i(uniforms.sceneryBlend, chunk.blend);
       gl.uniform1i(uniforms.sceneryReflectionPlane, chunk.reflection);
+      gl.depthFunc(chunk.passIndex>0?gl.LEQUAL:gl.LESS);
       if (chunk.reflectionNodes) gl.uniformMatrix4fv(uniforms.quadBones, false, chunk.reflectionNodes);
       gl.uniform2fv(uniforms.sceneryUvOffset, diagnostics.sceneryUv?.[chunk.material] ?? [0,0]);
-      if (chunk.blend) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); } else gl.disable(gl.BLEND);
+      if (chunk.blend) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, chunk.additive?gl.ONE:gl.ONE_MINUS_SRC_ALPHA); } else gl.disable(gl.BLEND);
       const sceneTexture = chunk.animationFrames?.[diagnostics.sceneryTextureFrames?.[chunk.material] ?? 0] ?? chunk.texture;
       gl.uniform1i(uniforms.useTexture, Boolean(sceneTexture)); gl.bindTexture(gl.TEXTURE_2D, sceneTexture ?? fallbackTexture);
       gl.bindVertexArray(chunk.vao);
@@ -1600,7 +1610,7 @@ function render(time) {
   diagnostics.rainRender={sourceInstances:terrain.rainSourceInstances,visibleInstances:rainVisibleInstances,draws:rainDraws,materialUpdates:rainMaterialUpdates,avoidedMaterialUpdates:rainVisibleInstances-rainMaterialUpdates,scope:'original geometry/RGBA/UV/FB_ONLY pass order; cached material state, no added storm'};
   gl.uniform1f(uniforms.alphaCutoff, 0); gl.uniform1i(uniforms.useVertexColor, false); gl.uniform1i(uniforms.sceneryBlend, false);
   gl.uniform1i(uniforms.sceneryReflectionPlane, 0);
-  gl.uniform2f(uniforms.sceneryUvOffset, 0, 0); gl.depthMask(true); gl.disable(gl.BLEND);
+  gl.uniform2f(uniforms.sceneryUvOffset, 0, 0); gl.depthMask(true); gl.depthFunc(gl.LESS); gl.disable(gl.BLEND);
   if (trainRenderer) { trainRenderer.draw(uniforms, fallbackTexture, Boolean(fog)); diagnostics.train.draws = trainRenderer.draws; diagnostics.train.triangles = trainRenderer.triangles; }
   drawEcosystem();
   gl.uniform1i(uniforms.unlit, false);

@@ -11,3 +11,10 @@ The separable floating-point inverse DCT is intentionally documented as approxim
 MPEG VLC/quantization tables are adapted from MIT-licensed PL_MPEG. Attribution, pinned revision and license are in [THIRD_PARTY.md](THIRD_PARTY.md). FFmpeg 8's LGPL source was consulted for format interpretation and the installed executable used as a verification oracle; its implementation and tables were not incorporated.
 
 Synthetic tests cover a neutral MPEG intra macroblock, all truncated prefixes, coding flags, dimensions and malformed terminal codes. The decoder does not yet support multi-frame movie timing or other IPU coding flags.
+
+Stadium `stbscreen.atm` pixel-format-2 frames reuse this single-image decoder.
+The ATM reader now accepts their length-prefixed compressed PST mip payloads
+and checks every frame's container extent before decoding a selected frame.
+The source PSM texture clock selects original LED advertisement frames; this
+does not add another IPU coding mode or multi-frame MPEG movie decoding. See
+[STADIUM_MATERIALS.md](STADIUM_MATERIALS.md) for the separate material checkpoint.

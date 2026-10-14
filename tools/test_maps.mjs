@@ -30,6 +30,7 @@ try {
       if (environment === 'free04') assert.equal(loaded.obstacles.instances, 0);
       else assert(loaded.obstacles.instances > 0, `${environment} must load its source scenery colliders`);
       assert.deepEqual(loaded.unsupportedSceneMeshes, [], 'All placed original scenery meshes decode, including the v4 towers');
+      assert.deepEqual(loaded.unsupportedSceneTextures, [], 'All loaded original scenery material textures decode');
       await page.bringToFront(); await page.locator('#game').focus();
       await page.keyboard.down('KeyW');
       const target = loaded.simulationSteps + (environment === 'env01' ? 480 : 180);
@@ -65,7 +66,7 @@ try {
       }
       assert.deepEqual(errors, []);
       if (process.env.ATV_MAP_SCREENSHOTS) await page.screenshot({ path: `${process.env.ATV_MAP_SCREENSHOTS}-${environment}.png` });
-      console.log(JSON.stringify({ environment, ready: state.ready, minimap: state.minimap, terrainTriangles: state.triangles, terrainUpdates: state.terrainDetailUpdates, vegetation: state.vegetationPlacements, draws: state.vegetationDraws, sceneInstances: state.sceneInstances, unsupportedMeshes: state.unsupportedSceneMeshes, water: state.water, waterHeight: state.frame.water_height, glError: state.glError }));
+      console.log(JSON.stringify({ environment, ready: state.ready, minimap: state.minimap, terrainTriangles: state.triangles, terrainUpdates: state.terrainDetailUpdates, vegetation: state.vegetationPlacements, draws: state.vegetationDraws, sceneInstances: state.sceneInstances, unsupportedMeshes: state.unsupportedSceneMeshes, unsupportedTextures: state.unsupportedSceneTextures, water: state.water, waterHeight: state.frame.water_height, glError: state.glError }));
     } catch (error) {
       console.error(JSON.stringify({ environment, errors, status: await page.locator('#status').textContent().catch(() => null), state: await page.evaluate(() => ({ ready: window.atvTerrainStatus?.ready, simulation: window.atvTerrainStatus?.simulation })).catch(() => null) }));
       throw error;

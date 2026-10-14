@@ -256,8 +256,8 @@ mod mx_tests {
 }
 
 /// Observed frontend ATM: version, frame count, zero flags, then complete
-/// indexed PST images concatenated without a per-image length prefix.
-/// Validate every frame before returning one, including the exact final extent.
+/// indexed or IPUM-compressed PST images concatenated without a per-image length prefix.
+/// Check every frame's container extent and exact final extent; decode the selected PST.
 pub fn decode_atm(data: &[u8], frame: usize) -> Result<(usize, Texture)> {
     let count = u32le(data, 4)? as usize;
     if u32le(data, 0)? != 1
@@ -276,13 +276,19 @@ pub fn decode_atm(data: &[u8], frame: usize) -> Result<(usize, Texture)> {
         let bits = match u32le(data, at + 4)? {
             0 => 4,
             1 => 8,
+            2 => 0, // Length-prefixed IPUM mip images; no palette.
             _ => return Err("unsupported ATM pixel format".into()),
         };
         let levels = u32le(data, at + 8)?;
         if u32le(data, at)? != 1 || levels == 0 || levels > 16 {
             return Err("invalid ATM PST header".into());
         }
-        at += 12 + if bits == 8 { 1024 } else { 64 };
+        at += 12
+            + match bits {
+                8 => 1024,
+                4 => 64,
+                _ => 0,
+            };
         for _ in 0..levels {
             let height = u32le(data, at)? as usize;
             let width = u32le(data, at + 4)? as usize;
@@ -295,8 +301,14 @@ pub fn decode_atm(data: &[u8], frame: usize) -> Result<(usize, Texture)> {
             {
                 return Err("invalid ATM frame dimensions/flags".into());
             }
-            at += 16;
-            let length = (width * height * bits).div_ceil(8);
+            let length = if bits == 0 {
+                let bytes = u32le(data, at + 16)? as usize;
+                at += 20;
+                bytes
+            } else {
+                at += 16;
+                (width * height * bits).div_ceil(8)
+            };
             slice(data, at, length)?;
             at += length;
         }
@@ -353,6 +365,74 @@ fn decode_ipum_levels(data: &[u8], levels: u32) -> Result<Texture> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn compressed_atm_frames_use_length_prefixed_ipum_mips() {
+        // Authored neutral intra macroblock, not a source-content fixture.
+        let mut bits = String::from("000000001");
+        for _ in 0..4 {
+            bits.push_str("10010");
+        }
+        for _ in 0..2 {
+            bits.push_str("0010");
+        }
+        while bits.len() % 8 != 0 {
+            bits.push('0');
+        }
+        let payload: Vec<u8> = bits
+            .as_bytes()
+            .chunks(8)
+            .map(|b| b.iter().fold(0, |v, &c| (v << 1) | (c - b'0')))
+            .collect();
+        let mut image = b"ipum".to_vec();
+        image.extend(((payload.len() + 16) as u32).to_le_bytes());
+        image.extend(16u16.to_le_bytes());
+        image.extend(16u16.to_le_bytes());
+        image.extend(1u32.to_le_bytes());
+        image.extend(payload);
+        image.extend([0, 0, 1, 0xb0, 0, 0, 1, 0xb1]);
+        let mut frame = Vec::new();
+        for value in [1u32, 2, 2] {
+            frame.extend(value.to_le_bytes());
+        }
+        for _ in 0..2 {
+            for value in [16u32, 16, 0, 0, image.len() as u32] {
+                frame.extend(value.to_le_bytes());
+            }
+            frame.extend(&image);
+        }
+        let mut data = Vec::new();
+        for value in [1u32, 2, 0] {
+            data.extend(value.to_le_bytes());
+        }
+        data.extend(&frame);
+        data.extend(&frame);
+        let (count, texture) = decode_atm(&data, 1).unwrap();
+        assert_eq!(count, 2);
+        assert_eq!((texture.info.width, texture.info.height), (16, 16));
+        assert!(
+            texture
+                .rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|v| *v == [130, 130, 130, 255])
+        );
+        for end in 0..data.len() {
+            assert!(decode_atm(&data[..end], 1).is_err());
+        }
+        assert!(decode_atm(&data, 2).is_err());
+        let mut bad = data.clone();
+        bad[40..44].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(decode_atm(&bad, 1).is_err());
+        let mut bad = data.clone();
+        bad[12 + frame.len() + 28..12 + frame.len() + 32].copy_from_slice(&1u32.to_le_bytes());
+        assert!(
+            decode_atm(&bad, 0).is_err(),
+            "later frame's extent is validated even when frame0 is requested"
+        );
+        data.push(0);
+        assert!(decode_atm(&data, 1).is_err());
+    }
     #[test]
     fn atm_validates_all_frames_and_exact_extent() {
         let mut frame = Vec::new();
