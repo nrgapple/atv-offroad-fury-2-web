@@ -7,7 +7,7 @@
   "summary": "The authored Training venue adapter keeps the source TOY start and uses the Training-specific extended boundary in Freestyle. A settled 960\u00d7600 Chromium host capture shows the rider grounded at 00 mph on the original course.",
   "details": [
     "Source instruction tracing ties Training mode 6 to margin \u22121000 independently of CrowdPresent; the browser adapter preserves that course policy rather than applying the ordinary Freestyle inset.",
-    "On the original start (124.06978, 89.74450, 636.56952), 180 no-input steps remained grounded at 0.000033 ft/s; another 180 idle steps after reset remained at 0.000042 ft/s. Actual 390 px touch input moved the ATV, six hay approaches contacted wheels and body, and a position beyond 3768 still triggered the extended boundary.",
+    "At the original TOY start (124.07, 89.75, 636.57), 180 no-input steps remained grounded at 0.000033 ft/s; another 180 idle steps after reset remained at 0.000042 ft/s. Actual 390 px touch input moved the ATV. Four of six hay approaches had wheel support (18\u201356 frames); all six had body contact (9\u2013222 frames). A position beyond 3768 still triggered the extended boundary.",
     "The inspected host-only Chromium capture uses the natural source start and original hosted runtime content, with no camera or teleport hook. It is an authored browser view, not original menu artwork or a physical-device capture."
   ],
   "limitation": "This does not recover Training objectives, lesson callbacks, or a full original Training replay. Boundary flight remains active beyond the source-verified extended thresholds; all evidence is host-only.",
