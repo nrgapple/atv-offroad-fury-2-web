@@ -150,6 +150,7 @@ struct Part {
 pub struct Effects {
     enabled: bool,
     gorn: bool,
+    worst_impact: f32,
     severed: Vec<usize>,
     blood: Vec<Particle>,
     tick: u64,
@@ -209,6 +210,7 @@ impl Effects {
         self.severed.clear();
         self.blood.clear();
         self.age = 0.;
+        self.worst_impact = 0.;
     }
     #[allow(clippy::too_many_arguments)]
     pub fn update(
@@ -249,6 +251,9 @@ impl Effects {
         }
         if tick != self.tick {
             self.tick = tick;
+            if wreck && impact_speed.is_finite() {
+                self.worst_impact = self.worst_impact.max(impact_speed);
+            }
             // Rider separation can happen in flight. Mechanical damage waits for
             // a real ATV contact, measured by inward speed rather than travel speed.
             if wreck && impact_speed >= 25. {
@@ -339,7 +344,7 @@ impl Effects {
                     }
                 }
             }
-            if self.gorn && detached && impact_speed >= 50. {
+            if self.gorn && detached && self.worst_impact >= 50. {
                 self.sever(rider_nodes);
             }
             if !self.joints.is_empty() || !self.parts.is_empty() {
@@ -675,6 +680,90 @@ mod tests {
         }
         assert_eq!(e.severed.len(), 1);
         assert!(landed);
+    }
+    #[test]
+    fn severe_contact_before_rider_separation_is_retained_only_for_this_crash() {
+        let rider = [
+            node("Pelvis", -1, [0., 8., 0.]),
+            node("Head", 0, [0., 9., 0.]),
+        ];
+        let pose: Vec<_> = rider.iter().map(|n| n.world_matrix).collect();
+        let mut e = Effects::default();
+        e.set_mode("gorn", true);
+        assert!(
+            e.update(
+                1,
+                0,
+                1. / 60.,
+                true,
+                false,
+                [0.; 3],
+                65.,
+                ID,
+                &[],
+                &[],
+                ID,
+                &pose,
+                &rider,
+                |_| None
+            )
+            .is_none()
+        );
+        let f = e
+            .update(
+                2,
+                0,
+                1. / 60.,
+                true,
+                true,
+                [0.; 3],
+                0.,
+                ID,
+                &[],
+                &[],
+                ID,
+                &pose,
+                &rider,
+                |_| None,
+            )
+            .unwrap();
+        assert_eq!(f.severed_nodes.len(), 1);
+        assert_eq!(f.blood.len(), 18);
+        e.update(
+            3,
+            1,
+            1. / 60.,
+            false,
+            false,
+            [0.; 3],
+            0.,
+            ID,
+            &[],
+            &[],
+            ID,
+            &pose,
+            &rider,
+            |_| None,
+        );
+        let soft = e
+            .update(
+                4,
+                1,
+                1. / 60.,
+                true,
+                true,
+                [0.; 3],
+                10.,
+                ID,
+                &[],
+                &[],
+                ID,
+                &pose,
+                &rider,
+                |_| None,
+            )
+            .unwrap();
+        assert!(soft.blood.is_empty() && soft.severed_nodes.is_empty());
     }
     #[test]
     fn rider_retains_detached_momentum_and_rebounds_after_constraint_solving() {
