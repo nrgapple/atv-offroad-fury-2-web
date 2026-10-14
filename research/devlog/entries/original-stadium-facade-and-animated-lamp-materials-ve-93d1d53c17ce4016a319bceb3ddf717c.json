@@ -3,7 +3,7 @@
   "timestamp": "2026-10-14T02:48:26.880462+00:00",
   "recorded_at": "2026-10-14T02:55:18.592905+00:00",
   "kind": "verification",
-  "title": "Original stadium facade and animated lamp materials verified on host",
+  "title": "Stadium LED animation, lamp glow and facade passes verified on host",
   "summary": "Restored the source stadium facade pass and additive lamp material while preserving original geometry, and verified the ten-frame LED clock and lifecycle on desktop and portrait.",
   "details": [
     "The original stadium lamp uses the source GS equation (Cs-0)*As+Cd, represented by SRC_ALPHA/ONE; the authored renderer retains its lamp mesh and texture. The building08sky14 reflection and diffuse facade passes render in source order over identical geometry with LEQUAL; reflection changes UVs, not vertex positions.",
