@@ -752,7 +752,10 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         .and_then(serde_json::Value::as_bool)
                         .ok_or("missing reverse input")?,
                 };
-                sim.funny_crashes.set_enabled(
+                sim.funny_crashes.set_mode(
+                    raw.get("crash_mode")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or(""),
                     raw.get("funny_crashes")
                         .and_then(serde_json::Value::as_bool)
                         .unwrap_or(false),

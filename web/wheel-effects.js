@@ -142,3 +142,56 @@ export class WheelEffectsRenderer {
   }
   dispose(){const gl=this.gl;gl.deleteVertexArray(this.vao);gl.deleteBuffer(this.corners);gl.deleteBuffer(this.buffer);gl.deleteBuffer(this.wetBuffer);gl.deleteTexture(this.texture);gl.deleteTexture(this.wetTexture);gl.deleteProgram(this.program);}
 }
+
+// Authored blood droplets and terrain splashes, one bounded instanced draw.
+export class BloodRenderer {
+  constructor(gl) {
+    this.gl=gl; this.draws=0; this.data=new Float32Array(96*5);
+    const shader=(type,source)=>{const s=gl.createShader(type);gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s;};
+    const vertex=shader(gl.VERTEX_SHADER,`#version 300 es
+    precision highp float;
+    layout(location=0) in vec2 corner;
+    layout(location=1) in vec4 drop;
+    layout(location=2) in float landed;
+    uniform mat4 viewProjection;
+    uniform vec3 right,up;
+    out vec2 uv;
+    void main(){
+      uv=corner;
+      vec3 p=drop.xyz;
+      vec3 r=landed>.5?vec3(1,0,0):right;
+      vec3 u=landed>.5?vec3(0,0,1):up;
+      gl_Position=viewProjection*vec4(p+(r*corner.x+u*corner.y)*drop.w,1);
+    }`);
+    const fragment=shader(gl.FRAGMENT_SHADER,`#version 300 es
+    precision highp float;
+    in vec2 uv;out vec4 color;
+    void main(){float d=length(uv);if(d>1.)discard;
+      float edge=1.-smoothstep(.72,1.,d);
+      color=vec4(mix(vec3(.22,.008,.012),vec3(.65,.018,.025),1.-d),edge*.9);
+    }`);
+    this.program=gl.createProgram();gl.attachShader(this.program,vertex);gl.attachShader(this.program,fragment);gl.linkProgram(this.program);gl.deleteShader(vertex);gl.deleteShader(fragment);
+    if(!gl.getProgramParameter(this.program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(this.program));
+    this.uniforms=Object.fromEntries(['viewProjection','right','up'].map(n=>[n,gl.getUniformLocation(this.program,n)]));
+    this.vao=gl.createVertexArray();gl.bindVertexArray(this.vao);
+    this.corners=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,this.corners);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,1,1,-1,-1,1,1,-1,1]),gl.STATIC_DRAW);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,8,0);
+    this.buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,this.buffer);gl.bufferData(gl.ARRAY_BUFFER,this.data.byteLength,gl.DYNAMIC_DRAW);
+    for(const [index,size,offset] of [[1,4,0],[2,1,16]]) {gl.enableVertexAttribArray(index);gl.vertexAttribPointer(index,size,gl.FLOAT,false,20,offset);gl.vertexAttribDivisor(index,1);}
+    gl.bindVertexArray(null);
+  }
+  draw(drops,{camera,viewProjection}) {
+    const gl=this.gl,count=Math.min(96,drops.length);this.draws=0;
+    if(!count)return;
+    for(let i=0;i<count;i++) {
+      const p=drops[i];this.data.set([p.position[0],p.position[1]-(p.landed?p.size-.025:0),p.position[2],p.size*(p.landed?5:1.8),Number(p.landed)],i*5);
+    }
+    const previous=gl.getParameter(gl.CURRENT_PROGRAM);
+    gl.useProgram(this.program);gl.uniformMatrix4fv(this.uniforms.viewProjection,false,viewProjection);
+    gl.uniform3fv(this.uniforms.right,[-Math.cos(camera.yaw),0,Math.sin(camera.yaw)]);
+    gl.uniform3fv(this.uniforms.up,[-Math.sin(camera.yaw)*Math.sin(camera.pitch),Math.cos(camera.pitch),-Math.cos(camera.yaw)*Math.sin(camera.pitch)]);
+    gl.bindVertexArray(this.vao);gl.bindBuffer(gl.ARRAY_BUFFER,this.buffer);gl.bufferSubData(gl.ARRAY_BUFFER,0,this.data.subarray(0,count*5));
+    gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);gl.drawArraysInstanced(gl.TRIANGLES,0,6,count);
+    gl.depthMask(true);gl.disable(gl.BLEND);gl.bindVertexArray(null);gl.useProgram(previous);this.draws=1;
+  }
+  dispose(){const gl=this.gl;gl.deleteVertexArray(this.vao);gl.deleteBuffer(this.corners);gl.deleteBuffer(this.buffer);gl.deleteProgram(this.program);}
+}

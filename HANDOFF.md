@@ -1,3 +1,58 @@
+## Smart camera shake and Gorn crash mode — host checkpoint (2026-10-13)
+
+Commit `7c6a29d` adds an independent saved Camera shake setting and a third
+crash choice, Gorn. Existing Crazy remains the default for installations without
+a saved choice; an existing saved Original is preserved. Gorn is opt-in. Camera
+shake defaults On unless reduced motion is active, and responds to engine, speed,
+ground acceleration and impacts with bounded vibration and a decaying severity
+kick. A synthesized bass/noise boom accents hard crashes.
+
+Gorn retains Crazy's vehicle/ragdoll presentation until a severe actual ATV
+impact of at least 50 ft/s or a rider terrain landing above 40 ft/s. Supported
+head, upper-arm and upper-leg connections separate into independent groups;
+terrain-contact droplets are capped at 90 and batched in one draw. Effects are
+local-player presentation. Recovery, reset and mode changes clear the effect.
+
+The severe in-game route passed 1,519 paired WASM steps with zero gameplay or
+camera mismatches, plus 101 post-reload steps. It showed three aerial ragdoll
+frames with the ATV intact, two real contact damage transitions, seven detached
+mechanical parts, five severed rider parts, 90 droplets, one GPU blood draw,
+nonzero camera kick/energy and boom, and intact recovery. Crazy touch Nac Nac
+switch/recovery passed 581 paired steps without mismatches. Motorcycle Crazy
+(333 paired steps) and Gorn (302) mild wreck touch/recovery passed without damage
+or gore. Saved settings reload and 44px targets at 390×844 and 844×390 pass.
+`make check` passes 359 core, 27 net, 7 relay, 15 web, 6 tools and 4 release
+Rust tests; 122 JS tests, including denied localStorage getter handling and repeated-impact kick-upgrade coverage; formatting and strict Clippy. `make verify`, `make web`,
+35 release checks (one expected skip), 19 Worker checks and repository hygiene
+also pass. The hill-camera regression passed at 390×844 and 1280×720.
+
+This is host-only evidence pending current-main CI, deployment and public browser
+verification. Captures are from host Chromium Metal at 1280×844. Physical-phone
+behavior and original crash/camera parity remain unverified. Existing source
+assets are reused; no new runtime resource additions are required. The selected screenshots still need the separate R2/gallery publication step. See
+[crash effects evidence](research/CRASH_EFFECTS.md).
+
+Follow-up host touch verification with ATV26/female at 390px passed Gorn rider
+separation, one mechanical-damage contact, switching to Original/Crazy, intact
+recovery and resumed driving: 607 paired WASM steps with zero gameplay/camera
+differences. The GPU reported 468 enhanced quad and 7,292 rider draws. A separate
+ATV1-to-ATV26 severe-route probe timed out after 60 seconds while waiting for all
+seven mechanical and five gore pieces; it did not reach that target. This is a
+route/severity coverage limit, not evidence of failed effects, and does not
+establish severe Gorn gore on the female ATV26 route.
+
+The final crash-timing fix retains the worst actual ATV impact only within the
+current wreck, so a hard contact before rider separation still triggers Gorn
+after detachment; recovery/reset clears it before another crash. A Rust
+regression covers delayed separation followed by a mild crash. The final Gorn
+route passed 1,405 paired WASM gameplay/camera steps plus 101 after reload with
+zero differences: three aerial frames with the ATV intact, two contact
+transitions, seven mechanical pieces, five rider pieces, 90 droplets, nonzero
+shake and boom, and intact recovery. The prior 1,519-step run remains valid for
+its earlier host checkpoint. `make check` passed with 360 core Rust tests and
+122 JS tests, formatting and strict Clippy; `make web` passed. New CI and public
+verification remain pending.
+
 ## All 40 original Freestyle venues — host checkpoint (2026-10-13)
 
 PR [#53](https://github.com/nrgapple/atv-offroad-fury-2-web/pull/53) adds all

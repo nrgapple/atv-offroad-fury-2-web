@@ -2,7 +2,11 @@
 
 Each coherent implementation checkpoint should include relevant passing checks,
 an evidence/limitations update and a dev-log entry through `tools/update_devlog.py`.
-Commit and push at completed component or integration gates. During longer work,
+Each invocation writes a unique file under `research/devlog/entries/`; stage that
+file, not the historical `research/devlog.json`. The public JSON is assembled
+automatically; see [checkpoint storage](devlog/README.md). Keep routine checkpoint
+and publication evidence in these entries rather than appending to shared handoff
+or deployment documents. Commit and push at completed component or integration gates. During longer work,
 report checkpoint status at least every 30 minutes: last commit, current gate,
 remaining checks and blockers. A passing host test is not a deployed checkpoint.
 

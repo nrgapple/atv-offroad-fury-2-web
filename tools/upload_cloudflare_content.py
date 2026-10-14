@@ -6,6 +6,7 @@ printing or copying credentials. Uploaded object keys are explicitly allowlisted
 """
 from concurrent.futures import ThreadPoolExecutor
 import argparse
+from devlog import read_devlog
 import hashlib
 import json
 from pathlib import Path
@@ -38,9 +39,7 @@ def upload(release, commit, force=False, content=None, release_scoped=False):
             raise ValueError('only the validated current-main release may update R2')
 
     require_current_main()
-    committed = subprocess.run(['git', 'show', f'{commit}:research/devlog.json'], cwd=ROOT,
-                               check=True, capture_output=True, text=True)
-    log = json.loads(committed.stdout)
+    log = read_devlog(ROOT, commit)
     icon_records = json.loads(subprocess.run(['git', 'show', f'{commit}:web/app-icon-assets.json'], cwd=ROOT,
                               check=True, capture_output=True, text=True).stdout)
     files = validated_content(content)
