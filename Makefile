@@ -38,6 +38,8 @@ check:
 	python3 -m py_compile tools/*.py
 	python3 -m unittest discover -s tools -p 'test_worker_build_cache.py'
 	python3 -m unittest discover -s tools -p 'test_devlog.py'
+	python3 -m unittest discover -s tools -p 'test_ci_changes.py'
+	python3 -m unittest discover -s tools -p 'test_release_workflow.py'
 
 web:
 	python3 tools/build_web.py

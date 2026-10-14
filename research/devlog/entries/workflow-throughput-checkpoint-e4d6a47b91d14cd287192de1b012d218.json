@@ -1,0 +1,12 @@
+{
+  "id": "workflow-throughput-checkpoint-e4d6a47b91d14cd287192de1b012d218",
+  "timestamp": "2026-10-14T04:01:54.975566+00:00",
+  "recorded_at": "2026-10-14T04:01:54.975566+00:00",
+  "kind": "build",
+  "title": "Workflow throughput checkpoint",
+  "summary": "Added workflow change classification, deployed artifact reuse, safe cancellation and cache rules, single-owner publication coordination, and private milestone receipts to streamline CI and release handling.",
+  "details": [
+    "Validation: make check passed, including 439 Rust tests (five ignored), 141 JavaScript tests (140 passed, one skipped), 19 Worker tests, eight worker-cache tests, seven devlog tests, three change-classifier tests, and eight workflow tests. The focused release test discovery passed 34 tests with one opt-in skip. make verify passed. Workflow behavior classifies docs, devlog metadata, and runtime changes; reuses validated deployed artifacts for metadata-only releases using committed metadata reads; cancels superseded PR runs; limits saved Rust target/registry cache to main while preserving the deployment tool cache; coordinates a single checkpoint owner and nonblocking shared R2 lock while fetching the deployed artifact; and records implementation-ready, merged, live, and gallery-complete milestone receipts."
+  ],
+  "limitation": "Full CI and public deployment have not run for this checkpoint, and production speedup has not been measured."
+}

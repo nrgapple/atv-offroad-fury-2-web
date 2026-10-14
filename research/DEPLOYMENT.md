@@ -26,6 +26,18 @@ ATV Freeride; Race remains Caribou National; sound/fullscreen need browser gestu
 
 # Private source repository and public Cloudflare hosting
 
+## Change-aware delivery (2026-10-14)
+
+The active flow is [CI_CHECKPOINTS.md](CI_CHECKPOINTS.md). Documentation skips
+application builds/deploys. Dev-log-only publications reuse validated deployed
+application bytes and record their `application_commit`; unknown/runtime changes
+retain full checks. PR updates cancel superseded builds, main remains serialized,
+and trusted main saves Rust build/registry caches. One named owner handles each
+combined R2/gallery publication, pinned to a successful **live** release even if
+unrelated docs advance main. Milestone receipts separate implementation-ready,
+merged, live and gallery-complete; no daemon, new release queue or No Mistakes
+cutover is involved. Older release descriptions below describe historical runs.
+
 ## Authored asset release keys (2026-10-13)
 
 The minimap regression reproduces old CSS and HUD code remaining in a returning
