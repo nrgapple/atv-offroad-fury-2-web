@@ -1,6 +1,6 @@
 {
-  "status": "Host-verified component checkpoint: original static type2 spray and type8 fire/smoke emitters are connected, and natural-view ENV07 smoke changes rendered pixels at desktop and mobile viewport sizes. This does not establish full environmental or whole-game parity.",
-  "working_on": "Continue the host implementation for additional original emitter families and recover timing, visibility, RNG ordering, moving attachments and weather policy; keep source fidelity and public release claims bounded to verified gates.",
+  "status": "Host-verified ambient component checkpoint: static type0/type2/type8 behavior, source timer modes, and declaration loading across all 40 venues have bounded evidence. This does not establish native scene scheduling, all emitter families, weather behavior, or full environmental parity. Public release is unverified.",
+  "working_on": "Continue implementing the remaining original ambient emitter families and validate their callbacks, visibility, moving attachments, lighting/transparency behavior, and shared RNG order against the source.",
   "entries": [
     {
       "id": "original-terrain-recovered-49e7a65b",
@@ -3128,9 +3128,22 @@
       "limitation": "Host Chromium captures only; this does not verify physical phones, geographically separated networking, native PS2 multiplayer, or full game parity. Public release is pending.",
       "image": "/devlog-images/sausalito-sx01-multiplayer-ride-host-checkpoint-0c020f9b.png",
       "caption": "Host Chromium multiplayer capture on Sausalito SX01: the ATV at 22 mph and P2 Guest label at 23 ft."
+    },
+    {
+      "id": "type0-dust-and-smoke-plus-original-emitter-timers-host-25f9a29b",
+      "timestamp": "2026-10-14T00:07:27.459367+00:00",
+      "recorded_at": "2026-10-14T00:07:27.459367+00:00",
+      "kind": "verification",
+      "title": "Type0 dust and smoke plus original emitter timers \u2014 host checkpoint",
+      "summary": "Host browser coverage now loads original common and mode ambient declarations across all 40 venues. The port adds source-derived static type0 blowing dust/smoke and native delay, one-shot, random on/off, and timed activation behavior. The all-venue census has 105 raw sections; the original indexed count enables 80 and leaves 25 sections dormant.",
+      "details": [
+        "Finite original-instruction comparisons report zero differences across 300 type0 birth cases (7,272 compared words/flags) and 500 timer cases (2,000 state words). All 40 routes load their actual ambient declarations once, with bounded finite frames and source placement independent of gameplay starts. FREE06 reaches the 600-particle cap with 94 dropped births in the captured gate.",
+        "A test-only FREE06 start beside a source grill attachment changes 1,971 desktop and 1,455 portrait framebuffer pixels; it uses one sprite draw and 286,192 GPU bytes. Pause/resume, reset, and context restoration pass. Verification: 426 Rust tests, 121 JavaScript tests, eight cache tests, make verify, and nine release tests passed."
+      ],
+      "limitation": "Host-only component checkpoint; the FREE06 start is a test-only route and shipped gameplay spawn is unchanged. Native shared RNG ordering, moving attachments, actor visibility callbacks, lighting and transparency fidelity remain incomplete. Type11 fountains, type9 hats, type12 fog, full weather behavior, and whole-game parity are unfinished. No public release is claimed."
     }
   ],
-  "updated_at": "2026-10-13T23:45:42.984128+00:00",
+  "updated_at": "2026-10-14T00:07:27.459367+00:00",
   "port_status": {
     "note": "Counts describe feature areas, not percent completion. Recovered behavior can have evidence while remaining unconnected. The board separates original ATV2 baseline systems from authored previews and other-game extensions. A public app deployment proves its CI artifact and application hashes; it does not prove a gameplay route or new R2 content. The public_release block is the last fully verified content/gallery package and browser checkpoint. Host-only candidates stay labeled separately.",
     "public_release": {
