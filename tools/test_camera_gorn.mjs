@@ -51,7 +51,7 @@ try {
  const presentation=await page.evaluate(()=>({camera:window.atvTerrainStatus.cameraPresentation,removed:window.atvTerrainStatus.severedBridgeTriangles}));
  assert(presentation.removed>0,'Severed mesh bridge triangles must be removed from the rendered rider');
  assert(presentation.camera.crash,'Crash camera must frame posed ATV and rider bounds');
- const mesh=await page.evaluate(()=>window.severedMesh);assert(mesh.draws>0);assert(mesh.maxEdge<8,`Rendered severed triangles stretch ${mesh.maxEdge} feet`);
+ let mesh=await page.evaluate(()=>window.severedMesh);assert(mesh.draws>0);assert(mesh.actorDraws>mesh.draws);assert(mesh.minW>1);assert(mesh.maxNdc<.90,`Rendered actors exceed framing margin: ${mesh.maxNdc}`);assert(mesh.maxEdge<8,`Rendered severed triangles stretch ${mesh.maxEdge} feet`);
  const framing=await page.evaluate(()=>{const s=window.atvTerrainStatus,v=s.camera,f=s.cameraPresentation.focalLength,aspect=document.querySelector('canvas').width/document.querySelector('canvas').height,b=s.cameraPresentation.crash.bounds;
   const forward=[Math.sin(v[3])*Math.cos(v[4]),Math.sin(v[4]),Math.cos(v[3])*Math.cos(v[4])],right=[-Math.cos(v[3]),0,Math.sin(v[3])],up=[-Math.sin(v[3])*Math.sin(v[4]),Math.cos(v[4]),-Math.cos(v[3])*Math.sin(v[4])];
   return Array.from({length:8},(_,c)=>{const p=b.min.map((x,i)=>((c&(1<<i))?b.max[i]:x)-v[i]),dot=a=>a.reduce((sum,x,i)=>sum+x*p[i],0),z=dot(forward);return [dot(right)*f/aspect/z,dot(up)*f/z,z];});});
@@ -62,6 +62,9 @@ try {
  if(process.env.ATV_CRASH_SCREENSHOT)await page.screenshot({path:process.env.ATV_CRASH_SCREENSHOT});
  await page.waitForFunction(n=>window.atvTerrainStatus.frame.reset_count>n,crash.reset_count,{timeout:20000});
  assert.equal(await page.evaluate(()=>window.atvTerrainStatus.frame.funny_crash??null),null);
+ mesh=await page.evaluate(()=>window.severedMesh);
+ assert(mesh.maxNdc<.90 && mesh.minW>1,'GPU geometry remains framed through the whole crash');
+ assert(mesh.maxEdge<8,'No stretched severed triangles later in recovery');
  const frames=await page.evaluate(()=>window.crashFrames);
  const originalIsolation=await verifyCrashIsolation(page);
  await page.keyboard.press('Escape');

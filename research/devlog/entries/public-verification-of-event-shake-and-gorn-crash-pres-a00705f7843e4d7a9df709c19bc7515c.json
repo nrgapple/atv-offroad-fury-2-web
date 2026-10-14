@@ -1,0 +1,17 @@
+{
+  "id": "public-verification-of-event-shake-and-gorn-crash-pres-a00705f7843e4d7a9df709c19bc7515c",
+  "timestamp": "2026-10-14T01:04:17.847759+00:00",
+  "recorded_at": "2026-10-14T01:06:07.124802+00:00",
+  "kind": "verification",
+  "title": "Public verification of event shake and Gorn crash presentation",
+  "summary": "The deployed game at furyremastered.com now verifies event-only camera shake, separated Gorn rider limbs and a shared ATV/rider crash view; the previously reported continuous driving shake and crash-framing defects are corrected in this public build.",
+  "details": [
+    "Verified deployment commit b69a85785a18fcd0ae539e3ddf4af6b3d920f4e2 on https://furyremastered.com. The severe Gorn route passed 1,392 exact paired native gameplay/camera steps plus 102 after reload, with three intact ATV aerial frames, two mechanical damage transitions, seven ATV pieces, five severed rider nodes, exactly 90 droplets, nonzero shake and boom, recovery, and settings checks. The inspected public capture shows the detached rider and ATV together in the crash view.",
+    "Separate host-only timing refinement at 9ab0771 calculates crash bounds from the current physics actor rather than the previous presented frame and guards shader prewarming during context loss. Its host GPU probe covered 558 draws through the crash with all actual rider/ATV vertices inside max NDC 0.6562, minimum clip W 19.396, and largest measured rider triangle edge 1.859 ft. This is not public proof of that later refinement."
+  ],
+  "limitation": "The public gameplay evidence applies to deployed commit b69a857. Current main has advanced to ebae742, so the first R2 upload was correctly rejected as superseded; current-main static/R2 publication verification is still pending. Host timing measurements are not a mobile FPS guarantee.",
+  "image": "/devlog-images/public-verification-of-event-shake-and-gorn-crash-pres-a00705f7843e4d7a9df709c19bc7515c.png",
+  "caption": "Public furyremastered.com at deployed commit b69a857: severe Gorn crash with rider and ATV framed together, detached parts and bounded droplets. Public gameplay verified; current-main gallery publication pending.",
+  "status": "Public game has event-only shake, separated Gorn limbs and shared crash framing.",
+  "working_on": "Verify the current-main release and static/R2 gallery after deployment; do not treat superseded artifact uploads as published."
+}
