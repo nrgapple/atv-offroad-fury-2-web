@@ -38,7 +38,7 @@ let funnyCrashes = crashSettings.enabled;
 const cameraShake = new VehicleShake();
 crashSettings.onChange = () => {
   funnyCrashes = crashSettings.enabled;
-  if(crashSettings.mode==='gorn' && terrain && !bloodRenderer)bloodRenderer=new BloodRenderer(gl);
+  if(crashSettings.mode==='gorn' && terrain && !lost && !bloodRenderer)bloodRenderer=new BloodRenderer(gl);
   if (simFrame) acceptFrame({...simFrame,funny_crash:null},false);
 };
 crashSettings.onShakeChange = () => { cameraShake.reset(); scheduleRender(); };
@@ -1296,8 +1296,10 @@ function acceptFrame(frame, effects = true) {
       gl.bindVertexArray(null);diagnostics.severedBridgeTriangles=removed;
     }
     if(funnyCrashes && frame.funny_crash) {
-      const quad=poseBounds(vehicle.boundsByNode,quadPose,vehicleMatrix());
-      const rider=poseBounds(vehicle.rider.boundsByNode,vehicle.rider.pose.world_matrices,frame.funny_crash.rider_node_matrices.length?null:frame.rider_world_matrix??vehicleMatrix());
+      // Bounds belong to this physics step, never the previous render sample.
+      const actorWorld=vehicleMatrix(frame);
+      const quad=poseBounds(vehicle.boundsByNode,quadPose,actorWorld);
+      const rider=poseBounds(vehicle.rider.boundsByNode,vehicle.rider.pose.world_matrices,frame.funny_crash.rider_node_matrices.length?null:frame.rider_world_matrix??actorWorld);
       vehicle.crashBounds=quad && rider ? {min:quad.min.map((v,i)=>Math.min(v,rider.min[i])),max:quad.max.map((v,i)=>Math.max(v,rider.max[i]))} : quad??rider;
     } else vehicle.crashBounds=null;
     diagnostics.animatedRiderNodes = frame.rider_node_matrices.length;
