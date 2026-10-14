@@ -138,3 +138,10 @@ newer main/local production. The temporary variable is restored after takeover;
 if cancellation cannot become terminal within two minutes, publication stops and
 the local guard remains in place for a retry. Inspect runs before restoring it.
 This is a foreground fallback command, not a new daemon or recurring job.
+
+Local compilation is namespaced by canonical checkout path, even if a build
+cache is shared or a target directory is symlinked. Do not link one task's Cargo
+target directly to another's. Every browser build executes the current menu ABI
+against its compiled WASM; local publication repeats the smoke test against the
+packaged bytes before touching production. A checksum alone proves transport
+integrity, not correspondence between JavaScript and the compiled Rust schema.

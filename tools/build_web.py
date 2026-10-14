@@ -12,7 +12,9 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 cargo = shutil.which('cargo') or str(Path.home() / '.cargo/bin/cargo')
-target = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'target'))
+# Cargo may treat older source mtimes in another checkout as fresh when target
+# directories are shared. Namespace artifacts by the canonical source checkout.
+target = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'target')) / 'web-checkouts' / hashlib.sha256(str(ROOT.resolve()).encode()).hexdigest()[:16]
 subprocess.run([cargo, 'build', '--locked', '--release', '-p', 'atv-web', '--target', 'wasm32-unknown-unknown', '--target-dir', str(target)], cwd=ROOT, check=True)
 dist = ROOT / 'web/dist'
 dist.mkdir(exist_ok=True)
@@ -37,4 +39,5 @@ for icon in icons['icons']:
     if data[:8] != b'\x89PNG\r\n\x1a\n' or struct.unpack('>II', data[16:24]) != (size, size) or hashlib.sha256(data).hexdigest() != icon['sha256']:
         raise ValueError('authored icon bytes do not match metadata')
     (dist / icon['file']).write_bytes(data)
+subprocess.run([shutil.which('node') or 'node', str(ROOT / 'tools/smoke_web_wasm.mjs'), str(dist / 'atv_web.wasm')], cwd=ROOT, check=True)
 print(f'Built {dist}; game assets are not included.')

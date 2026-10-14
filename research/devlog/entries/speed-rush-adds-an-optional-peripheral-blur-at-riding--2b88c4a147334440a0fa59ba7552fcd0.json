@@ -6,9 +6,9 @@
   "title": "Speed rush adds an optional peripheral blur at riding speed",
   "summary": "An authored seven-sample radial effect now eases in at 40 mph and caps at 75 mph, keeping the projected rider and center sharp while adding a subtle peripheral streak and bounded warp.",
   "details": [
-    "Desktop host verification passed across 357 rendered samples: center pixels were unchanged, the edge region showed 3,125,724 changed pixels, and Off matched the untouched frame exactly. Real riding at 47 mph and an airborne active frame were checked.",
+    "Desktop host verification passed across 357 rendered samples: center pixels were unchanged, the summed absolute red-channel difference across edge pixels was 3,125,724, and Off matched the untouched frame exactly. Real riding at 47 mph and an airborne active frame were checked.",
     "Saved Off/Low/Normal/High choices, preference reload, and WebGL context recovery passed. The effect skips work below threshold, during crashes and menus, or when disabled; it does not use camera turns or previous frames. Reduced-motion defaults to Off unless the player saved a choice.",
-    "Portrait 390\u00d7844 verification also passed across 400 rendered samples, including two airborne active frames and native riding driven in four-input batches. Center pixels stayed unchanged, edge changes were 3,125,724, Off matched exactly, and saved settings/context restoration passed."
+    "Portrait 390\u00d7844 verification also passed across 400 rendered samples, including two airborne active frames and native riding driven in four-input batches. Center pixels stayed unchanged, the summed absolute red-channel difference across edge pixels was 3,125,724, Off matched exactly, and saved settings/context restoration passed."
   ],
   "limitation": "Host desktop and portrait verification only; public deployment and verification are pending. The effect is an authored optional enhancement, not recovered original behavior.",
   "image": "/devlog-images/speed-rush-adds-an-optional-peripheral-blur-at-riding--2b88c4a147334440a0fa59ba7552fcd0.png",

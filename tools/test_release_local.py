@@ -76,6 +76,20 @@ class LocalReleaseTests(unittest.TestCase):
         with patch('deploy_local.git', side_effect=['', COMMIT, COMMIT]):
             require_clean_main(COMMIT)
 
+    def test_shared_target_symlink_still_isolates_checkout_compilation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            shared = Path(temporary) / 'cache'; shared.mkdir()
+            targets = []
+            for name in ['checkout-one', 'checkout-two']:
+                root = Path(temporary) / name; root.mkdir()
+                (root / 'target').symlink_to(shared)
+                with patch.object(deploy_local, 'ROOT', root), patch('deploy_local.subprocess.run') as process:
+                    deploy_local.run('make', 'check')
+                    targets.append(Path(process.call_args.kwargs['env']['CARGO_TARGET_DIR']).resolve())
+                    self.assertTrue(process.call_args.kwargs['check'])
+            self.assertNotEqual(*targets)
+            self.assertTrue(all(path.is_relative_to(shared.resolve()) for path in targets))
+
     def test_failed_local_check_prevents_worker_mutation(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
