@@ -134,8 +134,11 @@ Snow uses an independent source-algorithm 600-entry random table with a fixed
 portable seed. The original shared table/cursor and its interaction with other
 emitters remain unconnected. Portable billboard projection, shared GPU packet
 batch lifetime/UV ordering, PS2 render queue/GS rounding and hardware parity are
-still limits. Freeport's placed type 12 fog and ScreenRain lens/world droplets
-remain unconnected; ambient owns its independent placed type 8 raindrops.
+still limits. Freeport's persistent placed type 12 fog is connected; see
+[ambient fog implementation and remaining limits](AMBIENT_EFFECTS.md). ScreenRain
+lens/world droplets and their original callbacks remain unconnected. Ambient's
+placed type 8 raindrops are a separate source effect, documented in the same
+component report.
 
 
 The native Snow birth timestamp is zero; `001d1910` encodes bank clock minus

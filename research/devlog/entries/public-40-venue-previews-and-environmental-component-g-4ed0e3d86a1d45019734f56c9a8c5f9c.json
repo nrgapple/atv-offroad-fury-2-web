@@ -1,0 +1,17 @@
+{
+  "id": "public-40-venue-previews-and-environmental-component-g-4ed0e3d86a1d45019734f56c9a8c5f9c",
+  "timestamp": "2026-10-14T01:43:37.342512+00:00",
+  "recorded_at": "2026-10-14T01:52:47.898669+00:00",
+  "kind": "verification",
+  "title": "Public 40-venue previews and environmental component gates",
+  "summary": "The public 3e11dfb release passes all-40 original-venue driving and multiplayer lobby preview checks, alongside bounded public weather and persistent fog lifecycle gates. Earlier particle checks remain tied to their verified 9089529 deployment checkpoint.",
+  "details": [
+    "Main CI run 38496520618 passed for 3e11dfb7fc0dc598a249da0f371e3890af356a96. Public HTTPS hash checks on furyremastered.com and the Workers origin matched that commit, 517 hosted objects and 47 authored static files; the public log contained 217 entries and 167 screenshots. The separate approved R2 package validated 518 objects, uploaded four changes and totaled 423,236,483 bytes.",
+    "The public all-40 drive gate loaded and drove every original venue with full-sample terrain following the ATV, collision and minimap coverage, and no JavaScript/WebGL errors. The lobby gate synchronized selected names and artwork for host and guest in desktop and 390\u00d7844 portrait layouts: 39 original preview pairs plus the authored Training capture. Training's public regression retained the source start after 180 idle steps and reset, accepted 390 px touch movement with 5 ft displacement, observed wheel support on four of six hay approaches and body contact on all six, and confirmed the extended boundary remains active beyond 3768.",
+    "On the same public 3e11dfb deployment, seven rain lifecycle cases passed. Four isolated Freeport fog cases covered ATV and motorcycle in desktop and portrait Chromium views: 200 persistent source sprites, one draw, 286,192 GPU bytes, with pause/resume, vehicle reset and context restoration preserving state and no page/GL errors. The inspected portrait screenshot uses an explicit source-test placement beside the original fog volume. Earlier public component checks on 9089529 covered ENV07 smoke at its natural source start, FREE06 grill and ENV05 fountain at source-derived test starts, and MC27 Caribou Race Snow; those checks are retained as that release checkpoint, not relabeled as the 3e11dfb test run.",
+    "The desktop and portrait public preview captures show Sausalito's original stadium course image in the multiplayer lobby; the final fog portrait shows the ATV, ship and railing through the Freeport fog. Both are automated Chromium captures; the portrait size does not imply a physical-phone test."
+  ],
+  "limitation": "The user has reported mobile water artifacts and blank stadium screens; these are under investigation. The verified routes and component gates do not establish complete visual, physics, or original PS2 hardware parity. Global RNG/order, ScreenRain droplets, some source manager callbacks, moving locomotive smoke, and other lighting/rendering gaps remain.",
+  "image": "/devlog-images/public-40-venue-previews-and-environmental-component-g-4ed0e3d86a1d45019734f56c9a8c5f9c.png",
+  "caption": "Public Chromium portrait at 390\u00d7844, using an explicit source-test start beside the original Freeport fog: the rider, ship and railing remain visible through the fog. Automated browser capture, not a physical phone."
+}
