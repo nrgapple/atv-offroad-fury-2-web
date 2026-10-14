@@ -1,0 +1,14 @@
+{
+  "id": "public-two-client-freeride-on-sausalito-sx01-62e3c2eb1a2749a7b6348aae2a427713",
+  "timestamp": "2026-10-14T00:17:11.596891+00:00",
+  "recorded_at": "2026-10-14T00:25:36.816537+00:00",
+  "kind": "verification",
+  "title": "Public two-client Freeride on Sausalito SX01",
+  "summary": "Two consecutive public browser sessions passed on Sausalito/SX01 (map 23). Both clients rendered 13 remote draws, replicated rider movement, and cleaned up after host departure without JavaScript or WebGL errors.",
+  "details": [
+    "The confirmation run replicated 5.07 ft; a preceding diagnostic retry replicated 8.16 ft. The clients rendered remote rider rigs with 27 and 18 nodes. The public host capture shows the stadium at 19 mph and the P2 Guest marker at 18 ft; the guest vehicle is outside the camera view."
+  ],
+  "limitation": "An earlier public attempt timed out after both simulations initialized while waiting for remote-render readiness; the cause is unknown. Two subsequent runs passed. Both clients were automated browser sessions on one Mac; physical devices and geographically separated network behavior remain unverified. This is Freeride component evidence, not original PS2 multiplayer equivalence.",
+  "image": "/devlog-images/public-two-client-freeride-on-sausalito-sx01-62e3c2eb1a2749a7b6348aae2a427713.png",
+  "caption": "Public Fury Remastered Freeride host view in Chromium: Sausalito SX01 at 19 mph with the P2 Guest marker at 18 ft; the guest ATV is outside this camera view."
+}

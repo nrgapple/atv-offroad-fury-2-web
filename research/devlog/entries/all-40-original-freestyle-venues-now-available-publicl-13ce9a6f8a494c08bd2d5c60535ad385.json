@@ -1,0 +1,15 @@
+{
+  "id": "all-40-original-freestyle-venues-now-available-publicl-13ce9a6f8a494c08bd2d5c60535ad385",
+  "timestamp": "2026-10-14T00:12:47.302534+00:00",
+  "recorded_at": "2026-10-14T00:25:36.775070+00:00",
+  "kind": "verification",
+  "title": "All 40 original Freestyle venues now available publicly",
+  "summary": "Fury Remastered\u2019s public app now unlocks all 40 source venue families in Freestyle: eight ENV, six FREE, eight NAT, sixteen SX, Training, and Coonce Arena. A continuous Chromium sweep loaded and drove all 40 from the public deployment.",
+  "details": [
+    "The map app passed main CI/deploy at 3b08d61 (run 38487888220). Its separately published R2 package validated 500 objects with 41 changes and a manifest of 147 runtime entries. Public hash verification on furyremastered.com and the Workers origin matched 44 authored static files and 499 served content objects.",
+    "All 40 public venue routes became ready and drove with zero unsupported scenery meshes and no JavaScript or WebGL errors. The public menu/controller/touch regression passed, as did six Sausalito SX01 hay-bale approaches with original wheel support and body contacts and actual 390px touch movement."
+  ],
+  "limitation": "Public browser evidence from automated Chromium on one Mac; screenshots are browser captures, not physical-phone photos. The connected venue roster does not complete original race rules, Training objectives, hockey, weather/ambient behavior, crowd animations, water interactions, or full-game PS2 parity.",
+  "image": "/devlog-images/all-40-original-freestyle-venues-now-available-publicl-13ce9a6f8a494c08bd2d5c60535ad385.png",
+  "caption": "Public Fury Remastered in Chromium at 390\u00d7844 portrait: Sausalito SX01 with its stadium, crowd, hay barriers, rider, and GPS reading 3 mph. Browser capture, not a physical-phone photo."
+}
