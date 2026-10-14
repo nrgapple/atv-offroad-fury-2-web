@@ -1,3 +1,4 @@
+import { cameraAxes } from './render-support.js';
 // Original map particle atlases and Rust tire-effect state. JavaScript only draws.
 const vertexSource = `#version 300 es
 precision highp float;
@@ -126,7 +127,7 @@ export class WheelEffectsRenderer {
     }
     gl.useProgram(this.program);gl.uniformMatrix4fv(this.uniforms.viewProjection,false,viewProjection);
     const yaw=camera.yaw,pitch=camera.pitch;
-    gl.uniform3fv(this.uniforms.right,[-Math.cos(yaw),0,Math.sin(yaw)]);
+    gl.uniform3fv(this.uniforms.right,cameraAxes(yaw,0).right);
     gl.uniform3fv(this.uniforms.up,[-Math.sin(yaw)*Math.sin(pitch),Math.cos(pitch),-Math.cos(yaw)*Math.sin(pitch)]);
     gl.activeTexture(gl.TEXTURE0);gl.uniform1i(this.uniforms.atlas,0);gl.uniform1f(this.uniforms.now,this.frame?.time??0);
     gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
@@ -189,7 +190,7 @@ export class BloodRenderer {
       this.data[k+3]=p.size*(p.landed?5:1.8);this.data[k+4]=Number(p.landed);
     }
     gl.useProgram(this.program);gl.uniformMatrix4fv(this.uniforms.viewProjection,false,viewProjection);
-    gl.uniform3fv(this.uniforms.right,[-Math.cos(camera.yaw),0,Math.sin(camera.yaw)]);
+    gl.uniform3fv(this.uniforms.right,cameraAxes(camera.yaw,0).right);
     gl.uniform3fv(this.uniforms.up,[-Math.sin(camera.yaw)*Math.sin(camera.pitch),Math.cos(camera.pitch),-Math.cos(camera.yaw)*Math.sin(camera.pitch)]);
     gl.bindVertexArray(this.vao);gl.bindBuffer(gl.ARRAY_BUFFER,this.buffer);if(changed)gl.bufferSubData(gl.ARRAY_BUFFER,0,this.data.subarray(0,count*5));
     gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);gl.drawArraysInstanced(gl.TRIANGLES,0,6,count);

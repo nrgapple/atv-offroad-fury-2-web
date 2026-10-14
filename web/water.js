@@ -1,3 +1,4 @@
+import { cameraAxes } from './render-support.js';
 // Original WTT/PSM inputs and the Rust physics field supply this portable pass.
 // Native PS2 VU tessellation/reflection coordinates and froth remain incomplete.
 import { fogVertexShader, fogFragmentShader } from './fog.js';
@@ -204,7 +205,7 @@ export class WaterRenderer {
     gl.useProgram(this.program);gl.bindVertexArray(this.vao);
     gl.uniformMatrix4fv(u.viewProjection,false,viewProjection);gl.uniform3f(u.eye,camera.x,camera.y,camera.z);
     const cy=Math.cos(camera.yaw),sy=Math.sin(camera.yaw),cp=Math.cos(camera.pitch),sp=Math.sin(camera.pitch);
-    gl.uniform3f(u.forward,sy*cp,sp,cy*cp);gl.uniform3f(u.right,-cy,0,sy);gl.uniform3f(u.up,-sy*sp,cp,-cy*sp);
+    gl.uniform3f(u.forward,sy*cp,sp,cy*cp);gl.uniform3fv(u.right,cameraAxes(camera.yaw,camera.pitch).right);gl.uniform3f(u.up,-sy*sp,cp,-cy*sp);
     const difference=this.frame.base_height-camera.y;
     const boundary=(difference/farDistance-sp)*focalLength/cp;
     const minimum=difference<0?-1:Math.max(-1,Math.min(1,boundary));

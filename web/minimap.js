@@ -8,18 +8,18 @@ export const clampMapSize = value => Number.isFinite(Number(value)) ? Math.round
 export const clampMapZoom = value => Number.isFinite(Number(value)) ? Math.round(Math.max(25, Math.min(200, Number(value))) / 25) * 25 : 50;
 export const mapRange = zoom => MAP_RANGE * 100 / zoom;
 export const mapScale = range => 200 * 2 ** Math.round(Math.log2(range / MAP_RANGE));
-// Same handedness as the scene's overhead camera: right=-X, up=+Z.
-export const mapHeading = ([w, x, y, z]) => Math.atan2(-2 * (w * y + x * z), 1 - 2 * (y * y + x * x));
-export const mapPoint = (x, z, terrain, width, height) => [(1 - x / terrain.sizeX) * width, (1 - z / terrain.sizeZ) * height];
+// Same handedness as the scene's overhead camera: right=+X, up=+Z.
+export const mapHeading = ([w, x, y, z]) => Math.atan2(2 * (w * y + x * z), 1 - 2 * (y * y + x * x));
+export const mapPoint = (x, z, terrain, width, height) => [x / terrain.sizeX * width, (1 - z / terrain.sizeZ) * height];
 export function mapPose(frame) {
   const ragdoll = frame.funny_crash?.rider_node_matrices?.[0];
   const rider = ragdoll ?? frame.rider_world_matrix;
-  return rider ? { origin: rider.slice(12, 15), heading: Math.atan2(-rider[8], rider[10]), actor: ragdoll ? 'ragdoll rider' : 'rider' }
+  return rider ? { origin: rider.slice(12, 15), heading: Math.atan2(rider[8], rider[10]), actor: ragdoll ? 'ragdoll rider' : 'rider' }
     : { origin: frame.origin, heading: mapHeading(frame.orientation), actor: 'vehicle' };
 }
 export function mapPeerMarker(peer, center, range, size, headingUp) {
   const pose = mapPose({ ...peer, origin: peer.position, orientation: [1,0,0,0] });
-  let dx = -(pose.origin[0] - center.origin[0]) / range * size;
+  let dx = (pose.origin[0] - center.origin[0]) / range * size;
   let dy = -(pose.origin[2] - center.origin[2]) / range * size;
   if (headingUp) {
     const a = -center.heading;
@@ -78,7 +78,7 @@ export function rasterRow(terrain, tiles, pixels, row, width, height) {
   const { heights, spacing } = terrain;
   const gz = (1 - (row + .5) / height) * (terrain.depth - 1), iz = Math.floor(gz);
   for (let col = 0; col < width; col++) {
-    const gx = (1 - (col + .5) / width) * (terrain.width - 1), ix = Math.floor(gx);
+    const gx = ((col + .5) / width) * (terrain.width - 1), ix = Math.floor(gx);
     const h = (x, z) => heights[Math.max(0, Math.min(terrain.depth - 1, z)) * terrain.width + Math.max(0, Math.min(terrain.width - 1, x))];
     const dx = (h(ix + 1, iz) - h(ix - 1, iz)) / (2 * spacing), dz = (h(ix, iz + 1) - h(ix, iz - 1)) / (2 * spacing);
     const light = Math.max(.42, Math.min(1.15, .8 + (-dx * .4 + dz * .3 + .6) / Math.hypot(dx, dz, 1) * .35));

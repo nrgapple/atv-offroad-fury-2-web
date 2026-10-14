@@ -28,12 +28,12 @@ export async function captureMinimapTracking(page) {
             && s.motorcyclePresentation.origin.every((x, i) => Math.abs(x - model[12 + i]) < .001);
           if (matches || bike) {
             const m = map.actor === 'ragdoll rider' ? value : model;
-            const origin = [m[12], m[14]], heading = Math.atan2(-m[8], m[10]);
+            const origin = [m[12], m[14]], heading = Math.atan2(m[8], m[10]);
             const positionError = Math.hypot(map.center[0] - origin[0], map.center[1] - origin[1]);
             const headingError = Math.abs(Math.atan2(Math.sin(map.heading - heading), Math.cos(map.heading - heading)));
             const width = (s.terrainGrid[0] - 1) * s.terrainSampleSpacing, depth = (s.terrainGrid[1] - 1) * s.terrainSampleSpacing;
-            // Independent overhead basis: screen-right=-X, screen-up=+Z.
-            const cropWorld = [width * (1 - (crop[0] + crop[2] / 2) / 1024), depth * (1 - (crop[1] + crop[3] / 2) / 1024)];
+            // Independent overhead basis: screen-right=+X, screen-up=+Z.
+            const cropWorld = [width * ((crop[0] + crop[2] / 2) / 1024), depth * (1 - (crop[1] + crop[3] / 2) / 1024)];
             const cropError = Math.hypot(cropWorld[0] - origin[0], cropWorld[1] - origin[1]);
             const sample = { actor: map.actor, positionError, headingError, cropError, zoom: map.zoom, updates: map.updates };
             minimapTracking.samples.push(sample); checked = map.updates;

@@ -1,3 +1,23 @@
+// Original camera looks along +Z with +X on screen-right (0013be20).
+// WebGL depth uses -Z; convert depth without reflecting the source world in X.
+export function cameraAxes(yaw, pitch) {
+  return {
+    forward: [Math.sin(yaw)*Math.cos(pitch), Math.sin(pitch), Math.cos(yaw)*Math.cos(pitch)],
+    right: [Math.cos(yaw), 0, -Math.sin(yaw)],
+    up: [-Math.sin(yaw)*Math.sin(pitch), Math.cos(pitch), -Math.cos(yaw)*Math.sin(pitch)],
+  };
+}
+export function sceneViewProjection(camera, aspect, focalLength, near, far) {
+  const {x,y,z,yaw,pitch}=camera, {forward,right,up}=cameraAxes(yaw,pitch);
+  const dot=v=>v[0]*x+v[1]*y+v[2]*z;
+  const view=new Float32Array([right[0],up[0],-forward[0],0,right[1],up[1],-forward[1],0,right[2],up[2],-forward[2],0,-dot(right),-dot(up),dot(forward),1]);
+  const f=focalLength;
+  const projection=new Float32Array([f/aspect,0,0,0,0,f,0,0,0,0,(far+near)/(near-far),-1,0,0,2*far*near/(near-far),0]);
+  const result=new Float32Array(16);
+  for(let column=0;column<4;column++)for(let row=0;row<4;row++)for(let k=0;k<4;k++)result[column*4+row]+=projection[k*4+row]*view[column*4+k];
+  return result;
+}
+
 // Conservative presentation-only bounds. Never used for contacts or gameplay.
 export function vertexBounds(vertices, stride = 6) {
   const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
@@ -226,9 +246,7 @@ export function crashPresentation(view, subjects, aspect, height) {
   const bikeWeight=.5*(1-t*t*(3-2*t));
   const target=rider.map((v,i)=>v+(bike[i]-v)*bikeWeight);
   const pitch=Math.max(-.55,Math.min(-.22,view.pitch)),yaw=view.yaw;
-  const forward=[Math.sin(yaw)*Math.cos(pitch),Math.sin(pitch),Math.cos(yaw)*Math.cos(pitch)];
-  const right=[-Math.cos(yaw),0,Math.sin(yaw)];
-  const up=[-Math.sin(yaw)*Math.sin(pitch),Math.cos(pitch),-Math.cos(yaw)*Math.sin(pitch)];
+  const {forward,right,up}=cameraAxes(yaw,pitch);
   const f=view.presentation.focalLength;
   let distance=16;
   const bounds={min:target.map(v=>v-2.5),max:target.map(v=>v+2.5)};

@@ -42,7 +42,7 @@ try {
      const head=model.riderMesh.nodes.findIndex(n=>n.name==='Head'),pelvis=model.riderMesh.nodes.findIndex(n=>n.name==='Pelvis');
      const local=[0,1,2].map(i=>value[head*16+12+i]-value[pelvis*16+12+i]);
      const world=[0,1,2].map(i=>bodyMatrix[i]*local[0]+bodyMatrix[4+i]*local[1]+bodyMatrix[8+i]*local[2]);
-     const yaw=status.camera[3],right=[-Math.cos(yaw),0,Math.sin(yaw)];
+     const yaw=status.camera[3],right=[Math.cos(yaw),0,-Math.sin(yaw)];
      probe.bank={body:bodyMatrix[4]*right[0]+bodyMatrix[6]*right[2],rider:world[0]*right[0]+world[2]*right[2]};
     }
    }
@@ -68,7 +68,7 @@ try {
   const before=await state();
   const last=await page.evaluate(()=>window.controlFrames.at(-1));
   const look=last.camera.target.map((v,i)=>v-last.camera.position[i]);
-  const right=[-look[2],0,look[0]],len=Math.hypot(...right);right.forEach((v,i)=>right[i]=v/len);
+  const right=[look[2],0,-look[0]],len=Math.hypot(...right);right.forEach((v,i)=>right[i]=v/len);
   const fullLock=process.env.ATV_CONTROL_FULL_LOCK==='1';
   await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{id:1,x:180+direction*(fullLock?100:50),y:620,radiusX:6,radiusY:6,force:1}]});
   await page.waitForFunction(()=>Math.abs(window.atvTerrainStatus.input.steer)>.4);

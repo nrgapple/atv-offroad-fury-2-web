@@ -53,7 +53,7 @@ try {
  assert(presentation.camera.crash,'Crash camera must frame posed ATV and rider bounds');
  let mesh=await page.evaluate(()=>window.severedMesh);assert(mesh.draws>0);assert(mesh.actorDraws>mesh.draws);assert(mesh.minW>1);assert(mesh.maxNdc<.90,`Rendered actors exceed framing margin: ${mesh.maxNdc}`);assert(mesh.maxEdge<8,`Rendered severed triangles stretch ${mesh.maxEdge} feet`);
  const framing=await page.evaluate(()=>{const s=window.atvTerrainStatus,v=s.camera,f=s.cameraPresentation.focalLength,aspect=document.querySelector('canvas').width/document.querySelector('canvas').height,b=s.cameraPresentation.crash.bounds;
-  const forward=[Math.sin(v[3])*Math.cos(v[4]),Math.sin(v[4]),Math.cos(v[3])*Math.cos(v[4])],right=[-Math.cos(v[3]),0,Math.sin(v[3])],up=[-Math.sin(v[3])*Math.sin(v[4]),Math.cos(v[4]),-Math.cos(v[3])*Math.sin(v[4])];
+  const forward=[Math.sin(v[3])*Math.cos(v[4]),Math.sin(v[4]),Math.cos(v[3])*Math.cos(v[4])],right=[Math.cos(v[3]),0,-Math.sin(v[3])],up=[-Math.sin(v[3])*Math.sin(v[4]),Math.cos(v[4]),-Math.cos(v[3])*Math.sin(v[4])];
   return Array.from({length:8},(_,c)=>{const p=b.min.map((x,i)=>((c&(1<<i))?b.max[i]:x)-v[i]),dot=a=>a.reduce((sum,x,i)=>sum+x*p[i],0),z=dot(forward);return [dot(right)*f/aspect/z,dot(up)*f/z,z];});});
  assert(framing.every(([x,y,z])=>Math.abs(x)<.85&&Math.abs(y)<.85&&z>1),'Both rendered actors and debris must fit with impact-shake margin');
  assert(crash.funny_crash.blood.every(p=>p.position.every(Number.isFinite)));

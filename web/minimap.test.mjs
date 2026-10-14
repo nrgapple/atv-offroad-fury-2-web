@@ -14,11 +14,11 @@ test('footer lettering and black outline fit the circular edge at minimum and ma
 
 test('overhead camera projection preserves handedness and matches quaternion forward', () => {
   const terrain = { sizeX: 100, sizeZ: 200 };
-  assert.deepEqual(mapPoint(0, 200, terrain, 400, 400), [400, 0]);
-  assert.deepEqual(mapPoint(100, 0, terrain, 400, 400), [0, 400]);
+  assert.deepEqual(mapPoint(0, 200, terrain, 400, 400), [0, 0]);
+  assert.deepEqual(mapPoint(100, 0, terrain, 400, 400), [400, 400]);
   assert.deepEqual(mapPoint(50, 100, terrain, 400, 400), [200, 200]);
-  // Camera down=(0,-1,0), north=(0,0,1). down cross north gives right=(-1,0,0).
-  const right = [-1, 0, 0], north = [0, 0, 1];
+  // Source camera convention: screen-right=+X, screen-up=+Z.
+  const right = [1, 0, 0], north = [0, 0, 1];
   for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2, .7]) {
     const q = [Math.cos(yaw / 2), 0, Math.sin(yaw / 2), 0];
     const forward = [Math.sin(yaw), 0, Math.cos(yaw)];
@@ -35,10 +35,10 @@ test('overhead camera projection preserves handedness and matches quaternion for
 test('GPS uses rendered vehicle, native separated rider and world-space ragdoll roots', () => {
   const vehicle = { origin: [1, 2, 3], orientation: [1, 0, 0, 0] };
   const matrix = [0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 40, 5, 60, 1];
-  assert.deepEqual(mapPose(vehicle), { origin: vehicle.origin, heading: -0, actor: 'vehicle' });
-  assert.deepEqual(mapPose({ ...vehicle, rider_world_matrix: matrix }), { origin: [40, 5, 60], heading: -Math.PI / 2, actor: 'rider' });
+  assert.deepEqual(mapPose(vehicle), { origin: vehicle.origin, heading: 0, actor: 'vehicle' });
+  assert.deepEqual(mapPose({ ...vehicle, rider_world_matrix: matrix }), { origin: [40, 5, 60], heading: Math.PI / 2, actor: 'rider' });
   const root = [...matrix]; root[12] = 80;
-  assert.deepEqual(mapPose({ ...vehicle, rider_world_matrix: matrix, funny_crash: { rider_node_matrices: [root] } }), { origin: [80, 5, 60], heading: -Math.PI / 2, actor: 'ragdoll rider' });
+  assert.deepEqual(mapPose({ ...vehicle, rider_world_matrix: matrix, funny_crash: { rider_node_matrices: [root] } }), { origin: [80, 5, 60], heading: Math.PI / 2, actor: 'ragdoll rider' });
 });
 
 test('saved Off and clamped sizes survive reload; blocked storage still allows session changes', () => {
@@ -75,20 +75,20 @@ test('orthographic terrain uses the actual 64-cell texture mapping and positive 
   const tiles = terrainTiles(terrain), pixels = new Uint8ClampedArray(4 * 4 * 4);
   for (let row = 0; row < 4; row++) rasterRow(terrain, tiles, pixels, row, 4, 4);
   assert(pixels[0] > pixels[3 * 4 * 4], 'Northern material appears above southern material');
-  assert(pixels[4] < pixels[0], 'Positive X is screen-left, matching the overhead scene camera');
+  assert(pixels[4] > pixels[0], 'Positive X is screen-right, matching the source camera');
   for (let i = 3; i < pixels.length; i += 4) assert.equal(pixels[i], 255);
 });
 
 test('remote markers share scene handedness, zoom, rider tracking and heading-up rotation', () => {
-  const center = { origin: [100, 0, 100], heading: -Math.PI / 2 };
+  const center = { origin: [100, 0, 100], heading: Math.PI / 2 };
   const matrix = [0,0,-1,0, 0,1,0,0, 1,0,0,0, 148,0,100,1];
   const peer = { position: [900,0,900], rider_world_matrix: matrix };
   const north = mapPeerMarker(peer, center, mapRange(100), 160, false);
-  assert.equal(north.dx, -10); assert.equal(Math.abs(north.dy), 0);
-  assert.equal(north.rotation, -Math.PI/2); assert.equal(north.edge, false);
-  assert.equal(mapPeerMarker(peer, center, mapRange(50), 160, false).dx, -5);
+  assert.equal(north.dx, 10); assert.equal(Math.abs(north.dy), 0);
+  assert.equal(north.rotation, Math.PI/2); assert.equal(north.edge, false);
+  assert.equal(mapPeerMarker(peer, center, mapRange(50), 160, false).dx, 5);
   const heading = mapPeerMarker(peer, center, mapRange(100), 160, true);
   assert(Math.abs(heading.dx)<1e-12); assert.equal(heading.dy,-10); assert.equal(heading.rotation,0);
   const far = mapPeerMarker({position:[10000,0,100]},center,768,160,false);
-  assert.equal(far.edge,true); assert.equal(far.dx,-64);
+  assert.equal(far.edge,true); assert.equal(far.dx,64);
 });
