@@ -1,0 +1,17 @@
+{
+  "id": "bounded-animated-water-pass-stabilizes-portrait-views-27be7fd1a6a44dad8d207f444a732e5e",
+  "timestamp": "2026-10-14T02:18:47.697761+00:00",
+  "recorded_at": "2026-10-14T02:28:06.576697+00:00",
+  "kind": "verification",
+  "title": "Bounded animated water pass stabilizes portrait views",
+  "summary": "The host water renderer now follows the source dense-axis orientation with bounded viewport geometry and resident original texture mip chains. Six wet scenes and dry ENV01 pass Chromium and WebKit browser gates; NAT01 retains every original animated frame.",
+  "details": [
+    "Native NAT01 shader sampling matched all 2,970 original-resource height points and used all eleven source frames. The 585\u00d71266 portrait mesh held 7,946 vertices within the 8,000 portrait cap, one draw and 1,740,360 GPU bytes; ordinary frames emitted no uploads. Raw height textures retain integer NEAREST sampling, while original derivative and environment maps receive resident mip chains.",
+    "Across the six wet scenes (ENV04/05/07/08, FREE04 and NAT01) plus dry ENV01, Chromium and Safari-family WebKit passed frozen test-only wet placements, desktop and 585\u00d71266 touch-DPR3 portrait routes, rotation, context loss/restoration and zero browser/GL errors. Restoration assertions compare the live GPU base height, prepared origins, signed frame atlas layers, and GS normal frame layers/weights; those uniforms and layers remain identical after rotation and context recovery. Each surface uses one draw with zero ordinary mesh/texture/mipmap uploads.",
+    "The inspected NAT01 portrait image shows a source terrain shoreline, rider and animated water from a frozen test-only wet placement. WebKit loaded public HTTPS scene resources while the test overrode only the unpublished water renderer module on the host; this is host verification, not the deployed public renderer.",
+    "A bounded fixed-frame lateral-camera probe reduced large RGB outliers from 26 to four; warmed serial SwiftShader forced-readback time measured 28.55 ms before and 30.21 ms after. These are software-driver diagnostics, not a performance improvement or physical-phone benchmark."
+  ],
+  "limitation": "This candidate is not a public release. Exact native VU projection, intermediate-map filtering/reflection coordinates, complete visual parity and physical-phone performance remain unverified. Froth and shared physics blend-frequency provenance remain open; do not treat the host module override as public output.",
+  "image": "/devlog-images/bounded-animated-water-pass-stabilizes-portrait-views-27be7fd1a6a44dad8d207f444a732e5e.png",
+  "caption": "Host Safari-family WebKit 585\u00d71266 portrait, frozen test-only wet placement above original NAT01 terrain. Original scene resources loaded over public HTTPS; only the unpublished water renderer module is overridden locally. Not a public renderer release or physical-phone capture."
+}
