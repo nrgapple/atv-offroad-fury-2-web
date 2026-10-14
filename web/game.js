@@ -15,6 +15,7 @@ import { WaterRenderer } from './water.js';
 import { fogVertexShader, fogFragmentShader } from './fog.js';
 import { loadTrain, TrainRenderer } from './train.js';
 import { loadWheelEffects, loadMotorcycleEffects, WheelEffectsRenderer, BloodRenderer } from './wheel-effects.js';
+import {loadSnow,SnowRenderer} from './weather.js';
 import { MotorcyclePresentation } from './motorcycle-presentation.js';
 const $ = id => document.getElementById(id);
 const canvas = $('game');
@@ -51,6 +52,7 @@ let sceneChunks = [], sceneDraws = [], skyChunks = [], ecoGroups = [], ecoBillbo
 let waterRenderer;
 let trainRenderer;
 let wheelEffectsRenderer;
+let snowRenderer;
 let bloodRenderer;
 const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const camera = { x: 0, y: 0, z: 0, yaw: 0, pitch: -.35 };
@@ -224,6 +226,14 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
   const riderMaterials = await archiveAt('/RIDER/RIDER_MT.RES');
   riderTextures = await baseTextures(riderMesh, riderMaterials.bytes, riderMaterials.entries);
   }
+  //00208cc0 reads the actual common/mode TOYs' [Weather], not legacy
+  //SCN[Rain]. There is one local view per browser, including online rides;
+  //the original online versus local-player-count mapping is not established.
+  //Selection belongs to this scene load and survives ATV resets/GL.
+  const weather = await command(120, { common: decoder.decode(toy), mode: mode ?? '', random: Math.floor(Math.random() * 0x80000000), players: 1 });
+  if (weather.removed_model) sceneMetadata.models = sceneMetadata.models.filter(model => model.name.toLowerCase() !== weather.removed_model.toLowerCase());
+  diagnostics.weather = weather;
+  await audio.loadWeather({selection:weather,isCurrent:()=>token===generation});
   status('Decoding original terrain textures…');
   const bytes = await codec(3, resource, index), layout = await json(30, bytes), images = [];
   for (const record of layout.records) {
@@ -288,9 +298,10 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
     collisionPlacements.push({ ...placement, name });
   }
   const wheelEffects = model.motorcycle ? await loadMotorcycleEffects({resource:quadArchive,entries:quadEntries,config:bikeSource.particleConfig,codec,json}) : await loadWheelEffects({ resource, entries, quadArchive, quadEntries, codec, json, scene: decoder.decode(await codec(3, resource, sceneIndex)), mode });
+  const snow=await loadSnow({selection:weather,resource,entries,codec,json,gpuTexture:wheelEffects?.gpuTexture});
   const train = environment === 'env08' ? await loadTrain({ resource, entries, modeIndex, codec, json, baseTextures, isCurrent: () => token === generation }) : null;
   if (train && mode) await audio.loadSpatial({ toy: new TextEncoder().encode(mode), isCurrent: () => token === generation });
-  return { motorcycle: model.motorcycle ? {archive:quadArchive,id:model.quad_id} : null, bytes, environment, course, cpuNames, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
+  return { weather, snow, motorcycle: model.motorcycle ? {archive:quadArchive,id:model.quad_id} : null, bytes, environment, course, cpuNames, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
 }
 async function baseTextures(mesh, materialArchive, materialEntries, cache = new Map()) {
   const findMaterial = name => materialEntries.findIndex(entry => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase());
@@ -560,6 +571,7 @@ function clearMesh() {
   for (const model of remoteModels.values()) { disposeRemoteGpu(model); }
   bloodRenderer?.dispose(); bloodRenderer = undefined;
   wheelEffectsRenderer?.dispose(); wheelEffectsRenderer = undefined;
+  snowRenderer?.dispose(); snowRenderer=undefined;
   trainRenderer?.dispose(); trainRenderer = undefined;
   waterRenderer?.dispose(); waterRenderer = undefined;
   for (const chunk of [...chunks, ...vehicleChunks, ...sceneChunks, ...skyChunks]) { gl.deleteVertexArray(chunk.vao); gl.deleteBuffer(chunk.vertices); gl.deleteBuffer(chunk.indices); }
@@ -1053,6 +1065,7 @@ function buildTerrainMesh() {
 }
 function buildMesh() {
   clearMesh(); buildTerrainMesh(); buildEcosystem();
+  if(terrain.snowSource?.config){snowRenderer=new SnowRenderer(gl,terrain.snowSource);}
   if (terrain.wheelEffectsSource) { wheelEffectsRenderer = new WheelEffectsRenderer(gl, terrain.wheelEffectsSource); wheelEffectsRenderer.accept(simFrame?.wheel_particles); }
   if (terrain.trainSource) trainRenderer = new TrainRenderer(gl, terrain.trainSource, { upload, texture, inverseDirection });
   diagnostics.wheelEffects = wheelEffectsRenderer ? { atlas: terrain.wheelEffectsSource.config.atlas.texture, frames: terrain.wheelEffectsSource.config.atlas.frames.length, particles: 0, draws: 0, gpuBytes: wheelEffectsRenderer.gpuBytes } : null;
@@ -1140,7 +1153,7 @@ function buildMesh() {
       const groups = geometry.get(model.name);
       if (!groups?.length) continue;
       sceneInstances++;
-      for (const chunk of groups) { const matrix = new Float32Array(model.world_matrix); sceneDraws.push({ chunk, matrix, bounds: worldBounds(chunk.bounds, matrix), unlit: chunk.prelit || !model.use_lighting }); sceneTriangles += chunk.count / 3; }
+      for (const chunk of groups) { const matrix = new Float32Array(model.world_matrix); sceneDraws.push({ name: model.name, chunk, matrix, bounds: worldBounds(chunk.bounds, matrix), unlit: chunk.prelit || !model.use_lighting }); sceneTriangles += chunk.count / 3; }
     }
   }
   gl.bindVertexArray(null);
@@ -1294,6 +1307,9 @@ async function startSimulation(source) {
     trainRenderer?.accept(source.train.frame);
     diagnostics.train = { time: source.train.frame.time, duration: source.train.frame.duration, cars: source.train.frame.cars.filter(car => car.use_collision).length, wheelNodes: source.train.frame.wheel_matrices?.length ?? 0, frame: source.train.frame };
   } else diagnostics.train = null;
+  const snowConfig=await command(121,source.snow?{active:true,definition:source.weather.definition,emitter:source.snow.emitter}:{active:false});
+  if(source.snow){source.snow.config=snowConfig;snowRenderer?.dispose();snowRenderer=new SnowRenderer(gl,source.snow);}
+  diagnostics.snow=source.snow?{rings:snowConfig.offsets.length,gpuBytes:snowRenderer.gpuBytes,capacity:snowRenderer.capacity,time:0,births:0,live:0,draws:0,scope:'source camera rings/EMT births and mode2 motion; portable bounded GPU slots; global RNG/render queue provenance pending'}:null;
   const uvSources = Object.fromEntries([...source.world.textures].filter(([, texture]) => texture.pass?.uv_scroll || texture.pass?.texture_animation).map(([name, texture]) => [name, {source:texture.materialText,frames:texture.animationFrames?.length}]));
   const uvState = await command(91, uvSources);
   diagnostics.sceneryUv = Object.fromEntries(uvState.map(([name]) => [name, [0,0]]));
@@ -1326,9 +1342,10 @@ async function pumpSimulation() {
     diagnostics.physicsBatchSteps = count;
     if (token !== simGeneration) return;
     const previousFrame = simFrame, previousCamera = cameraFrame;
-    for (const { frame, camera: cameraResult, water, train, scenery_uv, scenery_textures, race } of frames) {
+    for (const { frame, camera: cameraResult, water, train, scenery_uv, scenery_textures, race, snow } of frames) {
       if(race)frame.race=race;
       acceptFrame(frame);
+      if(snow&&snowRenderer){snowRenderer.accept(snow);Object.assign(diagnostics.snow,{time:snow.time,births:snow.total_emitted,activeEmitters:snow.active_emitters,live:terrain.snowSource.history.reduce((n,birth)=>n+Number(Math.fround(snow.time-birth.time)<=birth.life),0)});}
       diagnostics.sceneryUv = scenery_uv; diagnostics.sceneryTextureFrames = scenery_textures;
       if (trainRenderer && train) { trainRenderer.accept(train); diagnostics.train.time = train.time; diagnostics.train.frame = train; }
       if (waterRenderer && water) { waterRenderer.accept(water); terrain.waterSource.frame = water; diagnostics.waterRender.baseHeight = water.base_height; }
@@ -1411,6 +1428,9 @@ function render(time) {
   if (!menuOpen) updateCamera(dt);
   if (simReady && !simulationPaused()) {
     simAccumulator = Math.min(.1, simAccumulator + dt); void pumpSimulation();
+    //Reset/pause actions dispatch synchronously before the batch awaits. They
+    //clear interpolation state; finish this frame before reading that cleared pose.
+    if(!simReady||simulationPaused()||!presentedFrame){stats.sample(time,performance.now()-started,false);return;}
     const center = diagnostics.terrainDetailCenter;
     const x = Math.max(0,Math.min(terrain.width-1,vehicle.position[0]/terrain.spacing)), z = Math.max(0,Math.min(terrain.depth-1,vehicle.position[2]/terrain.spacing));
     if (center && (Math.abs(x-center[0]) > 48 || Math.abs(z-center[1]) > 48)) buildTerrainMesh();
@@ -1479,30 +1499,43 @@ function render(time) {
   }
   gl.uniform1i(uniforms.useTerrainTexture, false); gl.uniform1i(uniforms.unlit, false); gl.activeTexture(gl.TEXTURE0);
   gl.uniform3f(uniforms.surfaceColor, .68, .70, .73);
-  for (const { chunk, matrix, unlit, bounds } of sceneDraws) {
-    if (outsideView(bounds, planes)) continue;
+  let previousSceneryChunk=null,previousSceneryUnlit=null,materialUpdates=0,rainDraws=0,rainVisibleInstances=0,rainMaterialUpdates=0;
+  const rainName=terrain.rainModelName;
+  for (const { name, chunk, matrix, unlit, bounds } of sceneDraws) {
+    if(outsideView(bounds,planes))continue;
+    const rain=name.toLowerCase()===rainName;
+    if(rain){rainDraws++;rainVisibleInstances++;}
     sceneryVisibleGroups++; sceneryDraws++; sceneryTriangles += chunk.count / 3;
-    gl.uniformMatrix4fv(uniforms.model, false, matrix); gl.uniform1i(uniforms.unlit, unlit);
-    gl.uniform1f(uniforms.alphaCutoff, chunk.alphaCutoff);
-    gl.uniform1i(uniforms.fogEnabled,Boolean(fog)&&chunk.fog);
-    gl.uniform1i(uniforms.useVertexColor, chunk.prelit); gl.uniform1i(uniforms.sceneryBlend, chunk.blend);
-    gl.uniform1i(uniforms.sceneryReflectionPlane, chunk.reflection);
-    if (chunk.reflectionNodes) gl.uniformMatrix4fv(uniforms.quadBones, false, chunk.reflectionNodes);
-    gl.uniform2fv(uniforms.sceneryUvOffset, diagnostics.sceneryUv?.[chunk.material] ?? [0,0]);
-    gl.depthMask(chunk.depthWrite);
-    if (chunk.blend) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); } else gl.disable(gl.BLEND);
-    const sceneTexture = chunk.animationFrames?.[diagnostics.sceneryTextureFrames?.[chunk.material] ?? 0] ?? chunk.texture;
-    gl.uniform1i(uniforms.useTexture, Boolean(sceneTexture)); gl.bindTexture(gl.TEXTURE_2D, sceneTexture ?? fallbackTexture);
-    gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
+    gl.uniformMatrix4fv(uniforms.model, false, matrix);
+    //Original rain uses FB_ONLY. Preserve its per-placement accepted/failed
+    //pass order; cache identical material state rather than reorder its pixels.
+    if(previousSceneryChunk!==chunk||previousSceneryUnlit!==unlit){
+      materialUpdates++;if(rain)rainMaterialUpdates++;
+      previousSceneryChunk=chunk;previousSceneryUnlit=unlit;
+      gl.uniform1i(uniforms.unlit, unlit);
+      gl.uniform1f(uniforms.alphaCutoff, chunk.alphaCutoff);
+      gl.uniform1i(uniforms.fogEnabled,Boolean(fog)&&chunk.fog);
+      gl.uniform1i(uniforms.useVertexColor, chunk.prelit); gl.uniform1i(uniforms.sceneryBlend, chunk.blend);
+      gl.uniform1i(uniforms.sceneryReflectionPlane, chunk.reflection);
+      if (chunk.reflectionNodes) gl.uniformMatrix4fv(uniforms.quadBones, false, chunk.reflectionNodes);
+      gl.uniform2fv(uniforms.sceneryUvOffset, diagnostics.sceneryUv?.[chunk.material] ?? [0,0]);
+      if (chunk.blend) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); } else gl.disable(gl.BLEND);
+      const sceneTexture = chunk.animationFrames?.[diagnostics.sceneryTextureFrames?.[chunk.material] ?? 0] ?? chunk.texture;
+      gl.uniform1i(uniforms.useTexture, Boolean(sceneTexture)); gl.bindTexture(gl.TEXTURE_2D, sceneTexture ?? fallbackTexture);
+      gl.bindVertexArray(chunk.vao);
+    }
+    gl.depthMask(chunk.depthWrite);gl.drawElements(gl.TRIANGLES,chunk.count,gl.UNSIGNED_SHORT,0);
     // GS FB_ONLY keeps failed fragments in the framebuffer without writing Z.
     // Split the mutually exclusive predicates so each source pixel blends once.
     if (chunk.alphaFailure === 1 && chunk.alphaCutoff > 0) {
       gl.uniform1i(uniforms.alphaFailPass, true); gl.depthMask(false);
-      sceneryDraws++; sceneryTriangles += chunk.count / 3;
+      sceneryDraws++; sceneryTriangles += chunk.count / 3;if(rain)rainDraws++;
       gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0);
       gl.uniform1i(uniforms.alphaFailPass, false);
     }
   }
+  diagnostics.sceneryMaterialUpdates=materialUpdates;
+  diagnostics.rainRender={sourceInstances:terrain.rainSourceInstances,visibleInstances:rainVisibleInstances,draws:rainDraws,materialUpdates:rainMaterialUpdates,avoidedMaterialUpdates:rainVisibleInstances-rainMaterialUpdates,scope:'original geometry/RGBA/UV/FB_ONLY pass order; cached material state, no added storm'};
   gl.uniform1f(uniforms.alphaCutoff, 0); gl.uniform1i(uniforms.useVertexColor, false); gl.uniform1i(uniforms.sceneryBlend, false);
   gl.uniform1i(uniforms.sceneryReflectionPlane, 0);
   gl.uniform2f(uniforms.sceneryUvOffset, 0, 0); gl.depthMask(true); gl.disable(gl.BLEND);
@@ -1549,7 +1582,8 @@ function render(time) {
     diagnostics.waterRender.cpuMilliseconds = waterRenderer.cpuMilliseconds;
     diagnostics.waterRender.gpuMilliseconds = waterRenderer.gpuMilliseconds;
   }
-  if (crashSettings.mode === 'gorn' && simFrame?.funny_crash?.blood?.length) {
+  if(snowRenderer){snowRenderer.draw({camera,viewProjection});Object.assign(diagnostics.snow,{draws:snowRenderer.draws,uploadBytes:snowRenderer.uploadBytes});}
+if (crashSettings.mode === 'gorn' && simFrame?.funny_crash?.blood?.length) {
     bloodRenderer ??= new BloodRenderer(gl);
     bloodRenderer.draw(simFrame.funny_crash.blood, {camera,viewProjection});
   } else if (bloodRenderer) bloodRenderer.draws = 0;
@@ -1561,8 +1595,8 @@ function render(time) {
   diagnostics.frames++;
   if (stats.mode !== 'off') {
     diagnostics.cpuDraws = cpuDraws; diagnostics.cpuTriangles = cpuTriangles;
-    diagnostics.drawCalls = cpuDraws + terrainDraws + sceneryDraws + vehicleChunks.length + (terrain.sky ? skyChunks.length : 0) + diagnostics.vegetationDraws + (waterRenderer?.draws ?? 0) + (trainRenderer?.draws ?? 0) + (wheelEffectsRenderer?.draws ?? 0);
-    diagnostics.drawTriangles = cpuTriangles + (terrainTriangles * 3 + sceneryTriangles * 3 + vehicleChunks.reduce((sum, c) => sum + c.count, 0) + (terrain.sky ? skyChunks.reduce((sum, c) => sum + c.count, 0) : 0)) / 3 + diagnostics.vegetationTriangles + (trainRenderer?.triangles ?? 0) + (wheelEffectsRenderer?.triangles ?? 0);
+    diagnostics.drawCalls = cpuDraws + terrainDraws + sceneryDraws + vehicleChunks.length + (terrain.sky ? skyChunks.length : 0) + diagnostics.vegetationDraws + (waterRenderer?.draws ?? 0) + (trainRenderer?.draws ?? 0) + (wheelEffectsRenderer?.draws ?? 0) + (snowRenderer?.draws ?? 0);
+    diagnostics.drawTriangles = cpuTriangles + (terrainTriangles * 3 + sceneryTriangles * 3 + vehicleChunks.reduce((sum, c) => sum + c.count, 0) + (terrain.sky ? skyChunks.reduce((sum, c) => sum + c.count, 0) : 0)) / 3 + diagnostics.vegetationTriangles + (trainRenderer?.triangles ?? 0) + (wheelEffectsRenderer?.triangles ?? 0) + (snowRenderer?.triangles ?? 0);
   }
   if (diagnostics.frames === 1 || diagnostics.frames % 120 === 0) {
     diagnostics.glError = gl.getError();
@@ -1598,7 +1632,9 @@ async function loadGame(file = null, environment = "env01", racing = null) {
     const heights = new Float32Array(width * depth), view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
     let min = Infinity, max = -Infinity;
     for (let i = 0; i < heights.length; i++) { const value = view.getFloat32(i * 4, true); if (!Number.isFinite(value)) throw new Error('Nonfinite terrain height.'); heights[i] = value; min = Math.min(min, value); max = Math.max(max, value); }
-    terrain = { width, depth, spacing: info.spacing, heights, min, max, sizeX: (width - 1) * info.spacing, sizeZ: (depth - 1) * info.spacing, textures: source.terrainTextures, world: source.world, sky: source.sky, ecosystem: source.ecosystem, trainSource: source.train, wheelEffectsSource: source.wheelEffects };
+    terrain = { weather: source.weather, snowSource:source.snow, width, depth, spacing: info.spacing, heights, min, max, sizeX: (width - 1) * info.spacing, sizeZ: (depth - 1) * info.spacing, textures: source.terrainTextures, world: source.world, sky: source.sky, ecosystem: source.ecosystem, trainSource: source.train, wheelEffectsSource: source.wheelEffects };
+    terrain.rainModelName=source.weather?.definition?.kind==='rain'?source.weather.definition.model.replace(/\.slt$/i,'').toLowerCase():null;
+    terrain.rainSourceInstances=source.world?.metadata.models.filter(model=>model.name.toLowerCase()===terrain.rainModelName).length ?? 0;
     minimap.setTerrain(racing ? null : terrain);
     diagnostics.terrainTextures = 0;
     uploadTerrainTextures();
@@ -1672,7 +1708,7 @@ window.addEventListener('resize', () => { scheduleRender(); });
 canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; for(const model of remoteModels.values()){model.chunks=null;model.gpuTextures=[];} diagnostics.ready = false; clearInput(); syncAudio(); frontend?.setLoading(true, 'Restoring graphics…'); status('Restoring graphics…'); });
 // Every old GPU handle belongs to the lost context, including vegetation instances.
 // Discard those references before buildMesh runs its normal resource cleanup.
-canvas.addEventListener('webglcontextrestored', () => { try { lost = false; bloodRenderer = undefined; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); scheduleRender(); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
+canvas.addEventListener('webglcontextrestored', () => { try { lost = false; snowRenderer=undefined; bloodRenderer = undefined; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); scheduleRender(); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
 window.addEventListener('pagehide', event => {
   cancelAnimationFrame(frame); frame = 0; clearInput();
   if (event.persisted) {
