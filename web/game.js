@@ -1422,6 +1422,8 @@ function render(time) {
   if (!menuOpen) updateCamera(dt);
   if (simReady && !simulationPaused()) {
     simAccumulator = Math.min(.1, simAccumulator + dt); void pumpSimulation();
+    // Input callbacks may synchronously reset/pause and clear presentation.
+    if(!simReady||simulationPaused()||!presentedFrame){stats.sample(time,performance.now()-started,false);return;}
     const center = diagnostics.terrainDetailCenter;
     const x = Math.max(0,Math.min(terrain.width-1,vehicle.position[0]/terrain.spacing)), z = Math.max(0,Math.min(terrain.depth-1,vehicle.position[2]/terrain.spacing));
     if (center && (Math.abs(x-center[0]) > 48 || Math.abs(z-center[1]) > 48)) buildTerrainMesh();
@@ -1432,7 +1434,7 @@ function render(time) {
     if (liveMultiplayer()) void multiplayer.sample();
     playerIndicators.root.hidden = true; lastTime = time; stats.sample(time, 0, false); return;
   }
-  diagnostics.motorcyclePresentation = simFrame?.vehicle_kind === 'motorcycle' ? { alpha: presentation.alpha, interpolated: presentation.interpolated, origin: presentedFrame.origin, orientation: presentedFrame.orientation } : null;
+  diagnostics.motorcyclePresentation = simFrame?.vehicle_kind === 'motorcycle' ? { alpha: presentation.alpha, interpolated: presentation.interpolated, origin: (presentedFrame ?? simFrame).origin, orientation: (presentedFrame ?? simFrame).orientation } : null;
   const smoothQuad = presentation.interpolated ? new Float32Array(presentedFrame.quad_node_matrices.flat()) : vehicle?.nodeMatrices;
   const smoothRider = presentation.interpolated ? presentedFrame.rider_node_matrices : vehicle?.rider?.pose.world_matrices;
   gl.viewport(0, 0, width, height); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.useProgram(program);
@@ -1560,7 +1562,7 @@ function render(time) {
     diagnostics.waterRender.cpuMilliseconds = waterRenderer.cpuMilliseconds;
     diagnostics.waterRender.gpuMilliseconds = waterRenderer.gpuMilliseconds;
   }
-  if(ambientEffectsRenderer){ambientEffectsRenderer.draw({camera,viewProjection,farDistance:fog?.end??768,fogColor,fog});Object.assign(diagnostics.ambientEffects,{draws:ambientEffectsRenderer.draws,visible:ambientEffectsRenderer.visible,gpuBytes:ambientEffectsRenderer.gpuBytes,cpuMilliseconds:ambientEffectsRenderer.cpuMilliseconds});}
+  if(ambientEffectsRenderer){ambientEffectsRenderer.draw({camera,viewProjection,farDistance:fog?.end??768,fogColor,fog});Object.assign(diagnostics.ambientEffects,{draws:ambientEffectsRenderer.draws,visible:ambientEffectsRenderer.visible,gpuBytes:ambientEffectsRenderer.gpuBytes,cpuMilliseconds:ambientEffectsRenderer.cpuMilliseconds,gpuSlots:ambientEffectsRenderer.streams?.state.count??0,gpuWraps:ambientEffectsRenderer.streams?.state.wraps??0,gpuUploadCalls:ambientEffectsRenderer.streams?.uploadCalls??0});}
   if (crashSettings.mode === 'gorn' && simFrame?.funny_crash?.blood?.length) {
     bloodRenderer ??= new BloodRenderer(gl);
     bloodRenderer.draw(simFrame.funny_crash.blood, {camera,viewProjection});

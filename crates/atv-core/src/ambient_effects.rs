@@ -9,6 +9,8 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+mod streams;
+pub const GPU_CAPACITY: usize = 400 * 12;
 pub const CAPACITY: usize = 600;
 #[derive(Deserialize)]
 pub struct Source {
@@ -334,6 +336,7 @@ struct Definition {
     additive: bool,
     emit_mode: usize,
     smoke: Option<Smoke>,
+    stream: Option<streams::Config>,
     on_range: [f32; 2],
     off_range: [f32; 2],
     delay: f32,
@@ -378,6 +381,8 @@ pub struct Frame {
     pub emitted: u64,
     pub total_emitted: u64,
     pub dropped: u64,
+    pub gpu_births: Vec<streams::Birth>,
+    pub gpu_total: u64,
 }
 #[derive(Debug, Serialize)]
 pub struct Metadata {
@@ -386,6 +391,9 @@ pub struct Metadata {
     pub active: usize,
     pub unsupported: Vec<String>,
     pub capacity: usize,
+    pub cpu_active: usize,
+    pub gpu_active: usize,
+    pub gpu_capacity: usize,
 }
 pub struct Effects {
     runtime: Vec<Runtime>,
@@ -396,6 +404,8 @@ pub struct Effects {
     total: u64,
     dropped: u64,
     frame: Frame,
+    gpu_total: u64,
+    gpu_initialized: bool,
 }
 fn random(r: &mut OriginalRandom) -> f32 {
     (r.next_u31() as f32) * 4.656_613e-10
@@ -429,7 +439,7 @@ impl Effects {
         let mut unsupported = plan.unresolved.clone();
         for placement in &plan.placements {
             // Placed raindrops are type8; weather policy/snow and type12 fog are separate.
-            if ![0, 2, 8].contains(&placement.type_id) {
+            if ![0, 2, 8, 11].contains(&placement.type_id) {
                 unsupported.push(format!(
                     "{}: original emitter type{} not connected",
                     placement.filename, placement.type_id
@@ -524,6 +534,11 @@ impl Effects {
                 additive: boolean(&d, "Properties", "Additive", false)?,
                 emit_mode,
                 smoke,
+                stream: if placement.type_id == 11 {
+                    Some(streams::Config::parse(&d)?)
+                } else {
+                    None
+                },
                 on_range: ranges[0],
                 off_range: ranges[1],
                 delay: number(&d, "General Info", "DelayTime", 0.)?,
@@ -549,8 +564,24 @@ impl Effects {
                 timer,
             });
         }
+        let stream_budget: usize = runtime
+            .iter()
+            .filter_map(|r| {
+                r.definition.stream.as_ref().map(|c| {
+                    (r.definition.base.rate * 0.1).ceil() as usize
+                        * c.length[1].ceil() as usize
+                        * (c.thickness[1].ceil() as usize + usize::from(c.bright_head))
+                })
+            })
+            .sum();
+        if stream_budget > GPU_CAPACITY {
+            return Err("original stream frame exceeds bounded packet budget".into());
+        }
         let metadata = Metadata {
             active: runtime.len(),
+            cpu_active: runtime.iter().filter(|r| r.placement.type_id != 11).count(),
+            gpu_active: runtime.iter().filter(|r| r.placement.type_id == 11).count(),
+            gpu_capacity: GPU_CAPACITY,
             atlas,
             plan,
             unsupported,
@@ -566,6 +597,8 @@ impl Effects {
                 total: 0,
                 dropped: 0,
                 frame: Frame::default(),
+                gpu_total: 0,
+                gpu_initialized: false,
             },
             metadata,
         ))
@@ -622,6 +655,7 @@ impl Effects {
             true
         });
         let mut emitted = 0;
+        let mut gpu_births = vec![];
         for (index, r) in self.runtime.iter_mut().enumerate() {
             if r.first {
                 r.first = false;
@@ -638,6 +672,35 @@ impl Effects {
             }
             let d = &r.definition;
             let base = &d.base;
+            if let Some(config) = &d.stream {
+                if !self.gpu_initialized {
+                    self.gpu_initialized = true;
+                    continue;
+                }
+                let births = streams::births(
+                    config,
+                    base,
+                    d.spread,
+                    r.placement.position,
+                    dt,
+                    &mut self.random,
+                );
+                let streams = (base.rate * dt).ceil() as usize;
+                for _ in 0..streams {
+                    r.frame += 1;
+                    if r.frame > d.group[1] {
+                        r.frame = d.group[0];
+                    }
+                }
+                let tile = r.frame - d.group[0];
+                for raw in births {
+                    self.gpu_total += 1;
+                    let birth =
+                        streams::Birth::packet(raw, config, self.gpu_total, self.time, tile);
+                    gpu_births.push(birth);
+                }
+                continue;
+            }
             let factor = if r.placement.type_id == 8 {
                 0.6
             } else if d.spread_velocity {
@@ -794,6 +857,8 @@ impl Effects {
             emitted,
             total_emitted: self.total,
             dropped: self.dropped,
+            gpu_births,
+            gpu_total: self.gpu_total,
         };
         Ok(&self.frame)
     }
@@ -913,6 +978,7 @@ mod tests {
                 additive: false,
                 emit_mode: 0,
                 smoke: c.smoke,
+                stream: None,
                 on_range: [0.; 2],
                 off_range: [0.; 2],
                 delay: 0.,
@@ -942,6 +1008,8 @@ mod tests {
                 total: 0,
                 dropped: 0,
                 frame: Frame::default(),
+                gpu_total: 0,
+                gpu_initialized: false,
             };
             effects.step(c.dt).unwrap();
             assert_eq!(

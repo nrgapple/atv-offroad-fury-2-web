@@ -1,5 +1,6 @@
 // Original placed TOY effects are simulated in Rust; this bounded renderer
 // adapts their sprite packets into two depth-tested, atlas-instanced GL draws.
+import {AmbientStreamsRenderer} from './ambient-streams.js';
 import {fogVertexShader, fogFragmentShader} from './fog.js';
 const normalize = name => name.replaceAll('\\','/').split('/').at(-1).toLowerCase();
 export async function loadAmbientEffects({resource,entries,codec,json,scene,common,mode,wheelEffects}) {
@@ -12,7 +13,7 @@ export async function loadAmbientEffects({resource,entries,codec,json,scene,comm
     return codec(3,resource,index);
   };
   source.emts={};
-  for(const name of new Set(plan.placements.filter(p=>[0,2,8].includes(p.type_id)).map(p=>p.filename))){if(entries.some(entry=>normalize(entry.name)===name))source.emts[name]=new TextDecoder().decode(await read(name));}
+  for(const name of new Set(plan.placements.filter(p=>[0,2,8,11].includes(p.type_id)).map(p=>p.filename))){if(entries.some(entry=>normalize(entry.name)===name))source.emts[name]=new TextDecoder().decode(await read(name));}
   const prt=entries.findIndex(entry=>/particles\.prt$/i.test(entry.name));
   source.prt=prt<0?'':new TextDecoder().decode(await codec(3,resource,prt));
   const config=await json(131,new TextEncoder().encode(JSON.stringify(source)));
@@ -25,7 +26,16 @@ export async function loadAmbientEffects({resource,entries,codec,json,scene,comm
     }
     for(const frame of config.atlas.frames)if(frame.rect[2]>texture.width||frame.rect[3]>texture.height)throw new Error('Original ambient rectangle exceeds atlas.');
   }
-  return {source,config,texture,frame:{time:0,particles:[],total_emitted:0,dropped:0}};
+  let gpuTexture=wheelEffects?.gpuTexture;
+  if(config.gpu_active&&(!gpuTexture||gpuTexture.width!==128||gpuTexture.height!==256)){
+    const material=entries.findIndex(e=>/(?:^|[/\\])(?:particle_gpu|env\d+particles_gpu)\.psm$/i.test(e.name));
+    if(material<0)throw new Error('Original fountain GPU material is missing.');
+    const binding=new TextDecoder().decode(await codec(3,resource,material)).match(/^\s*TextureMap_1\s*=\s*([A-Za-z0-9_]+)\s*$/mi)?.[1];
+    if(!binding)throw new Error('Original fountain GPU atlas binding is missing.');
+    const bytes=await read(`${binding}.pst`);gpuTexture={...await json(7,bytes),rgba:await codec(8,bytes)};
+    if(gpuTexture.width!==128||gpuTexture.height!==256)throw new Error('Unsupported original fountain atlas.');
+  }
+  return {source,config,texture,gpuTexture,frame:{time:0,particles:[],total_emitted:0,dropped:0}};
 }
 const vertexSource=`#version 300 es
 precision highp float;
@@ -69,7 +79,9 @@ export function visibleSprites(frame,camera,farDistance=768,workspace=[],pool=nu
 export class AmbientEffectsRenderer {
   constructor(gl,source){
     this.gl=gl;this.source=source;this.frame=source.frame;this.draws=0;this.triangles=0;this.visible=0;
-    this.visibleScratch=[];this.sortRecords=Array.from({length:source.config.capacity},(_,index)=>({p:null,index,depth:0}));this.instances=new Float32Array(source.config.capacity*10);this.gpuBytes=this.instances.byteLength+48+source.texture.rgba.length;
+    this.streams=source.config.gpu_active?new AmbientStreamsRenderer(gl,source):null;this.gpuBytes=this.streams?.gpuBytes??0;
+    if(!source.config.cpu_active){this.cpuOnly=false;return;}this.cpuOnly=true;
+    this.visibleScratch=[];this.sortRecords=Array.from({length:source.config.capacity},(_,index)=>({p:null,index,depth:0}));this.instances=new Float32Array(source.config.capacity*10);this.gpuBytes+=this.instances.byteLength+48+source.texture.rgba.length;
     const shader=(kind,text)=>{const s=gl.createShader(kind);gl.shaderSource(s,text);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){const error=gl.getShaderInfoLog(s);gl.deleteShader(s);throw new Error(error);}return s;};
     const vertex=shader(gl.VERTEX_SHADER,vertexSource),fragment=shader(gl.FRAGMENT_SHADER,fragmentSource);
     this.program=gl.createProgram();gl.attachShader(this.program,vertex);gl.attachShader(this.program,fragment);gl.linkProgram(this.program);gl.deleteShader(vertex);gl.deleteShader(fragment);
@@ -86,10 +98,12 @@ export class AmbientEffectsRenderer {
   accept(frame){
     if(!frame||!Number.isFinite(frame.time)||!Array.isArray(frame.particles)||frame.particles.length>this.source.config.capacity)throw new Error('Invalid Rust ambient particle frame.');
     for(const p of frame.particles)if(!this.source.config.atlas.frames[p.frame]||![...p.position,p.size,p.alpha].every(Number.isFinite)||p.size<0)throw new Error('Invalid original ambient sprite.');
-    this.frame=frame;this.source.frame=frame;
+    this.frame=frame;this.source.frame=frame;this.streams?.accept(frame);
   }
   draw({camera,viewProjection,farDistance=768,fogColor=[0,0,0],fog,lightColor=[1,1,1]}){
     const started=performance.now(),gl=this.gl;this.draws=0;this.triangles=0;
+    this.streams?.draw({camera,viewProjection,farDistance,fogColor,fog});this.draws=this.streams?.draws??0;this.triangles=this.streams?.triangles??0;
+    if(!this.cpuOnly){this.cpuMilliseconds=performance.now()-started;return;}
     const sprites=visibleSprites(this.frame,camera,farDistance,this.visibleScratch,this.sortRecords);this.visible=sprites.length;
     if(!sprites.length){this.cpuMilliseconds=performance.now()-started;return;}
     const old={program:gl.getParameter(gl.CURRENT_PROGRAM),vao:gl.getParameter(gl.VERTEX_ARRAY_BINDING),buffer:gl.getParameter(gl.ARRAY_BUFFER_BINDING),blend:gl.isEnabled(gl.BLEND),depthMask:gl.getParameter(gl.DEPTH_WRITEMASK),src:gl.getParameter(gl.BLEND_SRC_RGB),dst:gl.getParameter(gl.BLEND_DST_RGB),srcAlpha:gl.getParameter(gl.BLEND_SRC_ALPHA),dstAlpha:gl.getParameter(gl.BLEND_DST_ALPHA),active:gl.getParameter(gl.ACTIVE_TEXTURE)};
@@ -112,5 +126,5 @@ export class AmbientEffectsRenderer {
     gl.depthMask(old.depthMask);gl.blendFuncSeparate(old.src,old.dst,old.srcAlpha,old.dstAlpha);if(!old.blend)gl.disable(gl.BLEND);gl.bindVertexArray(old.vao);gl.bindBuffer(gl.ARRAY_BUFFER,old.buffer);gl.bindTexture(gl.TEXTURE_2D,oldTexture);gl.activeTexture(old.active);gl.useProgram(old.program);
     this.cpuMilliseconds=performance.now()-started;
   }
-  dispose(){const gl=this.gl;gl.deleteVertexArray(this.vao);gl.deleteBuffer(this.corners);gl.deleteBuffer(this.buffer);gl.deleteTexture(this.texture);gl.deleteProgram(this.program);}
+  dispose(){this.streams?.dispose();if(!this.cpuOnly)return;const gl=this.gl;gl.deleteVertexArray(this.vao);gl.deleteBuffer(this.corners);gl.deleteBuffer(this.buffer);gl.deleteTexture(this.texture);gl.deleteProgram(this.program);}
 }

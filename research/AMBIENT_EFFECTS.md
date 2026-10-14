@@ -73,10 +73,42 @@ range, stable descending depth and at most two blend-family instance draws.
 An original 128×512 atlas plus instance/corner buffers uses 286,192 GPU bytes.
 This is an additional GPU texture copy; decoded atlas bytes share tire sources.
 
-GPU fountain streams (type11), hat effects
-(type9), fog (type12), moving attachments and other actor animation families
+Hat effects (type9), fog (type12), moving attachments and other actor animation families
 remain explicit diagnostics at this component gate. Visibility callback scheduling, lighting, GS transparency ordering/fog precision
 and original scene-level manager sharing remain incomplete.
+
+## Static type11 fountain streams
+
+Original `0019f580` emits the ceiling of source rate × dt streams. Six RNG values
+per stream drive correlated XYZ velocity spread, lifetime, growth, and rounded
+stream length. Authored separation, section thickness, bright head, tail lifetime
+and velocity evolution are translated separately from CPU smoke. A finite gate
+runs 200 original birth cases: 490,018 EE instructions and 44,460 raw-word
+comparisons match. It supplies the active static gate, initialized GPU manager,
+original seeded RNG and suppressed flush threshold; it excludes full VU/GS replay.
+The reciprocal-square-root rounding matches that finite interpreter contract.
+
+`001d1910` packs signed 16-bit velocity, lifetime, size and growth. The browser
+consumes the quantized values, source color/alpha, GroundLevel − 5 and the original
+8-column/16-row UV selection, including the native 0.51 V offset. The decoded
+128×256 source GPU atlas is reused with wheel resources. The existing recovered
+mode2 VU contract (`001ad460` → `003b9740`) supplies ballistic motion, minimum Y
+plane, size growth and lifetime alpha. GLSL adapts those equations; no complete
+hardware raster/precision comparison is claimed.
+
+The fountain initializes a 400×12 ring, distinct from wheel spray's 900×12 ring.
+All ten source attachments run on the fixed simulation clock. New birth packets
+upload in contiguous ranges, with at most two updates when the ring wraps; one
+instanced draw ages/culls at most 4,800 slots on the GPU. An expired zero-lifetime
+birth clears its slot rather than preserving overwritten particles. A bounded
+retained typed buffer restores all slots after graphics loss. Fountain-only GPU
+storage is 515,120 bytes including atlas and corners; it allocates no CPU sprite
+renderer. Logical births remain independent of display distance.
+
+Native shared manager batching with wheels, global RNG order, camera-dependent
+fog-plane overrides, moving emitters, and complete VU/GS precision remain outside
+this component. The authored packet budget rejects configurations that could
+produce more than 4,800 births in the maximum accepted 0.1-second step.
 
 ## Host verification
 
@@ -90,5 +122,9 @@ at desktop and 390×844, with bounded draws, pause/resume, ATV reset and graphic
 context restoration preserving state. The FREE06 type0 gate uses an explicit test-only start beside a source static
 grill attachment; it verifies framebuffer contribution and the same lifecycle
 checks on desktop and portrait. The shipped gameplay spawn is unchanged.
-Screenshots remain under ignored private storage. Browser timings and automated portrait checks do not establish sustained
+The ENV05 fountain gate likewise uses a test-only source attachment start;
+it verifies center/directional stream framebuffer contribution, a wrapped
+4,800-slot ring, at most two birth uploads, pause/reset, and restored GPU-buffer hashes identical to the retained birth buffer, including
+pending uploads after the last worker response. Screenshots remain under ignored
+private storage. Browser timings and automated portrait checks do not establish sustained
 physical-phone performance or complete native environmental parity.
