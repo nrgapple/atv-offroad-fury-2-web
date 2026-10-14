@@ -41,6 +41,18 @@ seven mechanical and five gore pieces; it did not reach that target. This is a
 route/severity coverage limit, not evidence of failed effects, and does not
 establish severe Gorn gore on the female ATV26 route.
 
+The final crash-timing fix retains the worst actual ATV impact only within the
+current wreck, so a hard contact before rider separation still triggers Gorn
+after detachment; recovery/reset clears it before another crash. A Rust
+regression covers delayed separation followed by a mild crash. The final Gorn
+route passed 1,405 paired WASM gameplay/camera steps plus 101 after reload with
+zero differences: three aerial frames with the ATV intact, two contact
+transitions, seven mechanical pieces, five rider pieces, 90 droplets, nonzero
+shake and boom, and intact recovery. The prior 1,519-step run remains valid for
+its earlier host checkpoint. `make check` passed with 360 core Rust tests and
+122 JS tests, formatting and strict Clippy; `make web` passed. New CI and public
+verification remain pending.
+
 ## Uphill chase camera — public release (2026-10-13)
 
 PR #47 merged as `96e0ea04c1406a5adfeabbaec055b881b8c9dca7`; main CI/deploy

@@ -200,3 +200,17 @@ after 60 seconds waiting for all seven mechanical and five gore pieces. The
 route did not attain its severe target, so this is a route/severity coverage
 limit rather than a failed-effects result. Severe Gorn gore on female ATV26
 remains unverified.
+
+The final crash-timing fix remembers the worst actual ATV impact only during
+the current wreck. A hard collision of at least 50 ft/s before rider separation
+can therefore trigger Gorn when the rider detaches; recovery/reset clears the
+value so a later soft crash cannot inherit gore. A focused Rust regression
+covers delayed separation followed by a mild crash. The final Gorn route passed
+1,405 paired WASM gameplay/camera steps plus 101 after reload, with zero
+differences: three aerial ragdoll frames with the ATV intact, two contact
+transitions, seven mechanical pieces, five rider pieces, 90 droplets, nonzero
+shake and boom, and intact recovery. The earlier 1,519-step host run remains a
+valid checkpoint for that build. `make check` passes 360 core Rust and 122 JS
+tests, formatting and strict Clippy; `make web` passes. New CI and public
+verification remain pending. Existing approved captures remain accurate; this
+follow-up adds no screenshot.
