@@ -128,3 +128,26 @@ it verifies center/directional stream framebuffer contribution, a wrapped
 pending uploads after the last worker response. Screenshots remain under ignored
 private storage. Browser timings and automated portrait checks do not establish sustained
 physical-phone performance or complete native environmental parity.
+
+## Weather integration gate
+
+The combined weather/ambient checkpoint retains both optional batch fields and
+advances ambient and source camera Snow on the same successful fixed step.
+Component configuration follows physics initialization; context restoration
+rebuilds renderer resources from retained simulation/birth state. Reset/pause
+input can synchronously clear interpolation, so the current render ends before
+reading a cancelled presentation frame.
+
+All 40 routes load source ambient declarations and weather selection metadata
+without JS/GL errors. The shorter declaration gate complements the earlier
+80-step source catalog gate. Seven real rain lifecycle cases cover active/dry
+NAT06 and SX13 selection, Freeport ATV/motorcycle audio, pause/reset and graphics
+restoration. Source Caribou Race Snow contributes 36,995 desktop/42,616 portrait
+pixels, preserves all frozen Snow-only framebuffer bytes after restoration,
+and retains its clock across physical vehicle reset. ENV05 ATV and motorcycle
+fountain lifecycle/buffer gates also pass in the combined build.
+
+The 147-record weather content package changes only the repacked AUDIO.RES from
+446 to 447 members, adding rain.vag. The earlier map package is insufficient for
+Rain audio. These are host integration checks; public delivery is a separate
+gate owned by the release coordinator. Source fog12 remains unconnected.
