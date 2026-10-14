@@ -159,18 +159,20 @@ function impactNoise(x, seed) {
 // Event-only rotational impulses. GDC camera trauma squared with finite decay;
 // ordinary speed, engine RPM and suspension contacts never create shake.
 export class VehicleShake {
-  constructor() { this.reset(); }
+  constructor(clock=()=>performance.now()/1000) { this.clock=clock; this.reset(); }
   reset() {
+    this.impulseAt=0; this.cooldownUntil=0;
     this.previous=null; this.energy=0; this.roughness=0; this.time=0;
     this.remaining=0; this.duration=0; this.strength=0; this.cooldown=0;
     this.airTime=0; this.crashSeverity=0; this.lastSeverity=0; this.impacts=0;
     this.offset=[0,0,0,0];
   }
-  quiet() { this.energy=0; this.remaining=0; this.offset.fill(0); }
+  quiet() { this.energy=0; this.remaining=0; this.duration=0; this.offset.fill(0); }
   accept(actor, enabled=true) {
     const old=this.previous; this.previous=actor;
+    const now=this.clock();
     if (!actor || !enabled || !old || old.reset_count!==actor.reset_count || Math.hypot(...actor.origin.map((v,i)=>v-old.origin[i]))>40) {
-      this.quiet(); this.airTime=0; this.crashSeverity=0; this.cooldown=0; return 0;
+      this.quiet(); this.airTime=0; this.crashSeverity=0; this.cooldown=0; this.cooldownUntil=0; return 0;
     }
     const riding=actor.wreck?.phase==='Riding', grounded=actor.grounded?.some(Boolean);
     if (riding && old.wreck?.phase!=='Riding') this.crashSeverity=0;
@@ -185,20 +187,22 @@ export class VehicleShake {
     // A crash gets one impulse and at most a meaningful severity upgrade. Its
     // repeated bouncing cannot keep the camera moving throughout recovery.
     const upgrade=severity>=50 && this.crashSeverity<50;
-    if (severity && (this.cooldown===0 || upgrade) && (riding || this.crashSeverity===0 || upgrade)) {
+    if (severity && (now>=this.cooldownUntil || upgrade) && (riding || this.crashSeverity===0 || upgrade)) {
       this.strength=Math.min(1,Math.max(.2,(severity-12)/65));
-      this.duration=severity>=50?.48:.26; this.remaining=this.duration;
-      this.energy=this.strength; this.cooldown=.30; this.lastSeverity=severity;
+      this.duration=severity>=50?.48:.26; this.remaining=this.duration; this.impulseAt=now;
+      this.energy=this.strength; this.cooldown=.30; this.cooldownUntil=now+.30; this.lastSeverity=severity;
       if (!riding || body) this.crashSeverity=Math.max(this.crashSeverity,severity);
       this.impacts++; return severity;
     }
     return 0;
   }
   update(actor, dt, enabled=true, active=true) {
-    dt=Number.isFinite(dt)?Math.max(0,Math.min(.05,dt)):0;
-    this.cooldown=Math.max(0,this.cooldown-dt);
+    const now=this.clock();
+    this.cooldown=Math.max(0,this.cooldownUntil-now);
     if (!enabled || !active) { this.quiet(); return; }
-    this.time+=dt; this.remaining=Math.max(0,this.remaining-dt);
+    // Physics/control dt is capped by the game loop. Impulse age must use the
+    // event's real clock, including a slow frame and a fresh late-delivered hit.
+    this.time=now; this.remaining=Math.max(0,this.duration-(now-this.impulseAt));
     if (!this.remaining) { this.quiet(); return; }
     const attack=Math.min(1,(this.duration-this.remaining)/.012);
     this.energy=this.strength*this.remaining/this.duration;
