@@ -73,7 +73,7 @@ range, stable descending depth and at most two blend-family instance draws.
 An original 128×512 atlas plus instance/corner buffers uses 286,192 GPU bytes.
 This is an additional GPU texture copy; decoded atlas bytes share tire sources.
 
-Hat effects (type9), fog (type12), moving attachments and other actor animation families
+Hat effects (type9), moving attachments and other actor animation families
 remain explicit diagnostics at this component gate. Visibility callback scheduling, lighting, GS transparency ordering/fog precision
 and original scene-level manager sharing remain incomplete.
 
@@ -150,7 +150,7 @@ fountain lifecycle/buffer gates also pass in the combined build.
 The 147-record weather content package changes only the repacked AUDIO.RES from
 446 to 447 members, adding rain.vag. The earlier map package is insufficient for
 Rain audio. These are host integration checks; public delivery is a separate
-gate owned by the release coordinator. Source fog12 remains unconnected.
+gate owned by the release coordinator. Freeport fog12 is connected in the later host checkpoint below.
 
 The same configured camera-relative Snow manager now steps in motorcycle
 batches using their existing camera position/target. The motorcycle
@@ -160,3 +160,52 @@ Its physical vehicle reset preserves the scene clock. Snow resolves the scene
 GPU material/texture when a motorcycle's tire atlas is present; it does not use
 that vehicle atlas as Snow. Original ATV inputs and supplied scene atlas are
 unchanged.
+
+
+## Persistent Freeport type12 fog volume — host checkpoint
+
+The indexed Freeport common TOY fog declaration now loads its original EMT and
+CPU atlas group. `001a1070`/`001a12e0` initialize 200 persistent sprites across the
+source MinRange/MaxRange volume, with original random sizes, frame choices,
+mirrors and per-sprite oscillator noise. Construction initializes the volume
+before its first fixed step; `001a0d00` sets the placement before EMT loading.
+EmitRate does not create a continuous smoke plume.
+The native maximum of ParticlesInVolume/MinParticlesPerFrame is bounded by the
+existing 600-slot CPU pool, with dropped initialization slots reported.
+
+`001a0f30` advances the source triangle oscillator. Its phase is computed before
+the strict endpoint clamp, retaining the one-step overshoot and 1/1000 endpoint
+offset. The persistent branch of `00143aa0` keeps age fixed and adds phase × noise
+to position without a dt multiplier. Source Freeport age/lifetime remains 0.5,
+producing 32/128 alpha units. The persistent branch of `001451a0` fades that alpha
+with squared XYZ camera distance inside the source 20-foot radius. The renderer
+preserves finite float operation order for this distance calculation. Existing
+source scene fog, depth sorting and two blend-family draws remain in use.
+
+Private instruction gates pass 60 constructor cases (1,537 particles), 80 clock
+sequences (8,000 updates), 300 persistent motion cases and 300 near-alpha cases:
+660,486 executed finite EE instructions and 45,181 raw field/state/normalized-alpha
+comparisons, with zero differences. The clock gate supplies the base emitter
+callback; motion and alpha gates isolate their persistent instruction blocks.
+These do not recover full source manager scheduling, shared global/date RNG
+ordering, lighting, GS transparency precision or physical-phone performance.
+The port retains its independent map RNG seed1 and fixed simulation timestep.
+No raw source fixtures or instruction exports are included in Git.
+
+The host Freeport gate uses an explicit test-only start beside the original fog
+placement. An isolated fog draw changes 417,711 desktop and 202,553 portrait
+pixels; counts vary with capture timing. The 200 fog sprites retain age, size,
+atlas frame and mirrors after multiple lifetimes, while their positions follow
+the oscillator. Placed rain shares the remaining CPU slots. Rendering uses one
+instance draw and 286,192 GPU bytes with no extra fog texture or particle pool.
+Pause, vehicle reset and graphics restoration preserve the full source world
+frame; resuming continues its clock. All 40 venue routes pass declaration and
+weather loading with finite bounded frames. This is a host component gate;
+the same lifecycle gate also passes on motorcycles at desktop and portrait
+(575,622/271,167 isolated fog pixels in that capture). `make check` passes
+437 Rust tests and 135 JavaScript tests (five private Rust instruction gates and
+one private JS alpha gate are opt-in); formatting, strict Clippy, WASM build,
+`make verify` and 35 release tests (one skipped) pass. Public release remains
+owned by the release coordinator. Moving Arlington
+locomotive smoke, callback-gated hockey hats and other animated actor families
+remain explicit gaps.

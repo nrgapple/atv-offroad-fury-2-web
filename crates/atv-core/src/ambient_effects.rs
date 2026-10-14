@@ -9,6 +9,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+mod fog;
 mod streams;
 pub const GPU_CAPACITY: usize = 400 * 12;
 pub const CAPACITY: usize = 600;
@@ -337,6 +338,7 @@ struct Definition {
     emit_mode: usize,
     smoke: Option<Smoke>,
     stream: Option<streams::Config>,
+    fog: Option<fog::Config>,
     on_range: [f32; 2],
     off_range: [f32; 2],
     delay: f32,
@@ -349,6 +351,7 @@ struct Runtime {
     first: bool,
     frame: usize,
     timer: Timer,
+    oscillator: fog::Oscillator,
 }
 #[derive(Clone)]
 struct Particle {
@@ -373,6 +376,8 @@ pub struct Sprite {
     pub mirror: [bool; 2],
     pub additive: bool,
     pub lit: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fade_distance: Option<f32>,
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Frame {
@@ -438,8 +443,8 @@ impl Effects {
         let mut random_source = OriginalRandom::with_seed(1);
         let mut unsupported = plan.unresolved.clone();
         for placement in &plan.placements {
-            // Placed raindrops are type8; weather policy/snow and type12 fog are separate.
-            if ![0, 2, 8, 11].contains(&placement.type_id) {
+            // Placed raindrops and fog use the CPU atlas; Weather selection/Snow are separate.
+            if ![0, 2, 8, 11, 12].contains(&placement.type_id) {
                 unsupported.push(format!(
                     "{}: original emitter type{} not connected",
                     placement.filename, placement.type_id
@@ -454,7 +459,13 @@ impl Effects {
                 continue;
             };
             let d = text(s)?;
-            let base = Emitter::parse(s.as_bytes(), 0)?;
+            let mut base = Emitter::parse(s.as_bytes(), 0)?;
+            let fog = if placement.type_id == 12 {
+                base.flags = (base.flags | 0x80) & !8;
+                Some(fog::Config::parse(&d, &base)?)
+            } else {
+                None
+            };
             let group = integer(&d, "General Info", "ParticleGroup", 0, 127)?;
             let group = *atlas
                 .as_ref()
@@ -534,6 +545,7 @@ impl Effects {
                 additive: boolean(&d, "Properties", "Additive", false)?,
                 emit_mode,
                 smoke,
+                fog,
                 stream: if placement.type_id == 11 {
                     Some(streams::Config::parse(&d)?)
                 } else {
@@ -562,6 +574,7 @@ impl Effects {
                 phase: 0.,
                 first: true,
                 timer,
+                oscillator: fog::Oscillator::default(),
             });
         }
         let stream_budget: usize = runtime
@@ -587,30 +600,78 @@ impl Effects {
             unsupported,
             capacity: CAPACITY,
         };
-        Ok((
-            Self {
-                runtime,
-                particles: Vec::with_capacity(CAPACITY),
-                random: random_source,
-                serial: 0,
-                time: 0.,
-                total: 0,
-                dropped: 0,
-                frame: Frame::default(),
-                gpu_total: 0,
-                gpu_initialized: false,
-            },
-            metadata,
-        ))
+        let mut effects = Self {
+            runtime,
+            particles: Vec::with_capacity(CAPACITY),
+            random: random_source,
+            serial: 0,
+            time: 0.,
+            total: 0,
+            dropped: 0,
+            frame: Frame::default(),
+            gpu_total: 0,
+            gpu_initialized: false,
+        };
+        effects.initialize_fog();
+        effects.frame.particles = effects.sprites();
+        effects.frame.total_emitted = effects.total;
+        effects.frame.dropped = effects.dropped;
+        Ok((effects, metadata))
+    }
+    fn initialize_fog(&mut self) {
+        for (index, r) in self.runtime.iter_mut().enumerate() {
+            let Some(c) = &r.definition.fog else {
+                continue;
+            };
+            let wanted = c.count.ceil() as usize;
+            let available = CAPACITY - self.particles.len();
+            self.dropped += wanted.saturating_sub(available) as u64;
+            for _ in 0..wanted.min(available) {
+                let p = fog::initial(
+                    c,
+                    r.placement.position,
+                    r.definition.spread,
+                    r.definition.mirror,
+                    &mut self.random,
+                );
+                self.particles.push(Particle {
+                    position: p.position,
+                    velocity: p.noise,
+                    size: p.size,
+                    initial_size: p.size,
+                    growth: 0.,
+                    life: r.definition.base.life,
+                    age: r.definition.base.age * r.definition.base.life,
+                    frame: r.frame,
+                    set_first: r.frame,
+                    emitter: index,
+                    mirror: p.mirror,
+                });
+                r.frame = r.definition.group[0]
+                    + ((r.definition.group[1] - r.definition.group[0] + 1) as f32
+                        * random(&mut self.random)) as usize;
+                self.total += 1;
+            }
+        }
     }
     pub fn step(&mut self, dt: f32) -> Result<&Frame> {
         if !dt.is_finite() || dt <= 0. || dt > 0.1 {
             return Err("invalid ambient fixed step".into());
         }
         self.time += dt;
+        for r in &mut self.runtime {
+            if let Some(c) = &r.definition.fog {
+                r.oscillator.step(c.speed, dt);
+            }
+        }
         //00143aa0 moves before gravity and tests ground after velocity update.
         self.particles.retain_mut(|p| {
-            let d = &self.runtime[p.emitter].definition;
+            let r = &self.runtime[p.emitter];
+            let d = &r.definition;
+            if let Some(c) = &d.fog {
+                fog::move_particle(&mut p.position, p.velocity, c.speed, r.oscillator.phase);
+                return true;
+            }
             p.age += dt * 1000.;
             if p.life < p.age {
                 return false;
@@ -657,6 +718,9 @@ impl Effects {
         let mut emitted = 0;
         let mut gpu_births = vec![];
         for (index, r) in self.runtime.iter_mut().enumerate() {
+            if r.definition.fog.is_some() {
+                continue;
+            }
             if r.first {
                 r.first = false;
                 continue;
@@ -827,13 +891,27 @@ impl Effects {
                 self.total += 1;
             }
         }
-        let particles = self
-            .particles
+        let particles = self.sprites();
+        self.frame = Frame {
+            time: self.time,
+            particles,
+            emitted,
+            total_emitted: self.total,
+            dropped: self.dropped,
+            gpu_births,
+            gpu_total: self.gpu_total,
+        };
+        Ok(&self.frame)
+    }
+    fn sprites(&self) -> Vec<Sprite> {
+        self.particles
             .iter()
             .map(|p| {
                 let d = &self.runtime[p.emitter].definition;
                 let ratio = p.age / p.life;
-                let alpha = if d.base.flags & 2 != 0 {
+                let alpha = if d.fog.is_some() {
+                    0.5 * (1. - p.age * (1. / p.life))
+                } else if d.base.flags & 2 != 0 {
                     0.5 * (1. - ratio)
                 } else if d.base.flags & 0x1000 != 0 {
                     0.5 * ratio * p.initial_size.powi(3) / p.size.powi(3)
@@ -848,19 +926,10 @@ impl Effects {
                     mirror: p.mirror,
                     additive: d.additive,
                     lit: d.lit,
+                    fade_distance: d.fog.as_ref().map(|c| c.fade_distance),
                 }
             })
-            .collect();
-        self.frame = Frame {
-            time: self.time,
-            particles,
-            emitted,
-            total_emitted: self.total,
-            dropped: self.dropped,
-            gpu_births,
-            gpu_total: self.gpu_total,
-        };
-        Ok(&self.frame)
+            .collect()
     }
     pub fn frame(&self) -> &Frame {
         &self.frame
@@ -887,6 +956,46 @@ mod tests {
         assert_eq!(result.placements[0].position, [10., 25., 30.]);
         assert!(!result.placements[1].start_on);
         assert_eq!(result.unresolved, ["smoke.emt: 1/2 attachment prop.slt"]);
+    }
+    #[test]
+    fn persistent_volume_initializes_off_and_stays_bounded_after_lifetime() {
+        let source = Source {
+            scene: "[StaticModels]\nNumberOfStaticModels=0\n".into(),
+            common: "[ParticleEmitters]\nNumberOfEmitters=1\n[ParticleEmitter1]\nTypeID=12\nPosition=0,0,0\nStartOn=F\nEmitterFilename=synthetic.emt\n".into(),
+            mode: None,
+            prt: "[General Info]\nTextureMap=synthetic.tga\nNumFrames=1\nNumGroups=1\n[Frame0]\nUVLeft=0\nUVTop=0\nUVRight=1\nUVBottom=1\n[Group0]\nFirstFrame=0\nLastFrame=0\n".into(),
+            emts: BTreeMap::from([("synthetic.emt".into(), "[General Info]\nParticleLife=100\nInitialSize=1\nGrowth=1\nEmitRate=500\nAgeAtBirth=0.5\nVelocity=0,0,0\nParticlesInVolume=700\nMinSize=2\nMaxSize=3\nDistanceToFade=10\nOscillationSpeed=-1\nMinRange=-1,-1,-1\nMaxRange=1,1,1\n[Properties]\nGrows=T\n".into())]),
+        };
+        let (mut effects, metadata) = Effects::from_source(&source).unwrap();
+        assert_eq!(metadata.active, 1);
+        assert_eq!(effects.particles.len(), CAPACITY);
+        assert_eq!(effects.frame.particles.len(), CAPACITY);
+        let initial = effects
+            .particles
+            .iter()
+            .map(|p| (p.position, p.size, p.age))
+            .collect::<Vec<_>>();
+        for _ in 0..600 {
+            effects.step(1. / 60.).unwrap();
+        }
+        assert_eq!(
+            effects
+                .particles
+                .iter()
+                .map(|p| (p.position, p.size, p.age))
+                .collect::<Vec<_>>(),
+            initial
+        );
+        assert_eq!(effects.frame.total_emitted, CAPACITY as u64);
+        assert_eq!(effects.frame.emitted, 0);
+        assert_eq!(effects.frame.dropped, 100);
+        assert!(
+            effects
+                .frame
+                .particles
+                .iter()
+                .all(|p| p.fade_distance == Some(10.) && p.alpha == 0.25)
+        );
     }
     #[test]
     fn timer_switches_keep_strict_native_boundary_and_reads_do_not_advance() {
@@ -979,6 +1088,7 @@ mod tests {
                 emit_mode: 0,
                 smoke: c.smoke,
                 stream: None,
+                fog: None,
                 on_range: [0.; 2],
                 off_range: [0.; 2],
                 delay: 0.,
@@ -991,6 +1101,7 @@ mod tests {
                     start_on: true,
                 },
                 definition,
+                oscillator: fog::Oscillator::default(),
                 phase: c.phase,
                 first: false,
                 frame: if c.kind == 0 { 152 } else { 128 },
