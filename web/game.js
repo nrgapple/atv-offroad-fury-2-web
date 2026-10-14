@@ -1,5 +1,5 @@
 // Original content and vehicle component simulation run in the Rust worker.
-import { vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation } from './render-support.js';
+import { vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, RideEffectsSettings, VehicleShake } from './render-support.js';
 import { Multiplayer, PlayerIndicators } from './multiplayer.js';
 import { Frontend } from './frontend.js';
 import { courseResource } from './launch.js';
@@ -14,7 +14,7 @@ import { DiagnosticsOverlay } from './diagnostics.js';
 import { WaterRenderer } from './water.js';
 import { fogVertexShader, fogFragmentShader } from './fog.js';
 import { loadTrain, TrainRenderer } from './train.js';
-import { loadWheelEffects, loadMotorcycleEffects, WheelEffectsRenderer } from './wheel-effects.js';
+import { loadWheelEffects, loadMotorcycleEffects, WheelEffectsRenderer, BloodRenderer } from './wheel-effects.js';
 import { MotorcyclePresentation } from './motorcycle-presentation.js';
 const $ = id => document.getElementById(id);
 const canvas = $('game');
@@ -32,13 +32,14 @@ const remoteModels = new Map();
 const minimapSettings = new MinimapSettings();
 const minimap = new FreestyleMinimap(minimapSettings);
 const playerIndicators = new PlayerIndicators();
-let funnyCrashes = true;
-try { funnyCrashes = localStorage.getItem('atv-funny-crashes') !== 'false'; } catch { /* Session preference. */ }
-const crashSettings = { get enabled() { return funnyCrashes; }, toggle() {
-  funnyCrashes = !funnyCrashes;
-  try { localStorage.setItem('atv-funny-crashes', String(funnyCrashes)); } catch { /* Session preference. */ }
-  if (simFrame) acceptFrame(simFrame);
-} };
+const crashSettings = new RideEffectsSettings(undefined, matchMedia('(prefers-reduced-motion: reduce)').matches);
+let funnyCrashes = crashSettings.enabled;
+const cameraShake = new VehicleShake();
+crashSettings.onChange = () => {
+  funnyCrashes = crashSettings.enabled;
+  if (simFrame) acceptFrame({...simFrame,funny_crash:null},false);
+};
+crashSettings.onShakeChange = () => { cameraShake.reset(); scheduleRender(); };
 
 let raceSettings = null, raceCourse = null, cpuQuadMatrices, cpuRiderMatrices;
 const raceOverlay = new RaceOverlay({restart: async () => { await $('reset').onclick(); canvas.focus({preventScroll:true}); }, quit: () => frontend?.show('single')});
@@ -50,6 +51,7 @@ let sceneChunks = [], sceneDraws = [], skyChunks = [], ecoGroups = [], ecoBillbo
 let waterRenderer;
 let trainRenderer;
 let wheelEffectsRenderer;
+let bloodRenderer;
 const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const camera = { x: 0, y: 0, z: 0, yaw: 0, pitch: -.35 };
 const keys = new Set(), pointers = new Map();
@@ -63,7 +65,7 @@ const diagnostics = { ready: false, frames: 0, vertices: 0, triangles: 0, chunks
 let audio = new GameAudio(codec, message => { diagnostics.audioError = message; status(`Audio: ${message}`, true); });
 const stats = new DiagnosticsOverlay({ snapshot: () => ({ ...diagnostics, minimap: minimap.snapshot(), frame: simFrame, paused: simulationPaused(), menuOpen, focused, resolution: [canvas.width, canvas.height] }) });
 // Read-only snapshot for verification; does not expose the locally opened file.
-Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, minimap: minimap.snapshot(), hud: hud?.snapshot(), funnyCrashes, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()],reconnecting:multiplayer.reconnecting,lastDisconnect:multiplayer.lastDisconnect,droppedSnapshots:multiplayer.droppedSnapshots,networkAdapterRoundTripMs:multiplayer.networkEncodeMs,networkAdapterCalls:multiplayer.networkEncodeCalls} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
+Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, minimap: minimap.snapshot(), hud: hud?.snapshot(), funnyCrashes, crashMode: crashSettings.mode, cameraShake: { enabled: crashSettings.shake, energy: cameraShake.energy, roughness: cameraShake.roughness, offset: [...cameraShake.offset], impacts: cameraShake.impacts }, blood: { draws: bloodRenderer?.draws ?? 0, count: crashSettings.mode === 'gorn' ? simFrame?.funny_crash?.blood?.length ?? 0 : 0 }, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()],reconnecting:multiplayer.reconnecting,lastDisconnect:multiplayer.lastDisconnect,droppedSnapshots:multiplayer.droppedSnapshots,networkAdapterRoundTripMs:multiplayer.networkEncodeMs,networkAdapterCalls:multiplayer.networkEncodeCalls} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
 worker.onmessage = ({ data }) => {
   if (data.startupError) { status(data.startupError, true); return; }
   const request = pending.get(data.id);
@@ -556,6 +558,7 @@ function initializeGl() {
 }
 function clearMesh() {
   for (const model of remoteModels.values()) { disposeRemoteGpu(model); }
+  bloodRenderer?.dispose(); bloodRenderer = undefined;
   wheelEffectsRenderer?.dispose(); wheelEffectsRenderer = undefined;
   trainRenderer?.dispose(); trainRenderer = undefined;
   waterRenderer?.dispose(); waterRenderer = undefined;
@@ -1220,7 +1223,12 @@ function drivingInput() {
   input.steer = -clamp(input.steer); // Rust clamps the combined physical lean; one-handed touch also supplies lean.
   return { input, actions };
 }
-function acceptFrame(frame) {
+function acceptFrame(frame, effects = true) {
+  if (effects) {
+    const severity = cameraShake.accept(frame, focused && !document.hidden && !menuOpen && !lost && !pageSuspended);
+    if (severity >= 40) audio.crashBoom(severity);
+    if (!crashSettings.shake) { cameraShake.energy = 0; cameraShake.offset = [0,0,0,0]; }
+  }
   wheelEffectsRenderer?.accept(frame.wheel_particles);
   if (diagnostics.wheelEffects) { diagnostics.wheelEffects.frame = frame.wheel_particles; diagnostics.wheelEffects.particles = frame.wheel_particles?.particles.length ?? 0; }
   if (!frame?.origin?.every(Number.isFinite) || frame.origin.length !== 3 || !frame.orientation?.every(Number.isFinite) || frame.orientation.length !== 4 || !Number.isFinite(frame.speed) || !Number.isFinite(frame.rpm)) throw new Error('Simulation returned a nonfinite pose.');
@@ -1243,6 +1251,7 @@ function acceptFrame(frame) {
   }
 }
 async function startSimulation(source) {
+  cameraShake.reset();
   motorcyclePresentation.reset(); presentedFrame = presentedCamera = undefined;
   diagnostics.simulationSteps = 0;
   simReady = false; simFrame = undefined; cameraFrame = undefined; simAccumulator = 0; simGeneration++;
@@ -1304,12 +1313,13 @@ async function pumpSimulation() {
   try {
     const { input, actions } = drivingInput();
     input.funny_crashes = funnyCrashes;
+    input.crash_mode = crashSettings.mode;
     // Menu/reset transitions cancel input before any further physics is queued.
     if (actions.pause) { void frontend?.show('pause'); return; }
     if (actions.reset) { await $('reset').onclick(); return; }
     for (let step = 0; step < count; step++) simAccumulator -= 1 / 60;
     const cycle = cameraCycle || actions.camera; cameraCycle = false;
-    if (cycle) orbit = 0;
+    if (cycle) { orbit = 0; cameraShake.reset(); }
     const submitted = performance.now();
     const frames = await command(50, { count, input, orbit, cycle, now: Math.floor(performance.now()) });
     diagnostics.physicsRoundTripMs = performance.now() - submitted;
@@ -1338,7 +1348,7 @@ function acceptCameraFrame(frame) {
   diagnostics.followCamera = { ...frame, presetName: diagnostics.cameraPresets?.[frame.preset] };
 }
 function presentCameraFrame(frame = presentedCamera ?? cameraFrame) {
-  const view = chasePresentation(frame, presentedFrame ?? simFrame, canvas.width / canvas.height, uphillSightline, terrainHeight);
+  const view = cameraShake.apply(chasePresentation(frame, presentedFrame ?? simFrame, canvas.width / canvas.height, uphillSightline, terrainHeight), terrainHeight);
   [camera.x, camera.y, camera.z] = view.position;
   camera.yaw = view.yaw;
   camera.pitch = view.pitch;
@@ -1397,6 +1407,7 @@ function render(time) {
   const dt = Math.min(.05, Math.max(0, (time - (lastTime || time)) / 1000)); lastTime = time;
   const ratio = Math.min(devicePixelRatio || 1, 1.5), width = Math.max(1, Math.round(canvas.clientWidth * ratio)), height = Math.max(1, Math.round(canvas.clientHeight * ratio));
   if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+  cameraShake.update(simFrame, dt, crashSettings.shake, focused && !menuOpen && !lost);
   if (!menuOpen) updateCamera(dt);
   if (simReady && !simulationPaused()) {
     simAccumulator = Math.min(.1, simAccumulator + dt); void pumpSimulation();
@@ -1538,6 +1549,10 @@ function render(time) {
     diagnostics.waterRender.cpuMilliseconds = waterRenderer.cpuMilliseconds;
     diagnostics.waterRender.gpuMilliseconds = waterRenderer.gpuMilliseconds;
   }
+  if (crashSettings.mode === 'gorn' && simFrame?.funny_crash?.blood?.length) {
+    bloodRenderer ??= new BloodRenderer(gl);
+    bloodRenderer.draw(simFrame.funny_crash.blood, {camera,viewProjection});
+  } else if (bloodRenderer) bloodRenderer.draws = 0;
   if (wheelEffectsRenderer) {
     wheelEffectsRenderer.draw({ camera, viewProjection });
     diagnostics.wheelEffects.draws = wheelEffectsRenderer.draws; diagnostics.wheelEffects.triangles = wheelEffectsRenderer.triangles; diagnostics.wheelEffects.cpuMilliseconds = wheelEffectsRenderer.cpuMilliseconds; diagnostics.wheelEffects.wetLive = wheelEffectsRenderer.wetLive ?? 0;
@@ -1604,6 +1619,7 @@ $('disc').addEventListener('change', event => { const file = event.target.files[
 $('reset').onclick = async () => {
   if (!simStart || !vehicle) { resetCamera(); return; }
   if (raceSettings) { await loadGame(null, 'env01', raceSettings); return; }
+  cameraShake.reset();
   simGeneration++; simReady = false; simAccumulator = 0; clearInput();
   try { await audio.reset(); acceptFrame(await command(23, simStart)); await command(47, {}); orbit = 0; acceptCameraFrame(await command(46, { dt: 1 / 60, orbit })); simReady = true; buildMesh(); resetCamera(); }
   catch (error) { status(error.message, true); }
@@ -1648,7 +1664,7 @@ window.addEventListener('keyup', event => { keys.delete(event.code); gameplayBin
 const clearInput = () => { motorcyclePresentation.reset(); presentedFrame = presentedCamera = undefined; keys.clear(); pointers.clear(); touchControls.clear(); touchLean.clear(); gameplayBindings.cancel(); simAccumulator = 0; cameraCycle = false; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
 gameplayBindings.subscribe(clearInput);
 window.addEventListener('gamepaddisconnected', clearInput);
-const syncAudio = () => { void audio.setActive(focused && !document.hidden && !lost && !menuOpen && !pageSuspended).catch(error => { diagnostics.audioError = error.message; }); };
+const syncAudio = () => { if (!focused || document.hidden || lost || menuOpen || pageSuspended) cameraShake.reset(); void audio.setActive(focused && !document.hidden && !lost && !menuOpen && !pageSuspended).catch(error => { diagnostics.audioError = error.message; }); };
 window.addEventListener('blur', () => { focused = false; clearInput(); syncAudio(); scheduleRender(); });
 window.addEventListener('focus', () => { focused = true; lastTime = 0; syncAudio(); scheduleRender(); });
 document.addEventListener('visibilitychange', () => { clearInput(); lastTime = 0; syncAudio(); scheduleRender(); });
@@ -1656,7 +1672,7 @@ window.addEventListener('resize', () => { scheduleRender(); });
 canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; for(const model of remoteModels.values()){model.chunks=null;model.gpuTextures=[];} diagnostics.ready = false; clearInput(); syncAudio(); frontend?.setLoading(true, 'Restoring graphics…'); status('Restoring graphics…'); });
 // Every old GPU handle belongs to the lost context, including vegetation instances.
 // Discard those references before buildMesh runs its normal resource cleanup.
-canvas.addEventListener('webglcontextrestored', () => { try { lost = false; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); scheduleRender(); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
+canvas.addEventListener('webglcontextrestored', () => { try { lost = false; bloodRenderer = undefined; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); scheduleRender(); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
 window.addEventListener('pagehide', event => {
   cancelAnimationFrame(frame); frame = 0; clearInput();
   if (event.persisted) {
