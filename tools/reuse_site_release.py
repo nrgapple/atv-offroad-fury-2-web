@@ -69,15 +69,18 @@ def prepare(lane, event, commit, root=ROOT):
         subprocess.run(['git', 'merge-base', '--is-ancestor', source, commit], cwd=root, check=True)
         if classify(changed_paths(root, source, commit)) == 'runtime':
             raise ValueError('production has different runtime inputs')
-        runs = gh_json('gh', f'repos/{REPOSITORY}/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=100')
-        run = eligible_run(runs['workflow_runs'], source)
-        if not run:
-            raise ValueError('no successful main artifact for the public release')
-        base = root / 'work/reused-base'
-        if base.exists():
-            shutil.rmtree(base)
-        subprocess.run(['gh', 'run', 'download', str(run['id']), '--repo', REPOSITORY,
-                        '--name', 'web-release', '--dir', str(base)], check=True, timeout=120)
+        from local_release import local_artifact
+        base = local_artifact(source, root)
+        if base is None:
+            runs = gh_json('gh', f'repos/{REPOSITORY}/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=100')
+            run = eligible_run(runs['workflow_runs'], source)
+            if not run:
+                raise ValueError('no successful main artifact for the public release')
+            base = root / 'work/reused-base'
+            if base.exists():
+                shutil.rmtree(base)
+            subprocess.run(['gh', 'run', 'download', str(run['id']), '--repo', REPOSITORY,
+                            '--name', 'web-release', '--dir', str(base)], check=True, timeout=120)
         refresh(base, root / 'work/release', commit, root)
         print(f'Reused checked application {source}; only dev-log text and release identity changed.')
         return {'build': False, 'reused': True}

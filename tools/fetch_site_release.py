@@ -50,6 +50,10 @@ def fetch(repository, site_url=None, deployed=False):
                 return {'status': 'unchanged', 'commit': commit}
         except (OSError, ValueError):
             pass  # First publication may not contain deployment metadata yet.
+    from local_release import local_artifact
+    local = local_artifact(commit, ROOT)
+    if local is not None:
+        return {'status': 'ready', 'commit': commit, 'release': str(local), 'source': 'verified-local-fallback'}
     runs = gh_json(gh, f'repos/{repository}/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=100')
     run = eligible_run(runs['workflow_runs'], commit)
     if not run:

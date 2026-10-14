@@ -91,6 +91,8 @@ pub struct Request {
     #[serde(default)]
     pub original_camera: bool,
     #[serde(default)]
+    pub speed_rush: String,
+    #[serde(default)]
     pub minimap_enabled: bool,
     #[serde(default = "default_minimap_size")]
     pub minimap_size: f32,
@@ -1027,6 +1029,12 @@ pub fn layout(request: Request) -> Result<Frame> {
                 "debug" => "Stats: Debug (F3)",
                 _ => "Stats: Off (F3)",
             };
+            let speed_label = match request.speed_rush.as_str() {
+                "low" => "Speed rush: Low",
+                "normal" => "Speed rush: Normal",
+                "high" => "Speed rush: High",
+                _ => "Speed rush: Off",
+            };
             let mut choices = match request.page.as_str() {
                 "settings" => vec![
                     ("Controls", "controls"),
@@ -1046,7 +1054,10 @@ pub fn layout(request: Request) -> Result<Frame> {
                     ),
                     (diagnostics, "diagnostics"),
                 ],
-                _ => vec![("Minimap configuration", "minimap-config")],
+                _ => vec![
+                    ("Minimap configuration", "minimap-config"),
+                    (speed_label, "speed-rush"),
+                ],
             };
             if request.page == "hud-settings" && request.fullscreen {
                 choices.push(("Fullscreen", "fullscreen"));
@@ -1385,6 +1396,7 @@ mod tests {
             funny_crashes: false,
             crash_mode: String::new(),
             original_camera: false,
+            speed_rush: "normal".into(),
             minimap_enabled: true,
             minimap_size: 160.,
             minimap_zoom: 50.,
@@ -1588,7 +1600,7 @@ mod tests {
     fn minimap_settings_fit_and_validate_sizes() {
         assert_eq!(
             layout(request("hud-settings", 390., 844.)).unwrap().choices,
-            ["minimap-config", "fullscreen", "back"]
+            ["minimap-config", "speed-rush", "fullscreen", "back"]
         );
         for (w, h) in [
             (320., 568.),

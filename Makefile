@@ -11,7 +11,7 @@ RELEASE_ARGS ?=
 .PHONY: verify verify-full inventory import check web relay serve audit code-map native-analyze browser-check release release-status
 
 release:
-	@echo "Experimental release queue disabled. Use the GitHub Actions deployment and checkpoint R2 flow in research/CI_CHECKPOINTS.md."
+	@echo "Experimental release queue disabled. Use checked Actions or tools/deploy_local.py fallback and checkpoint R2 flow in research/CI_CHECKPOINTS.md."
 	@exit 1
 
 release-status:
@@ -34,7 +34,7 @@ check:
 	$(CARGO) fmt --all -- --check
 	$(CARGO) test --locked --workspace
 	$(CARGO) clippy --locked --workspace --all-targets -- -D warnings
-	$(NODE) --test web/water.test.mjs web/scenery-materials.test.mjs web/ambient-effects.test.mjs web/ambient-streams.test.mjs web/input.test.mjs web/content.test.mjs web/touch.test.mjs web/bindings.test.mjs web/music.test.mjs web/audio.test.mjs web/diagnostics.test.mjs web/multiplayer.test.mjs web/motorcycle-presentation.test.mjs web/minimap.test.mjs web/frontend.test.mjs web/launch.test.mjs web/install.test.mjs web/render-support.test.mjs
+	$(NODE) --test web/water.test.mjs web/scenery-materials.test.mjs web/ambient-effects.test.mjs web/ambient-streams.test.mjs web/input.test.mjs web/content.test.mjs web/touch.test.mjs web/bindings.test.mjs web/music.test.mjs web/audio.test.mjs web/diagnostics.test.mjs web/multiplayer.test.mjs web/motorcycle-presentation.test.mjs web/minimap.test.mjs web/frontend.test.mjs web/launch.test.mjs web/install.test.mjs web/render-support.test.mjs web/speed-rush.test.mjs
 	python3 -m py_compile tools/*.py
 	python3 -m unittest discover -s tools -p 'test_worker_build_cache.py'
 	python3 -m unittest discover -s tools -p 'test_devlog.py'

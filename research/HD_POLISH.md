@@ -6,7 +6,7 @@ type. It does not seek a pixelated PS2 output. Keep backgrounds and borders
 restrained, particularly on gameplay controls. Existing decoded artwork is a
 reference; enlarging the original textures cannot create high-resolution detail.
 
-Delivery sequence: tight crash camera and shake removal; start/menu, five-section
+Delivery sequence: tight crash camera and shake removal; start/menu, four-section
 persistent settings and HUD polish; optional speed-driven peripheral blur.
 Each gate receives host checks, its own dev-log entry and one owner's public
 release receipts. Physical phones and exact PS2 appearance remain unverified.
@@ -62,3 +62,16 @@ thumbnail. Course photos and model textures remain their original source detail.
 Host checks cover four viewports, 2x DPR, keyboard entry, 44px settings targets,
 persistence across reload, actual driving, standalone HUD and main-preview
 rotation. Physical phones/controllers and exact original appearance are not proven.
+
+## Speed rush checkpoint
+
+The authored seven-sample radial pass starts at 40 mph and eases toward its cap at
+75 mph. It protects the projected rider and central view, with a small bounded
+peripheral warp. It uses only the current image and speed, never camera movement
+or previous frames. HUD and menus are drawn separately and remain crisp.
+Display offers saved Off, Low, Normal and High choices; reduced-motion users
+default to Off unless they explicitly saved a choice. The pass skips GPU work
+below the threshold, during crashes/menus, and when disabled. Its image storage is
+three bytes per output pixel, allocated only when needed, resized with the canvas
+and rebuilt after context recovery. This is an optional authored enhancement,
+not a claim of recovered original-game behavior.
