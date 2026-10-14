@@ -1,0 +1,15 @@
+{
+  "id": "public-multiplayer-lobby-preview-in-portrait-layout-d38519b82c61401084234e59721c0bdf",
+  "timestamp": "2026-10-14T01:14:26.568883+00:00",
+  "recorded_at": "2026-10-14T01:18:32.178102+00:00",
+  "kind": "verification",
+  "title": "Public multiplayer lobby preview in portrait layout",
+  "summary": "The public multiplayer course preview remains legible in the 390\u00d7844 portrait lobby; host and guest clients synchronize the selected Sausalito name and its stadium artwork.",
+  "details": [
+    "This portrait capture is part of the public all-40 gate: 39 source preview pairs plus the separately authored Training fallback. Host and guest lobby artwork synchronized across all course choices.",
+    "The public browser check used Chromium at 390\u00d7844; this is not a physical-phone capture. Public deployment hashes matched the 510-object / 45-static-file release at ebae742."
+  ],
+  "limitation": "The screenshot documents one Sausalito lobby view and does not imply original PST art for Training or full multiplayer/game equivalence.",
+  "image": "/devlog-images/public-multiplayer-lobby-preview-in-portrait-layout-d38519b82c61401084234e59721c0bdf.png",
+  "caption": "Public HTTPS Chromium portrait lobby (390\u00d7844): Sausalito, the source stadium preview, player count and lobby action fit the screen; this is not a physical-phone capture."
+}

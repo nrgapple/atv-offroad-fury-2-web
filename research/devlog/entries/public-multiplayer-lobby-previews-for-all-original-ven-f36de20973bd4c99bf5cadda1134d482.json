@@ -1,0 +1,17 @@
+{
+  "id": "public-multiplayer-lobby-previews-for-all-original-ven-f36de20973bd4c99bf5cadda1134d482",
+  "timestamp": "2026-10-14T01:14:26.543320+00:00",
+  "recorded_at": "2026-10-14T01:18:32.141722+00:00",
+  "kind": "verification",
+  "title": "Public multiplayer lobby previews for all original venues",
+  "summary": "On the public release at ebae742, the multiplayer lobby synchronizes venue names and preview artwork across all 40 course choices. The selection set uses 39 original source preview pairs and an authored Training fallback image.",
+  "details": [
+    "The public browser gate passed for host and guest clients in desktop and 390\u00d7844 portrait layouts; the Training fallback is the authored Training canvas capture recorded separately. Public verification confirmed lobby artwork synchronization for every venue and no error in the browser gate.",
+    "Main CI/deployment verification passed for `ebae7427955ec1c85e659a98641ef49664412744` in run 38493717125. The validated separate R2 artifact contains 511 objects with six changes; the public HTTPS check then matched 510 served objects and 45 authored static files.",
+    "The public HTTPS deployment at https://furyremastered.com/ verified commit ebae7427955ec1c85e659a98641ef49664412744, with 510 hosted objects, 45 authored static files, 208 dev-log entries and 160 screenshots at the check.",
+    "The public Training regression kept the original TOY start grounded after 180 idle steps and after reset at 00 mph, passed actual 390 px touch movement with 5 ft displacement, had wheel support on four of six source hay approaches and body contact on all six, and confirmed the extended boundary remains active beyond 3768."
+  ],
+  "limitation": "These are public browser and multiplayer-lobby checks, not physical-phone captures or original PST parity for every course. The Training fallback is authored artwork; full game and source UI equivalence remain incomplete.",
+  "image": "/devlog-images/public-multiplayer-lobby-previews-for-all-original-ven-f36de20973bd4c99bf5cadda1134d482.png",
+  "caption": "Public HTTPS Chromium desktop lobby (1280\u00d7720): the Sausalito card shows the original stadium course preview, code KCAYQZQU and available multiplayer actions."
+}
