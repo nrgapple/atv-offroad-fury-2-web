@@ -262,14 +262,16 @@ fail explicitly instead of receiving an invented flat-plane replacement.
 
 The scene's water is not an ordinary PSG in the static model list. Native
 `00200650` creates the dedicated PSXWater actor; `00188390` submits its VU-generated
-projected surface. The portable implementation derives its source quality-one
+projected surface. The initial portable implementation derived its source quality-one
 counts from `00187bc0`: 334 projected subdivisions and three strip groups. A
 private original-instruction prefix probe verifies those counts in seven quality
 cases, 434 instructions, without hooks. It stops before profile initialization;
 it does **not** prove the VU's spatial orientation or exact topology. The portable
-335-by-4 indexed mesh has 1,340 vertices and 6,012 triangle indices, allocated
-once and reused. Its camera projection, topology and interpolation remain authored
-adaptations, rather than an instruction-equivalent VU geometry port.
+335-by-4 indexed mesh had 1,340 vertices and 6,012 triangle indices. That first
+version assigned the dense axis to viewport width; subsequent native viewport
+evidence corrects this below. The camera projection, triangulation and
+interpolation remain authored adaptations, rather than an instruction-equivalent
+VU geometry port.
 
 The material and texture inputs are original runtime resources already present
 in each hosted Freestyle RES. `env0N_water.psm` names the Water microprogram and
@@ -406,3 +408,62 @@ are renderer work counts, not physical-phone timings. Existing four wet-map rend
 Arlington, unchanged banks/sky and zero GL/browser errors. Full new-map driving,
 pause/context and public verification belong to the integrating map checkpoint.
 Source-derived fixture and GPU reports stay under ignored private storage.
+
+
+## Water visual stability checkpoint (host component, October 13)
+
+The initial projected mesh placed 334 subdivisions across the viewport and only
+three into the distance. Native `00190aa0` instead scales water-node +250 strip
+groups with viewport width/640 and +440 dense samples with viewport height/448.
+The emitted row stride is strip groups times 19 plus one. This establishes the
+orientation missing from the earlier constructor-count probe: the dense axis
+belongs into the distance. It does not establish every VU vertex or native
+triangle-strip boundary.
+
+The portable renderer now starts with that orientation and sample-count basis,
+then bounds resident geometry at 8,000 vertices in portrait and 12,000 in
+landscape. At 585×1266 it uses 58 columns and 136 depth subdivisions, compared
+with the previous 335 columns and three depth subdivisions. This avoids sparse
+height interpolation across most of the visible lake while keeping the integer
+height-fetch work bounded. Mesh buffers update only when the effective viewport
+grid changes; ordinary frames still update uniforms and submit one draw.
+A lost context or zero drawing-buffer size skips the draw before resize or
+queries touch invalid GPU state. Restoration rebuilds the grid and textures
+from retained original resources and preserves the completed shared field.
+
+Original derivative and environment images now receive resident mip chains with
+trilinear minification. This reduces undersampled normal/reflection detail during
+camera movement without changing the raw height maps, signed channel ordering,
+original GS normal weights, transparency, depth behavior, environment color,
+physics clock or wave frame selection. It is a portable browser filtering
+adaptation; exact native intermediate-map filtering and reflection coordinates
+remain unverified. The R8UI physics-height array retains integer NEAREST fetches
+at level zero. All mip generation happens during upload/restoration, never during
+ordinary animation.
+
+A fixed original NAT01 frame at 585×1266 compares the old and bounded new passes
+under a 0.05-foot lateral camera movement. In the bottom 40% of the image, pixels
+with summed RGB changes above 40 decrease from 26 to four; mean adjacent RGB
+variation decreases from 0.993 to 0.841. This is a bounded minification/stability
+probe, not a universal quality score or native output comparison. Serial warmed
+SwiftShader timings including forced readback measure 28.55 ms before and 30.21
+ms after; the rejected 24,000-vertex candidate measured about 53 ms. Physical
+phone performance is not established by these software-driver measurements.
+The final portrait NAT01 probe holds 7,946 vertices and 1,740,360 GPU bytes,
+including every original animated frame, with one draw and no ordinary uploads.
+
+Verification covers all six wet scenes (ENV04/05/07/08, FREE04, NAT01) and dry
+ENV01. The real source-resource browser gate selects wet positions from runtime
+terrain, waits for the loading overlay and initial fixed steps to complete,
+checks changed water pixels, unchanged banks/sky and zero GL/browser errors, then
+rotates every portrait view and restores its graphics context. Isolated original
+resource passes assert zero ordinary mesh/texture/mipmap uploads. Chromium passes
+all scenes. The Safari-family WebKit gate uses public HTTPS resources with only
+the unpublished authored water module overridden in the host test because this
+Mac's WebKit network process cannot reach the local HTTP server; this is host
+engine verification, not a public deployment. The retained NAT01 production
+shader matches Rust at all 2,970 original-resource points, uses every one of its
+eleven frames, retains identical held-frame pixels and emits no ordinary uploads.
+Source-derived fixtures, measurements and captures remain in ignored private
+storage. Froth, native VU/reflection parity and the shared physics blend-frequency
+provenance remain unresolved.
