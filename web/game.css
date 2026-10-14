@@ -184,3 +184,30 @@ body:not(.menu-open) #help, body:not(.menu-open) #status:not(.error) { display: 
 @media (max-height: 450px) and (min-width: 581px) {
   .pause-panel[data-screen]:not([data-screen=pause]) { width: min(820px, calc(100% - 20px)); }
 }
+
+/* HD frontend: original red/silver/gold character, open rows and restrained chrome. */
+#toolbar .atv-control { border: 0; background: transparent; box-shadow: none; border-radius: 0; color: #fff; text-shadow: 0 1px 3px #000, 0 0 5px #000; }
+#toolbar .atv-control svg { width: 20px; height: 20px; filter: drop-shadow(0 1px 2px #000); }
+#toolbar .atv-control:hover, #toolbar .atv-control:active { color: var(--atv-gold-light); background: #0002; }
+#frontend[data-pause-panel=true] { background: linear-gradient(100deg, #170303c7, #08060682); }
+.pause-panel, .pause-panel[data-screen]:not([data-screen=pause]) { border: 0; border-radius: 0; background: linear-gradient(115deg, #171313ef, #090909df); box-shadow: 0 16px 60px #0005; border-top: 3px solid var(--atv-silver); font-family: var(--atv-font-label); }
+.pause-panel header { border-color: #ffffff25; }
+.pause-panel h1 { font: italic 800 clamp(28px, 4vw, 38px)/1.1 var(--atv-font-label); letter-spacing: .02em; text-transform: uppercase; }
+.pause-eyebrow, .pause-group h2 { color: var(--atv-silver); }
+.pause-panel button, .pause-panel button[data-action=resume] { border: 0; border-radius: 0; background: transparent; color: var(--atv-text); font-size: 17px; font-weight: 700; padding-left: 20px; position: relative; }
+.pause-panel button:hover { color: #fff; background: #ffffff06; }
+.pause-panel button[aria-current=true], .pause-panel button[data-action=resume] { color: var(--atv-gold-light); background: transparent; }
+.pause-panel button[aria-current=true]::before { content: ''; position: absolute; left: 3px; top: 15px; bottom: 15px; width: 3px; background: var(--atv-gold); }
+.pause-value { color: var(--atv-gold-light); background: transparent; border-radius: 0; font-size: 14px; }
+.pause-arrow { color: inherit; }
+.pause-slider, .pause-tips, .pause-player, .pause-capture { border: 0; border-radius: 0; background: transparent; }
+.pause-slider { padding: 12px 20px; }
+.pause-tips { border-left: 2px solid #ffffff20; padding: 4px 16px; }
+.pause-detail, .pause-status, .pause-tips p { color: #bbb7b2; }
+.pause-footer button[data-action=back], .pause-footer button[data-action=pause], .pause-footer button[data-action=bindcancel] { border: 0; }
+.pause-panel[data-screen=settings] .pause-content { gap: 12px; }
+.pause-panel[data-screen=settings] .pause-group button { min-height: 58px; font-size: 21px; text-transform: uppercase; }
+.race-guide canvas { background: transparent; border: 0; border-radius: 0; }
+/* Keep the first editable control above help text on short landscape screens. */
+.pause-panel[data-screen=controls] .pause-tips { order: 2; }
+.pause-footer { order: 3; }

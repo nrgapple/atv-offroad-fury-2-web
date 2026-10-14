@@ -16,6 +16,7 @@ try {
     await page.waitForFunction(()=>document.getAnimations().filter(a=>a.effect?.target?.id==='menu-stage').length===0);
   };
   const inViewport = async selector => {
+    await page.waitForFunction(()=>Math.abs(document.querySelector('#game').getBoundingClientRect().width-innerWidth)<1 && Math.abs(document.querySelector('#game').getBoundingClientRect().height-innerHeight)<1);
     const box = await page.locator(selector).boundingBox(), size = page.viewportSize();
     assert(box && box.x>=-1 && box.y>=-1 && box.x+box.width<=size.width+1 && box.y+box.height<=size.height+1,`${selector} fits ${JSON.stringify(size)}: ${JSON.stringify(box)}`);
   };
@@ -55,9 +56,10 @@ try {
       const box=await button.boundingBox();assert(box.height>=43,'Finger-sized pause target');
     }
     await shot(`pause-${size.width}`);
+    await page.getByRole('button',{name:'Settings',exact:true}).tap(); await screen('settings');
     await page.getByRole('button',{name:'Controls',exact:true}).tap(); await screen('controls');
     await inViewport('input[type=range]');
-    await page.getByRole('button',{name:'Back',exact:true}).tap(); await screen('pause');
+    await page.getByRole('button',{name:'Back',exact:true}).tap(); await screen('settings'); await page.getByRole('button',{name:'Back',exact:true}).tap(); await screen('pause');
     await page.getByRole('button',{name:'Resume',exact:true}).tap();
     await page.waitForFunction(()=>document.querySelectorAll('.menu-transition').length===0,null,{timeout:5000});
   }
@@ -68,10 +70,11 @@ try {
   await page.locator('#loading-screen').waitFor({state:'hidden'});
   await page.getByRole('button',{name:'Pause',exact:true}).tap(); await screen('pause');
   await page.emulateMedia({reducedMotion:'reduce'});
-  await page.getByRole('button',{name:'Controls',exact:true}).tap();await screen('controls');
+  await page.getByRole('button',{name:'Settings',exact:true}).tap(); await screen('settings');
+    await page.getByRole('button',{name:'Controls',exact:true}).tap();await screen('controls');
   assert.equal(await page.locator('.menu-transition').count(),0);
   assert.equal(await page.locator('.loading-meter').count(),1);
-  await page.getByRole('button',{name:'Back',exact:true}).tap();await screen('pause');
+  await page.getByRole('button',{name:'Back',exact:true}).tap();await screen('settings');await page.getByRole('button',{name:'Back',exact:true}).tap();await screen('pause');
   await page.getByRole('button',{name:'Quit to Main Menu',exact:true}).tap();await screen('main');
   await page.getByRole('button',{name:'Single Player',exact:true}).tap();await screen('single');
   await page.getByRole('button',{name:'Quad and Rider',exact:true}).tap();await screen('garage');

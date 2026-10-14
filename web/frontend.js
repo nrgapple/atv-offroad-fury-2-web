@@ -6,7 +6,7 @@ const base = name => name.replaceAll('\\', '/').split('/').at(-1).toLowerCase();
 const unquote = value => (value ?? '').replace(/^"/, '').replace(/"$/, '');
 const fields = section => Object.fromEntries([...section.fields].reverse().map(f => [f.key.toLowerCase(), f.value]));
 const sections = doc => new Map(doc.sections.map(s => [s.name.toLowerCase(), fields(s)]));
-const overlayPages = new Set(['pause','players','hud-settings','minimap-config','controls','bindings','music']);
+const overlayPages = new Set(['settings','extras','pause','players','hud-settings','minimap-config','controls','bindings','music']);
 const fontName = 'tradegothic_boldcondensed_22s';
 const selectionKey = 'atv-player-selection';
 const trainingPreview = 'training-map-preview';
@@ -113,7 +113,7 @@ export class Frontend {
         }
         if (!held.size) this.padBlocked = false;
         if (!this.root.hidden && !this.padBlocked) for (const action of held) if (!this.lastPad.has(action)) {
-          if (action === 'pause' && ['pause','players','hud-settings','minimap-config','controls','bindings','music','multiplayer','create-lobby','join-lobby','lobby','garage'].includes(this.page) && !this.busy) this.resume();
+          if (action === 'pause' && ['settings','extras','pause','players','hud-settings','minimap-config','controls','bindings','music','multiplayer','create-lobby','join-lobby','lobby','garage'].includes(this.page) && !this.busy && this.activeSetup) this.resume();
           else void this.action(action === 'pause' ? 'accept' : action);
         }
         this.lastPad = held;
@@ -308,7 +308,7 @@ export class Frontend {
   async action(action) {
     if (this.busy || this.root.hidden) return;
     this.notice.textContent = '';
-    if (['up','down'].includes(action) && ['title','main','single','garage','multiplayer','create-lobby','join-lobby','lobby','race','pause','players','hud-settings','minimap-config','controls','bindings','music'].includes(this.page)) {
+    if (['up','down'].includes(action) && ['title','main','single','garage','multiplayer','create-lobby','join-lobby','lobby','race','settings','extras','pause','players','hud-settings','minimap-config','controls','bindings','music'].includes(this.page)) {
       const order = this.page === 'pause' ? this.pauseOrder : this.frame.choices;
       const index = order.indexOf(this.frame.choices[this.selection]);
       this.selection = this.frame.choices.indexOf(order[(index + (action === 'up' ? -1 : 1) + order.length) % order.length]);
@@ -318,7 +318,8 @@ export class Frontend {
       if (this.page === 'pause') return this.resume();
       if (this.page === 'garage') return this.show(this.garageReturn);
       if (this.page === 'lobby') return this.run('leave');
-      return this.show(({players:'pause',bindings:'controls',music:'pause','hud-settings':'pause','minimap-config':'hud-settings',controls:'pause',main:'title',single:'main',tracks:'single',race:'single','create-lobby':'multiplayer','join-lobby':'multiplayer',multiplayer:'main'})[this.page] ?? 'title');
+      if (this.page === 'settings') return this.show(this.settingsReturn ?? 'main');
+      return this.show(({settings:this.settingsReturn ?? 'main',extras:'settings',players:'pause',bindings:'controls',music:'settings','hud-settings':'settings','minimap-config':'hud-settings',controls:'settings',main:'title',single:'main',tracks:'single',race:'single','create-lobby':'multiplayer','join-lobby':'multiplayer',multiplayer:'main'})[this.page] ?? 'title');
     } else if (this.page === 'garage' && ['left','right'].includes(action)) {
       return this.run(action === 'left' ? 'quadprev' : 'quadnext');
     } else if (this.page === 'tracks' && ['left','right','up','down'].includes(action)) {
@@ -349,12 +350,13 @@ export class Frontend {
     if (this.busy) return;
     try {
       if (action === 'copyride') return await copyRideUrl(this.rideUrl(),this.notice);
+      if (action === 'settings') { this.settingsReturn = this.page === 'pause' ? 'pause' : 'main'; return this.show('settings'); }
       if (action === 'garage') { this.garageReturn = this.page; return this.show('garage'); }
       if (action === 'quadprev' || action === 'quadnext') { const count = ['multiplayer','create-lobby','join-lobby','lobby'].includes(this.garageReturn) ? 26 : 46; this.quadId = ((this.quadId - 1 + (action === 'quadnext' ? 1 : count - 1)) % count) + 1; }
       else if (action === 'riderchange' && this.quadId < 27) this.riderId = 1 - this.riderId;
       else if (action.startsWith('spawn:')) { this.busy=true; try { await this.multiplayer.action(action,this); } finally {this.busy=false;} return; }
       else if (['host','join','share','lobbymap','lobbystart','leave'].includes(action)) { if (['host','join'].includes(action) && this.quadId>=27) throw new Error('Choose an ATV for multiplayer. Motorcycles are available in Single Player.'); const setup = action==='host'?this.lobbySetup:undefined; this.lobbySetup=undefined; return await this.multiplayer.action(action, this, setup); }
-      else if (['main','single','tracks','pause','players','hud-settings','minimap-config','controls','music','multiplayer','create-lobby','join-lobby','lobby','race'].includes(action)) return await this.show(action);
+      else if (['main','single','tracks','settings','extras','pause','players','hud-settings','minimap-config','controls','music','multiplayer','create-lobby','join-lobby','lobby','race'].includes(action)) return await this.show(action);
       if (action === 'racestart') {
         try { await this.launchSingle('env01', {...this.raceSettings}); }
         catch(error) { await this.show('race');this.fail(error); } finally { this.busy = false; }
@@ -385,6 +387,7 @@ export class Frontend {
       else if (action === 'minimap-corner') this.minimapSettings?.toggleCorner();
       else if (action === 'minimap-toggle') this.minimapSettings?.toggle();
       else if (action === 'onehanded') this.mobileControls?.toggleOneHanded();
+      else if (action === 'crash-camera') this.crashSettings?.toggleCamera();
       else if (action === 'funnycrashes') this.crashSettings?.toggle();
       else if (action === 'diagnostics') this.diagnosticsOverlay?.cycle();
       else if (action === 'resume') return this.resume();
@@ -406,7 +409,7 @@ export class Frontend {
     const music = this.audio?.()?.music, musicState = music?.snapshot();
     const lobby = this.multiplayer?.state?.lobby;
     const request = {lobby_players:(lobby?.players??[]).map(p=>({id:String(p.id),label:`P${p.id+1} ${p.name}${p.id===this.multiplayer.state.peer?' (You)':''}`,value:p.id===this.multiplayer.state.peer?'self':(this.multiplayer.remote.find(r=>r.peer===p.id && !r.stale)?'ready':'waiting')})),race_laps:this.raceSettings.laps,race_cpu:this.raceSettings.cpu,race_difficulty:this.raceSettings.difficulty,race_available:this.raceAvailable,race_active:this.raceActive,quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? (this.page==='create-lobby'?this.createCode:this.roomCode),lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:track?.name ?? '',track_image:(this.page === 'lobby' && track?.id === 'training' && this.images.has(trainingPreview) ? trainingPreview : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
-      minimap_orientation:this.minimapSettings?.orientation ?? 'north-up',minimap_shape:this.minimapSettings?.shape ?? 'circle',minimap_corner:this.minimapSettings?.corner ?? 'top-right',minimap_enabled:this.minimapSettings?.enabled ?? true,minimap_size:this.minimapSettings?.size ?? 160,minimap_zoom:this.minimapSettings?.zoom ?? 50,funny_crashes:this.crashSettings?.enabled ?? true,crash_mode:this.crashSettings?.mode ?? 'crazy',mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
+      minimap_orientation:this.minimapSettings?.orientation ?? 'north-up',minimap_shape:this.minimapSettings?.shape ?? 'circle',minimap_corner:this.minimapSettings?.corner ?? 'top-right',minimap_enabled:this.minimapSettings?.enabled ?? true,minimap_size:this.minimapSettings?.size ?? 160,minimap_zoom:this.minimapSettings?.zoom ?? 50,funny_crashes:this.crashSettings?.enabled ?? true,crash_mode:this.crashSettings?.mode ?? 'crazy',original_camera:this.crashSettings?.camera === 'original',mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
       music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
       music_page:this.musicPage,music_status:musicState ? `${musicState.enabled ? 'On' : 'Off'} / Volume ${Math.round(musicState.volume * 100)}% / ${musicState.title || 'Choose a song'}` : '',music_enabled:musicState?.enabled ?? true,music_volume:Math.round((musicState?.volume ?? .7)*100),menu_logo:this.images.has('brand-logo'),menu_atv:this.images.has('multi_atv01')};
@@ -480,8 +483,9 @@ export class Frontend {
     this.modelViews.clear();
   }
   updateModelViews() {
-    if (this.page !== 'garage') return;
+    if (!['garage','main','single'].includes(this.page)) return;
     const commands = this.frame.draw.filter(command => command.kind === 'model_preview');
+    if (!commands.length) { this.clearModelViews(); return; }
     for (const command of commands) {
       let view = this.modelViews.get(command.model);
       if (!view) {
@@ -499,10 +503,10 @@ export class Frontend {
       delete view.canvas.dataset.clip; delete view.canvas.dataset.animationTime;
     }
     void this.modelAssets(this.quadId, this.riderId).then(source => {
-      if (token !== this.modelToken || this.page !== 'garage' || this.root.hidden) return;
-      this.modelViews.get('quad').set(source.mesh, source.textures);
-      this.modelViews.get('rider').set(source.riderMesh, source.riderTextures, source.riderPose?.world_matrices);
-      void this.startMenuRider(token, key);
+      if (token !== this.modelToken || !['garage','main','single'].includes(this.page) || this.root.hidden) return;
+      this.modelViews.get('quad')?.set(source.mesh, source.textures);
+      this.modelViews.get('rider')?.set(source.riderMesh, source.riderTextures, source.riderPose?.world_matrices);
+      if (this.page === 'garage') void this.startMenuRider(token, key);
       for (const view of this.modelViews.values()) view.canvas.dataset.selection = key;
     }).catch(error => {
       if (token !== this.modelToken) return;
@@ -676,7 +680,7 @@ export class Frontend {
         label.append(heading,input); parent.append(label);
       };
       if (this.page === 'pause') {
-        const groups = [['Ride',['resume','reset','players']],['Preferences',['controls','hud-settings','music','onehanded','funnycrashes','diagnostics','fullscreen']],['Session',['copyride','devlog','main','lobby']]];
+        const groups = [['Ride',['resume','reset','players']],['Preferences',['settings']],['Session',['copyride','devlog','main','lobby']]];
         this.pauseOrder = [];
         for (const [name,actions] of groups) {
           const group = section(name, `pause-${name.toLowerCase()}`);
@@ -701,7 +705,7 @@ export class Frontend {
           const capture = section('Listening for input','pause-capture');
           capture.append(element('p','pause-capture-label',this.capture.label),element('p','','Press a key, controller button or move an axis. Hold several together for a combination. Release to save; Escape cancels.'));
         }
-        const settings = section(({controls:'Response & bindings','hud-settings':'On-screen display','minimap-config':'Map preferences',bindings:'Actions',music:'Soundtrack',players:'Meet up',lobby:'Session actions'})[this.page]);
+        const settings = section(({settings:'Choose a section',extras:'Crash & camera',controls:'Response & bindings','hud-settings':'On-screen display','minimap-config':'Map preferences',bindings:'Actions',music:'Soundtrack',players:'Meet up',lobby:'Session actions'})[this.page]);
         const footer = element('footer','pause-footer');
         const paging = element('div','pause-pagination');
         for (const action of this.frame.choices) {
@@ -717,8 +721,8 @@ export class Frontend {
       this.pausePanel.replaceChildren(header,body);
     }
     this.pausePanel.dataset.screen = this.page;
-    this.pausePanel.querySelector('h1').textContent = ({pause:online ? 'Ride menu' : 'Paused',controls:'Controls','hud-settings':'HUD settings','minimap-config':'Minimap',bindings:this.bindingDevice === 'controller' ? 'Controller bindings' : 'Keyboard bindings',music:'Music',players:'Players',lobby:'Lobby'})[this.page];
-    this.pausePanel.querySelector('.pause-header .pause-status').textContent = ({pause:online ? 'Multiplayer is live. The ride keeps going while this menu is open.' : 'Take a breather. Your ride is paused.',controls:'Fine-tune your steering and make the controls your own.','hud-settings':'Keep the information you need in view.','minimap-config':'Set up your map for the way you ride.',bindings:this.bindingDevice === 'controller' ? 'Select an action to remap. Lean back, then forward at a ramp lip to preload.' : 'Select an action to remap. Changes are saved in this browser.',music:state.music_status,players:'The ride is live. Spawn beside a rider to meet up.',lobby:'Share your invite or head back to the ride.'})[this.page];
+    this.pausePanel.querySelector('h1').textContent = ({settings:'Settings',extras:'Extras',pause:online ? 'Ride menu' : 'Paused',controls:'Controls','hud-settings':'Display','minimap-config':'Minimap',bindings:this.bindingDevice === 'controller' ? 'Controller bindings' : 'Keyboard bindings',music:'Audio',players:'Players',lobby:'Lobby'})[this.page];
+    this.pausePanel.querySelector('.pause-header .pause-status').textContent = ({settings:'Saved automatically in this browser.',extras:'Make the ride your own.',pause:online ? 'Multiplayer is live. The ride keeps going while this menu is open.' : 'Take a breather. Your ride is paused.',controls:'Fine-tune your steering and make the controls your own.','hud-settings':'Keep the information you need in view.','minimap-config':'Set up your map for the way you ride.',bindings:this.bindingDevice === 'controller' ? 'Select an action to remap. Lean back, then forward at a ramp lip to preload.' : 'Select an action to remap. Changes are saved in this browser.',music:state.music_status,players:'The ride is live. Spawn beside a rider to meet up.',lobby:'Share your invite or head back to the ride.'})[this.page];
     for (const button of this.pausePanel.querySelectorAll('button')) {
       const action = button.dataset.action, hit = this.frame.hits.find(hit => hit.action === action);
       if (!hit) continue;
@@ -792,20 +796,12 @@ export class Frontend {
       if (['text','artwork','preview','model_preview'].includes(command.kind)) decoration = false;
       if (command.kind === 'model_preview') continue;
       if (command.kind === 'text') {
-        if (overlayPages.has(this.page)) {
-          const screenScale = stage.clientWidth / frame.width;
-          const size = Math.min(command.font.includes('italic') ? 30 : 22, (command.font.includes('italic') ? 30 : 20) * command.scale * screenScale) / screenScale;
-          c.save(); c.font = `600 ${size}px system-ui, sans-serif`; c.textBaseline = 'top';
-          c.fillStyle = `rgb(${command.color})`; c.fillText(command.text, ...command.at, command.max_width); c.restore(); continue;
-        }
-        // The font is still the original CEL/PST glyph atlas, not a screenshot
-        // of a page. Rust owns text content, positioning and maximum bounds.
-        const font = this.fonts.get(command.font), width = [...command.text].reduce((width,char) => {
-          const g = font?.glyphs.get(char.charCodeAt(0)); return width + (g ? (g.metrics ? g.metrics[0]+g.metrics[2] : (g.uv[2]-g.uv[0])*font.image.width) : 0);
-        },0);
-        const scale = Math.min(command.scale,command.max_width/Math.max(width,1));
-        c.save(); c.translate(...command.at); c.scale(scale,scale);
-        this.text(command.text,0,0,command.font,command.color); c.restore();
+        const heading=command.font.includes('italic');
+        const size=(heading ? 32 : 24)*command.scale;
+        c.save(); c.font=`${heading ? 'italic ' : ''}800 ${size}px "Arial Narrow", "Helvetica Neue", Arial, sans-serif`;
+        c.textBaseline='top'; c.fillStyle=`rgb(${command.color})`;
+        c.shadowColor='#0009'; c.shadowBlur=2; c.shadowOffsetY=1;
+        c.fillText(command.text,...command.at,command.max_width); c.restore();
       } else if (command.kind === 'artwork') {
         const image = this.images.get(command.image); if (image) c.drawImage(image,...command.rect);
       } else if (command.kind === 'preview') {

@@ -1420,7 +1420,7 @@ function acceptCameraFrame(frame) {
 function presentCameraFrame(frame = presentedCamera ?? cameraFrame) {
   const aspect=canvas.width/canvas.height;
   const chase=chasePresentation(frame,presentedFrame??simFrame,aspect,uphillSightline,terrainHeight);
-  const view=crashPresentation(chase,vehicle?.crashSubjects,aspect,terrainHeight);
+  const view=crashPresentation(chase,crashSettings.camera === 'tight' ? vehicle?.crashSubjects : null,aspect,terrainHeight);
   [camera.x, camera.y, camera.z] = view.position;
   camera.yaw = view.yaw;
   camera.pitch = view.pitch;

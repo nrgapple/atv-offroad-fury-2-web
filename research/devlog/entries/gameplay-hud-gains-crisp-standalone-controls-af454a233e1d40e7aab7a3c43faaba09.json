@@ -1,0 +1,15 @@
+{
+  "id": "gameplay-hud-gains-crisp-standalone-controls-af454a233e1d40e7aab7a3c43faaba09",
+  "timestamp": "2026-10-14T04:30:21.097070+00:00",
+  "recorded_at": "2026-10-14T04:31:21.185312+00:00",
+  "kind": "build",
+  "title": "Gameplay HUD gains crisp standalone controls",
+  "summary": "The gameplay HUD now draws a sharp speed display and standalone minimap without boxed toolbar controls, while retaining the original game's restrained visual character.",
+  "details": [
+    "The host settings gate confirmed the transparent pause/camera toolbar and standalone HUD during real driving across four viewport sizes and at 2\u00d7 device scale.",
+    "The UI lifecycle regression also passed boot/course/model/context restoration, reduced motion, failed-content handling, touch targets, and portrait/landscape rotation."
+  ],
+  "limitation": "Host-only verification; public deployment and verification are pending. This checkpoint does not establish original HUD pixel parity or physical-device rendering.",
+  "image": "/devlog-images/gameplay-hud-gains-crisp-standalone-controls-af454a233e1d40e7aab7a3c43faaba09.png",
+  "caption": "Host Chromium riding view with the standalone crisp HUD"
+}

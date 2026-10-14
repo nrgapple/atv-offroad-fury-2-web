@@ -98,6 +98,7 @@ test('crash preferences persist, migrate and ignore obsolete shake preferences',
  const store={getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)};
  const settings=new RideEffectsSettings(store);assert.equal(settings.mode,'original');
  settings.toggle();settings.toggle();assert.equal(new RideEffectsSettings(store).mode,'gorn');
+ settings.toggleCamera();assert.equal(new RideEffectsSettings(store).camera,'original');
  assert.equal(settings.shake,undefined);assert.equal(settings.toggleShake,undefined);
  const blocked=new RideEffectsSettings({getItem(){throw Error();},setItem(){throw Error();}});
  blocked.toggle();assert.equal(blocked.mode,'gorn');

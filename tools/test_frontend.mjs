@@ -72,8 +72,9 @@ try {
   await pad(9); await screen('pause');
   await page.waitForTimeout(100); const paused = await page.evaluate(()=>window.atvTerrainStatus.frame);
   await page.waitForTimeout(150); assert.deepEqual(await page.evaluate(()=>window.atvTerrainStatus.frame),paused,'Menus pause the Rust vehicle');
+  await page.getByRole('button',{name:'Settings',exact:true}).click(); await screen('settings');
   await page.getByRole('button',{name:'Controls',exact:true}).click(); await screen('controls');
-  await page.keyboard.press('Escape'); await screen('pause');
+  await page.keyboard.press('Escape'); await screen('settings'); await page.keyboard.press('Escape'); await screen('pause');
   await page.getByRole('button',{name:'Resume',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('#frontend').hidden);
   await page.keyboard.press('Escape'); await screen('pause');

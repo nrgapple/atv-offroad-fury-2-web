@@ -1,0 +1,16 @@
+{
+  "id": "settings-now-use-a-crisp-four-section-hd-menu-eaf99e1101ca4c6a9e83d6bc31975462",
+  "timestamp": "2026-10-14T04:29:57.009488+00:00",
+  "recorded_at": "2026-10-14T04:31:21.105406+00:00",
+  "kind": "build",
+  "title": "Settings now use a crisp four-section HD menu",
+  "summary": "A new Settings route organizes controls, display, audio and extras in a compact responsive menu with crisp canvas and DOM typography; the low-resolution ATV thumbnail is replaced by the rendered original model.",
+  "details": [
+    "Host checks passed at 320\u00d7568, 390\u00d7844, 844\u00d7390 and 1280\u00d7720, including 2\u00d7 device scale, keyboard access, all four categories and 44-pixel touch targets.",
+    "Persistent settings cover 115% steering sensitivity, mobile mode, minimap shape and size, and crash presentation. Extras expose crash mode plus tight or original crash-camera choices.",
+    "UI lifecycle checks passed boot, course and model loading, context restoration, reduced-motion behavior, failed-content handling, touch targets, and portrait/landscape rotation. The short-landscape controls/help ordering was corrected and rechecked."
+  ],
+  "limitation": "Host-only verification. Public deployment and verification have not occurred. This is a refreshed authored browser menu, not recovered native UI rendering.",
+  "image": "/devlog-images/settings-now-use-a-crisp-four-section-hd-menu-eaf99e1101ca4c6a9e83d6bc31975462.png",
+  "caption": "Host Chromium Settings screen at 390 pixels with four crisp sections"
+}
