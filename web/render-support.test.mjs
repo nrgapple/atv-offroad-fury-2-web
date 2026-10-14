@@ -165,8 +165,9 @@ test('severing removes bridge triangles but preserves geometry within each conne
 test('crash framing encloses diverging ATV, rider and debris in landscape and portrait',()=>{
  const bounds={min:[-20,0,-12],max:[30,25,22]};
  const original={position:[0,10,-15],yaw:.8,pitch:-.3,presentation:{focalLength:2.3}};
- for(const aspect of [.46,1.5,2.2]) {
-  const v=crashPresentation(original,bounds,aspect,()=>0);
+ for(const aspect of [.46,1.5,2.2])for(const floor of [0,80]) {
+  const v=crashPresentation(original,bounds,aspect,()=>floor);
+  assert(v.position[1]>=floor+2);
   const forward=[Math.sin(v.yaw)*Math.cos(v.pitch),Math.sin(v.pitch),Math.cos(v.yaw)*Math.cos(v.pitch)];
   const right=[-Math.cos(v.yaw),0,Math.sin(v.yaw)],up=[-Math.sin(v.yaw)*Math.sin(v.pitch),Math.cos(v.pitch),-Math.cos(v.yaw)*Math.sin(v.pitch)];
   for(let c=0;c<8;c++) {

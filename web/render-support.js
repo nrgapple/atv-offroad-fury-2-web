@@ -257,12 +257,14 @@ export function crashPresentation(view, bounds, aspect, height) {
     const dot=v=>v.reduce((sum,x,i)=>sum+x*p[i],0),depth=dot(forward);
     distance=Math.max(distance,Math.abs(dot(right))*f/aspect/.76-depth,Math.abs(dot(up))*f/.76-depth,2-depth);
   }
-  const position=target.map((v,i)=>v-forward[i]*distance);
-  // If terrain raises the eye, pull back further using the new viewing basis.
-  const floor=height(position[0],position[2])+2;
-  if(position[1]<floor) {
-    position[1]=floor;
-    return crashPresentation({...view,position,pitch:Math.atan2(target[1]-floor,Math.hypot(target[0]-position[0],target[2]-position[2]))},bounds,aspect,()=>-Infinity);
+  let position=target.map((v,i)=>v-forward[i]*distance);
+  // Climb by pulling back along the same sightline, so terrain clearance never
+  // changes the fitted orientation or drops either actor outside the frustum.
+  for(let i=0;i<8;i++) {
+    const deficit=height(position[0],position[2])+2-position[1];
+    if(deficit<=0)break;
+    distance+=deficit / -forward[1] + 1;
+    position=target.map((v,i)=>v-forward[i]*distance);
   }
   return {...view,position,yaw,pitch,presentation:{...view.presentation,crash:{target,bounds,distance}}};
 }
