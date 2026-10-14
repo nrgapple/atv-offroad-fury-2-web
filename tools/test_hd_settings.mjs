@@ -15,7 +15,7 @@ try {
  await page.setViewportSize({width:320,height:568});await page.waitForTimeout(200);await shot('main-320');
  await page.setViewportSize({width:1280,height:720});await page.waitForFunction(()=>document.querySelector('.model-view canvas')?.dataset.ready==='true');
  await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');await screen('settings');
- assert.deepEqual(await page.locator('.pause-panel button').allTextContents().then(a=>a.map(t=>t.replace('›','').trim())),['Controls','Display','Audio','Extras','Back']);
+ assert.deepEqual(await page.locator('.pause-panel button').allTextContents().then(a=>a.map(t=>t.trim())),['Controls','Display','Audio','Extras','Back']);
  for(const size of [{width:320,height:568},{width:390,height:844},{width:844,height:390},{width:1280,height:720}]){
   await page.setViewportSize(size);await page.waitForTimeout(100);await shot(`settings-${size.width}`);
   for(const name of ['Controls','Display','Audio','Extras']){

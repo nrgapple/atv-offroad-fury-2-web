@@ -659,8 +659,7 @@ export class Frontend {
         const hit = this.frame.hits.find(hit => hit.action === action); if (!hit) return;
         const button = element('button',''); button.type = 'button'; button.dataset.action = action;
         const copy = element('span','pause-label'); copy.append(element('span','pause-label-text'), element('small','pause-detail'));
-        button.append(copy, element('span','pause-value'), element('span','pause-arrow', action === 'resume' ? '↗' : '›'));
-        button.lastChild.setAttribute('aria-hidden','true');
+        button.append(copy, element('span','pause-value'));
         button.onclick = () => { this.selection = this.frame.choices.indexOf(action); void this.run(action); };
         focus(button, action); parent.append(button);
       };
@@ -733,7 +732,6 @@ export class Frontend {
       button.querySelector('.pause-label-text').textContent = label;
       button.querySelector('.pause-detail').textContent = detail ? value : '';
       const badge = button.querySelector('.pause-value'); badge.textContent = detail ? '' : value; badge.hidden = detail || !value;
-      button.querySelector('.pause-arrow').hidden = Boolean(value) && !detail;
       if (action.startsWith('song:')) button.dataset.playing = String(Number(action.slice(5)) === this.audio?.()?.music?.snapshot().playingIndex && state.music_enabled);
     }
     for (const slider of this.frame.sliders) {

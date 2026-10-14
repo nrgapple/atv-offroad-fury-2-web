@@ -1,0 +1,15 @@
+{
+  "id": "pause-and-settings-menus-use-plain-labels-without-emoj-e69546333b8541f09ac78cc482e3167d",
+  "timestamp": "2026-10-14T05:18:11.498341+00:00",
+  "recorded_at": "2026-10-14T05:18:39.054155+00:00",
+  "kind": "build",
+  "title": "Pause and settings menus use plain labels without emoji",
+  "summary": "Decorative arrow glyphs are removed from Pause, Settings and the development-log Play link, leaving restrained text-only menu labels and selections.",
+  "details": [
+    "Inspected desktop Pause and 390-pixel Settings captures: Resume and the four settings sections render as plain text, with no emoji or arrow decoration.",
+    "The host menu gate passed Settings from both Main Menu and Pause across four viewport layouts, with 44-pixel targets, saved controls/map/crash/camera preferences, transparent HUD controls, real driving, and Resume behavior."
+  ],
+  "limitation": "Host verification passed; public deployment and verification are pending.",
+  "image": "/devlog-images/pause-and-settings-menus-use-plain-labels-without-emoj-e69546333b8541f09ac78cc482e3167d.png",
+  "caption": "Pause menu with plain text labels and no decorative emoji or arrows"
+}
