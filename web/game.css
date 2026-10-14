@@ -132,8 +132,6 @@ body:not(.menu-open) #help, body:not(.menu-open) #status:not(.error) { display: 
 .pause-panel button:focus-visible { outline: 2px solid #eed477; outline-offset: 2px; }
 .pause-panel button[data-action=resume] { background: #e7cd75; color: #17191c; font-weight: 750; }
 .pause-value { flex-shrink: 0; font-size: 12px; color: #e7cd75; background: #0003; border-radius: 5px; padding: 3px 7px; }
-.pause-arrow { color: #aeb6c3; font-size: 20px; line-height: 1; }
-.pause-panel button[data-action=resume] .pause-arrow { color: inherit; }
 @media (max-width: 580px) {
   .pause-panel { inset: 12px; width: calc(100% - 24px); max-height: calc(100% - 24px); padding: 20px; border-radius: 12px; }
   .pause-panel header { padding-bottom: 16px; margin-bottom: 18px; }
@@ -199,7 +197,6 @@ body:not(.menu-open) #help, body:not(.menu-open) #status:not(.error) { display: 
 .pause-panel button[aria-current=true], .pause-panel button[data-action=resume] { color: var(--atv-gold-light); background: transparent; }
 .pause-panel button[aria-current=true]::before { content: ''; position: absolute; left: 3px; top: 15px; bottom: 15px; width: 3px; background: var(--atv-gold); }
 .pause-value { color: var(--atv-gold-light); background: transparent; border-radius: 0; font-size: 14px; }
-.pause-arrow { color: inherit; }
 .pause-slider, .pause-tips, .pause-player, .pause-capture { border: 0; border-radius: 0; background: transparent; }
 .pause-slider { padding: 12px 20px; }
 .pause-tips { border-left: 2px solid #ffffff20; padding: 4px 16px; }
