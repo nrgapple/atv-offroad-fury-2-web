@@ -1,0 +1,17 @@
+{
+  "id": "public-map-stadium-material-and-water-rendering-verifi-cf8e26f58a4946be84d1fee4f16b81be",
+  "timestamp": "2026-10-14T03:21:16+00:00",
+  "recorded_at": "2026-10-14T03:19:47.229188+00:00",
+  "kind": "verification",
+  "title": "Public map, stadium material and water rendering verification",
+  "summary": "Verified all40 original venues on the public build, synchronized course artwork in both multiplayer clients, and completed public stadium material checks plus bounded water renderer browser gates.",
+  "details": [
+    "On public deployment 4bb6be8064adce3157c608de0bb904b29cb838d9 (main CI 38504208481), all 40 original venue routes loaded and drove with unsupported mesh/texture lists empty and no WebGL errors. The multiplayer lobby synchronized both clients across desktop and portrait for all 40 names and artworks, using 39 original course preview pairs and the authored Training capture.",
+    "The public stadium material gate passed for ATV1 and motorcycle27 on desktop and 390px portrait. The original ATM LED advertisements began at frame 0, advanced through all 10 frames, and retained the venue clock through pause, placement reset and context restoration before advancing on resume. Source-test camera comparisons verified the additive lamp glow and restored building facade pass with no browser or GL errors; runtime files were not overridden.",
+    "All six wet scenes (ENV04/05/07/08, FREE04 and NAT01) passed the full 12-case desktop/portrait matrix in Chromium and real WebKit, with dry ENV01 assertions, on public deployment 5f20882876868e4358c0ac097960f07edbbdfdff (CI 38502240906). After the stadium scenery integration, the final public WebKit gate on 4bb6be8064adce3157c608de0bb904b29cb838d9 also passed ENV04, ENV08 and NAT01 in desktop and portrait through rotation and context restoration; banks and sky remained visible and the shared water field was retained. These final tests used the public runtime without a module override.",
+    "The inspected public Chromium portrait image shows the original Ventura stadium facade from an automated source-test camera. Its purpose is to document the corrected source facade material; it is not an ordinary riding view or a physical-phone capture."
+  ],
+  "limitation": "These bounded browser and component checks do not establish complete PS2 GS/VU or hardware pixel parity, nor performance on a physical iPhone. Water reflection/froth fidelity and shared physics blend-clock provenance, as well as broader shadows, actors and Training/hockey gameplay, remain incomplete.",
+  "image": "/devlog-images/public-map-stadium-material-and-water-rendering-verifi-cf8e26f58a4946be84d1fee4f16b81be.png",
+  "caption": "Public HTTPS Chromium portrait capture (390\u00d7844): Ventura stadium facade from an automated source-test camera. This verifies the public authored renderer and is not a physical-phone screenshot or normal riding-camera view."
+}
