@@ -87,10 +87,29 @@ void main() {
   vec3 surface = sampled.rgb * environmentColor;
   color = vec4(mix(fogColor, surface, fogCoverage()), clamp(sampled.a * (255.0 / 128.0), 0.0, 1.0));
 }`;
+function filteredTextureBytes(width,height,layers=1){
+  let bytes=0;for(;;){bytes+=width*height*layers*4;if(width===1&&height===1)return bytes;width=Math.max(1,width>>1);height=Math.max(1,height>>1);}
+}
 function compile(gl, kind, source) {
   const shader=gl.createShader(kind);gl.shaderSource(shader,source);gl.compileShader(shader);
   if (!gl.getShaderParameter(shader,gl.COMPILE_STATUS)) {const message=gl.getShaderInfoLog(shader);gl.deleteShader(shader);throw new Error(`Water shader: ${message}`);}
   return shader;
+}
+//00190aa0 scales strip groups by viewport width and dense rows by height.
+//Each native strip adds19 samples to the row stride, not three depth rows.
+//Portable triangulation stays bounded below Uint16 capacity on tall/wide screens.
+export function projectedGridSize(width,height,vertexBudget=24000){
+  if(!Number.isFinite(width)||!Number.isFinite(height)||width<=0||height<=0||!Number.isInteger(vertexBudget)||vertexBudget<1400||vertexBudget>24000)throw new Error('Invalid water viewport.');
+  const strips=Math.max(1,Math.min(8,Math.floor(3*width/640+.5))),columns=strips*19+1;
+  const requestedRows=Math.max(8,Math.min(1024,Math.floor(334*height/448+.5)));
+  const rows=Math.min(requestedRows,Math.floor(vertexBudget/columns)-1);
+  return{columns,rows};
+}
+export function projectedGrid(columns,rows){
+  const grid=new Float32Array(columns*(rows+1)*2),indices=new Uint16Array((columns-1)*rows*6);
+  for(let y=0;y<=rows;y++)for(let x=0;x<columns;x++)grid.set([x/(columns-1)*2-1,y/rows],(y*columns+x)*2);
+  let at=0;for(let y=0;y<rows;y++)for(let x=0;x<columns-1;x++){const a=y*columns+x,b=a+1,c=a+columns,d=c+1;indices.set([a,c,b,b,c,d],at);at+=6;}
+  return{grid,indices};
 }
 export class WaterRenderer {
   constructor(gl, source) {
@@ -107,14 +126,9 @@ export class WaterRenderer {
     if (!gl.getProgramParameter(this.program,gl.LINK_STATUS)) throw new Error(`Water program: ${gl.getProgramInfoLog(this.program)}`);
     this.uniforms=Object.fromEntries(['viewProjection','eye','forward','right','up','projection','screenBounds','baseHeight','farDistance','channelCount','origins[0]','inverseWidths[0]','widths[0]','channels[0]','tiled[0]','heightMaps','environmentMap','gradientMaps','gradientCount','gradientWaves[0]','gradientSecond[0]','environmentColor','fogColor','fogPacking','fogEnabled'].map(name=>[name,gl.getUniformLocation(this.program,name)]));
     this.vao=gl.createVertexArray();this.vertices=gl.createBuffer();this.indices=gl.createBuffer();
-    // 00187bc0 quality1:334 projected subdivisions and3 stripgroups.
-    // Portable topology differs from native VU generation; buffers remain static.
-    const columns=335, rows=3, grid=new Float32Array(columns*(rows+1)*2), indices=new Uint16Array((columns-1)*rows*6);
-    for(let y=0;y<=rows;y++)for(let x=0;x<columns;x++)grid.set([x/(columns-1)*2-1,y/rows],(y*columns+x)*2);
-    let at=0;for(let y=0;y<rows;y++)for(let x=0;x<columns-1;x++){const a=y*columns+x,b=a+1,c=a+columns,d=c+1;indices.set([a,c,b,b,c,d],at);at+=6;}
-    gl.bindVertexArray(this.vao);gl.bindBuffer(gl.ARRAY_BUFFER,this.vertices);gl.bufferData(gl.ARRAY_BUFFER,grid,gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,8,0);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,this.indices);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,indices,gl.STATIC_DRAW);
-    this.indexCount=indices.length;this.meshBytes=grid.byteLength+indices.byteLength;
+    gl.bindVertexArray(this.vao);gl.bindBuffer(gl.ARRAY_BUFFER,this.vertices);
+    gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,8,0);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,this.indices);
+    this.meshBytes=0;this.gridColumns=0;this.gridRows=0;this.resizeGrid(gl.drawingBufferWidth,gl.drawingBufferHeight);
     this.heightMaps=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D_ARRAY,this.heightMaps);
     const pixels=new Uint8Array(height.textures.length*dimension*dimension);height.textures.forEach((t,i)=>{for(let y=0;y<dimension;y++)for(let x=0;x<dimension;x++)pixels[i*dimension*dimension+y*dimension+x]=t.pixels[(y%t.dimension)*t.dimension+x%t.dimension];});
     gl.texImage3D(gl.TEXTURE_2D_ARRAY,0,gl.R8UI,dimension,dimension,height.textures.length,0,gl.RED_INTEGER,gl.UNSIGNED_BYTE,pixels);
@@ -124,7 +138,8 @@ export class WaterRenderer {
     const image=source.environment;
     if (image.rgba.length!==image.width*image.height*4) throw new Error('Invalid original water environment texture.');
     gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,image.width,image.height,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array(image.rgba));
-    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
     const gradients=source.gradients;
     if (!gradients?.textures?.length || gradients.waves.length>4) throw new Error('Missing original water derivative signatures.');
@@ -136,9 +151,18 @@ export class WaterRenderer {
     gradients.textures.forEach((t,i)=>{for(let y=0;y<normalDimension;y++)for(let x=0;x<normalDimension;x++){const from=((y%t.dimension)*t.dimension+x%t.dimension)*4,to=(i*normalDimension*normalDimension+y*normalDimension+x)*4;normalPixels[to]=t.pixels[from];normalPixels[to+1]=t.pixels[from+1];normalPixels[to+2]=t.pixels[from+2];normalPixels[to+3]=t.pixels[from+3];}});
     this.gradientMaps=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D_ARRAY,this.gradientMaps);
     gl.texImage3D(gl.TEXTURE_2D_ARRAY,0,gl.RGBA8,normalDimension,normalDimension,gradients.textures.length,0,gl.RGBA,gl.UNSIGNED_BYTE,normalPixels);
-    gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_WRAP_S,gl.REPEAT);gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_WRAP_T,gl.REPEAT);
-    this.gpuBytes=this.meshBytes+pixels.byteLength+image.rgba.length+normalPixels.byteLength;this.accept(source.frame);
+    this.textureBytes=pixels.byteLength+filteredTextureBytes(image.width,image.height)+filteredTextureBytes(normalDimension,normalDimension,gradients.textures.length);this.gpuBytes=this.meshBytes+this.textureBytes;this.accept(source.frame);
+  }
+  resizeGrid(width,height){
+    //Portrait keeps more depth samples than width samples with bounded fetch work.
+    const {columns,rows}=projectedGridSize(width,height,height>width?8000:12000);
+    if(columns===this.gridColumns&&rows===this.gridRows)return;
+    const gl=this.gl,{grid,indices}=projectedGrid(columns,rows);
+    gl.bindVertexArray(this.vao);gl.bindBuffer(gl.ARRAY_BUFFER,this.vertices);gl.bufferData(gl.ARRAY_BUFFER,grid,gl.STATIC_DRAW);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,this.indices);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,indices,gl.STATIC_DRAW);
+    this.gridColumns=columns;this.gridRows=rows;this.indexCount=indices.length;this.meshBytes=grid.byteLength+indices.byteLength;this.gpuBytes=this.meshBytes+(this.textureBytes??0);
   }
   accept(frame) {
     if (!frame || !Number.isFinite(frame.base_height) || frame.origins?.length!==this.channelCount || frame.origins.some(origin=>origin.length!==2 || !origin.every(Number.isFinite))) throw new Error('Invalid prepared shared water frame.');
@@ -162,7 +186,7 @@ export class WaterRenderer {
   }
   draw({camera,viewProjection,focalLength,aspect,farDistance,fogColor,fog}) {
     const gl=this.gl,u=this.uniforms;this.draws=0;
-    if (!this.frame) return;
+    if (!this.frame || gl.isContextLost() || !gl.drawingBufferWidth || !gl.drawingBufferHeight) return;
     const started=performance.now();
     for (let i=this.timerPending.length-1;i>=0;i--) {
       const query=this.timerPending[i];
@@ -176,6 +200,7 @@ export class WaterRenderer {
       timerQuery=this.timerFree.pop() ?? gl.createQuery();
       gl.beginQuery(this.timer.TIME_ELAPSED_EXT,timerQuery);
     }
+    this.resizeGrid(gl.drawingBufferWidth,gl.drawingBufferHeight);
     gl.useProgram(this.program);gl.bindVertexArray(this.vao);
     gl.uniformMatrix4fv(u.viewProjection,false,viewProjection);gl.uniform3f(u.eye,camera.x,camera.y,camera.z);
     const cy=Math.cos(camera.yaw),sy=Math.sin(camera.yaw),cp=Math.cos(camera.pitch),sp=Math.sin(camera.pitch);
