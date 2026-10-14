@@ -146,10 +146,10 @@ shared-bank update order, callback cadence and binary32 millisecond accumulation
 remain gaps. This component advances at the port's fixed 60Hz scene clock and
 makes no claim about complete original frame scheduling.
 
-Desktop and 390×844 portrait actual-source gates show 17,149/34,729 changed pixels
-when the Snow draw is removed. The gate then isolates the production Snow pass
-and holds its camera uniforms/physics results to separate it from the settling
-presentation camera. All frozen Snow framebuffer bytes restore exactly after
+Desktop and 390×844 portrait actual-source gates isolate the production Snow
+pass and hold its camera uniforms/physics results to separate it from the
+settling presentation camera. Removing that pass confirms visible contributions
+from its recovered source texture. All frozen Snow framebuffer bytes restore exactly after
 context loss, with zero uploads on subsequent render-only frames and zero GL or
 page errors. Real pause stops births and scene time. Physical vehicle reset op23
 preserves Snow time/emission IDs; existing Race Backspace performs a full race
