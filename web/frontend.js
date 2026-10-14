@@ -1,5 +1,5 @@
 import { gameplayBindings } from './bindings.js';
-import { parseLaunch, buildRideUrl, copyRideUrl } from './launch.js';
+import { parseLaunch, buildRideUrl, copyRideUrl, ENVIRONMENTS, COURSE_PREVIEWS, courseResource } from './launch.js';
 // Rust owns menu labels, supported choices and canvas hit regions. This bridge
 // draws the original frontend and crisp browser overlays, and binds input.
 const base = name => name.replaceAll('\\', '/').split('/').at(-1).toLowerCase();
@@ -12,13 +12,22 @@ const selectionKey = 'atv-player-selection';
 const normalizedSelection = value => ({
   quadId: Number.isInteger(value?.quadId) && value.quadId >= 1 && value.quadId <= 46 ? value.quadId : 1,
   riderId: value?.riderId === 1 ? 1 : 0,
-  freestyleEnvironment: typeof value?.freestyleEnvironment === 'string' && /^(env0[1-8]|free05)$/.test(value.freestyleEnvironment) ? value.freestyleEnvironment : 'env01',
+  freestyleEnvironment: ENVIRONMENTS.includes(value?.freestyleEnvironment) ? value.freestyleEnvironment : 'env01',
 });
 export function loadPlayerSelection(read = () => localStorage.getItem(selectionKey)) {
   try { return normalizedSelection(JSON.parse(read())); } catch { return normalizedSelection(null); }
 }
 export function savePlayerSelection(value, write = text => localStorage.setItem(selectionKey, text)) {
   try { write(JSON.stringify(normalizedSelection(value))); } catch { /* Session-only selection when storage is unavailable. */ }
+}
+export function unlockedCourses(tracks, files) {
+  const source = new Map();
+  for (const [section, f] of tracks) {
+    if (!/^(unspnat\d+|spnat\d+|amsx\d+|prosx\d+|spstunt\d+|train1|hoc1)$/.test(section)) continue;
+    if (ENVIRONMENTS.includes(f.scn) && !source.has(f.scn)) source.set(f.scn,f);
+  }
+  return ENVIRONMENTS.filter(id=>source.has(id) && files.some(f=>f.path===courseResource(id).archive))
+    .map(id=>({id,name:unquote(source.get(id).name),image:id==='training'?'':source.get(id).image}));
 }
 
 export class Frontend {
@@ -162,8 +171,8 @@ export class Frontend {
     try {
       await this.archive('/STARTAPP.RES');
       const tracks = await this.document('tracks.dat');
-      this.tracks = [...tracks.entries()].filter(([s, f]) => (/^(unspnat\d+|spstunt6)$/.test(s)) && ['env01','env02','env03','env04','env05','env06','env07','env08','free05'].includes(f.scn))
-        .map(([, f]) => ({ id: f.scn, name: unquote(f.name), image: f.image }));
+      const {files} = await this.content;
+      this.tracks = unlockedCourses(tracks,files);
       this.track = Math.max(0, this.tracks.findIndex(t => t.id === this.lastFreestyleEnvironment));
       for (const name of [fontName, 'tradegothic_boldcondensed_22soff', 'tradegothic_boldcondenseditalic_-1fs_32ds']) await this.font(name);
       await this.archive('/UI/RESOURCE/PAGEA/PAGE01.RES');
@@ -173,7 +182,6 @@ export class Frontend {
       try { await logo.decode(); this.images.set('brand-logo', logo); } catch { /* Rust text fallback */ }
       // The thumbnail arrives through a separately validated R2 package. Older
       // manifests can still open every menu while that content update publishes.
-      const {files} = await this.content;
       this.raceAvailable=files.some(f=>f.path==='/TRACKS/TRACKSA/ENV01/E01_NAT.RES');
       if (files.some(f => f.path === '/UI/RESOURCE/QUADINFO.RES')) { await this.archive('/UI/RESOURCE/QUADINFO.RES'); await this.image('multi_atv01'); }
       // The original catalog is available before a terrain/engine is loaded.
@@ -272,9 +280,9 @@ export class Frontend {
     try {
       if (page === 'tracks' || page === 'loading' || page === 'race') {
         if (!this.loaded.has('/UI/RESOURCE/TP/TP_ANAT.RES')) this.setLoading(true, 'Preparing course previews…');
-        await this.archive('/UI/RESOURCE/TP/TP_ANAT.RES');
-        await this.archive('/UI/RESOURCE/TP/TP_PSTNT.RES');
-        for (const track of this.tracks) { await this.image(`${track.image}a`); await this.image(`${track.image}b`); }
+        const {files} = await this.content;
+        for (const archive of COURSE_PREVIEWS) if (files.some(f=>f.path===archive)) await this.archive(archive);
+        for (const track of this.tracks) if (track.image) { await this.image(`${track.image}a`); await this.image(`${track.image}b`); }
       }
       this.page = page; this.selection = 0; this.layoutKey = '';
       if (this.isPausePanel()) this.resetPauseScroll = true;

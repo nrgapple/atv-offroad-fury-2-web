@@ -1876,7 +1876,7 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             }
             serde_json::to_vec(&serde_json::json!({"material":material,"height":atv_core::water_render::HeightAtlas::new(field)?,"gradients":gradients,
                 "frame":atv_core::water_render::Frame::new(field),"environment":{"width":environment.info.width,
-                "height":environment.info.height,"rgba":environment.rgba},"scope":"portable projected surface; native VU reflection/froth pending"}))
+                "height":environment.info.height,"rgba":environment.rgba},"scope":"portable projected surface; animated signatures supported, physics shared blend-clock provenance unresolved (weight 1/0); native VU reflection/froth pending"}))
                 .map_err(|error|error.to_string())
         });
     }
@@ -2006,6 +2006,8 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         6 => serde_json::to_vec(&elf::inspect(input)?),
         7 => serde_json::to_vec(&texture::decode_pst(input)?.info),
         8 => return Ok(texture::decode_pst(input)?.rgba),
+        97 => serde_json::to_vec(&texture::decode_tga(input)?.info),
+        98 => return Ok(texture::decode_tga(input)?.rgba),
         9 => {
             let terrain = terrain::decode_tr2(input)?;
             serde_json::to_vec(&serde_json::json!({

@@ -1144,6 +1144,7 @@ mod tests {
             definition,
             swell: crate::water_animation::SwellState::default(),
             states: vec![],
+            frames: vec![],
             waves: vec![crate::water_surface::SignatureWave {
                 origin: [0.; 2],
                 width: [100.; 2],

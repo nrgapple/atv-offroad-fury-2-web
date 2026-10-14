@@ -53,6 +53,34 @@ its earlier host checkpoint. `make check` passed with 360 core Rust tests and
 122 JS tests, formatting and strict Clippy; `make web` passed. New CI and public
 verification remain pending.
 
+## All 40 original Freestyle venues — host checkpoint (2026-10-13)
+
+PR [#53](https://github.com/nrgapple/atv-offroad-fury-2-web/pull/53) adds all
+40 original venue families to Freestyle: eight ENV, six FREE, eight NAT, sixteen
+SX, Training, and Coonce Arena. Existing IDs 1–9 remain stable; 31 venues use
+new IDs. A continuous Chromium source-content run loaded and drove all 40. The
+menu/controller route and mobile pause/reload covered the full roster. Six
+Sausalito SX01 hay-bale approaches at 390px showed original wheel support and
+body contacts. Two clients each rendered 13 remote draws, replicated 8.18 ft of
+host movement, and cleaned up after the host left. The inspected mobile and
+multiplayer host captures are recorded in `research/devlog.json`.
+
+After rebasing on current main, validation passed: 422 Rust tests, 120 JavaScript
+tests, eight build-cache tests, 35 release tests (one opt-in skip), 19 Worker
+tests, formatting, strict Clippy, `make verify`, and the WASM build. The private
+hosted-content package validated 147 runtime records, 347 content objects, and
+350,272,729 bytes. Training's four original TGA files match Pillow RGBA decoding
+byte-for-byte and render; their source backgrounds remain dark placeholders, and
+the original live instructional/video screen is absent. Coonce's HUD art is a
+small Freestyle adaptation assembled from five ENV01 preload images. NAT01's
+animated water frames are connected at 4 fps, while global physics blend-weight
+provenance remains unresolved. See [venue evidence](research/FREESTYLE_MAPS.md).
+
+This is host-only. PR CI, approved R2 publication, and public HTTPS verification
+remain pending. Weather dispatch, ambient emitters, reverse-playing crowd
+animations, and remaining original venue behavior are still incomplete. Do not
+describe this as a complete port or claim those systems are finished.
+
 ## Uphill chase camera — public release (2026-10-13)
 
 PR #47 merged as `96e0ea04c1406a5adfeabbaec055b881b8c9dca7`; main CI/deploy

@@ -1,6 +1,7 @@
 // Opt-in hosted original-content integration; source assets never enter CI.
 // ATV_TEST_URL=<host/public HTTPS> PLAYWRIGHT_MODULE=<module> node tools/test_frontend.mjs
 import assert from 'node:assert/strict';
+import { ENVIRONMENTS } from '../web/launch.js';
 import { createRequire } from 'node:module';
 const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4173';
@@ -52,12 +53,12 @@ try {
   await pad(0); await screen('tracks');
   assert.equal(await page.locator('#frontend').getAttribute('data-track'),'env01');
   const visited = new Set();
-  for (let index = 0; index < 9; index++) {
+  for (let index = 0; index < ENVIRONMENTS.length; index++) {
     visited.add(await page.locator('#frontend').getAttribute('data-track'));
     await pad(15);
   }
-  assert.deepEqual([...visited].sort(), ['env01','env02','env03','env04','env05','env06','env07','env08','free05']);
-  for (let index = 0; index < 9 && await page.locator('#frontend').getAttribute('data-track') !== 'env02'; index++) await pad(15);
+  assert.deepEqual([...visited].sort(), [...ENVIRONMENTS].sort());
+  for (let index = 0; index < ENVIRONMENTS.length && await page.locator('#frontend').getAttribute('data-track') !== 'env02'; index++) await pad(15);
   assert.equal(await page.locator('#frontend').getAttribute('data-track'),'env02');
   if (process.env.ATV_UI_SCREENSHOTS) await page.screenshot({path:`${process.env.ATV_UI_SCREENSHOTS}-tioga-selection.png`});
   await pad(0);
@@ -80,7 +81,7 @@ try {
   await page.setViewportSize({width:390,height:844});
   await page.getByRole('button',{name:'Single Player',exact:true}).tap(); await screen('single');
   await page.getByRole('button',{name:'Freestyle',exact:true}).tap(); await screen('tracks');
-  for (let index = 0; index < 9 && await page.locator('#frontend').getAttribute('data-track') !== 'env01'; index++) {
+  for (let index = 0; index < ENVIRONMENTS.length && await page.locator('#frontend').getAttribute('data-track') !== 'env01'; index++) {
     const before = await page.locator('#frontend').getAttribute('data-track');
     await page.getByRole('button',{name:'Previous environment',exact:true}).tap();
     await page.waitForFunction(before => document.querySelector('#frontend').dataset.track !== before,before);
@@ -100,7 +101,9 @@ try {
   assert.equal(await page.locator('#reset').isHidden(),true);
   assert.equal(await page.locator('#help').isVisible(),false);
   assert.equal(await page.evaluate(()=>getComputedStyle(document.body).userSelect),'none');
-  const resumeBounds = await page.getByRole('button',{name:'Resume',exact:true}).boundingBox();
+  const resume = page.getByRole('button',{name:'Resume',exact:true});
+  await resume.waitFor({state:'visible'});
+  const resumeBounds = await resume.boundingBox();
   assert(resumeBounds.height >= 43, 'Portrait pause targets remain finger-sized');
   await page.getByRole('button',{name:'Controls',exact:true}).tap(); await screen('controls');
   if (process.env.ATV_UI_SCREENSHOTS) await page.screenshot({path:`${process.env.ATV_UI_SCREENSHOTS}-controls-mobile.png`});
