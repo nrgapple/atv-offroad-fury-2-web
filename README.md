@@ -85,15 +85,15 @@ Use **V** for clutch on keyboard; existing lean, preload and stunt controls appl
 
 | Action | Keyboard default | Controller default |
 | --- | --- | --- |
-| Accelerate / brake | W / S | Bottom face button or right trigger / left face button or left trigger |
+| Accelerate / brake | W / S or up/down arrows | Bottom face button or right trigger / left face button or left trigger |
+| Reverse | Keep holding S (or down arrow) once stopped | Bottom + left face buttons together |
 | Steer | A / D or left/right arrows | Left stick horizontal or D-pad |
-| Lean forward / back | Q / E or up/down arrows | Left stick vertical or D-pad |
-| Reverse | R | Bottom + left face buttons together |
+| Lean forward / back | Q / E or Left Shift | Left stick vertical or D-pad |
 | Prepare a jump | Space hold/release, or quick back-to-forward lean | Quick back-to-forward lean at a jump |
-| Stunt modifiers | J / K / L with a direction | Right face / top face / left shoulder with a direction |
-| Pause / camera / reset | Escape / C / Backspace | Start / right stick click / both shoulder buttons |
+| Stunt modifiers | In the air, hold J / K (add L for combos), then tap a direction | Right face / top face / left shoulder with a direction |
+| Pause / camera / reset | Escape or P / C / R or Backspace | Start / right stick click / both shoulder buttons |
 
-Controller labels follow the browser's standard layout. See [controls](research/CONTROLS.md) and [touch gestures](research/TOUCH.md) for the full mappings and evidence.
+Press **H** (or the **Keys** button) while riding to show the keyboard controls card; it opens automatically on your first keyboard ride. Controller labels follow the browser's standard layout. See [controls](research/CONTROLS.md) and [touch gestures](research/TOUCH.md) for the full mappings and evidence.
 
 ## How the port works
 

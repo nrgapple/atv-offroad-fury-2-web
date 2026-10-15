@@ -20,6 +20,7 @@ import { loadWheelEffects, loadMotorcycleEffects, WheelEffectsRenderer, BloodRen
 import {loadSnow,SnowRenderer} from './weather.js';
 import {materialPassSources,materialPassKey} from './scenery-materials.js';
 import { MotorcyclePresentation } from './motorcycle-presentation.js';
+import { KeyboardHelp } from './keyboard-help.js';
 const $ = id => document.getElementById(id);
 const canvas = $('game');
 const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, powerPreference: 'high-performance' });
@@ -48,6 +49,7 @@ crashSettings.onChange = () => {
 };
 
 let raceSettings = null, raceCourse = null, cpuQuadMatrices, cpuRiderMatrices;
+const keyboardHelp = new KeyboardHelp();
 const raceOverlay = new RaceOverlay({restart: async () => { await $('reset').onclick(); canvas.focus({preventScroll:true}); }, quit: () => frontend?.show('single')});
 let simReady = false, simBusy = false, simAccumulator = 0, simFrame, simStart, simGeneration = 0, orbit = 0, cameraFrame, cameraCycle = false;
 const motorcyclePresentation = new MotorcyclePresentation();
@@ -1762,13 +1764,23 @@ canvas.addEventListener('pointermove', event => {
   pointer.x = event.clientX; pointer.y = event.clientY;
 });
 for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(name, event => { touchLean.end(event.pointerId, name !== 'pointerup'); pointers.delete(event.pointerId); });
+// While riding, a click on the page or a toolbar button must not silently
+// drop driving keys. Menus, dialogs, race results and fields keep their focus.
+function keyboardTarget() {
+  const active = document.activeElement;
+  if (active === canvas) return true;
+  if (!simReady || menuOpen || (active && active !== document.body && !$('toolbar').contains(active))) return false;
+  canvas.focus({ preventScroll: true });
+  return true;
+}
 window.addEventListener('keydown', event => {
-  if (document.activeElement !== canvas) return;
+  if (event.ctrlKey || event.metaKey) return;
   // A key held across blur/pause may resume with OS repeat events. It must be
   // released and pressed again after cancellation before becoming new input.
   if (event.repeat && !keys.has(event.code)) return;
   const bound = simReady ? gameplayBindings.usesKey(event.code) : ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ShiftLeft'].includes(event.code);
-  if (bound) { event.preventDefault(); keys.add(event.code); if (simReady) gameplayBindings.observeKeys(keys, event.repeat ? null : event.code); }
+  if (!bound || !keyboardTarget()) return;
+  event.preventDefault(); keys.add(event.code); if (simReady) gameplayBindings.observeKeys(keys, event.repeat ? null : event.code);
 });
 window.addEventListener('keyup', event => { keys.delete(event.code); gameplayBindings.observeKeys(keys); });
 const clearInput = () => { speedRush.reset(); motorcyclePresentation.reset(); presentedFrame = presentedCamera = undefined; keys.clear(); pointers.clear(); touchControls.clear(); touchLean.clear(); gameplayBindings.cancel(); simAccumulator = 0; cameraCycle = false; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
@@ -1813,7 +1825,7 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
       catch(error){if(isCurrent()){await frontend.show('lobby');frontend.fail(error);throw error;}}
       finally{if(isCurrent())frontend.busy=false;}
     },onLeave:message=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show('multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
-    frontend = new Frontend({minimapSettings,menuRider:menuRiderAssets,modelAssets:selectionAssets,crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => loadGame(null, environment,racing), active: open => { menuOpen = open; clearInput(); lastTime = 0; scheduleRender(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
+    frontend = new Frontend({minimapSettings,menuRider:menuRiderAssets,modelAssets:selectionAssets,crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => loadGame(null, environment,racing), active: open => { menuOpen = open; keyboardHelp.setRiding(!open); clearInput(); lastTime = 0; scheduleRender(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     hud = new HeadUpDisplay(frontend, canvas);
     document.body.classList.add('menu-open'); void frontend.init();
   } }

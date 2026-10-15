@@ -126,6 +126,33 @@ impl TouchDrive {
     }
 }
 
+/// Authored keyboard and touch drive adapters. Each keeps its own gear memory
+/// so W/S on a keyboard brake first and reverse from a stop, like touch does.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BrowserDrive {
+    keyboard: TouchDrive,
+    touch: TouchDrive,
+}
+impl BrowserDrive {
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    pub fn resolve(
+        &mut self,
+        independent: VehicleInput,
+        keyboard: Option<TouchIntent>,
+        touch: Option<TouchIntent>,
+        grounded: bool,
+        speed: f32,
+    ) -> Result<VehicleInput> {
+        let input = self
+            .keyboard
+            .resolve(independent, keyboard, grounded, speed)?;
+        self.touch.resolve(input, touch, grounded, speed)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,6 +438,38 @@ mod tests {
                 .unwrap()
                 .lean,
             1.
+        );
+    }
+
+    #[test]
+    fn keyboard_brake_key_stops_then_reverses_and_mixes_with_touch() {
+        let mut drive = BrowserDrive::default();
+        let pad = VehicleInput::default();
+        for (speed, expected) in [
+            (20., (0., 1., 0., false)),
+            (0.5, (1., 0., 0., true)),
+            (-4., (1., 0., 0., true)),
+        ] {
+            let result = drive.resolve(pad, intent(-1.), None, true, speed).unwrap();
+            assert_eq!(channels(result), expected);
+        }
+        // Releasing S coasts in reverse gear; W brakes the backward roll first.
+        assert_eq!(
+            channels(drive.resolve(pad, released(), None, true, -4.).unwrap()),
+            (0., 0., 0., true)
+        );
+        assert_eq!(
+            channels(drive.resolve(pad, intent(1.), None, true, -4.).unwrap()),
+            (0., 1., 0., true)
+        );
+        assert_eq!(
+            channels(drive.resolve(pad, intent(1.), None, true, 0.).unwrap()),
+            (1., 0., 0., false)
+        );
+        // Without a keyboard intent, touch keeps its independent gear state.
+        assert_eq!(
+            channels(drive.resolve(pad, None, intent(-1.), true, 0.).unwrap()),
+            (1., 0., 0., true)
         );
     }
 }
