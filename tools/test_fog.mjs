@@ -18,8 +18,9 @@ try {
           this.addEventListener('message', ({ data }) => {
             const op = this.ops.get(data.id);
             this.ops.delete(data.id);
-            if (op === 90 && data.bytes && !data.error)
-              fogPasses.push(JSON.parse(new TextDecoder().decode(data.bytes)));
+            if (op === 145 && data.bytes && !data.error)
+              for (const described of JSON.parse(new TextDecoder().decode(data.bytes)))
+                if (described.pass) fogPasses.push(described.pass);
           });
         }
         postMessage(data, ...args) {

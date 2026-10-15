@@ -18,12 +18,12 @@ try {
     await page.route('**/game.js', async route => {
       const response = await route.fetch();
       const oracle = `\nconst sourceDrawEcosystem=drawEcosystem;drawEcosystem=()=>{window.billboardSelectionView={...camera};return sourceDrawEcosystem();};\nwindow.billboardSelectionCheck=()=>{
-   const camera=window.billboardSelectionView,eco=terrain.ecosystem,fx=Math.sin(camera.yaw),fz=Math.cos(camera.yaw),far=terrain.world.metadata.fog?.end??768;
-   const start=performance.now(),brute=[];
-   for(const p of eco.renderPlacements){const dx=p.position[0]-camera.x,dz=p.position[2]-camera.z,depth=dx*fx+dz*fz;
-    if(dx*dx+dz*dz<=(far+p.radius)**2&&depth>-p.radius)brute.push({index:p.index,depth});}
+   const camera=window.billboardSelectionView,fx=Math.sin(camera.yaw),fz=Math.cos(camera.yaw),far=terrain.world.metadata.fog?.end??768;
+   const rust=renderCore.call(143,new Uint8Array()),start=performance.now(),brute=[];
+   for(const [index,p] of rust.placements.entries()){const dx=p.position[0]-camera.x,dz=p.position[2]-camera.z,depth=dx*fx+dz*fz;
+    if(dx*dx+dz*dz<=(far+p.radius)**2&&depth>-p.radius)brute.push({index,depth});}
    brute.sort((a,b)=>a.depth-b.depth);const fullScanMs=performance.now()-start;
-   const selected=eco.selection.slice().sort((a,b)=>a.depth-b.depth);
+   const selected=rust.selection.slice().sort((a,b)=>a.depth-b.depth);
    if(selected.length!==Math.min(1500,brute.length))throw Error('Spatial index lost visible candidates');
    for(let i=0;i<selected.length;i++)if(Math.abs(selected[i].depth-brute[i].depth)>1e-6)throw Error('Bounded selection differs from full scan '+JSON.stringify({i,selected:{index:selected[i].index,depth:selected[i].depth},brute:brute[i],camera}));
    return{candidates:brute.length,selected:selected.length,fullScanMs};};`;

@@ -1,7 +1,14 @@
 //! Original static-scenery pass metadata and the observed translation-only UV
 //! animator (001be080, 001be5d0). General rotation/shear and pixel animation are
 //! reported as unsupported; they must not silently become a fixed texture.
-use crate::{Result, scene};
+use crate::{
+    Result,
+    authored_text::{
+        assignment, first_digits, js_number, line_assignment, line_starts, lines, occurrences,
+        skip_space, space, starts_with_key, trim, uncommented,
+    },
+    scene,
+};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -244,6 +251,231 @@ pub fn parse(data: &[u8]) -> Result<Pass> {
     })
 }
 
+/// One ordered PSM pass as the browser binds it (formerly regex parsing in
+/// game.js). Text semantics follow the former JavaScript exactly, including
+/// unanchored key searches; `pass` is parsed only for a bound authored pass.
+#[derive(Debug, Serialize)]
+pub struct MaterialPass {
+    /// Shared declarations plus this pass's fields under ShaderPass_1.
+    pub source: String,
+    /// 001bf430 base TextureMap_1 when it uses coordinate set 0.
+    pub binding: Option<String>,
+    pub shader: Option<String>,
+    /// Reflection/environment-map microprogram name.
+    pub reflective: bool,
+    /// Reflective program without a supported local reflection plane.
+    pub unsupported_reflection: bool,
+    pub pass: Option<Pass>,
+    pub alpha_test: f64,
+    /// Explicit GEQUAL cutout (alphaTestMethod 5, failure 0/1) values.
+    pub scene_alpha_failure: f64,
+    pub scene_alpha_cutoff: f64,
+    /// MudAnimator TextureMap_1 entries in authored order.
+    pub mud_maps: Vec<String>,
+}
+
+/// Splits ordered ShaderPass_N sections; each result carries the shared
+/// declarations and its own fields as ShaderPass_1. Prologue/epilogue
+/// execution is separate.
+pub fn pass_sources(text: &str) -> Result<Vec<String>> {
+    if text.encode_utf16().count() > 1024 * 1024 {
+        return Err("Original material exceeds extent limit.".into());
+    }
+    let mut sections: Vec<(&str, Vec<&str>)> = vec![("", Vec::new())];
+    for line in lines(text) {
+        let clean = uncommented(line);
+        match clean.strip_prefix('[').and_then(|v| v.strip_suffix(']')) {
+            Some(header) if !header.is_empty() && !header.contains(']') => {
+                sections.push((header, Vec::new()))
+            }
+            _ => sections.last_mut().unwrap().1.push(line),
+        }
+    }
+    let total = |line: &str| {
+        let line = line.trim_start_matches(space);
+        starts_with_key(line, 0, "TotalShaderPasses")
+            && assignment(line, 0, "TotalShaderPasses").is_some()
+    };
+    let count = sections
+        .iter()
+        .filter(|(header, _)| header.eq_ignore_ascii_case("General"))
+        .flat_map(|(_, lines)| lines.iter().map(|line| uncommented(line)))
+        .find(|line| starts_with_key(line, 0, "TotalShaderPasses") && total(line))
+        .map_or(1., |line| js_number(line.split('=').nth(1).unwrap_or("")));
+    if count.fract() != 0. || !(1. ..=8.).contains(&count) {
+        return Err("Unsupported original material pass count.".into());
+    }
+    let numbered = |header: &str| {
+        header.len() > 11
+            && starts_with_key(header, 0, "ShaderPass_")
+            && header[11..].bytes().all(|b| b.is_ascii_digit())
+    };
+    let shared = sections
+        .iter()
+        .filter(|(header, _)| !numbered(header))
+        .map(|(header, lines)| {
+            let body = lines
+                .iter()
+                .map(|line| {
+                    if total(line) {
+                        "TotalShaderPasses=1"
+                    } else {
+                        line
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if header.is_empty() {
+                body
+            } else {
+                format!("[{header}]\n{body}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if trim(text).is_empty() {
+        return Ok(vec![String::new()]);
+    }
+    (1..=count as usize)
+        .map(|index| {
+            let name = format!("ShaderPass_{index}");
+            let mut matches = sections
+                .iter()
+                .filter(|(header, _)| header.eq_ignore_ascii_case(&name));
+            match (matches.next(), matches.next()) {
+                (Some((_, lines)), None) => {
+                    Ok(format!("{shared}\n[ShaderPass_1]\n{}", lines.join("\n")))
+                }
+                _ => Err(format!(
+                    "Original material pass{index} is missing or duplicated."
+                )),
+            }
+        })
+        .collect()
+}
+
+/// TextureMap_1 of [ShaderPass_1] when TextureCoordinateIndex_1 is zero.
+pub fn texture_binding(text: &str) -> Option<String> {
+    let (mut base, mut texture, mut coordinates) = (false, None, 0.);
+    for line in lines(text).map(uncommented) {
+        if line.starts_with('[') {
+            base = line.eq_ignore_ascii_case("[shaderpass_1]");
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=').filter(|_| base) else {
+            continue;
+        };
+        let (key, value) = (trim(key), trim(value));
+        if key.eq_ignore_ascii_case("TextureMap_1") {
+            texture = Some(value);
+        }
+        if key.eq_ignore_ascii_case("TextureCoordinateIndex_1") {
+            coordinates = js_number(value);
+        }
+    }
+    texture
+        .filter(|t| coordinates == 0. && !t.is_empty())
+        .map(str::to_owned)
+}
+
+fn describe_pass(source: String, fallback: Option<&str>) -> Result<MaterialPass> {
+    let text = source.as_str();
+    let shader = lines(text)
+        .map(uncommented)
+        .find(|line| {
+            starts_with_key(line, 0, "microProgramName")
+                && assignment(line, 0, "microProgramName").is_some()
+        })
+        .map(|line| trim(line.split('=').nth(1).unwrap_or("")).to_owned());
+    let binding = fallback
+        .map(str::to_owned)
+        .or_else(|| texture_binding(text));
+    let pass = if binding.is_some() && fallback.is_none() {
+        Some(parse(text.as_bytes())?)
+    } else {
+        None
+    };
+    let reflective = shader.as_deref().is_some_and(|shader| {
+        let shader = shader.to_ascii_lowercase();
+        shader.contains("refl") || shader.contains("envmap")
+    });
+    let reference = js_number(first_digits(text, "alphaReferenceValue").unwrap_or("0")) / 255.;
+    let alpha_off = occurrences(text, "alphaTestOnOff").any(|at| {
+        assignment(text, at, "alphaTestOnOff").is_some_and(|value| text[value..].starts_with('0'))
+    });
+    let cutout = line_assignment(text, "alphaTestOnOff", &['1'])
+        && line_assignment(text, "alphaTestMethod", &['5'])
+        && line_assignment(text, "processingMethodWhenFailedInAlphaTest", &['0', '1']);
+    let mut mud_maps = Vec::new();
+    if occurrences(text, "MudAnimator").next().is_some() {
+        // /^\s*TextureMap_1\s*=\s*([^\r\n;]+)/gmi, including its backtracking.
+        let value_char = |c: char| !matches!(c, '\r' | '\n' | ';');
+        let mut from = 0;
+        for start in line_starts(text) {
+            if start < from {
+                continue;
+            }
+            let key = skip_space(text, start);
+            let Some(value) = starts_with_key(text, key, "TextureMap_1")
+                .then(|| assignment(text, key, "TextureMap_1"))
+                .flatten()
+            else {
+                continue;
+            };
+            let open = text[..value].rfind('=').unwrap() + 1;
+            let first = if text[value..].chars().next().is_some_and(value_char) {
+                Some(value)
+            } else {
+                text[open..value]
+                    .char_indices()
+                    .rev()
+                    .find(|(_, c)| !matches!(c, '\r' | '\n'))
+                    .map(|(at, _)| open + at)
+            };
+            let Some(first) = first else {
+                continue;
+            };
+            let end = first
+                + text[first..]
+                    .find(|c: char| !value_char(c))
+                    .unwrap_or(text.len() - first);
+            mud_maps.push(trim(&text[first..end]).replace('"', ""));
+            from = end;
+        }
+    }
+    Ok(MaterialPass {
+        unsupported_reflection: reflective
+            && pass.as_ref().is_none_or(|pass| pass.reflection_plane == 0),
+        binding,
+        shader,
+        reflective,
+        pass,
+        alpha_test: if alpha_off { 0. } else { reference },
+        scene_alpha_failure: if cutout {
+            js_number(first_digits(text, "processingMethodWhenFailedInAlphaTest").unwrap_or("0"))
+        } else {
+            0.
+        },
+        scene_alpha_cutoff: if cutout { reference } else { 0. },
+        mud_maps,
+        source,
+    })
+}
+
+/// Ordered browser passes for a PSM. Without an authored PSM (`fallback`),
+/// 001bf430 → 001b5080 binds the material's own texture stem with set 0.
+pub fn describe(text: &str, multi_pass: bool, fallback: Option<&str>) -> Result<Vec<MaterialPass>> {
+    let sources = if multi_pass {
+        pass_sources(text)?
+    } else {
+        vec![text.to_owned()]
+    };
+    sources
+        .into_iter()
+        .map(|source| describe_pass(source, fallback))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,6 +533,187 @@ mod tests {
         assert!(pass.unsupported_animation.is_some());
         assert!(pass.uv_scroll.is_none());
         assert!(parse(b"[ShaderPass_1]\nv_velocity=NaN\nuvs_animate=1\nmicroProgramName=TexTransformPrelitCompressed\n").is_err());
+    }
+    // Expected values below were produced by the former game.js regex reading
+    // (textureBinding, microProgramName, alpha and MudAnimator expressions).
+    fn single(text: &str) -> MaterialPass {
+        let mut passes = describe(text, false, None).unwrap();
+        assert_eq!(passes.len(), 1);
+        passes.remove(0)
+    }
+    #[test]
+    fn binding_uses_base_pass_set_zero_with_javascript_number_rules() {
+        let binding = |text| texture_binding(text);
+        assert_eq!(
+            binding("[ShaderPass_1]\nTextureMap_1=a\nTextureCoordinateIndex_1=0x0").as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            binding("[ShaderPass_1]\nTextureMap_1=a\nTextureCoordinateIndex_1=-0.0e3").as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            binding("[ShaderPass_1]\nTextureMap_1=a\nTextureCoordinateIndex_1=inf"),
+            None
+        );
+        assert_eq!(
+            binding("[ShaderPass_1]\nTextureMap_1=a\nTextureCoordinateIndex_1=1"),
+            None
+        );
+        assert_eq!(binding("[ShaderPass_1]\nTextureMap_1=\n"), None);
+        assert_eq!(
+            binding("[SHADERPASS_1] ;c\n texturemap_1 = b ; comment\n").as_deref(),
+            Some("b")
+        );
+        assert_eq!(binding("[ShaderPass_2]\nTextureMap_1=a"), None);
+        let fallback = describe("", true, Some("stem")).unwrap();
+        assert_eq!(fallback.len(), 1);
+        assert_eq!(fallback[0].binding.as_deref(), Some("stem"));
+        assert!(fallback[0].pass.is_none() && fallback[0].shader.is_none());
+    }
+    #[test]
+    fn shader_alpha_and_cutout_follow_the_former_expressions() {
+        assert_eq!(
+            single("microProgramName = A=B\n").shader.as_deref(),
+            Some("A")
+        );
+        assert_eq!(
+            single("x microProgramName=no\nmicroProgramName=yes")
+                .shader
+                .as_deref(),
+            Some("yes")
+        );
+        assert_eq!(
+            single("XalphaReferenceValue=7 alphaReferenceValue=9").alpha_test,
+            7. / 255.
+        );
+        assert_eq!(
+            single("alphaTestOnOff=\n0\nalphaReferenceValue=9").alpha_test,
+            0.
+        );
+        let cutout = single(
+            "  alphaTestOnOff = 1 \nalphaTestMethod=5\nprocessingMethodWhenFailedInAlphaTest=1\nalphaReferenceValue=64",
+        );
+        assert_eq!(
+            (
+                cutout.alpha_test,
+                cutout.scene_alpha_failure,
+                cutout.scene_alpha_cutoff
+            ),
+            (64. / 255., 1., 64. / 255.)
+        );
+        for text in [
+            "a alphaTestOnOff=1\nalphaTestMethod=5\nprocessingMethodWhenFailedInAlphaTest=0",
+            "alphaTestOnOff\n=\n1\n\nalphaTestMethod=5\u{2028}processingMethodWhenFailedInAlphaTest=01",
+            "alphaTestOnOff=11\nalphaTestMethod=5\nprocessingMethodWhenFailedInAlphaTest=0",
+        ] {
+            let pass = single(text);
+            assert_eq!(
+                (pass.scene_alpha_failure, pass.scene_alpha_cutoff),
+                (0., 0.)
+            );
+        }
+        let reflective = describe(
+            "[ShaderPass_1]\nmicroProgramName=DiffuseEnvmapCompressed\nTextureMap_1=s",
+            false,
+            None,
+        )
+        .unwrap();
+        assert!(reflective[0].reflective && reflective[0].unsupported_reflection);
+        let plane = describe(
+            "[ShaderPass_1]\nmicroProgramName=PrelitReflXZEnvmapCompressed\nTextureMap_1=s",
+            false,
+            None,
+        )
+        .unwrap();
+        assert!(plane[0].reflective && !plane[0].unsupported_reflection);
+    }
+    #[test]
+    fn mud_maps_preserve_multiline_regex_backtracking() {
+        let maps = |text| single(text).mud_maps;
+        assert_eq!(
+            maps(
+                "[ShaderPass_1]\nMudAnimator=1\nTextureMap_1=dirt\n[ShaderPass_2]\nTextureMap_1 = \"mud\" ;c\n"
+            ),
+            ["dirt", "mud"]
+        );
+        assert_eq!(
+            maps("MudAnimator\nTextureMap_1=  ;x\nTextureMap_1=\n\n  b  "),
+            ["", "b"]
+        );
+        assert_eq!(
+            maps(
+                "mudanimator\n  TextureMap_1=a TextureMap_1=b\u{2028}TextureMap_1=c\nTextureMap_1 =\t\"d\""
+            ),
+            ["a TextureMap_1=b\u{2028}TextureMap_1=c", "d"]
+        );
+        assert!(maps("MudAnimator\nTextureMap_1=\r\n").is_empty());
+        assert!(maps("TextureMap_1=a\nTextureMap_1=b").is_empty());
+    }
+    #[test]
+    fn ordered_passes_keep_shared_declarations_and_reject_bad_counts() {
+        let passes = pass_sources("[General]\nTotalShaderPasses = 2 ; two\n[ShaderPass_1]\nTextureMap_1=a\n[ShaderPass_2]\nTextureMap_1=b\n[Epilogue]\nx=1").unwrap();
+        assert_eq!(
+            passes,
+            [
+                "\n[General]\nTotalShaderPasses=1\n[Epilogue]\nx=1\n[ShaderPass_1]\nTextureMap_1=a",
+                "\n[General]\nTotalShaderPasses=1\n[Epilogue]\nx=1\n[ShaderPass_1]\nTextureMap_1=b",
+            ]
+        );
+        assert_eq!(
+            pass_sources("[General]\nTotalShaderPasses=0x2\n[ShaderPass_1]\n[ShaderPass_2]")
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            pass_sources(
+                "[General]\nTotalShaderPasses=1\n[ShaderPass_01]\n[ShaderPass_1]\nTextureMap_1=a"
+            )
+            .unwrap(),
+            ["\n[General]\nTotalShaderPasses=1\n[ShaderPass_1]\nTextureMap_1=a"]
+        );
+        assert_eq!(pass_sources(" \n\t").unwrap(), [""]);
+        for (text, error) in [
+            (
+                "[General]\nTotalShaderPasses=9",
+                "Unsupported original material pass count.",
+            ),
+            (
+                "[General]\nTotalShaderPasses=1.5",
+                "Unsupported original material pass count.",
+            ),
+            (
+                "[General]\nTotalShaderPasses=NaN",
+                "Unsupported original material pass count.",
+            ),
+            (
+                "[General]\nTotalShaderPasses=2\n[ShaderPass_1]",
+                "Original material pass2 is missing or duplicated.",
+            ),
+            (
+                "[ShaderPass_1]\n[ShaderPass_1]",
+                "Original material pass1 is missing or duplicated.",
+            ),
+        ] {
+            assert_eq!(pass_sources(text).unwrap_err(), error);
+        }
+        let reflection = "[General]\nTotalShaderPasses=2\nEnableMultiPassCull=0\n[ShaderPass_1]\nmicroProgramName=PrelitReflXZEnvmapCompressed\nTextureMap_1=sky\n[ShaderPass_2];source overlay\nmicroProgramName=diffuseCompressed\nTextureMap_1=facade\nalphaBlendingOnOff=1\n[Epilogue]\nDummy=1";
+        let passes = describe(reflection, true, None).unwrap();
+        assert_eq!(
+            passes
+                .iter()
+                .map(|p| p.binding.as_deref().unwrap())
+                .collect::<Vec<_>>(),
+            ["sky", "facade"]
+        );
+        assert_eq!(passes[0].pass.as_ref().unwrap().reflection_plane, 2);
+        assert!(passes[1].pass.as_ref().unwrap().blend && !passes[1].source.contains("PrelitRefl"));
+        assert!(
+            passes.iter().all(
+                |p| p.source.contains("TotalShaderPasses=1") && p.source.contains("[Epilogue]")
+            )
+        );
     }
     #[test]
     fn atm_clock_retains_first_frame_uses_unsigned_ms_and_loop_start() {

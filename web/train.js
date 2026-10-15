@@ -29,7 +29,7 @@ export class TrainRenderer {
       for (const group of mesh.lods[0].groups) {
         if (group.vertices.length > 65536) throw new Error('Train mesh group exceeds index capacity.');
         const material = mesh.materials[group.material], image = source.textures.get(material);
-        if (/refl|envmap/i.test(image?.shader ?? '')) continue;
+        if (image?.reflective) continue;
         const vertices = new Float32Array(group.vertices.length * 9);
         group.vertices.forEach((vertex, index) => {
           const node = mesh.nodes[vertex.node];

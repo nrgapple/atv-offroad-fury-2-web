@@ -16,7 +16,7 @@ try {
           response,
           body:
             (await response.text()) +
-            `\nwindow.inspectNearVegetation=()=>{const p=ecoGroups[0].placements.reduce((best,p)=>Math.hypot(p.position[0]-camera.x,p.position[2]-camera.z)<Math.hypot(best.position[0]-camera.x,best.position[2]-camera.z)?p:best);menuOpen=false;focused=false;cameraFrame=null;$('frontend').hidden=true;camera.x=p.position[0]+10;camera.z=p.position[2]+10;camera.y=p.position[1]+p.radius*1.5;camera.yaw=Math.atan2(-10,-10);camera.pitch=Math.atan2(-p.radius,Math.sqrt(200));};`
+            `\nwindow.inspectNearVegetation=()=>{const slot=terrain.ecosystem.species[0].slot,p=renderCore.call(143,new Uint8Array()).placements.filter(p=>p.slot===slot).reduce((best,p)=>Math.hypot(p.position[0]-camera.x,p.position[2]-camera.z)<Math.hypot(best.position[0]-camera.x,best.position[2]-camera.z)?p:best);menuOpen=false;focused=false;cameraFrame=null;$('frontend').hidden=true;camera.x=p.position[0]+10;camera.z=p.position[2]+10;camera.y=p.position[1]+p.radius*1.5;camera.yaw=Math.atan2(-10,-10);camera.pitch=Math.atan2(-p.radius,Math.sqrt(200));};`
         });
       });
     await page.addInitScript(() => {
@@ -33,22 +33,18 @@ try {
           this.addEventListener('message', ({ data }) => {
             const input = this.ops.get(data.id);
             this.ops.delete(data.id);
-            if (data.error || !data.bytes || ![59, 60, 90].includes(input?.op)) return;
+            if (data.error || !data.bytes || ![59, 60, 145].includes(input?.op)) return;
             const value = JSON.parse(new TextDecoder().decode(data.bytes));
             if (input?.op === 59) ecoMaterialNames.push(...value.mesh.materials);
             if (input?.op === 60) window.ecoScene = value;
-            if (input?.op === 90 && input.texture) ecoPasses[input.texture.toLowerCase()] = value;
+            // Rust material passes report their base binding with the parsed pass.
+            if (input?.op === 145)
+              for (const described of value)
+                if (described.binding && described.pass) ecoPasses[described.binding.toLowerCase()] = described.pass;
           });
         }
         postMessage(data, ...args) {
-          const texture =
-            data.op === 90
-              ? new TextDecoder()
-                  .decode(data.bytes)
-                  .match(/^\s*TextureMap_1\s*=\s*([^;\r\n]+)/im)?.[1]
-                  .trim()
-              : null;
-          this.ops.set(data.id, { op: data.op, texture });
+          this.ops.set(data.id, { op: data.op });
           super.postMessage(data, ...args);
         }
       };

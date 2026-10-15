@@ -18,7 +18,7 @@ import { loadTrain, TrainRenderer } from './train.js';
 import { loadAmbientEffects, AmbientEffectsRenderer } from './ambient-effects.js';
 import { loadWheelEffects, loadMotorcycleEffects, WheelEffectsRenderer, BloodRenderer, bloodCount } from './wheel-effects.js';
 import {loadSnow,SnowRenderer} from './weather.js';
-import {materialPassSources,materialPassKey} from './scenery-materials.js';
+import {materialPassKey} from './scenery-materials.js';
 import { MotorcyclePresentation } from './motorcycle-presentation.js';
 import { KeyboardHelp } from './keyboard-help.js';
 const $ = id => document.getElementById(id);
@@ -84,8 +84,39 @@ let audio = new GameAudio(codec, message => { diagnostics.audioError = message; 
 const stats = new DiagnosticsOverlay({ snapshot: () => ({ ...diagnostics, minimap: minimap.snapshot(), frame: simFrame, paused: simulationPaused(), menuOpen, focused, resolution: [canvas.width, canvas.height] }) });
 // Read-only snapshot for verification; does not expose the locally opened file.
 Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, minimap: minimap.snapshot(), hud: hud?.snapshot(), funnyCrashes, crashMode: crashSettings.mode, chaseCamera: crashSettings.chase, speedRush: {...speedRush.snapshot(),setting:crashSettings.speed}, impactAudio: { impacts: impactEvents.impacts }, blood: { draws: bloodRenderer?.draws ?? 0, instances: bloodRenderer?.draws ? bloodRenderer.instances : 0, count: crashSettings.mode === 'gorn' ? bloodCount(simFrame?.funny_crash?.blood) : 0, stumps: crashSettings.mode === 'gorn' ? Math.floor((simFrame?.funny_crash?.blood?.stumps?.length ?? 0) / 7) : 0 }, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()],reconnecting:multiplayer.reconnecting,lastDisconnect:multiplayer.lastDisconnect,droppedSnapshots:multiplayer.droppedSnapshots,networkAdapterRoundTripMs:multiplayer.networkEncodeMs,networkAdapterCalls:multiplayer.networkEncodeCalls} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
+// Render-frame helpers (terrain height, vegetation queues) run synchronously in
+// a second, main-thread instance of the worker's compiled Rust module.
+let renderCore, renderCoreFailed;
+const renderCoreReady = new Promise((resolve, reject) => { renderCoreFailed = reject; worker.addEventListener('message', ({ data }) => {
+  if (!data.ready) return;
+  const started = performance.now();
+  (data.module ? WebAssembly.instantiate(data.module, {}) : WebAssembly.instantiateStreaming(fetch('atv_web.wasm'), {}).then(result => result.instance))
+    .then(instance => { renderCore = renderBridge(instance.exports); diagnostics.renderCore = { sharedModule: Boolean(data.module), instantiateMs: performance.now() - started, memoryBytes: instance.exports.memory.buffer.byteLength }; resolve(renderCore); }, reject);
+}); });
+renderCoreReady.catch(error => status(`Renderer failed: ${error.message}`, true));
+function renderBridge(wasm) {
+  const call = (op, bytes) => {
+    if (!wasm.input_resize(bytes.byteLength)) throw new Error('Render input exceeds limit.');
+    new Uint8Array(wasm.memory.buffer, wasm.input_ptr(), bytes.byteLength).set(bytes);
+    const ok = wasm.run(op, 0), text = decoder.decode(new Uint8Array(wasm.memory.buffer, wasm.output_ptr(), wasm.output_len()));
+    if (diagnostics.renderCore) diagnostics.renderCore.memoryBytes = wasm.memory.buffer.byteLength;
+    if (!ok) throw new Error(text);
+    return JSON.parse(text);
+  };
+  let floats = 0;
+  return {
+    call, terrainHeight: (x, z) => wasm.render_terrain_height(x, z),
+    loadVegetation(bytes) { const layout = call(142, bytes); floats = layout.capacity * (layout.billboard_floats + layout.mesh_floats); return layout; },
+    // Views are recreated per frame because memory growth detaches old buffers.
+    vegetation(x, z, forwardX, forwardZ, serial) {
+      if (!wasm.render_vegetation_select(x, z, forwardX, forwardZ, serial)) return null;
+      const at = wasm.render_vegetation_counts(), [visible, scanned, far, transition, near, groups] = new Uint32Array(wasm.memory.buffer, at, 6);
+      return { visible, scanned, far, transition, near, groups: new Uint32Array(wasm.memory.buffer, at + 24, groups), instances: new Float32Array(wasm.memory.buffer, wasm.render_vegetation_instances(), floats) };
+    },
+  };
+}
 worker.onmessage = ({ data }) => {
-  if (data.startupError) { status(data.startupError, true); return; }
+  if (data.startupError) { renderCoreFailed(new Error(data.startupError)); status(data.startupError, true); return; }
   const request = pending.get(data.id);
   if (!request) return;
   pending.delete(data.id);
@@ -333,9 +364,8 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
   const snow=await loadSnow({selection:weather,resource,entries,codec,json,gpuTexture:model.motorcycle?null:wheelEffects?.gpuTexture});
   const train = environment === 'env08' ? await loadTrain({ resource, entries, modeIndex, codec, json, baseTextures, isCurrent: () => token === generation }) : null;
   if (train && mode) await audio.loadSpatial({ toy: new TextEncoder().encode(mode), isCurrent: () => token === generation });
-  // Original grid spacing: the race mode TOY (8–15ft) or, for Supercross, the scene TOY.
-  const spacingOf = text => Number(/^\s*RiderSpacing\s*=\s*([\d.]+)/im.exec(text ?? '')?.[1]);
-  const riderSpacing = [spacingOf(mode), spacingOf(toy && decoder.decode(toy))].find(v => Number.isFinite(v) && v >= 1 && v <= 40);
+  // Rust reads grid RiderSpacing from the race mode TOY or, for Supercross, the scene TOY.
+  const spacingSources = [mode, toy && decoder.decode(toy)];
   // Each roster CPU rides its own original quad: physics, mesh and collision.
   for (const entry of cpuRoster ?? []) {
     const cpu = await json(89, new Uint8Array([frontend?.riderId ?? 0]), entry.quad), archive = await archiveAt(cpu.quad);
@@ -345,7 +375,7 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
     parts.forEach((p, i) => { view.setUint32(i * 4, p.length, true); bundle.set(p, at); at += p.length; });
     entry.bundle = bundle;
   }
-  return { weather, snow, motorcycle: model.motorcycle ? {archive:quadArchive,id:model.quad_id} : null, bytes, environment, course, cpuNames, cpuRoster, riderSpacing, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, ambientEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
+  return { weather, snow, motorcycle: model.motorcycle ? {archive:quadArchive,id:model.quad_id} : null, bytes, environment, course, cpuNames, cpuRoster, spacingSources, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, ambientEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
 }
 async function baseTextures(mesh, materialArchive, materialEntries, cache = new Map(), multiPass = false) {
   const findMaterial = name => materialEntries.findIndex(entry => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase());
@@ -354,16 +384,14 @@ async function baseTextures(mesh, materialArchive, materialEntries, cache = new 
     if (cache.has(material)) {const first=cache.get(material);for(const key of multiPass?first.passKeys??[material]:[material])textures.set(key,cache.get(key));continue;}
     const materialIndex = findMaterial(`${material}.psm`);
     const originalText = materialIndex < 0 ? '' : decoder.decode(await codec(3, materialArchive, materialIndex));
-    const sources=multiPass?materialPassSources(originalText):[originalText],passKeys=[];
-    for(const [passIndex,materialText] of sources.entries()) {
+    // Rust reads ordered passes, bindings, shader, alpha test and mud maps. Without
+    // an authored PSM, 001bf430 ->001b5080 binds the material's own stem (set0).
+    const passes=await command(145,{text:originalText,multi_pass:multiPass,fallback:materialIndex<0?material:null}),passKeys=[];
+    for(const [passIndex,described] of passes.entries()) {
     const passKey=materialPassKey(material,passIndex);passKeys.push(passKey);
-    //001bf430 ->001b5080 binds the same texture stem with coordinate set0
-    // when no authored PSM exists. Dynamic runtime replacements are separate.
-    const binding = materialIndex < 0 ? material : textureBinding(materialText);
+    const {binding,pass,reflective,source:materialText}=described,shader=described.shader??undefined;
     if (!binding) continue;
-    const shader = materialText.split(/\r?\n/).map(line => line.split(';')[0].trim()).find(line => /^microProgramName\s*=/i.test(line))?.split('=')[1].trim();
-    const pass = materialIndex < 0 ? null : await json(90, new TextEncoder().encode(materialText));
-    if (/refl|envmap/i.test(shader ?? '') && !pass?.reflection_plane) { const unsupported = { shader }; textures.set(passKey, unsupported); cache.set(passKey, unsupported); continue; }
+    if (described.unsupported_reflection) { const unsupported = { shader, reflective }; textures.set(passKey, unsupported); cache.set(passKey, unsupported); continue; }
     const textureIndex = findMaterial(`${binding}.pst`);
     const atmIndex = pass?.texture_animation || textureIndex < 0 ? findMaterial(`${binding}.atm`) : -1;
     const tgaIndex = textureIndex < 0 && atmIndex < 0 ? findMaterial(`${binding}.tga`) : -1;
@@ -376,37 +404,17 @@ async function baseTextures(mesh, materialArchive, materialEntries, cache = new 
       // Reverse-looping crowd ATMs retain their original first frame until the
       // native playback path is recovered. The material reports that limitation.
       const rgba = animationFrames ? animationFrames[0] : await codec(atmIndex >= 0 ? 57 : tgaIndex >= 0 ? 98 : 8, pst, 0);
-      const alphaMatch = materialText.match(/alphaReferenceValue\s*=\s*(\d+)/i);
-      // Explicit GEQUAL cutout materials, including the original tower lattice.
-      // FB_ONLY/source-alpha edge blending is not yet a complete GS match.
-      const sceneCutout = /^\s*alphaTestOnOff\s*=\s*1\s*$/mi.test(materialText)
-        && /^\s*alphaTestMethod\s*=\s*5\s*$/mi.test(materialText)
-        && /^\s*processingMethodWhenFailedInAlphaTest\s*=\s*[01]\s*$/mi.test(materialText);
-      image = { ...info, rgba, animationFrames, shader, pass, materialText, alphaTest: /alphaTestOnOff\s*=\s*0/i.test(materialText) ? 0 : Number(alphaMatch?.[1] ?? 0) / 255, sceneAlphaFailure: sceneCutout ? Number(materialText.match(/processingMethodWhenFailedInAlphaTest\s*=\s*(\d+)/i)?.[1] ?? 0) : 0, sceneAlphaCutoff: sceneCutout ? Number(alphaMatch?.[1] ?? 0) / 255 : 0 };
-    } catch (error) { image = { shader, error: error.message }; }
-    if (/MudAnimator/i.test(materialText)) {
-      const maps = [...materialText.matchAll(/^\s*TextureMap_1\s*=\s*([^\r\n;]+)/gmi)].map(m => m[1].trim().replaceAll('"',''));
-      const mudIndex = maps.length > 1 ? findMaterial(`${maps[1]}.pst`) : -1;
-      if (mudIndex >= 0) { const bytes=await codec(3,materialArchive,mudIndex); image.mud={...await json(7,bytes),rgba:await codec(8,bytes)}; }
-    }
+      // Scene cutout values are Rust's explicit GEQUAL reading, including the original
+      // tower lattice. FB_ONLY/source-alpha edge blending is not yet a complete GS match.
+      image = { ...info, rgba, animationFrames, shader, reflective, pass, materialText, alphaTest: described.alpha_test, sceneAlphaFailure: described.scene_alpha_failure, sceneAlphaCutoff: described.scene_alpha_cutoff };
+    } catch (error) { image = { shader, reflective, error: error.message }; }
+    const mudIndex = described.mud_maps.length > 1 ? findMaterial(`${described.mud_maps[1]}.pst`) : -1;
+    if (mudIndex >= 0) { const bytes=await codec(3,materialArchive,mudIndex); image.mud={...await json(7,bytes),rgba:await codec(8,bytes)}; }
     textures.set(passKey, image); cache.set(passKey, image);
     }
     if(multiPass&&textures.has(material))textures.get(material).passKeys=passKeys.filter(key=>textures.has(key));
   }
   return textures;
-}
-function textureBinding(text) {
-  let inBase = false, texture, coordinates = 0;
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.split(';')[0].trim();
-    if (line.startsWith('[')) { inBase = line.toLowerCase() === '[shaderpass_1]'; continue; }
-    if (!inBase) continue;
-    const split = line.indexOf('='); if (split < 0) continue;
-    const key = line.slice(0, split).trim().toLowerCase(), value = line.slice(split + 1).trim();
-    if (key === 'texturemap_1') texture = value;
-    if (key === 'texturecoordinateindex_1') coordinates = Number(value);
-  }
-  return coordinates === 0 && texture ? texture : null;
 }
 const vertexSource = `#version 300 es
 precision highp float;
@@ -712,13 +720,9 @@ function upload(vertices, indices, hasUv = false, hasNodes = false, hasColors = 
   chunk.bounds = vertexBounds(vertices, stride / 4);
   return chunk;
 }
-function terrainHeight(x, z) {
-  const { width, depth, spacing, heights } = terrain;
-  const gx = Math.max(0, Math.min(width - 1.00001, x / spacing)), gz = Math.max(0, Math.min(depth - 1.00001, z / spacing));
-  const ix = Math.floor(gx), iz = Math.floor(gz), fx = gx - ix, fz = gz - iz;
-  const a = heights[iz * width + ix], b = heights[iz * width + ix + 1], c = heights[(iz + 1) * width + ix], d = heights[(iz + 1) * width + ix + 1];
-  return fx + fz <= 1 ? a + fx * (b - a) + fz * (c - a) : d + (1 - fx) * (c - d) + (1 - fz) * (b - d);
-}
+// Visible ground for cameras and presentation: Rust interpolates the dense render
+// grid the terrain mesh is built from. Gameplay starts use the contact plane (op 140).
+function terrainHeight(x, z) { return renderCore.terrainHeight(x, z); }
 function setVehicle(source) {
   vehicle = undefined;
   if (!source.mesh || !source.scene) return;
@@ -964,26 +968,23 @@ function buildEcosystem() {
   const eco = terrain.ecosystem;
   diagnostics.vegetationPlacements = eco?.placements.length ?? 0;
   if (!eco) return;
-  const scale = Math.max(terrain.sizeX, terrain.sizeZ) / 65536, textures = new Map();
-  eco.renderPlacements = new Array(eco.placements.length); eco.selection = []; eco.maxRadius = 0; eco.billboard = ecoBillboard = null;
+  const textures = new Map();
+  eco.billboard = ecoBillboard = null;
   for (const [name, decoded] of eco.textures) {
     if (!decoded.rgba) continue;
     const gpu = texture(decoded); textures.set(name, gpu); gpuTextures.push(gpu);
   }
+  // Rust registers placements (00129b70 resampling) and owns per-frame
+  // selection; this layer keeps meshes, materials and instance buffers.
+  const metadata = terrain.world.metadata, config = encoder.encode(JSON.stringify({ far: metadata.fog?.end ?? 768, distances: metadata.ecosystem_distances,
+    species: eco.species.map(species => { const { bounds } = eco.models.get(species.slot); return { slot: species.slot, center_y: bounds.center[1], half_extents: bounds.half_extents.slice(0, 2) }; }) }));
+  const framed = new Uint8Array(4 + config.length + eco.bytes.length);
+  new DataView(framed.buffer).setUint32(0, config.length, true); framed.set(config, 4); framed.set(eco.bytes, 4 + config.length);
+  const layout = eco.layout = renderCore.loadVegetation(framed);
   for (const species of eco.species) {
-    const { mesh, bounds } = eco.models.get(species.slot);
-    if (!(bounds.half_extents[0] > 0 && bounds.half_extents[1] > 0)) throw new Error('Invalid vegetation mesh bounds.');
-    const placements = [];
-    const group = { placements, chunks: [], instances: gl.createBuffer(), visible: new Float32Array(Math.min(1500, eco.placements.length) * 8), count: 0 };
-    eco.placements.forEach((p,index) => {
-      if (p.slot !== species.slot) return;
-      const position = p.coordinates.map(c => c * scale);
-      // 00129b70 quantizes an explicitly resampled height back to u16.
-      if (p.resample_height) position[1] = (Math.trunc(terrainHeight(position[0], position[2]) / scale) & 65535) * scale;
-      const placement = { group, index, position, coordinates: p.coordinates, scale: [p.radius / bounds.half_extents[0], p.height * .5 / bounds.half_extents[1]], dimensions:[p.radius,p.height], atlas:species.atlas, baseHeight:(bounds.center[1]-bounds.half_extents[1])*.5/bounds.half_extents[1], radius: Math.max(p.radius, p.height), near: false, rotation: [1,0], phase: 64, seen: -100, depth: 0 };
-      eco.renderPlacements[index] = placement; placements.push(placement); eco.maxRadius = Math.max(eco.maxRadius,placement.radius);
-    });
-    gl.bindBuffer(gl.ARRAY_BUFFER, group.instances); gl.bufferData(gl.ARRAY_BUFFER, group.visible.byteLength, gl.DYNAMIC_DRAW);
+    const { mesh } = eco.models.get(species.slot);
+    const group = { chunks: [], instances: gl.createBuffer() };
+    gl.bindBuffer(gl.ARRAY_BUFFER, group.instances); gl.bufferData(gl.ARRAY_BUFFER, Math.min(layout.capacity, eco.placements.length) * layout.mesh_floats * 4, gl.DYNAMIC_DRAW);
     for (const source of mesh.lods[0].groups) {
       if (source.vertices.length > 65536) throw new Error('Vegetation mesh exceeds index bounds.');
       const vertices = new Float32Array(source.vertices.length * 8);
@@ -1009,10 +1010,10 @@ function buildEcosystem() {
       if (!decoded?.rgba || decoded.shader !== 'EcoSystemCode2D') throw new Error(`Original vegetation atlas is unavailable: ${material}`);
       chunk.texture = textures.get(material); chunk.fog = decoded.pass?.fog ?? true;
       chunk.blend = decoded.pass?.blend ?? true; chunk.depthWrite = decoded.pass?.depth_write ?? true; chunk.alphaCutoff = decoded.alphaTest;
-      const instances=gl.createBuffer(),visible=new Float32Array(1500*16);
-      gl.bindVertexArray(chunk.vao);gl.bindBuffer(gl.ARRAY_BUFFER,instances);gl.bufferData(gl.ARRAY_BUFFER,visible.byteLength,gl.DYNAMIC_DRAW);
+      const instances=gl.createBuffer();
+      gl.bindVertexArray(chunk.vao);gl.bindBuffer(gl.ARRAY_BUFFER,instances);gl.bufferData(gl.ARRAY_BUFFER,layout.capacity*layout.billboard_floats*4,gl.DYNAMIC_DRAW);
       for(const [location,size,offset]of [[4,3,0],[5,2,12],[9,3,20],[10,4,32],[11,4,48]]){gl.enableVertexAttribArray(location);gl.vertexAttribPointer(location,size,gl.FLOAT,false,64,offset);gl.vertexAttribDivisor(location,1);}
-      eco.billboard=ecoBillboard={chunk,instances,visible,material};
+      eco.billboard=ecoBillboard={chunk,instances,material};
     }
     if(species.atlas && eco.billboard.material.toLowerCase()!==species.billboard.replace(/\.[^.]+$/,'').toLowerCase())throw new Error('Mixed vegetation atlas families require separate ordered batches.');
     ecoGroups.push(group);
@@ -1024,72 +1025,16 @@ function bindEcoInstances(buffer) {
     gl.enableVertexAttribArray(location); gl.vertexAttribPointer(location,size,gl.FLOAT,false,32,offset); gl.vertexAttribDivisor(location,1);
   }
 }
-// A reusable max heap selects the nearest projected depths without sorting every
-// plant or allocating candidate objects. The visibility envelope is provisional.
-function selectEco(heap,p) {
-  if (heap.length===1500 && p.depth>=heap[0].depth) return;
-  if (heap.length===1500) {
-    let i=0;
-    while (i*2+1<heap.length) {
-      let child=i*2+1;
-      if (child+1<heap.length && heap[child+1].depth>heap[child].depth) child++;
-      if (heap[child].depth<=p.depth) break;
-      heap[i]=heap[child];i=child;
-    }
-    heap[i]=p;
-  } else {
-    let i=heap.length;heap.push(p);
-    while (i>0) { const parent=(i-1)>>1;if (heap[parent].depth>=p.depth) break;heap[i]=heap[parent];i=parent; }
-    heap[i]=p;
-  }
-}
 function drawEcosystem() {
   diagnostics.vegetationTriangles = 0;
   diagnostics.vegetationDraws = 0;
   if (!ecoGroups.length) return;
-  const eco = terrain.ecosystem, forwardX = Math.sin(camera.yaw), forwardZ = Math.cos(camera.yaw);
-  const inverse = 65536 / Math.max(terrain.sizeX,terrain.sizeZ), cellSize = Math.max(terrain.sizeX,terrain.sizeZ) / 64;
-  const far = terrain.world.metadata.fog?.end ?? 768, range = far+eco.maxRadius;
-  const clampCell = v => Math.max(0,Math.min(63,Math.floor(v/cellSize)));
-  const minX=clampCell(camera.x-range),maxX=clampCell(camera.x+range),minZ=clampCell(camera.z-range),maxZ=clampCell(camera.z+range);
-  const eyeX=Math.trunc(Math.fround(camera.x*inverse)),eyeZ=Math.trunc(Math.fround(camera.z*inverse));
-  const [nearDistance,farDistance]=terrain.world.metadata.ecosystem_distances;
-  const inner=Math.trunc(Math.fround(nearDistance*inverse)),outer=Math.trunc(Math.fround(farDistance*inverse));
-  const factor=Math.fround(64/(outer-inner));
-  const selected=eco.selection;selected.length=0;let scanned=0;
-  for(const group of ecoGroups){group.count=0;}
-  // Skip whole cells that lie behind the camera or beyond fog range. Every
-  // placement in them would fail the per-placement tests below (radius <=
-  // maxRadius), so selection, near/far state and draw order are unchanged.
-  const reach=(far+eco.maxRadius)**2;
-  for(let z=minZ;z<=maxZ;z++)for(let x=minX;x<=maxX;x++) {
-    const x0=x*cellSize-4-camera.x,x1=(x+1)*cellSize+4-camera.x,z0=z*cellSize-4-camera.z,z1=(z+1)*cellSize+4-camera.z;
-    if(Math.max(x0*forwardX,x1*forwardX)+Math.max(z0*forwardZ,z1*forwardZ)<=-eco.maxRadius)continue;
-    const nx=Math.max(x0,0,-x1),nz=Math.max(z0,0,-z1);if(nx*nx+nz*nz>reach)continue;
-    const cell=z*64+x, index=eco.visibility_index;
-    for(let i=index.offsets[cell];i<index.offsets[cell+1];i++) {
-      const p=eco.renderPlacements[index.placements[i]];scanned++;
-      const dx=p.position[0]-camera.x,dz=p.position[2]-camera.z;
-      p.depth=dx*forwardX+dz*forwardZ;
-      if(dx*dx+dz*dz>(far+p.radius)**2 || p.depth<=-p.radius)continue;
-      const qx=eyeX-p.coordinates[0],qz=eyeZ-p.coordinates[2],distance=qx*qx+qz*qz;
-      const near=distance<=outer*outer;
-      let phase=near ? distance<inner*inner ? 0 : Math.trunc(Math.fround(factor*Math.fround(Math.fround(Math.sqrt(distance))-inner))) : 64;
-      if(near&&!p.near) {
-        //0012a1c0 captures signed-short orientation only on distant→near entry.
-        p.rotation[0]=forwardZ===0 ? 1 : Math.trunc(Math.fround(forwardZ*32767))/32767;
-        p.rotation[1]=forwardZ===0 ? 0 : Math.trunc(Math.fround(-forwardX*32767))/32767;
-      }
-      p.near=near;
-      if(near&&phase!==0&&frame-p.seen>3)phase=0;
-      p.phase=phase;selectEco(selected,p);
-    }
-  }
-  selected.sort((a,b)=>b.depth-a.depth);
-  for(const p of selected) {
-    const group=p.group;p.seen=frame;
-    if(p.phase!==64)writeEco(group,p,group.count++);
-  }
+  const eco = terrain.ecosystem, forwardX = Math.sin(camera.yaw), forwardZ = Math.cos(camera.yaw), layout = eco.layout;
+  // Rust selects (0012a1c0 phases/orientation, bounded nearest-depth heap) and
+  // writes ordered instance floats; this layer uploads and submits them.
+  const selection = renderCore.vegetation(camera.x, camera.z, forwardX, forwardZ, frame);
+  if (!selection) return;
+  const instances = selection.instances;
   gl.uniform1i(uniforms.useEcosystem,true);gl.uniform1i(uniforms.ecoPerInstance,true);
   gl.uniform1i(uniforms.unlit,true);gl.uniform1i(uniforms.useQuadPose,false);
   const lighting=terrain.world.metadata.ecosystem_lighting;
@@ -1097,48 +1042,35 @@ function drawEcosystem() {
   gl.uniform3fv(uniforms.ecoSunDirection,lighting.direction);gl.uniform1i(uniforms.ecoSunPresent,lighting.sun_present);
   gl.uniform1i(uniforms.useVertexColor,true);diagnostics.vegetationLighting=lighting;
   gl.uniformMatrix4fv(uniforms.model,false,identity);gl.uniform2f(uniforms.ecoRotation,forwardZ,-forwardX);
-  let draws=0,nearCount=0,farCount=0,transitionCount=0;
+  let draws=0;
   //0012af80 submits distant, depth-disabled transition, then near material queues.
   gl.uniform1i(uniforms.ecoBillboard,true);
   for(const transition of [false,true]) {
     const billboard=eco.billboard;if(!billboard)continue;
-    const chunk=billboard.chunk;let count=0;
-    for(const p of selected)if(p.atlas&&p.phase!==0&&(p.phase<49)===transition)writeBillboard(billboard,p,count++);
+    const chunk=billboard.chunk,count=transition?selection.transition:selection.far,first=transition?selection.far:0;
     if(!count)continue;
-    gl.bindBuffer(gl.ARRAY_BUFFER,billboard.instances);gl.bufferSubData(gl.ARRAY_BUFFER,0,billboard.visible.subarray(0,count*16));
+    gl.bindBuffer(gl.ARRAY_BUFFER,billboard.instances);gl.bufferSubData(gl.ARRAY_BUFFER,0,instances.subarray(first*layout.billboard_floats,(first+count)*layout.billboard_floats));
     gl.uniform1f(uniforms.alphaCutoff,transition?1/255:chunk.alphaCutoff);
     ecoMaterial(chunk,transition?false:chunk.depthWrite);
     gl.drawElementsInstanced(gl.TRIANGLES,chunk.count,gl.UNSIGNED_SHORT,0,count);draws++;
     diagnostics.vegetationTriangles+=chunk.count/3*count;
-    if(transition)transitionCount=count;else farCount=count;
   }
   diagnostics.vegetationBillboardDraws=draws;
   gl.uniform1i(uniforms.ecoBillboard,false);
-  for(const group of ecoGroups) {
-    if(!group.count)continue;
-    gl.bindBuffer(gl.ARRAY_BUFFER,group.instances);gl.bufferSubData(gl.ARRAY_BUFFER,0,group.visible.subarray(0,group.count*8));
+  let offset=layout.mesh_offset;
+  for(const [index,group] of ecoGroups.entries()) {
+    const count=selection.groups[index];
+    if(!count)continue;
+    gl.bindBuffer(gl.ARRAY_BUFFER,group.instances);gl.bufferSubData(gl.ARRAY_BUFFER,0,instances.subarray(offset,offset+count*layout.mesh_floats));offset+=count*layout.mesh_floats;
     for(const chunk of group.chunks) {
       gl.uniform1f(uniforms.alphaCutoff,chunk.alphaCutoff);ecoMaterial(chunk,chunk.depthWrite);
-      gl.drawElementsInstanced(gl.TRIANGLES,chunk.count,gl.UNSIGNED_SHORT,0,group.count);draws++;
-      diagnostics.vegetationTriangles+=chunk.count/3*group.count;
+      gl.drawElementsInstanced(gl.TRIANGLES,chunk.count,gl.UNSIGNED_SHORT,0,count);draws++;
+      diagnostics.vegetationTriangles+=chunk.count/3*count;
     }
-    nearCount+=group.count;
   }
-  Object.assign(diagnostics,{vegetationVisible:selected.length,vegetationDraws:draws,vegetationNear:nearCount,vegetationFar:farCount,vegetationTransition:transitionCount,vegetationScanned:scanned});
+  Object.assign(diagnostics,{vegetationVisible:selection.visible,vegetationDraws:draws,vegetationNear:selection.near,vegetationFar:selection.far,vegetationTransition:selection.transition,vegetationScanned:selection.scanned});
   gl.uniform1i(uniforms.useEcosystem,false);gl.uniform1i(uniforms.ecoPerInstance,false);gl.uniform1f(uniforms.alphaCutoff,0);
   gl.uniform1i(uniforms.useVertexColor,false);gl.uniform1i(uniforms.sceneryBlend,false);gl.disable(gl.BLEND);gl.depthMask(true);
-}
-function writeEco(group,p,index) {
-  const offset=index*8,data=group.visible;
-  data[offset]=p.position[0];data[offset+1]=p.position[1];data[offset+2]=p.position[2];
-  data[offset+3]=p.scale[0];data[offset+4]=p.scale[1];data[offset+5]=p.rotation[0];data[offset+6]=p.rotation[1];data[offset+7]=p.phase;
-}
-function writeBillboard(billboard,p,index) {
-  const at=index*16,data=billboard.visible,atlas=p.atlas;
-  data[at]=p.position[0];data[at+1]=p.position[1];data[at+2]=p.position[2];
-  data[at+3]=p.dimensions[0];data[at+4]=p.dimensions[1];data[at+5]=p.rotation[0];data[at+6]=p.rotation[1];data[at+7]=p.phase;
-  data[at+8]=atlas.horizontal[0];data[at+9]=atlas.horizontal[2];data[at+10]=atlas.u[0];data[at+11]=atlas.u[2];
-  data[at+12]=atlas.u[1];data[at+13]=atlas.v[0];data[at+14]=atlas.v[1];data[at+15]=p.baseHeight;
 }
 function ecoMaterial(chunk,depthWrite) {
   gl.uniform1i(uniforms.useTexture,Boolean(chunk.texture));gl.uniform1i(uniforms.fogEnabled,Boolean(terrain.world.metadata.fog)&&chunk.fog);
@@ -1309,7 +1241,7 @@ function buildMesh() {
         for(const [passIndex,material] of (world.textures.get(baseMaterial)?.passKeys??[baseMaterial]).entries()) {
         const decoded = world.textures.get(material);
         const reflection = decoded?.pass?.reflection_plane ?? 0;
-        if (/refl|envmap/i.test(decoded?.shader ?? '') && !reflection) { skippedSceneGroups++; continue; }
+        if (decoded?.reflective && !reflection) { skippedSceneGroups++; continue; }
         const prelit = decoded?.pass?.prelit ?? false;
         if (reflection && mesh.nodes.length > 32) throw new Error('Reflection mesh exceeds original rigid-node GPU capacity.');
         const width = reflection ? 19 : prelit ? 12 : 8;
@@ -1486,15 +1418,13 @@ async function startSimulation(source) {
     scene_partition: source.world.metadata.collision_partition,
   });
   diagnostics.obstacles = { ...obstacles, rays: actor.rays };
-  if(source.course)source.scene.position[1]=terrainHeight(source.scene.position[0],source.scene.position[2])+2.5;
-  const origin=source.scene.position.slice();
-  if (multiplayer?.state.peer != null) { const slot=multiplayer.state.peer; origin[0]+=Math.cos(source.scene.yaw)*slot*8; origin[2]-=Math.sin(source.scene.yaw)*slot*8; }
-  simStart = { origin, yaw: source.scene.yaw };
+  // Rust places race grids on the terrain and spaces online slots.
+  simStart = await command(140, { position: source.scene.position, yaw: source.scene.yaw, course: Boolean(source.course), slot: multiplayer?.state.peer ?? null });
   if (source.motorcycle) await json(100,source.motorcycle.archive,source.motorcycle.id);
   acceptFrame(await command(23, simStart));
   cpuQuadMatrices = vehicle.nodeMatrices.slice(); cpuRiderMatrices = new Float32Array(vehicle.rider.pose.world_matrices.flat());
   for (const [index, entry] of (source.course ? source.cpuRoster ?? [] : []).entries()) await json(106, entry.bundle, index);
-  if (source.course) await command(96,{active:true,laps:raceSettings.laps,difficulty:raceSettings.difficulty,names:source.cpuNames.slice(0,raceSettings.cpu),...(source.riderSpacing?{spacing:source.riderSpacing}:{})});
+  if (source.course) await command(96,{active:true,laps:raceSettings.laps,difficulty:raceSettings.difficulty,names:source.cpuNames.slice(0,raceSettings.cpu),spacing_sources:source.spacingSources});
   raceCourse = source.course;
   raceOverlay.setCourse(raceCourse);
   disposeCpuOutfits(); raceCpuModels = [];
@@ -1859,7 +1789,9 @@ async function loadGame(file = null, environment = "env01", racing = null) {
     }
     diagnostics.contentSource = file ? 'local-file' : 'hosted-original';
     const info = await json(9, source.bytes), raw = await codec(10, source.bytes);
+    await renderCoreReady;
     if (token !== generation) return;
+    renderCore.call(141, source.bytes);
     const width = info.width_cells + 1, depth = info.depth_cells + 1;
     if (!Number.isInteger(width) || !Number.isInteger(depth) || width < 2 || depth < 2 || !Number.isFinite(info.spacing) || info.spacing <= 0 || raw.byteLength !== width * depth * 4) throw new Error('Invalid terrain dimensions.');
     const heights = new Float32Array(width * depth), view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
@@ -1893,8 +1825,7 @@ $('reset').onclick = async (options) => {
   let start = simStart;
   if (raceSettings) {
     if (options?.restart === true || race?.phase !== 'racing' || !race.track_point) { await loadGame(null, raceSettings.course ?? 'env01', raceSettings); return; }
-    const [x,,z] = race.track_point;
-    start = { origin: [x, terrainHeight(x, z) + 2.5, z], yaw: race.track_heading };
+    start = await command(140, { position: race.track_point, yaw: race.track_heading, course: true, slot: null });
   }
   impactEvents.reset();
   simGeneration++; simReady = false; simAccumulator = 0; clearInput();
