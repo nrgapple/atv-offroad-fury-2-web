@@ -110,8 +110,8 @@ needed. The base-swell period remains a radians divisor, not a full-cycle durati
 The source bitmap binding is also established. `00159f00` reads the stored
 8/16/32/64/128-pixel levels into indices 4/3/2/1/0, and stores the largest width
 as the base bitmap dimension. `0015d150`, the getter used by the water field,
-returns index-zero pixels and the base stride. `00197410` sets `DAT_00404868=0`
-while loading signatures, disabling the texture swizzle in `0015a340`.
+returns index-zero pixels and the base stride. `00197410` clears the global texture-swizzle
+flag at `00404868` while loading signatures, disabling the swizzle in `0015a340`.
 Therefore physics uses the largest level's unmodified raw palette-index bytes,
 not the smallest stored mip or displayed palette colors.
 

@@ -22,6 +22,8 @@ import:
 
 check:
 	python3 tools/check_secrets.py
+	python3 tools/verify_repository.py
+	python3 -m unittest discover -s tools -p 'test_security.py'
 	$(CARGO) fmt --all -- --check
 	$(CARGO) test --locked --workspace
 	$(CARGO) clippy --locked --workspace --all-targets -- -D warnings
