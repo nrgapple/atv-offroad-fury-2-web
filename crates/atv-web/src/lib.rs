@@ -1625,6 +1625,17 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
     if op == 104 {
         return multiplayer::install_rig(input, index);
     }
+    if op == 112 {
+        // Current ride placement, so a vehicle change continues from here.
+        return SIMULATION.with_borrow(|sim| {
+            let frame = sim.vehicle.as_ref().ok_or("vehicle is not ready")?.frame();
+            let m = vehicle_world(&frame);
+            let mut origin = frame.origin;
+            origin[1] += 1.;
+            serde_json::to_vec(&serde_json::json!({"origin": origin, "yaw": m[8].atan2(m[10])}))
+                .map_err(|e| e.to_string())
+        });
+    }
     if op == 86 {
         let request: serde_json::Value =
             serde_json::from_slice(input).map_err(|e| e.to_string())?;
@@ -1766,7 +1777,7 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         });
         return Ok(result);
     }
-    if (80..=85).contains(&op) || op == 109 {
+    if (80..=85).contains(&op) || matches!(op, 109..=111) {
         return SIMULATION.with_borrow(|sim| multiplayer::dispatch(input, op, index, sim));
     }
     if op == 87 {

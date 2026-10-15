@@ -679,16 +679,35 @@ impl Vehicle {
         Ok(())
     }
     /// Multiplayer owner applies only its response; remote poses remain immutable.
-    pub fn peer_contact(&mut self, origin: Vec3, velocity: Vec3, dt: f32, tie: f32) -> bool {
-        let own = self.body.origin(&self.body_config);
-        let Some(response) =
-            crate::peer_contact::resolve(own, self.body.linear_velocity, origin, velocity, dt, tie)
-        else {
+    /// `rotation` is the remote body orientation in W,X,Y,Z order, like
+    /// `BodyState::orientation`; `tie` is +1 on one owner and -1 on the other.
+    pub fn peer_contact(
+        &mut self,
+        origin: Vec3,
+        velocity: Vec3,
+        rotation: [f32; 4],
+        dt: f32,
+        tie: f32,
+    ) -> bool {
+        let own = crate::peer_contact::Body {
+            origin: self.body.origin(&self.body_config),
+            velocity: self.body.linear_velocity,
+            rotation: self.body.orientation,
+        };
+        let other = crate::peer_contact::Body {
+            origin,
+            velocity,
+            rotation,
+        };
+        let Some(response) = crate::peer_contact::resolve(own, other, dt, tie) else {
             return false;
         };
         let delta_velocity = sub(response.velocity, self.body.linear_velocity);
         self.body.center = add(self.body.center, response.displacement);
         self.body.linear_velocity = response.velocity;
+        // The proxy spins about world Y; the body stores body-local rates.
+        let spin = inverse_transform(self.body.basis(), [0., response.yaw_rate_change, 0.]);
+        self.body.local_angular_velocity = add(self.body.local_angular_velocity, spin);
         // Use actual owner impulse in the recovered per-quad impact classifier.
         // Speed alone, penetration correction and tangential motion do not eject
         // the rider. The proxy remains an authored equal-mass approximation.
@@ -2135,12 +2154,12 @@ mod tests {
             ),
             (
                 [60., 0., 0.],
-                [5., 0., 0.],
+                [4.5, 0., 0.],
                 [0.; 3],
                 Some(crate::wreck::Kind::Right),
             ),
             ([0., 0., 5.], [0., 0., 5.], [0.; 3], None),
-            ([0., 0., 60.], [5., 0., 0.], [0.; 3], None),
+            ([0., 0., 60.], [3.5, 0., 0.], [0.; 3], None),
             ([0.; 3], [0.; 3], [0.; 3], None),
         ] {
             let (mut vehicle, _) = fixture();
@@ -2148,12 +2167,12 @@ mod tests {
             vehicle.wreck_physics.as_mut().unwrap().rules.impact_limit = [19., 84., 21.];
             vehicle.body.linear_velocity = velocity;
             let other = add(vehicle.body.origin(&vehicle.body_config), other_delta);
-            assert!(vehicle.peer_contact(other, other_velocity, 1. / 60., 1.));
+            assert!(vehicle.peer_contact(other, other_velocity, [1., 0., 0., 0.], 1. / 60., 1.));
             assert_eq!(vehicle.wreck.kind, expected);
             if expected.is_some() {
                 assert_eq!(vehicle.wreck.phase, crate::wreck::Phase::Falling);
                 let serial_phase = vehicle.wreck;
-                vehicle.peer_contact(other, other_velocity, 1. / 60., 1.);
+                vehicle.peer_contact(other, other_velocity, [1., 0., 0., 0.], 1. / 60., 1.);
                 assert_eq!(vehicle.wreck.kind, serial_phase.kind);
             }
         }

@@ -1,0 +1,17 @@
+{
+  "id": "drop-in-multiplayer-join-any-time-meet-up-change-ride--902fa6f3025845d5a6611b742d8660b1",
+  "timestamp": "2026-10-15T03:16:03.484427+00:00",
+  "recorded_at": "2026-10-15T03:23:38.042918+00:00",
+  "kind": "build",
+  "title": "Drop-in multiplayer: join any time, meet up, change ride or track",
+  "summary": "Friends can host on a track and ride immediately, and others can open the invite at any time and appear beside a rider. The link reopens an ended room on its track, and any rider who drops or reloads gets their slot back within 30 s. When the host leaves, the next rider takes over. Change ATV and Rider swaps your ride in place, and the host's Select Track moves everyone. Remote riders are smoother (adaptive jitter buffer, curved jump arcs, decaying corrections), riders collide as boxes with spin and landing bounces, and the Arlington train follows a shared relay clock so it never freezes when the host pauses. Host verification only; not yet a public release.",
+  "details": [
+    "The multiplayer protocol is now v4, so tabs opened before this change must reload.",
+    "In the crate's 10 Hz / +-30 ms jitter test, the worst 16 ms step error of a remote rider is 0.106 ft, down from 0.445 ft before.",
+    "tools/test_multiplayer_dropin.mjs passed on a local Rust relay with the actual WASM build and original content: the guest met the host 10.3 ft apart; 134 ft of remote motion was observed; an ATV change to model 15 was seen by the host; the track changed env01 to env02 for both riders; a guest reload reclaimed slot 1; host departure handed the room to the guest; a 390 px wide late joiner rode on the original link; the expired code reopened on env05.",
+    "tools/test_multiplayer_features.mjs passed: Arlington train phases 85.82 and 85.8205 between two clients; contacts [42, 9]; flatbed riding within 0.374 ft of the deck position; head-on front wrecks replicated to both observers; the owner's reload returned to slot 0."
+  ],
+  "limitation": "Host-only checks on one Mac with headless Chromium/Metal. No public deployment has been verified yet. No physical phones or geographically separated latency were tested. Rider contacts are authored, owner-local and not server-reconciled. No race, score or game modes online.",
+  "image": "/devlog-images/drop-in-multiplayer-join-any-time-meet-up-change-ride--902fa6f3025845d5a6611b742d8660b1.png",
+  "caption": "Guest view right after opening the invite link: the host's ATV is beside them, labelled only 'Host'. Host-only capture on a local relay, not the public site."
+}

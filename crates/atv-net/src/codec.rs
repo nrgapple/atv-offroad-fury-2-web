@@ -22,6 +22,8 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
         Packet::Ping { .. } => 6,
         Packet::Pong { .. } => 7,
         Packet::SetLobby { .. } => 8,
+        Packet::Profile(_) => 11,
+        Packet::Ready { .. } => 12,
     };
     w.0.extend_from_slice(MAGIC);
     w.byte(VERSION);
@@ -33,7 +35,12 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
             w.0.extend_from_slice(code);
             w.participant(player)?;
         }
-        Packet::Welcome { peer, code, lobby } => {
+        Packet::Welcome {
+            peer,
+            code,
+            lobby,
+            key,
+        } => {
             peer_id(*peer)?;
             if !lobby.players.iter().any(|p| p.id == *peer) {
                 return Err(Error::InvalidValue);
@@ -42,6 +49,12 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
             w.byte(*peer);
             w.0.extend_from_slice(code);
             w.lobby(lobby)?;
+            w.0.extend_from_slice(key);
+        }
+        Packet::Profile(player) => w.participant(player)?,
+        Packet::Ready { map } => {
+            map_id(*map)?;
+            w.u16(*map);
         }
         Packet::Lobby(lobby) => w.lobby(lobby)?,
         Packet::SetLobby {
@@ -90,7 +103,11 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
             peer_id(*peer)?;
             w.byte(*peer);
         }
-        Packet::Ping { nonce } | Packet::Pong { nonce } => w.u32(*nonce),
+        Packet::Ping { nonce } => w.u32(*nonce),
+        Packet::Pong { nonce, server_ms } => {
+            w.u32(*nonce);
+            w.0.extend_from_slice(&server_ms.to_le_bytes());
+        }
     }
     if w.0.len() > MAX_PACKET_BYTES {
         return Err(Error::InvalidLength);
@@ -132,7 +149,13 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
             if !lobby.players.iter().any(|p| p.id == peer) {
                 return Err(Error::InvalidValue);
             }
-            Packet::Welcome { peer, code, lobby }
+            let key = r.take(16)?.try_into().map_err(|_| Error::InvalidLength)?;
+            Packet::Welcome {
+                peer,
+                code,
+                lobby,
+                key,
+            }
         }
         3 => Packet::Lobby(r.lobby()?),
         4 => {
@@ -183,7 +206,16 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
         }
         5 => Packet::Leave { peer: r.peer()? },
         6 => Packet::Ping { nonce: r.u32()? },
-        7 => Packet::Pong { nonce: r.u32()? },
+        7 => Packet::Pong {
+            nonce: r.u32()?,
+            server_ms: u64::from_le_bytes(r.take(8)?.try_into().map_err(|_| Error::InvalidLength)?),
+        },
+        11 => Packet::Profile(r.participant()?),
+        12 => {
+            let map = r.u16()?;
+            map_id(map)?;
+            Packet::Ready { map }
+        }
         8 => {
             let epoch = r.u32()?;
             let map = r.u16()?;

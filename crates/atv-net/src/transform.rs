@@ -165,7 +165,7 @@ pub(crate) fn normalize(q: [f32; 4]) -> [f32; 4] {
 pub(crate) fn lerp<const N: usize>(a: [f32; N], b: [f32; N], t: f32) -> [f32; N] {
     std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t)
 }
-fn slerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+pub(crate) fn slerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
     let a = normalize(a);
     let mut b = normalize(b);
     let mut d: f32 = a.iter().zip(b).map(|(a, b)| a * b).sum();
@@ -197,4 +197,18 @@ pub(crate) fn advance(rotation: [f32; 4], angular: [f32; 3], dt: f32) -> [f32; 4
         w * qy - x * qz + y * qw + z * qx,
         w * qz + x * qy - y * qx + z * qw,
     ])
+}
+/// Hamilton product of W,X,Y,Z quaternions: `a` applied after `b`.
+pub(crate) fn multiply(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    let [aw, ax, ay, az] = a;
+    let [bw, bx, by, bz] = b;
+    [
+        aw * bw - ax * bx - ay * by - az * bz,
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+    ]
+}
+pub(crate) fn conjugate([w, x, y, z]: [f32; 4]) -> [f32; 4] {
+    [w, -x, -y, -z]
 }

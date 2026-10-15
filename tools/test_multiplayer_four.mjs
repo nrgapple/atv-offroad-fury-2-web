@@ -57,22 +57,30 @@ async function garage(page,{quad,rider}) {
  if(rider===1)await button(page,'Change rider').click();
  await button(page,'Done').click();
 }
+// Tapping the already-selected course card rides at once; otherwise select it, then Ride.
+async function pickTrack(page,id) {const card=page.locator(`.ms-course[data-track-id=${id}]`);await card.waitFor({timeout:60000});const selected=await card.getAttribute('aria-selected')==='true';await card.click();if(!selected)await page.locator('button.ms-ride').click();}
 async function focus(page) {await page.evaluate(()=>window.dispatchEvent(new Event('focus')));}
 function finite(value) {return typeof value==='number'?Number.isFinite(value):value&&typeof value==='object'?Object.values(value).every(finite):true;}
 function summary(s) {return {model:s.playerModel,net:s.multiplayer?.state,remotes:s.multiplayer?.remote.map(p=>({peer:p.peer,model:p.atv_model,rider:p.rider_model,position:p.position,state:p.rider_state,stale:p.stale,extrapolated_ms:p.extrapolated_ms,nodes:[p.quad_node_matrices.length,p.rider_node_matrices.length]})),draws:s.multiplayerDraws,audio:s.audio?.multiplayer,performance:s.performance,physicsRoundTripMs:s.physicsRoundTripMs,physicsBatchMs:s.physicsBatchMs,physicsBatchSteps:s.physicsBatchSteps,focused:s.focused,paused:s.paused,gl:s.glError,multiplayerError:s.multiplayerError,audioError:s.audioError};}
 try {
  const host=pages[0];await host.goto(base+'/play.html');
- report.deployment=await host.evaluate(async()=>{const response=await fetch('/deployment.json',{cache:'no-store'});if(!response.ok)throw new Error(`Deployment identity unavailable (${response.status}).`);return response.json();});
- if(!(reachability==='host-only' && report.deployment.dirty && process.env.ATV_ALLOW_HOST_WIP==='1')) assert.match(report.deployment.commit,/^[a-f0-9]{40}$/,'deployment identity must contain a complete commit SHA');
- if(report.expectedCommit)assert.equal(report.deployment.commit,report.expectedCommit,'public/host deployment does not match ATV_EXPECTED_COMMIT');
+ // ATV_ALLOW_HOST_WIP=1 also accepts a host-only dev stack without /deployment.json.
+ const hostWip=reachability==='host-only'&&process.env.ATV_ALLOW_HOST_WIP==='1';
+ report.deployment=await host.evaluate(async hostWip=>{const response=await fetch('/deployment.json',{cache:'no-store'});if(response.status===404&&hostWip)return null;if(!response.ok)throw new Error(`Deployment identity unavailable (${response.status}).`);return response.json();},hostWip);
+ if(report.deployment===null)report.failedResponses=report.failedResponses.filter(r=>new URL(r.url).pathname!=='/deployment.json');
+ if(!(hostWip && (report.deployment===null || report.deployment.dirty))) assert.match(report.deployment.commit,/^[a-f0-9]{40}$/,'deployment identity must contain a complete commit SHA');
+ if(report.expectedCommit)assert.equal(report.deployment?.commit,report.expectedCommit,'public/host deployment does not match ATV_EXPECTED_COMMIT');
  await save();
- await button(host,'Press START').click({timeout:120000});await button(host,'Multiplayer').click();await button(host,'Create lobby').click();await host.getByRole('textbox',{name:'Rider name',exact:true}).fill('FourHost');await garage(host,report.models[0]);await button(host,'Create lobby').click();
- await host.waitForFunction(()=>window.atvTerrainStatus.multiplayer?.state.code,null,{timeout:20000});report.code=(await state(host)).multiplayer.state.code;report.stages.push('actual UI host room created');await save();console.log('HOST',report.code);
+ await button(host,'Press START').click({timeout:120000});await button(host,'Multiplayer').click();await button(host,'Host Game').click();await host.getByRole('textbox',{name:'Rider name',exact:true}).fill('FourHost');await garage(host,report.models[0]);
+ // Host Game → Select Track → Ride creates the room and starts riding at once.
+ await button(host,'Select Track').click();await pickTrack(host,'env01');
+ await host.waitForFunction(()=>window.atvTerrainStatus.multiplayer?.state.code&&window.atvTerrainStatus.simulation||window.atvTerrainStatus.multiplayerError,null,{timeout:180000});assert.equal((await state(host)).multiplayerError,undefined);
+ report.code=(await state(host)).multiplayer.state.code;report.stages.push('actual UI host room created and riding');await save();console.log('HOST',report.code);
  for(let i=1;i<4;i++) {
-  const page=pages[i];await page.goto(`${base}/play.html?room=${report.code}&play=0`);await page.getByRole('textbox',{name:'Rider name',exact:true}).fill(`Guest${report.models[i].quad}`,{timeout:120000});await garage(page,report.models[i]);await button(page,'Join lobby').click();await page.waitForFunction(()=>window.atvTerrainStatus.multiplayer?.state.peer!=null,null,{timeout:20000});console.log('JOIN',i,report.models[i]);
+  const page=pages[i];await page.goto(`${base}/play.html?room=${report.code}&play=0`);await page.getByRole('textbox',{name:'Rider name',exact:true}).fill(`Guest${report.models[i].quad}`,{timeout:120000});await garage(page,report.models[i]);await button(page,'Join Game').click();await page.waitForFunction(()=>window.atvTerrainStatus.multiplayer?.state.peer!=null,null,{timeout:20000});console.log('JOIN',i,report.models[i]);
  }
- await host.waitForFunction(()=>window.atvTerrainStatus.multiplayer?.state.lobby?.players.length===4,null,{timeout:20000});report.roster=(await state(host)).multiplayer.state.lobby.players;assert.equal(report.roster.length,4);report.stages.push('four selected models/rigs admitted');await save();
- await host.bringToFront();await button(host,'Ride together').click();
+ // Each guest drops straight into the running ride.
+ await host.waitForFunction(()=>window.atvTerrainStatus.multiplayer?.state.lobby?.players.length===4,null,{timeout:20000});report.roster=(await state(host)).multiplayer.state.lobby.players;assert.equal(report.roster.length,4);report.stages.push('four selected models/rigs admitted into the live ride');await save();
  await Promise.all(pages.map(page=>page.waitForFunction(()=>window.atvTerrainStatus.simulation||window.atvTerrainStatus.multiplayerError,null,{timeout:180000})));
  await Promise.all(pages.map(page=>page.waitForFunction(()=>window.atvTerrainStatus.multiplayer?.remote.length===3&&window.atvTerrainStatus.multiplayerDraws>0||window.atvTerrainStatus.multiplayerError,null,{timeout:120000})));
  for(const page of pages)await focus(page);
@@ -107,8 +115,12 @@ try {
  assert.deepEqual(report.errors,[]);assert.deepEqual(report.failedResponses,[]);
  // Verify explicit Leave before page destruction can replace its clean close
  // with the separate, intentional host-recovery grace path.
- await button(host,'Pause').click();await button(host,'Lobby').click();await button(host,'Leave lobby').click();await Promise.all(pages.slice(1).map(page=>page.waitForFunction(()=>!window.atvTerrainStatus.multiplayer?.state.code,null,{timeout:20000})));await host.close();
- report.hostEnd=await Promise.all(pages.slice(1).map(state));report.hostEnd=report.hostEnd.map(s=>({remote:s.multiplayer.remote.length,voices:s.audio.multiplayer.voices,impacts:s.audio.multiplayer.impacts,code:s.multiplayer.state.code??null,models:s.multiplayer.models,notice:s.multiplayerError??null}));
- for(const s of report.hostEnd){assert.equal(s.remote,0);assert.equal(s.voices,0);assert.equal(s.impacts,0);assert.equal(s.code,null);assert.deepEqual(s.models,[]);}
- report.stages.push('explicit host leave ends all three guests and disposes peer audio/GPU caches');report.passed=true;report.completed=new Date().toISOString();await save();console.log('PASS',JSON.stringify({movement:report.movement,final:report.final.map(s=>({quad:s.model.quad_id,rtt:s.net.rttMs,fps:s.performance.fps,p95:s.performance.p95Ms,cpu:s.performance.renderCpuMs,physicsRoundTripMs:s.physicsRoundTripMs})),hostEnd:report.hostEnd}));
+ // The ride goes on: the three guests keep the room, one becomes host, and the
+ // departed host's peer audio is released on every remaining client.
+ await button(host,'Pause').click();await button(host,'Leave Game').click();await host.waitForFunction(()=>!window.atvTerrainStatus.multiplayer?.state.code,null,{timeout:20000});
+ await Promise.all(pages.slice(1).map(page=>page.waitForFunction(()=>{const m=window.atvTerrainStatus.multiplayer,s=window.atvTerrainStatus;return m?.state.code&&m.state.lobby?.players.length===3&&m.state.lobby.host!==0&&m.remote.length===2&&s.audio.multiplayer.voices===2;},null,{timeout:30000})));await host.close();
+ report.hostEnd=await Promise.all(pages.slice(1).map(state));report.hostEnd=report.hostEnd.map(s=>({remote:s.multiplayer.remote.map(p=>p.peer),voices:s.audio.multiplayer.voices,code:s.multiplayer.state.code??null,host:s.multiplayer.state.lobby.host,peer:s.multiplayer.state.peer,simulation:s.simulation,models:s.multiplayer.models,notice:s.multiplayerError??null}));
+ for(const s of report.hostEnd){assert.equal(s.remote.length,2);assert.equal(s.remote.includes(0),false);assert.equal(s.voices,2);assert.equal(s.code,report.code);assert.equal(s.host,report.hostEnd[0].host);assert.ok(s.simulation);assert.equal(s.notice,null);}
+ assert.equal(report.hostEnd.filter(s=>s.host===s.peer).length,1,'exactly one remaining rider becomes host');
+ report.stages.push('explicit host leave hands the room to a guest; the other riders keep riding without the departed peer');report.passed=true;report.completed=new Date().toISOString();await save();console.log('PASS',JSON.stringify({movement:report.movement,final:report.final.map(s=>({quad:s.model.quad_id,rtt:s.net.rttMs,fps:s.performance.fps,p95:s.performance.p95Ms,cpu:s.performance.renderCpuMs,physicsRoundTripMs:s.physicsRoundTripMs})),hostEnd:report.hostEnd}));
 } catch(error) {report.passed=false;report.failure={message:error.message,stack:error.stack};report.failure.states=await Promise.all(pages.map(async page=>{try{return page.isClosed()?null:summary(await state(page));}catch{return null;}}));await save();console.error('FAIL',error);throw error;} finally {await browser.close();}

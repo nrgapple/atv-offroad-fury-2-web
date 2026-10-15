@@ -90,33 +90,19 @@ pub(super) fn rebase(snapshot: &mut Snapshot, sim: &Simulation) -> Result<()> {
     }
     Ok(())
 }
-/// Follow the host's latest clock, not its delayed rendered rider. A paused host
-/// freezes the shared train. Large resyncs rebuild pose history before collision.
+/// Every rider derives the train phase from the relay's wall clock, so the
+/// shared train keeps running when any rider (including the host) pauses,
+/// leaves or hands over the room. Large resyncs rebuild pose history.
 pub fn synchronize_train(sim: &mut Simulation, now: u64, dt: f32) -> Result<bool> {
     let target = CLIENT.with_borrow(|c| {
-        let lobby = c.lobby.as_ref()?;
-        if !lobby.started || c.peer == Some(lobby.host) {
+        if !c.lobby.as_ref().is_some_and(|l| l.started) {
             return None;
         }
-        let (s, received) = c.buffers.get(&lobby.host)?.latest()?;
-        let freshness = if s.animation.as_ref().is_some_and(|a| a.paused) {
-            15000
-        } else {
-            1000
-        };
-        if now.saturating_sub(received) > freshness {
-            return None;
-        }
-        Some((
-            s.train_time?,
-            s.train_running,
-            now.saturating_sub(received) as f32 * 0.001
-                + c.rtt_ms.unwrap_or(0).min(300) as f32 * 0.0005,
-        ))
+        server_now(c, now)
     });
-    if target.is_none() {
+    let Some(server_ms) = target else {
         return Ok(false);
-    }
+    };
     let attached = sim
         .vehicle
         .as_ref()
@@ -124,11 +110,14 @@ pub fn synchronize_train(sim: &mut Simulation, now: u64, dt: f32) -> Result<bool
         .map(|f| platform(sim, &f))
         .transpose()?
         .flatten();
-    let (Some((phase, running, elapsed)), Some(train)) = (target, sim.train.as_mut()) else {
+    let Some(train) = sim.train.as_mut() else {
         return Ok(false);
     };
     let duration = train.route.duration();
-    let target = (phase + if running { elapsed } else { 0. }).rem_euclid(duration);
+    if !duration.is_finite() || duration <= 0. {
+        return Ok(false);
+    }
+    let target = (server_ms / 1000.).rem_euclid(f64::from(duration)) as f32;
     let error = (target - train.time + duration * 0.5).rem_euclid(duration) - duration * 0.5;
     if error.abs() > 0.25 {
         // Prime the route's heading filter and previous/current velocity pair.
@@ -151,16 +140,11 @@ pub fn synchronize_train(sim: &mut Simulation, now: u64, dt: f32) -> Result<bool
                 vehicle.translate_network(std::array::from_fn(|i| moved[i] - origin[i]));
             }
         }
-    } else if running {
-        // Gentle phase correction avoids impulses from packet jitter.
+    } else {
+        // Gentle phase correction avoids impulses from clock jitter.
         sim.train.as_mut().unwrap().time = (sim.train.as_ref().unwrap().time
             + (error - dt).clamp(-dt * 0.25, dt * 0.25))
         .rem_euclid(duration);
-        super::super::step_train_scene(sim, dt)?;
-    } else {
-        // Keep zero platform velocity while the host is paused.
-        let train = sim.train.as_mut().unwrap();
-        train.time = (target - dt).rem_euclid(duration);
         super::super::step_train_scene(sim, dt)?;
     }
     Ok(true)
@@ -168,6 +152,10 @@ pub fn synchronize_train(sim: &mut Simulation, now: u64, dt: f32) -> Result<bool
 pub fn collide(sim: &mut Simulation, now: u64, dt: f32) -> Result<()> {
     CLIENT.with_borrow_mut(|c| {
         let Some(id) = c.peer else { return Ok(()) };
+        // Riders appear beside each other after a spawn; let them separate.
+        if now < c.ghost_until {
+            return Ok(());
+        }
         for (&peer, buffer) in &c.buffers {
             let Some(mut pose) = buffer.sample_current(now) else {
                 continue;
@@ -180,6 +168,7 @@ pub fn collide(sim: &mut Simulation, now: u64, dt: f32) -> Result<()> {
                 && vehicle.peer_contact(
                     pose.snapshot.atv.position,
                     pose.snapshot.velocity,
+                    pose.snapshot.atv.rotation,
                     dt,
                     if id < peer { -1. } else { 1. },
                 )
@@ -190,7 +179,12 @@ pub fn collide(sim: &mut Simulation, now: u64, dt: f32) -> Result<()> {
         Ok(())
     })
 }
+/// Spawning (beside a rider, or on joining) briefly disables rider contacts.
+pub fn ghost(now: u64) {
+    CLIENT.with_borrow_mut(|c| c.ghost_until = now + 2500);
+}
 pub fn spawn(sim: &Simulation, id: u8, now: u64) -> Result<Value> {
+    ghost(now);
     CLIENT.with_borrow(|c| {
         if c.peer == Some(id)
             || !c

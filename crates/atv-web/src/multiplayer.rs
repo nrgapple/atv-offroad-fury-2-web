@@ -49,6 +49,17 @@ struct Client {
     received: u64,
     sent: u64,
     rtt_ms: Option<u32>,
+    /// Owner-only slot secret from Welcome, used to reclaim the slot.
+    key: String,
+    /// Relay wall clock minus local monotonic clock, from the best ping.
+    clock_offset_ms: Option<f64>,
+    clock_rtt_ms: u32,
+    /// Peer contacts stay off until this local time after a spawn.
+    ghost_until: u64,
+}
+/// Shared world time in milliseconds, or None before the first relay ping.
+fn server_now(c: &Client, now: u64) -> Option<f64> {
+    c.clock_offset_ms.map(|offset| now as f64 + offset)
 }
 thread_local! {
     static CLIENT: RefCell<Client> = RefCell::default();
@@ -207,11 +218,7 @@ fn snapshot(c: &mut Client, sim: &Simulation, now: u32, paused: bool) -> Result<
     let interval = if paused {
         5000
     } else if !moving && state == RiderState::Riding {
-        if peer == 0 && s.train_time.is_some() {
-            500
-        } else {
-            1000
-        }
+        1000
     } else if state == RiderState::Wreck
         || state == RiderState::Airborne
         || s.speed > 35.
@@ -257,25 +264,46 @@ fn status(c: &Client) -> Value {
         .lobby
         .as_ref()
         .and_then(|lobby| atv_net::next_map(lobby.map));
-    json!({"peer":c.peer,"code":c.code,"lobby":c.lobby,"environment":environment,"nextMap":next_map,"receivedBytes":c.received,"sentBytes":c.sent,"rttMs":c.rtt_ms,"contacts":c.contacts,"network":{"messages":c.sent_messages,"full":c.full_messages,"delta":c.delta_messages,"suppressed":c.suppressed,"lastPacketBytes":c.last_packet_bytes,"animation":"local","protocol":atv_net::VERSION,"rigKeys":c.rigs.keys().collect::<Vec<_>>(),"rigRevision":c.rig_revision}})
+    json!({"peer":c.peer,"code":c.code,"key":c.key,"lobby":c.lobby,"clockSynced":c.clock_offset_ms.is_some(),"environment":environment,"nextMap":next_map,"receivedBytes":c.received,"sentBytes":c.sent,"rttMs":c.rtt_ms,"contacts":c.contacts,"network":{"messages":c.sent_messages,"full":c.full_messages,"delta":c.delta_messages,"suppressed":c.suppressed,"lastPacketBytes":c.last_packet_bytes,"animation":"local","protocol":atv_net::VERSION,"rigKeys":c.rigs.keys().collect::<Vec<_>>(),"rigRevision":c.rig_revision}})
 }
 fn lobby(c: &mut Client, value: atv_net::Lobby) {
     if c.lobby.as_ref() != Some(&value) {
         c.force_full = true;
         c.baseline = None;
-        c.local_animations.clear();
     }
-    if c.lobby.as_ref().is_some_and(|old| {
-        old.map != value.map || old.epoch != value.epoch || old.started != value.started
-    }) {
+    // Joins, departures and host handoff change the epoch; only a new map or
+    // start state invalidates other riders' motion. Keep smoothing intact.
+    if c.lobby
+        .as_ref()
+        .is_some_and(|old| old.map != value.map || old.started != value.started)
+    {
         c.buffers.clear();
         c.engines.clear();
         c.heard_crash.clear();
+        c.local_animations.clear();
     }
-    c.buffers
-        .retain(|peer, _| value.players.iter().any(|p| p.id == *peer));
-    c.engines
-        .retain(|peer, _| value.players.iter().any(|p| p.id == *peer));
+    let same = |peer: &u8| {
+        value.players.iter().any(|p| {
+            p.id == *peer
+                && c.lobby.as_ref().is_none_or(|old| {
+                    old.players.iter().any(|o| {
+                        o.id == p.id && o.atv_model == p.atv_model && o.rider_model == p.rider_model
+                    })
+                })
+        })
+    };
+    // A rider who changed vehicle restarts its pose history, sound and rig.
+    let keep = c
+        .buffers
+        .keys()
+        .chain(c.engines.keys())
+        .chain(c.local_animations.keys())
+        .copied()
+        .filter(|peer| same(peer))
+        .collect::<std::collections::BTreeSet<_>>();
+    c.buffers.retain(|peer, _| keep.contains(peer));
+    c.engines.retain(|peer, _| keep.contains(peer));
+    c.local_animations.retain(|peer, _| keep.contains(peer));
     c.heard_crash
         .retain(|peer, _| value.players.iter().any(|p| p.id == *peer));
     c.lobby = Some(value);
@@ -311,10 +339,24 @@ fn presentation(c: &mut Client, input: &[u8], now: u64, sim: &Simulation) -> Res
         .clamp(0., 0.1);
     c.last_sample = Some(now);
     let mut peers = Vec::new();
-    for (&id, buffer) in &c.buffers {
-        let Some(mut pose) = buffer.sample(now) else {
-            continue;
-        };
+    // Nearby riders are presented closer to their current estimate, so what
+    // you see lines up with contacts; distant riders keep the full jitter
+    // buffer for the smoothest motion.
+    let own = sim.vehicle.as_ref().map(|v| v.frame().origin);
+    let sampled = c
+        .buffers
+        .iter_mut()
+        .filter_map(|(&id, buffer)| {
+            let near = own
+                .zip(buffer.latest().map(|(s, _)| s.atv.position))
+                .map_or(0., |(a, b)| {
+                    let d = a.iter().zip(b).map(|(a, b)| (a - b) * (a - b)).sum::<f32>();
+                    ((40. - d.sqrt()) / 30.).clamp(0., 1.)
+                });
+            buffer.present(now, near).map(|pose| (id, pose))
+        })
+        .collect::<Vec<_>>();
+    for (id, mut pose) in sampled {
         world::rebase(&mut pose.snapshot, sim)?;
         let s = &pose.snapshot;
         let spatial = command(
@@ -480,9 +522,11 @@ pub fn dispatch(input: &[u8], op: u32, index: usize, sim: &Simulation) -> Result
                     peer,
                     code,
                     lobby: value,
+                    key,
                 } => {
                     c.peer = Some(*peer);
                     c.code = String::from_utf8(code.to_vec()).map_err(|e| e.to_string())?;
+                    c.key = key.iter().map(|b| format!("{b:02x}")).collect();
                     lobby(c, value.clone());
                 }
                 Packet::Lobby(value) => lobby(c, value.clone()),
@@ -509,12 +553,54 @@ pub fn dispatch(input: &[u8], op: u32, index: usize, sim: &Simulation) -> Result
                     c.engines.remove(peer);
                     c.heard_crash.remove(peer);
                 }
-                Packet::Pong { nonce } => c.rtt_ms = Some((index as u32).wrapping_sub(*nonce)),
+                Packet::Pong { nonce, server_ms } => {
+                    let rtt = (index as u32).wrapping_sub(*nonce);
+                    c.rtt_ms = Some(rtt);
+                    // Prefer low-latency samples: half the round trip is the
+                    // best available one-way estimate over TCP.
+                    if rtt < 5000 {
+                        let offset = *server_ms as f64 + f64::from(rtt) * 0.5 - index as f64;
+                        match c.clock_offset_ms {
+                            Some(old) if rtt > c.clock_rtt_ms.saturating_add(20) => {
+                                c.clock_offset_ms = Some(old + (offset - old) * 0.05);
+                            }
+                            Some(old) if (offset - old).abs() < 250. => {
+                                c.clock_offset_ms = Some(old + (offset - old) * 0.3);
+                                c.clock_rtt_ms = c.clock_rtt_ms.min(rtt);
+                            }
+                            _ => {
+                                c.clock_offset_ms = Some(offset);
+                                c.clock_rtt_ms = rtt;
+                            }
+                        }
+                    }
+                }
                 _ => return Err("unexpected relay packet".into()),
             }
             serde_json::to_vec(&json!({"state":status(c)})).map_err(|e| e.to_string())
         }
         83 => presentation(c, input, index as u64, sim),
+        110 => {
+            // Change vehicle/rider in place; the next pose is a full snapshot.
+            let v: Value = serde_json::from_slice(input).map_err(|e| e.to_string())?;
+            let quad = v["quad_id"].as_u64().ok_or("missing quad")?;
+            let rider = v["rider_id"].as_u64().ok_or("missing rider")?;
+            if quad > 26 || quad == 0 || rider > 1 {
+                return Err("unsupported player model".into());
+            }
+            c.quad = quad as u16;
+            c.rider = rider as u16;
+            c.force_full = true;
+            c.baseline = None;
+            c.pending = None;
+            serde_json::to_vec(&status(c)).map_err(|e| e.to_string())
+        }
+        111 => {
+            // A fresh arrival (join, map change, vehicle change) starts apart
+            // from nobody: ignore contacts briefly so riders can separate.
+            c.ghost_until = index as u64 + 2500;
+            Ok(b"null".to_vec())
+        }
         84 => {
             *c = Client::default();
             Ok(b"null".to_vec())
@@ -636,6 +722,7 @@ mod tests {
                 peer: 1,
                 code: *b"ABCD2345",
                 lobby: roster(false),
+                key: [0xab; 16],
             },
             0,
         )
@@ -643,6 +730,7 @@ mod tests {
         CLIENT.with_borrow(|c| {
             assert_eq!(c.peer, Some(1));
             assert_eq!(c.code, "ABCD2345");
+            assert_eq!(c.key, "ab".repeat(16));
             assert_eq!(c.quad, 2);
             assert_eq!(c.rider, 1);
             assert!(!c.lobby.as_ref().unwrap().started);
@@ -659,6 +747,7 @@ mod tests {
                     map: 9,
                     ..roster(false)
                 },
+                key: [1; 16],
             },
             0,
         )
@@ -751,7 +840,7 @@ mod tests {
         });
     }
     #[test]
-    fn map_start_and_epoch_changes_clear_remote_presentation() {
+    fn map_start_and_vehicle_changes_clear_remote_presentation() {
         for mode in 0..3 {
             setup(true);
             receive(Packet::Snapshot((remote(1, 0)).into()), 0).unwrap();
@@ -759,11 +848,51 @@ mod tests {
             match mode {
                 0 => changed.map = 5,
                 1 => changed.started = false,
-                _ => changed.epoch = 2,
+                _ => changed.players[1].atv_model = 7,
             }
             receive(Packet::Lobby(changed), 10).unwrap();
             CLIENT.with_borrow(|c| assert!(c.buffers.is_empty()));
         }
+    }
+    #[test]
+    fn joins_and_host_handoff_keep_remote_motion_history() {
+        setup(true);
+        receive(Packet::Snapshot((remote(1, 0)).into()), 0).unwrap();
+        let mut changed = roster(true);
+        changed.epoch = 9;
+        changed.host = 1;
+        changed.players.push(Participant {
+            id: 2,
+            name: "Late".into(),
+            atv_model: 4,
+            rider_model: 0,
+        });
+        receive(Packet::Lobby(changed), 10).unwrap();
+        CLIENT.with_borrow(|c| assert_eq!(c.buffers.get(&1).map(PoseBuffer::len), Some(1)));
+    }
+    #[test]
+    fn vehicle_change_updates_own_model_and_forces_full_state() {
+        setup(true);
+        dispatch(
+            br#"{"quad_id":14,"rider_id":1}"#,
+            110,
+            0,
+            &Simulation::default(),
+        )
+        .unwrap();
+        CLIENT.with_borrow(|c| {
+            assert_eq!((c.quad, c.rider, c.peer), (14, 1, Some(0)));
+            assert!(c.force_full && c.baseline.is_none());
+        });
+        assert!(
+            dispatch(
+                br#"{"quad_id":27,"rider_id":0}"#,
+                110,
+                0,
+                &Simulation::default()
+            )
+            .is_err()
+        );
     }
     #[test]
     fn silent_and_stale_players_render_without_audio_assets() {
@@ -811,11 +940,17 @@ mod tests {
         receive(
             Packet::Pong {
                 nonce: u32::MAX - 20,
+                server_ms: 1_000_000,
             },
             10,
         )
         .unwrap();
-        CLIENT.with_borrow(|c| assert_eq!(c.rtt_ms, Some(31)));
+        CLIENT.with_borrow(|c| {
+            assert_eq!(c.rtt_ms, Some(31));
+            // Server time plus half the round trip, against the local clock.
+            assert_eq!(c.clock_offset_ms, Some(1_000_000. + 15.5 - 10.));
+            assert_eq!(server_now(c, 110), Some(1_000_115.5));
+        });
     }
     #[test]
     fn node_adapter_keeps_source_basis_and_shear() {

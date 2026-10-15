@@ -17,7 +17,7 @@ pub use codec::{decode, encode};
 pub use smoothing::{PoseBuffer, SampledPose, SmoothingConfig};
 pub use transform::Transform;
 
-pub const VERSION: u8 = 3;
+pub const VERSION: u8 = 4;
 pub const MAX_PLAYERS: usize = 4;
 /// One-based lobby IDs reference this authored catalog; source resource keys
 /// remain stable even when their browser display names change.
@@ -34,6 +34,9 @@ pub const MAX_NAME_BYTES: usize = 32;
 pub const ROOM_CODE_BYTES: usize = 8;
 pub type PeerId = u8;
 pub type RoomCode = [u8; ROOM_CODE_BYTES];
+/// Per-participant secret returned only to its owner. Presenting it again
+/// within the reconnect grace reclaims the same slot (and color).
+pub type RejoinKey = [u8; 16];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
@@ -192,6 +195,7 @@ pub enum Packet {
         peer: PeerId,
         code: RoomCode,
         lobby: Lobby,
+        key: RejoinKey,
     },
     Lobby(Lobby),
     SetLobby {
@@ -209,6 +213,14 @@ pub enum Packet {
     },
     Pong {
         nonce: u32,
+        /// Relay wall clock in milliseconds; riders share world clocks from it.
+        server_ms: u64,
+    },
+    /// Change this rider's vehicle/rider/name without leaving the room.
+    Profile(Participant),
+    /// The sender has finished loading this map and is riding on it.
+    Ready {
+        map: u16,
     },
 }
 

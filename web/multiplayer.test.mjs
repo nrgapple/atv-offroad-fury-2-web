@@ -40,7 +40,7 @@ function fixture() {
   const mp=new Multiplayer({codec,command:async()=>({peer:null}),onState:v=>states.push(v),onStart:async map=>starts.push(map),onLeave:v=>leaves.push(v),ready:()=>true,listener:()=>({position:[0,0,0],forward:[0,0,1],velocity:[0,0,0]}),audio:()=>sound,assets:async(q,r)=>assets.push([q,r]),clearAssets:()=>cleanups.push(true),report:v=>reports.push(v)});
   const frontend={quadId:2,riderId:1,playerName:'Guest',tracks:ENVIRONMENTS.map(id=>({id})),notice:{},show:async()=>{}};
   async function connect() {
-    const pending=mp.connect('ABCD2345',frontend,'private-host-token');
+    const pending=mp.connect('ABCD2345',frontend,KEY);
     await flush();const socket=sockets.at(-1);assert(socket,'connection should construct socket');
     await socket.open();await pending;return socket;
   }
@@ -51,14 +51,16 @@ function fixture() {
   return {mp,calls,overrides,states,starts,leaves,reports,frames,models,assets,cleanups,sockets,Socket,intervals,timeouts,sound,frontend,defaultState,connect,cleanup};
 }
 
+const KEY='0123456789abcdef0123456789abcdef';
 // These tests cover transport glue races and queue bounds, while Rust tests own
 // wire-format correctness and numerical interpolation. No game assets are used.
-test('handshake uses selected model and authenticated host URL, with bounded timer lifecycle',async()=>{
+test('handshake uses selected model and slot key URL, then pings for the shared clock',async()=>{
   const f=fixture();try {
     const socket=await f.connect();
     assert.equal(socket.binaryType,'arraybuffer');
-    const url=new URL(socket.url);assert.equal(url.protocol,'wss:');assert.equal(url.pathname,'/multiplayer/rooms/ABCD2345');assert.equal(url.searchParams.get('host'),'private-host-token');
+    const url=new URL(socket.url);assert.equal(url.protocol,'wss:');assert.equal(url.pathname,'/multiplayer/rooms/ABCD2345');assert.equal(url.searchParams.get('key'),KEY);assert.equal(url.searchParams.get('host'),null);
     const join=decode(socket.sent[0]);assert.deepEqual(join.Join.player,{id:0,name:'Guest',atv_model:2,rider_model:1});assert.equal(String.fromCharCode(...join.Join.code),'ABCD2345');
+    await flush();assert(decode(socket.sent[1]).Ping,'join is followed by a clock ping');
     assert.deepEqual([...f.intervals.values()].map(v=>v.delay),[50,2000]);assert.equal(f.timeouts.size,0);
     f.mp.close();await flush();assert.equal(f.intervals.size,0);assert.equal(f.mp.socket,null);
   }finally{await f.cleanup();}
@@ -69,18 +71,18 @@ test('stale control encoding never sends commands into a replacement room socket
     const old=await f.connect();const pending=deferred();f.overrides.set(85,()=>pending.promise);
     const control=f.mp.control({SetLobby:{epoch:1,map:2,started:true}});
     await flush();f.mp.generation++;const replacement=new f.Socket('wss://game.example/new');replacement.readyState=f.Socket.OPEN;f.mp.socket=replacement;
-    pending.resolve(new Uint8Array([9]));await control;
-    assert.equal(old.sent.length,1);assert.equal(replacement.sent.length,0,'old-room host command must not cross sessions');
+    await flush();const sentBefore=old.sent.length;pending.resolve(new Uint8Array([9]));await control;
+    assert.equal(old.sent.length,sentBefore);assert.equal(replacement.sent.length,0,'old-room host command must not cross sessions');
   }finally{await f.cleanup();}
 });
 
 test('outbound snapshots allow only one encode and drop frames under socket backpressure',async()=>{
   const f=fixture();try {
-    const socket=await f.connect();f.mp.started=true;f.mp.state={peer:0};
+    const socket=await f.connect();await flush();const joined=socket.sent.length;f.mp.started=true;f.mp.readySent=true;f.mp.state={peer:0};
     socket.bufferedAmount=32768;await f.mp.send();assert.equal(f.calls.filter(c=>c.op===81).length,0);
     socket.bufferedAmount=0;const pending=deferred();f.overrides.set(81,()=>pending.promise);
     const first=f.mp.send();await f.mp.send();assert.equal(f.calls.filter(c=>c.op===81).length,1);
-    socket.bufferedAmount=32768;pending.resolve(new Uint8Array([4]));await first;assert.equal(socket.sent.length,1,'backpressure that rises during encoding must drop the stale snapshot');
+    socket.bufferedAmount=32768;pending.resolve(new Uint8Array([4]));await first;assert.equal(socket.sent.length,joined,'backpressure that rises during encoding must drop the stale snapshot');
     socket.bufferedAmount=0;f.overrides.set(81,async()=>new Uint8Array([5]));await f.mp.send();assert.deepEqual([...socket.sent.at(-1)],[5]);assert.equal(f.mp.sendBusy,false);
   }finally{await f.cleanup();}
 });
@@ -162,7 +164,7 @@ test('explicit disconnect disposes remote presentation assets and cannot run old
 
 test('local pause flag crosses the Rust snapshot boundary without queueing extra sends',async()=>{
   const f=fixture();try {
-    await f.connect();f.mp.started=true;f.mp.state={peer:0};f.mp.paused=()=>true;
+    await f.connect();f.mp.started=true;f.mp.readySent=true;f.mp.state={peer:0};f.mp.paused=()=>true;
     f.overrides.set(81,async()=>new Uint8Array([4]));await f.mp.send();
     assert.deepEqual([...f.calls.find(c=>c.op===81).bytes],[1]);
     f.mp.paused=()=>false;await f.mp.send();assert.deepEqual([...f.calls.filter(c=>c.op===81).at(-1).bytes],[0]);
@@ -191,30 +193,68 @@ test('superseded asynchronous session configuration cannot replace the newer soc
   }finally{await f.cleanup();}
 });
 
-test('Rust map metadata cycles to Vancouver, wraps, and starts its asset key',async()=>{
+test('host changes the track for everyone and every rider reloads onto the new map',async()=>{
   const f=fixture();try {
     const socket=await f.connect();
-    f.mp.state={...f.defaultState,environment:'env08',nextMap:9,lobby:{...f.defaultState.lobby,map:8}};
-    await f.mp.action('lobbymap',f.frontend);
-    assert.deepEqual(decode(socket.sent.at(-1)),{SetLobby:{epoch:1,map:9,started:false}});
-    f.mp.state={...f.defaultState,environment:'free05',nextMap:1,lobby:{...f.defaultState.lobby,map:9}};
-    await f.mp.action('lobbymap',f.frontend);
-    assert.deepEqual(decode(socket.sent.at(-1)),{SetLobby:{epoch:1,map:1,started:false}});
-    f.overrides.set(82,async()=>encode({state:{...f.mp.state,lobby:{...f.mp.state.lobby,started:true}},event:{}}));
-    socket.message();await f.mp.receiveQueue;
-    assert.deepEqual(f.starts,['free05']);
+    f.overrides.set(82,async()=>encode({state:{...f.defaultState,environment:'env08',lobby:{...f.defaultState.lobby,started:true,map:8}},event:{}}));
+    socket.message();await f.mp.receiveQueue;await flush();
+    assert.deepEqual(f.starts,['env08']);assert.equal(f.mp.loadedMap,'env08');
+    assert.deepEqual(decode(socket.sent.at(-1)),{Ready:{map:8}},'arrival is reported after loading');
+    f.mp.state={...f.mp.state,environment:'env08',lobby:{...f.mp.state.lobby,map:8,epoch:3}};
+    await f.mp.setMap('free05');
+    assert.deepEqual(decode(socket.sent.at(-1)),{SetLobby:{epoch:3,map:9,started:true}});
+    f.overrides.set(82,async()=>encode({state:{...f.defaultState,environment:'free05',lobby:{...f.defaultState.lobby,started:true,map:9,epoch:4}},event:{}}));
+    socket.message();await f.mp.receiveQueue;await flush();
+    assert.deepEqual(f.starts,['env08','free05']);assert.deepEqual(decode(socket.sent.at(-1)),{Ready:{map:9}});
+    f.mp.state={...f.mp.state,peer:1};await assert.rejects(f.mp.setMap('env02'),/host/);
+    await assert.rejects(f.mp.setMap('nope'),/map/);
   }finally{await f.cleanup();}
 });
 
-test('lobby selection skips courses absent from an older hosted manifest without changing wire IDs',async()=>{
- const f=fixture();try {
-  const socket=await f.connect();f.mp.state={...f.defaultState,nextMap:10,lobby:{...f.defaultState.lobby,map:9}};
-  f.frontend.tracks=ENVIRONMENTS.slice(0,9).map(id=>({id}));
-  await f.mp.action('lobbymap',f.frontend);assert.equal(decode(socket.sent.at(-1)).SetLobby.map,1);
-  f.frontend.tracks=ENVIRONMENTS.map(id=>({id}));
-  await f.mp.action('lobbymap',f.frontend);assert.equal(decode(socket.sent.at(-1)).SetLobby.map,10);
-  f.frontend.tracks=[];await assert.rejects(f.mp.action('lobbymap',f.frontend),/No original lobby courses/);
- }finally{await f.cleanup();}
+test('changing ATV and rider tells the room, then reloads the same map in place',async()=>{
+  const f=fixture();try {
+    const socket=await f.connect();const poses=[];
+    f.mp.command=async(op,value)=>op===112?{origin:[1,2,3],yaw:0.5}:op===80?{peer:null}:null;
+    f.mp.onStart=async(map,_current,pose)=>{f.starts.push(map);poses.push(pose);};
+    f.overrides.set(82,async()=>encode({state:{...f.defaultState,environment:'env03',lobby:{...f.defaultState.lobby,started:true,map:3}},event:{}}));
+    socket.message();await f.mp.receiveQueue;await flush();
+    f.frontend.quadId=14;f.frontend.riderId=0;
+    await f.mp.changeRide(f.frontend);
+    const profile=socket.sent.map(decode).find(p=>p.Profile);
+    assert.deepEqual(profile,{Profile:{id:0,name:'Guest',atv_model:14,rider_model:0}});
+    assert.deepEqual(f.starts,['env03','env03']);assert.deepEqual(poses,[null,{origin:[1,2,3],yaw:0.5}]);
+    assert.deepEqual(decode(socket.sent.at(-1)),{Ready:{map:3}});
+  }finally{await f.cleanup();}
+});
+
+test('an invite joins its live room, or opens that code again on the link map',async()=>{
+  const f=fixture();const savedFetch=globalThis.fetch;try {
+    const requests=[];f.frontend.roomCode='ABCD2345';const configured=[];
+    f.mp.connect=async(code,_frontend,key)=>{requests.push(['connect',code,key]);};
+    f.mp.configureLobby=async(map,start)=>configured.push([map,start]);
+    globalThis.fetch=async(url,init)=>{requests.push([init.method,String(url),JSON.parse(init.body)]);return {status:201,ok:true,json:async()=>({code:'ABCD2345',hostToken:KEY})};};
+    await f.mp.action('join',f.frontend,{map:'env05'});
+    assert.deepEqual(requests,[['POST','/multiplayer/rooms',{code:'ABCD2345',open:true}],['connect','ABCD2345',KEY]]);
+    assert.deepEqual(configured,[['env05',true]]);
+    requests.length=0;
+    globalThis.fetch=async()=>({status:200,ok:true,json:async()=>({code:'ABCD2345',open:true,players:2,max:4})});
+    await f.mp.action('join',f.frontend,{map:'env05'});
+    assert.deepEqual(requests.at(-1)[0],'connect');assert.equal(configured.length,1,'joining a live room never reconfigures it');
+    globalThis.fetch=async()=>({status:200,ok:true,json:async()=>({code:'ABCD2345',open:true,players:4,max:4})});
+    try{globalThis.sessionStorage?.clear?.();}catch{}
+    await assert.rejects(f.mp.action('join',f.frontend),/Game is full/);
+  }finally{globalThis.fetch=savedFetch;await f.cleanup();}
+});
+
+test('a ride that fails to load leaves the room instead of lingering in it',async()=>{
+  const f=fixture();try {
+    const socket=await f.connect();f.mp.onStart=async()=>{throw Error('Original ATV archive is missing.');};
+    f.overrides.set(82,async()=>encode({state:{...f.defaultState,lobby:{...f.defaultState.lobby,started:true}},event:{}}));
+    socket.message();await f.mp.receiveQueue;await flush();
+    assert(f.reports.includes('Original ATV archive is missing.'));
+    assert.equal(f.mp.socket,null);assert.deepEqual(f.mp.state,{});assert.equal(f.mp.started,false);
+    assert.deepEqual(socket.closes.at(-1),{code:1000,reason:'Left lobby'});
+  }finally{await f.cleanup();}
 });
 
 test('host close invalidates the pending map loader before it can resume a ride',async()=>{
@@ -241,9 +281,10 @@ test('active-room admission starts exactly once even when Welcome arrives during
 });
 test('join presents lobby before connecting so late-start loading cannot be covered afterwards',async()=>{
  const f=fixture();try {
-   const order=[];f.frontend.roomCode='ABCD2345';f.frontend.show=async()=>order.push('lobby');
+   const order=[],savedFetch=globalThis.fetch;f.frontend.roomCode='ABCD2345';f.frontend.show=async()=>order.push('lobby');
+   globalThis.fetch=async()=>({status:200,ok:true,json:async()=>({code:'ABCD2345',open:true,players:1,max:4})});
    f.mp.connect=async()=>{order.push('connect');order.push('loading');};
-   await f.mp.action('join',f.frontend);assert.deepEqual(order,['lobby','connect','loading']);
+   try{await f.mp.action('join',f.frontend);}finally{globalThis.fetch=savedFetch;}assert.deepEqual(order,['lobby','connect','loading']);
  }finally{await f.cleanup();}
 });
 test('spawn only resumes after the validated placement completes',async()=>{
@@ -277,15 +318,15 @@ test('a resumed browser discards old snapshot bursts without closing its lobby',
  }finally{await f.cleanup();}
 });
 
-test('host transport loss retries its capability without restarting the loaded ride',async()=>{
+test('any rider\'s transport loss retries its slot key without restarting the loaded ride',async()=>{
  const f=fixture();try {
-  const socket=await f.connect();f.mp.state={...f.defaultState,lobby:{...f.defaultState.lobby,started:true}};f.mp.started=true;
+  const socket=await f.connect();f.mp.state={...f.defaultState,lobby:{...f.defaultState.lobby,started:true}};f.mp.started=true;f.mp.loadedMap='env01';
   socket.close(1006,'');assert.equal(f.leaves.length,0);assert.equal(f.mp.reconnecting,true);
   f.timeouts.get(f.mp.retryTimer).fn();await flush();const next=f.sockets.at(-1);assert.notEqual(next,socket);
   await next.open();f.overrides.set(82,()=>encode({state:{...f.defaultState,lobby:{...f.defaultState.lobby,started:true}},event:{}}));
   next.message();await f.mp.receiveQueue;
   assert.equal(f.mp.reconnecting,false);assert.equal(f.mp.started,true);assert.deepEqual(f.starts,[]);
-  assert.equal(new URL(next.url).searchParams.get('host'),'private-host-token');
+  assert.equal(new URL(next.url).searchParams.get('key'),KEY);
   assert.equal(f.mp.lastDisconnect.code,1006);
  }finally{await f.cleanup();}
 });
@@ -298,16 +339,16 @@ test('intentional leave cancels a pending host recovery',async()=>{
 
 test('suppressed state produces no WebSocket frame and compact baseline receipt follows only actual sends',async()=>{
  const f=fixture();try {
-  const socket=await f.connect();f.mp.started=true;f.mp.state={peer:0};
-  f.overrides.set(81,async()=>new Uint8Array());await f.mp.send();assert.equal(socket.sent.length,1);assert.equal(f.calls.filter(c=>c.op===109).length,0);
+  const socket=await f.connect();await flush();f.mp.started=true;f.mp.readySent=true;f.mp.state={peer:0};const before=socket.sent.length;
+  f.overrides.set(81,async()=>new Uint8Array());await f.mp.send();assert.equal(socket.sent.length,before);assert.equal(f.calls.filter(c=>c.op===109).length,0);
   const bytes=new Uint8Array([65,84,86,77,3,9,0,0]);f.overrides.set(81,async()=>bytes);await f.mp.send();assert.equal(f.calls.filter(c=>c.op===109).length,1);assert.deepEqual([...socket.sent.at(-1)],[...bytes]);
   const delayed=deferred();f.overrides.set(81,()=>delayed.promise);const sending=f.mp.send();socket.bufferedAmount=32768;delayed.resolve(bytes);await sending;assert.equal(f.calls.filter(c=>c.op===109).length,1,'dropped compact snapshot cannot advance delta baseline');
  }finally{await f.cleanup();}
 });
 test('URL host setup waits for admission, then sends one atomic map/start command',async()=>{
  const f=fixture();try {
-  const socket=await f.connect();f.mp.state={peer:null};const pending=f.mp.configureLobby('free05',true);
-  assert.equal(f.calls.filter(c=>c.op===85).length,1,'no setup command before Welcome');
+  const socket=await f.connect();await flush();f.mp.state={peer:null};const controls=f.calls.filter(c=>c.op===85).length;const pending=f.mp.configureLobby('free05',true);
+  assert.equal(f.calls.filter(c=>c.op===85).length,controls,'no setup command before Welcome');
   f.mp.state={...f.defaultState};f.timeouts.values().next().value.fn();await flush();
   assert.deepEqual(decode(socket.sent.at(-1)),{SetLobby:{epoch:1,map:9,started:true}});
   f.mp.state={...f.defaultState,lobby:{...f.defaultState.lobby,map:9,started:true}};

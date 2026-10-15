@@ -1,68 +1,51 @@
-// Opt-in original-content/relay gate: source thumbnails on both lobby clients.
+// Opt-in original-content/relay gate: the host's Select Track picker shows every
+// course preview, and hosting a chosen non-default track puts the host and an
+// invited guest on that track.
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {ENVIRONMENTS} from '../web/launch.js';
 const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
 const base=process.env.ATV_TEST_URL||'http://127.0.0.1:49199';
-const browser=await chromium.launch({headless:true});
+const track=process.env.ATV_LOBBY_TRACK||'sx01';
+const browser=await chromium.launch({headless:true,args:process.env.ATV_BROWSER_GPU==='metal'?['--enable-gpu','--use-angle=metal']:[]});
 const host=await browser.newPage({viewport:{width:1280,height:720}});
 const guest=await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
 const errors=[];
 for(const page of [host,guest]) {
   page.on('pageerror',error=>errors.push(error.message));
-  await page.addInitScript(()=>{
-    Object.defineProperty(document,'hasFocus',{value:()=>true});
-    const NativeWorker=Worker;
-    window.Worker=class extends NativeWorker {
-      constructor(...args){
-        super(...args);this.menus=new Map();
-        this.addEventListener('message',({data})=>{
-          const request=this.menus.get(data.id);this.menus.delete(data.id);
-          if(request&&data.bytes&&!data.error) window.lobbyMenu={request,frame:JSON.parse(new TextDecoder().decode(data.bytes))};
-        });
-      }
-      postMessage(data,...args){
-        if(data.op===62){const request=JSON.parse(new TextDecoder().decode(data.bytes));if(request.page==='lobby'){request.environment=window.atvTerrainStatus?.multiplayer?.state.environment;this.menus.set(data.id,request);}}
-        super.postMessage(data,...args);
-      }
-    };
-    const clear=CanvasRenderingContext2D.prototype.clearRect,draw=CanvasRenderingContext2D.prototype.drawImage;
-    CanvasRenderingContext2D.prototype.clearRect=function(...args){if(this.canvas.id==='menu-canvas')window.lobbyPaints=[];return clear.apply(this,args);};
-    CanvasRenderingContext2D.prototype.drawImage=function(image,...args){
-      if(this.canvas.id==='menu-canvas'&&args.length===4){
-        const preview=window.lobbyMenu?.frame.draw.find(draw=>draw.kind==='preview');
-        if(preview&&Math.abs(args[0]-preview.rect[0])<.001&&Math.abs(args[1]-preview.rect[1])<.001)window.lobbyPaints=[];
-        (window.lobbyPaints??=[]).push({source:[image.width,image.height],rect:args});
-      }
-      return draw.call(this,image,...args);
-    };
-  });
+  await page.addInitScript(()=>{Object.defineProperty(document,'hasFocus',{value:()=>true});});
 }
 const button=(page,name)=>page.getByRole('button',{name,exact:true});
+const riding=(page,environment,remotes)=>page.waitForFunction(([environment,remotes])=>{
+  const s=window.atvTerrainStatus,m=s?.multiplayer;
+  return s?.multiplayerError||s?.simulation&&document.querySelector('#frontend').hidden&&m?.state.environment===environment&&m.remote.length===remotes;
+},[environment,remotes],{timeout:120000});
 try {
   await host.goto(`${base}/play.html`);await button(host,'Press START').click({timeout:90000});
-  await button(host,'Multiplayer').click();await button(host,'Create lobby').click();await button(host,'Create lobby').click();
-  await host.waitForFunction(()=>window.atvTerrainStatus.multiplayer?.state.code,null,{timeout:15000});
+  await button(host,'Multiplayer').click();await button(host,'Host Game').click();await button(host,'Select Track').click();
+  // Every course card carries its loaded preview; the hero follows the selection.
+  await host.locator('.ms-course').first().waitFor({timeout:60000});
+  await host.waitForFunction(()=>[...document.querySelectorAll('.ms-course img')].every(img=>img.complete),null,{timeout:60000});
+  const cards=await host.locator('.ms-course').evaluateAll(nodes=>nodes.map(n=>({id:n.dataset.trackId,name:n.getAttribute('aria-label'),src:n.querySelector('img')?.getAttribute('src')??null,width:n.querySelector('img')?.naturalWidth??0})));
+  assert.deepEqual(cards.map(c=>c.id).sort(),[...ENVIRONMENTS].sort(),'picker lists every course');
+  assert.deepEqual(cards.filter(c=>!c.src||c.width===0).map(c=>c.id),[],'every course shows a loaded preview');
+  const chosen=cards.find(c=>c.id===track);assert.ok(chosen,`picker offers ${track}`);
+  await host.locator(`.ms-course[data-track-id=${track}]`).click();
+  await host.waitForFunction(([id,src,name])=>document.querySelector(`.ms-course[data-track-id=${id}]`)?.getAttribute('aria-selected')==='true'&&document.querySelector('.ms-track-hero .ms-photo img')?.getAttribute('src')===src&&document.querySelector('.ms-track-hero .ms-track-name')?.textContent===name,[track,chosen.src,chosen.name],{timeout:15000});
+  assert.equal(await host.locator('button.ms-ride').getAttribute('aria-label'),`Ride ${chosen.name}`);
+  if(process.env.ATV_LOBBY_SCREENSHOTS)await host.screenshot({path:`${process.env.ATV_LOBBY_SCREENSHOTS}-picker.png`});
+  console.log(JSON.stringify({courses:cards.length,previews:cards.filter(c=>c.width>0).length,chosen}));
+  // Ride hosts the room on the chosen track; an invited guest lands on it too.
+  await host.locator('button.ms-ride').click();await riding(host,track,0);
   const code=await host.evaluate(()=>window.atvTerrainStatus.multiplayer.state.code);
-  await guest.goto(`${base}/play.html?room=${code}&action=join&play=1&player=Guest&quad=2`);
-  await host.waitForFunction(()=>window.atvTerrainStatus.multiplayer?.state.lobby?.players.length===2,null,{timeout:90000});
-  for(const [index,environment] of ENVIRONMENTS.entries()) {
-    for(const page of [host,guest]) await page.waitForFunction(environment=>{
-      const state=window.atvTerrainStatus.multiplayer?.state,menu=window.lobbyMenu;
-      if(state?.environment!==environment||menu?.request.environment!==environment||menu.request.page!=='lobby'||!menu.request.track_name)return false;
-      const preview=menu.frame.draw.find(draw=>draw.kind==='preview');
-      if(environment==='training')return preview?.image==='training-map-preview'&&(window.lobbyPaints??[]).filter(p=>Math.abs(p.rect[1]-preview.rect[1])<.001).length===1;
-      return preview?.image===menu.request.track_image&&(window.lobbyPaints??[]).filter(p=>Math.abs(p.rect[1]-preview.rect[1])<.001).length===2;
-    },environment,{timeout:90000});
-    const menus=await Promise.all([host,guest].map(page=>page.evaluate(()=>window.lobbyMenu)));
-    assert.equal(menus[0].request.track_name,menus[1].request.track_name);
-    assert.equal(menus[0].request.track_image,menus[1].request.track_image);
-    assert.equal(await button(guest,'Next environment').count(),0,'Only the host changes the map');
-    if(environment==='sx01'&&process.env.ATV_LOBBY_SCREENSHOTS)for(const [label,page] of [['desktop',host],['portrait',guest]])await page.screenshot({path:`${process.env.ATV_LOBBY_SCREENSHOTS}-${label}.png`});
-    console.log(JSON.stringify({environment,name:menus[0].request.track_name,image:menus[0].request.track_image,clients:2}));
-    if(index<ENVIRONMENTS.length-1){await button(host,'Next environment').click();await host.waitForFunction(map=>window.atvTerrainStatus.multiplayer.state.lobby.map===map,index+2,{timeout:15000});}
-  }
+  await guest.goto(`${base}/play.html?room=${code}&player=Guest&quad=2`);
+  await Promise.all([riding(host,track,1),riding(guest,track,1)]);
+  const states=await Promise.all([host,guest].map(page=>page.evaluate(()=>{const s=window.atvTerrainStatus;return {error:s.multiplayerError,source:s.source,environment:s.multiplayer.state.environment,map:s.multiplayer.state.lobby.map,peer:s.multiplayer.state.peer,host:s.multiplayer.state.lobby.host};})));
+  for(const s of states){assert.equal(s.error,undefined);assert.equal(s.environment,track);assert.equal(s.map,ENVIRONMENTS.indexOf(track)+1);assert.match(s.source,new RegExp(`${track}\\.tr2$`,'i'));}
+  // Only the host changes the track.
+  await button(guest,'Pause').click();await button(guest,'Leave Game').waitFor();assert.equal(await button(guest,'Select Track').count(),0,'Only the host changes the map');
+  if(process.env.ATV_LOBBY_SCREENSHOTS)await guest.screenshot({path:`${process.env.ATV_LOBBY_SCREENSHOTS}-guest.png`});
   assert.deepEqual(errors,[]);
-  await button(host,'Leave lobby').click();await guest.waitForFunction(()=>!window.atvTerrainStatus.multiplayer?.state.code,null,{timeout:45000});
-  console.log('PASS: all40 lobby selections synchronize names and artwork on desktop/portrait;39 original preview pairs plus the authored Training capture.');
-}catch(error){console.error(JSON.stringify({errors,states:await Promise.all([host,guest].map(page=>page.evaluate(()=>({menu:window.lobbyMenu,paint:window.lobbyPaints,state:window.atvTerrainStatus.multiplayer?.state,notice:document.querySelector('#menu-notice')?.textContent})).catch(()=>null)))}));throw error;}finally{await browser.close();}
+  console.log(JSON.stringify({code,track,clients:states}));
+  console.log(`PASS: Select Track shows ${cards.length} course previews; hosting ${track} puts host and invited guest on it.`);
+}catch(error){console.error(JSON.stringify({errors,states:await Promise.all([host,guest].map(page=>page.evaluate(()=>({page:document.querySelector('#frontend')?.dataset.page,state:window.atvTerrainStatus?.multiplayer?.state,notice:document.querySelector('#menu-notice')?.textContent})).catch(()=>null)))}));throw error;}finally{await browser.close();}
