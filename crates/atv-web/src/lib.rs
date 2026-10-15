@@ -244,7 +244,7 @@ fn sound_effects(input: &[u8], op: u32) -> Result<Vec<u8>> {
 struct MusicPlayback {
     library: atv_core::music::MusicLibrary,
     shuffle: atv_core::music::MusicShuffle,
-    // Initial RTC seed/global call order remain outside this reconstruction.
+    // The browser seeds this in place of the unrecovered original RTC seed.
     random: OriginalRandom,
 }
 thread_local! {
@@ -272,13 +272,14 @@ fn music(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             let library = atv_core::music::MusicLibrary::parse(input)?;
             let bytes = serde_json::to_vec(&library).map_err(|e| e.to_string())?;
             // Changing maps reloads the same catalog. Keep its original shuffle
-            // history instead of restarting at the deterministic first track.
+            // history instead of restarting at the first track. A nonzero index
+            // seeds a new shuffle so each session starts on a different song.
             if slot.as_ref().is_none_or(|music| music.library != library) {
                 let shuffle = atv_core::music::MusicShuffle::new(&library);
                 *slot = Some(MusicPlayback {
                     library,
                     shuffle,
-                    random: OriginalRandom::with_seed(1),
+                    random: OriginalRandom::with_seed(index.max(1) as u64),
                 });
             }
             Ok(bytes)
@@ -2197,6 +2198,37 @@ mod tests {
         assert!(music(br#"{"select":-1}"#, 41, 0).is_err());
         assert!(music(br#"{"select":1.5}"#, 41, 0).is_err());
         assert!(music(br#"{"select":1,"unexpected":true}"#, 41, 0).is_err());
+    }
+    #[test]
+    fn music_seed_varies_the_first_song_of_a_session() {
+        let mut catalog = String::from(
+            "[Songs]\nNumberOfSongs=8\nOrdered=1\n[Artists]\nNumberOfArtists=1\nArtist1=Artist\n[Genres]\nNumberOfGenres=1\nGenre1=Rock\n",
+        );
+        for i in 1..=8 {
+            catalog.push_str(&format!(
+                "[Song {i}]\nFilename=song{i}.vag\nTitle=Song{i}\nArtist=1\nGenre=1\nLocked=0\n"
+            ));
+        }
+        let first_songs: std::collections::BTreeSet<_> = [
+            0x9e37_79b9_usize,
+            0x7f4a_7c15,
+            0x0123_4567,
+            0xdead_beef,
+            0x2545_f491,
+            0x6c07_8965,
+        ]
+        .into_iter()
+        .map(|seed| {
+            MUSIC.with_borrow_mut(|slot| *slot = None);
+            music(catalog.as_bytes(), 40, seed).unwrap();
+            music(&[], 41, 0).unwrap()
+        })
+        .collect();
+        MUSIC.with_borrow_mut(|slot| *slot = None);
+        assert!(
+            first_songs.len() > 2,
+            "seeded sessions must not share one opening song"
+        );
     }
     #[test]
     fn batch_rejects_unbounded_or_fractional_step_counts_before_simulation() {

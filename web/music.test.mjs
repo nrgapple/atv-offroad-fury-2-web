@@ -10,8 +10,8 @@ function fixture({ songBytes = 65536 * 8, storage = null } = {}) {
   const files = [{ path: '/STARTAPP.RES', lba: 0, bytes: 16 }, ...songs.map((song, index) => ({ path: `/AUDIO/${song.filename}`, lba: (index + 1) * 1000, bytes: 2016 + songBytes }))];
   const calls = [], reads = [], sources = [], reports = [];
   let next = 0, decoding = null, readHook = null;
-  const codec = async (op, bytes) => {
-    calls.push({ op, bytes, decoding });
+  const codec = async (op, bytes, index) => {
+    calls.push({ op, bytes, index, decoding });
     if (op === 2) return encode([{ name: 'music.pb' }]);
     if (op === 3) return new Uint8Array([1]);
     if (op === 40) return encode({ songs });
@@ -54,6 +54,17 @@ test('all 21 catalog tracks are selectable; streaming stays bounded to 64 KiB de
   assert(f.calls.filter(call => call.op === 43).every(call => call.bytes.length <= 65536));
   assert.equal(f.reports.length, 0);
   assert(!f.stream.select(-1)); assert(!f.stream.select(21)); assert(!f.stream.select(NaN));
+});
+
+test('each session seeds the original shuffle with a fresh random 32-bit value', async () => {
+  const seeds = [];
+  for (let i = 0; i < 4; i++) {
+    const f = fixture(); await f.load();
+    const seed = f.calls.find(call => call.op === 40).index;
+    assert(Number.isInteger(seed) && seed > 0 && seed <= 0xffffffff);
+    seeds.push(seed);
+  }
+  assert(new Set(seeds).size > 1, 'sessions must not share one shuffle seed');
 });
 
 test('track ending queues the next song on the same clock and title follows audible track', async () => {
