@@ -157,7 +157,7 @@ impl CpuRacer {
     pub fn step(
         &mut self,
         course: &atv_core::race::Course,
-        player: &VehicleFrame,
+        player_speed: f32,
         peers: &[Peer],
         gap: f32,
         station: atv_core::race::Station,
@@ -181,7 +181,7 @@ impl CpuRacer {
         let (input, decisions) = self.driver.step(
             course,
             &before,
-            player,
+            player_speed,
             gap,
             DT,
             atv_core::race_ai::Context {

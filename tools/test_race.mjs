@@ -64,7 +64,7 @@ try {
  await page.waitForFunction(()=>!window.atvTerrainStatus.input?.touch_drive?.held);
  await page.waitForFunction(()=>window.atvTerrainStatus.frame.race.elapsed>=4,null,{timeout:30000});
  s=await state();assert(s.frame.race.elapsed>=4);assert(s.frame.race.opponents.every(o=>o.distance>40));assert.equal(s.glError,0);
- if(Number(process.env.ATV_RACE_MODEL||1)<27) {
+ {
  for(const cpu of s.frame.race.opponents){
   assert(cpu.physical,'CPU must use an independent physical quad');
   const p=cpu.physical;assert(p.orientation.every(Number.isFinite));assert(p.speed>1,'CPU accelerates through drivetrain');
@@ -74,8 +74,6 @@ try {
   assert(p.decisions.desired_speed>=0);assert(p.decisions.route_error<40,'CPU must follow track');
  }
  assert(s.frame.race.opponents.some(o=>o.physical.wheel_compression.some(c=>Math.abs(c)>0.01)),'CPU suspension responds to terrain');
- } else {
-  assert(s.frame.race.opponents.every(o=>!o.physical),'Motorcycle opponents retain their explicitly authored route preview');
  }
 
  for(const [name,size] of [['portrait',{width:390,height:844}],['landscape',{width:844,height:390}],['desktop',{width:1280,height:720}]]){

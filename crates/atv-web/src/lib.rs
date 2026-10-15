@@ -1154,86 +1154,25 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     .as_ref()
                     .ok_or("start simulation first")?
                     .frame();
-                let basis = atv_core::dynamics::basis(vehicle.orientation);
-                let velocity = vehicle.linear_velocity;
-                let local = atv_core::dynamics::inverse_transform(basis, velocity);
-                let terrain = sim.terrain.as_ref().ok_or("load original terrain first")?;
-                if let Some(wreck) = sim.wreck_animator.as_ref().and_then(|a| a.frame()) {
-                    let actors = [
-                        atv_core::camera::WreckActor {
-                            origin: vehicle.origin,
-                            velocity,
-                        },
-                        atv_core::camera::WreckActor {
-                            origin: wreck.origin,
-                            velocity: wreck.linear_velocity,
-                        },
-                    ];
-                    if sim.wreck_camera.is_none() {
-                        let mut camera = sim
-                            .camera
-                            .as_ref()
-                            .ok_or("camera missing")?
-                            .wreck_camera(actors)?;
-                        camera.set_static_obstacles(sim.obstacles.clone().unwrap_or_default());
-                        sim.wreck_camera = Some(camera);
-                    }
-                    let frame = sim
-                        .wreck_camera
-                        .as_mut()
-                        .ok_or("wreck camera missing")?
-                        .step_with_scene(
-                            actors,
-                            basis[2],
-                            json_number(&value, "dt")?,
-                            |point| {
-                                Ok(terrain
-                                    .contact(point[0], point[2])?
-                                    .map_or(point[1], |c| c.height))
-                            },
-                            sim.vehicle.as_ref().and_then(Vehicle::scene_collision),
-                        )?;
-                    let mut output = serde_json::to_value(frame).map_err(|e| e.to_string())?;
-                    output["mode"] = serde_json::json!("wreck");
-                    output["motion_blocked"] = serde_json::json!(
-                        sim.wreck_camera
-                            .as_ref()
-                            .is_some_and(|camera| camera.motion_blocked())
-                    );
-                    output["scene_query"] = serde_json::to_value(
-                        sim.wreck_camera
-                            .as_ref()
-                            .and_then(|camera| camera.scene_query()),
-                    )
-                    .map_err(|error| error.to_string())?;
-                    return serde_json::to_vec(&output).map_err(|e| e.to_string());
-                }
-                sim.wreck_camera = None;
-                let frame = sim
-                    .camera
-                    .as_mut()
-                    .ok_or("load original camera presets first")?
-                    .step(
-                        atv_core::camera::FollowInput {
-                            origin: vehicle.origin,
-                            forward: basis[2],
-                            velocity,
-                            speed: ((velocity[0] * velocity[0] + velocity[1] * velocity[1])
-                                + velocity[2] * velocity[2])
-                                .sqrt(),
-                            local_forward_speed: local[2],
-                            yaw_rate: vehicle.local_angular_velocity[1],
-                            wheel_contact: vehicle.grounded.iter().any(|v| *v),
-                            orbit: json_number(&value, "orbit")?,
-                        },
-                        json_number(&value, "dt")?,
-                        |point| {
-                            Ok(terrain
-                                .contact(point[0], point[2])?
-                                .map_or(point[1], |contact| contact.height))
-                        },
-                    )?;
-                return serde_json::to_vec(&frame).map_err(|e| e.to_string());
+                let actor = CameraActor {
+                    origin: vehicle.origin,
+                    orientation: vehicle.orientation,
+                    velocity: vehicle.linear_velocity,
+                    yaw_rate: vehicle.local_angular_velocity[1],
+                    grounded: vehicle.grounded.iter().any(|v| *v),
+                    rider: sim
+                        .wreck_animator
+                        .as_ref()
+                        .and_then(|a| a.frame())
+                        .map(|w| (w.origin, w.linear_velocity)),
+                };
+                let output = follow_camera(
+                    sim,
+                    actor,
+                    json_number(&value, "orbit")?,
+                    json_number(&value, "dt")?,
+                )?;
+                return serde_json::to_vec(&output).map_err(|e| e.to_string());
             }
             47 => {
                 let value: serde_json::Value =
@@ -1428,6 +1367,285 @@ struct SimulationBatchFrame {
 const CPU_OFF_TRACK_RESET: f32 = 5.;
 /// Seconds a riding CPU may stay below 3 ft/s before recovering.
 const CPU_STUCK_RESET: f32 = 4.;
+/// Player state the original follow/wreck cameras need, for either vehicle.
+pub(crate) struct CameraActor {
+    pub origin: [f32; 3],
+    pub orientation: [f32; 4],
+    pub velocity: [f32; 3],
+    pub yaw_rate: f32,
+    pub grounded: bool,
+    /// Detached rider origin and velocity during a wreck.
+    pub rider: Option<([f32; 3], [f32; 3])>,
+}
+pub(crate) fn follow_camera(
+    sim: &mut Simulation,
+    actor: CameraActor,
+    orbit: f32,
+    dt: f32,
+) -> Result<serde_json::Value> {
+    let basis = atv_core::dynamics::basis(actor.orientation);
+    let velocity = actor.velocity;
+    let local = atv_core::dynamics::inverse_transform(basis, velocity);
+    let terrain = sim.terrain.as_ref().ok_or("load original terrain first")?;
+    if let Some((rider_origin, rider_velocity)) = actor.rider {
+        let actors = [
+            atv_core::camera::WreckActor {
+                origin: actor.origin,
+                velocity,
+            },
+            atv_core::camera::WreckActor {
+                origin: rider_origin,
+                velocity: rider_velocity,
+            },
+        ];
+        if sim.wreck_camera.is_none() {
+            let mut camera = sim
+                .camera
+                .as_ref()
+                .ok_or("camera missing")?
+                .wreck_camera(actors)?;
+            camera.set_static_obstacles(sim.obstacles.clone().unwrap_or_default());
+            sim.wreck_camera = Some(camera);
+        }
+        let frame = sim
+            .wreck_camera
+            .as_mut()
+            .ok_or("wreck camera missing")?
+            .step_with_scene(
+                actors,
+                basis[2],
+                dt,
+                |point| {
+                    Ok(terrain
+                        .contact(point[0], point[2])?
+                        .map_or(point[1], |c| c.height))
+                },
+                sim.vehicle.as_ref().and_then(Vehicle::scene_collision),
+            )?;
+        let mut output = serde_json::to_value(frame).map_err(|e| e.to_string())?;
+        output["mode"] = serde_json::json!("wreck");
+        output["motion_blocked"] = serde_json::json!(
+            sim.wreck_camera
+                .as_ref()
+                .is_some_and(|camera| camera.motion_blocked())
+        );
+        output["scene_query"] = serde_json::to_value(
+            sim.wreck_camera
+                .as_ref()
+                .and_then(|camera| camera.scene_query()),
+        )
+        .map_err(|error| error.to_string())?;
+        return Ok(output);
+    }
+    sim.wreck_camera = None;
+    let frame = sim
+        .camera
+        .as_mut()
+        .ok_or("load original camera presets first")?
+        .step(
+            atv_core::camera::FollowInput {
+                origin: actor.origin,
+                forward: basis[2],
+                velocity,
+                speed: ((velocity[0] * velocity[0] + velocity[1] * velocity[1])
+                    + velocity[2] * velocity[2])
+                    .sqrt(),
+                local_forward_speed: local[2],
+                yaw_rate: actor.yaw_rate,
+                wheel_contact: actor.grounded,
+                orbit,
+            },
+            dt,
+            |point| {
+                Ok(terrain
+                    .contact(point[0], point[2])?
+                    .map_or(point[1], |contact| contact.height))
+            },
+        )?;
+    serde_json::to_value(frame).map_err(|e| e.to_string())
+}
+/// Rigid-body summary shared by ATV and motorcycle racers.
+#[derive(Clone, Copy)]
+struct RacePlayer {
+    origin: [f32; 3],
+    orientation: [f32; 4],
+    linear_velocity: [f32; 3],
+    speed_magnitude: f32,
+}
+impl From<&atv_core::vehicle::VehicleFrame> for RacePlayer {
+    fn from(f: &atv_core::vehicle::VehicleFrame) -> Self {
+        Self {
+            origin: f.origin,
+            orientation: f.orientation,
+            linear_velocity: f.linear_velocity,
+            speed_magnitude: f.speed_magnitude,
+        }
+    }
+}
+fn race_player(
+    vehicle: Option<&atv_core::vehicle::Vehicle>,
+    bike: Option<&atv_core::motorcycle::Motorcycle>,
+) -> Result<RacePlayer> {
+    if let Some(bike) = bike {
+        let f = bike.frame();
+        return Ok(RacePlayer {
+            origin: f.origin,
+            orientation: f.orientation,
+            linear_velocity: f.linear_velocity,
+            speed_magnitude: f.speed_magnitude,
+        });
+    }
+    Ok(RacePlayer::from(
+        &vehicle.ok_or("start simulation first")?.frame(),
+    ))
+}
+/// Race progress, real CPU racers and rider contact for either player vehicle.
+fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
+    if let Some(race) = &mut sim.race {
+        let player = race_player(sim.vehicle.as_ref(), sim.motorcycle.as_ref())?;
+        race.step(player.origin, 1. / 60.);
+        let [w, x, y, z] = player.orientation;
+        let yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
+        let terrain = sim.terrain.as_ref().ok_or("missing terrain")?;
+        if race.running() {
+            let nodes = &sim
+                .rider_mesh
+                .as_ref()
+                .ok_or("CPU rider mesh missing")?
+                .nodes;
+            let snapshots: Vec<_> = sim
+                .cpu_racers
+                .iter()
+                .map(|cpu| {
+                    let frame = cpu.vehicle.frame();
+                    atv_core::cpu_avoidance::Peer {
+                        origin: frame.origin,
+                        velocity: frame.linear_velocity,
+                    }
+                })
+                .collect();
+            let dynamic = sim
+                .vehicle
+                .as_ref()
+                .and_then(|v| v.scene_collision())
+                .map_or_else(Vec::new, |s| s.dynamic().to_vec());
+            let world = cpu::World {
+                terrain,
+                nodes,
+                materials: sim.materials.as_ref().ok_or("CPU materials missing")?,
+                water: sim.water.as_ref(),
+                dynamic: &dynamic,
+            };
+            // Race checkpoints stay on the racing line at each rider's
+            // last on-track station, facing the race direction.
+            let on_line = |(point, heading): ([f32; 3], f32)| -> Result<([f32; 3], f32)> {
+                let height = terrain
+                    .contact(point[0], point[2])?
+                    .map_or(point[1], |c| c.height);
+                Ok(([point[0], height + 2.5, point[2]], heading))
+            };
+            let checkpoint = Some(on_line(race.checkpoint(None))?);
+            if let Some(bike) = sim.motorcycle.as_mut() {
+                bike.set_race_checkpoint(checkpoint);
+            } else if let Some(vehicle) = sim.vehicle.as_mut() {
+                vehicle.set_race_checkpoint(checkpoint);
+            }
+            for (index, cpu) in sim.cpu_racers.iter_mut().enumerate() {
+                if race.opponents()[index].finished {
+                    continue;
+                }
+                cpu.vehicle
+                    .set_race_checkpoint(Some(on_line(race.checkpoint(Some(index)))?));
+                let peers: Vec<_> = std::iter::once(atv_core::cpu_avoidance::Peer {
+                    origin: player.origin,
+                    velocity: player.linear_velocity,
+                })
+                .chain(
+                    snapshots
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| *i != index)
+                        .map(|(_, p)| *p),
+                )
+                .collect();
+                let (frame, physical, repositioned) = cpu.step(
+                    &race.course,
+                    player.speed_magnitude,
+                    &peers,
+                    race.progress_difference(index),
+                    race.station(Some(index)),
+                    &world,
+                )?;
+                let [w, x, y, z] = frame.orientation;
+                let cpu_yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
+                if repositioned {
+                    race.reposition_cpu(index, frame.origin, cpu_yaw, Some(physical));
+                } else {
+                    race.observe_cpu(index, frame.origin, cpu_yaw, Some(physical.clone()));
+                    // Authored recovery: native RaceStatus times each racer
+                    // off the track polygon (+0xf0), but its CPU consumer is
+                    // unrecovered. Return a CPU that stays off the course or
+                    // pinned in place to its on-line checkpoint.
+                    if frame.wreck.phase == atv_core::wreck::Phase::Riding
+                        && (race.off_track_time(Some(index)) > CPU_OFF_TRACK_RESET
+                            || cpu.stuck_time() > CPU_STUCK_RESET)
+                    {
+                        cpu.respawn(nodes)?;
+                        let reset = cpu.vehicle.frame();
+                        let [w, x, y, z] = reset.orientation;
+                        let reset_yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
+                        race.reposition_cpu(index, reset.origin, reset_yaw, Some(physical));
+                    }
+                }
+            }
+            // Rider-to-rider contact with the authored equal-mass
+            // multiplayer proxy: every pair resolves from pre-contact
+            // poses and each racer applies its own half.
+            let mut bodies: Vec<(Option<usize>, RacePlayer)> = vec![(None, player)];
+            for (index, cpu) in sim.cpu_racers.iter().enumerate() {
+                if !race.opponents()[index].finished {
+                    let f = cpu.vehicle.frame();
+                    bodies.push((Some(index), RacePlayer::from(&f)));
+                }
+            }
+            for a in 0..bodies.len() {
+                for b in a + 1..bodies.len() {
+                    for (own, other, tie) in [(a, b, 1.), (b, a, -1.)] {
+                        let o = &bodies[other].1;
+                        let contact = match (bodies[own].0, sim.motorcycle.as_mut()) {
+                            (None, Some(bike)) => bike.peer_contact(
+                                o.origin,
+                                o.linear_velocity,
+                                o.orientation,
+                                1. / 60.,
+                                tie,
+                            ),
+                            (owner, _) => match owner {
+                                None => sim.vehicle.as_mut(),
+                                Some(i) => sim.cpu_racers.get_mut(i).map(|c| &mut c.vehicle),
+                            }
+                            .is_some_and(|vehicle| {
+                                vehicle.peer_contact(
+                                    o.origin,
+                                    o.linear_velocity,
+                                    o.orientation,
+                                    1. / 60.,
+                                    tie,
+                                )
+                            }),
+                        };
+                        if contact && tie > 0. {
+                            race.contacts += 1;
+                        }
+                    }
+                }
+            }
+        }
+        let race_frame = race.frame(yaw);
+        return Ok(Some(race_frame));
+    }
+    Ok(None)
+}
 fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
     let value: serde_json::Value = serde_json::from_slice(input).map_err(|e| e.to_string())?;
     let count = value
@@ -1479,149 +1697,7 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
             simulation(&step, 24)?
         };
         let frame = serialized_operation(bytes)?;
-        let race = SIMULATION.with_borrow_mut(|sim| -> Result<Option<atv_core::race::Frame>> {
-            if let Some(race) = &mut sim.race {
-                let player = sim
-                    .vehicle
-                    .as_ref()
-                    .ok_or("start simulation first")?
-                    .frame();
-                race.step(player.origin, 1. / 60.);
-                let [w, x, y, z] = player.orientation;
-                let yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
-                let terrain = sim.terrain.as_ref().ok_or("missing terrain")?;
-                if race.running() {
-                    let nodes = &sim
-                        .rider_mesh
-                        .as_ref()
-                        .ok_or("CPU rider mesh missing")?
-                        .nodes;
-                    let snapshots: Vec<_> = sim
-                        .cpu_racers
-                        .iter()
-                        .map(|cpu| {
-                            let frame = cpu.vehicle.frame();
-                            atv_core::cpu_avoidance::Peer {
-                                origin: frame.origin,
-                                velocity: frame.linear_velocity,
-                            }
-                        })
-                        .collect();
-                    let dynamic = sim
-                        .vehicle
-                        .as_ref()
-                        .and_then(|v| v.scene_collision())
-                        .map_or_else(Vec::new, |s| s.dynamic().to_vec());
-                    let world = cpu::World {
-                        terrain,
-                        nodes,
-                        materials: sim.materials.as_ref().ok_or("CPU materials missing")?,
-                        water: sim.water.as_ref(),
-                        dynamic: &dynamic,
-                    };
-                    // Race checkpoints stay on the racing line at each rider's
-                    // last on-track station, facing the race direction.
-                    let on_line = |(point, heading): ([f32; 3], f32)| -> Result<([f32; 3], f32)> {
-                        let height = terrain
-                            .contact(point[0], point[2])?
-                            .map_or(point[1], |c| c.height);
-                        Ok(([point[0], height + 2.5, point[2]], heading))
-                    };
-                    if let Some(vehicle) = sim.vehicle.as_mut() {
-                        vehicle.set_race_checkpoint(Some(on_line(race.checkpoint(None))?));
-                    }
-                    for (index, cpu) in sim.cpu_racers.iter_mut().enumerate() {
-                        if race.opponents()[index].finished {
-                            continue;
-                        }
-                        cpu.vehicle
-                            .set_race_checkpoint(Some(on_line(race.checkpoint(Some(index)))?));
-                        let peers: Vec<_> = std::iter::once(atv_core::cpu_avoidance::Peer {
-                            origin: player.origin,
-                            velocity: player.linear_velocity,
-                        })
-                        .chain(
-                            snapshots
-                                .iter()
-                                .enumerate()
-                                .filter(|(i, _)| *i != index)
-                                .map(|(_, p)| *p),
-                        )
-                        .collect();
-                        let (frame, physical, repositioned) = cpu.step(
-                            &race.course,
-                            &player,
-                            &peers,
-                            race.progress_difference(index),
-                            race.station(Some(index)),
-                            &world,
-                        )?;
-                        let [w, x, y, z] = frame.orientation;
-                        let cpu_yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
-                        if repositioned {
-                            race.reposition_cpu(index, frame.origin, cpu_yaw, Some(physical));
-                        } else {
-                            race.observe_cpu(index, frame.origin, cpu_yaw, Some(physical.clone()));
-                            // Authored recovery: native RaceStatus times each racer
-                            // off the track polygon (+0xf0), but its CPU consumer is
-                            // unrecovered. Return a CPU that stays off the course or
-                            // pinned in place to its on-line checkpoint.
-                            if frame.wreck.phase == atv_core::wreck::Phase::Riding
-                                && (race.off_track_time(Some(index)) > CPU_OFF_TRACK_RESET
-                                    || cpu.stuck_time() > CPU_STUCK_RESET)
-                            {
-                                cpu.respawn(nodes)?;
-                                let reset = cpu.vehicle.frame();
-                                let [w, x, y, z] = reset.orientation;
-                                let reset_yaw =
-                                    (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
-                                race.reposition_cpu(index, reset.origin, reset_yaw, Some(physical));
-                            }
-                        }
-                    }
-                    // Rider-to-rider contact with the authored equal-mass
-                    // multiplayer proxy: every pair resolves from pre-contact
-                    // poses and each racer applies its own half.
-                    let mut bodies: Vec<(Option<usize>, atv_core::vehicle::VehicleFrame)> = sim
-                        .vehicle
-                        .as_ref()
-                        .map(|v| (None, v.frame()))
-                        .into_iter()
-                        .collect();
-                    for (index, cpu) in sim.cpu_racers.iter().enumerate() {
-                        if !race.opponents()[index].finished {
-                            bodies.push((Some(index), cpu.vehicle.frame()));
-                        }
-                    }
-                    for a in 0..bodies.len() {
-                        for b in a + 1..bodies.len() {
-                            for (own, other, tie) in [(a, b, 1.), (b, a, -1.)] {
-                                let o = &bodies[other].1;
-                                let vehicle = match bodies[own].0 {
-                                    None => sim.vehicle.as_mut(),
-                                    Some(i) => sim.cpu_racers.get_mut(i).map(|c| &mut c.vehicle),
-                                };
-                                if let Some(vehicle) = vehicle
-                                    && vehicle.peer_contact(
-                                        o.origin,
-                                        o.linear_velocity,
-                                        o.orientation,
-                                        1. / 60.,
-                                        tie,
-                                    )
-                                    && tie > 0.
-                                {
-                                    race.contacts += 1;
-                                }
-                            }
-                        }
-                    }
-                }
-                let race_frame = race.frame(yaw);
-                return Ok(Some(race_frame));
-            }
-            Ok(None)
-        })?;
+        let race = SIMULATION.with_borrow_mut(step_race)?;
         let camera = serialized_operation(simulation(&camera, 46)?)?;
         let water = SIMULATION
             .with_borrow(|sim| sim.water.as_ref().map(atv_core::water_render::Frame::new));
@@ -1732,7 +1808,7 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
     if op == 101 {
         return engine_audio(input, op, index);
     }
-    if matches!(op, 23 | 46 | 47 | 50)
+    if matches!(op, 23 | 46 | 50)
         && SIMULATION.with_borrow(|sim| sim.motorcycle_model.is_some() || sim.motorcycle.is_some())
     {
         return motorcycles::dispatch(input, op);
@@ -1751,8 +1827,10 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         let roster = atv_core::race_roster::select(
             &text("groups")?,
             &text("riders")?,
-            u32::try_from(number("quad").ok_or("missing roster quad")?)
-                .map_err(|e| e.to_string())?,
+            atv_core::motorcycle::roster_quad(
+                u32::try_from(number("quad").ok_or("missing roster quad")?)
+                    .map_err(|e| e.to_string())?,
+            ),
             value
                 .get("female")
                 .and_then(serde_json::Value::as_bool)
@@ -1817,23 +1895,16 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             }
             let mut race =
                 atv_core::race::Race::new(course, integer("laps")?, names, integer("difficulty")?)?;
-            let racers = if sim.motorcycle.is_some() {
-                vec![]
-            } else {
-                race.opponents()
-                    .iter()
-                    .enumerate()
-                    .map(|(index, cpu)| {
-                        cpu::create_cpu_racer(
-                            sim,
-                            cpu.origin,
-                            cpu.yaw,
-                            index,
-                            integer("difficulty")?,
-                        )
-                    })
-                    .collect::<Result<Vec<_>>>()?
-            };
+            // A motorcycle player races the original CPU roster on its quads,
+            // as in MX vs. ATV mixed fields.
+            let racers = race
+                .opponents()
+                .iter()
+                .enumerate()
+                .map(|(index, cpu)| {
+                    cpu::create_cpu_racer(sim, cpu.origin, cpu.yaw, index, integer("difficulty")?)
+                })
+                .collect::<Result<Vec<_>>>()?;
             for (index, cpu) in racers.iter().enumerate() {
                 race.observe_cpu(
                     index,

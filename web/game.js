@@ -180,7 +180,7 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
     // Original roster (00210d20/0021f680): CPU quads from the course or player
     // ATV group, and AI riders with their own names, numbers and outfits.
     const groupsIndex = entries.findIndex(entry => memberNamed(entry,'atvgroups.pb'));
-    if (groupsIndex >= 0 && (frontend?.quadId ?? 1) <= 26) {
+    if (groupsIndex >= 0) {
       const champ = Number(/^\s*ChampQuadGroup\s*=\s*(-?\d+)/im.exec(mode ?? '')?.[1] ?? -1);
       cpuRoster = await command(105, { groups: decoder.decode(await codec(3,resource,groupsIndex)), riders: decoder.decode(await codec(3,resource,ai)), quad: frontend?.quadId ?? 1, female: (frontend?.riderId ?? 0) === 1, champ_group: champ, count: 4, seed: Math.floor(Math.random() * 2 ** 31) });
       cpuNames = cpuRoster.map(entry => entry.name);
@@ -232,19 +232,25 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
     if (index < 0) throw new Error(`Original rider file is missing: ${suffix}`);
     return codec(3, archive.bytes, index);
   }
-  let riderMesh, pose, riderTextures;
+  // Installs the ATV2 rider rig and motions (player, or race CPUs on quads).
+  async function loadAtvRider(selection) {
+    const riderArchive = await archiveAt(selection.rider), motions = await archiveAt('/ANIMSRDR.RES');
+    const mesh = await json(27, await member(riderArchive, '/' + selection.rider_mesh));
+    const riding = await json(51, await member(riderArchive, '/' + selection.rider_catalog));
+    for (let index = 0; index < riding.length; index++) {
+      if (token !== generation) throw new Error('Opening cancelled.');
+      await codec(52, await member(motions, '/' + riding[index].path.split('/').at(-1)), index);
+    }
+    return { mesh, pose: await codec(53, new Uint8Array()).then(bytes => JSON.parse(decoder.decode(bytes))) };
+  }
+  let riderMesh, pose, riderTextures, cpuRiderPose = null;
   if (bikeSource) {
     riderMesh = bikeSource.riderMesh; pose = bikeSource.riderPose;
     riderTextures = await baseTextures(riderMesh, quadArchive, quadEntries);
+    // MX vs. ATV fields mix classes: race CPUs keep their original quads and rider.
+    if (course && cpuRoster) cpuRiderPose = (await loadAtvRider(await json(89, new Uint8Array([frontend?.riderId ?? 0]), 1))).pose;
   } else {
-  const riderArchive = await archiveAt(model.rider), motions = await archiveAt('/ANIMSRDR.RES');
-  riderMesh = await json(27, await member(riderArchive, '/' + model.rider_mesh));
-  const riding = await json(51, await member(riderArchive, '/' + model.rider_catalog));
-  for (let index = 0; index < riding.length; index++) {
-    if (token !== generation) throw new Error('Opening cancelled.');
-    await codec(52, await member(motions, '/' + riding[index].path.split('/').at(-1)), index);
-  }
-  pose = await codec(53, new Uint8Array()).then(bytes => JSON.parse(decoder.decode(bytes)));
+  ({ mesh: riderMesh, pose } = await loadAtvRider(model));
   const riderMaterials = await archiveAt('/RIDER/RIDER_MT.RES');
   riderTextures = await baseTextures(riderMesh, riderMaterials.bytes, riderMaterials.entries);
   }
@@ -339,7 +345,7 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
     parts.forEach((p, i) => { view.setUint32(i * 4, p.length, true); bundle.set(p, at); at += p.length; });
     entry.bundle = bundle;
   }
-  return { weather, snow, motorcycle: model.motorcycle ? {archive:quadArchive,id:model.quad_id} : null, bytes, environment, course, cpuNames, cpuRoster, riderSpacing, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, ambientEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
+  return { weather, snow, cpuRiderPose, motorcycle: model.motorcycle ? {archive:quadArchive,id:model.quad_id} : null, bytes, environment, course, cpuNames, cpuRoster, riderSpacing, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, ambientEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
 }
 async function baseTextures(mesh, materialArchive, materialEntries, cache = new Map(), multiPass = false) {
   const findMaterial = name => materialEntries.findIndex(entry => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase());
@@ -1440,7 +1446,7 @@ async function startSimulation(source) {
   simStart = { origin, yaw: source.scene.yaw };
   if (source.motorcycle) await json(100,source.motorcycle.archive,source.motorcycle.id);
   acceptFrame(await command(23, simStart));
-  cpuQuadMatrices = vehicle.nodeMatrices.slice(); cpuRiderMatrices = new Float32Array(vehicle.rider.pose.world_matrices.flat());
+  cpuQuadMatrices = vehicle.nodeMatrices.slice(); cpuRiderMatrices = new Float32Array((source.cpuRiderPose ?? vehicle.rider.pose).world_matrices.flat());
   for (const [index, entry] of (source.course ? source.cpuRoster ?? [] : []).entries()) await json(106, entry.bundle, index);
   if (source.course) await command(96,{active:true,laps:raceSettings.laps,difficulty:raceSettings.difficulty,names:source.cpuNames.slice(0,raceSettings.cpu),...(source.riderSpacing?{spacing:source.riderSpacing}:{})});
   raceCourse = source.course;
@@ -1450,7 +1456,6 @@ async function startSimulation(source) {
   for (const cpu of raceCpuModels) cpu.outfit = await outfitTextures(cpu.entry.outfit, cpu.model.source?.riderMesh);
   diagnostics.cpuRoster = raceCpuModels.map(({ entry, outfit, model }) => ({ name: entry.name, ai: entry.ai, number: entry.number, quad: entry.quad, outfitTextures: outfit?.size ?? 0, model: Boolean(model?.source) }));
   diagnostics.cameraPresets = (await json(45, source.cameraPresets)).map(preset => preset.name);
-  if (source.motorcycle) diagnostics.cameraPresets=['MX Chase','MX Close','MX Wide'];
   orbit = 0; acceptCameraFrame(await command(46, { dt: 1 / 60, orbit }));
   if (source.train) {
     source.train.frame = await json(67, source.train.resource, source.train.modeIndex);
