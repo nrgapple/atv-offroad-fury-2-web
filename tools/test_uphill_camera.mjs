@@ -7,6 +7,7 @@ try {
  for (const viewport of [{width:390,height:844},{width:1280,height:720}]) {
   const page = await browser.newPage({viewport}), errors=[];
   page.on('pageerror',e=>errors.push(e.message));
+  await page.addInitScript(()=>localStorage.setItem('atv-chase-camera','assisted')); // Opt-in; Original is the default.
   await page.goto(`${process.env.ATV_TEST_URL || 'http://127.0.0.1:4349'}/play.html?drive=1&environment=env01`);
   await page.waitForFunction(()=>window.atvTerrainStatus?.simulationSteps>60,null,{timeout:120000});
   await page.evaluate(()=>{

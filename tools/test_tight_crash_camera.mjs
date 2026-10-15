@@ -15,6 +15,7 @@ try {
  await captureCrashIsolation(page);await captureCrashDraws(page);await captureSimulation(page,'crashFrames');
  await page.addInitScript(()=>{
   localStorage.setItem('atv-camera-shake','true'); // Obsolete preference must have no effect.
+  localStorage.setItem('atv-crash-mode','crazy'); // The tight shot belongs to the opt-in crash modes.
   window.cameraSamples=[];
   const sample=()=>{const s=window.atvTerrainStatus,c=s?.cameraPresentation?.crash;
     if(c)window.cameraSamples.push({c,camera:s.camera});requestAnimationFrame(sample);};requestAnimationFrame(sample);

@@ -91,6 +91,16 @@ test('orbit and pullback keep the rider framed and the camera above terrain', ()
   }
   assert.deepEqual(frame.position,[0,10,-15],'recovered frame is not mutated');
 });
+test('Chase camera Original clears the adaptation and presents the recovered landscape camera unmodified', () => {
+  const frame={position:[3,10,-15],target:[0,3,0],fov:85,preset:0};
+  const slope=new UphillSightline(); advance(slope,actor,(x,z)=>z); assert(slope.lift>.5);
+  slope.update(null,camera,1/60,(x,z)=>z); assert.equal(slope.lift,0); assert.equal(slope.pullback,0);
+  const view=chasePresentation(frame,actor,16/9,slope,(x,z)=>z);
+  const offset=frame.target.map((v,i)=>v-frame.position[i]);
+  assert.deepEqual(view.position,frame.position); assert.equal(view.yaw,Math.atan2(offset[0],offset[2]));
+  assert.equal(view.pitch,Math.atan2(offset[1],Math.hypot(offset[0],offset[2])));
+  assert.equal(view.presentation.focalLength,(4/3)/Math.tan(frame.fov*Math.PI/360));
+});
 
 const {RideEffectsSettings,ImpactEvents}=await import('./render-support.js');
 test('crash preferences persist, migrate and ignore obsolete shake preferences',()=>{
@@ -99,9 +109,20 @@ test('crash preferences persist, migrate and ignore obsolete shake preferences',
  const settings=new RideEffectsSettings(store);assert.equal(settings.mode,'original');
  settings.toggle();settings.toggle();assert.equal(new RideEffectsSettings(store).mode,'gorn');
  settings.toggleCamera();assert.equal(new RideEffectsSettings(store).camera,'original');
+ settings.toggleChase();assert.equal(new RideEffectsSettings(store).chase,'assisted');assert.equal(values.get('atv-chase-camera'),'assisted');
  assert.equal(settings.shake,undefined);assert.equal(settings.toggleShake,undefined);
  const blocked=new RideEffectsSettings({getItem(){throw Error();},setItem(){throw Error();}});
- blocked.toggle();assert.equal(blocked.mode,'gorn');
+ blocked.toggle();assert.equal(blocked.mode,'crazy');blocked.toggleChase();assert.equal(blocked.chaseAssist,true);
+});
+test('new players get original crashes and the recovered chase camera; saved choices persist',()=>{
+ const store=values=>({getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)});
+ const fresh=new RideEffectsSettings(store(new Map()));
+ assert.equal(fresh.mode,'original');assert.equal(fresh.enabled,false);assert.equal(fresh.chase,'original');assert.equal(fresh.chaseAssist,false);
+ assert.equal(new RideEffectsSettings(null).mode,'original');
+ for(const mode of ['crazy','gorn'])assert.equal(new RideEffectsSettings(store(new Map([['atv-crash-mode',mode]]))).mode,mode);
+ assert.equal(new RideEffectsSettings(store(new Map([['atv-funny-crashes','true']]))).mode,'crazy','explicit legacy On is kept');
+ assert.equal(new RideEffectsSettings(store(new Map([['atv-chase-camera','assisted']]))).chase,'assisted');
+ assert.equal(new RideEffectsSettings(store(new Map([['atv-chase-camera','bogus']]))).chase,'original');
 });
 test('impact audio retains contact gates without any camera transform',()=>{
  let clock=0;const events=new ImpactEvents(()=>clock);
@@ -118,7 +139,7 @@ test('impact audio retains contact gates without any camera transform',()=>{
 test('blocked browser storage getter permits session crash settings',()=>{
  const descriptor=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
  try {Object.defineProperty(globalThis,'localStorage',{configurable:true,get(){throw Error('denied');}});
- const s=new RideEffectsSettings();s.toggle();assert.equal(s.mode,'gorn');
+ const s=new RideEffectsSettings();s.toggle();assert.equal(s.mode,'crazy');
  } finally {if(descriptor)Object.defineProperty(globalThis,'localStorage',descriptor);else delete globalThis.localStorage;}
 });
 const {severedIndices,meshNodeBounds,poseBounds,crashPresentation}=await import('./render-support.js');

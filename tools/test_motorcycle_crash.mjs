@@ -12,7 +12,7 @@ try {
  page.on('pageerror',e=>errors.push(e.message));
  await captureCrashIsolation(page);await captureSimulation(page,'bikeFrames');
  await page.addInitScript(mode=>{
-  if(mode)localStorage.setItem('atv-crash-mode',mode);
+  localStorage.setItem('atv-crash-mode',mode||'crazy'); // Opt-in; new players default to Original.
   const post=Worker.prototype.postMessage;let held=false;
   Worker.prototype.postMessage=function(message,...args){
    if(message.op===50&&window.bikeDriving){

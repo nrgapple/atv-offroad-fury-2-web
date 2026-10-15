@@ -94,6 +94,9 @@ pub struct Request {
     pub crash_mode: String,
     #[serde(default)]
     pub original_camera: bool,
+    /// Authored chase-camera adaptation; off presents the recovered camera.
+    #[serde(default)]
+    pub chase_assist: bool,
     #[serde(default)]
     pub speed_rush: String,
     #[serde(default)]
@@ -1072,8 +1075,8 @@ pub fn layout(request: Request) -> Result<Frame> {
         "settings" | "extras" | "hud-settings" => {
             let crash_label = match request.crash_mode.as_str() {
                 "gorn" => "Crashes: Gorn (blood & limbs)",
-                "original" => "Crashes: Original",
-                _ => "Crashes: Crazy",
+                "crazy" => "Crashes: Crazy",
+                _ => "Crashes: Original",
             };
             let diagnostics = match request.diagnostics_mode.as_str() {
                 "performance" => "Stats: Performance (F3)",
@@ -1102,6 +1105,14 @@ pub fn layout(request: Request) -> Result<Frame> {
                             "Crash camera: Tight"
                         },
                         "crash-camera",
+                    ),
+                    (
+                        if request.chase_assist {
+                            "Chase camera: Assisted"
+                        } else {
+                            "Chase camera: Original"
+                        },
+                        "chase-camera",
                     ),
                     (diagnostics, "diagnostics"),
                 ],
@@ -1447,6 +1458,7 @@ mod tests {
             funny_crashes: false,
             crash_mode: String::new(),
             original_camera: false,
+            chase_assist: false,
             speed_rush: "normal".into(),
             minimap_enabled: true,
             minimap_size: 160.,
@@ -1700,6 +1712,35 @@ mod tests {
         let mut invalid = request("controls", 390., 844.);
         invalid.mobile_steering_sensitivity = f32::NAN;
         assert!(layout(invalid).is_err());
+    }
+    #[test]
+    fn extras_default_to_original_crashes_and_chase_camera() {
+        let labels = |r: Request| {
+            let menu = layout(r).unwrap();
+            assert_eq!(
+                menu.choices,
+                [
+                    "funnycrashes",
+                    "crash-camera",
+                    "chase-camera",
+                    "diagnostics",
+                    "back"
+                ]
+            );
+            menu.hits
+                .into_iter()
+                .map(|hit| hit.label)
+                .collect::<Vec<_>>()
+        };
+        let original = labels(request("extras", 390., 844.));
+        assert_eq!(original[0], "Crashes: Original");
+        assert_eq!(original[2], "Chase camera: Original");
+        let mut enhanced = request("extras", 390., 844.);
+        enhanced.crash_mode = "crazy".into();
+        enhanced.chase_assist = true;
+        let enhanced = labels(enhanced);
+        assert_eq!(enhanced[0], "Crashes: Crazy");
+        assert_eq!(enhanced[2], "Chase camera: Assisted");
     }
     #[test]
     fn minimap_settings_fit_and_validate_sizes() {

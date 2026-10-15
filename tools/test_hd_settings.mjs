@@ -25,14 +25,14 @@ try {
    await shot(`${name.toLowerCase()}-${size.width}`);await click('Back');await screen('settings');
   }
  }
- await click('Extras');await screen('extras');await click('Crashes: Crazy');await click('Crash camera: Tight');
- assert.equal(await page.evaluate(()=>localStorage.getItem('atv-crash-mode')),'gorn');assert.equal(await page.evaluate(()=>localStorage.getItem('atv-crash-camera')),'original');
+ await click('Extras');await screen('extras');await click('Crashes: Original');await click('Crashes: Crazy');await click('Crash camera: Tight');await click('Chase camera: Original');
+ assert.equal(await page.evaluate(()=>localStorage.getItem('atv-crash-mode')),'gorn');assert.equal(await page.evaluate(()=>localStorage.getItem('atv-crash-camera')),'original');assert.equal(await page.evaluate(()=>localStorage.getItem('atv-chase-camera')),'assisted');
  await click('Back');await click('Controls');await screen('controls');await click('One-handed mobile: On');
  await page.getByRole('slider',{name:'Mobile steering sensitivity'}).fill('115');
  await click('Back');await click('Display');await screen('hud-settings');await click('Minimap configuration');await screen('minimap-config');
  await click('Shape: Circular');await page.getByRole('slider',{name:'Minimap size',exact:true}).fill('192');
  await page.reload();await screen('title');await click('Press START');await click('Settings');await click('Extras');await screen('extras');
- await page.getByRole('button',{name:'Crashes: Gorn (blood & limbs)',exact:true}).waitFor();await page.getByRole('button',{name:'Crash camera: Original',exact:true}).waitFor();
+ await page.getByRole('button',{name:'Crashes: Gorn (blood & limbs)',exact:true}).waitFor();await page.getByRole('button',{name:'Crash camera: Original',exact:true}).waitFor();await page.getByRole('button',{name:'Chase camera: Assisted',exact:true}).waitFor();
  await click('Crash camera: Original');await click('Back');await click('Controls');await screen('controls');assert.equal(await page.getByRole('slider').inputValue(),'115');await click('One-handed mobile: Off');
  await click('Back');await click('Display');await click('Minimap configuration');await screen('minimap-config');await page.getByRole('button',{name:'Shape: Square',exact:true}).waitFor();assert.equal(await page.getByRole('slider',{name:'Minimap size',exact:true}).inputValue(),'192');
  await page.goto(`${base}/play.html?mode=single&map=env01`);await page.waitForFunction(()=>window.atvTerrainStatus?.simulation&&document.querySelector('#frontend').hidden,null,{timeout:90000});

@@ -19,8 +19,9 @@ bike in the browser before publishing a playable motorcycle option.
 Original resource bytes, source executables, module images and decompiler output
 remain in ignored `private/`. Only required validated runtime resources are
 eligible for the separate R2 package. Never add a raw executable/module to it.
-Optional funny crashes remain an authored presentation layer enabled explicitly;
-they must not change baseline motorcycle handling or recovery.
+Optional funny crashes remain an authored presentation layer; new players default
+to Original and choose Crazy/Gorn in Extras. They must not change baseline
+motorcycle handling or recovery.
 
 ## Observed resources
 

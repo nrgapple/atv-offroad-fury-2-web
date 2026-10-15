@@ -105,7 +105,10 @@ try {
     assert.equal(await page.evaluate(() => localStorage.getItem('atv-funny-crashes')), 'false');
     await page.getByRole('button', { name: 'Resume', exact: true }).click();
     await page.waitForFunction(() => !window.atvTerrainStatus.frame.funny_crash);
-  } else assert(frames.every(s => !s.frame.funny_crash), 'Original baseline must have no enhanced pose');
+  } else {
+    assert(frames.every(s => !s.frame.funny_crash), 'Original baseline must have no enhanced pose');
+    assert.equal(await page.evaluate(() => window.atvTerrainStatus.audio.crashBooms), 0, 'Original crashes play no authored boom');
+  }
   const riders = frames.map(s => s.frame.rider_wreck).filter(Boolean);
   assert(riders.every(f => f.scene_query?.cached), 'Every active wreck phase must borrow the quad scene cache');
   assert(riders.every(f => f.scene_query.cached_nodes <= 256 && f.scene_query.radius >= 0 && [

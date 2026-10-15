@@ -9,6 +9,7 @@ try {
   await page.goto(new URL('/play.html?drive=1&environment=env01', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173').href);
   await page.waitForFunction(() => window.atvTerrainStatus?.simulationSteps > 90, null, { timeout: 90000 });
   const portrait = await page.evaluate(() => window.atvTerrainStatus);
+  assert.equal(portrait.chaseCamera, 'original'); assert.equal(portrait.cameraPresentation.requestedHillOrbit, 0);
   assert.equal(portrait.cameraPresentation.portraitDistanceScale, 1.35);
   assert.equal(portrait.cameraPresentation.pitchLift, .12);
   const nativePitch = frame => Math.atan2(frame.target[1] - frame.position[1], Math.hypot(frame.target[0] - frame.position[0], frame.target[2] - frame.position[2]));
@@ -19,11 +20,12 @@ try {
   await page.waitForFunction(() => window.atvTerrainStatus.cameraPresentation.aspect > 1);
   const landscape = await page.evaluate(() => window.atvTerrainStatus);
   assert.equal(landscape.cameraPresentation.portraitDistanceScale, 1);
-  if (landscape.cameraPresentation.requestedHillOrbit === 0) assert.deepEqual(landscape.camera.slice(0, 3), landscape.followCamera.position);
+  assert.equal(landscape.cameraPresentation.requestedHillOrbit, 0, 'default Chase camera: Original adds no hill orbit');
+  assert.deepEqual(landscape.camera.slice(0, 3), landscape.followCamera.position);
   assert(Math.abs(landscape.camera[4] - nativePitch(landscape.followCamera) - landscape.cameraPresentation.uphillLift) < 1e-12, 'landscape pitch matches the presented hill rig within floating-point rounding');
   assert.equal(landscape.cameraPresentation.focalLength, (4 / 3) / Math.tan(landscape.followCamera.fov * Math.PI / 360));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForFunction(() => window.atvTerrainStatus.cameraPresentation.portraitDistanceScale === 1.35);
   assert.deepEqual(errors, []);
-  console.log('PASS: portrait camera widens and lifts sightline; rotation restores native landscape position/FOV with the independent uphill sightline.');
+  console.log('PASS: portrait camera widens and lifts sightline; rotation restores the unmodified recovered landscape camera by default.');
 } finally { await browser.close(); }

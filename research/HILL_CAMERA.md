@@ -94,3 +94,25 @@ The public portrait → landscape → portrait viewport-rotation check passed wi
 code changed for this test-only adjustment. Eight render-support tests passed
 again. Physical-phone behavior, original camera parity, isolated-prop
 anticipation and object-aware follow-camera clearance remain unverified or open.
+
+## Opt-in chase camera (2026-10-15)
+
+The uphill sightline is an authored adaptation, so it now sits behind the saved
+Settings → Extras `Chase camera: Original/Assisted` choice (`atv-chase-camera`),
+default Original. With Original the updater receives no actor, so orbit and
+pullback clear and a landscape view presents the recovered frame unmodified;
+a unit test checks exact position, yaw, pitch and focal length. Assisted keeps
+the previous behavior unchanged.
+
+Portrait framing ([camera](CAMERA.md#portrait-presentation)) stays independent of
+this choice. It is identity at aspect 1 or wider and only adapts viewports the
+PS2 never rendered. The projection keeps the recovered vertical framing, so
+without it a 390×844 view would show about a third of the 4:3 width.
+
+Host Chromium Metal evidence: with Assisted, `tools/test_uphill_camera.mjs`
+measured .2068/.2050 radians of orbit and 1.0954/1.0946 pullback in
+390×844/1280×720 and passed. A default 12-second W climb from the same Caribou
+start held orbit and extra pullback at exactly 0 over 979 frames.
+`tools/test_portrait_camera.mjs` now asserts zero default orbit and the exact
+recovered landscape position, and passes. Physical phones and public deployment
+remain unverified.

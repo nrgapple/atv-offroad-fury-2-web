@@ -63,7 +63,8 @@ export function outsideView(bounds, planes) {
   return false;
 }
 
-// Requested default chase adaptation. The recovered camera frame stays intact.
+// Optional chase adaptation (Chase camera: Assisted). The recovered camera frame
+// stays intact; a null actor (option Off) clears it to the unmodified rig.
 export class UphillSightline {
   constructor() { this.lift = 0; this.pullback = 0; this.airTime = 0; this.resetCount = null; }
   update(actor, camera, dt, height) {
@@ -140,18 +141,20 @@ export function chasePresentation(frame, actor, aspect, sightline, height) {
 }
 
 // Saved authored options, including migration of the former boolean crash switch.
+// Without a saved choice, crashes and the chase camera use the recovered original.
 export class RideEffectsSettings {
   constructor(storage, reducedMotion = false) {
     if (storage === undefined) {
       try { storage = globalThis.localStorage; } catch { storage = null; }
     }
-    this.storage = storage; this.mode = 'crazy'; this.camera = 'tight'; this.speed = reducedMotion ? 'off' : 'normal';
+    this.storage = storage; this.mode = 'original'; this.camera = 'tight'; this.chase = 'original'; this.speed = reducedMotion ? 'off' : 'normal';
     try {
       const speed = storage?.getItem('atv-speed-rush');
       if (['off','low','normal','high'].includes(speed)) this.speed = speed;
       this.camera = storage?.getItem('atv-crash-camera') === 'original' ? 'original' : 'tight';
+      this.chase = storage?.getItem('atv-chase-camera') === 'assisted' ? 'assisted' : 'original';
       const mode = storage?.getItem('atv-crash-mode');
-      this.mode = ['original','crazy','gorn'].includes(mode) ? mode : storage?.getItem('atv-funny-crashes') === 'false' ? 'original' : 'crazy';
+      this.mode = ['original','crazy','gorn'].includes(mode) ? mode : storage?.getItem('atv-funny-crashes') === 'true' ? 'crazy' : 'original';
     } catch { /* Session settings. */ }
   }
   toggleSpeed() {
@@ -163,6 +166,12 @@ export class RideEffectsSettings {
     this.camera = this.camera === 'tight' ? 'original' : 'tight';
     try { this.storage?.setItem('atv-crash-camera',this.camera); } catch { /* Session settings. */ }
     this.onCameraChange?.();
+  }
+  get chaseAssist() { return this.chase === 'assisted'; }
+  toggleChase() {
+    this.chase = this.chaseAssist ? 'original' : 'assisted';
+    try { this.storage?.setItem('atv-chase-camera',this.chase); } catch { /* Session settings. */ }
+    this.onChaseChange?.();
   }
   get enabled() { return this.mode !== 'original'; }
   toggle() {
