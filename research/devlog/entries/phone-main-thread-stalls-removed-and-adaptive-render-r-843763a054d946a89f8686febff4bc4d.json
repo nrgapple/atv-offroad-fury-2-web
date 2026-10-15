@@ -1,0 +1,12 @@
+{
+  "id": "phone-main-thread-stalls-removed-and-adaptive-render-r-843763a054d946a89f8686febff4bc4d",
+  "timestamp": "2026-10-15T13:11:39.223207+00:00",
+  "recorded_at": "2026-10-15T13:11:39.223207+00:00",
+  "kind": "build",
+  "title": "Phone main-thread stalls removed and adaptive render resolution (host checkpoint)",
+  "summary": "Profiling a phone-sized 390\u00d7844 DPR3 viewport with 4\u00d7 CPU throttling found the ambient/firework stream, weather and wheel-effect renderers spending about 14% of a Supercross race's main thread in synchronous WebGL state queries, plus forced layout from per-frame canvas/HUD size reads. These are gone; vegetation scans half as many placements with the same visible set; on high-DPR devices the 3D view now steps its pixel ratio between 1.5 and 1.0 when sustained frame times show the GPU cannot keep up. Also fixes a race grid behind the first node of a start straight being shown as OFF TRACK.",
+  "details": [
+    "8-second CPU profiles: gl.getParameter 1,134 ms \u2192 0 and forced clientWidth layout 136 ms \u2192 0 in an sx07 race; main-thread idle 5,058 \u2192 6,108 ms; drawEcosystem 608 \u2192 506 ms in Caribou Freestyle; vegetation placements scanned per frame 3,713/1,361/2,612 \u2192 1,909/626/1,199 (Caribou/env05/nat03) with unchanged visible counts. Implementation: a WebGL state shadow intercepts the setters for exactly the queried bindings; ResizeObserver sizes; exact cell culling (cells behind the camera or beyond fog+max radius, whose placements already failed the per-placement tests); RenderScale steps 0.25 below ~42 FPS for 1.5 s and back up after 6 s of smooth play, doubling the wait after a failed recovery (max 60 s); physics, input and HUD unaffected. Verification: unit tests for the shadow and RenderScale; make check (Rust, Clippy, 156 JS tests); ambient effects, weather, wheel dust and wet-particle pixel gates, fog, frontend and Caribou race browser checks pass; all 32 race courses pass tools/test_race_courses.mjs including a check that waiting on the grid is on the track."
+  ],
+  "limitation": "Host Chromium emulation, not physical-phone GPU, frame-rate or battery measurements; the adaptive resolution's benefit on GPU-bound phones still needs device confirmation. Race frames still carry about 37 KB of JSON (CPU bone matrices) and a five-quad race worker step costs about 2 ms on the host."
+}
