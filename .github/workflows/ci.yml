@@ -110,6 +110,19 @@ jobs:
           make web
           make relay
           python3 tools/package_release.py --commit "$GITHUB_SHA"
+      # Only the content-free group runs here: the built web/dist is served with an
+      # empty content directory. Game content never enters CI. See research/BROWSER_TESTS.md.
+      - name: Install pinned Playwright browsers
+        if: steps.prepare.outputs.build == 'true'
+        timeout-minutes: 8
+        run: |
+          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/playwright" playwright@1.58.2
+          "$RUNNER_TEMP/playwright/node_modules/.bin/playwright" install --with-deps --only-shell chromium webkit
+          echo "PLAYWRIGHT_MODULE=$RUNNER_TEMP/playwright/node_modules/playwright" >> "$GITHUB_ENV"
+      - name: Content-free browser smoke tests
+        if: steps.prepare.outputs.build == 'true'
+        timeout-minutes: 5
+        run: make browser-smoke
       - name: Upload asset-free release
         if: steps.plan.outputs.publish == 'true' && github.event_name != 'pull_request' || steps.prepare.outputs.build == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
