@@ -44,6 +44,37 @@ onset around 40 mph, protected central rider region, a bounded peripheral warp,
 and no HUD processing. Include Off/intensity choices, reduced-motion defaults,
 resize/context recovery and no processing cost when disabled or below threshold.
 
+### Speed rush v2
+
+The first pass protected the rider with a fixed screen ellipse and sampled through
+the ATV, so it smeared or blurred the vehicle on portrait phones and at other
+camera distances. Version 2 (`web/speed-rush.js`):
+
+- Writes stencil ref 1 while drawing the player's ATV/rider; the pass skips those
+  pixels exactly and gives zero weight to samples inside the vehicle's projected
+  screen bounds, so it never streaks onto nearby ground.
+- Radiates from the projected travel direction (linear velocity), smoothed and
+  clamped on screen, rather than a fixed screen point.
+- Jitters tap offsets with interleaved gradient noise (Jimenez, Call of Duty:
+  Advanced Warfare, 2014) so 5 taps on coarse-pointer devices and 8 elsewhere
+  look smooth; it drops 2 taps while frames run under 45 fps. The centre region
+  exits after one fetch.
+- Draws procedural wind lines in the same pass: polar cells around the travel
+  focus, moving outward in log-radius with a bright head and fading tail. The
+  research included CC0/Unlicense polar speed-line shaders
+  ([Godot Shaders](https://godotshaders.com/shader/speed-lines-shader-for-godot-4/),
+  [anime-speed-lines](https://github.com/mirzabeig/anime-speed-lines)); no code
+  is copied.
+- Widens FOV by up to 9% focal length; dynamic FOV is the most commonly
+  reported racing sense-of-speed cue ([SuperTuxKart forum](https://forum.supertuxkart.net/thread-200.html)).
+  Adds a light peripheral vignette.
+- Normalises radius by the shorter screen side so portrait phones streak at the
+  sides.
+
+Off (and reduced-motion default Off) restores the original camera and costs
+nothing. Physical-phone frame timing remains unverified; host checks used
+Chrome with a 390x844 @3x mobile emulation (DPR capped at 1.5 by the renderer).
+
 ## Menu and HUD checkpoint
 
 Main Menu and Pause now open the same Settings hub with four sections: Controls,

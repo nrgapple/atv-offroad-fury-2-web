@@ -21,9 +21,19 @@ try {
   const draw=()=>{gl.viewport(0,0,256,256);gl.enable(gl.SCISSOR_TEST);for(let y=0;y<256;y+=8)for(let x=0;x<256;x+=8){gl.scissor(x,y,8,8);gl.clearColor(((x+y)/8)%2,0.25,0.5,1);gl.clear(gl.COLOR_BUFFER_BIT);}gl.disable(gl.SCISSOR_TEST);};
   draw();const before=pixels();effect.draw({speed:120,intensity:'high',active:true,dt:2,width:256,height:256,focus:[.5,.5]});const after=pixels();
   let central=0,edge=0;for(let y=0;y<256;y++)for(let x=0;x<256;x++){const delta=Math.abs(before[(y*256+x)*4]-after[(y*256+x)*4]);if(Math.hypot(x-128,y-128)<24)central+=delta;else if(x<32||x>224||y<32||y>224)edge+=delta;}
-  draw();effect.draw({speed:120,intensity:'off',active:true,dt:1/60,width:256,height:256});const disabled=pixels();const equal=before.every((v,i)=>v===disabled[i]);const error=gl.getError();effect.dispose();return {central,edge,equal,error,disposed:effect.snapshot().textureBytes};
+  draw();effect.draw({speed:120,intensity:'off',active:true,dt:1/60,width:256,height:256});const disabled=pixels();const equal=before.every((v,i)=>v===disabled[i]);const error=gl.getError();effect.dispose();
+  // Stencil ref 1 (the player's ATV) stays pixel-identical inside a streaked edge.
+  const masked=document.createElement('canvas');masked.width=256;masked.height=256;
+  const mgl=masked.getContext('webgl2',{antialias:true,alpha:false,stencil:true,preserveDrawingBuffer:true});const guarded=new SpeedRush(mgl);
+  const read=()=>{const p=new Uint8Array(256*256*4);mgl.readPixels(0,0,256,256,mgl.RGBA,mgl.UNSIGNED_BYTE,p);return p;};
+  mgl.viewport(0,0,256,256);mgl.enable(mgl.SCISSOR_TEST);for(let y=0;y<256;y+=8)for(let x=0;x<256;x+=8){mgl.scissor(x,y,8,8);mgl.clearColor(((x+y)/8)%2,0.25,0.5,1);mgl.clear(mgl.COLOR_BUFFER_BIT);}
+  mgl.scissor(0,0,256,256);mgl.clearStencil(0);mgl.clear(mgl.STENCIL_BUFFER_BIT);mgl.scissor(0,0,48,48);mgl.clearStencil(1);mgl.clear(mgl.STENCIL_BUFFER_BIT);mgl.disable(mgl.SCISSOR_TEST);
+  const plain=read();guarded.draw({speed:120,intensity:'high',active:true,dt:2,width:256,height:256,focus:[.5,.5]});const streaked=read();
+  let protectedDelta=0,openDelta=0;for(let y=0;y<256;y++)for(let x=0;x<256;x++){const delta=Math.abs(plain[(y*256+x)*4]-streaked[(y*256+x)*4]);if(x<48&&y<48)protectedDelta+=delta;else if(x>208&&y>208)openDelta+=delta;}
+  const stencil=guarded.snapshot().stencil;guarded.dispose();
+  return {central,edge,equal,error,disposed:effect.snapshot().textureBytes,protectedDelta,openDelta,stencil};
  });
- assert.equal(pixelProof.central,0);assert(pixelProof.edge>10000);assert(pixelProof.equal);assert.equal(pixelProof.error,0);assert.equal(pixelProof.disposed,0);
+ assert.equal(pixelProof.central,0);assert(pixelProof.stencil);assert.equal(pixelProof.protectedDelta,0);assert(pixelProof.openDelta>10000);assert(pixelProof.edge>10000);assert(pixelProof.equal);assert.equal(pixelProof.error,0);assert.equal(pixelProof.disposed,0);
  // Orbiting at rest cannot start blur.
  await page.locator('#game').focus();await page.mouse.move(120,200);await page.mouse.down();await page.mouse.move(250,250,{steps:6});await page.mouse.up();assert.equal(await page.evaluate(()=>window.atvTerrainStatus.speedRush.draws),0);
  await page.locator('#game').focus();await page.keyboard.press('Escape');await page.getByRole('button',{name:'Reset ATV',exact:true}).click();
