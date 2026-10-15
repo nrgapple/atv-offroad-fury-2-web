@@ -8,6 +8,11 @@ are authored arcade code. Only the ground bank angle
 (`motorcycle_balance.rs`, GAME_REL `004dbd10`) cites a recovered routine, and it
 runs through an authored contact adapter. Native whole-step parity is unmeasured.
 
+"Paired steps" below are the enhancement-isolation check from
+`tools/crash_isolation.mjs` (enhanced vs Original-mode WASM workers, zero
+gameplay/camera differences). They show optional crash effects leave the port
+unchanged; they are not comparisons with MX vs. ATV Unleashed.
+
 Known non-original constraints (marked `Authored stabilizer:` in the code):
 
 - per-wheel spring force capped at `weight * 8`; fixed lateral-slip (`mass * 8`)
@@ -160,8 +165,8 @@ The optional authored crash layer recognizes the bike's `TireFront/TireRear`
 markers and transforms visible descendants below their nearest detached part.
 Nested rear wheel/swingarm pieces retain independent motion; reset and Off clear
 the presentation layer. A synthetic motorcycle hierarchy verifies this support.
-The existing ATV severe-wreck browser regression passes 855 exact paired WASM
-gameplay/camera steps with effects Off/On, seven visible pieces and intact recovery.
+The existing ATV severe-wreck browser regression passes the enhancement-isolation
+check (855 steps, enhanced vs Original mode, zero gameplay/camera differences), seven visible pieces and intact recovery.
 No live motorcycle crash or rider integration is established yet.
 
 The host gate passes 322 core, 25 net, 3 relay, 13 bridge and 69 JS tests, strict

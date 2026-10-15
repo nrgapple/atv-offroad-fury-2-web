@@ -1,6 +1,6 @@
 # Crash and recovery reconstruction
 
-The USA v2.00 crash path is being connected to the authored Rust runtime. This is
+The USA v2.00 crash path runs inside the authored Rust runtime. This is
 not an emulator or a replacement physics engine. Native export files and source
 assets remain private.
 
