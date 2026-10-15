@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseLaunch,buildRideUrl,copyRideUrl,ENVIRONMENTS,RACE_COURSES,courseResource} from './launch.js';
+import {parseLaunch,buildRideUrl,copyRideUrl,ENVIRONMENTS,RACE_COURSES,courseResource,loadingShotsResource} from './launch.js';
 const parse = search=>parseLaunch(search);
 test('ordinary and cache/marketing-only visits retain the title',()=>{
  for(const q of ['', '?v=123&utm_source=test','#room=ABCD1234']) assert.equal(parse(q).requested,false);
@@ -56,4 +56,14 @@ test('all venue resource paths match family naming and reject unsupported race r
   const r=courseResource(id,true);assert.equal(r.archive,path);assert.equal(r.sceneStem,id);assert.equal(r.modeStem,mode);
  }
  for(const id of ['free01','training','game01','unknown'])assert.throws(()=>courseResource(id,true));
+});
+test('every Freestyle venue except Training maps to its original loading shots', () => {
+  assert.equal(loadingShotsResource('env04'), '/UI/LOADICON/ENVB/E04_OB.LSI');
+  assert.equal(loadingShotsResource('env08'), '/UI/LOADICON/ENVC/E08_OB.LSI');
+  assert.equal(loadingShotsResource('free05'), '/UI/LOADICON/FREE/F05_OB.LSI');
+  assert.equal(loadingShotsResource('nat03'), '/UI/LOADICON/NAT/N03_NAT.LSI');
+  assert.equal(loadingShotsResource('sx16'), '/UI/LOADICON/SX/S16_NAT.LSI');
+  assert.equal(loadingShotsResource('game01'), '/UI/LOADICON/GAME/G01_SO.LSI');
+  assert.equal(loadingShotsResource('training'), null);
+  assert.equal(new Set(ENVIRONMENTS.map(loadingShotsResource).filter(Boolean)).size, ENVIRONMENTS.length - 1);
 });
