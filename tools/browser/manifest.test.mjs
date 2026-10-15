@@ -30,9 +30,19 @@ test('native comparisons are declared and load their data loudly', () => {
   for (const name of files) {
     const source = readFileSync(path.join(TOOLS, name), 'utf8');
     const used = [...new Set(source.match(/ATV_[A-Z0-9_]*_NATIVE\b/g) ?? [])].sort();
-    assert.deepEqual([...(TESTS[name]?.native ?? [])].sort(), used, `${name}: manifest native list must match the ATV_*_NATIVE variables it reads`);
+    const declared = Object.keys(TESTS[name]?.native ?? {});
+    assert.deepEqual(declared.filter(variable => variable.endsWith('_NATIVE')).sort(), used, `${name}: manifest native list must match the ATV_*_NATIVE variables it reads`);
+    for (const variable of declared) assert.ok(source.includes(variable), `${name}: does not read ${variable}`);
     for (const variable of used) {
       assert.match(source, new RegExp(`nativeData\\('${variable}'`), `${name}: read ${variable} with nativeData() so a missing report fails loudly`);
     }
+  }
+});
+
+test('browser tests stay readable (format with the command in research/BROWSER_TESTS.md)', () => {
+  for (const name of files) {
+    const long = readFileSync(path.join(TOOLS, name), 'utf8').split('\n')
+      .map((line, index) => [index + 1, line.length]).filter(([, length]) => length > 500);
+    assert.deepEqual(long, [], `${name}: lines over 500 characters [line, length]`);
   }
 });

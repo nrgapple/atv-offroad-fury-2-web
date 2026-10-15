@@ -9,7 +9,7 @@
 //   node tools/run_browser_tests.mjs --group relay --url http://127.0.0.1:8787
 //   node tools/run_browser_tests.mjs --list
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -48,8 +48,8 @@ if (args.list) {
     const names = Object.keys(TESTS).filter(name => inGroup(name, group));
     console.log(`\n${group} (${names.length})`);
     for (const name of names) {
-      const { note, reason, native } = TESTS[name];
-      console.log(`  ${name}${native ? ` [native: ${native.join(', ')}]` : ''}${reason ? ` -- ${reason}` : note ? ` -- ${note}` : ''}`);
+      const { note, reason, native, defaults } = TESTS[name];
+      console.log(`  ${name}${native ? ` [native: ${Object.keys(native).join(', ')}]` : ''}${defaults ? ` {defaults: ${defaults.join(', ')}}` : ''}${reason ? ` -- ${reason}` : note ? ` -- ${note}` : ''}`);
     }
   }
   process.exit(0);
@@ -118,11 +118,17 @@ function runTest({ name, group }, url) {
   const env = { ...process.env, ...entry.env, ATV_TEST_URL: url };
   if (group === 'content-free') env.ATV_CONTENT = 'none';
   if (group !== 'native') env.ATV_NATIVE = 'skip';
-  else delete env.ATV_NATIVE;
+  else {
+    delete env.ATV_NATIVE;
+    for (const [variable, file] of Object.entries(entry.native)) {
+      if (!env[variable] && existsSync(path.join(ROOT, file))) env[variable] = path.join(ROOT, file);
+    }
+  }
   const timeout = (entry.timeout ?? DEFAULT_TIMEOUT) * 1000;
   return new Promise(resolve => {
     const started = Date.now();
     const child = spawn(process.execPath, [path.join('tools', name)], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    running = child;
     let output = '', timedOut = false;
     const collect = stream => chunk => { output += chunk; if (args.verbose) stream.write(chunk); };
     child.stdout.on('data', collect(process.stdout));
@@ -139,6 +145,14 @@ function runTest({ name, group }, url) {
 
 const results = [];
 let exitCode = 0;
+let running = null;
+// Interrupted runs must not leave the test or its local servers behind.
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => {
+  running?.kill('SIGKILL');
+  for (const { child } of servers.values()) child.kill();
+  if (emptyContent) rmSync(emptyContent, { recursive: true, force: true });
+  process.exit(130);
+});
 try {
   for (const run of runs) {
     const entry = TESTS[run.name];
@@ -149,8 +163,10 @@ try {
       continue;
     }
     if (run.group === 'native') {
-      const missing = entry.native.filter(variable => !process.env[variable]);
-      if (missing.length) console.log(`NOTE ${run.name}: ${missing.join(', ')} unset; the test must fail loudly.`);
+      const missing = Object.entries(entry.native)
+        .filter(([variable, file]) => variable.endsWith('_NATIVE') && !process.env[variable] && !existsSync(path.join(ROOT, file)))
+        .map(([variable, file]) => `${variable} (default ${file})`);
+      if (missing.length) console.log(`NOTE ${run.name}: ${missing.join(', ')} unavailable; the test must fail loudly.`);
     }
     process.stdout.write(`RUN  ${run.name} [${run.group}] ... `);
     const result = await runTest(run, await site(mode));

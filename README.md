@@ -139,13 +139,14 @@ make serve   # Run the host-only development server on port 4173
 
 `make serve` is **host-only access**, not a remote handoff. `BIND` and `PORT` can be overridden; binding to `0.0.0.0` alone doesn't make the service remotely reachable. Use the public HTTPS build for remote play.
 
-Browser checks require Playwright, Chromium, and a running server:
+Browser checks require Playwright and Chromium. Build with `make web` first; the runner starts its own host-only server on a free port:
 
 ```sh
-PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-check
+PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-smoke   # content-free; also runs in CI
+PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-tests   # adds private-content tests
 ```
 
-`ATV_TEST_URL` selects the test server. Optional `ATV_TEST_ISO` selects a private local disc for source-content checks. `make audit`, `make code-map`, and `make native-analyze` support deeper recovery work; see [HANDOFF.md](HANDOFF.md) for the local toolchain and commands.
+See [research/BROWSER_TESTS.md](research/BROWSER_TESTS.md) for the groups, native comparisons, relay tests and running one test. Optional `ATV_TEST_ISO` selects a private local disc for source-content checks. `make audit`, `make code-map`, and `make native-analyze` support deeper recovery work; see [HANDOFF.md](HANDOFF.md) for the local toolchain and commands.
 
 | Folder | What's inside |
 | --- | --- |
