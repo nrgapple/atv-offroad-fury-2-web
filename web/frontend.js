@@ -1088,7 +1088,7 @@ class ModelView {
         uniform vec3 center; uniform vec2 extent; uniform float yaw; out vec2 tex; out float light;
         void main(){float c=cos(yaw),s=sin(yaw);mat3 r=mat3(c,0.,-s,0.,1.,0.,s,0.,c);vec3 v=r*((bones[int(node)]*vec4(p,1.)).xyz-center);
         float pitch=.25;float y=v.y*cos(pitch)-v.z*sin(pitch);float z=v.y*sin(pitch)+v.z*cos(pitch);
-        gl_Position=vec4(v.x/extent.x,y/extent.y,-z/40.,1.);tex=uv;vec3 nn=normalize(r*mat3(bones[int(node)])*n);light=.36+.7*max(dot(nn,normalize(vec3(-.4,.8,.6))),0.)+.16*max(dot(nn,normalize(vec3(.7,.1,-.7))),0.);}`);
+        gl_Position=vec4(-v.x/extent.x,y/extent.y,-z/40.,1.);tex=uv;vec3 nn=normalize(r*mat3(bones[int(node)])*n);light=.36+.7*max(dot(nn,normalize(vec3(.4,.8,.6))),0.)+.16*max(dot(nn,normalize(vec3(-.7,.1,-.7))),0.);}`);
       const fragment=shader(gl.FRAGMENT_SHADER, `#version 300 es
         precision highp float; in vec2 tex; in float light; uniform sampler2D image; uniform bool cutout; uniform vec2 paint; out vec4 color;
         ${paintGlsl}
@@ -1133,7 +1133,7 @@ class ModelView {
     const vertical=(this.dimensions[1]*Math.cos(.25)/2+horizontal*Math.sin(.25));
     const extent=Math.max(vertical,horizontal/aspect)*1.12;
     gl.uniformMatrix4fv(this.uniforms['bones[0]'],false,new Float32Array(this.pose.flat()));
-    gl.uniform3fv(this.uniforms.center,this.center);gl.uniform2f(this.uniforms.extent,extent*aspect,extent);gl.uniform1f(this.uniforms.yaw,this.yaw);gl.uniform1i(this.uniforms.image,0);gl.activeTexture(gl.TEXTURE0);
+    gl.uniform3fv(this.uniforms.center,this.center);gl.uniform2f(this.uniforms.extent,extent*aspect,extent);gl.uniform1f(this.uniforms.yaw,-this.yaw);gl.uniform1i(this.uniforms.image,0);gl.activeTexture(gl.TEXTURE0);
     for(const group of this.groups){gl.bindVertexArray(group.vao);gl.bindTexture(gl.TEXTURE_2D,group.texture);gl.uniform1i(this.uniforms.cutout,group.cutout);gl.uniform2fv(this.uniforms.paint,group.paintable?this.paint:PAINT_PALETTE[0]);gl.drawArrays(gl.TRIANGLES,0,group.count);}
     this.canvas.dataset.glError=String(gl.getError());
   }
