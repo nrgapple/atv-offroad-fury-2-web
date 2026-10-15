@@ -352,14 +352,11 @@
 .ms-stats .ms-meter-fill { position: absolute; inset: 0 auto 0 0; min-width: 0; transition: none; width: calc(var(--steps) * 10%); border-radius: 2px; background: repeating-linear-gradient(90deg, #dac01f 0 calc(100% / var(--steps, 1) - 2px), #0000 calc(100% / var(--steps, 1) - 2px) calc(100% / var(--steps, 1))); filter: drop-shadow(0 1px 0 #6a5600); }
 .ms-stats-speed { grid-area: speed; margin: 0; font: italic 800 clamp(14px, 1.5vw, 18px)/1 var(--atv-font-display); }
 .ms-stats-speed:empty { display: none; }
-/* Portrait: three short meters side by side, then the top speed and logo on
-   the right, so the block stays on the silver panel above its curved edge. */
+/* Portrait: the stats sit on a light card so they stay readable where the
+   block meets the silver panel's curved edge. */
 @media (orientation: portrait) {
-  .ms-stats { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "rows rows rows" ". speed logo"; gap: 4px 10px; padding-bottom: 6px; }
-  .ms-stats-rows { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-  .ms-stat { grid-template-columns: minmax(0, 1fr); gap: 3px; }
-  .ms-stat dt { text-align: left; }
-  .ms-stats-logo { max-height: 28px; max-width: 84px; }
+  .ms-stats { gap: 2px 10px; padding: 6px 10px; border-radius: 8px; background: #eeeeeee6; box-shadow: 0 2px 6px #0006; }
+  .ms-stats-logo { max-height: 44px; max-width: 96px; }
   .ms-stat dt, .ms-stats-speed { font-size: 13px; }
   .ms-stats .ms-meter { height: 8px; }
 }
