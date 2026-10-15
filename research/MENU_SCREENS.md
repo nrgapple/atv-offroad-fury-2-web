@@ -21,12 +21,12 @@ used; these are approximate composites, not captures.
 | Stage panel | Light-gray panel sweeping in from the right with a large curved edge and soft shadow | Vector silver panel (skewed rounded edge); on portrait it sits above the controls with a curved lower edge |
 | Title | Bold condensed italic over a white-to-transparent strip | Same, in a system condensed face |
 | Rows | Gold bullet; focused row grows into a glossy gold pill running off the left edge | Two-tone chrome-gold bar with a hard highlight split, small 5px corners and short hard shadows; no outline boxes or soft blurs |
-| Help | Dark translucent rounded box describing the focused row | Plain text with a gold rule |
+| Help | Dark translucent rounded box describing the focused row | Not shown: the original help strings describe modes the port does not have, and no invented descriptions are added |
 | Hints | Black pill with PS2 cross/triangle glyphs | Console glyphs dropped (players use touch, mouse, keyboard and modern pads); a plain Back control keeps that corner |
 | Select ATV & Rider | ATV and Rider are rows on one page beside a live 3D model | One page: ATV row with previous/next, Male/Female rider toggle, a list of every vehicle, and the ATV and rider models together on the stage |
 | Select Track | Left rows, 384×256 track photo on the right | Event-type tabs (Enduro, Stunt, Nationals, Supercross, Arena), a course list with photo thumbnails and a large preview with Ride |
 | Pause | Near-black translucent rounded panel, italic title strip, gold pill | Same, as one compact list over the frozen ride |
-| 3D previews | Lit original models on the gray panel | Stronger key/fill lighting with a mild saturation and contrast grade, so pale rider suits read on silver |
+| 3D previews | Lit original models on the gray panel | Drawn opaque. The UI rider textures (`RIDEINFO.RES` `atv2_*_ui`) keep a specular/reflection mask in alpha (about 50/255 on shirt, pants and sleeves); treating it as transparency let the silver panel show through and turned the black jersey gray. Rider materials never alpha-cut |
 
 Original stats sliders, gear rows, profile pages and the four-player colour
 columns are not reproduced; the port has no matching systems yet.
@@ -58,3 +58,31 @@ Host Chromium only: `tools/test_frontend.mjs` and `tools/test_menu_models.mjs`
 pass (six viewports including 390×844 and 320×568, all 26 quads, rider changes by
 touch, keyboard and controller, model/control separation, loading and driving).
 Physical phones, Safari/WebKit and exact original appearance are not verified.
+
+## Settings from the main menu
+
+Settings, Controls, Display, Audio and Extras opened from the main menu use the
+frontend backdrop and keep the original menu tune. The racing soundtrack plays
+there only after a song is chosen or music is toggled on the Audio page. From
+Pause they keep the ride panel and soundtrack.
+
+## Loading screens
+
+Both loaders follow the originals recovered privately from the disc (front-end
+loader `LDSCREEN.RES ld_ui` and the per-course `LdScreen` layout from
+`UI/LOADICON/*.LSI icon_info.ini`):
+
+- Boot: "Now Loading..." title strip, logo on red, and a gold bar in a black pill.
+  Runtime content is not yet available at boot, so the backdrop is a CSS red and
+  no tip is shown.
+- Course: "Now Loading..." strip, the course photograph as the action shot, a black
+  "Track:" bar and "Tips:" on the gray panel, and the gold bar in a black pill.
+  The bar advances with the real loading stages and never moves backwards.
+- Tips are the original STARTEVT `etips.txt` riding-technique tips, read from the
+  hosted archive at runtime; only their numbers are in source. Tips about profiles,
+  championships, editors, mini-games or PS2 buttons are omitted.
+
+The original per-course 640x448 loading backdrops (`LDSCREEN.RES`) and rotating
+256x180 action shots (`UI/LOADICON`) are not yet in the hosted content package.
+Records ("Fastest Lap", profile points) are not shown because the port has no
+saved records.

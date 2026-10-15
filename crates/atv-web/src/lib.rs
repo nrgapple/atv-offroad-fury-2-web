@@ -36,7 +36,7 @@ struct Simulation {
     motorcycle_model: Option<atv_core::motorcycle::Model>,
     motorcycle: Option<atv_core::motorcycle::Motorcycle>,
     motorcycle_effects: atv_core::motorcycle_effects::Effects,
-    touch_drive: atv_core::browser_input::TouchDrive,
+    browser_drive: atv_core::browser_input::BrowserDrive,
     input_generation: Option<u64>,
     resolved_input: Option<serde_json::Value>,
     rider_mesh: Option<mesh::Mesh>,
@@ -715,7 +715,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 }
                 sim.hud.reset();
                 sim.rider_mode = None;
-                sim.touch_drive.reset();
+                sim.browser_drive.reset();
                 sim.input_generation = None;
                 sim.resolved_input = None;
                 let frame = vehicle.frame();
@@ -766,22 +766,24 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 if dt <= 0. || dt > 0.1 {
                     return Err("invalid simulation time step".into());
                 }
-                let intent = raw
-                    .get("touch_drive")
-                    .filter(|v| !v.is_null())
-                    .map(|v| {
-                        serde_json::from_value(v.clone())
-                            .map_err(|e| format!("invalid touch intent: {e}"))
-                    })
-                    .transpose()?;
+                let intent = |key: &str| {
+                    raw.get(key)
+                        .filter(|v| !v.is_null())
+                        .map(|v| {
+                            serde_json::from_value(v.clone())
+                                .map_err(|e| format!("invalid {key} intent: {e}"))
+                        })
+                        .transpose()
+                };
                 let current = sim
                     .vehicle
                     .as_ref()
                     .ok_or("start simulation first")?
                     .frame();
-                let input = sim.touch_drive.resolve(
+                let input = sim.browser_drive.resolve(
                     input,
-                    intent,
+                    intent("keyboard_drive")?,
+                    intent("touch_drive")?,
                     current.grounded.iter().any(|c| *c),
                     current.speed,
                 )?;
@@ -837,7 +839,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     }
                     sim.wreck_camera = None;
                     sim.rider_mode = None;
-                    sim.touch_drive.reset();
+                    sim.browser_drive.reset();
                 }
                 //001e7600 publishes actor+290 before rider physics only while
                 //Riding/Attached; detached audio retains the last actor point.
@@ -859,7 +861,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 }
                 if frame.wreck.phase != atv_core::wreck::Phase::Riding {
                     // Never carry takeoff throttle/direction through recovery.
-                    sim.touch_drive.reset();
+                    sim.browser_drive.reset();
                     let nodes = &sim.rider_mesh.as_ref().ok_or("rider mesh missing")?.nodes;
                     let wreck = sim
                         .wreck_animator

@@ -9,7 +9,7 @@ test('native face drive/brake/reverse and independent trigger brake',()=>{
  assert.equal(b.read(empty,pad([2])).input.brake,1);
  let i=b.read(empty,pad([0,2])).input;assert(i.reverse);assert.equal(i.throttle,1);assert.equal(i.brake,0);assert.equal(i.reverse_chord_brake,1,'Rust must receive the chord brake to apply the native speed gate');
  i=b.read(empty,pad([0,2,6])).input;assert(i.reverse);assert.equal(i.brake,1);
- i=b.read(new Set(['KeyS']),pad([0,2])).input;assert.equal(i.brake,1);
+ i=b.read(new Set(['KeyS']),pad([0,2])).input;assert.equal(i.brake,0);assert.deepEqual(i.keyboard_drive,{generation:0,held:true,axis:-1},'Keyboard S goes to the Rust brake-then-reverse adapter');
  assert.equal(b.read(empty,pad([0],0,1)).input.lean,1,'Down+Cross retains wheelie lean');
  assert.equal(b.read(empty,pad([13])).input.lean,1);assert.equal(b.read(empty,pad([12])).input.lean,-1);
 });
@@ -44,12 +44,12 @@ test('every gameplay action can persist, reload, clear, and restore defaults',()
  const memory=new Map(),storage={getItem:k=>memory.get(k),setItem:(k,v)=>memory.set(k,v)};const b=new GameplayBindings(storage);
  for(const {id}of ACTIONS){b.setBinding('keyboard',id,{key:'KeyZ'});b.setBinding('controller',id,{button:10});}
  const restored=new GameplayBindings(storage);assert(restored.rows('keyboard').every(r=>r.labelBinding==='Z'));assert(restored.rows('controller').every(r=>r.labelBinding==='Button 10'));
- restored.setBinding('keyboard','throttle',[]);assert(!restored.usesKey('KeyW'));assert.equal(restored.read(new Set(['KeyW']),null).input.throttle,0);
- restored.reset('keyboard');assert(restored.usesKey('KeyW'));assert.equal(restored.read(new Set(['KeyW']),null).input.throttle,1);
+ restored.setBinding('keyboard','throttle',[]);assert(!restored.usesKey('KeyW'));assert.equal(restored.read(new Set(['KeyW']),null).input.keyboard_drive.held,false);
+ restored.reset('keyboard');assert(restored.usesKey('KeyW'));assert.equal(restored.read(new Set(['KeyW']),null).input.keyboard_drive.axis,1);
  for(const binding of [{button:-1},{axis:0,sign:0},{button:Infinity},{chord:[{button:1},{button:1}]}])assert.throws(()=>b.setBinding('controller','throttle',binding));
  assert.throws(()=>b.setBinding('keyboard','unknown',{key:'KeyZ'}));
- memory.set(STORAGE_KEY,'{"keyboard":{}}');assert.equal(new GameplayBindings(storage).read(new Set(['KeyW']),null).input.throttle,1);
- const denied=new GameplayBindings({getItem(){throw Error()},setItem(){throw Error()}});denied.setBinding('keyboard','throttle',{key:'KeyZ'});assert(denied.storageError);assert.equal(denied.read(new Set(['KeyZ']),null).input.throttle,1);
+ memory.set(STORAGE_KEY,'{"keyboard":{}}');assert.equal(new GameplayBindings(storage).read(new Set(['KeyW']),null).input.keyboard_drive.axis,1);
+ const denied=new GameplayBindings({getItem(){throw Error()},setItem(){throw Error()}});denied.setBinding('keyboard','throttle',{key:'KeyZ'});assert(denied.storageError);assert.equal(denied.read(new Set(['KeyZ']),null).input.keyboard_drive.axis,1);
 });
 test('camera pause edges and disconnected controller are neutral',()=>{
  const b=new GameplayBindings(null);assert(b.read(new Set(['Escape','KeyC']),null).actions.pause);assert(!b.read(new Set(['Escape','KeyC']),null).actions.camera);
@@ -89,4 +89,42 @@ test('fresh keyboard press immediately after resume does not require a neutral p
  b.cancel();b.observeKeys(new Set(['KeyC']));assert(!b.read(new Set(['KeyC']),null).actions.camera,'Repeat is not a new event edge');
  b.cancel();b.observeKeys(new Set(['KeyC']));b.observeKeys(new Set(['KeyC','KeyW']),'KeyW');assert(!b.read(new Set(['KeyC','KeyW']),null).actions.camera,'Unrelated key does not revive a cancelled action');
  b.cancel();b.observeKeys(new Set(['Space']),'Space');assert.equal(b.read(new Set(['Space']),null).input.preload_axis,1);
+});
+test('keyboard gas and brake/reverse are one drive axis; brake wins and arrows mirror WASD',()=>{
+ const b=new GameplayBindings(null),drive=keys=>b.read(new Set(keys),null).input;
+ for(const [keys,held,axis] of [[[],false,0],[['KeyW'],true,1],[['ArrowUp'],true,1],[['KeyS'],true,-1],[['ArrowDown'],true,-1],[['KeyW','KeyS'],true,-1]]){
+  const i=drive(keys);assert.deepEqual(i.keyboard_drive,{generation:b.generation,held,axis});assert.equal(i.throttle,0);assert.equal(i.brake,0);assert.equal(i.reverse,false);
+ }
+ assert.equal(drive(['ArrowLeft']).steer,-1);assert.equal(drive(['ArrowUp']).lean,0,'Arrow Up drives instead of leaning');
+ assert.equal(drive(['ShiftLeft']).lean,1);assert.equal(drive(['KeyQ']).lean,-1);
+ b.setBinding('keyboard','reverse',{key:'KeyB'});assert.equal(drive(['KeyB']).keyboard_drive.axis,-1,'An extra reverse key behaves like brake/reverse');
+ const c=new GameplayBindings(null);c.cancel();assert.equal(c.read(empty,null).input.keyboard_drive.generation,c.generation);
+});
+test('keyboard tricks: hold a trick key, then the freshest direction picks the trick',()=>{
+ let now=1000;const b=new GameplayBindings(null);b.clock=()=>now;
+ const press=(keys,code)=>{b.observeKeys(new Set(keys),code);return new Set(keys);};
+ // Gas held from before the jump does not force Up while a direction is chosen.
+ press(['KeyW'],'KeyW');now+=500;let keys=press(['KeyW','KeyJ'],'KeyJ');
+ let i=b.read(keys,null).input;assert.equal(i.stunt_modifiers,1);assert.deepEqual([i.stunt_x,i.stunt_y],[0,0]);
+ now+=60;keys=press(['KeyW','KeyJ','KeyA'],'KeyA');i=b.read(keys,null).input;assert.deepEqual([i.stunt_x,i.stunt_y],[-1,0]);assert.equal(i.keyboard_drive.axis,1,'Gas stays on during the trick');
+ // With no fresh direction the held gas key becomes Up after the grace window.
+ now+=1000;keys=press(['KeyW'],null);b.read(keys,null);keys=press(['KeyW','KeyK'],'KeyK');
+ assert.deepEqual([b.read(keys,null).input.stunt_x,b.read(keys,null).input.stunt_y],[0,0]);
+ now+=200;i=b.read(keys,null).input;assert.equal(i.stunt_modifiers,2);assert.deepEqual([i.stunt_x,i.stunt_y],[0,-1]);
+ // Brake/reverse is Down, steering is Left/Right, combos keep their native mask.
+ now+=1000;keys=press(['KeyJ','KeyL'],'KeyJ');keys=press(['KeyJ','KeyL','KeyS'],'KeyS');i=b.read(keys,null).input;assert.equal(i.stunt_modifiers,5);assert.deepEqual([i.stunt_x,i.stunt_y],[0,1]);
+ keys=press(['KeyJ','KeyL','KeyS','KeyD'],'KeyD');i=b.read(keys,null).input;assert.deepEqual([i.stunt_x,i.stunt_y],[1,0]);
+ // Without a trick key the stunt axes still follow steer/lean (controller stick).
+ i=b.read(empty,pad([1],0,-1)).input;assert.equal(i.stunt_modifiers,1);assert.deepEqual([i.stunt_x,i.stunt_y],[0,-1]);
+});
+test('saved v1 keyboard profiles adopt new defaults but keep customized rows',()=>{
+ const v1={keyboard:{throttle:[{key:'KeyW'}],brake:[{key:'KeyS'}],steerLeft:[{key:'KeyA'},{key:'ArrowLeft'}],steerRight:[{key:'KeyD'},{key:'ArrowRight'}],leanForward:[{key:'KeyQ'},{key:'ArrowUp'}],leanBack:[{key:'KeyE'},{key:'ArrowDown'}],reverse:[{key:'KeyR'}],stuntCircle:[{key:'KeyJ'}],stuntTriangle:[{key:'KeyK'}],stuntL1:[{key:'KeyL'}],clutch:[{key:'KeyV'}],preloadHold:[{key:'KeyP'}],camera:[{key:'KeyC'}],cameraLeft:[],cameraRight:[],reset:[{key:'Backspace'}],pause:[{key:'Escape'}]},controller:{throttle:[{button:5}]}};
+ const memory=new Map([[STORAGE_KEY,JSON.stringify(v1)]]),storage={getItem:k=>memory.get(k),setItem:(k,v)=>memory.set(k,v)};
+ const b=new GameplayBindings(storage),row=id=>b.rows('keyboard').find(r=>r.id===id).labelBinding;
+ assert.equal(row('throttle'),'W / ArrowUp');assert.equal(row('reverse'),'Unbound');assert.equal(row('reset'),'R / Backspace');
+ assert.equal(row('preloadHold'),'P','Customized row is kept');assert.equal(row('pause'),'Escape','New default drops a key a custom row already uses');
+ assert.equal(b.rows('controller').find(r=>r.id==='throttle').labelBinding,'Button 5');
+ assert.equal(JSON.parse(memory.get(STORAGE_KEY)).version,2);
+ b.setBinding('keyboard','leanForward',{key:'ArrowUp'});assert.equal(new GameplayBindings(storage).rows('keyboard').find(r=>r.id==='leanForward').labelBinding,'ArrowUp','v2 profiles are not migrated again');
+ assert.equal(b.rows('keyboard').find(r=>r.id==='brake').label,'Brake / reverse');assert.equal(b.rows('controller').find(r=>r.id==='brake').label,'Brake');
 });

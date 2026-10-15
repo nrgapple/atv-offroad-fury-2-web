@@ -147,7 +147,7 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
         sim.motorcycle_effects = atv_core::motorcycle_effects::Effects::default();
         sim.vehicle = None;
         sim.hud.reset();
-        sim.touch_drive.reset();
+        sim.browser_drive.reset();
         sim.input_generation = None;
         return serde_json::to_vec(&frame(sim, &serde_json::json!({}))?).map_err(|e| e.to_string());
     }
@@ -196,21 +196,23 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
             .get("input_generation")
             .and_then(serde_json::Value::as_u64);
         if generation != sim.input_generation {
-            sim.touch_drive.reset();
+            sim.browser_drive.reset();
             sim.input_generation = generation;
             if let Some(bike) = &mut sim.motorcycle {
                 bike.cancel_controls();
             }
         }
-        let intent = raw
-            .get("touch_drive")
-            .filter(|v| !v.is_null())
-            .map(|v| serde_json::from_value(v.clone()).map_err(|e| e.to_string()))
-            .transpose()?;
+        let intent = |key: &str| {
+            raw.get(key)
+                .filter(|v| !v.is_null())
+                .map(|v| serde_json::from_value(v.clone()).map_err(|e| e.to_string()))
+                .transpose()
+        };
         let bike = sim.motorcycle.as_mut().ok_or("start motorcycle first")?;
-        driving = sim.touch_drive.resolve(
+        driving = sim.browser_drive.resolve(
             driving,
-            intent,
+            intent("keyboard_drive")?,
+            intent("touch_drive")?,
             bike.frame().grounded.iter().any(|x| *x),
             bike.frame().speed,
         )?;

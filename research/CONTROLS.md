@@ -6,20 +6,22 @@ The baseline is the USA manual's printed pages 7–8, checked visually against t
 
 | Action | Original default | Browser controller default | Keyboard default |
 | --- | --- | --- | --- |
-| Accelerate | Cross | Bottom face / right trigger (0 / 7) | W |
-| Brake | Square | Left face / left trigger (2 / 6) | S |
-| Reverse | Cross + Square | Bottom + left face chord (0 + 2) | R |
+| Accelerate | Cross | Bottom face / right trigger (0 / 7) | W or Up arrow |
+| Brake | Square | Left face / left trigger (2 / 6) | S or Down arrow; brakes while rolling forward |
+| Reverse | Cross + Square | Bottom + left face chord (0 + 2) | Keep holding S / Down once stopped; optional extra key unbound |
 | Steer | Left stick left/right | Left stick horizontal or D-pad | A/D or left/right arrows |
-| Lean | Left stick forward/back | Left stick vertical or D-pad | Q/E or up/down arrows |
+| Lean | Left stick forward/back | Left stick vertical or D-pad | Q forward; E or Left Shift back |
 | Preload | Quick down → up stick motion while jumping | Same native lean motion; separate hold/release initially unbound | Native lean motion, or Space hold/release |
 | Wheelie | Down + Cross | Lean back + accelerate | Lean back + accelerate |
-| Stunt modifiers | Circle, Triangle, L1 | Right face, top face, left shoulder (1, 3, 4) | J, K, L |
-| Reset | L1 + R1, Practice only | Left + right shoulder (4 + 5) | Backspace |
-| Pause | Start | Start (9) | Escape |
+| Stunt modifiers | Circle, Triangle, L1 | Right face, top face, left shoulder (1, 3, 4) | J, K, L; then tap a direction (WASD, arrows, Q/E) |
+| Reset | L1 + R1, Practice only | Left + right shoulder (4 + 5) | R or Backspace |
+| Pause | Start | Start (9) | Escape or P |
 | Change camera | Not established by these manual pages | Right stick click (11), port adaptation | C |
-| Camera orbit | Not established by these manual pages | Right stick horizontal, port adaptation | Unbound |
+| Camera orbit | Not established by these manual pages | Right stick horizontal, port adaptation | Z / X |
 
-Controller numbers are the browser standard gamepad layout, not native PS2 device codes. Trigger alternatives, reset in the current Freestyle reconstruction, camera shortcuts and keyboard bindings are port conveniences. Bluetooth pairing and physical iOS/controller hardware are not validated by synthetic browser tests.
+Controller numbers are the browser standard gamepad layout, not native PS2 device codes.
+
+**Keyboard drive adaptation.** Keyboard gas and brake form one authored drive axis resolved in Rust at each fixed step (`browser_input::BrowserDrive`, sharing the touch drive rules): S brakes while rolling forward, selects reverse below 1 ft/s and keeps reverse gear while coasting; W brakes a backward roll before driving forward. Airborne input cannot change gear. S wins when both are held. Controllers keep the native Cross + Square reverse chord. Keyboard tricks use the most recently pressed held direction while a trick key is held; gas/brake count as Up/Down there. A direction already held before the trick key waits 150 ms for a fresh direction, so holding W does not force every trick Up. Saved version-1 keyboard rows that still equal the old defaults adopt the new ones; customized rows are kept. A controls card (`web/keyboard-help.js`) opens on the first keyboard ride, closes after 15 s and toggles with H or the Keys toolbar button. While riding, a click that leaves focus on the page or toolbar no longer drops driving keys. Trigger alternatives, reset in the current Freestyle reconstruction, camera shortcuts and keyboard bindings are port conveniences. Bluetooth pairing and physical iOS/controller hardware are not validated by synthetic browser tests.
 
 Reverse consumes the brake binding used in its active chord, matching Cross + Square without simultaneously applying Square braking. An independent brake alternative, such as the left trigger or keyboard S, still applies. The four driving axes preserve analog amounts and signed-axis remapping. Browser right-positive steering and stunt X preserve the native sign: +X is screen-right in the corrected source camera convention.
 

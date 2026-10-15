@@ -8,9 +8,13 @@ const unquote = value => (value ?? '').replace(/^"/, '').replace(/"$/, '');
 const fields = section => Object.fromEntries([...section.fields].reverse().map(f => [f.key.toLowerCase(), f.value]));
 const sections = doc => new Map(doc.sections.map(s => [s.name.toLowerCase(), fields(s)]));
 const overlayPages = new Set(['settings','extras','pause','players','hud-settings','minimap-config','controls','bindings','music']);
+const settingsPages = new Set(['settings','extras','hud-settings','minimap-config','controls','bindings','music']);
 const fontName = 'tradegothic_boldcondensed_22s';
 const selectionKey = 'atv-player-selection';
 const trainingPreview = 'training-map-preview';
+// Original STARTEVT etips.txt entries about riding technique. Tips about
+// profiles, championships, editors, mini-games or PS2 buttons are omitted.
+const ridingTips = [5,9,10,11,14,16,17,18,19,23,24,25,26,27];
 const normalizedSelection = value => ({
   quadId: Number.isInteger(value?.quadId) && value.quadId >= 1 && value.quadId <= 46 ? value.quadId : 1,
   riderId: value?.riderId === 1 ? 1 : 0,
@@ -115,7 +119,7 @@ export class Frontend {
         }
         if (!held.size) this.padBlocked = false;
         if (!this.root.hidden && !this.padBlocked) for (const action of held) if (!this.lastPad.has(action)) {
-          if (action === 'pause' && ['settings','extras','pause','players','hud-settings','minimap-config','controls','bindings','music','multiplayer','create-lobby','join-lobby','lobby','garage'].includes(this.page) && !this.busy && this.activeSetup) this.resume();
+          if (action === 'pause' && ['settings','extras','pause','players','hud-settings','minimap-config','controls','bindings','music','multiplayer','create-lobby','join-lobby','lobby','garage'].includes(this.page) && !this.busy && this.activeSetup && !this.menuSettings()) this.resume();
           else void this.action(action === 'pause' ? 'accept' : action);
         }
         this.lastPad = held;
@@ -299,9 +303,13 @@ export class Frontend {
     return buildRideUrl(location.origin,{...setup,playerName:this.playerName},{includePlayer:!room});
   }
   fail(error) { this.setLoading(false); this.notice.textContent = error.message; this.busy = false; this.root.dataset.error = 'true'; }
+  // Settings opened from the main menu belong to the frontend, not the ride.
+  menuSettings(page = this.page) { return settingsPages.has(page) && this.settingsReturn === 'main'; }
   syncPreview() {
-    const rideMenu = this.isPausePanel();
-    void this.audio?.()?.setMusicPreview((rideMenu || ['title','main','single','tracks','garage','multiplayer','create-lobby','join-lobby','lobby','race','loading','music'].includes(this.page)) && !this.root.hidden && !document.hidden && document.hasFocus(), !rideMenu).catch(error => this.fail(error));
+    const rideMenu = this.isPausePanel() && !this.menuSettings();
+    // The racing soundtrack plays in ride menus, or once a song is chosen on Audio.
+    const soundtrack = rideMenu || (this.page === 'music' && this.songPreview);
+    void this.audio?.()?.setMusicPreview((this.isPausePanel() || ['title','main','single','tracks','garage','multiplayer','create-lobby','join-lobby','lobby','race','loading','music'].includes(this.page)) && !this.root.hidden && !document.hidden && document.hasFocus(), !soundtrack).catch(error => this.fail(error));
   }
   beginCapture(id) {
     const row = gameplayBindings.rows(this.bindingDevice).find(row => row.id === id);
@@ -340,7 +348,8 @@ export class Frontend {
     delete this.root.dataset.error;
     // Arm soundtrack streaming before silencing gameplay voices, avoiding a
     // suspend/resume interruption on entry to the pause screen.
-    if (overlayPages.has(page)) void this.audio?.()?.setMusicPreview(!document.hidden && document.hasFocus(), false);
+    if (overlayPages.has(page) && !this.menuSettings(page)) void this.audio?.()?.setMusicPreview(!document.hidden && document.hasFocus(), false);
+    if (page !== 'music') this.songPreview = false;
     this.busy = true; this.root.hidden = false; this.active(true); this.notice.textContent = ''; this.buttons.replaceChildren();
     try {
       if (page === 'tracks' || page === 'loading' || page === 'race' || page === 'lobby') {
@@ -433,8 +442,8 @@ export class Frontend {
         if (!music) this.bindingRow = this.bindingPage * 4;
       } else if (action === 'bindclear') { const row = gameplayBindings.rows(this.bindingDevice)[this.bindingRow]; if (row) gameplayBindings.setBinding(this.bindingDevice,row.id,[]); }
       else if (action === 'bindreset') gameplayBindings.reset(this.bindingDevice);
-      else if (action.startsWith('song:')) { const music = this.audio?.()?.music; music?.setEnabled(true); music?.select(Number(action.slice(5))); this.syncPreview(); }
-      else if (action === 'musictoggle') { const music = this.audio?.()?.music; if (music) music.setEnabled(!music.snapshot().enabled); this.syncPreview(); }
+      else if (action.startsWith('song:')) { const music = this.audio?.()?.music; music?.setEnabled(true); music?.select(Number(action.slice(5))); this.songPreview = true; this.syncPreview(); }
+      else if (action === 'musictoggle') { const music = this.audio?.()?.music; if (music) music.setEnabled(!music.snapshot().enabled); this.songPreview = true; this.syncPreview(); }
       else if (action === 'musicvolume') { const music = this.audio?.()?.music; if (music) music.setVolume((Math.round(music.snapshot().volume * 4) + 1) % 5 / 4); }
       else if (action === 'steering-sensitivity') { this.pausePanel.querySelector('input[data-setting=steering-sensitivity]')?.focus(); return; }
       else if (action === 'minimap-zoom') { this.pausePanel.querySelector('input[data-setting="minimap-zoom"]')?.focus(); return; }
@@ -489,10 +498,20 @@ export class Frontend {
     } catch (error) { this.fail(error); }
     finally { this.layoutPending = false; }
   }
+  async loadTips() {
+    this.tipsPending ??= (async () => {
+      await this.archive('/STARTEVT.RES');
+      const doc = await this.document('etips.txt');
+      return ridingTips.map(id => doc.get(`tip${id}`)).filter(Boolean).map(fields => Object.keys(fields).filter(key => /^line\d+_1$/.test(key))
+        .sort((a, b) => parseInt(a.slice(4)) - parseInt(b.slice(4))).map(key => unquote(fields[key])));
+    })().catch(() => []);
+    return this.tipsPending;
+  }
   async beginLoading(environment) {
     if (!this.initialized) this.setLoading(true, 'Preparing course…');
     this.loadingTrack = this.tracks.find(track => track.id === environment) ?? this.tracks[this.track];
-    this.loadingStatus = 'Preparing course…';
+    this.loadingStatus = 'Preparing course…'; this.loadingProgress = 0; this.loadingTip = null;
+    void this.loadTips().then(tips => { if (this.page !== 'loading' || !tips.length) return; this.loadingTip = tips[Math.floor(Math.random() * tips.length)]; this.layoutKey = ''; void this.refresh(); });
     await this.show('loading'); this.busy = true;
     // Yield a frame so the loading UI is painted before decoding/upload work.
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -501,10 +520,13 @@ export class Frontend {
     if (this.page !== 'loading' || this.root.hidden) return;
     // Keep decoder details in diagnostics; the player sees the actual loading phase.
     this.loadingStatus = /engine|sound/i.test(text) ? 'Tuning sound…' : /ATV/i.test(text) ? 'Preparing your ride…' : /rider/i.test(text) ? 'Getting your rider ready…' : /texture|sky|model|vegetation/i.test(text) ? 'Building the scenery…' : /collision/i.test(text) ? 'Preparing the trail…' : /incomplete|Static terrain/i.test(text) ? 'Ready to ride' : 'Opening course…';
+    // The bar advances with the real loading stages and never moves backwards.
+    const stage = {'Opening course…':.12,'Preparing the trail…':.3,'Building the scenery…':.5,'Preparing your ride…':.7,'Getting your rider ready…':.82,'Tuning sound…':.92,'Ready to ride':1}[this.loadingStatus];
+    this.loadingProgress = Math.max(this.loadingProgress ?? 0, stage ?? 0);
     this.layoutKey = '';
     this.courseMeter?.setAttribute('aria-label', this.loadingStatus); void this.refresh();
   }
-  setLoading(visible, detail = 'Preparing menus…', title = 'Loading') {
+  setLoading(visible, detail = 'Preparing menus…', title = 'Now Loading...') {
     if (!this.loadingScreen) return;
     this.loadingScreen.hidden = !visible;
     this.loadingScreen.setAttribute('aria-busy', String(visible));
@@ -599,6 +621,8 @@ export class Frontend {
   rebuildButtons() {
     this.pausePanel.hidden = !this.isPausePanel();
     this.root.dataset.pausePanel = String(this.isPausePanel());
+    this.root.dataset.context = this.menuSettings() ? 'menu' : '';
+    if (this.backdropUrl) this.root.style.setProperty('--ms-backdrop', `url("${this.backdropUrl}")`);
     this.root.dataset.page = this.page;
     if (this.isPausePanel()) { this.rebuildPausePanel(); return; }
     this.courseMeter?.remove(); this.courseMeter = null;
@@ -684,7 +708,7 @@ export class Frontend {
   rebuildPausePanel() {
     // Rust owns supported actions, labels and values. DOM owns responsive layout.
     // Keep the same nodes for state updates so slider drags and focus survive.
-    const state = this.presentation, online = Boolean(state.lobby_started);
+    const state = this.presentation;
     const listPage = ['bindings','music'].includes(this.page);
     const players = state.lobby_players;
     const structure = JSON.stringify([this.page, this.frame.choices, Boolean(this.capture), this.bindingDevice, ['players','lobby'].includes(this.page) ? players : []]);
@@ -699,13 +723,11 @@ export class Frontend {
       this.panelStructure = structure;
       this.buttons.replaceChildren(); this.courseMeter?.remove(); this.courseMeter = null;
       const header = element('header', 'pause-header');
-      header.append(element('p','pause-eyebrow', this.page === 'pause' ? 'FURY REMASTERED' : `RIDE MENU / ${this.page === 'bindings' ? 'CONTROLS' : this.page === 'minimap-config' ? 'HUD SETTINGS' : ['players','lobby'].includes(this.page) ? 'SESSION' : 'PREFERENCES'}`));
       const title = element('h1',''); title.id = 'pause-title';
       header.append(title, element('p','pause-status'));
       const body = element('div', this.page === 'pause' ? 'pause-groups' : 'pause-content');
-      const section = (name, className = '') => {
+      const section = (className = '') => {
         const group = element('section', `pause-group ${className}`);
-        if (name) group.append(element('h2','',name));
         body.append(group); return group;
       };
       const focus = (node, action) => {
@@ -742,32 +764,32 @@ export class Frontend {
         label.append(heading,input); parent.append(label);
       };
       if (this.page === 'pause') {
-        const groups = [['Ride',['resume','reset','players']],['Preferences',['settings']],['Session',['copyride','devlog','main','lobby']]];
+        const groups = [['ride',['resume','reset','players']],['preferences',['settings']],['session',['copyride','devlog','main','lobby']]];
         this.pauseOrder = [];
         for (const [name,actions] of groups) {
-          const group = section(name, `pause-${name.toLowerCase()}`);
+          const group = section(`pause-${name}`);
           for (const action of actions) if (this.frame.choices.includes(action)) { this.pauseOrder.push(action); addButton(group,action); }
         }
       } else {
         if (this.page === 'controls') {
-          const tips = section(this.mobileControls?.oneHanded ? 'One-handed touch' : 'Two-thumb touch','pause-tips');
+          const tips = section('pause-tips');
           const lines = this.mobileControls?.oneHanded ? ['Hold anywhere to accelerate and brace for a jump.','Drag sideways to steer, and up or down to lean. Lift to coast and release preload.','Use a second finger to brake / reverse on the ground, or swipe / circle for tricks in the air.'] : ['Left thumb: steer and lean.','Right thumb: hold to accelerate and brace; drag back to brake / reverse. Lift to release preload.','In the air, swipe or circle with your right thumb for tricks.'];
           for (const line of lines) tips.append(element('p','',line));
         }
         if (this.page === 'players') {
-          const roster = section('Riders in this lobby');
+          const roster = section();
           for (const player of players) if (player.value !== 'ready') {
             const row = element('div','pause-player'); row.append(element('span','',player.label),element('span','pause-value',player.value === 'self' ? 'You' : 'Connecting')); roster.append(row);
           }
         }
         if (this.page === 'lobby') {
-          const details = section('Your session'); details.append(element('p','pause-room',state.room_code),element('p','pause-status',state.track_name),element('p','pause-status',state.lobby_status));
+          const details = section(); details.append(element('p','pause-room',state.room_code),element('p','pause-status',state.track_name),element('p','pause-status',state.lobby_status));
         }
         if (this.capture) {
-          const capture = section('Listening for input','pause-capture');
+          const capture = section('pause-capture');
           capture.append(element('p','pause-capture-label',this.capture.label),element('p','','Press a key, controller button or move an axis. Hold several together for a combination. Release to save; Escape cancels.'));
         }
-        const settings = section(({settings:'Choose a section',extras:'Crash & camera',controls:'Response & bindings','hud-settings':'On-screen display','minimap-config':'Map preferences',bindings:'Actions',music:'Soundtrack',players:'Meet up',lobby:'Session actions'})[this.page]);
+        const settings = section();
         const footer = element('footer','pause-footer');
         const paging = element('div','pause-pagination');
         for (const action of this.frame.choices) {
@@ -783,8 +805,9 @@ export class Frontend {
       this.pausePanel.replaceChildren(header,body);
     }
     this.pausePanel.dataset.screen = this.page;
-    this.pausePanel.querySelector('h1').textContent = ({settings:'Settings',extras:'Extras',pause:online ? 'Ride menu' : 'Paused',controls:'Controls','hud-settings':'Display','minimap-config':'Minimap',bindings:this.bindingDevice === 'controller' ? 'Controller bindings' : 'Keyboard bindings',music:'Audio',players:'Players',lobby:'Lobby'})[this.page];
-    this.pausePanel.querySelector('.pause-header .pause-status').textContent = ({settings:'Saved automatically in this browser.',extras:'Make the ride your own.',pause:online ? 'Multiplayer is live. The ride keeps going while this menu is open.' : 'Take a breather. Your ride is paused.',controls:'Fine-tune your steering and make the controls your own.','hud-settings':'Keep the information you need in view.','minimap-config':'Set up your map for the way you ride.',bindings:this.bindingDevice === 'controller' ? 'Select an action to remap. Lean back, then forward at a ramp lip to preload.' : 'Select an action to remap. Changes are saved in this browser.',music:state.music_status,players:'The ride is live. Spawn beside a rider to meet up.',lobby:'Share your invite or head back to the ride.'})[this.page];
+    this.pausePanel.querySelector('h1').textContent = ({settings:'Settings',extras:'Extras',pause:'Pause',controls:'Controls','hud-settings':'Display','minimap-config':'Minimap',bindings:this.bindingDevice === 'controller' ? 'Controller' : 'Keyboard',music:'Audio',players:'Players',lobby:'Lobby'})[this.page];
+    // Only live state appears under the title (the soundtrack's on/volume/song).
+    this.pausePanel.querySelector('.pause-header .pause-status').textContent = this.page === 'music' ? state.music_status : '';
     for (const button of this.pausePanel.querySelectorAll('button')) {
       const action = button.dataset.action, hit = this.frame.hits.find(hit => hit.action === action);
       if (!hit) continue;
@@ -925,13 +948,13 @@ class ModelView {
         float pitch=.25;float y=v.y*cos(pitch)-v.z*sin(pitch);float z=v.y*sin(pitch)+v.z*cos(pitch);
         gl_Position=vec4(v.x/extent.x,y/extent.y,-z/40.,1.);tex=uv;vec3 nn=normalize(r*mat3(bones[int(node)])*n);light=.36+.7*max(dot(nn,normalize(vec3(-.4,.8,.6))),0.)+.16*max(dot(nn,normalize(vec3(.7,.1,-.7))),0.);}`);
       const fragment=shader(gl.FRAGMENT_SHADER, `#version 300 es
-        precision highp float; in vec2 tex; in float light; uniform sampler2D image; out vec4 color;
-        void main(){vec4 t=texture(image,tex);if(t.a<.15)discard;vec3 c=t.rgb*light;float l=dot(c,vec3(.299,.587,.114));
+        precision highp float; in vec2 tex; in float light; uniform sampler2D image; uniform bool cutout; out vec4 color;
+        void main(){vec4 t=texture(image,tex);if(cutout&&t.a<.15)discard;vec3 c=t.rgb*light;float l=dot(c,vec3(.299,.587,.114));
         // Studio grade: richer colour and a little contrast so pale suits read on the silver stage.
-        c=clamp(mix(vec3(l),c,1.18),0.,1.);c=clamp((c-.5)*1.1+.47,0.,1.);color=vec4(c,t.a);}`);
+        c=clamp(mix(vec3(l),c,1.18),0.,1.);c=clamp((c-.5)*1.1+.47,0.,1.);color=vec4(c,1.);}`);
       this.program=gl.createProgram();gl.attachShader(this.program,vertex);gl.attachShader(this.program,fragment);gl.linkProgram(this.program);
       gl.deleteShader(vertex);gl.deleteShader(fragment);if(!gl.getProgramParameter(this.program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(this.program));
-      this.uniforms=Object.fromEntries(['center','extent','yaw','image','bones[0]'].map(n=>[n,gl.getUniformLocation(this.program,n)]));
+      this.uniforms=Object.fromEntries(['center','extent','yaw','image','cutout','bones[0]'].map(n=>[n,gl.getUniformLocation(this.program,n)]));
     }
     const gpu=new Map();
     const texture = decoded => {
@@ -948,7 +971,10 @@ class ModelView {
       group.indices.forEach((index,i)=>{const v=group.vertices[index];values.set([...v.local_position,...localNormal(mesh.nodes[v.node].world_matrix,v.normal),...v.uv,v.node],i*9);const matrix=pose[v.node]; const position=[0,1,2].map(a=>matrix[a]*v.local_position[0]+matrix[a+4]*v.local_position[1]+matrix[a+8]*v.local_position[2]+matrix[a+12]);position.forEach((p,a)=>{min[a]=Math.min(min[a],p);max[a]=Math.max(max[a],p);});});
       const vao=gl.createVertexArray(),buffer=gl.createBuffer();gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,values,gl.STATIC_DRAW);
       for(const [i,size,offset] of [[0,3,0],[1,3,12],[2,2,24],[3,1,32]]){gl.enableVertexAttribArray(i);gl.vertexAttribPointer(i,size,gl.FLOAT,false,36,offset);}
-      this.groups.push({vao,buffer,count:group.indices.length,texture:gpu.get(mesh.materials[group.material])??fallback});
+      // Original UI rider textures store a specular/reflection mask in alpha;
+      // only materials without that flag use alpha as a cut-out.
+      const decoded=materials.get(mesh.materials[group.material]);
+      this.groups.push({vao,buffer,count:group.indices.length,texture:gpu.get(mesh.materials[group.material])??fallback,cutout:!decoded?.opaque});
     }
     this.center=min.map((v,i)=>(v+max[i])/2); this.dimensions=min.map((v,i)=>max[i]-v);
     this.canvas.dataset.ready='true';this.canvas.dataset.triangles=String(this.groups.reduce((n,g)=>n+g.count/3,0));this.render();
@@ -965,7 +991,7 @@ class ModelView {
     const extent=Math.max(vertical,horizontal/aspect)*1.12;
     gl.uniformMatrix4fv(this.uniforms['bones[0]'],false,new Float32Array(this.pose.flat()));
     gl.uniform3fv(this.uniforms.center,this.center);gl.uniform2f(this.uniforms.extent,extent*aspect,extent);gl.uniform1f(this.uniforms.yaw,this.yaw);gl.uniform1i(this.uniforms.image,0);gl.activeTexture(gl.TEXTURE0);
-    for(const group of this.groups){gl.bindVertexArray(group.vao);gl.bindTexture(gl.TEXTURE_2D,group.texture);gl.drawArrays(gl.TRIANGLES,0,group.count);}
+    for(const group of this.groups){gl.bindVertexArray(group.vao);gl.bindTexture(gl.TEXTURE_2D,group.texture);gl.uniform1i(this.uniforms.cutout,group.cutout);gl.drawArrays(gl.TRIANGLES,0,group.count);}
     this.canvas.dataset.glError=String(gl.getError());
   }
   destroy(){this.resize.disconnect();this.clear();if(this.program&&!this.lost)this.gl.deleteProgram(this.program);this.gl?.getExtension('WEBGL_lose_context')?.loseContext();this.element.remove();}

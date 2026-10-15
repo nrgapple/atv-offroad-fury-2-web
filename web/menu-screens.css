@@ -56,9 +56,6 @@
 .ms-row-cycle[aria-current=true] .ms-row-value::before { content: ''; display: inline-block; width: 0; height: 0; margin-right: 10px; border: 7px solid transparent; border-right-color: currentColor; border-left-width: 0; vertical-align: 1px; }
 .ms-row-cycle[aria-current=true] .ms-row-value::after { content: ''; display: inline-block; width: 0; height: 0; margin-left: 10px; border: 7px solid transparent; border-left-color: currentColor; border-right-width: 0; vertical-align: 1px; }
 
-.ms-help { margin-top: auto; max-width: 420px; margin-right: 12px; padding: 2px 0 2px 16px; border-left: 3px solid #e8c832; }
-.ms-help p { color: #f0f0f0; text-shadow: 0 1px 3px #000; font: 600 clamp(14px, 1.5vw, 17px)/1.4 var(--atv-font-display); letter-spacing: .02em; }
-.ms-help:has(p:empty) { visibility: hidden; }
 
 /* Back sits bottom right on every screen; no console-specific button glyphs. */
 .ms-hints { grid-area: hints; justify-self: end; display: flex; align-items: center; gap: clamp(14px, 2.4vw, 30px); min-height: 50px; margin: 0 0 clamp(6px, 1.4vh, 14px); padding: 0 var(--ms-gutter) 0 26px; color: #f2f2f2; text-shadow: 0 1px 3px #000; font: 700 17px/1 var(--atv-font-display); letter-spacing: .04em; }
@@ -69,14 +66,9 @@
 @media (hover: hover) { .ms-hint-back:hover { color: var(--atv-gold-light); } }
 
 /* Shared plates and cards on the silver stage panel. */
-.ms-kicker { color: #7d1010; font: 800 12px/1.2 var(--atv-font-display); letter-spacing: .16em; text-transform: uppercase; }
 .ms-plate { display: grid; gap: 2px; }
 .ms-plate .ms-ride-name { color: #111; font: italic 800 clamp(22px, 2.8vw, 34px)/1.05 var(--atv-font-display); letter-spacing: .01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ms-plate .ms-ride-meta { color: #3d3d3d; font: 600 15px/1.3 var(--atv-font-display); }
 .ms-panel-logo { width: min(100%, 460px); height: auto; align-self: flex-start; filter: drop-shadow(0 3px 0 #0006); }
-.ms-panel-card { max-width: 440px; display: grid; gap: 10px; margin-top: auto; margin-bottom: auto; }
-.ms-panel-card h2 { font: italic 800 34px/1.05 var(--atv-font-display); color: #111; }
-.ms-panel-card p:not(.ms-kicker) { font: 600 17px/1.45 var(--atv-font-display); color: #333; }
 .ms-model { position: relative; flex: 1; min-height: 72px; }
 .ms-model .model-view { position: absolute; inset: 0; }
 .ms-model .model-view canvas { border-radius: 0; filter: drop-shadow(0 10px 6px #0004); }
@@ -90,11 +82,8 @@
 .ms-photo::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, #fff1 0, #0000 30%, #0000 70%, #0004); }
 .ms-photo img:not([src]) { visibility: hidden; }
 .ms-track-hero figcaption { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "badge ride" "name ride" "mode ride"; align-items: center; column-gap: 16px; max-width: 580px; }
-.ms-badge { grid-area: badge; justify-self: start; padding: 3px 10px 2px; border-radius: var(--ms-radius); background: #8e1010; color: #fff; font: 800 11px/1.3 var(--atv-font-display); letter-spacing: .14em; text-transform: uppercase; }
-.ms-badge:empty { display: none; }
 .ms-track-name { grid-area: name; color: #111; font: italic 800 clamp(24px, 3vw, 38px)/1.05 var(--atv-font-display); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ms-track-mode { grid-area: mode; color: #3d3d3d; font: 600 15px/1.3 var(--atv-font-display); }
-.ms-arrow { position: absolute; z-index: 1; top: 50%; width: 44px; height: 56px; margin-top: -28px; border-radius: var(--ms-radius); background: #0000008c; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); color: #fff; display: grid; place-items: center; cursor: pointer; }
+.ms-arrow { position: absolute; z-index: 1; top: 50%; width: 46px; height: 56px; margin-top: -28px; border-radius: var(--ms-radius); background: #0000008c; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); color: #fff; display: grid; place-items: center; cursor: pointer; }
 .ms-arrow svg { width: 20px; height: 20px; fill: currentColor; display: block; }
 .ms-arrow-left { left: 10px; } .ms-arrow-right { right: 10px; }
 
@@ -109,7 +98,6 @@
 .ms-logo { width: 100%; height: auto; filter: drop-shadow(0 4px 0 #0009); }
 .ms-logo-text { color: #fff; font: italic 800 clamp(60px, 14vw, 140px)/.9 var(--atv-font-display); text-shadow: 4px 6px 0 #000a; }
 .ms-logo-text span { display: block; color: #f1d84e; font-size: .4em; letter-spacing: .2em; }
-.ms-tagline { color: #f0f0f0; font: 600 clamp(14px, 1.8vw, 19px)/1.3 var(--atv-font-display); letter-spacing: .14em; text-transform: uppercase; text-shadow: 0 2px 4px #000; text-align: center; }
 .ms-title-actions { grid-area: actions; display: grid; justify-items: center; gap: 10px; padding: 0 16px clamp(24px, 7vh, 64px); }
 .ms-start { min-width: min(320px, 80vw); min-height: 60px; font-size: 26px; animation: ms-pulse 1.8s ease-in-out infinite; }
 .ms-link { min-height: 46px; padding: 0 22px; border-radius: var(--ms-radius); color: #f2f2f2; text-shadow: 0 1px 3px #000; font: 700 16px/1 var(--atv-font-display); letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
@@ -141,7 +129,7 @@
 .ms-row-stack .ms-row-label { font-size: .62em; letter-spacing: .14em; text-transform: uppercase; color: #f1d84e; }
 .ms-garage-row[aria-current=true] .ms-row-stack .ms-row-label { color: #4a3a00; }
 .ms-row-stack .ms-row-value { margin: 0; padding: 0; color: inherit; font-size: .92em; }
-.ms-cycle { flex: none; width: 44px; height: 44px; display: grid; place-items: center; border-radius: var(--ms-radius); color: #f1d84e; cursor: pointer; touch-action: manipulation; }
+.ms-cycle { flex: none; width: 46px; height: 46px; display: grid; place-items: center; border-radius: var(--ms-radius); color: #f1d84e; cursor: pointer; touch-action: manipulation; }
 .ms-cycle svg { width: 16px; height: 16px; fill: currentColor; display: block; filter: drop-shadow(0 1px 2px #000a); }
 .ms-garage-row[aria-current=true] .ms-cycle { color: #1b1500; }
 .ms-garage-row[aria-current=true] .ms-cycle svg { filter: none; }
@@ -155,7 +143,6 @@
 .ms-rider-row[aria-current=true] .ms-switch .is-on { background: #1b1500; color: #f6e061; }
 .ms-rider-row[aria-current=true] .ms-switch span:not(.is-on) { color: #3a2e00; }
 .ms-vehicles { display: flex; flex-direction: column; gap: 2px; padding: 0 12px 8px 0; }
-.ms-list-heading { padding: 12px 10px 6px; color: #f1d84e; text-shadow: 0 1px 3px #000; font: 800 12px/1 var(--atv-font-display); letter-spacing: .18em; text-transform: uppercase; }
 .ms-vehicle { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 0 14px 0 10px; border-radius: var(--ms-radius); text-align: left; cursor: pointer; touch-action: manipulation; }
 .ms-vehicle-name { min-width: 0; color: #e2e2e2; font: 700 clamp(16px, 1.6vw, 19px)/1.1 var(--atv-font-display); letter-spacing: .02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 1px 2px 0 #000b; }
 .ms-vehicle small { margin-left: auto; color: #e3c74a; font: 700 12px/1 var(--atv-font-display); letter-spacing: .08em; white-space: nowrap; }
@@ -170,20 +157,14 @@
 .ms-models .ms-model { position: absolute; min-height: 0; }
 .ms-models .ms-model-quad { left: 0; right: 30%; top: 14%; bottom: 0; }
 .ms-models .ms-model-rider { right: 0; width: 36%; top: 0; bottom: 2%; }
-.ms-drag-hint { color: #4b4b4b; font: 600 13px/1 var(--atv-font-display); letter-spacing: .08em; text-transform: uppercase; }
 
 /* Forms, lobby and loading. */
 .ms-fields { display: grid; gap: 12px; padding-right: 12px; }
 .ms-field { display: grid; gap: 6px; color: #eee; font: 700 15px/1.2 var(--atv-font-display); letter-spacing: .04em; }
 .ms-input { width: 100%; min-height: 48px; border-radius: var(--ms-radius); border: 0; background: #0000008c; box-shadow: inset 0 0 0 1px #ffffff26; padding: 4px 20px; font: 700 19px var(--atv-font-display); letter-spacing: .06em; }
 .ms-lobby-info { display: grid; gap: 4px; margin-right: 12px; text-shadow: 0 1px 3px #000; }
-.ms-lobby-info .ms-kicker { color: #f1d84e; }
 .ms-code { color: #fff; font: italic 800 clamp(30px, 4vw, 44px)/1 var(--atv-font-display); letter-spacing: .14em; }
 .ms-status { color: #e4e4e4; font: 600 15px/1.35 var(--atv-font-display); }
-.ms-loading .ms-left { justify-content: flex-end; padding-bottom: clamp(24px, 6vh, 56px); }
-.ms-loading-status { display: grid; gap: 14px; margin-right: 20px; }
-.ms-meter.course-load-meter { position: relative; }
-.ms-loading-status .ms-status { font-size: clamp(17px, 2vw, 22px); color: #fff; text-shadow: 0 2px 3px #000; }
 
 /* Portrait phones and tablets: stage on top, controls below, hint bar
    across the bottom. Everything stays inside the safe-area stage. */
@@ -200,7 +181,6 @@
   .ms-row::before { left: calc(-1 * var(--ms-gutter) - 30px); right: -12px; }
   .ms-garage-row::before { right: calc(-1 * var(--ms-gutter) - 30px); }
   .ms-rows, .ms-courses, .ms-vehicles, .ms-tabs { padding-right: 0; }
-  .ms-help { max-width: none; margin-right: 0; }
   .ms-hints { justify-self: stretch; justify-content: flex-end; margin: 0 var(--ms-gutter) 6px; padding: 0 0 0 4px; }
   .ms-panel-logo { width: auto; max-width: min(78%, 340px); min-height: 0; max-height: 24%; flex: 0 1 auto; object-fit: contain; align-self: center; }
   .ms-plate { text-align: center; }
@@ -208,14 +188,13 @@
   .ms-multiplayer { --ms-stage: 24%; }
   .ms-create-lobby, .ms-join-lobby { --ms-stage: 0px; }
   .ms-create-lobby .ms-panel::before, .ms-join-lobby .ms-panel::before { top: -200px; bottom: -14px; }
-  .ms-multiplayer .ms-panel-card, .ms-create-lobby .ms-panel, .ms-join-lobby .ms-panel { display: none; }
+    .ms-create-lobby .ms-panel, .ms-join-lobby .ms-panel { display: none; }
   .ms-multiplayer .ms-panel { justify-content: center; }
   .ms-tracks, .ms-race, .ms-lobby { --ms-stage: auto; }
   .ms-tracks .ms-panel, .ms-race .ms-panel, .ms-lobby .ms-panel { padding-bottom: 22px; }
   .ms-track-hero { flex: none; gap: 8px; }
   .ms-photo { max-width: none; aspect-ratio: 16 / 9; }
   .ms-track-hero figcaption { grid-template-areas: "name ride" "mode ride"; }
-  .ms-track-hero .ms-badge { display: none; }
   .ms-track-name { font-size: 24px; }
   .ms-ride { min-height: 48px; padding: 0 24px; font-size: 19px; }
   .ms-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 calc(-1 * var(--ms-gutter)); padding: 0 var(--ms-gutter) 2px; }
@@ -223,11 +202,7 @@
   .ms-tab { flex: none; }
   .ms-garage { --ms-stage: 40%; }
   .ms-garage .ms-plate { grid-template-columns: 1fr; }
-  .ms-garage .ms-drag-hint { display: none; }
   .ms-done { align-self: stretch; margin-right: 0; }
-  .ms-loading { --ms-stage: auto; }
-  .ms-loading .ms-left { justify-content: flex-start; padding-top: 20px; }
-  .ms-loading-status { margin-right: 0; }
 }
 /* Very short phones keep every essential control on screen. */
 @media (orientation: portrait) and (max-height: 640px) {
@@ -236,13 +211,10 @@
   .ms-garage { --ms-stage: 30%; }
   .ms-garage .ms-hints { display: none; }
   .ms-tracks .ms-photo, .ms-race .ms-photo, .ms-lobby .ms-photo { aspect-ratio: 2.4 / 1; }
-  .ms-track-mode { display: none; }
   .ms-tracks .ms-panel, .ms-race .ms-panel, .ms-lobby .ms-panel { padding-bottom: 16px; }
   .ms-garage .ms-left { gap: 6px; padding-bottom: 8px; }
-  .ms-garage .ms-side-heading, .ms-garage .ms-list-heading { padding-top: 4px; }
+    .ms-garage .ms-side-heading { padding-top: 4px; }
   .ms-done { min-height: 46px; }
-  .ms-help { display: none; }
-  .ms-plate .ms-ride-meta, .ms-garage .ms-kicker { display: none; }
   .ms-hints { min-height: 46px; }
   .ms-hints .ms-hint:not(.ms-hint-back) { display: none; }
 }
@@ -252,19 +224,16 @@
   .ms-header { padding: 8px 0 4px; }
   .ms-heading { font-size: 24px; padding-block: 3px 4px; }
   .ms-row { font-size: 18px; }
-  .ms-help { display: none; }
   .ms-panel { padding-top: 10px; padding-bottom: 6px; gap: 6px; }
   .ms-hints { min-height: 44px; margin-bottom: 6px; font-size: 15px; }
   .ms-panel-logo { width: min(70%, 300px); }
   .ms-plate .ms-ride-name, .ms-track-name { font-size: 22px; }
-  .ms-plate .ms-ride-meta, .ms-track-mode, .ms-drag-hint, .ms-garage .ms-kicker { display: none; }
   .ms-photo { max-height: 62%; width: auto; }
   .ms-ride { min-height: 44px; font-size: 18px; }
   .ms-course { min-height: 48px; }
   .ms-course-thumb { width: 60px; height: 40px; }
   .ms-vehicle { min-height: 44px; }
   .ms-garage .ms-left { gap: 4px; padding-bottom: 6px; }
-  .ms-garage .ms-list-heading { display: none; }
   .ms-done { min-height: 44px; font-size: 18px; }
   .ms-garage .ms-hints { display: none; }
 }
@@ -278,11 +247,9 @@
 #frontend[data-pause-panel=true] { background: radial-gradient(ellipse at 50% 45%, #0000004d 0, #000000b3 100%); }
 .pause-panel, .pause-panel[data-screen]:not([data-screen=pause]) { border: 0; border-radius: var(--ms-radius); background: #0c0c0cdb; -webkit-backdrop-filter: blur(12px) saturate(1.1); backdrop-filter: blur(12px) saturate(1.1); box-shadow: 0 6px 0 #0009, inset 0 1px 0 #ffffff1a; color: #e8e8e8; font-family: var(--atv-font-display); scrollbar-color: #d7b70d #0000; }
 .pause-panel header { border: 0; margin-bottom: 14px; padding-bottom: 0; }
-.pause-eyebrow { color: #f1d84e; font: 800 12px/1.2 var(--atv-font-display); letter-spacing: .18em; }
 .pause-panel h1 { margin: 0 -30px 8px; padding: 4px 30px 6px; background: linear-gradient(90deg, #ffffff38 0, #ffffff14 55%, #fff0); color: #f6f6f6; font: italic 800 clamp(30px, 4.4vw, 42px)/1.1 var(--atv-font-display); letter-spacing: .015em; text-transform: none; text-shadow: 2px 3px 0 #000a; }
 .pause-status, .pause-detail, .pause-tips p { color: #c4c4c4; font-family: var(--atv-font-display); }
 .pause-status { font-size: 15px; }
-.pause-group h2 { color: #f1d84e; font: 800 12px/1.2 var(--atv-font-display); letter-spacing: .18em; }
 .pause-panel button, .pause-panel button[data-action=resume] { min-height: 50px; padding: 0 22px; border: 0; border-radius: var(--ms-radius); background: transparent; color: #d6d6d6; font: 700 clamp(17px, 2vw, 21px)/1.15 var(--atv-font-display); letter-spacing: .03em; text-transform: none; text-shadow: 1px 2px 0 #000c; transition: background .15s, color .15s; }
 .pause-panel[data-screen=settings] .pause-group button { min-height: 56px; font-size: 22px; text-transform: none; }
 .pause-panel button:hover { background: #ffffff12; color: #fff; }
@@ -312,3 +279,54 @@
 .pause-panel[data-screen=pause] .pause-groups { grid-template-columns: 1fr; gap: 14px; }
 .pause-panel[data-screen=pause] .pause-group { grid-column: 1; grid-row: auto; gap: 2px; }
 @media (max-width: 580px) { .pause-panel[data-screen=pause] { width: calc(100% - 24px); } }
+
+/* Settings opened from the main menu sit on the frontend backdrop, not the ride. */
+#frontend[data-pause-panel=true][data-context=menu] { background: #2a0505; }
+#frontend[data-context=menu]::before { content: ''; position: absolute; inset: -40px; background: var(--ms-backdrop, none) center / cover no-repeat; filter: blur(9px) saturate(1.1) brightness(.9); }
+#frontend[data-context=menu]::after { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse at 18% 30%, #0000 0, #0000 35%, #1a0202b0 100%), linear-gradient(180deg, #0000 55%, #12020299); }
+#frontend[data-context=menu] #menu-stage { z-index: 1; }
+#frontend[data-context=menu] .pause-panel { inset: 0; width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; padding: clamp(12px, 3vh, 28px) clamp(16px, 3.2vw, 44px) 20px; border-radius: 0; background: none; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+#frontend[data-context=menu] .pause-panel h1 { margin: 0 calc(-1 * clamp(16px, 3.2vw, 44px)) 18px; padding: 6px clamp(16px, 3.2vw, 44px) 8px; background: linear-gradient(90deg, #ffffff52 0, #ffffff26 55%, #fff0 100%); font-size: clamp(26px, 3.6vw, 44px); }
+#frontend[data-context=menu] .pause-panel > :not(header) { max-width: 620px; }
+
+/* Course loader, after the original LdScreen: action shot left, Track bar and
+   Tips on the gray panel, gold progress in a black pill along the bottom. */
+.ms-screen.ms-loading { grid-template-areas: "header panel" "left panel" "bar bar"; }
+.ms-loading .ms-left { justify-content: center; padding-right: 12px; }
+.ms-shot { width: 100%; max-width: 560px; aspect-ratio: 3 / 2; margin: 0; overflow: hidden; border-radius: 14px; border: 3px solid #0b0b0b; background: #111; box-shadow: 0 4px 0 #0009; }
+.ms-shot img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.ms-shot img:not([src]) { visibility: hidden; }
+.ms-ld-info { margin: auto 0; display: grid; gap: 16px; max-width: 520px; }
+.ms-ld-track { display: flex; gap: 8px; align-items: baseline; padding: 8px 18px; border-radius: 999px; background: #0b0b0b; color: #f2f2f2; font: 700 clamp(18px, 2vw, 24px)/1.2 var(--atv-font-display); letter-spacing: .03em; box-shadow: 0 2px 0 #0008; }
+.ms-ld-track .ms-track-name { font: inherit; color: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ms-ld-tips { padding: 16px 20px; border-radius: var(--ms-radius); background: #2b2b2bd9; box-shadow: inset 0 1px 0 #ffffff1c, 0 2px 0 #0008; }
+.ms-ld-tips[hidden] { display: none; }
+.ms-ld-tips-label { color: #e8c832; font: 700 clamp(17px, 1.8vw, 21px)/1.3 var(--atv-font-display); letter-spacing: .03em; }
+.ms-ld-tip { color: #f0f0f0; font: 600 clamp(16px, 1.7vw, 20px)/1.35 var(--atv-font-display); letter-spacing: .02em; }
+.ms-ld-bar { grid-area: bar; display: grid; place-items: center; padding: 8px var(--ms-gutter) clamp(14px, 4vh, 36px); }
+.ms-meter { position: relative; width: min(420px, 70vw); height: 28px; padding: 4px; border-radius: 999px; border: 2px solid #cfcfcf; background: #0b0b0b; box-shadow: 0 2px 0 #0009; }
+.ms-meter-fill { display: block; height: 100%; width: var(--progress, 0%); min-width: 14px; border-radius: 999px; background: linear-gradient(180deg, #e9d36a 0%, #c3a227 45%, #8f7410 55%, #6d5708 100%); transition: width .5s ease-out; }
+@media (orientation: portrait) {
+  .ms-screen.ms-loading { grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "header" "left" "panel" "bar"; }
+  .ms-loading .ms-left { padding: 10px var(--ms-gutter); }
+  .ms-loading .ms-panel::before { top: 0; bottom: -40vh; border-radius: 75% 0 0 0 / 56px 0 0 0; box-shadow: 0 -10px 30px #000a, inset 0 3px 0 #f2f2f2; }
+  .ms-loading .ms-panel { padding-top: 34px; }
+  .ms-loading .ms-heading { background: linear-gradient(90deg, #ffffff52 0, #ffffff26 55%, #fff0 100%); color: #f4f4f4; text-shadow: 2px 3px 0 #000a; }
+  .ms-ld-info { margin: 0; }
+}
+@media (orientation: landscape) and (max-height: 500px) {
+  .ms-ld-tips { padding: 10px 14px; }
+  .ms-meter { height: 24px; }
+}
+@media (prefers-reduced-motion: reduce) { .ms-meter-fill { transition: none; } }
+
+/* Boot loader, after the original front-end loader (ld_ui): logo on red
+   scenery, "Now Loading..." strip and the same gold-in-pill bar. */
+.loading-screen { padding: 0; background: radial-gradient(ellipse at 30% 35%, #7a1010 0, #4b0909 45%, #1d0303 100%); }
+.loading-screen::before { background: radial-gradient(ellipse at 18% 30%, #0000 0, #0000 40%, #12020299 100%); }
+.loading-panel { position: absolute; inset: 0; width: auto; padding: max(14px, var(--app-safe-top)) max(16px, var(--app-safe-right)) max(20px, var(--app-safe-bottom)) max(16px, var(--app-safe-left)); display: grid; grid-template-rows: auto 1fr auto; border: 0; background: none; box-shadow: none; }
+.loading-panel h1 { order: -1; margin: clamp(0px, 2vh, 14px) calc(-1 * max(16px, var(--app-safe-left))) 0; padding: 6px max(16px, var(--app-safe-left)) 8px; background: linear-gradient(90deg, #ffffff52 0, #ffffff26 55%, #fff0 100%); color: #f4f4f4; font: italic 800 clamp(26px, 3.6vw, 44px)/1.05 var(--atv-font-display); letter-spacing: .015em; text-transform: none; text-shadow: 2px 3px 0 #000a; }
+.loading-brand { align-self: center; width: min(560px, 82vw); margin: 0 auto; filter: drop-shadow(0 4px 0 #0009); }
+#loading-detail { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.loading-panel .loading-meter { justify-self: center; width: min(420px, 70vw); height: 28px; padding: 4px; border-radius: 999px; border: 2px solid #cfcfcf; background: #0b0b0b; transform: none; overflow: hidden; }
+.loading-panel .loading-meter::after { border-radius: 999px; background: linear-gradient(180deg, #e9d36a 0%, #c3a227 45%, #8f7410 55%, #6d5708 100%); }

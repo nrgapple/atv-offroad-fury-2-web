@@ -59,9 +59,14 @@ try {
   await page.waitForFunction(() => !document.querySelector('#frontend').hidden && document.querySelector('#frontend').dataset.page === 'pause');
   await page.getByRole('button',{name:'Resume',exact:true}).click();
   await page.waitForFunction(() => document.querySelector('#frontend').hidden); await steps();
-  await page.keyboard.down('ArrowDown'); await input({lean:1,brake:0,throttle:0}); await page.keyboard.up('ArrowDown');
-  await page.keyboard.down('ArrowUp'); await input({lean:-1,brake:0}); await page.keyboard.up('ArrowUp');
+  await page.keyboard.down('KeyE'); await input({lean:1,brake:0,throttle:0}); await page.keyboard.up('KeyE');
+  await page.keyboard.down('KeyQ'); await input({lean:-1,brake:0}); await page.keyboard.up('KeyQ');
   await page.keyboard.down('KeyW'); await input({throttle:1}); await page.keyboard.up('KeyW');
+  // Arrows mirror WASD; S/Down from a stop selects reverse through Rust's keyboard adapter.
+  await page.keyboard.down('ArrowUp'); await input({throttle:1,lean:0,reverse:false}); await page.keyboard.up('ArrowUp');
+  await steps(30);
+  await page.keyboard.down('KeyS'); await input({throttle:1,brake:0,reverse:true}); await page.keyboard.up('KeyS');
+  await page.keyboard.down('KeyW'); await input({reverse:false,throttle:1}); await page.keyboard.up('KeyW');
   await set('keyboard','throttle',{key:'KeyT'});
   await page.keyboard.down('KeyW'); await steps(); await input({throttle:0}); await page.keyboard.up('KeyW');
   await page.keyboard.down('KeyT'); await input({throttle:1}); await page.keyboard.up('KeyT');
@@ -143,5 +148,5 @@ try {
   assert(result.regular.vertical > result.cancelled.vertical, 'Cancelled replay must have no jump boost');
   await page.evaluate(() => { window.bindings.reset('keyboard'); window.bindings.reset('controller'); });
   assert.deepEqual(errors,[]);
-  console.log(`PASS: real WASM remapped keyboard/analog controller inputs, native reverse chord, stunt axes, once-only camera/reset/pause, disconnect/blur cancellation, and original-map native stale-preload prevention after ${result.count+1} driving steps.`);
+  console.log(`PASS: real WASM remapped keyboard/analog controller inputs, native reverse chord, keyboard brake-then-reverse, stunt axes, once-only camera/reset/pause, disconnect/blur cancellation, and original-map native stale-preload prevention after ${result.count+1} driving steps.`);
 } finally { await browser.close(); }
