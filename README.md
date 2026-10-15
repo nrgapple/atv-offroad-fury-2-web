@@ -23,7 +23,7 @@ Codex has helped with most of the implementation and reverse engineering. We wor
 | **Mobile controls** | One-handed throttle, steering and rider lean, with an optional second touch for braking/reverse and airborne tricks. A standard two-thumb layout is also available. |
 | **Online multiplayer** | Up to four ATV riders in Freeride, drop-in style: host on any track and friends join from the invite link at any time, appearing beside you. Change ATV or track without leaving, and the ride carries on if anyone (including the host) drops or leaves. Remote riders have animated quads, spatial engine audio, overhead names and GPS markers. |
 | **Motorcycles** | Single Player includes 20 choices across 16 bike designs and 50/125/250/500 profiles, including labeled Race/Pro setups. These use a separate two-wheel Rust controller and resources recovered from **MX vs. ATV Unleashed**, not ATV2. Motorcycles are not yet available in multiplayer. |
-| **Race preview** | Single Player → Race offers Caribou Peak National, with countdown, laps, timing, radar and results. The ATV field includes four independently simulated CPU riders with recovered driving decisions. Full original race rules and progression remain unfinished. |
+| **Race preview** | Single Player → Race offers every original race course: eight Environment Nationals, eight Nationals and sixteen Supercross tracks, decoded from their own TDF route graphs with start straights, alternate lines and original start/finish gates. Countdown, laps, timing, radar and results are included. The ATV field includes four independently simulated CPU riders with recovered driving decisions. CPU corner speed on courses without authored speed limits, full original race rules and progression remain unfinished. |
 | **GPS and speed HUD** | A configurable minimap combines terrain, heading, speed and preload feedback. Choose shape, corner, size and zoom; tap it to switch north-up/heading-up. |
 | **Sound and settings** | All 21 original songs, per-quad engine audio, selected impact and train sounds, music selection and remappable keyboard/controller bindings. Music continues through the pause menu. |
 | **Crash presentation and camera** | Settings → Extras offers Original, Crazy and opt-in Gorn crash modes, plus Tight/Original crash-camera framing. Camera shake is removed. Gorn adds severed rider parts and bounded terrain droplets only on severe impacts; recovery and original vehicle handling remain intact. Settings are saved locally. |
@@ -67,7 +67,7 @@ This is an authored Rust multiplayer implementation using a Cloudflare room rela
 
 [Start Tioga with a Honda 250EX and female rider](https://furyremastered.com/?mode=single&map=env02&quad=14&rider=female), or use **Pause → Copy ride link** to share the setup you are riding. **Copy invite link** joins that room automatically at any time, or reopens it on its track once everyone has left. Links can select map, vehicle, rider, player name, Single Player/Freeride, a multiplayer room, or the supported Race laps/CPU settings. Add `play=0` to open setup before starting.
 
-See the [URL parameter reference and examples](research/PLAY_LINKS.md). Multiplayer remains ATV Freeride; motorcycles and the Caribou Race preview are Single Player.
+See the [URL parameter reference and examples](research/PLAY_LINKS.md). Multiplayer remains ATV Freeride; motorcycles and the Race preview are Single Player.
 
 ## Motorcycles in Single Player
 

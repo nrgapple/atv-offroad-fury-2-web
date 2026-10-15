@@ -102,13 +102,20 @@ fn frame(sim: &mut Simulation, raw: &serde_json::Value) -> Result<serde_json::Va
         f.wreck.phase != atv_core::wreck::Phase::Riding,
         f.linear_velocity,
         f.crash_impact_speed,
+        None,
         world,
         &pose,
         &bike.model.mesh.nodes,
         rider_world,
         &rider,
         &bike.model.rider.nodes,
-        |p| terrain.contact(p[0], p[2]).ok().flatten().map(|h| h.height),
+        |p| {
+            terrain
+                .contact(p[0], p[2])
+                .ok()
+                .flatten()
+                .map(|h| (h.height, h.normal))
+        },
     ))
     .map_err(|e| e.to_string())?;
     Ok(value)

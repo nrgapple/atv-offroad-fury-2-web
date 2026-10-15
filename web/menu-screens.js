@@ -159,7 +159,7 @@ function buildLobby(fe, left, panel) {
 function buildRace(fe, left, panel) {
   const list = h('nav', {class:'ms-rows', 'aria-label':'Race setup'});
   for (const action of fe.frame.choices) {
-    const stepper = ['racelaps','racecpu'].includes(action);
+    const stepper = ['racetrack','racelaps','racecpu'].includes(action);
     const item = row(fe, action, stepper ? [h('span', {class:'ms-row-value'})] : []);
     if (stepper) item.classList.add('ms-row-cycle');
     list.append(item);

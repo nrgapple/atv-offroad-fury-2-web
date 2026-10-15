@@ -21,8 +21,9 @@ try {
     const state = () => page.evaluate(() => window.atvTerrainStatus);
     const click = name => page.getByRole('button', { name, exact: true }).click();
     const ready = () => page.waitForFunction(() => window.atvTerrainStatus?.minimap.visible, null, { timeout: 90000 });
-    const open = async () => { await click('Pause'); await click('HUD settings'); assert.equal(await page.getByRole('slider').count(), 0); await click('Minimap configuration'); await page.getByRole('slider', { name: 'Minimap zoom', exact: true }).waitFor(); };
-    const resume = async () => { await click('Back'); await click('Back'); await click('Resume'); };
+    // Pause reaches Display through the Settings hub (PR #73).
+    const open = async () => { await click('Pause'); await click('Settings'); await click('Display'); assert.equal(await page.getByRole('slider').count(), 0); await click('Minimap configuration'); await page.getByRole('slider', { name: 'Minimap zoom', exact: true }).waitFor(); };
+    const resume = async () => { await click('Back'); await click('Back'); await click('Back'); await click('Resume'); };
     await page.goto(`${base}/play.html?drive=1&environment=env02`);
     await ready();
     const map = page.locator('#freestyle-minimap'), native = page.locator('#native-hud');
@@ -39,7 +40,7 @@ try {
       const slider = page.getByRole('slider', { name: 'Minimap zoom', exact: true });
       await slider.fill(String(zoom)); await slider.dispatchEvent('input');
       await resume(); await ready();
-      await page.waitForFunction(zoom => window.atvTerrainStatus.minimap.zoom === zoom && window.atvTerrainStatus.minimap.scaleFeet === ({25:800,50:400,200:100})[zoom], zoom);
+      await page.waitForFunction(zoom => window.atvTerrainStatus.minimap.zoom === zoom, zoom);
       assert.equal((await state()).minimap.rangeFeet, 76800 / zoom);
       assert.equal((await state()).minimap.builds, initialBuilds); assert.equal((await state()).minimap.backingBytes, originalBytes);
       assert.deepEqual(await map.boundingBox(), originalBox, 'Zoom changes world coverage, not screen size');

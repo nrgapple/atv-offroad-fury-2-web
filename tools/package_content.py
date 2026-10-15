@@ -42,6 +42,11 @@ STARTUP += tuple(f'/TRACKS/TRACKSA/FREE{i:02}/F{i:02}_FR.RES' for i in (1,2,3,4,
 STARTUP += tuple(f'/TRACKS/TRACKSA/NAT{i:02}/N{i:02}_FR.RES' for i in range(1,9))
 STARTUP += tuple(f'/TRACKS/TRACKSB/SX{i:02}/S{i:02}_FR.RES' for i in range(1,17))
 STARTUP += ('/TRACKS/TRACKSB/TRAINING/T00_TR.RES', '/TRACKS/TRACKSA/GAME01/G01_SO.RES')
+# Original race archives (TDF course, AIRiders, race TOY) for every other
+# Environment, National and Supercross venue; ENV01 is listed above.
+STARTUP += tuple(f'/TRACKS/TRACKSA/ENV{i:02}/E{i:02}_NAT.RES' for i in range(2,9))
+STARTUP += tuple(f'/TRACKS/TRACKSA/NAT{i:02}/N{i:02}_NAT.RES' for i in range(1,9))
+STARTUP += tuple(f'/TRACKS/TRACKSB/SX{i:02}/S{i:02}_NAT.RES' for i in range(1,17))
 STARTUP += tuple(f'/UI/RESOURCE/TP/TP_{group}.RES' for group in ('PNAT','ASX','PSX','HOCK'))
 
 # Original loading-screen action shots for every Freestyle venue except Training,

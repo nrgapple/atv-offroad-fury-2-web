@@ -16,7 +16,7 @@ import { WaterRenderer } from './water.js';
 import { fogVertexShader, fogFragmentShader } from './fog.js';
 import { loadTrain, TrainRenderer } from './train.js';
 import { loadAmbientEffects, AmbientEffectsRenderer } from './ambient-effects.js';
-import { loadWheelEffects, loadMotorcycleEffects, WheelEffectsRenderer, BloodRenderer } from './wheel-effects.js';
+import { loadWheelEffects, loadMotorcycleEffects, WheelEffectsRenderer, BloodRenderer, bloodCount } from './wheel-effects.js';
 import {loadSnow,SnowRenderer} from './weather.js';
 import {materialPassSources,materialPassKey} from './scenery-materials.js';
 import { MotorcyclePresentation } from './motorcycle-presentation.js';
@@ -77,7 +77,7 @@ const diagnostics = { ready: false, frames: 0, vertices: 0, triangles: 0, chunks
 let audio = new GameAudio(codec, message => { diagnostics.audioError = message; status(`Audio: ${message}`, true); });
 const stats = new DiagnosticsOverlay({ snapshot: () => ({ ...diagnostics, minimap: minimap.snapshot(), frame: simFrame, paused: simulationPaused(), menuOpen, focused, resolution: [canvas.width, canvas.height] }) });
 // Read-only snapshot for verification; does not expose the locally opened file.
-Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, minimap: minimap.snapshot(), hud: hud?.snapshot(), funnyCrashes, crashMode: crashSettings.mode, speedRush: {...speedRush.snapshot(),setting:crashSettings.speed}, impactAudio: { impacts: impactEvents.impacts }, blood: { draws: bloodRenderer?.draws ?? 0, count: crashSettings.mode === 'gorn' ? simFrame?.funny_crash?.blood?.length ?? 0 : 0 }, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()],reconnecting:multiplayer.reconnecting,lastDisconnect:multiplayer.lastDisconnect,droppedSnapshots:multiplayer.droppedSnapshots,networkAdapterRoundTripMs:multiplayer.networkEncodeMs,networkAdapterCalls:multiplayer.networkEncodeCalls} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
+Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, minimap: minimap.snapshot(), hud: hud?.snapshot(), funnyCrashes, crashMode: crashSettings.mode, speedRush: {...speedRush.snapshot(),setting:crashSettings.speed}, impactAudio: { impacts: impactEvents.impacts }, blood: { draws: bloodRenderer?.draws ?? 0, instances: bloodRenderer?.draws ? bloodRenderer.instances : 0, count: crashSettings.mode === 'gorn' ? bloodCount(simFrame?.funny_crash?.blood) : 0, stumps: crashSettings.mode === 'gorn' ? Math.floor((simFrame?.funny_crash?.blood?.stumps?.length ?? 0) / 7) : 0 }, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()],reconnecting:multiplayer.reconnecting,lastDisconnect:multiplayer.lastDisconnect,droppedSnapshots:multiplayer.droppedSnapshots,networkAdapterRoundTripMs:multiplayer.networkEncodeMs,networkAdapterCalls:multiplayer.networkEncodeCalls} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
 worker.onmessage = ({ data }) => {
   if (data.startupError) { status(data.startupError, true); return; }
   const request = pending.get(data.id);
@@ -167,7 +167,8 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
     const tdf = entries.findIndex(entry => memberNamed(entry, `${environment}nate.tdf`));
     if (tdf < 0) throw new Error('Original National course is missing.');
     course = await json(95, await codec(3,resource,tdf));
-    const a=course.points[0], b=course.points[1]; scene.position=a.slice(); scene.yaw=Math.atan2(b[0]-a[0],b[2]-a[2]);
+    // Rust places the grid behind the original TDF start gate.
+    scene.position=course.start.position.slice(); scene.yaw=course.start.yaw;
     const ai = entries.findIndex(entry => memberNamed(entry,'airiders.pb'));
     if (ai < 0) throw new Error('Original CPU roster is missing.');
     const roster=await json(54,await codec(3,resource,ai));
@@ -315,7 +316,10 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
   const snow=await loadSnow({selection:weather,resource,entries,codec,json,gpuTexture:model.motorcycle?null:wheelEffects?.gpuTexture});
   const train = environment === 'env08' ? await loadTrain({ resource, entries, modeIndex, codec, json, baseTextures, isCurrent: () => token === generation }) : null;
   if (train && mode) await audio.loadSpatial({ toy: new TextEncoder().encode(mode), isCurrent: () => token === generation });
-  return { weather, snow, motorcycle: model.motorcycle ? {archive:quadArchive,id:model.quad_id} : null, bytes, environment, course, cpuNames, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, ambientEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
+  // Original grid spacing: the race mode TOY (8–15ft) or, for Supercross, the scene TOY.
+  const spacingOf = text => Number(/^\s*RiderSpacing\s*=\s*([\d.]+)/im.exec(text ?? '')?.[1]);
+  const riderSpacing = [spacingOf(mode), spacingOf(toy && decoder.decode(toy))].find(v => Number.isFinite(v) && v >= 1 && v <= 40);
+  return { weather, snow, motorcycle: model.motorcycle ? {archive:quadArchive,id:model.quad_id} : null, bytes, environment, course, cpuNames, riderSpacing, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, ambientEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
 }
 async function baseTextures(mesh, materialArchive, materialEntries, cache = new Map(), multiPass = false) {
   const findMaterial = name => materialEntries.findIndex(entry => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase());
@@ -1355,7 +1359,7 @@ async function startSimulation(source) {
   if (source.motorcycle) await json(100,source.motorcycle.archive,source.motorcycle.id);
   acceptFrame(await command(23, simStart));
   cpuQuadMatrices = vehicle.nodeMatrices.slice(); cpuRiderMatrices = new Float32Array(vehicle.rider.pose.world_matrices.flat());
-  if (source.course) await command(96,{active:true,laps:raceSettings.laps,difficulty:raceSettings.difficulty,names:source.cpuNames.slice(0,raceSettings.cpu)});
+  if (source.course) await command(96,{active:true,laps:raceSettings.laps,difficulty:raceSettings.difficulty,names:source.cpuNames.slice(0,raceSettings.cpu),...(source.riderSpacing?{spacing:source.riderSpacing}:{})});
   raceCourse = source.course;
   raceOverlay.setCourse(raceCourse);
   diagnostics.cameraPresets = (await json(45, source.cameraPresets)).map(preset => preset.name);
@@ -1662,7 +1666,7 @@ function render(time) {
   }
   if(ambientEffectsRenderer){ambientEffectsRenderer.draw({camera,viewProjection,farDistance:fog?.end??768,fogColor,fog});Object.assign(diagnostics.ambientEffects,{draws:ambientEffectsRenderer.draws,visible:ambientEffectsRenderer.visible,gpuBytes:ambientEffectsRenderer.gpuBytes,cpuMilliseconds:ambientEffectsRenderer.cpuMilliseconds,gpuSlots:ambientEffectsRenderer.streams?.state.count??0,gpuWraps:ambientEffectsRenderer.streams?.state.wraps??0,gpuUploadCalls:ambientEffectsRenderer.streams?.uploadCalls??0});}
   if(snowRenderer){snowRenderer.draw({camera,viewProjection});Object.assign(diagnostics.snow,{draws:snowRenderer.draws,uploadBytes:snowRenderer.uploadBytes});}
-  if (crashSettings.mode === 'gorn' && simFrame?.funny_crash?.blood?.length) {
+  if (crashSettings.mode === 'gorn' && (bloodCount(simFrame?.funny_crash?.blood) || simFrame?.funny_crash?.blood?.stumps?.length)) {
     bloodRenderer ??= new BloodRenderer(gl);
     bloodRenderer.draw(simFrame.funny_crash.blood, {camera,viewProjection,program});
   } else if (bloodRenderer) bloodRenderer.draws = 0;
@@ -1738,7 +1742,7 @@ async function loadGame(file = null, environment = "env01", racing = null) {
 $('disc').addEventListener('change', event => { const file = event.target.files[0]; if (file) void loadGame(file).catch(error => status(error.message, true)); });
 $('reset').onclick = async () => {
   if (!simStart || !vehicle) { resetCamera(); return; }
-  if (raceSettings) { await loadGame(null, 'env01', raceSettings); return; }
+  if (raceSettings) { await loadGame(null, raceSettings.course ?? 'env01', raceSettings); return; }
   impactEvents.reset();
   simGeneration++; simReady = false; simAccumulator = 0; clearInput();
   try { await audio.reset(); acceptFrame(await command(23, simStart)); await command(47, {}); orbit = 0; acceptCameraFrame(await command(46, { dt: 1 / 60, orbit })); simReady = true; buildMesh(); resetCamera(); }

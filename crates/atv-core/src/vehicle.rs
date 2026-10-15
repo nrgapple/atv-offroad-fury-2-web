@@ -65,6 +65,13 @@ pub struct VehicleInput {
     /// the original speed gate; `brake` retains other independent brake inputs.
     pub reverse_chord_brake: Option<f32>,
 }
+/// Presentation-only: keep the strongest contact speed and where it occurred.
+fn observe_impact(speed: &mut f32, point: &mut Vec3, closing: f32, at: Vec3) {
+    if closing > *speed {
+        *speed = closing;
+        *point = at;
+    }
+}
 #[derive(Debug, Serialize)]
 pub struct VehicleFrame {
     pub origin: Vec3,
@@ -88,6 +95,8 @@ pub struct VehicleFrame {
     pub dynamic_secondary_contacts: usize,
     /// Presentation-only closing speed of this step’s strongest actual ATV contact.
     pub crash_impact_speed: f32,
+    /// Presentation-only world point of that contact (valid when speed > 0).
+    pub crash_impact_point: Vec3,
     pub preload_available: bool,
     pub preload_armed: bool,
     pub preload_active: bool,
@@ -191,6 +200,7 @@ pub struct Vehicle {
     dynamic_contact_count: usize,
     dynamic_secondary_contacts: usize,
     crash_impact_speed: f32,
+    crash_impact_point: Vec3,
     ///Secondary nonstatic contacts occur after the final integrator. Native
     ///translation and impact delta remain until the next first integration.
     pending_contact_corrections: ContactCorrections,
@@ -389,6 +399,7 @@ impl Vehicle {
             dynamic_contact_count: 0,
             dynamic_secondary_contacts: 0,
             crash_impact_speed: 0.,
+            crash_impact_point: [0.; 3],
             pending_contact_corrections: ContactCorrections::default(),
             wreck_physics: None,
             normal_contact: ContactConfig::from_physics(data)?,
@@ -765,6 +776,7 @@ impl Vehicle {
             dynamic_contact_count: self.dynamic_contact_count,
             dynamic_secondary_contacts: self.dynamic_secondary_contacts,
             crash_impact_speed: self.crash_impact_speed,
+            crash_impact_point: self.crash_impact_point,
             preload_available: self.rider_state.preload_status,
             preload_armed: self.rider_state.preload_armed,
             preload_active: self.rider_state.preload_active,
@@ -1323,7 +1335,12 @@ impl Vehicle {
                     &mut corrections.velocity_delta,
                 )? {
                     self.suspension_stop_contacts += 1;
-                    self.crash_impact_speed = self.crash_impact_speed.max(closing_speed);
+                    observe_impact(
+                        &mut self.crash_impact_speed,
+                        &mut self.crash_impact_point,
+                        closing_speed,
+                        point,
+                    );
                 }
             }
             for (i, d) in drive.iter().enumerate() {
@@ -1362,8 +1379,12 @@ impl Vehicle {
                     },
                 )?;
                 if output.grounded {
-                    self.crash_impact_speed =
-                        self.crash_impact_speed.max(-dot(point_velocity, normal));
+                    observe_impact(
+                        &mut self.crash_impact_speed,
+                        &mut self.crash_impact_point,
+                        -dot(point_velocity, normal),
+                        point,
+                    );
                     apply_spring_world_force(
                         &mut self.body,
                         &self.body_config,
@@ -1440,7 +1461,12 @@ impl Vehicle {
                     }
                 }
             }
-            self.crash_impact_speed = self.crash_impact_speed.max(corrections.closing_speed);
+            observe_impact(
+                &mut self.crash_impact_speed,
+                &mut self.crash_impact_point,
+                corrections.closing_speed,
+                corrections.closing_point,
+            );
             self.body.step(&self.body_config, step)?;
             self.wheel_world_angular_velocity = self.body.world_angular_velocity();
             for (value, next) in impact.iter_mut().zip(corrections.velocity_delta) {
@@ -1526,9 +1552,12 @@ impl Vehicle {
                 }
             }
         }
-        self.crash_impact_speed = self
-            .crash_impact_speed
-            .max(self.pending_contact_corrections.closing_speed);
+        observe_impact(
+            &mut self.crash_impact_speed,
+            &mut self.crash_impact_point,
+            self.pending_contact_corrections.closing_speed,
+            self.pending_contact_corrections.closing_point,
+        );
         //001e5260 runs edge launch after physics and before impact/wreck gates.
         // Query bit0 excludes vegetation expansion, not terrain/static objects.
         if self.boundary_launch.tick(dt, true)? {

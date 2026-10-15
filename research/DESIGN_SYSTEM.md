@@ -88,8 +88,19 @@ The minimap defaults to a borderless circle inset 8px plus safe-area offsets in
 the top-right corner. A square variant keeps the existing 4px corner radius;
 users can switch to bottom-left. Speed uses compact italic outlined silver
 lettering without a backdrop near the bottom edge, with a compact source-driven orange/blue
-preload indicator. The small feet readout sits immediately above speed. North and all lettering stay inside the circular safe region.
+preload indicator. The former map-scale (feet) readout was removed; it only reflected zoom and read as a broken altitude. North and all lettering stay inside the circular safe region.
 HUD settings links to a dedicated Minimap configuration group, keeping shape,
 corner, size, zoom, visibility and orientation together. Tap the map to toggle
 north-up/heading-up while its footer remains upright. <=360px toolbar buttons keep 44px icon
 targets and accessible names while hiding labels to leave space for the map.
+
+## In-game HUD
+
+`web/hud.css` gives the ride HUD the same language as the HD menus: the shared
+`--atv-font-display` condensed face (`--atv-font-label` now points to it), gold
+accents, and short hard text shadows (`--hud-text-shadow`) for legibility over the
+3D scene. Race results and the keyboard controls card use the Pause panel's dark
+rounded surface, title strip and gold primary button. The canvas-drawn speed
+readout and minimap read the same display font. When a large top-right minimap
+would meet the labelled toolbar, the toolbar switches to icon-only 44px buttons.
+The Keys button and keyboard card are hidden on touch-first devices.

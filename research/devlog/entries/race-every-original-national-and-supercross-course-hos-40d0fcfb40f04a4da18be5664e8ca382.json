@@ -1,0 +1,15 @@
+{
+  "id": "race-every-original-national-and-supercross-course-hos-40d0fcfb40f04a4da18be5664e8ca382",
+  "timestamp": "2026-10-15T02:25:18.980602+00:00",
+  "recorded_at": "2026-10-15T02:25:19.018213+00:00",
+  "kind": "build",
+  "title": "Race every original National and Supercross course (host checkpoint)",
+  "summary": "Single Player Race now offers all 32 original race courses (8 Environment Nationals, 8 Nationals, 16 Supercross) instead of only Caribou Peak, using each venue's own race archive, TDF route, AIRiders roster and race TOY. The Race page has a Course stepper; ride links accept map=env01-08, nat01-08 and sx01-16 with activity=race.",
+  "details": [
+    "Discoveries: the exact-build Track loader 00179680 reads the TDF as a section graph. Tag 1 is the section count (not a version), tags 5/6/7/24 open sections, 13/14 are fork links, and tags 15/16 are oriented boxes used as start and finish gates. Tag 15 matches the sx01 scene DefaultStartPosition and the Supercross start-gate firework trigger; tag 16 matches the RaceOrderMatters finish trigger. Sections flagged 0x100 are alternate lines. The port follows the main line through forks, keeps start straights, credits alternate lines on rejoin, counts laps at the finish gate, and lines riders up 4.66ft behind the start gate at the course RiderSpacing (8-15ft). Verification: all 32 TDFs parse; a scripted rider finishes a two-lap race on every course; tools/test_race_courses.mjs starts all 32 courses in host Chromium with four physical CPUs, checks grid spacing, race direction, progress and the course menu in three layouts with no page or GL errors; make check passes (Rust tests, strict Clippy, 140 JS tests).",
+    "Public verification, 2026-10-15: furyremastered.com serves eccf8d7 (Actions run 38673025179). The R2 manifest now lists all 32 race archives (217 records; 601 objects verified). tools/test_race_courses.mjs passes all 32 courses on the public app with four physical CPUs and no page or GL errors; the Caribou test_race.mjs and test_frontend.mjs regressions also pass publicly."
+  ],
+  "limitation": "CPU corner speed is not original on courses whose TDF speeds are all the 150ft/s sentinel (e.g. env02, nat01), so CPUs can overshoot early corners and recover through the existing wreck path. Exact finish-box tests, championship points, Supercross firework triggers and race progression remain unconnected; the existing Caribou test_race.mjs CPU assertions are intermittent on unmodified main as well.",
+  "image": "/devlog-images/race-every-original-national-and-supercross-course-hos-40d0fcfb40f04a4da18be5664e8ca382.png",
+  "caption": "Host Chromium capture (not a public or PS2 screenshot): Supercross course sx07 in Single Player Race, five-rider grid on the start straight, showing place, lap, total time, route hint, standings and minimap."
+}

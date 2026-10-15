@@ -52,7 +52,7 @@ try {
  const frames=await page.evaluate(()=>window.bikeFrames),isolation=await verifyCrashIsolation(page),impact=verifyCrashImpacts(frames);
  if(process.env.ATV_CRASH_MODE==='gorn') {
   assert.equal(await page.evaluate(()=>window.atvTerrainStatus.crashMode),'gorn');
-  assert(frames.every(s=>!s.frame.funny_crash || s.frame.funny_crash.blood.length<=90));
+  assert(frames.every(s=>!s.frame.funny_crash || s.frame.funny_crash.blood.drops.length/7+s.frame.funny_crash.blood.splats.length/10<=184));
   assert.equal(await page.evaluate(()=>window.atvTerrainStatus.frame.funny_crash??null),null);
  }
  assert(frames.some(s=>!s.frame.grounded.some(Boolean)));assert(frames.some(s=>s.frame.stunt));

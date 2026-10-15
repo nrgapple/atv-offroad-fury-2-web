@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MinimapSettings, mapPeerMarker, mapHeading, mapPoint, mapPose, mapRange, mapScale, terrainTiles, rasterRow, instrumentFooter } from './minimap.js';
+import { MinimapSettings, mapPeerMarker, mapHeading, mapPoint, mapPose, mapRange, terrainTiles, rasterRow, instrumentFooter } from './minimap.js';
 
 test('footer lettering and black outline fit the circular edge at minimum and maximum sizes', () => {
   for (const size of [96, 160, 224]) for (const width of [size * .3, size * .55]) {
@@ -55,9 +55,7 @@ test('saved Off and clamped sizes survive reload; blocked storage still allows s
   assert.equal(reloaded.zoom, 200); reloaded.setZoom(-10); assert.equal(reloaded.zoom, 25);
   reloaded.setZoom('bad'); assert.equal(reloaded.zoom, 50);
   assert.equal(reloaded.size, 224, 'Zoom does not change HUD size');
-  for (const [zoom, range, scale] of [[25, 3072, 800], [50, 1536, 400], [100, 768, 200], [200, 384, 100]]) {
-    assert.equal(mapRange(zoom), range); assert.equal(mapScale(range), scale);
-  }
+  for (const [zoom, range] of [[25, 3072], [50, 1536], [100, 768], [200, 384]]) assert.equal(mapRange(zoom), range);
   assert.equal(reloaded.shape, 'square'); assert.equal(reloaded.corner, 'bottom-left');
   assert.equal(reloaded.orientation, 'heading-up');
   reloaded.setSize('bad'); assert.equal(reloaded.size, 160);

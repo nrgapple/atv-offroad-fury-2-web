@@ -82,6 +82,10 @@ pub struct Request {
     pub race_difficulty: u32,
     #[serde(default)]
     pub race_available: bool,
+    /// Selected original race course id (env/nat/sx); its name and preview
+    /// arrive through track_name / track_image.
+    #[serde(default)]
+    pub race_course: String,
     #[serde(default)]
     pub race_active: bool,
     #[serde(default)]
@@ -549,7 +553,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                 236.
             };
             let detail = if !main && request.selection == 2 {
-                "Race CPU riders on Caribou Peak."
+                "Race CPU riders on 32 original National and Supercross courses."
             } else if main && request.selection == 2 {
                 "Controls, display, audio and extras."
             } else if main && request.selection == 3 {
@@ -590,36 +594,42 @@ pub fn layout(request: Request) -> Result<Frame> {
             f.footer(true);
         }
         "race" => {
+            let series = if request.race_course.starts_with("sx") {
+                "Supercross"
+            } else {
+                "National"
+            };
+            let name = if request.track_name.is_empty() {
+                "Original course"
+            } else {
+                request.track_name.as_str()
+            };
+            f.text(name, [30., 82.], 1., FONT, "255,255,255", w - 60.);
             f.text(
-                "Caribou Peak - National",
-                [30., 96.],
-                1.,
-                FONT,
-                "255,255,255",
-                w - 60.,
-            );
-            f.text(
-                "Race preview",
-                [30., 132.],
+                format!("{series} race preview"),
+                [30., 112.],
                 0.8,
                 FONT,
                 "255,226,107",
                 w - 60.,
             );
+            // Five full-height rows fit portrait. Landscape moves the share
+            // link beside Back so every target keeps its 44px minimum.
             let rows = [
+                (format!("Course: {name}"), "racetrack"),
                 (format!("Laps: {}", request.race_laps.max(1)), "racelaps"),
                 (format!("CPU riders: {}", request.race_cpu), "racecpu"),
                 ("Start Race".to_string(), "racestart"),
                 ("Copy ride link".to_string(), "copyride"),
             ];
             for (i, (label, action)) in rows.iter().enumerate() {
+                let rect = if !portrait && *action == "copyride" {
+                    [168., h - 68., 200., 56.]
+                } else {
+                    [24., 140. + i as f32 * 56., list_w.max(290.), 54.]
+                };
                 f.choices.push((*action).into());
-                f.button(
-                    label,
-                    action,
-                    [24., 154. + i as f32 * 56., list_w.max(290.), 54.],
-                    request.selection % rows.len() == i,
-                );
+                f.button(label, action, rect, request.selection % rows.len() == i);
             }
             if !portrait {
                 f.draw.push(Draw::Preview {
@@ -1449,6 +1459,7 @@ mod tests {
             race_cpu: 3,
             race_difficulty: 1,
             race_available: false,
+            race_course: "env01".into(),
             race_active: false,
         }
     }
@@ -1588,7 +1599,10 @@ mod tests {
         r.race_available = true;
         assert_eq!(layout(r).unwrap().choices, ["tracks", "garage", "race"]);
         let f = layout(request("race", 844., 390.)).unwrap();
-        assert_eq!(f.choices, ["racelaps", "racecpu", "racestart", "copyride"]);
+        assert_eq!(
+            f.choices,
+            ["racetrack", "racelaps", "racecpu", "racestart", "copyride"]
+        );
         for (i, a) in f.hits.iter().enumerate() {
             for b in &f.hits[i + 1..] {
                 let [ax, ay, aw, ah] = a.rect;

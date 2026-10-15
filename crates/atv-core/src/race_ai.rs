@@ -26,7 +26,7 @@ impl Course {
         };
         let mut total = 0.;
         for (i, a) in self.points.iter().enumerate() {
-            let b = self.points[(i + 1) % self.points.len()];
+            let b = self.points[self.next(i)];
             let dx = b[0] - a[0];
             let dz = b[2] - a[2];
             let length = (dx * dx + dz * dz).sqrt();
@@ -51,7 +51,7 @@ impl Course {
     pub fn ahead(&self, mut position: RoutePosition, mut distance: f32) -> RoutePosition {
         for _ in 0..self.points.len() {
             let a = self.points[position.segment];
-            let b = self.points[(position.segment + 1) % self.points.len()];
+            let b = self.points[self.next(position.segment)];
             let length = ((b[0] - a[0]).powi(2) + (b[2] - a[2]).powi(2)).sqrt();
             let available = (1. - position.fraction) * length;
             if distance <= available {
@@ -60,17 +60,14 @@ impl Course {
                 return position;
             }
             distance -= available;
-            position.segment = (position.segment + 1) % self.points.len();
+            position.segment = self.next(position.segment);
             position.fraction = 0.;
             position.point = b;
         }
         position
     }
     pub fn tangent(&self, segment: usize) -> [f32; 3] {
-        normalize(sub(
-            self.points[(segment + 1) % self.points.len()],
-            self.points[segment],
-        ))
+        normalize(sub(self.points[self.next(segment)], self.points[segment]))
     }
     pub fn target_speed(&self, position: RoutePosition) -> f32 {
         let speed = |i| {
@@ -78,7 +75,7 @@ impl Course {
             if v == -1. { 150. } else { v }
         };
         speed(position.segment) * (1. - position.fraction)
-            + position.fraction * speed((position.segment + 1) % self.points.len())
+            + position.fraction * speed(self.next(position.segment))
     }
 }
 fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
@@ -285,16 +282,7 @@ impl Driver {
         let lookahead = (25. + 4. * p.error).min(if on_track {
             60.
         } else {
-            course
-                .points
-                .iter()
-                .enumerate()
-                .map(|(i, a)| {
-                    let b = course.points[(i + 1) % course.points.len()];
-                    ((b[0] - a[0]).powi(2) + (b[2] - a[2]).powi(2)).sqrt()
-                })
-                .sum::<f32>()
-                * 0.5
+            course.cycle_length() * 0.5
         });
         let aim = course.ahead(p, lookahead);
         if aim.segment != self.last_target {

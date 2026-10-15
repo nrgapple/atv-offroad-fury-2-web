@@ -47,6 +47,7 @@ in the Main Menu before gameplay or networking begins.
 - [Tioga, Honda 250EX, female rider](https://furyremastered.com/?mode=single&map=env02&quad=14&rider=female&player=Sam)
 - [Vancouver on quad 26](https://furyremastered.com/?map=free05&quad=26)
 - [Caribou National, two laps, no CPUs](https://furyremastered.com/?activity=race&map=env01&quad=2&laps=2&cpu=0)
+- [Supercross race on sx07 with four CPUs](https://furyremastered.com/?activity=race&map=sx07&cpu=4)
 - [Create and start a Vancouver multiplayer ride](https://furyremastered.com/?mode=multiplayer&action=create&map=free05&quad=14&player=Host)
 - [Prepare a Tioga ride without starting](https://furyremastered.com/?map=env02&quad=14&rider=1&play=0)
 
@@ -84,7 +85,8 @@ session storage,
 never in links. No automatic retry loop repeatedly creates rooms.
 
 Current multiplayer is up to four ATV Freeride riders. Motorcycles and racing
-remain Single Player; Race supports Caribou Peak National only. Links do not add
+remain Single Player; Race accepts the 32 Environment, National and Supercross
+courses (`env01`–`env08`, `nat01`–`nat08`, `sx01`–`sx16`). Links do not add
 unimplemented modes, race rules, progression, persistent rooms or host migration.
 Audio and fullscreen remain subject to browser user-gesture rules: gameplay can
 load directly, while sound unlocks on the first interaction. A fresh navigation

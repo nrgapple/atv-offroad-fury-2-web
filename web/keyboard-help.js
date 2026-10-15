@@ -67,7 +67,7 @@ export class KeyboardHelp {
   toggle() { if (this.open) this.hide(); else this.show(); }
   // Called when a ride starts or the menu opens. Touch-driving devices keep
   // their own on-screen controls, so the card never auto-opens there.
-  setRiding(riding, touch = document.body.classList.contains('touch-driving')) {
+  setRiding(riding, touch = document.body.classList.contains('touch-driving') || globalThis.matchMedia?.('(hover: none) and (pointer: coarse)').matches) {
     this.riding = riding;
     if (this.button) this.button.disabled = !riding;
     if (!riding) { this.hide(); return; }

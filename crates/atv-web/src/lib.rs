@@ -480,13 +480,20 @@ fn simulation_frame(
             detached,
             frame.linear_velocity,
             frame.crash_impact_speed,
+            (frame.crash_impact_speed > 0.).then_some(frame.crash_impact_point),
             vehicle_world(frame),
             &matrices,
             &mesh.nodes,
             rider_world,
             &rider_pose,
             &rider_mesh.nodes,
-            |p| terrain.contact(p[0], p[2]).ok().flatten().map(|h| h.height),
+            |p| {
+                terrain
+                    .contact(p[0], p[2])
+                    .ok()
+                    .flatten()
+                    .map(|h| (h.height, h.normal))
+            },
         ))
         .map_err(|e| e.to_string())?;
     }
@@ -1659,7 +1666,10 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
     }
     if op == 95 {
         let course = atv_core::race::Course::parse(input)?;
-        let result = serde_json::to_vec(&course).map_err(|e| e.to_string())?;
+        let mut value = serde_json::to_value(&course).map_err(|e| e.to_string())?;
+        let (position, yaw) = course.start();
+        value["start"] = serde_json::json!({ "position": position, "yaw": yaw });
+        let result = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
         SIMULATION.with_borrow_mut(|sim| {
             sim.race_course = Some(course);
             sim.race = None;
@@ -1687,12 +1697,13 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             let names: Vec<String> =
                 serde_json::from_value(value.get("names").ok_or("missing CPU names")?.clone())
                     .map_err(|e| e.to_string())?;
-            let mut race = atv_core::race::Race::new(
-                sim.race_course.clone().ok_or("load race course first")?,
-                integer("laps")?,
-                names,
-                integer("difficulty")?,
-            )?;
+            let mut course = sim.race_course.clone().ok_or("load race course first")?;
+            // Original RiderSpacing from the course mode or scene TOY.
+            if let Some(spacing) = value.get("spacing").and_then(serde_json::Value::as_f64) {
+                course.rider_spacing = spacing as f32;
+            }
+            let mut race =
+                atv_core::race::Race::new(course, integer("laps")?, names, integer("difficulty")?)?;
             let racers = if sim.motorcycle.is_some() {
                 vec![]
             } else {
