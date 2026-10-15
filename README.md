@@ -6,7 +6,7 @@ Fury Remastered is an ongoing **Rust/WebAssembly port of ATV Offroad Fury 2** fo
 
 Codex has helped with most of the implementation and reverse engineering. We work from the original PS2 disc, without the original source code, recovering the game's resources and behavior one system at a time. The original experience is the baseline; optional enhancements sit alongside the ongoing port.
 
-**The public HTTPS build now unlocks all 40 original venue families in Freestyle:** eight environments, six stunt venues, eight Nationals, sixteen Supercross stadiums, Training, and Coonce Arena. The all-venue release was verified on the public app with its separate runtime content package. The browser port also supports all 26 original in-race quads, one-handed touch controls, online Freeride with up to four players, motorcycles, and a Caribou Peak National race preview. Required resources load automatically, with no installation or disc-selection step.
+**The public HTTPS build now unlocks all 40 original venue families in Freestyle:** eight environments, six stunt venues, eight Nationals, sixteen Supercross stadiums, Training, and Coonce Arena. The all-venue release was verified on the public app with its separate runtime content package. The browser port also supports all 26 original in-race quads, one-handed touch controls, online Freeride with up to four players, motorcycles, and a race preview on all 32 original race courses. Required resources load automatically, with no installation or disc-selection step.
 
 **This is still a work in progress.** Racing, progression, saves, and parts of the original physics, animation, audio and rendering remain incomplete. It is a playable reconstruction, not a completed decompilation or a finished port.
 
@@ -113,7 +113,7 @@ The browser runs the authored Rust port, not a PS2 emulator or the disc executab
 
 Selected physics, camera, animation, collision and rendering routines have comparisons against original instructions. **That is component evidence, not whole-game replay equivalence or a PS2-hardware comparison.** Full racing, progression/saves, stunt fidelity, remaining collision/water behavior, original audio mixing and full rendering fidelity are still open.
 
-**Screenshot baseline — October 13, 2026:** the public app identifies [`0787b32`](https://github.com/nrgapple/atv-offroad-fury-2-web/commit/0787b32b505ce8edc5d98bbf719514fce57b4ed9), with passing [main CI and deployment](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38457121147). Earlier public gates cover nine-map driving, all ATV selections, multiplayer late join/four-client replication, motorcycle touch steering and rider contacts, fog/reflections/materials, and pause/menu behavior. The screenshots above identify their own capture context; passing CI alone does not prove every gameplay system or physical-device behavior. Detailed evidence lives in the [handoff](HANDOFF.md), [deployment record](research/DEPLOYMENT.md) and [dev log](https://furyremastered.com/devlog.html).
+**Screenshot baseline — October 13, 2026:** the public app identifies [`0787b32`](https://github.com/nrgapple/atv-offroad-fury-2-web/commit/0787b32b505ce8edc5d98bbf719514fce57b4ed9), with passing [main CI and deployment](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38457121147). Earlier public gates cover nine-map driving, all ATV selections, multiplayer late join/four-client replication, motorcycle touch steering and rider contacts, fog/reflections/materials, and pause/menu behavior. The screenshots above identify their own capture context; passing CI alone does not prove every gameplay system or physical-device behavior. Current component status is in the [handoff](HANDOFF.md); detailed evidence lives in the [deployment record](research/DEPLOYMENT.md) and [dev log](https://furyremastered.com/devlog.html).
 
 ## Follow development
 
@@ -132,7 +132,7 @@ You need Rust with the `wasm32-unknown-unknown` target, rustfmt, Clippy, Python 
 
 ```sh
 make verify  # Check source identity, reference revisions, and Git exclusions
-make check   # Rust formatting, tests, Clippy, input tests, Python syntax
+make check   # Secrets/repository hygiene, Rust formatting, tests, Clippy, JS and Python tool tests
 make web     # Build the authored browser app and development workbench
 make serve   # Run the host-only development server on port 4173
 ```
