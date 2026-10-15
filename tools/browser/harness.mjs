@@ -7,6 +7,7 @@
 //                      (default elsewhere, e.g. CI) or 'none' for no flags. Headless Chromium
 //                      otherwise has no WebGL 2 and the game cannot start.
 //   ATV_NATIVE         'skip' lets native-comparison tests run only their content checks
+//   ATV_CONTENT        'none' when the site serves no private content (content-free group)
 //
 // tools/run_browser_tests.mjs starts a local server and sets these for each group.
 import assert from 'node:assert/strict';
@@ -21,6 +22,9 @@ let module;
 export function playwright() {
   return module ??= require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 }
+
+/** False when the runner serves no private content (ATV_CONTENT=none, content-free group). */
+export const contentAvailable = process.env.ATV_CONTENT !== 'none';
 
 /** Base URL of the site under test, without a trailing slash. */
 export const base = (process.env.ATV_TEST_URL || 'http://127.0.0.1:4173').replace(/\/+$/, '');

@@ -2,15 +2,27 @@
 // Exercise the real development-log feature board at a host or public URL.
 // This check does not load the game runtime or any original game data.
 import assert from 'node:assert/strict';
-import { assertNoErrors, base, launch, watchErrors } from './browser/harness.mjs';
+import { assertNoErrors, base, contentAvailable, launch, watchErrors } from './browser/harness.mjs';
 
 const browser = await launch();
 const errors = [];
-const observeErrors = page => watchErrors(page, errors, { console: true });
+// Checkpoint screenshots are private/R2 gallery content. Without it (the content-free
+// group) their 404s are answered with a blank PNG so every other error still fails.
+const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+let stubbedImages = 0;
+const observeErrors = async page => {
+  watchErrors(page, errors, { console: true });
+  if (!contentAvailable) await page.route('**/devlog-images/*.png', async route => {
+    const response = await route.fetch();
+    if (response.status() !== 404) return route.fulfill({ response });
+    stubbedImages++;
+    await route.fulfill({ status: 200, contentType: 'image/png', body: PIXEL });
+  });
+};
 
 try {
   const desktop = await browser.newPage({ viewport: { width: 1440, height: 1080 } });
-  observeErrors(desktop);
+  await observeErrors(desktop);
   await desktop.goto(new URL('/devlog.html', base).href, { waitUntil: 'networkidle' });
   await desktop.waitForFunction(() => document.querySelector('#feature-count')?.textContent.includes('features'));
   const metadata = await desktop.evaluate(async () => {
@@ -63,7 +75,7 @@ try {
   const mobile = await browser.newPage({
     viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true
   });
-  observeErrors(mobile);
+  await observeErrors(mobile);
   await mobile.goto(new URL('/devlog.html', base).href, { waitUntil: 'networkidle' });
   await mobile.waitForFunction(() => document.querySelector('#feature-count')?.textContent.includes('features'));
   const dimensions = await mobile.evaluate(() => ({
@@ -83,7 +95,7 @@ try {
   }
 
   assertNoErrors(errors);
-  console.log(JSON.stringify({ checkpoints: metadata.entries.length, latestRecorded: latestRecorded.id, featureAreas: featureCount, trainStatus: trainFeature.status, trainScope: trainFeature.scope, desktopFilters: 'passed', expandableEvidence: 'passed', mobileFilters: 'passed', mobile: dimensions, errors }));
+  console.log(JSON.stringify({ checkpoints: metadata.entries.length, latestRecorded: latestRecorded.id, featureAreas: featureCount, trainStatus: trainFeature.status, trainScope: trainFeature.scope, desktopFilters: 'passed', expandableEvidence: 'passed', mobileFilters: 'passed', mobile: dimensions, stubbedImages, errors }));
 } finally {
   await browser.close();
 }

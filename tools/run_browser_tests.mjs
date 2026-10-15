@@ -116,6 +116,7 @@ async function site(mode) {
 function runTest({ name, group }, url) {
   const entry = TESTS[name];
   const env = { ...process.env, ...entry.env, ATV_TEST_URL: url };
+  if (group === 'content-free') env.ATV_CONTENT = 'none';
   if (group !== 'native') env.ATV_NATIVE = 'skip';
   else delete env.ATV_NATIVE;
   const timeout = (entry.timeout ?? DEFAULT_TIMEOUT) * 1000;
