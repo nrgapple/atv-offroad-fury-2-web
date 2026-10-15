@@ -5,6 +5,10 @@ const EMPTY = new Uint8Array();
 const encoder = new TextEncoder(), decoder = new TextDecoder();
 const json = bytes => JSON.parse(decoder.decode(bytes));
 const clamp = value => Math.max(0, Math.min(1, value));
+// Stands in for the original RTC seed so each session opens on a random song.
+function sessionSeed() {
+  try { return globalThis.crypto.getRandomValues(new Uint32Array(1))[0] || 1; } catch { return 1 + Math.floor(Math.random() * 0xfffffffe); }
+}
 function storageDefault() { try { return globalThis.window?.localStorage ?? null; } catch { return null; } }
 
 export class MusicStream {
@@ -42,7 +46,7 @@ export class MusicStream {
     if (index < 0) throw new Error('Original music catalog is missing.');
     const catalog = await this.codec(3, bytes, index);
     if (!this.current(generation)) return;
-    const library = json(await this.codec(40, catalog));
+    const library = json(await this.codec(40, catalog, sessionSeed()));
     if (!this.current(generation)) return;
     this.library = library;
     for (const song of library.songs) {
@@ -137,8 +141,8 @@ export class MusicStream {
     const request = Number.isInteger(action.index) ? encoder.encode(JSON.stringify({ select: action.index })) : EMPTY;
     let song = json(await this.codec(41, request));
     if (!this.current(generation)) return false;
-    // The source RTC seed is not recovered. On a fresh page, avoid repeating
-    // the persisted last track when the deterministic original shuffle starts.
+    // On a fresh page, avoid repeating the persisted last track even if the
+    // randomly seeded shuffle happens to start on it.
     if (!this.song && !Number.isInteger(action.index) && this.library.songs.length > 1 && song?.filename === this.history[this.historyIndex]) {
       song = json(await this.codec(41, EMPTY));
       if (!this.current(generation)) return false;
