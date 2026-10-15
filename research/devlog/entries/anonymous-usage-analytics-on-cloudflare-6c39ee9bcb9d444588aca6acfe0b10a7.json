@@ -1,0 +1,17 @@
+{
+  "id": "anonymous-usage-analytics-on-cloudflare-6c39ee9bcb9d444588aca6acfe0b10a7",
+  "timestamp": "2026-10-15T23:30:02.706100+00:00",
+  "recorded_at": "2026-10-15T23:30:02.706100+00:00",
+  "kind": "build",
+  "title": "Anonymous usage analytics on Cloudflare",
+  "summary": "The game now records anonymous, cookie-free usage events to a Cloudflare Workers Analytics Engine dataset so we can see how people play: sessions, Single Player vs Multiplayer, Freeride vs Race, venues, vehicles, riding time, race results, load times and load failures.",
+  "details": [
+    "New POST /api/events Worker endpoint validates every event against a fixed schema (shared web/analytics.js) and writes it to the fury_usage dataset with only a two-letter country and the release commit added.",
+    "No cookies, identifiers, player names, room codes, URLs or free text are sent; IPs only key a 60-events-per-minute rate limiter and are never stored.",
+    "Automated browsers, local hosts, Do Not Track and Global Privacy Control send nothing; analytics failures never affect play.",
+    "Cloudflare Web Analytics (page views, referrers, Core Web Vitals) is ready behind an optional public site token; the CSP admits its beacon only when configured.",
+    "tools/analytics_report.py summarizes the dataset; research/ANALYTICS.md documents the schema and setup.",
+    "Verification: 192 Node tests (191 pass, 1 pre-existing private-content skip) including new client and Worker analytics tests, repository/secret scans, release packaging tests, a Wrangler dry-run showing the USAGE and EVENT_LIMIT bindings, and the content-free browser smoke group (4/4)."
+  ],
+  "limitation": "Host verification only at the time of writing. Production event delivery has not yet been checked on the public app. Cloudflare Web Analytics stays off until a site token is created in the dashboard, and reading the dataset needs an Account Analytics Read API token."
+}

@@ -111,12 +111,14 @@ export async function multiplayerRequest(request, env) {
   }
 }
 
-export function secureResponse(response, request) {
+export function secureResponse(response, request, { webAnalytics = false } = {}) {
   // Reconstructing an upgrade response would discard its accepted WebSocket.
   if (response.status === 101) return response;
   const secured = new Response(response.body, response);
   const socketOrigin = new URL(request.url).origin.replace(/^http/, 'ws');
-  secured.headers.set('Content-Security-Policy', `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self' ${socketOrigin}; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`);
+  // Cloudflare Web Analytics loads its beacon and reports to these origins only when enabled.
+  const beaconScript = webAnalytics ? ' https://static.cloudflareinsights.com' : '', beaconConnect = webAnalytics ? ' https://cloudflareinsights.com' : '';
+  secured.headers.set('Content-Security-Policy', `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'${beaconScript}; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self' ${socketOrigin}${beaconConnect}; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`);
   secured.headers.set('X-Content-Type-Options', 'nosniff');
   secured.headers.set('X-Frame-Options', 'DENY');
   secured.headers.set('Referrer-Policy', 'no-referrer');

@@ -1,8 +1,8 @@
 // Presentation only: race clocks, rank, checkpoints and CPU poses come from Rust.
 export const raceTime = value => value == null ? '--:--.--' : `${Math.floor(value/60)}:${(value%60).toFixed(2).padStart(5,'0')}`;
 export class RaceOverlay {
-  constructor({restart,quit}) {
-    this.restart=restart;this.quit=quit;this.course=null;this.resultShown=false;this.padArmed=false;this.busy=false;
+  constructor({restart,quit,finish}) {
+    this.restart=restart;this.quit=quit;this.finish=finish;this.course=null;this.resultShown=false;this.padArmed=false;this.busy=false;
     this.root=document.createElement('section');this.root.id='race-overlay';this.root.hidden=true;
     this.root.innerHTML=`<div class="race-strip"><strong class="race-place"></strong><span class="race-lap"></span><span class="race-total"></span></div><div class="race-times"><span class="race-current"></span><span class="race-best"></span></div><div class="race-guide"><canvas width="140" height="110" aria-label="Race course radar"></canvas><div><strong class="race-direction"></strong><ol class="race-order"></ol></div></div><div class="race-countdown" role="status" aria-live="polite"></div><div class="race-results" hidden><h2>Race Results</h2><p class="race-summary"></p><ol></ol><button type="button" data-race-action="retry">Race Again</button><button type="button" data-race-action="quit">Single Player</button></div>`;
     document.body.append(this.root);this.map=this.root.querySelector('canvas');this.ctx=this.map.getContext('2d');this.results=this.root.querySelector('.race-results');
@@ -35,7 +35,7 @@ export class RaceOverlay {
     this.radar(race,player);
     if(race.phase==='finished') {
       this.results.hidden=false;set('.race-summary',`Place ${race.position} of ${race.field} · ${raceTime(race.elapsed)} · Best ${raceTime(race.best)}`);
-      if(!this.resultShown){this.resultShown=true;this.results.querySelector('ol').replaceChildren(...race.standings.map(r=>{const li=document.createElement('li');li.textContent=`${r.name} — ${r.time==null?`${r.laps} laps`:raceTime(r.time)}`;return li;}));this.results.querySelector('button').focus({preventScroll:true});}
+      if(!this.resultShown){this.resultShown=true;this.finish?.(race);this.results.querySelector('ol').replaceChildren(...race.standings.map(r=>{const li=document.createElement('li');li.textContent=`${r.name} — ${r.time==null?`${r.laps} laps`:raceTime(r.time)}`;return li;}));this.results.querySelector('button').focus({preventScroll:true});}
       let pad;try{pad=[...navigator.getGamepads()].find(p=>p?.connected!==false&&p);}catch{}
       const held=pad?.buttons[0]?.pressed||pad?.buttons[1]?.pressed;
       if(!held)this.padArmed=true;

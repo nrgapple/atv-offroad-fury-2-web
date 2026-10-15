@@ -25,6 +25,12 @@
     "CANONICAL_ORIGIN": "https://furyremastered.com",
     "MULTIPLAYER_GUARDS": "required"
   },
+  "analytics_engine_datasets": [
+    {
+      "binding": "USAGE",
+      "dataset": "fury_usage"
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {
@@ -86,6 +92,14 @@
       "namespace_id": "82401302",
       "simple": {
         "limit": 120,
+        "period": 60
+      }
+    },
+    {
+      "name": "EVENT_LIMIT",
+      "namespace_id": "82401303",
+      "simple": {
+        "limit": 60,
         "period": 60
       }
     }
