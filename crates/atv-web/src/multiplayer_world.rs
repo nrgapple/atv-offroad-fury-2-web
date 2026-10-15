@@ -359,6 +359,7 @@ mod tests {
                         name: "Guest".into(),
                         atv_model: 1,
                         rider_model: 0,
+                        appearance: [0; 8],
                     }],
                 }),
                 ..Client::default()

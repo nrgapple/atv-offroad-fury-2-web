@@ -58,6 +58,10 @@ pub struct Request {
     pub music_ready: bool,
     #[serde(default)]
     pub music_rows: Vec<ControlRow>,
+    /// Rider gear page values (helmet, jersey, pants, gloves, boots, goggles,
+    /// quad colour), named from the original Profile Store catalog.
+    #[serde(default)]
+    pub gear_rows: Vec<String>,
     #[serde(default)]
     pub music_page: usize,
     #[serde(default)]
@@ -324,6 +328,8 @@ pub fn layout(request: Request) -> Result<Frame> {
         || request.music_status.len() > 256
         || request.control_rows.len() > 32
         || request.music_rows.len() > 64
+        || request.gear_rows.len() > 8
+        || request.gear_rows.iter().any(|row| row.len() > 64)
         || request
             .control_rows
             .iter()
@@ -413,6 +419,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         "join-lobby" => "Join Game",
         "lobby" => "Free Ride Lobby",
         "garage" => "Quad and Rider",
+        "gear" => "Rider Gear",
         "loading" => "Loading",
         "tracks" => "Freestyle",
         "race" => "Single Race",
@@ -644,7 +651,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             // Portrait stacks two equal model cards above the controls; landscape
             // gives the previews the right-hand stage. Bounds are in Rust UI units.
             let panel = if portrait {
-                [24., 98., w - 48., (h - 380.).clamp(100., 420.)]
+                [24., 98., w - 48., (h - 440.).clamp(100., 420.)]
             } else {
                 [list_w + 44., 92., w - list_w - 68., h - 124.]
             };
@@ -705,6 +712,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                 ("Previous quad", "quadprev"),
                 ("Next quad", "quadnext"),
                 ("Change rider", "riderchange"),
+                ("Rider gear", "gear"),
                 ("Done", "back"),
             ]
             .iter()
@@ -718,6 +726,38 @@ pub fn layout(request: Request) -> Result<Frame> {
                     request.selection == i,
                 );
             }
+        }
+        "gear" => {
+            // Original Profile Store categories; the jersey row sets the shirt
+            // and its matching sleeves together. Quad colour is authored.
+            let actions = [
+                ("Helmet", "gearhelmet"),
+                ("Jersey", "gearjersey"),
+                ("Pants", "gearpant"),
+                ("Gloves", "gearglove"),
+                ("Boots", "gearboot"),
+                ("Goggles", "geargoggle"),
+                ("Quad colour", "gearpaint"),
+            ];
+            // Seven rows between the title and the footer Back button.
+            let row_h =
+                ((h - 76. - 70.) / actions.len() as f32).min(if portrait { 56. } else { 50. });
+            let list_w = if portrait {
+                w - 48.
+            } else {
+                (w * 0.42).max(290.)
+            };
+            for (i, (label, action)) in actions.iter().enumerate() {
+                let value = request.gear_rows.get(i).map_or("Original", String::as_str);
+                f.choices.push((*action).into());
+                f.button(
+                    &format!("{label}: {value}"),
+                    action,
+                    [24., 76. + i as f32 * row_h, list_w, row_h - 2.],
+                    request.selection == i,
+                );
+            }
+            f.footer(true);
         }
         "loading" => {
             let photo_w = if portrait {
@@ -1436,6 +1476,7 @@ mod tests {
             capture_label: String::new(),
             music_ready: true,
             music_rows: vec![],
+            gear_rows: vec![],
             music_page: 0,
             music_status: String::new(),
             music_enabled: true,
@@ -1643,6 +1684,7 @@ mod tests {
                 "race",
                 "tracks",
                 "garage",
+                "gear",
                 "loading",
                 "settings",
                 "extras",

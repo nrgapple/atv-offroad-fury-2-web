@@ -1,4 +1,6 @@
 import { ENVIRONMENTS, buildRideUrl, copyRideUrl } from './launch.js';
+// Rider gear indices and quad paint shared with the room (0 = original).
+const appearanceOf = frontend => [...(frontend.appearance?.gear ?? [0,0,0,0,0,0,0]), frontend.appearance?.paint ?? 0];
 // Browser socket and drawing glue. Rust owns the protocol, identity validation,
 // pose smoothing, lobby state and audio decisions.
 const SESSION = 'atv-mp-session';
@@ -103,7 +105,7 @@ export class Multiplayer {
       socket.onopen = async () => {
         clearTimeout(timer);
         try {
-          await this.control({Join:{code:[...code].map(c=>c.charCodeAt(0)),player:{id:0,name:frontend.playerName.trim() || 'Rider',atv_model:frontend.quadId,rider_model:frontend.riderId}}});
+          await this.control({Join:{code:[...code].map(c=>c.charCodeAt(0)),player:{id:0,name:frontend.playerName.trim() || 'Rider',atv_model:frontend.quadId,rider_model:frontend.riderId,appearance:appearanceOf(frontend)}}});
           void this.ping(); resolve();
         }
         catch(e) {reject(e);}
@@ -201,12 +203,12 @@ export class Multiplayer {
     if (!lobby || this.state.peer !== lobby.host) throw Error('Only the host can change the track.');
     if (lobby.map !== map) await this.control({SetLobby:{epoch:lobby.epoch,map,started:true}});
   }
-  // Change ATV/rider mid-session: tell the room, then reload in place.
+  // Change ATV/rider/gear mid-session: tell the room, then reload in place.
   async changeRide(frontend) {
     const generation = this.generation, environment = this.loadedMap;
     if (!environment || !this.state.lobby) return;
     const pose = await this.command(112,{}).catch(() => null);
-    await this.control({Profile:{id:0,name:frontend.playerName.trim() || 'Rider',atv_model:frontend.quadId,rider_model:frontend.riderId}});
+    await this.control({Profile:{id:0,name:frontend.playerName.trim() || 'Rider',atv_model:frontend.quadId,rider_model:frontend.riderId,appearance:appearanceOf(frontend)}});
     await this.command(110,{quad_id:frontend.quadId,rider_id:frontend.riderId});
     if (generation === this.generation) await this.ride(environment, generation, pose);
   }

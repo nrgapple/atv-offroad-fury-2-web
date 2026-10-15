@@ -1192,6 +1192,7 @@ mod tests {
                 name: "Female".into(),
                 atv_model: 26,
                 rider_model: 1,
+                appearance: [0; 8],
             }),
             snapshot: None,
             sequence: Some(u32::MAX),

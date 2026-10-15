@@ -1,6 +1,7 @@
 import { gameplayBindings } from './bindings.js';
 import { parseLaunch, buildRideUrl, copyRideUrl, ENVIRONMENTS, RACE_COURSES, COURSE_PREVIEWS, courseResource, loadingShotsResource } from './launch.js';
 import { renderScreen, screenPages, courseGroup } from './menu-screens.js';
+import { PAINT_PALETTE, paintGlsl, paintable } from './render-support.js';
 // Rust owns menu labels, supported choices and their order. This bridge lays out
 // the HD frontend screens (menu-screens.js) and ride panels, and binds input.
 const base = name => name.replaceAll('\\', '/').split('/').at(-1).toLowerCase();
@@ -21,7 +22,18 @@ const normalizedSelection = value => ({
   freestyleEnvironment: ENVIRONMENTS.includes(value?.freestyleEnvironment) ? value.freestyleEnvironment : 'env01',
   // The multiplayer jersey name is remembered like the rest of the garage.
   playerName: typeof value?.playerName === 'string' && value.playerName.trim() && new TextEncoder().encode(value.playerName).length <= 24 && !/\p{Cc}/u.test(value.playerName) ? value.playerName : 'Rider',
+  appearance: normalizedAppearance(value?.appearance),
 });
+// Rider gear (helmet, glove, boot, shirt, sleeve, pant, goggle catalog
+// indices; 0 keeps the original) and the quad paint index, as shared online.
+export const GEAR_SLOTS = ['helmet','glove','boot','shirt','sleeve','pant','goggle'];
+export const PAINT_NAMES = ['Original','Red','Orange','Yellow','Green','Teal','Blue','Purple','Pink','White','Black'];
+export function normalizedAppearance(value) {
+  const gear = Array.isArray(value?.gear) && value.gear.length === 7 && value.gear.every(g => Number.isInteger(g) && g >= 0 && g <= 64) ? [...value.gear] : [0,0,0,0,0,0,0];
+  return { gear, paint: Number.isInteger(value?.paint) && value.paint >= 0 && value.paint < PAINT_NAMES.length ? value.paint : 0 };
+}
+export const appearanceBytes = a => [...normalizedAppearance(a).gear, normalizedAppearance(a).paint];
+export const appearanceFromBytes = bytes => normalizedAppearance(Array.isArray(bytes) && bytes.length === 8 ? { gear: bytes.slice(0, 7), paint: bytes[7] } : null);
 export function loadPlayerSelection(read = () => localStorage.getItem(selectionKey)) {
   try { return normalizedSelection(JSON.parse(read())); } catch { return normalizedSelection(null); }
 }
@@ -39,8 +51,9 @@ export function unlockedCourses(tracks, files) {
 }
 
 export class Frontend {
-  constructor({ codec, json, content, read, start, active, audio, diagnosticsOverlay, mobileControls, multiplayer, crashSettings, minimapSettings, modelAssets, menuRider }) {
-    Object.assign(this, { codec, json, content, read, start, active, audio, diagnosticsOverlay, mobileControls, multiplayer, crashSettings, minimapSettings, modelAssets, menuRider });
+  constructor({ codec, json, content, read, start, active, audio, diagnosticsOverlay, mobileControls, multiplayer, crashSettings, minimapSettings, modelAssets, menuRider, gearPreview }) {
+    Object.assign(this, { codec, json, content, read, start, active, audio, diagnosticsOverlay, mobileControls, multiplayer, crashSettings, minimapSettings, modelAssets, menuRider, gearPreview });
+    this.gearCatalog = null;
     this.root = document.getElementById('frontend'); this.canvas = document.getElementById('menu-canvas');
     this.ctx = this.canvas.getContext('2d'); this.buttons = document.getElementById('menu-buttons');
     this.notice = document.getElementById('menu-notice');
@@ -57,7 +70,7 @@ export class Frontend {
     this.assets = new Map(); this.images = new Map(); this.fonts = new Map();
     this.initialized = false; this.layoutKey = ''; this.layoutPending = false; this.loaded = new Set(); this.page = 'loading'; this.selection = 0; this.track = 0; this.busy = false; this.lastPad = new Set(); this.alive = true;
     const savedSelection = loadPlayerSelection();
-    this.quadId = savedSelection.quadId; this.riderId = savedSelection.riderId; this.lastFreestyleEnvironment = savedSelection.freestyleEnvironment; this.playerName = savedSelection.playerName; this.trackMode = 'single'; this.roomCode = ''; this.createCode = ''; this.garageReturn = 'single';
+    this.quadId = savedSelection.quadId; this.riderId = savedSelection.riderId; this.lastFreestyleEnvironment = savedSelection.freestyleEnvironment; this.playerName = savedSelection.playerName; this.appearance = savedSelection.appearance; this.trackMode = 'single'; this.roomCode = ''; this.createCode = ''; this.garageReturn = 'single';
     this.bindingDevice = 'keyboard'; this.bindingPage = 0; this.bindingRow = 0; this.musicPage = 0;
     this.capture = null; this.menuKeys = new Set();
     this.raceSettings={laps:3,cpu:3,difficulty:1,course:'env01'};this.raceActive=false;this.raceAvailable=false;this.raceCourses=[];
@@ -279,6 +292,13 @@ export class Frontend {
       this.raceAvailable=this.raceCourses.length>0;
       if(this.raceAvailable&&!this.raceCourses.includes(this.raceSettings.course))this.raceSettings.course=this.raceCourses[0];
       if (files.some(f => f.path === '/UI/RESOURCE/QUADINFO.RES')) { await this.archive('/UI/RESOURCE/QUADINFO.RES'); await this.image('multi_atv01'); }
+      // Original Profile Store gear catalog; older content packages omit it.
+      const gearRecord = files.find(f => f.path === '/UI/RESOURCE/RIDEINFO.RES');
+      if (gearRecord) {
+        const bytes = await this.read((await this.content).file, gearRecord.lba * 2048, gearRecord.bytes), entries = await this.json(2, bytes);
+        const index = entries.findIndex(e => e.name.toLowerCase().endsWith('uirider.txt'));
+        if (index >= 0) this.gearCatalog = await this.json(107, await this.codec(3, bytes, index));
+      }
       // The original catalog is available before a terrain/engine is loaded.
       const content = await this.content;
       await this.audio?.()?.music.load({ ...content, read: this.read, isCurrent: () => this.alive });
@@ -405,6 +425,7 @@ export class Frontend {
     } else if (action === 'back') {
       if (this.page === 'pause') return this.resume();
       if (this.page === 'garage') return this.leaveGarage();
+      if (this.page === 'gear') return this.show('garage');
       if (this.page === 'tracks' && this.trackMode !== 'single') { const mode = this.trackMode; this.trackMode = 'single'; return this.show(mode === 'host' ? 'create-lobby' : 'pause'); }
       if (this.page === 'lobby') return this.run('leave');
       if (this.page === 'settings') return this.show(this.settingsReturn ?? 'main');
@@ -415,7 +436,7 @@ export class Frontend {
       // Every direction steps through the courses visible under the event filter.
       const order = this.trackOrder(), position = Math.max(0, order.indexOf(this.track)) + (['left','up'].includes(action) ? -1 : 1);
       this.track = order[(position + order.length) % order.length]; this.scrollScreenSelection = true;
-    } else if (this.page === 'race' && ['left','right'].includes(action)) { return this.run(this.frame.choices[this.selection],action === 'left' ? -1 : 1);
+    } else if (['race','gear'].includes(this.page) && ['left','right'].includes(action)) { return this.run(this.frame.choices[this.selection],action === 'left' ? -1 : 1);
     } else if (this.page === 'minimap-config' && this.frame.choices[this.selection] === 'minimap-size' && ['left','right'].includes(action)) {
       this.minimapSettings?.setSize(this.minimapSettings.size + (action === 'left' ? -8 : 8));
     } else if (this.page === 'minimap-config' && this.frame.choices[this.selection] === 'minimap-zoom' && ['left','right'].includes(action)) {
@@ -447,7 +468,7 @@ export class Frontend {
       if (action === 'copyride') return await copyRideUrl(this.rideUrl(),this.notice);
       if (action === 'settings') { this.settingsReturn = this.page === 'pause' ? 'pause' : 'main'; return this.show('settings'); }
       if (action === 'garage') { this.garageReturn = this.page; return this.show('garage'); }
-      if (action === 'changeride') { this.garageReturn = 'pause'; this.rideBeforeGarage = [this.quadId, this.riderId]; return this.show('garage'); }
+      if (action === 'changeride') { this.garageReturn = 'pause'; this.rideBeforeGarage = [this.quadId, this.riderId, appearanceBytes(this.appearance).join('.')]; return this.show('garage'); }
       if (action === 'hosttrack') {
         // Hosting picks a track first; in a session the host moves everyone.
         if (this.page === 'create-lobby' && this.quadId >= 27) throw new Error('Choose an ATV for multiplayer. Motorcycles are available in Single Player.');
@@ -461,7 +482,8 @@ export class Frontend {
       else if (action === 'riderchange' && this.quadId < 27) this.riderId = 1 - this.riderId;
       else if (action.startsWith('spawn:')) { this.busy=true; try { await this.multiplayer.action(action,this); } finally {this.busy=false;} return; }
       else if (['host','join','share','leave'].includes(action)) { if (['host','join'].includes(action) && this.quadId>=27) throw new Error('Choose an ATV for multiplayer. Motorcycles are available in Single Player.'); if (['host','join'].includes(action)) this.saveSelection(); return await this.multiplayer.action(action, this); }
-      else if (['main','single','tracks','settings','extras','pause','players','hud-settings','minimap-config','controls','music','multiplayer','create-lobby','join-lobby','lobby','race'].includes(action)) return await this.show(action);
+      else if (['main','single','tracks','settings','extras','pause','players','hud-settings','minimap-config','controls','music','multiplayer','create-lobby','join-lobby','lobby','race','gear'].includes(action)) return await this.show(action);
+      if (action.startsWith('gear') && action !== 'gear') { this.stepGear(action.slice(4), direction); this.saveSelection(); this.layoutKey = ''; await this.refresh(); return; }
       if (action === 'racestart') {
         try { await this.launchSingle(this.raceSettings.course, {...this.raceSettings}); }
         catch(error) { await this.show('race');this.fail(error); } finally { this.busy = false; }
@@ -511,21 +533,40 @@ export class Frontend {
   async leaveGarage() {
     const previous = this.rideBeforeGarage; this.rideBeforeGarage = null;
     if (this.garageReturn !== 'pause') return this.show(this.garageReturn);
-    if (!this.multiplayer?.state?.lobby || !previous || (previous[0] === this.quadId && previous[1] === this.riderId)) return this.show('pause');
+    if (!this.multiplayer?.state?.lobby || !previous || (previous[0] === this.quadId && previous[1] === this.riderId && previous[2] === appearanceBytes(this.appearance).join('.'))) return this.show('pause');
     this.saveSelection(); this.busy = true;
     try { await this.multiplayer.changeRide(this); }
     catch (error) { await this.show('pause'); this.fail(error); }
     finally { this.busy = false; }
   }
   saveSelection() {
-    savePlayerSelection({quadId:this.quadId, riderId:this.riderId, freestyleEnvironment:this.lastFreestyleEnvironment, playerName:this.playerName});
+    savePlayerSelection({quadId:this.quadId, riderId:this.riderId, freestyleEnvironment:this.lastFreestyleEnvironment, playerName:this.playerName, appearance:this.appearance});
+  }
+  // Cycle one gear row through Original and the catalog items. The jersey sets
+  // the shirt and its matching sleeves together, as the original store does.
+  stepGear(row, direction = 1) {
+    const a = normalizedAppearance(this.appearance);
+    if (row === 'paint') a.paint = (a.paint + direction + PAINT_NAMES.length) % PAINT_NAMES.length;
+    else {
+      const slot = row === 'jersey' ? 'shirt' : row, at = GEAR_SLOTS.indexOf(slot), items = this.gearCatalog?.[at]?.items ?? [];
+      if (at < 0 || !items.length) return;
+      a.gear[at] = (a.gear[at] + direction + items.length + 1) % (items.length + 1);
+      if (row === 'jersey') a.gear[GEAR_SLOTS.indexOf('sleeve')] = Math.min(a.gear[at], this.gearCatalog[GEAR_SLOTS.indexOf('sleeve')]?.items.length ?? 0);
+    }
+    this.appearance = a;
+  }
+  gearRows() {
+    // The original catalog names pants/sleeves generically ("pants 10"); their
+    // index matches the jersey line of the same brand.
+    const a = normalizedAppearance(this.appearance), name = slot => { const at = GEAR_SLOTS.indexOf(slot), index = a.gear[at]; const item = index ? this.gearCatalog?.[at]?.items[index - 1]?.name : null; return !item ? 'Original' : /^(pants|sleeves) \d+$/i.test(item) ? this.gearCatalog?.[GEAR_SLOTS.indexOf('shirt')]?.items[index - 1]?.name ?? item : item; };
+    return [name('helmet'), name('shirt'), name('pant'), name('glove'), name('boot'), name('goggle'), PAINT_NAMES[a.paint]];
   }
   async refresh(force = false) {
     if (!this.initialized || this.root.hidden || (this.busy && this.page !== 'loading' && !force) || this.layoutPending) return;
     const stage = this.canvas.parentElement, track = this.page === 'loading' ? this.loadingTrack : this.page === 'lobby' ? this.tracks.find(t=>t.id===this.multiplayer?.state?.environment) : this.page === 'race' ? this.tracks.find(t=>t.id===this.raceSettings.course) : this.tracks[this.track];
     const music = this.audio?.()?.music, musicState = music?.snapshot();
     const lobby = this.multiplayer?.state?.lobby;
-    const request = {lobby_players:(lobby?.players??[]).map(p=>({id:String(p.id),label:`${p.name}${p.id===this.multiplayer.state.peer?' (You)':''}`,value:p.id===this.multiplayer.state.peer?'self':(this.multiplayer.remote.find(r=>r.peer===p.id && !r.stale)?'ready':'waiting')})),race_laps:this.raceSettings.laps,race_cpu:this.raceSettings.cpu,race_difficulty:this.raceSettings.difficulty,race_available:this.raceAvailable,race_course:this.raceSettings.course,race_active:this.raceActive,quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? (this.page==='create-lobby'?this.createCode:this.roomCode),lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:track?.name ?? '',track_image:(this.page === 'lobby' && track?.id === 'training' && this.images.has(trainingPreview) ? trainingPreview : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
+    const request = {lobby_players:(lobby?.players??[]).map(p=>({id:String(p.id),label:`${p.name}${p.id===this.multiplayer.state.peer?' (You)':''}`,value:p.id===this.multiplayer.state.peer?'self':(this.multiplayer.remote.find(r=>r.peer===p.id && !r.stale)?'ready':'waiting')})),race_laps:this.raceSettings.laps,race_cpu:this.raceSettings.cpu,race_difficulty:this.raceSettings.difficulty,race_available:this.raceAvailable,race_course:this.raceSettings.course,gear_rows:this.page === 'gear' ? this.gearRows() : [],race_active:this.raceActive,quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? (this.page==='create-lobby'?this.createCode:this.roomCode),lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:track?.name ?? '',track_image:(this.page === 'lobby' && track?.id === 'training' && this.images.has(trainingPreview) ? trainingPreview : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
       minimap_orientation:this.minimapSettings?.orientation ?? 'north-up',minimap_shape:this.minimapSettings?.shape ?? 'circle',minimap_corner:this.minimapSettings?.corner ?? 'top-right',minimap_enabled:this.minimapSettings?.enabled ?? true,minimap_size:this.minimapSettings?.size ?? 160,minimap_zoom:this.minimapSettings?.zoom ?? 50,funny_crashes:this.crashSettings?.enabled ?? true,crash_mode:this.crashSettings?.mode ?? 'crazy',original_camera:this.crashSettings?.camera === 'original',speed_rush:this.crashSettings?.speed ?? 'off',mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
       music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
@@ -542,7 +583,7 @@ export class Frontend {
       const frame = await this.json(62,new TextEncoder().encode(key));
       // Page/viewport can change while the worker handles the request. The next
       // frame requests fresh data, rather than applying a stale hit map.
-      if ((this.minimapSettings?.zoom ?? 50) !== request.minimap_zoom || (this.minimapSettings?.orientation ?? 'north-up') !== request.minimap_orientation || (this.minimapSettings?.shape ?? 'circle') !== request.minimap_shape || (this.minimapSettings?.corner ?? 'top-right') !== request.minimap_corner || (this.minimapSettings?.enabled ?? true) !== request.minimap_enabled || (this.minimapSettings?.size ?? 160) !== request.minimap_size || this.raceSettings.laps!==request.race_laps || this.raceSettings.course!==request.race_course || this.raceSettings.cpu!==request.race_cpu || this.raceSettings.difficulty!==request.race_difficulty || (this.mobileControls?.steeringSensitivity ?? 85) !== request.mobile_steering_sensitivity || (this.capture?.label ?? '') !== request.capture_label || this.bindingPage !== request.binding_page || this.musicPage !== request.music_page || this.page !== request.page || this.selection !== request.selection || this.quadId !== request.quad_id || this.riderId !== request.rider_id || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
+      if ((this.minimapSettings?.zoom ?? 50) !== request.minimap_zoom || (this.minimapSettings?.orientation ?? 'north-up') !== request.minimap_orientation || (this.minimapSettings?.shape ?? 'circle') !== request.minimap_shape || (this.minimapSettings?.corner ?? 'top-right') !== request.minimap_corner || (this.minimapSettings?.enabled ?? true) !== request.minimap_enabled || (this.minimapSettings?.size ?? 160) !== request.minimap_size || this.raceSettings.laps!==request.race_laps || this.raceSettings.course!==request.race_course || JSON.stringify(this.page === 'gear' ? this.gearRows() : [])!==JSON.stringify(request.gear_rows) || this.raceSettings.cpu!==request.race_cpu || this.raceSettings.difficulty!==request.race_difficulty || (this.mobileControls?.steeringSensitivity ?? 85) !== request.mobile_steering_sensitivity || (this.capture?.label ?? '') !== request.capture_label || this.bindingPage !== request.binding_page || this.musicPage !== request.music_page || this.page !== request.page || this.selection !== request.selection || this.quadId !== request.quad_id || this.riderId !== request.rider_id || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
       if (this.page === 'lobby' && this.multiplayer?.state?.environment !== track?.id) return;
       this.presentation = request; this.presentationTrack = track; this.frame = frame; this.layoutKey = key; this.draw(); this.rebuildButtons(); this.updateModelViews();
     } catch (error) { this.fail(error); }
@@ -619,7 +660,7 @@ export class Frontend {
     this.modelViews.clear();
   }
   updateModelViews() {
-    if (!['garage','main','single','create-lobby','join-lobby'].includes(this.page)) return;
+    if (!['garage','gear','main','single','create-lobby','join-lobby'].includes(this.page)) return;
     // HD screens provide named slots; the views move with responsive layout.
     const slots = [...this.buttons.querySelectorAll('[data-model-slot]')];
     if (!slots.length) { this.clearModelViews(); return; }
@@ -628,7 +669,7 @@ export class Frontend {
       if (!view) { view = new ModelView(slot, slot.dataset.modelSlot); this.modelViews.set(slot.dataset.modelSlot, view); }
       else if (view.element.parentElement !== slot) { slot.append(view.element); view.render(); }
     }
-    const key = `${this.quadId}:${this.riderId}`;
+    const appearance = normalizedAppearance(this.appearance), key = `${this.quadId}:${this.riderId}:${appearanceBytes(appearance).join('.')}`;
     if (key === this.modelKey) return;
     cancelAnimationFrame(this.modelAnimation);
     this.modelKey = key; const token = ++this.modelToken;
@@ -636,11 +677,12 @@ export class Frontend {
       view.clear('Loading model...');
       delete view.canvas.dataset.clip; delete view.canvas.dataset.animationTime;
     }
-    void this.modelAssets(this.quadId, this.riderId).then(source => {
-      if (token !== this.modelToken || !['garage','main','single','create-lobby','join-lobby'].includes(this.page) || this.root.hidden) return;
-      this.modelViews.get('quad')?.set(source.mesh, source.textures);
-      this.modelViews.get('rider')?.set(source.riderMesh, source.riderTextures, source.riderPose?.world_matrices);
-      if (this.page === 'garage') void this.startMenuRider(token, key);
+    void this.modelAssets(this.quadId, this.riderId).then(async source => {
+      const gear = this.quadId < 27 ? await this.gearPreview?.(appearance, source.riderMesh) : null;
+      if (token !== this.modelToken || !['garage','gear','main','single','create-lobby','join-lobby'].includes(this.page) || this.root.hidden) return;
+      this.modelViews.get('quad')?.set(source.mesh, source.textures, undefined, { paint: this.quadId < 27 ? appearance.paint : 0 });
+      this.modelViews.get('rider')?.set(source.riderMesh, gear?.size ? new Map([...source.riderTextures, ...gear]) : source.riderTextures, source.riderPose?.world_matrices);
+      if (['garage','gear'].includes(this.page)) void this.startMenuRider(token, key);
       for (const view of this.modelViews.values()) view.canvas.dataset.selection = key;
     }).catch(error => {
       if (token !== this.modelToken) return;
@@ -651,10 +693,11 @@ export class Frontend {
   async startMenuRider(token, key) {
     try {
       const original = await this.menuRider(this.riderId, () => token === this.modelToken, this.quadId);
-      if (!original || token !== this.modelToken || this.page !== 'garage') return;
+      const gear = original && this.quadId < 27 ? await this.gearPreview?.(normalizedAppearance(this.appearance), original.mesh) : null;
+      if (!original || token !== this.modelToken || !['garage','gear'].includes(this.page)) return;
       const view = this.modelViews.get('rider');
       view.yaw = original.previewYaw ?? -.6;
-      view.set(original.mesh,original.textures,original.pose.world_matrices);
+      view.set(original.mesh,gear?.size ? new Map([...original.textures, ...gear]) : original.textures,original.pose.world_matrices);
       view.canvas.dataset.selection = key; view.canvas.dataset.clip = original.clip;
       const start = performance.now(); let busy = false, last = 0;
       const tick = async time => {
@@ -992,8 +1035,9 @@ class ModelView {
     }
     this.groups = []; this.textures = []; this.source = null; this.message.textContent = message; this.element.classList.toggle('is-loading', /Loading|Restoring/.test(message)); delete this.canvas.dataset.ready;
   }
-  set(mesh, materials, pose = mesh.nodes.map(node => node.world_matrix)) {
-    this.clear(); this.pose = pose; this.source = [mesh, materials, pose]; const gl = this.gl;
+  set(mesh, materials, pose = mesh.nodes.map(node => node.world_matrix), { paint = 0 } = {}) {
+    pose ??= mesh.nodes.map(node => node.world_matrix);
+    this.clear(); this.pose = pose; this.source = [mesh, materials, pose, { paint }]; this.paint = PAINT_PALETTE[paint] ?? PAINT_PALETTE[0]; const gl = this.gl;
     if (!gl || this.lost) { this.message.textContent = '3D preview unavailable'; return; }
     if (!this.program) {
       const shader = (type, text) => { const s=gl.createShader(type); gl.shaderSource(s,text); gl.compileShader(s); if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
@@ -1004,13 +1048,14 @@ class ModelView {
         float pitch=.25;float y=v.y*cos(pitch)-v.z*sin(pitch);float z=v.y*sin(pitch)+v.z*cos(pitch);
         gl_Position=vec4(v.x/extent.x,y/extent.y,-z/40.,1.);tex=uv;vec3 nn=normalize(r*mat3(bones[int(node)])*n);light=.36+.7*max(dot(nn,normalize(vec3(-.4,.8,.6))),0.)+.16*max(dot(nn,normalize(vec3(.7,.1,-.7))),0.);}`);
       const fragment=shader(gl.FRAGMENT_SHADER, `#version 300 es
-        precision highp float; in vec2 tex; in float light; uniform sampler2D image; uniform bool cutout; out vec4 color;
-        void main(){vec4 t=texture(image,tex);if(cutout&&t.a<.15)discard;vec3 c=t.rgb*light;float l=dot(c,vec3(.299,.587,.114));
+        precision highp float; in vec2 tex; in float light; uniform sampler2D image; uniform bool cutout; uniform vec2 paint; out vec4 color;
+        ${paintGlsl}
+        void main(){vec4 t=texture(image,tex);if(cutout&&t.a<.15)discard;vec3 c=applyPaint(t.rgb,paint)*light;float l=dot(c,vec3(.299,.587,.114));
         // Studio grade: richer colour and a little contrast so pale suits read on the silver stage.
         c=clamp(mix(vec3(l),c,1.18),0.,1.);c=clamp((c-.5)*1.1+.47,0.,1.);color=vec4(c,1.);}`);
       this.program=gl.createProgram();gl.attachShader(this.program,vertex);gl.attachShader(this.program,fragment);gl.linkProgram(this.program);
       gl.deleteShader(vertex);gl.deleteShader(fragment);if(!gl.getProgramParameter(this.program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(this.program));
-      this.uniforms=Object.fromEntries(['center','extent','yaw','image','cutout','bones[0]'].map(n=>[n,gl.getUniformLocation(this.program,n)]));
+      this.uniforms=Object.fromEntries(['center','extent','yaw','image','cutout','paint','bones[0]'].map(n=>[n,gl.getUniformLocation(this.program,n)]));
     }
     const gpu=new Map();
     const texture = decoded => {
@@ -1030,7 +1075,7 @@ class ModelView {
       // Original UI rider textures store a specular/reflection mask in alpha;
       // only materials without that flag use alpha as a cut-out.
       const decoded=materials.get(mesh.materials[group.material]);
-      this.groups.push({vao,buffer,count:group.indices.length,texture:gpu.get(mesh.materials[group.material])??fallback,cutout:!decoded?.opaque});
+      this.groups.push({vao,buffer,count:group.indices.length,texture:gpu.get(mesh.materials[group.material])??fallback,cutout:!decoded?.opaque,paintable:paintable(mesh.materials[group.material])});
     }
     this.center=min.map((v,i)=>(v+max[i])/2); this.dimensions=min.map((v,i)=>max[i]-v);
     this.canvas.dataset.ready='true';this.canvas.dataset.triangles=String(this.groups.reduce((n,g)=>n+g.count/3,0));this.render();
@@ -1047,7 +1092,7 @@ class ModelView {
     const extent=Math.max(vertical,horizontal/aspect)*1.12;
     gl.uniformMatrix4fv(this.uniforms['bones[0]'],false,new Float32Array(this.pose.flat()));
     gl.uniform3fv(this.uniforms.center,this.center);gl.uniform2f(this.uniforms.extent,extent*aspect,extent);gl.uniform1f(this.uniforms.yaw,this.yaw);gl.uniform1i(this.uniforms.image,0);gl.activeTexture(gl.TEXTURE0);
-    for(const group of this.groups){gl.bindVertexArray(group.vao);gl.bindTexture(gl.TEXTURE_2D,group.texture);gl.uniform1i(this.uniforms.cutout,group.cutout);gl.drawArrays(gl.TRIANGLES,0,group.count);}
+    for(const group of this.groups){gl.bindVertexArray(group.vao);gl.bindTexture(gl.TEXTURE_2D,group.texture);gl.uniform1i(this.uniforms.cutout,group.cutout);gl.uniform2fv(this.uniforms.paint,group.paintable?this.paint:PAINT_PALETTE[0]);gl.drawArrays(gl.TRIANGLES,0,group.count);}
     this.canvas.dataset.glError=String(gl.getError());
   }
   destroy(){this.resize.disconnect();this.clear();if(this.program&&!this.lost)this.gl.deleteProgram(this.program);this.gl?.getExtension('WEBGL_lose_context')?.loseContext();this.element.remove();}

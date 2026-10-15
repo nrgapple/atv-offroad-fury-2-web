@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {loadPlayerSelection,savePlayerSelection,Frontend,unlockedCourses} from './frontend.js';
+import {loadPlayerSelection,savePlayerSelection,Frontend,unlockedCourses,normalizedAppearance,appearanceBytes,appearanceFromBytes} from './frontend.js';
 import {ENVIRONMENTS,courseResource} from './launch.js';
-const defaults={quadId:1,riderId:0,freestyleEnvironment:'env01',playerName:'Rider'};
+const defaults={quadId:1,riderId:0,freestyleEnvironment:'env01',playerName:'Rider',appearance:{gear:[0,0,0,0,0,0,0],paint:0}};
 test('saved vehicle, rider and last-played Freestyle course survive a storage roundtrip',()=>{
  for(const quadId of [1,26,27,46]) {
-  const choice={quadId,riderId:1,freestyleEnvironment:'free05',playerName:'Sam 🚀'};
+  const choice={quadId,riderId:1,freestyleEnvironment:'free05',playerName:'Sam 🚀',appearance:{gear:[3,1,15,26,26,4,11],paint:6}};
   let stored;savePlayerSelection(choice,value=>stored=value);
   assert.deepEqual(loadPlayerSelection(()=>stored),choice);
  }
@@ -59,4 +59,17 @@ test('race setup cycles available original courses and starts the selected one',
  await Frontend.prototype.run.call(menu,'racetrack',-1);assert.equal(menu.raceSettings.course,'sx16');
  await Frontend.prototype.run.call(menu,'racetrack',1);await Frontend.prototype.run.call(menu,'racetrack',1);assert.equal(menu.raceSettings.course,'nat03');
  await Frontend.prototype.run.call(menu,'racestart');assert.deepEqual(calls,[['nat03','nat03']]);
+});
+
+test('rider gear steps through Original and the catalog; jersey carries matching sleeves',()=>{
+ const items=n=>({items:Array.from({length:n},(_,i)=>({name:`Item ${i+1}`}))});
+ const menu={appearance:normalizedAppearance(null),gearCatalog:[items(3),items(2),items(2),items(4),items(4),items(5),items(2)]};
+ Frontend.prototype.stepGear.call(menu,'helmet',-1);assert.equal(menu.appearance.gear[0],3);
+ Frontend.prototype.stepGear.call(menu,'helmet',1);assert.equal(menu.appearance.gear[0],0);
+ Frontend.prototype.stepGear.call(menu,'jersey',1);Frontend.prototype.stepGear.call(menu,'jersey',1);
+ assert.deepEqual([menu.appearance.gear[3],menu.appearance.gear[4]],[2,2]);
+ Frontend.prototype.stepGear.call(menu,'paint',-1);assert.equal(menu.appearance.paint,10);
+ assert.deepEqual(Frontend.prototype.gearRows.call(menu),['Original','Item 2','Original','Original','Original','Original','Black']);
+ assert.deepEqual(appearanceFromBytes(appearanceBytes(menu.appearance)),menu.appearance);
+ for(const bad of [{gear:[65,0,0,0,0,0,0],paint:0},{gear:[0,0],paint:1},{gear:[0,0,0,0,0,0,0],paint:11}])assert.deepEqual(normalizedAppearance(bad),bad.gear.length===7&&bad.paint===11?{gear:bad.gear,paint:0}:{...normalizedAppearance(null),paint:bad.paint<11?bad.paint:0});
 });

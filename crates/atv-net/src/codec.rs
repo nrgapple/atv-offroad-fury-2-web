@@ -256,7 +256,11 @@ fn peer_id(id: PeerId) -> Result<()> {
 }
 fn participant(p: &Participant) -> Result<()> {
     peer_id(p.id)?;
-    if p.name.is_empty() || p.name.len() > MAX_NAME_BYTES || p.name.chars().any(char::is_control) {
+    if p.name.is_empty()
+        || p.name.len() > MAX_NAME_BYTES
+        || p.name.chars().any(char::is_control)
+        || !valid_appearance(&p.appearance)
+    {
         return Err(Error::InvalidValue);
     }
     Ok(())
@@ -318,6 +322,7 @@ impl Writer {
         self.0.extend_from_slice(p.name.as_bytes());
         self.u16(p.atv_model);
         self.u16(p.rider_model);
+        self.0.extend_from_slice(&p.appearance);
         Ok(())
     }
     fn lobby(&mut self, l: &Lobby) -> Result<()> {
@@ -419,6 +424,7 @@ impl<'a> Reader<'a> {
             name,
             atv_model: self.u16()?,
             rider_model: self.u16()?,
+            appearance: self.take(APPEARANCE_BYTES)?.try_into().unwrap(),
         };
         participant(&p)?;
         Ok(p)
