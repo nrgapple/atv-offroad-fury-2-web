@@ -2,12 +2,11 @@
 // Rider gear page, persistence and previews, ride appearance, and (with
 // ATV_TEST_MULTIPLAYER=1 against a relay-backed site) gear seen by other riders.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {mkdirSync} from 'node:fs';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
+import {launch} from './browser/harness.mjs';
 const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4212';
 const output=process.env.ATV_GEAR_SCREENSHOTS;if(output)mkdirSync(output,{recursive:true});
-const browser=await chromium.launch({headless:true});
+const browser=await launch();
 const errors=[];
 const button=(p,name)=>p.getByRole('button',{name,exact:true});
 const state=p=>p.evaluate(()=>window.atvTerrainStatus);
