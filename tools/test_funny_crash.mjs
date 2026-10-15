@@ -14,7 +14,8 @@ try {
  page.on('pageerror',e=>errors.push(e.message));
  await captureCrashIsolation(page);await captureCrashDraws(page);await captureSimulation(page,'crashFrames');
  await page.addInitScript(()=>{
-  // Fresh browser uses the default-On crash setting.
+  // Crazy is opt-in; a fresh browser defaults to Original crashes.
+  localStorage.setItem('atv-crash-mode','crazy');
   const post=Worker.prototype.postMessage;let held=false;
   Worker.prototype.postMessage=function(message,...args){
    if(message.op===50&&window.crashDriving){

@@ -6,9 +6,10 @@ Build funny crash presentation as an optional authored effects layer on top of
 the recovered wreck and recovery flow. It may react to real wreck/separation
 events, but it must not choose whether a wreck occurs or change the original
 vehicle solver, rider detach/recovery timing, checkpoints, or reset behavior.
-The recovered game remains the comparison baseline. At the user’s request, the
-effects option is now on by default; Off restores the original crash presentation.
-The setting is persisted through the existing settings path, retaining a saved Off.
+The recovered game remains the comparison baseline. The effects option was on by
+default from 2026-10-12 at the user’s request; since 2026-10-15 new players get
+Original, and saved Crazy/Gorn choices are kept (see
+[Original defaults](#original-defaults-2026-10-15)).
 
 **Enhancement-isolation check.** "Paired steps" in this note come from
 `tools/crash_isolation.mjs`: a mirrored WASM worker replays the same inputs
@@ -35,8 +36,8 @@ remain attached; effects must tolerate incomplete model coverage.
 
 The current implementation uses a 120 Hz constrained Verlet layer with bounded
 joint angle ranges, terrain-only contacts, at most 32 source rider nodes, and a
-cap of eight debris pieces. The toggle is persisted as `atv-funny-crashes` and
-defaults to On, while preserving an existing saved Off. Only the local player’s
+cap of eight debris pieces. The toggle was first persisted as `atv-funny-crashes`;
+`atv-crash-mode` now holds the choice and migrates that key. Only the local player’s
 crash receives the presentation layer;
 remote players keep their native poses. The source ATV chassis is a monolithic
 mesh, so visual breakaway is limited to authored mechanical pieces rather than
@@ -300,3 +301,30 @@ or a 22 ft rider separation (also true on production `eccf8d7`), so those two
 browser assertions are reported rather than asserted. The MX rider shows a
 pre-existing black patch on the back in Crazy/Gorn on production as well.
 Physical phones and public deployment are not verified by this section.
+
+## Original defaults (2026-10-15)
+
+Original behavior is the project baseline, so a player without a saved choice now
+gets Original crashes. A saved `atv-crash-mode` of Crazy or Gorn is kept, as is a
+legacy saved `atv-funny-crashes=true` (migrated to Crazy); anything else is
+Original. The menu labels an unset mode Original.
+
+The tight crash shot already applied only while Crazy/Gorn presentation is
+active: `vehicle.crashSubjects` is null otherwise, so Original always uses the
+recovered wreck camera. Its Tight/Original choice is unchanged. The synthesized
+bass/noise crash boom (`audio.crashBoom`) is authored, not a recovered sample.
+Its former companion, camera shake, was removed, so it is grouped with the crash
+mode and now plays only in Crazy/Gorn. Impact detection still runs for
+diagnostics; recovered impact samples are unaffected.
+
+Host evidence (Chromium Metal, local build): `make check` passes 399 core Rust
+tests and 157 JS tests (one existing private-case skip); `make web` passes.
+`test_hd_settings`, `test_camera_gorn` (boom still observed in Gorn),
+`test_motorcycle_crash` (304 exact paired Crazy/Off steps) and the default
+`test_wreck` route pass; that Original route now asserts zero booms.
+`test_tight_crash_camera` and `test_funny_crash` still fail only their route
+coverage assertions (22 ft separation; aerial bailout), identically with the
+previous origin/main scripts; see the route limits above. The legacy
+`ATV_FUNNY_CRASHES=1` `test_wreck` path also fails on a stale expectation of a
+crash row in the pause menu, independent of this change. Public deployment is
+not verified here.
