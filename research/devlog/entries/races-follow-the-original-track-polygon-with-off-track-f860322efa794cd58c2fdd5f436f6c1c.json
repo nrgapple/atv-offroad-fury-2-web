@@ -1,0 +1,14 @@
+{
+  "id": "races-follow-the-original-track-polygon-with-off-track-f860322efa794cd58c2fdd5f436f6c1c",
+  "timestamp": "2026-10-15T12:35:29.119871+00:00",
+  "recorded_at": "2026-10-15T12:35:29.153885+00:00",
+  "kind": "build",
+  "title": "Races follow the original track polygon, with off-track return and rider contact (host checkpoint)",
+  "summary": "Race progress now follows the original RaceStatus track model instead of radius checkpoints riders could miss: racers count progress only inside the authored edge polygon within a route window, laps count when race distance passes the finish gate, and alternate lines map onto the main line. The HUD shows OFF TRACK with a pointer back; Reset returns to the racing line without restarting the race; wreck recovery uses the on-track checkpoint. CPUs no longer get captured by nearby parts of the course (nat01's lap runs beside its start straight), recover when stuck or off the course, and racers now collide.",
+  "details": [
+    "Exact-build evidence: RaceStatus per-frame update 00248b20 calls 0017be80, which accepts only segments whose tag 10/11 edge polygon (0017bb50) contains the rider within Track +0x34/+0x38 route limits, accumulates off-track time at +0xf0, counts laps on a forward finish-box crossing (001a95b0), and passes each racer's track position/direction to its vehicle every update. Verification: unit tests; private test drives two-lap races on all 32 TDFs plus all 60 alternate lines without leaving the track; tools/test_race_courses.mjs passes all 32 courses in host Chromium including off track, OFF TRACK HUD, then Reset back to the racing line with the race running; 20-second races on env01/nat01/env02/sx03 resolve 82-132 rider contacts with CPU route error <=24 ft; test_race.mjs (Caribou) and test_frontend.mjs pass; make check passes (Rust, strict Clippy, 154 JS tests)."
+  ],
+  "limitation": "Host checkpoint until merged and publicly verified. The original window values (Track +0x34/+0x38) and exact finish-box test are not yet recovered; 150 ft ahead / 60 ft behind are authored. CPU off-track (5 s) and stuck (4 s) recovery is an authored policy; rider contact uses the authored multiplayer proxy, not a recovered PS2 collision model.",
+  "image": "/devlog-images/races-follow-the-original-track-polygon-with-off-track-f860322efa794cd58c2fdd5f436f6c1c.png",
+  "caption": "Host Chromium capture (not public, not PS2): Tioga/env02 race with the rider off the course; the HUD reads OFF TRACK, 291 ft with Reset to return, place 5/5, with the radar showing the track."
+}

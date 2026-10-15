@@ -44,3 +44,4 @@
 
 /* Menu notices (copy confirmations, errors) match the dark card. */
 #menu-notice { border-left: 3px solid var(--hud-gold); border-radius: 0 var(--ms-radius) var(--ms-radius) 0; background: #0c0c0cdb; font: 600 15px/1.35 var(--atv-font-display); box-shadow: 0 4px 0 #0009; }
+#race-overlay[data-off-track=true] .race-direction { color: #ff8a6b; }

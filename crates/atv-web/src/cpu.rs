@@ -14,6 +14,8 @@ pub struct CpuRacer {
     rider: atv_core::rider_pose::Animator,
     wreck: atv_core::wreck_animation::Animator,
     mode: Option<atv_core::rider_pose::Mode>,
+    /// Seconds riding below walking pace (pinned against scenery or a rider).
+    stuck: f32,
 }
 pub fn create_cpu_racer(
     sim: &Simulation,
@@ -87,6 +89,7 @@ pub fn create_cpu_racer(
         rider,
         wreck,
         mode: None,
+        stuck: 0.,
         driver: atv_core::race_ai::Driver::new(index, difficulty),
     })
 }
@@ -97,6 +100,7 @@ impl CpuRacer {
         player: &VehicleFrame,
         peers: &[Peer],
         gap: f32,
+        station: atv_core::race::Station,
         world: &World<'_>,
     ) -> Result<(VehicleFrame, atv_core::race::CpuPose, bool)> {
         const DT: f32 = 1. / 60.;
@@ -125,6 +129,7 @@ impl CpuRacer {
                 scene: self.vehicle.scene_collision(),
                 clearance: contact.as_ref().map_or(0., |c| before.origin[1] - c.height),
                 terrain_normal: predicted.as_ref().map_or([0., 1., 0.], |c| c.normal),
+                station: Some(station),
             },
         )?;
         let stunt_input = atv_core::stunt::Input {
@@ -209,6 +214,11 @@ impl CpuRacer {
             )?);
         }
         let frame = self.vehicle.frame();
+        if frame.wreck.phase == atv_core::wreck::Phase::Riding && frame.speed.abs() < 3. {
+            self.stuck += DT;
+        } else {
+            self.stuck = 0.;
+        }
         let rider_wreck = self.wreck.frame();
         let rider_matrices = if rider_wreck.is_some() {
             self.wreck.pose(world.nodes)?.world_matrices
@@ -236,6 +246,15 @@ impl CpuRacer {
         };
         let repositioned = frame.reset_count != before.reset_count;
         Ok((frame, pose, repositioned))
+    }
+    pub fn stuck_time(&self) -> f32 {
+        self.stuck
+    }
+    /// Recover at the race checkpoint on the racing line.
+    pub fn respawn(&mut self, nodes: &[mesh::Node]) -> Result<()> {
+        self.vehicle.reset_now()?;
+        self.stuck = 0.;
+        self.reset_presentation(nodes)
     }
     fn reset_presentation(&mut self, nodes: &[mesh::Node]) -> Result<()> {
         self.wreck.reset();

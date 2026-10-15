@@ -48,6 +48,64 @@ impl Course {
         }
         best
     }
+    /// Nearest racing-line point within the route window around a rider's
+    /// race station. Native 0017be80 tracks the current node instead of
+    /// searching the whole course, so a course that passes beside itself
+    /// (e.g. nat01's lap beside its start straight) cannot capture the CPU.
+    pub fn project_near(&self, origin: [f32; 3], station: crate::race::Station) -> RoutePosition {
+        let in_cycle = station.segment >= self.loop_start;
+        let mut first = station.segment;
+        let mut behind = station.fraction * self.segment(first);
+        while behind < crate::race::TRACK_BEHIND {
+            let Some(previous) = self.previous(first, in_cycle) else {
+                break;
+            };
+            first = previous;
+            behind += self.segment(previous);
+        }
+        let mut total: f32 = (0..first).map(|i| self.segment(i)).sum();
+        let mut best = RoutePosition {
+            segment: station.segment,
+            fraction: station.fraction,
+            point: self.point_at(station),
+            error: f32::MAX,
+            distance: 0.,
+        };
+        let mut segment = first;
+        let mut covered = 0.;
+        for _ in 0..self.points.len() {
+            let a = self.points[segment];
+            let b = self.points[self.next(segment)];
+            let dx = b[0] - a[0];
+            let dz = b[2] - a[2];
+            let length = (dx * dx + dz * dz).sqrt();
+            let fraction = (((origin[0] - a[0]) * dx + (origin[2] - a[2]) * dz)
+                / (length * length).max(0.0001))
+            .clamp(0., 1.);
+            let point = std::array::from_fn(|n| a[n] + fraction * (b[n] - a[n]));
+            let error = ((point[0] - origin[0]).powi(2) + (point[2] - origin[2]).powi(2)).sqrt();
+            if error < best.error {
+                best = RoutePosition {
+                    segment,
+                    fraction,
+                    point,
+                    error,
+                    distance: total + fraction * length,
+                };
+            }
+            covered += length;
+            if covered > behind + crate::race::TRACK_AHEAD * 2. {
+                break;
+            }
+            total = if self.next(segment) == self.loop_start {
+                (0..self.loop_start).map(|i| self.segment(i)).sum()
+            } else {
+                total + length
+            };
+            segment = self.next(segment);
+        }
+        best
+    }
     pub fn ahead(&self, mut position: RoutePosition, mut distance: f32) -> RoutePosition {
         for _ in 0..self.points.len() {
             let a = self.points[position.segment];
@@ -162,6 +220,8 @@ pub struct Context<'a> {
     pub scene: Option<&'a crate::scene_collision::SceneCollision>,
     pub clearance: f32,
     pub terrain_normal: [f32; 3],
+    /// The racer's on-track race station; None searches the whole course.
+    pub station: Option<crate::race::Station>,
 }
 pub struct Driver {
     random: crate::engine_audio::OriginalRandom,
@@ -257,7 +317,10 @@ impl Driver {
         if !dt.is_finite() || dt <= 0. || dt > 0.1 || course.points.len() < 4 {
             return Err("invalid CPU driving step".into());
         }
-        let p = course.project(frame.origin);
+        let p = match context.station {
+            Some(station) => course.project_near(frame.origin, station),
+            None => course.project(frame.origin),
+        };
         if frame.wreck.phase != crate::wreck::Phase::Riding {
             return Ok((
                 VehicleInput::default(),

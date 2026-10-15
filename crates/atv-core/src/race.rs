@@ -50,7 +50,38 @@ pub struct Course {
     pub finish_gate: Option<Gate>,
     pub rider_spacing: f32,
     pub sections: usize,
+    /// Authored tag 10/11 edge points; consecutive pairs bound the track
+    /// polygon tested by the native on-track query (0017bb50).
+    pub edges: Vec<[[f32; 3]; 2]>,
+    pub alternates: Vec<Alternate>,
 }
+/// A 0x100 alternate line from main checkpoint `from` back to `to`.
+#[derive(Clone, Serialize)]
+pub struct Alternate {
+    pub from: usize,
+    pub to: usize,
+    pub points: Vec<[f32; 3]>,
+    pub edges: Vec<[[f32; 3]; 2]>,
+}
+/// Position on the main racing line: segment start checkpoint and fraction.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Station {
+    pub segment: usize,
+    pub fraction: f32,
+}
+/// Result of the windowed on-track query.
+#[derive(Clone, Copy, Debug)]
+pub struct Located {
+    pub station: Station,
+    /// Signed route distance from the previous station.
+    pub offset: f32,
+    pub entered: bool,
+}
+/// Route window searched around a rider's current station, like the
+/// forward/backward limits passed to native 0017be80. The original values
+/// live in Track +0x34/+0x38 and are not yet recovered.
+pub const TRACK_AHEAD: f32 = 150.;
+pub const TRACK_BEHIND: f32 = 60.;
 impl Default for Course {
     fn default() -> Self {
         Self {
@@ -69,6 +100,8 @@ impl Default for Course {
             finish_gate: None,
             rider_spacing: 8.,
             sections: 1,
+            edges: vec![],
+            alternates: vec![],
         }
     }
 }
@@ -85,6 +118,7 @@ struct Section {
     flags: u32,
     points: Vec<[f32; 3]>,
     widths: Vec<f32>,
+    edges: Vec<[[f32; 3]; 2]>,
     point_flags: Vec<u32>,
     speeds: Vec<f32>,
     airtimes: Vec<f32>,
@@ -161,9 +195,9 @@ impl Course {
                 if edges.len() != 2 || point_field != 8 {
                     return Err("invalid TDF point order".into());
                 }
-                sections[current.unwrap()]
-                    .widths
-                    .push(distance(edges[0], edges[1]));
+                let section = &mut sections[current.unwrap()];
+                section.widths.push(distance(edges[0], edges[1]));
+                section.edges.push([edges[0], edges[1]]);
                 Ok(())
             };
             match tag {
@@ -426,6 +460,10 @@ impl Course {
                 .collect()
         };
         let widths = field(&|s, l| s.widths[l]);
+        let edges = ordered
+            .iter()
+            .map(|i| sections[route[*i].section].edges[route[*i].local])
+            .collect();
         let speeds = field(&|s, l| s.speeds[l]);
         let airtimes = field(&|s, l| s.airtimes[l]);
         let flags = ordered
@@ -462,6 +500,8 @@ impl Course {
             finish_gate: gates[1],
             rider_spacing: 8.,
             sections: sections.len(),
+            edges,
+            alternates: vec![],
         };
         // Alternate lines leave a fork section and rejoin the main line later.
         let main: Vec<usize> = order.clone();
@@ -507,6 +547,34 @@ impl Course {
                     && course.steps(from, to) * 2 < course.points.len()
                 {
                     course.branches.push((from, to));
+                    // Alternate polyline: fork end, the off-line sections, rejoin.
+                    let mut points = vec![course.points[from]];
+                    let mut edges = vec![course.edges[from]];
+                    let mut line = alternate;
+                    for _ in 0..sections.len() {
+                        if main.contains(&line) {
+                            break;
+                        }
+                        for (p, e) in sections[line].points.iter().zip(&sections[line].edges) {
+                            if distance(*points.last().unwrap(), *p) >= 0.5 {
+                                points.push(*p);
+                                edges.push(*e);
+                            }
+                        }
+                        line = successor(line).unwrap_or(line);
+                    }
+                    if distance(*points.last().unwrap(), course.points[to]) >= 0.5 {
+                        points.push(course.points[to]);
+                        edges.push(course.edges[to]);
+                    }
+                    if points.len() >= 3 {
+                        course.alternates.push(Alternate {
+                            from,
+                            to,
+                            points,
+                            edges,
+                        });
+                    }
                 }
             }
         }
@@ -517,6 +585,195 @@ impl Course {
             && course.route_length(0, course.finish) < 0.25 * course.cycle_length();
         Ok(course)
     }
+    /// Edge pair at a main checkpoint; synthesized from its width when a
+    /// hand-built course has no authored edges.
+    pub fn edge(&self, index: usize) -> [[f32; 3]; 2] {
+        if let Some(e) = self.edges.get(index) {
+            return *e;
+        }
+        let p = self.points[index];
+        let a = self.points[self.previous(index, true).unwrap_or(index)];
+        let b = self.points[self.next(index)];
+        let t = normalize_flat([b[0] - a[0], 0., b[2] - a[2]]).unwrap_or([0., 0., 1.]);
+        let h = self.widths[index] * 0.5;
+        [
+            [p[0] - t[2] * h, p[1], p[2] + t[0] * h],
+            [p[0] + t[2] * h, p[1], p[2] - t[0] * h],
+        ]
+    }
+    /// The checkpoint before `index`; across the lap seam inside the circuit.
+    pub fn previous(&self, index: usize, in_cycle: bool) -> Option<usize> {
+        if index == self.loop_start && in_cycle {
+            Some(self.points.len() - 1)
+        } else {
+            index.checked_sub(1)
+        }
+    }
+    pub fn point_at(&self, s: Station) -> [f32; 3] {
+        let a = self.points[s.segment];
+        let b = self.points[self.next(s.segment)];
+        std::array::from_fn(|n| a[n] + s.fraction * (b[n] - a[n]))
+    }
+    /// Heading (yaw about +Y, atan2(x, z)) of the racing line at a station.
+    pub fn heading_at(&self, s: Station) -> f32 {
+        let a = self.points[s.segment];
+        let b = self.points[self.next(s.segment)];
+        (b[0] - a[0]).atan2(b[2] - a[2])
+    }
+    /// Station `distance` feet further along the racing line.
+    pub fn advance(&self, mut s: Station, mut distance: f32) -> Station {
+        for _ in 0..=self.points.len() {
+            let length = self.segment(s.segment).max(0.0001);
+            let left = (1. - s.fraction) * length;
+            if distance <= left {
+                s.fraction += distance / length;
+                return s;
+            }
+            distance -= left;
+            s = Station {
+                segment: self.next(s.segment),
+                fraction: 0.,
+            };
+        }
+        s
+    }
+    /// Race distance of the first lap: grid to the checkpoint after the finish
+    /// gate, plus one lap when the grid sits just behind that gate.
+    pub fn first_lap(&self) -> f32 {
+        let first = if self.finish == 0 {
+            self.cycle_length()
+        } else {
+            self.route_length(0, self.finish)
+        };
+        if self.finish_grace {
+            first + self.cycle_length()
+        } else {
+            first
+        }
+    }
+    /// Windowed on-track query after native 0017be80: the rider must lie inside
+    /// an authored edge polygon within the route window around its station.
+    /// Alternate lines map onto the main line between their fork and rejoin.
+    pub fn locate(&self, p: [f32; 3], from: Station, entered: bool) -> Option<Located> {
+        let start = self.segment(from.segment) * from.fraction;
+        let mut best: Option<(f32, Located)> = None;
+        let mut consider = |segment: usize, offset_to_start: f32, entered: bool, fraction: f32| {
+            let offset = offset_to_start + fraction * self.segment(segment);
+            let located = Located {
+                station: Station { segment, fraction },
+                offset,
+                entered,
+            };
+            if best.is_none_or(|(o, _)| offset.abs() < o) {
+                best = Some((offset.abs(), located));
+            }
+        };
+        // Forward along the main line.
+        let mut segment = from.segment;
+        let mut offset = -start;
+        let mut in_cycle = entered;
+        let mut visited = Vec::new();
+        for _ in 0..self.points.len() {
+            if offset > TRACK_AHEAD {
+                break;
+            }
+            visited.push((segment, offset, in_cycle));
+            if let Some(f) = self.inside(p, segment) {
+                consider(segment, offset, in_cycle, f);
+            }
+            offset += self.segment(segment);
+            segment = self.next(segment);
+            in_cycle |= segment == self.loop_start;
+        }
+        // Backward along the main line.
+        let mut segment = from.segment;
+        let mut offset = -start;
+        for _ in 0..self.points.len() {
+            let Some(previous) = self.previous(segment, entered) else {
+                break;
+            };
+            offset -= self.segment(previous);
+            if offset + self.segment(previous) < -TRACK_BEHIND {
+                break;
+            }
+            segment = previous;
+            if let Some(f) = self.inside(p, segment) {
+                consider(segment, offset, entered, f);
+            }
+        }
+        // Alternate lines whose fork lies in the forward window, or which the
+        // rider is already between.
+        for alt in &self.alternates {
+            let Some((_, fork_offset, fork_cycle)) =
+                visited
+                    .iter()
+                    .copied()
+                    .find(|(s, _, _)| *s == alt.from)
+                    .or_else(|| {
+                        (self.steps(alt.from, from.segment) < self.steps(alt.from, alt.to))
+                            .then_some((alt.from, f32::NAN, entered))
+                    })
+            else {
+                continue;
+            };
+            let fork_offset = if fork_offset.is_nan() {
+                -start - self.route_length(alt.from, from.segment)
+            } else {
+                fork_offset
+            };
+            let span = self.route_length(alt.from, alt.to);
+            let total: f32 = alt
+                .points
+                .windows(2)
+                .map(|w| distance(w[0], w[1]))
+                .sum::<f32>()
+                .max(0.0001);
+            let mut along = 0.;
+            for i in 0..alt.points.len() - 1 {
+                let length = distance(alt.points[i], alt.points[i + 1]);
+                if let Some(f) = quad(
+                    p,
+                    alt.edges[i],
+                    alt.edges[i + 1],
+                    alt.points[i],
+                    alt.points[i + 1],
+                ) {
+                    let mapped = (along + f * length) / total * span;
+                    let station = self.advance(
+                        Station {
+                            segment: alt.from,
+                            fraction: 0.,
+                        },
+                        mapped,
+                    );
+                    let crosses = self.steps(alt.from, station.segment)
+                        >= self.steps(alt.from, self.loop_start)
+                        && self.loop_start != alt.from;
+                    let located = Located {
+                        station,
+                        offset: fork_offset + mapped,
+                        entered: fork_cycle || crosses,
+                    };
+                    if best.is_none_or(|(o, _)| located.offset.abs() < o) {
+                        best = Some((located.offset.abs(), located));
+                    }
+                }
+                along += length;
+            }
+        }
+        best.map(|(_, l)| l)
+    }
+    /// Fraction along `segment` when `p` lies inside its edge polygon.
+    fn inside(&self, p: [f32; 3], segment: usize) -> Option<f32> {
+        let n = self.next(segment);
+        quad(
+            p,
+            self.edge(segment),
+            self.edge(n),
+            self.points[segment],
+            self.points[n],
+        )
+    }
     /// The checkpoint after `index` on the main racing line.
     pub fn next(&self, index: usize) -> usize {
         if index + 1 >= self.points.len() {
@@ -525,7 +782,7 @@ impl Course {
             index + 1
         }
     }
-    fn steps(&self, from: usize, to: usize) -> usize {
+    pub fn steps(&self, from: usize, to: usize) -> usize {
         let mut i = from;
         for n in 0..=self.points.len() {
             if i == to {
@@ -535,7 +792,7 @@ impl Course {
         }
         usize::MAX
     }
-    fn segment(&self, index: usize) -> f32 {
+    pub fn segment(&self, index: usize) -> f32 {
         distance(self.points[index], self.points[self.next(index)])
     }
     /// Ordered route length from `from` forward to `to`.
@@ -585,6 +842,34 @@ fn normalize_flat(v: [f32; 3]) -> Option<[f32; 3]> {
     let length = (v[0] * v[0] + v[2] * v[2]).sqrt();
     (length > 0.000001 && length.is_finite()).then(|| [v[0] / length, 0., v[2] / length])
 }
+/// Point-in-quad test for the polygon between two authored edge pairs,
+/// returning the centerline fraction of the projection.
+fn quad(
+    p: [f32; 3],
+    e0: [[f32; 3]; 2],
+    e1: [[f32; 3]; 2],
+    a: [f32; 3],
+    b: [f32; 3],
+) -> Option<f32> {
+    let corners = [e0[0], e1[0], e1[1], e0[1]];
+    let mut inside = false;
+    for i in 0..4 {
+        let (c, d) = (corners[i], corners[(i + 3) % 4]);
+        if (c[2] > p[2]) != (d[2] > p[2])
+            && p[0] < (d[0] - c[0]) * (p[2] - c[2]) / (d[2] - c[2]) + c[0]
+        {
+            inside = !inside;
+        }
+    }
+    if !inside {
+        return None;
+    }
+    let dx = b[0] - a[0];
+    let dz = b[2] - a[2];
+    Some(
+        (((p[0] - a[0]) * dx + (p[2] - a[2]) * dz) / (dx * dx + dz * dz).max(0.0001)).clamp(0., 1.),
+    )
+}
 fn segment_distance(p: [f32; 3], a: [f32; 3], b: [f32; 3]) -> f32 {
     let dx = b[0] - a[0];
     let dz = b[2] - a[2];
@@ -597,113 +882,80 @@ fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
 }
 #[derive(Clone)]
 struct Progress {
-    next: usize,
+    /// Last on-track station on the main racing line.
+    station: Station,
+    entered: bool,
+    /// Race distance along the racing line from the grid, and its maximum.
+    distance: f32,
+    furthest: f32,
     completed: u32,
     last: [f32; 3],
     finish: Option<f32>,
     lap_start: f32,
     best: Option<f32>,
     last_lap: f32,
-    /// Times the lap circuit was re-entered from its closing segment.
-    wraps: u32,
-    entered: bool,
-    armed: bool,
+    /// Seconds since the rider last lay inside the track polygon.
+    off_track: f32,
 }
 impl Progress {
     fn new(start: [f32; 3], course: &Course) -> Self {
+        let entered = course.loop_start == 0;
+        let origin = Station {
+            segment: 0,
+            fraction: 0.,
+        };
+        let station = course
+            .locate(start, origin, entered)
+            .filter(|l| l.offset >= 0.)
+            .map_or(origin, |l| l.station);
+        let distance = course.segment(0) * station.fraction * f32::from(station.segment == 0);
         Self {
-            next: course.next(0),
+            station,
+            entered,
+            distance,
+            furthest: distance,
             completed: 0,
             last: start,
             finish: None,
             lap_start: 0.,
             best: None,
             last_lap: 0.,
-            wraps: 0,
-            entered: course.loop_start == 0,
-            armed: !course.finish_grace,
+            off_track: 0.,
         }
     }
-    fn reaches(&self, p: [f32; 3], course: &Course, index: usize) -> bool {
-        let target = course.points[index];
-        let radius = (course.widths[index] * 0.6).clamp(16., 65.);
-        let dx = p[0] - self.last[0];
-        let dz = p[2] - self.last[2];
-        let t = (((target[0] - self.last[0]) * dx + (target[2] - self.last[2]) * dz)
-            / (dx * dx + dz * dz).max(0.0001))
-        .clamp(0., 1.);
-        let closest = [self.last[0] + dx * t, p[1], self.last[2] + dz * t];
-        distance(closest, target) <= radius
-    }
-    fn pass(&mut self, course: &Course, time: f32, laps: u32) {
-        let passed = self.next;
-        if passed == course.loop_start {
-            if self.entered {
-                self.wraps += 1;
-            }
-            self.entered = true;
-        }
-        if passed == course.finish {
-            if self.armed {
-                self.completed += 1;
-                let lap = time - self.lap_start;
-                self.last_lap = lap;
-                self.lap_start = time;
-                self.best = Some(self.best.map_or(lap, |v| v.min(lap)));
-                if self.completed >= laps {
-                    self.finish = Some(time);
-                }
-            }
-            self.armed = true;
-        }
-        self.next = course.next(passed);
-    }
-    fn update(&mut self, p: [f32; 3], course: &Course, time: f32, laps: u32) {
+    fn update(&mut self, p: [f32; 3], course: &Course, time: f32, laps: u32, dt: f32) {
         if self.finish.is_some() {
             return;
         }
-        let dx = p[0] - self.last[0];
-        let dz = p[2] - self.last[2];
-        // A reset/teleport cannot award a checkpoint along its swept path.
-        if dx * dx + dz * dz > 0.0001 && distance(p, self.last) < 200. {
-            if self.reaches(p, course, self.next) {
-                self.pass(course, time, laps);
-            } else if let Some(&(_, to)) = course.branches.iter().find(|(from, to)| {
-                *to != self.next
-                    && course.steps(*from, self.next) < course.steps(*from, *to)
-                    && self.reaches(p, course, *to)
-            }) {
-                // Alternate line rejoined: the skipped main-line checkpoints
-                // still count in order, including any finish or lap wrap.
-                while self.finish.is_none() && self.next != to {
-                    self.pass(course, time, laps);
-                }
-                if self.finish.is_none() {
-                    self.pass(course, time, laps);
-                }
+        // Progress only moves inside the track polygon and the route window, so
+        // cutting across the infield or a teleport cannot skip the course.
+        match course.locate(p, self.station, self.entered) {
+            Some(located) => {
+                self.station = located.station;
+                self.entered = located.entered;
+                self.distance += located.offset;
+                self.off_track = 0.;
             }
+            None => self.off_track += dt,
         }
         self.last = p;
+        self.furthest = self.furthest.max(self.distance);
+        // A lap completes when the furthest progress passes the finish gate.
+        while self.completed < laps
+            && self.furthest >= course.first_lap() + self.completed as f32 * course.cycle_length()
+        {
+            self.completed += 1;
+            let lap = time - self.lap_start;
+            self.last_lap = lap;
+            self.lap_start = time;
+            self.best = Some(self.best.map_or(lap, |v| v.min(lap)));
+            if self.completed >= laps {
+                self.finish = Some(time);
+            }
+        }
     }
-    // Restrict interpolation to the ordered checkpoint segment. Global nearest
-    // projection wraps a rider just behind the start to the end of the lap and
-    // can also award apparent distance across neighboring sections of a course.
-    fn distance(&self, course: &Course) -> f32 {
-        let previous = if self.next == course.loop_start && self.entered {
-            course.points.len() - 1
-        } else {
-            self.next - 1
-        };
-        let a = course.points[previous];
-        let b = course.points[self.next];
-        let dx = b[0] - a[0];
-        let dz = b[2] - a[2];
-        let segment = distance(a, b);
-        let fraction = (((self.last[0] - a[0]) * dx + (self.last[2] - a[2]) * dz)
-            / (segment * segment).max(0.0001))
-        .clamp(0., 1.);
-        let prefix: f32 = (0..previous).map(|i| course.segment(i)).sum();
-        self.wraps as f32 * course.cycle_length() + prefix + fraction * segment
+    fn distance(&self, _course: &Course) -> f32 {
+        self.distance
     }
 }
 #[derive(Serialize, Clone)]
@@ -754,6 +1006,13 @@ pub struct Frame {
     pub checkpoint: usize,
     pub checkpoints: usize,
     pub wrong_way: bool,
+    /// Player outside the track polygon, with the on-track return point.
+    pub off_track: bool,
+    pub off_track_time: f32,
+    pub track_point: [f32; 3],
+    pub track_heading: f32,
+    /// Rider-to-rider contacts resolved so far this race.
+    pub contacts: u32,
     pub opponents: Vec<Opponent>,
     pub standings: Vec<Standing>,
 }
@@ -766,6 +1025,7 @@ pub struct Race {
     opponents: Vec<Opponent>,
     progress: Vec<Progress>,
     preview_speeds: Vec<f32>,
+    pub contacts: u32,
 }
 impl Race {
     pub fn new(course: Course, laps: u32, names: Vec<String>, difficulty: u32) -> Result<Self> {
@@ -823,6 +1083,7 @@ impl Race {
             opponents,
             progress,
             preview_speeds,
+            contacts: 0,
         })
     }
     pub fn locked(&self) -> bool {
@@ -838,7 +1099,8 @@ impl Race {
             return;
         }
         self.elapsed += dt;
-        self.player.update(p, &self.course, self.elapsed, self.laps);
+        self.player
+            .update(p, &self.course, self.elapsed, self.laps, dt);
     }
     /// Preserve the separate authored motorcycle race preview. Original ATV
     /// racers use observe_cpu after independent Vehicle steps, never this path.
@@ -855,7 +1117,9 @@ impl Race {
             if progress.finish.is_some() {
                 continue;
             }
-            let target = self.course.points[progress.next];
+            let target = self
+                .course
+                .point_at(self.course.advance(progress.station, 30.));
             let delta = distance(o.origin, target);
             let travel = (speed * dt).min(delta);
             if delta > 0.001 {
@@ -864,9 +1128,7 @@ impl Race {
                 o.origin[2] += o.yaw.cos() * travel;
                 o.distance += travel;
             }
-            if delta <= travel + 1. {
-                progress.update(o.origin, &self.course, self.elapsed, self.laps);
-            }
+            progress.update(o.origin, &self.course, self.elapsed, self.laps, dt);
             o.finished = progress.finish.is_some();
         }
     }
@@ -909,8 +1171,23 @@ impl Race {
         o.origin = origin;
         o.yaw = yaw;
         o.physical = physical;
-        p.update(origin, &self.course, self.elapsed, self.laps);
+        p.update(origin, &self.course, self.elapsed, self.laps, 1. / 60.);
         o.finished = p.finish.is_some();
+    }
+    fn rider(&self, cpu: Option<usize>) -> &Progress {
+        cpu.map_or(&self.player, |i| &self.progress[i])
+    }
+    /// Last on-track station of the player (None) or a CPU.
+    pub fn station(&self, cpu: Option<usize>) -> Station {
+        self.rider(cpu).station
+    }
+    pub fn off_track_time(&self, cpu: Option<usize>) -> f32 {
+        self.rider(cpu).off_track
+    }
+    /// Race reset pose on the racing line, facing the race direction.
+    pub fn checkpoint(&self, cpu: Option<usize>) -> ([f32; 3], f32) {
+        let s = self.rider(cpu).station;
+        (self.course.point_at(s), self.course.heading_at(s))
     }
     pub fn frame(&self, yaw: f32) -> Frame {
         let mut order: Vec<_> = std::iter::once(("YOU".to_string(), &self.player))
@@ -935,8 +1212,9 @@ impl Race {
             .position(|(_, p)| std::ptr::eq(*p, &self.player))
             .unwrap()
             + 1;
-        let target = self.course.points[self.player.next];
-        let bearing = (target[0] - self.player.last[0]).atan2(target[2] - self.player.last[2]);
+        let station = self.player.station;
+        let target = self.course.point_at(self.course.advance(station, 60.));
+        let heading = self.course.heading_at(station);
         Frame {
             phase: if self.countdown > 0. {
                 "countdown"
@@ -958,11 +1236,17 @@ impl Race {
             position,
             field: order.len(),
             target,
-            checkpoint: self.player.next,
+            checkpoint: station.segment,
             checkpoints: self.course.points.len(),
             wrong_way: self.countdown == 0.
                 && self.player.finish.is_none()
-                && (bearing - yaw).cos() < -0.4,
+                && self.player.off_track < 0.5
+                && (heading - yaw).cos() < -0.4,
+            off_track: self.player.off_track > 0.5,
+            off_track_time: self.player.off_track,
+            track_point: self.course.point_at(station),
+            track_heading: heading,
+            contacts: self.contacts,
             opponents: self.opponents.clone(),
             standings: order
                 .into_iter()
@@ -1049,6 +1333,48 @@ mod tests {
                 (travelled - expected).abs() < 150.,
                 "{travelled} vs {expected}"
             );
+            // Every alternate line stays on the track and rejoins in order.
+            let label = path.file_name().unwrap().to_string_lossy().to_string();
+            for alt in &course.alternates {
+                let mut race = Race::new(course.clone(), 3, vec![], 1).unwrap();
+                race.countdown = 0.;
+                let mut route: Vec<[f32; 3]> = vec![];
+                let mut i = 0;
+                while i != alt.from {
+                    i = course.next(i);
+                    route.push(course.points[i]);
+                }
+                route.extend(alt.points.iter().skip(1));
+                let mut at = start;
+                for target in route {
+                    loop {
+                        let gap = distance(at, target);
+                        at = if gap <= 10. {
+                            target
+                        } else {
+                            std::array::from_fn(|n| at[n] + (target[n] - at[n]) * 10. / gap)
+                        };
+                        race.step(at, 0.05);
+                        assert!(
+                            race.player.off_track < 0.3,
+                            "{label} alternate {}->{} left the track at {at:?}",
+                            alt.from,
+                            alt.to
+                        );
+                        if gap <= 10. {
+                            break;
+                        }
+                    }
+                }
+                let reached = race.player.station.segment;
+                assert!(
+                    distance(course.point_at(race.player.station), course.points[alt.to]) < 40.,
+                    "{label} alternate {}->{} ended at {reached}",
+                    alt.from,
+                    alt.to
+                );
+            }
+            eprintln!("{label}: {} alternates driven", course.alternates.len());
         }
     }
     fn course() -> Course {
@@ -1086,7 +1412,7 @@ mod tests {
             r.step(p, 1.);
         }
         assert_eq!(r.player.completed, 0);
-        assert_eq!(r.player.next, 1);
+        assert!(r.player.furthest <= 0.);
     }
     #[test]
     fn leader_gap_uses_ordered_distance_at_start_and_lap_wrap() {
@@ -1094,23 +1420,25 @@ mod tests {
         r.countdown = 0.;
         // A rider who drifts backwards over the start must not appear almost
         // one lap ahead, disabling the original CPU speed limiting policy.
+        // (5, 0, 0) lies 5ft before the start on the closing segment.
         r.step([5., 0., 0.], 1.);
+        assert_eq!(r.player.distance(&r.course), -5.);
         r.observe_cpu(0, [0., 0., 50.], 0., None);
-        assert_eq!(r.progress_difference(0), 50.);
+        assert_eq!(r.progress_difference(0), 55.);
         for p in [[0., 0., 100.], [100., 0., 100.], [100., 0., 0.]] {
             r.step([5., 0., 0.], 1.);
             r.observe_cpu(0, p, 0., None);
         }
         r.observe_cpu(0, [30., 0., 0.], 0., None);
-        assert_eq!(r.progress_difference(0), 370.);
+        assert_eq!(r.progress_difference(0), 375.);
         r.observe_cpu(0, [0.; 3], 0., None);
-        assert_eq!(r.progress_difference(0), 400.);
+        assert_eq!(r.progress_difference(0), 405.);
         r.observe_cpu(0, [0., 0., 10.], 0., None);
-        assert_eq!(r.progress_difference(0), 410.);
+        assert_eq!(r.progress_difference(0), 415.);
         // A reset to another segment cannot create a lap or course-length gap.
         r.step([100., 0., 0.], 1.);
         assert_eq!(r.player.completed, 0);
-        assert_eq!(r.player.distance(&r.course), 0.);
+        assert!(r.player.distance(&r.course) <= 0.);
     }
     #[test]
     fn physical_cpus_require_observation_and_motorcycle_preview_is_explicit() {
@@ -1133,13 +1461,14 @@ mod tests {
         r.countdown = 0.;
         r.step([0.; 3], 1.);
         let prior_distance = r.opponents[0].distance;
+        let station = r.progress[0].station;
         r.reposition_cpu(0, [0., 0., 100.], 1., None);
-        assert_eq!(r.progress[0].next, 1);
+        assert_eq!(r.progress[0].station, station);
         assert_eq!(r.progress[0].completed, 0);
         assert_eq!(r.opponents[0].distance, prior_distance);
-        // Ordinary driving after the recovery can earn this checkpoint.
+        // Ordinary driving after the recovery earns progress on the track.
         r.observe_cpu(0, [0., 0., 101.], 1., None);
-        assert_eq!(r.progress[0].next, 2);
+        assert!((r.progress[0].distance - 101.).abs() < 2.);
         assert_eq!(r.opponents[0].distance, prior_distance + 1.);
     }
     #[test]
@@ -1254,12 +1583,21 @@ mod tests {
             field(&mut data, 6, &[int(*flags)]);
             field(&mut data, 7, &[100.]);
             field(&mut data, 24, &[0.]);
-            for p in *points {
+            for (i, p) in points.iter().enumerate() {
+                // Edges 15ft either side, perpendicular to the section.
+                let (a, b) = if i + 1 < points.len() {
+                    (points[i], points[i + 1])
+                } else {
+                    (points[i - 1], points[i])
+                };
+                let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+                let l = (dx * dx + dz * dz).sqrt();
+                let (nx, nz) = (dz / l * 15., -dx / l * 15.);
                 data.push(8);
                 field(&mut data, 23, &[int(0)]);
                 field(&mut data, 9, &[p[0], 0., p[1]]);
-                field(&mut data, 10, &[p[0] - 15., 0., p[1]]);
-                field(&mut data, 11, &[p[0] + 15., 0., p[1]]);
+                field(&mut data, 10, &[p[0] - nx, 0., p[1] - nz]);
+                field(&mut data, 11, &[p[0] + nx, 0., p[1] + nz]);
                 for tag in [12, 18, 26, 27] {
                     field(&mut data, tag, &[1.]);
                 }
@@ -1306,14 +1644,15 @@ mod tests {
             r.step(p, 1.);
         }
         assert_eq!(r.player.completed, 1);
-        assert_eq!(r.player.wraps, 0);
         let before = r.player.distance(&r.course);
-        // The alternate line never visits (50, 250) but still rejoins in order.
-        for p in [[0., 0., 200.], [50., 0., 150.], [100., 0., 200.]] {
-            r.step(p, 1.);
-        }
-        assert_eq!(r.player.next, 7);
-        assert!(r.player.distance(&r.course) > before);
+        // The alternate line never visits (50, 250) but maps onto the main
+        // line between its fork and rejoin.
+        r.step([0., 0., 200.], 1.);
+        r.step([50., 0., 150.], 1.);
+        assert!(r.player.off_track == 0., "alternate line is on track");
+        r.step([100., 0., 200.], 1.);
+        assert_eq!(r.player.off_track, 0.);
+        assert!(r.player.distance(&r.course) >= before + 200.);
         for p in [
             [100., 0., 100.],
             [100., 0., 0.],
@@ -1325,7 +1664,6 @@ mod tests {
         assert!(r.player.finish.is_none());
         r.step([0., 0., 100.], 1.);
         assert_eq!(r.player.completed, 2);
-        assert_eq!(r.player.wraps, 1);
         assert_eq!(r.frame(0.).phase, "finished");
     }
     #[test]
