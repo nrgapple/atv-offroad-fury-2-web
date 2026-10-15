@@ -39,6 +39,8 @@ pub struct ContactCorrections {
     /// Presentation-only strongest inward point speed at a resolved contact.
     /// Never participates in native response, wreck classification or recovery.
     pub closing_speed: f32,
+    /// Presentation-only world point of that strongest contact.
+    pub closing_point: Vec3,
     /// Applied after the body integrator, once per substep.
     pub translation: Vec3,
     /// Original body+0x180 impact accumulator, used by later wreck detection.
@@ -221,7 +223,10 @@ fn resolve_with_velocity_and_scale(
     let effective_mass =
         1.0 / ((0.0 + 0.0 + inverse_mass) + dot(local_normal, cross(rotational, arm)));
     let normal_velocity = dot(velocity, normal);
-    corrections.closing_speed = corrections.closing_speed.max(-normal_velocity);
+    if -normal_velocity > corrections.closing_speed {
+        corrections.closing_speed = -normal_velocity;
+        corrections.closing_point = point;
+    }
     if normal_velocity < 0.0 {
         let impulse = scale(
             normal,

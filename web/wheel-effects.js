@@ -144,57 +144,130 @@ export class WheelEffectsRenderer {
   dispose(){const gl=this.gl;gl.deleteVertexArray(this.vao);gl.deleteBuffer(this.corners);gl.deleteBuffer(this.buffer);gl.deleteBuffer(this.wetBuffer);gl.deleteTexture(this.texture);gl.deleteTexture(this.wetTexture);gl.deleteProgram(this.program);}
 }
 
-// Authored blood droplets and terrain splashes, one bounded instanced draw.
+// Gorn blood: ground splats, stump caps and droplets packed for one
+// instanced draw. 12 floats per instance: position+kind, axis+seed, extra.
+export const BLOOD_STRIDE = 12, BLOOD_CAPACITY = 120 + 64 + 32;
+const seedAt = (x, z) => { const s = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453; return s - Math.floor(s); };
+export function packBlood(blood, out) {
+  let n = 0;
+  const put = (x, y, z, kind, ax, ay, az, seed, e0, e1, e2, e3) => {
+    if (n >= BLOOD_CAPACITY) return;
+    out.set([x, y, z, kind, ax, ay, az, seed, e0, e1, e2, e3], n++ * BLOOD_STRIDE);
+  };
+  const splats = blood?.splats ?? [], stumps = blood?.stumps ?? [], drops = blood?.drops ?? [];
+  // Ground stains first, then stump caps, then droplets in flight on top.
+  for (let i = 0; i + 9 < splats.length; i += 10) {
+    const s = splats.slice(i, i + 10);
+    put(s[0], s[1], s[2], 1, s[3], s[4], s[5], seedAt(s[0], s[2]), s[6], s[7], s[8], s[9]);
+  }
+  for (let i = 0; i + 6 < stumps.length; i += 7) {
+    const s = stumps.slice(i, i + 7);
+    put(s[0], s[1], s[2], 2, s[3], s[4], s[5], seedAt(s[0], s[1]), 0, 0, s[6], s[6]);
+  }
+  for (let i = 0; i + 6 < drops.length; i += 7) {
+    const d = drops.slice(i, i + 7), speed = Math.hypot(d[3], d[4], d[5]);
+    // Motion streak: ~30 ms of travel, never longer than a foot.
+    put(d[0], d[1], d[2], 0, d[3], d[4], d[5], 0, 0, 0, d[6], Math.min(d[6] + speed * 0.03, 1));
+  }
+  return n;
+}
+export function bloodCount(blood) {
+  return Math.floor((blood?.drops?.length ?? 0) / 7) + Math.floor((blood?.splats?.length ?? 0) / 10);
+}
 export class BloodRenderer {
   constructor(gl) {
-    this.gl=gl; this.draws=0; this.data=new Float32Array(96*5);
+    this.gl=gl; this.draws=0; this.instances=0; this.data=new Float32Array(BLOOD_CAPACITY*BLOOD_STRIDE);
     const shader=(type,source)=>{const s=gl.createShader(type);gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s;};
     const vertex=shader(gl.VERTEX_SHADER,`#version 300 es
     precision highp float;
     layout(location=0) in vec2 corner;
-    layout(location=1) in vec4 drop;
-    layout(location=2) in float landed;
+    layout(location=1) in vec4 a0;
+    layout(location=2) in vec4 a1;
+    layout(location=3) in vec4 a2;
     uniform mat4 viewProjection;
-    uniform vec3 right,up;
-    out vec2 uv;
+    uniform vec3 eye;
+    out vec2 uv; flat out float kind; flat out float seed; out float shade;
     void main(){
-      uv=corner;
-      vec3 p=drop.xyz;
-      vec3 r=landed>.5?vec3(1,0,0):right;
-      vec3 u=landed>.5?vec3(0,0,1):up;
-      gl_Position=viewProjection*vec4(p+(r*corner.x+u*corner.y)*drop.w,1);
+      uv=corner; kind=a0.w; seed=a1.w;
+      vec3 p=a0.xyz, X, Y;
+      if(kind<.5){
+        // Droplet: a camera-facing streak along its velocity, tail behind.
+        float speed=length(a1.xyz);
+        vec3 along=speed>.01?a1.xyz/speed:vec3(0,1,0);
+        vec3 view=normalize(eye-p);
+        vec3 side=cross(along,view);
+        side=length(side)>1e-3?normalize(side):normalize(cross(vec3(0,1,0),view)+vec3(1e-4,0,0));
+        vec3 up=normalize(cross(view,side));
+        p-=along*(a2.w-a2.z)*.5;
+        X=side*a2.z; Y=up*a2.w*sign(dot(up,along)+1e-4);
+        shade=1.;
+      } else {
+        vec3 N=normalize(a1.xyz), T;
+        if(kind<1.5){vec3 d=vec3(a2.x,0.,a2.y);d.y=-(N.x*d.x+N.z*d.z)/max(N.y,.05);T=normalize(d);}
+        else T=normalize(abs(N.y)<.9?cross(N,vec3(0,1,0)):cross(N,vec3(1,0,0)));
+        vec3 B=cross(N,T);
+        X=T*(kind<1.5?a2.w:a2.z); Y=B*a2.z;
+        p+=N*(kind<1.5?.03:.015);
+        shade=.55+.45*max(dot(N,normalize(vec3(.35,.85,.4))),0.);
+      }
+      gl_Position=viewProjection*vec4(p+X*corner.x+Y*corner.y,1);
     }`);
     const fragment=shader(gl.FRAGMENT_SHADER,`#version 300 es
     precision highp float;
-    in vec2 uv;out vec4 color;
-    void main(){float d=length(uv);if(d>1.)discard;
-      float edge=1.-smoothstep(.72,1.,d);
-      color=vec4(mix(vec3(.22,.008,.012),vec3(.65,.018,.025),1.-d),edge*.9);
+    in vec2 uv; flat in float kind; flat in float seed; in float shade; out vec4 color;
+    float hash(float n){return fract(sin(n)*43758.5453);}
+    void main(){
+      float r=length(uv);
+      if(kind<.5){
+        if(r>1.)discard;
+        vec3 c=mix(vec3(.30,.004,.01),vec3(.62,.02,.03),1.-r);
+        c+=vec3(.3,.15,.15)*(1.-smoothstep(0.,.35,length(uv-vec2(-.3,.4))));
+        color=vec4(c,(1.-smoothstep(.55,1.,r))*.95);
+      } else if(kind<1.5){
+        // Irregular lobed stain with satellite droplets beyond the rim.
+        float a=atan(uv.y,uv.x);
+        float edge=.68+.10*sin(a*5.+seed*6.283)+.07*sin(a*9.+seed*17.)+.05*sin(a*17.+seed*41.);
+        float body=1.-smoothstep(edge-.06,edge,r);
+        vec2 cell=floor(uv*5.), f=fract(uv*5.)-.5;
+        float h=hash(dot(cell,vec2(12.9898,78.233))+seed*91.);
+        float satellite=h>.8&&r>edge&&r<1.?1.-smoothstep(.12,.28,length(f)):0.;
+        float alpha=max(body,satellite);
+        if(alpha<.02)discard;
+        vec3 wet=mix(vec3(.15,0.,.008),vec3(.40,.012,.02),smoothstep(edge,0.,r));
+        wet+=vec3(.16,.07,.07)*(1.-smoothstep(0.,.18,abs(r-.4*edge)));
+        color=vec4(wet*shade,alpha*.92);
+      } else {
+        // Stump cap: torn muscle around a bone and marrow.
+        if(r>1.)discard;
+        vec3 meat=mix(vec3(.56,.07,.07),vec3(.30,.01,.02),smoothstep(.35,1.,r));
+        vec2 b=uv-vec2(.08,-.05);
+        vec3 c=mix(meat,vec3(.86,.82,.72),1.-smoothstep(.26,.32,length(b)));
+        c=mix(c,vec3(.45,.12,.08),1.-smoothstep(.09,.13,length(b)));
+        color=vec4(c*shade,1.-smoothstep(.88,1.,r));
+      }
     }`);
     this.program=gl.createProgram();gl.attachShader(this.program,vertex);gl.attachShader(this.program,fragment);gl.linkProgram(this.program);gl.deleteShader(vertex);gl.deleteShader(fragment);
     if(!gl.getProgramParameter(this.program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(this.program));
-    this.uniforms=Object.fromEntries(['viewProjection','right','up'].map(n=>[n,gl.getUniformLocation(this.program,n)]));
+    this.uniforms=Object.fromEntries(['viewProjection','eye'].map(n=>[n,gl.getUniformLocation(this.program,n)]));
     this.vao=gl.createVertexArray();gl.bindVertexArray(this.vao);
     this.corners=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,this.corners);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,1,1,-1,-1,1,1,-1,1]),gl.STATIC_DRAW);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,8,0);
     this.buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,this.buffer);gl.bufferData(gl.ARRAY_BUFFER,this.data.byteLength,gl.DYNAMIC_DRAW);
-    for(const [index,size,offset] of [[1,4,0],[2,1,16]]) {gl.enableVertexAttribArray(index);gl.vertexAttribPointer(index,size,gl.FLOAT,false,20,offset);gl.vertexAttribDivisor(index,1);}
+    for(const index of [1,2,3]) {gl.enableVertexAttribArray(index);gl.vertexAttribPointer(index,4,gl.FLOAT,false,BLOOD_STRIDE*4,(index-1)*16);gl.vertexAttribDivisor(index,1);}
     gl.bindVertexArray(null);
   }
-  draw(drops,{camera,viewProjection,program}) {
-    const gl=this.gl,count=Math.min(96,drops.length);this.draws=0;
-    if(!count)return;
-    const changed=this.drops!==drops;this.drops=drops;
-    if(changed)for(let i=0;i<count;i++) {
-      const p=drops[i],k=i*5;
-      this.data[k]=p.position[0];this.data[k+1]=p.position[1]-(p.landed?p.size-.025:0);this.data[k+2]=p.position[2];
-      this.data[k+3]=p.size*(p.landed?5:1.8);this.data[k+4]=Number(p.landed);
-    }
+  draw(blood,{camera,viewProjection,program}) {
+    const gl=this.gl;this.draws=0;
+    const changed=this.blood!==blood;this.blood=blood;
+    if(changed)this.instances=packBlood(blood,this.data);
+    if(!this.instances)return;
     gl.useProgram(this.program);gl.uniformMatrix4fv(this.uniforms.viewProjection,false,viewProjection);
-    gl.uniform3fv(this.uniforms.right,cameraAxes(camera.yaw,0).right);
-    gl.uniform3fv(this.uniforms.up,[-Math.sin(camera.yaw)*Math.sin(camera.pitch),Math.cos(camera.pitch),-Math.cos(camera.yaw)*Math.sin(camera.pitch)]);
-    gl.bindVertexArray(this.vao);gl.bindBuffer(gl.ARRAY_BUFFER,this.buffer);if(changed)gl.bufferSubData(gl.ARRAY_BUFFER,0,this.data.subarray(0,count*5));
-    gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);gl.drawArraysInstanced(gl.TRIANGLES,0,6,count);
-    gl.depthMask(true);gl.disable(gl.BLEND);gl.bindVertexArray(null);gl.useProgram(program);this.draws=1;
+    gl.uniform3fv(this.uniforms.eye,[camera.x,camera.y,camera.z]);
+    gl.bindVertexArray(this.vao);gl.bindBuffer(gl.ARRAY_BUFFER,this.buffer);if(changed)gl.bufferSubData(gl.ARRAY_BUFFER,0,this.data.subarray(0,this.instances*BLOOD_STRIDE));
+    gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
+    gl.enable(gl.POLYGON_OFFSET_FILL);gl.polygonOffset(-2,-2);
+    gl.drawArraysInstanced(gl.TRIANGLES,0,6,this.instances);
+    gl.disable(gl.POLYGON_OFFSET_FILL);gl.depthMask(true);gl.disable(gl.BLEND);gl.bindVertexArray(null);gl.useProgram(program);this.draws=1;
   }
   dispose(){const gl=this.gl;gl.deleteVertexArray(this.vao);gl.deleteBuffer(this.corners);gl.deleteBuffer(this.buffer);gl.deleteProgram(this.program);}
 }
+
