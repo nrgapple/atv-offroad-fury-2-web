@@ -1,7 +1,8 @@
 import { gameplayBindings } from './bindings.js';
 import { parseLaunch, buildRideUrl, copyRideUrl, ENVIRONMENTS, COURSE_PREVIEWS, courseResource } from './launch.js';
-// Rust owns menu labels, supported choices and canvas hit regions. This bridge
-// draws the original frontend and crisp browser overlays, and binds input.
+import { renderScreen, screenPages, courseGroup } from './menu-screens.js';
+// Rust owns menu labels, supported choices and their order. This bridge lays out
+// the HD frontend screens (menu-screens.js) and ride panels, and binds input.
 const base = name => name.replaceAll('\\', '/').split('/').at(-1).toLowerCase();
 const unquote = value => (value ?? '').replace(/^"/, '').replace(/"$/, '');
 const fields = section => Object.fromEntries([...section.fields].reverse().map(f => [f.key.toLowerCase(), f.value]));
@@ -54,6 +55,7 @@ export class Frontend {
     this.bindingDevice = 'keyboard'; this.bindingPage = 0; this.bindingRow = 0; this.musicPage = 0;
     this.capture = null; this.menuKeys = new Set();
     this.raceSettings={laps:3,cpu:3,difficulty:1};this.raceActive=false;this.raceAvailable=false;
+    this.trackFilter = 'all'; this.trackUrls = new Map(); this.backdropUrl = '';
     gameplayBindings.subscribe(() => { this.layoutKey = ''; });
     window.addEventListener('keydown', e => {
       if (!this.capture) return;
@@ -169,6 +171,52 @@ export class Frontend {
     });
     return this.trainingPreviewPending;
   }
+  async imageUrl(canvas) {
+    const blob = await new Promise(resolve => canvas.toBlob(resolve));
+    if (!blob) throw new Error('Menu image encoding failed');
+    return URL.createObjectURL(blob);
+  }
+  // Original course photographs ship as two halves; join them once into a
+  // blob URL so every HD screen can use a normal responsive <img>.
+  async trackPhoto(track) {
+    if (!track || this.trackUrls.has(track.id)) return this.trackUrls.get(track?.id) ?? '';
+    let url = '';
+    if (track.id === 'training') url = await this.trainingMapPreview() ? `/devlog-images/${trainingPreview}.png` : '';
+    else if (track.image) {
+      const a = await this.image(`${track.image}a`), b = await this.image(`${track.image}b`), joined = document.createElement('canvas');
+      joined.width = a.width + b.width; joined.height = Math.max(a.height, b.height);
+      const c = joined.getContext('2d', {willReadFrequently:true}); c.drawImage(a, 0, 0); c.drawImage(b, a.width, 0, b.width, a.height);
+      url = await this.imageUrl(trimDark(joined));
+    }
+    this.trackUrls.set(track.id, url); return url;
+  }
+  trackPhotoUrl(track) { return track ? this.trackUrls.get(track.id) ?? '' : ''; }
+  trackOrder() {
+    const order = this.tracks.map((_, index) => index);
+    return this.trackFilter === 'all' ? order : order.filter(index => courseGroup(this.tracks[index].id) === this.trackFilter);
+  }
+  setTrackFilter(filter) {
+    this.trackFilter = filter;
+    const order = this.trackOrder();
+    if (order.length && !order.includes(this.track)) this.track = order[0];
+    this.scrollScreenSelection = true; this.layoutKey = ''; void this.refresh();
+  }
+  selectTrack(index) {
+    if (this.busy) return;
+    if (index === this.track) { void this.action('accept'); return; }
+    this.track = index; this.layoutKey = ''; void this.refresh();
+  }
+  garageCatalog() {
+    const online = ['multiplayer','create-lobby','join-lobby','lobby'].includes(this.garageReturn);
+    return (this.frame?.catalog ?? []).filter(item => !online || item.group === 'ATV');
+  }
+  vehicleSummary() {
+    const catalog = this.frame?.catalog?.length ? this.garageCatalog() : [];
+    const item = catalog.find(entry => entry.id === this.quadId), group = catalog.filter(entry => entry.group === item?.group);
+    const rider = this.quadId >= 27 ? 'MX rider' : this.riderId ? 'Female rider' : 'Male rider';
+    return {label:item?.label ?? `Vehicle ${this.quadId}`, group:item?.group === 'Motorcycle' ? 'Motorcycle' : 'ATV', index:group.indexOf(item) + 1, count:group.length, rider,
+      meta:[item?.class, rider].filter(Boolean).join(' / ')};
+  }
   bitmap(info, rgba) {
     const c = document.createElement('canvas'); c.width = info.width; c.height = info.height;
     c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rgba), info.width, info.height), 0, 0); return c;
@@ -188,6 +236,8 @@ export class Frontend {
       this.track = Math.max(0, this.tracks.findIndex(t => t.id === this.lastFreestyleEnvironment));
       for (const name of [fontName, 'tradegothic_boldcondensed_22soff', 'tradegothic_boldcondenseditalic_-1fs_32ds']) await this.font(name);
       await this.archive('/UI/RESOURCE/PAGEA/PAGE01.RES');
+      // PAGE01's opaque red-tinted scenic backdrop sits behind the HD screens.
+      if (this.assets.has('bk_mainmenu.pst')) { try { this.backdropUrl = await this.imageUrl(await this.image('bk_mainmenu')); } catch { /* gradient-only backdrop */ } }
       // Authored vector branding is independent of recovered disc textures.
       // Keep the text fallback usable if the static asset cannot be decoded.
       const logo = new Image(); logo.src = 'fury-remastered.svg';
@@ -294,7 +344,7 @@ export class Frontend {
         if (!this.loaded.has('/UI/RESOURCE/TP/TP_ANAT.RES')) this.setLoading(true, 'Preparing course previews…');
         const {files} = await this.content;
         for (const archive of COURSE_PREVIEWS) if (files.some(f=>f.path===archive)) await this.archive(archive);
-        if (page !== 'lobby') for (const track of this.tracks) if (track.image) { await this.image(`${track.image}a`); await this.image(`${track.image}b`); }
+        if (page !== 'lobby') for (const track of this.tracks) await this.trackPhoto(track);
       }
       this.page = page; this.selection = 0; this.layoutKey = '';
       if (this.isPausePanel()) this.resetPauseScroll = true;
@@ -312,7 +362,7 @@ export class Frontend {
       const order = this.page === 'pause' ? this.pauseOrder : this.frame.choices;
       const index = order.indexOf(this.frame.choices[this.selection]);
       this.selection = this.frame.choices.indexOf(order[(index + (action === 'up' ? -1 : 1) + order.length) % order.length]);
-      this.scrollPauseSelection = this.isPausePanel();
+      this.scrollPauseSelection = this.isPausePanel(); this.scrollScreenSelection = !this.isPausePanel();
       if (this.page === 'bindings' && this.selection < 4) this.bindingRow = this.bindingPage * 4 + this.selection;
     } else if (action === 'back') {
       if (this.page === 'pause') return this.resume();
@@ -323,7 +373,9 @@ export class Frontend {
     } else if (this.page === 'garage' && ['left','right'].includes(action)) {
       return this.run(action === 'left' ? 'quadprev' : 'quadnext');
     } else if (this.page === 'tracks' && ['left','right','up','down'].includes(action)) {
-      this.track = (this.track + (['left','up'].includes(action) ? -1 : 1) + this.tracks.length) % this.tracks.length;
+      // Every direction steps through the courses visible under the event filter.
+      const order = this.trackOrder(), position = Math.max(0, order.indexOf(this.track)) + (['left','up'].includes(action) ? -1 : 1);
+      this.track = order[(position + order.length) % order.length]; this.scrollScreenSelection = true;
     } else if (this.page === 'race' && ['left','right'].includes(action)) { return this.run(this.frame.choices[this.selection],action === 'left' ? -1 : 1);
     } else if (this.page === 'minimap-config' && this.frame.choices[this.selection] === 'minimap-size' && ['left','right'].includes(action)) {
       this.minimapSettings?.setSize(this.minimapSettings.size + (action === 'left' ? -8 : 8));
@@ -352,7 +404,8 @@ export class Frontend {
       if (action === 'copyride') return await copyRideUrl(this.rideUrl(),this.notice);
       if (action === 'settings') { this.settingsReturn = this.page === 'pause' ? 'pause' : 'main'; return this.show('settings'); }
       if (action === 'garage') { this.garageReturn = this.page; return this.show('garage'); }
-      if (action === 'quadprev' || action === 'quadnext') { const count = ['multiplayer','create-lobby','join-lobby','lobby'].includes(this.garageReturn) ? 26 : 46; this.quadId = ((this.quadId - 1 + (action === 'quadnext' ? 1 : count - 1)) % count) + 1; }
+      if (action.startsWith('vehicle:')) { const id = Number(action.slice(8)); if (this.garageCatalog().some(item => item.id === id)) { this.quadId = id; this.scrollScreenSelection = true; } }
+      else if (action === 'quadprev' || action === 'quadnext') { const count = ['multiplayer','create-lobby','join-lobby','lobby'].includes(this.garageReturn) ? 26 : 46; this.quadId = ((this.quadId - 1 + (action === 'quadnext' ? 1 : count - 1)) % count) + 1; }
       else if (action === 'riderchange' && this.quadId < 27) this.riderId = 1 - this.riderId;
       else if (action.startsWith('spawn:')) { this.busy=true; try { await this.multiplayer.action(action,this); } finally {this.busy=false;} return; }
       else if (['host','join','share','lobbymap','lobbystart','leave'].includes(action)) { if (['host','join'].includes(action) && this.quadId>=27) throw new Error('Choose an ATV for multiplayer. Motorcycles are available in Single Player.'); const setup = action==='host'?this.lobbySetup:undefined; this.lobbySetup=undefined; return await this.multiplayer.action(action, this, setup); }
@@ -396,8 +449,8 @@ export class Frontend {
       else if (action === 'fullscreen') {
         if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen();
       } else if (action === 'devlog') location.href = 'devlog.html';
-      else if (!['quadprev','quadnext','riderchange'].includes(action)) return await this.action(action);
-      if (['quadprev','quadnext','riderchange'].includes(action)) this.saveSelection();
+      else if (!['quadprev','quadnext','riderchange'].includes(action) && !action.startsWith('vehicle:')) return await this.action(action);
+      if (['quadprev','quadnext','riderchange'].includes(action) || action.startsWith('vehicle:')) { this.saveSelection(); this.scrollScreenSelection = true; }
       this.layoutKey = ''; await this.refresh();
     } catch (error) { this.fail(error); }
   }
@@ -428,7 +481,7 @@ export class Frontend {
       // frame requests fresh data, rather than applying a stale hit map.
       if ((this.minimapSettings?.zoom ?? 50) !== request.minimap_zoom || (this.minimapSettings?.orientation ?? 'north-up') !== request.minimap_orientation || (this.minimapSettings?.shape ?? 'circle') !== request.minimap_shape || (this.minimapSettings?.corner ?? 'top-right') !== request.minimap_corner || (this.minimapSettings?.enabled ?? true) !== request.minimap_enabled || (this.minimapSettings?.size ?? 160) !== request.minimap_size || this.raceSettings.laps!==request.race_laps || this.raceSettings.cpu!==request.race_cpu || this.raceSettings.difficulty!==request.race_difficulty || (this.mobileControls?.steeringSensitivity ?? 85) !== request.mobile_steering_sensitivity || (this.capture?.label ?? '') !== request.capture_label || this.bindingPage !== request.binding_page || this.musicPage !== request.music_page || this.page !== request.page || this.selection !== request.selection || this.quadId !== request.quad_id || this.riderId !== request.rider_id || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
       if (this.page === 'lobby' && this.multiplayer?.state?.environment !== track?.id) return;
-      this.presentation = request; this.frame = frame; this.layoutKey = key; this.draw(); this.rebuildButtons(); this.updateModelViews();
+      this.presentation = request; this.presentationTrack = track; this.frame = frame; this.layoutKey = key; this.draw(); this.rebuildButtons(); this.updateModelViews();
     } catch (error) { this.fail(error); }
     finally { this.layoutPending = false; }
   }
@@ -484,16 +537,14 @@ export class Frontend {
     this.modelViews.clear();
   }
   updateModelViews() {
-    if (!['garage','main','single'].includes(this.page)) return;
-    const commands = this.frame.draw.filter(command => command.kind === 'model_preview');
-    if (!commands.length) { this.clearModelViews(); return; }
-    for (const command of commands) {
-      let view = this.modelViews.get(command.model);
-      if (!view) {
-        view = new ModelView(this.canvas.parentElement, command.model);
-        this.modelViews.set(command.model, view);
-      }
-      view.place(command.rect, this.frame);
+    if (!['garage','main','single','create-lobby','join-lobby'].includes(this.page)) return;
+    // HD screens provide named slots; the views move with responsive layout.
+    const slots = [...this.buttons.querySelectorAll('[data-model-slot]')];
+    if (!slots.length) { this.clearModelViews(); return; }
+    for (const slot of slots) {
+      let view = this.modelViews.get(slot.dataset.modelSlot);
+      if (!view) { view = new ModelView(slot, slot.dataset.modelSlot); this.modelViews.set(slot.dataset.modelSlot, view); }
+      else if (view.element.parentElement !== slot) { slot.append(view.element); view.render(); }
     }
     const key = `${this.quadId}:${this.riderId}`;
     if (key === this.modelKey) return;
@@ -504,7 +555,7 @@ export class Frontend {
       delete view.canvas.dataset.clip; delete view.canvas.dataset.animationTime;
     }
     void this.modelAssets(this.quadId, this.riderId).then(source => {
-      if (token !== this.modelToken || !['garage','main','single'].includes(this.page) || this.root.hidden) return;
+      if (token !== this.modelToken || !['garage','main','single','create-lobby','join-lobby'].includes(this.page) || this.root.hidden) return;
       this.modelViews.get('quad')?.set(source.mesh, source.textures);
       this.modelViews.get('rider')?.set(source.riderMesh, source.riderTextures, source.riderPose?.world_matrices);
       if (this.page === 'garage') void this.startMenuRider(token, key);
@@ -546,6 +597,13 @@ export class Frontend {
     this.root.dataset.pausePanel = String(this.isPausePanel());
     this.root.dataset.page = this.page;
     if (this.isPausePanel()) { this.rebuildPausePanel(); return; }
+    this.courseMeter?.remove(); this.courseMeter = null;
+    if (screenPages.has(this.page)) {
+      renderScreen(this);
+      Object.assign(this.root.dataset, {selection:String(this.selection), track:this.tracks[this.track]?.id ?? '', renderer:'rust', musicPage:String(this.musicPage), bindingPage:String(this.bindingPage)});
+      return;
+    }
+    delete this.buttons.dataset.structure;
     const focusedAction = this.buttons.contains(document.activeElement) ? document.activeElement.dataset.action : null;
     // Preserve native range nodes during input/redraw so dragging and keyboard
     // focus survive every Rust label update.
@@ -781,6 +839,7 @@ export class Frontend {
     if (this.isPausePanel()) { this.ctx.clearRect(0,0,this.canvas.width,this.canvas.height); if(this.backgroundCanvas)this.backgroundCanvas.hidden=true; return; }
     const c = this.ctx, stage = this.canvas.parentElement, dpr = Math.min(devicePixelRatio || 1,3, Math.sqrt(8_000_000 / Math.max(1,stage.clientWidth * stage.clientHeight)));
     this.canvas.width = Math.round(stage.clientWidth*dpr); this.canvas.height = Math.round(stage.clientHeight*dpr);
+    if (screenPages.has(this.page)) { if (this.backgroundCanvas) this.backgroundCanvas.hidden = true; return; }
     c.setTransform(this.canvas.width/frame.width,0,0,this.canvas.height/frame.height,0,0);
     const fullBleed = document.documentElement.classList.contains('app-standalone') && !['pause','hud-settings','minimap-config','controls','bindings','music'].includes(this.page) && this.backgroundCanvas;
     let decoration = true;
@@ -831,6 +890,7 @@ class ModelView {
     this.canvas = document.createElement('canvas'); this.canvas.setAttribute('aria-label', `${kind === 'quad' ? 'ATV' : 'Rider'} model; drag to rotate`);
     this.canvas.tabIndex = 0; this.message = document.createElement('span'); this.message.setAttribute('role', 'status');
     this.element.append(this.canvas, this.message); stage.append(this.element);
+    this.resize = new ResizeObserver(() => this.render()); this.resize.observe(this.element);
     this.gl = this.canvas.getContext('webgl2', { alpha: true, antialias: true });
     this.yaw = -.6; this.groups = []; this.textures = []; this.kind = kind;
     this.canvas.addEventListener('pointerdown', event => { this.pointer = {id:event.pointerId, x:event.clientX}; this.canvas.setPointerCapture(event.pointerId); });
@@ -839,9 +899,6 @@ class ModelView {
     this.canvas.addEventListener('keydown', event => { if (!['ArrowLeft','ArrowRight'].includes(event.code)) return; event.preventDefault(); event.stopPropagation(); this.yaw += event.code === 'ArrowLeft' ? -.25 : .25; this.render(); });
     this.canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); this.lost = true; delete this.canvas.dataset.ready; this.message.textContent = 'Restoring model…'; this.element.classList.add('is-loading'); });
     this.canvas.addEventListener('webglcontextrestored', () => { this.lost = false; this.program = null; this.groups = []; this.textures = []; if (this.source) this.set(...this.source); });
-  }
-  place([x,y,w,h], frame) {
-    Object.assign(this.element.style, {left:`${x/frame.width*100}%`,top:`${y/frame.height*100}%`,width:`${w/frame.width*100}%`,height:`${h/frame.height*100}%`}); this.render();
   }
   clear(message = '') {
     const gl = this.gl;
@@ -862,10 +919,12 @@ class ModelView {
         uniform vec3 center; uniform vec2 extent; uniform float yaw; out vec2 tex; out float light;
         void main(){float c=cos(yaw),s=sin(yaw);mat3 r=mat3(c,0.,-s,0.,1.,0.,s,0.,c);vec3 v=r*((bones[int(node)]*vec4(p,1.)).xyz-center);
         float pitch=.25;float y=v.y*cos(pitch)-v.z*sin(pitch);float z=v.y*sin(pitch)+v.z*cos(pitch);
-        gl_Position=vec4(v.x/extent.x,y/extent.y,-z/40.,1.);tex=uv;light=.58+.42*max(dot(normalize(r*mat3(bones[int(node)])*n),normalize(vec3(-.4,.8,.6))),0.);}`);
+        gl_Position=vec4(v.x/extent.x,y/extent.y,-z/40.,1.);tex=uv;vec3 nn=normalize(r*mat3(bones[int(node)])*n);light=.36+.7*max(dot(nn,normalize(vec3(-.4,.8,.6))),0.)+.16*max(dot(nn,normalize(vec3(.7,.1,-.7))),0.);}`);
       const fragment=shader(gl.FRAGMENT_SHADER, `#version 300 es
         precision highp float; in vec2 tex; in float light; uniform sampler2D image; out vec4 color;
-        void main(){vec4 t=texture(image,tex);if(t.a<.15)discard;color=vec4(t.rgb*light,t.a);}`);
+        void main(){vec4 t=texture(image,tex);if(t.a<.15)discard;vec3 c=t.rgb*light;float l=dot(c,vec3(.299,.587,.114));
+        // Studio grade: richer colour and a little contrast so pale suits read on the silver stage.
+        c=clamp(mix(vec3(l),c,1.18),0.,1.);c=clamp((c-.5)*1.1+.47,0.,1.);color=vec4(c,t.a);}`);
       this.program=gl.createProgram();gl.attachShader(this.program,vertex);gl.attachShader(this.program,fragment);gl.linkProgram(this.program);
       gl.deleteShader(vertex);gl.deleteShader(fragment);if(!gl.getProgramParameter(this.program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(this.program));
       this.uniforms=Object.fromEntries(['center','extent','yaw','image','bones[0]'].map(n=>[n,gl.getUniformLocation(this.program,n)]));
@@ -905,7 +964,33 @@ class ModelView {
     for(const group of this.groups){gl.bindVertexArray(group.vao);gl.bindTexture(gl.TEXTURE_2D,group.texture);gl.drawArrays(gl.TRIANGLES,0,group.count);}
     this.canvas.dataset.glError=String(gl.getError());
   }
-  destroy(){this.clear();if(this.program&&!this.lost)this.gl.deleteProgram(this.program);this.gl?.getExtension('WEBGL_lose_context')?.loseContext();this.element.remove();}
+  destroy(){this.resize.disconnect();this.clear();if(this.program&&!this.lost)this.gl.deleteProgram(this.program);this.gl?.getExtension('WEBGL_lose_context')?.loseContext();this.element.remove();}
+}
+
+// Course photographs carry black/transparent mats from their 640x448 page
+// placement, including a diagonal wedge where the original red panel curve
+// covered the photo. Trim dark edge rows/columns and the wedge's widest extent.
+function trimDark(canvas) {
+  const {width, height} = canvas, data = canvas.getContext('2d').getImageData(0, 0, width, height).data;
+  const lit = o => data[o + 3] > 16 && data[o] + data[o + 1] + data[o + 2] > 54;
+  const dark = (x0, y0, dx, dy, count) => {
+    let count2 = 0;
+    for (let i = 0; i < count; i++) if (lit(((y0 + dy * i) * width + x0 + dx * i) * 4)) count2++;
+    return count2 < count * .04;
+  };
+  // First lit pixel of each row; the 90th percentile ignores stray dark pixels.
+  const starts = [];
+  for (let y = 0; y < height; y++) { let x = 0; while (x < width / 4 && !lit((y * width + x) * 4)) x++; starts.push(x); }
+  starts.sort((a, b) => a - b);
+  let left = Math.min(Math.floor(width / 4), starts[Math.floor(height * .9)]), right = width, top = 0, bottom = height;
+  while (left < width / 4 && dark(left, 0, 0, 1, height)) left++;
+  while (right > width * .75 && dark(right - 1, 0, 0, 1, height)) right--;
+  while (top < height / 4 && dark(left, top, 1, 0, right - left)) top++;
+  while (bottom > height * .75 && dark(left, bottom - 1, 1, 0, right - left)) bottom--;
+  if (left === 0 && top === 0 && right === width && bottom === height) return canvas;
+  const trimmed = document.createElement('canvas'); trimmed.width = right - left; trimmed.height = bottom - top;
+  trimmed.getContext('2d').drawImage(canvas, left, top, trimmed.width, trimmed.height, 0, 0, trimmed.width, trimmed.height);
+  return trimmed;
 }
 
 function localNormal(m, n) {

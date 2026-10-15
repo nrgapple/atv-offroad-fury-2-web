@@ -191,6 +191,15 @@ pub struct TextInput {
     pub value: String,
     pub max_length: usize,
 }
+/// One garage selection. The browser lists these together so vehicle and
+/// rider choices share a single page; ids are the gameplay selection ids.
+#[derive(Serialize)]
+pub struct CatalogItem {
+    pub id: u16,
+    pub label: String,
+    pub group: &'static str,
+    pub class: String,
+}
 #[derive(Serialize)]
 pub struct Frame {
     pub width: f32,
@@ -200,6 +209,7 @@ pub struct Frame {
     pub choices: Vec<String>,
     pub sliders: Vec<Slider>,
     pub inputs: Vec<TextInput>,
+    pub catalog: Vec<CatalogItem>,
 }
 impl Frame {
     fn rect(
@@ -347,6 +357,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         choices: vec![],
         sliders: vec![],
         inputs: vec![],
+        catalog: vec![],
     };
     if pause {
         f.rect([0., 0., w, h], 0., "#00000070", "#00000070", "");
@@ -426,6 +437,31 @@ pub fn layout(request: Request) -> Result<Frame> {
     } else {
         (w * 0.48).min(380.)
     };
+    // Pages that show the current ride carry the selectable vehicle catalog.
+    if matches!(
+        request.page.as_str(),
+        "main" | "single" | "garage" | "create-lobby" | "join-lobby"
+    ) {
+        for id in 1..=crate::motorcycle::SELECTION_COUNT {
+            let label = crate::player_models::selection(id, 0)?.label;
+            f.catalog.push(if id >= 27 {
+                let (size, pro) = crate::motorcycle::class(id)?;
+                CatalogItem {
+                    id,
+                    label: label.split(" / ").next().unwrap_or(&label).into(),
+                    group: "Motorcycle",
+                    class: format!("{size}cc {}", if pro { "Pro" } else { "Race" }),
+                }
+            } else {
+                CatalogItem {
+                    id,
+                    label,
+                    group: "ATV",
+                    class: String::new(),
+                }
+            });
+        }
+    }
     match request.page.as_str() {
         "title" => {
             f.choices.extend(["main", "devlog"].map(String::from));
@@ -1489,6 +1525,37 @@ mod tests {
                 .choices
                 .iter()
                 .any(|choice| choice == "fullscreen")
+        );
+    }
+    #[test]
+    fn garage_catalog_lists_every_vehicle_once() {
+        let menu = layout(request("garage", 1280., 720.)).unwrap();
+        assert_eq!(menu.catalog.len(), 46);
+        assert!(
+            menu.catalog
+                .iter()
+                .enumerate()
+                .all(|(i, item)| item.id as usize == i + 1)
+        );
+        assert_eq!(
+            menu.catalog
+                .iter()
+                .filter(|item| item.group == "ATV")
+                .count(),
+            26
+        );
+        assert_eq!(menu.catalog[13].label, "Honda 250EX");
+        assert_eq!(menu.catalog[30].class, "250cc Race");
+        assert!(!menu.catalog[30].label.contains(" / "));
+        assert_eq!(
+            layout(request("main", 1280., 720.)).unwrap().catalog.len(),
+            46
+        );
+        assert!(
+            layout(request("tracks", 1280., 720.))
+                .unwrap()
+                .catalog
+                .is_empty()
         );
     }
     #[test]
