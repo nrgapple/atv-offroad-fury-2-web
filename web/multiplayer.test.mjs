@@ -246,6 +246,17 @@ test('an invite joins its live room, or opens that code again on the link map',a
   }finally{globalThis.fetch=savedFetch;await f.cleanup();}
 });
 
+test('a ride that fails to load leaves the room instead of lingering in it',async()=>{
+  const f=fixture();try {
+    const socket=await f.connect();f.mp.onStart=async()=>{throw Error('Original ATV archive is missing.');};
+    f.overrides.set(82,async()=>encode({state:{...f.defaultState,lobby:{...f.defaultState.lobby,started:true}},event:{}}));
+    socket.message();await f.mp.receiveQueue;await flush();
+    assert(f.reports.includes('Original ATV archive is missing.'));
+    assert.equal(f.mp.socket,null);assert.deepEqual(f.mp.state,{});assert.equal(f.mp.started,false);
+    assert.deepEqual(socket.closes.at(-1),{code:1000,reason:'Left lobby'});
+  }finally{await f.cleanup();}
+});
+
 test('host close invalidates the pending map loader before it can resume a ride',async()=>{
   const f=fixture();try {
     const socket=await f.connect(),pending=deferred();let current;

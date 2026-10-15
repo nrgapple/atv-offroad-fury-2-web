@@ -132,16 +132,21 @@ try {
     const resumeMusic=await musicBefore(a);await button(a,'Resume').click();await running(a);await musicContinues(a,resumeMusic,false);await a.waitForTimeout(200);assert.equal((await state(a)).frame.applied_input.throttle,0);
     console.log('PASS settings hub and all six submenu routes at five viewports, remap/cancel/defaults/pagination/music, stable ranges, responsive layout, sharp DOM labels, scroll access, keyboard/Tab, settings sliders, single-player freeze and neutral resume');
   } else {
-    await button(a,'Multiplayer').click();await button(a,'Create lobby').click();await a.getByRole('textbox',{name:'Rider name',exact:true}).fill('Pause Host');await button(a,'Create lobby').click();
-    await a.waitForFunction(()=>window.atvTerrainStatus.multiplayer.state.code);const code=(await state(a)).multiplayer.state.code;console.log('ROOM',code);
-    const b=await page();await button(b,'Multiplayer').click();await button(b,'Join lobby').click();await b.getByRole('textbox',{name:'Rider name',exact:true}).fill('Live Guest');await b.getByRole('textbox',{name:'Lobby code',exact:true}).fill(code);await button(b,'Join lobby').click();
+    // Host Game → Select Track → Ride starts riding; the guest joins the live ride.
+    await button(a,'Multiplayer').click();await button(a,'Host Game').click();await a.getByRole('textbox',{name:'Rider name',exact:true}).fill('Pause Host');await button(a,'Select Track').click();
+    const card=a.locator('.ms-course[data-track-id=env01]');await card.waitFor({timeout:60000});const selected=await card.getAttribute('aria-selected')==='true';await card.click();if(!selected)await a.locator('button.ms-ride').click();
+    await running(a);const code=(await state(a)).multiplayer.state.code;assert.match(code,/^[A-Z0-9]{8}$/);console.log('ROOM',code);
+    const b=await page();await button(b,'Multiplayer').click();await button(b,'Join Game').click();await b.getByRole('textbox',{name:'Rider name',exact:true}).fill('Live Guest');await b.getByRole('textbox',{name:'Lobby code',exact:true}).fill(code);await button(b,'Join Game').click();
     await a.waitForFunction(()=>window.atvTerrainStatus.multiplayer.state.lobby.players.length===2);
-    await button(a,'Ride together').click();await Promise.all([running(a),running(b)]);console.log('BOTH RIDING');
+    await Promise.all([running(a),running(b)]);console.log('BOTH RIDING');
     for(const p of [a,b])await p.waitForFunction(()=>window.atvTerrainStatus.multiplayerDraws>0,null,{timeout:60000});
     for(const [menu,rider] of [[a,b],[b,a]]) {
       await menu.bringToFront();await menu.evaluate(()=>window.dispatchEvent(new Event('focus')));
       const music=await musicBefore(menu);await menu.keyboard.down('KeyW');await menu.waitForFunction(()=>window.atvTerrainStatus.frame.applied_input.throttle>.5);await openPause(menu);await menu.keyboard.up('KeyW');await musicContinues(menu,music,true);
       assert.equal(await menu.locator('#pause-title').textContent(),'Pause');
+      // Online rows: only the host may change the track for everyone.
+      assert.deepEqual(await menu.locator('.pause-panel button').evaluateAll(nodes=>nodes.map(n=>n.dataset.action)),['resume','reset','players','changeride',...(menu===a?['hosttrack']:[]),'settings','copyride','devlog','leave']);
+      assert.equal(await button(menu,'Copy invite link').count(),1);assert.equal(await button(menu,'Leave Game').count(),1);
       const before=(await state(menu)).simulationSteps;
       await menu.waitForFunction(before=>window.atvTerrainStatus.simulationSteps>before+15,before,{timeout:10000});
       assert.equal((await state(menu)).frame.applied_input.throttle,0,'menu releases local driving');
@@ -152,13 +157,17 @@ try {
       await menu.bringToFront();await menu.evaluate(()=>window.dispatchEvent(new Event('focus')));await shot(menu,menu===a?'online-host':'online-guest');
       await button(menu,'Settings').click();await screen(menu,'settings');await button(menu,'Controls').click();await screen(menu,'controls');const settingsSteps=(await state(menu)).simulationSteps;
       await menu.waitForFunction(n=>window.atvTerrainStatus.simulationSteps>n+10,settingsSteps,{timeout:10000});
-      await menu.keyboard.press('Escape');await screen(menu,'settings');await menu.keyboard.press('Escape');await screen(menu,'pause');await button(menu,'Players').click();await screen(menu,'players');await shot(menu,'players');
+      await menu.keyboard.press('Escape');await screen(menu,'settings');await menu.keyboard.press('Escape');await screen(menu,'pause');await button(menu,'Players').click();await screen(menu,'players');await button(menu,`Spawn beside ${menu===a?'Live Guest':'Pause Host'}`).waitFor();await shot(menu,'players');
       const rosterSteps=(await state(menu)).simulationSteps;await menu.waitForFunction(n=>window.atvTerrainStatus.simulationSteps>n+10,rosterSteps,{timeout:10000});
       await menu.keyboard.press('Escape');await button(menu,'Resume').click();await running(menu);assert.equal((await state(menu)).frame.applied_input.throttle,0);
       console.log('LIVE_MENU',JSON.stringify({role:menu===a?'host':'guest',steps:s.simulationSteps-before,remoteMovement:Math.hypot(...s.multiplayer.remote[0].position.map((v,i)=>v-remoteBefore[i]))}));
     }
-    await openPause(b);await openPause(a);await button(a,'Lobby').click();await screen(a,'lobby');assert.equal(await a.locator('.pause-panel').isVisible(),true);const lobbyMusic=await musicBefore(a),lobbySteps=(await state(a)).simulationSteps;await a.waitForFunction(n=>window.atvTerrainStatus.simulationSteps>n+10,lobbySteps);await musicContinues(a,lobbyMusic,true);await shot(a,'lobby');await button(a,'Leave lobby').click();await a.waitForFunction(()=>!window.atvTerrainStatus.multiplayer.state.code&&document.querySelector('#frontend').dataset.page==='multiplayer');await b.waitForFunction(()=>!window.atvTerrainStatus.multiplayer.state.code,null,{timeout:15000});await a.close();assert.equal((await state(b)).multiplayer.remote.length,0);
-    console.log('PASS both host/guest pause menus and settings keep physics/peers rendering, neutral input, and host departure cleanup');
+    // Host leaves from Pause: the paused guest keeps the room and becomes host,
+    // and its pause menu gains Select Track.
+    await openPause(b);await openPause(a);await button(a,'Leave Game').click();await a.waitForFunction(()=>!window.atvTerrainStatus.multiplayer.state.code&&document.querySelector('#frontend').dataset.page==='multiplayer');
+    await b.waitForFunction(code=>{const m=window.atvTerrainStatus.multiplayer;return m.state.code===code&&m.state.lobby?.host===m.state.peer&&m.state.lobby.players.length===1&&m.remote.length===0;},code,{timeout:15000});await a.close();
+    await button(b,'Select Track').waitFor({timeout:15000});const guestSteps=(await state(b)).simulationSteps;await b.waitForFunction(n=>window.atvTerrainStatus.simulationSteps>n+10,guestSteps,{timeout:10000});await shot(b,'handoff');
+    console.log('PASS both host/guest pause menus and settings keep physics/peers rendering, neutral input, online rows, and host handoff on departure');
   }
   assert.deepEqual(errors,[]);
 }finally{await browser.close();}

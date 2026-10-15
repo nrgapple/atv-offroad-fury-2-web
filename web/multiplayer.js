@@ -126,7 +126,12 @@ export class Multiplayer {
       if (generation !== this.generation) return;
       this.loadedMap = environment;
       await this.audio().loadRemoteModels(this.state.lobby?.players ?? []);
-    } catch (error) { this.report(error.message); return; }
+    } catch (error) {
+      this.report(error.message);
+      // A rider who cannot load the track must not linger in the room.
+      if (generation === this.generation) { forgetKey(); await this.disconnect(false); }
+      return;
+    }
     finally { if (generation === this.generation) this.loading = false; }
     if (generation !== this.generation) return;
     await this.markReady(generation);
