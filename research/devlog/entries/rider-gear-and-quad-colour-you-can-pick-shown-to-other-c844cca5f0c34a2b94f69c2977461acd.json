@@ -1,0 +1,14 @@
+{
+  "id": "rider-gear-and-quad-colour-you-can-pick-shown-to-other-c844cca5f0c34a2b94f69c2977461acd",
+  "timestamp": "2026-10-15T17:31:43.923339+00:00",
+  "recorded_at": "2026-10-15T17:31:43.954765+00:00",
+  "kind": "build",
+  "title": "Rider gear and quad colour you can pick, shown to other riders (host checkpoint)",
+  "summary": "The Garage has a Rider gear page built on the original Profile Store catalog (uiRider.txt): helmet, jersey with matching sleeves, pants, gloves, boots and goggles from the original 153 items, plus an authored Quad colour option, with live quad and rider previews in desktop, portrait and landscape. Choices are saved, applied to your rider and quad in rides, and sent to other riders in multiplayer so everyone is easier to tell apart.",
+  "details": [
+    "Evidence: original Profile Store pages (Helmet/Jersey/Gear/Glove/Goggle/Boot/ATV) and 0021db50 read uiRider.txt's seven sections; every item resolves to an in-game RIDER_MT material (shirts use their <stem>001 slot variant; sleeves/pants pair with the jersey index). Quad colour is an authored enhancement (the originals' colour schemes are separate ATVs): it recolours only saturated pixels of the quad body atlases to a hue, white or black and keeps frames, engines, shocks and tires original. Multiplayer protocol 5 adds an 8-byte appearance to each lobby participant; remote riders draw with that gear and paint. Verification: unit tests (catalog, material resolution, appearance stepping, protocol round trip/rejection); tools/test_rider_gear.mjs passes in host Chromium in three layouts with persistence, ready previews and ride appearance; make check passes (Rust, strict Clippy, 157 JS tests)."
+  ],
+  "limitation": "Host checkpoint until merged and deployed; the gear catalog and enlarged rider-material package still need the R2 content upload before public riders can pick gear (Quad colour works without it). The two-rider multiplayer appearance check needs the deployed relay. No store progression or points - every item is available, like the Garage's quads.",
+  "image": "/devlog-images/rider-gear-and-quad-colour-you-can-pick-shown-to-other-c844cca5f0c34a2b94f69c2977461acd.png",
+  "caption": "Host Chromium capture (not public, not PS2) of the Garage Rider Gear page: helmet, jersey, pants, gloves, boots and goggles rows (Goggles set to Scott Yellow, others Thor Black) and a Quad colour row set to Red, with the live quad and rider previews on the right."
+}
