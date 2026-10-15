@@ -3,7 +3,11 @@
 The implementation follows the original ENV08 Freestyle procedural route and
 named wheel motion. This core checkpoint provides authored Rust route time,
 carriage poses and wheel-node poses. The host integration draws the original
-runtime meshes; public verification remains pending. Original
+runtime meshes. Status: live collision with all 11 train bodies, train
+encounters and the three original train samples passed public verification on
+2026-10-12 (see [TRAIN_CONTACT.md](TRAIN_CONTACT.md) and `DEPLOYMENT.md`);
+particle smoke and complete original train behavior remain unfinished. The
+sections below are dated history. Original
 resources, native exports, instruction probes and their output stay under ignored
 `private/` and `work/`. No disc executable or emulator runs in the browser.
 
@@ -118,9 +122,9 @@ procedural models and wheel assembly, sharing repeated model buffers.
 ATV_TEST_URL=<host-or-public-url> PLAYWRIGHT_MODULE=<playwright-module> node tools/test_train.mjs
 ```
 
-This is host evidence, not a verified public release. The bridge still supplies no-hit for the
-train's scene-height override. Dynamic train collision response, original spatial
-loop sounds and particle smoke are unfinished. The smoke PSG is the small original
+At this checkpoint this was host evidence, not a verified public release. The bridge then supplied no-hit for the
+train's scene-height override; dynamic train collision response and spatial loop
+sounds were later connected (see TRAIN_CONTACT.md). Particle smoke remains unfinished. The smoke PSG is the small original
 emitter marker, not a reconstructed smoke effect. These gaps must remain explicit
 through host/public verification; moving rendered cars and wheels alone do not
 establish complete original train behavior or full handling parity.

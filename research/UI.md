@@ -2,6 +2,15 @@
 
 ## Current status
 
+The front end is now browser-native HTML screens (title, main, single-player,
+multiplayer, lobby, garage, course, race and loading) driven by Rust-owned
+actions and choice order; see [MENU_SCREENS.md](MENU_SCREENS.md). All 40
+Freestyle venue families, the race course picker and the responsive pause menu
+are connected. Original profiles, championships, unlock progression and saves
+are not implemented, and most original page callbacks are authored adaptations.
+
+## Initial recovered route (historical, public v6/v7)
+
 The host browser build renders and navigates this recovered route:
 
 `Title → Main Menu → Single Player → Freestyle → Environment picker`
@@ -10,7 +19,7 @@ Both Caribou Peak (ENV01) and Tioga Valley (ENV02) enter driving scenes. Public 
 
 Public v7 adds a pause overlay based on the `[Main Menu]` section of `OVERLAYS.RES`. It shows Resume, Reset ATV, Controls, Fullscreen, Dev log, and Quit to Main Menu over the running scene. Public checks confirmed that pausing freezes the Rust simulation frame and that Resume, Controls/back, and Quit work. The driving toolbar is reduced to Pause and Camera. The panel uses original art but its browser callbacks are authored adaptations, not the original pause callback implementation.
 
-This is a connected route through selected original pages, not a full recreation of the original front end. Other menu callbacks and modes, race HUD, race flow, profiles, championships, and most environments are not yet implemented. The title prompt now sits clearly between the logo and legal text. The browser runs authored Rust/WebAssembly code and is not a PS2 emulator.
+This is a connected route through selected original pages, not a full recreation of the original front end. At that point other menu callbacks and modes, race HUD, race flow, profiles, championships, and most environments were not yet implemented. The title prompt now sits clearly between the logo and legal text. The browser runs authored Rust/WebAssembly code and is not a PS2 emulator.
 
 ## Resource and layout evidence
 
