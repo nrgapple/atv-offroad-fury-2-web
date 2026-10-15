@@ -1,14 +1,12 @@
 // Actual-content fixed-step touch transport regression. Replays loaded runtime
 // resources into two fresh WASM instances, never edits vehicle poses or forces.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {writeFile} from 'node:fs/promises';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const browser=await chromium.launch({headless:true});
+import {assertNoErrors,base,launch,newPage,waitForSteps} from './browser/harness.mjs';
+const browser=await launch();
 try {
- const page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
+ const errors=[],page=await newPage(browser,{viewport:{width:390,height:844},hasTouch:true,isMobile:true},errors);
   await page.addInitScript(() => localStorage.setItem('atv-mobile-one-handed', 'false')); // Explicit optional two-finger mode.
- const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.addInitScript(()=>{
    window.initialPackets=[];window.orbitRequests=[];
    const ops=new Set([20,21,22,23,26,27,28,29,44,45,46,47,48,49,51,52,53,64,65,67,69,91]);
@@ -19,12 +17,12 @@ try {
      return post.call(this,data,...rest);
    };
  });
- const url=new URL('/play.html?drive=1',process.env.ATV_TEST_URL||'http://127.0.0.1:4173');
+ const url=new URL('/play.html?drive=1',base);
  await page.goto(url.href);
  await page.waitForFunction(()=>window.atvTerrainStatus?.simulation,null,{timeout:90000});
  const cdp=await page.context().newCDPSession(page);
  const touch=(type,points=[])=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:points.map(p=>({radiusX:6,radiusY:6,force:1,...p}))});
- const steps=async()=>{const start=await page.evaluate(()=>window.atvTerrainStatus.simulationSteps);await page.waitForFunction(n=>window.atvTerrainStatus.simulationSteps>=n+4,start);};
+ const steps=()=>waitForSteps(page,4);
  // Right touch must reacquire focus, not become a camera pointer. Both thumbs
  // include horizontal motion so a leaked orbit handler cannot pass unnoticed.
  await page.waitForFunction(()=>window.atvTerrainStatus.frame.grounded.some(Boolean),null,{timeout:10000});
@@ -120,6 +118,6 @@ try {
  assert(result.released&&result.sawAir&&result.sawLanding,'Original map must reach preload/takeoff/landing');
  assert(result.insideTakeoff,'Takeoff must occur inside a batch and the following step must retain lean with throttle/brake0');
  assert(result.transitions>0,'At least one ground/air transition must occur within a four-step batch');
- assert.deepEqual(errors,[]);
+ assertNoErrors(errors);
  console.log(`PASS: ${result.steps} original-map steps match four-step batches vs sequential calls; left lean and right release remain independent through takeoff/landing; both portrait thumb drags preserve orbit after focus loss.`);
 }finally{await browser.close();}

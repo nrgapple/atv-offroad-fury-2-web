@@ -1,13 +1,10 @@
 // Host/public browser gate for compact UI, real pointer input and native-touch suppression.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-const { chromium, webkit } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4173';
-const engine = process.env.ATV_UI_BROWSER === 'webkit' ? webkit : chromium;
-const browser = await engine.launch({ headless: true });
+import { assertNoErrors, base, button, launch, newPage, waitForScreen } from './browser/harness.mjs';
+const engine = process.env.ATV_UI_BROWSER === 'webkit' ? 'webkit' : 'chromium';
+const browser = await launch({ engine });
 try {
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
-  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  const errors = []; const page = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }, errors);
   await page.goto(new URL('/play.html?drive=1&environment=env01', base).href);
   await page.waitForFunction(() => window.atvTerrainStatus?.simulation, null, { timeout: 90000 });
   // Mount an isolated surface with the real controls to verify native gesture gate
@@ -43,17 +40,17 @@ try {
   await page.locator('#camera').click();
   await page.waitForFunction(before => window.atvTerrainStatus.followCamera?.preset !== before, preset);
   await page.locator('#menu').tap();
-  await page.waitForFunction(() => document.querySelector('#frontend').dataset.page === 'pause');
+  await waitForScreen(page, 'pause');
   assert.equal(await page.locator('#toolbar').isVisible(), false);
-  await page.getByRole('button', { name: 'Resume', exact: true }).tap();
+  await button(page, 'Resume').tap();
   await page.waitForFunction(() => document.querySelector('#frontend').hidden);
-  if (engine === chromium) {
+  if (engine === 'chromium') {
     const cdp = await page.context().newCDPSession(page);
     const touch = (type, points = []) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(p => ({ radiusX: 6, radiusY: 6, force: 1, ...p })) });
     for (let i = 0; i < 8; i++) { await touch('touchStart', [{ id: 1, x: 80, y: 580 }]); await touch('touchEnd'); }
     await touch('touchStart', [{ id: 1, x: 5, y: 830 }]);
     await page.waitForFunction(() => window.atvTerrainStatus.input?.touch_drive?.held);
-    await page.waitForTimeout(700); // Exceeds the native long-press interval.
+    await page.waitForTimeout(700); // Time-based on purpose: exceeds the native long-press interval.
     assert.equal(await page.evaluate(() => getSelection().toString()), '');
     const styles = await page.locator('.touch-rider-marker *').evaluateAll(elements => elements.map(el => getComputedStyle(el).webkitUserSelect));
     assert(styles.every(value => value === 'none'));
@@ -77,6 +74,6 @@ try {
     await page.waitForFunction(() => window.atvTerrainStatus.input?.throttle === 0 && window.atvTerrainStatus.input?.lean === 0);
 
   }
-  assert.deepEqual(errors, []);
-  console.log(`PASS: ${engine === webkit ? 'WebKit' : 'Chromium'} mobile layouts, 44px actions, focus, camera/pause/resume, native touch scope/teardown${engine === chromium ? ', rapid/long/edge touches, two-finger input and cancellation' : ''}. Physical iOS loupe remains a hardware check.`);
+  assertNoErrors(errors);
+  console.log(`PASS: ${engine === 'webkit' ? 'WebKit' : 'Chromium'} mobile layouts, 44px actions, focus, camera/pause/resume, native touch scope/teardown${engine === 'chromium' ? ', rapid/long/edge touches, two-finger input and cancellation' : ''}. Physical iOS loupe remains a hardware check.`);
 } finally { await browser.close(); }

@@ -1,40 +1,36 @@
 // Opt-in original Caribou ramp: failed stunt, detached rider and automatic recovery.
 // Drives only through actual Chromium touch events; no physics/state injection.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { captureSimulation } from './capture_simulation.mjs';
 import { captureMinimapTracking } from './minimap_tracking.mjs';
 import { captureCrashIsolation, verifyCrashIsolation, captureCrashDraws, verifyCrashImpacts } from './crash_isolation.mjs';
-const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
+import { assertNoErrors, base, button, launch, newPage, waitForSteps } from './browser/harness.mjs';
 await mkdir('work/verification', {recursive: true});
 const screenshotPrefix = process.env.ATV_WRECK_SCREENSHOT_PREFIX || 'work/verification/rider-wreck';
-const browser = await chromium.launch({ headless: true });
+const browser = await launch();
 try {
-  const page = await browser.newPage({ viewport: { width: Number(process.env.ATV_WRECK_WIDTH || 390), height: 844 }, hasTouch: true, isMobile: true });
+  const errors = []; const page = await newPage(browser, { viewport: { width: Number(process.env.ATV_WRECK_WIDTH || 390), height: 844 }, hasTouch: true, isMobile: true }, errors);
   await page.addInitScript(enabled => { localStorage.setItem('atv-mobile-one-handed', 'false'); localStorage.setItem('atv-funny-crashes', String(enabled)); }, process.env.ATV_FUNNY_CRASHES === '1'); // Explicit optional two-finger mode.
   if (process.env.ATV_CRASH_MODE === 'gorn') await page.addInitScript(()=>localStorage.setItem('atv-crash-mode','gorn'));
   if (process.env.ATV_CRASH_ISOLATION === '1') await captureCrashIsolation(page);
   await captureCrashDraws(page);
   await captureMinimapTracking(page);
   await captureSimulation(page, 'rampFrames');
-  const errors = []; page.on('pageerror', e => errors.push(e.message));
-  const url = new URL('/play.html', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173');
+  const url = new URL('/play.html', base);
   url.searchParams.set('drive', '1'); url.searchParams.set('environment', 'env01');
   if (process.env.ATV_WRECK_QUAD || process.env.ATV_WRECK_RIDER) {
     await page.goto(new URL('/play.html', url).href);
-    const button=name=>page.getByRole('button',{name,exact:true});
-    await button('Press START').click({timeout:120000}); await button('Single Player').click(); await button('Quad and Rider').click();
-    for(let i=1;i<Number(process.env.ATV_WRECK_QUAD || 1);i++) await button('Next quad').click();
-    if(process.env.ATV_WRECK_RIDER === '1') await button('Change rider').click();
-    await button('Done').click(); await button('Freestyle').click(); await button('Ride Caribou Peak').click();
+    await button(page,'Press START').click({timeout:120000}); await button(page,'Single Player').click(); await button(page,'Quad and Rider').click();
+    for(let i=1;i<Number(process.env.ATV_WRECK_QUAD || 1);i++) await button(page,'Next quad').click();
+    if(process.env.ATV_WRECK_RIDER === '1') await button(page,'Change rider').click();
+    await button(page,'Done').click(); await button(page,'Freestyle').click(); await button(page,'Ride Caribou Peak').click();
   } else await page.goto(url.href);
   await page.waitForFunction(() => window.atvTerrainStatus?.simulation, null, { timeout: 90000 });
   await page.bringToFront(); await page.locator('#game').focus();
   // Native actor reset starts a two-second stunt cooldown. Wait in simulation
   // steps; renderer startup speed must not decide whether the gesture is legal.
-  const readyStep = await page.evaluate(() => window.atvTerrainStatus.simulationSteps);
-  await page.waitForFunction(step => window.atvTerrainStatus.simulationSteps >= step + 125, readyStep, { timeout: 10000 });
+  await waitForSteps(page, 125, { timeout: 10000 });
   const cdp = await page.context().newCDPSession(page);
   const touch = (type, points = []) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(point => ({ radiusX: 6, radiusY: 6, force: 1, ...point })) });
   const left = { id: 1, x: 60, y: 560 };
@@ -60,19 +56,19 @@ try {
     await page.waitForFunction(() => crashDraws.quad > 0 && crashDraws.rider > 0);
     await page.keyboard.press('Escape');
     const initialMode=process.env.ATV_CRASH_MODE === 'gorn' ? 'Crashes: Gorn (blood & limbs)' : 'Crashes: Crazy';
-    await page.getByRole('button',{name:initialMode,exact:true}).waitFor();
+    await button(page,initialMode).waitFor();
     const paused=await page.evaluate(() => window.atvTerrainStatus.frame.funny_crash);
-    await page.waitForTimeout(250);
+    await page.waitForTimeout(250); // Time-based on purpose: proves paused crash physics stays frozen over wall-clock time.
     assert.deepEqual(await page.evaluate(() => window.atvTerrainStatus.frame.funny_crash),paused,'Paused crash physics must freeze');
     const before=await page.evaluate(() => crashDraws.baseline);
-    if(process.env.ATV_CRASH_MODE !== 'gorn') await page.getByRole('button',{name:'Crashes: Crazy',exact:true}).click();
-    await page.getByRole('button',{name:'Crashes: Gorn (blood & limbs)',exact:true}).click();
+    if(process.env.ATV_CRASH_MODE !== 'gorn') await button(page,'Crashes: Crazy').click();
+    await button(page,'Crashes: Gorn (blood & limbs)').click();
     assert.equal(await page.evaluate(() => window.atvTerrainStatus.funnyCrashes),false);
-    await page.getByRole('button',{name:'Resume',exact:true}).click();
+    await button(page,'Resume').click();
     await page.waitForFunction(before => crashDraws.baseline > before, before);
     await page.keyboard.press('Escape');
-    await page.getByRole('button',{name:'Crashes: Original',exact:true}).click();
-    await page.getByRole('button',{name:'Resume',exact:true}).click();
+    await button(page,'Crashes: Original').click();
+    await button(page,'Resume').click();
   }
   await page.waitForFunction(() => window.atvTerrainStatus.frame.rider_wreck?.grounded, null, {timeout: 10000,polling:'raf'});
   await page.waitForFunction(() => window.minimapTracking.samples.some(s => s.actor !== 'vehicle'), null, { timeout: 10000 });
@@ -100,10 +96,10 @@ try {
     assert(effects.every(f => [...f.quad_node_matrices.flat(), ...f.rider_node_matrices.flat()].every(Number.isFinite)));
     assert(!reset.funny_crash, 'Recovery must rebuild the intact quad and rider');
     await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: 'Crashes: Crazy', exact: true }).click();
-    await page.getByRole('button', { name: 'Crashes: Gorn (blood & limbs)', exact: true }).click();
+    await button(page, 'Crashes: Crazy').click();
+    await button(page, 'Crashes: Gorn (blood & limbs)').click();
     assert.equal(await page.evaluate(() => localStorage.getItem('atv-funny-crashes')), 'false');
-    await page.getByRole('button', { name: 'Resume', exact: true }).click();
+    await button(page, 'Resume').click();
     await page.waitForFunction(() => !window.atvTerrainStatus.frame.funny_crash);
   } else assert(frames.every(s => !s.frame.funny_crash), 'Original baseline must have no enhanced pose');
   const riders = frames.map(s => s.frame.rider_wreck).filter(Boolean);
@@ -133,7 +129,7 @@ try {
   await writeFile(process.env.ATV_WRECK_TRACE || 'work/verification/wreck-browser-trace.json',JSON.stringify({start,reset,frames,errors,tracking},null,2));
   if (process.env.ATV_CRASH_ISOLATION === '1') await verifyCrashIsolation(page);
   if (process.env.ATV_FUNNY_CRASHES === '1') console.log('Crash GPU draws',await page.evaluate(() => crashDraws));
-  assert.deepEqual(errors, []);
+  assertNoErrors(errors);
   assert.equal(await page.evaluate(() => window.atvTerrainStatus.glError), 0);
   console.log('PASS: real touch Nac Nac → vertical wreck → original separation/ground clip → terrain contact → automatic reset → resumed driving.');
 } finally { await browser.close(); }

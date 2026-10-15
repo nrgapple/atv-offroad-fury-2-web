@@ -2,14 +2,12 @@
 // Scrollable garage lists are measured by their visible area; full size still sets the 44px target.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {createRequire} from 'node:module';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const base=process.env.ATV_TEST_URL || 'http://127.0.0.1:4173';
+import {assertNoErrors,base,button as harnessButton,launch,newPage,nextFrames} from './browser/harness.mjs';
 const output=process.env.ATV_MENU_SCREENSHOTS;
-const browser=await chromium.launch({headless:true,args:['--use-angle=metal']});
-const page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
-const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('response',r=>{if(r.status()>=400)errors.push(`${r.status()} ${r.url()}`);});
-const button=name=>page.getByRole('button',{name,exact:true});
+const browser=await launch();
+const errors=[],page=await newPage(browser,{viewport:{width:390,height:844},hasTouch:true,isMobile:true},errors);
+page.on('response',r=>{if(r.status()>=400)errors.push(`${r.status()} ${r.url()}`);});
+const button=name=>harnessButton(page,name);
 const ready=key=>page.waitForFunction(key=>[...document.querySelectorAll('.model-view canvas')].length===2&&[...document.querySelectorAll('.model-view canvas')].every(c=>c.dataset.ready==='true'&&c.dataset.selection===key),key,{timeout:90000});
 const shot=async name=>{if(output)await page.screenshot({path:`${output}-${name}.png`});};
 const report={viewports:[],models:[],errors};
@@ -34,9 +32,11 @@ try {
     report.viewports.push({viewport,bounds});await shot(`${viewport.width}x${viewport.height}`);
   }
   await page.waitForFunction(()=>document.querySelectorAll('.model-view canvas')[1]?.dataset.clip?.includes('mrider_body'));
-  const rider=page.locator('.model-view canvas').last();const idleStart=await rider.screenshot();await page.waitForTimeout(650);assert.notDeepEqual(await rider.screenshot(),idleStart,'Original rider motion must change rendered pixels');
+  const rider=page.locator('.model-view canvas').last();const idleStart=await rider.screenshot();
+  // Time-based on purpose: the menu rider idle animation advances on the wall clock.
+  await page.waitForTimeout(650);assert.notDeepEqual(await rider.screenshot(),idleStart,'Original rider motion must change rendered pixels');
   // Touch/pointer orbit and keyboard orbit redraw actual framebuffer pixels.
-  await page.setViewportSize({width:390,height:844});await page.waitForTimeout(150);
+  await page.setViewportSize({width:390,height:844});await nextFrames(page,9);
   const canvas=page.locator('.model-view canvas').first();const before=await canvas.screenshot();const box=await canvas.boundingBox();
   await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();await page.mouse.move(box.x+box.width/2+55,box.y+box.height/2);await page.mouse.up();
   assert.notDeepEqual(await canvas.screenshot(),before);
@@ -45,7 +45,7 @@ try {
   // with the same Rust choices (release after every simulated button press).
   await page.mouse.click(10,80);
   await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');await ready('1:1');await page.waitForFunction(()=>document.querySelectorAll('.model-view canvas')[1]?.dataset.clip?.startsWith('frider'));await shot('female-portrait');
-  const pad=async index=>{await page.evaluate(index=>{window.__menuPad={connected:true,axes:[0,0,0,0],buttons:Array.from({length:17},(_,i)=>({pressed:i===index,value:i===index?1:0}))};Object.defineProperty(navigator,'getGamepads',{configurable:true,value:()=>[window.__menuPad]});},index);await page.waitForTimeout(120);await page.evaluate(()=>window.__menuPad.buttons.forEach(b=>{b.pressed=false;b.value=0;}));await page.waitForTimeout(100);};
+  const pad=async index=>{await page.evaluate(index=>{window.__menuPad={connected:true,axes:[0,0,0,0],buttons:Array.from({length:17},(_,i)=>({pressed:i===index,value:i===index?1:0}))};Object.defineProperty(navigator,'getGamepads',{configurable:true,value:()=>[window.__menuPad]});},index);await nextFrames(page,3);await page.evaluate(()=>window.__menuPad.buttons.forEach(b=>{b.pressed=false;b.value=0;}));await nextFrames(page,3);};
   await pad(15);await ready('2:1');await pad(14);await ready('1:1');
   // All original quads and both original bind rigs are GPU drawn via real UI.
   for(let quad=1;quad<=26;quad++){
@@ -58,18 +58,18 @@ try {
   // Rapid changes cannot show a late response for an old selected model.
   for(let i=0;i<5;i++)await button('Next quad').click();await ready('6:1');
   const view=page.locator('.model-view canvas').first();
-  await view.evaluate(c=>{c.__loss=c.getContext('webgl2').getExtension('WEBGL_lose_context');c.__loss.loseContext();});await page.waitForTimeout(100);
+  await view.evaluate(c=>{c.__loss=c.getContext('webgl2').getExtension('WEBGL_lose_context');c.__loss.loseContext();});await page.waitForFunction(()=>document.querySelector('.model-view canvas').dataset.ready===undefined);
   await view.evaluate(c=>c.__loss.restoreContext());await ready('6:1');
   await button('Done').click();assert.equal(await page.locator('.model-view').count(),0);await button('Freestyle').click();
   await button('Ride Caribou Peak').click();await page.waitForFunction(()=>document.querySelector('#frontend').dataset.page==='loading');
   assert.equal(await page.locator('#menu-buttons button').count(),0);await shot('loading-portrait');
-  await page.setViewportSize({width:844,height:390});await page.waitForTimeout(100);await shot('loading-landscape');
+  await page.setViewportSize({width:844,height:390});await nextFrames(page,6);await shot('loading-landscape');
   await page.waitForFunction(()=>document.querySelector('#frontend').hidden&&window.atvTerrainStatus.simulation,null,{timeout:120000});
   const driven=await page.evaluate(()=>window.atvTerrainStatus);assert.equal(driven.playerModel.quad_id,6);assert.equal(driven.playerModel.rider_id,1);assert.equal(driven.glError,0);
   await page.keyboard.press('Escape');await button('Resume').waitFor();
   // Pause keeps the racing soundtrack playing (PR #40); gameplay voices stay silent.
   await page.waitForFunction(()=>window.atvTerrainStatus.audio.musicPreview);const paused=await page.evaluate(()=>window.atvTerrainStatus.audio);assert.equal(paused.voices,0);
   await button('Quit to Main Menu').click();await page.waitForFunction(()=>window.atvTerrainStatus.audio.musicPreview&&window.atvTerrainStatus.audio.context==='running');
-  assert.deepEqual(errors,[]);report.passed=true;console.log(JSON.stringify(report));
+  assertNoErrors(errors);report.passed=true;console.log(JSON.stringify(report));
   if(process.env.ATV_MENU_REPORT)fs.writeFileSync(process.env.ATV_MENU_REPORT,JSON.stringify(report,null,2));
 }finally{await browser.close();}

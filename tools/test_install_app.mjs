@@ -1,15 +1,13 @@
 // Real title/menu and DOM, synthetic platform/install signals. This does not
 // perform an OS installation or establish physical iOS behavior.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { mkdir } from 'node:fs/promises';
-const engines = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
+import { assertNoErrors, base, launch, nextFrames, waitForScreen, watchErrors } from './browser/harness.mjs';
 const engine = process.env.ATV_INSTALL_BROWSER || 'chromium';
 assert.ok(['chromium', 'webkit'].includes(engine));
-const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4192';
 const output = process.env.ATV_INSTALL_OUTPUT;
 if (output) await mkdir(output, { recursive: true });
-const browser = await engines[engine].launch({ headless: true });
+const browser = await launch({ engine });
 const checks = [], errors = [];
 const contexts = [];
 async function title({ apple = false, ipad = false, standalone = false, display = false, blocked = false, width = 390, height = 844 } = {}) {
@@ -24,9 +22,10 @@ async function title({ apple = false, ipad = false, standalone = false, display 
       Storage.prototype.setItem = function(key, value) { if (key === 'fury-app-install-dismissed-until') throw Error('blocked'); return set.call(this, key, value); };
     }
   }, { apple, ipad, standalone, display, blocked });
-  const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
+  const page = await context.newPage(); watchErrors(page, errors);
   await page.goto(base + '/play.html');
-  await page.waitForFunction(() => document.querySelector('#frontend').dataset.page === 'title' && document.querySelector('#frontend').dataset.transition !== 'entering', null, { timeout: 90000 });
+  await waitForScreen(page, 'title');
+  await page.waitForFunction(() => document.querySelector('#frontend').dataset.transition !== 'entering');
   await page.getByRole('button', { name: 'Press START', exact: true }).waitFor();
   return page;
 }
@@ -69,9 +68,9 @@ try {
   assert.equal(await page.locator('#frontend').getAttribute('data-page'), 'title', 'Enter on Add app must not start game');
   await shot(page, 'iphone-instructions');
   await page.evaluate(() => { window.testPad = { connected: true, axes: [0,0,0,0], buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })) }; Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [window.testPad] }); window.testPad.buttons[0] = { pressed: true, value: 1 }; });
-  await page.waitForTimeout(350); assert.equal(await page.locator('#frontend').getAttribute('data-page'), 'title', 'gamepad blocked behind modal');
+  await nextFrames(page, 21); assert.equal(await page.locator('#frontend').getAttribute('data-page'), 'title', 'gamepad blocked behind modal');
   await page.keyboard.press('Escape'); assert.equal(await page.locator('#app-install-help').evaluate(e => e.open), false);
-  await page.waitForTimeout(150); assert.equal(await page.locator('#frontend').getAttribute('data-page'), 'title', 'held controller stays blocked after modal closes');
+  await nextFrames(page, 9); assert.equal(await page.locator('#frontend').getAttribute('data-page'), 'title', 'held controller stays blocked after modal closes');
   await page.evaluate(() => { window.testPad.buttons[0] = { pressed: false, value: 0 }; });
   await page.getByRole('button', { name: 'Press START', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('#frontend').dataset.page === 'main'); assert.equal(await banner.isVisible(), false);
@@ -112,6 +111,6 @@ try {
   }
   const installed = await title({ apple: true }); await installed.evaluate(() => window.dispatchEvent(new Event('appinstalled'))); assert.equal(await installed.locator('#app-install-banner').isVisible(), false); await installed.context().close();
   checks.push('feature-detected native prompt requires click, one-shot accept/dismiss/failure lifecycle, appinstalled suppression');
-  assert.deepEqual(errors, []);
+  assertNoErrors(errors);
   console.log(JSON.stringify({ passed: true, engine, url: base, checks, limits: 'Synthetic platform and install events; OS Home Screen installation and physical iOS are not automated.' }, null, 2));
 } finally { await browser.close(); }

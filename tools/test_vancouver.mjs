@@ -1,13 +1,11 @@
 // Original Vancouver asset/collision/selector gate. No fixture game data in CI.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {writeFile} from 'node:fs/promises';
 import {installContactHarness,loadContactMap} from './runtime_contact_harness.mjs';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4290';
-const browser=await chromium.launch({headless:true});
+import {assertNoErrors,base,button,launch,newPage,waitForGame,waitForScreen} from './browser/harness.mjs';
+const browser=await launch();
 try {for(const mobile of [false,true]) {
- const page=await browser.newPage({viewport:mobile?{width:390,height:844}:{width:960,height:600}}),errors=[];page.on('pageerror',e=>errors.push(e.message));await installContactHarness(page);
+ const errors=[],page=await newPage(browser,{viewport:mobile?{width:390,height:844}:{width:960,height:600}},errors);await installContactHarness(page);
  await loadContactMap(page,base,'free05');
  const result=await page.evaluate(async()=>{
   const status=window.atvTerrainStatus,{scene,placement}=contactAssets;
@@ -33,24 +31,26 @@ try {for(const mobile of [false,true]) {
  const contact=result.frames.findIndex(f=>f.support.some(Boolean));const air=result.frames.findIndex((f,i)=>i>contact&&!f.grounded.some(Boolean));
  assert(air>contact,'Driving off the ski ramp must become airborne');assert(result.frames.slice(air+1).some(f=>f.grounded.some(Boolean)),'Ski-ramp flight must return to ground contact');
  if(process.env.ATV_VANCOUVER_REPORT)await writeFile(`${process.env.ATV_VANCOUVER_REPORT}${mobile?'-mobile':''}.json`,JSON.stringify(result));
- await page.getByRole('button',{name:'Resume',exact:true}).click();
+ await button(page,'Resume').click();
  await page.locator('#game').focus();
  await page.waitForFunction(()=>window.atvTerrainStatus.sceneryTextureFrames?.draglight>0,null,{timeout:15000});
  const frame=await page.evaluate(()=>window.atvTerrainStatus.sceneryTextureFrames.draglight);assert(frame>=1);
- await page.keyboard.press('Escape');await page.waitForTimeout(150);const paused=await page.evaluate(()=>window.atvTerrainStatus.sceneryTextureFrames);await page.waitForTimeout(200);assert.deepEqual(await page.evaluate(()=>window.atvTerrainStatus.sceneryTextureFrames),paused);
- await page.getByRole('button',{name:'Resume',exact:true}).click();
+ await page.keyboard.press('Escape');await waitForScreen(page,'pause');
+ // Time-based on purpose: let an in-flight frame land, then prove paused animation frames stay still over wall-clock time.
+ await page.waitForTimeout(150);const paused=await page.evaluate(()=>window.atvTerrainStatus.sceneryTextureFrames);await page.waitForTimeout(200);assert.deepEqual(await page.evaluate(()=>window.atvTerrainStatus.sceneryTextureFrames),paused);
+ await button(page,'Resume').click();
  if(process.env.ATV_VANCOUVER_SCREENSHOTS)await page.screenshot({path:`${process.env.ATV_VANCOUVER_SCREENSHOTS}${mobile?'-mobile':''}.png`});
- assert.deepEqual(errors,[]);assert.equal(await page.evaluate(()=>document.querySelector('#game').getContext('webgl2').getError()),0);
+ assertNoErrors(errors);assert.equal(await page.evaluate(()=>document.querySelector('#game').getContext('webgl2').getError()),0);
  console.log(JSON.stringify({mobile,modelCount:result.modelCount,drawn:result.sceneInstances,colliders:result.placementCount,vegetation:result.vegetation,wheelFrames:result.frames.filter(f=>f.support.some(Boolean)).length,bodyFrames:result.frames.filter(f=>f.body>0).length,air,frame}));
- await page.goto(`${base}/play.html`);await page.waitForFunction(()=>document.querySelector('#frontend')?.dataset.page==='title');await page.keyboard.press('Enter');await page.getByRole('button',{name:'Single Player',exact:true}).click();await page.getByRole('button',{name:'Freestyle',exact:true}).click();
+ await page.goto(`${base}/play.html`);await waitForScreen(page,'title');await page.keyboard.press('Enter');await button(page,'Single Player').click();await button(page,'Freestyle').click();
  for(let i=0;i<9 && await page.locator('#frontend').getAttribute('data-track')!=='free05';i++) {
   const previous=await page.locator('#frontend').getAttribute('data-track');
-  await page.getByRole('button',{name:'Next environment',exact:true}).click({force:true});
+  await button(page,'Next environment').click({force:true});
   await page.waitForFunction(previous=>document.querySelector('#frontend').dataset.track!==previous,previous);
  }
  assert.equal(await page.locator('#frontend').getAttribute('data-track'),'free05');
- await page.getByRole('button',{name:'Ride Vancouver Ridge',exact:true}).click({force:true});
- await page.waitForFunction(()=>window.atvTerrainStatus?.ready&&/free05.tr2$/i.test(window.atvTerrainStatus.source),null,{timeout:120000});
- assert(await page.locator('#disc').isHidden());assert.deepEqual(errors,[]);
+ await button(page,'Ride Vancouver Ridge').click({force:true});
+ await waitForGame(page,{until:()=>window.atvTerrainStatus.ready&&/free05.tr2$/i.test(window.atvTerrainStatus.source)});
+ assert(await page.locator('#disc').isHidden());assertNoErrors(errors);
  await page.close();
 }console.log('PASS: Vancouver original ski-ramp support/body/air/landing, six solid asset types, animation and unlocked menu route on desktop/390px. Full hardware/render parity remains incomplete.');}finally{await browser.close();}

@@ -1,14 +1,13 @@
 // Original-content transport equivalence and optional before/after WASM timing.
 // Supply ATV_BASELINE_WASM from the preceding tested build; never publish it.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {readFile,writeFile} from 'node:fs/promises';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const browser=await chromium.launch({headless:true});
+import {assertNoErrors,base,launch,newPage} from './browser/harness.mjs';
+const browser=await launch();
 const reports=[];
 try {
  for(const environment of (process.env.ATV_TRANSPORT_MAPS||'env01,env04,env08,free05').split(',')) {
-  const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  const errors=[];const page=await newPage(browser,{},errors);
   if(process.env.ATV_BASELINE_WASM)await page.route('**/transport-baseline.wasm',async route=>route.fulfill({contentType:'application/wasm',body:await readFile(process.env.ATV_BASELINE_WASM)}));
   await page.addInitScript(()=>{
    window.transportPackets=[];
@@ -16,7 +15,7 @@ try {
    const post=Worker.prototype.postMessage;
    Worker.prototype.postMessage=function(data,...rest){if(ops.has(data.op))transportPackets.push({op:data.op,index:data.index,bytes:data.bytes.slice()});return post.call(this,data,...rest);};
   });
-  const url=new URL('/play.html?drive=1',process.env.ATV_TEST_URL||'http://127.0.0.1:4173');url.searchParams.set('environment',environment);
+  const url=new URL('/play.html?drive=1',base);url.searchParams.set('environment',environment);
   await page.goto(url.href);await page.waitForFunction(()=>window.atvTerrainStatus?.simulation,null,{timeout:90000});
   assert.match(await page.evaluate(()=>window.atvTerrainStatus.source),new RegExp(environment,'i'),'Requested map must actually load');
   await page.evaluate(()=>window.dispatchEvent(new Event('blur')));
@@ -59,7 +58,7 @@ try {
    }
    return{steps,maximumBytes,timings};
   },Boolean(process.env.ATV_BASELINE_WASM));
-  assert.deepEqual(errors,[]);reports.push({environment,...report});console.log(JSON.stringify(reports.at(-1)));await page.close();
+  assertNoErrors(errors);reports.push({environment,...report});console.log(JSON.stringify(reports.at(-1)));await page.close();
  }
  if(process.env.ATV_TRANSPORT_REPORT)await writeFile(process.env.ATV_TRANSPORT_REPORT,JSON.stringify(reports,null,2));
  console.log('PASS: all intermediate frames/cameras retain exact sequential numbers; optional baseline matches every field at native f32 precision.');

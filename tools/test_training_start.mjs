@@ -1,19 +1,15 @@
 // Opt-in original-content regression for Training's natural start and boundaries.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {installContactHarness,loadContactMap} from './runtime_contact_harness.mjs';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const base=process.env.ATV_TEST_URL || 'http://127.0.0.1:4173';
-const browser=await chromium.launch({headless:true});
-const page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
-const errors=[]; page.on('pageerror',e=>errors.push(e.message));
+import {assertNoErrors,base,launch,newPage,waitForGame,waitForSteps} from './browser/harness.mjs';
+const browser=await launch();
+const errors=[],page=await newPage(browser,{viewport:{width:390,height:844},hasTouch:true,isMobile:true},errors);
 await installContactHarness(page);
 try {
   await page.goto(`${base}/play.html?drive=1&environment=training`);
-  await page.waitForFunction(()=>window.atvTerrainStatus?.simulation,null,{timeout:120000});
+  await waitForGame(page,{until:()=>window.atvTerrainStatus.simulation});
   await page.bringToFront(); await page.locator('#game').focus();
-  const first=await page.evaluate(()=>window.atvTerrainStatus.simulationSteps);
-  await page.waitForFunction(first=>window.atvTerrainStatus.simulationSteps>=first+180,first,{timeout:120000});
+  await waitForSteps(page,180,{timeout:120000});
   const idle=await page.evaluate(()=>window.atvTerrainStatus.frame);
   assert.equal(idle.boundary_launch.active,false,'The unmodified Training start must not launch without input');
   assert(Math.abs(idle.speed)<2,'Training must settle naturally at rest');
@@ -24,8 +20,7 @@ try {
   await page.waitForFunction(start=>Math.hypot(...window.atvTerrainStatus.frame.origin.map((v,i)=>v-start[i]))>5,idle.origin,{timeout:30000});
   await cdp.send('Input.dispatchTouchEvent',{type:'touchCancel',touchPoints:[]});
   await page.keyboard.press('Backspace');
-  const resetStep=await page.evaluate(()=>window.atvTerrainStatus.simulationSteps);
-  await page.waitForFunction(n=>window.atvTerrainStatus.simulationSteps>=n+180,resetStep,{timeout:120000});
+  await waitForSteps(page,180,{timeout:120000});
   const reset=await page.evaluate(()=>window.atvTerrainStatus.frame);
   assert.equal(reset.boundary_launch.active,false,'Reset must preserve Training boundary policy');
   assert(Math.abs(reset.speed)<2);
@@ -53,6 +48,6 @@ try {
   assert(result.contacts.some(c=>c.support>0&&c.body>0),'Original Training props must still collide');
   assert.equal(result.boundary.active,true,'Training extended boundary remains active outside its native limits');
   assert.equal(await page.evaluate(()=>window.atvTerrainStatus.glError),0);
-  assert.deepEqual(errors,[]);
+  assertNoErrors(errors);
   console.log('PASS: natural Training idle180steps,390px touch driving/reset, source prop contacts and active extended boundary.');
 } finally {await browser.close();}

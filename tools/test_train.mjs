@@ -1,13 +1,11 @@
 // Original train integration; test placement comes from decoded route/MOT output.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4173';
-const browser = await chromium.launch({ headless: true });
+import { assertNoErrors, base, button, launch, newPage, waitForGame } from './browser/harness.mjs';
+const browser = await launch();
 try {
   for (const mobile of [false, true]) {
-    const page = await browser.newPage({ viewport: mobile ? { width: 390, height: 844 } : { width: 960, height: 600 } });
-    const errors = []; page.on('pageerror', error => errors.push(error.message));
+    const errors = [];
+    const page = await newPage(browser, { viewport: mobile ? { width: 390, height: 844 } : { width: 960, height: 600 } }, errors);
     await page.addInitScript(() => {
       const NativeWorker = Worker;
       window.Worker = class extends NativeWorker {
@@ -48,8 +46,7 @@ try {
     });
     try {
       await page.goto(`${base}/play.html?drive=1&environment=env08`);
-      await page.waitForFunction(() => window.atvTerrainStatus?.ready || document.querySelector('#status.error'), null, { timeout: 120000 });
-      assert((await page.evaluate(() => window.atvTerrainStatus)).ready, await page.locator('#status').textContent());
+      await waitForGame(page);
       await page.waitForFunction(() => window.atvTerrainStatus.train?.time > 0.5, null, { timeout: 30000 });
       await page.evaluate(() => { window.captureTrainPixels = true; });
       await page.waitForFunction(() => window.trainPixelEvidence, null, { timeout: 30000 });
@@ -59,20 +56,22 @@ try {
       const moving = await page.evaluate(() => structuredClone(window.atvTerrainStatus.train));
       assert.notDeepEqual(first.frame.cars[0].matrix, moving.frame.cars[0].matrix);
       assert.notDeepEqual(first.frame.wheel_matrices, moving.frame.wheel_matrices);
-      await page.keyboard.press('Escape'); await page.getByRole('button', { name: 'Resume', exact: true }).waitFor();
+      await page.keyboard.press('Escape'); await button(page, 'Resume').waitFor();
+      // Time-based on purpose: let any in-flight step settle, then prove the paused train clock does not advance.
       await page.waitForTimeout(100);
       const paused = await page.evaluate(() => window.atvTerrainStatus.train.time);
       await page.waitForTimeout(300); assert.equal(await page.evaluate(() => window.atvTerrainStatus.train.time), paused);
-      await page.getByRole('button', { name: 'Resume', exact: true }).click();
+      await button(page, 'Resume').click();
       await page.waitForFunction(time => window.atvTerrainStatus.train.time > time, paused);
       await page.evaluate(() => { window.trainLose = document.querySelector('#game').getContext('webgl2').getExtension('WEBGL_lose_context'); window.trainLose.loseContext(); });
       await page.waitForFunction(() => !window.atvTerrainStatus.ready);
+      // Kept: brief pause after context loss before restoring; no observable readiness signal.
       await page.waitForTimeout(100); await page.evaluate(() => window.trainLose.restoreContext());
       await page.waitForFunction(() => window.atvTerrainStatus.ready);
       await page.waitForFunction(time => window.atvTerrainStatus.train.time > time, paused);
       assert.equal(await page.evaluate(() => document.querySelector('#game').getContext('webgl2').getError()), 0);
       const evidence = await page.evaluate(() => window.trainPixelEvidence);
-      assert.equal(evidence.glError, 0); assert.deepEqual(errors, []);
+      assert.equal(evidence.glError, 0); assertNoErrors(errors);
       if (process.env.ATV_TRAIN_SCREENSHOTS) await page.screenshot({ path: `${process.env.ATV_TRAIN_SCREENSHOTS}${mobile ? '-mobile' : ''}.png` });
       console.log(JSON.stringify({ mobile, evidence, draws: first.draws, triangles: first.triangles, time: moving.time }));
     } finally { await page.close(); }

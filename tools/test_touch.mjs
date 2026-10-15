@@ -1,13 +1,11 @@
 // Opt-in original-content browser touch integration. No vehicle state injection.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const browser = await chromium.launch({ headless: true });
+import { assertNoErrors, base, button, launch, newPage, waitForScreen, waitForSteps } from './browser/harness.mjs';
+const browser = await launch();
 try {
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const errors = []; const page = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }, errors);
   // Explicit optional two-finger mode and original steering response for this baseline route.
   await page.addInitScript(() => { localStorage.setItem('atv-mobile-one-handed', 'false'); localStorage.setItem('atv-mobile-steering-sensitivity', '100'); });
-  const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.addInitScript(() => {
     window.touchSamples = []; window.touchResolved = [];
     const watched = new WeakSet(), requests = new Map();
@@ -30,15 +28,15 @@ try {
       return post.call(this, data, ...rest);
     };
   });
-  await page.goto(new URL('/play.html', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173').href);
-  await page.waitForFunction(() => document.querySelector('#frontend').dataset.page === 'title', null, { timeout: 90000 });
+  await page.goto(new URL('/play.html', base).href);
+  await waitForScreen(page, 'title');
   await page.keyboard.press('Enter');
-  await page.getByRole('button', { name: 'Single Player', exact: true }).tap();
-  await page.getByRole('button', { name: 'Freestyle', exact: true }).tap();
-  await page.getByRole('button', { name: 'Ride Caribou Peak', exact: true }).tap();
+  await button(page, 'Single Player').tap();
+  await button(page, 'Freestyle').tap();
+  await button(page, 'Ride Caribou Peak').tap();
   await page.waitForFunction(() => window.atvTerrainStatus.simulation && document.querySelector('#frontend').hidden, null, { timeout: 90000 });
   const read = () => page.evaluate(() => window.atvTerrainStatus);
-  const steps = async count => { const target = (await read()).simulationSteps + count; await page.waitForFunction(target => window.atvTerrainStatus.simulationSteps >= target, target, { timeout: 90000 }); };
+  const steps = count => waitForSteps(page, count, { timeout: 90000 });
   const samples = () => page.evaluate(() => window.touchSamples);
   const resetSamples = () => page.evaluate(() => { window.touchSamples = []; window.touchResolved = []; });
   const cdp = await page.context().newCDPSession(page);
@@ -49,7 +47,7 @@ try {
     // Each stationary-press case needs a fresh grounded start. Accumulated
     // driving can otherwise reach the ramp and correctly switch to air tricks
     // during a later case's drive-only assertions. No vehicle state is injected.
-    await page.goto(new URL('/play.html?drive=1&environment=env02', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173').href);
+    await page.goto(new URL('/play.html?drive=1&environment=env02', base).href);
     await page.waitForFunction(() => window.atvTerrainStatus?.simulation, null, { timeout: 90000 });
     await page.waitForFunction(() => window.atvTerrainStatus.frame.grounded.some(Boolean), null, { timeout: 10000 });
     const right = { id: 1, ...position };
@@ -66,7 +64,7 @@ try {
     assert.equal((await samples()).filter(s => s.input.preload_axis === -1).length, 1);
     assert.equal((await read()).input.lean, 0);
   }
-  await page.goto(new URL('/play.html?drive=1', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173').href);
+  await page.goto(new URL('/play.html?drive=1', base).href);
   await page.waitForFunction(() => window.atvTerrainStatus?.simulation && window.atvTerrainStatus.frame.grounded.some(Boolean), null, { timeout: 90000 });
   console.log('Anywhere on the right drives immediately and holds preload; back drag brakes without adding lean; release submits once.');
   const right = { id: 1, x: 310, y: 530 };
@@ -97,19 +95,21 @@ try {
   console.log('Left always steers/leans; right brakes before gear changes and releases throttle with preload.');
   await touch('touchStart', [right]); await steps(2); await resetSamples();
   await page.evaluate(() => window.dispatchEvent(new Event('blur'))); await touch('touchCancel');
+  // Time-based on purpose: lets an in-flight batch finish, then proves the blurred frame stays unchanged.
   await page.waitForTimeout(100); const paused = (await read()).frame;
   await page.waitForTimeout(100); assert.deepEqual((await read()).frame, paused);
   await page.evaluate(() => window.dispatchEvent(new Event('focus'))); await steps(3);
   assert(!(await samples()).some(s => s.input.preload_axis === -1));
   await touch('touchStart', [right]); await steps(2); await resetSamples();
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => document.querySelector('#frontend').dataset.page === 'pause');
+  await waitForScreen(page, 'pause');
   assert(await page.locator('#touch-controls').isHidden()); await touch('touchCancel');
+  // Time-based on purpose: lets an in-flight batch finish, then proves the paused frame stays unchanged.
   await page.waitForTimeout(100); const menuFrame = (await read()).frame;
   await page.waitForTimeout(100); assert.deepEqual((await read()).frame, menuFrame);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 390);
   const log = await browser.newPage(); await log.goto(new URL('/devlog.html', page.url()).href);
   assert.notEqual(await log.evaluate(() => getComputedStyle(document.body).webkitUserSelect), 'none', 'Dev log remains selectable');
-  assert.deepEqual(errors, []);
+  assertNoErrors(errors);
   console.log('PASS: right drive/preload, left steer/lean, safe automatic direction changes, cancellation, multi-touch, focus/menu pause, game text selection suppressed; dev log unaffected.');
 } finally { await browser.close(); }

@@ -1,21 +1,18 @@
 // Original-content render gate; source resources stay in the separate runtime manifest.
 // ATV_TEST_URL=<host/public HTTPS> PLAYWRIGHT_MODULE=<module> node tools/test_water_render.mjs
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
+import { assertNoErrors, base, launch, newPage, waitForGame } from './browser/harness.mjs';
 const browserName = process.env.ATV_BROWSER || 'chromium';
-const playwright = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
 assert(['chromium', 'webkit'].includes(browserName));
-const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4173';
 const candidateModule = process.env.ATV_WATER_MODULE ? await readFile(process.env.ATV_WATER_MODULE, 'utf8') : null;
-const browser = await playwright[browserName].launch({ headless: true });
+const browser = await launch({ engine: browserName });
 try {
   for (const environment of (process.env.ATV_WATER_MAPS || 'env01,env04,env05,env07,env08,free04,nat01').split(',')) {
     for (const mobile of environment === 'env01' ? [false] : [false, true]) {
-      const page = await browser.newPage({ viewport: mobile ? { width: 390, height: 844 } : { width: 960, height: 540 }, deviceScaleFactor: mobile ? 3 : 1, isMobile: mobile, hasTouch: mobile });
-      if (candidateModule) await page.route(url => url.pathname === '/water.js', route => route.fulfill({ contentType: 'text/javascript', body: candidateModule }));
       const errors = [];
-      page.on('pageerror', error => errors.push(error.message));
+      const page = await newPage(browser, { viewport: mobile ? { width: 390, height: 844 } : { width: 960, height: 540 }, deviceScaleFactor: mobile ? 3 : 1, isMobile: mobile, hasTouch: mobile }, errors);
+      if (candidateModule) await page.route(url => url.pathname === '/water.js', route => route.fulfill({ contentType: 'text/javascript', body: candidateModule }));
       await page.addInitScript(() => {
         const NativeWorker = window.Worker;
         window.Worker = class extends NativeWorker {
@@ -77,10 +74,7 @@ try {
       });
       try {
         await page.goto(`${base}/play.html?drive=1&environment=${environment}`, { waitUntil: 'domcontentloaded', timeout: 120000 });
-        await page.waitForFunction(() => window.atvTerrainStatus?.ready || document.querySelector('#status.error'), null, { timeout: 120000 });
-        await page.waitForFunction(() => document.querySelector('#loading-screen')?.hidden && window.atvTerrainStatus?.simulationSteps >= 3, null, { timeout: 120000 });
-        let state = await page.evaluate(() => window.atvTerrainStatus);
-        assert(state.ready, await page.locator('#status').textContent());
+        let state = await waitForGame(page, { until: () => document.querySelector('#loading-screen')?.hidden && window.atvTerrainStatus?.simulationSteps >= 3 });
         if (environment === 'env01') {
           assert.equal(state.water, null); assert.equal(state.waterRender, null);
         } else {
@@ -114,7 +108,7 @@ try {
           if (process.env.ATV_WATER_SCREENSHOTS) await page.screenshot({ path: `${process.env.ATV_WATER_SCREENSHOTS}-${environment}${mobile ? '-mobile' : ''}.png` });
           console.log(JSON.stringify({ browser: browserName, environment, mobile, ...evidence, water: state.waterRender }));
           if (mobile) {
-            //Let any batch already in flight settle before retaining the actual GPU frame.
+            // Time-based on purpose: lets any batch already in flight settle (physics is held) before retaining the actual GPU frame.
             await page.waitForTimeout(100);
             await page.evaluate(() => { window.waterPixelEvidence = null; window.captureWaterPixels = true; });
             await page.waitForFunction(() => window.waterPixelEvidence);
@@ -128,7 +122,7 @@ try {
             assert(bytes < 3 * 1024 * 1024);
             await page.evaluate(() => { window.waterContext = document.querySelector('#game').getContext('webgl2').getExtension('WEBGL_lose_context'); if (!window.waterContext) throw Error('Missing context-loss extension'); window.waterContext.loseContext(); });
             await page.waitForFunction(() => !window.atvTerrainStatus.ready);
-            await page.waitForTimeout(100);
+            await page.waitForTimeout(100); // Time-based on purpose: keeps the WebGL context lost briefly before restoring it.
             await page.evaluate(() => window.waterContext.restoreContext());
             await page.waitForFunction(() => window.atvTerrainStatus.ready && document.querySelector('#loading-screen').hidden);
             await page.evaluate(() => { window.waterPixelEvidence = null; window.captureWaterPixels = true; });
@@ -138,7 +132,7 @@ try {
             assert.deepEqual(await page.evaluate(() => window.waterDrawFrame), frame, 'Restoration retains completed live base, origins, signed frame layers and normal weights');
           }
         }
-        assert(state.frame.origin.every(Number.isFinite)); assert.equal(state.glError, 0); assert.deepEqual(errors, []);
+        assert(state.frame.origin.every(Number.isFinite)); assert.equal(state.glError, 0); assertNoErrors(errors);
       } finally { await page.close(); }
     }
   }

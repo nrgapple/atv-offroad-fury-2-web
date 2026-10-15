@@ -1,6 +1,6 @@
 // Verify delivered home-screen metadata and exact PNG sizes, host or public HTTPS.
 import assert from 'node:assert/strict';
-const base=process.env.ATV_TEST_URL || 'http://127.0.0.1:4327';
+import { base } from './browser/harness.mjs';
 async function get(path){const response=await fetch(new URL(path,base),{headers:{'User-Agent':'Fury-app-identity-verifier/1.0'}});assert.equal(response.status,200,path);return response;}
 const appleIcons=new Set();
 for(const path of ['/index.html','/play.html']) {

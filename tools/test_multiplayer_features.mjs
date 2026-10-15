@@ -1,13 +1,11 @@
 // Actual WASM/relay regression: late join, UI, moving train and owner contacts.
 // Worker interception is test-only placement/readback; no production debug API.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4195';
-const browser=await chromium.launch({headless:true,args:process.env.ATV_BROWSER_GPU==='metal'?['--enable-gpu','--use-angle=metal']:[]});
-const errors=[],pages=[];const state=p=>p.evaluate(()=>window.atvTerrainStatus),button=(p,name)=>p.getByRole('button',{name,exact:true});
+import {assertNoErrors,base,button,gameState,launch,newPage,nextFrames,waitForAnimations,waitForSteps} from './browser/harness.mjs';
+const browser=await launch();
+const errors=[],pages=[];const state=gameState;
 async function page(name) {
- const p=await browser.newPage({viewport:{width:1280,height:896},hasTouch:true});pages.push(p);p.on('pageerror',e=>errors.push(e.message));
+ const p=await newPage(browser,{viewport:{width:1280,height:896},hasTouch:true},errors);pages.push(p);
  await p.addInitScript(()=>{
    Object.defineProperty(document,'hasFocus',{value:()=>true});
    Object.defineProperty(document,'hidden',{get:()=>Boolean(window.testFreeze)});
@@ -19,7 +17,7 @@ async function page(name) {
  await p.goto(base+'/play.html');await button(p,'Press START').click({timeout:90000});await button(p,'Multiplayer').click();assert.equal(await p.getByRole('textbox').count(),0);await button(p,name==='Host'?'Host Game':'Join Game').click();await p.getByRole('textbox',{name:'Rider name',exact:true}).fill(name);return p;
 }
 async function ready(p,count=1){await p.waitForFunction(n=>window.atvTerrainStatus.simulation&&window.atvTerrainStatus.multiplayer?.remote.length===n&&window.atvTerrainStatus.multiplayerDraws>0,count,{timeout:120000});assert.equal((await state(p)).multiplayerError,undefined);}
-async function pause(p){await button(p,'Pause').click();await button(p,'Resume').waitFor();await p.waitForTimeout(120);}
+async function pause(p){await button(p,'Pause').click();await button(p,'Resume').waitFor();await waitForAnimations(p);}
 try {
  const a=await page('Host');const desired='F'+Date.now().toString(36).toUpperCase().slice(-7);await a.getByRole('textbox',{name:'Lobby code (8 letters/numbers, optional)',exact:true}).fill(desired);await button(a,'Select Track').click();
  // Hosting picks the track first; Ride starts the game for drop-in friends.
@@ -32,7 +30,7 @@ try {
  await b.waitForFunction(()=>document.querySelector('#frontend').hidden,null,{timeout:15000});
  await Promise.all(pages.map(p=>p.waitForFunction(()=>window.atvTerrainStatus.minimap.peers?.length===1&&document.querySelectorAll('.player-indicator').length===1,null,{timeout:15000})));
  assert.equal((await state(a)).multiplayer.state.code,code);assert.equal((await state(b)).multiplayer.state.code,code);
- await b.waitForTimeout(1200);
+ await waitForSteps(b,72);
  const phases=await Promise.all(pages.map(async p=>(await state(p)).train.time));assert(Math.abs(phases[0]-phases[1])<.25,JSON.stringify(phases));
  console.log('LATE_JOIN',JSON.stringify({code,phases,draws:await Promise.all(pages.map(async p=>(await state(p)).multiplayerDraws))}));
  // A code-less transport close must recover the owner without reloading the
@@ -49,26 +47,26 @@ try {
  // Host stops at a safe ground position; guest spawns through the actual pause UI.
  await pause(a);await b.waitForFunction(()=>window.atvTerrainStatus.multiplayer.remote[0]?.rider_state==='Riding',null,{timeout:15000});
  await pause(b);await button(b,'Players').click();await button(b,'Spawn beside Host').click();await b.waitForFunction(()=>document.querySelector('#frontend').hidden);
- await b.waitForTimeout(200);let near=await state(b);const host=near.multiplayer.remote[0].position;
+ await waitForSteps(b,12);let near=await state(b);const host=near.multiplayer.remote[0].position;
  assert(Math.hypot(...near.frame.origin.map((v,i)=>v-host[i]))<25);assert(Math.hypot(...near.frame.origin.map((v,i)=>v-host[i]))>5);
  console.log('SPAWN',JSON.stringify({origin:near.frame.origin,host}));
- await b.setViewportSize({width:390,height:844});await b.waitForTimeout(350);
+ await b.setViewportSize({width:390,height:844});await nextFrames(b,3);
  const labelBox=await b.locator('.player-indicator').boundingBox();assert(labelBox.x>=0&&labelBox.x+labelBox.width<=390,'edge label must fit mobile screen');
  const view=await state(b);await a.evaluate(v=>testCommand(23,v),{origin:[view.frame.origin[0]+Math.sin(view.camera[3])*70,host[1],view.frame.origin[2]+Math.cos(view.camera[3])*70],yaw:0});
- await b.waitForTimeout(350);
+ await b.waitForTimeout(350); // Time-based on purpose: the moved host pose must cross the relay before the observer draws its label.
  const indicator=await b.locator('.player-indicator').evaluate(n=>({font:parseFloat(getComputedStyle(n).fontSize),svg:parseFloat(getComputedStyle(n.querySelector('svg')).width),bitmap:n.querySelectorAll('canvas,img').length}));
  assert.equal(indicator.font,18);assert.equal(indicator.svg,18);assert.equal(indicator.bitmap,0);
  if(process.env.ATV_MP_SCREENSHOT)await b.screenshot({path:process.env.ATV_MP_SCREENSHOT});
  await pause(b);await b.setViewportSize({width:390,height:844});await button(b,'Players').click();
- await b.waitForTimeout(400);const hit=await button(b,'Spawn beside Host').boundingBox();console.log('MOBILE_HIT',JSON.stringify(hit));assert(hit.width>40&&hit.height>=40);assert(hit.x>=0&&hit.x+hit.width<=390);
+ await waitForAnimations(b);const hit=await button(b,'Spawn beside Host').boundingBox();console.log('MOBILE_HIT',JSON.stringify(hit));assert(hit.width>40&&hit.height>=40);assert(hit.x>=0&&hit.x+hit.width<=390);
  if(process.env.ATV_MP_SCREENSHOT)await b.screenshot({path:process.env.ATV_MP_SCREENSHOT.replace('.png','-players.png')});
  await button(b,'Back').click();await b.setViewportSize({width:1280,height:896});
  // Put both owned vehicles into overlapping open ground proxies. Each owner
  // independently resolves its half; snapshots must propagate that response.
  const placement={origin:host,yaw:0};
  await a.evaluate(v=>testCommand(23,v),placement);await b.evaluate(v=>testCommand(23,{...v,origin:[v.origin[0]+3,v.origin[1],v.origin[2]]}),placement);
- await a.waitForTimeout(200);await button(a,'Resume').click();await button(b,'Resume').click();
- await a.waitForTimeout(700);const resolved=await Promise.all(pages.map(state));assert(resolved.some(s=>s.multiplayer.state.contacts>0));// Side-by-side boxes are 4 ft wide: overlapping riders separate to at least that.
+ await waitForSteps(a,12);await button(a,'Resume').click();await button(b,'Resume').click();
+ await waitForSteps(a,42);const resolved=await Promise.all(pages.map(state));assert(resolved.some(s=>s.multiplayer.state.contacts>0));// Side-by-side boxes are 4 ft wide: overlapping riders separate to at least that.
  assert(Math.hypot(...resolved[0].frame.origin.map((v,i)=>v-resolved[1].frame.origin[i]))>3.9);
  const contacts=await Promise.all(pages.map(async p=>(await state(p)).multiplayer.state.contacts));console.log('CONTACTS',JSON.stringify(contacts));
  // Place the host just above the recovered flatbed collision deck, then let
@@ -76,7 +74,8 @@ try {
  await pause(a);await pause(b);
  // Online menus intentionally keep physics live. Freeze test clocks only while
  // placing on the moving deck, so the placement/velocity share one train frame.
- await Promise.all(pages.map(p=>p.evaluate(()=>{window.testFreeze=true;document.dispatchEvent(new Event('visibilitychange'));})));await a.waitForTimeout(150);
+ await Promise.all(pages.map(p=>p.evaluate(()=>{window.testFreeze=true;document.dispatchEvent(new Event('visibilitychange'));})));
+ await a.waitForTimeout(150); // Time-based on purpose: the frozen clock has no steps; let in-flight replies land.
  const trainSetup=await a.evaluate(async()=>{
    const previous=await testCommand(68,null);const train=await testCommand(68,{dt:1/60});const car=train.cars.findIndex(c=>/flatbeda/i.test(c.model));const m=train.cars[car].matrix;
    const origin=[0,1,2].map(i=>m[12+i]+m[4+i]*17.+m[8+i]*10);
@@ -89,7 +88,7 @@ try {
  await b.waitForFunction(()=>window.atvTerrainStatus.multiplayer.remote[0]?.platform!=null,null,{timeout:15000});
  // Allow the landing transition and initial packets to reach the observer
  // before comparing steady deck-relative pose (not simultaneous airborne poses).
- await b.waitForTimeout(750);
+ await waitForSteps(b,45);
  const trainSamples=[];
  for(let i=0;i<20;i++){
    const [own,observer]=await Promise.all([state(a),state(b)]);const peer=observer.multiplayer.remote[0];
@@ -99,7 +98,7 @@ try {
      const seenLocal=local(observer.train.frame.cars[peer.platform].matrix,peer.position);
      trainSamples.push({error:Math.hypot(...ownerLocal.map((v,j)=>v-seenLocal[j])),ownerLocal,seenLocal});
    }
-   await b.waitForTimeout(50);
+   await b.waitForTimeout(50); // Time-based on purpose: wall-clock samples of relay-delivered poses.
  }
  assert(trainSamples.length>=10,JSON.stringify({trainSetup,trainSamples}));
  const maxTrainError=Math.max(...trainSamples.map(s=>s.error));assert(maxTrainError<4,JSON.stringify(trainSamples));
@@ -107,14 +106,15 @@ try {
  if(process.env.ATV_MP_SCREENSHOT)await b.screenshot({path:process.env.ATV_MP_SCREENSHOT.replace('.png','-train.png')});
  // Opposing fast riders must enter the recovered native wreck flow on both
  // owners, and observers must receive a detached rider plus a new crash serial.
- await Promise.all(pages.map(p=>p.evaluate(()=>{window.testFreeze=true;document.dispatchEvent(new Event('visibilitychange'));})));await a.waitForTimeout(150);
+ await Promise.all(pages.map(p=>p.evaluate(()=>{window.testFreeze=true;document.dispatchEvent(new Event('visibilitychange'));})));
+ await a.waitForTimeout(150); // Time-based on purpose: the frozen clock has no steps; let in-flight replies land.
  const beforeCrashes=await Promise.all(pages.map(state));
  await Promise.all(pages.map((p,i)=>p.evaluate(async({host,i})=>{
    await testCommand(23,{origin:[host[0],host[1]+1,host[2]+(i?8:-8)],velocity:[0,0,i?-60:60],yaw:i?Math.PI:0});
    window.testImpacts=[];window.testImpactTimer=setInterval(()=>{const s=window.atvTerrainStatus;window.testImpacts.push({frames:s.frames,steps:s.simulationSteps,origin:s.frame.origin,speed:s.frame.speed,visible:!document.hidden,focused:document.hasFocus(),wreck:s.frame.wreck,contacts:s.multiplayer.state.contacts,peer:s.multiplayer.remote[0]});},30);
  },{host,i})));
  await Promise.all(pages.map(p=>p.evaluate(()=>{window.testFreeze=false;document.dispatchEvent(new Event('visibilitychange'));})));
- await a.waitForTimeout(2000);
+ await waitForSteps(a,120);
  const impacts=await Promise.all(pages.map(p=>p.evaluate(()=>{clearInterval(testImpactTimer);return testImpacts;})));
  for(let i=0;i<impacts.length;i++) {
    const samples=impacts[i],wreck=samples.find(s=>s.wreck.phase==='Falling'&&s.wreck.kind==='Front');
@@ -140,5 +140,5 @@ try {
  await b.waitForFunction(()=>{const m=window.atvTerrainStatus.multiplayer;return m.state.code&&m.state.lobby?.players.length===1&&m.state.lobby.host===m.state.peer;},null,{timeout:15000});
  await b.waitForFunction(()=>window.atvTerrainStatus.multiplayer.remote.length===0,null,{timeout:15000});
  await a.close();
- assert.deepEqual(errors,[]);console.log('PASS late admission / minimap / smooth arrows / minimap dots / pause roster / nearby spawn / contacts / head-on wreck replication / handoff');
+ assertNoErrors(errors);console.log('PASS late admission / minimap / smooth arrows / minimap dots / pause roster / nearby spawn / contacts / head-on wreck replication / handoff');
 }finally{await browser.close();}

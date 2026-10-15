@@ -1,14 +1,10 @@
 // Opt-in actual hosted content + Rust relay. No original resources enter CI.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4430';
-const browser=await chromium.launch({headless:true,args:process.env.ATV_BROWSER_GPU==='metal'?['--enable-gpu','--use-angle=metal']:[]});
+import {assertNoErrors,base,button,gameState as state,launch,newPage} from './browser/harness.mjs';
+const browser=await launch();
 const errors=[],pages=[];
-const button=(p,name)=>p.getByRole('button',{name,exact:true});
-const state=p=>p.evaluate(()=>window.atvTerrainStatus);
 async function page(viewport={width:1280,height:896}){
- const p=await browser.newPage({viewport,hasTouch:true});pages.push(p);p.on('pageerror',e=>errors.push(e.message));
+ const p=await newPage(browser,{viewport,hasTouch:true},errors);pages.push(p);
  await p.addInitScript(()=>{Object.defineProperty(document,'hasFocus',{value:()=>true});window.testConnections=0;const Native=WebSocket;window.WebSocket=class extends Native{constructor(...args){super(...args);window.testConnections++;}};});
  return p;
 }
@@ -80,5 +76,5 @@ try{
  await p.goto(base+'/play.html?utm_source=test');await button(p,'Press START').waitFor({timeout:90000});assert.equal((await state(p)).simulation,false);
  // A rider whose ride failed to load must not stay in the room as an invisible member.
  assert.equal(failedRoom,null,`failed load left the client connected to room ${failedRoom} while showing the Multiplayer menu`);
- assert.deepEqual(errors,[]);console.log('PASS direct setup/share/reload/defaults/motorcycle/race/prepare/validation/missing room/host/late join/lobby authority/ordinary title; no disc picker or page errors');
+ assertNoErrors(errors);console.log('PASS direct setup/share/reload/defaults/motorcycle/race/prepare/validation/missing room/host/late join/lobby authority/ordinary title; no disc picker or page errors');
 }catch(error){for(const p of pages)try{console.error('FAIL_STATE',JSON.stringify(await p.evaluate(()=>({url:location.href,page:document.querySelector('#frontend').dataset,notice:document.querySelector('#menu-notice').textContent,state:window.atvTerrainStatus}))));}catch{}throw error;}finally{await browser.close();}

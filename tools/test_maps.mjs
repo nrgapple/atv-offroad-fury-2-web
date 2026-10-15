@@ -2,15 +2,12 @@
 // ATV_TEST_URL=<host/public HTTPS> PLAYWRIGHT_MODULE=<module> node tools/test_maps.mjs
 import assert from 'node:assert/strict';
 import { ENVIRONMENTS } from '../web/launch.js';
-import { createRequire } from 'node:module';
-const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4173';
-const browser = await chromium.launch({ headless: true });
+import { assertNoErrors, base, launch, newPage } from './browser/harness.mjs';
+const browser = await launch();
 try {
   for (const environment of (process.env.ATV_TEST_MAPS?.split(',') ?? ENVIRONMENTS)) {
-    const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
     const errors = [];
-    page.on('pageerror', error => errors.push(error.message));
+    const page = await newPage(browser, { viewport: { width: 960, height: 540 } }, errors);
     try {
       await page.goto(`${base}/play.html?drive=1&environment=${environment}`);
       await page.waitForFunction(() => (window.atvTerrainStatus?.ready && window.atvTerrainStatus?.simulation) || document.querySelector('#status')?.classList.contains('error') || document.querySelector('#frontend')?.dataset.error, null, { timeout: 120000 });
@@ -64,7 +61,7 @@ try {
         assert.equal(state.sceneInstances, loaded.sceneInstances);
         assert.equal(state.vehicleTextures, loaded.vehicleTextures);
       }
-      assert.deepEqual(errors, []);
+      assertNoErrors(errors);
       if (process.env.ATV_MAP_SCREENSHOTS) await page.screenshot({ path: `${process.env.ATV_MAP_SCREENSHOTS}-${environment}.png` });
       console.log(JSON.stringify({ environment, ready: state.ready, minimap: state.minimap, terrainTriangles: state.triangles, terrainUpdates: state.terrainDetailUpdates, vegetation: state.vegetationPlacements, draws: state.vegetationDraws, sceneInstances: state.sceneInstances, unsupportedMeshes: state.unsupportedSceneMeshes, unsupportedTextures: state.unsupportedSceneTextures, water: state.water, waterHeight: state.frame.water_height, glError: state.glError }));
     } catch (error) {

@@ -1,25 +1,21 @@
 // Actual HUD integration/corner/shape gate; original content remains opt-in.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { mkdir, writeFile } from 'node:fs/promises';
-const { chromium, webkit } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4191';
+import { assertNoErrors, base, button, gameState, launch, newPage } from './browser/harness.mjs';
 const out = process.env.ATV_MINIMAP_OUTPUT || (process.env.ATV_UI_BROWSER === 'webkit' ? 'work/verification/minimap-instrument-webkit' : 'work/verification/minimap-instrument');
-const engine = process.env.ATV_UI_BROWSER === 'webkit' ? webkit : chromium;
 await mkdir(out, { recursive: true });
-const browser = await engine.launch({ headless: true });
+const browser = await launch({ engine: process.env.ATV_UI_BROWSER === 'webkit' ? 'webkit' : 'chromium' });
 const errors = [], results = [];
 try {
   for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }, { width: 844, height: 390 }, { width: 1280, height: 720 }].filter(v => !process.env.ATV_MINIMAP_WIDTHS || process.env.ATV_MINIMAP_WIDTHS.split(',').includes(String(v.width)))) {
-    const page = await browser.newPage({ viewport, hasTouch: true, deviceScaleFactor: 3 });
+    const page = await newPage(browser, { viewport, hasTouch: true, deviceScaleFactor: 3 }, errors);
     const graph = [];
     page.on('request', request => {
       const url = new URL(request.url());
       if (url.origin === new URL(base).origin && /\.(js|css|wasm)$/.test(url.pathname)) graph.push({path:url.pathname,version:url.searchParams.get('v')});
     });
-    page.on('pageerror', e => errors.push(e.message));
-    const state = () => page.evaluate(() => window.atvTerrainStatus);
-    const click = name => page.getByRole('button', { name, exact: true }).click();
+    const state = () => gameState(page);
+    const click = name => button(page, name).click();
     const ready = () => page.waitForFunction(() => window.atvTerrainStatus?.minimap.visible, null, { timeout: 90000 });
     // Pause reaches Display through the Settings hub (PR #73).
     const open = async () => { await click('Pause'); await click('Settings'); await click('Display'); assert.equal(await page.getByRole('slider').count(), 0); await click('Minimap configuration'); await page.getByRole('slider', { name: 'Minimap zoom', exact: true }).waitFor(); };
@@ -87,7 +83,7 @@ try {
     }
     results.push({ viewport, state: (await state()).minimap, graph }); await page.close();
   }
-  assert.deepEqual(errors, []);
+  assertNoErrors(errors);
   await writeFile(`${out}/results.json`, JSON.stringify({ results, errors }, null, 2));
   console.log(`PASS: circular/square GPS, both corners, nested settings, saved preferences, no duplicate speed pixels, Off fallback, Rust preload and cache reuse at ${results.length} viewport(s).`);
 } finally { await browser.close(); }

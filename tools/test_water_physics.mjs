@@ -1,16 +1,14 @@
 // Original-content water failure and buoyant wreck-rider integration gate.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {writeFile} from 'node:fs/promises';
 import {installContactHarness,loadContactMap,findWaterRoute} from './runtime_contact_harness.mjs';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4197';
+import {assertNoErrors,base,launch,newPage} from './browser/harness.mjs';
 const environments=(process.env.ATV_WATER_MAPS||'env04,env05,env07,env08').split(',');
-const browser=await chromium.launch({headless:true});
+const browser=await launch();
 try {
   for(const environment of environments) for(const mobile of environment===environments[0]?[false,true]:[false]) {
-    const page=await browser.newPage({viewport:mobile?{width:390,height:844}:{width:960,height:600}}),errors=[];
-    page.on('pageerror',e=>errors.push(e.message)); await installContactHarness(page);
+    const errors=[],page=await newPage(browser,{viewport:mobile?{width:390,height:844}:{width:960,height:600}},errors);
+    await installContactHarness(page);
     try {
       await loadContactMap(page,base,environment); const route=await findWaterRoute(page);
       const drive=await page.evaluate(async route=>{
@@ -51,7 +49,7 @@ try {
       assert(rider.every(f=>f.origin.every(Number.isFinite)&&(!f.rider_wreck||f.rider_wreck.origin.every(Number.isFinite))));
       const summary={environment,mobile,expired,reset:expired>=0?expired+1:null,waterOnlyFrames:waterOnly.length,buoyancyUpwardSpeed:Math.max(...waterOnly.map(f=>f.rider_wreck.linear_velocity[1])),errors};
       if(process.env.ATV_WATER_REPORT) await writeFile(`${process.env.ATV_WATER_REPORT}-${environment}${mobile?'-mobile':''}.json`,JSON.stringify({summary,route,drive,rider}));
-      assert.deepEqual(errors,[]);assert.equal(await page.evaluate(()=>document.querySelector('#game').getContext('webgl2').getError()),0);
+      assertNoErrors(errors);assert.equal(await page.evaluate(()=>document.querySelector('#game').getContext('webgl2').getError()),0);
       console.log(JSON.stringify(summary));
     } finally {await page.close();}
   }

@@ -1,22 +1,21 @@
 // Real-content menu/settings/HUD gate. Never includes source bytes in reports.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const browser=await chromium.launch({headless:true});
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4191';
+import {assertNoErrors,base,button,holdKey,launch,newPage,waitForGame} from './browser/harness.mjs';
+const browser=await launch();
 const errors=[];
 try {
- const page=await browser.newPage({viewport:{width:1280,height:720},deviceScaleFactor:2,hasTouch:true});
- page.on('pageerror',e=>errors.push(e.message));
+ const page=await newPage(browser,{viewport:{width:1280,height:720},deviceScaleFactor:2,hasTouch:true},errors);
  const screen=async name=>{await page.waitForFunction(name=>document.querySelector('#frontend').dataset.page===name&&!document.querySelector('#frontend').hidden&&!document.querySelector('#loading-screen').hidden===false,name,{timeout:90000});assert.equal(await page.locator('#frontend').getAttribute('data-error'),null);await page.waitForFunction(()=>!document.getAnimations().some(a=>a.effect?.target?.id==='menu-stage')&&document.querySelectorAll('.menu-transition').length===0);};
- const click=async name=>page.getByRole('button',{name,exact:true}).click();
+ const click=async name=>button(page,name).click();
  const shot=async name=>{if(process.env.ATV_HD_SCREENSHOTS)await page.screenshot({path:`${process.env.ATV_HD_SCREENSHOTS}-${name}.png`});};
  await page.goto(`${base}/play.html`);await screen('title');await shot('title');await click('Press START');await screen('main');await page.waitForFunction(()=>document.querySelector('.model-view canvas')?.dataset.ready==='true');await shot('main');
+ // Time-based on purpose: the menu re-lays out through an asynchronous worker round trip after a resize and exposes no completion signal.
  await page.setViewportSize({width:320,height:568});await page.waitForTimeout(200);await shot('main-320');
  await page.setViewportSize({width:1280,height:720});await page.waitForFunction(()=>document.querySelector('.model-view canvas')?.dataset.ready==='true');
  await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');await screen('settings');
  assert.deepEqual(await page.locator('.pause-panel button').allTextContents().then(a=>a.map(t=>t.trim())),['Controls','Display','Audio','Extras','Back']);
  for(const size of [{width:320,height:568},{width:390,height:844},{width:844,height:390},{width:1280,height:720}]){
+  // Time-based on purpose: the menu re-lays out through an asynchronous worker round trip after a resize and exposes no completion signal.
   await page.setViewportSize(size);await page.waitForTimeout(100);await shot(`settings-${size.width}`);
   for(const name of ['Controls','Display','Audio','Extras']){
    await click(name);await screen({Controls:'controls',Display:'hud-settings',Audio:'music',Extras:'extras'}[name]);
@@ -35,11 +34,11 @@ try {
  await page.getByRole('button',{name:'Crashes: Gorn (blood & limbs)',exact:true}).waitFor();await page.getByRole('button',{name:'Crash camera: Original',exact:true}).waitFor();
  await click('Crash camera: Original');await click('Back');await click('Controls');await screen('controls');assert.equal(await page.getByRole('slider').inputValue(),'115');await click('One-handed mobile: Off');
  await click('Back');await click('Display');await click('Minimap configuration');await screen('minimap-config');await page.getByRole('button',{name:'Shape: Square',exact:true}).waitFor();assert.equal(await page.getByRole('slider',{name:'Minimap size',exact:true}).inputValue(),'192');
- await page.goto(`${base}/play.html?mode=single&map=env01`);await page.waitForFunction(()=>window.atvTerrainStatus?.simulation&&document.querySelector('#frontend').hidden,null,{timeout:90000});
- await page.keyboard.down('KeyW');await page.waitForTimeout(1000);await page.keyboard.up('KeyW');await shot('hud');
+ await page.goto(`${base}/play.html?mode=single&map=env01`);await waitForGame(page,{timeout:90000,until:()=>window.atvTerrainStatus.simulation&&document.querySelector('#frontend').hidden});
+ await holdKey(page,'KeyW',60);await shot('hud');
  assert.equal(await page.locator('#toolbar .atv-control').first().evaluate(e=>getComputedStyle(e).backgroundColor),'rgba(0, 0, 0, 0)');
  await page.keyboard.press('Escape');await screen('pause');await shot('pause');await click('Settings');await screen('settings');await click('Display');await click('Minimap configuration');await click('Freestyle minimap: On');
  await click('Back');await click('Back');await click('Back');await screen('pause');await click('Resume');await page.waitForFunction(()=>!document.querySelector('#native-hud').hidden);await shot('hud-standalone');
- assert.equal(await page.evaluate(()=>window.atvTerrainStatus.glError),0);assert.deepEqual(errors,[]);
+ assert.equal(await page.evaluate(()=>window.atvTerrainStatus.glError),0);assertNoErrors(errors);
  console.log('PASS: HD menu, four sections from main/pause, four viewport layouts, 44px targets, saved controls/map/crash/camera, transparent HUD buttons, real driving and standalone HUD');
 }finally{await browser.close();}

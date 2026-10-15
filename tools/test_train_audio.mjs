@@ -1,12 +1,10 @@
 // Actual Rust spatial commands and original train PCM through the browser.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4173';
-const browser = await chromium.launch({ headless: true });
+import { assertNoErrors, base, launch, newPage, waitForGame } from './browser/harness.mjs';
+const browser = await launch();
 try {
-  const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
-  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  const errors = [];
+  const page = await newPage(browser, { viewport: { width: 960, height: 600 } }, errors);
   await page.addInitScript(() => {
     const NativeContext = window.AudioContext || window.webkitAudioContext;
     window.AudioContext = class extends NativeContext {
@@ -51,8 +49,7 @@ try {
   });
   try {
     await page.goto(`${base}/play.html?drive=1&environment=env08`);
-    await page.waitForFunction(()=>window.atvTerrainStatus?.ready || document.querySelector('#status.error'), null, {timeout:120000});
-    assert((await page.evaluate(()=>window.atvTerrainStatus)).ready,await page.locator('#status').textContent());
+    await waitForGame(page);
     await page.locator('#game').click({position:{x:400,y:150}});
     await page.waitForFunction(()=>window.atvTerrainStatus.audio?.spatial.voices===11,null,{timeout:30000});
     const natural = await page.evaluate(()=>window.atvTerrainStatus.audio.spatial);
@@ -79,6 +76,7 @@ try {
     assert.equal(await page.evaluate(()=>window.atvTerrainStatus.audio.spatial.starts),11);
     await page.keyboard.press('Escape'); await page.getByRole('button',{name:'Resume',exact:true}).waitFor();
     await page.waitForFunction(()=>window.atvTerrainStatus.audio.context==='suspended');
+    // Time-based on purpose: the suspended audio clock must not advance over wall-clock time.
     const paused=await page.evaluate(()=>window.trainAudioContext.currentTime); await page.waitForTimeout(300);
     assert.equal(await page.evaluate(()=>window.trainAudioContext.currentTime),paused);
     await page.getByRole('button',{name:'Resume',exact:true}).click();
@@ -87,7 +85,7 @@ try {
     await page.waitForFunction(()=>!window.atvTerrainStatus.ready && window.atvTerrainStatus.audio.context==='suspended');
     await page.evaluate(()=>window.trainAudioLose.restoreContext()); await page.waitForFunction(()=>window.atvTerrainStatus.ready && window.atvTerrainStatus.audio.context==='running');
     assert.equal(await page.evaluate(()=>window.atvTerrainStatus.audio.spatial.starts),11);
-    assert.deepEqual(errors,[]);assert.equal(await page.evaluate(()=>window.atvTerrainStatus.audioError),undefined);
+    assertNoErrors(errors);assert.equal(await page.evaluate(()=>window.atvTerrainStatus.audioError),undefined);
     if(process.env.ATV_TRAIN_AUDIO_SCREENSHOT)await page.screenshot({path:process.env.ATV_TRAIN_AUDIO_SCREENSHOT});
     console.log(JSON.stringify({natural,actualEnergy,moving:moving.commands.slice(0,3),near:near.commands[0],far:far.commands[0],starts:far.starts}));
     console.log('PASS: three original mono train samples/11 bounded attached loops produce nonzero PCM; recovered near/far stereo/pitch, body/camera motion, pause/resume and graphics restore pass with no duplicate voices. PS2 listening/mixer parity remains unverified.');

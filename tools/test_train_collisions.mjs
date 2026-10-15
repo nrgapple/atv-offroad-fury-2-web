@@ -1,13 +1,10 @@
 // Runtime encounters use decoded original route poses and original COL bodies.
 // The setup moves the test ATV only; it never injects velocity, impulses or wrecks.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4192';
-const browser=await chromium.launch({headless:true});
+import {assertNoErrors,base,launch,newPage,waitForGame} from './browser/harness.mjs';
+const browser=await launch();
 try {
- const page=await browser.newPage({viewport:{width:960,height:600}}),errors=[];
- page.on('pageerror',e=>errors.push(e.message));
+ const errors=[],page=await newPage(browser,{viewport:{width:960,height:600}},errors);
  await page.addInitScript(()=>{
   const NativeWorker=Worker;let id=-1000;
   window.Worker=class extends NativeWorker {
@@ -18,8 +15,8 @@ try {
   window.encounterCommand=(op,value)=>encounterBinary(op,new TextEncoder().encode(value==null?'':JSON.stringify(value)));
  });
  await page.goto(`${base}/play.html?drive=1&environment=env08`);
- await page.waitForFunction(()=>window.atvTerrainStatus?.ready||document.querySelector('#status.error'),null,{timeout:120000});
- assert((await page.evaluate(()=>window.atvTerrainStatus)).ready,await page.locator('#status').textContent());
+ await waitForGame(page);
+ // Time-based on purpose: let any in-flight game worker batch drain after pausing before issuing direct worker commands.
  await page.keyboard.press('Escape');await page.getByRole('button',{name:'Resume',exact:true}).waitFor();await page.waitForTimeout(100);
  const cases=[
   {name:'front-land',local:[0,.5,60],direction:1,throttle:0,routeSteps:900},
@@ -62,6 +59,6 @@ try {
   }
   console.log(JSON.stringify({name:test.name,contact,upwardSpeed:Math.max(...frames.map(f=>f.linear_velocity[1])),dynamicContacts:Math.max(...frames.map(f=>f.dynamic_contact_count)),secondaryContacts:Math.max(...frames.map(f=>f.dynamic_secondary_contacts)),phases:[...new Set(frames.map(f=>f.wreck.phase))]}));
  }
- assert.deepEqual(errors,[]);
+ assertNoErrors(errors);
  console.log('PASS: original front ramp supports a rideable lift/landing and a high relative-speed launch; side/top encounters run body contacts, wreck/recovery and wheel support. Whole-game/hardware parity remains unverified.');
 }finally{await browser.close();}

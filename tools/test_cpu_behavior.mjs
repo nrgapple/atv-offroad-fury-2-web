@@ -1,11 +1,9 @@
 // Original-content integration; no injected crashes or modified physics.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const browser=await chromium.launch({headless:true});
+import {assertNoErrors,base,launch,newPage,waitForScreen} from './browser/harness.mjs';
+const browser=await launch();
 try {
- const page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true});
- const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const errors=[],page=await newPage(browser,{viewport:{width:390,height:844},hasTouch:true},errors);
  // Observe every actual worker batch frame, including frames between renders.
  // This probe only reads transport responses; it changes no game input/state.
  await page.addInitScript(()=>{
@@ -37,8 +35,8 @@ try {
    postMessage(message,...args){if(message?.op===50)this.cpuIds.add(message.id);return super.postMessage(message,...args);}
   };
  });
- const screen=async n=>page.waitForFunction(n=>document.querySelector('#frontend').dataset.page===n,n,{timeout:90000});
- await page.goto(process.env.ATV_TEST_URL||'http://127.0.0.1:4318');await screen('title');
+ const screen=n=>waitForScreen(page,n);
+ await page.goto(base);await screen('title');
  for(const [label,next]of [['Press START','main'],['Single Player','single'],['Race','race']]){await page.getByRole('button',{name:label,exact:true}).click();await screen(next);}
  await page.getByRole('button',{name:'CPU riders: 3',exact:true}).click();
  await page.getByRole('button',{name:'Start Race',exact:true}).click();
@@ -51,9 +49,11 @@ try {
  assert(stats.some(s=>s.obstacles>0),'Original scenery rays encounter real course geometry');
  assert(stats.some(s=>s.wrecks>0&&s.neutralWreck>0&&s.detached>0&&s.contacts>0&&s.recoveries>0&&s.resumed>0),'Natural wreck, detached rider contacts, recovery and resumed driving');
  for(const size of [{width:844,height:390},{width:390,height:844}]){
-  await page.setViewportSize(size);await page.getByRole('button',{name:'Pause',exact:true}).tap();await screen('pause');await page.waitForTimeout(100);
+  await page.setViewportSize(size);await page.getByRole('button',{name:'Pause',exact:true}).tap();await screen('pause');
+  // Time-based on purpose: let any in-flight worker batch land, then prove the paused frame does not change.
+  await page.waitForTimeout(100);
   const before=await page.evaluate(()=>window.atvTerrainStatus.frame);await page.waitForTimeout(300);assert.deepEqual(await page.evaluate(()=>window.atvTerrainStatus.frame),before);
   await page.getByRole('button',{name:'Resume',exact:true}).tap();
  }
- assert.deepEqual(errors,[]);
+ assertNoErrors(errors);
 }finally{await browser.close();}

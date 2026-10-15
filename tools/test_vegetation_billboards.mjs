@@ -1,15 +1,14 @@
 // Original atlas rendering and bounded browser-selection gate; private native
 // probes are optional inputs and never required or published by CI.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import fs from 'node:fs/promises';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const native=process.env.ATV_BILLBOARD_NATIVE?JSON.parse(await fs.readFile(process.env.ATV_BILLBOARD_NATIVE,'utf8')):null;
+import {assertNoErrors,base,launch,nativeData,newPage,waitForGame,waitForScreen} from './browser/harness.mjs';
+const native=await nativeData('ATV_BILLBOARD_NATIVE','native billboard atlas cases (GPU/native comparison)');
+// Optional extra geometry cases, used only together with the native report.
 const geometry=process.env.ATV_BILLBOARD_GEOMETRY?JSON.parse(await fs.readFile(process.env.ATV_BILLBOARD_GEOMETRY,'utf8')):null;
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4290',browser=await chromium.launch({headless:true});
+const browser=await launch();
 try {for(const environment of (process.env.ATV_ECO_MAPS||'env01,env02,env03,env04,env05,env06,env07,env08,free05').split(',')) {
- const page=await browser.newPage({viewport:{width:960,height:600}}),errors=[];
- page.on('pageerror',e=>errors.push(e.message));
+ const errors=[],page=await newPage(browser,{viewport:{width:960,height:600}},errors);
  await page.route('**/game.js',async route=>{
   const response=await route.fetch();
   const oracle=`\nconst sourceDrawEcosystem=drawEcosystem;drawEcosystem=()=>{window.billboardSelectionView={...camera};return sourceDrawEcosystem();};\nwindow.billboardSelectionCheck=()=>{
@@ -48,13 +47,14 @@ try {for(const environment of (process.env.ATV_ECO_MAPS||'env01,env02,env03,env0
   }
  });
  await page.goto(`${base}/play.html?drive=1&environment=${environment}`);
- await page.waitForFunction(()=>atvTerrainStatus?.ready&&atvTerrainStatus?.simulation,null,{timeout:120000});
+ await waitForGame(page,{until:()=>atvTerrainStatus.simulation});
  assert.match(await page.evaluate(()=>atvTerrainStatus.source),new RegExp(`${environment}\\.tr2$`));
  await page.evaluate(()=>billboardGate.capture=true);await page.waitForFunction(()=>billboardGate.pixels>0,null,{timeout:15000});await page.evaluate(()=>billboardGate.capture=false);
  const result=await page.evaluate(()=>({environment:atvTerrainStatus.source,placements:atvTerrainStatus.vegetationPlacements,scanned:atvTerrainStatus.vegetationScanned,near:atvTerrainStatus.vegetationNear,far:atvTerrainStatus.vegetationFar,transition:atvTerrainStatus.vegetationTransition,triangles:atvTerrainStatus.vegetationTriangles,draws:billboardGate.draws,batches:atvTerrainStatus.vegetationBillboardDraws,pixels:billboardGate.pixels,gl:atvTerrainStatus.glError,indexCount:billboardGate.eco.visibility_index.placements.length}));
- assert(result.draws>0&&result.far>0&&result.pixels>0);assert.equal(result.indexCount,result.placements);assert(result.scanned<result.placements);assert.equal(result.gl,0);assert.deepEqual(errors,[]);
+ assert(result.draws>0&&result.far>0&&result.pixels>0);assert.equal(result.indexCount,result.placements);assert(result.scanned<result.placements);assert.equal(result.gl,0);assertNoErrors(errors);
  assert(result.batches>0&&result.batches<=2,'All source atlas species share ordered distant/transition batches');
- await page.keyboard.press('Escape');await page.waitForTimeout(250);
+ // Pause so the selection check sees a stationary camera.
+ await page.keyboard.press('Escape');await waitForScreen(page,'pause');
  result.selection=await page.evaluate(()=>billboardSelectionCheck());
  if(native&&environment==='env01')result.native=await page.evaluate(({cases,geometry})=>{
   const gl=document.querySelector('#game').getContext('webgl2'),prior=gl.getParameter(gl.CURRENT_PROGRAM),priorVao=gl.getParameter(gl.VERTEX_ARRAY_BINDING);

@@ -1,14 +1,11 @@
 // Opt-in real-disc renderer/simulation verification. No disc data leaves the browser.
 // ATV_TEST_ISO=/private/disc.iso PLAYWRIGHT_MODULE=/path/to/playwright node tools/test_renderer.mjs
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+import { assertNoErrors, base, button, gameState, launch, newPage, nextFrames, waitForGame, waitForSteps } from './browser/harness.mjs';
 const iso = process.env.ATV_TEST_ISO;
 const bundled = process.env.ATV_TEST_BUNDLED === '1';
 if (!iso && !bundled) throw new Error('Set ATV_TEST_ISO to the private USA v2.00 ISO path.');
-const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4173';
-const browser = await chromium.launch({ headless: true });
+const browser = await launch();
 const errors = [], requests = [];
 const distance = (a, b) => Math.hypot(...a.map((value, index) => value - b[index]));
 const finite = state => {
@@ -24,14 +21,12 @@ const finite = state => {
   assert.equal(state.glError, 0);
 };
 try {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, hasTouch: true });
+  const page = await newPage(browser, { viewport: { width: 1280, height: 720 }, hasTouch: true }, errors);
   await page.addInitScript(() => localStorage.setItem('atv-mobile-one-handed', 'false')); // Explicit optional two-finger mode.
-  const read = () => page.evaluate(() => window.atvTerrainStatus);
-  const steps = async count => {
-    const start = (await read()).simulationSteps;
-    await page.waitForFunction(target => window.atvTerrainStatus.simulationSteps >= target, start + count, { timeout: 90000 });
-  };
-  page.on('pageerror', error => errors.push(error.message));
+  const read = () => gameState(page);
+  const steps = count => waitForSteps(page, count, { timeout: 90000 });
+  // Reset finished: the body is back at the scene start and any pause menu has closed.
+  const resetDone = origin => page.waitForFunction(origin => !document.querySelector('#frontend:not([hidden])') && Math.hypot(...window.atvTerrainStatus.frame.origin.map((value, index) => value - origin[index])) < 2, origin);
   page.on('request', request => requests.push({ url: request.url(), method: request.method(), resourceType: request.resourceType(), postDataLength: request.postDataBuffer()?.byteLength ?? 0 }));
   const startUrl = new URL('/play.html', base);
   if (!bundled) startUrl.searchParams.set('source', 'disc');
@@ -39,13 +34,13 @@ try {
   await page.goto(startUrl.href);
   if (!bundled) await page.locator('#disc').setInputFiles(iso);
   try {
-    await page.waitForFunction(() => window.atvTerrainStatus?.ready && window.atvTerrainStatus.simulation && window.atvTerrainStatus.frames > 3, null, { timeout: 90000 });
+    await waitForGame(page, { until: () => window.atvTerrainStatus.ready && window.atvTerrainStatus.simulation && window.atvTerrainStatus.frames > 3 });
   } catch (error) {
     throw new Error(`Disc load failed: ${await page.locator('#status').textContent()}; browser errors: ${JSON.stringify(errors)}`, { cause: error });
   }
   await page.locator('#game').click({ position: { x: 640, y: 300 } });
   await page.waitForFunction(() => window.atvTerrainStatus.audio?.context === 'running' && window.atvTerrainStatus.audio.commands > 0);
-  await page.waitForTimeout(1000);
+  await steps(60);
   const loaded = await read();
   assert(loaded.width > 100 && loaded.depth > 100 && loaded.triangles > 1000);
   assert(loaded.vehicleVertices > 1000 && loaded.vehicleTriangles > 1000 && loaded.vehicleTextures > 0);
@@ -80,7 +75,7 @@ try {
   await page.keyboard.down('KeyS'); await steps(108); await page.keyboard.up('KeyS');
   const braked = await read(); finite(braked);
   assert(braked.frame.speed < driven.frame.speed, 'Original brakes must reduce speed');
-  if (bundled) { await page.locator('#menu').click(); await page.getByRole('button', {name:'Reset ATV', exact:true}).click(); } else await page.evaluate(() => document.querySelector('#reset').onclick()); await page.waitForTimeout(800);
+  if (bundled) { await page.locator('#menu').click(); await button(page, 'Reset ATV').click(); } else await page.evaluate(() => document.querySelector('#reset').onclick()); await resetDone(loaded.frame.origin);
   assert(distance((await read()).frame.origin, loaded.frame.origin) < 2, 'Reset returns the body to the original scene start');
   for (const preset of [1, 2, 3, 4, 0]) {
     await page.locator('#camera').click();
@@ -94,7 +89,7 @@ try {
     Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [window.testPad] });
     window.dispatchEvent(new Event('focus'));
   });
-  await page.waitForTimeout(600);
+  await steps(36);
   const gamepad = await read(); finite(gamepad);
   assert.notDeepEqual(gamepad.frame.rider_node_matrices, loaded.frame.rider_node_matrices, 'Original rider controllers must respond to driving input');
   assert.equal(gamepad.input.throttle, 1); assert(gamepad.input.steer > 0, 'Right input follows source +X screen-right steering');
@@ -103,6 +98,7 @@ try {
   await steps(15);
   assert.equal((await read()).followCamera.preset, 2, 'Held controller camera button cycles only once');
   await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+  // Time-based on purpose: let an in-flight step land, then prove focus loss freezes the body over wall-clock time.
   await page.waitForTimeout(100);
   const blurred = await read();
   await page.waitForTimeout(200);
@@ -115,10 +111,10 @@ try {
     window.lose.loseContext();
   });
   await page.waitForFunction(() => !window.atvTerrainStatus.ready);
-  await page.waitForTimeout(100);
+  await page.waitForTimeout(100); // Time-based on purpose: keep the context lost briefly before restoring it.
   await page.evaluate(() => window.lose.restoreContext());
   await page.waitForFunction(() => window.atvTerrainStatus.ready);
-  await page.waitForTimeout(100);
+  await nextFrames(page, 3);
   const restored = await read(); finite(restored);
   assert.equal(await page.evaluate(() => document.querySelector('#game').getContext('webgl2').getError()), 0, 'Context restoration must discard every previous GPU handle, including vegetation');
   assert.equal(restored.vehicleTextures, loaded.vehicleTextures);
@@ -128,25 +124,25 @@ try {
   assert.equal(restored.sceneInstances, loaded.sceneInstances);
   await page.evaluate(() => Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => { throw new DOMException('blocked', 'SecurityError'); } }));
   await page.setViewportSize({ width: 390, height: 844 });
-  if (bundled) { await page.locator('#menu').click(); await page.getByRole('button', {name:'Reset ATV', exact:true}).click(); } else await page.evaluate(() => document.querySelector('#reset').onclick()); await page.waitForTimeout(300);
+  if (bundled) { await page.locator('#menu').click(); await button(page, 'Reset ATV').click(); } else await page.evaluate(() => document.querySelector('#reset').onclick()); await resetDone(loaded.frame.origin);
   const cdp = await page.context().newCDPSession(page);
   const point = (id, x, y) => ({ id, x, y, radiusX: 1, radiusY: 1, force: 1 });
   const before = await read();
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point(1, 80, 440)] });
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point(1, 80, 440), point(2, 290, 440)] });
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point(1, 105, 440), point(2, 290, 380)] });
-  await page.waitForTimeout(500);
+  await page.waitForFunction(() => { const input = window.atvTerrainStatus.input; return input.throttle > .5 && input.steer > 0 && input.preload_axis === 1; });
   const during = await read(); finite(during);
   assert(during.input.throttle > .5 && during.input.steer > 0);
   assert.equal(during.input.preload_axis, 1, 'Right touch holds preload without orbiting the camera');
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
-  await page.waitForTimeout(100);
+  await page.waitForFunction(() => { const input = window.atvTerrainStatus.input; return input.throttle === 0 && input.brake === 0 && input.steer === 0; });
   const cancelled = await read();
   assert.equal(cancelled.input.throttle, 0); assert.equal(cancelled.input.brake, 0); assert.equal(Math.abs(cancelled.input.steer), 0);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 390);
   finite(cancelled);
   if (process.env.ATV_TEST_SCREENSHOT) await page.screenshot({ path: process.env.ATV_TEST_SCREENSHOT });
-  assert.deepEqual(errors, []);
+  assertNoErrors(errors);
   // Sites injects this Cloudflare challenge before a disc is selected. Keep its
   // known platform POST separate; game code has no upload path.
   const origin = new URL(base).origin;

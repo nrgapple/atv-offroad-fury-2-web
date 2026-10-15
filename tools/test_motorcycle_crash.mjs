@@ -1,15 +1,13 @@
 // Original-resource motorcycle jump/bailout gate. Only ordinary riding/stunt
 // inputs are supplied; solver pose, contact, velocity and wreck state are observed.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {writeFile} from 'node:fs/promises';
 import {captureSimulation} from './capture_simulation.mjs';
 import {captureCrashIsolation,verifyCrashIsolation,verifyCrashImpacts} from './crash_isolation.mjs';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const browser=await chromium.launch({headless:true,args:['--use-angle=metal']});
+import {assertNoErrors,base,button as roleButton,launch,newPage} from './browser/harness.mjs';
+const browser=await launch();
 try {
- const page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true}),errors=[];
- page.on('pageerror',e=>errors.push(e.message));
+ const errors=[],page=await newPage(browser,{viewport:{width:390,height:844},hasTouch:true},errors);
  await captureCrashIsolation(page);await captureSimulation(page,'bikeFrames');
  await page.addInitScript(mode=>{
   if(mode)localStorage.setItem('atv-crash-mode',mode);
@@ -26,8 +24,8 @@ try {
    return post.call(this,message,...args);
   };
  },process.env.ATV_CRASH_MODE);
- await page.goto(`${process.env.ATV_TEST_URL||'http://127.0.0.1:4397'}/play.html`);
- const button=name=>page.getByRole('button',{name,exact:true});
+ await page.goto(`${base}/play.html`);
+ const button=name=>roleButton(page,name);
  await button('Press START').click({timeout:120000});await button('Single Player').click();await button('Quad and Rider').click();
  for(let i=0;i<20;i++)await button('Previous quad').click(); // 27: MX 50 Race
  await page.waitForFunction(()=>[...document.querySelectorAll('.model-view canvas')].every(c=>c.dataset.selection==='27:0'));
@@ -56,7 +54,7 @@ try {
   assert.equal(await page.evaluate(()=>window.atvTerrainStatus.frame.funny_crash??null),null);
  }
  assert(frames.some(s=>!s.frame.grounded.some(Boolean)));assert(frames.some(s=>s.frame.stunt));
- assert(frames.every(s=>s.frame.origin.every(Number.isFinite)));assert.deepEqual(errors,[]);assert.equal(await page.evaluate(()=>window.atvTerrainStatus.glError),0);
+ assert(frames.every(s=>s.frame.origin.every(Number.isFinite)));assertNoErrors(errors);assert.equal(await page.evaluate(()=>window.atvTerrainStatus.glError),0);
  await writeFile(process.env.ATV_MOTORCYCLE_CRASH_REPORT||'work/verification/motorcycle-crash.json',JSON.stringify({passed:true,touch:true,isolation,impact,crashed,frames,errors}));
  console.log(JSON.stringify({passed:true,touch:true,frames:frames.length,isolation,impact}));
 } finally {await browser.close();}

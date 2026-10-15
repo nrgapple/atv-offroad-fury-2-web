@@ -1,14 +1,11 @@
 // Opt-in browser check against actual catalog + Rust decoder + hosted content.
 // No music payloads, disc contents or screenshots are written to the repository.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4173';
-const browser = await chromium.launch({ headless: true });
+import { assertNoErrors, base, launch, newPage } from './browser/harness.mjs';
+const browser = await launch();
 const errors = [];
 try {
-  const page = await browser.newPage(); page.on('pageerror', error => errors.push(error.message));
+  const page = await newPage(browser, {}, errors);
   await page.goto(base + '/workbench.html'); await page.locator('body').click({ position: { x: 4, y: 4 } });
   await page.evaluate(async () => {
     const [{ MusicStream }, { openHostedContent }] = await Promise.all([import('/music.js'), import('/content.js')]);
@@ -41,15 +38,15 @@ try {
   const state = await page.evaluate(() => {
     const { stream } = window.musicHarness; stream.setEnabled(false); return stream.snapshot();
   });
-  await page.waitForTimeout(150);
+  await page.waitForTimeout(150); // Time-based on purpose: prove the disabled stream's position stays frozen.
   const paused = await page.evaluate(() => window.musicHarness.stream.snapshot());
   assert.equal(paused.voices, 0); assert.equal(paused.positionSeconds, state.positionSeconds);
   await page.evaluate(() => window.musicHarness.stream.setEnabled(true));
   await page.waitForFunction(() => window.musicHarness.stream.snapshot().voices > 0);
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(200); // Time-based on purpose: wall-clock audio playback must advance.
   assert(await page.evaluate(position => window.musicHarness.stream.snapshot().positionSeconds > position, state.positionSeconds));
   const evidence = await page.evaluate(() => ({ tracks: window.musicHarness.stream.tracks.map(({ title, artist }) => ({ title, artist })), state: window.musicHarness.stream.snapshot(), errors: window.musicHarness.errors, maxDecodeBytes: Math.max(...window.musicHarness.requests.filter(item => item.op === 43).map(item => item.count)) }));
-  assert.equal(evidence.maxDecodeBytes, 65536); assert.deepEqual(evidence.errors, []); assert.deepEqual(errors, []);
+  assert.equal(evidence.maxDecodeBytes, 65536); assert.deepEqual(evidence.errors, []); assertNoErrors(errors);
   console.log(JSON.stringify({ passed: true, songs: evidence.tracks.length, maxDecodeBytes: evidence.maxDecodeBytes, state: evidence.state }));
   await page.evaluate(async () => { window.musicHarness.stream.close(); window.musicHarness.worker.terminate(); await window.musicHarness.context.close(); });
 } finally { await browser.close(); }

@@ -1,13 +1,11 @@
 // Original-content menu gate: standing MX clips must reach the GPU, animate,
 // and remain separate from the original ATV rigs. No pose state is injected.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {writeFile} from 'node:fs/promises';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const browser=await chromium.launch({headless:true,args:['--use-angle=metal']});
+import {assertNoErrors,base,launch,newPage} from './browser/harness.mjs';
+const browser=await launch();
 try {
- const page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true}),errors=[];
- page.on('pageerror',e=>errors.push(e.message));
+ const errors=[],page=await newPage(browser,{viewport:{width:390,height:844},hasTouch:true},errors);
  await page.addInitScript(()=>{
   const get=WebGL2RenderingContext.prototype.getUniformLocation,mat=WebGL2RenderingContext.prototype.uniformMatrix4fv,locations=new WeakMap();
   WebGL2RenderingContext.prototype.getUniformLocation=function(...args){const loc=get.apply(this,args);if(loc)locations.set(loc,args[1]);return loc;};
@@ -24,7 +22,7 @@ try {
  });
  const button=name=>page.getByRole('button',{name,exact:true}),rider=page.locator('.model-view canvas').last();
  const ready=id=>page.waitForFunction(id=>[...document.querySelectorAll('.model-view canvas')].every(c=>c.dataset.ready==='true'&&c.dataset.selection===`${id}:0`)&&document.querySelectorAll('.model-view canvas')[1]?.dataset.clip?.startsWith('ui_rider_select_'),id,{timeout:90000});
- await page.goto(`${process.env.ATV_TEST_URL||'http://127.0.0.1:4398'}/play.html`);
+ await page.goto(`${base}/play.html`);
  await button('Press START').click({timeout:120000});await button('Single Player').click();await button('Quad and Rider').click();
  await page.waitForFunction(()=>document.querySelectorAll('.model-view canvas')[1]?.dataset.clip?.startsWith('mrider_body_'));
  const report={models:[],clips:[],errors};
@@ -43,7 +41,7 @@ try {
   report.models.push({id,pose});
   if([29,45].includes(id)){
    const before=await rider.screenshot(),boneBefore=await page.evaluate(()=>window.menuPose);
-   await page.waitForTimeout(700);
+   await page.waitForTimeout(700); // Time-based on purpose: the menu breathing clip advances on wall-clock time between the two samples.
    assert.notDeepEqual(await rider.screenshot(),before,'Source breathing must change rendered pixels');
    assert.notDeepEqual(await page.evaluate(()=>window.menuPose),boneBefore,'Source breathing must update GPU bones');
    if(process.env.ATV_MX_MENU_SCREENSHOTS)await page.screenshot({path:`${process.env.ATV_MX_MENU_SCREENSHOTS}-${id}.png`});
@@ -52,11 +50,11 @@ try {
  const seen=new Set();
  for(let i=0;i<240;i++){
   seen.add(await rider.getAttribute('data-clip'));if([1,2,3].every(n=>seen.has(`ui_rider_select_idle${n}.mot`)))break;
-  await page.waitForTimeout(150);
+  await page.waitForTimeout(150); // Time-based on purpose: samples the idle clip rotation within a 240 x 150 ms wall-clock budget.
  }
  report.clips=[...seen];assert([1,2,3].every(n=>seen.has(`ui_rider_select_idle${n}.mot`)),'All three source idle clips must play');
  // Returning to an ATV must restore its original menu animation bank.
  await button('Next quad').click();await page.waitForFunction(()=>document.querySelectorAll('.model-view canvas')[1]?.dataset.selection==='1:0'&&document.querySelectorAll('.model-view canvas')[1]?.dataset.clip?.startsWith('mrider_body_'));
- assert.equal(await page.locator('#menu-notice').textContent(),'');assert.deepEqual(errors,[]);report.passed=true;
+ assert.equal(await page.locator('#menu-notice').textContent(),'');assertNoErrors(errors);report.passed=true;
  await writeFile(process.env.ATV_MX_MENU_REPORT||'work/verification/mx-standing-menu.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }finally{await browser.close();}

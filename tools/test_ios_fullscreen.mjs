@@ -1,14 +1,11 @@
 // Real game/menu geometry with synthetic installed-iOS metrics. No OS install.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-const engines = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
+import { assertNoErrors, base, button, launch, newPage } from './browser/harness.mjs';
 const engine = process.env.ATV_IOS_BROWSER || 'chromium';
-const browser = await engines[engine].launch({ headless: true });
-const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4338';
+const browser = await launch({ engine });
 const errors = [];
 try {
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
-  page.on('pageerror', e => errors.push(e.message));
+  const page = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: true }, errors);
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'standalone', { value: true });
     Object.defineProperty(navigator, 'userAgent', { value: 'Mozilla/5.0 (iPhone) AppleWebKit Safari' });
@@ -33,17 +30,17 @@ try {
     assert(result.map.y >= safe.top && result.map.right <= width - safe.right, JSON.stringify(result));
     assert(result.scroll[0] <= width && result.scroll[1] <= height);
     if (process.env.ATV_IOS_SCREENSHOTS) await page.screenshot({ path: `${process.env.ATV_IOS_SCREENSHOTS}-${engine}-${width}.png` });
-    await page.getByRole('button', {name:'Pause', exact:true}).click();
-    await page.getByRole('button', {name:'Resume',exact:true}).waitFor();
+    await button(page, 'Pause').click();
+    await button(page, 'Resume').waitFor();
     await page.waitForFunction(() => document.querySelector('#menu-stage').getAnimations().every(a => a.playState === 'finished'));
     const stage = await page.locator('#menu-stage').boundingBox();
     assert.equal(stage.y,safe.top); assert.equal(stage.x,safe.left); assert.equal(stage.y+stage.height,height-safe.bottom);
-    await page.getByRole('button', {name:'Resume',exact:true}).click();
+    await button(page, 'Resume').click();
     console.log(JSON.stringify({ engine, width, height, safe, result }));
   }
   await check(390,844,{top:59,right:0,bottom:34,left:0});
   await check(844,390,{top:0,right:59,bottom:21,left:59});
   await check(390,844,{top:59,right:0,bottom:34,left:0});
-  assert.deepEqual(errors,[]);
+  assertNoErrors(errors);
   console.log('PASS: installed-iOS gap compensation, edge-to-edge game backing, safe HUD/pause and live orientation changes. Physical installation remains untested.');
 } finally { await browser.close(); }

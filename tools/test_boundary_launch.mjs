@@ -1,13 +1,11 @@
 // Opt-in real-content edge launch. Uses normal keyboard controls; no state injection.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { mkdir, writeFile } from 'node:fs/promises';
-const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
+import { assertNoErrors, base, launch, newPage, waitForSteps } from './browser/harness.mjs';
 await mkdir('work/verification', { recursive: true });
-const browser = await chromium.launch({ headless: true });
+const browser = await launch();
 try {
-  const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
-  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  const errors = []; const page = await newPage(browser, { viewport: { width: 960, height: 540 } }, errors);
   await page.addInitScript(() => {
     window.boundaryFrames = [];
     const watched = new WeakSet();
@@ -33,7 +31,7 @@ try {
     };
   });
   const environment = process.env.ATV_BOUNDARY_MAP || 'env04';
-  await page.goto(new URL(`/play.html?drive=1&environment=${environment}`, process.env.ATV_TEST_URL || 'http://127.0.0.1:4180').href);
+  await page.goto(new URL(`/play.html?drive=1&environment=${environment}`, base).href);
   await page.waitForFunction(() => window.atvTerrainStatus?.simulation, null, { timeout: 90000 });
   await page.bringToFront(); await page.locator('#game').focus();
   for (let i = 0; i < 3 && (await page.evaluate(() => window.atvTerrainStatus.performance.mode)) !== 'debug'; i++) await page.keyboard.press('F3');
@@ -67,7 +65,7 @@ try {
           if (key) await page.keyboard.down(key);
           held = key;
         }
-        await page.waitForTimeout(120);
+        await waitForSteps(page, 7);
       }
       if (held) await page.keyboard.up(held);
     } else {
@@ -110,7 +108,7 @@ try {
     } }));
     assert.equal(duringFlight.filter(f => f.boundary_launch.elapsed === 0).length, 1);
     console.log(JSON.stringify({ recovered: { origin: recovered.origin, boundary: recovered.boundary_launch, resets: recovered.reset_count } }));
-    assert.deepEqual(errors, []);
+    assertNoErrors(errors);
     assert.equal(await page.evaluate(() => window.atvTerrainStatus.glError), 0);
     console.log('PASS normal drive crosses original edge, launches inward/upward into wreck, separates and recovers with boundary state cleared.');
   } finally {

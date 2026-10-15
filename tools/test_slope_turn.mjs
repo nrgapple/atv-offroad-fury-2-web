@@ -1,17 +1,16 @@
 // Opt-in original-content steering route with measurable elevation change.
 // Records riding and wreck frames separately; scenery contacts are not excluded.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { captureSimulation } from './capture_simulation.mjs';
-const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
+import { assertNoErrors, base, launch, newPage } from './browser/harness.mjs';
 await mkdir('work/verification', { recursive: true });
-const browser = await chromium.launch({ headless: true });
+const browser = await launch();
 try {
-  const page = await browser.newPage({ viewport: { width: 1100, height: 700 } });
+  const errors = [];
+  const page = await newPage(browser, { viewport: { width: 1100, height: 700 } }, errors);
   await captureSimulation(page, 'turnFrames');
-  const errors = []; page.on('pageerror', error => errors.push(error.message));
-  await page.goto(new URL('/play.html?drive=1&environment=env01', process.env.ATV_TEST_URL || 'http://127.0.0.1:4180').href);
+  await page.goto(new URL('/play.html?drive=1&environment=env01', base).href);
   await page.waitForFunction(() => window.atvTerrainStatus?.simulation, null, { timeout: 90000 });
   await page.bringToFront(); await page.locator('#game').focus();
   for (let i = 0; i < 3 && (await page.evaluate(() => window.atvTerrainStatus.performance.mode)) !== 'debug'; i++) await page.keyboard.press('F3');
@@ -30,7 +29,7 @@ try {
   assert(Math.max(...heights) - Math.min(...heights) > 5, 'The riding trace must cross measurable elevation');
   assert(riding.some(sample => sample.input.steer > 0) && riding.some(sample => sample.input.steer < 0), 'Both steering directions must reach the simulation');
   assert(frames.every(sample => [...sample.frame.origin, ...sample.frame.orientation].every(Number.isFinite)));
-  assert.deepEqual(errors, []);
+  assertNoErrors(errors);
   assert.equal(await page.evaluate(() => window.atvTerrainStatus.glError), 0);
   console.log(JSON.stringify({ frames: frames.length, ridingFrames: riding.length, wreckFrames: frames.length - riding.length, ridingHeightRange: [Math.min(...heights), Math.max(...heights)], final: frames.at(-1).frame.origin }));
   console.log('PASS: both steering directions across uneven terrain remain finite; use terrain_clearance for riding tire overlap. This is not an isolated slope or original-game parity test.');

@@ -2,17 +2,15 @@
 // and held-stunt inputs through the existing WASM input interface; never sets
 // velocity, pose, wreck state, damage or effects state. Results remain private.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {captureSeveredMesh} from './capture_severed_mesh.mjs';
 import {captureSimulation} from './capture_simulation.mjs';
 import {captureCrashIsolation,verifyCrashIsolation,captureCrashDraws,verifyCrashImpacts} from './crash_isolation.mjs';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const browser=await chromium.launch({headless:true,args:process.env.ATV_BROWSER_GPU==='metal'?['--use-angle=metal']:[]});
+import {assertNoErrors,base,launch,newPage,waitForAnimations} from './browser/harness.mjs';
+const browser=await launch();
 await mkdir('work/verification',{recursive:true});
 try {
- const page=await browser.newPage({viewport:{width:Number(process.env.ATV_CRASH_WIDTH||1280),height:844}}),errors=[];
- page.on('pageerror',e=>errors.push(e.message));
+ const errors=[],page=await newPage(browser,{viewport:{width:Number(process.env.ATV_CRASH_WIDTH||1280),height:844}},errors);
  await captureSeveredMesh(page);await captureCrashIsolation(page);await captureCrashDraws(page);await captureSimulation(page,'crashFrames');
  await page.addInitScript(()=>{
   if(!localStorage.getItem('atv-crash-mode'))localStorage.setItem('atv-crash-mode','gorn');
@@ -29,7 +27,7 @@ try {
    return post.call(this,message,...args);
   };
  });
- await page.goto(`${process.env.ATV_TEST_URL||'http://127.0.0.1:4182'}/play.html?drive=1&environment=env01`);
+ await page.goto(`${base}/play.html?drive=1&environment=env01`);
  await page.waitForFunction(()=>window.atvTerrainStatus?.simulation,null,{timeout:120000});
  assert.equal(await page.evaluate(()=>window.atvTerrainStatus.funnyCrashes),true);
  await page.keyboard.press('Escape');
@@ -87,8 +85,8 @@ try {
  }
  await page.setViewportSize({width:Number(process.env.ATV_CRASH_WIDTH||1280),height:844});
  // Animated nested menus: step back until the pause screen offers Resume.
- for(let k=0;k<6&&!(await page.getByRole('button',{name:'Resume',exact:true}).isVisible());k++){await page.waitForTimeout(400);const back=page.getByRole('button',{name:'Back',exact:true});if(await back.isVisible())await back.click({force:true});}
- await page.waitForTimeout(400);await page.getByRole('button',{name:'Resume',exact:true}).click({force:true});
+ for(let k=0;k<6&&!(await page.getByRole('button',{name:'Resume',exact:true}).isVisible());k++){await waitForAnimations(page);const back=page.getByRole('button',{name:'Back',exact:true});if(await back.isVisible())await back.click({force:true});}
+ await waitForAnimations(page);await page.getByRole('button',{name:'Resume',exact:true}).click({force:true});
  await page.waitForFunction(()=>window.crashIsolation.compared>100);
  const isolation=await verifyCrashIsolation(page);
  const impact=verifyCrashImpacts(frames);
@@ -97,7 +95,7 @@ try {
  console.log(`Aerial intact-ATV ragdoll frames on this route: ${impact.aerial}`);
  assert(impact.impacts>0);
  assert(frames.every(s=>!s.frame.funny_crash||[...s.frame.funny_crash.quad_node_matrices.flat(),...s.frame.funny_crash.rider_node_matrices.flat()].every(Number.isFinite)));
- assert.deepEqual(errors,[]);assert.equal(await page.evaluate(()=>window.atvTerrainStatus.glError),0);
+ assertNoErrors(errors);assert.equal(await page.evaluate(()=>window.atvTerrainStatus.glError),0);
  await writeFile(process.env.ATV_CRASH_TRACE||'work/verification/camera-gorn.json',JSON.stringify({crash,isolation,originalIsolation,feedback,impact,presentation,mesh,framing,frames,errors}));
  console.log('PASS: Gorn severe crash tears only the struck limb(s), renders stumps/droplets/splats in one draw, impact camera/audio, intact recovery, settings persistence and exact paired gameplay.');
 } finally {await browser.close();}

@@ -1,12 +1,11 @@
 // Opt-in actual-content gameplay binding integration. Menu capture is covered
 // separately by test_frontend; this follows the same singleton into real WASM.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const browser = await chromium.launch({ headless: true });
+import { assertNoErrors, base, launch, newPage, nextFrames, waitForGame, waitForSteps } from './browser/harness.mjs';
+const browser = await launch();
 try {
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
-  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  const errors = [];
+  const page = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }, errors);
   await page.addInitScript(() => {
     window.bindingPad = null; window.initialPackets = []; window.bindingBatches = []; window.bindingResets = 0;
     Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [window.bindingPad] });
@@ -19,14 +18,11 @@ try {
       return post.call(this, data, ...rest);
     };
   });
-  await page.goto(new URL('/play.html?drive=1', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173').href);
-  await page.waitForFunction(() => window.atvTerrainStatus?.simulation, null, { timeout:90000 });
+  await page.goto(new URL('/play.html?drive=1', base).href);
+  await waitForGame(page, { until: () => window.atvTerrainStatus.simulation });
   await page.evaluate(async () => { window.runtimePackets = window.initialPackets.slice(); window.bindings = (await import('./bindings.js')).gameplayBindings; });
   const focus = async () => { await page.bringToFront(); await page.locator('#game').focus(); };
-  const steps = async (count=4) => {
-    const first = await page.evaluate(() => window.atvTerrainStatus.simulationSteps);
-    await page.waitForFunction(({first,count}) => window.atvTerrainStatus.simulationSteps >= first + count, {first,count});
-  };
+  const steps = (count=4) => waitForSteps(page, count);
   const input = expected => page.waitForFunction(expected => Object.entries(expected).every(([key,value]) => Math.abs(Number(window.atvTerrainStatus.input[key])-Number(value)) < 1e-6), expected);
   const set = (device,id,binding) => page.evaluate(({device,id,binding}) => window.bindings.setBinding(device,id,binding), {device,id,binding});
   const pad = async (buttons=[],axes=[0,0,0,0]) => {
@@ -96,9 +92,10 @@ try {
   await pad();
   await page.evaluate(() => { window.bindingPad.buttons[9] = {pressed:true,value:1}; });
   await page.waitForFunction(() => !document.querySelector('#frontend').hidden && document.querySelector('#frontend').dataset.page === 'pause');
-  await page.waitForTimeout(180);
+  await nextFrames(page, 11); // The front end polls the held pad once per animation frame.
   assert.equal(await page.locator('#frontend').isVisible(), true, 'The controller press that opens pause must not resume it');
   const paused = await page.evaluate(() => window.atvTerrainStatus.simulationSteps);
+  // Time-based on purpose: proves the paused simulation does not advance.
   await page.waitForTimeout(120); assert.equal(await page.evaluate(() => window.atvTerrainStatus.simulationSteps), paused);
   await page.evaluate(() => { window.bindingPad.buttons[9] = {pressed:false,value:0}; });
   await page.getByRole('button',{name:'Resume',exact:true}).click();
@@ -147,6 +144,6 @@ try {
   assert(!result.cancelled.active && !result.cancelled.armed && result.cancelled.strength === 0, 'Cancellation must clear the native flick, not synthesize release');
   assert(result.regular.vertical > result.cancelled.vertical, 'Cancelled replay must have no jump boost');
   await page.evaluate(() => { window.bindings.reset('keyboard'); window.bindings.reset('controller'); });
-  assert.deepEqual(errors,[]);
+  assertNoErrors(errors);
   console.log(`PASS: real WASM remapped keyboard/analog controller inputs, native reverse chord, keyboard brake-then-reverse, stunt axes, once-only camera/reset/pause, disconnect/blur cancellation, and original-map native stale-preload prevention after ${result.count+1} driving steps.`);
 } finally { await browser.close(); }

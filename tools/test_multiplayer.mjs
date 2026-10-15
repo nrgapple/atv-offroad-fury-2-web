@@ -1,15 +1,11 @@
 // Opt-in real-content Rust/WASM + Rust/workerd multiplayer integration.
 import assert from 'node:assert/strict';
 import { ENVIRONMENTS } from '../web/launch.js';
-import {createRequire} from 'node:module';
-const{chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4186';
+import {assertNoErrors,base,button,gameState as state,launch,newPage,waitForAnimations,waitForSteps} from './browser/harness.mjs';
 const map=Number(process.env.ATV_MP_MAP||1);assert.ok(Number.isInteger(map)&&map>=1&&map<=ENVIRONMENTS.length,'ATV_MP_MAP must be 1..40');
-const browser=await chromium.launch({headless:true,args:process.env.ATV_BROWSER_GPU==='metal'?['--enable-gpu','--use-angle=metal']:[]});const errors=[];
-const a=await browser.newPage({viewport:{width:1280,height:896},hasTouch:true}),b=await browser.newPage({viewport:{width:1280,height:896},hasTouch:true});
-for(const page of[a,b]) {page.on('pageerror',e=>errors.push(e.message));await page.addInitScript(()=>{Object.defineProperty(document,'hasFocus',{value:()=>true});});}
-const button=(page,name)=>page.getByRole('button',{name,exact:true});
-const state=page=>page.evaluate(()=>window.atvTerrainStatus);
+const browser=await launch();const errors=[];
+const a=await newPage(browser,{viewport:{width:1280,height:896},hasTouch:true},errors),b=await newPage(browser,{viewport:{width:1280,height:896},hasTouch:true},errors);
+for(const page of[a,b]) {await page.addInitScript(()=>{Object.defineProperty(document,'hasFocus',{value:()=>true});});}
 // Tapping the already-selected course card rides at once; otherwise select it, then Ride.
 const pickTrack=async(page,id)=>{const card=page.locator(`.ms-course[data-track-id=${id}]`);await card.waitFor({timeout:60000});const selected=await card.getAttribute('aria-selected')==='true';await card.click();if(!selected)await page.locator('button.ms-ride').click();};
 const menu=async page=>{await page.goto(base+'/play.html');await button(page,'Press START').click({timeout:90000});await button(page,'Multiplayer').click();};
@@ -34,10 +30,11 @@ try{
    await b.waitForFunction(()=>window.atvTerrainStatus?.multiplayer?.state.code&&!window.atvTerrainStatus.simulation,null,{timeout:60000});
    await a.close();
    await b.waitForFunction(()=>{const s=window.atvTerrainStatus,m=s.multiplayer;return s.simulation&&m?.state.code&&m.state.lobby?.host===m.state.peer&&m.state.lobby.players.length===1&&m.remote.length===0||s.multiplayerError;},null,{timeout:120000});
+   // Time-based on purpose: prove the guest's menu does not reappear shortly after the handoff.
    await b.waitForTimeout(300);
    assert.equal(await b.locator('#frontend').isHidden(),true,'guest keeps riding');
    const s=await state(b);assert.equal(s.multiplayer.state.code,code);assert.equal(s.multiplayer.remote.length,0);assert.equal(s.audio.multiplayer.voices,0);assert.equal(s.multiplayerError,undefined);
-   assert.deepEqual(errors,[]);console.log(JSON.stringify({passed:true,hostLeftDuringLoad:true,guestBecameHost:true,map}));
+   assertNoErrors(errors);console.log(JSON.stringify({passed:true,hostLeftDuringLoad:true,guestBecameHost:true,map}));
  } else {
  for(const page of[a,b])await page.waitForFunction(()=>window.atvTerrainStatus.simulation||window.atvTerrainStatus.multiplayerError,null,{timeout:120000});
  for(const page of[a,b])await page.waitForFunction(()=>window.atvTerrainStatus.multiplayer?.remote.length===1 && window.atvTerrainStatus.multiplayerDraws>0 || window.atvTerrainStatus.multiplayerError,null,{timeout:60000});
@@ -46,7 +43,7 @@ try{
  for(const page of[a,b]) {const s=await state(page);assert.equal(s.multiplayer.state.lobby.map,map);assert.equal(s.multiplayer.state.environment,ENVIRONMENTS[map-1]);if(map===9)assert.match(s.source,/free05/i);}
  if(process.env.ATV_MP_SCREENSHOT){await a.screenshot({path:process.env.ATV_MP_SCREENSHOT.replace('.png','-start.png')});await b.screenshot({path:process.env.ATV_MP_SCREENSHOT.replace('.png','-guest.png')});}
  const initial=(await state(b)).multiplayer.remote[0].position;
- await a.bringToFront();await a.evaluate(()=>window.dispatchEvent(new Event('focus')));await a.keyboard.down('KeyW');await a.waitForFunction(()=>window.atvTerrainStatus.frame?.applied_input?.throttle>.5,null,{timeout:15000}); await b.waitForFunction(initial=>{const p=window.atvTerrainStatus.multiplayer?.remote[0]?.position;return p&&Math.hypot(...p.map((v,i)=>v-initial[i]))>3;},initial,{timeout:30000});await a.keyboard.up('KeyW');await a.waitForTimeout(250);
+ await a.bringToFront();await a.evaluate(()=>window.dispatchEvent(new Event('focus')));await a.keyboard.down('KeyW');await a.waitForFunction(()=>window.atvTerrainStatus.frame?.applied_input?.throttle>.5,null,{timeout:15000}); await b.waitForFunction(initial=>{const p=window.atvTerrainStatus.multiplayer?.remote[0]?.position;return p&&Math.hypot(...p.map((v,i)=>v-initial[i]))>3;},initial,{timeout:30000});await a.keyboard.up('KeyW');await waitForSteps(a,15);
  const moved=(await state(b)).multiplayer.remote[0].position;assert.ok(Math.hypot(...moved.map((v,i)=>v-initial[i]))>3,'remote ATV moves after host throttle');
  if(process.env.ATV_MP_WRECK==='1') {
    await a.setViewportSize({width:390,height:844});
@@ -55,10 +52,10 @@ try{
    await b.evaluate(()=>{window.remoteTrace=[];window.remoteTimer=setInterval(()=>{const s=window.atvTerrainStatus;const p=s.multiplayer?.remote[0];if(p){window.remoteTrace.push({state:p.rider_state,crash:p.crash_serial,quad:p.world_matrix.slice(12,15),rider:p.rider_world_matrix.slice(12,15),spatial:p.spatial,voices:s.audio.multiplayer});if(window.remoteTrace.length>1200)window.remoteTrace.shift();}},50);});
    // Optional two-thumb mode, real touch driving and airborne stunt gesture.
    await a.evaluate(()=>{localStorage.setItem('atv-mobile-one-handed','false');});
-   await button(a,'Pause').click();await a.waitForFunction(()=>document.querySelector('#frontend').dataset.page==='pause'&&!document.querySelector('#frontend').hidden&&!document.getAnimations().some(a=>a.effect?.target?.id==='menu-stage'),null,{timeout:10000});await a.waitForTimeout(300);
+   await button(a,'Pause').click();await a.waitForFunction(()=>document.querySelector('#frontend').dataset.page==='pause'&&!document.querySelector('#frontend').hidden&&!document.getAnimations().some(a=>a.effect?.target?.id==='menu-stage'),null,{timeout:10000});await waitForAnimations(a);
    // The one-handed toggle lives under Pause → Settings → Controls.
    await button(a,'Settings').click();await button(a,'Controls').click();await button(a,'Keyboard bindings').waitFor();if(await button(a,'One-handed mobile: On').count())await button(a,'One-handed mobile: On').click();await button(a,'One-handed mobile: Off').waitFor();
-   await a.keyboard.press('Escape');await button(a,'Audio').waitFor();await a.keyboard.press('Escape');await button(a,'Resume').waitFor();await a.waitForTimeout(300);await button(a,'Resume').click();await a.waitForFunction(()=>document.querySelector('#frontend').hidden,null,{timeout:10000});
+   await a.keyboard.press('Escape');await button(a,'Audio').waitFor();await a.keyboard.press('Escape');await button(a,'Resume').waitFor();await waitForAnimations(a);await button(a,'Resume').click();await a.waitForFunction(()=>document.querySelector('#frontend').hidden,null,{timeout:10000});
    const cdp=await a.context().newCDPSession(a);
    const touch=(type,points=[])=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:points.map(p=>({radiusX:6,radiusY:6,force:1,...p}))});
    const left={id:1,x:60,y:560},right={id:2,x:310,y:530},drive={...right,y:460};
@@ -81,6 +78,6 @@ try{
  await a.bringToFront();await button(a,'Pause').click();await button(a,'Leave Game').click();await a.waitForFunction(()=>!window.atvTerrainStatus.multiplayer?.state.code,null,{timeout:15000});await a.close();
  await b.waitForFunction(()=>{const m=window.atvTerrainStatus.multiplayer;return m?.state.code&&m.state.lobby?.host===m.state.peer&&m.state.lobby.players.length===1&&m.remote.length===0;},null,{timeout:45000});
  const after=await state(b);assert.equal(after.multiplayer.state.code,code);assert.ok(after.simulation,'guest ride continues');assert.equal(after.multiplayerError,undefined);
- assert.deepEqual(errors,[]);console.log(JSON.stringify({passed:true,code,remoteDistance:Math.hypot(...moved.map((v,i)=>v-initial[i])),handoff:{host:after.multiplayer.state.lobby.host,peer:after.multiplayer.state.peer},summary}));
+ assertNoErrors(errors);console.log(JSON.stringify({passed:true,code,remoteDistance:Math.hypot(...moved.map((v,i)=>v-initial[i])),handoff:{host:after.multiplayer.state.lobby.host,peer:after.multiplayer.state.peer},summary}));
  }
 }finally{await browser.close();}

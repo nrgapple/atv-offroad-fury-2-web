@@ -1,19 +1,17 @@
 // Authored input/presentation fixture. Chromium uses real two-touch CDP events;
 // WebKit uses synthetic Pointer Events with a capture shim, not physical iOS.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { mkdirSync, writeFileSync } from 'node:fs';
-const { chromium, webkit } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4338';
+import { assertNoErrors, base, launch, newPage } from './browser/harness.mjs';
 const output = process.env.ATV_TRICK_WHEEL_OUTPUT || 'work/verification/trick-wheel';
 mkdirSync(output, { recursive: true });
 const results = [];
-for (const [name, engine] of [['Chromium', chromium], ['WebKit', webkit]]) {
-  const browser = await engine.launch({ headless: true });
+for (const [name, engine] of [['Chromium', 'chromium'], ['WebKit', 'webkit']]) {
+  const browser = await launch({ engine });
   try {
     for (const viewport of [{width:390,height:844}, {width:844,height:390}, {width:320,height:568}, {width:667,height:375}]) {
-      const page = await browser.newPage({ viewport, hasTouch: true, isMobile: true });
-      const errors = []; page.on('pageerror', error => errors.push(error.message));
+      const errors = [];
+      const page = await newPage(browser, { viewport, hasTouch: true, isMobile: true }, errors);
       await page.route('**/wheel-fixture', route => route.fulfill({contentType:'text/html', body:'<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/design-system.css"><link rel="stylesheet" href="/touch.css"><style>html,body{margin:0;overflow:hidden}#game{position:fixed;inset:0;width:100%;height:100%;touch-action:none}</style><canvas id="game"></canvas><div id="toolbar"></div>'}));
       await page.goto(new URL('/wheel-fixture', base).href);
       await page.evaluate(async synthetic => {
@@ -98,7 +96,7 @@ for (const [name, engine] of [['Chromium', chromium], ['WebKit', webkit]]) {
         await touch('touchCancel'); await touch('touchStart',[moved]);
       }
       await touch('touchCancel'); assert(!await wheel.isVisible());
-      assert.deepEqual(errors,[]); results.push({browser:name,viewport,tenReleaseSelections:true,edgeTargetsAndCenterCancel:true,plainOutlinedText:true,noZoomScrollSelection:true,lifecycleCancellation:true,errors});
+      assertNoErrors(errors); results.push({browser:name,viewport,tenReleaseSelections:true,edgeTargetsAndCenterCancel:true,plainOutlinedText:true,noZoomScrollSelection:true,lifecycleCancellation:true,errors});
       await page.close();
     }
   } finally {await browser.close();}

@@ -1,14 +1,10 @@
 // Original-content reflection gate. Native arithmetic observations stay private.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
-import fs from 'node:fs/promises';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4290';
-const native=process.env.ATV_REFLECTION_NATIVE ? JSON.parse(await fs.readFile(process.env.ATV_REFLECTION_NATIVE,'utf8')) : null;
-const browser=await chromium.launch({headless:true});
+import {assertNoErrors,base,launch,nativeData,newPage,waitForGame} from './browser/harness.mjs';
+const native=await nativeData('ATV_REFLECTION_NATIVE','native reflection UV arithmetic (GPU/native comparison)');
+const browser=await launch();
 try {for(const environment of ['env01','free05']) {
-  const page=await browser.newPage({viewport:{width:960,height:600}}), errors=[];
-  page.on('pageerror',e=>errors.push(e.message));
+  const errors=[], page=await newPage(browser,{viewport:{width:960,height:600}},errors);
   await page.addInitScript(()=>{
     window.reflectionMeshes=[]; window.reflectionModels=[]; window.reflectionDraws=0; window.reflectionPixels=0;
     const NativeWorker=Worker;
@@ -57,8 +53,7 @@ try {for(const environment of ['env01','free05']) {
     await route.fulfill({ response, body: source });
   });
   await page.goto(`${base}/play.html?drive=1&environment=${environment}`);
-  await page.waitForFunction(()=>window.atvTerrainStatus?.ready||document.querySelector('#status')?.classList.contains('error'),null,{timeout:120000});
-  assert(await page.evaluate(()=>window.atvTerrainStatus?.ready),await page.locator('#status').textContent());
+  await waitForGame(page);
   await page.locator('#game').focus();
   const state=await page.evaluate(()=>{
     const status=window.atvTerrainStatus;
@@ -106,7 +101,7 @@ try {for(const environment of ['env01','free05']) {
     }
     gl.disable(gl.RASTERIZER_DISCARD);gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK,null);gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER,0,null);gl.bindVertexArray(priorVao);gl.useProgram(priorProgram);gl.deleteTransformFeedback(feedback);gl.deleteBuffer(buffer);gl.deleteVertexArray(vao);gl.deleteProgram(p);gl.deleteShader(vertex);gl.deleteShader(fragment);return maximum;
   },native.cases);
-  assert.deepEqual(errors,[]);assert.equal(await page.evaluate(()=>document.querySelector('#game').getContext('webgl2').getError()),0);
+  assertNoErrors(errors);assert.equal(await page.evaluate(()=>document.querySelector('#game').getContext('webgl2').getError()),0);
   if(process.env.ATV_REFLECTION_SCREENSHOTS)await page.screenshot({path:`${process.env.ATV_REFLECTION_SCREENSHOTS}-${environment}.png`});
   console.log(JSON.stringify({environment,...state,pixels:await page.evaluate(()=>reflectionPixels),nativeCases:native&&environment==='env01'?native.cases.length:0,gpuComparisons:native&&environment==='env01'?native.cases.length*3:0,maximumError}));
   await page.close();

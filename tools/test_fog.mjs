@@ -1,14 +1,10 @@
 // Private-content scene fog gate and actual-renderer GPU coverage/interpolation.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
-import fs from 'node:fs/promises';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4290';
-const native=process.env.ATV_FOG_NATIVE?JSON.parse(await fs.readFile(process.env.ATV_FOG_NATIVE,'utf8')):null;
-const browser=await chromium.launch({headless:true});
+import {assertNoErrors,base,launch,nativeData,newPage,waitForGame} from './browser/harness.mjs';
+const native=await nativeData('ATV_FOG_NATIVE','native fog coverage samples (GPU coverage comparison)');
+const browser=await launch();
 try {for(const environment of ['env01','env04','free05']) {
- const page=await browser.newPage({viewport:{width:960,height:600}}),errors=[];
- page.on('pageerror',e=>errors.push(e.message));
+ const errors=[],page=await newPage(browser,{viewport:{width:960,height:600}},errors);
  await page.addInitScript(()=>{
   window.fogPasses=[];window.fogDraws={enabled:0,disabled:0};
   const NativeWorker=Worker;
@@ -22,8 +18,7 @@ try {for(const environment of ['env01','env04','free05']) {
   WebGL2RenderingContext.prototype.drawElements=function(...args){const p=this.getParameter(this.CURRENT_PROGRAM);if(p&&!this.isContextLost()){const l=this.getUniformLocation(p,'fogEnabled');if(l)fogDraws[this.getUniform(p,l)?'enabled':'disabled']++;}return draw.apply(this,args);};
  });
  await page.goto(`${base}/play.html?drive=1&environment=${environment}`);
- await page.waitForFunction(()=>window.atvTerrainStatus?.ready||document.querySelector('#status')?.classList.contains('error'),null,{timeout:120000});
- assert(await page.evaluate(()=>window.atvTerrainStatus?.ready),await page.locator('#status').textContent());
+ await waitForGame(page);
  await page.waitForFunction(()=>fogDraws.enabled>0);
  const state=await page.evaluate(()=>({fog:atvTerrainStatus.fog,passes:fogPasses,draws:fogDraws}));
  assert.equal(state.fog.end,768);assert.equal(state.fog.start,environment==='free05'?352:0);
@@ -52,7 +47,7 @@ try {for(const environment of ['env01','env04','free05']) {
   gl.bindFramebuffer(gl.FRAMEBUFFER,prior.framebuffer);gl.viewport(...prior.viewport);gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK,null);gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER,0,null);gl.bindVertexArray(prior.vao);gl.useProgram(prior.program);if(prior.depth)gl.enable(gl.DEPTH_TEST);if(prior.blend)gl.enable(gl.BLEND);if(prior.cull)gl.enable(gl.CULL_FACE);gl.deleteFramebuffer(framebuffer);gl.deleteTexture(texture);gl.deleteBuffer(positions);gl.deleteBuffer(buffer);gl.deleteTransformFeedback(feedback);gl.deleteVertexArray(vao);gl.deleteProgram(p);gl.deleteShader(v);gl.deleteShader(f);
   return {coverageSamples:count,maximumByteDifference,affineExpected:affine,perspectiveExpected:perspective,actual:pixel[0]};
  },native);
- assert.deepEqual(errors,[]);assert.equal(await page.evaluate(()=>document.querySelector('#game').getContext('webgl2').getError()),0);
+ assertNoErrors(errors);assert.equal(await page.evaluate(()=>document.querySelector('#game').getContext('webgl2').getError()),0);
  if(process.env.ATV_FOG_SCREENSHOTS)await page.screenshot({path:`${process.env.ATV_FOG_SCREENSHOTS}-${environment}.png`});
  console.log(JSON.stringify({environment,fog:state.fog,draws:state.draws,gpu}));await page.close();
 }console.log('PASS: original scene fog range, mixed material switches, GPU coverage and screen-linear interpolation; full hardware/terrain/water parity remains open.');}finally{await browser.close();}

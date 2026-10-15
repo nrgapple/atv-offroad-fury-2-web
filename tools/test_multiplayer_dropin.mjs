@@ -5,21 +5,18 @@
 //   PLAYWRIGHT_MODULE=/path/to/playwright ATV_TEST_URL=http://127.0.0.1:4187 \
 //   node tools/test_multiplayer_dropin.mjs
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const base = (process.env.ATV_TEST_URL || 'http://127.0.0.1:4187').replace(/\/$/, '');
+import { assertNoErrors, base, button, holdKey, launch, waitForSteps, watchErrors } from './browser/harness.mjs';
 const shots = process.env.ATV_MP_SCREENSHOT;
-const browser = await chromium.launch({ headless: true, args: process.env.ATV_BROWSER_GPU === 'metal' ? ['--enable-gpu', '--use-angle=metal'] : [] });
+const browser = await launch();
 const errors = [], report = {};
 async function rider(viewport = { width: 1280, height: 896 }) {
   const context = await browser.newContext({ viewport, hasTouch: true });
   await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base });
   const page = await context.newPage();
-  page.on('pageerror', error => errors.push(error.message));
+  watchErrors(page, errors);
   await page.addInitScript(() => { Object.defineProperty(document, 'hasFocus', { value: () => true }); });
   return page;
 }
-const button = (page, name) => page.getByRole('button', { name, exact: true });
 const state = page => page.evaluate(() => window.atvTerrainStatus);
 const distance = (a, b) => Math.hypot(...a.map((v, i) => v - b[i]));
 const riding = (page, map, remotes = 1, timeout = 120000) => page.waitForFunction(([map, remotes]) => {
@@ -53,7 +50,7 @@ try {
   assert.equal(s.multiplayer.state.peer, 1);
   // Arrivals are placed beside a rider who is already there.
   await b.waitForFunction(() => window.atvTerrainStatus.frame?.origin, null, { timeout: 30000 });
-  await b.waitForTimeout(4000);
+  await waitForSteps(b, 240);
   const [ha, hb] = [await state(a), await state(b)];
   report.meetDistanceFt = distance(ha.frame.origin, hb.frame.origin);
   assert.ok(report.meetDistanceFt < 40, `guest should meet beside the host, was ${report.meetDistanceFt.toFixed(1)} ft`);
@@ -62,7 +59,7 @@ try {
   // 3. Remote motion: the host drives; the guest samples presented positions every frame.
   await b.evaluate(() => { window.trace = []; const step = () => { const p = window.atvTerrainStatus.multiplayer?.remote?.[0]; if (p) window.trace.push([performance.now(), ...p.position]); if (window.trace.length < 600) requestAnimationFrame(step); }; requestAnimationFrame(step); });
   await a.bringToFront(); await a.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await a.keyboard.down('KeyW'); await a.waitForTimeout(4000); await a.keyboard.up('KeyW');
+  await holdKey(a, 'KeyW', 240);
   const trace = await b.evaluate(() => window.trace);
   // Presentation updates asynchronously; compare speeds between updates only.
   const updates = trace.filter((p, i) => i === 0 || distance(p.slice(1), trace[i - 1].slice(1)) > 1e-4);
@@ -131,6 +128,7 @@ try {
   // 9. After everyone leaves and the room expires, the same link opens it again.
   if (process.env.ATV_MP_REOPEN !== '0') {
     await b.close(); await c.close();
+    // Time-based on purpose: waits for the relay's empty-room expiry.
     await new Promise(resolve => setTimeout(resolve, 100000));
     const d = await rider();
     await d.goto(`${base}/play.html?room=${code}&map=env05&player=Again`);
@@ -139,7 +137,7 @@ try {
     assert.equal(s.multiplayer.state.code, code); assert.equal(s.multiplayer.state.lobby.host, s.multiplayer.state.peer);
     report.reopened = { code, map: s.multiplayer.state.environment };
   }
-  assert.deepEqual(errors, []);
+  assertNoErrors(errors);
   console.log(JSON.stringify({ result: 'pass', ...report }, null, 2));
 } catch (error) {
   console.log(JSON.stringify({ result: 'fail', error: error.message, errors, ...report }, null, 2));

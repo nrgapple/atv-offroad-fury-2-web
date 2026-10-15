@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4191';
-const browser=await chromium.launch({headless:true});
+import {assertNoErrors,base,launch,newPage,waitForGame} from './browser/harness.mjs';
+const browser=await launch();
 try {
  for(const mobile of[false,true]){
-  const page=await browser.newPage({viewport:mobile?{width:390,height:844}:{width:960,height:600}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  const errors=[],page=await newPage(browser,{viewport:mobile?{width:390,height:844}:{width:960,height:600}},errors);
   await page.addInitScript(()=>{
    const NativeWorker=Worker;window.wheelEffectTrace=[];
    window.Worker=class extends NativeWorker{
@@ -23,7 +21,7 @@ try {
   });
   try{
    await page.goto(`${base}/play.html?drive=1&environment=env04`);
-   await page.waitForFunction(()=>window.atvTerrainStatus?.ready||document.querySelector('#status.error'),null,{timeout:120000});assert((await page.evaluate(()=>window.atvTerrainStatus)).ready,await page.locator('#status').textContent());
+   await waitForGame(page);
    await page.evaluate(()=>window.captureWheelPixels=true);await page.keyboard.down('KeyW');
    await page.waitForFunction(()=>window.atvTerrainStatus.wheelEffects?.frame?.total_emitted[0]>20,null,{timeout:40000});
    await page.waitForFunction(()=>window.wheelPixelEvidence,null,{timeout:30000});
@@ -33,13 +31,17 @@ try {
    await page.keyboard.up('KeyD');await page.keyboard.up('KeyW');
    const roost=await page.evaluate(()=>structuredClone(window.atvTerrainStatus.wheelEffects));assert(roost.frame.total_emitted[1]>0&&roost.frame.total_emitted[2]>0);
    if(process.env.ATV_WHEEL_EFFECT_SCREENSHOTS)await page.screenshot({path:`${process.env.ATV_WHEEL_EFFECT_SCREENSHOTS}${mobile?'-mobile':''}.png`});
-   await page.keyboard.press('Escape');await page.getByRole('button',{name:'Resume',exact:true}).waitFor();await page.waitForTimeout(100);
+   await page.keyboard.press('Escape');await page.getByRole('button',{name:'Resume',exact:true}).waitFor();
+   // Time-based on purpose: let any in-flight worker batch land, then prove the paused effects do not advance.
+   await page.waitForTimeout(100);
    const paused=await page.evaluate(()=>window.atvTerrainStatus.wheelEffects.frame);await page.waitForTimeout(250);assert.deepEqual(await page.evaluate(()=>window.atvTerrainStatus.wheelEffects.frame),paused);
    await page.getByRole('button',{name:'Resume',exact:true}).click();await page.waitForFunction(t=>window.atvTerrainStatus.wheelEffects?.frame?.time>t,paused.time);
-   await page.evaluate(()=>{window.loseWheel=document.querySelector('#game').getContext('webgl2').getExtension('WEBGL_lose_context');window.loseWheel.loseContext();});await page.waitForFunction(()=>!window.atvTerrainStatus.ready);await page.waitForTimeout(100);await page.evaluate(()=>window.loseWheel.restoreContext());await page.waitForFunction(()=>window.atvTerrainStatus.ready);await page.waitForFunction(t=>window.atvTerrainStatus.wheelEffects?.frame?.time>t,paused.time);
+   await page.evaluate(()=>{window.loseWheel=document.querySelector('#game').getContext('webgl2').getExtension('WEBGL_lose_context');window.loseWheel.loseContext();});await page.waitForFunction(()=>!window.atvTerrainStatus.ready);
+   await page.waitForTimeout(100); // Time-based on purpose: keep the context lost briefly before restoring it.
+   await page.evaluate(()=>window.loseWheel.restoreContext());await page.waitForFunction(()=>window.atvTerrainStatus.ready);await page.waitForFunction(t=>window.atvTerrainStatus.wheelEffects?.frame?.time>t,paused.time);
    const trace=await page.evaluate(()=>window.wheelEffectTrace.map(f=>({time:f.wheel_particles.time,emitted:f.wheel_particles.emitted,centers:f.wheel_effects.centers,terrain:f.wheel_effects.terrain_heights,water:f.wheel_effects.water_heights})));assert(trace.length>50);
    for(const frame of trace){if(frame.emitted[0]||frame.emitted[1]||frame.emitted[2])assert([2,3].some(i=>frame.centers[i][1]-frame.terrain[i]<=1.3001));}
-   assert.equal(await page.evaluate(()=>document.querySelector('#game').getContext('webgl2').getError()),0);assert.deepEqual(errors,[]);
+   assert.equal(await page.evaluate(()=>document.querySelector('#game').getContext('webgl2').getError()),0);assertNoErrors(errors);
    console.log(JSON.stringify({mobile,pixels:await page.evaluate(()=>window.wheelPixelEvidence),dry:first.frame.total_emitted,turning:roost.frame.total_emitted,gpuBytes:roost.gpuBytes,cpuMilliseconds:roost.cpuMilliseconds,frames:trace.length}));
   }finally{await page.close();}
  }

@@ -1,14 +1,10 @@
 // Original-content near-vegetation packet/state gate. Distant vegetation has a separate gate.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
-import fs from 'node:fs/promises';
-const native=process.env.ATV_ECO_NATIVE?JSON.parse(await fs.readFile(process.env.ATV_ECO_NATIVE,'utf8')):null;
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4290';
-const browser=await chromium.launch({headless:true});
+import {assertNoErrors,base,launch,nativeData,newPage,waitForGame,waitForScreen} from './browser/harness.mjs';
+const native=await nativeData('ATV_ECO_NATIVE','native near-vegetation lighting arithmetic (GPU/native comparison)');
+const browser=await launch();
 try {for(const environment of (process.env.ATV_ECO_MAPS||'env01,env04,free05').split(',')) {
- const page=await browser.newPage({viewport:{width:960,height:600}}),errors=[];
- page.on('pageerror',error=>errors.push(error.message));
+ const errors=[],page=await newPage(browser,{viewport:{width:960,height:600}},errors);
  // The recovered LOD leaves ENV07's starting near queue outside the view.
  // Inspect the nearest authored fern with a test-only frozen camera.
  if(environment==='env07')await page.route('**/game.js',async route=>{const response=await route.fetch();await route.fulfill({response,body:(await response.text())+`\nwindow.inspectNearVegetation=()=>{const p=ecoGroups[0].placements.reduce((best,p)=>Math.hypot(p.position[0]-camera.x,p.position[2]-camera.z)<Math.hypot(best.position[0]-camera.x,best.position[2]-camera.z)?p:best);menuOpen=false;focused=false;cameraFrame=null;$('frontend').hidden=true;camera.x=p.position[0]+10;camera.z=p.position[2]+10;camera.y=p.position[1]+p.radius*1.5;camera.yaw=Math.atan2(-10,-10);camera.pitch=Math.atan2(-p.radius,Math.sqrt(200));};`});});
@@ -47,10 +43,10 @@ try {for(const environment of (process.env.ATV_ECO_MAPS||'env01,env04,free05').s
   prototype.drawElements=function(...args){const p=this.getParameter(this.CURRENT_PROGRAM);if(p){const value=name=>{const location=this.getUniformLocation(p,name);return location&&this.getUniform(p,location);};if(value('useQuadPose')&&!value('useEcosystem')){if(value('useVertexColor')||value('sceneryBlend'))throw Error('Vegetation state leaked to a vehicle or rider');ecoVehicleDraws++;}}return vehicle.apply(this,args);};
  });
  await page.goto(`${base}/play.html?drive=1&environment=${environment}`);
- await page.waitForFunction(()=>window.atvTerrainStatus?.ready&&window.atvTerrainStatus?.simulation,null,{timeout:120000});
+ await waitForGame(page,{until:()=>window.atvTerrainStatus.simulation});
  assert.match(await page.evaluate(()=>window.atvTerrainStatus.source),new RegExp(`${environment}\\.tr2$`),'Requested vegetation map must load');
  await page.evaluate(()=>window.captureEco=true);
- if(environment==='env07'){await page.keyboard.press('Escape');await page.waitForTimeout(250);await page.evaluate(()=>inspectNearVegetation());}
+ if(environment==='env07'){await page.keyboard.press('Escape');await waitForScreen(page,'pause');await page.evaluate(()=>inspectNearVegetation());}
  await page.waitForFunction(()=>ecoPixels>0&&ecoVehicleDraws>0,null,{timeout:15000});
  await page.evaluate(()=>window.captureEco=false);
  const result=await page.evaluate(()=>({environment:atvTerrainStatus.source,lighting:atvTerrainStatus.vegetationLighting,draws:ecoDraws,vehicleDraws:ecoVehicleDraws,pixels:ecoPixels,gl:atvTerrainStatus.glError}));
@@ -69,7 +65,7 @@ try {for(const environment of (process.env.ATV_ECO_MAPS||'env01,env04,free05').s
   }
   gl.disable(gl.RASTERIZER_DISCARD);gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK,null);gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER,0,null);gl.bindVertexArray(priorVao);gl.useProgram(prior);gl.deleteTransformFeedback(feedback);gl.deleteBuffer(buffer);gl.deleteVertexArray(vao);gl.deleteProgram(p);gl.deleteShader(vertex);gl.deleteShader(fragment);return{cases:cases.length,maxError,differingBytes};
  },native.cases);
- assert(result.draws>0&&result.vehicleDraws>0&&result.pixels>0);assert.equal(result.gl,0);assert.deepEqual(errors,[]);console.log(JSON.stringify(result));
+ assert(result.draws>0&&result.vehicleDraws>0&&result.pixels>0);assert.equal(result.gl,0);assertNoErrors(errors);console.log(JSON.stringify(result));
  if(process.env.ATV_ECO_SCREENSHOTS)await page.screenshot({path:`${process.env.ATV_ECO_SCREENSHOTS}-${environment}.png`});
  await page.close();
  }console.log('PASS: near vegetation Sun/ambient preparation, source blend/fog/depth switches, visible vegetation and vehicle-state isolation; optional original arithmetic comparison. Full native visibility/GS hardware parity remain open.');

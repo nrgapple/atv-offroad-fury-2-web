@@ -2,30 +2,27 @@
 // Starts the original race on every Environment, National and Supercross course
 // (or ATV_RACE_COURSES=env02,sx07) and checks the start gate, field and racing.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {mkdirSync} from 'node:fs';
 import {RACE_COURSES} from '../web/launch.js';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4184';
+import {assertNoErrors,base,button,holdKey,launch,newPage,nextFrames,waitForAnimations,waitForScreen} from './browser/harness.mjs';
 const output=process.env.ATV_RACE_SCREENSHOTS;
 if(output)mkdirSync(output,{recursive:true});
 const courses=process.env.ATV_RACE_COURSES?process.env.ATV_RACE_COURSES.split(','):RACE_COURSES;
-const browser=await chromium.launch({headless:true});
+const browser=await launch();
 const errors=[],results=[];
 try {
- const page=await browser.newPage({viewport:{width:1280,height:720},hasTouch:true});
- page.on('pageerror',e=>errors.push(e.message));
- const screen=async name=>{await page.waitForFunction(name=>document.querySelector('#frontend').dataset.page===name||document.querySelector('#frontend').dataset.error,name,{timeout:90000});assert.equal(await page.locator('#frontend').getAttribute('data-error'),null,await page.locator('#menu-notice').textContent());};
+ const page=await newPage(browser,{viewport:{width:1280,height:720},hasTouch:true},errors);
+ const screen=name=>waitForScreen(page,name);
  const state=()=>page.evaluate(()=>window.atvTerrainStatus);
  // Menu: the Course row cycles every published original course in both directions.
  await page.goto(base);await screen('title');
- await page.getByRole('button',{name:'Press START',exact:true}).click();await screen('main');
- await page.getByRole('button',{name:'Single Player',exact:true}).click();await screen('single');
- await page.getByRole('button',{name:'Race',exact:true}).click();await screen('race');
+ await button(page,'Press START').click();await screen('main');
+ await button(page,'Single Player').click();await screen('single');
+ await button(page,'Race').click();await screen('race');
  const course=()=>page.locator('#menu-buttons button[aria-label^="Course: "]').getAttribute('aria-label');
  const first=await course();
  for(const [name,size] of [['desktop',{width:1280,height:720}],['portrait',{width:390,height:844}],['landscape',{width:844,height:390}]]){
-  await page.setViewportSize(size);await page.waitForTimeout(300);
+  await page.setViewportSize(size);await waitForAnimations(page);await nextFrames(page,2);
   const hits=await page.locator('#menu-buttons button').evaluateAll(buttons=>buttons.map(b=>({label:b.getAttribute('aria-label'),rect:b.getBoundingClientRect().toJSON()})));
   for(const hit of hits){assert(hit.rect.x>=0&&hit.rect.y>=0&&hit.rect.right<=size.width+1&&hit.rect.bottom<=size.height+1,JSON.stringify(hit));assert(hit.rect.height>=44,JSON.stringify(hit));}
   for(const [i,a] of hits.entries())for(const b of hits.slice(i+1))assert(a.rect.right<=b.rect.x||b.rect.right<=a.rect.x||a.rect.bottom<=b.rect.y||b.rect.bottom<=a.rect.y,`${a.label} overlaps ${b.label}`);
@@ -59,7 +56,7 @@ try {
   if(id===courses[0]){
    // Leave the track: progress pauses, the HUD points back to the racing line,
    // and Reset returns to that line without restarting the race.
-   await page.keyboard.down('KeyW');await page.keyboard.down('KeyD');await page.waitForTimeout(700);await page.keyboard.up('KeyD');
+   await page.keyboard.down('KeyW');await holdKey(page,'KeyD',42);
    await page.waitForFunction(()=>window.atvTerrainStatus.frame.race.off_track,null,{timeout:30000});
    await page.keyboard.up('KeyW');
    const off=(await state()).frame.race;
@@ -72,7 +69,7 @@ try {
   }
   results.push({id,checkpoints:race.checkpoints,gap:Number(gap.toFixed(1)),player_checkpoint:s.frame.race.checkpoint,cpu:s.frame.race.opponents.map(o=>Math.round(o.distance))});
  }
- assert.deepEqual(errors,[]);
+ assertNoErrors(errors);
  console.log(JSON.stringify({gate:'race-courses',courses:results.length,results}));
  console.log(`PASS: ${results.length} original race courses start from their gates with four physical CPUs; course menu cycles in three layouts; no page or GL errors.`);
 } finally { await browser.close(); }

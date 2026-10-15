@@ -1,13 +1,11 @@
 // Caribou's original ramp and all five authored ski obstacle placements.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {writeFile} from 'node:fs/promises';
 import {installContactHarness,loadContactMap} from './runtime_contact_harness.mjs';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4197';
-const browser=await chromium.launch({headless:true});
+import {assertNoErrors,base,launch,newPage} from './browser/harness.mjs';
+const browser=await launch();
 try {for(const mobile of [false,true]) {
-  const page=await browser.newPage({viewport:mobile?{width:390,height:844}:{width:960,height:600}}),errors=[];page.on('pageerror',e=>errors.push(e.message));await installContactHarness(page);
+  const errors=[],page=await newPage(browser,{viewport:mobile?{width:390,height:844}:{width:960,height:600}},errors);await installContactHarness(page);
   try {
     await loadContactMap(page,base,'env01');
     const rows=await page.evaluate(async()=>{
@@ -43,7 +41,7 @@ try {for(const mobile of [false,true]) {
       }
     }
     if(process.env.ATV_SNOW_REPORT)await writeFile(`${process.env.ATV_SNOW_REPORT}${mobile?'-mobile':''}.json`,JSON.stringify(rows));
-    assert.deepEqual(errors,[]);assert.equal(await page.evaluate(()=>document.querySelector('#game').getContext('webgl2').getError()),0);
+    assertNoErrors(errors);assert.equal(await page.evaluate(()=>document.querySelector('#game').getContext('webgl2').getError()),0);
     console.log(JSON.stringify({mobile,routes:rows.map(r=>({name:r.name,direction:r.direction,supportFrames:r.frames.filter(f=>f.support.some(Boolean)).length,bodyFrames:r.frames.filter(f=>f.body>0).length,upwardSpeed:Math.max(...r.frames.map(f=>f.velocity[1]))}))}));
   } finally {await page.close();}
 }console.log('PASS: original Caribou ramp and all five ski placements supply wheel/body contacts from both directions; ramp launch/landing passes desktop and390px. This is bounded collision coverage.');}finally{await browser.close();}

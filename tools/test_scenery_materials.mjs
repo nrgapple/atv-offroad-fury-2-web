@@ -1,15 +1,12 @@
 // Original-content inspection views: no game fixtures or camera changes ship.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import fs from 'node:fs/promises';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4173';
-const browser=await chromium.launch({headless:true});
+import {assertNoErrors,base,launch,newPage,waitForGame,waitForSteps} from './browser/harness.mjs';
+const browser=await launch();
 const results=[];
 try {
   for(const [environment,model,material,velocity] of [['env04','sx13rain','rain',2],['env07','lava','lava',0],['env08','waterduct1','waterflow',.983],['free05','skijump','skijump',0]]) {
-    const page=await browser.newPage({viewport:{width:960,height:600}}),errors=[];
-    page.on('pageerror',e=>errors.push(e.message));
+    const errors=[],page=await newPage(browser,{viewport:{width:960,height:600}},errors);
     await page.addInitScript(model => {
       window.sceneryModelName = model; window.sourceColors = new Set(['[128,128,128,128]']); window.checkedColorVaos = new WeakSet(); window.materialDraws = 0; window.materialPixels = 0; window.uvPixels = 0; window.materialPending = 0;
       const NativeWorker = Worker;
@@ -90,19 +87,20 @@ try {
       };
     }, model);
     await page.goto(`${base}/play.html?drive=1&environment=${environment}`);
-    await page.waitForFunction(()=>window.atvTerrainStatus?.ready&&window.atvTerrainStatus?.simulation,null,{timeout:120000});
+    await waitForGame(page,{until:()=>window.atvTerrainStatus.simulation});
     await page.locator('#game').focus();
     let state=await page.evaluate(()=>window.atvTerrainStatus);
     assert(state.sceneryPrelitGroups>0);assert.deepEqual(state.sceneryUnsupportedAnimations,[]);
     if(velocity) {
       assert(state.sceneryUv[material]);
-      const previous=state.sceneryUv[material],steps=state.simulationSteps;
-      await page.waitForFunction(n=>window.atvTerrainStatus.simulationSteps>n+10,steps);
+      const previous=state.sceneryUv[material];
+      await waitForSteps(page,11);
       state=await page.evaluate(()=>window.atvTerrainStatus);
       assert.notDeepEqual(state.sceneryUv[material],previous);
       await page.keyboard.press('Escape');
       await page.waitForFunction(()=>document.querySelector('#frontend').dataset.page==='pause' && materialPending===0);
       const paused=await page.evaluate(()=>window.atvTerrainStatus.sceneryUv);
+      // Time-based on purpose: proves the paused UV phase does not advance.
       await page.waitForTimeout(250);assert.deepEqual(await page.evaluate(()=>window.atvTerrainStatus.sceneryUv),paused);
       await page.getByRole('button',{name:'Resume',exact:true}).click();
     }
@@ -117,14 +115,14 @@ try {
     await page.waitForFunction(()=>document.querySelector('#frontend').dataset.page==='pause' && materialPending===0);
     // Context restoration must retain the Rust UV phase instead of restarting.
     await page.evaluate(()=>{window.sceneryContext=document.querySelector('#game').getContext('webgl2').getExtension('WEBGL_lose_context');window.sceneryContext.loseContext();});
-    await page.waitForTimeout(150);const lost=await page.evaluate(()=>window.atvTerrainStatus.sceneryUv);
+    await page.waitForFunction(()=>!window.atvTerrainStatus.ready);const lost=await page.evaluate(()=>window.atvTerrainStatus.sceneryUv);
     await page.evaluate(()=>window.sceneryContext.restoreContext());
     await page.waitForFunction(()=>window.atvTerrainStatus.ready);
     assert.deepEqual(await page.evaluate(()=>window.atvTerrainStatus.sceneryUv),lost);
     await page.getByRole('button',{name:'Resume',exact:true}).click();
     await page.locator('#game').focus();
     await page.waitForFunction(()=>window.atvTerrainStatus.glError===0);
-    assert.deepEqual(errors,[]);results.push({environment,material,...result});console.log(JSON.stringify(results.at(-1)));
+    assertNoErrors(errors);results.push({environment,material,...result});console.log(JSON.stringify(results.at(-1)));
     await page.close();
   }
   if(process.env.ATV_SCENERY_REPORT)await fs.writeFile(process.env.ATV_SCENERY_REPORT,JSON.stringify(results,null,2));

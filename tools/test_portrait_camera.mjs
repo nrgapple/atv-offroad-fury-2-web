@@ -1,12 +1,11 @@
 // Exercise the rendered camera across live viewport rotation. No vehicle injection.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const browser = await chromium.launch({ headless: true, args: process.env.ATV_BROWSER_GPU === 'metal' ? ['--use-angle=metal'] : [] });
+import { assertNoErrors, base, launch, newPage } from './browser/harness.mjs';
+const browser = await launch();
 try {
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
-  const errors = []; page.on('pageerror', error => errors.push(error.message));
-  await page.goto(new URL('/play.html?drive=1&environment=env01', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173').href);
+  const errors = [];
+  const page = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }, errors);
+  await page.goto(new URL('/play.html?drive=1&environment=env01', base).href);
   await page.waitForFunction(() => window.atvTerrainStatus?.simulationSteps > 90, null, { timeout: 90000 });
   const portrait = await page.evaluate(() => window.atvTerrainStatus);
   assert.equal(portrait.cameraPresentation.portraitDistanceScale, 1.35);
@@ -24,6 +23,6 @@ try {
   assert.equal(landscape.cameraPresentation.focalLength, (4 / 3) / Math.tan(landscape.followCamera.fov * Math.PI / 360));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForFunction(() => window.atvTerrainStatus.cameraPresentation.portraitDistanceScale === 1.35);
-  assert.deepEqual(errors, []);
+  assertNoErrors(errors);
   console.log('PASS: portrait camera widens and lifts sightline; rotation restores native landscape position/FOV with the independent uphill sightline.');
 } finally { await browser.close(); }

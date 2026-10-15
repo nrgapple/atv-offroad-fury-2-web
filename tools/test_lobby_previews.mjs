@@ -2,20 +2,16 @@
 // course preview, and hosting a chosen non-default track puts the host and an
 // invited guest on that track.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {ENVIRONMENTS} from '../web/launch.js';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:49199';
+import {assertNoErrors,base,button,launch,newPage} from './browser/harness.mjs';
 const track=process.env.ATV_LOBBY_TRACK||'sx01';
-const browser=await chromium.launch({headless:true,args:process.env.ATV_BROWSER_GPU==='metal'?['--enable-gpu','--use-angle=metal']:[]});
-const host=await browser.newPage({viewport:{width:1280,height:720}});
-const guest=await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
+const browser=await launch();
 const errors=[];
+const host=await newPage(browser,{viewport:{width:1280,height:720}},errors);
+const guest=await newPage(browser,{viewport:{width:390,height:844},hasTouch:true,isMobile:true},errors);
 for(const page of [host,guest]) {
-  page.on('pageerror',error=>errors.push(error.message));
   await page.addInitScript(()=>{Object.defineProperty(document,'hasFocus',{value:()=>true});});
 }
-const button=(page,name)=>page.getByRole('button',{name,exact:true});
 const riding=(page,environment,remotes)=>page.waitForFunction(([environment,remotes])=>{
   const s=window.atvTerrainStatus,m=s?.multiplayer;
   return s?.multiplayerError||s?.simulation&&document.querySelector('#frontend').hidden&&m?.state.environment===environment&&m.remote.length===remotes;
@@ -45,7 +41,7 @@ try {
   // Only the host changes the track.
   await button(guest,'Pause').click();await button(guest,'Leave Game').waitFor();assert.equal(await button(guest,'Select Track').count(),0,'Only the host changes the map');
   if(process.env.ATV_LOBBY_SCREENSHOTS)await guest.screenshot({path:`${process.env.ATV_LOBBY_SCREENSHOTS}-guest.png`});
-  assert.deepEqual(errors,[]);
+  assertNoErrors(errors);
   console.log(JSON.stringify({code,track,clients:states}));
   console.log(`PASS: Select Track shows ${cards.length} course previews; hosting ${track} puts host and invited guest on it.`);
 }catch(error){console.error(JSON.stringify({errors,states:await Promise.all([host,guest].map(page=>page.evaluate(()=>({page:document.querySelector('#frontend')?.dataset.page,state:window.atvTerrainStatus?.multiplayer?.state,notice:document.querySelector('#menu-notice')?.textContent})).catch(()=>null)))}));throw error;}finally{await browser.close();}

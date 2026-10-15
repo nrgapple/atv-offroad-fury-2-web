@@ -1,23 +1,20 @@
 // Actual touch regression: toolbar fingers remain independent of riding capture.
 // Requires original runtime content; never runs in private-free CI.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {mkdirSync} from 'node:fs';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const browser=await chromium.launch({headless:true});
-const base=process.env.ATV_TEST_URL || 'http://127.0.0.1:4317';
+import {assertNoErrors,base,launch,newPage,waitForSteps} from './browser/harness.mjs';
+const browser=await launch();
 const output=process.env.ATV_MOBILE_UTILITY_SCREENSHOTS;
 if(output)mkdirSync(output,{recursive:true});
 const errors=[], results=[];
 try {
  for(const [name,viewport] of [['portrait',{width:390,height:844}],['landscape',{width:844,height:390}]]) {
-  const page=await browser.newPage({viewport,hasTouch:true,isMobile:true});
-  page.on('pageerror',error=>errors.push(error.message));
+  const page=await newPage(browser,{viewport,hasTouch:true,isMobile:true},errors);
   await page.addInitScript(()=>localStorage.setItem('atv-mobile-one-handed','true'));
   await page.goto(new URL('/play.html?drive=1',base).href);
   await page.waitForFunction(()=>window.atvTerrainStatus?.simulation,null,{timeout:90000});
   const read=()=>page.evaluate(()=>window.atvTerrainStatus);
-  const steps=async(count=4)=>{const target=(await read()).simulationSteps+count;await page.waitForFunction(n=>window.atvTerrainStatus.simulationSteps>=n,target,{timeout:30000});};
+  const steps=(count=4)=>waitForSteps(page,count,{timeout:30000});
   const cdp=await page.context().newCDPSession(page);
   const touch=(type,points=[])=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:points.map(p=>({...p,radiusX:6,radiusY:6,force:1}))});
   const point=async(selector,id=2)=>{const box=await page.locator(selector).boundingBox();return {id,x:box.x+box.width/2,y:box.y+box.height/2};};
@@ -56,6 +53,7 @@ try {
   await touch('touchStart',[drive,pause]);await touch('touchEnd',[pause]);
   await page.waitForFunction(()=>document.querySelector('#frontend').dataset.page==='pause'&&!document.querySelector('#frontend').hidden);
   assert.equal(await page.evaluate(()=>window.utilityClicks.menu),1);
+  // Time-based on purpose: let any in-flight step land, then prove the paused frame stays frozen.
   await page.waitForTimeout(100);const paused=(await read()).frame;
   await page.waitForTimeout(200);assert.deepEqual((await read()).frame,paused,'Pause touch freezes the simulation');
   assert(await page.locator('#touch-controls').isHidden());
@@ -77,6 +75,6 @@ try {
   results.push({viewport:name,buttons:buttons.map(({name,rect})=>({name,width:rect.width,height:rect.height})),primaryAndHeldTouch:true,cancelAndDrag:true,pauseFreezes:true});
   await page.close();
  }
- assert.deepEqual(errors,[]);
+ assertNoErrors(errors);
  console.log(JSON.stringify({gate:'mobile-utilities',results,errors}));
 } finally { await browser.close(); }

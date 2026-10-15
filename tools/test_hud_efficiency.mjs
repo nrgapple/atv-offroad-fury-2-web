@@ -1,17 +1,16 @@
 // Exact original-vs-cropped HUD raster checks using the same runtime art/fonts.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {readFile,mkdir,writeFile} from 'node:fs/promises';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
+import {assertNoErrors,base,launch,newPage} from './browser/harness.mjs';
 const out=process.env.ATV_PERF_OUTPUT||'work/verification/performance';await mkdir(out,{recursive:true});
 const baseline=await readFile(`${out}/baseline/hud.js`,'utf8');
-const browser=await chromium.launch({headless:true,args:['--use-angle=metal']});
+const browser=await launch();
 const reports=[];
 try{
- const p=await browser.newPage({viewport:{width:390,height:844},deviceScaleFactor:3});const errors=[];p.on('pageerror',e=>errors.push(e.message));
+ const errors=[],p=await newPage(browser,{viewport:{width:390,height:844},deviceScaleFactor:3},errors);
  await p.route('**/game.js*',async route=>{const r=await route.fetch();await route.fulfill({response:r,body:(await r.text())+'\nwindow.__hudAudit = () => hud;'});});
  await p.route('**/audit-hud-baseline.js',r=>r.fulfill({contentType:'application/javascript',body:baseline}));
- await p.goto(`${process.env.ATV_TEST_URL||'http://127.0.0.1:4329'}/play.html?drive=1`);await p.waitForFunction(()=>window.atvTerrainStatus?.simulation,null,{timeout:90000});await p.evaluate(()=>window.dispatchEvent(new Event('blur')));
+ await p.goto(`${base}/play.html?drive=1`);await p.waitForFunction(()=>window.atvTerrainStatus?.simulation,null,{timeout:90000});await p.evaluate(()=>window.dispatchEvent(new Event('blur')));
  for(const viewport of [{width:390,height:844},{width:844,height:390},{width:360,height:568},{width:1280,height:720}]){
   await p.setViewportSize(viewport);
   const result=await p.evaluate(async()=>{
@@ -36,6 +35,6 @@ try{
   assert.equal(result.before.draws,result.unchanged.draws);assert.equal(result.paused.clears,result.hidden.clears);assert.equal(result.hidden.backingBytes,4);
   reports.push({viewport,...result});console.log(JSON.stringify(reports.at(-1)));
  }
- assert.deepEqual(errors,[]);await writeFile(`${out}/paired-hud.json`,JSON.stringify({scope:'Same host Chromium, exact original art/fonts, DPR3 raster comparison, four viewports, render-only HUD fixtures',reports,errors},null,2));
+ assertNoErrors(errors);await writeFile(`${out}/paired-hud.json`,JSON.stringify({scope:'Same host Chromium, exact original art/fonts, DPR3 raster comparison, four viewports, render-only HUD fixtures',reports,errors},null,2));
  console.log('PASS: exact HUD raster, speed ownership, preload fill/alpha, stunt color/scale/offset and inactive/unchanged suppression');
 }finally{await browser.close();}

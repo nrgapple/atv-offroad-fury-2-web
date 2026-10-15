@@ -1,22 +1,20 @@
 // Source-content host/public integration; excluded from private-free CI.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const browser=await chromium.launch({headless:true});
+import {assertNoErrors,base,button,launch,newPage} from './browser/harness.mjs';
+const browser=await launch();
 const errors=[];
 try{
- const page=await browser.newPage({viewport:{width:844,height:390},hasTouch:true});
- page.on('pageerror',e=>errors.push(e.message));
+ const page=await newPage(browser,{viewport:{width:844,height:390},hasTouch:true},errors);
  // Enable existing read-only render counters for the GPU delivery assertion.
  await page.addInitScript(()=>localStorage.setItem('atv.diagnostics.v1','performance'));
  const screen=async n=>{await page.waitForFunction(n=>document.querySelector('#frontend').dataset.page===n,n,{timeout:90000});};
- await page.goto(process.env.ATV_TEST_URL||'http://127.0.0.1:4317');await screen('title');
- await page.getByRole('button',{name:'Press START',exact:true}).click();await screen('main');
- await page.getByRole('button',{name:'Single Player',exact:true}).click();await screen('single');
- await page.getByRole('button',{name:'Race',exact:true}).click();await screen('race');
+ await page.goto(base);await screen('title');
+ await button(page,'Press START').click();await screen('main');
+ await button(page,'Single Player').click();await screen('single');
+ await button(page,'Race').click();await screen('race');
  assert.equal(await page.getByRole('button',{name:/Difficulty:/}).count(),0,'Only the recovered National pace is offered');
- await page.getByRole('button',{name:'CPU riders: 3',exact:true}).click();await page.getByRole('button',{name:'CPU riders: 4',exact:true}).waitFor();
- await page.getByRole('button',{name:'Start Race',exact:true}).click();
+ await button(page,'CPU riders: 3').click();await button(page,'CPU riders: 4').waitFor();
+ await button(page,'Start Race').click();
  await page.waitForFunction(()=>window.atvTerrainStatus.frame?.race?.phase==='racing',null,{timeout:120000});
  // Observe each published simulation frame, rather than requiring a brief
  // braking/coasting decision to coincide with a five-second telemetry sample.
@@ -58,8 +56,9 @@ try{
   assert(cpu.every(o=>Number.isFinite(o.physical.speed)&&o.physical.orientation.every(Number.isFinite)));
  }
  assert(rows.some(r=>r.draws>0),'Physical CPU matrices reach actual GPU draws');
- await page.getByRole('button',{name:'Pause',exact:true}).click();await screen('pause');
+ await button(page,'Pause').click();await screen('pause');
+ // Time-based on purpose: proves the paused race frame does not change.
  const before=await page.evaluate(()=>window.atvTerrainStatus.frame);await page.waitForTimeout(500);assert.deepEqual(await page.evaluate(()=>window.atvTerrainStatus.frame),before);
- assert.deepEqual(errors,[]);
+ assertNoErrors(errors);
  console.log(JSON.stringify({gate:'source-cpu-driving',decisions,elapsed:rows.at(-1).elapsed,samples:rows.map(r=>({elapsed:r.elapsed,draws:r.draws,cpus:r.cpus.map(o=>({origin:o.origin,distance:o.distance,speed:o.physical.speed,steer:o.physical.decisions.steer,brake:o.physical.decisions.brake,throttle:o.physical.decisions.throttle,error:o.physical.decisions.route_error}))})),errors}));
 }finally{await browser.close();}

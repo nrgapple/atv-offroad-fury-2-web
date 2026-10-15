@@ -1,23 +1,20 @@
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { captureMinimapTracking } from './minimap_tracking.mjs';
-const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4191';
+import { assertNoErrors, base, launch, newPage, nextFrames, waitForGame, waitForSteps } from './browser/harness.mjs';
 const out = process.env.ATV_MINIMAP_OUTPUT || 'work/verification/minimap-projection';
 await mkdir(out, { recursive: true });
-const browser = await chromium.launch({ headless: true }), results = [];
+const browser = await launch(), results = [];
 try {
   for (const [quadId, environment] of [[1, 'env02'], [26, 'env01']]) {
-    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
-    const errors = []; page.on('pageerror', e => errors.push(e.message));
+    const errors = [], page = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: true }, errors);
     await page.addInitScript(quadId => localStorage.setItem('atv-player-selection', JSON.stringify({ quadId, riderId: 0, freestyleEnvironment: 'env01' })), quadId);
     await captureMinimapTracking(page);
     await page.goto(`${base}/play.html?drive=1&environment=${environment}`);
-    await page.waitForFunction(() => window.atvTerrainStatus?.minimap.visible, null, { timeout: 90000 });
+    await waitForGame(page, { until: () => window.atvTerrainStatus.minimap.visible });
     await page.locator('#game').focus();
     await page.keyboard.down('KeyW'); await page.keyboard.down('KeyD');
-    await page.waitForTimeout(1800); await page.keyboard.up('KeyD'); await page.keyboard.up('KeyW');
+    await waitForSteps(page, 108); await page.keyboard.up('KeyD'); await page.keyboard.up('KeyW');
     await page.waitForFunction(() => window.minimapTracking.samples.length > 10);
     await page.screenshot({ path: `${out}/${quadId}-wider-gps.png` });
     await page.getByRole('button', { name: 'Pause', exact: true }).click();
@@ -27,19 +24,19 @@ try {
     await zoom.waitFor(); await zoom.focus(); await page.keyboard.press('Home');
     await page.waitForFunction(() => window.atvTerrainStatus.minimap.zoom === 25);
     await page.waitForFunction(() => !document.querySelector('.menu-transition'));
-    await page.waitForTimeout(100); // Let the next Rust menu frame paint the updated label.
+    await nextFrames(page, 3); // Let the next Rust menu frame paint the updated label.
     await page.screenshot({ path: `${out}/${quadId}-zoom-settings.png` });
     for (const name of ['Back', 'Back', 'Resume']) await page.getByRole('button', { name, exact: true }).click();
     await page.waitForFunction(() => window.minimapTracking.samples.some(s => s.zoom === 25));
     const movingTracking = await page.evaluate(() => window.minimapTracking);
     assert.deepEqual(movingTracking.errors, [], 'Moving actor GPS matches the rendered GPU pose and crop');
-    await page.reload(); await page.waitForFunction(() => window.atvTerrainStatus?.minimap.visible, null, { timeout: 90000 });
+    await page.reload(); await waitForGame(page, { until: () => window.atvTerrainStatus.minimap.visible });
     assert.equal(await zoom.count(), 0);
     assert.equal(await page.evaluate(() => window.atvTerrainStatus.minimap.zoom), 25);
     await page.waitForFunction(() => window.minimapTracking.samples.length > 3);
     const tracking = await page.evaluate(() => window.minimapTracking);
     assert.deepEqual(tracking.errors, [], 'GPS crop, heading and position agree with actual GPU actor transforms');
-    assert.deepEqual(errors, []);
+    assertNoErrors(errors);
     results.push({ quadId, environment, movingTracking, tracking }); await page.close();
   }
   await writeFile(`${out}/results.json`, JSON.stringify(results, null, 2));

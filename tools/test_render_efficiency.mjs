@@ -1,12 +1,11 @@
 // Paired authored renderer checks against an immutable main build. Original
 // content stays in private runtime storage; reports contain only hashes/metrics.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {mkdir,writeFile} from 'node:fs/promises';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const before=process.env.ATV_PERF_BASELINE||'http://127.0.0.1:4328',after=process.env.ATV_TEST_URL||'http://127.0.0.1:4329';
+import {assertNoErrors,base,launch,newPage,waitForGame} from './browser/harness.mjs';
+const before=process.env.ATV_PERF_BASELINE||'http://127.0.0.1:4328',after=base;
 const out=process.env.ATV_PERF_OUTPUT||'work/verification/performance';await mkdir(out,{recursive:true});
-const browser=await chromium.launch({headless:true,args:['--use-angle=metal']});
+const browser=await launch();
 const report={scope:'One host Mac, Chromium Metal; matched spawn patch/state/recovered follow camera; 4 serial alternating pairs of 80 frames after 20 warmups; render wall time includes gl.finish and excludes physics; phone viewport is not physical mobile hardware or battery measurement',maps:[],hud:[]};
 const hooks=`
 let auditSpawnCamera;
@@ -37,14 +36,14 @@ window.__renderAudit = {
  hudState(){return {frame:simFrame.hud,hud,frontend};}
 };`;
 async function create(base,env,viewport){
- const p=await browser.newPage({viewport,deviceScaleFactor:viewport.width===390?3:1,hasTouch:true});const errors=[];p.on('pageerror',e=>errors.push(e.message));
+ const errors=[],p=await newPage(browser,{viewport,deviceScaleFactor:viewport.width===390?3:1,hasTouch:true},errors);
  await p.addInitScript(()=>{
   window.__auditFreeze=true;window.__auditCounts={uploads:0,bytes:0,deletes:0,draws:0,triangles:0};
   for(const name of ['bufferData','bufferSubData','deleteBuffer','drawElements','drawElementsInstanced']){const original=WebGL2RenderingContext.prototype[name];WebGL2RenderingContext.prototype[name]=function(...args){const a=window.__auditCounts;if(name==='deleteBuffer')a.deletes++;else if(name.startsWith('buffer')){a.uploads++;a.bytes+=typeof args[1]==='number'&&name==='bufferData'?args[1]:(name==='bufferData'?args[1]:args[2]).byteLength;}else{a.draws=(a.draws??0)+1;a.triangles=(a.triangles??0)+args[1]/3*(name==='drawElementsInstanced'?args[4]:1);}return original.apply(this,args);};}
  });
  await p.route('**/game.js*',async route=>{const r=await route.fetch();let source=await r.text();source=source.replace('frame = requestAnimationFrame(render);','if (!window.__auditFreeze) frame = requestAnimationFrame(render);').replace('if (simReady && !simulationPaused()) {','if (!window.__auditFreeze && simReady && !simulationPaused()) {');await route.fulfill({response:r,body:source+hooks});});
  await p.route('**/render-support.js*',async route=>{const r=await route.fetch();await route.fulfill({response:r,body:(await r.text()).replace('export function outsideView(bounds, planes) {','export function outsideView(bounds, planes) { if (globalThis.__auditDisableCulling) return false;')});});
- await p.goto(`${base}/play.html?drive=1&environment=${env}`);try { await p.waitForFunction(()=>window.atvTerrainStatus?.ready&&window.__renderAudit,null,{timeout:90000}); } catch(e) { console.error(JSON.stringify({base,env,errors,status:await p.locator('#status').textContent(),state:await p.evaluate(()=>({ready:window.atvTerrainStatus?.ready,simulation:window.atvTerrainStatus?.simulation,hooks:Boolean(window.__renderAudit)}))})); throw e; }
+ await p.goto(`${base}/play.html?drive=1&environment=${env}`);try { await waitForGame(p,{until:()=>window.atvTerrainStatus.ready&&window.__renderAudit}); } catch(e) { console.error(JSON.stringify({base,env,errors,status:await p.locator('#status').textContent(),state:await p.evaluate(()=>({ready:window.atvTerrainStatus?.ready,simulation:window.atvTerrainStatus?.simulation,hooks:Boolean(window.__renderAudit)}))})); throw e; }
  return{p,errors};
 }
 try{
@@ -67,7 +66,7 @@ try{
    const order=i%2?[b,a]:[a,b],pair={};for(const side of order){await side.p.evaluate(()=>window.__auditCounts={uploads:0,bytes:0,deletes:0,draws:0,triangles:0});pair[side===a?'before':'after']=await side.p.evaluate(()=>window.__renderAudit.timing(80));}timings.push(pair);
   }
   if(env==='env01')await b.p.screenshot({path:`${out}/390-candidate.png`});
-  assert.deepEqual(a.errors,[]);assert.deepEqual(b.errors,[]);const row={env,viewport,pixels:rows,geometry,timings};report.maps.push(row);console.log(JSON.stringify({env,pixels:rows,geometry:geometry.map(r=>({center:r.center,beforeMs:r.before.ms,afterMs:r.after.ms,before:r.before.counts,after:r.after.counts})),timings}));await a.p.close();await b.p.close();await writeFile(`${out}/paired-render.json`,JSON.stringify(report,null,2));
+  assertNoErrors(a.errors);assertNoErrors(b.errors);const row={env,viewport,pixels:rows,geometry,timings};report.maps.push(row);console.log(JSON.stringify({env,pixels:rows,geometry:geometry.map(r=>({center:r.center,beforeMs:r.before.ms,afterMs:r.after.ms,before:r.before.counts,after:r.after.counts})),timings}));await a.p.close();await b.p.close();await writeFile(`${out}/paired-render.json`,JSON.stringify(report,null,2));
  }
  await writeFile(`${out}/paired-render.json`,JSON.stringify(report,null,2));
  console.log('PASS: matched renderer pixel output, original terrain GPU bytes and alternating fixed-state timings');

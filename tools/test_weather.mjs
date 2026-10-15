@@ -1,12 +1,11 @@
 // Original-resource rain gate. Optional reference URL verifies identical pixels.
 // Reference and candidate are separate authored builds; source assets stay in R2.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
-const{chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4173',reference=process.env.ATV_WEATHER_REFERENCE_URL;
-const browser=await chromium.launch({headless:true});
+import {assertNoErrors,base,launch,newPage,waitForGame} from './browser/harness.mjs';
+const reference=process.env.ATV_WEATHER_REFERENCE_URL;
+const browser=await launch();
 async function capture(url,mobile){
- const page=await browser.newPage({viewport:mobile?{width:390,height:844}:{width:960,height:540}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const errors=[],page=await newPage(browser,{viewport:mobile?{width:390,height:844}:{width:960,height:540}},errors);
  await page.addInitScript(()=>{
   const context=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(kind,options){return context.call(this,kind,kind==='webgl2'?{...options,preserveDrawingBuffer:true}:options);};
   const NativeWorker=Worker;
@@ -16,10 +15,10 @@ async function capture(url,mobile){
   };
  });
  await page.goto(`${url}/play.html?drive=1&environment=env04`);
- await page.waitForFunction(()=>window.atvTerrainStatus?.ready||document.querySelector('#status.error'),null,{timeout:120000});assert((await page.evaluate(()=>window.atvTerrainStatus)).ready,await page.locator('#status').textContent());
+ await waitForGame(page);
  await page.waitForFunction(()=>window.atvTerrainStatus.simulationSteps>=90,null,{timeout:120000});
  const result=await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>{const state=window.atvTerrainStatus,canvas=document.querySelector('#game'),gl=canvas.getContext('webgl2'),pixels=new Uint8Array(canvas.width*canvas.height*4);gl.readPixels(0,0,canvas.width,canvas.height,gl.RGBA,gl.UNSIGNED_BYTE,pixels);resolve({state,pixels:Array.from(pixels),error:gl.getError()});})));
- assert.equal(result.error,0);assert.equal(result.state.glError,0);assert.deepEqual(errors,[]);await page.close();return result;
+ assert.equal(result.error,0);assert.equal(result.state.glError,0);assertNoErrors(errors);await page.close();return result;
 }
 try{
  for(const mobile of [false,true]){

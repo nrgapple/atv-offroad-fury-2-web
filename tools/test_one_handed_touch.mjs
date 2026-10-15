@@ -1,14 +1,13 @@
 // Real browser menu/CDP touch events and original Caribou ramp; no state/force injection.
 import assert from 'node:assert/strict';
 import { captureSimulation } from './capture_simulation.mjs';
-import { createRequire } from 'node:module';
-const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const browser = await chromium.launch({ headless: true });
+import { assertNoErrors, base, launch, newPage } from './browser/harness.mjs';
+const browser = await launch();
 try {
   // Storage denial must retain the default without affecting the saved-setting route.
   const denied = await browser.newPage();
   await denied.addInitScript(() => Object.defineProperty(window, 'localStorage', { get() { throw new Error('storage unavailable'); } }));
-  await denied.goto(new URL('/', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173').href);
+  await denied.goto(new URL('/', base).href);
   assert.equal(await denied.evaluate(async () => {
     const { mountTouchControls } = await import('/touch.js');
     const surface = document.createElement('canvas'); document.body.append(surface);
@@ -16,12 +15,12 @@ try {
     const oneHanded = controls.oneHanded; controls.destroy(); return oneHanded;
   }), true, 'Unavailable storage uses one finger');
   await denied.close();
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const errors=[];
+  const page = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }, errors);
   // This baseline trajectory uses the original 100% setting; the slider gate covers the gentler default.
   await page.addInitScript(() => localStorage.setItem('atv-mobile-steering-sensitivity', '100'));
   await captureSimulation(page, 'landingFrames');
-  const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  const url=new URL('/play.html?drive=1&environment=env01',process.env.ATV_TEST_URL || 'http://127.0.0.1:4173');
+  const url=new URL('/play.html?drive=1&environment=env01',base);
   await page.goto(url.href);
   await page.waitForFunction(()=>window.atvTerrainStatus?.simulation,null,{timeout:90000});
   await page.locator('#menu').click();
@@ -115,6 +114,6 @@ try {
   if(process.env.ATV_ONE_HAND_LANDING_SCREENSHOT)await page.screenshot({path:process.env.ATV_ONE_HAND_LANDING_SCREENSHOT});
   await touch('touchEnd');
   await page.waitForFunction(()=>{const i=window.atvTerrainStatus.input;return i?.throttle===0 && i.brake===0 && !i.reverse && !i.touch_drive.held;});
-  assert.deepEqual(errors,[]);
+  assertNoErrors(errors);
   console.log('PASS: one-finger default, storage-denied fallback, saved two/one-finger settings, compact cue/vector, touch-to-throttle/brace, cardinal/diagonal steering and lean with proportional direction vectors with no brake/reverse/tricks, release coasts, and continuous held throttle/brace through air and landing. Physical phone hardware unverified.');
 } finally {await browser.close();}

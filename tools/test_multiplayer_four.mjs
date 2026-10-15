@@ -5,30 +5,26 @@
 //   ATV_BROWSER_GPU=metal ATV_TEST_URL=https://atv-offroad-fury-2.champtoday.workers.dev node tools/test_multiplayer_four.mjs
 // Set PLAYWRIGHT_MODULE to an installed Playwright package path when needed.
 // Optional ATV_EXPECTED_COMMIT must equal the full /deployment.json commit SHA.
-// URL defaults to the host-only integrated Worker on port 4186. Metal flags are
-// opt-in for macOS; measurements cover four automated contexts sharing one host,
+// URL defaults to the harness base (tools/browser/harness.mjs), which also picks the
+// WebGL backend (ATV_BROWSER_GPU); measurements cover four automated contexts sharing one host,
 // synthetic focus, and possible background throttling, not independent devices.
 // Reports/screenshots remain under ignored private/reports. Room creation and
 // joining exercise the normal public API; this test never changes hosted assets.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {dirname,join} from 'node:path';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
+import {base,button,gameState as state,gpuArgs,launch} from './browser/harness.mjs';
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
-const base=(process.env.ATV_TEST_URL||'http://127.0.0.1:4186').replace(/\/$/,'');
 const reachability=['https://furyremastered.com','https://atv-offroad-fury-2.champtoday.workers.dev'].includes(new URL(base).origin)?'public HTTPS':['localhost','127.0.0.1','[::1]'].includes(new URL(base).hostname)?'host-only':'caller-provided URL';
-const gpuFlags=process.env.ATV_BROWSER_GPU==='metal'?['--enable-gpu','--use-angle=metal']:[];
+const gpuFlags=gpuArgs();
 const output=process.env.ATV_MP_FOUR_REPORT||join(root,'private/reports/multiplayer-four-browser.json');
 const image=process.env.ATV_MP_FOUR_SCREENSHOT||join(root,'private/reports/devlog-images/multiplayer-four-browser.png');
 const report={started:new Date().toISOString(),base,reachability,expectedCommit:process.env.ATV_EXPECTED_COMMIT||null,conditions:{browser:'headless Chromium',gpuFlags,viewport:[1280,896],clients:4,documentHasFocusOverride:true,diagnostics:'performance',contention:'Other host workload is not measured; compare concurrent probe logs before attributing timing outliers.',timingScope:'Four automated clients on one Mac sharing CPU/GPU; not four separate player devices.'},models:[{quad:1,rider:0},{quad:14,rider:1},{quad:26,rider:0},{quad:2,rider:1}],errors:[],failedResponses:[],stages:[],movement:[],samples:[],limitations:['Physical phones/controllers, geographically separated machines and Internet latency diversity are not tested.','Focus events are dispatched before gathering each client so synthetic/background Chromium focus does not prevent normal app audio activation. Background-tab throttling remains possible.','Per-peer GL draw matching is disabled before the timing window; game diagnostics are enabled.']};
 const save=()=>writeFile(output,JSON.stringify(report,null,2)+'\n');
 await mkdir(join(root,'private/reports/devlog-images'),{recursive:true});
-const browser=await chromium.launch({headless:true,args:report.conditions.gpuFlags});
+const browser=await launch();
 const pages=await Promise.all(report.models.map(()=>browser.newPage({viewport:{width:1280,height:896},hasTouch:true})));
-const button=(page,name)=>page.getByRole('button',{name,exact:true});
-const state=page=>page.evaluate(()=>window.atvTerrainStatus);
 for(let index=0;index<pages.length;index++) {
  const page=pages[index];page.on('pageerror',error=>report.errors.push({client:index,error:error.message}));page.on('response',response=>{if(response.status()>=400)report.failedResponses.push({client:index,status:response.status(),url:response.url()});});
  await page.addInitScript(()=>{
@@ -110,6 +106,7 @@ try {
  await pages[0].screenshot({path:image});report.screenshot=image;
  // At least ten seconds without draw-matching instrumentation so 120-frame
  // rolling diagnostics can refresh; sample all clients without foreground swaps.
+ // Time-based on purpose: wall-clock timing samples of the rolling performance diagnostics.
  for(let tick=0;tick<12;tick++) {await pages[0].waitForTimeout(1000);const values=await Promise.all(pages.map(state));report.samples.push({at:new Date().toISOString(),clients:values.map(summary)});if(tick%4===3){await save();console.log('TIMING',tick,JSON.stringify(values.map(s=>({fps:s.performance.fps,p95:s.performance.p95Ms,cpu:s.performance.renderCpuMs,worker:s.physicsRoundTripMs,rtt:s.multiplayer.state.rttMs}))))}}
  report.final=report.samples.at(-1).clients;
  assert.deepEqual(report.errors,[]);assert.deepEqual(report.failedResponses,[]);

@@ -1,14 +1,12 @@
 // Opt-in original-content regression. Persisted lifecycle events are synthetic;
 // this proves recovery semantics, not that a browser actually used BFCache.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { writeFile } from 'node:fs/promises';
-const engines = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
+import { assertNoErrors, base, button, launch, newPage, waitForScreen } from './browser/harness.mjs';
 const engine = process.env.ATV_TEST_ENGINE || 'webkit';
-const browser = await engines[engine].launch({ headless:true });
+const browser = await launch({ engine });
 try {
-  const page = await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
-  const errors=[]; page.on('pageerror',error=>errors.push(error.message));
+  const errors=[]; const page = await newPage(browser,{viewport:{width:390,height:844},hasTouch:true,isMobile:true},errors);
   await page.addInitScript(() => {
     window.workerLifecycle={created:0,terminated:0};
     const NativeWorker=Worker;
@@ -17,7 +15,7 @@ try {
       terminate(){window.workerLifecycle.terminated++;return super.terminate();}
     };
   });
-  await page.goto(new URL('/play.html?drive=1',process.env.ATV_TEST_URL || 'http://127.0.0.1:4173').href);
+  await page.goto(new URL('/play.html?drive=1',base).href);
   await page.waitForFunction(()=>window.atvTerrainStatus?.simulation,null,{timeout:90000});
   await page.locator('#game').tap({position:{x:60,y:560}});
   await page.keyboard.down('KeyW');
@@ -25,9 +23,9 @@ try {
   const before=await page.evaluate(()=>window.atvTerrainStatus);
   await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true})));
   await page.keyboard.up('KeyW');
-  await page.waitForTimeout(300); // An already-submitted worker batch may finish.
+  await page.waitForTimeout(300); // Time-based on purpose: an already-submitted worker batch may finish.
   const suspended=await page.evaluate(()=>window.atvTerrainStatus.simulationSteps);
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(300); // Time-based on purpose: proves suspended steps do not advance over wall-clock time.
   assert.equal(await page.evaluate(()=>window.atvTerrainStatus.simulationSteps),suspended);
   await page.evaluate(()=>{
     window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true}));
@@ -43,10 +41,10 @@ try {
   assert.deepEqual(await page.evaluate(()=>window.workerLifecycle),{created:1,terminated:0});
   assert.equal(after.simulation,true); assert.equal(after.glError,0); assert(!after.audioError);
   await page.keyboard.press('Escape');
-  await page.waitForFunction(()=>document.querySelector('#frontend').dataset.page==='pause');
-  await page.getByRole('button',{name:'Resume',exact:true}).tap();
+  await waitForScreen(page,'pause');
+  await button(page,'Resume').tap();
   await page.waitForFunction(()=>document.querySelector('#frontend').hidden);
-  assert.deepEqual(errors,[]);
+  assertNoErrors(errors);
   if(process.env.ATV_LIFECYCLE_TRACE) await writeFile(process.env.ATV_LIFECYCLE_TRACE,JSON.stringify({method:'Synthetic persisted PageTransitionEvents; not actual BFCache navigation',engine,before,suspended,after,errors},null,2));
   if(process.env.ATV_LIFECYCLE_SCREENSHOT) await page.screenshot({path:process.env.ATV_LIFECYCLE_SCREENSHOT});
   console.log(`PASS ${engine}: retained Rust worker resumes from airborne persisted-page suspension, stale input clears, drive and pause/resume remain usable. Synthetic lifecycle regression only.`);

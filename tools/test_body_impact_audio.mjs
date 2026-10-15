@@ -1,16 +1,15 @@
 // Original BodyImpact scheduling and PCM from a real touch-driven rider wreck.
 // No collision, sound event, sample or physics state is injected.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { captureSimulation } from './capture_simulation.mjs';
-const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
+import { assertNoErrors, base, button, launch, newPage } from './browser/harness.mjs';
 await mkdir('work/verification', { recursive: true });
-const browser = await chromium.launch({ headless: true });
+const browser = await launch();
 let page;
 try {
-  page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
-  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  const errors = [];
+  page = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }, errors);
   await page.addInitScript(() => {
     localStorage.setItem('atv-mobile-one-handed', 'false');
     window.bodyAudioEvents = []; window.bodyAudioPeaks = [];
@@ -52,7 +51,7 @@ try {
     };
   });
   await captureSimulation(page, 'bodyFrames');
-  const url = new URL('/play.html', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173');
+  const url = new URL('/play.html', base);
   url.searchParams.set('drive', '1'); url.searchParams.set('environment', 'env01');
   await page.goto(url.href);
   await page.waitForFunction(() => window.atvTerrainStatus?.simulation, null, { timeout: 90000 });
@@ -78,11 +77,12 @@ try {
   const recovered = await page.evaluate(() => window.atvTerrainStatus.frame);
   assert.equal(recovered.wreck.phase, 'Riding');
   await page.waitForFunction(() => window.atvTerrainStatus.audio.effects.voices === 0, null, { timeout: 10000, polling: 'raf' });
-  await page.keyboard.press('Escape'); await page.getByRole('button', { name: 'Resume', exact: true }).waitFor();
+  await page.keyboard.press('Escape'); await button(page, 'Resume').waitFor();
   await page.waitForFunction(() => window.atvTerrainStatus.audio.context === 'suspended');
   const paused = await page.evaluate(() => window.bodyAudioContext.currentTime);
+  // Time-based on purpose: proves the suspended audio clock does not advance while paused.
   await page.waitForTimeout(250); assert.equal(await page.evaluate(() => window.bodyAudioContext.currentTime), paused);
-  await page.getByRole('button', { name: 'Resume', exact: true }).click();
+  await button(page, 'Resume').click();
   await page.waitForFunction(time => window.bodyAudioContext.currentTime > time, paused);
   const result = await page.evaluate(() => ({ audio: window.atvTerrainStatus.audio, events: window.bodyAudioEvents,
     peaks: window.bodyAudioPeaks, frames: window.bodyFrames, glError: window.atvTerrainStatus.glError, audioError: window.atvTerrainStatus.audioError }));
@@ -99,7 +99,7 @@ try {
   assert(detached.length > 0);
   assert(detached.every(({ frame }) => frame.rider_audio_position.every((value, i) => value === detached[0].frame.rider_audio_position[i])),
     'Original actor audio cache holds its last attached location during detached motion');
-  assert.equal(result.audio.effects.voices, 0); assert.equal(result.glError, 0); assert.equal(result.audioError, undefined); assert.deepEqual(errors, []);
+  assert.equal(result.audio.effects.voices, 0); assert.equal(result.glError, 0); assert.equal(result.audioError, undefined); assertNoErrors(errors);
   console.log(JSON.stringify({ samples: result.audio.effects.samples, starts: result.audio.effects.starts,
     selections: result.audio.effects.selections, peaks: result.peaks, triggers: result.events.filter(event => event.result.event) }));
   console.log('PASS: real touch wreck produces original BodyImpact PCM from native sampled contact deltas, bounded nonoverlapping playback, cached rider position, recovery and pause/resume.');

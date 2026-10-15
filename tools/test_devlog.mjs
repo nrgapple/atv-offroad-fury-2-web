@@ -2,20 +2,11 @@
 // Exercise the real development-log feature board at a host or public URL.
 // This check does not load the game runtime or any original game data.
 import assert from 'node:assert/strict';
-import process from 'node:process';
-import { createRequire } from 'node:module';
+import { assertNoErrors, base, launch, watchErrors } from './browser/harness.mjs';
 
-const base = process.env.ATV_TEST_URL;
-if (!base) throw new Error('Set ATV_TEST_URL to the host or public site base URL.');
-const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const browser = await chromium.launch({ headless: true });
+const browser = await launch();
 const errors = [];
-const observeErrors = page => {
-  page.on('pageerror', error => errors.push(error.message));
-  page.on('console', message => {
-    if (message.type() === 'error') errors.push(message.text());
-  });
-};
+const observeErrors = page => watchErrors(page, errors, { console: true });
 
 try {
   const desktop = await browser.newPage({ viewport: { width: 1440, height: 1080 } });
@@ -91,7 +82,7 @@ try {
     assert.equal(await card.getAttribute('data-status'), 'PARTIAL');
   }
 
-  assert.deepEqual(errors, [], `browser errors: ${errors.join('; ')}`);
+  assertNoErrors(errors);
   console.log(JSON.stringify({ checkpoints: metadata.entries.length, latestRecorded: latestRecorded.id, featureAreas: featureCount, trainStatus: trainFeature.status, trainScope: trainFeature.scope, desktopFilters: 'passed', expandableEvidence: 'passed', mobileFilters: 'passed', mobile: dimensions, errors }));
 } finally {
   await browser.close();

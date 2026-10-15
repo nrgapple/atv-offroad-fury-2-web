@@ -2,17 +2,14 @@
 // Natural Caribou hop: no injected vehicle state, poses, velocity or forces.
 import assert from 'node:assert/strict';
 import {captureSimulation} from './capture_simulation.mjs';
-import {createRequire} from 'node:module';
 import {mkdirSync,writeFileSync} from 'node:fs';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const browser=await chromium.launch({headless:true});
-const base=process.env.ATV_TEST_URL || 'http://127.0.0.1:4327';
+import {assertNoErrors,base,launch,newPage,waitForGame,waitForSteps} from './browser/harness.mjs';
+const browser=await launch();
 const output=process.env.ATV_ENHANCED_MOBILE_OUTPUT || 'work/verification/enhanced-mobile';
 mkdirSync(output,{recursive:true});
 const errors=[],results=[];
 async function setup(viewport) {
- const page=await browser.newPage({viewport,hasTouch:true,isMobile:true});
- page.on('pageerror',e=>errors.push(e.message));
+ const page=await newPage(browser,{viewport,hasTouch:true,isMobile:true},errors);
  await page.addInitScript(()=>{
   localStorage.setItem('atv-mobile-one-handed','true');
   window.rideFrames=[];window.orbitRequests=[];
@@ -21,13 +18,13 @@ async function setup(viewport) {
  });
  await captureSimulation(page,'rideFrames');
  await page.goto(new URL('/play.html?drive=1',base).href);
- await page.waitForFunction(()=>window.atvTerrainStatus?.simulation&&!document.querySelector('#touch-controls').hidden,null,{timeout:90000});
+ await waitForGame(page,{until:()=>window.atvTerrainStatus.simulation&&!document.querySelector('#touch-controls').hidden});
  // The original reposition/spawn gate blocks stunts for two simulated seconds.
  // A fast cached startup must not spend the release pulse inside that gate.
  await page.waitForFunction(()=>window.atvTerrainStatus.simulationSteps>=130);
  const cdp=await page.context().newCDPSession(page);
  const touch=(type,points=[])=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:points.map(p=>({radiusX:6,radiusY:6,force:1,...p}))});
- const steps=async()=>{const n=await page.evaluate(()=>window.atvTerrainStatus.simulationSteps);await page.waitForFunction(n=>window.atvTerrainStatus.simulationSteps>=n+4,n);};
+ const steps=()=>waitForSteps(page,4);
  return {page,touch,steps};
 }
 try {
@@ -80,5 +77,5 @@ try {
   results.push({gesture,stunt:stunt.frame.stunt.name,primaryDriveAndBrace:true,previewWithoutStunt:true,releaseStartsStunt:true,independentRelease:true});
   await touch('touchCancel');await page.close();
  }
- assert.deepEqual(errors,[]);writeFileSync(`${output}/report.json`,JSON.stringify({results,errors},null,2));console.log(JSON.stringify({gate:'enhanced-mobile',results,errors}));
+ assertNoErrors(errors);writeFileSync(`${output}/report.json`,JSON.stringify({results,errors},null,2));console.log(JSON.stringify({gate:'enhanced-mobile',results,errors}));
 } finally {await browser.close();}

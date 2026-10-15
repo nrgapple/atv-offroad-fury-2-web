@@ -1,15 +1,14 @@
 // Opt-in original Caribou terrain + Rust/WASM positive preload check.
 // Drives only through actual Chromium touch events; no physics/state injection.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { writeFile } from 'node:fs/promises';
-const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const browser = await chromium.launch({ headless: true });
+import { assertNoErrors, base, launch, newPage } from './browser/harness.mjs';
+const browser = await launch();
 try {
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const errors = [];
+  const page = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }, errors);
   await page.addInitScript(() => localStorage.setItem('atv-mobile-one-handed', 'false')); // Explicit optional two-finger mode.
-  const errors = []; page.on('pageerror', e => errors.push(e.message));
-  const url = new URL('/play.html', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173');
+  const url = new URL('/play.html', base);
   url.searchParams.set('drive', '1'); url.searchParams.set('environment', 'env01');
   await page.goto(url.href);
   await page.waitForFunction(() => window.atvTerrainStatus?.simulation && !document.querySelector('#touch-controls').hidden, null, { timeout: 90000 });
@@ -71,7 +70,7 @@ try {
   assert(active.some(s => s.frame.linear_velocity[1] > 0));
   assert(active.some(s => !s.frame.grounded.some(Boolean)));
   assert(active.every(s => s.input.throttle === 0), 'Right release stops throttle throughout active preload');
-  assert.deepEqual(errors, []);
+  assertNoErrors(errors);
   if (process.env.ATV_TOUCH_RAMP_TRACE) await writeFile(process.env.ATV_TOUCH_RAMP_TRACE, JSON.stringify({ armed, pullbackStep, landed, frames, errors }, null, 2));
   console.log(`PASS: actual Caribou ramp, native arming and active preload, airborne contacts; upward speed at arm ${armed.linear_velocity[1].toFixed(2)} ft/s, peak active ${Math.max(...active.map(s => s.frame.linear_velocity[1])).toFixed(2)} ft/s. No injected state/forces.`);
 } finally { await browser.close(); }

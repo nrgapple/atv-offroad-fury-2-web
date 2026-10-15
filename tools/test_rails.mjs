@@ -1,14 +1,11 @@
 // Inspection camera and fixtures are derived from the loaded original scene.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4173';
+import { assertNoErrors, base, launch, newPage, waitForGame, waitForSteps } from './browser/harness.mjs';
 const baseline = process.env.ATV_RAIL_BASELINE === '1';
-const browser = await chromium.launch({ headless: true });
+const browser = await launch();
 try {
   for (const mobile of [false, true]) {
-    const page = await browser.newPage({ viewport: mobile ? { width: 390, height: 844 } : { width: 960, height: 600 } });
-    const errors = []; page.on('pageerror', e => errors.push(e.message));
+    const errors = [], page = await newPage(browser, { viewport: mobile ? { width: 390, height: 844 } : { width: 960, height: 600 } }, errors);
     await page.addInitScript(() => {
       const NativeWorker = Worker;
       window.Worker = class extends NativeWorker {
@@ -71,13 +68,12 @@ try {
     });
     try {
       await page.goto(`${base}/play.html?drive=1&environment=env08`);
-      await page.waitForFunction(() => window.atvTerrainStatus?.ready || document.querySelector('#status.error'), null, { timeout:120000 });
-      assert((await page.evaluate(() => window.atvTerrainStatus)).ready, await page.locator('#status').textContent());
+      await waitForGame(page);
       assert.equal(await page.evaluate(() => window.railModels.length),12);
       const rows=[];
       for (let i=0;i<12;i++) {
         await page.evaluate(index => { window.railIndex=index; document.querySelector('#reset').click(); },i);
-        await page.waitForTimeout(350);
+        await waitForSteps(page, 21);
         await page.evaluate(() => { window.railEvidence=null; window.captureRail=true; });
         await page.waitForFunction(() => window.railEvidence, null, { timeout:15000 });
         const row=await page.evaluate(() => window.railEvidence); rows.push(row);
@@ -85,7 +81,7 @@ try {
         if (!baseline) assert(row.changed>20,`curve ${i} did not change sufficient pixels: ${row.changed}`);
         if (i===0 && process.env.ATV_RAIL_SCREENSHOTS) await page.screenshot({path:`${process.env.ATV_RAIL_SCREENSHOTS}${mobile?'-mobile':''}.png`});
       }
-      assert.deepEqual(errors,[]); console.log(JSON.stringify({mobile,baseline,curves:rows}));
+      assertNoErrors(errors); console.log(JSON.stringify({mobile,baseline,curves:rows}));
     } finally { await page.close(); }
   }
   console.log(baseline?'Baseline rail inspection recorded.':'PASS: all twelve original curved rail placements change pixels at desktop and390px with no JS/GL errors. Inspection views are separate from the gameplay camera.');

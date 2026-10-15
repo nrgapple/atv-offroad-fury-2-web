@@ -1,14 +1,12 @@
 // Ordinary source-course driving; no injected vehicle states or forces.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-const {chromium} = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const browser = await chromium.launch({headless:true,args:process.env.ATV_BROWSER_GPU==='metal'?['--use-angle=metal']:[]});
+import { assertNoErrors, base, holdKey, launch, newPage, waitForGame, waitForSteps } from './browser/harness.mjs';
+const browser = await launch();
 try {
  for (const viewport of [{width:390,height:844},{width:1280,height:720}]) {
-  const page = await browser.newPage({viewport}), errors=[];
-  page.on('pageerror',e=>errors.push(e.message));
-  await page.goto(`${process.env.ATV_TEST_URL || 'http://127.0.0.1:4349'}/play.html?drive=1&environment=env01`);
-  await page.waitForFunction(()=>window.atvTerrainStatus?.simulationSteps>60,null,{timeout:120000});
+  const errors=[], page = await newPage(browser,{viewport},errors);
+  await page.goto(`${base}/play.html?drive=1&environment=env01`);
+  await waitForGame(page,{until:()=>window.atvTerrainStatus.simulationSteps>60});
   await page.evaluate(()=>{
    window.hillTrace=[];
    let last=performance.now();
@@ -26,8 +24,8 @@ try {
   assert(Math.abs(hill.camera[4]-native-hill.cameraPresentation.pitchLift-hill.cameraPresentation.uphillLift)<1e-6);
   assert(hill.cameraPresentation.uphillDistanceScale>1.09,'climb pulls back');
   if(process.env.ATV_HILL_SCREENSHOT)await page.screenshot({path:process.env.ATV_HILL_SCREENSHOT.replace('.png',`-${viewport.width}.png`)});
-  await page.keyboard.down('KeyE'); await page.waitForTimeout(2500); await page.keyboard.up('KeyE');
-  await page.waitForTimeout(1500);
+  await holdKey(page,'KeyE',150);
+  await waitForSteps(page,90);
   const trace=await page.evaluate(()=>window.hillTrace);
   let checked=0,maxStep=0;
   for(let i=1;i<trace.length;i++) {
@@ -45,7 +43,7 @@ try {
   await page.keyboard.up('KeyW');
   await page.getByRole('button',{name:'Camera',exact:true}).click();
   await page.waitForFunction(()=>window.atvTerrainStatus.followCamera.preset!==0&&window.atvTerrainStatus.cameraPresentation.requestedHillOrbit===0&&window.atvTerrainStatus.cameraPresentation.uphillDistanceScale===1);
-  assert.deepEqual(errors,[]);
+  assertNoErrors(errors);
   console.log(JSON.stringify({viewport,orbit:hill.cameraPresentation.requestedHillOrbit,pullback:hill.cameraPresentation.uphillDistanceScale,position:hill.frame.origin,grounded:hill.frame.grounded,nativePitch:native,renderedPitch:hill.camera[4],samples:trace.length,checked,maxOrbitStep:maxStep}));
   await page.close();
  }

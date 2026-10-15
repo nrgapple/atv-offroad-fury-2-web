@@ -1,17 +1,14 @@
 // Source-coordinate regression: observe real GPU projection and real input/body
 // turns. No source coordinates, textures or synthetic physics fixtures in Git.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {mkdir,writeFile} from 'node:fs/promises';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4493';
+import {assertNoErrors,base,button,launch,newPage,waitForSteps} from './browser/harness.mjs';
 const output=process.env.ATV_ORIENTATION_OUTPUT||'work/verification/world-orientation';
 await mkdir(output,{recursive:true});
-const browser=await chromium.launch({headless:true,args:['--use-angle=metal']});
+const browser=await launch();
 const report={turns:[],errors:[]};
 try {
- const page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true});
- page.on('pageerror',e=>report.errors.push(e.message));
+ const page=await newPage(browser,{viewport:{width:390,height:844},hasTouch:true},report.errors);
  await page.addInitScript(()=>{
   const p=WebGL2RenderingContext.prototype,names=new WeakMap(),get=p.getUniformLocation,upload=p.uniformMatrix4fv;
   window.orientationProbe={uploads:0,errors:[]};
@@ -36,8 +33,8 @@ try {
  const cdp=await page.context().newCDPSession(page);
  const finger=(x)=>({id:1,x,y:620,radiusX:5,radiusY:5,force:1});
  for(const method of ['keyboard','controller','touch'])for(const direction of [-1,1]) {
-  await page.getByRole('button',{name:'Pause',exact:true}).click();
-  await page.getByRole('button',{name:'Reset ATV',exact:true}).click();
+  await button(page,'Pause').click();
+  await button(page,'Reset ATV').click();
   await page.waitForFunction(()=>document.querySelector('#frontend').hidden&&window.atvTerrainStatus.simulation&&Math.abs(window.atvTerrainStatus.frame.speed)<1);
   await page.locator('#game').focus();
   if(method==='keyboard')await page.keyboard.down('KeyW');
@@ -52,7 +49,7 @@ try {
   else if(method==='controller')await page.evaluate(d=>window.turnPad.axes[0]=d*.65,direction);
   else await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[finger(180+direction*50)]});
   await page.waitForFunction(d=>window.atvTerrainStatus.input.steer*d>.4,direction);
-  await page.waitForTimeout(450);
+  await waitForSteps(page,27);
   const after=await state(),angle=heading(after.frame.orientation)-yaw;
   const turn=Math.atan2(Math.sin(angle),Math.cos(angle));
   const side=after.frame.origin.reduce((sum,v,i)=>sum+(v-before.frame.origin[i])*right[i],0);
@@ -66,6 +63,6 @@ try {
  }
  report.projection=await page.evaluate(()=>window.orientationProbe);
  assert(report.projection.uploads>10);assert.deepEqual(report.projection.errors,[]);
- assert.deepEqual(report.errors,[]);
+ assertNoErrors(report.errors);
  console.log('PASS: original +X projects screen-right; keyboard/controller/touch turn left and right in the actual quad simulation.');
 } finally {await writeFile(`${output}/results.json`,JSON.stringify(report,null,2));await browser.close();}

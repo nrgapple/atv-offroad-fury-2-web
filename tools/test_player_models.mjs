@@ -10,11 +10,9 @@
 // ATV_MODEL_SCREEN_PREFIX. Public URLs require an approved deployed checkpoint.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {createRequire} from 'node:module';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const base=process.env.ATV_TEST_URL || 'http://127.0.0.1:4186';
+import {base,button as roleButton,launch,waitForSteps} from './browser/harness.mjs';
 const root=fileURLToPath(new URL('..',import.meta.url));
 const privateReports=path.join(root,'private/reports');
 const output=path.resolve(root,process.env.ATV_MODEL_REPORT || 'private/reports/player-models-browser.json');
@@ -29,7 +27,7 @@ const targetUrl=new URL(base);
 const reachability=targetUrl.origin==='https://atv-offroad-fury-2.champtoday.workers.dev'?'public HTTPS':(targetUrl.hostname==='localhost'||targetUrl.hostname==='[::1]'||/^127\./.test(targetUrl.hostname))?'host-only':'caller-provided URL';
 const report={started:new Date().toISOString(),base,reachability,models:[],errors:[],requests:[],limitations:['Desktop automated Chromium only; physical controllers and phones unverified.','Rendering observes actual WebGL pose draws; does not establish original PS2 fidelity.']};
 const save=()=>fs.writeFileSync(output,JSON.stringify(report,null,2)+'\n');
-const browser=await chromium.launch({headless:true,args:['--enable-gpu','--use-angle=metal','--autoplay-policy=no-user-gesture-required']});
+const browser=await launch({args:['--autoplay-policy=no-user-gesture-required']});
 const page=await browser.newPage({viewport:{width:1280,height:896}});
 page.on('pageerror',e=>report.errors.push({type:'pageerror',message:e.message}));
 page.on('console',m=>{if(m.type()==='error')report.errors.push({type:'console',message:m.text()});});
@@ -56,7 +54,7 @@ await page.addInitScript(()=>{
  };
  proto.drawElements=function(...args){if(window.__modelProbe.armed&&enabled&&kind)window.__modelProbe.draws[kind]++;return draw.apply(this,args);};
 });
-const button=(name)=>page.getByRole('button',{name,exact:true});
+const button=(name)=>roleButton(page,name);
 const read=()=>page.evaluate(()=>{
  const s=window.atvTerrainStatus;
  function finite(v){return typeof v==='number'?Number.isFinite(v):v===null||typeof v!=='object'?true:Object.values(v).every(finite);}
@@ -75,7 +73,7 @@ try{
    const garageText=await page.locator('#frontend').innerText();
    await button('Done').click();await button('Freestyle').click();await button('Ride Caribou Peak').click();
    await page.waitForFunction(({id,rider})=>document.querySelector('#frontend').hidden&&window.atvTerrainStatus?.simulation&&window.atvTerrainStatus?.playerModel?.quad_id===id&&window.atvTerrainStatus?.playerModel?.rider_id===rider,{id,rider},{timeout:120000});
-   await page.waitForTimeout(350);
+   await waitForSteps(page,21);
    const before=await read();
    assert.equal(before.model.quad,`/QUAD/BIKES${id<=13?'A':'B'}/ATV${String(id).padStart(2,'0')}.RES`);
    assert.equal(before.model.quad_materials,before.model.quad.replace('.RES','_MT.RES'));
@@ -88,7 +86,7 @@ try{
    const expected=JSON.parse(fs.readFileSync(path.join(privateReports,`engine-audio-configs/${String(id).padStart(2,'0')}.json`)));
    assert.equal(engine.config.engine_set,expected.engine_set);assert.equal(engine.config.stroke,expected.stroke);assert.deepEqual(engine.config.samples,expected.samples);
    await page.evaluate(()=>{window.__modelProbe.draws={quad:0,rider:0};window.__modelProbe.armed=true;});
-   await page.keyboard.down('w');await page.waitForTimeout(1400);
+   await page.keyboard.down('w');await waitForSteps(page,84);
    const driven=await read();await page.keyboard.up('w');
    await page.evaluate(()=>window.__modelProbe.armed=false);
    const horizontal=Math.hypot(driven.frame.origin[0]-before.frame.origin[0],driven.frame.origin[2]-before.frame.origin[2]);

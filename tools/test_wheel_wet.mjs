@@ -1,13 +1,11 @@
 // Runtime surface-effect gate: original water terrain or a private audited COL point.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {readFile} from 'node:fs/promises';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4191';
+import {assertNoErrors,base,button,launch,newPage,waitForGame} from './browser/harness.mjs';
 const mud=process.env.ATV_WHEEL_MUD_FIXTURE?JSON.parse(await readFile(process.env.ATV_WHEEL_MUD_FIXTURE,'utf8')):null;
-const browser=await chromium.launch({headless:true});
+const browser=await launch();
 try{for(const mobile of[false,true]){
- const page=await browser.newPage({viewport:mobile?{width:390,height:844}:{width:960,height:600}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const errors=[],page=await newPage(browser,{viewport:mobile?{width:390,height:844}:{width:960,height:600}},errors);
  await page.addInitScript(({mud})=>{
   const NativeWorker=Worker;window.surfaceFrames=[];
   window.Worker=class extends NativeWorker{
@@ -32,14 +30,16 @@ try{for(const mobile of[false,true]){
  },{mud});
  try{
   const environment=mud?.environment??'env04',kind=mud?'mud':'water',index=mud?1:0;
-  await page.goto(`${base}/play.html?drive=1&environment=${environment}`);await page.waitForFunction(()=>window.atvTerrainStatus?.ready||document.querySelector('#status.error'),null,{timeout:120000});assert((await page.evaluate(()=>window.atvTerrainStatus)).ready,await page.locator('#status').textContent());
+  await page.goto(`${base}/play.html?drive=1&environment=${environment}`);await waitForGame(page);
   await page.evaluate(()=>window.captureWetPixels=true);await page.keyboard.down('KeyW');await page.waitForFunction(i=>window.atvTerrainStatus.wheelEffects?.frame?.wet_total_emitted[i]>0,index,{timeout:40000});await page.waitForFunction(()=>window.wetPixelEvidence,null,{timeout:30000});await page.keyboard.up('KeyW');
   const visible=await page.evaluate(()=>structuredClone(window.atvTerrainStatus.wheelEffects));assert(visible.draws<=2);assert(visible.gpuBytes<1.2*1024*1024);assert(visible.frame.wet_total_emitted[index]>0);
   if(process.env.ATV_WHEEL_WET_SCREENSHOTS)await page.screenshot({path:`${process.env.ATV_WHEEL_WET_SCREENSHOTS}-${kind}${mobile?'-mobile':''}.png`});
-  await page.keyboard.press('Escape');await page.getByRole('button',{name:'Resume',exact:true}).waitFor();await page.waitForTimeout(100);const paused=await page.evaluate(()=>window.atvTerrainStatus.wheelEffects.frame);await page.waitForTimeout(250);assert.deepEqual(await page.evaluate(()=>window.atvTerrainStatus.wheelEffects.frame),paused);await page.getByRole('button',{name:'Resume',exact:true}).click();await page.waitForFunction(t=>window.atvTerrainStatus.wheelEffects?.frame?.time>t,paused.time);
+  // Time-based on purpose: let any in-flight step settle, then prove the paused effect frame does not change.
+  await page.keyboard.press('Escape');await button(page,'Resume').waitFor();await page.waitForTimeout(100);const paused=await page.evaluate(()=>window.atvTerrainStatus.wheelEffects.frame);await page.waitForTimeout(250);assert.deepEqual(await page.evaluate(()=>window.atvTerrainStatus.wheelEffects.frame),paused);await button(page,'Resume').click();await page.waitForFunction(t=>window.atvTerrainStatus.wheelEffects?.frame?.time>t,paused.time);
+  // Kept: brief pause after context loss before restoring; no observable readiness signal.
   await page.evaluate(()=>{window.surfaceLost=document.querySelector('#game').getContext('webgl2').getExtension('WEBGL_lose_context');window.surfaceLost.loseContext();});await page.waitForFunction(()=>!window.atvTerrainStatus.ready);await page.waitForTimeout(100);await page.evaluate(()=>window.surfaceLost.restoreContext());await page.waitForFunction(()=>window.atvTerrainStatus.ready);await page.waitForFunction(t=>window.atvTerrainStatus.wheelEffects?.frame?.time>t,paused.time);
   const frames=await page.evaluate(()=>window.surfaceFrames),births=frames.flatMap(f=>f.wheel_particles?.wet_births??[]).filter(p=>p.kind===kind);assert(births.length>0);assert(births.every(p=>mud?p.tile>=8&&p.tile<16:p.tile>=0&&p.tile<8));
   if(mud)assert(frames.some(f=>f.wheel_effects.mud.some(Boolean)));else assert(frames.some(f=>f.wheel_effects.water_heights.some((h,i)=>h>f.wheel_effects.terrain_heights[i])));
-  assert.equal(await page.evaluate(()=>document.querySelector('#game').getContext('webgl2').getError()),0);assert.deepEqual(errors,[]);console.log(JSON.stringify({kind,mobile,placement:await page.evaluate(()=>window.surfacePlacement),pixels:await page.evaluate(()=>window.wetPixelEvidence),births:births.length,draws:visible.draws,gpuBytes:visible.gpuBytes,cpuMilliseconds:visible.cpuMilliseconds}));
+  assert.equal(await page.evaluate(()=>document.querySelector('#game').getContext('webgl2').getError()),0);assertNoErrors(errors);console.log(JSON.stringify({kind,mobile,placement:await page.evaluate(()=>window.surfacePlacement),pixels:await page.evaluate(()=>window.wetPixelEvidence),births:births.length,draws:visible.draws,gpuBytes:visible.gpuBytes,cpuMilliseconds:visible.cpuMilliseconds}));
  }catch(error){console.log(JSON.stringify(await page.evaluate(()=>({placement:window.surfacePlacement,frame:window.atvTerrainStatus?.frame,fx:window.atvTerrainStatus?.wheelEffects,mudHits:window.surfaceFrames.filter(f=>f.wheel_effects.mud.some(Boolean)).length,maxTangent:Math.max(0,...window.surfaceFrames.map(f=>Math.abs(f.wheel_effects.wheel_tangential_speeds[0])))}))));throw error;}finally{await page.close();}
 }console.log('PASS: original wet particle atlas changes pixels from authoritative tire surface hits at desktop/390px; fixed clock pauses and context restoration preserve the ring.');}finally{await browser.close();}

@@ -1,21 +1,20 @@
 // Opt-in original Caribou ramp: preload takeoff and clean landing without a stunt.
 // Drives only through actual Chromium touch events; no physics/state injection.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { captureSimulation } from './capture_simulation.mjs';
-const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
+import { assertNoErrors, base, launch, newPage, waitForGame, waitForSteps } from './browser/harness.mjs';
 await mkdir('work/verification', {recursive: true});
-const browser = await chromium.launch({ headless: true });
+const browser = await launch();
 try {
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const errors = [];
+  const page = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }, errors);
   await page.addInitScript(() => localStorage.setItem('atv-mobile-one-handed', 'false')); // Explicit optional two-finger mode.
   await captureSimulation(page, 'rampFrames');
-  const errors = []; page.on('pageerror', e => errors.push(e.message));
-  const url = new URL('/play.html', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173');
+  const url = new URL('/play.html', base);
   url.searchParams.set('drive', '1'); url.searchParams.set('environment', 'env01');
   await page.goto(url.href);
-  await page.waitForFunction(() => window.atvTerrainStatus?.simulation, null, { timeout: 90000 });
+  await waitForGame(page, { until: () => window.atvTerrainStatus.simulation });
   await page.bringToFront(); await page.locator('#game').focus();
   if (process.env.ATV_DIAGNOSTICS === 'debug') {
     for (let i = 0; i < 3 && (await page.evaluate(() => window.atvTerrainStatus.performance.mode)) !== 'debug'; i++) await page.keyboard.press('F3');
@@ -33,7 +32,7 @@ try {
 
   await touch('touchCancel');
   await page.waitForFunction(() => window.atvTerrainStatus.frame.grounded.some(Boolean),null,{timeout:10000,polling:'raf'});
-  await page.waitForTimeout(1000);
+  await waitForSteps(page, 60);
   const { frames, final, steps } = await page.evaluate(() => ({
     frames: window.rampFrames, final: window.atvTerrainStatus.frame,
     steps: window.atvTerrainStatus.simulationSteps,
@@ -46,7 +45,7 @@ try {
   assert.equal(final.wreck.phase,'Riding');
   assert.equal(final.reset_count,0);
   assert.equal(frames.length, steps, 'Record every delivered batch step');
-  assert.deepEqual(errors, []);
+  assertNoErrors(errors);
   assert.equal(await page.evaluate(() => window.atvTerrainStatus.glError), 0);
   console.log('PASS clean preload takeoff and landing without stunt or wreck');
 } finally {await browser.close();}

@@ -2,10 +2,10 @@
 // load the new release without clearing cache or saved settings.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
-const { chromium, webkit } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
+import { assertNoErrors, button, gpuArgs, playwright, watchErrors } from './browser/harness.mjs';
+const { chromium, webkit } = playwright();
 const engine = process.env.ATV_UI_BROWSER === 'webkit' ? webkit : chromium;
 const out = process.env.ATV_MINIMAP_OUTPUT || 'work/verification/minimap-cache';
 const fixture = 'work/verification/minimap-cache-fixtures';
@@ -47,10 +47,12 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
 await mkdir(out,{recursive:true});
 const profile = `${out}/browser-profile`;
-const browser = await engine.launchPersistentContext(profile,{headless:true,viewport:{width:390,height:844},hasTouch:true});
+// A persistent profile keeps the real HTTP cache, so the harness launch() does not apply;
+// Chromium still needs the harness WebGL backend flags.
+const browser = await engine.launchPersistentContext(profile,{headless:true,viewport:{width:390,height:844},hasTouch:true,args:engine===chromium?gpuArgs():[]});
 try {
   const page = await browser.newPage();
-  page.on('pageerror',e=>errors.push(e.message));
+  watchErrors(page, errors);
   const map = page.locator('#freestyle-minimap');
   const layout = () => map.evaluate(e => {const c=getComputedStyle(e),r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,radius:c.borderRadius,padding:c.padding,border:c.borderWidth,background:c.backgroundColor};});
   const nativePixels = () => page.locator('#native-hud').evaluate(c=>c.getContext('2d').getImageData(0,0,c.width,c.height).data.some((v,i)=>i%4===3&&v>0));
@@ -74,15 +76,16 @@ try {
   const graph=requests.filter(r=>r.upgraded&&/\.(js|css|wasm)$/.test(r.name));
   assert(graph.length>=12); assert(graph.every(r=>r.version===commit),'Every transitive module, CSS, Worker and WASM uses this release key');
   await page.screenshot({path:`${out}/fixed-after.png`});
-  await page.evaluate(()=>window.dispatchEvent(new Event('blur'))); await page.waitForTimeout(100);
+  await page.evaluate(()=>window.dispatchEvent(new Event('blur')));
+  await page.waitForTimeout(100); // Time-based on purpose: the speed flag must stay false, so there is no change to wait for.
   assert.equal(await page.locator('#native-hud').getAttribute('data-speed-visible'),'false','Temporary map hiding cannot restore standalone MPH');
   await page.evaluate(()=>window.dispatchEvent(new Event('focus'))); await ready();
-  await page.getByRole('button',{name:'Pause',exact:true}).click(); await page.getByRole('button',{name:'HUD settings',exact:true}).click(); await page.getByRole('button',{name:'Minimap configuration',exact:true}).click();
-  await page.getByRole('button',{name:'Freestyle minimap: On',exact:true}).click();
-  for(const name of ['Back','Back','Resume']) await page.getByRole('button',{name,exact:true}).click();
+  await button(page,'Pause').click(); await button(page,'HUD settings').click(); await button(page,'Minimap configuration').click();
+  await button(page,'Freestyle minimap: On').click();
+  for(const name of ['Back','Back','Resume']) await button(page,name).click();
   await page.waitForFunction(()=>document.querySelector('#native-hud').dataset.speedVisible==='true');
   assert(await nativePixels(),'Explicit Off restores standalone speed');
-  assert.deepEqual(errors,[]);
+  assertNoErrors(errors);
   await writeFile(`${out}/results.json`,JSON.stringify({engine:process.env.ATV_UI_BROWSER||'chromium',broken,fixed,graph,errors},null,2));
   console.log('PASS: reproduced mixed-version rectangle, padding and duplicate MPH; fresh release graph fixes a returning browser without clearing its old HTTP cache; explicit Off alone restores Freestyle speed.');
 } finally {await browser.close();await rm(profile,{recursive:true,force:true});server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}

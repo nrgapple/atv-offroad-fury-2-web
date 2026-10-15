@@ -1,15 +1,14 @@
 // Owner-content gate for actual touch turn direction, grip/peg attachment and
 // pose continuity. No solver poses, velocities or contact states are injected.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {writeFile} from 'node:fs/promises';
 import {captureSimulation} from './capture_simulation.mjs';
 import {captureCrashIsolation,verifyCrashIsolation} from './crash_isolation.mjs';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const browser=await chromium.launch({headless:true,args:['--use-angle=metal']});
+import {assertNoErrors,base,gameState,launch,newPage,waitForGame,waitForSteps} from './browser/harness.mjs';
+const browser=await launch();
 try {
- const page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true}),errors=[];
- page.on('pageerror',e=>errors.push(e.message));await captureCrashIsolation(page);await captureSimulation(page,'controlFrames');
+ const errors=[],page=await newPage(browser,{viewport:{width:390,height:844},hasTouch:true},errors);
+ await captureCrashIsolation(page);await captureSimulation(page,'controlFrames');
  await page.addInitScript(()=>{
   window.bikePresentationProbe={draws:0,blends:0,maxOriginError:0,contacts:0,maxGrip:0,maxFoot:0};
   const requests=new WeakMap(),post=Worker.prototype.postMessage;let model,quad,body=false,bodyMatrix;
@@ -49,8 +48,7 @@ try {
    return mat.call(this,loc,transpose,value);
   };
  });
- const base=process.env.ATV_TEST_URL||'http://127.0.0.1:4397';
- const button=name=>page.getByRole('button',{name,exact:true}),state=()=>page.evaluate(()=>window.atvTerrainStatus);
+ const button=name=>page.getByRole('button',{name,exact:true}),state=()=>gameState(page);
  const cdp=await page.context().newCDPSession(page);
  await page.goto(`${base}/play.html`);await button('Press START').click({timeout:120000});
  const id=Number(process.env.ATV_CONTROL_MODEL||29);
@@ -58,7 +56,7 @@ try {
  for(let i=0;i<Math.min(id-1,47-id);i++)await button(id-1<=47-id?'Next quad':'Previous quad').click();
  await page.waitForFunction(id=>[...document.querySelectorAll('.model-view canvas')].every(c=>c.dataset.selection===`${id}:0`),id);
  await button('Done').click();await button('Freestyle').click();await button('Ride Caribou Peak').click();
- await page.waitForFunction(()=>document.querySelector('#frontend').hidden&&window.atvTerrainStatus?.simulation,null,{timeout:120000});
+ await waitForGame(page,{until:()=>document.querySelector('#frontend').hidden&&window.atvTerrainStatus.simulation});
  const report={id,turns:[],errors};
  for(const direction of [-1,1]){
   const reset=(await state()).frame.reset_count;
@@ -72,7 +70,7 @@ try {
   const fullLock=process.env.ATV_CONTROL_FULL_LOCK==='1';
   await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{id:1,x:180+direction*(fullLock?100:50),y:620,radiusX:6,radiusY:6,force:1}]});
   await page.waitForFunction(()=>Math.abs(window.atvTerrainStatus.input.steer)>.4);
-  await page.waitForTimeout(450);
+  await waitForSteps(page,27);
   const after=await state(),delta=after.frame.origin.map((v,i)=>v-before.frame.origin[i]);
   if(fullLock)assert(Math.abs(after.input.steer)>.95,'Extended reach gate must actually request full steering');
   const [w,x,y,z]=after.frame.orientation,forward=[2*(x*z+w*y),2*(y*z-w*x),1-2*(x*x+y*y)];
@@ -84,9 +82,9 @@ try {
   assert(bank.rider*direction>.025,`Rendered rider banks away from ${direction}: ${JSON.stringify(bank)}`);
   report.turns.push({direction,side,heading,bank,steer:after.input.steer});
   if(process.env.ATV_CONTROL_SCREENSHOTS)await page.screenshot({path:`${process.env.ATV_CONTROL_SCREENSHOTS}-${direction<0?'left':'right'}.png`});
-  if(fullLock)await page.waitForTimeout(1600); // Observe low-speed, full-lock reach after the initial turn.
+  if(fullLock)await waitForSteps(page,96); // Observe low-speed, full-lock reach after the initial turn.
   await cdp.send('Input.dispatchTouchEvent',{type:'touchCancel',touchPoints:[]});await page.waitForFunction(()=>!window.atvTerrainStatus.input.touch_drive.held);
-  await page.waitForTimeout(250);
+  await waitForSteps(page,15);
  }
  const frames=await page.evaluate(()=>window.controlFrames.filter(s=>s.frame.vehicle_kind==='motorcycle'));
  const normal=frames.filter(s=>s.frame.rider_grip_errors&&s.frame.wreck.phase==='Riding');
@@ -97,7 +95,7 @@ try {
  const consecutive=normal.slice(1).filter((s,i)=>s.frame.reset_count===normal[i].frame.reset_count);
  report.maxPelvisStep=Math.max(...consecutive.map(s=>{const i=normal.indexOf(s),a=normal[i-1].frame.rider_node_matrices[0],b=s.frame.rider_node_matrices[0];return Math.hypot(...b.slice(12,15).map((v,j)=>v-a[12+j]));}));
  assert(report.maxPelvisStep<.2,`Normal pose snaps: ${report.maxPelvisStep}`);
- report.frames=normal.length;report.isolation=await verifyCrashIsolation(page);assert.deepEqual(errors,[]);assert.equal((await state()).glError,0);report.passed=true;
+ report.frames=normal.length;report.isolation=await verifyCrashIsolation(page);assertNoErrors(errors);assert.equal((await state()).glError,0);report.passed=true;
  report.presentation=await page.evaluate(()=>window.bikePresentationProbe);assert(report.presentation.blends>10,'Actual GPU draws must use intermediate motorcycle poses');
  assert(report.presentation.contacts>10,'Actual GPU draws must compare rider and bike markers');assert(report.presentation.maxGrip<.08,`Rendered hands disconnect: ${report.presentation.maxGrip}`);assert(report.presentation.maxFoot<.08,`Rendered boots disconnect: ${report.presentation.maxFoot}`);
  await writeFile(process.env.ATV_CONTROL_REPORT||'work/verification/motorcycle-controls.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));

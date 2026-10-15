@@ -1,11 +1,8 @@
 // Browser integration checks. Synthetic fixtures are generated in memory.
 // Optional ATV_TEST_ISO exercises private source content without copying it into web/.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4173';
-const browser = await chromium.launch({ headless: true });
+import { assertNoErrors, base, launch, watchErrors } from './browser/harness.mjs';
+const browser = await launch();
 const errors = [];
 const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, hasTouch: true });
 await context.addInitScript(() => {
@@ -13,7 +10,7 @@ await context.addInitScript(() => {
   Object.defineProperty(navigator, 'getGamepads', { value: () => window.testPads });
 });
 const page = await context.newPage();
-page.on('pageerror', error => errors.push(error.message));
+watchErrors(page, errors);
 const requests = [];
 page.on('request', request => requests.push({ url: request.url(), method: request.method() }));
 function u32(value) { const b = Buffer.alloc(4); b.writeUInt32LE(value); return b; }
@@ -113,8 +110,8 @@ try {
     await page.locator('audio').evaluate(a => a.play());
     await page.waitForFunction(() => document.querySelector('audio')?.currentTime > .1);
     console.log('PASS: exact-build ISO hash, real archive/image, original stereo music decode and browser playback clock');
-  }
-  assert.equal(errors.length, 0, JSON.stringify(errors));
+  } else console.log('NOTE: private ISO checks not run; set ATV_TEST_ISO to the USA v2.00 ISO to include them.');
+  assertNoErrors(errors);
   assert(requests.every(r => r.method === 'GET' && (r.url.startsWith(base) || r.url.startsWith('blob:'))), 'Unexpected upload or external request');
   console.log('PASS: no browser exceptions or file uploads');
 } finally { await browser.close(); }

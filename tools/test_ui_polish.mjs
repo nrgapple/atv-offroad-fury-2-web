@@ -1,14 +1,11 @@
 // Opt-in runtime-content UI gate: boot/course/model loaders, motion and rotation.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
-const {chromium} = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const base = process.env.ATV_TEST_URL || 'http://127.0.0.1:4173';
-const browser = await chromium.launch({headless:true});
+import {assertNoErrors, base, button, launch, newPage, nextFrames, waitForGame} from './browser/harness.mjs';
+const browser = await launch();
 const errors = [];
 const sizes = [{width:390,height:844},{width:844,height:390},{width:667,height:375}];
 try {
-  const page = await browser.newPage({viewport:sizes[0],hasTouch:true});
-  page.on('pageerror', e => errors.push(e.message));
+  const page = await newPage(browser, {viewport:sizes[0],hasTouch:true}, errors);
   const shot = async name => { if (process.env.ATV_UI_SCREENSHOTS) await page.screenshot({path:`${process.env.ATV_UI_SCREENSHOTS}-${name}.png`}); };
   const screen = async name => {
     await page.waitForFunction(name => document.querySelector('#frontend').dataset.page === name && document.querySelector('#loading-screen').hidden, name, {timeout:90000});
@@ -32,35 +29,35 @@ try {
     await shot(`boot-${size.width}`);
   }
   releaseBoot(); await screen('title');
-  await page.getByRole('button',{name:'Press START',exact:true}).tap(); await screen('main');
+  await button(page,'Press START').tap(); await screen('main');
   // Navigate during entry motion; old snapshots must not survive the next route.
-  await page.getByRole('button',{name:'Single Player',exact:true}).tap(); await screen('single');
-  await page.getByRole('button',{name:'Freestyle',exact:true}).tap(); await screen('tracks');
+  await button(page,'Single Player').tap(); await screen('single');
+  await button(page,'Freestyle').tap(); await screen('tracks');
   let releaseCourse;
   const course = new Promise(resolve=>{releaseCourse=resolve;});
   await page.route('**/content/*.bin', async route=>{await course;await route.continue();});
-  await page.getByRole('button',{name:'Ride Caribou Peak',exact:true}).tap(); await screen('loading');
+  await button(page,'Ride Caribou Peak').tap(); await screen('loading');
   for (const size of sizes) {
     await page.setViewportSize(size);
-    await page.waitForTimeout(300); await inViewport('.course-load-meter');
+    await nextFrames(page, 3); await inViewport('.course-load-meter');
     assert(await page.locator('.course-load-meter').isVisible());
     assert.equal(await page.locator('#status').isVisible(),false);
     await shot(`course-${size.width}`);
   }
   releaseCourse();
-  await page.waitForFunction(()=>document.querySelector('#frontend').hidden&&window.atvTerrainStatus.ready,null,{timeout:90000});
+  await waitForGame(page, {until: () => document.querySelector('#frontend').hidden && window.atvTerrainStatus.ready});
   for (const size of sizes) {
     await page.setViewportSize(size);
-    await page.getByRole('button',{name:'Pause',exact:true}).tap(); await screen('pause');
+    await button(page,'Pause').tap(); await screen('pause');
     for (const button of await page.locator('#menu-buttons button').all()) {
       const box=await button.boundingBox();assert(box.height>=43,'Finger-sized pause target');
     }
     await shot(`pause-${size.width}`);
-    await page.getByRole('button',{name:'Settings',exact:true}).tap(); await screen('settings');
-    await page.getByRole('button',{name:'Controls',exact:true}).tap(); await screen('controls');
+    await button(page,'Settings').tap(); await screen('settings');
+    await button(page,'Controls').tap(); await screen('controls');
     await inViewport('input[type=range]');
-    await page.getByRole('button',{name:'Back',exact:true}).tap(); await screen('settings'); await page.getByRole('button',{name:'Back',exact:true}).tap(); await screen('pause');
-    await page.getByRole('button',{name:'Resume',exact:true}).tap();
+    await button(page,'Back').tap(); await screen('settings'); await button(page,'Back').tap(); await screen('pause');
+    await button(page,'Resume').tap();
     await page.waitForFunction(()=>document.querySelectorAll('.menu-transition').length===0,null,{timeout:5000});
   }
   // Context restoration gets a centered loader and returns to driving.
@@ -68,19 +65,19 @@ try {
   await page.locator('#loading-screen').waitFor({state:'visible'});await inViewport('.loading-panel');
   await page.evaluate(()=>window.contextRecovery.restoreContext());
   await page.locator('#loading-screen').waitFor({state:'hidden'});
-  await page.getByRole('button',{name:'Pause',exact:true}).tap(); await screen('pause');
+  await button(page,'Pause').tap(); await screen('pause');
   await page.emulateMedia({reducedMotion:'reduce'});
-  await page.getByRole('button',{name:'Settings',exact:true}).tap(); await screen('settings');
-    await page.getByRole('button',{name:'Controls',exact:true}).tap();await screen('controls');
+  await button(page,'Settings').tap(); await screen('settings');
+    await button(page,'Controls').tap();await screen('controls');
   assert.equal(await page.locator('.menu-transition').count(),0);
   assert.equal(await page.locator('.loading-meter').count(),1);
-  await page.getByRole('button',{name:'Back',exact:true}).tap();await screen('settings');await page.getByRole('button',{name:'Back',exact:true}).tap();await screen('pause');
-  await page.getByRole('button',{name:'Quit to Main Menu',exact:true}).tap();await screen('main');
-  await page.getByRole('button',{name:'Single Player',exact:true}).tap();await screen('single');
-  await page.getByRole('button',{name:'Quad and Rider',exact:true}).tap();await screen('garage');
+  await button(page,'Back').tap();await screen('settings');await button(page,'Back').tap();await screen('pause');
+  await button(page,'Quit to Main Menu').tap();await screen('main');
+  await button(page,'Single Player').tap();await screen('single');
+  await button(page,'Quad and Rider').tap();await screen('garage');
   await page.waitForFunction(()=>document.querySelectorAll('.model-view canvas[data-ready=true]').length===2,null,{timeout:90000});
   assert.equal(await page.locator('.model-view.is-loading').count(),0);
-  assert.deepEqual(errors,[]);
+  assertNoErrors(errors);
   // A failing content request must end startup loading and display the error.
   const failure=await browser.newPage({viewport:sizes[0]});
   await failure.route('**/content/manifest.json',route=>route.abort());
