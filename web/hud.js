@@ -173,7 +173,7 @@ export class HeadUpDisplay {
       if (operation === 'setTransform') actual.setTransform(...args.slice(0, 4), args[4]-left, args[5]-top);
       else if (operation === 'text') {
         const [text,x,y,w,h,color]=args;
-        actual.save(); actual.font=`italic 800 ${h}px "Arial Narrow", "Helvetica Neue", Arial, sans-serif`;
+        actual.save(); actual.font=`italic 800 ${h}px ${this.displayFont ??= getComputedStyle(document.documentElement).getPropertyValue('--atv-font-display').trim() || 'sans-serif'}`;
         actual.textBaseline='top'; actual.fillStyle=`rgb(${color})`; actual.strokeStyle='#080808bb'; actual.lineWidth=2;
         actual.lineJoin='round'; actual.strokeText(text,x,y,w); actual.fillText(text,x,y,w); actual.restore();
       }

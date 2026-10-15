@@ -7,7 +7,6 @@ export const MAP_INTERVAL = 50;
 export const clampMapSize = value => Number.isFinite(Number(value)) ? Math.round(Math.max(96, Math.min(224, Number(value))) / 8) * 8 : 160;
 export const clampMapZoom = value => Number.isFinite(Number(value)) ? Math.round(Math.max(25, Math.min(200, Number(value))) / 25) * 25 : 50;
 export const mapRange = zoom => MAP_RANGE * 100 / zoom;
-export const mapScale = range => 200 * 2 ** Math.round(Math.log2(range / MAP_RANGE));
 // Same handedness as the scene's overhead camera: right=+X, up=+Z.
 export const mapHeading = ([w, x, y, z]) => Math.atan2(2 * (w * y + x * z), 1 - 2 * (y * y + x * x));
 export const mapPoint = (x, z, terrain, width, height) => [x / terrain.sizeX * width, (1 - z / terrain.sizeZ) * height];
@@ -133,10 +132,12 @@ export class FreestyleMinimap {
       const mode = settings.orientation === 'north-up' ? 'North up' : 'Heading up';
       this.root.setAttribute('aria-label', `Minimap orientation: ${mode}`); this.root.title = 'Tap to switch north up / heading up';
       this.updated = -Infinity; if (!settings.enabled) this.release();
+      this.fitToolbar();
     };
     settings.changed();
+    window.addEventListener('resize', () => this.fitToolbar());
     const css = getComputedStyle(this.root);
-    this.colors = { ink: css.getPropertyValue('--atv-ink').trim(), gold: css.getPropertyValue('--atv-gold-light').trim(), silver: css.getPropertyValue('--atv-silver-light').trim(), orange: css.getPropertyValue('--atv-orange').trim(), font: css.getPropertyValue('--atv-font-label').trim() };
+    this.colors = { ink: css.getPropertyValue('--atv-ink').trim(), gold: css.getPropertyValue('--atv-gold-light').trim(), silver: css.getPropertyValue('--atv-silver-light').trim(), orange: css.getPropertyValue('--atv-orange').trim(), font: css.getPropertyValue('--atv-font-display').trim() };
   }
   release() {
     if (this.base) this.base.width = this.base.height = 1;
@@ -171,9 +172,9 @@ export class FreestyleMinimap {
     this.metrics.backingBytes = MAP_RESOLUTION * MAP_RESOLUTION * (build.pixels ? 8 : 4);
   }
   draw(time, player, visible, peers = []) {
-    if (!this.settings.enabled || !visible || !this.terrain || !player) { if (!this.root.hidden) this.root.hidden = true; return; }
+    if (!this.settings.enabled || !visible || !this.terrain || !player) { if (!this.root.hidden) { this.root.hidden = true; this.fitToolbar(); } return; }
     if (!this.base) { this.buildSlice(); return; }
-    if (this.root.hidden) this.root.hidden = false;
+    if (this.root.hidden) { this.root.hidden = false; this.fitToolbar(); }
     if (time - this.updated < MAP_INTERVAL) return;
     this.updated = time; const started = performance.now();
     const rect = this.root.getBoundingClientRect(), size = rect.width, dpr = Math.min(devicePixelRatio || 1, 1.5), pixels = Math.max(1, Math.round(size * dpr));
@@ -207,17 +208,15 @@ export class FreestyleMinimap {
     // Both shapes keep lettering inside the circular safe region. Speed and
     // preload values arrive from the same Rust HUD as the original meter.
     const hud = player.hud;
-    let readoutY = size * .76;
     if (hud) {
       const fontSize = Math.max(16, size * .17), unitsSize = Math.max(9, size * .07);
-      c.font = `italic 800 ${fontSize}px Impact, ${this.colors.font}`;
+      c.font = `italic 800 ${fontSize}px ${this.colors.font}`;
       const speedWidth = c.measureText(hud.speed_text).width;
       c.font = `800 ${unitsSize}px ${this.colors.font}`;
       const units = c.measureText(hud.units), unitsWidth = units.width, width = speedWidth + unitsWidth + 4;
       const x = (size - width) / 2, y = instrumentFooter(size, this.settings.shape, width, units.actualBoundingBoxDescent || unitsSize * .25);
-      readoutY = y - fontSize - 5;
       c.fillStyle = this.colors.silver; c.strokeStyle = this.colors.ink; c.lineWidth = 3;
-      c.font = `italic 800 ${fontSize}px Impact, ${this.colors.font}`;
+      c.font = `italic 800 ${fontSize}px ${this.colors.font}`;
       c.strokeText(hud.speed_text, x, y); c.fillText(hud.speed_text, x, y);
       c.font = `800 ${unitsSize}px ${this.colors.font}`;
       c.strokeText(hud.units, x + speedWidth + 4, y); c.fillText(hud.units, x + speedWidth + 4, y);
@@ -230,15 +229,19 @@ export class FreestyleMinimap {
       if (this.canvas.dataset.speed !== hud.speed_text) this.canvas.dataset.speed = hud.speed_text;
       const preload = String(hud.preload_visible); if (this.canvas.dataset.preload !== preload) this.canvas.dataset.preload = preload;
     }
-    const scaleFeet = mapScale(range), scaleLabel = `${scaleFeet} ft`;
-    const length = size * scaleFeet / range, left = (size - length) / 2;
-    c.strokeStyle = this.colors.silver; c.lineWidth = 1.5; c.beginPath(); c.moveTo(left, readoutY + 2); c.lineTo(left + length, readoutY + 2); c.stroke();
-    c.font = `700 9px ${this.colors.font}`; c.strokeStyle = this.colors.ink; c.lineWidth = 3;
-    const textX = (size - c.measureText(scaleLabel).width) / 2;
-    c.strokeText(scaleLabel, textX, readoutY); c.fillText(scaleLabel, textX, readoutY);
     this.metrics.lastCpuMs = performance.now() - started; this.metrics.totalCpuMs += this.metrics.lastCpuMs; this.metrics.updates++;
-    this.metrics.center = [x, z]; this.metrics.actor = pose.actor; this.metrics.scaleFeet = scaleFeet; this.metrics.heading = heading; this.metrics.mapRotation = headingUp ? -heading : 0; this.metrics.markerRotation = headingUp ? 0 : heading;
+    this.metrics.center = [x, z]; this.metrics.actor = pose.actor; this.metrics.heading = heading; this.metrics.mapRotation = headingUp ? -heading : 0; this.metrics.markerRotation = headingUp ? 0 : heading;
     this.metrics.backingBytes = (MAP_RESOLUTION * MAP_RESOLUTION + pixels * pixels) * 4;
+  }
+  // A large top-right map can meet the labelled toolbar on narrow screens; the
+  // toolbar then shows icon-only buttons (still 44px targets) instead of overlapping.
+  fitToolbar() {
+    const toolbar = this.root.parentElement;
+    if (toolbar?.id !== 'toolbar') return;
+    toolbar.classList.remove('is-compact');
+    if (this.root.hidden || this.settings.corner !== 'top-right') return;
+    const bar = toolbar.getBoundingClientRect(), map = this.root.getBoundingClientRect();
+    if (bar.right + 8 > map.left && bar.top < map.bottom) toolbar.classList.add('is-compact');
   }
   get visible() { return !this.root.hidden; }
   snapshot() { return { ...this.metrics, enabled: this.settings.enabled, size: this.settings.size, zoom: this.settings.zoom, shape: this.settings.shape, corner: this.settings.corner, orientation: this.settings.orientation, visible: this.visible, resolution: this.canvas.width, rangeFeet: mapRange(this.settings.zoom), maxHz: 1000 / MAP_INTERVAL, extraSceneDraws: 0 }; }
