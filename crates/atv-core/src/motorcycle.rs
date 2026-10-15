@@ -441,6 +441,7 @@ pub struct Frame {
     pub wheelie_active: bool,
     pub stoppie_active: bool,
     pub crossup: f32,
+    pub boundary_launch: crate::boundary_launch::State,
     pub mud_amount: [f32; 2],
     pub surfaces: [usize; 2],
     pub vehicle_kind: &'static str,
@@ -456,6 +457,9 @@ pub struct Motorcycle {
     safe_origin: V,
     safe_yaw: f32,
     race_checkpoint: Option<(V, f32)>,
+    boundary: Option<(crate::boundary_launch::Config, bool)>,
+    boundary_launch: crate::boundary_launch::State,
+    boundary_random: crate::engine_audio::OriginalRandom,
     rider_body: Option<(M, V)>,
     pose_controls: pose::Controls,
     normal_pose: Option<animation::Pose>,
@@ -520,6 +524,9 @@ impl Motorcycle {
             safe_origin: origin,
             safe_yaw: yaw,
             race_checkpoint: None,
+            boundary: None,
+            boundary_launch: crate::boundary_launch::State::default(),
+            boundary_random: crate::engine_audio::OriginalRandom::with_seed(1),
             rider_body: None,
             pose_controls: pose::Controls::default(),
             normal_pose: None,
@@ -568,6 +575,8 @@ impl Motorcycle {
             ],
             &self.body_config,
         )?;
+        self.body_config.max_speed_squared = crate::boundary_launch::NORMAL_MAX_SPEED_SQUARED;
+        self.boundary_launch.reset();
         self.compression = [0.; 2];
         self.angles = [0.; 2];
         self.preload = 0.;
@@ -592,6 +601,38 @@ impl Motorcycle {
         self.active_stunt = None;
         self.stunt_hold = false;
         self.refresh();
+        Ok(())
+    }
+    /// The original ATV2 map-edge launch (001e5260) applies to bikes riding
+    /// ATV2 maps; CrowdPresent/Training select the extended boundary.
+    pub fn set_boundary(
+        &mut self,
+        config: crate::boundary_launch::Config,
+        extended: bool,
+    ) -> Result<()> {
+        config.outside([0.; 3], extended)?;
+        self.boundary = Some((config, extended));
+        Ok(())
+    }
+    fn boundary_step(&mut self, dt: f32) -> Result<()> {
+        self.boundary_launch.tick(dt, true)?;
+        let origin = self.body.origin(&self.body_config);
+        if !self.boundary_launch.active
+            && self.frame.wreck.phase == crate::wreck::Phase::Riding
+            && let Some((config, extended)) = self.boundary
+            && config.outside(origin, extended)?
+        {
+            let words: [u32; 4] = std::array::from_fn(|_| self.boundary_random.next_u31());
+            let launch = config.launch(origin, [words[0], words[1]])?;
+            let kind = crate::boundary_launch::random_wreck_kind([words[2], words[3]])?;
+            self.body.linear_velocity = launch.linear_velocity;
+            self.body.local_angular_velocity = launch.local_angular_velocity;
+            self.body_config.max_speed_squared = crate::boundary_launch::LAUNCH_MAX_SPEED_SQUARED;
+            self.boundary_launch.begin();
+            self.frame.wreck.begin(kind);
+            self.wreck_time = 0.;
+        }
+        self.frame.boundary_launch = self.boundary_launch;
         Ok(())
     }
     /// Race recovery returns to the racing line, like the ATV checkpoint.
@@ -728,6 +769,7 @@ impl Motorcycle {
         for _ in 0..n {
             self.substep(terrain, input, dt / n as f32)?;
         }
+        self.boundary_step(dt)?;
         if self.frame.wreck.phase != crate::wreck::Phase::Riding {
             if self.rider_body.is_none() {
                 let mut world = self.world();

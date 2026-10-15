@@ -158,6 +158,9 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
         }
         let bike = sim.motorcycle.as_mut().ok_or("missing motorcycle")?;
         bike.set_obstacles(sim.obstacles.clone().unwrap_or_default());
+        if let Some(config) = sim.boundary_config {
+            bike.set_boundary(config, sim.extended_boundary)?;
+        }
         for _ in 0..30 {
             bike.step(
                 sim.terrain.as_ref().ok_or("load terrain first")?,
