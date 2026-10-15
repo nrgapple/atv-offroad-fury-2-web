@@ -88,6 +88,8 @@ Proposed mappings stay labeled until the exact game's original actions are verif
 Source media and recovered content stay under ignored `private/`; generated
 analysis containing game data is private as well. Share only tools, synthetic
 tests, and format/engineering notes. Build artifacts use the configured SSD.
-Serve only the built web directory. The browser reads a user-selected ISO locally.
+Serve only the built web directory. (Superseded delivery detail: the browser
+first read a user-selected ISO locally; the public app now autoloads approved
+runtime resources from the separate R2 manifest, see `DEPLOYMENT.md`.)
 Remote access requires an existing approved secure path or explicit authorization;
 host-local verification is not remote delivery.

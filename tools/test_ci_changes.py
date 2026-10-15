@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from ci_changes import classify, plan
-from test_release_queue import git
+from test_fixtures import git
 
 
 class ChangePlanTests(unittest.TestCase):

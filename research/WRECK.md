@@ -1,6 +1,6 @@
 # Crash and recovery reconstruction
 
-The USA v2.00 crash path is being connected to the authored Rust runtime. This is
+The USA v2.00 crash path runs inside the authored Rust runtime. This is
 not an emulator or a replacement physics engine. Native export files and source
 assets remain private.
 
@@ -321,7 +321,7 @@ match `rider_height_allowed` plus the Rust crash evaluator.
 
 The post-loop full-correction pass remains omitted in the port. `0011e7e0`
 registers the runtime node class names `CollisionObject` and `Vegetation`;
-`DAT_00460f00` is the registered CollisionObject tag, not a dynamic-body-only
+the global word at `00460f00` holds the registered CollisionObject tag, not a dynamic-body-only
 class or a literal 255 after initialization. `001dd830` builds a restricted
 second candidate list from CollisionObject nodes with mode bit `bf.3` clear.
 After all body substeps, it re-queries chassis actor `+0x180`, temporarily sets

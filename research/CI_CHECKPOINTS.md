@@ -6,8 +6,9 @@ checks, R2 upload and gallery verification. Contributors provide their tested
 commit, required private resource package and inspected images to that owner.
 Do not start a second upload or repeat another owner's completed checks.
 The GitHub Actions application deployment remains automatic when healthy. The
-checked local fallback below is authorized when Actions stalls or fails. The
-experimental daemon/release queue and No Mistakes remain disabled.
+checked local fallback below is authorized when Actions stalls or fails. No
+Mistakes remains disabled. The experimental local release queue (`atv-release`)
+was removed; see `git log -- research/RELEASE_QUEUE.md` for its history.
 
 ## Three CI lanes
 

@@ -5,17 +5,8 @@ ISO ?= private/source/ATV Offroad Fury 2 (USA) (v2.00).iso
 ELF ?= private/extracted/SCUS_972.11
 BIND ?= 127.0.0.1
 PORT ?= 4173
-ATV_RELEASE ?= $(HOME)/.local/bin/atv-release
-RELEASE_ARGS ?=
 
-.PHONY: verify verify-full inventory import check web relay serve audit code-map native-analyze browser-check release release-status
-
-release:
-	@echo "Experimental release queue disabled. Merge to main and let GitHub Actions deploy; see research/CI_CHECKPOINTS.md."
-	@exit 1
-
-release-status:
-	$(ATV_RELEASE) status
+.PHONY: verify verify-full inventory import check web relay serve audit code-map native-analyze browser-check
 
 verify:
 	python3 tools/verify_setup.py
@@ -31,6 +22,8 @@ import:
 
 check:
 	python3 tools/check_secrets.py
+	python3 tools/verify_repository.py
+	python3 -m unittest discover -s tools -p 'test_security.py'
 	$(CARGO) fmt --all -- --check
 	$(CARGO) test --locked --workspace
 	$(CARGO) clippy --locked --workspace --all-targets -- -D warnings
