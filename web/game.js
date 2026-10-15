@@ -1,6 +1,6 @@
 import { SpeedRush, speedRushFocus, speedRushBounds } from './speed-rush.js';
 // Original content and vehicle component simulation run in the Rust worker.
-import { sceneViewProjection, vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, RideEffectsSettings, ImpactEvents, severedIndices, meshNodeBounds, crashSubjects, crashPresentation } from './render-support.js';
+import { sceneViewProjection, vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, RideEffectsSettings, ImpactEvents, severedIndices, meshNodeBounds, crashSubjects, crashPresentation, shadowGlState, observedSize, RenderScale } from './render-support.js';
 import { Multiplayer, PlayerIndicators } from './multiplayer.js';
 import { Frontend } from './frontend.js';
 import { courseResource } from './launch.js';
@@ -25,6 +25,9 @@ const $ = id => document.getElementById(id);
 const canvas = $('game');
 // Stencil marks the player's own ATV/rider so the speed pass leaves it crisp.
 const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, stencil: true, powerPreference: 'high-performance' });
+const glShadow = gl ? shadowGlState(gl) : null;
+const canvasSize = observedSize(canvas, el => ({ width: el.clientWidth, height: el.clientHeight }));
+const renderScale = new RenderScale();
 const status = (text, error = false) => { if (!error) frontend?.loadingStage(text); else frontend?.setLoading(false); $('status').textContent = text; $('status').classList.toggle('error', error); };
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
@@ -932,7 +935,14 @@ function drawEcosystem() {
   const factor=Math.fround(64/(outer-inner));
   const selected=eco.selection;selected.length=0;let scanned=0;
   for(const group of ecoGroups){group.count=0;}
+  // Skip whole cells that lie behind the camera or beyond fog range. Every
+  // placement in them would fail the per-placement tests below (radius <=
+  // maxRadius), so selection, near/far state and draw order are unchanged.
+  const reach=(far+eco.maxRadius)**2;
   for(let z=minZ;z<=maxZ;z++)for(let x=minX;x<=maxX;x++) {
+    const x0=x*cellSize-4-camera.x,x1=(x+1)*cellSize+4-camera.x,z0=z*cellSize-4-camera.z,z1=(z+1)*cellSize+4-camera.z;
+    if(Math.max(x0*forwardX,x1*forwardX)+Math.max(z0*forwardZ,z1*forwardZ)<=-eco.maxRadius)continue;
+    const nx=Math.max(x0,0,-x1),nz=Math.max(z0,0,-z1);if(nx*nx+nz*nz>reach)continue;
     const cell=z*64+x, index=eco.visibility_index;
     for(let i=index.offsets[cell];i<index.offsets[cell+1];i++) {
       const p=eco.renderPlacements[index.placements[i]];scanned++;
@@ -1489,8 +1499,9 @@ function render(time) {
   hud?.draw(simFrame?.hud, simReady && focused && !lost && !document.hidden && !menuOpen, { speedVisible: Boolean(raceSettings) || !minimapSettings.enabled });
   raceOverlay.draw(simFrame?.race,simFrame,simReady && focused && !lost && !document.hidden && !menuOpen);
   if (lost || !gl || !terrain || document.hidden || (menuOpen && !liveMultiplayer())) { lastTime = time; stats.sample(time, 0, false); return; }
-  const dt = Math.min(.05, Math.max(0, (time - (lastTime || time)) / 1000)); lastTime = time;
-  const ratio = Math.min(devicePixelRatio || 1, 1.5), width = Math.max(1, Math.round(canvas.clientWidth * ratio)), height = Math.max(1, Math.round(canvas.clientHeight * ratio));
+  const frameMs = time - (lastTime || time), dt = Math.min(.05, Math.max(0, frameMs / 1000)); lastTime = time;
+  if (simReady && focused && !menuOpen && devicePixelRatio > 1) renderScale.sample(frameMs);
+  const ratio = renderScale.pixelRatio(devicePixelRatio), width = Math.max(1, Math.round(canvasSize.width * ratio)), height = Math.max(1, Math.round(canvasSize.height * ratio));
   if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
   if (!menuOpen) updateCamera(dt);
   if (simReady && !simulationPaused()) {
@@ -1680,7 +1691,7 @@ function render(time) {
       vehicle:speedRushBounds(viewProjection,actor.origin)});
   } else speedRush.draws=0;
   diagnostics.visibility = { terrainDraws, terrainTriangles, sceneryDraws, sceneryTriangles, terrainCulled: chunks.length - terrainDraws, sceneryCulled: sceneDraws.length - sceneryVisibleGroups };
-  diagnostics.frames++;
+  diagnostics.frames++; diagnostics.renderRatio = renderScale.ratio;
   if (stats.mode !== 'off') {
     diagnostics.cpuDraws = cpuDraws; diagnostics.cpuTriangles = cpuTriangles;
     diagnostics.drawCalls = speedRush.draws + cpuDraws + terrainDraws + sceneryDraws + vehicleChunks.length + (terrain.sky ? skyChunks.length : 0) + diagnostics.vegetationDraws + (waterRenderer?.draws ?? 0) + (trainRenderer?.draws ?? 0) + (wheelEffectsRenderer?.draws ?? 0) + (ambientEffectsRenderer?.draws ?? 0) + (snowRenderer?.draws ?? 0);
@@ -1814,7 +1825,7 @@ window.addEventListener('resize', () => { scheduleRender(); });
 canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; for(const model of remoteModels.values()){model.chunks=null;model.gpuTextures=[];} diagnostics.ready = false; clearInput(); syncAudio(); frontend?.setLoading(true, 'Restoring graphics…'); status('Restoring graphics…'); });
 // Every old GPU handle belongs to the lost context, including vegetation instances.
 // Discard those references before buildMesh runs its normal resource cleanup.
-canvas.addEventListener('webglcontextrestored', () => { try { lost = false; speedRush = new SpeedRush(gl, { coarse: coarsePointer() }); snowRenderer=undefined; ambientEffectsRenderer=undefined; bloodRenderer = undefined; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); scheduleRender(); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
+canvas.addEventListener('webglcontextrestored', () => { try { lost = false; glShadow?.reset(); speedRush = new SpeedRush(gl, { coarse: coarsePointer() }); snowRenderer=undefined; ambientEffectsRenderer=undefined; bloodRenderer = undefined; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); scheduleRender(); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
 window.addEventListener('pagehide', event => {
   cancelAnimationFrame(frame); frame = 0; clearInput();
   if (event.persisted) {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cameraAxes, sceneViewProjection, vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation } from './render-support.js';
+import { cameraAxes, sceneViewProjection, vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, shadowGlState, RenderScale } from './render-support.js';
 const identity = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
 const planes = viewPlanes(identity);
 test('boxes crossing clip planes survive, including near-plane and camera-containing boxes', () => {
@@ -168,4 +168,39 @@ test('source camera puts +X on the right and preserves depth, pitch and clipping
     assert(!outsideView(tiny(point(4,0,20)),planes));
     assert(outsideView(tiny(point(0,0,-20)),planes));
   }
+});
+
+test('GL state shadow answers saved bindings without querying the context', () => {
+  const E = { ARRAY_BUFFER: 1, ELEMENT_ARRAY_BUFFER: 2, BLEND: 3, ONE: 4, ZERO: 5, TEXTURE0: 6, TEXTURE1: 7, TEXTURE_2D: 8, CURRENT_PROGRAM: 9, VERTEX_ARRAY_BINDING: 10, ARRAY_BUFFER_BINDING: 11, DEPTH_WRITEMASK: 12, BLEND_SRC_RGB: 13, BLEND_DST_RGB: 14, BLEND_SRC_ALPHA: 15, BLEND_DST_ALPHA: 16, ACTIVE_TEXTURE: 17, TEXTURE_BINDING_2D: 18, MAX_TEXTURE_SIZE: 19, DEPTH_TEST: 20, SRC_ALPHA: 21 };
+  let queries = 0;
+  const gl = { ...E, getParameter: name => { queries++; return name === E.MAX_TEXTURE_SIZE ? 4096 : null; }, isEnabled: () => { queries++; return true; } };
+  for (const n of ['useProgram', 'bindVertexArray', 'bindBuffer', 'enable', 'disable', 'depthMask', 'blendFunc', 'blendFuncSeparate', 'activeTexture', 'bindTexture', 'deleteBuffer', 'deleteVertexArray', 'deleteTexture']) gl[n] = () => {};
+  const shadow = shadowGlState(gl);
+  assert.equal(gl.getParameter(E.CURRENT_PROGRAM), null); assert.equal(gl.getParameter(E.DEPTH_WRITEMASK), true); assert.equal(gl.isEnabled(E.BLEND), false);
+  const program = {}, vao = {}, buffer = {}, element = {}, t0 = {}, t1 = {};
+  gl.useProgram(program); gl.bindVertexArray(vao); gl.bindBuffer(E.ARRAY_BUFFER, buffer); gl.bindBuffer(E.ELEMENT_ARRAY_BUFFER, element);
+  gl.enable(E.BLEND); gl.depthMask(false); gl.blendFuncSeparate(E.SRC_ALPHA, E.ONE, E.ONE, E.ZERO);
+  gl.bindTexture(E.TEXTURE_2D, t0); gl.activeTexture(E.TEXTURE1); gl.bindTexture(E.TEXTURE_2D, t1);
+  assert.deepEqual([E.CURRENT_PROGRAM, E.VERTEX_ARRAY_BINDING, E.ARRAY_BUFFER_BINDING, E.DEPTH_WRITEMASK, E.BLEND_SRC_RGB, E.BLEND_DST_RGB, E.BLEND_SRC_ALPHA, E.BLEND_DST_ALPHA, E.ACTIVE_TEXTURE, E.TEXTURE_BINDING_2D].map(gl.getParameter), [program, vao, buffer, false, E.SRC_ALPHA, E.ONE, E.ONE, E.ZERO, E.TEXTURE1, t1]);
+  assert.equal(gl.isEnabled(E.BLEND), true); assert.equal(queries, 0);
+  gl.activeTexture(E.TEXTURE0); assert.equal(gl.getParameter(E.TEXTURE_BINDING_2D), t0);
+  gl.blendFunc(E.ONE, E.ZERO); gl.disable(E.BLEND); gl.deleteBuffer(buffer); gl.deleteTexture(t0);
+  assert.deepEqual([gl.getParameter(E.BLEND_SRC_ALPHA), gl.isEnabled(E.BLEND), gl.getParameter(E.ARRAY_BUFFER_BINDING), gl.getParameter(E.TEXTURE_BINDING_2D)], [E.ONE, false, null, null]);
+  assert.equal(gl.getParameter(E.MAX_TEXTURE_SIZE), 4096); assert.equal(gl.isEnabled(E.DEPTH_TEST), true); assert.equal(queries, 2);
+  shadow.reset(); assert.equal(gl.getParameter(E.CURRENT_PROGRAM), null);
+});
+
+test('adaptive render scale steps down on sustained slow frames and recovers', () => {
+  const scale = new RenderScale();
+  assert.equal(scale.pixelRatio(3), 1.5); assert.equal(scale.pixelRatio(1), 1);
+  for (let i = 0; i < 40; i++) scale.sample(16.7);
+  scale.sample(400); assert.equal(scale.ratio, 1.5, 'one hitch never lowers quality');
+  for (let i = 0; i < 120; i++) scale.sample(33);
+  assert.equal(scale.ratio, 1, 'sustained 30fps steps down to the floor');
+  for (let i = 0; i < 450; i++) scale.sample(16.7);
+  assert.equal(scale.ratio, 1.25, 'smooth play restores sharpness step by step');
+  for (let i = 0; i < 120; i++) scale.sample(33);
+  assert.equal(scale.ratio, 1); assert.equal(scale.upAfter, 12, 'a failed recovery backs off');
+  for (let i = 0; i < 4000; i++) scale.sample(8.3);
+  assert.equal(scale.ratio, 1.5); assert.equal(scale.pixelRatio(2), 1.5);
 });
