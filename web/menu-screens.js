@@ -259,7 +259,35 @@ function buildGarage(fe, left, panel) {
   panel.append(h('div', {class:'ms-plate ms-garage-plate'}, h('p', {class:'ms-ride-name'})),
     h('div', {class:'ms-models'},
       h('div', {class:'ms-model ms-model-quad', dataset:{modelSlot:'quad'}}),
-      h('div', {class:'ms-model ms-model-rider', dataset:{modelSlot:'rider'}})));
+      h('div', {class:'ms-model ms-model-rider', dataset:{modelSlot:'rider'}})),
+    statsPanel());
+}
+
+// Original ATV select page stats (uiQuad.txt): the maker logo, then Engine,
+// Traction and Suspension on ten-step meters (the original slider moves five
+// steps each way), and the authored top speed.
+const STATS = [['engine','Engine'],['traction','Traction'],['suspension','Suspension']];
+function statsPanel() {
+  return h('section', {class:'ms-stats', 'aria-label':'ATV stats', hidden:true},
+    h('img', {class:'ms-stats-logo', alt:''}),
+    h('dl', {class:'ms-stats-rows'}, ...STATS.map(([key, label]) => h('div', {class:'ms-stat', dataset:{stat:key}},
+      h('dt', {text:label}),
+      h('dd', {}, h('span', {class:'ms-meter', role:'meter', 'aria-label':label, 'aria-valuemin':'0', 'aria-valuemax':'10'}, h('span', {class:'ms-meter-fill'})))))),
+    h('p', {class:'ms-stats-speed'}));
+}
+function syncStats(root, stats) {
+  const panel = root.querySelector('.ms-stats');
+  if (!panel) return;
+  panel.hidden = !stats;
+  if (!stats) return;
+  const logo = panel.querySelector('.ms-stats-logo');
+  if (logo.getAttribute('src') !== (stats.logoUrl || null)) { if (stats.logoUrl) logo.src = stats.logoUrl; else logo.removeAttribute('src'); }
+  logo.hidden = !stats.logoUrl;
+  for (const [key] of STATS) {
+    const steps = Math.round(stats[key] * 10), meter = panel.querySelector(`[data-stat=${key}] .ms-meter`);
+    meter.setAttribute('aria-valuenow', String(steps)); meter.style.setProperty('--steps', String(steps));
+  }
+  panel.querySelector('.ms-stats-speed').textContent = stats.topSpeed ? `Top speed ${Math.round(stats.topSpeed)} mph` : '';
 }
 
 function setPhoto(figure, url, track) {
@@ -328,6 +356,7 @@ function sync(fe) {
     }
   }
   if (page === 'garage') {
+    syncStats(root, fe.vehicleStats?.());
     root.querySelector('.ms-vehicle-kind').textContent = vehicle.group === 'Motorcycle' ? 'Bike' : 'ATV';
     const riderRow = root.querySelector('.ms-rider-row');
     if (riderRow) {

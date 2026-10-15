@@ -797,7 +797,9 @@ async function remoteAssets(quad, rider) {
     const mesh=bike?.mesh ?? await json(11,await member(quadArchive,selected.quad_mesh));
     const riderMesh=bike?.riderMesh ?? await json(11,await member(riderArchive,selected.rider_mesh));
     const quadMaterials=await archive(selected.quad_materials), riderMaterials=selected.motorcycle ? riderArchive : await archive('/RIDER/RIDER_MT.RES');
-    model.source={mesh,riderMesh,riderPose:bike?.riderPose,bikeArchive:bike?quadArchive.bytes:null,textures:await baseTextures(mesh,quadMaterials.bytes,quadMaterials.entries),riderTextures:await baseTextures(riderMesh,riderMaterials.bytes,riderMaterials.entries)};
+    // Garage figures: authored top speed and gearbox from the quad's physics.
+    const stats=bike ? null : await (async()=>json(108,await member(quadArchive,selected.physics)))().catch(()=>null);
+    model.source={mesh,riderMesh,riderPose:bike?.riderPose,bikeArchive:bike?quadArchive.bytes:null,stats,textures:await baseTextures(mesh,quadMaterials.bytes,quadMaterials.entries),riderTextures:await baseTextures(riderMesh,riderMaterials.bytes,riderMaterials.entries)};
     if(!bike) {
       model.prepareAnimation=async()=> {
         const known=multiplayer?.state?.network?.rigKeys;

@@ -87,6 +87,7 @@ pub mod vegetation_proxy;
 pub mod vegetation_ray;
 pub mod vegetation_render;
 pub mod vehicle;
+pub mod vehicle_stats;
 
 pub mod wreck_animation;
 
