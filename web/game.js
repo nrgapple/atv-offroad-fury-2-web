@@ -3,7 +3,8 @@ import { SpeedRush, speedRushFocus, speedRushBounds } from './speed-rush.js';
 import { sceneViewProjection, vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, RideEffectsSettings, ImpactEvents, severedIndices, meshNodeBounds, crashSubjects, crashPresentation, shadowGlState, observedSize, RenderScale, PAINT_PALETTE, paintGlsl, paintable } from './render-support.js';
 import { Multiplayer, PlayerIndicators } from './multiplayer.js';
 import { Frontend } from './frontend.js';
-import { courseResource } from './launch.js';
+import { courseResource, parseLaunch } from './launch.js';
+import { UsageAnalytics } from './analytics.js';
 import { RaceOverlay } from './race.js';
 import { mountTouchControls, TouchLeanIntent } from './touch.js';
 import { GameAudio } from './audio.js';
@@ -58,7 +59,9 @@ let raceSettings = null, raceCourse = null, cpuQuadMatrices, cpuRiderMatrices, r
 // The player's rider gear and quad paint for the loaded ride (ATVs only).
 let rideAppearance = null;
 const keyboardHelp = new KeyboardHelp();
-const raceOverlay = new RaceOverlay({restart: async () => { await $('reset').onclick({restart:true}); canvas.focus({preventScroll:true}); }, quit: () => frontend?.show('single')});
+const usage = new UsageAnalytics();
+const raceOverlay = new RaceOverlay({restart: async () => { await $('reset').onclick({restart:true}); canvas.focus({preventScroll:true}); }, quit: () => frontend?.show('single'),
+  finish: race => usage.track('race_finish', { ...usage.ride, place: race.position, field: race.field, seconds: race.elapsed })});
 let simReady = false, simBusy = false, simAccumulator = 0, simFrame, simStart, simGeneration = 0, orbit = 0, cameraFrame, cameraCycle = false;
 const motorcyclePresentation = new MotorcyclePresentation();
 const uphillSightline = new UphillSightline();
@@ -1823,6 +1826,16 @@ async function loadGame(file = null, environment = "env01", racing = null) {
   } catch (error) { if (token === generation) status(error.message, true); throw error; }
   finally { if (token === generation) $('disc').disabled = false; }
 }
+// Anonymous usage context only: mode, venue, vehicle number and race settings.
+const vehicleKind = quad => quad > 26 ? 'motorcycle' : 'atv';
+const onlineRide = map => ({ mode: 'multiplayer', activity: 'freestyle', map, vehicle: 'atv', quad: frontend?.quadId });
+async function startRide(environment, racing) {
+  const quad = frontend?.quadId, started = performance.now();
+  const ride = { mode: 'single', activity: racing ? 'race' : 'freestyle', map: environment, vehicle: vehicleKind(quad), quad, ...(racing ? { laps: racing.laps, cpu: racing.cpu } : {}) };
+  try { await loadGame(null, environment, racing); }
+  catch (error) { usage.rideFailed(ride); throw error; }
+  if (simReady) usage.rideStarted(ride, { seconds: (performance.now() - started) / 1000 });
+}
 $('disc').addEventListener('change', event => { const file = event.target.files[0]; if (file) void loadGame(file).catch(error => status(error.message, true)); });
 $('reset').onclick = async (options) => {
   if (!simStart || !vehicle) { resetCamera(); return; }
@@ -1892,13 +1905,14 @@ window.addEventListener('gamepaddisconnected', clearInput);
 const syncAudio = () => { if (!focused || document.hidden || lost || menuOpen || pageSuspended) impactEvents.reset(); void audio.setActive(focused && !document.hidden && !lost && !menuOpen && !pageSuspended).catch(error => { diagnostics.audioError = error.message; }); };
 window.addEventListener('blur', () => { focused = false; clearInput(); syncAudio(); scheduleRender(); });
 window.addEventListener('focus', () => { focused = true; lastTime = 0; syncAudio(); scheduleRender(); });
-document.addEventListener('visibilitychange', () => { clearInput(); lastTime = 0; syncAudio(); scheduleRender(); });
+document.addEventListener('visibilitychange', () => { usage.setVisible(!document.hidden); if (document.hidden) usage.report(1); clearInput(); lastTime = 0; syncAudio(); scheduleRender(); });
 window.addEventListener('resize', () => { scheduleRender(); });
 canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; for(const model of remoteModels.values()){model.chunks=null;model.gpuTextures=[];for(const entry of model.gear?.values()??[])entry.gpu=null;} for(const cpu of raceCpuModels)cpu.gpu=null; diagnostics.ready = false; clearInput(); syncAudio(); frontend?.setLoading(true, 'Restoring graphics…'); status('Restoring graphics…'); });
 // Every old GPU handle belongs to the lost context, including vegetation instances.
 // Discard those references before buildMesh runs its normal resource cleanup.
 canvas.addEventListener('webglcontextrestored', () => { try { lost = false; glShadow?.reset(); speedRush = new SpeedRush(gl, { coarse: coarsePointer() }); snowRenderer=undefined; ambientEffectsRenderer=undefined; bloodRenderer = undefined; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); scheduleRender(); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
 window.addEventListener('pagehide', event => {
+  usage.report(1);
   cancelAnimationFrame(frame); frame = 0; clearInput();
   if (event.persisted) {
     // Back/forward cache retains this page. Its live Rust worker and audio
@@ -1923,18 +1937,19 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
       await multiplayer.send();
     },ready:()=>simReady,paused:simulationPaused,listener:()=>({position:[camera.x,camera.y,camera.z],forward:[Math.sin(camera.yaw)*Math.cos(camera.pitch),Math.sin(camera.pitch),Math.cos(camera.yaw)*Math.cos(camera.pitch)],velocity:simFrame?.linear_velocity??[0,0,0]}),audio:()=>audio,assets:remoteAssets,clearAssets:()=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();},report:message=>{diagnostics.multiplayerError=message;status(message,true);},onState:()=>{if(frontend){void frontend.refresh();}},onStart:async (environment,isCurrent,pose)=>{
       if(!isCurrent())return;
-      frontend.busy=true;frontend.notice.textContent='';
+      frontend.busy=true;frontend.notice.textContent='';const started=performance.now();
       try {
         await loadGame(null,environment);
         // A vehicle change reloads in place rather than at the start line.
         if(pose&&isCurrent()&&simReady){simGeneration++;simAccumulator=0;acceptFrame(await command(23,{origin:pose.origin,yaw:pose.yaw}));await command(47,{});orbit=0;acceptCameraFrame(await command(46,{dt:1/60,orbit}));buildMesh();}
-        if(isCurrent()){frontend.raceActive=false;frontend.activeSetup={map:environment,activity:'freestyle',quadId:frontend.quadId,riderId:frontend.riderId};frontend.resume();}
+        if(isCurrent()){frontend.raceActive=false;frontend.activeSetup={map:environment,activity:'freestyle',quadId:frontend.quadId,riderId:frontend.riderId};frontend.resume();usage.rideStarted({...onlineRide(environment),players:multiplayer.state.lobby?.players?.length},{seconds:(performance.now()-started)/1000});}
       }
-      catch(error){if(isCurrent()){await frontend.show('multiplayer');frontend.fail(error);throw error;}}
+      catch(error){if(isCurrent()){usage.rideFailed(onlineRide(environment));await frontend.show('multiplayer');frontend.fail(error);throw error;}}
       finally{if(isCurrent())frontend.busy=false;}
-    },onLeave:message=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show('multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
-    frontend = new Frontend({minimapSettings,menuRider:menuRiderAssets,modelAssets:selectionAssets,gearPreview:gearTextures,crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => loadGame(null, environment,racing), active: open => { menuOpen = open; keyboardHelp.setRiding(!open); clearInput(); lastTime = 0; scheduleRender(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
+    },onLeave:message=>{usage.rideEnded();for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show('multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
+    frontend = new Frontend({minimapSettings,menuRider:menuRiderAssets,modelAssets:selectionAssets,gearPreview:gearTextures,crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => startRide(environment,racing), active: open => { menuOpen = open; usage.setRiding(!open); if (open) usage.report(10); keyboardHelp.setRiding(!open); clearInput(); lastTime = 0; scheduleRender(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     hud = new HeadUpDisplay(frontend, canvas);
     document.body.classList.add('menu-open'); void frontend.init();
+    usage.track('session_start', { entry: parseLaunch(location.search).requested ? 'link' : 'menu' });
   } }
 catch (error) { $('loading-screen').hidden = true; status(error.message, true); $('menu-notice').textContent = error.message; }

@@ -1,4 +1,5 @@
 import { multiplayerRequest, secureResponse } from './security.mjs';
+import { usageEvent, webAnalyticsEnabled, withWebAnalytics } from './analytics.mjs';
 const BLOB = /^\/content\/[a-f0-9]{64}\.bin$/;
 const IMAGE = /^\/devlog-images\/[a-z0-9-]+\.png$/;
 const APP_ICON = /^\/app-icons\/[a-f0-9]{64}\.png$/;
@@ -41,9 +42,10 @@ async function route(request, env) {
       target.search = url.search;
       return Response.redirect(target.href, 308);
     }
+    const allowed = (env.GAME_ORIGINS ?? env.GAME_ORIGIN ?? url.origin).split(',').map(value => value.trim()).filter(Boolean);
+    if (path === '/api/events') return usageEvent(request, env, allowed);
     if (path.startsWith('/multiplayer/')) {
       const origin = request.headers.get('Origin');
-      const allowed = (env.GAME_ORIGINS ?? env.GAME_ORIGIN ?? url.origin).split(',').map(value => value.trim()).filter(Boolean);
       if (!origin || !allowed.includes(origin)) return new Response('Origin denied', {status:403});
       if (request.method !== 'GET' && request.method !== 'POST') return new Response('Method not allowed', {status:405});
       if (!env.MULTIPLAYER) return new Response('Multiplayer unavailable', {status:503});
@@ -81,4 +83,4 @@ async function route(request, env) {
     return env.ASSETS.fetch(request);
 }
 
-export default { async fetch(request, env) { return secureResponse(await route(request, env), request); } };
+export default { async fetch(request, env) { return secureResponse(await withWebAnalytics(await route(request, env), request, env), request, { webAnalytics: webAnalyticsEnabled(env) }); } };

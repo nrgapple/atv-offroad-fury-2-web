@@ -119,7 +119,7 @@ Selected physics, camera, animation, collision and rendering routines have compa
 
 The [screenshot dev log](https://furyremastered.com/devlog.html) records discoveries, changes, verification and limitations. Its older entries describe historical builds; the screenshots in this README are selected recent checkpoints.
 
-For the implementation, start with [strategy](research/IMPLEMENTATION.md), [resources](research/RESOURCES.md) and [formats](research/FORMATS.md). System notes cover [movement](research/MOVEMENT.md), [collision](research/COLLISION.md), [wrecks](research/WRECK.md), [racing](research/RACING.md), [audio](research/AUDIO.md), [motorcycles](research/MOTORCYCLES.md) and [multiplayer](research/MULTIPLAYER.md).
+For the implementation, start with [strategy](research/IMPLEMENTATION.md), [resources](research/RESOURCES.md) and [formats](research/FORMATS.md). System notes cover [movement](research/MOVEMENT.md), [collision](research/COLLISION.md), [wrecks](research/WRECK.md), [racing](research/RACING.md), [audio](research/AUDIO.md), [motorcycles](research/MOTORCYCLES.md) and [multiplayer](research/MULTIPLAYER.md). Anonymous usage analytics are described in [analytics](research/ANALYTICS.md).
 
 ## Working on the project
 
