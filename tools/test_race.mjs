@@ -98,8 +98,8 @@ try {
   window.resultFixture.draw(window.resultFixtureFrame,player,true);
  });
  for(const size of [{width:390,height:844},{width:844,height:390}]) {
-  await page.setViewportSize(size);
-  const result=await page.locator('.race-results').boundingBox();assert(result.x>=0&&result.y>=0&&result.x+result.width<=size.width+1&&result.y+result.height<=size.height+1);
+  await page.setViewportSize(size);await page.waitForFunction(w=>Math.abs(document.body.getBoundingClientRect().width-w)<1,size.width);
+  const result=await page.locator('.race-results').boundingBox();assert(result.x>=0&&result.y>=0&&result.x+result.width<=size.width+1&&result.y+result.height<=size.height+1,`results fit ${JSON.stringify(size)}: ${JSON.stringify(result)}`);
   if(output)await page.screenshot({path:`${output}/race-results-${size.width}.png`});
  }
  await page.getByRole('button',{name:'Race Again',exact:true}).click();

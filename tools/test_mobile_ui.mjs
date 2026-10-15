@@ -26,14 +26,15 @@ try {
   assert.deepEqual(native, { held: [true, true], inactive: false, destroyed: false });
   for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }, { width: 844, height: 390 }]) {
     await page.setViewportSize(viewport);
-    const boxes = await page.locator('#toolbar button:not(#freestyle-minimap)').evaluateAll(buttons => buttons.map(el => {
+    // The Keys toggle (PR #79) hides itself during touch driving; check visible controls.
+    const boxes = await page.locator('#toolbar button:not(#freestyle-minimap)').evaluateAll(buttons => buttons.filter(el => el.getClientRects().length).map(el => {
       const box = el.getBoundingClientRect(), css = getComputedStyle(el);
       return { x: box.x, y: box.y, width: box.width, height: box.height, min: css.minHeight, name: el.getAttribute('aria-label') };
     }));
-    assert.deepEqual(boxes.map(box => box.name), ['Pause', 'Camera']);
-    for (const box of boxes) { assert(box.width >= 44 && box.height >= 44); assert(box.x >= 0 && box.x + box.width <= viewport.width); }
+    assert.deepEqual(boxes.map(box => box.name).slice(0, 2), ['Pause', 'Camera']); assert(boxes.slice(2).every(box => box.name === 'Keyboard controls (H)'));
+    for (const box of boxes) { assert(box.width >= 44 && box.height >= 44, JSON.stringify(box)); assert(box.x >= 0 && box.x + box.width <= viewport.width, `${viewport.width}: ${JSON.stringify(box)}`); }
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-    assert.equal(await page.locator('#camera svg').evaluate(el => getComputedStyle(el).width), '16px');
+    assert.equal(await page.locator('#camera svg').evaluate(el => getComputedStyle(el).width), '20px'); // HD toolbar icons (PR #73)
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.locator('#camera').focus();
@@ -69,7 +70,8 @@ try {
     await touch('touchStart', [left, right]);
     await page.waitForFunction(() => window.atvTerrainStatus.input?.throttle === 1 && window.atvTerrainStatus.input?.preload_axis === 1);
     await touch('touchMove', [{ ...left, x: 95, y: 525 }, right]);
-    await page.waitForFunction(() => Math.abs(window.atvTerrainStatus.input?.steer + .425) < 1e-6 && window.atvTerrainStatus.input?.lean === -.5);
+    // Rightward drag steers right (+), as in web/touch.test.mjs; 35px at the 85% default.
+    await page.waitForFunction(() => Math.abs(window.atvTerrainStatus.input?.steer - .425) < 1e-6 && window.atvTerrainStatus.input?.lean === -.5);
     assert.equal(await page.locator('.touch-rider-marker').evaluate(el => getComputedStyle(el).width), '72px');
     await touch('touchCancel');
     await page.waitForFunction(() => window.atvTerrainStatus.input?.throttle === 0 && window.atvTerrainStatus.input?.lean === 0);
