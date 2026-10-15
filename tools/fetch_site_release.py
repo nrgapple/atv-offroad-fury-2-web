@@ -31,8 +31,6 @@ def fetch(repository, site_url=None, deployed=False):
     gh = shutil.which('gh')
     if not gh:
         raise RuntimeError('GitHub CLI is required')
-    if not gh_json(gh, f'repos/{repository}')['private']:
-        raise ValueError('source repository must remain private')
     if deployed:
         from reuse_site_release import public_commit
         commit = public_commit(site_url or 'https://furyremastered.com')

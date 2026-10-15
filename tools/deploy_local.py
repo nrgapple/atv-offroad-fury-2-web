@@ -86,8 +86,6 @@ def prefer_actions(commit, stall_seconds=600):
 def deploy(commit, checkpoint, owner, reason):
     run('git', 'fetch', 'origin')
     require_clean_main(commit)
-    if not gh_json('gh', f'repos/{REPOSITORY}')['private']:
-        raise ValueError('source repository must remain private')
     with publication_lock(ROOT):
         require_owner(ROOT, checkpoint, owner)
         variables = gh_json('gh', f'repos/{REPOSITORY}/actions/variables')['variables']

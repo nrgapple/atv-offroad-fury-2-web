@@ -277,7 +277,7 @@ requires the local private disc and reference checkouts. Artifacts are retained 
 Public Sites publishing uses the native Sites tools with a fresh source-write
 credential kept only in session memory. The Sites source helper pushes the exact
 hosting source and packages the static archive, then native tools save and deploy
-that version. The Site's source commit is separate from the private GitHub source
+that version. The Site's source commit is separate from the GitHub source
 commit; `/deployment.json` in the built artifact identifies the latter.
 
 The current Sites integration does not expose a durable public GitHub push-to-deploy
