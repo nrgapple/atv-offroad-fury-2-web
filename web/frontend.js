@@ -9,6 +9,8 @@ const unquote = value => (value ?? '').replace(/^"/, '').replace(/"$/, '');
 const fields = section => Object.fromEntries([...section.fields].reverse().map(f => [f.key.toLowerCase(), f.value]));
 const sections = doc => new Map(doc.sections.map(s => [s.name.toLowerCase(), fields(s)]));
 const overlayPages = new Set(['settings','extras','pause','players','hud-settings','minimap-config','controls','bindings','music']);
+// Menu pages with quad/rider preview slots.
+const MODEL_PAGES = ['garage','gear','main','single','create-lobby','join-lobby'];
 const settingsPages = new Set(['settings','extras','hud-settings','minimap-config','controls','bindings','music']);
 const fontName = 'tradegothic_boldcondensed_22s';
 const selectionKey = 'atv-player-selection';
@@ -414,7 +416,11 @@ export class Frontend {
     const previous = this.root.hidden ? null : this.canvas;
     this.captureTransition(previous);
     this.cancelCapture();
-    this.clearModelViews();
+    // Menu pages share one quad and one rider preview: keep their views (and
+    // WebGL contexts) and move them into the new page instead of recreating
+    // and reloading them on every switch. Browsers, iOS Safari especially,
+    // cap live WebGL contexts and evict older ones, including the game's.
+    if (!(MODEL_PAGES.includes(this.page) && MODEL_PAGES.includes(page))) this.clearModelViews();
     delete this.root.dataset.error;
     // Arm soundtrack streaming before silencing gameplay voices, avoiding a
     // suspend/resume interruption on entry to the pause screen.
@@ -657,7 +663,7 @@ export class Frontend {
   }
   captureTransition(canvas = this.canvas) {
     for (const animation of this.transitions) animation.cancel();
-    this.transitions = []; this.transitionGhost?.remove(); this.transitionGhost = null;
+    this.transitions = []; releaseCanvas(this.transitionGhost); this.transitionGhost = null;
     if (this.isPausePanel() || !canvas || !this.frame || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const ghost = document.createElement('canvas'), rect = canvas.getBoundingClientRect();
     ghost.width = canvas.width; ghost.height = canvas.height; ghost.getContext('2d').drawImage(canvas, 0, 0);
@@ -670,7 +676,7 @@ export class Frontend {
     const ghost = this.transitionGhost;
     if (ghost) {
       const exit = ghost.animate([{opacity:1,transform:'translateX(0)'},{opacity:0,transform:'translateX(-28px)'}], {duration:180,easing:'ease-in',fill:'forwards'});
-      this.transitions.push(exit); exit.finished.then(() => ghost.remove(), () => ghost.remove());
+      this.transitions.push(exit); exit.finished.then(() => releaseCanvas(ghost), () => releaseCanvas(ghost));
       this.transitionGhost = null;
     }
     if (leaving || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -685,17 +691,19 @@ export class Frontend {
     this.modelViews.clear();
   }
   updateModelViews() {
-    if (!['garage','gear','main','single','create-lobby','join-lobby'].includes(this.page)) return;
+    if (!MODEL_PAGES.includes(this.page)) return;
     // HD screens provide named slots; the views move with responsive layout.
     const slots = [...this.buttons.querySelectorAll('[data-model-slot]')];
     if (!slots.length) { this.clearModelViews(); return; }
+    let created = false;
     for (const slot of slots) {
       let view = this.modelViews.get(slot.dataset.modelSlot);
-      if (!view) { view = new ModelView(slot, slot.dataset.modelSlot); this.modelViews.set(slot.dataset.modelSlot, view); }
+      if (!view) { view = new ModelView(slot, slot.dataset.modelSlot); this.modelViews.set(slot.dataset.modelSlot, view); created = true; }
       else if (view.element.parentElement !== slot) { slot.append(view.element); view.render(); }
     }
     const appearance = normalizedAppearance(this.appearance), key = `${this.quadId}:${this.riderId}:${appearanceBytes(appearance).join('.')}`;
-    if (key === this.modelKey) return;
+    // A newly added view (e.g. the rider on entering the Garage) still needs the models.
+    if (key === this.modelKey && !created) return;
     cancelAnimationFrame(this.modelAnimation);
     this.modelKey = key; const token = ++this.modelToken;
     for (const view of this.modelViews.values()) {
@@ -704,7 +712,7 @@ export class Frontend {
     }
     void this.modelAssets(this.quadId, this.riderId).then(async source => {
       const gear = this.quadId < 27 ? await this.gearPreview?.(appearance, source.riderMesh) : null;
-      if (token !== this.modelToken || !['garage','gear','main','single','create-lobby','join-lobby'].includes(this.page) || this.root.hidden) return;
+      if (token !== this.modelToken || !MODEL_PAGES.includes(this.page) || this.root.hidden) return;
       this.modelViews.get('quad')?.set(source.mesh, source.textures, undefined, { paint: this.quadId < 27 ? appearance.paint : 0 });
       this.vehicleFigures = { quadId: this.quadId, ...source.stats }; void this.refreshStatsLogo();
       this.modelViews.get('rider')?.set(source.riderMesh, gear?.size ? new Map([...source.riderTextures, ...gear]) : source.riderTextures, source.riderPose?.world_matrices);
@@ -727,9 +735,10 @@ export class Frontend {
       view.canvas.dataset.selection = key; view.canvas.dataset.clip = original.clip;
       const start = performance.now(); let busy = false, last = 0;
       const tick = async time => {
-        if (token !== this.modelToken || !view.element.isConnected) return;
+        if (token !== this.modelToken) return;
         this.modelAnimation = requestAnimationFrame(tick);
-        if (document.hidden || !document.hasFocus() || busy || time-last < 33) return;
+        // A kept view is briefly detached while its page is rebuilt.
+        if (!view.element.isConnected || document.hidden || !document.hasFocus() || busy || time-last < 33) return;
         busy = true; last = time;
         try {
           const data = new Float32Array([Math.max(0,(time-start)/1000)]);
@@ -1036,6 +1045,13 @@ export class Frontend {
 
 // Isolated inspection views use decoded original bind-pose meshes/materials.
 // They never initialize or step the gameplay animator/physics worker state.
+// Drop a discarded canvas's backing store now rather than at garbage
+// collection; iOS Safari limits total canvas memory.
+function releaseCanvas(canvas) {
+  if (!canvas) return;
+  canvas.remove(); canvas.width = canvas.height = 0;
+}
+
 class ModelView {
   constructor(stage, kind) {
     this.element = document.createElement('div'); this.element.className = 'model-view';
@@ -1121,7 +1137,7 @@ class ModelView {
     for(const group of this.groups){gl.bindVertexArray(group.vao);gl.bindTexture(gl.TEXTURE_2D,group.texture);gl.uniform1i(this.uniforms.cutout,group.cutout);gl.uniform2fv(this.uniforms.paint,group.paintable?this.paint:PAINT_PALETTE[0]);gl.drawArrays(gl.TRIANGLES,0,group.count);}
     this.canvas.dataset.glError=String(gl.getError());
   }
-  destroy(){this.resize.disconnect();this.clear();if(this.program&&!this.lost)this.gl.deleteProgram(this.program);this.gl?.getExtension('WEBGL_lose_context')?.loseContext();this.element.remove();}
+  destroy(){this.resize.disconnect();this.clear();if(this.program&&!this.lost)this.gl.deleteProgram(this.program);this.gl?.getExtension('WEBGL_lose_context')?.loseContext();releaseCanvas(this.canvas);this.element.remove();}
 }
 
 // Course photographs carry black/transparent mats from their 640x448 page

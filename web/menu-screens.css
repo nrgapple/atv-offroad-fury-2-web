@@ -62,7 +62,7 @@
 .ms-hints:empty { display: none; }
 .ms-hint { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .ms-back-icon, .ms-back-icon svg { display: block; width: 16px; height: 16px; fill: currentColor; }
-.ms-hint-back { min-height: 46px; min-width: 64px; padding: 0 10px; border-radius: var(--ms-radius); cursor: pointer; }
+.ms-hint-back { min-height: 46px; min-width: 64px; padding: 0 12px; border-radius: var(--ms-radius); background: #0000008f; cursor: pointer; }
 @media (hover: hover) { .ms-hint-back:hover { color: var(--atv-gold-light); } }
 
 /* Shared plates and cards on the silver stage panel. */
@@ -187,6 +187,8 @@
   .ms-main, .ms-single { --ms-stage: 50%; }
   .ms-multiplayer { --ms-stage: 24%; }
   .ms-create-lobby, .ms-join-lobby { --ms-stage: 0px; }
+  /* No silver stage on these pages: the heading sits on the red backdrop. */
+  .ms-create-lobby .ms-heading, .ms-join-lobby .ms-heading { background: linear-gradient(90deg, #0000004d 0, #0000001a 60%, #0000); color: #f2f2f2; text-shadow: 0 2px 3px #000; }
   .ms-create-lobby .ms-panel::before, .ms-join-lobby .ms-panel::before { top: -200px; bottom: -14px; }
     .ms-create-lobby .ms-panel, .ms-join-lobby .ms-panel { display: none; }
   .ms-multiplayer .ms-panel { justify-content: center; }
@@ -343,22 +345,27 @@
 .ms-stats[hidden] { display: none; }
 .ms-stats-logo { grid-area: logo; max-width: clamp(80px, 12vw, 150px); max-height: 64px; object-fit: contain; filter: drop-shadow(0 2px 0 #0005); }
 .ms-stats-rows { grid-area: rows; display: grid; gap: 4px; margin: 0; }
-.ms-stat { display: grid; grid-template-columns: minmax(5.6em, auto) minmax(0, 1fr); align-items: center; gap: 10px; }
+.ms-stat { display: grid; grid-template-columns: 6.6em minmax(0, 1fr); align-items: center; gap: 10px; }
 .ms-stat dt { font: italic 800 clamp(14px, 1.5vw, 18px)/1 var(--atv-font-display); text-align: right; letter-spacing: .02em; }
 .ms-stat dd { margin: 0; }
-.ms-meter { --steps: 0; display: block; position: relative; height: clamp(9px, 1.2vh, 12px); border-radius: 2px; background: repeating-linear-gradient(90deg, #00000038 0 calc(10% - 2px), #0000 calc(10% - 2px) 10%); box-shadow: inset 0 1px 0 #0003; }
-.ms-meter-fill { position: absolute; inset: 0 auto 0 0; width: calc(var(--steps) * 10%); border-radius: 2px; background: repeating-linear-gradient(90deg, #dac01f 0 calc(100% / var(--steps, 1) - 2px), #0000 calc(100% / var(--steps, 1) - 2px) calc(100% / var(--steps, 1))); filter: drop-shadow(0 1px 0 #6a5600); }
+.ms-stats .ms-meter { --steps: 0; display: block; width: auto; padding: 0; border: 0; position: relative; height: clamp(9px, 1.2vh, 12px); border-radius: 2px; background: repeating-linear-gradient(90deg, #00000038 0 calc(10% - 2px), #0000 calc(10% - 2px) 10%); box-shadow: inset 0 1px 0 #0003; }
+.ms-stats .ms-meter-fill { position: absolute; inset: 0 auto 0 0; min-width: 0; transition: none; width: calc(var(--steps) * 10%); border-radius: 2px; background: repeating-linear-gradient(90deg, #dac01f 0 calc(100% / var(--steps, 1) - 2px), #0000 calc(100% / var(--steps, 1) - 2px) calc(100% / var(--steps, 1))); filter: drop-shadow(0 1px 0 #6a5600); }
 .ms-stats-speed { grid-area: speed; margin: 0; font: italic 800 clamp(14px, 1.5vw, 18px)/1 var(--atv-font-display); }
 .ms-stats-speed:empty { display: none; }
+/* Portrait: three short meters side by side, then the top speed and logo on
+   the right, so the block stays on the silver panel above its curved edge. */
 @media (orientation: portrait) {
-  .ms-stats { gap: 2px 10px; }
-  .ms-stats-logo { max-height: 44px; max-width: 96px; }
+  .ms-stats { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "rows rows rows" ". speed logo"; gap: 4px 10px; padding-bottom: 6px; }
+  .ms-stats-rows { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .ms-stat { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+  .ms-stat dt { text-align: left; }
+  .ms-stats-logo { max-height: 28px; max-width: 84px; }
   .ms-stat dt, .ms-stats-speed { font-size: 13px; }
-  .ms-meter { height: 8px; }
+  .ms-stats .ms-meter { height: 8px; }
 }
 @media (orientation: landscape) and (max-height: 500px) {
   .ms-stats { gap: 2px 10px; }
   .ms-stats-logo { max-height: 36px; }
   .ms-stat dt, .ms-stats-speed { font-size: 12px; }
-  .ms-meter { height: 7px; }
+  .ms-stats .ms-meter { height: 7px; }
 }
