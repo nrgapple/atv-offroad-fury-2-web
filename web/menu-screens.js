@@ -159,7 +159,7 @@ function buildLobby(fe, left, panel) {
 function buildRace(fe, left, panel) {
   const list = h('nav', {class:'ms-rows', 'aria-label':'Race setup'});
   for (const action of fe.frame.choices) {
-    const stepper = ['racelaps','racecpu'].includes(action);
+    const stepper = ['racetrack','racelaps','racecpu'].includes(action);
     const item = row(fe, action, stepper ? [h('span', {class:'ms-row-value'})] : []);
     if (stepper) item.classList.add('ms-row-cycle');
     list.append(item);
@@ -171,7 +171,7 @@ function buildRace(fe, left, panel) {
 // The original course loader (LdScreen): an action shot on the left, a black
 // "Track:" bar and "Tips:" on the gray panel, and a gold bar in a black pill.
 function buildLoading(fe, left, panel) {
-  left.append(h('figure', {class:'ms-shot'}, h('img', {alt:''})));
+  left.append(h('figure', {class:'ms-shot'}));
   panel.append(h('div', {class:'ms-ld-info'},
     h('p', {class:'ms-ld-track'}, h('span', {text:'Track:'}), ' ', h('span', {class:'ms-track-name'})),
     h('div', {class:'ms-ld-tips'}, h('p', {class:'ms-ld-tips-label', text:'Tips:'}), h('p', {class:'ms-ld-tip'}))));
@@ -285,8 +285,13 @@ function sync(fe) {
     }
   }
   if (page === 'loading') {
-    const shot = root.querySelector('.ms-shot img'), url = fe.trackPhotoUrl(fe.presentationTrack);
-    if (shot.getAttribute('src') !== (url || null)) { if (url) shot.src = url; else shot.removeAttribute('src'); }
+    // Original action shots crossfade when available; otherwise the course photo.
+    const frame = root.querySelector('.ms-shot'), urls = fe.loadingShots?.length ? fe.loadingShots : [fe.trackPhotoUrl(fe.presentationTrack)].filter(Boolean);
+    if (frame.dataset.urls !== urls.join('|')) {
+      frame.dataset.urls = urls.join('|');
+      frame.replaceChildren(...urls.map(url => h('img', {alt:'', src:url})));
+    }
+    [...frame.children].forEach((img, i) => img.classList.toggle('is-on', i === (fe.shotFrame ?? 0) % frame.children.length));
     root.querySelector('.ms-track-name').textContent = fe.presentationTrack?.name ?? '';
     const tip = fe.loadingTip ?? [];
     root.querySelector('.ms-ld-tips').hidden = !tip.length;

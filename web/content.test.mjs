@@ -30,3 +30,10 @@ test('hosted reader rejects altered bytes, foreign URLs and chunk gaps', async (
   manifest.files[0].chunks[1].offset = 3;
   assert.throws(() => contentSource(manifest, () => {}), /extent/);
 });
+test('loading-screen icon archives are accepted, other extensions are not', () => {
+  const { manifest } = fixture();
+  manifest.files[0].path = '/UI/LOADICON/ENVA/E01_OB.LSI';
+  assert.doesNotThrow(() => contentSource(manifest, () => {}));
+  manifest.files[0].path = '/UI/LOADICON/ENVA/E01_OB.EXE';
+  assert.throws(() => contentSource(manifest, () => {}), /record/);
+});

@@ -82,7 +82,13 @@ loader `LDSCREEN.RES ld_ui` and the per-course `LdScreen` layout from
   hosted archive at runtime; only their numbers are in source. Tips about profiles,
   championships, editors, mini-games or PS2 buttons are omitted.
 
-The original per-course 640x448 loading backdrops (`LDSCREEN.RES`) and rotating
-256x180 action shots (`UI/LOADICON`) are not yet in the hosted content package.
-Records ("Fastest Lap", profile points) are not shown because the port has no
-saved records.
+The course loader crossfades each venue's six original action shots
+(`UI/LOADICON/<group>/<course>.LSI`, frames 02-07, 256x180 pictures) every 2.5 s,
+matching `icon_info.ini`'s 15-second loop. Each course's archive (~225 KB) is a
+lazy hosted record, so a load fetches only its own shots; Training ships no shots
+and keeps the course photograph, which is also the fallback while shots load or
+when an older content manifest lacks them. The hosted reader accepts `.LSI`
+records. The per-course 640x448 `LDSCREEN.RES` backdrops are not used: the original
+loader's panels and bars are painted into those images, which cannot match a
+responsive layout. Records ("Fastest Lap", profile points) are not shown because
+the port has no saved records.

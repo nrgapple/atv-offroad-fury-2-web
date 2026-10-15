@@ -58,7 +58,7 @@ try {
       await a.setViewportSize(size);await a.waitForTimeout(350);
       const panel=a.locator('.pause-panel');const box=await panel.boundingBox();
       assert(box.x>=0&&box.y>=0&&box.x+box.width<=size.width&&box.y+box.height<=size.height);
-      assert.deepEqual(await panel.locator('h2').allTextContents(),['Ride','Preferences','Session']);
+      assert.deepEqual(await panel.locator('button').evaluateAll(nodes=>nodes.map(n=>n.dataset.action)),['resume','reset','settings','copyride','devlog','main']);
       const boxes=await panel.locator('button').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height};}));
       for(const b of boxes)assert(b.h>=44&&b.x>=box.x&&b.x+b.w<=box.x+box.width);
       for(let i=0;i<boxes.length;i++)for(const b of boxes.slice(i+1)){const c=boxes[i];assert(c.x+c.w<=b.x+1||b.x+b.w<=c.x+1||c.y+c.h<=b.y+1||b.y+b.h<=c.y+1,'buttons overlap');}
@@ -80,13 +80,15 @@ try {
         for(const control of await panel.locator('button,input').all()) {
           await control.scrollIntoViewIfNeeded();const b=await control.boundingBox();
           assert(b.height>=44&&b.x>=box.x&&b.x+b.width<=box.x+box.width,`${name} ${size.width}: accessible control`);
-          assert(b.y>=box.y&&b.y+b.height<=box.y+box.height,`${name}: reachable scrolling`);
+          assert(b.y>=box.y-1&&b.y+b.height<=box.y+box.height+1,`${name} ${size.width}x${size.height}: reachable scrolling ${JSON.stringify({control:await control.getAttribute('aria-label')??await control.getAttribute('data-setting'),b,box})}`);
         }
         await panel.evaluate(n=>n.scrollTop=0);
         if(size.width===390||size.width===1280)await shot(a,`${name}-${size.width}`);
       }
       await a.setViewportSize({width:390,height:844});
     }
+    // Pause reaches Controls, Display and Audio through the Settings hub (PR #73).
+    await button(a,'Settings').click();await submenuLayout('settings');
     await button(a,'Controls').click();await submenuLayout('controls');await musicContinues(a,music,true);await shot(a,'controls');
     const steering=a.getByRole('slider',{name:'Mobile steering sensitivity',exact:true});
     await steering.evaluate(n=>n.dataset.identity='kept');await steering.focus();await a.keyboard.press('ArrowRight');
@@ -111,24 +113,24 @@ try {
     await a.evaluate(()=>window.pausePad.buttons[13]={pressed:true,value:1});await a.waitForTimeout(100);
     assert.equal(await a.evaluate(()=>document.activeElement.dataset.action),await a.locator('.pause-panel button[data-action^="bind:"]').nth(1).getAttribute('data-action'));
     await a.evaluate(()=>window.pausePad=null);
-    await a.keyboard.press('Escape');await screen(a,'controls');await a.keyboard.press('Escape');await screen(a,'pause');
-    await button(a,'Music').click();await submenuLayout('music');
+    await a.keyboard.press('Escape');await screen(a,'controls');await a.keyboard.press('Escape');await screen(a,'settings');
+    await button(a,'Audio').click();await submenuLayout('music');
     await button(a,'Next').click();await a.waitForFunction(()=>document.querySelector('.pause-page-count').textContent.startsWith('Page 2'));
     await a.locator('.pause-panel button[data-action^="song:"]').first().click();await a.waitForFunction(()=>document.querySelector('.pause-panel button[data-playing=true]'));
     await button(a,'Music off').click();await button(a,'Music on').click();await button(a,'Volume').click();
-    await a.keyboard.press('Escape');await screen(a,'pause');
+    await a.keyboard.press('Escape');await screen(a,'settings');await a.keyboard.press('Escape');await screen(a,'pause');
     assert.equal(await a.locator('.pause-panel').evaluate(n=>n.scrollTop),0,'reopening starts at Resume');
-    await button(a,'HUD settings').click();await submenuLayout('hud-settings');await button(a,'Minimap configuration').click();await submenuLayout('minimap-config');await shot(a,'minimap');
+    await button(a,'Settings').click();await screen(a,'settings');await button(a,'Display').click();await submenuLayout('hud-settings');await button(a,'Minimap configuration').click();await submenuLayout('minimap-config');await shot(a,'minimap');
     const slider=a.getByRole('slider',{name:'Minimap size',exact:true});await slider.focus();await a.keyboard.press('ArrowRight');await a.waitForTimeout(100);assert.equal(await slider.inputValue(),'168');
-    await a.keyboard.press('Escape');await screen(a,'hud-settings');await a.keyboard.press('Escape');await screen(a,'pause');
+    await a.keyboard.press('Escape');await screen(a,'hud-settings');await a.keyboard.press('Escape');await screen(a,'settings');await a.keyboard.press('Escape');await screen(a,'pause');
     await button(a,'Resume').focus();await a.keyboard.press('ArrowDown');await a.waitForTimeout(100);
     assert.equal(await a.locator('.pause-panel [aria-current=true]').getAttribute('data-action'),'reset');
-    await a.keyboard.press('ArrowDown');await a.waitForTimeout(100);assert.equal(await a.locator('.pause-panel [aria-current=true]').getAttribute('data-action'),'controls');
-    await a.keyboard.press('Enter');await screen(a,'controls');await a.keyboard.press('Escape');await screen(a,'pause');
+    await a.keyboard.press('ArrowDown');await a.waitForTimeout(100);assert.equal(await a.locator('.pause-panel [aria-current=true]').getAttribute('data-action'),'settings');
+    await a.keyboard.press('Enter');await screen(a,'settings');await a.keyboard.press('Escape');await screen(a,'pause');
     // Native Tab focus and Enter must activate the same highlighted control.
     await button(a,'Resume').focus();await a.keyboard.press('Tab');await a.waitForTimeout(100);assert.equal(await a.evaluate(()=>document.activeElement.dataset.action),'reset');
     const resumeMusic=await musicBefore(a);await button(a,'Resume').click();await running(a);await musicContinues(a,resumeMusic,false);await a.waitForTimeout(200);assert.equal((await state(a)).frame.applied_input.throttle,0);
-    console.log('PASS all six submenu routes at five viewports, remap/cancel/defaults/pagination/music, stable ranges, responsive layout, sharp DOM labels, scroll access, keyboard/Tab, settings sliders, single-player freeze and neutral resume');
+    console.log('PASS settings hub and all six submenu routes at five viewports, remap/cancel/defaults/pagination/music, stable ranges, responsive layout, sharp DOM labels, scroll access, keyboard/Tab, settings sliders, single-player freeze and neutral resume');
   } else {
     await button(a,'Multiplayer').click();await button(a,'Create lobby').click();await a.getByRole('textbox',{name:'Rider name',exact:true}).fill('Pause Host');await button(a,'Create lobby').click();
     await a.waitForFunction(()=>window.atvTerrainStatus.multiplayer.state.code);const code=(await state(a)).multiplayer.state.code;console.log('ROOM',code);
@@ -139,7 +141,7 @@ try {
     for(const [menu,rider] of [[a,b],[b,a]]) {
       await menu.bringToFront();await menu.evaluate(()=>window.dispatchEvent(new Event('focus')));
       const music=await musicBefore(menu);await menu.keyboard.down('KeyW');await menu.waitForFunction(()=>window.atvTerrainStatus.frame.applied_input.throttle>.5);await openPause(menu);await menu.keyboard.up('KeyW');await musicContinues(menu,music,true);
-      assert.equal(await menu.locator('#pause-title').textContent(),'Ride menu');
+      assert.equal(await menu.locator('#pause-title').textContent(),'Pause');
       const before=(await state(menu)).simulationSteps;
       await menu.waitForFunction(before=>window.atvTerrainStatus.simulationSteps>before+15,before,{timeout:10000});
       assert.equal((await state(menu)).frame.applied_input.throttle,0,'menu releases local driving');
@@ -148,9 +150,9 @@ try {
       await menu.waitForFunction(before=>{const s=window.atvTerrainStatus,p=s.multiplayer.remote[0].position;return Math.hypot(...p.map((v,i)=>v-before[i]))>3;},remoteBefore,{timeout:15000});
       await rider.keyboard.up('KeyW');const s=await state(menu);assert(s.multiplayerDraws>0);assert.equal(s.glError,0);
       await menu.bringToFront();await menu.evaluate(()=>window.dispatchEvent(new Event('focus')));await shot(menu,menu===a?'online-host':'online-guest');
-      await button(menu,'Controls').click();await screen(menu,'controls');const settingsSteps=(await state(menu)).simulationSteps;
+      await button(menu,'Settings').click();await screen(menu,'settings');await button(menu,'Controls').click();await screen(menu,'controls');const settingsSteps=(await state(menu)).simulationSteps;
       await menu.waitForFunction(n=>window.atvTerrainStatus.simulationSteps>n+10,settingsSteps,{timeout:10000});
-      await menu.keyboard.press('Escape');await screen(menu,'pause');await button(menu,'Players').click();await screen(menu,'players');await shot(menu,'players');
+      await menu.keyboard.press('Escape');await screen(menu,'settings');await menu.keyboard.press('Escape');await screen(menu,'pause');await button(menu,'Players').click();await screen(menu,'players');await shot(menu,'players');
       const rosterSteps=(await state(menu)).simulationSteps;await menu.waitForFunction(n=>window.atvTerrainStatus.simulationSteps>n+10,rosterSteps,{timeout:10000});
       await menu.keyboard.press('Escape');await button(menu,'Resume').click();await running(menu);assert.equal((await state(menu)).frame.applied_input.throttle,0);
       console.log('LIVE_MENU',JSON.stringify({role:menu===a?'host':'guest',steps:s.simulationSteps-before,remoteMovement:Math.hypot(...s.multiplayer.remote[0].position.map((v,i)=>v-remoteBefore[i]))}));

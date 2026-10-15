@@ -1,5 +1,5 @@
 import { gameplayBindings } from './bindings.js';
-import { parseLaunch, buildRideUrl, copyRideUrl, ENVIRONMENTS, COURSE_PREVIEWS, courseResource } from './launch.js';
+import { parseLaunch, buildRideUrl, copyRideUrl, ENVIRONMENTS, RACE_COURSES, COURSE_PREVIEWS, courseResource, loadingShotsResource } from './launch.js';
 import { renderScreen, screenPages, courseGroup } from './menu-screens.js';
 // Rust owns menu labels, supported choices and their order. This bridge lays out
 // the HD frontend screens (menu-screens.js) and ride panels, and binds input.
@@ -58,8 +58,8 @@ export class Frontend {
     this.quadId = savedSelection.quadId; this.riderId = savedSelection.riderId; this.lastFreestyleEnvironment = savedSelection.freestyleEnvironment; this.playerName = 'Rider'; this.roomCode = ''; this.createCode = ''; this.garageReturn = 'single';
     this.bindingDevice = 'keyboard'; this.bindingPage = 0; this.bindingRow = 0; this.musicPage = 0;
     this.capture = null; this.menuKeys = new Set();
-    this.raceSettings={laps:3,cpu:3,difficulty:1};this.raceActive=false;this.raceAvailable=false;
-    this.trackFilter = 'all'; this.trackUrls = new Map(); this.backdropUrl = '';
+    this.raceSettings={laps:3,cpu:3,difficulty:1,course:'env01'};this.raceActive=false;this.raceAvailable=false;this.raceCourses=[];
+    this.trackFilter = 'all'; this.trackUrls = new Map(); this.backdropUrl = ''; this.shotUrls = new Map(); this.loadingShots = []; this.shotFrame = 0;
     gameplayBindings.subscribe(() => { this.layoutKey = ''; });
     window.addEventListener('keydown', e => {
       if (!this.capture) return;
@@ -194,6 +194,26 @@ export class Frontend {
     }
     this.trackUrls.set(track.id, url); return url;
   }
+  // The original loader cycles six action shots per course. Their archives all
+  // name members frame01..08, so decode them here rather than in the shared map.
+  async courseShots(track) {
+    const path = track && loadingShotsResource(track.id);
+    if (!path) return [];
+    if (!this.shotUrls.has(path)) this.shotUrls.set(path, (async () => {
+      const {file, files} = await this.content, record = files.find(entry => entry.path === path);
+      if (!record) return [];
+      const bytes = await this.read(file, record.lba * 2048, record.bytes), entries = await this.json(2, bytes), urls = [];
+      for (let frame = 2; frame <= 7; frame++) {
+        const index = entries.findIndex(entry => base(entry.name) === `frame0${frame}.pst`);
+        if (index < 0) continue;
+        const image = await this.codec(3, bytes, index), info = await this.json(7, image);
+        urls.push(await this.imageUrl(trimDark(this.bitmap(info, await this.codec(8, image)))));
+      }
+      return urls;
+    })().catch(() => []));
+    return this.shotUrls.get(path);
+  }
+  stopShots() { clearInterval(this.shotTimer); this.shotTimer = null; this.loadingShots = []; this.shotFrame = 0; }
   trackPhotoUrl(track) { return track ? this.trackUrls.get(track.id) ?? '' : ''; }
   trackOrder() {
     const order = this.tracks.map((_, index) => index);
@@ -248,7 +268,10 @@ export class Frontend {
       try { await logo.decode(); this.images.set('brand-logo', logo); } catch { /* Rust text fallback */ }
       // The thumbnail arrives through a separately validated R2 package. Older
       // manifests can still open every menu while that content update publishes.
-      this.raceAvailable=files.some(f=>f.path==='/TRACKS/TRACKSA/ENV01/E01_NAT.RES');
+      // Each original course's race archive is offered once its R2 record exists.
+      this.raceCourses=RACE_COURSES.filter(id=>files.some(f=>f.path===courseResource(id,true).archive));
+      this.raceAvailable=this.raceCourses.length>0;
+      if(this.raceAvailable&&!this.raceCourses.includes(this.raceSettings.course))this.raceSettings.course=this.raceCourses[0];
       if (files.some(f => f.path === '/UI/RESOURCE/QUADINFO.RES')) { await this.archive('/UI/RESOURCE/QUADINFO.RES'); await this.image('multi_atv01'); }
       // The original catalog is available before a terrain/engine is loaded.
       const content = await this.content;
@@ -273,7 +296,7 @@ export class Frontend {
       if (setup.mode==='multiplayer') {
         await this.multiplayer.action(setup.action==='create'?'host':'join',this,setup.action==='create'?{map:setup.map,start:true}:undefined);
       } else {
-        if (setup.activity==='race' && !this.raceAvailable) throw Error('Race resources are unavailable. Try Freestyle.');
+        if (setup.activity==='race' && !this.raceCourses.includes(setup.map)) throw Error('Race resources for this course are unavailable. Try Freestyle.');
         await this.launchSingle(setup.map,setup.activity==='race'?setup.raceSettings:null);
       }
     } catch (error) {
@@ -296,7 +319,7 @@ export class Frontend {
     const racing = this.page==='race';
     const setup = room ? {mode:'multiplayer',room,map:this.multiplayer.state.environment,quadId:this.quadId,riderId:this.riderId} :
       overlayPages.has(this.page) && this.activeSetup ? this.activeSetup :
-      {map:racing?'env01':this.tracks[this.track].id,activity:racing?'race':'freestyle',quadId:this.quadId,riderId:this.riderId,raceSettings:this.raceSettings};
+      {map:racing?this.raceSettings.course:this.tracks[this.track].id,activity:racing?'race':'freestyle',quadId:this.quadId,riderId:this.riderId,raceSettings:this.raceSettings};
     return buildRideUrl(location.origin,{...setup,playerName:this.playerName},{includePlayer:!room});
   }
   fail(error) { this.setLoading(false); this.notice.textContent = error.message; this.busy = false; this.root.dataset.error = 'true'; }
@@ -335,7 +358,7 @@ export class Frontend {
     for (const atom of atoms) if (!this.capture.atoms.some(a => JSON.stringify(a) === JSON.stringify(atom) || ('axis' in atom && a.axis === atom.axis)) && this.capture.atoms.length < 4) this.capture.atoms.push(atom);
     if (!atoms.length && this.capture.atoms.length) this.finishCapture();
   }
-  resume() { this.animatePage(true); this.setLoading(false); this.clearModelViews(); this.cancelCapture(); this.root.hidden = true; this.active(false); void this.audio?.()?.setMusicPreview(false); }
+  resume() { this.stopShots(); this.animatePage(true); this.setLoading(false); this.clearModelViews(); this.cancelCapture(); this.root.hidden = true; this.active(false); void this.audio?.()?.setMusicPreview(false); }
   async show(page) {
     this.padBlocked = true;
     const previous = this.root.hidden ? null : this.canvas;
@@ -420,11 +443,12 @@ export class Frontend {
       else if (['host','join','share','lobbymap','lobbystart','leave'].includes(action)) { if (['host','join'].includes(action) && this.quadId>=27) throw new Error('Choose an ATV for multiplayer. Motorcycles are available in Single Player.'); const setup = action==='host'?this.lobbySetup:undefined; this.lobbySetup=undefined; return await this.multiplayer.action(action, this, setup); }
       else if (['main','single','tracks','settings','extras','pause','players','hud-settings','minimap-config','controls','music','multiplayer','create-lobby','join-lobby','lobby','race'].includes(action)) return await this.show(action);
       if (action === 'racestart') {
-        try { await this.launchSingle('env01', {...this.raceSettings}); }
+        try { await this.launchSingle(this.raceSettings.course, {...this.raceSettings}); }
         catch(error) { await this.show('race');this.fail(error); } finally { this.busy = false; }
         return;
       }
-      if (['racelaps','racecpu'].includes(action)) {
+      if (['racetrack','racelaps','racecpu'].includes(action)) {
+        if (action === 'racetrack' && this.raceCourses.length) { const courses = this.raceCourses, at = Math.max(0, courses.indexOf(this.raceSettings.course)); this.raceSettings.course = courses[(at + direction + courses.length) % courses.length]; }
         if (action === 'racelaps') this.raceSettings.laps = (this.raceSettings.laps - 1 + direction + 5) % 5 + 1;
         if (action === 'racecpu') { const options = [0,3,4]; this.raceSettings.cpu = options[(options.indexOf(this.raceSettings.cpu) + direction + 3) % 3]; }
         this.layoutKey = ''; await this.refresh(); return;
@@ -468,10 +492,10 @@ export class Frontend {
   }
   async refresh(force = false) {
     if (!this.initialized || this.root.hidden || (this.busy && this.page !== 'loading' && !force) || this.layoutPending) return;
-    const stage = this.canvas.parentElement, track = this.page === 'loading' ? this.loadingTrack : this.page === 'lobby' ? this.tracks.find(t=>t.id===this.multiplayer?.state?.environment) : this.page === 'race' ? this.tracks.find(t=>t.id==='env01') : this.tracks[this.track];
+    const stage = this.canvas.parentElement, track = this.page === 'loading' ? this.loadingTrack : this.page === 'lobby' ? this.tracks.find(t=>t.id===this.multiplayer?.state?.environment) : this.page === 'race' ? this.tracks.find(t=>t.id===this.raceSettings.course) : this.tracks[this.track];
     const music = this.audio?.()?.music, musicState = music?.snapshot();
     const lobby = this.multiplayer?.state?.lobby;
-    const request = {lobby_players:(lobby?.players??[]).map(p=>({id:String(p.id),label:`P${p.id+1} ${p.name}${p.id===this.multiplayer.state.peer?' (You)':''}`,value:p.id===this.multiplayer.state.peer?'self':(this.multiplayer.remote.find(r=>r.peer===p.id && !r.stale)?'ready':'waiting')})),race_laps:this.raceSettings.laps,race_cpu:this.raceSettings.cpu,race_difficulty:this.raceSettings.difficulty,race_available:this.raceAvailable,race_active:this.raceActive,quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? (this.page==='create-lobby'?this.createCode:this.roomCode),lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:track?.name ?? '',track_image:(this.page === 'lobby' && track?.id === 'training' && this.images.has(trainingPreview) ? trainingPreview : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
+    const request = {lobby_players:(lobby?.players??[]).map(p=>({id:String(p.id),label:`P${p.id+1} ${p.name}${p.id===this.multiplayer.state.peer?' (You)':''}`,value:p.id===this.multiplayer.state.peer?'self':(this.multiplayer.remote.find(r=>r.peer===p.id && !r.stale)?'ready':'waiting')})),race_laps:this.raceSettings.laps,race_cpu:this.raceSettings.cpu,race_difficulty:this.raceSettings.difficulty,race_available:this.raceAvailable,race_course:this.raceSettings.course,race_active:this.raceActive,quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? (this.page==='create-lobby'?this.createCode:this.roomCode),lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:track?.name ?? '',track_image:(this.page === 'lobby' && track?.id === 'training' && this.images.has(trainingPreview) ? trainingPreview : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
       minimap_orientation:this.minimapSettings?.orientation ?? 'north-up',minimap_shape:this.minimapSettings?.shape ?? 'circle',minimap_corner:this.minimapSettings?.corner ?? 'top-right',minimap_enabled:this.minimapSettings?.enabled ?? true,minimap_size:this.minimapSettings?.size ?? 160,minimap_zoom:this.minimapSettings?.zoom ?? 50,funny_crashes:this.crashSettings?.enabled ?? true,crash_mode:this.crashSettings?.mode ?? 'crazy',original_camera:this.crashSettings?.camera === 'original',speed_rush:this.crashSettings?.speed ?? 'off',mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
       music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
@@ -488,7 +512,7 @@ export class Frontend {
       const frame = await this.json(62,new TextEncoder().encode(key));
       // Page/viewport can change while the worker handles the request. The next
       // frame requests fresh data, rather than applying a stale hit map.
-      if ((this.minimapSettings?.zoom ?? 50) !== request.minimap_zoom || (this.minimapSettings?.orientation ?? 'north-up') !== request.minimap_orientation || (this.minimapSettings?.shape ?? 'circle') !== request.minimap_shape || (this.minimapSettings?.corner ?? 'top-right') !== request.minimap_corner || (this.minimapSettings?.enabled ?? true) !== request.minimap_enabled || (this.minimapSettings?.size ?? 160) !== request.minimap_size || this.raceSettings.laps!==request.race_laps || this.raceSettings.cpu!==request.race_cpu || this.raceSettings.difficulty!==request.race_difficulty || (this.mobileControls?.steeringSensitivity ?? 85) !== request.mobile_steering_sensitivity || (this.capture?.label ?? '') !== request.capture_label || this.bindingPage !== request.binding_page || this.musicPage !== request.music_page || this.page !== request.page || this.selection !== request.selection || this.quadId !== request.quad_id || this.riderId !== request.rider_id || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
+      if ((this.minimapSettings?.zoom ?? 50) !== request.minimap_zoom || (this.minimapSettings?.orientation ?? 'north-up') !== request.minimap_orientation || (this.minimapSettings?.shape ?? 'circle') !== request.minimap_shape || (this.minimapSettings?.corner ?? 'top-right') !== request.minimap_corner || (this.minimapSettings?.enabled ?? true) !== request.minimap_enabled || (this.minimapSettings?.size ?? 160) !== request.minimap_size || this.raceSettings.laps!==request.race_laps || this.raceSettings.course!==request.race_course || this.raceSettings.cpu!==request.race_cpu || this.raceSettings.difficulty!==request.race_difficulty || (this.mobileControls?.steeringSensitivity ?? 85) !== request.mobile_steering_sensitivity || (this.capture?.label ?? '') !== request.capture_label || this.bindingPage !== request.binding_page || this.musicPage !== request.music_page || this.page !== request.page || this.selection !== request.selection || this.quadId !== request.quad_id || this.riderId !== request.rider_id || stage.clientWidth !== request.width || stage.clientHeight !== request.height || this.root.hidden) return;
       if (this.page === 'lobby' && this.multiplayer?.state?.environment !== track?.id) return;
       this.presentation = request; this.presentationTrack = track; this.frame = frame; this.layoutKey = key; this.draw(); this.rebuildButtons(); this.updateModelViews();
     } catch (error) { this.fail(error); }
@@ -506,7 +530,13 @@ export class Frontend {
   async beginLoading(environment) {
     if (!this.initialized) this.setLoading(true, 'Preparing course…');
     this.loadingTrack = this.tracks.find(track => track.id === environment) ?? this.tracks[this.track];
-    this.loadingStatus = 'Preparing course…'; this.loadingProgress = 0; this.loadingTip = null;
+    this.loadingStatus = 'Preparing course…'; this.loadingProgress = 0; this.loadingTip = null; this.stopShots();
+    void this.courseShots(this.loadingTrack).then(urls => {
+      if (this.page !== 'loading' || !urls.length) return;
+      // Original icon_info.ini: frames 02-07 loop over 15 seconds.
+      this.loadingShots = urls; this.shotFrame = 0; this.layoutKey = ''; void this.refresh();
+      this.shotTimer = setInterval(() => { if (this.page !== 'loading') return this.stopShots(); this.shotFrame++; this.layoutKey = ''; void this.refresh(); }, 2500);
+    });
     void this.loadTips().then(tips => { if (this.page !== 'loading' || !tips.length) return; this.loadingTip = tips[Math.floor(Math.random() * tips.length)]; this.layoutKey = ''; void this.refresh(); });
     await this.show('loading'); this.busy = true;
     // Yield a frame so the loading UI is painted before decoding/upload work.
@@ -1012,7 +1042,7 @@ function trimDark(canvas) {
   while (left < width / 4 && dark(left, 0, 0, 1, height)) left++;
   while (right > width * .75 && dark(right - 1, 0, 0, 1, height)) right--;
   while (top < height / 4 && dark(left, top, 1, 0, right - left)) top++;
-  while (bottom > height * .75 && dark(left, bottom - 1, 1, 0, right - left)) bottom--;
+  while (bottom > height * .6 && dark(left, bottom - 1, 1, 0, right - left)) bottom--;
   if (left === 0 && top === 0 && right === width && bottom === height) return canvas;
   const trimmed = document.createElement('canvas'); trimmed.width = right - left; trimmed.height = bottom - top;
   trimmed.getContext('2d').drawImage(canvas, left, top, trimmed.width, trimmed.height, 0, 0, trimmed.width, trimmed.height);

@@ -226,3 +226,54 @@ host behavior gate, not a complete lap or original finish-line replay. The
 checkpoint remains host-only until its validated main artifact passes public
 release verification. Rider-to-rider collision impulses, roster-specific tuning,
 original start slots, race progression and finish rules remain open.
+
+## All 32 original race courses — 2026-10-14
+
+The disc ships a race archive for every Environment, National and Supercross venue:
+`E0n_NAT.RES` (8), `N0n_NAT.RES` (8) and `S0n_NAT.RES` (16). Each contains the same
+members as Caribou: `<venue>natE.tdf`, `AIRiders.pb`, `<venue>nat.toy` (radar,
+championship points, `RiderSpacing`, Supercross fireworks), scene and terrain.
+Only Caribou was connected because the Rust TDF reader was fitted to its single
+closed loop and rejected the other 31.
+
+Exact-build Track loader `00179680` reads the TDF as a section graph:
+
+| Tag | Meaning in the loader |
+| --- | --- |
+| 1 | Section count (allocates the section table); not a version. Caribou 1, `env02` 9, `sx03` 17. |
+| 5 / 6 / 7 / 24 | Section id, flags (loader ORs `0xc1`), editor length, extra word. |
+| 8, 23, 9–11, 12, 18, 26, 27 | Route point and its fields, as before. Tag 12 is read and discarded. |
+| 13 / 14 | Section link count, then (slot, target section) links. |
+| 15 / 16 / 25 | Oriented boxes at Track +0x54/+0x58/+0x5c: center, forward, half-width vector, width. |
+| 19–22, 40, 41 | Leader policy, lane limit, header word. |
+
+Evidence for the box roles: on every course tag 15 lies at the start (section 0 or
+the grid) and tag 16 on the lap circuit. `sx01.scn` `DefaultStartPosition`
+(123.9, 90, 104.7) matches the tag 15 center (123, 89). In `sx01nat.toy`,
+`FireworkTrigger2` (the 140ft start-gate trigger) matches tag 15's position and
+direction, and the `RaceOrderMatters` `FireworkTrigger1` matches tag 16. The port
+therefore treats 15 as the start gate and 16 as the finish gate. The consumers of
+Track +0x54/+0x58 have not been traced, so exact gate tests remain provisional.
+
+Sections flagged `0x100` are the parallel alternate line at each fork; the other
+link is the main line. The reader follows the main line from section 0 until it
+closes, giving an optional start straight (Nationals/Supercross) plus the lap
+circuit. Riders start 4.66ft behind the gate (the native 001f8410 grid fallback)
+at the course `RiderSpacing` (8–15ft from the race TOY; Supercross 10ft from the
+scene TOY). A lap is completed at the checkpoint after the finish gate; when the
+gate sits just ahead of the grid (<25% of a lap), its first crossing starts the
+race instead. Riders on an alternate line are credited in order when they rejoin.
+
+Host checks: all 32 TDFs parse; a scripted rider completes a two-lap race on every
+course, with the travelled distance matching the decoded first-lap/lap lengths
+(1,748–9,974ft laps, up to five forks). `tools/test_race_courses.mjs` starts every
+course in Chromium with four physical CPUs and checks grid spacing, race direction,
+progress, the course menu in three layouts and page/GL errors.
+
+Limitations: CPU corner speed is not original on courses whose TDF speeds are all
+the 150ft/s sentinel (e.g. `env02`, `nat01`). The recovered driver has no corner
+braking and the project does not guess one, so CPUs can overshoot early corners
+and use the existing wreck/recovery path. Supercross firework streams beyond the
+ambient GPU packet budget are reported as unsupported instead of failing the
+load; firework triggers, championship points and original finish-line box tests
+remain unconnected. Race resources need the updated R2 content package.
