@@ -1,0 +1,16 @@
+{
+  "id": "keyboard-controls-rebuilt-for-first-time-players-b262e6a619dd449793119cdfc3ccf8c5",
+  "timestamp": "2026-10-15T01:46:04.977429+00:00",
+  "recorded_at": "2026-10-15T01:46:08.771532+00:00",
+  "kind": "build",
+  "title": "Keyboard controls rebuilt for first-time players",
+  "summary": "S now brakes and then reverses once stopped, arrows drive like WASD, keyboard tricks are hold J/K (add L) then tap a direction, R resets, and a first-ride controls card (H or the Keys button) shows the live key bindings.",
+  "details": [
+    "Rust keyboard drive adapter (browser_input::BrowserDrive) reuses the touch brake-then-reverse rules per fixed step; host play-test: S slowed 32 ft/s to 6.6 ft/s then reversed, W braked the backward roll then drove forward.",
+    "Host play-test trick: holding W, pressing J, then A performed Suicide No Hander; the 150 ms grace stopped held gas forcing an Up trick.",
+    "make check passed: Rust workspace tests, clippy, and 144 node tests; new bindings and keyboard-help tests cover migration of saved v1 keyboard profiles."
+  ],
+  "limitation": "Host-only verification at commit a387596; not yet verified on the public build. The opt-in Playwright test tools/test_bindings.mjs was updated but timed out waiting for ?drive=1 simulation startup on the host, so it was not run to completion.",
+  "image": "/devlog-images/keyboard-controls-rebuilt-for-first-time-players-b262e6a619dd449793119cdfc3ccf8c5.png",
+  "caption": "Host build: the keyboard controls card on a player's first keyboard ride at Caribou Peak."
+}
