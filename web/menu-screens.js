@@ -14,7 +14,7 @@ export function courseGroup(id) {
 }
 export const groupLabel = id => COURSE_GROUPS.find(([key]) => key === courseGroup(id))?.[1] ?? '';
 
-const titles = {main:'Main Menu',single:'Single Player',multiplayer:'Multiplayer','create-lobby':'Create Lobby','join-lobby':'Join Lobby',lobby:'Free Ride Lobby',garage:'Select ATV & Rider',tracks:'Select Track',race:'Single Race',loading:'Loading'};
+const titles = {main:'Main Menu',single:'Single Player',multiplayer:'Multiplayer','create-lobby':'Create Lobby','join-lobby':'Join Lobby',lobby:'Free Ride Lobby',garage:'Select ATV & Rider',tracks:'Select Track',race:'Single Race',loading:'Now Loading...'};
 const icon = {
   left:'<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M13 3 5 10l8 7z"/></svg>',
   right:'<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3l8 7-8 7z"/></svg>',
@@ -168,9 +168,15 @@ function buildRace(fe, left, panel) {
   panel.append(trackFigure('ms-track-hero'));
 }
 
+// The original course loader (LdScreen): an action shot on the left, a black
+// "Track:" bar and "Tips:" on the gray panel, and a gold bar in a black pill.
 function buildLoading(fe, left, panel) {
-  panel.append(trackFigure('ms-track-hero'));
-  left.append(h('div', {class:'ms-loading-status'}, h('p', {class:'ms-status', role:'status'}), h('div', {class:'loading-meter course-load-meter ms-meter', 'aria-hidden':'true'})));
+  left.append(h('figure', {class:'ms-shot'}, h('img', {alt:''})));
+  panel.append(h('div', {class:'ms-ld-info'},
+    h('p', {class:'ms-ld-track'}, h('span', {text:'Track:'}), ' ', h('span', {class:'ms-track-name'})),
+    h('div', {class:'ms-ld-tips'}, h('p', {class:'ms-ld-tips-label', text:'Tips:'}), h('p', {class:'ms-ld-tip'}))));
+  left.parentElement.append(h('footer', {class:'ms-ld-bar'},
+    h('div', {class:'course-load-meter ms-meter', role:'progressbar', 'aria-valuemin':'0', 'aria-valuemax':'100'}, h('span', {class:'ms-meter-fill'}))));
 }
 
 function buildTracks(fe, left, panel) {
@@ -279,9 +285,15 @@ function sync(fe) {
     }
   }
   if (page === 'loading') {
-    setPhoto(root.querySelector('.ms-track-hero'), fe.trackPhotoUrl(fe.presentationTrack), fe.presentationTrack);
-    root.querySelector('.ms-status').textContent = state.loading_status;
-    root.querySelector('.ms-meter').setAttribute('aria-label', state.loading_status);
+    const shot = root.querySelector('.ms-shot img'), url = fe.trackPhotoUrl(fe.presentationTrack);
+    if (shot.getAttribute('src') !== (url || null)) { if (url) shot.src = url; else shot.removeAttribute('src'); }
+    root.querySelector('.ms-track-name').textContent = fe.presentationTrack?.name ?? '';
+    const tip = fe.loadingTip ?? [];
+    root.querySelector('.ms-ld-tips').hidden = !tip.length;
+    root.querySelector('.ms-ld-tip').replaceChildren(...tip.flatMap((line, i) => i ? [document.createElement('br'), line] : [line]));
+    const meter = root.querySelector('.ms-meter'), progress = Math.round((fe.loadingProgress ?? 0) * 100);
+    meter.style.setProperty('--progress', `${progress}%`);
+    meter.setAttribute('aria-valuenow', String(progress)); meter.setAttribute('aria-label', state.loading_status);
   }
   if (page === 'tracks') {
     const track = fe.tracks[fe.track];

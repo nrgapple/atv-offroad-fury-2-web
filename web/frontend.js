@@ -12,6 +12,9 @@ const settingsPages = new Set(['settings','extras','hud-settings','minimap-confi
 const fontName = 'tradegothic_boldcondensed_22s';
 const selectionKey = 'atv-player-selection';
 const trainingPreview = 'training-map-preview';
+// Original STARTEVT etips.txt entries about riding technique. Tips about
+// profiles, championships, editors, mini-games or PS2 buttons are omitted.
+const ridingTips = [5,9,10,11,14,16,17,18,19,23,24,25,26,27];
 const normalizedSelection = value => ({
   quadId: Number.isInteger(value?.quadId) && value.quadId >= 1 && value.quadId <= 46 ? value.quadId : 1,
   riderId: value?.riderId === 1 ? 1 : 0,
@@ -491,10 +494,20 @@ export class Frontend {
     } catch (error) { this.fail(error); }
     finally { this.layoutPending = false; }
   }
+  async loadTips() {
+    this.tipsPending ??= (async () => {
+      await this.archive('/STARTEVT.RES');
+      const doc = await this.document('etips.txt');
+      return ridingTips.map(id => doc.get(`tip${id}`)).filter(Boolean).map(fields => Object.keys(fields).filter(key => /^line\d+_1$/.test(key))
+        .sort((a, b) => parseInt(a.slice(4)) - parseInt(b.slice(4))).map(key => unquote(fields[key])));
+    })().catch(() => []);
+    return this.tipsPending;
+  }
   async beginLoading(environment) {
     if (!this.initialized) this.setLoading(true, 'Preparing course…');
     this.loadingTrack = this.tracks.find(track => track.id === environment) ?? this.tracks[this.track];
-    this.loadingStatus = 'Preparing course…';
+    this.loadingStatus = 'Preparing course…'; this.loadingProgress = 0; this.loadingTip = null;
+    void this.loadTips().then(tips => { if (this.page !== 'loading' || !tips.length) return; this.loadingTip = tips[Math.floor(Math.random() * tips.length)]; this.layoutKey = ''; void this.refresh(); });
     await this.show('loading'); this.busy = true;
     // Yield a frame so the loading UI is painted before decoding/upload work.
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -503,10 +516,13 @@ export class Frontend {
     if (this.page !== 'loading' || this.root.hidden) return;
     // Keep decoder details in diagnostics; the player sees the actual loading phase.
     this.loadingStatus = /engine|sound/i.test(text) ? 'Tuning sound…' : /ATV/i.test(text) ? 'Preparing your ride…' : /rider/i.test(text) ? 'Getting your rider ready…' : /texture|sky|model|vegetation/i.test(text) ? 'Building the scenery…' : /collision/i.test(text) ? 'Preparing the trail…' : /incomplete|Static terrain/i.test(text) ? 'Ready to ride' : 'Opening course…';
+    // The bar advances with the real loading stages and never moves backwards.
+    const stage = {'Opening course…':.12,'Preparing the trail…':.3,'Building the scenery…':.5,'Preparing your ride…':.7,'Getting your rider ready…':.82,'Tuning sound…':.92,'Ready to ride':1}[this.loadingStatus];
+    this.loadingProgress = Math.max(this.loadingProgress ?? 0, stage ?? 0);
     this.layoutKey = '';
     this.courseMeter?.setAttribute('aria-label', this.loadingStatus); void this.refresh();
   }
-  setLoading(visible, detail = 'Preparing menus…', title = 'Loading') {
+  setLoading(visible, detail = 'Preparing menus…', title = 'Now Loading...') {
     if (!this.loadingScreen) return;
     this.loadingScreen.hidden = !visible;
     this.loadingScreen.setAttribute('aria-busy', String(visible));

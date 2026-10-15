@@ -65,3 +65,24 @@ Settings, Controls, Display, Audio and Extras opened from the main menu use the
 frontend backdrop and keep the original menu tune. The racing soundtrack plays
 there only after a song is chosen or music is toggled on the Audio page. From
 Pause they keep the ride panel and soundtrack.
+
+## Loading screens
+
+Both loaders follow the originals recovered privately from the disc (front-end
+loader `LDSCREEN.RES ld_ui` and the per-course `LdScreen` layout from
+`UI/LOADICON/*.LSI icon_info.ini`):
+
+- Boot: "Now Loading..." title strip, logo on red, and a gold bar in a black pill.
+  Runtime content is not yet available at boot, so the backdrop is a CSS red and
+  no tip is shown.
+- Course: "Now Loading..." strip, the course photograph as the action shot, a black
+  "Track:" bar and "Tips:" on the gray panel, and the gold bar in a black pill.
+  The bar advances with the real loading stages and never moves backwards.
+- Tips are the original STARTEVT `etips.txt` riding-technique tips, read from the
+  hosted archive at runtime; only their numbers are in source. Tips about profiles,
+  championships, editors, mini-games or PS2 buttons are omitted.
+
+The original per-course 640x448 loading backdrops (`LDSCREEN.RES`) and rotating
+256x180 action shots (`UI/LOADICON`) are not yet in the hosted content package.
+Records ("Fastest Lap", profile points) are not shown because the port has no
+saved records.
