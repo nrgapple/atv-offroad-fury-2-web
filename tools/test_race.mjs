@@ -86,18 +86,17 @@ try {
   assert.equal(s.minimap.buildSlices, 0, 'Race does not generate GPS pixels');
   assert.equal(s.frame.race.field, 5);
   assert.equal(s.frame.race.checkpoints, 252);
-  // Original roster: four unique AIRiders riders on ATVs from the course/player group.
-  if (Number(process.env.ATV_RACE_MODEL || 1) < 27) {
-    assert.deepEqual(
-      s.frame.race.opponents.map(o => o.name),
-      s.cpuRoster.map(r => r.name)
-    );
-    assert.equal(new Set(s.cpuRoster.map(r => r.name)).size, 4);
-    assert(
-      s.cpuRoster.every(r => r.quad >= 1 && r.quad <= 26 && r.model && r.outfitTextures > 0),
-      JSON.stringify(s.cpuRoster)
-    );
-  } else assert.equal(s.frame.race.opponents.length, 4);
+  // Original roster: four unique AIRiders riders on ATVs from the course/player group
+  // (a motorcycle player draws from its class stand-in group).
+  assert.deepEqual(
+    s.frame.race.opponents.map(o => o.name),
+    s.cpuRoster.map(r => r.name)
+  );
+  assert.equal(new Set(s.cpuRoster.map(r => r.name)).size, 4);
+  assert(
+    s.cpuRoster.every(r => r.quad >= 1 && r.quad <= 26 && r.model && r.outfitTextures > 0),
+    JSON.stringify(s.cpuRoster)
+  );
   const startOrigin = s.frame.origin;
   await page.keyboard.down('KeyW');
   await waitForSteps(page, 30);
@@ -134,7 +133,7 @@ try {
   assert(s.frame.race.elapsed >= 4);
   assert(s.frame.race.opponents.every(o => o.distance > 40));
   assert.equal(s.glError, 0);
-  if (Number(process.env.ATV_RACE_MODEL || 1) < 27) {
+  {
     for (const cpu of s.frame.race.opponents) {
       assert(cpu.physical, 'CPU must use an independent physical quad');
       const p = cpu.physical;
@@ -154,11 +153,6 @@ try {
     assert(
       s.frame.race.opponents.some(o => o.physical.wheel_compression.some(c => Math.abs(c) > 0.01)),
       'CPU suspension responds to terrain'
-    );
-  } else {
-    assert(
-      s.frame.race.opponents.every(o => !o.physical),
-      'Motorcycle opponents retain their explicitly authored route preview'
     );
   }
 

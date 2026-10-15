@@ -309,7 +309,7 @@ impl Driver {
         &mut self,
         course: &Course,
         frame: &VehicleFrame,
-        player: &VehicleFrame,
+        player_speed: f32,
         progress_difference: f32,
         dt: f32,
         context: Context<'_>,
@@ -397,7 +397,7 @@ impl Driver {
         };
         desired_speed = leader_speed(
             desired_speed,
-            player.speed_magnitude,
+            player_speed,
             progress_difference,
             60.,
             course.leader_policy,

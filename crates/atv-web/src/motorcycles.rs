@@ -49,6 +49,21 @@ pub fn load(input: &[u8], id: usize, install: bool) -> Result<Vec<u8>> {
     }
     Ok(output)
 }
+/// The bike feeds the original ATV2 follow/wreck cameras.
+fn camera_actor(sim: &Simulation) -> Result<CameraActor> {
+    let bike = sim.motorcycle.as_ref().ok_or("start motorcycle first")?;
+    let f = bike.frame();
+    let rider = bike.rider_world();
+    Ok(CameraActor {
+        origin: f.origin,
+        orientation: f.orientation,
+        velocity: f.linear_velocity,
+        yaw_rate: f.local_angular_velocity[1],
+        grounded: f.grounded.iter().any(|v| *v),
+        rider: (f.wreck.phase != atv_core::wreck::Phase::Riding)
+            .then(|| ([rider[12], rider[13], rider[14]], bike.rider_velocity())),
+    })
+}
 fn frame(sim: &mut Simulation, raw: &serde_json::Value) -> Result<serde_json::Value> {
     let bike = sim.motorcycle.as_ref().ok_or("start motorcycle first")?;
     let f = bike.frame();
@@ -139,10 +154,13 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
             sim.motorcycle
                 .as_mut()
                 .ok_or("load motorcycle first")?
-                .reset()?;
+                .reset_now()?;
         }
         let bike = sim.motorcycle.as_mut().ok_or("missing motorcycle")?;
         bike.set_obstacles(sim.obstacles.clone().unwrap_or_default());
+        if let Some(config) = sim.boundary_config {
+            bike.set_boundary(config, sim.extended_boundary)?;
+        }
         for _ in 0..30 {
             bike.step(
                 sim.terrain.as_ref().ok_or("load terrain first")?,
@@ -151,6 +169,10 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
             )?;
         }
         sim.placement_epoch = bike.frame().reset_count;
+        if let Some(camera) = &mut sim.camera {
+            camera.reset();
+        }
+        sim.wreck_camera = None;
         sim.motorcycle_effects = atv_core::motorcycle_effects::Effects::default();
         sim.vehicle = None;
         sim.hud.reset();
@@ -159,35 +181,23 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
         return serde_json::to_vec(&frame(sim, &serde_json::json!({}))?).map_err(|e| e.to_string());
     }
     if op == 46 {
-        return serde_json::to_vec(
-            &sim.motorcycle
-                .as_ref()
-                .ok_or("start motorcycle first")?
-                .camera(json_number(source, "orbit")?),
-        )
-        .map_err(|e| e.to_string());
-    }
-    if op == 47 {
-        sim.motorcycle
-            .as_mut()
-            .ok_or("start motorcycle first")?
-            .cycle_camera(
-                source
-                    .get("cycle")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false),
-            );
-        return Ok(b"{}".to_vec());
+        let output = follow_camera(
+            sim,
+            camera_actor(sim)?,
+            json_number(source, "orbit")?,
+            1. / 60.,
+        )?;
+        return serde_json::to_vec(&output).map_err(|e| e.to_string());
     }
     if source
         .get("cycle")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false)
     {
-        sim.motorcycle
+        sim.camera
             .as_mut()
-            .ok_or("start motorcycle first")?
-            .cycle_camera(true);
+            .ok_or("load original camera presets first")?
+            .cycle();
     }
     let count = source
         .get("count")
@@ -249,12 +259,18 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false),
             );
+            if let Some(water) = &mut sim.water {
+                water.advance(1. / 60.)?;
+            }
             bike.step(
                 sim.terrain.as_ref().ok_or("load terrain first")?,
                 driving,
                 1. / 60.,
             )?;
             bike.stunt_controls(mask, axes, 1. / 60.)?;
+            if let Some(water) = &mut sim.water {
+                water.prepare_surface()?;
+            }
         }
         let f = bike.frame();
         if let Some(name) = &bike.stunt_name {
@@ -273,6 +289,10 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
             0.,
         )?;
         if sim.placement_epoch != f.reset_count {
+            if let Some(camera) = &mut sim.camera {
+                camera.reset();
+            }
+            sim.wreck_camera = None;
             sim.motorcycle_effects = atv_core::motorcycle_effects::Effects::default();
             sim.placement_epoch = f.reset_count;
         }
@@ -283,30 +303,19 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
             1. / 60.,
             sim.terrain.as_ref().ok_or("missing terrain")?,
         )?;
-        let race = if let Some(race) = &mut sim.race {
-            race.step(f.origin, 1. / 60.);
-            race.step_motorcycle_preview_cpus(1. / 60.);
-            let b = atv_core::dynamics::basis(f.orientation);
-            let mut state = race.frame(b[2][0].atan2(b[2][2]));
-            for cpu in &mut state.opponents {
-                cpu.origin[1] = sim
-                    .terrain
-                    .as_ref()
-                    .ok_or("missing terrain")?
-                    .contact(cpu.origin[0], cpu.origin[2])?
-                    .map_or(f.origin[1], |h| h.height + 0.1);
-            }
-            Some(state)
-        } else {
-            None
-        };
+        let race = step_race(sim)?;
         let train = step_train_scene(sim, 1. / 60.)?;
         let water = sim.water.as_ref().map(atv_core::water_render::Frame::new);
-        let camera = sim
-            .motorcycle
-            .as_ref()
-            .ok_or("missing motorcycle")?
-            .camera(json_number(source, "orbit")?);
+        let camera = follow_camera(
+            sim,
+            camera_actor(sim)?,
+            json_number(source, "orbit")?,
+            1. / 60.,
+        )?;
+        let view = |key: &str| -> Result<[f32; 3]> {
+            serde_json::from_value(camera[key].clone()).map_err(|e| e.to_string())
+        };
+        let (position, target) = (view("position")?, view("target")?);
         let mut scenery_uv = std::collections::BTreeMap::new();
         for (name, scroll) in &mut sim.scenery_uv {
             scenery_uv.insert(name.clone(), scroll.step(1. / 60.)?);
@@ -328,10 +337,7 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
             .map(|effects| effects.step(1. / 60.).cloned())
             .transpose()?;
         let snow = if let Some(snow) = sim.snow.as_mut() {
-            Some(snow.step(
-                camera.position,
-                std::array::from_fn(|i| camera.target[i] - camera.position[i]),
-            )?)
+            Some(snow.step(position, std::array::from_fn(|i| target[i] - position[i]))?)
         } else {
             None
         };
