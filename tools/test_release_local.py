@@ -96,7 +96,7 @@ class LocalReleaseTests(unittest.TestCase):
             def run(*command):
                 if command == ('make', 'check'):
                     raise ValueError('test failure')
-            with patch.object(deploy_local, 'ROOT', root), patch('deploy_local.run', side_effect=run), patch('deploy_local.require_clean_main'), patch('deploy_local.require_owner'), patch('deploy_local.cancel_main_runs'), patch('deploy_local.gh_json', side_effect=[{'private': True}, {'variables': []}]), patch('deploy_local.stage') as stage:
+            with patch.object(deploy_local, 'ROOT', root), patch('deploy_local.run', side_effect=run), patch('deploy_local.require_clean_main'), patch('deploy_local.require_owner'), patch('deploy_local.cancel_main_runs'), patch('deploy_local.gh_json', side_effect=[{'variables': []}]), patch('deploy_local.stage') as stage:
                 with self.assertRaisesRegex(ValueError, 'test failure'):
                     deploy(COMMIT, 'checkpoint', 'owner', 'stalled')
                 stage.assert_not_called()

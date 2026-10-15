@@ -129,8 +129,6 @@ class WorkflowTests(unittest.TestCase):
         run = {'id': 123, 'html_url': 'https://example.test/run', 'head_sha': COMMIT,
                'head_branch': 'main', 'status': 'completed', 'conclusion': 'success', 'event': 'push'}
         def github(_gh, endpoint):
-            if endpoint.endswith('atv-offroad-fury-2-web'):
-                return {'private': True}
             if '/runs?' in endpoint:
                 return {'workflow_runs': [run]}
             raise AssertionError('must pin deployed artifact, never query current main')
