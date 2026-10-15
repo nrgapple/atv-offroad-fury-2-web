@@ -207,6 +207,8 @@ height back into the original unsigned16-bit coordinate before registration.
 `vegetation_collision::resampled_coordinates` retains native signed32
 truncation and unsigned16 wrapping for representable finite sampled heights.
 `placement_bounds` returns the registration bounds for those final coordinates.
+The browser's vegetation queues (`vegetation_render`) requantize with the same
+function and terrain contact, using the terrain extent as the packed range.
 All placements register, including species without collision proxies. A private
 600-case complete `00129b70` wrapper executes 153,400 original instructions;
 all 1,800 packed coordinates and 3,600 bounds component bits match. Raw file

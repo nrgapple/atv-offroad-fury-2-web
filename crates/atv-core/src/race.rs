@@ -1261,9 +1261,46 @@ impl Race {
         }
     }
 }
+/// Original grid RiderSpacing: the first of the race mode TOY, then (for
+/// Supercross) the scene TOY, whose `RiderSpacing=` value lies in 1–40 ft.
+/// Reads /^\s*RiderSpacing\s*=\s*([\d.]+)/im as the former browser did.
+pub fn rider_spacing<'a>(sources: impl IntoIterator<Item = &'a str>) -> Option<f32> {
+    use crate::authored_text::{assignment, js_number, line_starts, skip_space, starts_with_key};
+    sources.into_iter().find_map(|text| {
+        let value = line_starts(text).find_map(|start| {
+            let key = skip_space(text, start);
+            let value = starts_with_key(text, key, "RiderSpacing")
+                .then(|| assignment(text, key, "RiderSpacing"))
+                .flatten()?;
+            let end = value
+                + text[value..]
+                    .find(|c: char| !c.is_ascii_digit() && c != '.')
+                    .unwrap_or(text.len() - value);
+            (end > value).then(|| js_number(&text[value..end]))
+        })?;
+        (value.is_finite() && (1. ..=40.).contains(&value)).then_some(value as f32)
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rider_spacing_reads_the_first_valid_authored_toy() {
+        // Former browser expression results for the same text.
+        assert_eq!(
+            rider_spacing(["[Race]\n  RiderSpacing = 12.5 ;ft", "RiderSpacing=8"]),
+            Some(12.5)
+        );
+        assert_eq!(rider_spacing(["", "riderspacing=\n9"]), Some(9.));
+        assert_eq!(
+            rider_spacing(["RiderSpacing=8.5.1", "RiderSpacing=41", "x RiderSpacing=3"]),
+            None
+        );
+        assert_eq!(
+            rider_spacing(["RiderSpacing=0.5\nRiderSpacing=10", "RiderSpacing=15"]),
+            Some(15.)
+        );
+    }
     #[test]
     #[ignore = "requires privately extracted original TDF courses"]
     fn every_original_race_course_parses() {

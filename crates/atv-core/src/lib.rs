@@ -2,6 +2,7 @@
 pub mod ambient_effects;
 pub mod animation;
 pub mod audio;
+mod authored_text;
 pub mod boundary_launch;
 pub mod browser_input;
 pub mod camera;
@@ -42,6 +43,7 @@ pub mod scenery_material;
 pub mod sky;
 pub mod sound_effects;
 pub mod spatial_audio;
+pub mod spawn;
 pub mod stunt;
 pub mod stunt_score;
 pub mod terrain;
@@ -83,6 +85,7 @@ pub mod ui_menu;
 pub mod vegetation_collision;
 pub mod vegetation_proxy;
 pub mod vegetation_ray;
+pub mod vegetation_render;
 pub mod vehicle;
 
 pub mod wreck_animation;

@@ -11,19 +11,20 @@ try {for(const environment of (process.env.ATV_ECO_MAPS||'env01,env04,free05').s
  page.on('pageerror',error=>errors.push(error.message));
  // The recovered LOD leaves ENV07's starting near queue outside the view.
  // Inspect the nearest authored fern with a test-only frozen camera.
- if(environment==='env07')await page.route('**/game.js',async route=>{const response=await route.fetch();await route.fulfill({response,body:(await response.text())+`\nwindow.inspectNearVegetation=()=>{const p=ecoGroups[0].placements.reduce((best,p)=>Math.hypot(p.position[0]-camera.x,p.position[2]-camera.z)<Math.hypot(best.position[0]-camera.x,best.position[2]-camera.z)?p:best);menuOpen=false;focused=false;cameraFrame=null;$('frontend').hidden=true;camera.x=p.position[0]+10;camera.z=p.position[2]+10;camera.y=p.position[1]+p.radius*1.5;camera.yaw=Math.atan2(-10,-10);camera.pitch=Math.atan2(-p.radius,Math.sqrt(200));};`});});
+ if(environment==='env07')await page.route('**/game.js',async route=>{const response=await route.fetch();await route.fulfill({response,body:(await response.text())+`\nwindow.inspectNearVegetation=()=>{const slot=terrain.ecosystem.species[0].slot,p=renderCore.call(143,new Uint8Array()).placements.filter(p=>p.slot===slot).reduce((best,p)=>Math.hypot(p.position[0]-camera.x,p.position[2]-camera.z)<Math.hypot(best.position[0]-camera.x,best.position[2]-camera.z)?p:best);menuOpen=false;focused=false;cameraFrame=null;$('frontend').hidden=true;camera.x=p.position[0]+10;camera.z=p.position[2]+10;camera.y=p.position[1]+p.radius*1.5;camera.yaw=Math.atan2(-10,-10);camera.pitch=Math.atan2(-p.radius,Math.sqrt(200));};`});});
  await page.addInitScript(()=>{
   window.ecoMaterialNames=[];window.ecoPasses={};window.ecoDraws=0;window.ecoPixels=0;window.ecoVehicleDraws=0;
   const NativeWorker=Worker;
   window.Worker=class extends NativeWorker {
    constructor(...args){super(...args);this.ops=new Map();this.addEventListener('message',({data})=>{
-    const input=this.ops.get(data.id);this.ops.delete(data.id);if(data.error||!data.bytes||![59,60,90].includes(input?.op))return;
+    const input=this.ops.get(data.id);this.ops.delete(data.id);if(data.error||!data.bytes||![59,60,145].includes(input?.op))return;
     const value=JSON.parse(new TextDecoder().decode(data.bytes));
     if(input?.op===59)ecoMaterialNames.push(...value.mesh.materials);
     if(input?.op===60)window.ecoScene=value;
-    if(input?.op===90&&input.texture)ecoPasses[input.texture.toLowerCase()]=value;
+    // Rust material passes report their base binding with the parsed pass.
+    if(input?.op===145)for(const described of value)if(described.binding&&described.pass)ecoPasses[described.binding.toLowerCase()]=described.pass;
    });}
-   postMessage(data,...args){const texture=data.op===90?new TextDecoder().decode(data.bytes).match(/^\s*TextureMap_1\s*=\s*([^;\r\n]+)/mi)?.[1].trim():null;this.ops.set(data.id,{op:data.op,texture});super.postMessage(data,...args);}
+   postMessage(data,...args){this.ops.set(data.id,{op:data.op});super.postMessage(data,...args);}
   };
   const prototype=WebGL2RenderingContext.prototype,draw=prototype.drawElementsInstanced,vehicle=prototype.drawElements,shader=prototype.shaderSource;
   prototype.shaderSource=function(s,text){if(text.includes('ecoSunDirection'))window.ecoVertexSource=text;return shader.call(this,s,text);};

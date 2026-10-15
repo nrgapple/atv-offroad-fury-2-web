@@ -85,3 +85,15 @@ profile does not prove PS2 hardware rounding, exceptional-value behavior, VU
 pipeline timing, full loader state, scene cache lifetime, or whole-frame vehicle
 equivalence. The integrated wheel/support/stop scheduling and display-time mesh
 pose still require their own coupled evidence. See [movement](MOVEMENT.md).
+
+## Browser ground height
+
+Render cameras, the presentation spawn clamp, race starts and race resets read
+`Terrain::clamped_height`: the contact plane above, with grid coordinates
+clamped to the world edge for cameras outside it. A per-block leaf grid gives
+the same first-listed leaf as `contact()`'s ordered search for batched queries.
+The former browser interpolated the dense `heightfield()` copy instead. Inside
+the world the two agree within about 5e-4 ft on most maps, but not at tile
+corners whose neighboring tiles disagree: FREE04 differs by up to 130 ft at a
+few such corners and ENV04 by 0.02 ft. The dense copy still builds the visible
+terrain mesh, so the mesh can differ from the contact ground at those corners.

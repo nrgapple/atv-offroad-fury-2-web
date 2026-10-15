@@ -13,7 +13,7 @@ try {for(const environment of ['env01','env04','free05']) {
   window.fogPasses=[];window.fogDraws={enabled:0,disabled:0};
   const NativeWorker=Worker;
   window.Worker=class extends NativeWorker {
-   constructor(...args){super(...args);this.ops=new Map();this.addEventListener('message',({data})=>{const op=this.ops.get(data.id);this.ops.delete(data.id);if(op===90&&data.bytes&&!data.error)fogPasses.push(JSON.parse(new TextDecoder().decode(data.bytes)));});}
+   constructor(...args){super(...args);this.ops=new Map();this.addEventListener('message',({data})=>{const op=this.ops.get(data.id);this.ops.delete(data.id);if(op===145&&data.bytes&&!data.error)for(const described of JSON.parse(new TextDecoder().decode(data.bytes)))if(described.pass)fogPasses.push(described.pass);});}
    postMessage(data,...args){this.ops.set(data.id,data.op);super.postMessage(data,...args);}
   };
   const source=WebGL2RenderingContext.prototype.shaderSource;

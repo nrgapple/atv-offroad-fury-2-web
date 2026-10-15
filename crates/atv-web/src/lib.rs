@@ -16,6 +16,7 @@ mod cpu;
 mod motorcycles;
 use cpu::CpuRacer;
 mod multiplayer;
+mod render;
 thread_local! { static MENU_RIDER: RefCell<Option<atv_core::menu_preview::Rider>> = const { RefCell::new(None) }; }
 
 #[derive(Default)]
@@ -1769,9 +1770,17 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
                 serde_json::from_value(value.get("names").ok_or("missing CPU names")?.clone())
                     .map_err(|e| e.to_string())?;
             let mut course = sim.race_course.clone().ok_or("load race course first")?;
-            // Original RiderSpacing from the course mode or scene TOY.
-            if let Some(spacing) = value.get("spacing").and_then(serde_json::Value::as_f64) {
-                course.rider_spacing = spacing as f32;
+            // Original RiderSpacing from the course mode or scene TOY text.
+            if let Some(spacing) = value
+                .get("spacing_sources")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|sources| {
+                    atv_core::race::rider_spacing(
+                        sources.iter().filter_map(serde_json::Value::as_str),
+                    )
+                })
+            {
+                course.rider_spacing = spacing;
             }
             let mut race =
                 atv_core::race::Race::new(course, integer("laps")?, names, integer("difficulty")?)?;
@@ -1806,6 +1815,43 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         });
     }
 
+    if (141..=143).contains(&op) {
+        return render::dispatch(input, op);
+    }
+    if op == 140 {
+        let request: serde_json::Value =
+            serde_json::from_slice(input).map_err(|e| e.to_string())?;
+        let position: [f64; 3] = serde_json::from_value(request["position"].clone())
+            .map_err(|_| "invalid start position")?;
+        let yaw = request["yaw"].as_f64().ok_or("invalid start yaw")?;
+        let slot = match &request["slot"] {
+            serde_json::Value::Null => None,
+            value => Some(
+                value
+                    .as_u64()
+                    .filter(|slot| *slot < 4)
+                    .ok_or("invalid start slot")? as u8,
+            ),
+        };
+        let course = request["course"].as_bool().unwrap_or(false);
+        return SIMULATION.with_borrow(|sim| {
+            let terrain = sim.terrain.as_ref().ok_or("load original terrain first")?;
+            let origin = atv_core::spawn::start_origin(terrain, position, yaw, course, slot)?;
+            serde_json::to_vec(&serde_json::json!({"origin": origin, "yaw": yaw}))
+                .map_err(|e| e.to_string())
+        });
+    }
+    if op == 145 {
+        let request: serde_json::Value =
+            serde_json::from_slice(input).map_err(|e| e.to_string())?;
+        let text = request["text"].as_str().ok_or("missing material text")?;
+        let fallback = request["fallback"].as_str();
+        let multi_pass = request["multi_pass"].as_bool().unwrap_or(false);
+        return serde_json::to_vec(&atv_core::scenery_material::describe(
+            text, multi_pass, fallback,
+        )?)
+        .map_err(|e| e.to_string());
+    }
     if op == 90 {
         return serde_json::to_vec(&atv_core::scenery_material::parse(input)?)
             .map_err(|e| e.to_string());
