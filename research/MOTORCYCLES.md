@@ -1,5 +1,36 @@
 # Motorcycle reconstruction
 
+**Status: the motorcycle controller is authored, not recovered.** Resources
+(PSR records, PSG/SUB meshes, PST textures, MOT clips, audio) and named tuning
+values come from MX vs. ATV Unleashed, but the integrator, tire/suspension
+model, stunt timing and wreck handling in `crates/atv-core/src/motorcycle.rs`
+are authored arcade code. Only the ground bank angle
+(`motorcycle_balance.rs`, GAME_REL `004dbd10`) cites a recovered routine, and it
+runs through an authored contact adapter. Native whole-step parity is unmeasured.
+
+Known non-original constraints (marked `Authored stabilizer:` in the code):
+
+- per-wheel spring force capped at `weight * 8`; fixed lateral-slip (`mass * 8`)
+  and braking (`mass * 10`) velocity-kill gains ahead of the tuned friction clamps;
+- over-travel push-out of up to 0.3 ft along the contact normal, removing 70% of
+  the inward normal velocity;
+- wreck body held at terrain + 0.5 ft with 0.12 rebound and 0.97 damping;
+- detached rider clamped to terrain with 0.85 horizontal friction;
+- grounded wreck trigger when roll exceeds `max(AirborneRollWreckAngle, 1.4 rad)`
+  or pitch exceeds a fixed 1.4 rad, and a minimum wreck time of 1.75 s
+  (`.max(1.75)`).
+
+A real recovery would require Ghidra analysis of the SLUS_211.04/GAME_REL.BIN
+bike controller, tire and wreck routines (update order, units, gates), then an
+instruction-level oracle comparison of whole steps against the Rust controller,
+like the ATV physics oracle work kept under ignored `work/physics`. Until then,
+describe motorcycles as an authored controller using source resources and tuning.
+
+"Paired steps" below are the enhancement-isolation check from
+`tools/crash_isolation.mjs` (enhanced vs Original-mode WASM workers, zero
+gameplay/camera differences). They show optional crash effects leave the port
+unchanged; they are not comparisons with MX vs. ATV Unleashed.
+
 Source: the user-supplied MX vs. ATV Unleashed USA disc, boot `SLUS_211.04`,
 version 1.02. Boot SHA-256:
 `4b74c0c76ffe0838e00c1b9f75b31e1bb91adae06ec9da1416355b363572102a`.
@@ -19,8 +50,9 @@ bike in the browser before publishing a playable motorcycle option.
 Original resource bytes, source executables, module images and decompiler output
 remain in ignored `private/`. Only required validated runtime resources are
 eligible for the separate R2 package. Never add a raw executable/module to it.
-Optional funny crashes remain an authored presentation layer enabled explicitly;
-they must not change baseline motorcycle handling or recovery.
+Optional funny crashes remain an authored presentation layer; new players default
+to Original and choose Crazy/Gorn in Extras. They must not change baseline
+motorcycle handling or recovery.
 
 ## Observed resources
 
@@ -135,8 +167,8 @@ The optional authored crash layer recognizes the bike's `TireFront/TireRear`
 markers and transforms visible descendants below their nearest detached part.
 Nested rear wheel/swingarm pieces retain independent motion; reset and Off clear
 the presentation layer. A synthetic motorcycle hierarchy verifies this support.
-The existing ATV severe-wreck browser regression passes 855 exact paired WASM
-gameplay/camera steps with effects Off/On, seven visible pieces and intact recovery.
+The existing ATV severe-wreck browser regression passes the enhancement-isolation
+check (855 steps, enhanced vs Original mode, zero gameplay/camera differences), seven visible pieces and intact recovery.
 No live motorcycle crash or rider integration is established yet.
 
 The host gate passes 322 core, 25 net, 3 relay, 13 bridge and 69 JS tests, strict

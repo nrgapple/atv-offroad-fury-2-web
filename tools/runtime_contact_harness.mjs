@@ -1,5 +1,6 @@
 // Opt-in original-content integration harness. All coordinates come from loaded
 // resources; test placement does not inject impulses, velocities or wreck states.
+import { button, waitForGame } from './browser/harness.mjs';
 export async function installContactHarness(page) {
   await page.addInitScript(() => {
     const NativeWorker = Worker; let id = -2000;
@@ -39,10 +40,11 @@ export async function installContactHarness(page) {
 
 export async function loadContactMap(page, base, environment) {
   await page.goto(`${base}/play.html?drive=1&environment=${environment}`);
-  await page.waitForFunction(()=>window.atvTerrainStatus?.ready || document.querySelector('#status.error'),null,{timeout:120000});
-  if (!(await page.evaluate(()=>window.atvTerrainStatus.ready))) throw Error(await page.locator('#status').textContent());
+  await waitForGame(page);
   await page.keyboard.press('Escape');
-  await page.getByRole('button',{name:'Resume',exact:true}).waitFor();
+  await button(page,'Resume').waitFor();
+  // Time-based on purpose: lets a simulation batch already sent to the worker
+  // finish before direct contact commands run against the paused state.
   await page.waitForTimeout(100);
 }
 

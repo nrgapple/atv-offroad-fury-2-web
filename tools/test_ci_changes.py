@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from ci_changes import classify, plan
-from test_release_queue import git
+from test_fixtures import git
 
 
 class ChangePlanTests(unittest.TestCase):
@@ -12,9 +12,11 @@ class ChangePlanTests(unittest.TestCase):
         self.assertEqual(classify(['README.md', 'research/DEPLOYMENT.md', 'AGENTS.md']), 'docs')
         self.assertEqual(classify(['research/devlog/entries/checkpoint.json']), 'metadata')
         self.assertEqual(classify(['research/devlog.json', 'research/MAP_FIDELITY.md']), 'metadata')
+        self.assertEqual(classify(['research/BROWSER_TESTS.md']), 'docs')
         for path in ['tools/build_web.py', '.github/workflows/ci.yml', 'Cargo.lock',
                      'crates/atv-core/src/lib.rs', 'web/devlog.js', 'research/fixture.bin',
-                     'research/runtime.json', 'new-file', 'Makefile']:
+                     'research/runtime.json', 'new-file', 'Makefile', 'tools/browser/harness.mjs',
+                     'tools/browser/manifest.mjs', 'tools/run_browser_tests.mjs', 'tools/test_fog.mjs']:
             with self.subTest(path=path):
                 self.assertEqual(classify(['research/devlog/entries/new.json', path]), 'runtime')
 

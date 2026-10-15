@@ -1,18 +1,20 @@
 // Opt-in authored overlay test against the actual game, WASM and original content.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const browser = await chromium.launch({ headless: true });
+import { assertNoErrors, base, button, launch, newPage, waitForScreen } from './browser/harness.mjs';
+const browser = await launch();
 try {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
-  const errors = []; page.on('pageerror', error => errors.push(error.message));
-  const url = new URL('/play.html?drive=1&environment=env01', process.env.ATV_TEST_URL || 'http://127.0.0.1:4173');
+  const errors = [];
+  const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
+  const url = new URL('/play.html?drive=1&environment=env01', base);
   await page.goto(url.href);
   await page.waitForFunction(() => window.atvTerrainStatus?.simulation, null, { timeout: 90000 });
-  await page.bringToFront(); await page.locator('#game').focus();
+  await page.bringToFront();
+  await page.locator('#game').focus();
   const overlay = page.locator('#diagnostics-overlay');
   assert(await overlay.isHidden());
-  await page.keyboard.down('F3'); await page.keyboard.down('F3'); await page.keyboard.up('F3');
+  await page.keyboard.down('F3');
+  await page.keyboard.down('F3');
+  await page.keyboard.up('F3');
   await page.waitForFunction(() => window.atvTerrainStatus.performance.samples >= 5);
   let state = await page.evaluate(() => window.atvTerrainStatus);
   assert.equal(state.performance.mode, 'performance', 'Key repeat must not cycle repeatedly');
@@ -20,26 +22,39 @@ try {
   assert(Number.isFinite(state.physicsBatchMs) && state.physicsBatchSteps > 0);
   assert(state.wasmBytes > 0 && state.drawCalls > 0 && state.drawTriangles > 0);
   assert.match(await overlay.textContent(), /FPS .*WASM batch/s);
-  await page.keyboard.press('F3'); assert.equal(await overlay.getAttribute('data-mode'), 'debug');
+  await page.keyboard.press('F3');
+  assert.equal(await overlay.getAttribute('data-mode'), 'debug');
   assert.match(await overlay.textContent(), /Contact FL FR RL RR.*Suspension.*Wreck/s);
-  await page.keyboard.press('F3'); assert(await overlay.isHidden());
+  await page.keyboard.press('F3');
+  assert(await overlay.isHidden());
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => document.querySelector('#frontend').dataset.page === 'pause');
-  await page.getByRole('button', { name: 'Stats: Off (F3)', exact: true }).click();
-  await page.getByRole('button', { name: 'Stats: Performance (F3)', exact: true }).click();
-  await page.getByRole('button', { name: 'Stats: Debug (F3)', exact: true }).waitFor();
+  await waitForScreen(page, 'pause');
+  await button(page, 'Stats: Off (F3)').click();
+  await button(page, 'Stats: Performance (F3)').click();
+  await button(page, 'Stats: Debug (F3)').waitFor();
   assert(await overlay.isHidden(), 'Pause choices must remain unobscured');
-  await page.getByRole('button', { name: 'Resume', exact: true }).click();
+  await button(page, 'Resume').click();
   assert(await overlay.isVisible());
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
-  await page.waitForFunction(() => window.atvTerrainStatus?.simulation && window.atvTerrainStatus.performance.samples >= 5, null, { timeout: 90000 });
+  await page.waitForFunction(
+    () => window.atvTerrainStatus?.simulation && window.atvTerrainStatus.performance.samples >= 5,
+    null,
+    { timeout: 90000 }
+  );
   assert.equal(await overlay.getAttribute('data-mode'), 'debug', 'Pause setting must persist after reload');
   const bounds = await overlay.boundingBox();
   assert(bounds.x >= 0 && bounds.x + bounds.width <= 390 && bounds.y + bounds.height <= 844);
-  assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#diagnostics-overlay')).pointerEvents), 'none');
+  assert.equal(
+    await page.evaluate(() => getComputedStyle(document.querySelector('#diagnostics-overlay')).pointerEvents),
+    'none'
+  );
   if (process.env.ATV_STATS_SCREENSHOT) await page.screenshot({ path: process.env.ATV_STATS_SCREENSHOT });
-  assert.deepEqual(errors, []);
+  assertNoErrors(errors);
   assert.equal((await page.evaluate(() => window.atvTerrainStatus)).glError, 0);
-  console.log('PASS: F3 cycles performance/debug/off once; pause setting persists; live render/WASM/contact diagnostics fit desktop and portrait without intercepting controls.');
-} finally { await browser.close(); }
+  console.log(
+    'PASS: F3 cycles performance/debug/off once; pause setting persists; live render/WASM/contact diagnostics fit desktop and portrait without intercepting controls.'
+  );
+} finally {
+  await browser.close();
+}

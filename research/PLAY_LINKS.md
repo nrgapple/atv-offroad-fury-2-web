@@ -106,7 +106,7 @@ the Rust relay. It checks root forwarding, saved-choice overrides, copied-link
 reloading, ATV/motorcycle/race starts, 390px setup, invalid-link network exclusion,
 missing rooms, automatic creation/late joining, host map authority, prepare/create
 and ordinary title navigation. Browser evidence and release identity are recorded
-in HANDOFF.md and the dev log. Host Chromium captures do not establish physical
+in the dev log and `research/DEPLOYMENT.md`. Host Chromium captures do not establish physical
 phone or geographically separated multiplayer behavior.
 
 Public verification on 2026-10-13 passes at main `e4bfd91` (PR #44), including

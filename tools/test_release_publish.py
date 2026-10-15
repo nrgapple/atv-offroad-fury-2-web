@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import upload_cloudflare_content as uploader
 from package_release import scoped_content_source
-from test_release_queue import content
+from test_fixtures import content
 
 
 class Response(io.BytesIO):

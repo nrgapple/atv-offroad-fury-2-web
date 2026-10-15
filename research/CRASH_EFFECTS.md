@@ -6,9 +6,17 @@ Build funny crash presentation as an optional authored effects layer on top of
 the recovered wreck and recovery flow. It may react to real wreck/separation
 events, but it must not choose whether a wreck occurs or change the original
 vehicle solver, rider detach/recovery timing, checkpoints, or reset behavior.
-The recovered game remains the comparison baseline. At the user’s request, the
-effects option is now on by default; Off restores the original crash presentation.
-The setting is persisted through the existing settings path, retaining a saved Off.
+The recovered game remains the comparison baseline. The effects option was on by
+default from 2026-10-12 at the user’s request; since 2026-10-15 new players get
+Original, and saved Crazy/Gorn choices are kept (see
+[Original defaults](#original-defaults-2026-10-15)).
+
+**Enhancement-isolation check.** "Paired steps" in this note come from
+`tools/crash_isolation.mjs`: a mirrored WASM worker replays the same inputs
+with crash enhancements off (Original mode), and gameplay/camera/water/train
+fields are compared after removing the presentation payload. Zero differences
+shows the optional layer does not change the port's simulation; it is not a
+comparison with the original PS2 game.
 
 ## Effects model
 
@@ -28,8 +36,8 @@ remain attached; effects must tolerate incomplete model coverage.
 
 The current implementation uses a 120 Hz constrained Verlet layer with bounded
 joint angle ranges, terrain-only contacts, at most 32 source rider nodes, and a
-cap of eight debris pieces. The toggle is persisted as `atv-funny-crashes` and
-defaults to On, while preserving an existing saved Off. Only the local player’s
+cap of eight debris pieces. The toggle was first persisted as `atv-funny-crashes`;
+`atv-crash-mode` now holds the choice and migrates that key. Only the local player’s
 crash receives the presentation layer;
 remote players keep their native poses. The source ATV chassis is a monolithic
 mesh, so visual breakaway is limited to authored mechanical pieces rather than
@@ -40,8 +48,8 @@ markers. Their visible tire children and handlebar attachments inherit the
 nearest detached part's transformed pose; a separately detached rear wheel
 inside a detached swingarm retains its own motion. Synthetic hierarchy tests
 cover four severe-crash parts, child transforms, unchanged frame geometry and
-reset/Off. The existing ATV browser gate still passes 855 paired gameplay/camera
-steps and seven visible pieces. This is compatible presentation groundwork;
+reset/Off. The existing ATV browser gate still passes the enhancement-isolation check
+(855 steps, enhanced vs Original mode) with seven visible pieces. This is compatible presentation groundwork;
 playable motorcycle handling, rider and crash integration remain unfinished.
 
 Verified ordinary Nac Nac failure captures show the rider separating with two
@@ -60,13 +68,13 @@ not suitable for the dev log.
 
 The 2026-10-13 tuning retains more launch momentum, adds clearer torso/limb
 tumble and carries terrain rebound through joint solving. A fresh severe ATV
-route completed 1,197 paired enhanced/Off WASM steps with zero compared
-gameplay/camera mismatches, including three aerial ragdoll frames with the ATV
+route passed the enhancement-isolation check (1,197 steps, enhanced vs Original
+mode, zero gameplay/camera differences), including three aerial ragdoll frames with the ATV
 intact, two contact-damage transitions, seven visible parts and intact recovery.
 The inspected Caribou capture is host evidence only; physical iOS and public
 deployment are not established. See [fullscreen, camera and crash evidence](IOS_CAMERA_CRASH.md).
-The separate motorcycle touch/crash replay completed 302 paired enhanced/Off
-steps with zero mismatches across 251 observed frames and mild-crash recovery;
+The separate motorcycle touch/crash replay passed the enhancement-isolation
+check (302 steps, zero differences) across 251 observed frames and mild-crash recovery;
 it produced no damaging-part contact case.
 
 ## Controls and compatibility
@@ -92,7 +100,7 @@ breakaway simulation runs and baseline wreck behavior remains equivalent.
   debris, and correct settings presentation. Label host and public evidence
   separately; a host result is not a public release check.
 
-At this host checkpoint, paired mirror-WASM traces compare gameplay, camera,
+At this host checkpoint, enhancement-isolation (mirror-WASM) traces compare gameplay, camera,
 water, train, and wheel fields after excluding the effects payload and echoed
 toggle. They cover 415 desktop, 430 female-rider mobile, and 762 severe-impact
 steps with zero mismatches. The ordinary touch Nac Nac failure was exercised with the male
@@ -129,9 +137,9 @@ landings, separating/no-penetration contacts, hard ground and horizontal obstacl
 contacts, later damage escalation and no duplicate parts. Host severe source
 inputs produce three aerial rider-ragdoll frames with intact ATV, then two parts
 at a 27.420 ft/s obstacle contact and seven at a later 50.855 ft/s contact, GPU
-draws and intact recovery. The 1,199 exact mirrored WASM steps have zero compared
-gameplay/camera mismatches. Host touch ATV26/female passes at 390px, including
-pause, mid-wreck Off/On and recovery; 439 paired steps have zero mismatches.
+draws and intact recovery. The enhancement-isolation check covers 1,199 steps (enhanced vs Original
+mode) with zero gameplay/camera differences. Host touch ATV26/female passes at 390px, including
+pause, mid-wreck Off/On and recovery; the isolation check's 439 steps show zero differences.
 Explicit original Off passes the touch crash/recovery route. Fresh default On,
 saved Off/On after reload, and unavailable-storage defaults/session toggles pass
 at 844×390. These follow-up results are host verification, pending public release;
@@ -173,13 +181,14 @@ joint connections split into independent groups; unsupported geometry remains
 intact. Terrain splashes use at most 90 droplets and a single GPU draw. The
 effect is local-player only and clears on recovery, reset and crash-mode changes.
 
-The host severe route passed 1,519 paired WASM steps with zero gameplay/camera
-mismatches and 101 additional steps after reload. It produced three aerial
+The host severe route passed the enhancement-isolation check (1,519 steps,
+enhanced vs Original mode, zero gameplay/camera differences) and 101 additional
+steps after reload. It produced three aerial
 ragdoll frames with the ATV intact, two actual contact-damage transitions, seven
 mechanical parts, five severed rider parts and 90 droplets in one GPU blood draw,
 then intact recovery. Camera kick/energy and the crash boom were observed. Crazy
-Nac Nac mode switching and recovery passed 581 paired steps without mismatches.
-Motorcycle Crazy and Gorn mild-wreck touch/recovery passed 333 and 302 paired
+Nac Nac mode switching and recovery passed 581 isolation-check steps without differences.
+Motorcycle Crazy and Gorn mild-wreck touch/recovery passed 333 and 302 isolation-check
 steps respectively, with no damage or gore. Settings persistence and 44px
 targets passed in 390×844 portrait and 844×390 landscape.
 
@@ -193,8 +202,8 @@ camera parity are unverified. No new runtime resource additions are needed; the 
 
 Follow-up host touch verification at 390px with ATV26/female and Gorn passed
 rider separation, one contact/mechanical-damage transition, switching through
-Original and Crazy, intact recovery and resumed driving. The 607 paired WASM
-steps had zero gameplay/camera differences; GPU counts were 468 enhanced quad
+Original and Crazy, intact recovery and resumed driving. The enhancement-isolation
+check (607 steps, enhanced vs Original mode) had zero gameplay/camera differences; GPU counts were 468 enhanced quad
 and 7,292 rider draws. A separate ATV1-to-ATV26 severe-route probe timed out
 after 60 seconds waiting for all seven mechanical and five gore pieces. The
 route did not attain its severe target, so this is a route/severity coverage
@@ -206,8 +215,8 @@ the current wreck. A hard collision of at least 50 ft/s before rider separation
 can therefore trigger Gorn when the rider detaches; recovery/reset clears the
 value so a later soft crash cannot inherit gore. A focused Rust regression
 covers delayed separation followed by a mild crash. The final Gorn route passed
-1,405 paired WASM gameplay/camera steps plus 101 after reload, with zero
-differences: three aerial ragdoll frames with the ATV intact, two contact
+the enhancement-isolation check (1,405 steps plus 101 after reload, enhanced vs
+Original mode) with zero gameplay/camera differences: three aerial ragdoll frames with the ATV intact, two contact
 transitions, seven mechanical pieces, five rider pieces, 90 droplets, nonzero
 shake and boom, and intact recovery. The earlier 1,519-step host run remains a
 valid checkpoint for that build. `make check` passes 360 core Rust and 122 JS
@@ -280,7 +289,7 @@ animated hand-off, head-first slams tearing the neck, side slams tearing the
 struck forearm first, moderate tumbles tearing nothing, blood bounds/pooling/
 streaks, Crazy mode having no gore, localized breakaway and reset/mode clears.
 On the Caribou severe route (Chromium/Metal, 1280×844) the Gorn gate passed
-with 1,019 + 102 exactly paired enhanced/Off gameplay/camera steps: three ATV
+the enhancement-isolation check (1,019 + 102 steps, enhanced vs Original mode): three ATV
 parts near the contact, rider strike 41 ft/s, one torn joint (right knee) with
 two stump caps, bounded blood in one draw, no stretched severed triangles, and
 intact recovery. Female ATV26 and MX rider crashes ran without errors.
@@ -292,3 +301,30 @@ or a 22 ft rider separation (also true on production `eccf8d7`), so those two
 browser assertions are reported rather than asserted. The MX rider shows a
 pre-existing black patch on the back in Crazy/Gorn on production as well.
 Physical phones and public deployment are not verified by this section.
+
+## Original defaults (2026-10-15)
+
+Original behavior is the project baseline, so a player without a saved choice now
+gets Original crashes. A saved `atv-crash-mode` of Crazy or Gorn is kept, as is a
+legacy saved `atv-funny-crashes=true` (migrated to Crazy); anything else is
+Original. The menu labels an unset mode Original.
+
+The tight crash shot already applied only while Crazy/Gorn presentation is
+active: `vehicle.crashSubjects` is null otherwise, so Original always uses the
+recovered wreck camera. Its Tight/Original choice is unchanged. The synthesized
+bass/noise crash boom (`audio.crashBoom`) is authored, not a recovered sample.
+Its former companion, camera shake, was removed, so it is grouped with the crash
+mode and now plays only in Crazy/Gorn. Impact detection still runs for
+diagnostics; recovered impact samples are unaffected.
+
+Host evidence (Chromium Metal, local build): `make check` passes 399 core Rust
+tests and 157 JS tests (one existing private-case skip); `make web` passes.
+`test_hd_settings`, `test_camera_gorn` (boom still observed in Gorn),
+`test_motorcycle_crash` (304 exact paired Crazy/Off steps) and the default
+`test_wreck` route pass; that Original route now asserts zero booms.
+`test_tight_crash_camera` and `test_funny_crash` still fail only their route
+coverage assertions (22 ft separation; aerial bailout), identically with the
+previous origin/main scripts; see the route limits above. The legacy
+`ATV_FUNNY_CRASHES=1` `test_wreck` path also fails on a stale expectation of a
+crash row in the pause menu, independent of this change. Public deployment is
+not verified here.

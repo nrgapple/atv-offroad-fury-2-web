@@ -47,6 +47,7 @@ const impactEvents = new ImpactEvents();
 const coarsePointer = () => { try { return matchMedia('(pointer: coarse)').matches; } catch { return false; } };
 let speedRush = new SpeedRush(gl, { coarse: coarsePointer() });
 crashSettings.onSpeedChange = () => { speedRush.reset(); scheduleRender(); };
+crashSettings.onChaseChange = () => { uphillSightline.update(null); if (cameraFrame) presentCameraFrame(); scheduleRender(); };
 crashSettings.onChange = () => {
   funnyCrashes = crashSettings.enabled;
   if(crashSettings.mode==='gorn' && terrain && !lost && !bloodRenderer)bloodRenderer=new BloodRenderer(gl);
@@ -82,7 +83,7 @@ const diagnostics = { ready: false, frames: 0, vertices: 0, triangles: 0, chunks
 let audio = new GameAudio(codec, message => { diagnostics.audioError = message; status(`Audio: ${message}`, true); });
 const stats = new DiagnosticsOverlay({ snapshot: () => ({ ...diagnostics, minimap: minimap.snapshot(), frame: simFrame, paused: simulationPaused(), menuOpen, focused, resolution: [canvas.width, canvas.height] }) });
 // Read-only snapshot for verification; does not expose the locally opened file.
-Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, minimap: minimap.snapshot(), hud: hud?.snapshot(), funnyCrashes, crashMode: crashSettings.mode, speedRush: {...speedRush.snapshot(),setting:crashSettings.speed}, impactAudio: { impacts: impactEvents.impacts }, blood: { draws: bloodRenderer?.draws ?? 0, instances: bloodRenderer?.draws ? bloodRenderer.instances : 0, count: crashSettings.mode === 'gorn' ? bloodCount(simFrame?.funny_crash?.blood) : 0, stumps: crashSettings.mode === 'gorn' ? Math.floor((simFrame?.funny_crash?.blood?.stumps?.length ?? 0) / 7) : 0 }, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()],reconnecting:multiplayer.reconnecting,lastDisconnect:multiplayer.lastDisconnect,droppedSnapshots:multiplayer.droppedSnapshots,networkAdapterRoundTripMs:multiplayer.networkEncodeMs,networkAdapterCalls:multiplayer.networkEncodeCalls} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
+Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, minimap: minimap.snapshot(), hud: hud?.snapshot(), funnyCrashes, crashMode: crashSettings.mode, chaseCamera: crashSettings.chase, speedRush: {...speedRush.snapshot(),setting:crashSettings.speed}, impactAudio: { impacts: impactEvents.impacts }, blood: { draws: bloodRenderer?.draws ?? 0, instances: bloodRenderer?.draws ? bloodRenderer.instances : 0, count: crashSettings.mode === 'gorn' ? bloodCount(simFrame?.funny_crash?.blood) : 0, stumps: crashSettings.mode === 'gorn' ? Math.floor((simFrame?.funny_crash?.blood?.stumps?.length ?? 0) / 7) : 0 }, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()],reconnecting:multiplayer.reconnecting,lastDisconnect:multiplayer.lastDisconnect,droppedSnapshots:multiplayer.droppedSnapshots,networkAdapterRoundTripMs:multiplayer.networkEncodeMs,networkAdapterCalls:multiplayer.networkEncodeCalls} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
 worker.onmessage = ({ data }) => {
   if (data.startupError) { status(data.startupError, true); return; }
   const request = pending.get(data.id);
@@ -1409,7 +1410,8 @@ function drivingInput() {
 function acceptFrame(frame, effects = true) {
   if (effects) {
     const severity = impactEvents.accept(frame, focused && !document.hidden && !menuOpen && !lost && !pageSuspended);
-    if (severity >= 40) audio.crashBoom(severity);
+    // Authored boom belongs to the optional Crazy/Gorn crash presentation.
+    if (severity >= 40 && funnyCrashes) audio.crashBoom(severity);
   }
   wheelEffectsRenderer?.accept(frame.wheel_particles);
   if (diagnostics.wheelEffects) { diagnostics.wheelEffects.frame = frame.wheel_particles; diagnostics.wheelEffects.particles = frame.wheel_particles?.particles.length ?? 0; }
@@ -1585,7 +1587,7 @@ function followCamera(dt) {
   orbit -= (amount('cameraRight') - amount('cameraLeft')) * dt * 1.7;
 }
 function updateCamera(dt) {
-  if (simReady) { uphillSightline.update(presentedFrame ?? simFrame, presentedCamera ?? cameraFrame, dt, terrainHeight); followCamera(dt); return; }
+  if (simReady) { uphillSightline.update(crashSettings.chaseAssist ? presentedFrame ?? simFrame : null, presentedCamera ?? cameraFrame, dt, terrainHeight); followCamera(dt); return; }
   if (!focused || document.hidden) return;
   const pad = gamepad();
   let sideways = Number(keys.has('KeyD') || keys.has('ArrowRight')) - Number(keys.has('KeyA') || keys.has('ArrowLeft')) + deadzone(pad?.axes[0]);
