@@ -577,19 +577,27 @@ impl Effects {
                 oscillator: fog::Oscillator::default(),
             });
         }
-        let stream_budget: usize = runtime
-            .iter()
-            .filter_map(|r| {
-                r.definition.stream.as_ref().map(|c| {
-                    (r.definition.base.rate * 0.1).ceil() as usize
-                        * c.length[1].ceil() as usize
-                        * (c.thickness[1].ceil() as usize + usize::from(c.bright_head))
-                })
-            })
-            .sum();
-        if stream_budget > GPU_CAPACITY {
-            return Err("original stream frame exceeds bounded packet budget".into());
-        }
+        // Stream emitters keep their authored order while their worst-case
+        // packets fit; race-only firework sets beyond the bounded GPU packet
+        // are reported instead of failing the whole course load.
+        let mut stream_budget = 0usize;
+        runtime.retain(|r| {
+            let Some(c) = r.definition.stream.as_ref() else {
+                return true;
+            };
+            let cost = (r.definition.base.rate * 0.1).ceil() as usize
+                * c.length[1].ceil() as usize
+                * (c.thickness[1].ceil() as usize + usize::from(c.bright_head));
+            if stream_budget + cost > GPU_CAPACITY {
+                unsupported.push(format!(
+                    "{}: stream exceeds bounded packet budget",
+                    r.placement.filename
+                ));
+                return false;
+            }
+            stream_budget += cost;
+            true
+        });
         let metadata = Metadata {
             active: runtime.len(),
             cpu_active: runtime.iter().filter(|r| r.placement.type_id != 11).count(),

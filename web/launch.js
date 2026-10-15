@@ -4,9 +4,11 @@ export const ENVIRONMENTS = ['env01','env02','env03','env04','env05','env06','en
   'free01','free02','free03','free04','free06',
   ...Array.from({length:8},(_,i)=>`nat${String(i+1).padStart(2,'0')}`),
   ...Array.from({length:16},(_,i)=>`sx${String(i+1).padStart(2,'0')}`),'training','game01'];
+// Every Environment, National and Supercross venue ships an original *_NAT.RES race.
+export const RACE_COURSES = ENVIRONMENTS.filter(id=>/^(env|nat|sx)\d\d$/.test(id));
 export const COURSE_PREVIEWS = ['ANAT','PSTNT','PNAT','ASX','PSX','HOCK'].map(id=>`/UI/RESOURCE/TP/TP_${id}.RES`);
 export function courseResource(environment, racing = false) {
-  if (!ENVIRONMENTS.includes(environment) || (racing && environment !== 'env01')) throw new Error('Unsupported course.');
+  if (!ENVIRONMENTS.includes(environment) || (racing && !RACE_COURSES.includes(environment))) throw new Error('Unsupported course.');
   const number=environment.slice(-2), family=environment.replace(/\d+$/,'');
   const prefix={env:'E',free:'F',nat:'N',sx:'S',game:'G'}[family];
   const group=family==='sx'||family==='training'?'B':'A';
@@ -66,9 +68,9 @@ export function parseLaunch(search, tracks = ENVIRONMENTS.map(id=>({id,name:id})
     if (quadId>26) errors.push('Multiplayer supports ATVs 1–26; motorcycles are Single Player only.');
     if (activity!=='freestyle') errors.push('Multiplayer supports Freeride only.');
   }
-  if (activity==='race' && map!=='env01') errors.push('Race preview supports Caribou Peak (env01) only.');
+  if (activity==='race' && map && !RACE_COURSES.includes(map)) errors.push('Races use the original Environment, National and Supercross courses.');
   if (activity!=='race' && ('laps' in values || 'cpu' in values)) errors.push('Laps/cpu requires activity=race.');
-  return {requested:true,errors,mode,activity,action,play,map:map??'env01',quadId,riderId,playerName,room,raceSettings:{laps,cpu,difficulty:1}};
+  return {requested:true,errors,mode,activity,action,play,map:map??'env01',quadId,riderId,playerName,room,raceSettings:{laps,cpu,difficulty:1,course:map??'env01'}};
 }
 export function buildRideUrl(origin, setup, {includePlayer = true} = {}) {
   const url = new URL('/play.html',origin);

@@ -51,3 +51,11 @@ test('all venues are selectable regardless of source access and points, with one
  assert.deepEqual(unlockedCourses(new Map(records),files.slice(0,9)).map(t=>t.id),ENVIRONMENTS.slice(0,9));
  for(const freestyleEnvironment of ENVIRONMENTS){let stored;savePlayerSelection({...defaults,freestyleEnvironment},v=>stored=v);assert.equal(loadPlayerSelection(()=>stored).freestyleEnvironment,freestyleEnvironment);}
 });
+
+test('race setup cycles available original courses and starts the selected one',async()=>{
+ const calls=[],menu={busy:false,notice:{},raceCourses:['env01','nat03','sx16'],raceSettings:{laps:3,cpu:3,difficulty:1,course:'env01'},
+  refresh:async()=>{},show:async()=>{},fail(error){throw error;},launchSingle:async(map,racing)=>calls.push([map,racing.course])};
+ await Frontend.prototype.run.call(menu,'racetrack',-1);assert.equal(menu.raceSettings.course,'sx16');
+ await Frontend.prototype.run.call(menu,'racetrack',1);await Frontend.prototype.run.call(menu,'racetrack',1);assert.equal(menu.raceSettings.course,'nat03');
+ await Frontend.prototype.run.call(menu,'racestart');assert.deepEqual(calls,[['nat03','nat03']]);
+});

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseLaunch,buildRideUrl,copyRideUrl,ENVIRONMENTS,courseResource} from './launch.js';
+import {parseLaunch,buildRideUrl,copyRideUrl,ENVIRONMENTS,RACE_COURSES,courseResource} from './launch.js';
 const parse = search=>parseLaunch(search);
 test('ordinary and cache/marketing-only visits retain the title',()=>{
  for(const q of ['', '?v=123&utm_source=test','#room=ABCD1234']) assert.equal(parse(q).requested,false);
@@ -24,8 +24,9 @@ test('old room links autojoin and create links use explicit intent',()=>{
 });
 test('race settings survive roundtrip; incomplete modes are rejected',()=>{
  const s=parse(new URL(buildRideUrl('https://example.test',{activity:'race',quadId:34,raceSettings:{laps:5,cpu:4}})).search);
- assert.deepEqual(s.errors,[]);assert.deepEqual(s.raceSettings,{laps:5,cpu:4,difficulty:1});
- for(const q of ['?activity=race&map=env02','?mode=mp&room=ABCD1234&activity=race','?room=ABCD1234&quad=27','?laps=2','?activity=race&cpu=5'])assert(parse(q).errors.length,q);
+ assert.deepEqual(s.errors,[]);assert.deepEqual(s.raceSettings,{laps:5,cpu:4,difficulty:1,course:'env01'});
+ assert.deepEqual(parse('?activity=race&map=sx07').raceSettings,{laps:3,cpu:3,difficulty:1,course:'sx07'});
+ for(const q of ['?activity=race&map=free05','?activity=race&map=training','?mode=mp&room=ABCD1234&activity=race','?room=ABCD1234&quad=27','?laps=2','?activity=race&cpu=5'])assert(parse(q).errors.length,q);
 });
 test('malformed, conflicting and duplicate values never silently launch',()=>{
  for(const q of ['?map=nope','?map=','?map=env01&map=env02','?map=env01&environment=env01','?quad=1&atv=2','?quad=0','?quad=47','?quad=1.5','?quad=0x10','?rider=2','?player=','?player=%00','?player='+encodeURIComponent('🏁'.repeat(9)),'?mode=single&room=ABCD1234','?room=ABCD','?play=maybe','?activity=supercross','?action=delete','?activity=race&laps=6'])assert(parse(q).errors.length,q);
@@ -50,6 +51,9 @@ test('all venue resource paths match family naming and reject unsupported race r
   ['game01','/TRACKS/TRACKSA/GAME01/G01_SO.RES','game01','game01']]) {
    const r=courseResource(id);assert.equal(r.archive,path);assert.equal(r.sceneStem,scene);assert.equal(r.modeStem,mode);
   }
- assert.equal(courseResource('env01',true).archive,'/TRACKS/TRACKSA/ENV01/E01_NAT.RES');
- for(const id of ['nat01','sx01','unknown'])assert.throws(()=>courseResource(id,true));
+ assert.equal(RACE_COURSES.length,32);
+ for(const [id,path,mode] of [['env01','/TRACKS/TRACKSA/ENV01/E01_NAT.RES','env01nat'],['nat01','/TRACKS/TRACKSA/NAT01/N01_NAT.RES','nat01nat'],['sx16','/TRACKS/TRACKSB/SX16/S16_NAT.RES','sx16nat']]) {
+  const r=courseResource(id,true);assert.equal(r.archive,path);assert.equal(r.sceneStem,id);assert.equal(r.modeStem,mode);
+ }
+ for(const id of ['free01','training','game01','unknown'])assert.throws(()=>courseResource(id,true));
 });

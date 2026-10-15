@@ -15,17 +15,18 @@ export const groupLabel = id => COURSE_GROUPS.find(([key]) => key === courseGrou
 
 const titles = {main:'Main Menu',single:'Single Player',multiplayer:'Multiplayer','create-lobby':'Create Lobby','join-lobby':'Join Lobby',lobby:'Free Ride Lobby',garage:'Select ATV & Rider',tracks:'Select Track',race:'Single Race',loading:'Loading'};
 const details = {
-  single:'Free ride every original venue, race CPU riders on Caribou Peak, or pick your ride.',
+  single:'Free ride every original venue, race CPU riders on 32 original courses, or pick your ride.',
   multiplayer:'Up to four riders can free ride together online. Share an invite link or lobby code.',
   settings:'Controls, display, audio and extras. Changes are saved in this browser.',
   devlog:'Progress, screenshots and what is coming next for Fury Remastered.',
   tracks:'Free ride any original Enduro, Stunt, Nationals, Supercross or arena venue.',
   garage:'Choose your ATV or motorcycle and your rider.',
-  race:'Race CPU riders around Caribou Peak. Set laps and the size of the field.',
+  race:'Race CPU riders on any original National or Supercross course. Choose the course, laps and field size.',
   'create-lobby':'Host a Freeride room. Leave the code blank for a random one.',
   'join-lobby':'Enter a lobby code from a friend to ride together.',
   host:'Open the room. You choose the course and start the ride.',
   join:'Join the lobby with this code.',
+  racetrack:'Use left and right to choose an original National or Supercross course.',
   racelaps:'Use left and right to change the number of laps.',
   racecpu:'Use left and right to change how many CPU riders start.',
   racestart:'Head to the starting line.',
@@ -186,7 +187,7 @@ function buildLobby(fe, left, panel) {
 function buildRace(fe, left, panel) {
   const list = h('nav', {class:'ms-rows', 'aria-label':'Race setup'});
   for (const action of fe.frame.choices) {
-    const stepper = ['racelaps','racecpu'].includes(action);
+    const stepper = ['racetrack','racelaps','racecpu'].includes(action);
     const item = row(fe, action, stepper ? [h('span', {class:'ms-row-value'})] : []);
     if (stepper) item.classList.add('ms-row-cycle');
     list.append(item);
@@ -306,7 +307,7 @@ function sync(fe) {
     if (value) value.textContent = rest.join(': ');
   }
   if (page === 'race' || page === 'lobby') {
-    setPhoto(root.querySelector('.ms-track-hero'), fe.trackPhotoUrl(fe.presentationTrack), fe.presentationTrack, page === 'race' ? 'National / Race preview' : 'Free Ride');
+    setPhoto(root.querySelector('.ms-track-hero'), fe.trackPhotoUrl(fe.presentationTrack), fe.presentationTrack, page === 'race' ? `${courseGroup(fe.presentationTrack?.id ?? '') === 'sx' ? 'Supercross' : 'National'} / Race preview` : 'Free Ride');
     if (page === 'lobby') {
       root.querySelector('.ms-code').textContent = state.room_code || '--------';
       root.querySelector('.ms-status').textContent = state.lobby_status || 'Connecting…';
