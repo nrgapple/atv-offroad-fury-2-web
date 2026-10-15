@@ -16,8 +16,11 @@ export function mountGameViewport(win = window, doc = document) {
   if (!doc.getElementById('game')) return;
   const update = () => {
     const standalone = win.navigator.standalone === true || win.matchMedia('(display-mode: standalone)').matches || win.matchMedia('(display-mode: fullscreen)').matches;
-    const { width, height } = gameViewport(win, standalone, isAppleMobile(win.navigator));
+    // A mobile layout viewport grows to fit an explicitly sized page. Release the
+    // previous size before measuring so narrowing and rotation can shrink it.
     const style = doc.documentElement.style;
+    style.removeProperty('--app-width'); style.removeProperty('--app-height'); void doc.documentElement.offsetWidth;
+    const { width, height } = gameViewport(win, standalone, isAppleMobile(win.navigator));
     style.setProperty('--app-width', `${width}px`);
     style.setProperty('--app-height', `${height}px`);
   };

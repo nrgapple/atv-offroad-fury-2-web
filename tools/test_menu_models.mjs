@@ -1,4 +1,5 @@
 // Real-WASM original-content UI gate. Reports/screenshots remain private.
+// Scrollable garage lists are measured by their visible area; full size still sets the 44px target.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createRequire} from 'node:module';
@@ -25,7 +26,7 @@ try {
   for(const viewport of [{width:390,height:844},{width:320,height:568},{width:844,height:390},{width:740,height:360},{width:1280,height:720},{width:768,height:1024}]){
     await page.setViewportSize(viewport);
     await page.waitForFunction(({width,height})=>{const c=document.querySelector('#menu-canvas');return c.width/c.height>width/height-.01&&c.width/c.height<width/height+.01;},viewport);
-    const bounds=await page.evaluate(()=>({views:[...document.querySelectorAll('.model-view canvas')].map(c=>({...c.getBoundingClientRect().toJSON(),triangles:Number(c.dataset.triangles),gl:c.dataset.glError})),buttons:[...document.querySelectorAll('#menu-buttons button')].map(b=>({...b.getBoundingClientRect().toJSON(),label:b.getAttribute('aria-label')})),overflow:document.documentElement.scrollWidth>innerWidth}));
+    const bounds=await page.evaluate(()=>({views:[...document.querySelectorAll('.model-view canvas')].map(c=>({...c.getBoundingClientRect().toJSON(),triangles:Number(c.dataset.triangles),gl:c.dataset.glError})),buttons:[...document.querySelectorAll('#menu-buttons button')].flatMap(b=>{const r=b.getBoundingClientRect(),c=b.closest('.ms-scroll')?.getBoundingClientRect();if(!c)return [{...r.toJSON(),label:b.getAttribute('aria-label')}];const x=Math.max(r.left,c.left),y=Math.max(r.top,c.top),right=Math.min(r.right,c.right),bottom=Math.min(r.bottom,c.bottom);return right<=x||bottom<=y?[]:[{x,y,right,bottom,width:r.width,height:r.height,label:b.getAttribute('aria-label')}];}),overflow:document.documentElement.scrollWidth>innerWidth}));
     assert.equal(bounds.overflow,false);
     for(const b of [...bounds.views,...bounds.buttons]){assert.ok(b.x>=0&&b.y>=0&&b.right<=viewport.width+1&&b.bottom<=viewport.height+1,JSON.stringify(b));}
     for(const b of bounds.buttons){assert.ok(b.height>=44&&b.width>=44,`${viewport.width}: ${b.label}`);for(const v of bounds.views)assert.ok(b.right<=v.x||b.x>=v.right||b.bottom<=v.y||b.y>=v.bottom,'Controls must not cover models');}
@@ -66,7 +67,8 @@ try {
   await page.waitForFunction(()=>document.querySelector('#frontend').hidden&&window.atvTerrainStatus.simulation,null,{timeout:120000});
   const driven=await page.evaluate(()=>window.atvTerrainStatus);assert.equal(driven.playerModel.quad_id,6);assert.equal(driven.playerModel.rider_id,1);assert.equal(driven.glError,0);
   await page.keyboard.press('Escape');await button('Resume').waitFor();
-  const paused=await page.evaluate(()=>window.atvTerrainStatus.audio);assert.equal(paused.musicPreview,false);assert.equal(paused.context,'suspended');
+  // Pause keeps the racing soundtrack playing (PR #40); gameplay voices stay silent.
+  await page.waitForFunction(()=>window.atvTerrainStatus.audio.musicPreview);const paused=await page.evaluate(()=>window.atvTerrainStatus.audio);assert.equal(paused.voices,0);
   await button('Quit to Main Menu').click();await page.waitForFunction(()=>window.atvTerrainStatus.audio.musicPreview&&window.atvTerrainStatus.audio.context==='running');
   assert.deepEqual(errors,[]);report.passed=true;console.log(JSON.stringify(report));
   if(process.env.ATV_MENU_REPORT)fs.writeFileSync(process.env.ATV_MENU_REPORT,JSON.stringify(report,null,2));

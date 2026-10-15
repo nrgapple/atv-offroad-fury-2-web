@@ -26,6 +26,14 @@
   --atv-space-2: 8px;
   --atv-space-3: 12px;
   --atv-compass-size: 96px;
+  /* Frontend screens, sampled from the original page textures (research/MENU_SCREENS.md). */
+  --atv-font-display: 'Avenir Next Condensed', 'Arial Narrow', 'Roboto Condensed', 'Sans-Serif Condensed', 'Helvetica Neue', Arial, sans-serif;
+  --atv-menu-text: #d2d2d2;
+  --atv-gold-pill: linear-gradient(180deg, #fff7b8 0%, #f6dc4a 46%, #d4ae0c 50%, #c19d07 78%, #a88604 100%);
+  --atv-gold-bullet: radial-gradient(circle at 34% 30%, #fff8bf 0, #ead046 32%, #b49704 62%, #5e4d02 100%);
+  --atv-panel-silver: linear-gradient(180deg, #bcbcbc 0%, #a9a9a9 48%, #8c8c8c 100%);
+  --atv-help-box: #2e2e2ebd;
+  --atv-scenic-tint: #b51616;
 }
 /* Reuse for browser-native utility actions; Rust menus keep their own hit regions. */
 .atv-control {

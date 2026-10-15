@@ -1,0 +1,314 @@
+/* HD frontend screens. Composition follows the original ATV2 pages (red-tinted
+   scenic backdrop, curved silver stage panel, gold bullets and glossy gold
+   selection pill, dark help box, black hint pill), redrawn as crisp vectors.
+   Portrait phones are a primary layout: the stage moves above the controls. */
+/* Canvas-era hit buttons are direct #menu-buttons children; screen buttons are
+   nested, so this zero-specificity reset keeps component rules simple. */
+:root { --ms-radius: 5px; }
+:where(.ms-screen) button { position: relative; margin: 0; padding: 0; color: inherit; background: none; border: 0; border-radius: 0; font: inherit; }
+:where(.ms-screen) button:focus-visible { outline: none; }
+:where(.ms-screen) button:focus-visible:not([aria-current=true]):not(.ms-garage-row[aria-current=true] button) { box-shadow: 0 0 0 3px #f6e061b3; }
+/* Selection already follows focus on rows and lists, so they draw no ring. */
+.ms-screen :is(.ms-row, .ms-course, .ms-vehicle, .ms-tab):focus-visible { box-shadow: none; }
+
+.ms-screen {
+  --ms-gutter: clamp(16px, 3.2vw, 44px);
+  --ms-row: clamp(48px, 6.4vh, 60px);
+  position: absolute; inset: 0; overflow: hidden; isolation: isolate;
+  display: grid; grid-template-columns: minmax(300px, 44%) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "header panel" "left panel" "hints hints";
+  color: var(--atv-menu-text); font-family: var(--atv-font-display); font-weight: 700;
+  -webkit-user-select: none; user-select: none;
+}
+.ms-screen h1, .ms-screen h2, .ms-screen p, .ms-screen figure { margin: 0; }
+
+/* Backdrop: the original pages are monochrome scenery multiplied with red. */
+.ms-backdrop { position: absolute; inset: 0; z-index: -2; background: #2a0505; overflow: hidden; }
+.ms-backdrop-photo { position: absolute; inset: -40px; background: center / cover no-repeat; filter: blur(9px) saturate(1.1) brightness(.9); }
+/* PAGE01's backdrop is already red-tinted; course photos get the same treatment. */
+.ms-backdrop-photo.is-track { filter: grayscale(1) contrast(1.1) brightness(1.4) blur(16px); }
+.ms-backdrop::before { content: ''; position: absolute; z-index: 1; inset: 0; background: var(--atv-scenic-tint); mix-blend-mode: multiply; opacity: 0; }
+.ms-backdrop:has(.is-track)::before { opacity: 1; }
+.ms-backdrop::after { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse at 18% 30%, #0000 0, #0000 35%, #1a0202b0 100%), linear-gradient(180deg, #0000 55%, #12020299); }
+
+/* The curved silver stage panel sweeps in from the right. */
+.ms-panel-shape { position: absolute; z-index: -1; top: -2px; bottom: -2px; left: calc(44% + 4vw); right: -20vw; transform: skewX(7deg); transform-origin: top left; border-top-left-radius: clamp(90px, 18vh, 200px); background: var(--atv-panel-silver); box-shadow: -14px 0 34px #000a, inset 3px 0 0 #f2f2f2, inset 7px 0 10px #ffffff55; }
+.ms-panel { grid-area: panel; position: relative; min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 12px; padding: clamp(16px, 4vh, 40px) var(--ms-gutter) 12px clamp(64px, calc(4vw + 12vh), 160px); color: #161616; }
+
+.ms-header { grid-area: header; padding: clamp(12px, 3vh, 28px) 0 clamp(8px, 1.6vh, 16px); }
+.ms-heading { display: block; padding: 6px var(--ms-gutter) 8px; background: linear-gradient(90deg, #ffffff52 0, #ffffff26 55%, #fff0 100%); color: #f4f4f4; font: italic 800 clamp(26px, 3.6vw, 44px)/1.05 var(--atv-font-display); letter-spacing: .015em; text-shadow: 2px 3px 0 #000a, 0 0 18px #0006; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.ms-left { grid-area: left; position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: clamp(8px, 1.6vh, 16px); padding: 0 0 12px var(--ms-gutter); }
+
+/* Rows: gold bullet, light-gray label; the focused row becomes a glossy gold
+   pill that runs off the left edge, exactly as the original menu01/menu02 bar. */
+.ms-rows { display: flex; flex-direction: column; gap: 2px; padding-right: 8px; }
+.ms-row { display: flex; align-items: center; gap: 14px; width: 100%; min-height: var(--ms-row); padding: 0 18px 0 6px; isolation: isolate; text-align: left; font: 700 clamp(19px, 2.3vw, 27px)/1.1 var(--atv-font-display); letter-spacing: .035em; color: var(--atv-menu-text); text-shadow: 1px 2px 0 #000c; cursor: pointer; touch-action: manipulation; }
+.ms-row::before { content: ''; position: absolute; z-index: -1; inset: 5px 0 5px calc(-1 * var(--ms-gutter) - 30px); border-radius: var(--ms-radius); background: var(--atv-gold-pill); box-shadow: inset 0 1px 0 #fffbe0, 0 2px 0 #0009; opacity: 0; transform: scaleX(.6); transform-origin: left center; transition: opacity .16s, transform .22s cubic-bezier(.2,1.2,.4,1); }
+.ms-row[aria-current=true]:focus-visible { outline: none; }
+.ms-row[aria-current=true] { color: #0d0b00; text-shadow: 0 1px 0 #fff6b066; }
+.ms-row[aria-current=true]::before { opacity: 1; transform: none; }
+.ms-bullet { flex: none; width: 14px; height: 14px; border-radius: 50%; background: var(--atv-gold-bullet); box-shadow: 0 1px 2px #000, inset 0 -1px 1px #0006; transition: transform .16s; }
+.ms-row[aria-current=true] .ms-bullet { transform: scale(0); }
+.ms-row-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-row-value { margin-left: auto; padding-left: 12px; color: #f1d84e; font-size: .86em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ms-row[aria-current=true] .ms-row-value { color: #3a2e00; }
+.ms-row-cycle[aria-current=true] .ms-row-value::before { content: ''; display: inline-block; width: 0; height: 0; margin-right: 10px; border: 7px solid transparent; border-right-color: currentColor; border-left-width: 0; vertical-align: 1px; }
+.ms-row-cycle[aria-current=true] .ms-row-value::after { content: ''; display: inline-block; width: 0; height: 0; margin-left: 10px; border: 7px solid transparent; border-left-color: currentColor; border-right-width: 0; vertical-align: 1px; }
+
+.ms-help { margin-top: auto; max-width: 420px; margin-right: 12px; padding: 2px 0 2px 16px; border-left: 3px solid #e8c832; }
+.ms-help p { color: #f0f0f0; text-shadow: 0 1px 3px #000; font: 600 clamp(14px, 1.5vw, 17px)/1.4 var(--atv-font-display); letter-spacing: .02em; }
+.ms-help:has(p:empty) { visibility: hidden; }
+
+/* Back sits bottom right on every screen; no console-specific button glyphs. */
+.ms-hints { grid-area: hints; justify-self: end; display: flex; align-items: center; gap: clamp(14px, 2.4vw, 30px); min-height: 50px; margin: 0 0 clamp(6px, 1.4vh, 14px); padding: 0 var(--ms-gutter) 0 26px; color: #f2f2f2; text-shadow: 0 1px 3px #000; font: 700 17px/1 var(--atv-font-display); letter-spacing: .04em; }
+.ms-hints:empty { display: none; }
+.ms-hint { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.ms-back-icon, .ms-back-icon svg { display: block; width: 16px; height: 16px; fill: currentColor; }
+.ms-hint-back { min-height: 46px; min-width: 64px; padding: 0 10px; border-radius: var(--ms-radius); cursor: pointer; }
+@media (hover: hover) { .ms-hint-back:hover { color: var(--atv-gold-light); } }
+
+/* Shared plates and cards on the silver stage panel. */
+.ms-kicker { color: #7d1010; font: 800 12px/1.2 var(--atv-font-display); letter-spacing: .16em; text-transform: uppercase; }
+.ms-plate { display: grid; gap: 2px; }
+.ms-plate .ms-ride-name { color: #111; font: italic 800 clamp(22px, 2.8vw, 34px)/1.05 var(--atv-font-display); letter-spacing: .01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-plate .ms-ride-meta { color: #3d3d3d; font: 600 15px/1.3 var(--atv-font-display); }
+.ms-panel-logo { width: min(100%, 460px); height: auto; align-self: flex-start; filter: drop-shadow(0 3px 0 #0006); }
+.ms-panel-card { max-width: 440px; display: grid; gap: 10px; margin-top: auto; margin-bottom: auto; }
+.ms-panel-card h2 { font: italic 800 34px/1.05 var(--atv-font-display); color: #111; }
+.ms-panel-card p:not(.ms-kicker) { font: 600 17px/1.45 var(--atv-font-display); color: #333; }
+.ms-model { position: relative; flex: 1; min-height: 72px; }
+.ms-model .model-view { position: absolute; inset: 0; }
+.ms-model .model-view canvas { border-radius: 0; filter: drop-shadow(0 10px 6px #0004); }
+.ms-model .model-view span { color: #333; text-shadow: none; }
+
+/* Track photo with the original thin gold frame. */
+.ms-track-hero { display: flex; flex-direction: column; justify-content: center; gap: 16px; min-height: 0; flex: 1; padding-bottom: 6vh; }
+.ms-photo { position: relative; flex: 0 1 auto; width: 100%; max-width: 580px; aspect-ratio: 3 / 2; min-height: 0; border-radius: var(--ms-radius); background: #222; overflow: hidden; box-shadow: 0 4px 0 #000a; }
+/* Original photos are 384x256: smooth scaling plus a soft grade keeps them from looking blocky. */
+.ms-photo img { display: block; width: 100%; height: 100%; object-fit: cover; image-rendering: auto; filter: saturate(1.08) contrast(1.04); }
+.ms-photo::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, #fff1 0, #0000 30%, #0000 70%, #0004); }
+.ms-photo img:not([src]) { visibility: hidden; }
+.ms-track-hero figcaption { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "badge ride" "name ride" "mode ride"; align-items: center; column-gap: 16px; max-width: 580px; }
+.ms-badge { grid-area: badge; justify-self: start; padding: 3px 10px 2px; border-radius: var(--ms-radius); background: #8e1010; color: #fff; font: 800 11px/1.3 var(--atv-font-display); letter-spacing: .14em; text-transform: uppercase; }
+.ms-badge:empty { display: none; }
+.ms-track-name { grid-area: name; color: #111; font: italic 800 clamp(24px, 3vw, 38px)/1.05 var(--atv-font-display); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-track-mode { grid-area: mode; color: #3d3d3d; font: 600 15px/1.3 var(--atv-font-display); }
+.ms-arrow { position: absolute; z-index: 1; top: 50%; width: 44px; height: 56px; margin-top: -28px; border-radius: var(--ms-radius); background: #0000008c; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); color: #fff; display: grid; place-items: center; cursor: pointer; }
+.ms-arrow svg { width: 20px; height: 20px; fill: currentColor; display: block; }
+.ms-arrow-left { left: 10px; } .ms-arrow-right { right: 10px; }
+
+/* Gold pill calls to action: Ride, Done, Press Start. */
+.ms-pill, .ms-start { display: inline-flex; align-items: center; justify-content: center; min-height: 52px; padding: 0 34px; border-radius: var(--ms-radius); background: var(--atv-gold-pill); box-shadow: inset 0 1px 0 #fffbe0, 0 2px 0 #0009; color: #0d0b00; font: italic 800 22px/1 var(--atv-font-display); letter-spacing: .06em; text-transform: uppercase; cursor: pointer; touch-action: manipulation; }
+.ms-ride { grid-area: ride; }
+@media (hover: hover) { .ms-pill:hover, .ms-start:hover { filter: brightness(1.08); } }
+
+/* Title: full-bleed scenery, centred lockup, pulsing Press Start. */
+.ms-screen.ms-title { grid-template-columns: 1fr; grid-template-rows: 1fr auto; grid-template-areas: "lockup" "actions"; }
+.ms-title-lockup { grid-area: lockup; align-self: center; justify-self: center; display: grid; justify-items: center; gap: 14px; width: min(760px, 88%); }
+.ms-logo { width: 100%; height: auto; filter: drop-shadow(0 4px 0 #0009); }
+.ms-logo-text { color: #fff; font: italic 800 clamp(60px, 14vw, 140px)/.9 var(--atv-font-display); text-shadow: 4px 6px 0 #000a; }
+.ms-logo-text span { display: block; color: #f1d84e; font-size: .4em; letter-spacing: .2em; }
+.ms-tagline { color: #f0f0f0; font: 600 clamp(14px, 1.8vw, 19px)/1.3 var(--atv-font-display); letter-spacing: .14em; text-transform: uppercase; text-shadow: 0 2px 4px #000; text-align: center; }
+.ms-title-actions { grid-area: actions; display: grid; justify-items: center; gap: 10px; padding: 0 16px clamp(24px, 7vh, 64px); }
+.ms-start { min-width: min(320px, 80vw); min-height: 60px; font-size: 26px; animation: ms-pulse 1.8s ease-in-out infinite; }
+.ms-link { min-height: 46px; padding: 0 22px; border-radius: var(--ms-radius); color: #f2f2f2; text-shadow: 0 1px 3px #000; font: 700 16px/1 var(--atv-font-display); letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
+@keyframes ms-pulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.18); } }
+
+/* Course select: event tabs, photo list and a large framed preview. */
+.ms-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding-right: 12px; }
+.ms-tab { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; border-radius: var(--ms-radius); color: #eee; text-shadow: 0 1px 3px #000; font: 700 15px/1 var(--atv-font-display); letter-spacing: .04em; cursor: pointer; touch-action: manipulation; }
+.ms-tab small { color: #f1d84e; font-size: 12px; }
+.ms-tab[aria-selected=true] { background: var(--atv-gold-pill); color: #0d0b00; text-shadow: none; }
+.ms-tab[aria-selected=true] small { color: #3a2e00; }
+.ms-left > :not(.ms-scroll) { flex: none; }
+.ms-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #d7b70d #0006; -webkit-overflow-scrolling: touch; }
+.ms-courses { display: flex; flex-direction: column; gap: 4px; padding: 2px 12px 8px 0; }
+.ms-course { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 4px 12px 4px 4px; border-radius: var(--ms-radius); text-align: left; cursor: pointer; touch-action: manipulation; }
+.ms-course-thumb { flex: none; width: 72px; height: 48px; border-radius: 2px; overflow: hidden; background: #0006; box-shadow: 0 2px 0 #0009; }
+.ms-course-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ms-course-copy { display: grid; min-width: 0; }
+.ms-course-name { color: #ececec; font: 700 clamp(16px, 1.7vw, 20px)/1.15 var(--atv-font-display); letter-spacing: .02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 1px 2px 0 #000b; }
+.ms-course small { color: #e3c74a; font: 700 12px/1.3 var(--atv-font-display); letter-spacing: .12em; text-transform: uppercase; }
+.ms-course[aria-selected=true] { background: var(--atv-gold-pill); box-shadow: inset 0 1px 0 #fffbe0, 0 2px 0 #0009; }
+.ms-course[aria-selected=true] .ms-course-name { color: #0d0b00; text-shadow: none; }
+.ms-course[aria-selected=true] small { color: #4a3a00; }
+@media (hover: hover) { .ms-course:hover:not([aria-selected=true]) { background: #ffffff14; } }
+
+/* Garage: vehicle and rider rows beside one shared model stage. */
+.ms-garage-row { position: relative; }
+.ms-row-stack { display: grid; min-width: 0; flex: 1; text-align: center; }
+.ms-row-stack .ms-row-label { font-size: .62em; letter-spacing: .14em; text-transform: uppercase; color: #f1d84e; }
+.ms-garage-row[aria-current=true] .ms-row-stack .ms-row-label { color: #4a3a00; }
+.ms-row-stack .ms-row-value { margin: 0; padding: 0; color: inherit; font-size: .92em; }
+.ms-cycle { flex: none; width: 44px; height: 44px; display: grid; place-items: center; border-radius: var(--ms-radius); color: #f1d84e; cursor: pointer; touch-action: manipulation; }
+.ms-cycle svg { width: 16px; height: 16px; fill: currentColor; display: block; filter: drop-shadow(0 1px 2px #000a); }
+.ms-garage-row[aria-current=true] .ms-cycle { color: #1b1500; }
+.ms-garage-row[aria-current=true] .ms-cycle svg { filter: none; }
+@media (hover: hover) { .ms-cycle:hover { background: #ffffff1f; } }
+.ms-rider-row[aria-disabled=true] { cursor: default; }
+.ms-rider-row[aria-disabled=true] .ms-switch { opacity: .4; }
+.ms-switch { margin-left: auto; display: inline-flex; padding: 3px; border-radius: var(--ms-radius); background: #0000005c; font-size: .74em; letter-spacing: .03em; }
+.ms-switch span { padding: 7px 14px; border-radius: var(--ms-radius); color: #e6e6e6; transition: background .15s, color .15s; }
+.ms-switch .is-on { background: var(--atv-gold-pill); color: #0d0b00; text-shadow: none; }
+.ms-rider-row[aria-current=true] .ms-switch { background: #1b150026; }
+.ms-rider-row[aria-current=true] .ms-switch .is-on { background: #1b1500; color: #f6e061; }
+.ms-rider-row[aria-current=true] .ms-switch span:not(.is-on) { color: #3a2e00; }
+.ms-vehicles { display: flex; flex-direction: column; gap: 2px; padding: 0 12px 8px 0; }
+.ms-list-heading { padding: 12px 10px 6px; color: #f1d84e; text-shadow: 0 1px 3px #000; font: 800 12px/1 var(--atv-font-display); letter-spacing: .18em; text-transform: uppercase; }
+.ms-vehicle { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 0 14px 0 10px; border-radius: var(--ms-radius); text-align: left; cursor: pointer; touch-action: manipulation; }
+.ms-vehicle-name { min-width: 0; color: #e2e2e2; font: 700 clamp(16px, 1.6vw, 19px)/1.1 var(--atv-font-display); letter-spacing: .02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 1px 2px 0 #000b; }
+.ms-vehicle small { margin-left: auto; color: #e3c74a; font: 700 12px/1 var(--atv-font-display); letter-spacing: .08em; white-space: nowrap; }
+.ms-vehicle[aria-selected=true] { background: var(--atv-gold-pill); box-shadow: inset 0 1px 0 #fffbe0, 0 2px 0 #0009; }
+.ms-vehicle[aria-selected=true] .ms-vehicle-name { color: #0d0b00; text-shadow: none; }
+.ms-vehicle[aria-selected=true] small { color: #4a3a00; }
+.ms-vehicle[aria-selected=true] .ms-bullet { background: #1b1500; }
+@media (hover: hover) { .ms-vehicle:hover:not([aria-selected=true]) { background: #ffffff14; } }
+.ms-done { align-self: flex-start; min-width: 180px; margin-right: 12px; }
+/* The rider stands just behind the ATV's rear wheel so the pair reads as one ride. */
+.ms-models { position: relative; flex: 1; min-height: 0; }
+.ms-models .ms-model { position: absolute; min-height: 0; }
+.ms-models .ms-model-quad { left: 0; right: 30%; top: 14%; bottom: 0; }
+.ms-models .ms-model-rider { right: 0; width: 36%; top: 0; bottom: 2%; }
+.ms-drag-hint { color: #4b4b4b; font: 600 13px/1 var(--atv-font-display); letter-spacing: .08em; text-transform: uppercase; }
+
+/* Forms, lobby and loading. */
+.ms-fields { display: grid; gap: 12px; padding-right: 12px; }
+.ms-field { display: grid; gap: 6px; color: #eee; font: 700 15px/1.2 var(--atv-font-display); letter-spacing: .04em; }
+.ms-input { width: 100%; min-height: 48px; border-radius: var(--ms-radius); border: 0; background: #0000008c; box-shadow: inset 0 0 0 1px #ffffff26; padding: 4px 20px; font: 700 19px var(--atv-font-display); letter-spacing: .06em; }
+.ms-lobby-info { display: grid; gap: 4px; margin-right: 12px; text-shadow: 0 1px 3px #000; }
+.ms-lobby-info .ms-kicker { color: #f1d84e; }
+.ms-code { color: #fff; font: italic 800 clamp(30px, 4vw, 44px)/1 var(--atv-font-display); letter-spacing: .14em; }
+.ms-status { color: #e4e4e4; font: 600 15px/1.35 var(--atv-font-display); }
+.ms-loading .ms-left { justify-content: flex-end; padding-bottom: clamp(24px, 6vh, 56px); }
+.ms-loading-status { display: grid; gap: 14px; margin-right: 20px; }
+.ms-meter.course-load-meter { position: relative; }
+.ms-loading-status .ms-status { font-size: clamp(17px, 2vw, 22px); color: #fff; text-shadow: 0 2px 3px #000; }
+
+/* Portrait phones and tablets: stage on top, controls below, hint bar
+   across the bottom. Everything stays inside the safe-area stage. */
+@media (orientation: portrait) {
+  .ms-screen { --ms-row: 50px; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, var(--ms-stage, 40%)) minmax(0, 1fr) auto; grid-template-areas: "header" "panel" "left" "hints"; }
+  /* The panel paints its own silver so its curved edge always meets the rows. */
+  .ms-panel-shape { display: none; }
+  .ms-panel { isolation: isolate; overflow: visible; }
+  .ms-panel::before { content: ''; position: absolute; z-index: -1; top: -240px; bottom: 0; left: -10vw; right: -10vw; border-bottom-left-radius: 75% 56px; background: var(--atv-panel-silver); box-shadow: 0 14px 30px #000a, inset 0 -3px 0 #f2f2f2; pointer-events: none; }
+  .ms-header { padding: 10px 0 6px; position: relative; z-index: 1; }
+  .ms-heading { background: linear-gradient(90deg, #00000038 0, #00000014 60%, #0000); color: #1a1a1a; text-shadow: 0 1px 0 #fff8; font-size: clamp(24px, 7vw, 32px); }
+  .ms-panel { padding: 4px var(--ms-gutter) 10px; gap: 8px; }
+  .ms-left { padding: 14px var(--ms-gutter) 10px; gap: 10px; }
+  .ms-row::before { left: calc(-1 * var(--ms-gutter) - 30px); right: -12px; }
+  .ms-garage-row::before { right: calc(-1 * var(--ms-gutter) - 30px); }
+  .ms-rows, .ms-courses, .ms-vehicles, .ms-tabs { padding-right: 0; }
+  .ms-help { max-width: none; margin-right: 0; }
+  .ms-hints { justify-self: stretch; justify-content: flex-end; margin: 0 var(--ms-gutter) 6px; padding: 0 0 0 4px; }
+  .ms-panel-logo { width: auto; max-width: min(78%, 340px); min-height: 0; max-height: 24%; flex: 0 1 auto; object-fit: contain; align-self: center; }
+  .ms-plate { text-align: center; }
+  .ms-main, .ms-single { --ms-stage: 50%; }
+  .ms-multiplayer { --ms-stage: 24%; }
+  .ms-create-lobby, .ms-join-lobby { --ms-stage: 0px; }
+  .ms-create-lobby .ms-panel::before, .ms-join-lobby .ms-panel::before { top: -200px; bottom: -14px; }
+  .ms-multiplayer .ms-panel-card, .ms-create-lobby .ms-panel, .ms-join-lobby .ms-panel { display: none; }
+  .ms-multiplayer .ms-panel { justify-content: center; }
+  .ms-tracks, .ms-race, .ms-lobby { --ms-stage: auto; }
+  .ms-tracks .ms-panel, .ms-race .ms-panel, .ms-lobby .ms-panel { padding-bottom: 22px; }
+  .ms-track-hero { flex: none; gap: 8px; }
+  .ms-photo { max-width: none; aspect-ratio: 16 / 9; }
+  .ms-track-hero figcaption { grid-template-areas: "name ride" "mode ride"; }
+  .ms-track-hero .ms-badge { display: none; }
+  .ms-track-name { font-size: 24px; }
+  .ms-ride { min-height: 48px; padding: 0 24px; font-size: 19px; }
+  .ms-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 calc(-1 * var(--ms-gutter)); padding: 0 var(--ms-gutter) 2px; }
+  .ms-tabs::-webkit-scrollbar { display: none; }
+  .ms-tab { flex: none; }
+  .ms-garage { --ms-stage: 40%; }
+  .ms-garage .ms-plate { grid-template-columns: 1fr; }
+  .ms-garage .ms-drag-hint { display: none; }
+  .ms-done { align-self: stretch; margin-right: 0; }
+  .ms-loading { --ms-stage: auto; }
+  .ms-loading .ms-left { justify-content: flex-start; padding-top: 20px; }
+  .ms-loading-status { margin-right: 0; }
+}
+/* Very short phones keep every essential control on screen. */
+@media (orientation: portrait) and (max-height: 640px) {
+  .ms-screen { --ms-row: 46px; }
+  .ms-main, .ms-single { --ms-stage: 40%; }
+  .ms-garage { --ms-stage: 30%; }
+  .ms-garage .ms-hints { display: none; }
+  .ms-tracks .ms-photo, .ms-race .ms-photo, .ms-lobby .ms-photo { aspect-ratio: 2.4 / 1; }
+  .ms-track-mode { display: none; }
+  .ms-tracks .ms-panel, .ms-race .ms-panel, .ms-lobby .ms-panel { padding-bottom: 16px; }
+  .ms-garage .ms-left { gap: 6px; padding-bottom: 8px; }
+  .ms-garage .ms-side-heading, .ms-garage .ms-list-heading { padding-top: 4px; }
+  .ms-done { min-height: 46px; }
+  .ms-help { display: none; }
+  .ms-plate .ms-ride-meta, .ms-garage .ms-kicker { display: none; }
+  .ms-hints { min-height: 46px; }
+  .ms-hints .ms-hint:not(.ms-hint-back) { display: none; }
+}
+/* Short landscape phones: compact header, rows and hint bar. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .ms-screen { --ms-row: 44px; grid-template-columns: minmax(280px, 46%) minmax(0, 1fr); }
+  .ms-header { padding: 8px 0 4px; }
+  .ms-heading { font-size: 24px; padding-block: 3px 4px; }
+  .ms-row { font-size: 18px; }
+  .ms-help { display: none; }
+  .ms-panel { padding-top: 10px; padding-bottom: 6px; gap: 6px; }
+  .ms-hints { min-height: 44px; margin-bottom: 6px; font-size: 15px; }
+  .ms-panel-logo { width: min(70%, 300px); }
+  .ms-plate .ms-ride-name, .ms-track-name { font-size: 22px; }
+  .ms-plate .ms-ride-meta, .ms-track-mode, .ms-drag-hint, .ms-garage .ms-kicker { display: none; }
+  .ms-photo { max-height: 62%; width: auto; }
+  .ms-ride { min-height: 44px; font-size: 18px; }
+  .ms-course { min-height: 48px; }
+  .ms-course-thumb { width: 60px; height: 40px; }
+  .ms-vehicle { min-height: 44px; }
+  .ms-garage .ms-left { gap: 4px; padding-bottom: 6px; }
+  .ms-garage .ms-list-heading { display: none; }
+  .ms-done { min-height: 44px; font-size: 18px; }
+  .ms-garage .ms-hints { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ms-start { animation: none; }
+  .ms-row::before, .ms-bullet { transition: none; }
+}
+
+/* Pause and its settings screens follow the original Overlays.pb pause page: a
+   dark translucent rounded panel, italic title strip and the same gold pill. */
+#frontend[data-pause-panel=true] { background: radial-gradient(ellipse at 50% 45%, #0000004d 0, #000000b3 100%); }
+.pause-panel, .pause-panel[data-screen]:not([data-screen=pause]) { border: 0; border-radius: var(--ms-radius); background: #0c0c0cdb; -webkit-backdrop-filter: blur(12px) saturate(1.1); backdrop-filter: blur(12px) saturate(1.1); box-shadow: 0 6px 0 #0009, inset 0 1px 0 #ffffff1a; color: #e8e8e8; font-family: var(--atv-font-display); scrollbar-color: #d7b70d #0000; }
+.pause-panel header { border: 0; margin-bottom: 14px; padding-bottom: 0; }
+.pause-eyebrow { color: #f1d84e; font: 800 12px/1.2 var(--atv-font-display); letter-spacing: .18em; }
+.pause-panel h1 { margin: 0 -30px 8px; padding: 4px 30px 6px; background: linear-gradient(90deg, #ffffff38 0, #ffffff14 55%, #fff0); color: #f6f6f6; font: italic 800 clamp(30px, 4.4vw, 42px)/1.1 var(--atv-font-display); letter-spacing: .015em; text-transform: none; text-shadow: 2px 3px 0 #000a; }
+.pause-status, .pause-detail, .pause-tips p { color: #c4c4c4; font-family: var(--atv-font-display); }
+.pause-status { font-size: 15px; }
+.pause-group h2 { color: #f1d84e; font: 800 12px/1.2 var(--atv-font-display); letter-spacing: .18em; }
+.pause-panel button, .pause-panel button[data-action=resume] { min-height: 50px; padding: 0 22px; border: 0; border-radius: var(--ms-radius); background: transparent; color: #d6d6d6; font: 700 clamp(17px, 2vw, 21px)/1.15 var(--atv-font-display); letter-spacing: .03em; text-transform: none; text-shadow: 1px 2px 0 #000c; transition: background .15s, color .15s; }
+.pause-panel[data-screen=settings] .pause-group button { min-height: 56px; font-size: 22px; text-transform: none; }
+.pause-panel button:hover { background: #ffffff12; color: #fff; }
+.pause-panel button[aria-current=true], .pause-panel button[aria-current=true]:hover { background: var(--atv-gold-pill); color: #0d0b00; text-shadow: none; box-shadow: inset 0 1px 0 #fffbe0, 0 2px 0 #0009; }
+.pause-panel button[aria-current=true]::before { content: none; }
+.pause-panel button:focus-visible { outline: none; }
+.pause-panel button:focus-visible:not([aria-current=true]) { box-shadow: 0 0 0 3px #f6e061b3; }
+.pause-value { color: #f1d84e; background: transparent; font: 700 15px/1.2 var(--atv-font-display); }
+.pause-panel button[aria-current=true] .pause-value, .pause-panel button[aria-current=true] .pause-detail { color: #3a2e00; }
+.pause-panel button[data-playing=true] { box-shadow: inset 4px 0 #f1d84e; }
+.pause-footer { border: 0; padding-top: 8px; }
+.pause-slider { padding: 10px 22px; border-radius: var(--ms-radius); }
+.pause-slider:has(input[data-selected=true]) { background: #ffffff0f; }
+.pause-tips { border-left: 3px solid #e8c832; border-radius: 0; padding: 2px 0 2px 16px; }
+.pause-tips h2 { color: #f1d84e; }
+.pause-room { color: #fff; font: italic 800 34px/1 var(--atv-font-display); letter-spacing: .14em; }
+@media (max-width: 580px) {
+  .pause-panel h1 { margin: 0 -20px 8px; padding: 4px 20px 6px; font-size: 30px; }
+  .pause-panel { border-radius: var(--ms-radius); }
+}
+@media (max-height: 450px) and (min-width: 581px) {
+  .pause-panel h1 { margin: 0 -20px 6px; padding: 2px 20px 4px; font-size: 28px; }
+  .pause-panel button, .pause-panel button[data-action=resume] { min-height: 46px; }
+}
+/* One compact list, as in the original pause overlay. */
+.pause-panel[data-screen=pause] { width: min(520px, calc(100% - 48px)); }
+.pause-panel[data-screen=pause] .pause-groups { grid-template-columns: 1fr; gap: 14px; }
+.pause-panel[data-screen=pause] .pause-group { grid-column: 1; grid-row: auto; gap: 2px; }
+@media (max-width: 580px) { .pause-panel[data-screen=pause] { width: calc(100% - 24px); } }

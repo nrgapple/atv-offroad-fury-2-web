@@ -18,6 +18,7 @@ The menu reconstruction in `crates/atv-core/src/ui_menu.rs` retains the recovere
 | Mobile target | `--atv-control-hit` | 44px minimum width and height |
 | Utility shape | `--atv-control-radius` | 4px, silver rim, restrained red lower edge |
 | Touch compass | `--atv-compass-size` | 96px; two-finger drive marker remains 72px |
+| Frontend screens | `--atv-gold-pill`, `--atv-gold-bullet`, `--atv-panel-silver`, `--atv-font-display` | Selection pill, row bullet, stage panel and condensed display face for HD menus |
 
 ## Typography
 
@@ -39,7 +40,7 @@ The touch compass uses a silver instrument ring, faint crosshair, gold direction
 
 ## Adding UI
 
-Reference semantic CSS variables instead of copying colors into new components. Choose red for brand emphasis, gold for selection or direction, and charcoal/silver for gameplay utilities. Keep mobile chrome compact and outside the rider view where possible. Let Rust own menu layout, simulation state and scoring; CSS presents browser controls. Original HUD resource colors, dimensions and preload timing remain authored by their resource/Rust paths. If a new Rust menu style is required, align it with this evidence and update this file and browser tokens together.
+Reference semantic CSS variables instead of copying colors into new components. Choose red for brand emphasis, gold for selection or direction, and charcoal/silver for gameplay utilities. Keep mobile chrome compact and outside the rider view where possible. Rust owns menu actions, labels, values, choice order, simulation state and scoring; the browser owns responsive menu layout. Frontend screens follow [MENU_SCREENS.md](MENU_SCREENS.md): red scenic backdrop, curved silver stage, gold bullet rows with a gold selection pill, and no outline boxes around selected items. Original HUD resource colors, dimensions and preload timing remain authored by their resource/Rust paths. If a new Rust menu style is required, align it with this evidence and update this file and browser tokens together.
 
 ## Safari gesture ownership
 
