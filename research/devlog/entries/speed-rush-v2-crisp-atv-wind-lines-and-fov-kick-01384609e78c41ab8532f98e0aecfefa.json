@@ -1,0 +1,16 @@
+{
+  "id": "speed-rush-v2-crisp-atv-wind-lines-and-fov-kick-01384609e78c41ab8532f98e0aecfefa",
+  "timestamp": "2026-10-15T01:50:00.258272+00:00",
+  "recorded_at": "2026-10-15T01:51:40.949929+00:00",
+  "kind": "build",
+  "title": "Speed rush v2: crisp ATV, wind lines and FOV kick",
+  "summary": "The optional speed-rush effect (Settings, Extras) was rebuilt so the player's ATV and rider stay sharp while the surroundings streak radially from the direction of travel, with tapered wind lines, a small field-of-view kick and a light vignette. It is an authored enhancement, not original PS2 behaviour; Off and reduced-motion restore the original camera.",
+  "details": [
+    "Masking: the player's ATV and rider are stencil-masked so the blur never touches them, and blur samples that land inside the ATV's projected screen bounds are ignored so it no longer smears onto the ground. Version 1 used a fixed screen ellipse that missed the ATV on portrait phones. Streaks now radiate from the projected travel direction, and radius is normalised by the shorter screen side so portrait phones streak at the sides. Procedural tapered wind lines move outward in the same pass. A dynamic FOV kick (up to 9% focal length) and a light vignette were added. Off or reduced-motion restores the original camera.",
+    "Mobile cost: taps are jittered with interleaved gradient noise, 5 on touch devices and 8 elsewhere, dropping 2 while under 45 fps. Centre pixels exit after one fetch and ATV pixels are not shaded. With the option off there is no scene copy and no pass.",
+    "Verification on commit b28fb12 (PR 80): 141 web unit tests pass. tools/test_speed_rush.mjs passes on a local build, including a new stencil proof (protected region pixel-identical) and real riding above 40 mph. Desktop 1280x720 and phone 390x844@3x screenshots were inspected: v1 at 55 mph, v2 real driving at 56 mph on desktop and phone, and v2 at forced high intensity on both showing the wind lines."
+  ],
+  "limitation": "Host-verified implementation checkpoint; public deployment is not separately verified in this entry. Frame timing on physical phones is not verified. The effect is an authored enhancement, not original PS2 behaviour.",
+  "image": "/devlog-images/speed-rush-v2-crisp-atv-wind-lines-and-fov-kick-01384609e78c41ab8532f98e0aecfefa.png",
+  "caption": "Speed rush v2 during real driving at 56 mph on desktop (1280x720): the ATV and rider stay crisp while the trees and ground streak from the travel direction, with a few faint wind lines at the edges."
+}
