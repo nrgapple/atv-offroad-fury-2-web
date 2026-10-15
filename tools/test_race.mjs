@@ -40,7 +40,11 @@ try {
  await page.getByRole('button',{name:'Start Race',exact:true}).tap();
  await page.waitForFunction(()=>document.querySelector('#frontend').hidden&&window.atvTerrainStatus.frame?.race?.phase==='countdown',null,{timeout:120000});
  let s=await state();assert.equal(s.minimap.visible,false,'Freestyle GPS stays out of Race');assert.equal(s.minimap.buildSlices,0,'Race does not generate GPS pixels');assert.equal(s.frame.race.field,5);assert.equal(s.frame.race.checkpoints,252);
- assert.deepEqual(s.frame.race.opponents.map(o=>o.name),['YUKARI','PANZER','MCNABB','BALS']);
+ // Original roster: four unique AIRiders riders on ATVs from the course/player group.
+ if(Number(process.env.ATV_RACE_MODEL||1)<27){
+  assert.deepEqual(s.frame.race.opponents.map(o=>o.name),s.cpuRoster.map(r=>r.name));assert.equal(new Set(s.cpuRoster.map(r=>r.name)).size,4);
+  assert(s.cpuRoster.every(r=>r.quad>=1&&r.quad<=26&&r.model&&r.outfitTextures>0),JSON.stringify(s.cpuRoster));
+ } else assert.equal(s.frame.race.opponents.length,4);
  const startOrigin=s.frame.origin;
  await page.keyboard.down('KeyW');await page.waitForTimeout(500);s=await state();assert.deepEqual(s.frame.origin,startOrigin,'Countdown blocks throttle');
  await page.getByRole('button',{name:'Pause',exact:true}).tap();await screen('pause');
@@ -65,7 +69,7 @@ try {
   assert(cpu.physical,'CPU must use an independent physical quad');
   const p=cpu.physical;assert(p.orientation.every(Number.isFinite));assert(p.speed>1,'CPU accelerates through drivetrain');
   assert(p.wheel_angles.some(a=>Math.abs(a)>0.1),'CPU wheels must roll');
-  assert.equal(p.quad_matrices.length,27);assert.equal(p.rider_matrices.length,18);
+  assert(p.quad_matrices.length>=20);assert.equal(p.rider_matrices.length,18);
   assert(p.quad_matrices.flat().every(Number.isFinite));assert(p.rider_matrices.flat().every(Number.isFinite));
   assert(p.decisions.desired_speed>=0);assert(p.decisions.route_error<40,'CPU must follow track');
  }

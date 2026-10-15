@@ -1,0 +1,14 @@
+{
+  "id": "races-use-the-original-cpu-roster-their-own-atvs-rider-19a747ccaa7342508b83162d9834bc33",
+  "timestamp": "2026-10-15T13:34:19.850885+00:00",
+  "recorded_at": "2026-10-15T13:34:19.899038+00:00",
+  "kind": "build",
+  "title": "Races use the original CPU roster: their own ATVs, riders and outfits (host checkpoint)",
+  "summary": "CPU riders no longer clone the player's quad and outfit. Each race now selects the original roster from AIRiders.pb and quad\\ATVGroups.pb: CPU ATVs from the course's ChampQuadGroup or the player's ATV group (with its fallback groups), and an unused AI rider for each quad with that rider's name, number and outfit. Each CPU races on its own original quad's physics and collision and is drawn with that quad and the rider's helmet, gloves, goggles, pants, shirt, sleeves and boots.",
+  "details": [
+    "Exact-build evidence: 00210d20 gathers ATV groups (course ChampQuadGroup when positive, else the player's group; groups 5/6 fold into 3) plus their GroupN fallbacks and draws each CPU quad at random without replacement; 0021f680 draws an unused AI rider from the quad's [QuadN] Male/Female list (AI ids below 22 are male) and loads its [AIn] outfit fields. Port: race_roster module; per-CPU quad models installed in the simulation (physics, mesh/linkage, ao.col chassis + wreck rays, ar.col actor rays); renderer reuses the multiplayer model loader with per-material outfit replacement; content package keeps 119 outfit materials (RIDER_MT 0.3 -> 3.2 MB). Verification: unit tests for group/fallback/fold/female/unique selection; private test selects four outfitted riders for every quad 1-26, both sexes and course groups -1/1/2; host races on env05, nat01 and sx07 keep CPU route error <=13 ft over 20 s on their own quad physics with 127-164 rider contacts; test_race.mjs (ATV and motorcycle) and test_race_courses.mjs assert roster names, models and outfits; make check passes (Rust, strict Clippy, 156 JS tests)."
+  ],
+  "limitation": "Host checkpoint until merged, deployed, the updated rider-material package is uploaded to R2 and the result is publicly verified. Original per-rider jerseys (..._shirt_AIn) and race-number plates are composed at runtime from the rider's number and are not yet connected, so shirts use their base design and plates keep the default number. The male/female column follows the player's rider (the original slot flag's initial value is unrecovered). Motorcycle races keep their separate preview CPUs.",
+  "image": "/devlog-images/races-use-the-original-cpu-roster-their-own-atvs-rider-19a747ccaa7342508b83162d9834bc33.png",
+  "caption": "Host Chromium capture (not public, not PS2): Supercross sx07 grid at countdown 3 with the player's yellow Honda 400EX between a CPU on a stars-and-stripes Ravage Talon in a gray/white kit and a CPU on a green Kawasaki in a yellow/black kit; standings BALS, DICOSOLA, YOU, INVERSIN, KINNAMAN."
+}

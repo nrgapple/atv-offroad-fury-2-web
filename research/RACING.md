@@ -338,3 +338,45 @@ HUD, then checks that Reset returns to the racing line with the race running.
 Limitations: the original window values and finish-box test are not yet ported
 exactly. The CPU off-track and stuck recovery policy is authored, and rider
 contact is the authored multiplayer proxy, not a recovered PS2 collision model.
+
+## Original CPU roster: quads, riders and outfits — 2026-10-15
+
+The race archives carry `quad\ATVGroups.pb` and `AIRiders.pb`. Exact-build
+`00210d20` gathers ATV groups: the course `ChampQuadGroup` from the race TOY
+when positive, otherwise the human's ATV group. Groups 5 and 6 fold into 3.
+It adds every `GroupN` fallback listed in those groups, pools their ATVs, and
+draws each CPU slot's quad at random without replacement, refilling an
+exhausted pool. `0021f680` then reads the slot quad's `[QuadN]` `MaleN`/`FemaleN`
+list and draws an unused AI rider. AI ids below 22 are male. Each `[AIn]`
+section supplies the rider's name, number, and helmet, glove, boot, sleeve,
+pant, goggle and shirt materials. Both functions seed libc rand from the RTC.
+
+`race_roster::select` ports this selection; the port seeds it per race.
+Integration choices:
+
+- The male/female column follows the player's rider, because the original
+  slot flag's initial value is unrecovered and CPUs share the player's rig.
+- Each CPU installs its own original quad (op 106): physics, mesh/linkage,
+  `ao.col` chassis points with wreck rays, and `ar.col` actor rays. Its
+  physical vehicle, handling and collisions follow that ATV.
+- Rendering reuses the multiplayer quad/rider model loader. Each rider-mesh
+  material is replaced by the AI's outfit material for its slot.
+- Per-rider jerseys (`…_shirt_AIn`) are composed at runtime in the original,
+  probably with the race number, and do not exist on the disc. The port uses
+  the base shirt's mesh-slot variant (`<base>001`); numbers are unconnected.
+
+The content package keeps the outfit materials in the compacted
+`RIDER_MT.RES`: 119 materials, 0.3MB → 3.2MB. Motorcycles keep their separate
+preview CPUs.
+
+Checks:
+
+- Unit tests cover player-group, course-group, folded-group and female
+  selection, unique riders and exhausted-list fallback.
+- A private test selects four named, fully outfitted riders for every quad
+  1–26, for both sexes, with course groups −1, 1 and 2.
+- Host Chromium races show distinct quads and outfits on the grid and while
+  racing. On their own quad physics, CPU route error stays ≤13ft over 20s on
+  env05, nat01 and sx07, with 127–164 rider contacts.
+- `test_race.mjs` and `test_race_courses.mjs` assert the roster names, models
+  and outfit textures.
