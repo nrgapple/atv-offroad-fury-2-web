@@ -227,22 +227,20 @@ test('changing ATV and rider tells the room, then reloads the same map in place'
   }finally{await f.cleanup();}
 });
 
-test('an invite to an ended room opens it again on the link map, and a taken race joins it',async()=>{
+test('an invite joins its live room, or opens that code again on the link map',async()=>{
   const f=fixture();const savedFetch=globalThis.fetch;try {
     const requests=[];f.frontend.roomCode='ABCD2345';const configured=[];
     f.mp.connect=async(code,_frontend,key)=>{requests.push(['connect',code,key]);};
     f.mp.configureLobby=async(map,start)=>configured.push([map,start]);
-    globalThis.fetch=async(url,init)=>{requests.push([init?.method??'GET',String(url)]);
-      if(!init)return {status:410,ok:false};
-      return {status:201,ok:true,json:async()=>({code:'ABCD2345',hostToken:KEY})};};
+    globalThis.fetch=async(url,init)=>{requests.push([init.method,String(url),JSON.parse(init.body)]);return {status:201,ok:true,json:async()=>({code:'ABCD2345',hostToken:KEY})};};
     await f.mp.action('join',f.frontend,{map:'env05'});
-    assert.deepEqual(requests,[['GET','/multiplayer/rooms/ABCD2345'],['POST','/multiplayer/rooms'],['connect','ABCD2345',KEY]]);
+    assert.deepEqual(requests,[['POST','/multiplayer/rooms',{code:'ABCD2345',open:true}],['connect','ABCD2345',KEY]]);
     assert.deepEqual(configured,[['env05',true]]);
     requests.length=0;
-    globalThis.fetch=async(url,init)=>{requests.push([init?.method??'GET',String(url)]);return init?{status:409,ok:false}:{status:404,ok:false};};
+    globalThis.fetch=async()=>({status:200,ok:true,json:async()=>({code:'ABCD2345',open:true,players:2,max:4})});
     await f.mp.action('join',f.frontend,{map:'env05'});
-    assert.deepEqual(requests.at(-1)[0],'connect');assert.equal(configured.length,1,'joining a just-created room never reconfigures it');
-    globalThis.fetch=async()=>({status:200,ok:true,json:async()=>({players:4,max:4})});
+    assert.deepEqual(requests.at(-1)[0],'connect');assert.equal(configured.length,1,'joining a live room never reconfigures it');
+    globalThis.fetch=async()=>({status:200,ok:true,json:async()=>({code:'ABCD2345',open:true,players:4,max:4})});
     try{globalThis.sessionStorage?.clear?.();}catch{}
     await assert.rejects(f.mp.action('join',f.frontend),/Game is full/);
   }finally{globalThis.fetch=savedFetch;await f.cleanup();}
@@ -272,9 +270,10 @@ test('active-room admission starts exactly once even when Welcome arrives during
 });
 test('join presents lobby before connecting so late-start loading cannot be covered afterwards',async()=>{
  const f=fixture();try {
-   const order=[];f.frontend.roomCode='ABCD2345';f.frontend.show=async()=>order.push('lobby');
+   const order=[],savedFetch=globalThis.fetch;f.frontend.roomCode='ABCD2345';f.frontend.show=async()=>order.push('lobby');
+   globalThis.fetch=async()=>({status:200,ok:true,json:async()=>({code:'ABCD2345',open:true,players:1,max:4})});
    f.mp.connect=async()=>{order.push('connect');order.push('loading');};
-   await f.mp.action('join',f.frontend);assert.deepEqual(order,['lobby','connect','loading']);
+   try{await f.mp.action('join',f.frontend);}finally{globalThis.fetch=savedFetch;}assert.deepEqual(order,['lobby','connect','loading']);
  }finally{await f.cleanup();}
 });
 test('spawn only resumes after the validated placement completes',async()=>{

@@ -153,22 +153,20 @@ export class Multiplayer {
       }
     }
   }
-  async status(code) {
-    try {
-      const response = await fetch(`/multiplayer/rooms/${code}`);
-      if (response.status === 404 || response.status === 410) return {missing:true};
-      if (response.ok) return await response.json();
-    } catch { /* Connect anyway; the socket reports any failure. */ }
-    return {};
-  }
-  async host(frontend, code, map, joinIfTaken=false) {
+  // Hosting creates a room. Opening an invite joins its live room, or starts
+  // that code again on the link's map when everyone has left.
+  async host(frontend, code, map, open=false) {
     if(code && !/^[A-Z0-9]{8}$/.test(code)) throw new Error('Choose exactly 8 letters or numbers, or leave the code blank.');
-    const response = await fetch('/multiplayer/rooms',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});
-    if (response.status===409 && joinIfTaken) { await frontend.show('lobby'); return this.connect(code,frontend,savedKey(code)); }
+    const response = await fetch('/multiplayer/rooms',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(open?{code,open:true}:{code})});
     if (!response.ok) throw new Error(response.status===409?'Unable to create Game, game name already exists':response.status===429?'Too many lobby attempts or multiplayer is at capacity. Try again shortly.':`Game creation failed! (${response.status})`);
-    const {code:createdCode,hostToken} = await response.json();
-    saveKey(createdCode,hostToken);
-    await frontend.show('lobby'); await this.connect(createdCode,frontend,hostToken);
+    const room = await response.json();
+    if (room.open) {
+      const key = savedKey(code);
+      if (!key && room.players >= (room.max ?? 4)) throw new Error('Game is full!');
+      await frontend.show('lobby'); return this.connect(code,frontend,key);
+    }
+    saveKey(room.code,room.hostToken);
+    await frontend.show('lobby'); await this.connect(room.code,frontend,room.hostToken);
     await this.configureLobby(map,true);
   }
   async action(action, frontend, setup) {
@@ -179,11 +177,8 @@ export class Multiplayer {
     } else if (action === 'join') {
       const code = frontend.roomCode.trim().toUpperCase();
       if(!/^[A-Z0-9]{8}$/.test(code)) throw new Error('Enter the 8-letter or number lobby code.');
-      const key = savedKey(code), room = await this.status(code);
       // An invite always works: an ended room opens again on the link's map.
-      if (room.missing) return this.host(frontend,code,setup?.map ?? frontend.tracks?.[frontend.track]?.id ?? 'env01',true);
-      if (!key && room.players >= (room.max ?? 4)) throw new Error('Game is full!');
-      await frontend.show('lobby'); await this.connect(code,frontend,key);
+      await this.host(frontend,code,setup?.map ?? frontend.tracks?.[frontend.track]?.id ?? 'env01',true);
     } else if (action === 'share') {
       await copyRideUrl(this.inviteUrl(frontend),frontend.notice,'Invite link');
     } else if (action === 'leave') {

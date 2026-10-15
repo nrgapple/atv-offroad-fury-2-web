@@ -16,18 +16,18 @@ flowchart LR
 ## Authority and latency
 
 Each player simulates their own quad in Rust at the established local cadence;
-controls do not wait for a network round trip. The host owns the lobby's map and
-start. A Rust Cloudflare Durable Object authenticates the creator's private token,
+controls do not wait for a network round trip. The current host owns the room's
+map. A Rust Cloudflare Durable Object authenticates each rider's private slot key,
 assigns participant slots, validates shared binary packets and relays snapshots.
-The room code and invite URL contain no host credential. Explicit host leave ends
-its room. Transport loss retains the room for 30 seconds while the browser retries
-the creator capability for up to 25 seconds, preserving the loaded ride. The same
-browser tab can recover its host identity after reload using session storage.
-Host migration and competitive authority are not implemented. A new
-authored equal-mass contact proxy uses swept six-foot cylinders and each owner
-applies only its own response. It is not the original PS2 contact behavior and
-the relay does not reconcile physics. The updated packet schema is incompatible
-with earlier clients; clients must reload before joining a room on this version.
+The room code and invite URL contain no credential. A dropped rider's slot is held
+for 30 seconds while the browser retries its key for up to 25 seconds, preserving
+the loaded ride; the same tab also recovers its slot after a reload. When the host
+leaves, map authority passes to another rider and the ride continues (see the
+drop-in section below). Competitive authority is not implemented. Authored
+yawed-box contacts let each owner apply only its own response. This is not the
+original PS2 contact behavior, and the relay does not reconcile physics. Packet
+schema changes are incompatible with earlier clients; clients must reload before
+joining a room on a newer version.
 
 Protocol v3 sends compact full snapshots and changed-block deltas rather than
 source node matrices. A full snapshot is 135 bytes; adding a moving-platform
@@ -81,15 +81,14 @@ room. JavaScript remains socket, DOM/WebGL and Web Audio API glue.
 
 ## Create and join flow
 
-The authored Multiplayer menu first offers separate **Create lobby** and
-**Join lobby** choices. Each form collects a rider name and offers the garage.
-Create accepts an optional custom code of exactly eight letters or digits; a
-blank code requests a random one, while an active duplicate custom code is rejected.
-Closed/expired rooms release their code. Reuse creates a fresh host capability and
-room generation, so old tokens and delayed old socket callbacks cannot affect it.
-Join requires an eight-character code. Invite links open the Join form with the
-code prefilled, leaving the rider to submit the join action. This form flow is
-verified in the host and public browser gates at 551d7fd.
+The Multiplayer menu offers **Host Game** and **Join Game**, using the original
+executable's own lobby strings. Both forms collect a remembered rider name and
+offer the garage. Host Game continues to **Select Track** (the original course
+picker); its Ride creates the room and starts riding at once, so there is no
+pre-ride lobby wait. Create accepts an optional custom code of exactly eight
+letters or digits; a blank code requests a random one. Join requires an
+eight-character code. Invite links join the live room directly, or reopen that
+code on the link's map after the room has ended (see the drop-in section below).
 
 ## Models and sound
 
@@ -353,3 +352,82 @@ touch failed airborne Nac Nac produced 117 trace frames, including 51 detached
 rider frames and 14 impact-audio frames; crash serial advanced 0→1, spatial pan
 changed, and remote automatic recovery returned the rider to Riding. See
 `work/verification/efficiency-public-wreck.log`.
+
+## Drop-in rooms, smoother riders and box contacts (host checkpoint, 2026-10-14)
+
+Multiplayer now targets friends hopping into a map together at any time.
+
+- **Protocol v4** (`crates/atv-net`): Welcome carries each rider's private
+  16-byte rejoin key. `Profile` changes vehicle/rider in place. `Ready{map}`
+  reports a loaded map. Pong carries the relay wall clock. v3 tabs are asked to
+  reload.
+- **Relay** (`crates/atv-relay`):
+  - Anyone may join a live room without the host connected.
+  - A dropped rider's slot, color and roster entry are held for 30 seconds,
+    reclaimable with its key (the creator's capability is slot 0's key).
+  - When the host leaves, map authority passes to the lowest remaining rider.
+  - The host may change the map while riding, and poses are relayed only from
+    riders whose Ready matches the current map.
+  - Rooms close after 60 seconds empty. `POST /multiplayer/rooms` with
+    `{"code","open":true}` joins a live code or recreates an ended one, under
+    the existing create guards.
+  - A delta that races a map or vehicle change waits for the sender's next full
+    snapshot instead of closing the socket.
+- **Client:**
+  - Rooms start riding immediately.
+  - Arrivals appear beside a rider already present, using the existing safe
+    spawn search.
+  - Contacts are ignored for 2.5 seconds after any arrival so riders can
+    separate.
+  - Every rider reconnects with its key.
+  - Pause → Change ATV and Rider reloads in place at the current position.
+  - The host's Pause → Select Track moves everyone.
+  - Joins and host handoff no longer clear other riders' interpolation history.
+    Earlier, every epoch change reset all remote buffers.
+- **Shared train clock:** the Arlington train phase now derives from the relay
+  clock, so it keeps running for everyone when the host pauses, suspends or
+  leaves.
+- **Smoothing:** `PoseBuffer::present` adds an adaptive jitter buffer, Hermite
+  jump arcs, decaying corrections and proximity-aware presentation. In the
+  crate's 10 Hz ±30 ms jitter test, the worst 16 ms step error falls from
+  0.445 ft (fixed 80 ms delay) to 0.106 ft.
+- **Contacts** (`atv-core::peer_contact`):
+  - Riders are yawed 4.0 × 6.4 ft boxes, 4.8 ft tall, tested with 3D SAT and
+    swept in steps of 1 ft or less.
+  - Responses use equal-mass impulses (restitution 0.25), light friction, yaw
+    spin from off-center hits (capped at 4 rad/s) and a bounce when landing on
+    another rider.
+  - The recovered wreck classifier still decides ejection.
+  - This is authored behavior, not recovered PS2 multiplayer contact.
+- **Presentation:** overhead markers show only the rider's name. Online pause
+  rows use the executable's "Change ATV and Rider", "Leave Game" and "Copy
+  invite link" wording. Select Track is a browser label for the original course
+  picker.
+
+Host verification on the local Rust relay, actual WASM and original content
+(Chromium/Metal, one Mac):
+
+- `tools/test_multiplayer_dropin.mjs` passes:
+  - hosting from the menus straight into a ride;
+  - an invite-link guest meeting 10.3 ft from the host;
+  - 134 ft of remote motion;
+  - an in-place ATV change to model 15 seen by the host;
+  - a host track change from env01 to env02 with both riders reloading;
+  - a guest reload reclaiming slot 1;
+  - host departure handing the room to the guest, who keeps riding and gets
+    Select Track;
+  - a 390 px late joiner on the original link;
+  - reopening the expired code on env05 from the same link.
+- `tools/test_multiplayer_features.mjs` (updated to the new menus) passes:
+  - late admission on Arlington with train phases 85.82 / 85.8205;
+  - socket-close recovery;
+  - spawn beside the host;
+  - overlapping box contacts [42, 9] separating past 3.9 ft;
+  - 20 flatbed samples within 0.374 ft of deck-relative position;
+  - front-first head-on wrecks replicated to both observers;
+  - owner reload back into slot 0;
+  - handoff on host leave.
+
+Workspace Rust tests, strict Clippy, formatting and the JavaScript suites pass.
+These are host checks, not public deployment, physical-phone or geographically
+separated latency evidence.

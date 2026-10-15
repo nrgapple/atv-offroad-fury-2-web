@@ -64,17 +64,23 @@ never copied. If clipboard access fails, the full URL appears in the notice.
 
 ## Lobby authority and limits
 
-A create link starts a new lobby, waits for host admission, then atomically
-sets its map and starts the ride. `play=0` prepares the create form; clicking
-Create lobby applies the requested map while leaving the lobby unstarted.
+A create link starts a new room, waits for host admission, then atomically
+sets its map and starts the ride. `play=0` prepares the Host Game form with the
+link's track selected; Select Track → Ride then hosts it.
 Custom codes that already exist fail with a clear message. Opening a random-code
 create URL again creates another room; use the generated invite to return/join.
 
-A join link joins an unstarted lobby and waits for its host, or loads a running
-ride immediately. The room's map is authoritative, including when a joining
-URL requests another supported map. Guests never set the map or start a room.
-Missing/full/closed rooms and connection failures recover through the existing
-room/menu notices. Owner recovery capabilities remain in same-tab session storage,
+A join link "opens" its code: it joins the live room and loads the running
+ride immediately, beside a rider already there. If everyone has left and the
+room has ended, the same link starts that code again on the link's map, so an
+invite keeps working. If two friends reopen it at once, one creates the room and
+the other joins it. Within a live room, the room's map is authoritative,
+including when a joining URL requests another supported map; only the current
+host changes it (Pause → Select Track), and every rider follows.
+
+Full rooms and connection failures recover through the existing room/menu
+notices. Every rider's slot key (and the creator's capability) stays in same-tab
+session storage,
 never in links. No automatic retry loop repeatedly creates rooms.
 
 Current multiplayer is up to four ATV Freeride riders. Motorcycles and racing

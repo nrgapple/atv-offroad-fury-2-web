@@ -204,12 +204,15 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
         {
             return Response::error("Admission required", 503);
         }
+        let mut open = false;
         let requested = if body.is_empty() {
             None
         } else {
             let Ok(value) = serde_json::from_str::<serde_json::Value>(&body) else {
                 return Response::error("Invalid lobby request", 400);
             };
+            // Invite links "open" their code: join a live room, or start it again.
+            open = value.get("open").and_then(|v| v.as_bool()) == Some(true);
             match value.get("code").and_then(|v| v.as_str()) {
                 None | Some("") => None,
                 Some(code) => match atv_net::parse_room_code(code) {
@@ -264,6 +267,14 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
                 .with_status(201));
             }
             if response.status_code() == 409 && requested.is_some() {
+                if open {
+                    let mut response = response;
+                    let live: serde_json::Value = response.json().await.unwrap_or_default();
+                    return Response::from_json(&serde_json::json!({
+                        "code": text, "open": true,
+                        "players": live.get("players"), "max": MAX_PLAYERS,
+                    }));
+                }
                 return Response::error("Lobby code is taken", 409);
             }
             if response.status_code() != 409 {
@@ -388,7 +399,7 @@ impl LobbyRoom {
         Ok(())
     }
 
-    /// Roster update to everyone still connected, when anyone remains.
+    /// Roster without (and not sent to) `except`, when anyone remains.
     fn broadcast_lobby(&self, except: Option<&WebSocket>) -> Result<()> {
         let lobby = self.lobby(except)?;
         if !lobby.players.is_empty() {
@@ -563,7 +574,10 @@ impl DurableObject for LobbyRoom {
                 .is_some_and(|room| !room_reusable(room, now()))
             {
                 self.record("connection_rejected", None, "Room exists", Some(409), None);
-                return Response::error("Room exists", 409);
+                let players = self.lobby(None).map_or(0, |l| l.players.len());
+                return Ok(
+                    Response::from_json(&serde_json::json!({"players": players}))?.with_status(409),
+                );
             }
             room.generation = previous
                 .as_ref()
@@ -607,13 +621,7 @@ impl DurableObject for LobbyRoom {
             .map(|s| s.eq_ignore_ascii_case("websocket"))
             != Some(true)
         {
-            // Invite links check a code before connecting; an ended code can
-            // then be opened again by whoever follows the link.
-            let lobby = self.lobby(None)?;
-            return Response::from_json(&serde_json::json!({
-                "players": lobby.players.len(), "max": MAX_PLAYERS,
-                "map": room.map, "started": room.started,
-            }));
+            return Response::error("WebSocket required", 426);
         }
         let key = req
             .url()?
@@ -774,7 +782,8 @@ impl DurableObject for LobbyRoom {
                         key: key_bytes(&connection.key),
                     },
                 )?;
-                self.broadcast_lobby(Some(&ws))?;
+                // Everyone else learns the full roster, including the arrival.
+                self.broadcast(&Packet::Lobby(self.lobby(None)?), Some(&ws))?;
                 return Ok(());
             }
             Packet::Snapshot(mut snapshot) if connection.player.is_some() => {
