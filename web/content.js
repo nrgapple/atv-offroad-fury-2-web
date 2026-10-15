@@ -8,7 +8,7 @@ export function contentSource(manifest, fetchBlob) {
   const files = [], cache = new Map();
   const validBlob = blob => integer(blob.bytes) && blob.bytes > 0 && blob.bytes <= MAX_BLOB && /^[a-f0-9]{64}$/.test(blob.sha256) && blob.url === `/content/${blob.sha256}.bin`;
   for (const record of manifest.files) {
-    if (!/^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.(RES|VAG)$/.test(record.path) || !integer(record.lba) || !integer(record.bytes) || record.bytes === 0 || record.bytes > 128 * 1024 * 1024) throw new Error('Invalid hosted content record.');
+    if (!/^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.(RES|VAG|LSI)$/.test(record.path) || !integer(record.lba) || !integer(record.bytes) || record.bytes === 0 || record.bytes > 128 * 1024 * 1024) throw new Error('Invalid hosted content record.');
     const chunks = record.chunks ?? [{ ...record, offset: 0 }];
     if (!Array.isArray(chunks) || chunks.length === 0 || chunks.length > 128) throw new Error('Invalid hosted content chunks.');
     let end = 0;

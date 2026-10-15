@@ -1,5 +1,5 @@
 import { gameplayBindings } from './bindings.js';
-import { parseLaunch, buildRideUrl, copyRideUrl, ENVIRONMENTS, COURSE_PREVIEWS, courseResource } from './launch.js';
+import { parseLaunch, buildRideUrl, copyRideUrl, ENVIRONMENTS, COURSE_PREVIEWS, courseResource, loadingShotsResource } from './launch.js';
 import { renderScreen, screenPages, courseGroup } from './menu-screens.js';
 // Rust owns menu labels, supported choices and their order. This bridge lays out
 // the HD frontend screens (menu-screens.js) and ride panels, and binds input.
@@ -59,7 +59,7 @@ export class Frontend {
     this.bindingDevice = 'keyboard'; this.bindingPage = 0; this.bindingRow = 0; this.musicPage = 0;
     this.capture = null; this.menuKeys = new Set();
     this.raceSettings={laps:3,cpu:3,difficulty:1};this.raceActive=false;this.raceAvailable=false;
-    this.trackFilter = 'all'; this.trackUrls = new Map(); this.backdropUrl = '';
+    this.trackFilter = 'all'; this.trackUrls = new Map(); this.backdropUrl = ''; this.shotUrls = new Map(); this.loadingShots = []; this.shotFrame = 0;
     gameplayBindings.subscribe(() => { this.layoutKey = ''; });
     window.addEventListener('keydown', e => {
       if (!this.capture) return;
@@ -194,6 +194,26 @@ export class Frontend {
     }
     this.trackUrls.set(track.id, url); return url;
   }
+  // The original loader cycles six action shots per course. Their archives all
+  // name members frame01..08, so decode them here rather than in the shared map.
+  async courseShots(track) {
+    const path = track && loadingShotsResource(track.id);
+    if (!path) return [];
+    if (!this.shotUrls.has(path)) this.shotUrls.set(path, (async () => {
+      const {file, files} = await this.content, record = files.find(entry => entry.path === path);
+      if (!record) return [];
+      const bytes = await this.read(file, record.lba * 2048, record.bytes), entries = await this.json(2, bytes), urls = [];
+      for (let frame = 2; frame <= 7; frame++) {
+        const index = entries.findIndex(entry => base(entry.name) === `frame0${frame}.pst`);
+        if (index < 0) continue;
+        const image = await this.codec(3, bytes, index), info = await this.json(7, image);
+        urls.push(await this.imageUrl(trimDark(this.bitmap(info, await this.codec(8, image)))));
+      }
+      return urls;
+    })().catch(() => []));
+    return this.shotUrls.get(path);
+  }
+  stopShots() { clearInterval(this.shotTimer); this.shotTimer = null; this.loadingShots = []; this.shotFrame = 0; }
   trackPhotoUrl(track) { return track ? this.trackUrls.get(track.id) ?? '' : ''; }
   trackOrder() {
     const order = this.tracks.map((_, index) => index);
@@ -335,7 +355,7 @@ export class Frontend {
     for (const atom of atoms) if (!this.capture.atoms.some(a => JSON.stringify(a) === JSON.stringify(atom) || ('axis' in atom && a.axis === atom.axis)) && this.capture.atoms.length < 4) this.capture.atoms.push(atom);
     if (!atoms.length && this.capture.atoms.length) this.finishCapture();
   }
-  resume() { this.animatePage(true); this.setLoading(false); this.clearModelViews(); this.cancelCapture(); this.root.hidden = true; this.active(false); void this.audio?.()?.setMusicPreview(false); }
+  resume() { this.stopShots(); this.animatePage(true); this.setLoading(false); this.clearModelViews(); this.cancelCapture(); this.root.hidden = true; this.active(false); void this.audio?.()?.setMusicPreview(false); }
   async show(page) {
     this.padBlocked = true;
     const previous = this.root.hidden ? null : this.canvas;
@@ -506,7 +526,13 @@ export class Frontend {
   async beginLoading(environment) {
     if (!this.initialized) this.setLoading(true, 'Preparing course…');
     this.loadingTrack = this.tracks.find(track => track.id === environment) ?? this.tracks[this.track];
-    this.loadingStatus = 'Preparing course…'; this.loadingProgress = 0; this.loadingTip = null;
+    this.loadingStatus = 'Preparing course…'; this.loadingProgress = 0; this.loadingTip = null; this.stopShots();
+    void this.courseShots(this.loadingTrack).then(urls => {
+      if (this.page !== 'loading' || !urls.length) return;
+      // Original icon_info.ini: frames 02-07 loop over 15 seconds.
+      this.loadingShots = urls; this.shotFrame = 0; this.layoutKey = ''; void this.refresh();
+      this.shotTimer = setInterval(() => { if (this.page !== 'loading') return this.stopShots(); this.shotFrame++; this.layoutKey = ''; void this.refresh(); }, 2500);
+    });
     void this.loadTips().then(tips => { if (this.page !== 'loading' || !tips.length) return; this.loadingTip = tips[Math.floor(Math.random() * tips.length)]; this.layoutKey = ''; void this.refresh(); });
     await this.show('loading'); this.busy = true;
     // Yield a frame so the loading UI is painted before decoding/upload work.
@@ -1012,7 +1038,7 @@ function trimDark(canvas) {
   while (left < width / 4 && dark(left, 0, 0, 1, height)) left++;
   while (right > width * .75 && dark(right - 1, 0, 0, 1, height)) right--;
   while (top < height / 4 && dark(left, top, 1, 0, right - left)) top++;
-  while (bottom > height * .75 && dark(left, bottom - 1, 1, 0, right - left)) bottom--;
+  while (bottom > height * .6 && dark(left, bottom - 1, 1, 0, right - left)) bottom--;
   if (left === 0 && top === 0 && right === width && bottom === height) return canvas;
   const trimmed = document.createElement('canvas'); trimmed.width = right - left; trimmed.height = bottom - top;
   trimmed.getContext('2d').drawImage(canvas, left, top, trimmed.width, trimmed.height, 0, 0, trimmed.width, trimmed.height);

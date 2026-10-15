@@ -44,6 +44,15 @@ STARTUP += tuple(f'/TRACKS/TRACKSB/SX{i:02}/S{i:02}_FR.RES' for i in range(1,17)
 STARTUP += ('/TRACKS/TRACKSB/TRAINING/T00_TR.RES', '/TRACKS/TRACKSA/GAME01/G01_SO.RES')
 STARTUP += tuple(f'/UI/RESOURCE/TP/TP_{group}.RES' for group in ('PNAT','ASX','PSX','HOCK'))
 
+# Original loading-screen action shots for every Freestyle venue except Training,
+# which ships only progress-bar art. Each course's file is fetched lazily.
+LOADICON = tuple([f'/UI/LOADICON/ENV{"AAABBBCC"[i - 1]}/E{i:02}_OB.LSI' for i in range(1, 9)]
+    + [f'/UI/LOADICON/FREE/F{i:02}_OB.LSI' for i in range(1, 7)]
+    + [f'/UI/LOADICON/NAT/N{i:02}_NAT.LSI' for i in range(1, 9)]
+    + [f'/UI/LOADICON/SX/S{i:02}_NAT.LSI' for i in range(1, 17)]
+    + ['/UI/LOADICON/GAME/G01_SO.LSI'])
+STARTUP += LOADICON
+
 STARTUP += tuple(path for i in range(2, 27) for path in (
     f'/QUAD/BIKES{"A" if i <= 13 else "B"}/ATV{i:02}.RES',
     f'/QUAD/BIKES{"A" if i <= 13 else "B"}/ATV{i:02}_MT.RES'))
@@ -482,7 +491,7 @@ def main():
                 data = compact_map_placements(data, path.split('/')[-2])
             elif path == '/RIDER/RIDER_MT.RES':
                 data = compact_rider_materials(originals['/RIDER/MRIDER.RES'], data, (originals['/RIDER/FRIDER.RES'],))
-            record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith('/QUAD/') or path in ('/RIDER/FRIDER.RES',), **blob(data)}
+            record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith(('/QUAD/', '/UI/LOADICON/')) or path in ('/RIDER/FRIDER.RES',), **blob(data)}
             if data != originals[path]:
                 record.update(repacked=True, member_count=len(Resource(data).members))
             records.append(record)
