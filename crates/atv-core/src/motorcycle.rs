@@ -1,6 +1,27 @@
-//! Playable two-wheel reconstruction using SLUS_211.04 resource identities and
-//! tuning. The integrator/controller below is authored: native whole-step parity,
-//! collision-v2 dispatch, stunt timing and tire curves are not established yet.
+//! Authored arcade two-wheel controller. It is NOT a recovered MX vs. ATV
+//! Unleashed (SLUS_211.04/GAME_REL.BIN) controller: it reads that game's bike
+//! resources and named tuning values, but the integrator, tire model, stunt
+//! timing and collision-v2 dispatch are authored. Only the ground bank angle in
+//! `motorcycle_balance.rs` (GAME_REL `004dbd10`) cites a recovered routine, and
+//! even that runs through an authored contact adapter. Native whole-step parity
+//! has not been measured.
+//!
+//! Known non-original constraints (authored stabilizers, marked
+//! `// Authored stabilizer:` at each site):
+//! - tire spring force capped at `weight * 8` per wheel, and fixed lateral-slip
+//!   (`mass * 8`) and braking (`mass * 10`) velocity-kill gains ahead of the
+//!   tuned friction clamps;
+//! - over-travel push-out of up to 0.3 ft along the contact normal, removing 70%
+//!   of the inward normal velocity;
+//! - wreck body held at terrain + 0.5 ft, keeping 12% of the impact speed as
+//!   rebound and damping other motion by 0.97 per step;
+//! - detached rider clamped to the terrain with 0.85 horizontal friction;
+//! - airborne-landing wreck angle floors of 1.4 rad (roll via `.max(1.4)`, pitch
+//!   fixed) and a minimum wreck duration of 1.75 s.
+//!
+//! A real recovery needs the SLUS_211.04/GAME_REL.BIN bike controller routines
+//! analysed in Ghidra and an oracle comparison like the ATV work under
+//! `work/physics`; see `research/MOTORCYCLES.md`.
 use crate::{
     Result, animation, dynamics,
     mesh::{self, Mesh},
@@ -682,6 +703,7 @@ impl Motorcycle {
                 for i in 0..3 {
                     world[12 + i] += velocity[i] * dt;
                 }
+                // Authored stabilizer: detached-rider terrain clamp, 0.85 friction.
                 if let Some(hit) = terrain.contact(world[12], world[14])?
                     && world[13] < hit.height
                 {
@@ -827,10 +849,13 @@ impl Motorcycle {
                     } else {
                         tire.rebound
                     };
+                    // Authored stabilizer: per-wheel spring force cap of weight * 8.
                     let force =
                         (tire.spring * compression - damping * velocity).clamp(0., weight * 8.);
                     self.body
                         .apply_world_force(scale(hit.normal, force), center);
+                    // Authored stabilizer: over-travel push-out (max 0.3 ft) and 70%
+                    // inward normal-velocity removal.
                     if depth > tire.travel {
                         self.frame.crash_impact_speed =
                             self.frame.crash_impact_speed.max((-velocity).max(0.));
@@ -853,6 +878,7 @@ impl Motorcycle {
                     };
                     let lateral = crate::wheel::cross(hit.normal, forward);
                     let lateral_speed = dot(self.body.velocity_at(center), lateral);
+                    // Authored stabilizer: fixed lateral-slip (mass * 8) and braking (mass * 10) gains.
                     let side = (-lateral_speed * mass * 8.)
                         .clamp(-force * tire.side[surface], force * tire.side[surface]);
                     let brake = if wreck { 0.1 } else { input.brake };
@@ -1093,6 +1119,8 @@ impl Motorcycle {
                 self.frame.wheelie_active = false;
                 self.frame.stoppie_active = false;
             }
+            // Authored stabilizer: 1.4 rad floor on the roll wreck angle and a
+            // fixed 1.4 rad pitch limit.
             if grounded
                 && (self.frame.crash_impact_speed
                     > self.value("Wrecks", "FreestyleDownWreckSpeedLimit")
@@ -1110,6 +1138,8 @@ impl Motorcycle {
             self.wreck_time += dt;
             self.frame.wreck.timer = self.wreck_time;
             let p = origin;
+            // Authored stabilizer: wreck body snapped to terrain + 0.5 ft with
+            // 0.12 rebound and 0.97 damping; wreck lasts at least 1.75 s.
             if let Some(hit) = terrain.contact(p[0], p[2])?
                 && p[1] < hit.height + 0.5
             {

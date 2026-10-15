@@ -1,5 +1,30 @@
 # Motorcycle reconstruction
 
+**Status: the motorcycle controller is authored, not recovered.** Resources
+(PSR records, PSG/SUB meshes, PST textures, MOT clips, audio) and named tuning
+values come from MX vs. ATV Unleashed, but the integrator, tire/suspension
+model, stunt timing and wreck handling in `crates/atv-core/src/motorcycle.rs`
+are authored arcade code. Only the ground bank angle
+(`motorcycle_balance.rs`, GAME_REL `004dbd10`) cites a recovered routine, and it
+runs through an authored contact adapter. Native whole-step parity is unmeasured.
+
+Known non-original constraints (marked `Authored stabilizer:` in the code):
+
+- per-wheel spring force capped at `weight * 8`; fixed lateral-slip (`mass * 8`)
+  and braking (`mass * 10`) velocity-kill gains ahead of the tuned friction clamps;
+- over-travel push-out of up to 0.3 ft along the contact normal, removing 70% of
+  the inward normal velocity;
+- wreck body held at terrain + 0.5 ft with 0.12 rebound and 0.97 damping;
+- detached rider clamped to terrain with 0.85 horizontal friction;
+- airborne-landing wreck angle floors of 1.4 rad (roll `.max(1.4)`, fixed pitch)
+  and a minimum wreck time of 1.75 s (`.max(1.75)`).
+
+A real recovery would require Ghidra analysis of the SLUS_211.04/GAME_REL.BIN
+bike controller, tire and wreck routines (update order, units, gates), then an
+instruction-level oracle comparison of whole steps against the Rust controller,
+like the ATV physics oracle work kept under ignored `work/physics`. Until then,
+describe motorcycles as an authored controller using source resources and tuning.
+
 Source: the user-supplied MX vs. ATV Unleashed USA disc, boot `SLUS_211.04`,
 version 1.02. Boot SHA-256:
 `4b74c0c76ffe0838e00c1b9f75b31e1bb91adae06ec9da1416355b363572102a`.
