@@ -412,3 +412,46 @@ The approved gameplay screenshot remains stored in ignored
 R2 package; screenshot files never enter GitHub source. Its public gallery caption
 identifies the actual capture as host Chromium Metal at 390×844/DPR3. No screenshot
 from the separate four-browser run was approved or published.
+
+## Phone-oriented main-thread pass — 2026-10-15
+
+Method: host Chromium (Metal) emulating a phone, 390×844 at DPR3 with touch,
+and CDP CPU throttling ×4. The CPU profiler sampled at 200μs for 8s of held-
+throttle driving. These results identify main-thread hot spots; they are not
+physical-phone, GPU or battery measurements.
+
+| Hot spot (8s sample) | Before | After | Change |
+| --- | ---: | ---: | --- |
+| `gl.getParameter` (Supercross race, sx07) | 1,134ms | 0ms | WebGL state shadow |
+| Forced layout `clientWidth` (race) | 136ms | 0ms | ResizeObserver canvas size |
+| Main-thread idle (race, sx07) | 5,058ms | 6,108ms | ≈13% of the main thread freed |
+| `drawEcosystem` (Freestyle, Caribou) | 608ms | 506ms | exact cell culling |
+| Vegetation placements scanned per frame (Caribou / Bluewater / nat03) | 3,713 / 1,361 / 2,612 | 1,909 / 626 / 1,199 | same visible counts |
+
+- **WebGL state shadow (`shadowGlState`).** The ambient-effect, stream,
+  weather and wheel renderers saved and restored about ten bindings with
+  `gl.getParameter`/`isEnabled` every frame. These synchronous queries stall the
+  GPU pipeline, and the cost grows on phones. The shadow intercepts the
+  matching setters and answers those exact enums. Every other query still goes
+  to the context, and the shadow resets on context restore. Unit-tested;
+  ambient, weather, wheel and wet-particle pixel gates still pass.
+- **Observed sizes.** The game canvas and HUD surface sizes come from a
+  `ResizeObserver` instead of per-frame `clientWidth`/`getBoundingClientRect`.
+  Those reads forced layout after the race overlay updated its text.
+- **Vegetation cell culling.** Visibility cells entirely behind the camera
+  (projected depth ≤ −maxRadius), or beyond fog plus maxRadius, are skipped.
+  Every placement in them failed the existing per-placement tests, so
+  selection, near/far phase state and draw order are unchanged.
+- **Adaptive render resolution (`RenderScale`).** On high-DPR devices, only the
+  WebGL canvas pixel ratio steps between 1.5 and 1.0 in 0.25 increments.
+  Below about 42 FPS for 1.5s steps down; 6s at about 57 FPS or better steps
+  back up. A failed recovery doubles the wait (up to 60s). Isolated hitches
+  never lower it. Physics (60Hz worker), input and the HUD are unaffected.
+  Diagnostics report `renderRatio`. Its benefit on GPU-bound phones still
+  needs physical-device confirmation.
+
+Remaining phone candidates: per-frame race JSON is about 37KB, about 21KB of
+which is CPU bone matrices (parse ≈3% of the throttled main thread). A race
+worker step costs about 2ms (p95 3.2ms) on the host for five physical quads,
+which a phone may multiply several times. Vegetation selection and sorting
+remain the largest main-thread renderer cost.
