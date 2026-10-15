@@ -1,16 +1,86 @@
 // Rain selection/resources/audio/lifetimes in the real authored browser runtime.
 import assert from 'node:assert/strict';
-import{assertNoErrors,base,button,launch,newPage,waitForGame}from'./browser/harness.mjs';
-const browser=await launch();
-try{
- for(const [environment,sample,expected,mobile,quad] of [['env04',.25,true,true,1],['nat06',.25,true,false,1],['nat06',.99,false,false,1],['sx13',.25,true,false,1],['sx13',.99,false,false,1],['env01',.25,false,false,1],['env04',.25,true,true,27]]){
-  const errors=[],page=await newPage(browser,{viewport:mobile?{width:390,height:844}:{width:960,height:540}},errors);await page.addInitScript(sample=>{Math.random=()=>sample;},sample);
-  await page.goto(`${base}/play.html?drive=1&environment=${environment}&quad=${quad}`);let state=await waitForGame(page);assert.equal(state.weather.active,expected);assert.equal(state.weather.native_player_count,1);assert.equal(Boolean(state.weather.removed_model),!expected&&['nat06','sx13'].includes(environment));
-  if(expected){assert(state.rainRender.sourceInstances>0);await page.locator('#game').click({position:{x:100,y:100}});await page.waitForFunction(()=>window.atvTerrainStatus.audio.weather.voices===1,null,{timeout:30000});const before=await page.evaluate(()=>window.atvTerrainStatus),weather=before.weather;assert.equal(before.audio.weather.starts,1);assert(before.audio.weather.decoded);
-   await page.keyboard.press('Escape');await page.waitForFunction(()=>document.querySelector('#frontend').dataset.page==='pause');await page.waitForFunction(()=>window.atvTerrainStatus.audio.weather.muted);assert.equal((await page.evaluate(()=>window.atvTerrainStatus.audio.weather)).voices,1);
-   await button(page,'Resume').click();await page.waitForFunction(()=>!window.atvTerrainStatus.audio.weather.muted);await page.locator('#game').focus();await page.keyboard.press('Backspace');await page.waitForFunction(()=>window.atvTerrainStatus.audio.weather.voices===1);assert.equal((await page.evaluate(()=>window.atvTerrainStatus.audio.weather)).starts,1);
-   if(environment==='env04'&&quad===1){await page.evaluate(()=>{window.weatherContext=document.querySelector('#game').getContext('webgl2').getExtension('WEBGL_lose_context');window.weatherContext.loseContext();});await page.waitForFunction(()=>!window.atvTerrainStatus.ready);await page.evaluate(()=>window.weatherContext.restoreContext());await page.waitForFunction(()=>window.atvTerrainStatus.ready);assert.deepEqual((await page.evaluate(()=>window.atvTerrainStatus.weather)),weather);assert.equal((await page.evaluate(()=>window.atvTerrainStatus.audio.weather)).starts,1);}
-  }else{assert.equal(state.rainRender.sourceInstances,0);assert.equal(state.audio.weather.voices,0);assert(!state.audio.weather.active);}
-  state=await page.evaluate(()=>window.atvTerrainStatus);assert.equal(state.glError,0);assertNoErrors(errors);console.log(JSON.stringify({environment,sample,quad,mobile,weather:state.weather,rain:state.rainRender,audio:state.audio.weather}));await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:false})));assert.equal((await page.evaluate(()=>window.atvTerrainStatus.audio.weather)).voices,0);await page.close();
- }
-}finally{await browser.close();}
+import { assertNoErrors, base, button, launch, newPage, waitForGame } from './browser/harness.mjs';
+const browser = await launch();
+try {
+  for (const [environment, sample, expected, mobile, quad] of [
+    ['env04', 0.25, true, true, 1],
+    ['nat06', 0.25, true, false, 1],
+    ['nat06', 0.99, false, false, 1],
+    ['sx13', 0.25, true, false, 1],
+    ['sx13', 0.99, false, false, 1],
+    ['env01', 0.25, false, false, 1],
+    ['env04', 0.25, true, true, 27]
+  ]) {
+    const errors = [],
+      page = await newPage(
+        browser,
+        { viewport: mobile ? { width: 390, height: 844 } : { width: 960, height: 540 } },
+        errors
+      );
+    await page.addInitScript(sample => {
+      Math.random = () => sample;
+    }, sample);
+    await page.goto(`${base}/play.html?drive=1&environment=${environment}&quad=${quad}`);
+    let state = await waitForGame(page);
+    assert.equal(state.weather.active, expected);
+    assert.equal(state.weather.native_player_count, 1);
+    assert.equal(Boolean(state.weather.removed_model), !expected && ['nat06', 'sx13'].includes(environment));
+    if (expected) {
+      assert(state.rainRender.sourceInstances > 0);
+      await page.locator('#game').click({ position: { x: 100, y: 100 } });
+      await page.waitForFunction(() => window.atvTerrainStatus.audio.weather.voices === 1, null, { timeout: 30000 });
+      const before = await page.evaluate(() => window.atvTerrainStatus),
+        weather = before.weather;
+      assert.equal(before.audio.weather.starts, 1);
+      assert(before.audio.weather.decoded);
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => document.querySelector('#frontend').dataset.page === 'pause');
+      await page.waitForFunction(() => window.atvTerrainStatus.audio.weather.muted);
+      assert.equal((await page.evaluate(() => window.atvTerrainStatus.audio.weather)).voices, 1);
+      await button(page, 'Resume').click();
+      await page.waitForFunction(() => !window.atvTerrainStatus.audio.weather.muted);
+      await page.locator('#game').focus();
+      await page.keyboard.press('Backspace');
+      await page.waitForFunction(() => window.atvTerrainStatus.audio.weather.voices === 1);
+      assert.equal((await page.evaluate(() => window.atvTerrainStatus.audio.weather)).starts, 1);
+      if (environment === 'env04' && quad === 1) {
+        await page.evaluate(() => {
+          window.weatherContext = document
+            .querySelector('#game')
+            .getContext('webgl2')
+            .getExtension('WEBGL_lose_context');
+          window.weatherContext.loseContext();
+        });
+        await page.waitForFunction(() => !window.atvTerrainStatus.ready);
+        await page.evaluate(() => window.weatherContext.restoreContext());
+        await page.waitForFunction(() => window.atvTerrainStatus.ready);
+        assert.deepEqual(await page.evaluate(() => window.atvTerrainStatus.weather), weather);
+        assert.equal((await page.evaluate(() => window.atvTerrainStatus.audio.weather)).starts, 1);
+      }
+    } else {
+      assert.equal(state.rainRender.sourceInstances, 0);
+      assert.equal(state.audio.weather.voices, 0);
+      assert(!state.audio.weather.active);
+    }
+    state = await page.evaluate(() => window.atvTerrainStatus);
+    assert.equal(state.glError, 0);
+    assertNoErrors(errors);
+    console.log(
+      JSON.stringify({
+        environment,
+        sample,
+        quad,
+        mobile,
+        weather: state.weather,
+        rain: state.rainRender,
+        audio: state.audio.weather
+      })
+    );
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false })));
+    assert.equal((await page.evaluate(() => window.atvTerrainStatus.audio.weather)).voices, 0);
+    await page.close();
+  }
+} finally {
+  await browser.close();
+}
