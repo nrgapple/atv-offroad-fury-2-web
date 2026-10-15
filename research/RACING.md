@@ -1,10 +1,64 @@
-# Racing reconstruction strategy — 2026-10-12
+# Racing reconstruction
 
-The [USA manual](https://www.videogamemanual.com/PS2/ATV%20Offroad%20Fury%202%20%28USA%29.pdf) (printed p.10) identifies Place, Lap, Lap Time, Best, Total, Lead, radar and position as race HUD information. The current Freestyle route omits racing. The exact USA v2.00 National archive contains an editor-tagged TDF course, a race-specific TOY radar rectangle, and AIRiders.pb identities.
+The [USA manual](https://www.videogamemanual.com/PS2/ATV%20Offroad%20Fury%202%20%28USA%29.pdf) (printed p.10) identifies Place, Lap, Lap Time, Best, Total, Lead, radar and position as race HUD information. Each exact USA v2.00 race archive contains an editor-tagged TDF course, a race-specific TOY (radar rectangle, rider spacing, championship points) and AIRiders.pb identities.
 
-Implement an explicitly marked race preview using original National terrain/scenery and recovered course points, with authored Rust countdown, ordered checkpoint validation, laps, timing, rank and results. Original CPU decisions, rider interactions and vehicle-to-vehicle collisions are not recovered. The preview CPUs use deterministic route motion with terrain-following poses and distinct speeds, not recovered physical AI. Keep Freestyle physics unchanged; do not call this the original race implementation.
+## Current status
 
-TDF observations: leading byte tags 1(version), 2/3(world offsets), 4(scale); route marker 8 followed by 23(flags), 9(center), 10/11(edges), 12,18,26,27 scalars. Coordinates are editor-local and transform by offset + scale × point. The route closes with its first point repeated; tag13 starts the trailing start-grid section. The parser consumes/validates the stream including that tail, but does not interpret unknown gameplay flags as race rules. Synthetic tests plus private real-resource probes establish decoding consistency, not native instruction parity.
+Race mode runs all 32 original Environment, National and Supercross courses with
+up to four CPU opponents on the shared Vehicle solver. It is a reconstruction
+with recovered driver decisions inside authored race rules, not the original
+race implementation. Later sections are dated history; this summary is current.
+
+**Recovered** (exact-build SCUS_972.11 evidence; bounded instruction probes
+for the scalar branches, not whole-race replay):
+
+- TDF section graph, route points, target speeds (tag 18; `-1` = 150ft/s),
+  leader-policy factors (tags 19–22), lane limit (tag 40) and start/finish boxes
+  (tags 15/16) from Track loader `00179680`.
+- CPU path-driver decisions from `0024f9d0`: lookahead 25 + 4 × route error
+  (60ft cap on track), lateral target and slew/clamp (`0024fe4c`), heading gain
+  and sine saturation, 1ft/s throttle/brake deadband (`002509ac`), and the
+  ahead-only leader speed policy with its 60ft/s floor (`002536b0`).
+- Direction avoidance `0024f840` → `00252080`: peer near/far relative velocity,
+  eight-ray static attenuation and vegetation response.
+- Low-air lean feedback and the National trick gate (10-second interval, 10%
+  trial, TDF airtime fit, `001e9650` clip eligibility).
+- CPU wreck decision, passive body, wreck clips and rider controller reuse the
+  player's Vehicle path. Grid fallback 4.66ft behind the start gate (`001f8410`)
+  with the course `RiderSpacing`.
+
+**Authored** (integration adaptations, not original behavior):
+
+- Race rules: countdown, laps, timing, ranking, results and HUD. Progress follows
+  the racing line inside the TDF edge polygon with an authored window (150ft
+  ahead, 60ft behind); the original Track +0x34/+0x38 values and the native
+  `001a95b0` finish-box test are not ported.
+- Route projection near each racer's station and ground/contact mapping; host
+  Rust `sin`/`atan2` instead of PS2 trigonometry/VU precision.
+- Per-CPU random streams seeded `97211 + 47 × index` instead of the native
+  global random stream.
+- Off-track (5 s) and stuck (under 3ft/s for 4 s) CPU recovery to the race
+  checkpoint; the original consumer of the off-track timer is unrecovered.
+- Rider-to-rider contact through the multiplayer `peer_contact` proxy.
+- The motorcycle race preview is kinematic route following at fixed speeds; it
+  never runs for ATV racers.
+
+**Missing or unverified:**
+
+- Difficulty mapping: `race_ai::Driver::new` ignores its `_difficulty`
+  argument, and the frontend always sends difficulty 1. Only the motorcycle
+  preview speeds use it.
+- Corner braking where every TDF speed is the 150ft/s sentinel (e.g. `env02`,
+  `nat01`); none is guessed.
+- Native start slots/event start nodes (`001f8410` cases 3–10), roster/quad
+  diversity, costumes and roster-specific tuning.
+- The flag 64 preload/jump helper, optional AI flags (aggression, `0x800` direct
+  velocity), scene query category/order and actor update ordering.
+- Championship points, firework triggers and whole-race PS2 replay parity.
+
+## Initial preview (historical)
+
+TDF observations (first pass; superseded by the section-graph table below, where tag 1 is the section count): leading byte tags 1(version), 2/3(world offsets), 4(scale); route marker 8 followed by 23(flags), 9(center), 10/11(edges), 12,18,26,27 scalars. Coordinates are editor-local and transform by offset + scale × point. The route closes with its first point repeated; tag13 starts the trailing start-grid section. The parser consumes/validates the stream including that tail, but does not interpret unknown gameplay flags as race rules. Synthetic tests plus private real-resource probes establish decoding consistency, not native instruction parity.
 
 Host browser gates cover desktop, portrait and phone landscape, pause, rotation, countdown input lock, CPU motion, restart and Freestyle regression. Finish/shortcut rules receive Rust tests. Publication is separate; the user requested no deployment waits. Original resources and screenshots remain ignored and outside GitHub.
 
@@ -71,7 +125,7 @@ Sampled CPU distances are 70.53–80.96 feet; no JS/GL errors occur. Race CPU
 motion remains authored and provisional; original CPU physics/passing/collisions
 and whole-course browser replay equivalence remain unverified.
 
-## Original CPU driving reconstruction — next implementation gate
+## Original CPU driving reconstruction
 
 The exact USA v2.00 executable now supplies the driving strategy. Private
 Ghidra exports retain matching source/load bytes for VehicleAI mode dispatch

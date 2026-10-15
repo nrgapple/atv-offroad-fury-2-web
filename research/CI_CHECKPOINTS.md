@@ -6,8 +6,9 @@ checks, R2 upload and gallery verification. Contributors provide their tested
 commit, required private resource package and inspected images to that owner.
 Do not start a second upload or repeat another owner's completed checks.
 The GitHub Actions application deployment remains automatic when healthy. The
-checked local fallback below is authorized when Actions stalls or fails. The
-experimental daemon/release queue and No Mistakes remain disabled.
+checked local fallback below is authorized when Actions stalls or fails. No
+Mistakes remains disabled. The experimental local release queue (`atv-release`)
+was removed; see `git log -- research/RELEASE_QUEUE.md` for its history.
 
 ## Three CI lanes
 
@@ -26,6 +27,11 @@ experimental daemon/release queue and No Mistakes remain disabled.
 - **Runtime or unknown files:** code, frontend, tooling, dependencies, workflow and
   mixed changes retain full tests, lint and release builds. Manual dispatch also
   forces this path. The explicit allowlist is in `tools/ci_changes.py`.
+
+The runtime lane also runs the content-free browser smoke group
+(`make browser-smoke`) against the freshly built `web/dist`, served with an empty
+content directory, using pinned Playwright 1.58.2 Chromium/WebKit. Content, native
+and relay browser groups stay local; see `BROWSER_TESTS.md`.
 
 Updated PRs cancel their superseded runs. Main deployments are never interrupted;
 main workflow concurrency remains serialized (GitHub may replace a pending run

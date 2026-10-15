@@ -1,29 +1,216 @@
 // Actual authored WASM/relay bytes, paused presence and late-join reconstruction.
 // Same-host synthetic-focus browser test; never a production billing forecast.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
-import {writeFile} from 'node:fs/promises';
-const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const base=process.env.ATV_TEST_URL||'http://127.0.0.1:5197';
-const output=process.env.ATV_MP_REPORT||'private/reports/multiplayer-efficiency.json';
-const browser=await chromium.launch({headless:true,args:process.env.ATV_BROWSER_GPU==='metal'?['--enable-gpu','--use-angle=metal']:[]});
-const pages=[],errors=[];const state=p=>p.evaluate(()=>window.atvTerrainStatus),button=(p,name)=>p.getByRole('button',{name,exact:true});
-const report={base,scope:new URL(base).protocol==='https:'?'public HTTPS':'host-only',started:new Date().toISOString(),stages:[],errors};
-async function page(){const p=await browser.newPage({viewport:{width:1280,height:896},hasTouch:true});p.setDefaultTimeout(30000);pages.push(p);p.on('pageerror',e=>errors.push(e.message));await p.addInitScript(()=>{Object.defineProperty(document,'hasFocus',{value:()=>true});Object.defineProperty(document,'hidden',{get:()=>Boolean(window.netFrozen)});const Native=WebSocket;window.netFrames=[];window.WebSocket=class extends Native {send(bytes){const b=new Uint8Array(bytes);netFrames.push({time:performance.now(),bytes:b.byteLength,kind:b[5]});super.send(bytes);}};});return p;}
+import { writeFile } from 'node:fs/promises';
+import { assertNoErrors, base, button, gameState, launch, newPage } from './browser/harness.mjs';
+const output = process.env.ATV_MP_REPORT || 'private/reports/multiplayer-efficiency.json';
+const browser = await launch();
+const pages = [],
+  errors = [];
+const state = gameState;
+const report = {
+  base,
+  scope: new URL(base).protocol === 'https:' ? 'public HTTPS' : 'host-only',
+  started: new Date().toISOString(),
+  stages: [],
+  errors
+};
+async function page() {
+  const p = await newPage(browser, { viewport: { width: 1280, height: 896 }, hasTouch: true }, errors);
+  p.setDefaultTimeout(30000);
+  pages.push(p);
+  await p.addInitScript(() => {
+    Object.defineProperty(document, 'hasFocus', { value: () => true });
+    Object.defineProperty(document, 'hidden', { get: () => Boolean(window.netFrozen) });
+    const Native = WebSocket;
+    window.netFrames = [];
+    window.WebSocket = class extends Native {
+      send(bytes) {
+        const b = new Uint8Array(bytes);
+        netFrames.push({ time: performance.now(), bytes: b.byteLength, kind: b[5] });
+        super.send(bytes);
+      }
+    };
+  });
+  return p;
+}
 // Tapping the already-selected course card rides at once; otherwise select it, then Ride.
-async function pickTrack(p,id){const card=p.locator(`.ms-course[data-track-id=${id}]`);await card.waitFor({timeout:60000});const selected=await card.getAttribute('aria-selected')==='true';await card.click();if(!selected)await p.locator('button.ms-ride').click();}
-async function windowSample(p,ms){const before=await p.evaluate(()=>({time:performance.now(),index:netFrames.length,s:window.atvTerrainStatus}));await p.waitForTimeout(ms);const after=await p.evaluate(index=>({time:performance.now(),frames:netFrames.slice(index),s:window.atvTerrainStatus}),before.index);const pose=after.frames.filter(f=>f.kind===9||f.kind===10);return {seconds:(after.time-before.time)/1000,messages:pose.length,bytes:pose.reduce((n,f)=>n+f.bytes,0),packetSizes:[...new Set(pose.map(f=>f.bytes))],hz:pose.length/((after.time-before.time)/1000),before:before.s.multiplayer.state.network,after:after.s.multiplayer.state.network,operations:after.s.networkOperations,remote:after.s.multiplayer.remote.map(p=>({position:p.position,stale:p.stale,quad:p.quad_node_matrices.length,rider:p.rider_node_matrices.length}))};}
-try{
- // Host Game → Select Track → Ride starts riding at once; the guest drops in.
- const a=await page();await a.goto(base+'/play.html');report.deployment=await a.evaluate(()=>fetch('/deployment.json').then(r=>r.ok?r.json():null));await button(a,'Press START').click({timeout:120000});await button(a,'Multiplayer').click();await button(a,'Host Game').click();await a.getByRole('textbox',{name:'Rider name',exact:true}).fill('CompactHost');await button(a,'Select Track').click();await pickTrack(a,'env01');await a.waitForFunction(()=>window.atvTerrainStatus.multiplayer?.state.code&&window.atvTerrainStatus.simulation||window.atvTerrainStatus.multiplayerError,null,{timeout:120000});const code=(await state(a)).multiplayer.state.code;console.log('HOST',code);
- const b=await page();await b.goto(base+`/play.html?room=${code}&play=0`);await b.getByRole('textbox',{name:'Rider name',exact:true}).fill('CompactGuest',{timeout:120000});await button(b,'Quad and Rider').click();await button(b,'Change rider').click();await button(b,'Done').click();await button(b,'Join Game').click();await a.waitForFunction(()=>window.atvTerrainStatus.multiplayer?.state.lobby?.players.length===2);for(const p of [a,b])await p.waitForFunction(()=>window.atvTerrainStatus.multiplayerDraws>0||window.atvTerrainStatus.multiplayerError,null,{timeout:120000});await a.bringToFront();
- assert.equal((await state(a)).multiplayerError,undefined);assert.equal((await state(b)).multiplayerError,undefined);
- await a.locator('#game').focus();await a.keyboard.down('KeyW');report.driving=await windowSample(a,10000);await a.keyboard.up('KeyW');assert(report.driving.messages>20);assert(report.driving.packetSizes.every(n=>n<190));report.driving.oldBaselineBytes=report.driving.messages*2526;report.driving.payloadReduction=1-report.driving.bytes/report.driving.oldBaselineBytes;console.log('DRIVING',JSON.stringify(report.driving));report.stages.push('compact/delta driving with full-precision world positions and local poses');
- for(const p of [a,b]){await p.bringToFront();await button(p,'Pause').click();await p.evaluate(()=>{window.netFrozen=true;});}await a.waitForTimeout(500);
- report.paused=await Promise.all([a,b].map(p=>windowSample(p,11000)));for(const m of report.paused){assert(m.messages<=3,`paused snapshots ${m.messages}`);assert(m.remote.every(p=>!p.stale&&p.quad===27&&[18,27].includes(p.rider)));}console.log('PAUSED',JSON.stringify(report.paused));report.stages.push('suspended riders stay fresh with <=3 snapshots per 11-second window');
- const frozen=(await state(a)).frame.origin;const c=await page();await c.goto(base+`/play.html?room=${code}&play=0`);await c.getByRole('textbox',{name:'Rider name',exact:true}).fill('LateCompact',{timeout:120000});await button(c,'Join Game').click();await c.waitForFunction(()=>window.atvTerrainStatus.multiplayerDraws>0||window.atvTerrainStatus.multiplayerError,null,{timeout:120000});const joined=await state(c);assert.equal(joined.multiplayerError,undefined);assert.equal(joined.multiplayer.remote.length,2);const host=joined.multiplayer.remote.find(p=>p.peer===0);assert(Math.hypot(...host.position.map((v,i)=>v-frozen[i]))<.1);assert(host.rider_node_matrices.length===18);report.lateJoin={distance:Math.hypot(...host.position.map((v,i)=>v-frozen[i])),draws:joined.multiplayerDraws};report.stages.push('late join reconstructs suspended host locally at precise root position');
- await button(c,'Pause').click();await button(c,'Leave Game').click();await c.waitForFunction(()=>!window.atvTerrainStatus.multiplayer?.state.code);await c.close();await a.bringToFront();await a.evaluate(()=>{window.netFrozen=false;});await button(a,'Resume').click();await a.keyboard.down('KeyW');report.resumed=await windowSample(a,2500);await a.keyboard.up('KeyW');assert(report.resumed.messages>10);report.stages.push('resume restores active updates');
- // A remaining host keeps its ride and room alive without sending solo poses.
- await b.bringToFront();await button(b,'Leave Game').click();await b.waitForFunction(()=>!window.atvTerrainStatus.multiplayer?.state.code);await b.close();await a.waitForFunction(()=>window.atvTerrainStatus.multiplayer?.state.lobby?.players.length===1);report.solo=await windowSample(a,5500);assert.equal(report.solo.messages,0);report.stages.push('solo room sends no movement snapshots');
- assert.deepEqual(errors,[]);assert.equal((await state(a)).multiplayerError,undefined);report.passed=true;report.completed=new Date().toISOString();console.log(JSON.stringify(report));
-}catch(error){report.passed=false;report.failure={message:error.message,stack:error.stack};report.states=await Promise.all(pages.map(async p=>{try{const s=await state(p);return {draws:s.multiplayerDraws,model:s.playerModel,error:s.multiplayerError,frame:s.frame?.origin,multiplayer:s.multiplayer?.state,remote:s.multiplayer?.remote.map(p=>({peer:p.peer,quad:p.quad_node_matrices.length,rider:p.rider_node_matrices.length}))};}catch{return null;}}));console.error(error);throw error;}finally{await writeFile(output,JSON.stringify(report,null,2));await browser.close();}
+async function pickTrack(p, id) {
+  const card = p.locator(`.ms-course[data-track-id=${id}]`);
+  await card.waitFor({ timeout: 60000 });
+  const selected = (await card.getAttribute('aria-selected')) === 'true';
+  await card.click();
+  if (!selected) await p.locator('button.ms-ride').click();
+}
+async function windowSample(p, ms) {
+  const before = await p.evaluate(() => ({
+    time: performance.now(),
+    index: netFrames.length,
+    s: window.atvTerrainStatus
+  }));
+  // Time-based on purpose: measures relay message rate and bytes over a wall-clock window.
+  await p.waitForTimeout(ms);
+  const after = await p.evaluate(
+    index => ({ time: performance.now(), frames: netFrames.slice(index), s: window.atvTerrainStatus }),
+    before.index
+  );
+  const pose = after.frames.filter(f => f.kind === 9 || f.kind === 10);
+  return {
+    seconds: (after.time - before.time) / 1000,
+    messages: pose.length,
+    bytes: pose.reduce((n, f) => n + f.bytes, 0),
+    packetSizes: [...new Set(pose.map(f => f.bytes))],
+    hz: pose.length / ((after.time - before.time) / 1000),
+    before: before.s.multiplayer.state.network,
+    after: after.s.multiplayer.state.network,
+    operations: after.s.networkOperations,
+    remote: after.s.multiplayer.remote.map(p => ({
+      position: p.position,
+      stale: p.stale,
+      quad: p.quad_node_matrices.length,
+      rider: p.rider_node_matrices.length
+    }))
+  };
+}
+try {
+  // Host Game → Select Track → Ride starts riding at once; the guest drops in.
+  const a = await page();
+  await a.goto(base + '/play.html');
+  report.deployment = await a.evaluate(() => fetch('/deployment.json').then(r => (r.ok ? r.json() : null)));
+  await button(a, 'Press START').click({ timeout: 120000 });
+  await button(a, 'Multiplayer').click();
+  await button(a, 'Host Game').click();
+  await a.getByRole('textbox', { name: 'Rider name', exact: true }).fill('CompactHost');
+  await button(a, 'Select Track').click();
+  await pickTrack(a, 'env01');
+  await a.waitForFunction(
+    () =>
+      (window.atvTerrainStatus.multiplayer?.state.code && window.atvTerrainStatus.simulation) ||
+      window.atvTerrainStatus.multiplayerError,
+    null,
+    { timeout: 120000 }
+  );
+  const code = (await state(a)).multiplayer.state.code;
+  console.log('HOST', code);
+  const b = await page();
+  await b.goto(base + `/play.html?room=${code}&play=0`);
+  await b.getByRole('textbox', { name: 'Rider name', exact: true }).fill('CompactGuest', { timeout: 120000 });
+  await button(b, 'Garage').click();
+  await button(b, 'Change rider').click();
+  await button(b, 'Done').click();
+  await button(b, 'Join Game').click();
+  await a.waitForFunction(() => window.atvTerrainStatus.multiplayer?.state.lobby?.players.length === 2);
+  for (const p of [a, b])
+    await p.waitForFunction(
+      () => window.atvTerrainStatus.multiplayerDraws > 0 || window.atvTerrainStatus.multiplayerError,
+      null,
+      { timeout: 120000 }
+    );
+  await a.bringToFront();
+  assert.equal((await state(a)).multiplayerError, undefined);
+  assert.equal((await state(b)).multiplayerError, undefined);
+  await a.locator('#game').focus();
+  await a.keyboard.down('KeyW');
+  report.driving = await windowSample(a, 10000);
+  await a.keyboard.up('KeyW');
+  assert(report.driving.messages > 20);
+  assert(report.driving.packetSizes.every(n => n < 190));
+  report.driving.oldBaselineBytes = report.driving.messages * 2526;
+  report.driving.payloadReduction = 1 - report.driving.bytes / report.driving.oldBaselineBytes;
+  console.log('DRIVING', JSON.stringify(report.driving));
+  report.stages.push('compact/delta driving with full-precision world positions and local poses');
+  for (const p of [a, b]) {
+    await p.bringToFront();
+    await button(p, 'Pause').click();
+    await p.evaluate(() => {
+      window.netFrozen = true;
+    });
+  }
+  // Time-based on purpose: lets in-flight snapshots drain before the paused rate window.
+  await a.waitForTimeout(500);
+  report.paused = await Promise.all([a, b].map(p => windowSample(p, 11000)));
+  for (const m of report.paused) {
+    assert(m.messages <= 3, `paused snapshots ${m.messages}`);
+    assert(m.remote.every(p => !p.stale && p.quad === 27 && [18, 27].includes(p.rider)));
+  }
+  console.log('PAUSED', JSON.stringify(report.paused));
+  report.stages.push('suspended riders stay fresh with <=3 snapshots per 11-second window');
+  const frozen = (await state(a)).frame.origin;
+  const c = await page();
+  await c.goto(base + `/play.html?room=${code}&play=0`);
+  await c.getByRole('textbox', { name: 'Rider name', exact: true }).fill('LateCompact', { timeout: 120000 });
+  await button(c, 'Join Game').click();
+  await c.waitForFunction(
+    () => window.atvTerrainStatus.multiplayerDraws > 0 || window.atvTerrainStatus.multiplayerError,
+    null,
+    { timeout: 120000 }
+  );
+  const joined = await state(c);
+  assert.equal(joined.multiplayerError, undefined);
+  assert.equal(joined.multiplayer.remote.length, 2);
+  const host = joined.multiplayer.remote.find(p => p.peer === 0);
+  assert(Math.hypot(...host.position.map((v, i) => v - frozen[i])) < 0.1);
+  assert(host.rider_node_matrices.length === 18);
+  report.lateJoin = {
+    distance: Math.hypot(...host.position.map((v, i) => v - frozen[i])),
+    draws: joined.multiplayerDraws
+  };
+  report.stages.push('late join reconstructs suspended host locally at precise root position');
+  await button(c, 'Pause').click();
+  await button(c, 'Leave Game').click();
+  await c.waitForFunction(() => !window.atvTerrainStatus.multiplayer?.state.code);
+  await c.close();
+  await a.bringToFront();
+  await a.evaluate(() => {
+    window.netFrozen = false;
+  });
+  await button(a, 'Resume').click();
+  await a.keyboard.down('KeyW');
+  report.resumed = await windowSample(a, 2500);
+  await a.keyboard.up('KeyW');
+  assert(report.resumed.messages > 10);
+  report.stages.push('resume restores active updates');
+  // A remaining host keeps its ride and room alive without sending solo poses.
+  await b.bringToFront();
+  await button(b, 'Leave Game').click();
+  await b.waitForFunction(() => !window.atvTerrainStatus.multiplayer?.state.code);
+  await b.close();
+  await a.waitForFunction(() => window.atvTerrainStatus.multiplayer?.state.lobby?.players.length === 1);
+  report.solo = await windowSample(a, 5500);
+  assert.equal(report.solo.messages, 0);
+  report.stages.push('solo room sends no movement snapshots');
+  assertNoErrors(errors);
+  assert.equal((await state(a)).multiplayerError, undefined);
+  report.passed = true;
+  report.completed = new Date().toISOString();
+  console.log(JSON.stringify(report));
+} catch (error) {
+  report.passed = false;
+  report.failure = { message: error.message, stack: error.stack };
+  report.states = await Promise.all(
+    pages.map(async p => {
+      try {
+        const s = await state(p);
+        return {
+          draws: s.multiplayerDraws,
+          model: s.playerModel,
+          error: s.multiplayerError,
+          frame: s.frame?.origin,
+          multiplayer: s.multiplayer?.state,
+          remote: s.multiplayer?.remote.map(p => ({
+            peer: p.peer,
+            quad: p.quad_node_matrices.length,
+            rider: p.rider_node_matrices.length
+          }))
+        };
+      } catch {
+        return null;
+      }
+    })
+  );
+  console.error(error);
+  throw error;
+} finally {
+  await writeFile(output, JSON.stringify(report, null, 2));
+  await browser.close();
+}

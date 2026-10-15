@@ -85,3 +85,15 @@ profile does not prove PS2 hardware rounding, exceptional-value behavior, VU
 pipeline timing, full loader state, scene cache lifetime, or whole-frame vehicle
 equivalence. The integrated wheel/support/stop scheduling and display-time mesh
 pose still require their own coupled evidence. See [movement](MOVEMENT.md).
+
+## Browser ground height
+
+The browser keeps two ground queries with different jobs. Gameplay starts (race
+grids and race resets) read `Terrain::clamped_height`: the contact plane above,
+with grid coordinates clamped to the world edge. Cameras and other presentation
+read `Heightfield::height`, which interpolates the dense `heightfield()` copy
+that also builds the visible terrain mesh, exactly as the former JavaScript did.
+The two agree within about 5e-4 ft on most maps, but not at tile corners whose
+neighboring tiles disagree: FREE04 differs by up to 130 ft at a few such
+corners and ENV04 by 0.02 ft. Cameras therefore follow the ground the player
+sees, while physics and starts follow the contact ground.

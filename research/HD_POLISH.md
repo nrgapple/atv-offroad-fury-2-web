@@ -27,6 +27,9 @@ crash damage, recovery and camera frames remain unchanged.
 
 Camera shake and its setting are removed. Old stored shake preferences have no
 effect. Contact event detection remains only for the existing impact sound.
+The tight shot and that synthesized impact boom apply only in Crazy/Gorn; since
+2026-10-15 new players default to Original crashes (see
+[crash effects](CRASH_EFFECTS.md#original-defaults-2026-10-15)).
 
 ## Speed-effect research and implementation direction
 

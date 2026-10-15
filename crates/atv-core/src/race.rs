@@ -1038,7 +1038,6 @@ pub struct Race {
     player: Progress,
     opponents: Vec<Opponent>,
     progress: Vec<Progress>,
-    preview_speeds: Vec<f32>,
     pub contacts: u32,
 }
 impl Race {
@@ -1080,9 +1079,6 @@ impl Race {
                 physical: None,
             })
             .collect();
-        let preview_speeds = (0..opponents.len())
-            .map(|i| [32., 46., 60.][difficulty as usize] + i as f32 * 1.7)
-            .collect();
         let progress = opponents
             .iter()
             .map(|o| Progress::new(o.origin, &course))
@@ -1096,7 +1092,6 @@ impl Race {
             player,
             opponents,
             progress,
-            preview_speeds,
             contacts: 0,
         })
     }
@@ -1115,36 +1110,6 @@ impl Race {
         self.elapsed += dt;
         self.player
             .update(p, &self.course, self.elapsed, self.laps, dt);
-    }
-    /// Preserve the separate authored motorcycle race preview. Original ATV
-    /// racers use observe_cpu after independent Vehicle steps, never this path.
-    pub fn step_motorcycle_preview_cpus(&mut self, dt: f32) {
-        if !self.running() {
-            return;
-        }
-        for ((o, progress), speed) in self
-            .opponents
-            .iter_mut()
-            .zip(&mut self.progress)
-            .zip(&self.preview_speeds)
-        {
-            if progress.finish.is_some() {
-                continue;
-            }
-            let target = self
-                .course
-                .point_at(self.course.advance(progress.station, 30.));
-            let delta = distance(o.origin, target);
-            let travel = (speed * dt).min(delta);
-            if delta > 0.001 {
-                o.yaw = (target[0] - o.origin[0]).atan2(target[2] - o.origin[2]);
-                o.origin[0] += o.yaw.sin() * travel;
-                o.origin[2] += o.yaw.cos() * travel;
-                o.distance += travel;
-            }
-            progress.update(o.origin, &self.course, self.elapsed, self.laps, dt);
-            o.finished = progress.finish.is_some();
-        }
     }
     pub fn opponents(&self) -> &[Opponent] {
         &self.opponents
@@ -1275,9 +1240,46 @@ impl Race {
         }
     }
 }
+/// Original grid RiderSpacing: the first of the race mode TOY, then (for
+/// Supercross) the scene TOY, whose `RiderSpacing=` value lies in 1–40 ft.
+/// Reads /^\s*RiderSpacing\s*=\s*([\d.]+)/im as the former browser did.
+pub fn rider_spacing<'a>(sources: impl IntoIterator<Item = &'a str>) -> Option<f32> {
+    use crate::authored_text::{assignment, js_number, line_starts, skip_space, starts_with_key};
+    sources.into_iter().find_map(|text| {
+        let value = line_starts(text).find_map(|start| {
+            let key = skip_space(text, start);
+            let value = starts_with_key(text, key, "RiderSpacing")
+                .then(|| assignment(text, key, "RiderSpacing"))
+                .flatten()?;
+            let end = value
+                + text[value..]
+                    .find(|c: char| !c.is_ascii_digit() && c != '.')
+                    .unwrap_or(text.len() - value);
+            (end > value).then(|| js_number(&text[value..end]))
+        })?;
+        (value.is_finite() && (1. ..=40.).contains(&value)).then_some(value as f32)
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rider_spacing_reads_the_first_valid_authored_toy() {
+        // Former browser expression results for the same text.
+        assert_eq!(
+            rider_spacing(["[Race]\n  RiderSpacing = 12.5 ;ft", "RiderSpacing=8"]),
+            Some(12.5)
+        );
+        assert_eq!(rider_spacing(["", "riderspacing=\n9"]), Some(9.));
+        assert_eq!(
+            rider_spacing(["RiderSpacing=8.5.1", "RiderSpacing=41", "x RiderSpacing=3"]),
+            None
+        );
+        assert_eq!(
+            rider_spacing(["RiderSpacing=0.5\nRiderSpacing=10", "RiderSpacing=15"]),
+            Some(15.)
+        );
+    }
     #[test]
     #[ignore = "requires privately extracted original TDF courses"]
     fn every_original_race_course_parses() {
@@ -1455,18 +1457,13 @@ mod tests {
         assert!(r.player.distance(&r.course) <= 0.);
     }
     #[test]
-    fn physical_cpus_require_observation_and_motorcycle_preview_is_explicit() {
+    fn physical_cpus_require_observation() {
         let mut r = Race::new(course(), 1, vec!["CPU".into()], 1).unwrap();
         let start = r.opponents()[0].origin;
-        r.step_motorcycle_preview_cpus(1. / 60.);
-        assert_eq!(r.opponents()[0].origin, start);
         r.countdown = 0.;
         r.step([0.; 3], 1. / 60.);
         assert_eq!(r.opponents()[0].origin, start);
         assert_eq!(r.opponents()[0].distance, 0.);
-        r.step_motorcycle_preview_cpus(1. / 60.);
-        assert_ne!(r.opponents()[0].origin, start);
-        assert!(r.opponents()[0].distance > 0.);
         assert!(r.opponents()[0].physical.is_none());
     }
     #[test]

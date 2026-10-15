@@ -253,6 +253,19 @@ export class Frontend {
   }
   // Multiplayer garages (menus, or Change ATV and Rider mid-session) are ATV only.
   onlineGarage() { return ['multiplayer','create-lobby','join-lobby','lobby'].includes(this.garageReturn) || (this.garageReturn === 'pause' && Boolean(this.multiplayer?.state?.lobby)); }
+  // ATV stats panel: original uiQuad.txt Engine/Traction/Suspension values,
+  // the maker logo, and the authored physics top speed. None for motorcycles.
+  vehicleStats() {
+    const info = this.quadInfo?.get(this.quadId);
+    if (!info || this.quadId >= 27) return null;
+    const figures = this.vehicleFigures?.quadId === this.quadId ? this.vehicleFigures : null;
+    return { ...info, logoUrl: this.statsLogo?.name === info.logo ? this.statsLogo.url : '', topSpeed: figures?.top_speed ?? null };
+  }
+  async refreshStatsLogo() {
+    const info = this.quadInfo?.get(this.quadId);
+    if (!info?.logo || this.statsLogo?.name === info.logo) return;
+    try { const url = await this.imageUrl(await this.image(info.logo)); this.statsLogo = { name: info.logo, url }; this.layoutKey = ''; void this.refresh(); } catch { /* logo is optional */ }
+  }
   vehicleSummary() {
     const catalog = this.frame?.catalog?.length ? this.garageCatalog() : [];
     const item = catalog.find(entry => entry.id === this.quadId), group = catalog.filter(entry => entry.group === item?.group);
@@ -291,7 +304,18 @@ export class Frontend {
       this.raceCourses=RACE_COURSES.filter(id=>files.some(f=>f.path===courseResource(id,true).archive));
       this.raceAvailable=this.raceCourses.length>0;
       if(this.raceAvailable&&!this.raceCourses.includes(this.raceSettings.course))this.raceSettings.course=this.raceCourses[0];
-      if (files.some(f => f.path === '/UI/RESOURCE/QUADINFO.RES')) { await this.archive('/UI/RESOURCE/QUADINFO.RES'); await this.image('multi_atv01'); }
+      if (files.some(f => f.path === '/UI/RESOURCE/QUADINFO.RES')) {
+        await this.archive('/UI/RESOURCE/QUADINFO.RES'); await this.image('multi_atv01');
+        // Original ATV select page stats: Engine/Traction/Suspension per IngameID.
+        try {
+          this.quadInfo = new Map();
+          for (const [name, values] of await this.document('uiQuad.txt')) {
+            const get = key => values[key] ?? values[Object.keys(values).find(k => k.toLowerCase() === key)], id = Number(get('ingameid')), number = key => Math.min(1, Math.max(0, Number(get(key))));
+            if (!/^quad\d+$/.test(name) || !Number.isInteger(id)) continue;
+            this.quadInfo.set(id, { name: (get('name') ?? '').replace(/^"|"$/g, ''), logo: (get('image') ?? '').replace(/"/g, '').trim(), engine: number('engine_range'), traction: number('traction_range'), suspension: number('suspension_range') });
+          }
+        } catch { this.quadInfo = null; }
+      }
       // Original Profile Store gear catalog; older content packages omit it.
       const gearRecord = files.find(f => f.path === '/UI/RESOURCE/RIDEINFO.RES');
       if (gearRecord) {
@@ -517,6 +541,7 @@ export class Frontend {
       else if (action === 'onehanded') this.mobileControls?.toggleOneHanded();
       else if (action === 'speed-rush') this.crashSettings?.toggleSpeed();
       else if (action === 'crash-camera') this.crashSettings?.toggleCamera();
+      else if (action === 'chase-camera') this.crashSettings?.toggleChase();
       else if (action === 'funnycrashes') this.crashSettings?.toggle();
       else if (action === 'diagnostics') this.diagnosticsOverlay?.cycle();
       else if (action === 'resume') return this.resume();
@@ -567,7 +592,7 @@ export class Frontend {
     const music = this.audio?.()?.music, musicState = music?.snapshot();
     const lobby = this.multiplayer?.state?.lobby;
     const request = {lobby_players:(lobby?.players??[]).map(p=>({id:String(p.id),label:`${p.name}${p.id===this.multiplayer.state.peer?' (You)':''}`,value:p.id===this.multiplayer.state.peer?'self':(this.multiplayer.remote.find(r=>r.peer===p.id && !r.stale)?'ready':'waiting')})),race_laps:this.raceSettings.laps,race_cpu:this.raceSettings.cpu,race_difficulty:this.raceSettings.difficulty,race_available:this.raceAvailable,race_course:this.raceSettings.course,gear_rows:this.page === 'gear' ? this.gearRows() : [],race_active:this.raceActive,quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? (this.page==='create-lobby'?this.createCode:this.roomCode),lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:track?.name ?? '',track_image:(this.page === 'lobby' && track?.id === 'training' && this.images.has(trainingPreview) ? trainingPreview : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
-      minimap_orientation:this.minimapSettings?.orientation ?? 'north-up',minimap_shape:this.minimapSettings?.shape ?? 'circle',minimap_corner:this.minimapSettings?.corner ?? 'top-right',minimap_enabled:this.minimapSettings?.enabled ?? true,minimap_size:this.minimapSettings?.size ?? 160,minimap_zoom:this.minimapSettings?.zoom ?? 50,funny_crashes:this.crashSettings?.enabled ?? true,crash_mode:this.crashSettings?.mode ?? 'crazy',original_camera:this.crashSettings?.camera === 'original',speed_rush:this.crashSettings?.speed ?? 'off',mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
+      minimap_orientation:this.minimapSettings?.orientation ?? 'north-up',minimap_shape:this.minimapSettings?.shape ?? 'circle',minimap_corner:this.minimapSettings?.corner ?? 'top-right',minimap_enabled:this.minimapSettings?.enabled ?? true,minimap_size:this.minimapSettings?.size ?? 160,minimap_zoom:this.minimapSettings?.zoom ?? 50,funny_crashes:this.crashSettings?.enabled ?? false,crash_mode:this.crashSettings?.mode ?? 'original',original_camera:this.crashSettings?.camera === 'original',chase_assist:this.crashSettings?.chase === 'assisted',speed_rush:this.crashSettings?.speed ?? 'off',mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
       music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
       music_page:this.musicPage,music_status:musicState ? `${musicState.enabled ? 'On' : 'Off'} / Volume ${Math.round(musicState.volume * 100)}% / ${musicState.title || 'Choose a song'}` : '',music_enabled:musicState?.enabled ?? true,music_volume:Math.round((musicState?.volume ?? .7)*100),menu_logo:this.images.has('brand-logo'),menu_atv:this.images.has('multi_atv01')};
@@ -681,6 +706,7 @@ export class Frontend {
       const gear = this.quadId < 27 ? await this.gearPreview?.(appearance, source.riderMesh) : null;
       if (token !== this.modelToken || !['garage','gear','main','single','create-lobby','join-lobby'].includes(this.page) || this.root.hidden) return;
       this.modelViews.get('quad')?.set(source.mesh, source.textures, undefined, { paint: this.quadId < 27 ? appearance.paint : 0 });
+      this.vehicleFigures = { quadId: this.quadId, ...source.stats }; void this.refreshStatsLogo();
       this.modelViews.get('rider')?.set(source.riderMesh, gear?.size ? new Map([...source.riderTextures, ...gear]) : source.riderTextures, source.riderPose?.world_matrices);
       if (['garage','gear'].includes(this.page)) void this.startMenuRider(token, key);
       for (const view of this.modelViews.values()) view.canvas.dataset.selection = key;

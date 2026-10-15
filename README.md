@@ -6,7 +6,7 @@ Fury Remastered is an ongoing **Rust/WebAssembly port of ATV Offroad Fury 2** fo
 
 Codex has helped with most of the implementation and reverse engineering. We work from the original PS2 disc, without the original source code, recovering the game's resources and behavior one system at a time. The original experience is the baseline; optional enhancements sit alongside the ongoing port.
 
-**The public HTTPS build now unlocks all 40 original venue families in Freestyle:** eight environments, six stunt venues, eight Nationals, sixteen Supercross stadiums, Training, and Coonce Arena. The all-venue release was verified on the public app with its separate runtime content package. The browser port also supports all 26 original in-race quads, one-handed touch controls, online Freeride with up to four players, motorcycles, and a Caribou Peak National race preview. Required resources load automatically, with no installation or disc-selection step.
+**The public HTTPS build now unlocks all 40 original venue families in Freestyle:** eight environments, six stunt venues, eight Nationals, sixteen Supercross stadiums, Training, and Coonce Arena. The all-venue release was verified on the public app with its separate runtime content package. The browser port also supports all 26 original in-race quads, one-handed touch controls, online Freeride with up to four players, motorcycles, and a race preview on all 32 original race courses. Required resources load automatically, with no installation or disc-selection step.
 
 **This is still a work in progress.** Racing, progression, saves, and parts of the original physics, animation, audio and rendering remain incomplete. It is a playable reconstruction, not a completed decompilation or a finished port.
 
@@ -22,11 +22,11 @@ Codex has helped with most of the implementation and reverse engineering. We wor
 | **Quads and riders** | All 26 original in-race quads, with their own resources, tuning and engine banks; male and female rider choices. Garage selections are available without the original unlock progression. |
 | **Mobile controls** | One-handed throttle, steering and rider lean, with an optional second touch for braking/reverse and airborne tricks. A standard two-thumb layout is also available. |
 | **Online multiplayer** | Up to four ATV riders in Freeride, drop-in style: host on any track and friends join from the invite link at any time, appearing beside you. Change ATV or track without leaving, and the ride carries on if anyone (including the host) drops or leaves. Remote riders have animated quads, spatial engine audio, overhead names and GPS markers. |
-| **Motorcycles** | Single Player includes 20 choices across 16 bike designs and 50/125/250/500 profiles, including labeled Race/Pro setups. These use a separate two-wheel Rust controller and resources recovered from **MX vs. ATV Unleashed**, not ATV2. Motorcycles are not yet available in multiplayer. |
+| **Motorcycles** | Single Player includes 20 choices across 16 bike designs and 50/125/250/500 profiles, including labeled Race/Pro setups. These use an authored two-wheel Rust controller (not recovered MX physics) with models, animation, sound and tuning values from **MX vs. ATV Unleashed**, not ATV2. Motorcycles are not yet available in multiplayer. |
 | **Race preview** | Single Player → Race offers every original race course: eight Environment Nationals, eight Nationals and sixteen Supercross tracks, decoded from their own TDF route graphs with start straights, alternate lines and original start/finish gates. Countdown, laps, timing, radar and results are included. The ATV field includes four independently simulated CPU riders with recovered driving decisions. CPU corner speed on courses without authored speed limits, full original race rules and progression remain unfinished. |
 | **GPS and speed HUD** | A configurable minimap combines terrain, heading, speed and preload feedback. Choose shape, corner, size and zoom; tap it to switch north-up/heading-up. |
 | **Sound and settings** | All 21 original songs, per-quad engine audio, selected impact and train sounds, music selection and remappable keyboard/controller bindings. Music continues through the pause menu. |
-| **Crash presentation and camera** | Settings → Extras offers Original, Crazy and opt-in Gorn crash modes, plus Tight/Original crash-camera framing. Camera shake is removed. Gorn adds severed rider parts and bounded terrain droplets only on severe impacts; recovery and original vehicle handling remain intact. Settings are saved locally. |
+| **Crash presentation and camera** | Settings → Extras offers Original (default), Crazy and Gorn crash modes, Tight/Original framing for Crazy/Gorn crashes, and an opt-in Assisted chase camera for steep climbs. Camera shake is removed. Gorn adds severed rider parts and bounded terrain droplets only on severe impacts; recovery and original vehicle handling remain intact. Settings are saved locally. |
 | **Quick return** | This browser remembers Garage selections, settings and the last successfully loaded Freestyle course. Home Screen app metadata and an install/help flow are included. |
 
 The renderer now connects recovered materials, animated UVs, fog coverage, ice-reflection overlays and near-vegetation colors, alongside water and wheel effects. These are incremental rendering improvements; original lighting, distant vegetation/LOD, shadows and full-scene fidelity still need work. See [map evidence](research/MAP_FIDELITY.md).
@@ -71,7 +71,7 @@ See the [URL parameter reference and examples](research/PLAY_LINKS.md). Multipla
 
 ## Motorcycles in Single Player
 
-The garage also includes motorcycles recovered from the separate **MX vs. ATV Unleashed** disc. Their two-wheel controller connects suspension, engine/gears, clutch, rider lean, preload, stunts, particles and wreck/recovery. Bike brands sharing a class profile do not imply separately recovered per-brand physics.
+The garage also includes motorcycles whose resources and tuning come from the separate **MX vs. ATV Unleashed** disc. Their authored two-wheel controller (not a recovered MX controller) connects suspension, engine/gears, clutch, rider lean, preload, stunts, particles and wreck/recovery. Bike brands sharing a class profile do not imply separately recovered per-brand physics.
 
 <img src="https://furyremastered.com/devlog-images/public-motorcycle-touch-steering-and-rider-contact-now-b584ab85.png" width="300" alt="Motorcycle and rider on a snowy course in the public browser build, shown in portrait with touch controls.">
 
@@ -113,7 +113,7 @@ The browser runs the authored Rust port, not a PS2 emulator or the disc executab
 
 Selected physics, camera, animation, collision and rendering routines have comparisons against original instructions. **That is component evidence, not whole-game replay equivalence or a PS2-hardware comparison.** Full racing, progression/saves, stunt fidelity, remaining collision/water behavior, original audio mixing and full rendering fidelity are still open.
 
-**Screenshot baseline — October 13, 2026:** the public app identifies [`0787b32`](https://github.com/nrgapple/atv-offroad-fury-2-web/commit/0787b32b505ce8edc5d98bbf719514fce57b4ed9), with passing [main CI and deployment](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38457121147). Earlier public gates cover nine-map driving, all ATV selections, multiplayer late join/four-client replication, motorcycle touch steering and rider contacts, fog/reflections/materials, and pause/menu behavior. The screenshots above identify their own capture context; passing CI alone does not prove every gameplay system or physical-device behavior. Detailed evidence lives in the [handoff](HANDOFF.md), [deployment record](research/DEPLOYMENT.md) and [dev log](https://furyremastered.com/devlog.html).
+**Screenshot baseline — October 13, 2026:** the public app identifies [`0787b32`](https://github.com/nrgapple/atv-offroad-fury-2-web/commit/0787b32b505ce8edc5d98bbf719514fce57b4ed9), with passing [main CI and deployment](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38457121147). Earlier public gates cover nine-map driving, all ATV selections, multiplayer late join/four-client replication, motorcycle touch steering and rider contacts, fog/reflections/materials, and pause/menu behavior. The screenshots above identify their own capture context; passing CI alone does not prove every gameplay system or physical-device behavior. Current component status is in the [handoff](HANDOFF.md); detailed evidence lives in the [deployment record](research/DEPLOYMENT.md) and [dev log](https://furyremastered.com/devlog.html).
 
 ## Follow development
 
@@ -132,20 +132,21 @@ You need Rust with the `wasm32-unknown-unknown` target, rustfmt, Clippy, Python 
 
 ```sh
 make verify  # Check source identity, reference revisions, and Git exclusions
-make check   # Rust formatting, tests, Clippy, input tests, Python syntax
+make check   # Secrets/repository hygiene, Rust formatting, tests, Clippy, JS and Python tool tests
 make web     # Build the authored browser app and development workbench
 make serve   # Run the host-only development server on port 4173
 ```
 
 `make serve` is **host-only access**, not a remote handoff. `BIND` and `PORT` can be overridden; binding to `0.0.0.0` alone doesn't make the service remotely reachable. Use the public HTTPS build for remote play.
 
-Browser checks require Playwright, Chromium, and a running server:
+Browser checks require Playwright and Chromium. Build with `make web` first; the runner starts its own host-only server on a free port:
 
 ```sh
-PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-check
+PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-smoke   # content-free; also runs in CI
+PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-tests   # adds private-content tests
 ```
 
-`ATV_TEST_URL` selects the test server. Optional `ATV_TEST_ISO` selects a private local disc for source-content checks. `make audit`, `make code-map`, and `make native-analyze` support deeper recovery work; see [HANDOFF.md](HANDOFF.md) for the local toolchain and commands.
+See [research/BROWSER_TESTS.md](research/BROWSER_TESTS.md) for the groups, native comparisons, relay tests and running one test. Optional `ATV_TEST_ISO` selects a private local disc for source-content checks. `make audit`, `make code-map`, and `make native-analyze` support deeper recovery work; see [HANDOFF.md](HANDOFF.md) for the local toolchain and commands.
 
 | Folder | What's inside |
 | --- | --- |
@@ -159,4 +160,4 @@ PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-check
 
 </details>
 
-GitHub holds authored code and shareable notes. Required recovered runtime resources and approved screenshots live separately in Cloudflare R2. The disc image, BIOS, raw executable, reverse-engineering outputs, and reference checkouts stay private and outside GitHub/CI. GitHub Actions checks the authored build and deploys it to the public Cloudflare app; content uploads follow their own validation path. The local release queue remains experimental and is not the production delivery path.
+GitHub holds authored code and shareable notes. Required recovered runtime resources and approved screenshots live separately in Cloudflare R2. The disc image, BIOS, raw executable, reverse-engineering outputs, and reference checkouts stay private and outside GitHub/CI. GitHub Actions checks the authored build and deploys it to the public Cloudflare app; content uploads follow their own validation path.

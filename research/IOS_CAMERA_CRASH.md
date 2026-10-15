@@ -18,7 +18,10 @@ ramp pitch as the vehicle leaves support. Keep the existing portrait framing.
 Tune only Funny crashes: retain more launch momentum, add coherent tumble,
 strengthen torso/limb braces and preserve terrain rebound through joint solving.
 Keep native driving, wreck classification, contacts, scoring and recovery intact.
-Verify exact paired enhanced/Off WASM results, actual GPU poses and recovery.
+Verify the enhancement-isolation check (mirrored enhanced vs Original-mode WASM
+workers, `tools/crash_isolation.mjs`), actual GPU poses and recovery. That check
+proves the optional layer leaves the port's simulation unchanged; it is not a
+comparison with the original PS2 game.
 Host WebKit with synthetic standalone/safe-area signals cannot prove physical
 Home Screen behavior; the user's device remains the final hardware check.
 
@@ -38,8 +41,8 @@ rendered pitch changed from −0.3769404 to −0.0361075 radians. Cycling Camera
 reset the lift. This is a default-chase browser adaptation and does not alter
 the recovered camera simulation or establish original uphill-camera behavior.
 
-The severe ATV Funny Crashes route completed 1,197 paired enhanced/Off WASM
-steps with zero compared gameplay/camera mismatches. Three aerial frames kept
+The severe ATV Funny Crashes route passed the enhancement-isolation check:
+1,197 steps, enhanced vs Original mode, zero gameplay/camera differences. Three aerial frames kept
 the ATV intact; two actual contact-damage transitions produced seven visible
 parts, followed by intact recovery. Host gates passed 416 Rust tests across the
 core/net/relay/web/tools/release suites, 100 JavaScript tests, eight build-cache
@@ -48,8 +51,8 @@ formatting, strict Clippy and the WASM build.
 
 The standalone install-flow checks also passed in Chromium and WebKit for the
 synthetic Home Screen title/menu, decorative fill, rotation, install prompts and
-persistence. The motorcycle touch/crash route completed 302 paired enhanced/Off
-WASM steps with zero mismatches across 251 observed frames; a mild crash recovered
+persistence. The motorcycle touch/crash route passed the enhancement-isolation
+check (302 steps, zero differences) across 251 observed frames; a mild crash recovered
 without damaging-part contacts.
 
 All results here are host-only automated checks with synthetic viewport/safe-area

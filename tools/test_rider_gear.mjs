@@ -25,7 +25,7 @@ try {
   await p.goto(base+'/play.html');await screen(p,'title');
   await button(p,'Press START').click();await screen(p,'main');
   await button(p,'Single Player').click();await screen(p,'single');
-  await button(p,'Quad and Rider').click();await screen(p,'garage');
+  await button(p,'Garage').click();await screen(p,'garage');
   await button(p,'Rider gear').click();await screen(p,'gear');
   const label=prefix=>p.locator(`#menu-buttons button[aria-label^="${prefix}:"]`).getAttribute('aria-label');
   for(const prefix of ['Helmet','Jersey','Pants','Gloves','Boots','Goggles','Quad colour']){

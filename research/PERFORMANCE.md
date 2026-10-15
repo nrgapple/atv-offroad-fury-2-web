@@ -172,8 +172,10 @@ public CI artifact has the same compiler-produced binary hash.
 The following are investigation targets, not established optimization wins.
 Line numbers can shift; use the named symbols when locating them again.
 
-- `web/game.js`: `drawEcosystem` (vegetation scan, selection/sort and instance
-  writes); `command`, `pumpSimulation` and `acceptFrame` (browser/WASM request,
+- `crates/atv-core/src/vegetation_render.rs` (`Vegetation::select`: vegetation
+  scan, selection/sort and instance writes, run in the main-thread WASM
+  instance) and `web/game.js` `drawEcosystem` (instance uploads and draws);
+  `command`, `pumpSimulation` and `acceptFrame` (browser/WASM request,
   fixed-rate simulation batching and frame/matrix conversion).
 - `web/worker.js`: Worker request handling, WASM `run`, output copying and
   transferable response.

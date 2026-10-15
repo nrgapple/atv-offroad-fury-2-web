@@ -11,9 +11,8 @@ from urllib.error import HTTPError
 
 from devlog import BASE, ENTRIES, read_devlog
 import package_release
-import release_resources
 import serve_web
-from test_release_queue import content, git
+from test_fixtures import git
 from update_devlog import main as record
 
 
@@ -115,19 +114,14 @@ class DevlogTests(unittest.TestCase):
             (root / ENTRIES / 'first.json').write_text('dirty invalid JSON')
             self.assertEqual(read_devlog(root, commit), expected)
             self.assertEqual(json.loads(git(root, 'show', f'{commit}:{BASE}')), history)
-            # Private release snapshots must discover images in committed entry files.
+            # Release packaging and R2 uploads must discover images in committed entry files.
             git(root, 'restore', '.')
             (root / ENTRIES / 'third.json').unlink()
             checkpoint(root, 'image', image='/devlog-images/image.png')
             git(root, 'add', '.'); git(root, 'commit', '-m', 'image')
-            content(root / 'queue/published/content')
-            (root / 'queue/published/images').mkdir()
-            (root / 'images').mkdir()
-            (root / 'images/image.png').write_bytes(b'\x89PNG\r\n\x1a\nfixture')
-            release_resources.snapshot(root, git(root, 'rev-parse', 'HEAD'), root / 'job', root / 'queue',
-                                       root / 'queue/published/content', root / 'images', reviewed=True)
-            release_resources.verify_snapshot(root / 'job')
-            self.assertTrue((root / 'job/resources/images/image.png').is_file())
+            committed = read_devlog(root, git(root, 'rev-parse', 'HEAD'))
+            self.assertEqual([entry.get('image') for entry in committed['entries'] if entry.get('image')],
+                             ['/devlog-images/image.png'])
 
     def test_release_packages_combined_text_and_excludes_screenshot_references(self):
         with tempfile.TemporaryDirectory() as temporary:

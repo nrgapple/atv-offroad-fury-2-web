@@ -23,9 +23,10 @@ draws total, with descending projected depth. Near meshes remain grouped.
 
 Rust decoding uses direct species-slot lookup instead of a species search for
 every placement. It builds stable 64² packed-coordinate cells with prefix offsets
-and original placement indices. The browser queries relevant cells and selects
-up to 1,500 placements with a reusable max heap; it sorts only that bounded result
-for transparency. This acceleration preserves the current browser visibility
+and original placement indices. Rust (`vegetation_render`, run synchronously in
+the page's second WASM instance) queries relevant cells and selects up to 1,500
+placements with a reusable max heap; it sorts only that bounded result for
+transparency and writes the instance floats the browser uploads. This acceleration preserves the current browser visibility
 envelope and source identities. It does not reproduce native spatial callbacks,
 whole-depth-bucket cutoff or clipping/cache order.
 

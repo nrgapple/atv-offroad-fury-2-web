@@ -1,6 +1,27 @@
-//! Playable two-wheel reconstruction using SLUS_211.04 resource identities and
-//! tuning. The integrator/controller below is authored: native whole-step parity,
-//! collision-v2 dispatch, stunt timing and tire curves are not established yet.
+//! Authored arcade two-wheel controller. It is NOT a recovered MX vs. ATV
+//! Unleashed (SLUS_211.04/GAME_REL.BIN) controller: it reads that game's bike
+//! resources and named tuning values, but the integrator, tire model, stunt
+//! timing and collision-v2 dispatch are authored. Only the ground bank angle in
+//! `motorcycle_balance.rs` (GAME_REL `004dbd10`) cites a recovered routine, and
+//! even that runs through an authored contact adapter. Native whole-step parity
+//! has not been measured.
+//!
+//! Known non-original constraints (authored stabilizers, marked
+//! `// Authored stabilizer:` at each site):
+//! - tire spring force capped at `weight * 8` per wheel, and fixed lateral-slip
+//!   (`mass * 8`) and braking (`mass * 10`) velocity-kill gains ahead of the
+//!   tuned friction clamps;
+//! - over-travel push-out of up to 0.3 ft along the contact normal, removing 70%
+//!   of the inward normal velocity;
+//! - wreck body held at terrain + 0.5 ft, keeping 12% of the impact speed as
+//!   rebound and damping other motion by 0.97 per step;
+//! - detached rider clamped to the terrain with 0.85 horizontal friction;
+//! - grounded wreck trigger when roll exceeds `max(AirborneRollWreckAngle, 1.4)`
+//!   rad or pitch exceeds a fixed 1.4 rad, and a minimum wreck time of 1.75 s.
+//!
+//! A real recovery needs the SLUS_211.04/GAME_REL.BIN bike controller routines
+//! analysed in Ghidra and an oracle comparison like the ATV work under
+//! `work/physics`; see `research/MOTORCYCLES.md`.
 use crate::{
     Result, animation, dynamics,
     mesh::{self, Mesh},
@@ -95,6 +116,18 @@ pub fn definition(id: u16) -> Result<(u16, bool, &'static str, &'static str)> {
         _ => return Err("unsupported motorcycle selection".into()),
     };
     Ok((entry.0, id <= 34 && id.is_multiple_of(2), entry.1, entry.2))
+}
+/// Authored ATV2 roster stand-in for a motorcycle player: the CPU group of a
+/// comparable stock quad per MX class (Mini, 125, 250, 500). ATV players pass
+/// through unchanged.
+pub fn roster_quad(quad: u32) -> u32 {
+    match u16::try_from(quad).ok().and_then(|id| class(id).ok()) {
+        Some((50, _)) => 14,
+        Some((125, _)) => 5,
+        Some((250, _)) => 4,
+        Some(_) => 7,
+        None => quad,
+    }
 }
 pub fn class(id: u16) -> Result<(u16, bool)> {
     definition(id).map(|(size, pro, _, _)| (size, pro))
@@ -429,17 +462,11 @@ pub struct Frame {
     pub wheelie_active: bool,
     pub stoppie_active: bool,
     pub crossup: f32,
+    pub boundary_launch: crate::boundary_launch::State,
     pub mud_amount: [f32; 2],
     pub surfaces: [usize; 2],
     pub vehicle_kind: &'static str,
     pub reconstruction: &'static str,
-}
-#[derive(Serialize)]
-pub struct Camera {
-    pub position: V,
-    pub target: V,
-    pub fov: f32,
-    pub preset: usize,
 }
 pub struct Motorcycle {
     pub model: Model,
@@ -450,12 +477,14 @@ pub struct Motorcycle {
     start_yaw: f32,
     safe_origin: V,
     safe_yaw: f32,
+    race_checkpoint: Option<(V, f32)>,
+    boundary: Option<(crate::boundary_launch::Config, bool)>,
+    boundary_launch: crate::boundary_launch::State,
+    boundary_random: crate::engine_audio::OriginalRandom,
     rider_body: Option<(M, V)>,
     pose_controls: pose::Controls,
     normal_pose: Option<animation::Pose>,
     visual_steer: f32,
-    camera_origin: V,
-    camera_yaw: f32,
     frame: Frame,
     gear: usize,
     rpm: f32,
@@ -480,7 +509,6 @@ pub struct Motorcycle {
     spin_time: f32,
     clutch_down: bool,
     boost_time: f32,
-    camera_preset: usize,
     active_stunt: Option<usize>,
     stunt_hold: bool,
 }
@@ -516,12 +544,14 @@ impl Motorcycle {
             start_yaw: yaw,
             safe_origin: origin,
             safe_yaw: yaw,
+            race_checkpoint: None,
+            boundary: None,
+            boundary_launch: crate::boundary_launch::State::default(),
+            boundary_random: crate::engine_audio::OriginalRandom::with_seed(1),
             rider_body: None,
             pose_controls: pose::Controls::default(),
             normal_pose: None,
             visual_steer: 0.,
-            camera_origin: origin,
-            camera_yaw: yaw,
             frame: Frame::default(),
             gear: 1,
             rpm,
@@ -546,7 +576,6 @@ impl Motorcycle {
             spin_time: 0.,
             clutch_down: false,
             boost_time: 0.,
-            camera_preset: 0,
             active_stunt: None,
             stunt_hold: false,
         };
@@ -567,6 +596,8 @@ impl Motorcycle {
             ],
             &self.body_config,
         )?;
+        self.body_config.max_speed_squared = crate::boundary_launch::NORMAL_MAX_SPEED_SQUARED;
+        self.boundary_launch.reset();
         self.compression = [0.; 2];
         self.angles = [0.; 2];
         self.preload = 0.;
@@ -583,8 +614,6 @@ impl Motorcycle {
         self.pose_controls = pose::Controls::default();
         self.normal_pose = None;
         self.visual_steer = 0.;
-        self.camera_origin = self.start;
-        self.camera_yaw = self.start_yaw;
         self.frame = Frame::default();
         self.last_input = VehicleInput::default();
         self.gear = 1;
@@ -595,8 +624,103 @@ impl Motorcycle {
         self.refresh();
         Ok(())
     }
+    /// The original ATV2 map-edge launch (001e5260) applies to bikes riding
+    /// ATV2 maps; CrowdPresent/Training select the extended boundary.
+    pub fn set_boundary(
+        &mut self,
+        config: crate::boundary_launch::Config,
+        extended: bool,
+    ) -> Result<()> {
+        config.outside([0.; 3], extended)?;
+        self.boundary = Some((config, extended));
+        Ok(())
+    }
+    fn boundary_step(&mut self, dt: f32) -> Result<()> {
+        self.boundary_launch.tick(dt, true)?;
+        let origin = self.body.origin(&self.body_config);
+        if !self.boundary_launch.active
+            && self.frame.wreck.phase == crate::wreck::Phase::Riding
+            && let Some((config, extended)) = self.boundary
+            && config.outside(origin, extended)?
+        {
+            let words: [u32; 4] = std::array::from_fn(|_| self.boundary_random.next_u31());
+            let launch = config.launch(origin, [words[0], words[1]])?;
+            let kind = crate::boundary_launch::random_wreck_kind([words[2], words[3]])?;
+            self.body.linear_velocity = launch.linear_velocity;
+            self.body.local_angular_velocity = launch.local_angular_velocity;
+            self.body_config.max_speed_squared = crate::boundary_launch::LAUNCH_MAX_SPEED_SQUARED;
+            self.boundary_launch.begin();
+            self.frame.wreck.begin(kind);
+            self.wreck_time = 0.;
+        }
+        self.frame.boundary_launch = self.boundary_launch;
+        Ok(())
+    }
+    /// Race recovery returns to the racing line, like the ATV checkpoint.
+    pub fn set_race_checkpoint(&mut self, checkpoint: Option<(V, f32)>) {
+        self.race_checkpoint = checkpoint
+            .filter(|(origin, yaw)| origin.iter().all(|v| v.is_finite()) && yaw.is_finite());
+    }
+    /// Manual reset: the race checkpoint when racing, otherwise the start.
+    pub fn reset_now(&mut self) -> Result<()> {
+        if self.race_checkpoint.is_some() {
+            self.recover()
+        } else {
+            self.reset()
+        }
+    }
+    /// Rider-to-rider contact through the shared equal-mass peer proxy. A
+    /// contact impulse beyond the source side/front/back wreck limits ejects.
+    pub fn peer_contact(
+        &mut self,
+        origin: V,
+        velocity: V,
+        rotation: [f32; 4],
+        dt: f32,
+        tie: f32,
+    ) -> bool {
+        let own = crate::peer_contact::Body {
+            origin: self.body.origin(&self.body_config),
+            velocity: self.body.linear_velocity,
+            rotation: self.body.orientation,
+        };
+        let other = crate::peer_contact::Body {
+            origin,
+            velocity,
+            rotation,
+        };
+        let Some(response) = crate::peer_contact::resolve(own, other, dt, tie) else {
+            return false;
+        };
+        let change = sub(response.velocity, self.body.linear_velocity);
+        self.body.center = add(self.body.center, response.displacement);
+        self.body.linear_velocity = response.velocity;
+        let spin =
+            dynamics::inverse_transform(self.body.basis(), [0., response.yaw_rate_change, 0.]);
+        self.body.local_angular_velocity = add(self.body.local_angular_velocity, spin);
+        if self.frame.wreck.phase == crate::wreck::Phase::Riding {
+            let local = dynamics::inverse_transform(self.body.basis(), change);
+            let (limit, kind) = if local[2] < 0. && local[2].abs() > local[0].abs() {
+                ("FrontWreckSpeedLimit", crate::wreck::Kind::Front)
+            } else if local[2].abs() > local[0].abs() {
+                ("BackWreckSpeedLimit", crate::wreck::Kind::Back)
+            } else if local[0] > 0. {
+                ("SideWreckSpeedLimit", crate::wreck::Kind::Left)
+            } else {
+                ("SideWreckSpeedLimit", crate::wreck::Kind::Right)
+            };
+            if dot(local, local).sqrt() > self.value("Wrecks", limit) {
+                self.frame.wreck.begin(kind);
+                self.wreck_time = 0.;
+            }
+        }
+        self.refresh();
+        true
+    }
     fn recover(&mut self) -> Result<()> {
-        let (origin, yaw) = (self.safe_origin, self.safe_yaw);
+        let (origin, yaw) = self
+            .race_checkpoint
+            .unwrap_or((self.safe_origin, self.safe_yaw));
         self.reset()?;
         self.body = dynamics::BodyState::new(
             add(origin, [0., 0.4, 0.]),
@@ -604,8 +728,6 @@ impl Motorcycle {
             &self.body_config,
         )?;
         self.refresh();
-        self.camera_origin = self.frame.origin;
-        self.camera_yaw = yaw;
         Ok(())
     }
     pub fn rider_velocity(&self) -> V {
@@ -668,6 +790,7 @@ impl Motorcycle {
         for _ in 0..n {
             self.substep(terrain, input, dt / n as f32)?;
         }
+        self.boundary_step(dt)?;
         if self.frame.wreck.phase != crate::wreck::Phase::Riding {
             if self.rider_body.is_none() {
                 let mut world = self.world();
@@ -682,6 +805,7 @@ impl Motorcycle {
                 for i in 0..3 {
                     world[12 + i] += velocity[i] * dt;
                 }
+                // Authored stabilizer: detached-rider terrain clamp, 0.85 friction.
                 if let Some(hit) = terrain.contact(world[12], world[14])?
                     && world[13] < hit.height
                 {
@@ -708,21 +832,6 @@ impl Motorcycle {
         )?;
         self.normal_pose = Some(normal);
         self.visual_steer = visual;
-        let origin = self.body.origin(&self.body_config);
-        for (i, value) in origin.iter().enumerate() {
-            self.camera_origin[i] += (value - self.camera_origin[i]) * (1. - (-10. * dt).exp());
-        }
-        let b = self.body.basis();
-        let v = self.body.linear_velocity;
-        let yaw = if !self.frame.grounded.iter().any(|v| *v) && v[0] * v[0] + v[2] * v[2] > 9. {
-            v[0].atan2(v[2])
-        } else {
-            b[2][0].atan2(b[2][2])
-        };
-        let difference = (yaw - self.camera_yaw + std::f32::consts::PI)
-            .rem_euclid(std::f32::consts::TAU)
-            - std::f32::consts::PI;
-        self.camera_yaw += difference * (1. - (-6. * dt).exp());
         self.tick += 1;
         self.time += dt;
         self.refresh();
@@ -827,10 +936,13 @@ impl Motorcycle {
                     } else {
                         tire.rebound
                     };
+                    // Authored stabilizer: per-wheel spring force cap of weight * 8.
                     let force =
                         (tire.spring * compression - damping * velocity).clamp(0., weight * 8.);
                     self.body
                         .apply_world_force(scale(hit.normal, force), center);
+                    // Authored stabilizer: over-travel push-out (max 0.3 ft) and 70%
+                    // inward normal-velocity removal.
                     if depth > tire.travel {
                         self.frame.crash_impact_speed =
                             self.frame.crash_impact_speed.max((-velocity).max(0.));
@@ -853,6 +965,7 @@ impl Motorcycle {
                     };
                     let lateral = crate::wheel::cross(hit.normal, forward);
                     let lateral_speed = dot(self.body.velocity_at(center), lateral);
+                    // Authored stabilizer: fixed lateral-slip (mass * 8) and braking (mass * 10) gains.
                     let side = (-lateral_speed * mass * 8.)
                         .clamp(-force * tire.side[surface], force * tire.side[surface]);
                     let brake = if wreck { 0.1 } else { input.brake };
@@ -1093,6 +1206,8 @@ impl Motorcycle {
                 self.frame.wheelie_active = false;
                 self.frame.stoppie_active = false;
             }
+            // Authored stabilizer: grounded wreck roll threshold floored at 1.4 rad
+            // and a fixed 1.4 rad pitch threshold.
             if grounded
                 && (self.frame.crash_impact_speed
                     > self.value("Wrecks", "FreestyleDownWreckSpeedLimit")
@@ -1110,6 +1225,8 @@ impl Motorcycle {
             self.wreck_time += dt;
             self.frame.wreck.timer = self.wreck_time;
             let p = origin;
+            // Authored stabilizer: wreck body snapped to terrain + 0.5 ft with
+            // 0.12 rebound and 0.97 damping; wreck lasts at least 1.75 s.
             if let Some(hit) = terrain.contact(p[0], p[2])?
                 && p[1] < hit.height + 0.5
             {
@@ -1352,25 +1469,6 @@ impl Motorcycle {
             b[0][0], b[0][1], b[0][2], 0., b[1][0], b[1][1], b[1][2], 0., b[2][0], b[2][1],
             b[2][2], 0., p[0], p[1], p[2], 1.,
         ]
-    }
-    pub fn cycle_camera(&mut self, cycle: bool) {
-        self.camera_preset = if cycle {
-            (self.camera_preset + 1) % 3
-        } else {
-            0
-        };
-    }
-    pub fn camera(&self, orbit: f32) -> Camera {
-        let yaw = self.camera_yaw + orbit;
-        let target = add(self.camera_origin, [0., 3., 0.]);
-        let distance = [21., 12., 32.][self.camera_preset];
-        let lift = [8., 5., 14.][self.camera_preset];
-        Camera {
-            position: add(target, [-yaw.sin() * distance, lift, -yaw.cos() * distance]),
-            target,
-            fov: 60.,
-            preset: self.camera_preset,
-        }
     }
 }
 #[cfg(test)]

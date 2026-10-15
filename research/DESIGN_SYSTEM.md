@@ -64,7 +64,7 @@ The setting is public in main commit `f5ee8cddd74bc7342cccd80b9700bbf63d9b07a9` 
 
 ## Model inspection and loading
 
-The Quad and Rider page uses Rust-owned charcoal/silver model cards and the same
+The Garage page uses Rust-owned charcoal/silver model cards and the same
 gold selection rows, with 44px physical targets across portrait and landscape.
 Original models and a Rust-sampled original rider idle occupy the cards; each
 view supports drag or focused left/right keys. Keep controls outside those views.

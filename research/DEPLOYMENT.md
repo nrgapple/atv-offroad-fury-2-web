@@ -35,8 +35,8 @@ retain full checks. PR updates cancel superseded builds, main remains serialized
 and trusted main saves Rust build/registry caches. One named owner handles each
 combined R2/gallery publication, pinned to a successful **live** release even if
 unrelated docs advance main. Milestone receipts separate implementation-ready,
-merged, live and gallery-complete; no daemon, new release queue or No Mistakes
-cutover is involved. Older release descriptions below describe historical runs.
+merged, live and gallery-complete; no daemon or No Mistakes cutover is
+involved (the experimental release queue was removed). Older release descriptions below describe historical runs.
 
 ## Authored asset release keys (2026-10-13)
 
