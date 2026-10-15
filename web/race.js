@@ -42,7 +42,9 @@ export class RaceOverlay {
     const c=this.ctx,points=this.course.points;const xs=points.map(p=>p[0]),zs=points.map(p=>p[2]);
     const minX=Math.min(...xs),maxX=Math.max(...xs),minZ=Math.min(...zs),maxZ=Math.max(...zs),scale=Math.min(120/(maxX-minX),90/(maxZ-minZ));
     const project=p=>[70+(p[0]-(minX+maxX)/2)*scale,55-(p[2]-(minZ+maxZ)/2)*scale];
-    c.clearRect(0,0,140,110);c.beginPath();points.forEach((p,i)=>{const [x,y]=project(p);i?c.lineTo(x,y):c.moveTo(x,y);});c.closePath();c.strokeStyle='#c9c9c9';c.lineWidth=3;c.stroke();
+    c.clearRect(0,0,140,110);c.beginPath();points.forEach((p,i)=>{const [x,y]=project(p);i?c.lineTo(x,y):c.moveTo(x,y);});
+    // Close onto the lap circuit; a National/Supercross start straight stays open.
+    const [lx,ly]=project(points[this.course.loop_start??0]);c.lineTo(lx,ly);c.strokeStyle='#c9c9c9';c.lineWidth=3;c.stroke();
     const dot=(p,color,r)=>{const [x,y]=project(p);c.beginPath();c.arc(x,y,r,0,Math.PI*2);c.fillStyle=color;c.fill();};
     dot(race.target,'#7dd9ff',4);for(const cpu of race.opponents)dot(cpu.origin,'#f67862',3);dot(player.origin,'#ffe375',4);
   }
