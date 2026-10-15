@@ -16,7 +16,7 @@ import { WaterRenderer } from './water.js';
 import { fogVertexShader, fogFragmentShader } from './fog.js';
 import { loadTrain, TrainRenderer } from './train.js';
 import { loadAmbientEffects, AmbientEffectsRenderer } from './ambient-effects.js';
-import { loadWheelEffects, loadMotorcycleEffects, WheelEffectsRenderer, BloodRenderer } from './wheel-effects.js';
+import { loadWheelEffects, loadMotorcycleEffects, WheelEffectsRenderer, BloodRenderer, bloodCount } from './wheel-effects.js';
 import {loadSnow,SnowRenderer} from './weather.js';
 import {materialPassSources,materialPassKey} from './scenery-materials.js';
 import { MotorcyclePresentation } from './motorcycle-presentation.js';
@@ -77,7 +77,7 @@ const diagnostics = { ready: false, frames: 0, vertices: 0, triangles: 0, chunks
 let audio = new GameAudio(codec, message => { diagnostics.audioError = message; status(`Audio: ${message}`, true); });
 const stats = new DiagnosticsOverlay({ snapshot: () => ({ ...diagnostics, minimap: minimap.snapshot(), frame: simFrame, paused: simulationPaused(), menuOpen, focused, resolution: [canvas.width, canvas.height] }) });
 // Read-only snapshot for verification; does not expose the locally opened file.
-Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, minimap: minimap.snapshot(), hud: hud?.snapshot(), funnyCrashes, crashMode: crashSettings.mode, speedRush: {...speedRush.snapshot(),setting:crashSettings.speed}, impactAudio: { impacts: impactEvents.impacts }, blood: { draws: bloodRenderer?.draws ?? 0, count: crashSettings.mode === 'gorn' ? simFrame?.funny_crash?.blood?.length ?? 0 : 0 }, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()],reconnecting:multiplayer.reconnecting,lastDisconnect:multiplayer.lastDisconnect,droppedSnapshots:multiplayer.droppedSnapshots,networkAdapterRoundTripMs:multiplayer.networkEncodeMs,networkAdapterCalls:multiplayer.networkEncodeCalls} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
+Object.defineProperty(window, 'atvTerrainStatus', { get: () => ({ ...diagnostics, minimap: minimap.snapshot(), hud: hud?.snapshot(), funnyCrashes, crashMode: crashSettings.mode, speedRush: {...speedRush.snapshot(),setting:crashSettings.speed}, impactAudio: { impacts: impactEvents.impacts }, blood: { draws: bloodRenderer?.draws ?? 0, instances: bloodRenderer?.draws ? bloodRenderer.instances : 0, count: crashSettings.mode === 'gorn' ? bloodCount(simFrame?.funny_crash?.blood) : 0, stumps: crashSettings.mode === 'gorn' ? Math.floor((simFrame?.funny_crash?.blood?.stumps?.length ?? 0) / 7) : 0 }, performance: stats.snapshot(), audio: audio.snapshot(), simulation: simReady, multiplayer: multiplayer ? {state:structuredClone(multiplayer.state),remote:structuredClone(multiplayer.remote),models:[...remoteModels.keys()],reconnecting:multiplayer.reconnecting,lastDisconnect:multiplayer.lastDisconnect,droppedSnapshots:multiplayer.droppedSnapshots,networkAdapterRoundTripMs:multiplayer.networkEncodeMs,networkAdapterCalls:multiplayer.networkEncodeCalls} : null, frame: simFrame ? structuredClone(simFrame) : null, camera: [camera.x, camera.y, camera.z, camera.yaw, camera.pitch] }) });
 worker.onmessage = ({ data }) => {
   if (data.startupError) { status(data.startupError, true); return; }
   const request = pending.get(data.id);
@@ -1666,7 +1666,7 @@ function render(time) {
   }
   if(ambientEffectsRenderer){ambientEffectsRenderer.draw({camera,viewProjection,farDistance:fog?.end??768,fogColor,fog});Object.assign(diagnostics.ambientEffects,{draws:ambientEffectsRenderer.draws,visible:ambientEffectsRenderer.visible,gpuBytes:ambientEffectsRenderer.gpuBytes,cpuMilliseconds:ambientEffectsRenderer.cpuMilliseconds,gpuSlots:ambientEffectsRenderer.streams?.state.count??0,gpuWraps:ambientEffectsRenderer.streams?.state.wraps??0,gpuUploadCalls:ambientEffectsRenderer.streams?.uploadCalls??0});}
   if(snowRenderer){snowRenderer.draw({camera,viewProjection});Object.assign(diagnostics.snow,{draws:snowRenderer.draws,uploadBytes:snowRenderer.uploadBytes});}
-  if (crashSettings.mode === 'gorn' && simFrame?.funny_crash?.blood?.length) {
+  if (crashSettings.mode === 'gorn' && (bloodCount(simFrame?.funny_crash?.blood) || simFrame?.funny_crash?.blood?.stumps?.length)) {
     bloodRenderer ??= new BloodRenderer(gl);
     bloodRenderer.draw(simFrame.funny_crash.blood, {camera,viewProjection,program});
   } else if (bloodRenderer) bloodRenderer.draws = 0;

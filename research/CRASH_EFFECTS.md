@@ -214,3 +214,81 @@ valid checkpoint for that build. `make check` passes 360 core Rust and 122 JS
 tests, formatting and strict Clippy; `make web` passes. New CI and public
 verification remain pending. Existing approved captures remain accurate; this
 follow-up adds no screenshot.
+
+## Articulated ragdoll and localized Gorn (2026-10-14)
+
+The user asked for a more realistic ragdoll (no limbs bending the wrong way,
+impact location mattering), Gorn dismemberment specific to where the body was
+hit, a blood overhaul, and phone-friendly cost. Strategies considered:
+
+- **Point-mass Verlet with distance braces** (previous layer): cheap, but has no
+  orientation, so knees/elbows can fold either way and segments twist freely.
+- **Impulse-based rigid bodies with a joint solver** (PhysX/Bullet style):
+  robust but heavy for WASM and needs many iterations for stiff chains.
+- **Extended position-based dynamics (XPBD) rigid bodies** (Müller et al. 2020):
+  unconditionally stable with small substeps, handles positional joints, hinge
+  and swing-twist limits and contacts in one pass. Chosen.
+- **Active/powered ragdoll** (balance controllers): out of scope; an ejected
+  rider is limp, so passive joints with tissue damping are appropriate.
+- **Dismemberment by solver joint stress** was prototyped but the multi-pass
+  PBD impulses are too noisy (a 19 ft/s touch read as a 92–143 ft/s load).
+  The shipped rule uses the measured contact approach speed of the part that
+  actually struck, which is reliable and directly encodes impact location.
+
+### Implementation
+
+`ragdoll.rs` builds 16 capsule rigid bodies from the decoded rider skeleton
+(pelvis, lower/upper torso with rigid clavicles, head, upper/lower arms, hands,
+thighs, shins, feet); unknown nodes (female hair chain, `Dummy_*` markers) ride
+rigidly on their nearest body. Proportions and rest directions come from each
+bind skeleton, so ATV male/female and MX riders share one anatomical table.
+Masses follow Dempster-style segment fractions. Knees and elbows are hinges
+limited to anatomical flexion (−3° to ~145°); hips, shoulders, neck, spine,
+wrists and ankles use quadrant-elliptical swing cones plus twist limits. The
+solver runs 480 Hz while the body is energetic and 240 Hz while settling, with
+two joint passes either side of terrain contacts and segment self-collision;
+contacts apply Coulomb friction and low restitution at the touching point, and
+the body sleeps once at rest. One terrain plane per capsule end is sampled per
+presentation step. Native release measures ~130 µs per 60 Hz frame during the
+energetic phase. The ragdoll starts from the animated pose with each segment's
+animated velocity, and the launch blends in 65% of the last riding velocity
+(the native wreck hand-off is only ~17 ft/s after a ~62 ft/s crash).
+
+Gorn tears the nearest tearable joint between the struck part and the torso:
+hand/forearm → elbow, foot/shin → knee, upper arm → shoulder, thigh → hip,
+head → neck (approach speed 37–46 ft/s by part). The earliest strike tears
+first, each further tear in one crash needs a 60% harder strike, at most four
+tear, and severed pieces do not dismember further. Hard contacts (≥26 ft/s)
+open wound splatter where they occur. `gore.rs` holds bounded pools (120
+droplets, 64 splats): arterial pulses from the body-side stump at an
+adrenaline heart rate, a short dribble from the torn limb, droplets landing as
+splats stretched by impact angle and merged into stains, pools that grow under
+resting stumps and smear trails from sliding ones, plus stump caps. WebGL draws
+splats, caps and velocity-streaked droplets in one instanced call.
+
+ATV breakaway now uses the recorded world point of the strongest contact
+(`crash_impact_point`, observed beside `crash_impact_speed` and never fed back):
+moderate hits shed the nearest one or two wheels, severe hits shed parts near
+the contact, ≥80 ft/s sheds all, and pieces fly away from the struck point.
+Motorcycles have no contact point yet and keep the severity-only selection.
+
+### Evidence (host only)
+
+Rust gates cover hinge direction/alignment and cone limits through violent
+tumbles on a slope, joint separation, terrain non-penetration, sleeping,
+animated hand-off, head-first slams tearing the neck, side slams tearing the
+struck forearm first, moderate tumbles tearing nothing, blood bounds/pooling/
+streaks, Crazy mode having no gore, localized breakaway and reset/mode clears.
+On the Caribou severe route (Chromium/Metal, 1280×844) the Gorn gate passed
+with 1,019 + 102 exactly paired enhanced/Off gameplay/camera steps: three ATV
+parts near the contact, rider strike 41 ft/s, one torn joint (right knee) with
+two stump caps, bounded blood in one draw, no stretched severed triangles, and
+intact recovery. Female ATV26 and MX rider crashes ran without errors.
+
+Limits: still terrain-only contacts (no trees/rocks/ATV collision for the
+body), local player only, and the native recovery ends the scene after ~2–3 s.
+The current route no longer produces an airborne bailout before the ATV impact
+or a 22 ft rider separation (also true on production `eccf8d7`), so those two
+browser assertions are reported rather than asserted. The MX rider shows a
+pre-existing black patch on the back in Crazy/Gorn on production as well.
+Physical phones and public deployment are not verified by this section.

@@ -480,13 +480,20 @@ fn simulation_frame(
             detached,
             frame.linear_velocity,
             frame.crash_impact_speed,
+            (frame.crash_impact_speed > 0.).then_some(frame.crash_impact_point),
             vehicle_world(frame),
             &matrices,
             &mesh.nodes,
             rider_world,
             &rider_pose,
             &rider_mesh.nodes,
-            |p| terrain.contact(p[0], p[2]).ok().flatten().map(|h| h.height),
+            |p| {
+                terrain
+                    .contact(p[0], p[2])
+                    .ok()
+                    .flatten()
+                    .map(|h| (h.height, h.normal))
+            },
         ))
         .map_err(|e| e.to_string())?;
     }
