@@ -56,6 +56,20 @@ try {
   assert(s.frame.race.opponents.every(o=>o.physical&&o.physical.quad_matrices.flat().every(Number.isFinite)),`${id} CPU physics`);
   assert(await page.locator('#race-overlay').isVisible());
   if(output)await page.screenshot({path:`${output}/race-course-${id}.png`});
+  if(id===courses[0]){
+   // Leave the track: progress pauses, the HUD points back to the racing line,
+   // and Reset returns to that line without restarting the race.
+   await page.keyboard.down('KeyW');await page.keyboard.down('KeyD');await page.waitForTimeout(700);await page.keyboard.up('KeyD');
+   await page.waitForFunction(()=>window.atvTerrainStatus.frame.race.off_track,null,{timeout:30000});
+   await page.keyboard.up('KeyW');
+   const off=(await state()).frame.race;
+   assert.match(await page.locator('.race-direction').textContent(),/OFF TRACK/);
+   await page.keyboard.press('Backspace');
+   await page.waitForFunction(()=>window.atvTerrainStatus.frame?.race&&!window.atvTerrainStatus.frame.race.off_track,null,{timeout:15000});
+   s=await state();
+   assert.equal(s.frame.race.phase,'racing');assert(s.frame.race.elapsed>=off.elapsed,'Reset keeps the race running');
+   assert(Math.hypot(s.frame.origin[0]-off.track_point[0],s.frame.origin[2]-off.track_point[2])<20,'Reset returns to the racing line');
+  }
   results.push({id,checkpoints:race.checkpoints,gap:Number(gap.toFixed(1)),player_checkpoint:s.frame.race.checkpoint,cpu:s.frame.race.opponents.map(o=>Math.round(o.distance))});
  }
  assert.deepEqual(errors,[]);

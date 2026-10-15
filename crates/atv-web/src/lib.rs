@@ -1422,6 +1422,10 @@ struct SimulationBatchFrame {
     snow: Option<atv_core::weather::SnowFrame>,
 }
 
+/// Seconds a CPU may stay outside the track polygon before recovering.
+const CPU_OFF_TRACK_RESET: f32 = 5.;
+/// Seconds a riding CPU may stay below 3 ft/s before recovering.
+const CPU_STUCK_RESET: f32 = 4.;
 fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
     let value: serde_json::Value = serde_json::from_slice(input).map_err(|e| e.to_string())?;
     let count = value
@@ -1513,10 +1517,23 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
                         water: sim.water.as_ref(),
                         dynamic: &dynamic,
                     };
+                    // Race checkpoints stay on the racing line at each rider's
+                    // last on-track station, facing the race direction.
+                    let on_line = |(point, heading): ([f32; 3], f32)| -> Result<([f32; 3], f32)> {
+                        let height = terrain
+                            .contact(point[0], point[2])?
+                            .map_or(point[1], |c| c.height);
+                        Ok(([point[0], height + 2.5, point[2]], heading))
+                    };
+                    if let Some(vehicle) = sim.vehicle.as_mut() {
+                        vehicle.set_race_checkpoint(Some(on_line(race.checkpoint(None))?));
+                    }
                     for (index, cpu) in sim.cpu_racers.iter_mut().enumerate() {
                         if race.opponents()[index].finished {
                             continue;
                         }
+                        cpu.vehicle
+                            .set_race_checkpoint(Some(on_line(race.checkpoint(Some(index)))?));
                         let peers: Vec<_> = std::iter::once(atv_core::cpu_avoidance::Peer {
                             origin: player.origin,
                             velocity: player.linear_velocity,
@@ -1534,6 +1551,7 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
                             &player,
                             &peers,
                             race.progress_difference(index),
+                            race.station(Some(index)),
                             &world,
                         )?;
                         let [w, x, y, z] = frame.orientation;
@@ -1541,7 +1559,59 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
                         if repositioned {
                             race.reposition_cpu(index, frame.origin, cpu_yaw, Some(physical));
                         } else {
-                            race.observe_cpu(index, frame.origin, cpu_yaw, Some(physical));
+                            race.observe_cpu(index, frame.origin, cpu_yaw, Some(physical.clone()));
+                            // Authored recovery: native RaceStatus times each racer
+                            // off the track polygon (+0xf0), but its CPU consumer is
+                            // unrecovered. Return a CPU that stays off the course or
+                            // pinned in place to its on-line checkpoint.
+                            if frame.wreck.phase == atv_core::wreck::Phase::Riding
+                                && (race.off_track_time(Some(index)) > CPU_OFF_TRACK_RESET
+                                    || cpu.stuck_time() > CPU_STUCK_RESET)
+                            {
+                                cpu.respawn(nodes)?;
+                                let reset = cpu.vehicle.frame();
+                                let [w, x, y, z] = reset.orientation;
+                                let reset_yaw =
+                                    (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
+                                race.reposition_cpu(index, reset.origin, reset_yaw, Some(physical));
+                            }
+                        }
+                    }
+                    // Rider-to-rider contact with the authored equal-mass
+                    // multiplayer proxy: every pair resolves from pre-contact
+                    // poses and each racer applies its own half.
+                    let mut bodies: Vec<(Option<usize>, atv_core::vehicle::VehicleFrame)> = sim
+                        .vehicle
+                        .as_ref()
+                        .map(|v| (None, v.frame()))
+                        .into_iter()
+                        .collect();
+                    for (index, cpu) in sim.cpu_racers.iter().enumerate() {
+                        if !race.opponents()[index].finished {
+                            bodies.push((Some(index), cpu.vehicle.frame()));
+                        }
+                    }
+                    for a in 0..bodies.len() {
+                        for b in a + 1..bodies.len() {
+                            for (own, other, tie) in [(a, b, 1.), (b, a, -1.)] {
+                                let o = &bodies[other].1;
+                                let vehicle = match bodies[own].0 {
+                                    None => sim.vehicle.as_mut(),
+                                    Some(i) => sim.cpu_racers.get_mut(i).map(|c| &mut c.vehicle),
+                                };
+                                if let Some(vehicle) = vehicle
+                                    && vehicle.peer_contact(
+                                        o.origin,
+                                        o.linear_velocity,
+                                        o.orientation,
+                                        1. / 60.,
+                                        tie,
+                                    )
+                                    && tie > 0.
+                                {
+                                    race.contacts += 1;
+                                }
+                            }
                         }
                     }
                 }

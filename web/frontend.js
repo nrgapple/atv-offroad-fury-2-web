@@ -498,7 +498,7 @@ export class Frontend {
       else if (action === 'funnycrashes') this.crashSettings?.toggle();
       else if (action === 'diagnostics') this.diagnosticsOverlay?.cycle();
       else if (action === 'resume') return this.resume();
-      else if (action === 'reset') { await document.getElementById('reset').onclick(); return this.resume(); }
+      else if (action === 'reset') { await document.getElementById('reset').onclick({restart:true}); return this.resume(); }
       else if (action === 'fullscreen') {
         if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen();
       } else if (action === 'devlog') location.href = 'devlog.html';

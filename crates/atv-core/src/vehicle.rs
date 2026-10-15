@@ -223,6 +223,10 @@ pub struct Vehicle {
     applied_drive_controls: (f32, f32, bool),
     reset_origin: Vec3,
     reset_yaw: f32,
+    /// Race reset pose on the racing line. Native RaceStatus passes each
+    /// racer's track position and direction to its vehicle interface every
+    /// update (00248b20 callback +0x20); races recover there, facing forward.
+    race_checkpoint: Option<(Vec3, f32)>,
     reset_count: u32,
 }
 impl Vehicle {
@@ -420,6 +424,7 @@ impl Vehicle {
             applied_drive_controls: (0., 0., false),
             reset_origin: origin,
             reset_yaw: yaw,
+            race_checkpoint: None,
             reset_count: 0,
         })
     }
@@ -528,19 +533,25 @@ impl Vehicle {
         Ok(true)
     }
     ///001e35d0 is shared by wreck recovery and the expired deep-water clock.
+    pub fn set_race_checkpoint(&mut self, checkpoint: Option<(Vec3, f32)>) {
+        self.race_checkpoint = checkpoint
+            .filter(|(origin, yaw)| origin.iter().all(|v| v.is_finite()) && yaw.is_finite());
+    }
+    /// Immediate recovery at the current (race) checkpoint.
+    pub fn reset_now(&mut self) -> Result<()> {
+        self.reset_to_checkpoint()
+    }
     fn reset_to_checkpoint(&mut self) -> Result<()> {
+        let (reset_origin, reset_yaw) = self
+            .race_checkpoint
+            .unwrap_or((self.reset_origin, self.reset_yaw));
         self.body_config.center_of_mass = self.base_center;
         self.body_config.max_speed_squared = crate::boundary_launch::NORMAL_MAX_SPEED_SQUARED;
         self.boundary_launch.reset();
         self.skip_vegetation_query = false;
         self.body = BodyState::new(
-            self.reset_origin,
-            [
-                (self.reset_yaw * 0.5).cos(),
-                0.,
-                (self.reset_yaw * 0.5).sin(),
-                0.,
-            ],
+            reset_origin,
+            [(reset_yaw * 0.5).cos(), 0., (reset_yaw * 0.5).sin(), 0.],
             &self.body_config,
         )?;
         self.pending_contact_corrections = ContactCorrections::default();

@@ -277,3 +277,64 @@ and use the existing wreck/recovery path. Supercross firework streams beyond the
 ambient GPU packet budget are reported as unsupported instead of failing the
 load; firework triggers, championship points and original finish-line box tests
 remain unconnected. Race resources need the updated R2 content package.
+
+## Track progress, off-track, recovery and rider contact — 2026-10-15
+
+Exact-build RaceStatus (`RaceStatus.cpp`; per-frame update `00248b20`, reset
+`00247900`) runs in track mode against the TDF graph:
+
+- `0017be80` keeps each racer on a track node. It accepts only segments whose
+  authored edge polygon (tag 10/11 points of consecutive nodes, tested by
+  `0017bb50`) contains the rider, within a forward/backward route window
+  (Track +0x34/+0x38). Fork links admit alternate (`0x100`) sections.
+- When no segment qualifies, the racer is off track: progress stays on the last
+  node and RaceStatus accumulates off-track time (+0xf0). It also computes a
+  vector from the rider back to the track (+0x1a0).
+- A lap counts on a forward crossing of the tag 16 finish box (`001a95b0`)
+  only when the rider's tracked distance is near the finish.
+- Every update passes the racer's track position and direction to its vehicle
+  interface (callback +0x20).
+- Race creation `001f9690` sets the CPU AI flags and constants already used by
+  the port. `0x800` (direct velocity) depends on a game option.
+
+The port now follows this model. It replaces the radius checkpoints, which
+riders could miss and which stalled their progress:
+
+- `Course` keeps the authored edge pairs and every alternate polyline.
+- `Course::locate` accepts a rider only inside an edge polygon within 150ft
+  ahead or 60ft behind its station. These window values are authored; the
+  original Track +0x34/+0x38 values are unrecovered.
+- Progress is the race distance along the racing line, so laps count when the
+  furthest distance passes the finish gate. Cutting across the infield,
+  teleporting or reversing cannot skip or re-count the course. Alternate lines
+  map onto the main line between their fork and rejoin.
+- The HUD shows OFF TRACK, with an arrow and distance back to the racing line.
+- During a race, Reset returns the player to that point facing the race
+  direction; Pause → Restart Race still restarts the event.
+- Each racer's vehicle reset checkpoint is its on-track station, facing the
+  racing line. Wreck recovery and deep-water resets in races therefore return
+  to the course instead of the crash site.
+- CPU steering projects only within the route window around its own race
+  station. Global nearest-segment projection let nat01's lap, which runs beside
+  its start straight, capture CPUs at the first corner and send them away from
+  the course. This was the cause of the earlier nat01/env02 overshoots.
+- Authored recovery: a riding CPU that stays off the track polygon for 5s, or
+  below 3ft/s for 4s, returns to its race checkpoint. The original consumer of
+  the off-track timer is unrecovered.
+- Rider-to-rider contact reuses the authored equal-mass multiplayer proxy
+  (`peer_contact`), including the recovered impact wreck classifier. Every pair
+  of player and active CPUs resolves from pre-contact poses, and each racer
+  applies its own half.
+
+Checks: unit tests cover the polygon window, alternate lines, finish grace and
+distance ranking. The private all-courses test drives a two-lap race on all 32
+TDFs, plus each of the 60 alternate lines from fork to rejoin, without leaving
+the track. In host Chromium, nat01 CPUs now take the first corner (route error
+stays at 0–20ft for the leading CPU). Twenty-second races on env01, nat01, env02
+and sx03 resolve 82–132 rider contacts, with CPU route error ≤24ft.
+`tools/test_race_courses.mjs` also drives off track and checks the OFF TRACK
+HUD, then checks that Reset returns to the racing line with the race running.
+
+Limitations: the original window values and finish-box test are not yet ported
+exactly. The CPU off-track and stuck recovery policy is authored, and rider
+contact is the authored multiplayer proxy, not a recovered PS2 collision model.

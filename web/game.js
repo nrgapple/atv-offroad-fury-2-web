@@ -52,7 +52,7 @@ crashSettings.onChange = () => {
 
 let raceSettings = null, raceCourse = null, cpuQuadMatrices, cpuRiderMatrices;
 const keyboardHelp = new KeyboardHelp();
-const raceOverlay = new RaceOverlay({restart: async () => { await $('reset').onclick(); canvas.focus({preventScroll:true}); }, quit: () => frontend?.show('single')});
+const raceOverlay = new RaceOverlay({restart: async () => { await $('reset').onclick({restart:true}); canvas.focus({preventScroll:true}); }, quit: () => frontend?.show('single')});
 let simReady = false, simBusy = false, simAccumulator = 0, simFrame, simStart, simGeneration = 0, orbit = 0, cameraFrame, cameraCycle = false;
 const motorcyclePresentation = new MotorcyclePresentation();
 const uphillSightline = new UphillSightline();
@@ -1740,12 +1740,20 @@ async function loadGame(file = null, environment = "env01", racing = null) {
   finally { if (token === generation) $('disc').disabled = false; }
 }
 $('disc').addEventListener('change', event => { const file = event.target.files[0]; if (file) void loadGame(file).catch(error => status(error.message, true)); });
-$('reset').onclick = async () => {
+$('reset').onclick = async (options) => {
   if (!simStart || !vehicle) { resetCamera(); return; }
-  if (raceSettings) { await loadGame(null, raceSettings.course ?? 'env01', raceSettings); return; }
+  // During a race, Reset returns to the last on-track point facing the race
+  // direction; Restart Race / Race Again reload the whole event.
+  const race = simFrame?.race;
+  let start = simStart;
+  if (raceSettings) {
+    if (options?.restart === true || race?.phase !== 'racing' || !race.track_point) { await loadGame(null, raceSettings.course ?? 'env01', raceSettings); return; }
+    const [x,,z] = race.track_point;
+    start = { origin: [x, terrainHeight(x, z) + 2.5, z], yaw: race.track_heading };
+  }
   impactEvents.reset();
   simGeneration++; simReady = false; simAccumulator = 0; clearInput();
-  try { await audio.reset(); acceptFrame(await command(23, simStart)); await command(47, {}); orbit = 0; acceptCameraFrame(await command(46, { dt: 1 / 60, orbit })); simReady = true; buildMesh(); resetCamera(); }
+  try { await audio.reset(); acceptFrame(await command(23, start)); await command(47, {}); orbit = 0; acceptCameraFrame(await command(46, { dt: 1 / 60, orbit })); simReady = true; buildMesh(); resetCamera(); }
   catch (error) { status(error.message, true); }
 };
 $('menu').onclick = () => { void frontend?.show('pause'); };
