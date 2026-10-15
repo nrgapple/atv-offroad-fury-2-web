@@ -43,7 +43,10 @@ try {
       window.menuPad.buttons[button] = { pressed: true, value: 1 };
     }, button);
     if (navigation) {
-      await page.waitForURL(url => ['/play', '/play.html'].includes(url.pathname));
+      // A navigating press destroys the page context; wait for the new URL only.
+      await page.waitForURL(
+        typeof navigation === 'string' ? navigation : url => ['/play', '/play.html'].includes(url.pathname)
+      );
       return;
     }
     await nextFrames(page, 3);
@@ -64,8 +67,7 @@ try {
   assert.equal((await gameState(page)).simulation, false);
   await pad(13);
   await page.waitForFunction(() => document.querySelector('#frontend').dataset.selection === '1');
-  await pad(0);
-  await page.waitForURL('**/devlog.html');
+  await pad(0, '**/devlog.html');
   await page.getByRole('heading', { name: 'Development log', exact: true }).waitFor();
   await page.getByRole('link', { name: 'Play current build' }).click();
   await screen('title');

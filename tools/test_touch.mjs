@@ -138,7 +138,8 @@ try {
   assert.equal((await read()).input.throttle, 0);
   assert.equal((await read()).input.brake, 0);
   assert.equal((await read()).input.lean, 1);
-  assert.equal((await read()).input.steer, -0.5);
+  // Source +X is screen-right: the steering sign is no longer negated (3574454).
+  assert.equal((await read()).input.steer, 0.5);
   await touch('touchMove', [left]);
   await touch('touchStart', [left, right]);
   await touch('touchMove', [left, drive]);

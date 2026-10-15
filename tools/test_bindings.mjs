@@ -164,7 +164,8 @@ try {
   await pad([], [0, 0, 0, 0.575]);
   await input({ throttle: 0 });
   await pad([1, 3, 4], [0.575, -0.575, 0, 0]);
-  await input({ stunt_modifiers: 7, stunt_x: 0.5, stunt_y: -0.5, steer: -0.5, lean: -0.5 });
+  // Source +X is screen-right: the steering sign is no longer negated (3574454).
+  await input({ stunt_modifiers: 7, stunt_x: 0.5, stunt_y: -0.5, steer: 0.5, lean: -0.5 });
   await pad();
   // Camera, reset and pause actions must be rising edges, not per-frame work.
   const beforeCamera = await page.evaluate(() => window.bindingBatches.filter(b => b.cycle).length);
