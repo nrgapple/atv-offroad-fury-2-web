@@ -201,6 +201,9 @@
   .ms-tabs::-webkit-scrollbar { display: none; }
   .ms-tab { flex: none; }
   .ms-garage { --ms-stage: 40%; }
+  /* Seven gear rows: a shorter preview stage, and the rows scroll above Back if needed. */
+  .ms-gear { --ms-stage: 26%; }
+  .ms-gear .ms-left { overflow-y: auto; overscroll-behavior: contain; }
   .ms-garage .ms-plate { grid-template-columns: 1fr; }
   .ms-done { align-self: stretch; margin-right: 0; }
 }
@@ -209,7 +212,10 @@
   .ms-screen { --ms-row: 46px; }
   .ms-main, .ms-single { --ms-stage: 40%; }
   .ms-garage { --ms-stage: 30%; }
+  .ms-gear { --ms-stage: 20%; }
   .ms-garage .ms-hints { display: none; }
+  /* The models need the room; stats return on taller screens. */
+  .ms-garage .ms-stats { display: none; }
   .ms-tracks .ms-photo, .ms-race .ms-photo, .ms-lobby .ms-photo { aspect-ratio: 2.4 / 1; }
   .ms-tracks .ms-panel, .ms-race .ms-panel, .ms-lobby .ms-panel { padding-bottom: 16px; }
   .ms-garage .ms-left { gap: 6px; padding-bottom: 8px; }

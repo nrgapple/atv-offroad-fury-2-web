@@ -118,7 +118,7 @@ for (let index = 0; index < pages.length; index++) {
   });
 }
 async function garage(page, { quad, rider }) {
-  await button(page, 'Quad and Rider').click();
+  await button(page, 'Garage').click();
   const next = quad - 1,
     previous = 27 - quad;
   for (let n = 0; n < Math.min(next, previous); n++)

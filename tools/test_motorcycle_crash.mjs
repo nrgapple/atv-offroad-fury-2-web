@@ -44,10 +44,10 @@ try {
   const button = name => roleButton(page, name);
   await button('Press START').click({ timeout: 120000 });
   await button('Single Player').click();
-  await button('Quad and Rider').click();
+  await button('Garage').click();
   for (let i = 0; i < 20; i++) await button('Previous quad').click(); // 27: MX 50 Race
   await page.waitForFunction(() =>
-    [...document.querySelectorAll('.model-view canvas')].every(c => c.dataset.selection === '27:0')
+    [...document.querySelectorAll('.model-view canvas')].every(c => c.dataset.selection?.split(':').slice(0, 2).join(':') === '27:0')
   );
   await button('Done').click();
   await button('Freestyle').click();

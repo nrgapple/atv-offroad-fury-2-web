@@ -38,7 +38,7 @@ try {
     await page.goto(new URL('/play.html', url).href);
     await button(page, 'Press START').click({ timeout: 120000 });
     await button(page, 'Single Player').click();
-    await button(page, 'Quad and Rider').click();
+    await button(page, 'Garage').click();
     for (let i = 1; i < Number(process.env.ATV_WRECK_QUAD || 1); i++) await button(page, 'Next quad').click();
     if (process.env.ATV_WRECK_RIDER === '1') await button(page, 'Change rider').click();
     await button(page, 'Done').click();

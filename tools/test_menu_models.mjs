@@ -16,7 +16,7 @@ const ready = key =>
     key =>
       [...document.querySelectorAll('.model-view canvas')].length === 2 &&
       [...document.querySelectorAll('.model-view canvas')].every(
-        c => c.dataset.ready === 'true' && c.dataset.selection === key
+        c => c.dataset.ready === 'true' && c.dataset.selection?.split(':').slice(0, 2).join(':') === key
       ),
     key,
     { timeout: 90000 }
@@ -39,7 +39,7 @@ try {
   assert.equal(music.menuMusic.track, 'UI/uitune1');
   report.menuMusic = music.menuMusic;
   await button('Single Player').click();
-  await button('Quad and Rider').click();
+  await button('Garage').click();
   await ready('1:0');
   await page.waitForFunction(() =>
     document.querySelectorAll('.model-view canvas')[1]?.dataset.clip?.startsWith('mrider')
@@ -93,7 +93,7 @@ try {
         );
     }
     for (const v of bounds.views) {
-      assert.ok(v.width > 70 && v.height > 90);
+      assert.ok(v.width > 70 && v.height > 90, `${viewport.width}x${viewport.height}: ${JSON.stringify(v)}`);
       assert.ok(v.triangles > 1000);
       assert.equal(v.gl, '0');
     }

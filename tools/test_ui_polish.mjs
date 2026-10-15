@@ -138,7 +138,7 @@ try {
   await screen('main');
   await button(page, 'Single Player').tap();
   await screen('single');
-  await button(page, 'Quad and Rider').tap();
+  await button(page, 'Garage').tap();
   await screen('garage');
   await page.waitForFunction(
     () => document.querySelectorAll('.model-view canvas[data-ready=true]').length === 2,

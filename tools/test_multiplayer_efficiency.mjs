@@ -95,7 +95,7 @@ try {
   const b = await page();
   await b.goto(base + `/play.html?room=${code}&play=0`);
   await b.getByRole('textbox', { name: 'Rider name', exact: true }).fill('CompactGuest', { timeout: 120000 });
-  await button(b, 'Quad and Rider').click();
+  await button(b, 'Garage').click();
   await button(b, 'Change rider').click();
   await button(b, 'Done').click();
   await button(b, 'Join Game').click();

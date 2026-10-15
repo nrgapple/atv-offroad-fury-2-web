@@ -169,6 +169,7 @@ export const TESTS = {
     env: { ATV_TEST_BUNDLED: '1' },
     note: 'Hosted content; set ATV_TEST_ISO instead for the private disc path'
   },
+  'test_rider_gear.mjs': { group: 'content' },
   'test_scenery_materials.mjs': { group: 'content' },
   'test_settings.mjs': { group: 'content' },
   'test_simulation_transport.mjs': { group: 'content' },

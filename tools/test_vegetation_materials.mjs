@@ -16,7 +16,8 @@ try {
           response,
           body:
             (await response.text()) +
-            `\nwindow.inspectNearVegetation=()=>{const slot=terrain.ecosystem.species[0].slot,p=renderCore.call(143,new Uint8Array()).placements.filter(p=>p.slot===slot).reduce((best,p)=>Math.hypot(p.position[0]-camera.x,p.position[2]-camera.z)<Math.hypot(best.position[0]-camera.x,best.position[2]-camera.z)?p:best);menuOpen=false;focused=false;cameraFrame=null;$('frontend').hidden=true;camera.x=p.position[0]+10;camera.z=p.position[2]+10;camera.y=p.position[1]+p.radius*1.5;camera.yaw=Math.atan2(-10,-10);camera.pitch=Math.atan2(-p.radius,Math.sqrt(200));};`
+            `\nwindow.inspectNearVegetation=()=>{const slot=terrain.ecosystem.species[0].slot,p=renderCore.call(143,new Uint8Array()).placements.filter(p=>p.slot===slot)` +
+            `.reduce((best,p)=>Math.hypot(p.position[0]-camera.x,p.position[2]-camera.z)<Math.hypot(best.position[0]-camera.x,best.position[2]-camera.z)?p:best);menuOpen=false;focused=false;cameraFrame=null;$('frontend').hidden=true;camera.x=p.position[0]+10;camera.z=p.position[2]+10;camera.y=p.position[1]+p.radius*1.5;camera.yaw=Math.atan2(-10,-10);camera.pitch=Math.atan2(-p.radius,Math.sqrt(200));};`
         });
       });
     await page.addInitScript(() => {

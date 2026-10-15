@@ -20,14 +20,14 @@ try {
   for (const id of ids) {
     console.log(`Motorcycle ${id}: selection and riding`);
     await button('Single Player').click();
-    await button('Quad and Rider').click();
+    await button('Garage').click();
     const next = (id - selected + 46) % 46,
       previous = (selected - id + 46) % 46;
     for (let i = 0; i < Math.min(next, previous); i++)
       await button(next <= previous ? 'Next quad' : 'Previous quad').click();
     selected = id;
     await page.waitForFunction(
-      id => [...document.querySelectorAll('.model-view canvas')].every(c => c.dataset.selection === `${id}:0`),
+      id => [...document.querySelectorAll('.model-view canvas')].every(c => c.dataset.selection?.split(':').slice(0, 2).join(':') === `${id}:0`),
       id
     );
     assert.equal(await page.locator('#menu-notice').textContent(), '');

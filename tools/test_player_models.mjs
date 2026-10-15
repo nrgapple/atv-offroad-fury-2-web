@@ -147,7 +147,7 @@ try {
   await page.goto(base + '/play.html');
   await button('Press START').click({ timeout: 120000 });
   await button('Single Player').click();
-  await button('Quad and Rider').click();
+  await button('Garage').click();
   // Initial selection is ID1/male. Use real garage actions to reach requested range.
   for (let id = 1; id < from; id++) {
     await button('Next quad').click();
@@ -158,7 +158,7 @@ try {
       rider = (id - 1) % 2;
     if (id > from) {
       await button('Single Player').click();
-      await button('Quad and Rider').click();
+      await button('Garage').click();
       await button('Next quad').click();
       await button('Change rider').click();
     }

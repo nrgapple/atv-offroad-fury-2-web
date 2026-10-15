@@ -101,11 +101,11 @@ try {
   await button('Press START').click({ timeout: 120000 });
   const id = Number(process.env.ATV_CONTROL_MODEL || 29);
   await button('Single Player').click();
-  await button('Quad and Rider').click();
+  await button('Garage').click();
   for (let i = 0; i < Math.min(id - 1, 47 - id); i++)
     await button(id - 1 <= 47 - id ? 'Next quad' : 'Previous quad').click();
   await page.waitForFunction(
-    id => [...document.querySelectorAll('.model-view canvas')].every(c => c.dataset.selection === `${id}:0`),
+    id => [...document.querySelectorAll('.model-view canvas')].every(c => c.dataset.selection?.split(':').slice(0, 2).join(':') === `${id}:0`),
     id
   );
   await button('Done').click();

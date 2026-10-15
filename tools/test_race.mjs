@@ -30,13 +30,13 @@ try {
   if (process.env.ATV_RACE_MODEL) {
     const id = Number(process.env.ATV_RACE_MODEL);
     assert(id >= 1 && id <= 46);
-    await button(page, 'Quad and Rider').click();
+    await button(page, 'Garage').click();
     const next = id - 1,
       previous = 47 - id;
     for (let i = 0; i < Math.min(next, previous); i++)
       await button(page, next <= previous ? 'Next quad' : 'Previous quad').click();
     await page.waitForFunction(
-      id => [...document.querySelectorAll('.model-view canvas')].every(c => c.dataset.selection === `${id}:0`),
+      id => [...document.querySelectorAll('.model-view canvas')].every(c => c.dataset.selection?.split(':').slice(0, 2).join(':') === `${id}:0`),
       id
     );
     await button(page, 'Done').click();

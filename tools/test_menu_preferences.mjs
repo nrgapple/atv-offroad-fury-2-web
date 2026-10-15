@@ -30,9 +30,9 @@ try {
     await screen('single');
   };
   const garage = async key => {
-    await button(page, 'Quad and Rider').tap();
+    await button(page, 'Garage').tap();
     await screen('garage');
-    await page.waitForFunction(key => document.querySelector('.model-view canvas')?.dataset.selection === key, key, {
+    await page.waitForFunction(key => document.querySelector('.model-view canvas')?.dataset.selection?.split(':').slice(0, 2).join(':') === key, key, {
       timeout: 90000
     });
   };

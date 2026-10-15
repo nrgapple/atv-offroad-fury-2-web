@@ -42,7 +42,7 @@ try {
     page.waitForFunction(
       id =>
         [...document.querySelectorAll('.model-view canvas')].every(
-          c => c.dataset.ready === 'true' && c.dataset.selection === `${id}:0`
+          c => c.dataset.ready === 'true' && c.dataset.selection?.split(':').slice(0, 2).join(':') === `${id}:0`
         ) && document.querySelectorAll('.model-view canvas')[1]?.dataset.clip?.startsWith('ui_rider_select_'),
       id,
       { timeout: 90000 }
@@ -50,7 +50,7 @@ try {
   await page.goto(`${base}/play.html`);
   await button('Press START').click({ timeout: 120000 });
   await button('Single Player').click();
-  await button('Quad and Rider').click();
+  await button('Garage').click();
   await page.waitForFunction(() =>
     document.querySelectorAll('.model-view canvas')[1]?.dataset.clip?.startsWith('mrider_body_')
   );
@@ -101,7 +101,7 @@ try {
   await button('Next quad').click();
   await page.waitForFunction(
     () =>
-      document.querySelectorAll('.model-view canvas')[1]?.dataset.selection === '1:0' &&
+      document.querySelectorAll('.model-view canvas')[1]?.dataset.selection?.split(':').slice(0, 2).join(':') === '1:0' &&
       document.querySelectorAll('.model-view canvas')[1]?.dataset.clip?.startsWith('mrider_body_')
   );
   assert.equal(await page.locator('#menu-notice').textContent(), '');

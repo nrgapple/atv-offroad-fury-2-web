@@ -421,7 +421,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         "create-lobby" => "Host Game",
         "join-lobby" => "Join Game",
         "lobby" => "Free Ride Lobby",
-        "garage" => "Quad and Rider",
+        "garage" => "Garage",
         "gear" => "Rider Gear",
         "loading" => "Loading",
         "tracks" => "Freestyle",
@@ -535,7 +535,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                     ("Dev log", "devlog"),
                 ]
             } else {
-                &[("Quad and Rider", "garage")]
+                &[("Garage", "garage")]
             };
             for (i, (label, action)) in items.iter().enumerate() {
                 f.choices.push((*action).into());
@@ -859,7 +859,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                 } else {
                     ("Join Game", "join")
                 },
-                ("Quad and Rider", "garage"),
+                ("Garage", "garage"),
             ];
             for (i, (label, action)) in rows.iter().enumerate() {
                 f.choices.push((*action).into());
