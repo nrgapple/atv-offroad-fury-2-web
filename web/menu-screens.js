@@ -2,7 +2,8 @@
 // labels, values and keyboard choice order; this module owns the responsive HD
 // layout. The composition follows the original ATV2 pages: a red-tinted scenic
 // backdrop, a curved silver stage panel on the right, gold bullet rows with a
-// glossy gold selection pill, a dark help box and a Back control where the hint pill sat.
+// glossy gold selection bar, and a Back control where the hint pill sat. Text is
+// limited to the original-style labels; no invented descriptions or subheadings.
 export const screenPages = new Set(['title','main','single','multiplayer','create-lobby','join-lobby','lobby','garage','tracks','race','loading']);
 
 // Original event families from tracks.dat ids; labels follow the manual's event types.
@@ -14,28 +15,6 @@ export function courseGroup(id) {
 export const groupLabel = id => COURSE_GROUPS.find(([key]) => key === courseGroup(id))?.[1] ?? '';
 
 const titles = {main:'Main Menu',single:'Single Player',multiplayer:'Multiplayer','create-lobby':'Create Lobby','join-lobby':'Join Lobby',lobby:'Free Ride Lobby',garage:'Select ATV & Rider',tracks:'Select Track',race:'Single Race',loading:'Loading'};
-const details = {
-  single:'Free ride every original venue, race CPU riders on Caribou Peak, or pick your ride.',
-  multiplayer:'Up to four riders can free ride together online. Share an invite link or lobby code.',
-  settings:'Controls, display, audio and extras. Changes are saved in this browser.',
-  devlog:'Progress, screenshots and what is coming next for Fury Remastered.',
-  tracks:'Free ride any original Enduro, Stunt, Nationals, Supercross or arena venue.',
-  garage:'Choose your ATV or motorcycle and your rider.',
-  race:'Race CPU riders around Caribou Peak. Set laps and the size of the field.',
-  'create-lobby':'Host a Freeride room. Leave the code blank for a random one.',
-  'join-lobby':'Enter a lobby code from a friend to ride together.',
-  host:'Open the room. You choose the course and start the ride.',
-  join:'Join the lobby with this code.',
-  racelaps:'Use left and right to change the number of laps.',
-  racecpu:'Use left and right to change how many CPU riders start.',
-  racestart:'Head to the starting line.',
-  copyride:'Copy a link that opens this exact setup.',
-  share:'Copy an invite link friends can open to join.',
-  lobbymap:'Cycle the course for everyone in the lobby.',
-  lobbystart:'Start the ride for everyone in the lobby.',
-  resume:'Head back to the ride.',
-  leave:'Leave this lobby.',
-};
 const icon = {
   left:'<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M13 3 5 10l8 7z"/></svg>',
   right:'<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3l8 7-8 7z"/></svg>',
@@ -118,13 +97,10 @@ function buildHints(fe) {
   return bar;
 }
 
-function helpBox() { return h('div', {class:'ms-help', 'aria-live':'polite'}, h('p', {})); }
-
 function buildTitle(fe, screen) {
   const logo = fe.images.get('brand-logo');
   screen.append(h('div', {class:'ms-title-lockup'},
-    logo ? h('img', {class:'ms-logo', src:logo.src, alt:'Fury Remastered'}) : h('h1', {class:'ms-logo-text'}, 'Fury ', h('span', {text:'Remastered'})),
-    h('p', {class:'ms-tagline', text:'ATV Offroad Fury 2, rebuilt for the browser'})));
+    logo ? h('img', {class:'ms-logo', src:logo.src, alt:'Fury Remastered'}) : h('h1', {class:'ms-logo-text'}, 'Fury ', h('span', {text:'Remastered'}))));
   screen.append(h('div', {class:'ms-title-actions'},
     choice(fe, 'main', 'ms-start', h('span', {text:hit(fe, 'main')?.label ?? 'Press Start'})),
     choice(fe, 'devlog', 'ms-link', h('span', {text:'Dev log'}))));
@@ -133,7 +109,7 @@ function buildTitle(fe, screen) {
 function rideStage(panel, logo) {
   if (logo) panel.append(logo);
   panel.append(h('div', {class:'ms-model ms-model-quad', dataset:{modelSlot:'quad'}}),
-    h('div', {class:'ms-plate'}, h('p', {class:'ms-kicker', text:'Your ride'}), h('p', {class:'ms-ride-name'}), h('p', {class:'ms-ride-meta'})));
+    h('div', {class:'ms-plate'}, h('p', {class:'ms-ride-name'})));
 }
 
 function brandLogo(fe) {
@@ -144,12 +120,9 @@ function brandLogo(fe) {
 function buildMenu(fe, left, panel) {
   const list = h('nav', {class:'ms-rows', 'aria-label':titles[fe.page]});
   for (const action of fe.frame.choices) if (action !== 'back') list.append(row(fe, action));
-  left.append(list, helpBox());
-  if (fe.page === 'multiplayer') {
-    panel.append(brandLogo(fe) ?? '', h('div', {class:'ms-panel-card'},
-      h('p', {class:'ms-kicker', text:'Online Freeride'}), h('h2', {text:'Ride together'}),
-      h('p', {text:'Up to four ATV riders share one course. Friends can join with an invite link or code, even after the ride starts.'})));
-  } else rideStage(panel, brandLogo(fe));
+  left.append(list);
+  if (fe.page === 'multiplayer') panel.append(brandLogo(fe) ?? '');
+  else rideStage(panel, brandLogo(fe));
 }
 
 function buildForm(fe, left, panel) {
@@ -167,19 +140,19 @@ function buildForm(fe, left, panel) {
   }
   const list = h('nav', {class:'ms-rows', 'aria-label':titles[fe.page]});
   for (const action of fe.frame.choices) if (action !== 'back') list.append(row(fe, action, action === 'garage' ? [h('span', {class:'ms-row-value ms-ride-summary'})] : []));
-  left.append(form, list, helpBox());
+  left.append(form, list);
   rideStage(panel, null);
 }
 
 function trackFigure(className) {
   return h('figure', {class:className}, h('div', {class:'ms-photo'}, h('img', {alt:''})),
-    h('figcaption', {}, h('span', {class:'ms-badge'}), h('h2', {class:'ms-track-name'}), h('p', {class:'ms-track-mode'})));
+    h('figcaption', {}, h('h2', {class:'ms-track-name'})));
 }
 
 function buildLobby(fe, left, panel) {
   const list = h('nav', {class:'ms-rows', 'aria-label':'Lobby actions'});
   for (const action of fe.frame.choices) list.append(row(fe, action));
-  left.append(h('div', {class:'ms-lobby-info'}, h('p', {class:'ms-kicker', text:'Lobby code'}), h('p', {class:'ms-code'}), h('p', {class:'ms-status'})), list, helpBox());
+  left.append(h('div', {class:'ms-lobby-info'}, h('p', {class:'ms-code'}), h('p', {class:'ms-status'})), list);
   panel.append(trackFigure('ms-track-hero'));
 }
 
@@ -191,7 +164,7 @@ function buildRace(fe, left, panel) {
     if (stepper) item.classList.add('ms-row-cycle');
     list.append(item);
   }
-  left.append(list, helpBox());
+  left.append(list);
   panel.append(trackFigure('ms-track-hero'));
 }
 
@@ -251,7 +224,6 @@ function buildGarage(fe, left, panel) {
   const catalog = fe.garageCatalog();
   const list = h('div', {class:'ms-vehicles ms-scroll', role:'listbox', 'aria-label':'Vehicles'});
   for (const group of [...new Set(catalog.map(item => item.group))]) {
-    list.append(h('p', {class:'ms-list-heading', text:group === 'ATV' ? 'ATVs' : 'Motorcycles'}));
     for (const item of catalog.filter(item => item.group === group)) {
       const option = h('button', {type:'button', class:'ms-vehicle', role:'option', 'aria-label':item.label, dataset:{vehicle:String(item.id)}},
         h('span', {class:'ms-bullet', 'aria-hidden':'true'}), h('span', {class:'ms-vehicle-name', text:item.label}), item.class ? h('small', {text:item.class}) : null);
@@ -260,21 +232,18 @@ function buildGarage(fe, left, panel) {
     }
   }
   left.append(rows, list, choice(fe, 'back', 'ms-pill ms-done', h('span', {text:hit(fe, 'back')?.label ?? 'Done'})));
-  panel.append(h('div', {class:'ms-plate ms-garage-plate'}, h('p', {class:'ms-kicker ms-vehicle-count'}), h('p', {class:'ms-ride-name'}), h('p', {class:'ms-ride-meta'})),
+  panel.append(h('div', {class:'ms-plate ms-garage-plate'}, h('p', {class:'ms-ride-name'})),
     h('div', {class:'ms-models'},
       h('div', {class:'ms-model ms-model-quad', dataset:{modelSlot:'quad'}}),
-      h('div', {class:'ms-model ms-model-rider', dataset:{modelSlot:'rider'}})),
-    h('p', {class:'ms-drag-hint', text:'Drag a model to rotate it'}));
+      h('div', {class:'ms-model ms-model-rider', dataset:{modelSlot:'rider'}})));
 }
 
-function setPhoto(figure, url, track, mode) {
+function setPhoto(figure, url, track) {
   if (!figure) return;
   const img = figure.querySelector('.ms-photo img');
   if (img.getAttribute('src') !== (url || null)) { if (url) img.src = url; else img.removeAttribute('src'); }
   figure.classList.toggle('is-empty', !url);
-  figure.querySelector('.ms-badge').textContent = track ? groupLabel(track.id) : '';
   figure.querySelector('.ms-track-name').textContent = track?.name ?? '';
-  figure.querySelector('.ms-track-mode').textContent = mode;
 }
 
 function sync(fe) {
@@ -292,11 +261,8 @@ function sync(fe) {
     backdrop.style.backgroundImage = backdropUrl ? `url("${backdropUrl}")` : '';
     backdrop.classList.toggle('is-track', Boolean(focusTrack && fe.trackPhotoUrl(focusTrack)));
   }
-  const help = root.querySelector('.ms-help p');
-  if (help) help.textContent = details[selected] ?? (page === 'garage' ? '' : details[page] ?? '');
   const vehicle = fe.vehicleSummary();
   for (const name of root.querySelectorAll('.ms-ride-name')) name.textContent = vehicle.label;
-  for (const meta of root.querySelectorAll('.ms-ride-meta')) meta.textContent = vehicle.meta;
   for (const summary of root.querySelectorAll('.ms-ride-summary')) summary.textContent = vehicle.label;
   for (const button of root.querySelectorAll('.ms-row[data-action]')) {
     const target = hit(fe, button.dataset.action), value = button.querySelector('.ms-row-value:not(.ms-ride-summary):not(.ms-ride-name)');
@@ -306,20 +272,20 @@ function sync(fe) {
     if (value) value.textContent = rest.join(': ');
   }
   if (page === 'race' || page === 'lobby') {
-    setPhoto(root.querySelector('.ms-track-hero'), fe.trackPhotoUrl(fe.presentationTrack), fe.presentationTrack, page === 'race' ? 'National / Race preview' : 'Free Ride');
+    setPhoto(root.querySelector('.ms-track-hero'), fe.trackPhotoUrl(fe.presentationTrack), fe.presentationTrack);
     if (page === 'lobby') {
       root.querySelector('.ms-code').textContent = state.room_code || '--------';
       root.querySelector('.ms-status').textContent = state.lobby_status || 'Connecting…';
     }
   }
   if (page === 'loading') {
-    setPhoto(root.querySelector('.ms-track-hero'), fe.trackPhotoUrl(fe.presentationTrack), fe.presentationTrack, 'Free Ride');
+    setPhoto(root.querySelector('.ms-track-hero'), fe.trackPhotoUrl(fe.presentationTrack), fe.presentationTrack);
     root.querySelector('.ms-status').textContent = state.loading_status;
     root.querySelector('.ms-meter').setAttribute('aria-label', state.loading_status);
   }
   if (page === 'tracks') {
     const track = fe.tracks[fe.track];
-    setPhoto(root.querySelector('.ms-track-hero'), fe.trackPhotoUrl(track), track, 'Free Ride');
+    setPhoto(root.querySelector('.ms-track-hero'), fe.trackPhotoUrl(track), track);
     for (const card of root.querySelectorAll('.ms-course')) {
       const current = card.dataset.trackId === track?.id;
       card.setAttribute('aria-selected', String(current));
@@ -327,7 +293,6 @@ function sync(fe) {
     }
   }
   if (page === 'garage') {
-    root.querySelector('.ms-vehicle-count').textContent = `${vehicle.group} ${vehicle.index} of ${vehicle.count}`;
     root.querySelector('.ms-vehicle-kind').textContent = vehicle.group === 'Motorcycle' ? 'Bike' : 'ATV';
     const riderRow = root.querySelector('.ms-rider-row');
     if (riderRow) {

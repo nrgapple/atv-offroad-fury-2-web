@@ -797,7 +797,8 @@ async function menuRiderAssets(rider, isCurrent, quad = 1) {
     for (const [index,entry] of entries.entries()) {
       if (!entry.name.toLowerCase().endsWith('.pst')) continue;
       const image = await codec(3,bytes,index), info = await json(7,image);
-      textures.set(entry.name.split('/').at(-1).toLowerCase().replace(/\.pst$/, ''),{...info,rgba:await codec(8,image)});
+      // Menu rider alpha is a specular/reflection mask, never transparency.
+      textures.set(entry.name.split('/').at(-1).toLowerCase().replace(/\.pst$/, ''),{...info,rgba:await codec(8,image),opaque:true});
     }
     textures.set('atv2_shirt_ui_export',textures.get('atv2_shirt_ui'));
     menuRiderTextures = textures;

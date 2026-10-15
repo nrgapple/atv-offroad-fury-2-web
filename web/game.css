@@ -117,12 +117,10 @@ body:not(.menu-open) #help, body:not(.menu-open) #status:not(.error) { display: 
 .pause-panel[hidden] { display: none; }
 .pause-panel { position: absolute; inset: 24px; margin: auto; width: min(820px, calc(100% - 48px)); height: fit-content; max-height: calc(100% - 48px); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 30px; background: #16191ef5; border: 1px solid #ffffff24; border-radius: 16px; box-shadow: 0 24px 80px #0009; color: #f4f5f7; font: 15px/1.45 system-ui, sans-serif; }
 .pause-panel header { padding-bottom: 22px; border-bottom: 1px solid #ffffff1c; margin-bottom: 22px; }
-.pause-eyebrow { margin: 0 0 6px; color: #e3c867; font-size: 11px; font-weight: 750; letter-spacing: .16em; }
 .pause-panel h1 { font-size: 32px; letter-spacing: -.03em; line-height: 1.2; margin: 0 0 8px; }
 .pause-status { color: #b7bdc8; margin: 0; font-size: 14px; }
 .pause-groups { display: grid; grid-template-columns: 1fr 1.2fr; gap: 24px; align-items: start; }
 .pause-group { min-width: 0; display: grid; gap: 6px; }
-.pause-group h2 { color: #b7bdc8; font-size: 12px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; margin: 0 0 4px; }
 .pause-ride { grid-column: 1; grid-row: 1; }
 .pause-preferences { grid-column: 2; grid-row: 1 / 3; }
 .pause-session { grid-column: 1; grid-row: 2; }
@@ -191,7 +189,6 @@ body:not(.menu-open) #help, body:not(.menu-open) #status:not(.error) { display: 
 .pause-panel, .pause-panel[data-screen]:not([data-screen=pause]) { border: 0; border-radius: 0; background: linear-gradient(115deg, #171313ef, #090909df); box-shadow: 0 16px 60px #0005; border-top: 3px solid var(--atv-silver); font-family: var(--atv-font-label); }
 .pause-panel header { border-color: #ffffff25; }
 .pause-panel h1 { font: italic 800 clamp(28px, 4vw, 38px)/1.1 var(--atv-font-label); letter-spacing: .02em; text-transform: uppercase; }
-.pause-eyebrow, .pause-group h2 { color: var(--atv-silver); }
 .pause-panel button, .pause-panel button[data-action=resume] { border: 0; border-radius: 0; background: transparent; color: var(--atv-text); font-size: 17px; font-weight: 700; padding-left: 20px; position: relative; }
 .pause-panel button:hover { color: #fff; background: #ffffff06; }
 .pause-panel button[aria-current=true], .pause-panel button[data-action=resume] { color: var(--atv-gold-light); background: transparent; }
