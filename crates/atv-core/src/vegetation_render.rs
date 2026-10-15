@@ -5,7 +5,7 @@
 //! heap are browser acceleration: native spatial callbacks, depth-bucket cutoff
 //! and clipping/cache order are not reproduced. Arithmetic mirrors the former
 //! JavaScript port: binary64 except where the original binary32 rounding applies.
-use crate::{Result, ecosystem::Ecosystem, terrain::Terrain, vegetation_collision};
+use crate::{Result, ecosystem::Ecosystem, terrain::Heightfield};
 use serde::{Deserialize, Serialize};
 
 pub const CAPACITY: usize = 1500;
@@ -78,12 +78,13 @@ pub struct Vegetation {
 }
 
 impl Vegetation {
-    /// Registers every ESB placement in source order. Height-resampled
-    /// placements use the 00129b70 contact sample and unsigned16 requantization
-    /// with the terrain extent as the packed-coordinate range.
-    pub fn new(ecosystem: Ecosystem, terrain: &Terrain, config: &Config) -> Result<Self> {
-        let extent = (f64::from(terrain.width_cells) * f64::from(terrain.spacing))
-            .max(f64::from(terrain.depth_cells) * f64::from(terrain.spacing));
+    /// Registers every ESB placement in source order, with the terrain extent
+    /// as the packed-coordinate range. Height-resampled placements quantize
+    /// the visible dense-grid height back to unsigned16 (00129b70), as the
+    /// former browser did. Collision registration samples the contact plane;
+    /// which plane the original sampler reads is not verified.
+    pub fn new(ecosystem: Ecosystem, ground: &Heightfield, config: &Config) -> Result<Self> {
+        let extent = ground.extent();
         if !extent.is_finite() || extent <= 0. {
             return Err("invalid vegetation terrain extent".into());
         }
@@ -94,8 +95,6 @@ impl Vegetation {
             return Err("invalid vegetation distances".into());
         }
         let scale = extent / 65536.;
-        let unit = scale as f32;
-        let reciprocal = 65536. / extent as f32;
         let mut groups = Vec::with_capacity(ecosystem.species.len());
         let mut group_of = [None; 256];
         let mut bounds = Vec::with_capacity(ecosystem.species.len());
@@ -129,27 +128,27 @@ impl Vegetation {
             );
             bounds.push((half_x, half_y, (center - half_y) * 0.5 / half_y, atlas));
         }
-        let grid = terrain.leaf_grid();
         let mut placements = Vec::with_capacity(ecosystem.placements.len());
         let mut max_radius = 0f64;
         for p in &ecosystem.placements {
             let group =
                 group_of[usize::from(p.slot)].ok_or("placement references absent species")?;
             let (half_x, half_y, base_height, atlas) = bounds[group];
-            let mut coordinates = p.coordinates;
+            let mut position = p.coordinates.map(|c| f64::from(c) * scale);
             if p.resample_height {
-                let point = vegetation_collision::placement_position(coordinates, unit)?;
-                let height = terrain
-                    .contact_with(grid.as_ref(), point[0], point[2])?
-                    .map_or(point[1], |hit| hit.height);
-                coordinates =
-                    vegetation_collision::resampled_coordinates(coordinates, height, reciprocal)?;
+                // Math.trunc(height / scale) & 65535: ToInt32 keeps the low 16 bits.
+                let packed = (ground.height(position[0], position[2]) / scale).trunc();
+                position[1] = if packed.is_finite() {
+                    packed.rem_euclid(65536.)
+                } else {
+                    0.
+                } * scale;
             }
             let (radius, height) = (f64::from(p.radius), f64::from(p.height));
             let placement = Placement {
                 group,
                 coordinates: p.coordinates,
-                position: coordinates.map(|c| f64::from(c) * scale),
+                position,
                 scale: [radius / half_x, height * 0.5 / half_y],
                 dimensions: [p.radius, p.height],
                 atlas,
@@ -390,7 +389,7 @@ impl Vegetation {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::terrain::{TerrainLeaf, TerrainTile};
+    use crate::terrain::{Terrain, TerrainLeaf, TerrainTile};
 
     /// A 16-cell, 64 ft plane: height = 3x + z (cells), exact in binary32.
     pub(crate) fn plane() -> Terrain {
@@ -497,7 +496,7 @@ pub(crate) mod tests {
                 },
             ],
         };
-        Vegetation::new(ecosystem, &plane(), &config).unwrap()
+        Vegetation::new(ecosystem, &plane().render_heights().unwrap(), &config).unwrap()
     }
 
     /// Expected values were produced by the former game.js buildEcosystem and

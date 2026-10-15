@@ -99,14 +99,17 @@ issues WebGL calls, manages the DOM and events, and moves bytes. Three paths
 that had grown in `web/game.js` now live in `atv-core`:
 
 - **Vegetation queues** (`vegetation_render`): placement registration, the
-  00129b70 height resample, per-frame cell scan, 0012a1c0 distance phases,
+  00129b70 unsigned16 height resample (sampling the visible dense grid, as the
+  former browser did), per-frame cell scan, 0012a1c0 distance phases,
   near-entry signed-short orientation, stale-visibility reset, the bounded
   1,500-plant nearest-depth heap, the descending-depth sort and the instance
   floats for the 0012af80 distant/transition/near queues. JavaScript uploads the
   produced ranges and issues the draws.
-- **Ground height and starts** (`Terrain::clamped_height`, `spawn`): render
-  cameras and the presentation spawn clamp use the TR2 contact plane. Race grid
-  and race-reset heights (contact + 2.5 ft) and online slot offsets (8 ft per
+- **Ground height and starts** (`Heightfield`, `Terrain::clamped_height`,
+  `spawn`): cameras (chase, crash framing, uphill sightline, free flight) and
+  the presentation spawn clamp read the dense render grid the terrain mesh is
+  built from, with the former interpolation. Gameplay uses the TR2 contact
+  plane: race grid and race-reset heights (contact + 2.5 ft) and online slot offsets (8 ft per
   slot) are computed by worker op 140. Grid `RiderSpacing` is read from the
   race mode or scene TOY text by `race::rider_spacing` in op 96.
 - **PSM reading** (`scenery_material::describe`, op 145): ordered pass
@@ -119,7 +122,7 @@ instantiates a second instance of the same `atv_web.wasm` on its main thread.
 The worker posts its compiled `WebAssembly.Module` with its ready message, so
 the module is downloaded and compiled once; a browser that cannot clone modules
 receives none and fetches its own copy. This instance holds only presentation
-state (decoded TR2 for heights, ESB placements and queue output). Exports take
+state (dense render heights, ESB placements and queue output). Exports take
 numbers and write instance floats into its memory, which JavaScript views as a
 `Float32Array`; no JSON crosses per frame. `loadGame` awaits the instance before
 terrain exists, so no draw or camera helper can run first. A separate small
@@ -127,10 +130,10 @@ WASM artifact was rejected: it would add a second build, cache and release path
 for code already in the module.
 
 Host measurements (headless Chromium, Apple Silicon): instantiating the shared
-module took 0.1–0.2 ms; render-instance memory was 14.8 MB on ENV01, 15.4 MB on
-NAT06 and 2.6 MB on SX07 (no vegetation), against 20–33 MB in the worker. The
-release module grew from 2,694,934 to 2,784,665 bytes (717,470 to 743,334
-gzip). In a Node replay of 1,500 frames per map, Rust selection averaged
+module took 0.1–0.2 ms; render-instance memory was 20.6 MB on ENV01, 20.9 MB on
+NAT06, 14.4 MB on FREE04 and 2.9 MB on SX07 (no vegetation), against 20–33 MB in
+the worker. The release module grew from 2,694,934 to 2,786,017 bytes (717,470
+to 744,022 gzip). In a Node replay of 1,500 frames per map, Rust selection averaged
 0.01–0.11 ms per frame against 0.03–0.40 ms for the former JavaScript, and
 placement registration 0.3–11 ms against 0.6–36 ms. These are host replay
 figures, not phone frame-rate claims.
@@ -138,10 +141,11 @@ figures, not phone frame-rate claims.
 Equivalence evidence (private, not committed): the former functions were run
 beside the Rust path on every Freestyle ecosystem (19 maps, 1,500-frame camera
 paths with turns, teleports and skipped frames). Selection counts, order,
-phases, orientation and every instance float matched bit-for-bit when both
-received the same binary32 inputs, except resampled plant heights: the former
-dense-grid interpolation and the contact plane disagree by one 16-bit quantum
-(≤0.088 ft) on 0–5 plants per map. With production inputs the former code also
+phases, orientation and every instance float (355 million) matched bit-for-bit
+when both received the same binary32 inputs, including resampled plant heights.
+Camera ground heights matched exactly at 380,000 random points inside and
+outside every world and on dense sweeps of FREE04 (12.1 million points) and
+ENV04 (9.7 million). With production inputs the former code also
 read species/placement sizes through decimal JSON, so 1 ulp scale differences
 remain; Rust now uses the exact authored binary32 values. PSM descriptions
 matched for all 31,590 disc material/mode cases and 13,298 hosted-package cases,

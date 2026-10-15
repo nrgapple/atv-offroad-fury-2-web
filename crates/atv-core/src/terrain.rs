@@ -34,12 +34,16 @@ pub struct Terrain {
     pub depth_cells: u32,
 }
 
-/// Leaf lookup for batched browser queries. It records the first leaf
-/// containing each 16-cell block, matching contact()'s ordered search.
-pub struct LeafGrid {
-    columns: usize,
-    rows: usize,
-    leaves: Vec<u32>,
+/// Dense render heights, row-major Z then X, as the browser's terrain mesh
+/// uses them. `height` interpolates them exactly as the former JavaScript
+/// presentation query did (binary64 over binary32 samples, edge clamped).
+/// Cameras use it so they follow the visible ground; gameplay uses contact().
+pub struct Heightfield {
+    pub width: usize,
+    pub depth: usize,
+    /// Spacing as the page received it: the shortest decimal of the binary32.
+    pub spacing: f64,
+    pub heights: Vec<f32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -429,37 +433,6 @@ impl Terrain {
     /// query mode is separate. Finite
     /// reciprocal-square-root rounds once; PS2 hardware FPU quirks are unproven.
     pub fn contact(&self, x: f32, z: f32) -> Result<Option<TerrainContact>> {
-        self.contact_with(None, x, z)
-    }
-
-    /// Grid of 16-cell blocks; None when a leaf is not block-aligned.
-    pub fn leaf_grid(&self) -> Option<LeafGrid> {
-        let columns = self.width_cells.div_ceil(16) as usize;
-        let rows = self.depth_cells.div_ceil(16) as usize;
-        let mut leaves = vec![u32::MAX; columns.checked_mul(rows)?];
-        for (index, leaf) in self.leaves.iter().enumerate() {
-            if leaf.x % 16 != 0 || leaf.z % 16 != 0 {
-                return None;
-            }
-            let (column, row) = ((leaf.x / 16) as usize, (leaf.z / 16) as usize);
-            if column < columns && row < rows && leaves[row * columns + column] == u32::MAX {
-                leaves[row * columns + column] = index as u32;
-            }
-        }
-        Some(LeafGrid {
-            columns,
-            rows,
-            leaves,
-        })
-    }
-
-    /// contact() using an optional leaf grid from this unchanged terrain.
-    pub fn contact_with(
-        &self,
-        grid: Option<&LeafGrid>,
-        x: f32,
-        z: f32,
-    ) -> Result<Option<TerrainContact>> {
         if !x.is_finite() || !z.is_finite() {
             return Err("nonfinite terrain contact position".into());
         }
@@ -469,13 +442,12 @@ impl Terrain {
         if gx >= self.width_cells as f32 || gz >= self.depth_cells as f32 {
             return Ok(None);
         }
-        self.contact_at(grid, gx, gz, gx as u32, gz as u32)
+        self.contact_at(gx, gz, gx as u32, gz as u32)
     }
 
-    /// Browser presentation/spawn ground: the contact plane with grid
-    /// coordinates clamped to the terrain edge, so cameras outside the world
-    /// still receive the nearest edge height. Not an original query mode.
-    pub fn clamped_height(&self, grid: Option<&LeafGrid>, x: f32, z: f32) -> Result<Option<f32>> {
+    /// Browser start ground: the contact plane with grid coordinates clamped
+    /// to the terrain edge. Not an original query mode.
+    pub fn clamped_height(&self, x: f32, z: f32) -> Result<Option<f32>> {
         if !x.is_finite() || !z.is_finite() || self.width_cells == 0 || self.depth_cells == 0 {
             return Err("nonfinite terrain height position".into());
         }
@@ -485,30 +457,20 @@ impl Terrain {
         let cell_x = (gx as u32).min(self.width_cells - 1);
         let cell_z = (gz as u32).min(self.depth_cells - 1);
         Ok(self
-            .contact_at(grid, gx, gz, cell_x, cell_z)?
+            .contact_at(gx, gz, cell_x, cell_z)?
             .map(|contact| contact.height))
     }
 
     fn contact_at(
         &self,
-        grid: Option<&LeafGrid>,
         gx: f32,
         gz: f32,
         cell_x: u32,
         cell_z: u32,
     ) -> Result<Option<TerrainContact>> {
-        let leaf = match grid {
-            Some(grid) => {
-                let (column, row) = ((cell_x / 16) as usize, (cell_z / 16) as usize);
-                (column < grid.columns && row < grid.rows)
-                    .then(|| grid.leaves[row * grid.columns + column])
-                    .and_then(|index| self.leaves.get(index as usize))
-            }
-            None => self.leaves.iter().find(|leaf| {
-                cell_x >= leaf.x && cell_x < leaf.x + 16 && cell_z >= leaf.z && cell_z < leaf.z + 16
-            }),
-        };
-        let Some(leaf) = leaf else {
+        let Some(leaf) = self.leaves.iter().find(|leaf| {
+            cell_x >= leaf.x && cell_x < leaf.x + 16 && cell_z >= leaf.z && cell_z < leaf.z + 16
+        }) else {
             return Ok(None);
         };
         let local_x = (cell_x - leaf.x) as usize;
@@ -627,6 +589,19 @@ impl Terrain {
         Ok(heights)
     }
 
+    pub fn render_heights(&self) -> Result<Heightfield> {
+        Ok(Heightfield {
+            width: self.width_cells as usize + 1,
+            depth: self.depth_cells as usize + 1,
+            spacing: self
+                .spacing
+                .to_string()
+                .parse()
+                .map_err(|_| "invalid TR2 spacing")?,
+            heights: self.heightfield()?,
+        })
+    }
+
     /// Original positions for one finest-level tile, row-major 17 by 17.
     pub fn positions(&self, leaf: &TerrainLeaf) -> Vec<[f32; 3]> {
         self.tiles[leaf.tile as usize]
@@ -641,6 +616,36 @@ impl Terrain {
                 ]
             })
             .collect()
+    }
+}
+
+impl Heightfield {
+    /// Edge-clamped split-quad interpolation; the diagonal ties to the first
+    /// triangle. NaN input yields NaN.
+    pub fn height(&self, x: f64, z: f64) -> f64 {
+        let (gx, gz) = (x / self.spacing, z / self.spacing);
+        if gx.is_nan() || gz.is_nan() {
+            return f64::NAN;
+        }
+        let clamp = |v: f64, size: usize| v.min(size as f64 - 1.00001).max(0.);
+        let (gx, gz) = (clamp(gx, self.width), clamp(gz, self.depth));
+        let (ix, iz) = (gx.floor(), gz.floor());
+        let (fx, fz) = (gx - ix, gz - iz);
+        let at = |x: f64, z: f64| f64::from(self.heights[z as usize * self.width + x as usize]);
+        let (a, b, c, d) = (
+            at(ix, iz),
+            at(ix + 1., iz),
+            at(ix, iz + 1.),
+            at(ix + 1., iz + 1.),
+        );
+        if fx + fz <= 1. {
+            a + fx * (b - a) + fz * (c - a)
+        } else {
+            d + (1. - fx) * (c - d) + (1. - fz) * (b - d)
+        }
+    }
+    pub fn extent(&self) -> f64 {
+        ((self.width - 1) as f64 * self.spacing).max((self.depth - 1) as f64 * self.spacing)
     }
 }
 
@@ -816,62 +821,30 @@ mod tests {
     }
 
     #[test]
-    fn clamped_height_and_leaf_grid_match_contact() {
+    fn clamped_height_matches_contact_and_render_heights_follow_the_dense_grid() {
         let mut terrain = decode_tr2(&sample()).unwrap();
-        terrain.width_cells = 32;
         terrain.tiles[0].heights = std::array::from_fn(|i| (i % 17 + 2 * (i / 17)) as u16);
         terrain.tiles[0]
             .attributes
             .fill(u32::from_le_bytes([0, 127, 0, 0]));
-        terrain.tiles.push(TerrainTile {
-            tag: 0,
-            heights: [40; 289],
-            attributes: [u32::from_le_bytes([0, 127, 0, 0]); 289],
-        });
-        for (tile, x) in [(1, 16), (0, 16)] {
-            terrain.leaves.push(TerrainLeaf {
-                x,
-                z: 0,
-                tile,
-                height_morph: 1.,
-                height_scale: 0.5,
-                minimum_height: 0.,
-                maximum_height: 100.,
-            });
+        for [x, z] in [[0.5, 0.5], [7.25, 31.9], [31.99, 2.], [12., 12.]] {
+            let contact = terrain.contact(x, z).unwrap().map(|c| c.height);
+            assert_eq!(terrain.clamped_height(x, z).unwrap(), contact);
         }
-        let grid = terrain.leaf_grid().unwrap();
-        for [x, z] in [
-            [0.5, 0.5],
-            [7.25, 31.9],
-            [31.99, 2.],
-            [33., 4.],
-            [63.9, 31.9],
-            [12., 12.],
-        ] {
-            let linear = terrain.contact(x, z).unwrap().map(|c| c.height);
-            assert_eq!(
-                terrain
-                    .contact_with(Some(&grid), x, z)
-                    .unwrap()
-                    .map(|c| c.height),
-                linear
-            );
-            assert_eq!(terrain.clamped_height(Some(&grid), x, z).unwrap(), linear);
-            assert_eq!(terrain.clamped_height(None, x, z).unwrap(), linear);
-        }
-        // Outside the world the edge plane continues; the first listed leaf owns a block.
-        assert_eq!(
-            terrain.clamped_height(None, -9., -3.).unwrap(),
-            terrain.contact(0., 0.).unwrap().map(|c| c.height)
-        );
-        assert_eq!(
-            terrain.clamped_height(Some(&grid), 500., 10.).unwrap(),
-            Some(40.)
-        );
-        assert_eq!(terrain.clamped_height(None, 500., 500.).unwrap(), Some(40.));
-        assert!(terrain.clamped_height(None, f32::NAN, 0.).is_err());
-        terrain.leaves[1].x = 15;
-        assert!(terrain.leaf_grid().is_none());
+        // Outside the world the edge plane continues.
+        let edge = terrain.contact(0., 0.).unwrap().map(|c| c.height);
+        assert_eq!(terrain.clamped_height(-9., -3.).unwrap(), edge);
+        assert_eq!(terrain.clamped_height(500., 500.).unwrap(), Some(48.));
+        assert!(terrain.clamped_height(f32::NAN, 0.).is_err());
+        // Former browser query results on this dense grid (height = x + 2z cells).
+        let render = terrain.render_heights().unwrap();
+        assert_eq!((render.width, render.depth, render.spacing), (17, 17, 2.));
+        assert_eq!(render.height(3., 5.), 6.5);
+        assert_eq!(render.height(-4., 70.), 31.99998);
+        assert_eq!(render.height(31.9, 31.9), 47.85);
+        assert_eq!(render.height(1., 1.), 1.5);
+        assert!(render.height(f64::NAN, 1.).is_nan());
+        assert_eq!(render.extent(), 32.);
     }
 
     #[test]

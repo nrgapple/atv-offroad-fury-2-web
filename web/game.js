@@ -691,7 +691,8 @@ function upload(vertices, indices, hasUv = false, hasNodes = false, hasColors = 
   chunk.bounds = vertexBounds(vertices, stride / 4);
   return chunk;
 }
-// Rust TR2 contact plane, clamped to the terrain edge for cameras outside it.
+// Visible ground for cameras and presentation: Rust interpolates the dense render
+// grid the terrain mesh is built from. Gameplay starts use the contact plane (op 140).
 function terrainHeight(x, z) { return renderCore.terrainHeight(x, z); }
 function setVehicle(source) {
   vehicle = undefined;

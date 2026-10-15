@@ -2,13 +2,13 @@
 //! this module on its main thread; it holds only presentation state (terrain
 //! heights and vegetation queues) and never runs the simulation. Per-frame
 //! exports take numbers and write instance floats into this instance's memory.
-use atv_core::{Result, terrain::Terrain, vegetation_render};
+use atv_core::{Result, terrain::Heightfield, vegetation_render};
 use std::cell::RefCell;
 
 #[derive(Default)]
 struct Render {
-    terrain: Option<Terrain>,
-    grid: Option<atv_core::terrain::LeafGrid>,
+    /// Dense heights of the visible terrain mesh.
+    ground: Option<Heightfield>,
     vegetation: Option<vegetation_render::Vegetation>,
     /// visible, scanned, far, transition, near, groups, then per-group counts.
     counts: Vec<u32>,
@@ -18,11 +18,11 @@ thread_local! { static RENDER: RefCell<Render> = RefCell::default(); }
 pub fn dispatch(input: &[u8], op: u32) -> Result<Vec<u8>> {
     RENDER.with_borrow_mut(|render| match op {
         141 => {
+            render.ground = None;
             let terrain = atv_core::terrain::decode_tr2(input)?;
             let result = serde_json::json!({"width_cells": terrain.width_cells, "depth_cells": terrain.depth_cells, "spacing": terrain.spacing});
             render.vegetation = None;
-            render.grid = terrain.leaf_grid();
-            render.terrain = Some(terrain);
+            render.ground = Some(terrain.render_heights()?);
             serde_json::to_vec(&result).map_err(|e| e.to_string())
         }
         142 => {
@@ -36,8 +36,8 @@ pub fn dispatch(input: &[u8], op: u32) -> Result<Vec<u8>> {
             let config: vegetation_render::Config =
                 serde_json::from_slice(&input[4..4 + length]).map_err(|e| e.to_string())?;
             let ecosystem = atv_core::ecosystem::decode(&input[4 + length..])?;
-            let terrain = render.terrain.as_ref().ok_or("load render terrain first")?;
-            let vegetation = vegetation_render::Vegetation::new(ecosystem, terrain, &config)?;
+            let ground = render.ground.as_ref().ok_or("load render terrain first")?;
+            let vegetation = vegetation_render::Vegetation::new(ecosystem, ground, &config)?;
             let result = serde_json::json!({
                 "placements": vegetation.len(), "groups": vegetation.groups, "max_radius": vegetation.max_radius,
                 "capacity": vegetation_render::CAPACITY, "billboard_floats": vegetation_render::BILLBOARD_FLOATS,
@@ -66,20 +66,15 @@ pub fn dispatch(input: &[u8], op: u32) -> Result<Vec<u8>> {
     })
 }
 
-/// Clamped terrain contact height; NaN before terrain loads or for NaN input.
+/// Visible (dense render grid) ground height for cameras and presentation;
+/// NaN before terrain loads or for NaN input.
 #[unsafe(no_mangle)]
 pub extern "C" fn render_terrain_height(x: f64, z: f64) -> f64 {
     RENDER.with_borrow(|render| {
         render
-            .terrain
+            .ground
             .as_ref()
-            .and_then(|terrain| {
-                terrain
-                    .clamped_height(render.grid.as_ref(), x as f32, z as f32)
-                    .ok()
-                    .flatten()
-            })
-            .map_or(f64::NAN, f64::from)
+            .map_or(f64::NAN, |ground| ground.height(x, z))
     })
 }
 

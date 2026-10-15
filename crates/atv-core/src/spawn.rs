@@ -20,7 +20,7 @@ pub fn start_origin(
     let mut origin = position;
     if course {
         let ground = terrain
-            .clamped_height(None, position[0] as f32, position[2] as f32)?
+            .clamped_height(position[0] as f32, position[2] as f32)?
             .ok_or("course start lies outside the recovered terrain")?;
         origin[1] = f64::from(ground) + COURSE_CLEARANCE;
     }
@@ -39,7 +39,7 @@ mod tests {
     fn course_starts_sit_on_terrain_and_slots_step_right() {
         let terrain = crate::vegetation_render::tests::plane();
         // Former browser rule: ground + 2.5 ft, then slot * 8 ft along (cos, -sin).
-        let ground = terrain.clamped_height(None, 320., 448.).unwrap().unwrap();
+        let ground = terrain.clamped_height(320., 448.).unwrap().unwrap();
         assert_eq!(ground, 22.);
         assert_eq!(
             start_origin(&terrain, [320., 99., 448.], 0., true, None).unwrap(),
