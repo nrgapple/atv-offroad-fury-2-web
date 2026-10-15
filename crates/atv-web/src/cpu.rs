@@ -8,6 +8,54 @@ pub struct World<'a> {
     pub water: Option<&'a atv_core::water_animation::LiveField>,
     pub dynamic: &'a [atv_core::scene_collision::DynamicObstacle],
 }
+/// A CPU racer's own original quad: physics, mesh/linkage, chassis contact
+/// points with wreck rays, and actor (obstacle) rays from its ATV archive.
+pub struct CpuModel {
+    pub physics: PhysicsData,
+    pub mesh: mesh::Mesh,
+    pub quad_pose: std::rc::Rc<atv_core::quad_pose::QuadPose>,
+    pub chassis_points: Vec<[f32; 3]>,
+    pub wreck_rays: std::rc::Rc<atv_core::collision::CollisionRayTree>,
+    pub obstacle_rays: std::rc::Rc<atv_core::collision::CollisionRayTree>,
+}
+impl CpuModel {
+    /// Bundle: four little-endian u32 lengths, then physics, mesh, chassis
+    /// (`ao.col`) and actor (`ar.col`) bytes.
+    pub fn parse(bundle: &[u8]) -> Result<Self> {
+        let header = bundle.get(..16).ok_or("CPU model bundle is truncated")?;
+        let mut at: usize = 16;
+        let mut parts = Vec::with_capacity(4);
+        for i in 0..4 {
+            let length = u32::from_le_bytes(header[i * 4..i * 4 + 4].try_into().unwrap()) as usize;
+            parts.push(
+                bundle
+                    .get(at..at.checked_add(length).ok_or("CPU model size overflow")?)
+                    .ok_or("CPU model bundle is truncated")?,
+            );
+            at += length;
+        }
+        if at != bundle.len() {
+            return Err("CPU model bundle has trailing bytes".into());
+        }
+        let mesh = mesh::decode_psg(parts[1])?;
+        let chassis = atv_core::collision::decode_ray_tree(parts[2])?;
+        let actor = atv_core::collision::decode_ray_tree(parts[3])?;
+        let identity = [
+            1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+        ];
+        if actor.transform != identity {
+            return Err("unsupported CPU actor collision header transform".into());
+        }
+        Ok(Self {
+            physics: PhysicsData::parse(parts[0])?,
+            quad_pose: std::rc::Rc::new(atv_core::quad_pose::QuadPose::new(&mesh)?),
+            mesh,
+            chassis_points: chassis.chassis_points()?,
+            wreck_rays: std::rc::Rc::new(chassis),
+            obstacle_rays: std::rc::Rc::new(actor),
+        })
+    }
+}
 pub struct CpuRacer {
     pub vehicle: Vehicle,
     driver: atv_core::race_ai::Driver,
@@ -30,28 +78,40 @@ pub fn create_cpu_racer(
         .ok_or("CPU grid outside terrain")?
         .height
         + 2.5;
-    let mut vehicle = Vehicle::new(
-        sim.mesh.as_ref().ok_or("CPU mesh missing")?,
-        sim.physics.as_ref().ok_or("CPU physics missing")?,
-        origin,
-        yaw,
-    )?;
-    vehicle.enable_wrecks(sim.physics.as_ref().ok_or("CPU physics missing")?)?;
+    // Each CPU rides its own original quad when the roster installed one.
+    let model = sim.cpu_models.get(index).and_then(Option::as_ref);
+    let mesh = model
+        .map_or(sim.mesh.as_ref(), |m| Some(&m.mesh))
+        .ok_or("CPU mesh missing")?;
+    let physics = model
+        .map_or(sim.physics.as_ref(), |m| Some(&m.physics))
+        .ok_or("CPU physics missing")?;
+    let mut vehicle = Vehicle::new(mesh, physics, origin, yaw)?;
+    vehicle.enable_wrecks(physics)?;
     vehicle.set_wreck_rays(
-        sim.wreck_rays
-            .as_ref()
+        model
+            .map_or(sim.wreck_rays.as_ref(), |m| Some(&m.wreck_rays))
             .ok_or("CPU wreck rays missing")?
             .clone(),
     )?;
     if let Some(config) = sim.boundary_config {
         vehicle.set_boundary(config, sim.extended_boundary)?;
     }
-    vehicle.set_linkage(sim.quad_pose.as_ref().ok_or("CPU linkage missing")?.clone());
+    vehicle.set_linkage(
+        model
+            .map_or(sim.quad_pose.as_ref(), |m| Some(&m.quad_pose))
+            .ok_or("CPU linkage missing")?
+            .clone(),
+    );
     vehicle.set_materials(sim.materials.ok_or("CPU materials missing")?);
-    vehicle.set_chassis_points(sim.chassis_points.as_ref().ok_or("CPU chassis missing")?)?;
+    vehicle.set_chassis_points(
+        model
+            .map_or(sim.chassis_points.as_ref(), |m| Some(&m.chassis_points))
+            .ok_or("CPU chassis missing")?,
+    )?;
     vehicle.set_obstacles(
-        sim.obstacle_rays
-            .as_ref()
+        model
+            .map_or(sim.obstacle_rays.as_ref(), |m| Some(&m.obstacle_rays))
             .ok_or("CPU rays missing")?
             .clone(),
         sim.obstacles.as_ref().ok_or("CPU scenery missing")?.clone(),

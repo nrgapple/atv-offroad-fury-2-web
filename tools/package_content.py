@@ -263,8 +263,20 @@ def mesh_material_names(data):
             for i in range(count)}
 
 
-def compact_rider_materials(mesh_archive, material_archive, additional_meshes=()):
-    """Keep every material/pass texture referenced by the packaged rider meshes."""
+def ai_outfit_names(ai_riders):
+    """Outfit material stems named by AIRiders.pb (Helmet/Glove/.../Shirt)."""
+    fields = ('helmet', 'glove', 'boot', 'sleeve', 'pant', 'goggle', 'shirt')
+    names = {value.replace('\\', '/').rsplit('/', 1)[-1].lower()
+             for name, section in config(ai_riders).items() if name.startswith('ai')
+             for key, value in section.items() if key in fields and value}
+    # Per-rider `_aiN` jerseys are composed at runtime; ship the base shirt's
+    # mesh-slot variant used by the rider mesh (`atv2_shirt001`).
+    return {re.sub(r'_ai\d+$', '001', name) if re.search(r'shirt_ai\d+$', name) else name for name in names}
+
+
+def compact_rider_materials(mesh_archive, material_archive, additional_meshes=(), extra_names=()):
+    """Keep every material/pass texture referenced by the packaged rider meshes
+    and by the original CPU rider outfits."""
     materials = Resource(material_archive)
     names = set()
     for source in (mesh_archive, *additional_meshes):
@@ -278,6 +290,10 @@ def compact_rider_materials(mesh_archive, material_archive, additional_meshes=()
         if basename in indices:
             raise ValueError('ambiguous rider material member')
         indices[basename] = i
+    # AIRiders names some outfits the disc does not ship (e.g. skin_black_shirt_ai12);
+    # those slots keep the mesh's default material, so only present ones are added.
+    names.update(name for name in extra_names
+                 if f'{name}.psm' in indices or f'{name}.pst' in indices)
     selected = set()
     for name in names:
         psm = indices.get(f'{name}.psm')
@@ -495,7 +511,8 @@ def main():
             elif path.endswith('_ENDL.RES'):
                 data = compact_map_placements(data, path.split('/')[-2])
             elif path == '/RIDER/RIDER_MT.RES':
-                data = compact_rider_materials(originals['/RIDER/MRIDER.RES'], data, (originals['/RIDER/FRIDER.RES'],))
+                outfits = ai_outfit_names(Resource(originals['/TRACKS/TRACKSA/ENV01/E01_NAT.RES']).named('airiders.pb'))
+                data = compact_rider_materials(originals['/RIDER/MRIDER.RES'], data, (originals['/RIDER/FRIDER.RES'],), outfits)
             record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith(('/QUAD/', '/UI/LOADICON/')) or path in ('/RIDER/FRIDER.RES',), **blob(data)}
             if data != originals[path]:
                 record.update(repacked=True, member_count=len(Resource(data).members))

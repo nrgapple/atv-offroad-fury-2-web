@@ -77,6 +77,8 @@ struct Simulation {
     race_course: Option<atv_core::race::Course>,
     race: Option<atv_core::race::Race>,
     cpu_racers: Vec<CpuRacer>,
+    /// Original quads selected for the CPU roster, by race slot.
+    cpu_models: Vec<Option<cpu::CpuModel>>,
 }
 struct TrainCollisionBinding {
     car: usize,
@@ -1735,6 +1737,45 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
     {
         return motorcycles::dispatch(input, op);
     }
+    if op == 105 {
+        let value: serde_json::Value = serde_json::from_slice(input).map_err(|e| e.to_string())?;
+        let text = |key: &str| -> Result<Vec<u8>> {
+            Ok(value
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| format!("missing roster {key}"))?
+                .as_bytes()
+                .to_vec())
+        };
+        let number = |key: &str| value.get(key).and_then(serde_json::Value::as_i64);
+        let roster = atv_core::race_roster::select(
+            &text("groups")?,
+            &text("riders")?,
+            u32::try_from(number("quad").ok_or("missing roster quad")?)
+                .map_err(|e| e.to_string())?,
+            value
+                .get("female")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            number("champ_group").unwrap_or(-1),
+            usize::try_from(number("count").unwrap_or(4)).map_err(|e| e.to_string())?,
+            u64::try_from(number("seed").unwrap_or(1)).map_err(|e| e.to_string())?,
+        )?;
+        return serde_json::to_vec(&roster).map_err(|e| e.to_string());
+    }
+    if op == 106 {
+        let model = cpu::CpuModel::parse(input)?;
+        return SIMULATION.with_borrow_mut(|sim| {
+            if index >= 4 {
+                return Err("CPU model slot out of range".into());
+            }
+            if sim.cpu_models.len() <= index {
+                sim.cpu_models.resize_with(index + 1, || None);
+            }
+            sim.cpu_models[index] = Some(model);
+            Ok(b"null".to_vec())
+        });
+    }
     if op == 95 {
         let course = atv_core::race::Course::parse(input)?;
         let mut value = serde_json::to_value(&course).map_err(|e| e.to_string())?;
@@ -1756,6 +1797,7 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
                 sim.race = None;
                 sim.race_course = None;
                 sim.cpu_racers.clear();
+                sim.cpu_models.clear();
                 return Ok(b"null".to_vec());
             }
             let integer = |key| {

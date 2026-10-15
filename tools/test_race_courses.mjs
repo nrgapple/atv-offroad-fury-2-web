@@ -42,7 +42,9 @@ try {
   assert.equal(await page.locator('#frontend').getAttribute('data-error'),null,`${id}: ${await page.locator('#menu-notice').textContent()}`);
   let s=await state();const race=s.frame.race;
   assert.equal(race.field,5,id);assert.equal(race.laps,2,id);assert.equal(race.opponents.length,4,id);
-  assert(race.checkpoints>=40,`${id} route`);assert(!race.wrong_way,`${id} grid faces the race direction`);
+  assert(race.checkpoints>=40,`${id} route`);
+  assert.deepEqual(race.opponents.map(o=>o.name),s.cpuRoster.map(r=>r.name),`${id} roster names`);
+  assert(s.cpuRoster.every(r=>r.model&&r.outfitTextures>0),`${id} roster models/outfits ${JSON.stringify(s.cpuRoster)}`);assert(!race.wrong_way,`${id} grid faces the race direction`);
   // Riders line up across the original start gate, one RiderSpacing apart.
   const xs=race.opponents.map(o=>o.origin);const gap=Math.hypot(xs[1][0]-xs[2][0],xs[1][2]-xs[2][2]);
   assert(gap>=15&&gap<=31,`${id} grid gap ${gap}`);
@@ -70,7 +72,7 @@ try {
    assert.equal(s.frame.race.phase,'racing');assert(s.frame.race.elapsed>=off.elapsed,'Reset keeps the race running');
    assert(Math.hypot(s.frame.origin[0]-off.track_point[0],s.frame.origin[2]-off.track_point[2])<20,'Reset returns to the racing line');
   }
-  results.push({id,checkpoints:race.checkpoints,gap:Number(gap.toFixed(1)),player_checkpoint:s.frame.race.checkpoint,cpu:s.frame.race.opponents.map(o=>Math.round(o.distance))});
+  results.push({id,roster:s.cpuRoster.map(r=>`${r.name}:${r.quad}`),checkpoints:race.checkpoints,gap:Number(gap.toFixed(1)),player_checkpoint:s.frame.race.checkpoint,cpu:s.frame.race.opponents.map(o=>Math.round(o.distance))});
  }
  assert.deepEqual(errors,[]);
  console.log(JSON.stringify({gate:'race-courses',courses:results.length,results}));
