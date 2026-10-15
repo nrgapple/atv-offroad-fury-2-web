@@ -50,6 +50,7 @@ fn every_control_and_full_pose_roundtrips() {
             peer: 1,
             code,
             lobby: lobby(),
+            key: [7; 16],
         },
         Packet::Lobby(lobby()),
         Packet::SetLobby {
@@ -60,7 +61,12 @@ fn every_control_and_full_pose_roundtrips() {
         Packet::Snapshot((snapshot(1, 100, 2.)).into()),
         Packet::Leave { peer: 3 },
         Packet::Ping { nonce: u32::MAX },
-        Packet::Pong { nonce: u32::MAX },
+        Packet::Pong {
+            nonce: u32::MAX,
+            server_ms: 1_791_000_000_123,
+        },
+        Packet::Profile(participant(2)),
+        Packet::Ready { map: 40 },
     ];
     for packet in packets {
         assert_eq!(decode(&encode(&packet).unwrap()).unwrap(), packet);
@@ -174,7 +180,8 @@ fn rejects_unknown_state_boolean_invalid_roster_and_room() {
             lobby: Lobby {
                 players: vec![participant(0)],
                 ..lobby()
-            }
+            },
+            key: [7; 16],
         })
         .is_err()
     );
@@ -498,11 +505,35 @@ fn all_map_control_and_roster_roundtrip_without_changing_wire_layout() {
                 peer: 1,
                 code: *b"ABCD2345",
                 lobby: roster,
+                key: [7; 16],
             },
         ] {
             assert_eq!(decode(&encode(&packet).unwrap()).unwrap(), packet);
         }
     }
+}
+#[test]
+fn profile_and_ready_controls_validate_models_names_and_maps() {
+    let mut bad = participant(1);
+    bad.name.clear();
+    assert!(encode(&Packet::Profile(bad)).is_err());
+    assert_eq!(
+        encode(&Packet::Ready {
+            map: MAX_MAP_ID + 1
+        }),
+        Err(Error::InvalidValue)
+    );
+    let mut ready = encode(&Packet::Ready { map: 1 }).unwrap();
+    ready[8..10].copy_from_slice(&0u16.to_le_bytes());
+    assert_eq!(decode(&ready), Err(Error::InvalidValue));
+    let mut short = encode(&Packet::Pong {
+        nonce: 1,
+        server_ms: 2,
+    })
+    .unwrap();
+    short.pop();
+    rewrite_length(&mut short);
+    assert!(decode(&short).is_err());
 }
 #[test]
 fn unsupported_maps_are_rejected_by_encoder_and_untrusted_wire_decoder() {
@@ -535,6 +566,7 @@ fn unsupported_maps_are_rejected_by_encoder_and_untrusted_wire_decoder() {
             peer: 1,
             code: *b"ABCD2345",
             lobby: lobby(),
+            key: [7; 16],
         })
         .unwrap();
         welcome[22..24].copy_from_slice(&map.to_le_bytes());

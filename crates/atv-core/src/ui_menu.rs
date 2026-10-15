@@ -405,8 +405,8 @@ pub fn layout(request: Request) -> Result<Frame> {
         "main" => "Main Menu",
         "single" => "Single Player",
         "multiplayer" => "Multiplayer",
-        "create-lobby" => "Create lobby",
-        "join-lobby" => "Join lobby",
+        "create-lobby" => "Host Game",
+        "join-lobby" => "Join Game",
         "lobby" => "Free Ride Lobby",
         "garage" => "Quad and Rider",
         "loading" => "Loading",
@@ -753,12 +753,9 @@ pub fn layout(request: Request) -> Result<Frame> {
             );
         }
         "multiplayer" => {
-            for (i, (label, action)) in [
-                ("Create lobby", "create-lobby"),
-                ("Join lobby", "join-lobby"),
-            ]
-            .iter()
-            .enumerate()
+            for (i, (label, action)) in [("Host Game", "create-lobby"), ("Join Game", "join-lobby")]
+                .iter()
+                .enumerate()
             {
                 f.choices.push((*action).into());
                 f.button(
@@ -801,11 +798,13 @@ pub fn layout(request: Request) -> Result<Frame> {
                     max_length,
                 });
             }
+            // Hosting continues to the original track picker; its Ride starts
+            // the game at once so friends can drop in from the invite.
             let rows = [
                 if creating {
-                    ("Create lobby", "host")
+                    ("Select Track", "hosttrack")
                 } else {
-                    ("Join lobby", "join")
+                    ("Join Game", "join")
                 },
                 ("Quad and Rider", "garage"),
             ];
@@ -826,16 +825,8 @@ pub fn layout(request: Request) -> Result<Frame> {
             } else {
                 list_w.min(w * 0.48 - 36.)
             };
-            let mut rows = vec![("Copy invite link", "share")];
-            if request.lobby_started {
-                rows.push(("Resume ride", "resume"));
-            } else if request.lobby_host {
-                rows.extend([
-                    ("Next environment", "lobbymap"),
-                    ("Ride together", "lobbystart"),
-                ]);
-            }
-            rows.push(("Leave lobby", "leave"));
+            // Shown only while joining: the ride starts as soon as it loads.
+            let rows = [("Copy invite link", "share"), ("Leave Game", "leave")];
             let mut details_y = 100.;
             if !request.track_image.is_empty() {
                 let preview = if portrait {
@@ -1018,15 +1009,29 @@ pub fn layout(request: Request) -> Result<Frame> {
                 ),
                 ("Settings", "settings"),
             ];
-            if !request.lobby_status.is_empty() {
+            let online = !request.lobby_status.is_empty();
+            if online {
+                // Original pause rows: change ride in place; the host picks
+                // the next track for everyone.
                 choices.insert(2, ("Players", "players"));
+                choices.insert(3, ("Change ATV and Rider", "changeride"));
+                if request.lobby_host {
+                    choices.insert(4, ("Select Track", "hosttrack"));
+                }
             }
-            choices.push(("Copy ride link", "copyride"));
+            choices.push((
+                if online {
+                    "Copy invite link"
+                } else {
+                    "Copy ride link"
+                },
+                "copyride",
+            ));
             choices.push(("Dev log", "devlog"));
-            choices.push(if request.lobby_status.is_empty() {
-                ("Quit to Main Menu", "main")
+            choices.push(if online {
+                ("Leave Game", "leave")
             } else {
-                ("Lobby", "lobby")
+                ("Quit to Main Menu", "main")
             });
             let available = h - if portrait { 110. } else { 90. };
             let max_rows = ((available * scale / 44.).floor() as usize).max(1);
@@ -1452,13 +1457,32 @@ mod tests {
         let menu = layout(request("multiplayer", 390., 844.)).unwrap();
         assert!(menu.inputs.is_empty());
         assert_eq!(menu.choices, ["create-lobby", "join-lobby"]);
+        assert_eq!(menu.hits[0].label, "Host Game");
         let create = layout(request("create-lobby", 390., 844.)).unwrap();
         assert_eq!(create.inputs.len(), 2);
         assert_eq!(create.inputs[1].action, "create-code");
-        assert_eq!(create.choices, ["host", "garage"]);
+        assert_eq!(create.choices, ["hosttrack", "garage"]);
         let join = layout(request("join-lobby", 390., 844.)).unwrap();
         assert_eq!(join.inputs[1].action, "room-code");
         assert_eq!(join.choices, ["join", "garage"]);
+    }
+    #[test]
+    fn online_pause_offers_ride_change_host_track_and_leave() {
+        let online = |host| {
+            let mut input = request("pause", 1280., 720.);
+            input.lobby_status = "2/4".into();
+            input.lobby_host = host;
+            layout(input).unwrap()
+        };
+        let guest = online(false);
+        assert!(guest.choices.contains(&"changeride".to_string()));
+        assert!(!guest.choices.contains(&"hosttrack".to_string()));
+        assert_eq!(guest.choices.last().unwrap(), "leave");
+        let host = online(true);
+        assert!(host.choices.contains(&"hosttrack".to_string()));
+        let solo = layout(request("pause", 1280., 720.)).unwrap();
+        assert!(!solo.choices.contains(&"changeride".to_string()));
+        assert_eq!(solo.choices.last().unwrap(), "main");
     }
     #[test]
     fn lobby_preview_leaves_visible_actions_on_short_and_full_screens() {

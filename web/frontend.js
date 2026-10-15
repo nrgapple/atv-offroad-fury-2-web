@@ -19,6 +19,8 @@ const normalizedSelection = value => ({
   quadId: Number.isInteger(value?.quadId) && value.quadId >= 1 && value.quadId <= 46 ? value.quadId : 1,
   riderId: value?.riderId === 1 ? 1 : 0,
   freestyleEnvironment: ENVIRONMENTS.includes(value?.freestyleEnvironment) ? value.freestyleEnvironment : 'env01',
+  // The multiplayer jersey name is remembered like the rest of the garage.
+  playerName: typeof value?.playerName === 'string' && value.playerName.trim() && new TextEncoder().encode(value.playerName).length <= 24 && !/\p{Cc}/u.test(value.playerName) ? value.playerName : 'Rider',
 });
 export function loadPlayerSelection(read = () => localStorage.getItem(selectionKey)) {
   try { return normalizedSelection(JSON.parse(read())); } catch { return normalizedSelection(null); }
@@ -55,7 +57,7 @@ export class Frontend {
     this.assets = new Map(); this.images = new Map(); this.fonts = new Map();
     this.initialized = false; this.layoutKey = ''; this.layoutPending = false; this.loaded = new Set(); this.page = 'loading'; this.selection = 0; this.track = 0; this.busy = false; this.lastPad = new Set(); this.alive = true;
     const savedSelection = loadPlayerSelection();
-    this.quadId = savedSelection.quadId; this.riderId = savedSelection.riderId; this.lastFreestyleEnvironment = savedSelection.freestyleEnvironment; this.playerName = 'Rider'; this.roomCode = ''; this.createCode = ''; this.garageReturn = 'single';
+    this.quadId = savedSelection.quadId; this.riderId = savedSelection.riderId; this.lastFreestyleEnvironment = savedSelection.freestyleEnvironment; this.playerName = savedSelection.playerName; this.trackMode = 'single'; this.roomCode = ''; this.createCode = ''; this.garageReturn = 'single';
     this.bindingDevice = 'keyboard'; this.bindingPage = 0; this.bindingRow = 0; this.musicPage = 0;
     this.capture = null; this.menuKeys = new Set();
     this.raceSettings={laps:3,cpu:3,difficulty:1};this.raceActive=false;this.raceAvailable=false;
@@ -119,7 +121,9 @@ export class Frontend {
         }
         if (!held.size) this.padBlocked = false;
         if (!this.root.hidden && !this.padBlocked) for (const action of held) if (!this.lastPad.has(action)) {
-          if (action === 'pause' && ['settings','extras','pause','players','hud-settings','minimap-config','controls','bindings','music','multiplayer','create-lobby','join-lobby','lobby','garage'].includes(this.page) && !this.busy && this.activeSetup && !this.menuSettings()) this.resume();
+          if (action === 'pause' && this.page === 'garage' && this.garageReturn === 'pause' && !this.busy) void this.leaveGarage();
+          else if (action === 'pause' && this.page === 'tracks' && this.trackMode === 'change' && !this.busy) { this.trackMode = 'single'; this.resume(); }
+          else if (action === 'pause' && ['settings','extras','pause','players','hud-settings','minimap-config','controls','bindings','music','multiplayer','create-lobby','join-lobby','lobby','garage'].includes(this.page) && !this.busy && this.activeSetup && !this.menuSettings()) this.resume();
           else void this.action(action === 'pause' ? 'accept' : action);
         }
         this.lastPad = held;
@@ -231,9 +235,11 @@ export class Frontend {
     this.track = index; this.layoutKey = ''; void this.refresh();
   }
   garageCatalog() {
-    const online = ['multiplayer','create-lobby','join-lobby','lobby'].includes(this.garageReturn);
+    const online = this.onlineGarage();
     return (this.frame?.catalog ?? []).filter(item => !online || item.group === 'ATV');
   }
+  // Multiplayer garages (menus, or Change ATV and Rider mid-session) are ATV only.
+  onlineGarage() { return ['multiplayer','create-lobby','join-lobby','lobby'].includes(this.garageReturn) || (this.garageReturn === 'pause' && Boolean(this.multiplayer?.state?.lobby)); }
   vehicleSummary() {
     const catalog = this.frame?.catalog?.length ? this.garageCatalog() : [];
     const item = catalog.find(entry => entry.id === this.quadId), group = catalog.filter(entry => entry.group === item?.group);
@@ -287,11 +293,11 @@ export class Frontend {
     this.track = Math.max(0,this.tracks.findIndex(t=>t.id===setup.map));
     const page = setup.mode==='multiplayer' ? (setup.action==='create'?'create-lobby':'join-lobby') : setup.activity==='race'?'race':'tracks';
     await this.show(page);
-    this.lobbySetup = setup.mode==='multiplayer' && setup.action==='create' && !setup.play ? {map:setup.map,start:false} : undefined;
     if (!setup.play) return;
     try {
       if (setup.mode==='multiplayer') {
-        await this.multiplayer.action(setup.action==='create'?'host':'join',this,setup.action==='create'?{map:setup.map,start:true}:undefined);
+        // A join link reopens its room on the link's map if the room ended.
+        await this.multiplayer.action(setup.action==='create'?'host':'join',this,{map:setup.map,start:true});
       } else {
         if (setup.activity==='race' && !this.raceAvailable) throw Error('Race resources are unavailable. Try Freestyle.');
         await this.launchSingle(setup.map,setup.activity==='race'?setup.raceSettings:null);
@@ -395,7 +401,8 @@ export class Frontend {
       if (this.page === 'bindings' && this.selection < 4) this.bindingRow = this.bindingPage * 4 + this.selection;
     } else if (action === 'back') {
       if (this.page === 'pause') return this.resume();
-      if (this.page === 'garage') return this.show(this.garageReturn);
+      if (this.page === 'garage') return this.leaveGarage();
+      if (this.page === 'tracks' && this.trackMode !== 'single') { const mode = this.trackMode; this.trackMode = 'single'; return this.show(mode === 'host' ? 'create-lobby' : 'pause'); }
       if (this.page === 'lobby') return this.run('leave');
       if (this.page === 'settings') return this.show(this.settingsReturn ?? 'main');
       return this.show(({settings:this.settingsReturn ?? 'main',extras:'settings',players:'pause',bindings:'controls',music:'settings','hud-settings':'settings','minimap-config':'hud-settings',controls:'settings',main:'title',single:'main',tracks:'single',race:'single','create-lobby':'multiplayer','join-lobby':'multiplayer',multiplayer:'main'})[this.page] ?? 'title');
@@ -417,10 +424,14 @@ export class Frontend {
     } else if (action === 'accept') {
       if (this.page === 'title') return this.run(this.frame.choices[this.selection]);
       if (this.page === 'tracks') {
-        const environment = this.tracks[this.track].id;
+        const environment = this.tracks[this.track].id, mode = this.trackMode;
         this.busy = true;
-        try { await this.launchSingle(environment); }
-        catch (error) { await this.show('tracks'); this.fail(error); }
+        try {
+          if (mode === 'host') { this.trackMode = 'single'; this.saveSelection(); await this.multiplayer.action('host', this, {map:environment}); }
+          else if (mode === 'change') { this.trackMode = 'single'; await this.multiplayer.setMap(environment); this.busy = false; this.resume(); }
+          else await this.launchSingle(environment);
+        }
+        catch (error) { if (mode !== 'single') { this.trackMode = mode; } await this.show(mode === 'host' ? 'create-lobby' : mode === 'change' ? 'pause' : 'tracks'); this.fail(error); }
         this.busy = false; return;
       }
       return this.run(this.frame.choices[this.selection]);
@@ -433,11 +444,20 @@ export class Frontend {
       if (action === 'copyride') return await copyRideUrl(this.rideUrl(),this.notice);
       if (action === 'settings') { this.settingsReturn = this.page === 'pause' ? 'pause' : 'main'; return this.show('settings'); }
       if (action === 'garage') { this.garageReturn = this.page; return this.show('garage'); }
+      if (action === 'changeride') { this.garageReturn = 'pause'; this.rideBeforeGarage = [this.quadId, this.riderId]; return this.show('garage'); }
+      if (action === 'hosttrack') {
+        // Hosting picks a track first; in a session the host moves everyone.
+        if (this.page === 'create-lobby' && this.quadId >= 27) throw new Error('Choose an ATV for multiplayer. Motorcycles are available in Single Player.');
+        this.trackMode = this.page === 'create-lobby' ? 'host' : 'change';
+        const current = this.tracks.findIndex(t => t.id === this.multiplayer?.state?.environment);
+        if (this.trackMode === 'change' && current >= 0) this.track = current;
+        return this.show('tracks');
+      }
       if (action.startsWith('vehicle:')) { const id = Number(action.slice(8)); if (this.garageCatalog().some(item => item.id === id)) { this.quadId = id; this.scrollScreenSelection = true; } }
-      else if (action === 'quadprev' || action === 'quadnext') { const count = ['multiplayer','create-lobby','join-lobby','lobby'].includes(this.garageReturn) ? 26 : 46; this.quadId = ((this.quadId - 1 + (action === 'quadnext' ? 1 : count - 1)) % count) + 1; }
+      else if (action === 'quadprev' || action === 'quadnext') { const count = this.onlineGarage() ? 26 : 46; this.quadId = ((this.quadId - 1 + (action === 'quadnext' ? 1 : count - 1)) % count) + 1; }
       else if (action === 'riderchange' && this.quadId < 27) this.riderId = 1 - this.riderId;
       else if (action.startsWith('spawn:')) { this.busy=true; try { await this.multiplayer.action(action,this); } finally {this.busy=false;} return; }
-      else if (['host','join','share','lobbymap','lobbystart','leave'].includes(action)) { if (['host','join'].includes(action) && this.quadId>=27) throw new Error('Choose an ATV for multiplayer. Motorcycles are available in Single Player.'); const setup = action==='host'?this.lobbySetup:undefined; this.lobbySetup=undefined; return await this.multiplayer.action(action, this, setup); }
+      else if (['host','join','share','leave'].includes(action)) { if (['host','join'].includes(action) && this.quadId>=27) throw new Error('Choose an ATV for multiplayer. Motorcycles are available in Single Player.'); if (['host','join'].includes(action)) this.saveSelection(); return await this.multiplayer.action(action, this); }
       else if (['main','single','tracks','settings','extras','pause','players','hud-settings','minimap-config','controls','music','multiplayer','create-lobby','join-lobby','lobby','race'].includes(action)) return await this.show(action);
       if (action === 'racestart') {
         try { await this.launchSingle('env01', {...this.raceSettings}); }
@@ -483,15 +503,25 @@ export class Frontend {
       this.layoutKey = ''; await this.refresh();
     } catch (error) { this.fail(error); }
   }
+  // Leaving the garage mid-session applies a changed ATV/rider in place.
+  async leaveGarage() {
+    const previous = this.rideBeforeGarage; this.rideBeforeGarage = null;
+    if (this.garageReturn !== 'pause') return this.show(this.garageReturn);
+    if (!this.multiplayer?.state?.lobby || !previous || (previous[0] === this.quadId && previous[1] === this.riderId)) return this.show('pause');
+    this.saveSelection(); this.busy = true;
+    try { await this.multiplayer.changeRide(this); }
+    catch (error) { await this.show('pause'); this.fail(error); }
+    finally { this.busy = false; }
+  }
   saveSelection() {
-    savePlayerSelection({quadId:this.quadId, riderId:this.riderId, freestyleEnvironment:this.lastFreestyleEnvironment});
+    savePlayerSelection({quadId:this.quadId, riderId:this.riderId, freestyleEnvironment:this.lastFreestyleEnvironment, playerName:this.playerName});
   }
   async refresh(force = false) {
     if (!this.initialized || this.root.hidden || (this.busy && this.page !== 'loading' && !force) || this.layoutPending) return;
     const stage = this.canvas.parentElement, track = this.page === 'loading' ? this.loadingTrack : this.page === 'lobby' ? this.tracks.find(t=>t.id===this.multiplayer?.state?.environment) : this.page === 'race' ? this.tracks.find(t=>t.id==='env01') : this.tracks[this.track];
     const music = this.audio?.()?.music, musicState = music?.snapshot();
     const lobby = this.multiplayer?.state?.lobby;
-    const request = {lobby_players:(lobby?.players??[]).map(p=>({id:String(p.id),label:`P${p.id+1} ${p.name}${p.id===this.multiplayer.state.peer?' (You)':''}`,value:p.id===this.multiplayer.state.peer?'self':(this.multiplayer.remote.find(r=>r.peer===p.id && !r.stale)?'ready':'waiting')})),race_laps:this.raceSettings.laps,race_cpu:this.raceSettings.cpu,race_difficulty:this.raceSettings.difficulty,race_available:this.raceAvailable,race_active:this.raceActive,quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? (this.page==='create-lobby'?this.createCode:this.roomCode),lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:track?.name ?? '',track_image:(this.page === 'lobby' && track?.id === 'training' && this.images.has(trainingPreview) ? trainingPreview : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
+    const request = {lobby_players:(lobby?.players??[]).map(p=>({id:String(p.id),label:`${p.name}${p.id===this.multiplayer.state.peer?' (You)':''}`,value:p.id===this.multiplayer.state.peer?'self':(this.multiplayer.remote.find(r=>r.peer===p.id && !r.stale)?'ready':'waiting')})),race_laps:this.raceSettings.laps,race_cpu:this.raceSettings.cpu,race_difficulty:this.raceSettings.difficulty,race_available:this.raceAvailable,race_active:this.raceActive,quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? (this.page==='create-lobby'?this.createCode:this.roomCode),lobby_status:lobby ? `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}` : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:track?.name ?? '',track_image:(this.page === 'lobby' && track?.id === 'training' && this.images.has(trainingPreview) ? trainingPreview : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
       minimap_orientation:this.minimapSettings?.orientation ?? 'north-up',minimap_shape:this.minimapSettings?.shape ?? 'circle',minimap_corner:this.minimapSettings?.corner ?? 'top-right',minimap_enabled:this.minimapSettings?.enabled ?? true,minimap_size:this.minimapSettings?.size ?? 160,minimap_zoom:this.minimapSettings?.zoom ?? 50,funny_crashes:this.crashSettings?.enabled ?? true,crash_mode:this.crashSettings?.mode ?? 'crazy',original_camera:this.crashSettings?.camera === 'original',speed_rush:this.crashSettings?.speed ?? 'off',mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
       music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
@@ -786,7 +816,7 @@ export class Frontend {
         label.append(heading,input); parent.append(label);
       };
       if (this.page === 'pause') {
-        const groups = [['ride',['resume','reset','players']],['preferences',['settings']],['session',['copyride','devlog','main','lobby']]];
+        const groups = [['ride',['resume','reset','players','changeride','hosttrack']],['preferences',['settings']],['session',['copyride','devlog','main','leave']]];
         this.pauseOrder = [];
         for (const [name,actions] of groups) {
           const group = section(`pause-${name}`);

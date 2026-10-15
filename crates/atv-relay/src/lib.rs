@@ -10,8 +10,20 @@ const ROOM_KEY: &str = "room";
 const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const MAX_AGE_MS: f64 = 12. * 60. * 60. * 1000.;
 const IDLE_MS: f64 = 60_000.;
-const HOST_GRACE_MS: f64 = 30_000.;
+/// A dropped rider keeps their slot (and color) this long for reconnection.
+const GRACE_MS: f64 = 30_000.;
 const CLEANUP_MS: i64 = 30_000;
+
+/// A participant slot held for reconnection. The creator's slot 0 is held
+/// (without a player yet) until its first connection arrives.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+struct Reserved {
+    peer: u8,
+    #[serde(default)]
+    player: Option<Participant>,
+    key: String,
+    since_ms: f64,
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Room {
@@ -21,10 +33,13 @@ struct Room {
     admission_lease: Option<String>,
     #[serde(default)]
     generation: u32,
+    /// Current map authority. Passes to another rider when the host leaves.
     #[serde(default)]
-    host_disconnected_ms: Option<f64>,
+    host: u8,
     #[serde(default)]
-    host_player: Option<Participant>,
+    reserved: Vec<Reserved>,
+    #[serde(default)]
+    empty_since_ms: Option<f64>,
     code: RoomCode,
     host_token: String,
     created_ms: f64,
@@ -42,6 +57,12 @@ struct Connection {
     generation: u32,
     #[serde(default)]
     close_recoverable: Option<bool>,
+    /// Rejoin secret for this slot; only its owner receives it.
+    #[serde(default)]
+    key: String,
+    /// Map this rider has loaded. Poses are relayed only on the room's map.
+    #[serde(default)]
+    ready_map: u16,
     active: bool,
     peer: u8,
     player: Option<Participant>,
@@ -73,11 +94,29 @@ fn recoverable_close(code: usize, reason: &str) -> bool {
         || (code == 1000 && reason == "Connection timed out")
 }
 fn room_reusable(room: &Room, instant: f64) -> bool {
-    room.closed
-        || instant - room.created_ms > MAX_AGE_MS
-        || room
-            .host_disconnected_ms
-            .is_some_and(|t| instant - t >= HOST_GRACE_MS)
+    room.closed || instant - room.created_ms > MAX_AGE_MS
+}
+/// Lowest slot that is neither connected nor held for a reconnecting rider.
+fn free_slot(taken: impl Iterator<Item = u8> + Clone) -> Option<u8> {
+    (0..MAX_PLAYERS as u8).find(|id| taken.clone().all(|t| t != *id))
+}
+/// Reservations older than the reconnect grace, oldest first.
+fn expired(reserved: &[Reserved], instant: f64) -> Vec<Reserved> {
+    reserved
+        .iter()
+        .filter(|r| instant - r.since_ms >= GRACE_MS)
+        .cloned()
+        .collect()
+}
+fn key_bytes(key: &str) -> [u8; 16] {
+    let mut out = [0; 16];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = key
+            .get(i * 2..i * 2 + 2)
+            .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+            .unwrap_or(0);
+    }
+    out
 }
 
 fn same_room(room: &Room, connection: &Connection) -> bool {
@@ -196,8 +235,15 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
                     instance: random_token()?,
                     admission_lease: admission_lease.clone(),
                     generation: 0,
-                    host_disconnected_ms: None,
-                    host_player: None,
+                    host: 0,
+                    // Hold the creator's slot until its first connection.
+                    reserved: vec![Reserved {
+                        peer: 0,
+                        player: None,
+                        key: token.clone(),
+                        since_ms: now(),
+                    }],
+                    empty_since_ms: None,
                     code,
                     host_token: token.clone(),
                     created_ms: now(),
@@ -285,6 +331,7 @@ impl LobbyRoom {
             })
     }
 
+    /// Connected riders plus riders whose slots are held for reconnection.
     fn lobby(&self, except: Option<&WebSocket>) -> Result<Lobby> {
         let room = self.room.borrow();
         let room = room.as_ref().ok_or("Room does not exist")?;
@@ -294,20 +341,60 @@ impl LobbyRoom {
             .filter(|(ws, _)| except != Some(ws))
             .filter_map(|(_, connection)| connection.player)
             .collect::<Vec<_>>();
-        // Keep host identity valid while its authenticated socket recovers.
-        if !players.iter().any(|p| p.id == 0)
-            && let Some(player) = &room.host_player
-        {
-            players.push(player.clone());
+        for held in &room.reserved {
+            if let Some(player) = &held.player
+                && !players.iter().any(|p| p.id == held.peer)
+            {
+                players.push(player.clone());
+            }
         }
         players.sort_by_key(|player| player.id);
+        let host = if players.iter().any(|p| p.id == room.host) {
+            room.host
+        } else {
+            players.first().map_or(room.host, |p| p.id)
+        };
         Ok(Lobby {
-            host: 0,
+            host,
             epoch: room.epoch,
             map: room.map,
             started: room.started,
             players,
         })
+    }
+
+    async fn save(&self, room: Room) -> Result<()> {
+        *self.room.borrow_mut() = Some(room.clone());
+        self.state.storage().put(ROOM_KEY, room).await
+    }
+
+    /// Pass map authority to the lowest connected rider, else a held slot.
+    fn promote(&self, room: &mut Room, except: Option<&WebSocket>) -> Result<()> {
+        let connected = self
+            .connections()?
+            .into_iter()
+            .filter(|(ws, c)| except != Some(ws) && c.player.is_some())
+            .map(|(_, c)| c.peer)
+            .min();
+        if let Some(peer) = connected.or_else(|| {
+            room.reserved
+                .iter()
+                .filter(|r| r.player.is_some())
+                .map(|r| r.peer)
+                .min()
+        }) {
+            room.host = peer;
+        }
+        Ok(())
+    }
+
+    /// Roster update to everyone still connected, when anyone remains.
+    fn broadcast_lobby(&self, except: Option<&WebSocket>) -> Result<()> {
+        let lobby = self.lobby(except)?;
+        if !lobby.players.is_empty() {
+            self.broadcast(&Packet::Lobby(lobby), except)?;
+        }
+        Ok(())
     }
 
     /// Lifecycle-only diagnostics: no names, credentials, packet bodies or URLs.
@@ -403,62 +490,55 @@ impl LobbyRoom {
     }
 
     async fn departed(&self, ws: &WebSocket, recoverable: bool) -> Result<()> {
-        if let Some(mut connection) = ws.deserialize_attachment::<Connection>()? {
-            if !connection.active {
-                return Ok(());
-            }
-            connection.active = false;
-            ws.serialize_attachment(&connection)?;
-            if self
-                .room
-                .borrow()
-                .as_ref()
-                .is_none_or(|room| room.closed || !same_room(room, &connection))
-            {
-                return Ok(());
-            }
-            if connection.peer == 0 {
-                if !recoverable || connection.player.is_none() {
-                    return self.finish("Host left the room").await;
-                }
-                let mut room = self.room.borrow().clone().unwrap();
-                room.host_disconnected_ms = Some(now());
-                room.host_player = connection.player;
-                *self.room.borrow_mut() = Some(room.clone());
-                self.state.storage().put(ROOM_KEY, room).await?;
-                self.record(
-                    "host_reconnect_grace",
-                    Some(ws),
-                    "Waiting up to 30 seconds",
-                    None,
-                    None,
-                );
-                self.state.storage().set_alarm(5_000_i64).await?;
-                return Ok(());
-            }
-            self.bump_epoch().await?;
+        let Some(mut connection) = ws.deserialize_attachment::<Connection>()? else {
+            return Ok(());
+        };
+        if !connection.active {
+            return Ok(());
+        }
+        connection.active = false;
+        ws.serialize_attachment(&connection)?;
+        let Some(mut room) = self.room.borrow().clone() else {
+            return Ok(());
+        };
+        if room.closed || !same_room(&room, &connection) {
+            return Ok(());
+        }
+        let held = recoverable && connection.player.is_some();
+        room.reserved.retain(|r| r.peer != connection.peer);
+        if held {
+            // Keep the rider's slot, color and roster entry while it reconnects.
+            room.reserved.push(Reserved {
+                peer: connection.peer,
+                player: connection.player.clone(),
+                key: connection.key.clone(),
+                since_ms: now(),
+            });
+            self.record(
+                "peer_reconnect_grace",
+                Some(ws),
+                "Holding slot for 30 seconds",
+                None,
+                None,
+            );
+            self.state.storage().set_alarm(5_000_i64).await?;
+        } else {
             self.broadcast(
                 &Packet::Leave {
                     peer: connection.peer,
                 },
                 Some(ws),
             )?;
-            let lobby = self.lobby(Some(ws))?;
-            if !lobby.players.is_empty() {
-                self.broadcast(&Packet::Lobby(lobby), Some(ws))?;
+            if room.host == connection.peer {
+                self.promote(&mut room, Some(ws))?;
             }
         }
-        Ok(())
-    }
-
-    async fn bump_epoch(&self) -> Result<()> {
-        let saved = {
-            let mut room = self.room.borrow_mut();
-            let room = room.as_mut().ok_or("Room does not exist")?;
-            room.epoch = room.epoch.wrapping_add(1);
-            room.clone()
-        };
-        self.state.storage().put(ROOM_KEY, saved).await
+        if self.connections()?.iter().all(|(other, _)| other == ws) {
+            room.empty_since_ms.get_or_insert(now());
+        }
+        room.epoch = room.epoch.wrapping_add(1);
+        self.save(room).await?;
+        self.broadcast_lobby(Some(ws))
     }
 }
 
@@ -527,67 +607,68 @@ impl DurableObject for LobbyRoom {
             .map(|s| s.eq_ignore_ascii_case("websocket"))
             != Some(true)
         {
-            return Response::error("WebSocket required", 426);
+            // Invite links check a code before connecting; an ended code can
+            // then be opened again by whoever follows the link.
+            let lobby = self.lobby(None)?;
+            return Response::from_json(&serde_json::json!({
+                "players": lobby.players.len(), "max": MAX_PLAYERS,
+                "map": room.map, "started": room.started,
+            }));
         }
-        let host_token = req
+        let key = req
             .url()?
             .query_pairs()
-            .find(|(k, _)| k == "host")
-            .map(|(_, v)| v.into_owned());
+            .find(|(k, _)| k == "key" || k == "host")
+            .map(|(_, v)| v.into_owned())
+            .filter(|key| key.len() == 32 && key.bytes().all(|b| b.is_ascii_hexdigit()));
+        let mut room = room;
         let mut connections = self.connections()?;
-        let is_host = host_token.as_deref() == Some(room.host_token.as_str());
-        if is_host {
-            // The owner capability can replace its broken connection, even if
-            // the old transport has not delivered a close callback yet.
+        let mut reclaimed = None;
+        if let Some(key) = &key {
+            // A rider's key replaces its own broken connection, even if the
+            // old transport has not delivered a close callback yet.
             for (socket, connection) in &mut connections {
-                if connection.peer == 0 {
+                if &connection.key == key {
+                    reclaimed = Some(connection.peer);
                     connection.active = false;
                     socket.serialize_attachment(&connection)?;
-                    let _ = self.close_socket(socket, 1000, "Host connection replaced");
+                    let _ = self.close_socket(socket, 1000, "Connection replaced");
                 }
             }
             connections.retain(|(_, c)| c.active);
-        }
-        if connections.len() >= MAX_PLAYERS {
-            self.record("connection_rejected", None, "Room is full", Some(409), None);
-            return Response::error("Room is full", 409);
-        }
-        let peer = if is_host {
-            0
-        } else {
-            if host_token.is_some() {
-                self.record(
-                    "connection_rejected",
-                    None,
-                    "Invalid host token",
-                    Some(403),
-                    None,
-                );
-                return Response::error("Invalid host token", 403);
+            if let Some(index) = room.reserved.iter().position(|r| &r.key == key) {
+                reclaimed.get_or_insert(room.reserved.remove(index).peer);
             }
-            if !connections
-                .iter()
-                .any(|(_, c)| c.peer == 0 && c.player.is_some())
-            {
-                self.record(
-                    "connection_rejected",
-                    None,
-                    "Host is not connected",
-                    Some(409),
-                    None,
-                );
-                return Response::error("Host is not connected", 409);
+        }
+        let peer = match reclaimed {
+            Some(peer) => peer,
+            None => {
+                let taken = connections
+                    .iter()
+                    .map(|(_, c)| c.peer)
+                    .chain(room.reserved.iter().map(|r| r.peer))
+                    .collect::<Vec<_>>();
+                let Some(peer) = free_slot(taken.iter().copied()) else {
+                    self.record("connection_rejected", None, "Room is full", Some(409), None);
+                    return Response::error("Game is full!", 409);
+                };
+                peer
             }
-            (1..MAX_PLAYERS as u8)
-                .find(|id| connections.iter().all(|(_, c)| c.peer != *id))
-                .ok_or("Room is full")?
         };
+        let key = match (reclaimed, key) {
+            (Some(_), Some(key)) => key,
+            _ => random_token()?,
+        };
+        room.empty_since_ms = None;
+        self.save(room.clone()).await?;
         let pair = WebSocketPair::new()?;
         let instant = now();
         pair.server.serialize_attachment(Connection {
             instance: room.instance.clone(),
             generation: room.generation,
             close_recoverable: None,
+            key,
+            ready_map: 0,
             active: true,
             peer,
             player: None,
@@ -639,8 +720,11 @@ impl DurableObject for LobbyRoom {
         let packet = match packet {
             Packet::Delta(mut d) => {
                 d.snapshot.peer = connection.peer;
+                // A delta can race a map/vehicle change. Wait for the sender's
+                // next full snapshot rather than ending a healthy session.
                 let Some(base) = connection.snapshot.as_ref() else {
-                    return self.close_socket(&ws, 1008, "Snapshot baseline missing");
+                    ws.serialize_attachment(connection)?;
+                    return Ok(());
                 };
                 match atv_net::apply_delta(&d, base) {
                     Ok(s) => Packet::Snapshot((s).into()),
@@ -657,90 +741,128 @@ impl DurableObject for LobbyRoom {
                     return self.close_socket(&ws, 1008, "Unknown actor model");
                 }
                 player.id = connection.peer;
-                connection.player = Some(player.clone());
+                connection.player = Some(player);
                 ws.serialize_attachment(&connection)?;
-                if connection.peer == 0 {
-                    if room.host_player.is_some() {
-                        // A resumed client starts its pose sequence at zero.
-                        // Clear observers' old buffers before its new snapshots.
-                        self.broadcast(&Packet::Leave { peer: 0 }, Some(&ws))?;
-                    }
-                    let mut resumed = room.clone();
-                    resumed.host_disconnected_ms = None;
-                    resumed.host_player = Some(player);
-                    *self.room.borrow_mut() = Some(resumed.clone());
-                    self.state.storage().put(ROOM_KEY, resumed).await?;
+                let mut room = room;
+                let present =
+                    self.connections()?.iter().any(|(other, c)| {
+                        other != &ws && c.player.is_some() && c.peer == room.host
+                    }) || room
+                        .reserved
+                        .iter()
+                        .any(|r| r.player.is_some() && r.peer == room.host);
+                if !present {
+                    room.host = connection.peer;
                 }
+                room.epoch = room.epoch.wrapping_add(1);
+                self.save(room.clone()).await?;
+                // A reclaimed or reused slot starts a new pose sequence; clear
+                // observers' old buffers before its new snapshots arrive.
+                self.broadcast(
+                    &Packet::Leave {
+                        peer: connection.peer,
+                    },
+                    Some(&ws),
+                )?;
                 self.record("peer_joined", Some(&ws), "", None, None);
-                self.bump_epoch().await?;
-                let lobby = self.lobby(None)?;
                 send(
                     &ws,
                     &Packet::Welcome {
                         peer: connection.peer,
                         code,
-                        lobby: lobby.clone(),
+                        lobby: self.lobby(None)?,
+                        key: key_bytes(&connection.key),
                     },
                 )?;
-                self.broadcast(&Packet::Lobby(lobby), Some(&ws))?;
-                // Give a late joiner current state even if all peers are paused.
-                for (peer, other) in self.connections()? {
-                    if peer != ws
-                        && let Some(s) = other.snapshot
-                    {
-                        send(&ws, &Packet::Snapshot(s.into()))?;
-                    }
-                }
+                self.broadcast_lobby(Some(&ws))?;
+                return Ok(());
             }
             Packet::Snapshot(mut snapshot) if connection.player.is_some() => {
-                if !room.started {
-                    ws.serialize_attachment(connection)?;
-                    return Ok(());
-                }
                 let player = connection
                     .player
                     .as_ref()
                     .expect("matched connected player");
-                if snapshot.atv_model != player.atv_model
-                    || snapshot.rider_model != player.rider_model
-                {
-                    return self.close_socket(&ws, 1008, "Actor model changed");
-                }
+                let current = snapshot.atv_model == player.atv_model
+                    && snapshot.rider_model == player.rider_model;
                 if connection
                     .sequence
                     .is_none_or(|old| atv_net::sequence_newer(snapshot.sequence, old))
                 {
                     connection.sequence = Some(snapshot.sequence);
                     snapshot.peer = connection.peer;
+                    // The sender's delta baseline advances on every send, so the
+                    // relay keeps it even when this pose is not forwarded.
                     // Persist only bounded attachment state; no SQL writes per pose.
                     connection.snapshot = Some(snapshot.as_ref().clone());
-                    self.broadcast(&Packet::Snapshot(snapshot), Some(&ws))?;
+                    // Poses from a previous map or vehicle are never relayed.
+                    if room.started && connection.ready_map == room.map && current {
+                        self.broadcast(&Packet::Snapshot(snapshot), Some(&ws))?;
+                    }
                 }
             }
-            Packet::Ping { nonce } if connection.player.is_some() => {
-                send(&ws, &Packet::Pong { nonce })?
+            Packet::Ready { map } if connection.player.is_some() => {
+                if map == room.map {
+                    connection.ready_map = map;
+                    // Give an arriving rider everyone's current state, even if
+                    // all peers are momentarily idle or suspended.
+                    for (peer, other) in self.connections()? {
+                        if peer != ws
+                            && other.ready_map == room.map
+                            && let (Some(s), Some(p)) = (other.snapshot, other.player)
+                            && s.atv_model == p.atv_model
+                            && s.rider_model == p.rider_model
+                        {
+                            send(&ws, &Packet::Snapshot(s.into()))?;
+                        }
+                    }
+                }
             }
+            Packet::Profile(mut player) if connection.player.is_some() => {
+                if !(1..=26).contains(&player.atv_model) || player.rider_model > 1 {
+                    return self.close_socket(&ws, 1008, "Unknown actor model");
+                }
+                player.id = connection.peer;
+                connection.player = Some(player);
+                // The rider reloads with its new vehicle and reports Ready again.
+                connection.ready_map = 0;
+                connection.snapshot = None;
+                ws.serialize_attachment(&connection)?;
+                let mut room = room;
+                room.epoch = room.epoch.wrapping_add(1);
+                self.save(room).await?;
+                self.broadcast_lobby(None)?;
+                return Ok(());
+            }
+            Packet::Ping { nonce } if connection.player.is_some() => send(
+                &ws,
+                &Packet::Pong {
+                    nonce,
+                    server_ms: now() as u64,
+                },
+            )?,
             Packet::SetLobby {
                 epoch,
                 map,
                 started,
-            } if connection.peer == 0 && connection.player.is_some() => {
+            } if connection.player.is_some() && self.lobby(None)?.host == connection.peer => {
                 if !atv_net::valid_map(map) {
                     return self.close_socket(&ws, 1008, "Unknown environment");
                 }
-                if epoch != room.epoch || (room.started && (map != room.map || !started)) {
+                if epoch != room.epoch || (room.started && !started) {
                     send(&ws, &Packet::Lobby(self.lobby(None)?))?;
                     ws.serialize_attachment(connection)?;
                     return Ok(());
                 }
                 let mut next = room;
+                let moved = next.map != map;
                 next.map = map;
                 next.started = started;
                 next.epoch = next.epoch.wrapping_add(1);
-                self.state.storage().put(ROOM_KEY, &next).await?;
-                *self.room.borrow_mut() = Some(next);
+                self.save(next).await?;
                 self.record(
-                    if started {
+                    if moved {
+                        "map_changed"
+                    } else if started {
                         "lobby_started"
                     } else {
                         "lobby_updated"
@@ -753,6 +875,10 @@ impl DurableObject for LobbyRoom {
                 self.broadcast(&Packet::Lobby(self.lobby(None)?), None)?;
             }
             Packet::Leave { .. } => return self.close_socket(&ws, 1000, "Left room"),
+            // A former host's map command can race a handoff; resynchronize it.
+            Packet::SetLobby { .. } if connection.player.is_some() => {
+                send(&ws, &Packet::Lobby(self.lobby(None)?))?
+            }
             _ => return self.close_socket(&ws, 1008, "Message not permitted"),
         }
         ws.serialize_attachment(connection)?;
@@ -817,41 +943,54 @@ impl DurableObject for LobbyRoom {
             return Response::empty();
         }
         let instant = now();
-        if room
-            .host_disconnected_ms
-            .is_some_and(|t| instant - t >= HOST_GRACE_MS)
-        {
-            self.finish("Host connection could not be restored").await?;
-        } else if instant - room.created_ms > MAX_AGE_MS {
+        if instant - room.created_ms > MAX_AGE_MS {
             self.finish("Room expired").await?;
-        } else {
-            let connections = self.connections()?;
-            if connections.is_empty()
-                && room.host_disconnected_ms.is_none()
-                && instant - room.created_ms > IDLE_MS
-            {
-                self.finish("Empty room expired").await?;
-            } else {
-                for (ws, connection) in connections {
-                    if instant - connection.last_seen_ms > IDLE_MS {
-                        let _ = self.close_socket(&ws, 1000, "Connection timed out");
-                        self.departed(&ws, true).await?;
-                    }
-                }
-                if self.room.borrow().as_ref().is_some_and(|r| !r.closed) {
-                    let delay = if self
-                        .room
-                        .borrow()
-                        .as_ref()
-                        .is_some_and(|r| r.host_disconnected_ms.is_some())
-                    {
-                        5_000_i64
-                    } else {
-                        30_000_i64
-                    };
-                    self.state.storage().set_alarm(delay).await?;
-                }
+            return Response::empty();
+        }
+        for (ws, connection) in self.connections()? {
+            if instant - connection.last_seen_ms > IDLE_MS {
+                let _ = self.close_socket(&ws, 1000, "Connection timed out");
+                self.departed(&ws, true).await?;
             }
+        }
+        let Some(mut room) = self.room.borrow().clone() else {
+            return Response::empty();
+        };
+        let gone = expired(&room.reserved, instant);
+        if !gone.is_empty() {
+            room.reserved.retain(|r| !gone.contains(r));
+            for held in &gone {
+                if held.player.is_some() {
+                    self.broadcast(&Packet::Leave { peer: held.peer }, None)?;
+                }
+                self.record("peer_slot_released", None, "", None, None);
+            }
+            if gone.iter().any(|r| r.peer == room.host) {
+                self.promote(&mut room, None)?;
+            }
+            room.epoch = room.epoch.wrapping_add(1);
+        }
+        let empty = self.connections()?.is_empty() && room.reserved.is_empty();
+        if empty {
+            room.empty_since_ms.get_or_insert(instant);
+        } else {
+            room.empty_since_ms = None;
+        }
+        let idle = room
+            .empty_since_ms
+            .is_some_and(|since| instant - since > IDLE_MS);
+        let holding = !room.reserved.is_empty();
+        self.save(room).await?;
+        if !gone.is_empty() {
+            self.broadcast_lobby(None)?;
+        }
+        if idle {
+            self.finish("Empty room expired").await?;
+        } else {
+            self.state
+                .storage()
+                .set_alarm(if holding { 5_000_i64 } else { 30_000_i64 })
+                .await?;
         }
         Response::empty()
     }
@@ -882,22 +1021,49 @@ mod tests {
     }
 
     #[test]
-    fn old_room_schema_and_reuse_deadlines_preserve_active_owners() {
+    fn old_room_schema_loads_and_only_closed_or_expired_codes_are_reusable() {
         let mut room: Room = serde_json::from_value(serde_json::json!({
             "code": b"ABCD2345", "host_token":"secret", "created_ms":100.,
-            "closed":false,"epoch":1,"map":8,"started":true
+            "closed":false,"epoch":1,"map":8,"started":true,
+            "host_disconnected_ms": 5., "host_player": null
         }))
         .unwrap();
-        assert_eq!(room.generation, 0);
-        assert!(room.host_player.is_none());
+        assert_eq!((room.generation, room.host), (0, 0));
+        assert!(room.reserved.is_empty());
         assert!(!room_reusable(&room, 101.));
-        room.host_disconnected_ms = Some(1000.);
-        assert!(!room_reusable(&room, 1000. + HOST_GRACE_MS - 1.));
-        assert!(room_reusable(&room, 1000. + HOST_GRACE_MS));
-        room.host_disconnected_ms = None;
+        assert!(!room_reusable(&room, 100. + MAX_AGE_MS));
         assert!(room_reusable(&room, 101. + MAX_AGE_MS));
         room.closed = true;
         assert!(room_reusable(&room, 101.));
+    }
+
+    #[test]
+    fn slots_skip_connected_and_held_riders_and_holds_expire_after_grace() {
+        assert_eq!(free_slot([].into_iter()), Some(0));
+        assert_eq!(free_slot([0, 2].into_iter()), Some(1));
+        assert_eq!(free_slot([1, 0, 2].into_iter()), Some(3));
+        assert_eq!(free_slot([0, 1, 2, 3].into_iter()), None);
+        let held = |peer, since_ms| Reserved {
+            peer,
+            player: None,
+            key: "00".repeat(16),
+            since_ms,
+        };
+        let reserved = [held(1, 0.), held(2, 10_000.)];
+        assert!(expired(&reserved, GRACE_MS - 1.).is_empty());
+        assert_eq!(expired(&reserved, GRACE_MS), vec![held(1, 0.)]);
+        assert_eq!(expired(&reserved, GRACE_MS + 10_000.).len(), 2);
+    }
+
+    #[test]
+    fn rejoin_keys_roundtrip_through_welcome_bytes() {
+        let key = "00ff10a0b1c2d3e4f5061728394a5b6c";
+        let bytes = key_bytes(key);
+        assert_eq!(bytes[0], 0);
+        assert_eq!(bytes[1], 255);
+        assert_eq!(bytes[15], 0x6c);
+        let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(hex, key);
     }
 
     #[test]
@@ -967,6 +1133,8 @@ mod tests {
             instance: String::new(),
             generation: 1,
             close_recoverable: None,
+            key: String::new(),
+            ready_map: 0,
             active: true,
             peer: 0,
             player: None,
@@ -991,8 +1159,9 @@ mod tests {
             instance: String::new(),
             admission_lease: None,
             generation: 1,
-            host_disconnected_ms: None,
-            host_player: None,
+            host: 2,
+            reserved: vec![],
+            empty_since_ms: None,
             code: *b"ABCD2345",
             host_token: "secret".into(),
             created_ms: 123.,
@@ -1005,6 +1174,8 @@ mod tests {
             instance: String::new(),
             generation: 1,
             close_recoverable: None,
+            key: "ab".repeat(16),
+            ready_map: 9,
             active: true,
             peer: 2,
             player: Some(Participant {

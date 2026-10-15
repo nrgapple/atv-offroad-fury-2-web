@@ -2,15 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {loadPlayerSelection,savePlayerSelection,Frontend,unlockedCourses} from './frontend.js';
 import {ENVIRONMENTS,courseResource} from './launch.js';
-const defaults={quadId:1,riderId:0,freestyleEnvironment:'env01'};
+const defaults={quadId:1,riderId:0,freestyleEnvironment:'env01',playerName:'Rider'};
 test('saved vehicle, rider and last-played Freestyle course survive a storage roundtrip',()=>{
  for(const quadId of [1,26,27,46]) {
-  const choice={quadId,riderId:1,freestyleEnvironment:'free05'};
+  const choice={quadId,riderId:1,freestyleEnvironment:'free05',playerName:'Sam 🚀'};
   let stored;savePlayerSelection(choice,value=>stored=value);
   assert.deepEqual(loadPlayerSelection(()=>stored),choice);
  }
 });
 test('invalid or unavailable saved selection safely falls back per field',()=>{
+ for(const playerName of ['', '   ', 'x'.repeat(25), 'bad\nname', 42])assert.equal(loadPlayerSelection(()=>JSON.stringify({playerName})).playerName,'Rider');
  for(const stored of [null,'bad','null','[]','42','{"freestyleEnvironment":["env02"]}','{"quadId":47,"riderId":7,"freestyleEnvironment":"private"}'])assert.deepEqual(loadPlayerSelection(()=>stored),defaults);
  assert.deepEqual(loadPlayerSelection(()=>{throw Error('denied');}),defaults);
  assert.doesNotThrow(()=>savePlayerSelection(defaults,()=>{throw Error('quota');}));
@@ -34,7 +35,7 @@ test('URL launch applies identity before loading, and invalid links do no gamepl
  calls.length=0;await Frontend.prototype.openLaunch.call(menu,'?room=ABCD1234&quad=27');assert.deepEqual(calls,[['show','main']]);assert.match(menu.notice.textContent,/ATVs/);
  calls.length=0;await Frontend.prototype.openLaunch.call(menu,'?action=create&map=env02&play=0');assert.deepEqual(calls,[['show','create-lobby']]);
  calls.length=0;await Frontend.prototype.openLaunch.call(menu,'?action=create&map=env02');assert.deepEqual(calls,[['show','create-lobby'],['network','host',{map:'env02',start:true}]]);
- calls.length=0;await Frontend.prototype.openLaunch.call(menu,'?room=ABCD1234');assert.deepEqual(calls,[['show','join-lobby'],['network','join',undefined]]);
+ calls.length=0;await Frontend.prototype.openLaunch.call(menu,'?room=ABCD1234');assert.deepEqual(calls,[['show','join-lobby'],['network','join',{map:'env01',start:true}]]);
 });
 test('direct load failures recover to a usable setup page',async()=>{
  const shown=[],menu={tracks:[{id:'env01'}],notice:{},show:async page=>shown.push(page),launchSingle:async()=>{throw Error('asset unavailable');},fail(error){this.notice.textContent=error.message;}};
