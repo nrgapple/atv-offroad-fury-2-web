@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Checked host deployment fallback. No daemon; run from the release owner's worktree."""
+"""Checked host deployment fallback. No daemon; run from the release owner's worktree.
+
+GitHub Actions is the deployment path. This takes over production and cancels
+main runs, so it only runs when the user explicitly asked for a local deploy."""
 import argparse
 from datetime import datetime, timezone
 import hashlib
@@ -145,11 +148,15 @@ def main():
     parser.add_argument('--checkpoint', required=True)
     parser.add_argument('--owner', required=True)
     parser.add_argument('--reason', required=True)
-    parser.add_argument('--prefer-actions', action='store_true', help='Fall back after 10 minutes without step progress, 20 minutes total, or a failed run')
+    parser.add_argument('--prefer-actions', action='store_true', help='Wait for Actions first: up to 10 minutes without step progress, 20 minutes total')
+    parser.add_argument('--user-requested', action='store_true', help='Required for local publication: the user explicitly asked for a local deploy')
     args = parser.parse_args()
     if args.prefer_actions and prefer_actions(args.commit):
         print('Actions deployed the requested commit; proceed with public browser and gallery checks')
         return
+    if not args.user_requested:
+        raise SystemExit('GitHub Actions is the deployment path. Retry failed main jobs with `gh run rerun <run-id> --failed`; '
+                         'deploy locally only when the user explicitly asks, with --user-requested.')
     deploy(args.commit, args.checkpoint, args.owner, args.reason)
 
 

@@ -106,27 +106,31 @@ Direct messaging to **Port core gameplay systems** failed with
 The audit did not stop that writer or commit its dirty game files. These observations
 are historical evidence, not a claim that the newer implementation is deployed.
 
-## Local fallback when Actions stalls
+## Retrying, and the user-requested local deployment
 
-The release owner must not wait indefinitely for Actions. From their own clean
-worktree at the exact merged `origin/main` commit, run:
+GitHub Actions is the deployment path. Every check and deploy step has a time
+limit, and JavaScript tests have a per-test timeout, so a hang fails with the
+step or test named instead of stalling until someone cancels it. Retry a failed
+or timed-out main run with `gh run rerun <run-id> --failed`, or fix forward.
+
+Only when the user explicitly asks for a host deployment, from a clean worktree
+at the exact merged `origin/main` commit, run:
 
 ```sh
-python3 tools/deploy_local.py --prefer-actions --commit <full-main-sha> \
-  --checkpoint <claimed-id> --owner <owner> --reason "Actions fallback"
+python3 tools/deploy_local.py --user-requested --commit <full-main-sha> \
+  --checkpoint <claimed-id> --owner <owner> --reason "User requested local deploy"
 ```
 
-This watches current run/step progress, falling back after ten minutes without
-progress, twenty minutes total, or a failed/cancelled run. For an already known
-stall or an explicitly requested local deployment, omit `--prefer-actions`.
-It acquires the shared publication lock, temporarily sets the repository variable
+`--prefer-actions` first waits for Actions (ten minutes without step progress,
+twenty minutes total); without `--user-requested` the tool then stops and points
+back to rerunning Actions. When it does publish, it acquires the shared publication
+lock, temporarily sets the repository variable
 `FURY_DEPLOYMENT_MODE=local`, cancels competing main runs and requires them to be
 terminal, then runs local implementation/security/release checks, source-resource
-verification, browser WASM and Rust relay builds. Commit relevant browser evidence
-before invoking it. It refuses dirty/unmerged/stale checkouts, uses the authored
-file allowlist, and deploys with pinned Wrangler using the existing host login.
-It preserves existing domain bindings and verifies all authored bytes and relay
-identity on both public HTTPS addresses. No manual CI success assertion is used.
+verification, browser WASM and Rust relay builds. It refuses dirty/unmerged/stale
+checkouts, uses the authored file allowlist, and deploys with pinned Wrangler using
+the existing host login. It preserves existing domain bindings and verifies all
+authored bytes and relay identity on both public HTTPS addresses.
 
 Successful checked artifacts and receipts persist under ignored shared
 `private/reports/local-releases/<sha>/`. `fetch_site_release.py --deployed`, the

@@ -103,5 +103,20 @@ class LocalReleaseTests(unittest.TestCase):
                 self.assertFalse((root / 'private/reports/local-releases').exists())
 
 
+    def test_local_publication_requires_explicit_user_request(self):
+        argv = ['deploy_local.py', '--commit', COMMIT, '--checkpoint', 'c', '--owner', 'o', '--reason', 'r']
+        with patch('sys.argv', argv), patch('deploy_local.deploy') as publish:
+            with self.assertRaises(SystemExit):
+                deploy_local.main()
+            publish.assert_not_called()
+        with patch('sys.argv', argv + ['--user-requested']), patch('deploy_local.deploy') as publish:
+            deploy_local.main()
+            publish.assert_called_once_with(COMMIT, 'c', 'o', 'r')
+        # Waiting for Actions never turns into a local takeover on its own.
+        with patch('sys.argv', argv + ['--prefer-actions']), patch('deploy_local.prefer_actions', return_value=False), patch('deploy_local.deploy') as publish:
+            with self.assertRaises(SystemExit):
+                deploy_local.main()
+            publish.assert_not_called()
+
 if __name__ == '__main__':
     unittest.main()

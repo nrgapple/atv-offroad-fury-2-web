@@ -31,6 +31,7 @@ jobs:
         id: plan
         run: python3 tools/ci_changes.py
       - name: Validate documentation, metadata and repository hygiene
+        timeout-minutes: 5
         run: |
           python3 tools/verify_repository.py
           python3 tools/ci_changes.py --validate
@@ -70,8 +71,11 @@ jobs:
           key: fury-rust-v1-${{ steps.rust-key.outputs.key }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}-${{ github.sha }}
           restore-keys: |
             fury-rust-v1-${{ steps.rust-key.outputs.key }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}-
+      # Bounded so a hung test fails with its name in the log instead of stalling
+      # the deployment until someone cancels it. Warm runs take about two minutes.
       - name: Check repository and implementation
         if: steps.prepare.outputs.build == 'true'
+        timeout-minutes: 12
         run: |
           python3 -m unittest discover -s tools -p 'test_security.py'
           make check CARGO="$(which cargo)"
@@ -101,6 +105,7 @@ jobs:
           install -m 755 "$RUNNER_TEMP/fury-worker-build/bin/worker-build" "$HOME/.cargo/bin/worker-build"
       - name: Build browser release
         if: steps.prepare.outputs.build == 'true'
+        timeout-minutes: 12
         run: |
           make web
           make relay
@@ -147,6 +152,10 @@ jobs:
           REUSED_APPLICATION: ${{ steps.prepare.outputs.reused }}
         run: |
           echo "Lane: $RELEASE_LANE; Rust build: $RUNTIME_BUILD; reused checked application: $REUSED_APPLICATION" >> "$GITHUB_STEP_SUMMARY"
+      - name: Explain how to retry a failed main build
+        if: failure() && github.ref == 'refs/heads/main'
+        run: |
+          echo "Main build failed or timed out. Fix forward, or retry this run's failed jobs with: \`gh run rerun $GITHUB_RUN_ID --failed\`. Production deploys only from Actions." >> "$GITHUB_STEP_SUMMARY"
   deploy:
     name: Deploy and verify production
     needs: web
@@ -179,6 +188,7 @@ jobs:
         run: python3 tools/deployment_gate.py --commit "$GITHUB_SHA"
       - name: Deploy successful main build to Cloudflare
         if: steps.deployment-gate.outputs.publish == 'true'
+        timeout-minutes: 6
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
@@ -190,6 +200,7 @@ jobs:
           npx --yes wrangler@4.149.0 deploy --config work/cloudflare/wrangler.jsonc
       - name: Verify public commit, application hashes and dev log
         if: steps.deployment-gate.outputs.publish == 'true'
+        timeout-minutes: 4
         run: |
           python3 tools/verify_ci_deployment.py --release work/release --commit "$GITHUB_SHA" \
             --url https://furyremastered.com/
