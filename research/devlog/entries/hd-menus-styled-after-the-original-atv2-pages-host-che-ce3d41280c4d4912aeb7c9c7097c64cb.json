@@ -1,0 +1,15 @@
+{
+  "id": "hd-menus-styled-after-the-original-atv2-pages-host-che-ce3d41280c4d4912aeb7c9c7097c64cb",
+  "timestamp": "2026-10-15T01:00:44.078660+00:00",
+  "recorded_at": "2026-10-15T01:01:16.227232+00:00",
+  "kind": "build",
+  "title": "HD menus styled after the original ATV2 pages (host checkpoint)",
+  "summary": "Title, main, single-player, multiplayer, lobby, garage, course, race and loading pages are now responsive HTML screens, and Pause is restyled. Rust still owns actions, labels, values and choice order. The look follows the original pages rebuilt privately from the disc's page layouts, textures and fonts: a red-tinted scenic backdrop, a curved silver stage panel, gold bullet rows with a two-tone chrome-gold selection bar, and an italic title strip. Corners are small with hard short shadows, and console button glyphs are replaced by a Back control. Select ATV & Rider is one page with an ATV row (previous/next), a one-tap Male/Female switch, a list of all 26 ATVs and 20 motorcycles, and both 3D models together on the stage, with added model lighting contrast. Select Track has event-type tabs (Enduro, Stunt, Nationals, Supercross, Arena), a photo thumbnail for every course, and a large preview with Ride; the original photo mats were trimmed.",
+  "details": [
+    "Portrait phones stack the stage above the controls, with 44px minimum touch targets.",
+    "Verification on host Chromium: make check and the browser tests test_frontend, test_menu_models (six viewports including 390x844 and 320x568), test_ui_polish, test_hd_settings, test_menu_preferences and test_motorcycle_menu all pass."
+  ],
+  "limitation": "This is not a pixel-exact recreation of the original menus.",
+  "image": "/devlog-images/hd-menus-styled-after-the-original-atv2-pages-host-che-ce3d41280c4d4912aeb7c9c7097c64cb.png",
+  "caption": "Phone garage page in the HD menu revamp, styled after the original ATV2 garage screen (host Chromium)."
+}
