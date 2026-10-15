@@ -1737,6 +1737,9 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
     {
         return motorcycles::dispatch(input, op);
     }
+    if op == 107 {
+        return serde_json::to_vec(&atv_core::rider_gear::parse(input)?).map_err(|e| e.to_string());
+    }
     if op == 105 {
         let value: serde_json::Value = serde_json::from_slice(input).map_err(|e| e.to_string())?;
         let text = |key: &str| -> Result<Vec<u8>> {

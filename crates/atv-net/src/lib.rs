@@ -17,7 +17,7 @@ pub use codec::{decode, encode};
 pub use smoothing::{PoseBuffer, SampledPose, SmoothingConfig};
 pub use transform::Transform;
 
-pub const VERSION: u8 = 4;
+pub const VERSION: u8 = 5;
 pub const MAX_PLAYERS: usize = 4;
 /// One-based lobby IDs reference this authored catalog; source resource keys
 /// remain stable even when their browser display names change.
@@ -102,6 +102,14 @@ pub struct Participant {
     pub name: String,
     pub atv_model: u16,
     pub rider_model: u16,
+    /// Rider gear catalog indices (helmet, glove, boot, shirt, sleeve, pant,
+    /// goggle; 0 keeps the original) followed by the quad paint index.
+    #[serde(default)]
+    pub appearance: [u8; APPEARANCE_BYTES],
+}
+pub const APPEARANCE_BYTES: usize = 8;
+pub fn valid_appearance(a: &[u8; APPEARANCE_BYTES]) -> bool {
+    a[..7].iter().all(|g| *g <= 64) && a[7] < 16
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Lobby {

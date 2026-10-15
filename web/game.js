@@ -1,6 +1,6 @@
 import { SpeedRush, speedRushFocus, speedRushBounds } from './speed-rush.js';
 // Original content and vehicle component simulation run in the Rust worker.
-import { sceneViewProjection, vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, RideEffectsSettings, ImpactEvents, severedIndices, meshNodeBounds, crashSubjects, crashPresentation, shadowGlState, observedSize, RenderScale } from './render-support.js';
+import { sceneViewProjection, vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, RideEffectsSettings, ImpactEvents, severedIndices, meshNodeBounds, crashSubjects, crashPresentation, shadowGlState, observedSize, RenderScale, PAINT_PALETTE, paintGlsl, paintable } from './render-support.js';
 import { Multiplayer, PlayerIndicators } from './multiplayer.js';
 import { Frontend } from './frontend.js';
 import { courseResource } from './launch.js';
@@ -54,6 +54,8 @@ crashSettings.onChange = () => {
 };
 
 let raceSettings = null, raceCourse = null, cpuQuadMatrices, cpuRiderMatrices, raceCpuModels = [];
+// The player's rider gear and quad paint for the loaded ride (ATVs only).
+let rideAppearance = null;
 const keyboardHelp = new KeyboardHelp();
 const raceOverlay = new RaceOverlay({restart: async () => { await $('reset').onclick({restart:true}); canvas.focus({preventScroll:true}); }, quit: () => frontend?.show('single')});
 let simReady = false, simBusy = false, simAccumulator = 0, simFrame, simStart, simGeneration = 0, orbit = 0, cameraFrame, cameraCycle = false;
@@ -247,6 +249,9 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
   pose = await codec(53, new Uint8Array()).then(bytes => JSON.parse(decoder.decode(bytes)));
   const riderMaterials = await archiveAt('/RIDER/RIDER_MT.RES');
   riderTextures = await baseTextures(riderMesh, riderMaterials.bytes, riderMaterials.entries);
+  rideAppearance = model.motorcycle ? null : frontend?.appearance ?? null;
+  diagnostics.rideAppearance = rideAppearance ? { ...rideAppearance, gear: [...rideAppearance.gear] } : null;
+  for (const [material, decoded] of rideAppearance ? await gearTextures(rideAppearance, riderMesh) : []) riderTextures.set(material, decoded);
   }
   //00208cc0 reads the actual common/mode TOYs' [Weather], not legacy
   //SCN[Rain]. There is one local view per browser, including online rides;
@@ -532,8 +537,10 @@ uniform vec3 sunlightDirection;
 uniform vec3 fogColor;
 uniform bool unlit;
 uniform bool skyPass;
+uniform vec2 quadPaint;
 out vec4 color;
 ${fogFragmentShader}
+${paintGlsl}
 void main() {
   // Let both crash actors remain visible through foreground foliage. A stable
   // screen-door fade keeps tree context without extra translucent draw passes.
@@ -556,7 +563,7 @@ void main() {
     //002fe710 overrides TEST with GREATER/KEEP and a per-placement reference.
     if (useEcosystem && ecoPerInstance) { if (sampled.a <= (ecoBillboard ? alphaCutoff : ecoReference)) discard; }
     else if (alphaFailPass ? sampled.a >= alphaCutoff : sampled.a < alphaCutoff) discard;
-    base = sampled.rgb;
+    base = applyPaint(sampled.rgb, quadPaint);
     if (motorcycleMudAmount > 0.0) {vec4 mud = texture(motorcycleMudTexture,texcoord); base = mix(base,mud.rgb,clamp(mud.a*(255.0/128.0)*motorcycleMudAmount,0.0,1.0));}
     // GS source alpha uses 128 for unity, while decoded PST bytes use 255.
     sourceAlpha = sceneryBlend ? clamp(sampled.a * (255.0 / 128.0), 0.0, 1.0) : 1.0;
@@ -603,6 +610,7 @@ function initializeGl() {
   for (const name of ['ecoBillboard','ecoPerInstance']) uniforms[name] = gl.getUniformLocation(program,name);
   for (const name of ['ecoAmbient','ecoSunlight','ecoSunDirection','ecoSunPresent']) uniforms[name] = gl.getUniformLocation(program,name);
   uniforms.alphaCutoff = gl.getUniformLocation(program, 'alphaCutoff');
+  uniforms.quadPaint = gl.getUniformLocation(program, 'quadPaint');
   uniforms.useQuadPose = gl.getUniformLocation(program, 'useQuadPose');
   uniforms.quadBones = gl.getUniformLocation(program, 'quadBones[0]');
   uniforms.motorcycleMudTexture = gl.getUniformLocation(program,'motorcycleMudTexture');
@@ -740,6 +748,7 @@ function disposeRemoteGpu(model) {
   for (const chunk of model.chunks ?? []) { gl.deleteVertexArray(chunk.vao); gl.deleteBuffer(chunk.vertices); gl.deleteBuffer(chunk.indices); }
   for (const texture of model.gpuTextures ?? []) gl.deleteTexture(texture);
   model.chunks = null; model.gpuTextures = [];
+  for (const entry of model.gear?.values() ?? []) entry.gpu = null;
 }
 function buildRemoteGpu(model) {
   if (!model.source || model.chunks || lost) return;
@@ -848,7 +857,7 @@ async function outfitTextures(outfit, riderMesh) {
   const archive = await riderMaterialArchive, replacements = new Map();
   for (const material of riderMesh.materials) {
     const slot = outfitSlot(material), name = slot && outfit[slot];
-    if (name) replacements.set(material, slot === 'shirt' ? name + (/\d+$/.exec(material)?.[0] ?? '') : name);
+    if (name) replacements.set(material, slot === 'shirt' ? name + (/\d+$/.exec(material)?.[0] ?? '001') : name);
   }
   const names = [...new Set(replacements.values())];
   const mesh = { materials: names, lods: [{ groups: names.map((_, material) => ({ material })) }] };
@@ -859,6 +868,42 @@ async function outfitTextures(outfit, riderMesh) {
   for (const [material, name] of replacements) if (decoded.get(name)?.rgba) textures.set(material, decoded.get(name));
   return textures;
 }
+// Player gear (frontend appearance) → rider-mesh material textures. Each
+// catalog item lists in-game material candidates; shirts pass their base so
+// the mesh slot suffix applies, and the jersey's sleeves follow its index.
+async function gearTextures(appearance, riderMesh) {
+  const catalog = frontend?.gearCatalog, gear = appearance?.gear;
+  if (!catalog || !gear?.some(Boolean) || !riderMesh) return new Map();
+  const content = await (hostedContent ??= openHostedContent());
+  const file = content.files.find(f => f.path === '/RIDER/RIDER_MT.RES');
+  if (!file) return new Map();
+  riderMaterialArchive ??= read(content.file, file.lba * 2048, file.bytes).then(async bytes => ({ bytes, entries: await json(2, bytes) }));
+  const names = new Set((await riderMaterialArchive).entries.map(e => e.name.split(/[\\/]/).at(-1).toLowerCase().replace(/\.(psm|pst)$/, '')));
+  const outfit = {};
+  ['helmet','glove','boot','shirt','sleeve','pant','goggle'].forEach((slot, at) => {
+    const item = gear[at] ? catalog[at]?.items[gear[at] - 1] : null;
+    if (!item) return;
+    const found = item.materials.find(m => names.has(m));
+    if (found) outfit[slot] = slot === 'shirt' ? found.replace(/001$/, '') : found;
+  });
+  return outfitTextures(outfit, riderMesh);
+}
+// Remote riders: gear textures per model and appearance, uploaded lazily.
+function peerGear(model, appearance) {
+  const key = appearanceKey(appearance);
+  if (!key) return null;
+  model.gear ??= new Map();
+  let entry = model.gear.get(key);
+  if (!entry) {
+    entry = { decoded: null, gpu: null };
+    model.gear.set(key, entry);
+    void gearTextures(appearance, model.source?.riderMesh).then(decoded => { entry.decoded = decoded; }).catch(() => { entry.decoded = new Map(); });
+  }
+  if (entry.decoded && !entry.gpu && !lost) { entry.gpu = new Map(); for (const [name, decoded] of entry.decoded) { const gpu = texture(decoded); entry.gpu.set(name, gpu); model.gpuTextures.push(gpu); } }
+  return entry.gpu;
+}
+const appearanceKey = a => a && (a.gear?.some(Boolean) || a.paint) ? `${a.gear.join('.')}:${a.paint}` : '';
+const peerAppearance = peer => { const bytes = multiplayer?.state?.lobby?.players?.find(p => p.id === peer)?.appearance; return Array.isArray(bytes) && bytes.length === 8 ? { gear: bytes.slice(0, 7), paint: bytes[7] } : null; };
 // Rider mesh material → AIRiders outfit field.
 const outfitSlot = material => /helmet/i.test(material) ? 'helmet' : /glove/i.test(material) ? 'glove' : /goggle/i.test(material) ? 'goggle' : /pant/i.test(material) ? 'pant' : /shirt/i.test(material) ? 'shirt' : /sleeve/i.test(material) ? 'sleeve' : /boot/i.test(material) ? 'boot' : null;
 function disposeCpuOutfits() { for (const cpu of raceCpuModels) for (const texture of cpu.gpu?.values() ?? []) gl.deleteTexture(texture); for (const cpu of raceCpuModels) cpu.gpu = null; }
@@ -891,7 +936,7 @@ function drawRosterCpu(cpu, slot, transform, riderTransform) {
   return draws;
 }
 function drawRemotePlayers() {
-  let draws=0;
+  let draws=0, gearPeers=0, paintPeers=0;
   for (const peer of multiplayer?.remote ?? []) {
     const model=remoteModels.get(`${peer.atv_model}:${peer.rider_model}`); if (!model?.source) continue;
     if (peer.quad_node_matrices.length!==model.source.mesh.nodes.length || peer.rider_node_matrices.length!==model.source.riderMesh.nodes.length) continue;
@@ -899,15 +944,20 @@ function drawRemotePlayers() {
     const quad=new Float32Array(peer.quad_node_matrices.flat()), rider=new Float32Array(peer.rider_node_matrices.flat());
     const quadWorld=new Float32Array(peer.world_matrix), riderWorld=new Float32Array(peer.rider_world_matrix);
     gl.uniform1i(uniforms.useQuadPose,true);
+    const appearance = peer.atv_model <= 26 ? peerAppearance(peer.peer) : null, gear = peerGear(model, appearance), paint = PAINT_PALETTE[appearance?.paint ?? 0] ?? PAINT_PALETTE[0];
+    if (gear?.size) gearPeers++; if (appearance?.paint) paintPeers++;
     for (const chunk of model.chunks ?? []) {
+      const bound = (chunk.rider && gear?.get(chunk.material)) || chunk.texture;
       gl.uniformMatrix4fv(uniforms.model,false,chunk.rider?riderWorld:quadWorld);
       gl.uniformMatrix4fv(uniforms.quadBones,false,chunk.rider?rider:quad);
       gl.uniform1i(uniforms.fogEnabled,Boolean(terrain.world?.metadata.fog)&&chunk.fog);
-      gl.uniform1i(uniforms.useTexture,Boolean(chunk.texture));gl.bindTexture(gl.TEXTURE_2D,chunk.texture??fallbackTexture);
+      gl.uniform2fv(uniforms.quadPaint,!chunk.rider&&paintable(chunk.material)?paint:PAINT_PALETTE[0]);
+      gl.uniform1i(uniforms.useTexture,Boolean(bound));gl.bindTexture(gl.TEXTURE_2D,bound??fallbackTexture);
       gl.bindVertexArray(chunk.vao);gl.drawElements(gl.TRIANGLES,chunk.count,gl.UNSIGNED_SHORT,0);draws++;
     }
   }
-  diagnostics.multiplayerDraws=draws;
+  gl.uniform2fv(uniforms.quadPaint,PAINT_PALETTE[0]);
+  diagnostics.multiplayerDraws=draws; diagnostics.remoteGear={gear:gearPeers,paint:paintPeers};
 }
 function buildEcosystem() {
   const eco = terrain.ecosystem;
@@ -1205,7 +1255,7 @@ function buildMesh() {
       vertices.set([...vertex.local_position, ...inverseDirection(node.world_matrix, vertex.normal), ...vertex.uv, vertex.node], index * 9);
     });
     const chunk = upload(vertices, new Uint16Array(group.indices), true, true);
-    chunk.quad = true;
+    chunk.quad = true; chunk.material = vehicle.materials[group.material];
     const mud=vehicle.textures.get(vehicle.materials[group.material])?.mud;
     if (mud) {chunk.mudTexture=texture(mud);gpuTextures.push(chunk.mudTexture);}
     chunk.texture = materialTextures.get(vehicle.materials[group.material]);
@@ -1710,7 +1760,9 @@ function render(time) {
   if (vehicle) gl.uniformMatrix4fv(uniforms.quadBones, false, smoothQuad);
   const rushMask=speedRush.amount>0;
   if(rushMask){gl.enable(gl.STENCIL_TEST);gl.stencilFunc(gl.ALWAYS,1,0xff);gl.stencilOp(gl.KEEP,gl.KEEP,gl.REPLACE);}
+  const playerPaint = PAINT_PALETTE[rideAppearance?.paint ?? 0] ?? PAINT_PALETTE[0];
   for (const chunk of vehicleChunks) {
+    gl.uniform2fv(uniforms.quadPaint, chunk.quad && paintable(chunk.material) ? playerPaint : PAINT_PALETTE[0]);
     gl.activeTexture(gl.TEXTURE4);gl.bindTexture(gl.TEXTURE_2D,chunk.mudTexture ?? fallbackTexture);
     gl.uniform1f(uniforms.motorcycleMudAmount,simFrame?.vehicle_kind==='motorcycle' && chunk.mudTexture ? Math.max(...simFrame.mud_amount) : 0);
     gl.activeTexture(gl.TEXTURE0);
@@ -1726,6 +1778,7 @@ function render(time) {
     if(chunk.rider && chunk.cutCount!==null && chunk.cutCount!==undefined)gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,chunk.indices);
   }
   if(rushMask)gl.disable(gl.STENCIL_TEST);
+  gl.uniform2fv(uniforms.quadPaint, PAINT_PALETTE[0]);
   gl.uniform1f(uniforms.motorcycleMudAmount,0);
   let cpuDraws = 0, cpuTriangles = 0;
   for (const [slot, cpu] of (simFrame?.race?.opponents ?? []).entries()) {
@@ -1901,7 +1954,7 @@ window.addEventListener('blur', () => { focused = false; clearInput(); syncAudio
 window.addEventListener('focus', () => { focused = true; lastTime = 0; syncAudio(); scheduleRender(); });
 document.addEventListener('visibilitychange', () => { clearInput(); lastTime = 0; syncAudio(); scheduleRender(); });
 window.addEventListener('resize', () => { scheduleRender(); });
-canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; for(const model of remoteModels.values()){model.chunks=null;model.gpuTextures=[];} for(const cpu of raceCpuModels)cpu.gpu=null; diagnostics.ready = false; clearInput(); syncAudio(); frontend?.setLoading(true, 'Restoring graphics…'); status('Restoring graphics…'); });
+canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; for(const model of remoteModels.values()){model.chunks=null;model.gpuTextures=[];for(const entry of model.gear?.values()??[])entry.gpu=null;} for(const cpu of raceCpuModels)cpu.gpu=null; diagnostics.ready = false; clearInput(); syncAudio(); frontend?.setLoading(true, 'Restoring graphics…'); status('Restoring graphics…'); });
 // Every old GPU handle belongs to the lost context, including vegetation instances.
 // Discard those references before buildMesh runs its normal resource cleanup.
 canvas.addEventListener('webglcontextrestored', () => { try { lost = false; glShadow?.reset(); speedRush = new SpeedRush(gl, { coarse: coarsePointer() }); snowRenderer=undefined; ambientEffectsRenderer=undefined; bloodRenderer = undefined; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); scheduleRender(); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
@@ -1940,7 +1993,7 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
       catch(error){if(isCurrent()){await frontend.show('multiplayer');frontend.fail(error);throw error;}}
       finally{if(isCurrent())frontend.busy=false;}
     },onLeave:message=>{for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show('multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
-    frontend = new Frontend({minimapSettings,menuRider:menuRiderAssets,modelAssets:selectionAssets,crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => loadGame(null, environment,racing), active: open => { menuOpen = open; keyboardHelp.setRiding(!open); clearInput(); lastTime = 0; scheduleRender(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
+    frontend = new Frontend({minimapSettings,menuRider:menuRiderAssets,modelAssets:selectionAssets,gearPreview:gearTextures,crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => loadGame(null, environment,racing), active: open => { menuOpen = open; keyboardHelp.setRiding(!open); clearInput(); lastTime = 0; scheduleRender(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     hud = new HeadUpDisplay(frontend, canvas);
     document.body.classList.add('menu-open'); void frontend.init();
   } }

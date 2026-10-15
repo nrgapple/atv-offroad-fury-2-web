@@ -47,6 +47,8 @@ STARTUP += ('/TRACKS/TRACKSB/TRAINING/T00_TR.RES', '/TRACKS/TRACKSA/GAME01/G01_S
 STARTUP += tuple(f'/TRACKS/TRACKSA/ENV{i:02}/E{i:02}_NAT.RES' for i in range(2,9))
 STARTUP += tuple(f'/TRACKS/TRACKSA/NAT{i:02}/N{i:02}_NAT.RES' for i in range(1,9))
 STARTUP += tuple(f'/TRACKS/TRACKSB/SX{i:02}/S{i:02}_NAT.RES' for i in range(1,17))
+# Original Profile Store gear catalog (uiRider.txt only) for rider customization.
+STARTUP += ('/UI/RESOURCE/RIDEINFO.RES',)
 STARTUP += tuple(f'/UI/RESOURCE/TP/TP_{group}.RES' for group in ('PNAT','ASX','PSX','HOCK'))
 
 # Original loading-screen action shots for every Freestyle venue except Training,
@@ -272,6 +274,23 @@ def ai_outfit_names(ai_riders):
     # Per-rider `_aiN` jerseys are composed at runtime; ship the base shirt's
     # mesh-slot variant used by the rider mesh (`atv2_shirt001`).
     return {re.sub(r'_ai\d+$', '001', name) if re.search(r'shirt_ai\d+$', name) else name for name in names}
+
+
+def gear_catalog_names(rideinfo):
+    """In-game material candidates for every uiRider.txt gear item."""
+    catalog = config(Resource(rideinfo).named('uirider.txt'))
+    names = set()
+    for section in ('helmets', 'gloves', 'boots', 'shirts', 'sleeves', 'pants', 'goggles'):
+        values = catalog.get(section, {})
+        for i in range(1, int(values.get('numitems', '0')) + 1):
+            base = values.get(f'texture_{i}', '').strip('"').replace('\\', '/').rsplit('/', 1)[-1].lower().removesuffix('_ui')
+            names.update({base, f'{base}001', f'{base}s'} if base else ())
+    return names
+
+
+def compact_gear_catalog(rideinfo):
+    """Only the Profile Store catalog text; store artwork stays on the disc."""
+    return pack_resource([('ui/frontend/uiRider.txt', Resource(rideinfo).named('uirider.txt'))])
 
 
 def compact_rider_materials(mesh_archive, material_archive, additional_meshes=(), extra_names=()):
@@ -508,10 +527,13 @@ def main():
             elif path == '/ANIMSRDR.RES':
                 catalogs = [Resource(originals[f'/RIDER/{stem}.RES']).named(stem.lower() + '.mcf') for stem in ('MRIDER', 'FRIDER')]
                 data = compact_rider_motions(data, catalogs)
+            elif path == '/UI/RESOURCE/RIDEINFO.RES':
+                data = compact_gear_catalog(data)
             elif path.endswith('_ENDL.RES'):
                 data = compact_map_placements(data, path.split('/')[-2])
             elif path == '/RIDER/RIDER_MT.RES':
                 outfits = ai_outfit_names(Resource(originals['/TRACKS/TRACKSA/ENV01/E01_NAT.RES']).named('airiders.pb'))
+                outfits |= gear_catalog_names(source('/UI/RESOURCE/RIDEINFO.RES'))
                 data = compact_rider_materials(originals['/RIDER/MRIDER.RES'], data, (originals['/RIDER/FRIDER.RES'],), outfits)
             record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith(('/QUAD/', '/UI/LOADICON/')) or path in ('/RIDER/FRIDER.RES',), **blob(data)}
             if data != originals[path]:

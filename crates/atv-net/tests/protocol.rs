@@ -6,6 +6,7 @@ fn participant(id: u8) -> Participant {
         name: format!("Rider {id}"),
         atv_model: 1,
         rider_model: 1,
+        appearance: [0; 8],
     }
 }
 fn lobby() -> Lobby {
@@ -628,4 +629,16 @@ fn attached_rider_does_not_extrapolate_away_from_car_and_dismount_is_discrete() 
     b.push(s, 150).unwrap();
     assert!(b.sample(200).unwrap().snapshot.platform.is_some());
     assert!(b.sample(230).unwrap().snapshot.platform.is_none());
+}
+
+#[test]
+fn rider_appearance_roundtrips_and_rejects_out_of_range_gear() {
+    let mut l = lobby();
+    l.players[1].appearance = [3, 1, 15, 26, 26, 26, 11, 6];
+    let packet = Packet::Lobby(l.clone());
+    assert_eq!(decode(&encode(&packet).unwrap()).unwrap(), packet);
+    l.players[1].appearance[7] = 16;
+    assert!(encode(&Packet::Lobby(l.clone())).is_err());
+    l.players[1].appearance = [65, 0, 0, 0, 0, 0, 0, 0];
+    assert!(encode(&Packet::Lobby(l)).is_err());
 }

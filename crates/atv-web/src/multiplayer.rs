@@ -658,12 +658,14 @@ mod tests {
                     name: "Host".into(),
                     atv_model: 1,
                     rider_model: 0,
+                    appearance: [0; 8],
                 },
                 Participant {
                     id: 1,
                     name: "Guest".into(),
                     atv_model: 2,
                     rider_model: 1,
+                    appearance: [0; 8],
                 },
             ],
         }
@@ -866,6 +868,7 @@ mod tests {
             name: "Late".into(),
             atv_model: 4,
             rider_model: 0,
+            appearance: [0; 8],
         });
         receive(Packet::Lobby(changed), 10).unwrap();
         CLIENT.with_borrow(|c| assert_eq!(c.buffers.get(&1).map(PoseBuffer::len), Some(1)));

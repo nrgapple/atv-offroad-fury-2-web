@@ -59,7 +59,7 @@ test('handshake uses selected model and slot key URL, then pings for the shared 
     const socket=await f.connect();
     assert.equal(socket.binaryType,'arraybuffer');
     const url=new URL(socket.url);assert.equal(url.protocol,'wss:');assert.equal(url.pathname,'/multiplayer/rooms/ABCD2345');assert.equal(url.searchParams.get('key'),KEY);assert.equal(url.searchParams.get('host'),null);
-    const join=decode(socket.sent[0]);assert.deepEqual(join.Join.player,{id:0,name:'Guest',atv_model:2,rider_model:1});assert.equal(String.fromCharCode(...join.Join.code),'ABCD2345');
+    const join=decode(socket.sent[0]);assert.deepEqual(join.Join.player,{id:0,name:'Guest',atv_model:2,rider_model:1,appearance:[0,0,0,0,0,0,0,0]});assert.equal(String.fromCharCode(...join.Join.code),'ABCD2345');
     await flush();assert(decode(socket.sent[1]).Ping,'join is followed by a clock ping');
     assert.deepEqual([...f.intervals.values()].map(v=>v.delay),[50,2000]);assert.equal(f.timeouts.size,0);
     f.mp.close();await flush();assert.equal(f.intervals.size,0);assert.equal(f.mp.socket,null);
@@ -221,7 +221,7 @@ test('changing ATV and rider tells the room, then reloads the same map in place'
     f.frontend.quadId=14;f.frontend.riderId=0;
     await f.mp.changeRide(f.frontend);
     const profile=socket.sent.map(decode).find(p=>p.Profile);
-    assert.deepEqual(profile,{Profile:{id:0,name:'Guest',atv_model:14,rider_model:0}});
+    assert.deepEqual(profile,{Profile:{id:0,name:'Guest',atv_model:14,rider_model:0,appearance:[0,0,0,0,0,0,0,0]}});
     assert.deepEqual(f.starts,['env03','env03']);assert.deepEqual(poses,[null,{origin:[1,2,3],yaw:0.5}]);
     assert.deepEqual(decode(socket.sent.at(-1)),{Ready:{map:3}});
   }finally{await f.cleanup();}

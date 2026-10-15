@@ -4,7 +4,7 @@
 // backdrop, a curved silver stage panel on the right, gold bullet rows with a
 // glossy gold selection bar, and a Back control where the hint pill sat. Text is
 // limited to the original-style labels; no invented descriptions or subheadings.
-export const screenPages = new Set(['title','main','single','multiplayer','create-lobby','join-lobby','lobby','garage','tracks','race','loading']);
+export const screenPages = new Set(['title','main','single','multiplayer','create-lobby','join-lobby','lobby','garage','gear','tracks','race','loading']);
 
 // Original event families from tracks.dat ids; labels follow the manual's event types.
 export const COURSE_GROUPS = [['all','All'],['env','Enduro'],['free','Stunt'],['nat','Nationals'],['sx','Supercross'],['extra','Arena']];
@@ -14,7 +14,7 @@ export function courseGroup(id) {
 }
 export const groupLabel = id => COURSE_GROUPS.find(([key]) => key === courseGroup(id))?.[1] ?? '';
 
-const titles = {main:'Main Menu',single:'Single Player',multiplayer:'Multiplayer','create-lobby':'Create Lobby','join-lobby':'Join Lobby',lobby:'Free Ride Lobby',garage:'Select ATV & Rider',tracks:'Select Track',race:'Single Race',loading:'Now Loading...'};
+const titles = {main:'Main Menu',single:'Single Player',multiplayer:'Multiplayer','create-lobby':'Create Lobby','join-lobby':'Join Lobby',lobby:'Free Ride Lobby',garage:'Select ATV & Rider',gear:'Rider Gear',tracks:'Select Track',race:'Single Race',loading:'Now Loading...'};
 const icon = {
   left:'<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M13 3 5 10l8 7z"/></svg>',
   right:'<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3l8 7-8 7z"/></svg>',
@@ -57,7 +57,7 @@ function build(fe) {
   const left = h('div', {class:'ms-left'});
   const panel = h('section', {class:'ms-panel'});
   screen.append(h('div', {class:'ms-panel-shape', 'aria-hidden':'true'}), h('header', {class:'ms-header'}, h('h1', {class:'ms-heading', text:titles[page] ?? ''})), left, panel);
-  ({main:buildMenu, single:buildMenu, multiplayer:buildMenu, 'create-lobby':buildForm, 'join-lobby':buildForm, lobby:buildLobby, garage:buildGarage, tracks:buildTracks, race:buildRace, loading:buildLoading})[page](fe, left, panel);
+  ({main:buildMenu, single:buildMenu, multiplayer:buildMenu, 'create-lobby':buildForm, 'join-lobby':buildForm, lobby:buildLobby, garage:buildGarage, gear:buildGear, tracks:buildTracks, race:buildRace, loading:buildLoading})[page](fe, left, panel);
   if (page !== 'loading') screen.append(buildHints(fe));
   return screen;
 }
@@ -170,6 +170,22 @@ function buildRace(fe, left, panel) {
 
 // The original course loader (LdScreen): an action shot on the left, a black
 // "Track:" bar and "Tips:" on the gray panel, and a gold bar in a black pill.
+// Original Profile Store categories as left/right steppers beside the live
+// quad and rider previews.
+function buildGear(fe, left, panel) {
+  const list = h('nav', {class:'ms-rows', 'aria-label':'Rider gear'});
+  for (const action of fe.frame.choices) {
+    if (action === 'back') continue;
+    const item = row(fe, action, [h('span', {class:'ms-row-value'})]);
+    item?.classList.add('ms-row-cycle');
+    list.append(item ?? '');
+  }
+  left.append(list);
+  panel.append(h('div', {class:'ms-models'},
+    h('div', {class:'ms-model ms-model-quad', dataset:{modelSlot:'quad'}}),
+    h('div', {class:'ms-model ms-model-rider', dataset:{modelSlot:'rider'}})));
+}
+
 function buildLoading(fe, left, panel) {
   left.append(h('figure', {class:'ms-shot'}));
   panel.append(h('div', {class:'ms-ld-info'},
@@ -226,7 +242,9 @@ function buildGarage(fe, left, panel) {
   // One tap toggles the rider; the switch shows which one is riding.
   const rider = row(fe, 'riderchange', [h('span', {class:'ms-switch', 'aria-hidden':'true'}, h('span', {dataset:{rider:'0'}, text:'Male'}), h('span', {dataset:{rider:'1'}, text:'Female'}))]);
   rider?.classList.add('ms-garage-row', 'ms-rider-row');
-  rows.append(vehicleRow, rider ?? '');
+  const gear = row(fe, 'gear');
+  gear?.classList.add('ms-garage-row');
+  rows.append(vehicleRow, rider ?? '', gear ?? '');
   const catalog = fe.garageCatalog();
   const list = h('div', {class:'ms-vehicles ms-scroll', role:'listbox', 'aria-label':'Vehicles'});
   for (const group of [...new Set(catalog.map(item => item.group))]) {

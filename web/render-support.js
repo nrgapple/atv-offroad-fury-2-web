@@ -348,3 +348,19 @@ export class RenderScale {
   }
   pixelRatio(device = 1) { return Math.min(device || 1, this.ratio); }
 }
+
+// Authored quad paint (rider customization). Index order matches Rust
+// rider_gear::PAINTS. Mode 1 recolours saturated body-atlas pixels to `hue`,
+// keeping their shading; 2 lifts them to white; 3 darkens them to black.
+// Grey, black and metal parts are unsaturated and stay original.
+export const PAINT_PALETTE = [[0,0],[1,0],[1,.075],[1,.15],[1,.33],[1,.48],[1,.62],[1,.76],[1,.9],[2,0],[3,0]];
+export const paintable = material => /s\d+m\d+$/i.test(material ?? '');
+export const paintGlsl = `
+vec3 paintRgb2hsv(vec3 c){vec4 K=vec4(0.,-1./3.,2./3.,-1.);vec4 p=mix(vec4(c.bg,K.wz),vec4(c.gb,K.xy),step(c.b,c.g));vec4 q=mix(vec4(p.xyw,c.r),vec4(c.r,p.yzx),step(p.x,c.r));float d=q.x-min(q.w,q.y);return vec3(abs(q.z+(q.w-q.y)/(6.*d+1e-6)),d/(q.x+1e-6),q.x);}
+vec3 paintHsv2rgb(vec3 c){vec3 p=abs(fract(c.xxx+vec3(1.,2./3.,1./3.))*6.-3.);return c.z*mix(vec3(1.),clamp(p-1.,0.,1.),c.y);}
+vec3 applyPaint(vec3 base, vec2 paint){
+  if(paint.x<.5)return base;
+  vec3 h=paintRgb2hsv(base);float w=smoothstep(.22,.42,h.y)*smoothstep(.05,.16,h.z);
+  vec3 target=paint.x<1.5?paintHsv2rgb(vec3(paint.y,max(h.y,.55),h.z)):paint.x<2.5?vec3(min(1.,h.z*1.1+.18)):vec3(h.z*.2);
+  return mix(base,target,w);
+}`;

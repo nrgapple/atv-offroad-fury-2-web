@@ -93,5 +93,6 @@ pub mod cpu_avoidance;
 pub mod race;
 pub mod race_ai;
 pub mod race_roster;
+pub mod rider_gear;
 
 pub mod peer_contact;
