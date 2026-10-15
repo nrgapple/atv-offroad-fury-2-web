@@ -9,7 +9,7 @@ from unittest.mock import patch
 from release_checkpoint import claim, record, status, publication_lock, require_owner
 from reuse_site_release import refresh, prepare
 from test_release import fixture, COMMIT
-from test_release_queue import git
+from test_fixtures import git
 import upload_cloudflare_content as uploader
 import fetch_site_release as fetcher
 
