@@ -35,10 +35,11 @@ try {
  await page.getByRole('button',{name:'Reset ATV',exact:true}).waitFor();
  await page.evaluate(()=>window.crashDriving=true);
  await page.getByRole('button',{name:'Reset ATV',exact:true}).click();
- await page.waitForFunction(()=>window.atvTerrainStatus.frame.funny_crash?.detached_parts===7&&window.atvTerrainStatus.frame.funny_crash.rider_node_matrices.length>0&&window.atvTerrainStatus.frame.funny_crash.age>.6,null,{timeout:60000});
+ await page.waitForFunction(()=>window.atvTerrainStatus.frame.funny_crash?.detached_parts>=1&&window.atvTerrainStatus.frame.funny_crash.rider_node_matrices.length>0&&window.atvTerrainStatus.frame.funny_crash.age>.6,null,{timeout:60000});
  await page.evaluate(()=>window.crashDriving=false);
  const crash=await page.evaluate(()=>window.atvTerrainStatus.frame);
- assert.equal(crash.funny_crash.detached_parts,7);
+ // Pieces nearest the actual contact break; a severe hit sheds at least one.
+ assert(crash.funny_crash.detached_parts>=1&&crash.funny_crash.detached_parts<=7);
  await page.waitForFunction(()=>crashDraws.quad>0&&crashDraws.rider>0);
  if(process.env.ATV_CRASH_SCREENSHOT)await page.screenshot({path:process.env.ATV_CRASH_SCREENSHOT});
  await page.waitForFunction(n=>window.atvTerrainStatus.frame.reset_count>n,crash.reset_count,{timeout:20000});

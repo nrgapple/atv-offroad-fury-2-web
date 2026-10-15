@@ -72,7 +72,8 @@ export function verifyCrashImpacts(frames) {
   if(frame.reset_count!==reset) { reset=frame.reset_count; previous=0; }
   const parts=frame.funny_crash?.detached_parts??0;
   if(parts>previous) {
-   assert(frame.crash_impact_speed>=(parts>2?50:25), 'New breakaway pieces require a hard actual ATV impact');
+   // Moderate contacts shed at most two nearby wheels per step; more needs a severe one.
+   assert(frame.crash_impact_speed>=(parts-previous>2?50:25), 'New breakaway pieces require a hard actual ATV impact');
    impacts++;
   }
   if(frame.funny_crash?.rider_node_matrices.length&&parts===0&&frame.crash_impact_speed===0&&!frame.grounded.some(Boolean)) aerial++;

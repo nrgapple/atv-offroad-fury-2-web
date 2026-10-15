@@ -212,11 +212,11 @@ impl Kind {
     /// its nearest tearable joint.
     fn tear_speed(self) -> f32 {
         match self {
-            Kind::Head => 50.,
-            Kind::Hand | Kind::Foot => 48.,
-            Kind::LowerArm | Kind::LowerLeg => 44.,
-            Kind::UpperArm => 48.,
-            Kind::UpperLeg => 54.,
+            Kind::Head => 42.,
+            Kind::Hand | Kind::Foot => 40.,
+            Kind::LowerArm | Kind::LowerLeg => 37.,
+            Kind::UpperArm => 40.,
+            Kind::UpperLeg => 46.,
             _ => f32::INFINITY,
         }
     }
@@ -1203,7 +1203,7 @@ impl Ragdoll {
         for (index, load) in candidates {
             // Tearing absorbs energy: each further tear in one crash needs a
             // clearly harder strike, so only the worst-hit parts give way.
-            if torn.len() >= limit || load < 1. + 0.45 * self.torn as f32 {
+            if torn.len() >= limit || load < 1. + 0.6 * self.torn as f32 {
                 continue;
             }
             // Severed pieces do not dismember further; a joint and a joint

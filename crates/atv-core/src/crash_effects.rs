@@ -115,6 +115,9 @@ pub struct Effects {
     previous_pose: Vec<M>,
     parts: Vec<Part>,
     rider_velocity: Option<V>,
+    /// Vehicle velocity on the last riding step, before the crash bled it off.
+    riding_velocity: V,
+    rider_impact: f32,
 }
 #[derive(Serialize)]
 pub struct Frame {
@@ -122,6 +125,8 @@ pub struct Frame {
     pub severed_nodes: Vec<usize>,
     pub blood: BloodFrame,
     pub detached_parts: usize,
+    /// Hardest rider contact approach speed (ft/s) so far in this crash.
+    pub rider_impact: f32,
     pub rider_node_matrices: Vec<M>,
     pub quad_node_matrices: Vec<M>,
 }
@@ -173,6 +178,7 @@ impl Effects {
         self.severed.clear();
         self.gore.clear();
         self.age = 0.;
+        self.rider_impact = 0.;
     }
     /// Mechanical pieces nearest the actual contact give way first. Without a
     /// contact point (motorcycles), severity alone selects the classic set.
@@ -309,6 +315,9 @@ impl Effects {
             self.clear();
             self.reset = reset;
         }
+        if !wreck && velocity.iter().all(|v| v.is_finite()) {
+            self.riding_velocity = velocity;
+        }
         if tick != self.tick {
             self.tick = tick;
             // Rider separation can happen in flight. Mechanical damage waits for
@@ -328,7 +337,18 @@ impl Effects {
                 if detached && !self.unsupported_rider {
                     let previous = (self.previous_pose.len() == pose.len())
                         .then_some((self.previous_pose.as_slice(), dt));
-                    let launch = self.rider_velocity.unwrap_or(velocity);
+                    // An ejected rider keeps most of the momentum the vehicle
+                    // had before the impact stopped it.
+                    let native = self.rider_velocity.unwrap_or(velocity);
+                    let carried = sub(self.riding_velocity, native);
+                    let launch =
+                        if dot(self.riding_velocity, self.riding_velocity) > dot(native, native) {
+                            add(native, scale(carried, 0.65))
+                        } else {
+                            native
+                        };
+                    let speed = dot(launch, launch).sqrt();
+                    let launch = scale(launch, 1. / (speed / 90.).max(1.));
                     self.ragdoll = Ragdoll::new(rider_nodes, &pose, previous, launch);
                     self.unsupported_rider = self.ragdoll.is_none();
                 } else {
@@ -339,6 +359,9 @@ impl Effects {
                 |p: V| floor(p).filter(|(h, n)| h.is_finite() && n.iter().all(|v| v.is_finite()));
             if let Some(ragdoll) = &mut self.ragdoll {
                 ragdoll.step(dt, &floor);
+                for b in 0..ragdoll.body_count() {
+                    self.rider_impact = self.rider_impact.max(ragdoll.impact(b).0);
+                }
                 if self.gorn {
                     let budget = MAX_TEARS.saturating_sub(self.severed.len());
                     for torn in ragdoll.tear(budget) {
@@ -408,6 +431,7 @@ impl Effects {
                 BloodFrame::default()
             },
             detached_parts: self.parts.len(),
+            rider_impact: self.rider_impact,
             rider_node_matrices,
             quad_node_matrices,
         })

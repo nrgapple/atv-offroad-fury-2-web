@@ -226,11 +226,11 @@ export class BloodRenderer {
       } else if(kind<1.5){
         // Irregular lobed stain with satellite droplets beyond the rim.
         float a=atan(uv.y,uv.x);
-        float edge=.68+.10*sin(a*5.+seed*6.283)+.07*sin(a*9.+seed*17.)+.05*sin(a*17.+seed*41.);
+        float edge=.74+.08*sin(a*3.+seed*6.283)+.05*sin(a*7.+seed*17.)+.025*sin(a*13.+seed*41.);
         float body=1.-smoothstep(edge-.06,edge,r);
         vec2 cell=floor(uv*5.), f=fract(uv*5.)-.5;
         float h=hash(dot(cell,vec2(12.9898,78.233))+seed*91.);
-        float satellite=h>.8&&r>edge&&r<1.?1.-smoothstep(.12,.28,length(f)):0.;
+        float satellite=h>.87&&r>edge&&r<1.?1.-smoothstep(.12,.28,length(f)):0.;
         float alpha=max(body,satellite);
         if(alpha<.02)discard;
         vec3 wet=mix(vec3(.15,0.,.008),vec3(.40,.012,.02),smoothstep(edge,0.,r));

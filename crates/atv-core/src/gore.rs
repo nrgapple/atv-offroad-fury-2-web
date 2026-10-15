@@ -424,7 +424,7 @@ impl Gore {
             let vn = dot(v, normal);
             let slide = sub(v, scale(normal, vn));
             let speed = length(v);
-            let width = (r * (2.4 + 0.06 * speed)).min(0.6);
+            let width = (r * (3.2 + 0.07 * speed)).min(0.7);
             let stretch = 1. + (length(slide) / vn.abs().max(2.)).min(2.5);
             self.splat(p, normal, slide, width, width * stretch);
         }

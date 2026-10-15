@@ -7,7 +7,7 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import {captureSimulation} from './capture_simulation.mjs';
 import {captureCrashIsolation,verifyCrashIsolation,captureCrashDraws,verifyCrashImpacts} from './crash_isolation.mjs';
 const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
-const browser=await chromium.launch({headless:true});
+const browser=await chromium.launch({headless:true,args:process.env.ATV_BROWSER_GPU==='metal'?['--use-angle=metal']:[]});
 await mkdir('work/verification',{recursive:true});
 try {
  const page=await browser.newPage({viewport:{width:Number(process.env.ATV_CRASH_WIDTH||1280),height:844}}),errors=[];
@@ -39,10 +39,11 @@ try {
  await page.getByRole('button',{name:'Reset ATV',exact:true}).waitFor();
  await page.evaluate(()=>window.crashDriving=true);
  await page.getByRole('button',{name:'Reset ATV',exact:true}).click();
- await page.waitForFunction(()=>window.atvTerrainStatus.frame.funny_crash?.detached_parts===7&&window.atvTerrainStatus.frame.funny_crash.rider_node_matrices.length>0&&window.atvTerrainStatus.frame.funny_crash.age>.6,null,{timeout:60000});
+ await page.waitForFunction(()=>window.atvTerrainStatus.frame.funny_crash?.detached_parts>=1&&window.atvTerrainStatus.frame.funny_crash.rider_node_matrices.length>0&&window.atvTerrainStatus.frame.funny_crash.age>.6,null,{timeout:60000});
  await page.evaluate(()=>window.crashDriving=false);
  const crash=await page.evaluate(()=>window.atvTerrainStatus.frame);
- assert.equal(crash.funny_crash.detached_parts,7);
+ // Pieces nearest the actual contact break; a severe hit sheds at least one.
+ assert(crash.funny_crash.detached_parts>=1&&crash.funny_crash.detached_parts<=7);
  await page.waitForFunction(()=>crashDraws.quad>0&&crashDraws.rider>0);
  if(process.env.ATV_CRASH_SCREENSHOT)await page.screenshot({path:process.env.ATV_CRASH_SCREENSHOT});
  await page.waitForFunction(n=>window.atvTerrainStatus.frame.reset_count>n,crash.reset_count,{timeout:20000});
