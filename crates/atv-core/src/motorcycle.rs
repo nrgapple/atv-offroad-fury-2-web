@@ -16,8 +16,8 @@
 //! - wreck body held at terrain + 0.5 ft, keeping 12% of the impact speed as
 //!   rebound and damping other motion by 0.97 per step;
 //! - detached rider clamped to the terrain with 0.85 horizontal friction;
-//! - airborne-landing wreck angle floors of 1.4 rad (roll via `.max(1.4)`, pitch
-//!   fixed) and a minimum wreck duration of 1.75 s.
+//! - grounded wreck trigger when roll exceeds `max(AirborneRollWreckAngle, 1.4)`
+//!   rad or pitch exceeds a fixed 1.4 rad, and a minimum wreck time of 1.75 s.
 //!
 //! A real recovery needs the SLUS_211.04/GAME_REL.BIN bike controller routines
 //! analysed in Ghidra and an oracle comparison like the ATV work under
@@ -1119,8 +1119,8 @@ impl Motorcycle {
                 self.frame.wheelie_active = false;
                 self.frame.stoppie_active = false;
             }
-            // Authored stabilizer: 1.4 rad floor on the roll wreck angle and a
-            // fixed 1.4 rad pitch limit.
+            // Authored stabilizer: grounded wreck roll threshold floored at 1.4 rad
+            // and a fixed 1.4 rad pitch threshold.
             if grounded
                 && (self.frame.crash_impact_speed
                     > self.value("Wrecks", "FreestyleDownWreckSpeedLimit")

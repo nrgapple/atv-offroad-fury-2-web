@@ -8,11 +8,6 @@ are authored arcade code. Only the ground bank angle
 (`motorcycle_balance.rs`, GAME_REL `004dbd10`) cites a recovered routine, and it
 runs through an authored contact adapter. Native whole-step parity is unmeasured.
 
-"Paired steps" below are the enhancement-isolation check from
-`tools/crash_isolation.mjs` (enhanced vs Original-mode WASM workers, zero
-gameplay/camera differences). They show optional crash effects leave the port
-unchanged; they are not comparisons with MX vs. ATV Unleashed.
-
 Known non-original constraints (marked `Authored stabilizer:` in the code):
 
 - per-wheel spring force capped at `weight * 8`; fixed lateral-slip (`mass * 8`)
@@ -21,14 +16,20 @@ Known non-original constraints (marked `Authored stabilizer:` in the code):
   the inward normal velocity;
 - wreck body held at terrain + 0.5 ft with 0.12 rebound and 0.97 damping;
 - detached rider clamped to terrain with 0.85 horizontal friction;
-- airborne-landing wreck angle floors of 1.4 rad (roll `.max(1.4)`, fixed pitch)
-  and a minimum wreck time of 1.75 s (`.max(1.75)`).
+- grounded wreck trigger when roll exceeds `max(AirborneRollWreckAngle, 1.4 rad)`
+  or pitch exceeds a fixed 1.4 rad, and a minimum wreck time of 1.75 s
+  (`.max(1.75)`).
 
 A real recovery would require Ghidra analysis of the SLUS_211.04/GAME_REL.BIN
 bike controller, tire and wreck routines (update order, units, gates), then an
 instruction-level oracle comparison of whole steps against the Rust controller,
 like the ATV physics oracle work kept under ignored `work/physics`. Until then,
 describe motorcycles as an authored controller using source resources and tuning.
+
+"Paired steps" below are the enhancement-isolation check from
+`tools/crash_isolation.mjs` (enhanced vs Original-mode WASM workers, zero
+gameplay/camera differences). They show optional crash effects leave the port
+unchanged; they are not comparisons with MX vs. ATV Unleashed.
 
 Source: the user-supplied MX vs. ATV Unleashed USA disc, boot `SLUS_211.04`,
 version 1.02. Boot SHA-256:
