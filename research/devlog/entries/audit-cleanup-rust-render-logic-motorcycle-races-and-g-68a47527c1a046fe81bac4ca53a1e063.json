@@ -1,0 +1,18 @@
+{
+  "id": "audit-cleanup-rust-render-logic-motorcycle-races-and-g-68a47527c1a046fe81bac4ca53a1e063",
+  "timestamp": "2026-10-15T23:01:51.151864+00:00",
+  "recorded_at": "2026-10-15T23:01:51.151864+00:00",
+  "kind": "build",
+  "title": "Audit cleanup, Rust render logic, motorcycle races and Garage stats",
+  "summary": "Combined three paused workstreams into one checkpoint: the code audit cleanup, render-frame logic moved from JavaScript into Rust, motorcycles racing the original CPU roster, and original ATV stats in the renamed Garage.",
+  "details": [
+    "Vegetation selection, terrain height for cameras, race starts and PSM material parsing now run in Rust; JavaScript only uploads buffers and issues draws.",
+    "Crash mode and chase camera default to the recovered original behaviour.",
+    "Browser tests share one harness, are classified in a manifest, and a content-free smoke group runs in CI. The disabled experimental release queue was removed.",
+    "A motorcycle player now races the original CPU roster on physical ATVs, uses ATV2's original follow and wreck cameras, and gets the original map-edge launch.",
+    "The Garage shows Engine, Traction and Suspension from the original uiQuad.txt, the maker logo, and the authored top speed. The top quad really is rated 1.0 on all three.",
+    "The Quad and Rider entry is now called Garage; the Rider Gear page no longer puts Back over its last rows on shorter phones.",
+    "Verified on host: make check, make web, the content-free smoke group, race (ATV and motorcycle), two race courses, vegetation billboards and materials, fog, frontend, menu models, motorcycle menu and UI polish browser tests."
+  ],
+  "limitation": "Music not playing on the public site has not been investigated."
+}
