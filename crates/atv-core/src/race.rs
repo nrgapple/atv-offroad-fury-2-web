@@ -82,6 +82,8 @@ pub struct Located {
 /// live in Track +0x34/+0x38 and are not yet recovered.
 pub const TRACK_AHEAD: f32 = 150.;
 pub const TRACK_BEHIND: f32 = 60.;
+/// Track apron behind the first node of a start straight (grid setback 4.66ft).
+const START_APRON: f32 = 30.;
 impl Default for Course {
     fn default() -> Self {
         Self {
@@ -766,13 +768,25 @@ impl Course {
     /// Fraction along `segment` when `p` lies inside its edge polygon.
     fn inside(&self, p: [f32; 3], segment: usize) -> Option<f32> {
         let n = self.next(segment);
-        quad(
+        let on = quad(
             p,
             self.edge(segment),
             self.edge(n),
             self.points[segment],
             self.points[n],
-        )
+        );
+        // The grid sits behind the start gate, before the first node of a
+        // start straight; a short apron behind it counts as on track.
+        if on.is_some() || segment != 0 || self.loop_start == 0 {
+            return on;
+        }
+        let a = self.points[0];
+        let b = self.points[n];
+        let t = normalize_flat([b[0] - a[0], 0., b[2] - a[2]])?;
+        let e = self.edge(0);
+        let back = e.map(|v| [v[0] - t[0] * START_APRON, v[1], v[2] - t[2] * START_APRON]);
+        let behind = [a[0] - t[0] * START_APRON, a[1], a[2] - t[2] * START_APRON];
+        quad(p, back, e, behind, a).map(|_| 0.)
     }
     /// The checkpoint after `index` on the main racing line.
     pub fn next(&self, index: usize) -> usize {
@@ -1630,6 +1644,13 @@ mod tests {
         assert_eq!(c.branches, vec![(4, 6)]);
         let (start, yaw) = c.start();
         assert!((start[2] + 94.66).abs() < 0.001 && yaw.abs() < 0.001);
+        // A grid slightly behind the first node stays on the track apron.
+        let origin = Station {
+            segment: 0,
+            fraction: 0.,
+        };
+        assert!(c.locate([5., 0., -110.], origin, false).is_some());
+        assert!(c.locate([5., 0., -140.], origin, false).is_none());
         // The gate/policy tail is optional; the route graph is not.
         for length in 0..data.len() - 2 * 41 - 5 * 5 {
             assert!(Course::parse(&data[..length]).is_err());

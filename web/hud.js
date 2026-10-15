@@ -1,6 +1,7 @@
 // Draw original runtime HUD layouts with crisp HD text. All changing values and animation
 // clocks arrive from authored Rust; this bridge never derives scores from input.
 import { courseResource } from './launch.js';
+import { observedSize } from './render-support.js';
 const unquote = value => (value ?? '').replace(/^"/, '').replace(/"$/, '');
 const numbers = value => value?.split(',').map(s => Number(s.trim()));
 const fontDefault = 'tradegothic_boldcondensed_22s';
@@ -125,7 +126,8 @@ export class HeadUpDisplay {
     }
     this.canvas.dataset.speedVisible = String(speedVisible);
     if (!this.ready || !visible || !hud || (!speedVisible && !hud.stunt_visible)) { this.release(); return; }
-    const rect = this.surface.getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 3);
+    this.surfaceSize ??= observedSize(this.surface);
+    const rect = this.surfaceSize, dpr = Math.min(devicePixelRatio || 1, 3);
     const width = Math.round(rect.width * dpr), height = Math.round(rect.height * dpr);
     if (width <= 0 || height <= 0) { this.release(); return; }
     const key = JSON.stringify([hud, speedVisible, rect.width, rect.height, dpr]);

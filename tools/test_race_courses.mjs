@@ -48,8 +48,11 @@ try {
   // Riders line up across the original start gate, one RiderSpacing apart.
   const xs=race.opponents.map(o=>o.origin);const gap=Math.hypot(xs[1][0]-xs[2][0],xs[1][2]-xs[2][2]);
   assert(gap>=15&&gap<=31,`${id} grid gap ${gap}`);
+  // Waiting on the grid behind the start gate is on the track.
+  await page.waitForFunction(()=>window.atvTerrainStatus.frame?.race?.elapsed>=1,null,{timeout:60000});
+  assert.equal((await state()).frame.race.off_track,false,`${id} grid is on the track`);
   await page.keyboard.down('KeyW');
-  await page.waitForFunction(()=>window.atvTerrainStatus.frame.race.elapsed>=3,null,{timeout:60000});
+  await page.waitForFunction(()=>window.atvTerrainStatus.frame.race.elapsed>=4,null,{timeout:60000});
   await page.keyboard.up('KeyW');
   s=await state();
   assert.equal(s.frame.race.phase,'racing',id);assert.equal(s.glError,0,id);

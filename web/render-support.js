@@ -284,3 +284,67 @@ export function meshNodeBounds(groups, count) {
   }
   return bounds;
 }
+
+// Synchronous gl.getParameter/isEnabled queries stall the GPU pipeline, which
+// is costly on phones. Renderers that save and restore state (ambient effects,
+// streams, weather and wheel effects) query a handful of bindings every frame,
+// so shadow exactly those values by intercepting their setters. Answers match
+// the context because every change goes through the patched calls; the shadow
+// resets with the context on loss/restore.
+export function shadowGlState(gl) {
+  const defaults = () => ({ program: null, vao: null, arrayBuffer: null, blend: false, depthMask: true, src: gl.ONE, dst: gl.ZERO, srcAlpha: gl.ONE, dstAlpha: gl.ZERO, active: gl.TEXTURE0, textures: new Map() });
+  let s = defaults();
+  const wrap = (name, after) => { const original = gl[name].bind(gl); gl[name] = (...args) => { const result = original(...args); after(...args); return result; }; };
+  wrap('useProgram', program => { s.program = program; });
+  wrap('bindVertexArray', vao => { s.vao = vao; });
+  wrap('bindBuffer', (target, buffer) => { if (target === gl.ARRAY_BUFFER) s.arrayBuffer = buffer; });
+  wrap('enable', cap => { if (cap === gl.BLEND) s.blend = true; });
+  wrap('disable', cap => { if (cap === gl.BLEND) s.blend = false; });
+  wrap('depthMask', flag => { s.depthMask = Boolean(flag); });
+  wrap('blendFunc', (src, dst) => { s.src = s.srcAlpha = src; s.dst = s.dstAlpha = dst; });
+  wrap('blendFuncSeparate', (src, dst, srcAlpha, dstAlpha) => { Object.assign(s, { src, dst, srcAlpha, dstAlpha }); });
+  wrap('activeTexture', unit => { s.active = unit; });
+  wrap('bindTexture', (target, texture) => { if (target === gl.TEXTURE_2D) s.textures.set(s.active, texture); });
+  wrap('deleteBuffer', buffer => { if (buffer && s.arrayBuffer === buffer) s.arrayBuffer = null; });
+  wrap('deleteVertexArray', vao => { if (vao && s.vao === vao) s.vao = null; });
+  wrap('deleteTexture', texture => { for (const [unit, bound] of s.textures) if (texture && bound === texture) s.textures.set(unit, null); });
+  const getParameter = gl.getParameter.bind(gl), isEnabled = gl.isEnabled.bind(gl);
+  const shadowed = new Map([[gl.CURRENT_PROGRAM, () => s.program], [gl.VERTEX_ARRAY_BINDING, () => s.vao], [gl.ARRAY_BUFFER_BINDING, () => s.arrayBuffer], [gl.DEPTH_WRITEMASK, () => s.depthMask], [gl.BLEND_SRC_RGB, () => s.src], [gl.BLEND_DST_RGB, () => s.dst], [gl.BLEND_SRC_ALPHA, () => s.srcAlpha], [gl.BLEND_DST_ALPHA, () => s.dstAlpha], [gl.ACTIVE_TEXTURE, () => s.active], [gl.TEXTURE_BINDING_2D, () => s.textures.get(s.active) ?? null]]);
+  gl.getParameter = name => (shadowed.get(name) ?? (() => getParameter(name)))();
+  gl.isEnabled = cap => cap === gl.BLEND ? s.blend : isEnabled(cap);
+  return { reset() { s = defaults(); }, state: () => s };
+}
+
+// Element size kept current by a ResizeObserver, so per-frame code never
+// forces a synchronous layout after the HUD or race overlay changed the DOM.
+export function observedSize(element, measure = el => el.getBoundingClientRect()) {
+  const read = () => { const r = measure(element); return { width: r.width, height: r.height }; };
+  const size = read();
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => Object.assign(size, read())).observe(element);
+  else size.live = true;
+  return { get width() { return size.live ? read().width : size.width; }, get height() { return size.live ? read().height : size.height; } };
+}
+
+// Adaptive 3D render resolution for GPU-bound phones. Physics, input and the
+// HUD keep their own rates and resolution; only the WebGL canvas pixel ratio
+// steps between `min` and `max`, and only from sustained active frame times.
+export class RenderScale {
+  constructor({ max = 1.5, min = 1, step = 0.25, slowMs = 24, fastMs = 17.5, downAfter = 1.5, upAfter = 6 } = {}) {
+    Object.assign(this, { max, min, step, slowMs, fastMs, downAfter, upAfter, ratio: max, average: 1000 / 60, slow: 0, fast: 0, changes: 0, raised: false });
+  }
+  // `frameMs` is the raw interval between active frames.
+  sample(frameMs) {
+    if (!Number.isFinite(frameMs) || frameMs <= 0 || frameMs > 250) return this.ratio;
+    this.average += (frameMs - this.average) * 0.1;
+    const seconds = frameMs / 1000;
+    this.slow = this.average > this.slowMs ? this.slow + seconds : 0;
+    this.fast = this.average < this.fastMs ? this.fast + seconds : 0;
+    if (this.slow >= this.downAfter && this.ratio > this.min) {
+      // Falling back after a recovery doubles the wait before the next try.
+      if (this.raised) this.upAfter = Math.min(60, this.upAfter * 2);
+      this.ratio = Math.max(this.min, this.ratio - this.step); this.slow = 0; this.raised = false; this.changes++;
+    } else if (this.fast >= this.upAfter && this.ratio < this.max) { this.ratio = Math.min(this.max, this.ratio + this.step); this.fast = 0; this.raised = true; this.changes++; }
+    return this.ratio;
+  }
+  pixelRatio(device = 1) { return Math.min(device || 1, this.ratio); }
+}
