@@ -140,6 +140,16 @@ export function chasePresentation(frame, actor, aspect, sightline, height) {
   } };
 }
 
+// Authored camera shots (the pre-race camera) keep their pose; only the
+// portrait focal adaptation of the chase view applies.
+export function cinematicPresentation(frame, aspect) {
+  const portrait = Math.max(0, Math.min(1, (1 - aspect) / .5));
+  const view = frame.target.map((value, i) => value - frame.position[i]);
+  const focalLength = (4 / 3) / Math.tan(frame.fov * Math.PI / 360) * (1 - .12 * portrait);
+  return { position: [...frame.position], yaw: Math.atan2(view[0], view[2]), pitch: Math.atan2(view[1], Math.hypot(view[0], view[2])),
+    presentation: { aspect, portrait, cinematic: true, focalLength } };
+}
+
 // Saved authored options, including migration of the former boolean crash switch.
 // Without a saved choice, crashes and the chase camera use the recovered original.
 export class RideEffectsSettings {

@@ -85,6 +85,10 @@ struct Simulation {
     /// The original path driver that takes the player's vehicle after the
     /// finish line, created on the first post-finish frame.
     race_autopilot: Option<atv_core::race_ai::Driver>,
+    /// The course's pre-race camera shots (`<venue>nat<n>.vub`) and the
+    /// intro camera playing them before the countdown.
+    race_shots: Vec<Vec<atv_core::race_intro::ShotFrame>>,
+    race_intro: Option<atv_core::race_intro::Intro>,
     /// Original quads selected for the CPU roster, by race slot.
     cpu_models: Vec<Option<cpu::CpuModel>>,
 }
@@ -1470,7 +1474,64 @@ pub(crate) struct CameraActor {
     /// Detached rider origin and velocity during a wreck.
     pub rider: Option<([f32; 3], [f32; 3])>,
 }
+/// The follow camera, replaced by the pre-race camera before the race.
 pub(crate) fn follow_camera(
+    sim: &mut Simulation,
+    actor: CameraActor,
+    orbit: f32,
+    dt: f32,
+) -> Result<serde_json::Value> {
+    let (rider, forward) = (
+        actor.origin,
+        atv_core::dynamics::basis(actor.orientation)[2],
+    );
+    let mut output = chase_camera(sim, actor, orbit, dt)?;
+    let (Some(race), Some(intro)) = (sim.race.as_mut(), sim.race_intro.as_mut()) else {
+        return Ok(output);
+    };
+    if !race.holding() {
+        sim.race_intro = None;
+        return Ok(output);
+    }
+    let follow: atv_core::race_intro::Pose =
+        serde_json::from_value(output.clone()).map_err(|e| e.to_string())?;
+    let terrain = sim.terrain.as_ref().ok_or("load original terrain first")?;
+    let ground = |x: f32, z: f32| {
+        terrain
+            .contact(x, z)
+            .ok()
+            .flatten()
+            .map_or(f32::MIN, |c| c.height)
+    };
+    let pose = intro.step(
+        dt,
+        &atv_core::race_intro::Scene {
+            rider,
+            forward,
+            follow,
+            ground: &ground,
+        },
+    )?;
+    if intro.countdown_requested() {
+        race.start_countdown();
+    }
+    if let Some(pose) = pose {
+        output["position"] = serde_json::json!(pose.position);
+        output["target"] = serde_json::json!(pose.target);
+        output["fov"] = serde_json::json!(pose.fov);
+        output["mode"] = serde_json::json!("intro");
+    }
+    Ok(output)
+}
+/// Skip the pre-race camera on any button (`00212d40`).
+pub(crate) fn skip_race_intro(sim: &mut Simulation) {
+    if let (Some(race), Some(intro)) = (sim.race.as_mut(), sim.race_intro.as_mut())
+        && intro.skip()
+    {
+        race.start_countdown();
+    }
+}
+fn chase_camera(
     sim: &mut Simulation,
     actor: CameraActor,
     orbit: f32,
@@ -1614,7 +1675,7 @@ fn race_controls(sim: &mut Simulation) -> Result<Option<atv_core::vehicle::Vehic
         sim.race_autopilot = None;
         return Ok(None);
     };
-    if race.counting_down() {
+    if race.holding() {
         return Ok(Some(atv_core::vehicle::VehicleInput {
             brake: 1.,
             ..Default::default()
@@ -1690,7 +1751,7 @@ fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
         // Every racer keeps its physics through the countdown (held on the
         // brakes) and after the finish, when the CPUs drive on.
         {
-            let hold = race.counting_down();
+            let hold = race.holding();
             let nodes = &sim
                 .rider_mesh
                 .as_ref()
@@ -1854,6 +1915,13 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
         .unwrap_or(false)
     {
         simulation(br#"{"cycle":true}"#, 47)?;
+    }
+    if value
+        .get("skip_intro")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        SIMULATION.with_borrow_mut(skip_race_intro);
     }
     let mut frames = Vec::with_capacity(count as usize);
     let now = value
@@ -2069,9 +2137,25 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         SIMULATION.with_borrow_mut(|sim| {
             sim.race_course = Some(course);
             sim.race = None;
+            sim.race_intro = None;
+            sim.race_shots.clear();
             sim.cpu_racers.clear();
         });
         return Ok(result);
+    }
+    if op == 113 {
+        // Pre-race camera shot `index` (0 starts the course's list).
+        let shot = atv_core::race_intro::parse_vub(input)?;
+        return SIMULATION.with_borrow_mut(|sim| {
+            if index == 0 {
+                sim.race_shots.clear();
+            }
+            if index != sim.race_shots.len() || index > 3 {
+                return Err("race camera shots must load in order".into());
+            }
+            sim.race_shots.push(shot);
+            Ok(b"null".to_vec())
+        });
     }
     if op == 96 {
         return SIMULATION.with_borrow_mut(|sim| {
@@ -2079,6 +2163,8 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
                 serde_json::from_slice(input).map_err(|e| e.to_string())?;
             if value.get("active").and_then(serde_json::Value::as_bool) == Some(false) {
                 sim.race = None;
+                sim.race_intro = None;
+                sim.race_shots.clear();
                 sim.race_course = None;
                 sim.cpu_racers.clear();
                 sim.cpu_models.clear();
@@ -2126,6 +2212,15 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
                     race.opponents()[index].yaw,
                     None,
                 );
+            }
+            // Race load plays the pre-race camera (`00210980` SetCamera(5));
+            // Restart Race (`00215460`) goes straight to the countdown.
+            sim.race_intro = None;
+            if value.get("intro").and_then(serde_json::Value::as_bool) != Some(false)
+                && !sim.race_shots.is_empty()
+            {
+                sim.race_intro = Some(atv_core::race_intro::Intro::new(sim.race_shots.clone()));
+                race.begin_intro();
             }
             sim.cpu_racers = racers;
             sim.race = Some(race);

@@ -64,6 +64,10 @@ body:not(.menu-open) #help, body:not(.menu-open) #status:not(.error) { display: 
 
 #race-overlay { position: fixed; z-index: 2; top: max(76px, calc(var(--app-safe-top) + 66px)); left: max(14px, var(--app-safe-left)); right: max(14px, var(--app-safe-right)); pointer-events: none; font-family: var(--atv-font-display); font-variant-numeric: tabular-nums; color: #fff; text-shadow: 1px 2px 2px #000; }
 #race-overlay[hidden], .race-results[hidden], .race-menu[hidden], .race-show[hidden] { display: none; }
+#race-overlay[data-phase=intro] > :not(.race-fade) { visibility: hidden; }
+.race-fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; }
+.race-fade.is-fading { animation: race-fade-in .5s linear both; }
+@keyframes race-fade-in { from { opacity: 1; } to { opacity: 0; } }
 .race-strip { display: flex; flex-wrap: wrap; gap: 12px 28px; font-size: clamp(15px, 2vw, 23px); }
 .race-place, .race-lap { color: #ffe375; }
 .race-times { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 5px; font-size: 14px; }

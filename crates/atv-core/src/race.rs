@@ -17,6 +17,7 @@ use serde::Serialize;
 const ALTERNATE_SECTION: u32 = 0x100;
 /// Native grid fallback in 001f8410 sets riders 4.66ft behind the start node.
 const GRID_SETBACK: f32 = 4.66;
+const COUNTDOWN: f32 = 4.;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct Gate {
@@ -1016,6 +1017,9 @@ pub struct Standing {
 pub struct Frame {
     pub phase: &'static str,
     pub countdown: u32,
+    /// QuadzillaCountdownOverlay step (`00217590`): 0 all lamps off, 1–3 red
+    /// lamps lit one per second, 4 green at GO, shown for 1s (`002e81f0`).
+    pub lights: Option<u8>,
     pub elapsed: f32,
     pub lap: u32,
     pub laps: u32,
@@ -1041,6 +1045,8 @@ pub struct Race {
     pub course: Course,
     pub laps: u32,
     pub countdown: f32,
+    /// The pre-race camera holds the countdown until it requests it.
+    intro: bool,
     pub elapsed: f32,
     player: Progress,
     opponents: Vec<Opponent>,
@@ -1097,7 +1103,9 @@ impl Race {
         Ok(Self {
             course,
             laps,
-            countdown: 3.,
+            // `0020f780`: 4.0s, a step each second, live at the end.
+            countdown: COUNTDOWN,
+            intro: false,
             elapsed: 0.,
             player,
             opponents,
@@ -1107,15 +1115,32 @@ impl Race {
             random: crate::engine_audio::OriginalRandom::with_seed(97211 + 5 * 47),
         })
     }
-    /// The countdown holds every racer on the grid; physics still settles.
-    pub fn counting_down(&self) -> bool {
-        self.countdown > 0.
+    /// The intro and countdown hold every racer on the grid; physics still
+    /// settles.
+    pub fn holding(&self) -> bool {
+        self.intro || self.countdown > 0.
+    }
+    pub fn in_intro(&self) -> bool {
+        self.intro
+    }
+    /// Hold the countdown for the pre-race camera.
+    pub fn begin_intro(&mut self) {
+        if self.countdown == COUNTDOWN && self.elapsed == 0. {
+            self.intro = true;
+        }
+    }
+    pub fn start_countdown(&mut self) {
+        self.intro = false;
     }
     /// The player has finished; their quad continues under CPU control.
     pub fn player_finished(&self) -> bool {
         self.player.finish.is_some()
     }
     pub fn step(&mut self, p: [f32; 3], dt: f32) {
+        if self.intro {
+            self.player.last = p;
+            return;
+        }
         if self.countdown > 0. {
             self.countdown = (self.countdown - dt).max(0.);
             self.player.last = p;
@@ -1293,7 +1318,9 @@ impl Race {
         let target = self.course.point_at(self.course.advance(station, 60.));
         let heading = self.course.heading_at(station);
         Frame {
-            phase: if self.countdown > 0. {
+            phase: if self.intro {
+                "intro"
+            } else if self.countdown > 0. {
                 "countdown"
             } else if self.player.finish.is_some() {
                 "finished"
@@ -1301,6 +1328,15 @@ impl Race {
                 "racing"
             },
             countdown: self.countdown.ceil() as u32,
+            lights: if self.intro {
+                None
+            } else if self.countdown > 0. {
+                Some(((COUNTDOWN - self.countdown) as u8).min(3))
+            } else if self.elapsed < 1. {
+                Some(4)
+            } else {
+                None
+            },
             elapsed: self.elapsed,
             lap: (self.player.completed + 1).min(self.laps),
             laps: self.laps,
@@ -1508,11 +1544,26 @@ mod tests {
     #[test]
     fn countdown_then_finish_hand_over_the_player() {
         let mut r = Race::new(course(), 1, vec![], 1).unwrap();
-        assert!(r.counting_down() && !r.player_finished());
-        for _ in 0..181 {
+        r.begin_intro();
+        assert!(r.holding() && r.in_intro());
+        r.step([0.; 3], 1.);
+        assert_eq!(r.countdown, 4., "the intro holds the countdown");
+        assert_eq!(r.frame(0.).phase, "intro");
+        assert_eq!(r.frame(0.).lights, None);
+        r.start_countdown();
+        assert_eq!(r.frame(0.).lights, Some(0));
+        r.step([0.; 3], 1.5);
+        assert_eq!(r.frame(0.).lights, Some(1));
+        r.countdown = 4.;
+        assert!(r.holding() && !r.player_finished());
+        for _ in 0..241 {
             r.step([0.; 3], 1. / 60.);
         }
-        assert!(!r.counting_down() && !r.player_finished());
+        assert!(!r.holding() && !r.player_finished());
+        assert_eq!(r.frame(0.).lights, Some(4), "green at GO");
+        r.step([0.; 3], 1.);
+        assert_eq!(r.frame(0.).lights, None, "lamps hide after 1s");
+        r.elapsed = 0.;
         for p in [[0., 0., 100.], [100., 0., 100.], [100., 0., 0.], [0.; 3]] {
             r.step(p, 1.);
         }

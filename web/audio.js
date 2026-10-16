@@ -6,7 +6,7 @@ export class GameAudio {
     this.codec = codec;
     this.report = report;
     this.context = null;
-    this.buffers = new Map();
+    this.buffers = new Map(); this.oneShotPlays = {};
     this.sources = new Set();
     this.current = null;
     this.ready = false;
@@ -109,6 +109,12 @@ export class GameAudio {
     for (const name of new Set([...this.config.samples.flat(),...(this.config.impact_samples ?? [])])) {
       if (!isCurrent() || this.closed) return;
       await this.loadSample(name);
+    }
+    // Race start lamps and the Supercross gate; an older content package
+    // without them rides on silently.
+    for (const name of ['beep01.vag', 'go.vag', 'gate.vag']) {
+      if (!isCurrent() || this.closed) return;
+      await this.loadSample(name).catch(() => {});
     }
     const riderIndex = table.entries.findIndex(entry => /(^|[\\/])rider\.aud$/i.test(entry.name));
     if (!motorcycle && riderIndex < 0) throw new Error('Original rider sound table is missing.');
@@ -419,6 +425,7 @@ export class GameAudio {
     const sample=this.buffers.get(name);
     if (!sample?.buffer || !this.context || this.context.state !== 'running') return;
     const source=this.context.createBufferSource();source.buffer=sample.buffer;source.connect(this.engineGain);
+    this.oneShotPlays[name]=(this.oneShotPlays[name]??0)+1;
     const voice={source};this.sources.add(voice);
     source.onended=()=>{this.sources.delete(voice);source.disconnect();};source.start();
   }
@@ -507,7 +514,8 @@ export class GameAudio {
     if (this.effectsReady) await this.codec(78, new Uint8Array());
   }
   snapshot() {
-    return { ready: this.ready, context: this.context?.state ?? 'locked', samples: this.buffers.size,
+    return { ready: this.ready, context: this.context?.state ?? 'locked', samples: this.buffers.size, oneShots: { ...this.oneShotPlays },
+      raceStart: ['beep01.vag', 'go.vag', 'gate.vag'].filter(name => this.buffers.has(name)),
       weather: {active:this.weatherActive,muted:!this.active,voices:this.weatherSource?1:0,starts:this.weatherStarts,sample:'rain.vag',decoded:Boolean(this.buffers.get('rain.vag')?.buffer),sampleRate:this.buffers.get('rain.vag')?.info.sample_rate,loopStart:this.buffers.get('rain.vag')?.info.loop_start,loopEnd:this.buffers.get('rain.vag')?.info.loop_end,pcmBytes:this.buffers.get('rain.vag')?.buffer?this.buffers.get('rain.vag').buffer.length*this.buffers.get('rain.vag').buffer.numberOfChannels*4:0},
       menuMusic: {ready:this.menuTracks.length === 4,voices:this.menuSource ? 1 : 0,track:this.menuSource ? this.menuTracks[0].name : null,stereo:Boolean(this.menuTracks[0]?.buffer?.numberOfChannels === 2)},
       musicPreview: this.musicPreview, voices: this.sources.size, commands: this.commands, sound: this.lastSound,
