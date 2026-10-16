@@ -36,8 +36,8 @@ export function trickWheelSelection(dx, dy) {
   const angle = Math.atan2(dy, dx);
   return (Math.hypot(dx, dy) >= OUTER_DISTANCE && sectorAt(OUTER_TRICKS, angle)) || sectorAt(INNER_TRICKS, angle);
 }
-// Optional Extras flips come from the driving thumb. Pull it fully back (or
-// fully left/right) and lift: on the ramp the lift is also the jump, and in
+// Optional Extras flips come from the driving thumb. Pull it past the driving
+// range, hold a beat, and lift: on the ramp the lift is also the jump, and in
 // the first moments of air it still counts. Rust owns the timing window.
 // Down matches leaning back; left/right spin that way. No front flip exists.
 export const FLIPS = [
@@ -45,15 +45,36 @@ export const FLIPS = [
   { name: '360 Left', flip: 'left', cue: 'LIFT → 360 LEFT' },
   { name: '360 Right', flip: 'right', cue: 'LIFT → 360 RIGHT' },
 ];
-export const FLIP_PULL = .75;
-export function flipFromAxes(steer, lean) {
-  if (!Number.isFinite(steer) || !Number.isFinite(lean)) return null;
-  if (lean >= FLIP_PULL && lean >= Math.abs(steer)) return FLIPS[0];
-  if (Math.abs(steer) >= FLIP_PULL && Math.abs(steer) > lean) return steer < 0 ? FLIPS[1] : FLIPS[2];
-  return null;
+// The flip zone lies beyond where lean (70px) and steering (full lock) already
+// saturate, so ordinary hard steering or leaning never reaches it. It needs a
+// near-straight pull (±30°) and FLIP_DWELL ms inside before a lift counts;
+// sliding into it while lifting does not. A thumb that rolls back out in the
+// last FLIP_GRACE ms before lifting still keeps the armed flip.
+export const FLIP_REACH = 105, FLIP_DWELL = 220, FLIP_GRACE = 100;
+const FLIP_CONE = Math.PI / 6;
+export function flipZone(dx, dy, sensitivity = 100) {
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return null;
+  const distance = Math.hypot(dx, dy), angle = Math.atan2(dy, dx);
+  const toward = target => Math.abs(Math.atan2(Math.sin(angle - target), Math.cos(angle - target))) <= FLIP_CONE;
+  if (distance >= FLIP_REACH && toward(Math.PI / 2)) return FLIPS[0];
+  const fullLock = 70 * 100 / Math.max(1, sensitivity);
+  if (distance < Math.max(FLIP_REACH, fullLock * 1.3)) return null;
+  return toward(Math.PI) ? FLIPS[1] : toward(0) ? FLIPS[2] : null;
 }
 // Held pull time in source stick-hold frames (60 = one second = full strength).
 const holdFrames = (since, now) => Math.max(0, Math.min(60, (now - since) * .06));
+// Pointer flip bookkeeping shared by the one-handed thumb and the two-finger pad.
+const trackFlip = (pointer, flip, now) => {
+  if (flip === pointer.flip) return;
+  if (pointer.flip && now - pointer.flipSince >= FLIP_DWELL) pointer.lastArmed = { flip: pointer.flip, since: pointer.flipSince, at: now };
+  pointer.flip = flip; pointer.flipSince = now;
+};
+export const flipArmed = (pointer, now = performance.now()) => Boolean(pointer?.flip && now - pointer.flipSince >= FLIP_DWELL);
+const flipLaunch = (pointer, now) => {
+  if (flipArmed(pointer, now)) return { flip: pointer.flip.flip, hold: holdFrames(pointer.flipSince, now) };
+  const last = pointer?.lastArmed;
+  return last && now - last.at <= FLIP_GRACE ? { flip: last.flip.flip, hold: holdFrames(last.since, last.at) } : null;
+};
 // Two-finger mode: a long straight swipe down/left/right in the air flips.
 export const FLIP_SWIPE = 120;
 // Gesture mappings are browser adaptations of original modifier/direction inputs.
@@ -106,8 +127,7 @@ export class TouchInput {
     }
     if (pointer.mode === 'drive') {
       if (this.oneHanded) {
-        const flip = flipFromAxes(steeringAxis(x - pointer.x, this.steeringSensitivity), clamp((y - pointer.y) / 70));
-        if (flip !== pointer.flip) { pointer.flip = flip; pointer.flipSince = now; }
+        trackFlip(pointer, flipZone(x - pointer.x, y - pointer.y, this.steeringSensitivity), now);
       }
       const back = y - pointer.y;
       pointer.axis = this.oneHanded ? 1 : back > 8 ? -clamp((back - 8) / 62) : 1;
@@ -138,8 +158,7 @@ export class TouchInput {
     if (this.pointer?.id !== id) return;
     if (cancelled) { this.clear(); return; }
     // Lifting the pulled driving thumb launches a flip (Rust checks timing).
-    if (this.flips && this.oneHanded && this.pointer.flip)
-      this.pendingFlip = { flip: this.pointer.flip.flip, hold: holdFrames(this.pointer.flipSince, now) };
+    if (this.flips && this.oneHanded) this.pendingFlip = flipLaunch(this.pointer, now);
     if (this.pointer.mode === 'radial') this.pendingSelection = this.pointer.selection;
     if (this.pointer.mode === 'trick') {
       const sent = this.pointer.selectionSent;
@@ -202,14 +221,10 @@ export class TouchLeanIntent {
     if (this.pointer?.id !== id) return;
     this.pointer.dx = x - this.pointer.x;
     this.pointer.dy = clamp((y - this.pointer.y) / 70);
-    const flip = flipFromAxes(this.steer, this.lean);
-    if (flip !== this.pointer.flip) { this.pointer.flip = flip; this.pointer.flipSince = now; }
+    trackFlip(this.pointer, flipZone(this.pointer.dx, y - this.pointer.y, this.sensitivity()), now);
   }
   /** Two-finger mode: the left pad's held full pull when the drive thumb lifts. */
-  launchFlip(now = performance.now()) {
-    const p = this.pointer;
-    return p?.flip ? { flip: p.flip.flip, hold: holdFrames(p.flipSince, now) } : null;
-  }
+  launchFlip(now = performance.now()) { return this.pointer ? flipLaunch(this.pointer, now) : null; }
   end(id) { if (this.pointer?.id === id) this.pointer = null; }
   get steer() { return steeringAxis(this.pointer?.dx ?? 0, this.sensitivity()); }
   get lean() { return this.pointer?.dy ?? 0; }
@@ -221,14 +236,18 @@ export function loadOneHandedPreference(read = () => localStorage.getItem('atv-m
 }
 
 // Read intent without sampling it or consuming a preload release.
-export function oneHandedFeedback(input, frame) {
+export function oneHandedFeedback(input, frame, now = performance.now()) {
   const pointer = input.pointer;
   const applied = frame?.applied_input;
   const current = applied?.touch_drive?.generation === input.generation && applied.touch_drive.held;
   // Only promise a flip when lifting now would start one.
-  const canLaunch = frame?.preload_armed || frame?.preload_active || frame?.flip?.launch_window;
-  const flip = input.flips && input.oneHanded && canLaunch ? pointer?.flip : null;
+  const canLaunch = Boolean(input.flips && input.oneHanded && pointer && (frame?.preload_armed || frame?.preload_active || frame?.flip?.launch_window));
+  const flip = canLaunch && flipArmed(pointer, now) ? pointer.flip : null;
   return {
+    // Compass arming feedback: which flip zone the thumb is in and how far through the dwell.
+    flipZone: canLaunch ? pointer.flip?.flip ?? null : null,
+    flipProgress: canLaunch && pointer.flip ? Math.min(1, (now - pointer.flipSince) / FLIP_DWELL) : 0,
+    flipsReady: canLaunch,
     steer: pointer ? steeringAxis(pointer.currentX - pointer.x, input.steeringSensitivity) : 0,
     lean: pointer ? clamp((pointer.currentY - pointer.y) / 70) : 0,
     cue: !pointer ? '' : flip ? flip.cue : input.secondary?.pointer && !input.airborne ? (current && applied.brake > 0 ? 'BRAKE → REVERSE' : 'REVERSE · BRACE') : frame?.preload_active ? 'PRELOADED' : frame?.preload_armed ? 'LIFT FOR PRELOAD' : current && applied.brake > 0 ? 'BRAKE · BRACE' : 'DRIVE · BRACE',
@@ -242,6 +261,8 @@ const COACH_RIDES = 3, COACH_WHEEL = 5;
 const coachCount = key => { try { return Number(localStorage.getItem(key)) || 0; } catch { return 0; } };
 const saveCoachCount = (key, value) => { try { localStorage.setItem(key, String(value)); } catch { /* Session-only count. */ } };
 const SVG_NS = 'http://www.w3.org/2000/svg';
+// Compass flip-zone arcs: flip and centre angle (clockwise from three o'clock), ±30° wide.
+const FLIP_ARCS = [['backflip', 90], ['left', 180], ['right', 0]];
 // Wheel geometry in CSS pixels from its centre; the outer band starts at OUTER_DISTANCE.
 const WHEEL_RADIUS = 156, HUB = 28, INNER_EDGE = 126, INNER_LABEL = 80, OUTER_LABEL = 143, SIDE_MARGIN = 160;
 const sectorPath = ({ angle, span }, inner, outer, gap) => {
@@ -258,11 +279,12 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
   let rides = coachCount('atv-touch-coach-rides'), wheelOpens = coachCount('atv-touch-coach-wheel'), rodeThisSession = false;
   const utilityPointers = new Map();
   const root = document.createElement('div'); root.id = 'touch-controls'; root.setAttribute('aria-hidden', 'true');
-  root.innerHTML = '<div class="touch-rider-marker"><svg class="touch-ring" viewBox="0 0 96 96"><defs><linearGradient id="touch-ring-metal" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f4f4f4"/><stop offset=".45" stop-color="#9a9a9a"/><stop offset=".55" stop-color="#5c5c5c"/><stop offset="1" stop-color="#c9c9c9"/></linearGradient></defs><circle class="touch-ring-shadow" cx="48" cy="48" r="46.5"/><circle class="touch-ring-rim" cx="48" cy="48" r="44"/><circle class="touch-ring-throttle" cx="48" cy="48" r="44" pathLength="100"/><circle class="touch-ring-preload" cx="48" cy="48" r="38.5" pathLength="100"/></svg><b class="touch-axis forward">FWD</b><b class="touch-axis back">BACK</b><b class="touch-axis left">L</b><b class="touch-axis right">R</b><em class="touch-direction"></em><i></i><span>PRELOAD</span></div>' +
+  root.innerHTML = '<div class="touch-rider-marker"><svg class="touch-ring" viewBox="0 0 96 96"><defs><linearGradient id="touch-ring-metal" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f4f4f4"/><stop offset=".45" stop-color="#9a9a9a"/><stop offset=".55" stop-color="#5c5c5c"/><stop offset="1" stop-color="#c9c9c9"/></linearGradient></defs><circle class="touch-ring-shadow" cx="48" cy="48" r="46.5"/><circle class="touch-ring-rim" cx="48" cy="48" r="44"/><circle class="touch-ring-throttle" cx="48" cy="48" r="44" pathLength="100"/><circle class="touch-ring-preload" cx="48" cy="48" r="38.5" pathLength="100"/>' + FLIP_ARCS.map(([flip, angle]) => `<circle class="touch-flip-zone" data-flip="${flip}" cx="48" cy="48" r="55" pathLength="100" transform="rotate(${angle - 30} 48 48)"/>`).join('') + '<circle class="touch-flip-fill" cx="48" cy="48" r="55" pathLength="100"/></svg><b class="touch-axis forward">FWD</b><b class="touch-axis back">BACK</b><b class="touch-axis left">L</b><b class="touch-axis right">R</b><em class="touch-direction"></em><i></i><span>PRELOAD</span></div>' +
     '<div class="touch-idle-hint"><i></i><b></b><small></small></div>';
   parent.append(root);
   const marker = root.firstElementChild, label = marker.querySelector('span');
-  const throttleArc = marker.querySelector('.touch-ring-throttle');
+  const throttleArc = marker.querySelector('.touch-ring-throttle'), flipFill = marker.querySelector('.touch-flip-fill');
+  let flipBuzzed = null;
   const hint = root.querySelector('.touch-idle-hint');
   const wheel = document.createElement('div'); wheel.className = 'touch-trick-wheel'; wheel.hidden = true;
   wheel.innerHTML = `<svg class="touch-trick-sectors" viewBox="${-WHEEL_RADIUS} ${-WHEEL_RADIUS} ${WHEEL_RADIUS * 2} ${WHEEL_RADIUS * 2}"><defs><radialGradient id="touch-trick-gold" cx="0" cy="0" r="${WHEEL_RADIUS}" gradientUnits="userSpaceOnUse"><stop offset=".2" stop-color="#fff7b8"/><stop offset=".55" stop-color="#e5d360"/><stop offset="1" stop-color="#a88604"/></radialGradient></defs><circle class="touch-trick-hub" r="${HUB - 2}"/></svg><span class="touch-trick-name"></span><div class="touch-trick-center"></div><span class="touch-trick-cue"></span>`;
@@ -328,11 +350,22 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
     const state = oneHandedFeedback(input, lastFrame);
     // The release burst keeps naming achieved preload after the thumb lifts.
     const cue = state.cue || (lastFrame?.preload_active ? 'PRELOADED' : '');
-    const key = [state.steer, state.lean, cue].join('|');
+    const armed = FLIPS.some(flip => flip.cue === cue);
+    // A short buzz (where supported) confirms the flip armed; lifting now flips.
+    if (armed && flipBuzzed !== state.flipZone) { flipBuzzed = state.flipZone; try { navigator.vibrate?.(12); } catch { /* Unsupported. */ } }
+    if (!armed) flipBuzzed = null;
+    const progress = Math.round(state.flipProgress * 20) / 20;
+    const key = [state.steer, state.lean, cue, state.flipsReady, state.flipZone, progress].join('|');
     if (key === presentationKey) return;
     presentationKey = key;
     label.textContent = cue;
-    marker.dataset.flip = String(FLIPS.some(flip => flip.cue === cue));
+    marker.dataset.flip = String(armed);
+    // Zone arcs appear only when a lift could flip; the entered arc fills over the dwell.
+    marker.dataset.flipsReady = String(state.flipsReady);
+    marker.dataset.flipZone = state.flipZone ?? '';
+    const zone = FLIP_ARCS.find(([flip]) => flip === state.flipZone);
+    if (zone) flipFill.setAttribute('transform', `rotate(${zone[1] - 30} 48 48)`);
+    flipFill.style.strokeDasharray = `${progress * 100 / 6} 100`;
     marker.style.setProperty('--steer', `${state.steer * 34}px`);
     marker.style.setProperty('--lean', `${state.lean * 34}px`);
     marker.style.setProperty('--angle', `${Math.atan2(state.lean, state.steer)}rad`);
