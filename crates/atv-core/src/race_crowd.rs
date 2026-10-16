@@ -4,10 +4,12 @@
 //! Exact-build evidence from private exports: crowd emitter `002cb9b0`
 //! loading `Audio\Crowd\crowd.aud` (`002cbc20`), players `002cc070`–`002cc2f0`
 //! with the no-repeat pick, triggers `001e8a20` (Boo), `001ea930` (Cheer),
-//! `001e9a00` (Stomp), `00216190` (Win) and `002cc320` (stop Stomp); the
+//! `001e9a00` (Stomp), `00216190` (Win), `002cc320` (stop Stomp) and the
+//! stunt chain finish `001eaad0` (Cheer when landed, Oh when failed); the
 //! flash manager `0020f2c0`/`0020ee10` with `[CameraFlash]` from the venue
-//! TOY (`0020a380`). The `Am` set is used: the setting selecting `Pro` is
-//! unrecovered. The `Oh` trigger is unidentified and not reproduced. The
+//! TOY (`0020a380`). Tracks.dat Pro Supercross courses (settings+8 = 7) use
+//! the `Pro` lists, the others `Am`; only Pro has Stomp. The chain-finish
+//! cue's extra gate (chain+8 bit 2) is unidentified and treated as set. The
 //! original libc `rand` stream is replaced by the port's own.
 use crate::Result;
 use serde::Serialize;
@@ -38,6 +40,7 @@ fn field<'a>(fields: &'a [(String, String)], key: &str) -> Option<&'a str> {
 pub struct Sounds {
     pub boo: Vec<String>,
     pub cheer: Vec<String>,
+    pub oh: Vec<String>,
     pub win: Vec<String>,
     pub stomp: Vec<String>,
 }
@@ -63,6 +66,7 @@ pub fn parse_crowd(text: &str, prefix: &str) -> Result<Sounds> {
     Ok(Sounds {
         boo: list("Boo")?,
         cheer: list("Cheer")?,
+        oh: list("Oh")?,
         win: list("Win")?,
         stomp: list("Stomp")?,
     })
@@ -93,11 +97,14 @@ pub struct Events {
     /// Finishing places this step: (is the player, place).
     pub finishes: Vec<(bool, usize)>,
     pub single_player: bool,
+    /// The player's stunt chain ended: landed (Cheer) or failed (Oh), from
+    /// the chain-finish listener `001eaad0`.
+    pub stunt: Option<bool>,
 }
 pub struct Crowd {
     sounds: Sounds,
     last_rank: usize,
-    last: [Option<usize>; 2],
+    last: [Option<usize>; 3],
     random: crate::engine_audio::OriginalRandom,
 }
 impl Crowd {
@@ -105,16 +112,16 @@ impl Crowd {
         Self {
             sounds,
             last_rank: 0,
-            last: [None; 2],
+            last: [None; 3],
             random: crate::engine_audio::OriginalRandom::with_seed(seed),
         }
     }
-    /// `trunc(n · rand / 2³¹)`; Boo and Cheer step past a repeated pick.
+    /// `trunc(n · rand / 2³¹)`; Boo, Cheer and Oh step past a repeated pick.
     fn pick(&mut self, list: usize) -> Option<Cue> {
-        let sounds = if list == 0 {
-            &self.sounds.boo
-        } else {
-            &self.sounds.cheer
+        let sounds = match list {
+            0 => &self.sounds.boo,
+            1 => &self.sounds.cheer,
+            _ => &self.sounds.oh,
         };
         let n = sounds.len();
         if n == 0 {
@@ -138,6 +145,11 @@ impl Crowd {
         // A CPU in first, or any racer finishing, stops the Stomp loop.
         if lost_lead || !events.finishes.is_empty() {
             frame.stop_loop = true;
+        }
+        match events.stunt {
+            Some(true) => frame.cue = self.pick(1),
+            Some(false) => frame.cue = self.pick(2),
+            None => {}
         }
         if events.player_wrecked && events.player_rank == 1 {
             frame.cue = self.pick(0);
@@ -317,6 +329,24 @@ mod tests {
             ..Events::default()
         });
         assert_eq!(boo.cue.unwrap().sample, "crowd/amcrowd/aboo001.vag");
+    }
+    #[test]
+    fn stunt_chains_cheer_when_landed_and_oh_when_failed() {
+        let aud =
+            format!("{AUD}[AmOh]\r\nNumSounds = 1\r\nSound_1 = Crowd\\AmCrowd\\aoh001.vag\r\n");
+        let mut crowd = Crowd::new(parse_crowd(&aud, "Am").unwrap(), 1);
+        let landed = crowd.step(&Events {
+            player_rank: 3,
+            stunt: Some(true),
+            ..Events::default()
+        });
+        assert!(landed.cue.unwrap().sample.contains("acheer"));
+        let failed = crowd.step(&Events {
+            player_rank: 3,
+            stunt: Some(false),
+            ..Events::default()
+        });
+        assert_eq!(failed.cue.unwrap().sample, "crowd/amcrowd/aoh001.vag");
     }
     #[test]
     fn flashes_light_random_batches_and_burst_up_and_back() {

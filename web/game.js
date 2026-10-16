@@ -10,7 +10,7 @@ import { mountTouchControls, TouchLeanIntent } from './touch.js';
 import { GameAudio } from './audio.js';
 import { openHostedContent } from './content.js';
 import { gameplayBindings } from './bindings.js';
-import { HeadUpDisplay } from './hud.js';
+import { HeadUpDisplay, RaceOverlaySettings } from './hud.js';
 import { FreestyleMinimap, MinimapSettings } from './minimap.js';
 import { DiagnosticsOverlay } from './diagnostics.js';
 import { WaterRenderer } from './water.js';
@@ -40,6 +40,7 @@ let focused = document.hasFocus(), gamepadsAvailable = true, menuOpen = true;
 let frontend, hostedContent, hud, multiplayer;
 const remoteModels = new Map();
 const minimapSettings = new MinimapSettings();
+const raceOverlays = new RaceOverlaySettings();
 const minimap = new FreestyleMinimap(minimapSettings);
 const playerIndicators = new PlayerIndicators();
 const crashSettings = new RideEffectsSettings(undefined, matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -321,6 +322,12 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
   //Selection belongs to this scene load and survives ATV resets/GL.
   const weather = await command(120, { common: decoder.decode(toy), mode: mode ?? '', random: Math.floor(Math.random() * 0x80000000), players: 1 });
   if (weather.removed_model) sceneMetadata.models = sceneMetadata.models.filter(model => model.name.toLowerCase() !== weather.removed_model.toLowerCase());
+  // National drop gate: its own soultree from the race TOY, not a scene
+  // model (00222cd0); Rust poses it each frame after GO.
+  if (racing && mode) {
+    const gate = await json(116, encoder.encode(mode));
+    if (gate) sceneMetadata.models.push({ name: gate.model, position: gate.matrix.slice(12, 15), look: gate.matrix.slice(8, 11), up: gate.matrix.slice(4, 7), use_lighting: true, dynamic_lighting: false, world_matrix: gate.matrix, drop_gate: true });
+  }
   diagnostics.weather = weather;
   await audio.loadWeather({selection:weather,isCurrent:()=>token===generation});
   status('Decoding original terrain textures…');
@@ -1300,7 +1307,7 @@ function buildMesh() {
       const groups = geometry.get(model.name);
       if (!groups?.length) continue;
       sceneInstances++;
-      for (const chunk of groups) { const matrix = new Float32Array(model.world_matrix); sceneDraws.push({ name: model.name, chunk, matrix, flash, bounds: worldBounds(chunk.bounds, matrix), unlit: chunk.prelit || !model.use_lighting }); sceneTriangles += chunk.count / 3; }
+      for (const chunk of groups) { const matrix = new Float32Array(model.world_matrix); sceneDraws.push({ name: model.name, chunk, matrix, flash, gate: Boolean(model.drop_gate), bounds: worldBounds(chunk.bounds, matrix), unlit: chunk.prelit || !model.use_lighting }); sceneTriangles += chunk.count / 3; }
     }
   }
   gl.bindVertexArray(null);
@@ -1468,9 +1475,11 @@ async function startSimulation(source) {
   litFlashes = new Set();
   const flashPool = source.world.metadata.crowd_present ? source.world.metadata.models.filter(model => model.name.toLowerCase() === 'cameraflash').length : 0;
   let stadium = { soultree: [], crowd: [] };
-  try { stadium = await command(115, { crowd: source.course ? source.crowd?.aud ?? null : null, toy: source.toy ? decoder.decode(source.toy) : null, flash_pool: flashPool, soultree: source.crowd?.soultree ?? null }); }
+  // Tracks.dat settings+8: Pro Supercross courses play the Pro crowd (002cb9b0).
+  const crowdPrefix = frontend?.proSupercross?.has(source.environment) ? 'Pro' : 'Am';
+  try { stadium = await command(115, { crowd: source.course ? source.crowd?.aud ?? null : null, crowd_prefix: crowdPrefix, toy: source.toy ? decoder.decode(source.toy) : null, flash_pool: flashPool, soultree: source.crowd?.soultree ?? null }); }
   catch (error) { diagnostics.crowdError = error.message; await command(115, {}).catch(() => {}); }
-  diagnostics.crowd = { flashPool, soultree: stadium.soultree.length, reactions: stadium.crowd.length };
+  diagnostics.crowd = { flashPool, prefix: crowdPrefix, soultree: stadium.soultree.length, reactions: stadium.crowd.length };
   void audio.loadStadium(stadium).catch(error => { diagnostics.audioError = error.message; });
   const intro = !raceRestarting; raceRestarting = false;
   if (source.course) await command(96,{active:true,intro,laps:raceSettings.laps,difficulty:raceSettings.difficulty,names:source.cpuNames.slice(0,raceSettings.cpu),spacing_sources:source.spacingSources});
@@ -1530,7 +1539,8 @@ async function pumpSimulation() {
     if (token !== simGeneration) return;
     const previousFrame = simFrame, previousCamera = cameraFrame;
     for (const { frame, camera: cameraResult, water, train, scenery_uv, scenery_textures, race, ambient, snow, flashes } of frames) {
-      if(race){frame.race=race;startLightSound(race);if(race.crowd)audio.crowdCue(race.crowd);}
+      if(race){frame.race=race;startLightSound(race);if(race.crowd)audio.crowdCue(race.crowd);if(race.gate)poseGate(race.gate);}
+      raceMusicEvent(race);
       if(flashes){litFlashes=new Set(flashes);diagnostics.flashes=flashes.length;}
       acceptFrame(frame);
       if(ambient&&terrain.ambientEffectsSource){terrain.ambientEffectsSource.frame=ambient;ambientEffectsRenderer?.accept(ambient);diagnostics.ambientEffects.frame=ambient;}
@@ -1548,13 +1558,30 @@ async function pumpSimulation() {
   } finally { simBusy = false; }
 }
 // 321 LIGHTS sounds (002e79a0): beep01 as each red lamp lights, go with the
-// green lamp; Supercross also drops its start gate (00223bf0, gate.vag).
+// green lamp; a National drops its start gate (00223bf0, gate.vag).
+function poseGate(matrix) {
+  let draws = 0;
+  for (const draw of sceneDraws) if (draw.gate) { draws++; draw.matrix.set(matrix); draw.bounds = worldBounds(draw.chunk.bounds, draw.matrix); }
+  diagnostics.dropGate = { draws, origin: [...matrix.slice(12, 15)], up: [...matrix.slice(4, 7)] };
+}
+// IntOut race music follows the race phase (00217bb0, 00217590, 00216260).
+let raceMusicPhase = null;
+function raceMusicEvent(race) {
+  const phase = race?.phase ?? null;
+  if (phase === raceMusicPhase) return;
+  const previous = raceMusicPhase; raceMusicPhase = phase;
+  if (phase === 'intro') void audio.raceMusic('intro');
+  else if (phase === 'countdown' && previous !== 'intro') void audio.raceMusic('restart');
+  else if (phase === 'racing') void audio.raceMusic('go');
+  else if (phase === 'finished') void audio.raceMusic('over', race.position === 1);
+  else if (!phase) void audio.raceMusic('leave');
+}
 let startLights = null;
 function startLightSound(race) {
   const lights = race.lights ?? null;
   if (lights !== startLights && lights != null && lights > 0) {
     audio.oneShot(lights < 4 ? 'beep01.vag' : 'go.vag');
-    if (lights === 4 && /^sx/.test(raceSettings?.course ?? '')) audio.oneShot('gate.vag');
+    if (lights === 4 && race.gate) audio.oneShot('gate.vag');
   }
   startLights = lights;
 }
@@ -1624,7 +1651,7 @@ function render(time) {
   // temporarily hidden. Only the explicit Off setting restores standalone MPH.
   // The original race overlays sit below the toolbar buttons.
   const raceHud = raceSettings && simFrame?.race && simFrame.race.phase !== 'intro' ? simFrame.race : null;
-  hud?.draw(simFrame?.hud, simReady && focused && !lost && !document.hidden && !menuOpen && simFrame?.race?.phase !== 'intro', { speedVisible: Boolean(raceSettings) || !minimapSettings.enabled, lights: simFrame?.race?.lights ?? null, race: raceHud, frame: raceHud && (presentedFrame ?? simFrame), topInset: raceHud ? $('toolbar').getBoundingClientRect().bottom : 0 });
+  hud?.draw(simFrame?.hud, simReady && focused && !lost && !document.hidden && !menuOpen && simFrame?.race?.phase !== 'intro', { speedVisible: raceSettings ? raceOverlays.shown('speed') : !minimapSettings.enabled, lights: simFrame?.race?.lights ?? null, race: raceHud, frame: raceHud && (presentedFrame ?? simFrame), topInset: raceHud ? $('toolbar').getBoundingClientRect().bottom : 0, overlays: raceOverlays });
   raceOverlay.lamps = Boolean(hud?.lamps); raceOverlay.native = Boolean(hud?.race);
   raceOverlay.draw(simFrame?.race,simFrame,simReady && focused && !lost && !document.hidden && !menuOpen);
   if (lost || !gl || !terrain || document.hidden || (menuOpen && !liveMultiplayer())) { lastTime = time; stats.sample(time, 0, false); return; }
@@ -2013,7 +2040,7 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
       catch(error){if(isCurrent()){usage.rideFailed(onlineRide(environment));await frontend.show(multiplayer.shared?'main':'multiplayer');frontend.fail(error);throw error;}}
       finally{if(isCurrent())frontend.busy=false;}
     },onLeave:message=>{usage.rideEnded();for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show(multiplayer.shared?'main':'multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
-    frontend = new Frontend({minimapSettings,menuRider:menuRiderAssets,modelAssets:selectionAssets,gearPreview:gearTextures,crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => startRide(environment,racing), active: open => { menuOpen = open; usage.setRiding(!open); if (open) usage.report(10); keyboardHelp.setRiding(!open); clearInput(); lastTime = 0; scheduleRender(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
+    frontend = new Frontend({minimapSettings,raceOverlays,menuRider:menuRiderAssets,modelAssets:selectionAssets,gearPreview:gearTextures,crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => startRide(environment,racing), active: open => { menuOpen = open; usage.setRiding(!open); if (open) usage.report(10); keyboardHelp.setRiding(!open); clearInput(); lastTime = 0; scheduleRender(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     hud = new HeadUpDisplay(frontend, canvas);
     document.body.classList.add('menu-open'); void frontend.init();
     usage.track('session_start', { entry: parseLaunch(location.search).requested ? 'link' : 'menu' });

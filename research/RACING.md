@@ -517,8 +517,8 @@ Exact-build evidence (private exports; bounded reading):
   off; steps 1–3 light the three red lamps one per second, each with
   `beep01.vag`; step 4 lights the green lamp with `go.vag` and hides 1s later.
   The lamp art is in every race and Freeride course archive.
-- **Supercross gate** (`00223bf0`): at GO the DropGate rotates (45° over 1s
-  by default) and `gate.vag` plays.
+- **Start gate** (`00223bf0`): only National race TOYs declare a `[DropGate]`;
+  see "National drop gate" below. Supercross has none.
 
 Port:
 
@@ -531,7 +531,8 @@ Port:
 - `Race::frame().lights` gives the lamp step. The HUD draws the original lamps
   centred on wide screens, and the beep, go and gate sounds play from the
   content package (`AUDIO.RES` gains the three samples). Without the lamp
-  art, the countdown digits remain.
+  art, the countdown digits remain. (An earlier build played `gate.vag` on
+  Supercross; the original plays it only with a National drop gate.)
 - Not reproduced: the fly-by/orbit fallbacks (every course has shots), the
   race-load announcer cue `00217bb0`, and the Supercross gate rotation.
 
@@ -614,8 +615,16 @@ fallback without the race art. Off the track for 5s returns the player to the
 course, as the countdown sign and the manual describe.
 
 Not reproduced: SCORE uses the port's committed stunt points; the qualifying
-bar and new-record infotexts need championships and saved records; the Pause
-→ Overlays toggles; object 41 (place number) as an alternative to the tree.
+bar and new-record infotexts need championships and saved records.
+
+**Overlay toggles** (original Pause → Overlays, `002df120`): Settings →
+Display → Race overlays switches the original groups and saves them in this
+browser. Timing hides LAP TIME, BEST/TOTAL/LEAD; Lap hides LAP and the lap
+history; Score; Position chooses the name tree (object 4), the place number
+"PLACE n/field" (object 41) or nothing; Informational hides signs, infotext
+and stunt text; Speedometer/Preload; Radar. The 321 lights are not in a
+group, as in the original. The port places the page under Display rather
+than the pause menu itself.
 
 ## Stadium crowd and camera flashes — 2026-10-16
 
@@ -630,8 +639,11 @@ CrowdPresent=T` (all 16 Supercross venues) build the crowd emitter
   player second (`001e9a00`), stopped when a CPU leads or any racer finishes
   (`002cc320`); Win when the player finishes first (`00216190`). Boo and
   Cheer step past an immediate repeat. A playing clip blocks new ones; a
-  Stomp loop gives way. The Am lists are used: the setting that selects Pro
-  (and its Stomp) is unrecovered, and the Oh trigger is unidentified.
+  Stomp loop gives way. Tracks.dat category (settings+8) picks the lists:
+  the eight Pro Supercross courses (`prosx`: sx03, 04, 07, 10, 11, 14, 15, 16)
+  use Pro, the Amateur ones Am; only Pro has Stomp. The stunt chain finish
+  (`001eaad0`) plays Cheer when a chain lands and Oh when it fails; its extra
+  gate (chain+8 bit 2) is unidentified and treated as set.
 - **Ambient crowd:** each venue `<venue>.aud` places 8 looping
   `[SoultreeSoundN]` sounds (`crdloop3`–`6`) with Min/MaxDistance, played
   through the train's recovered stereo attenuation (`00172e70`).
@@ -647,7 +659,7 @@ browser hides the pooled models outside the lit batch, plays the cues and
 loops, and the content package adds the 18 crowd clips and four loops to
 `AUDIO.RES`. Previously every flash model was drawn permanently. Freestyle on
 a Supercross venue keeps the loops and constant flashes. AI stunt bursts,
-crowd volume and the race-over `IntOut` music are not reproduced.
+and crowd volume are not reproduced.
 
 ## Supercross fireworks — 2026-10-16
 
@@ -676,3 +688,38 @@ triggers keeps every stream emitter instead of the static packet budget; the
 bounded GPU ring takes the bursts. The gate test is an authored plane
 crossing, not the RaceStatus gate (`002487c0`); the gate drop rotation is
 still not reproduced.
+
+## Race intro and race-over music — 2026-10-16
+
+Exact-build evidence (private exports): `IntOut\intout.aud` defines eight
+stereo stream cues: INT001–INT006 and OUT001 (looping) / OUT004. Race load
+(`00217bb0`) plays a random INT001–INT004 for a single race (INT005/INT006
+belong to championship modes), with no song. At GO (`00217590`) every IntOut
+cue stops and the next song starts. Race over (`00216260`) fades the song over
+1.5s (`0014f8d0`, 0.8 × the remainder when shorter) and plays OUT004 after a
+win, handing over to the OUT001 loop when under 1s of OUT004 remains
+(`00211490`), or OUT001 at once after a loss. Restart stops everything; the
+countdown then runs without an intro cue.
+
+Port: the eight cues join the repacked `AUDIO.RES` (the files use the music
+VAG layout and decode with the existing stereo VAG path) and play on their own
+voice at the music volume; `MusicStream.hold`/`release` give the silent
+intro and the race-over fade. The IntOut base volume is not recovered.
+
+## National drop gate — 2026-10-16
+
+Exact-build evidence (private exports `00222170`, `00222cd0`, DropGateAction
+`002212d0`/`002212f0`, reset `00221370`): only N01–N08 race TOYs declare
+`[DropGate]`: its own `natNNdropgate.slt` soultree (not a scene model), placed
+at Position with rows X = Up × Look, Y = Up, Z = Look ⟂ Up. At GO it turns
+about RotationAxisLocal (−X) through RotationAngleDegrees (40°, N02 39.5°)
+linearly over RotationRateInSeconds (0.1s) about its bottom edge, falling
+toward the riders to about 5° above horizontal, and plays `gate.vag`. Restart
+stands it up again. It has no collision.
+
+Port: `race_gate::DropGate` poses the panel each frame from the race clock;
+the browser adds the gate model to the scene draw list. The grid keeps the
+original placement (4.66ft behind the TDF tag-15 box, `001f8410` cases 3–10,
+which use the same box). On most Nationals the gate stands about 7–8ft past
+that box, ~12ft ahead of the riders (nat03, nat05); on nat01 the authored
+gate stands 12ft before the box, so it lies behind the grid there.

@@ -15,7 +15,23 @@ export const overlayTime = t => {
   const h = Math.floor(Math.abs(t) * 100 + .5), pad = n => String(n).padStart(2, '0');
   return `${t < 0 ? '-' : ''}${pad(Math.floor(h / 6000))}:${pad(Math.floor(h / 100) % 60)}.${pad(h % 100)}`;
 };
-const RACE_OBJECTS = [1, 2, 3, 4, 7, 11, 14];
+const RACE_OBJECTS = [1, 2, 3, 4, 7, 11, 14, 41];
+// Original Pause → Overlays groups (002df120); saved in this browser.
+export const OVERLAY_GROUPS = ['timing', 'lap', 'score', 'info', 'speed', 'radar'];
+export class RaceOverlaySettings {
+  constructor(storage) {
+    this.off = new Set(); this.position = 'name'; this.changed = () => {};
+    try {
+      this.storage = storage ?? globalThis.localStorage;
+      for (const group of JSON.parse(this.storage.getItem('atv-race-overlays-off') ?? '[]')) if (OVERLAY_GROUPS.includes(group)) this.off.add(group);
+      const position = this.storage.getItem('atv-race-position'); if (['name', 'place', 'off'].includes(position)) this.position = position;
+    } catch { /* Session fallback. */ }
+  }
+  save() { try { this.storage.setItem('atv-race-overlays-off', JSON.stringify([...this.off])); this.storage.setItem('atv-race-position', this.position); } catch { /* Session fallback. */ } this.changed(); }
+  shown(group) { return !this.off.has(group); }
+  toggle(group) { if (!OVERLAY_GROUPS.includes(group)) return; this.off.has(group) ? this.off.delete(group) : this.off.add(group); this.save(); }
+  cyclePosition() { this.position = { name: 'place', place: 'off', off: 'name' }[this.position]; this.save(); }
+}
 const SIGNS = { 1: 'Single-Sign-1', 2: 'Single-Sign-2', 3: 'Single-Sign-3', 12: 'Single-Sign-12', 13: 'Single-Sign-13', 14: 'Single-Sign-14', 15: 'Single-Sign-15' };
 
 // Record text/icon draws before sizing a tightly bounded canvas.
@@ -125,7 +141,8 @@ export class HeadUpDisplay {
   // Original 640x448 race layout: left items keep their x, right items keep
   // their distance from the right edge, centred items stay centred; items in
   // the lower half keep their distance from the bottom.
-  drawRace(race, frame, rect, dpr, topInset) {
+  drawRace(race, frame, rect, dpr, topInset, overlays) {
+    const shown = group => overlays?.shown(group) ?? true, position = overlays?.position ?? 'name';
     // Phones keep a 480-unit minimum width (the gaps between the top items
     // allow it) and drop the right column below the compact speed meter.
     const compact = rect.width < 560, R = this.race, unit = Math.min(rect.height / 448, rect.width / 480);
@@ -138,26 +155,28 @@ export class HeadUpDisplay {
     const L = n => R.layout.get(n), hud = race.hud ?? {};
     const text = (value, where, layout, i, options = {}) => this.text(value, where, layout, i, { color: options.color ?? layout[`text${i}color`] ?? raceText, ...options });
     // LAP TIME, LAP, SCORE.
-    text('LAP TIME', at(609, 23), L(1), 1); text(overlayTime(race.lap_time), at(609, 23), L(1), 2);
-    text('LAP', at(354, 23), L(2), 1); text(`${race.lap} / ${race.laps}`, at(354, 23), L(2), 2);
-    text('SCORE', at(178, 23), L(3), 1); text(String(Math.floor((frame?.stunt_score?.committed_points ?? 0) + .5)), at(178, 23), L(3), 2);
+    if (shown('timing')) { text('LAP TIME', at(609, 23), L(1), 1); text(overlayTime(race.lap_time), at(609, 23), L(1), 2); }
+    if (shown('lap')) { text('LAP', at(354, 23), L(2), 1); text(`${race.lap} / ${race.laps}`, at(354, 23), L(2), 2); }
+    if (shown('score')) { text('SCORE', at(178, 23), L(3), 1); text(String(Math.floor((frame?.stunt_score?.committed_points ?? 0) + .5)), at(178, 23), L(3), 2); }
+    // Position: the name tree (object 4) or the place number (object 41).
+    if (position === 'place') { text('PLACE', at(20, 23), L(41), 1); text(race.position ? `${race.position}/${race.field}` : '---', at(20, 23), L(41), 2); }
     // PLACE position tree: each rider slot's name slides to its rank.
     const tree = L(4), names = ['YOU', ...race.opponents.map(o => o.name)].map(n => String(n).slice(0, 9));
-    text('PLACE', at(20, 23), tree, 1);
-    for (let rank = 1; rank <= Math.min(5, names.length); rank++) {
+    if (position === 'name') text('PLACE', at(20, 23), tree, 1);
+    for (let rank = 1; position === 'name' && rank <= Math.min(5, names.length); rank++) {
       const player = race.position === rank;
       text(String(rank), at(20, 23), tree, rank + 1, { color: player ? raceGold : raceText, scale: player ? hud.place_scale ?? 1 : 1 });
     }
-    names.slice(0, 5).forEach((name, slot) => text(name, at(20, 23), tree, 7, { color: slot === 0 ? raceGold : raceText, offset: [0, hud.tree?.[slot] ?? (race.ranks?.[slot] - 1) * 23] }));
+    if (position === 'name') names.slice(0, 5).forEach((name, slot) => text(name, at(20, 23), tree, 7, { color: slot === 0 ? raceGold : raceText, offset: [0, hud.tree?.[slot] ?? (race.ranks?.[slot] - 1) * 23] }));
     // BEST/TOTAL/LEAD, faded by the lap history; LEAD green ahead, red behind.
     const listing = L(7), alpha = 255 * (hud.listing_alpha ?? 1);
-    if (alpha > 0) {
+    if (alpha > 0 && shown('timing')) {
       ['BEST:', 'TOTAL:', 'LEAD:'].forEach((label, i) => text(label, at(609, 23), listing, i + 1, { alpha }));
       text(overlayTime(race.best ?? 0), at(609, 23), listing, 4, { alpha });
       text(overlayTime(race.elapsed), at(609, 23), listing, 5, { alpha });
       text(overlayTime(race.lead), at(609, 23), listing, 6, { alpha, color: race.lead >= 0 ? '30,215,30' : '200,60,60' });
     }
-    if (hud.history) {
+    if (hud.history && shown('lap')) {
       const history = L(14), where = [ax(609) + hud.history.offset, ay(23, 609)];
       hud.history.rows.forEach((row, i) => {
         const color = row.best ? (history.bestlapcolor ?? '76,181,255').replace(/\s/g, '') : raceText;
@@ -165,8 +184,8 @@ export class HeadUpDisplay {
       });
     }
     // Infotext and signage.
-    if (hud.infotext) text(hud.infotext, at(320, 304), L(11), 1);
-    const sign = hud.sign && R.signs.get(hud.sign.id);
+    if (hud.infotext && shown('info')) text(hud.infotext, at(320, 304), L(11), 1);
+    const sign = shown('info') && hud.sign && R.signs.get(hud.sign.id);
     if (sign) {
       // Phones show signs below the stacked top items.
       const where = at(320, 80); if (compact) where[1] += meter + 120; this.icon(where, sign, 1);
@@ -176,6 +195,7 @@ export class HeadUpDisplay {
     }
     // Radar: north-up course map at native size, racer dots drawn last-first.
     const { map, left, top: north, right } = R.radar, scale = (right - left) / map.width, origin = at(20, 305);
+    if (!shown('radar')) { c.restore(); this.logicalWidth = saved; return; }
     c.drawImage(map, origin[0], origin[1], map.width, map.height);
     const dot = (p, rgb) => {
       const x = Math.max(0, Math.min(map.width - 8, Math.trunc((p[0] - left) / scale))), y = Math.max(0, Math.min(map.height - 8, Math.trunc((north - p[2]) / scale)));
@@ -233,7 +253,7 @@ export class HeadUpDisplay {
     this.painted = false; this.lastKey = '';
   }
   snapshot() { return { draws: this.draws, clears: this.clears, backingBytes: this.canvas.width * this.canvas.height * 4 }; }
-  draw(hud, visible = true, { speedVisible = true, lights = null, race = null, frame = null, topInset = 0 } = {}) {
+  draw(hud, visible = true, { speedVisible = true, lights = null, race = null, frame = null, topInset = 0, overlays = null } = {}) {
     if (!this.race) race = null;
     if (!this.lamps) lights = null;
     if (hud) {
@@ -246,7 +266,7 @@ export class HeadUpDisplay {
     const rect = this.surfaceSize, dpr = Math.min(devicePixelRatio || 1, 3);
     const width = Math.round(rect.width * dpr), height = Math.round(rect.height * dpr);
     if (width <= 0 || height <= 0) { this.release(); return; }
-    const key = JSON.stringify([hud, speedVisible, lights, race && { ...race, opponents: race.opponents.map(o => [o.name, o.origin]), standings: null }, race && frame?.origin, race && frame?.stunt_score?.committed_points, topInset, rect.width, rect.height, dpr]);
+    const key = JSON.stringify([hud, speedVisible, lights, overlays && [...overlays.off, overlays.position], race && { ...race, opponents: race.opponents.map(o => [o.name, o.origin]), standings: null }, race && frame?.origin, race && frame?.stunt_score?.committed_points, topInset, rect.width, rect.height, dpr]);
     if (key === this.lastKey) return;
     const actual = this.ctx, list = new HudDrawList(); this.ctx = list;
     // Original logical frame is 640x448. Extend horizontal framing on wide
@@ -266,7 +286,7 @@ export class HeadUpDisplay {
       this.canvas.dataset.speedVisible = String(speedVisible);
       this.canvas.dataset.lights = lights == null ? '' : String(lights);
       this.canvas.dataset.race = race ? (race.hud?.sign?.id ?? 'on') : '';
-      if (race) this.drawRace(race, frame, rect, dpr, topInset);
+      if (race) this.drawRace(race, frame, rect, dpr, topInset, overlays);
       if (lights != null) {
         // Four 32x32 lamps from (256,208) in 640x448, centred on wide screens:
         // three red lamps light one per second, then the green lamp at GO.
@@ -276,7 +296,7 @@ export class HeadUpDisplay {
           this.ctx.drawImage(this.lamps[name], left + lamp * 32, top, 32, 32);
         }
       }
-      if (hud.stunt_visible) {
+      if (hud.stunt_visible && (!race || (overlays?.shown('info') ?? true))) {
         const stunt = this.layout.get('OverlayObject-12'), at = [this.logicalWidth / 2, compact ? logicalHeight * .62 : logicalHeight - 100];
         const common = { color: hud.stunt_color.join(','), alpha: hud.stunt_alpha };
         this.text(hud.stunt_name, at, stunt, 1, { ...common, offset: hud.stunt_offsets[0] });
