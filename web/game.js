@@ -1,6 +1,6 @@
 import { SpeedRush, speedRushFocus, speedRushBounds } from './speed-rush.js';
 // Original content and vehicle component simulation run in the Rust worker.
-import { sceneViewProjection, vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, RideEffectsSettings, ImpactEvents, severedIndices, meshNodeBounds, crashSubjects, crashPresentation, shadowGlState, observedSize, RenderScale, PAINT_PALETTE, paintGlsl, paintable } from './render-support.js';
+import { sceneViewProjection, vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, cinematicPresentation, RideEffectsSettings, ImpactEvents, severedIndices, meshNodeBounds, crashSubjects, crashPresentation, shadowGlState, observedSize, RenderScale, PAINT_PALETTE, paintGlsl, paintable } from './render-support.js';
 import { MAX_REMOTE_MODELS, Multiplayer, PlayerIndicators } from './multiplayer.js';
 import { Frontend } from './frontend.js';
 import { courseResource, parseLaunch } from './launch.js';
@@ -55,6 +55,10 @@ crashSettings.onChange = () => {
   if (simFrame) acceptFrame({...simFrame,funny_crash:null},false);
 };
 
+// Restart Race goes straight to the countdown; a new race plays the intro.
+let raceRestarting = false;
+// Any key, tap or controller button skips the pre-race camera.
+let introSkip = false, introPadHeld = true;
 let raceSettings = null, raceCourse = null, cpuQuadMatrices, cpuRiderMatrices, raceCpuModels = [];
 // The player's rider gear and quad paint for the loaded ride (ATVs only).
 let rideAppearance = null;
@@ -208,6 +212,15 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
     const tdf = entries.findIndex(entry => memberNamed(entry, `${environment}nate.tdf`));
     if (tdf < 0) throw new Error('Original National course is missing.');
     course = await json(95, await codec(3,resource,tdf));
+    // Pre-race camera shots <venue>nat1.vub… play before the countdown.
+    for (let shot = 1; shot <= 4; shot++) {
+      const vub = entries.findIndex(entry => memberNamed(entry, `${environment}nat${shot}.vub`));
+      if (vub < 0) break;
+      await json(113, await codec(3, resource, vub), shot - 1);
+    }
+    // After the finish a director cuts between these trackside cameras.
+    const tv = entries.findIndex(entry => memberNamed(entry, `${environment}nat.tv`));
+    if (tv >= 0) await json(114, await codec(3, resource, tv));
     // Rust places the grid behind the original TDF start gate.
     scene.position=course.start.position.slice(); scene.yaw=course.start.yaw;
     const ai = entries.findIndex(entry => memberNamed(entry,'airiders.pb'));
@@ -1440,7 +1453,8 @@ async function startSimulation(source) {
   acceptFrame(await command(23, simStart));
   cpuQuadMatrices = vehicle.nodeMatrices.slice(); cpuRiderMatrices = new Float32Array((source.cpuRiderPose ?? vehicle.rider.pose).world_matrices.flat());
   for (const [index, entry] of (source.course ? source.cpuRoster ?? [] : []).entries()) await json(106, entry.bundle, index);
-  if (source.course) await command(96,{active:true,laps:raceSettings.laps,difficulty:raceSettings.difficulty,names:source.cpuNames.slice(0,raceSettings.cpu),spacing_sources:source.spacingSources});
+  const intro = !raceRestarting; raceRestarting = false;
+  if (source.course) await command(96,{active:true,intro,laps:raceSettings.laps,difficulty:raceSettings.difficulty,names:source.cpuNames.slice(0,raceSettings.cpu),spacing_sources:source.spacingSources});
   raceCourse = source.course;
   raceOverlay.setCourse(raceCourse);
   disposeCpuOutfits(); raceCpuModels = [];
@@ -1487,13 +1501,17 @@ async function pumpSimulation() {
     const cycle = cameraCycle || actions.camera; cameraCycle = false;
     if (cycle) { orbit = 0; impactEvents.reset(); }
     const submitted = performance.now();
-    const frames = await command(50, { count, input, orbit, cycle, now: Math.floor(performance.now()) });
+    const pad = focused ? gamepad() : null, padPressed = Boolean(pad?.buttons.some(b => b.pressed));
+    if (simFrame?.race?.phase === 'intro' && padPressed && !introPadHeld) introSkip = true;
+    introPadHeld = padPressed;
+    const skip_intro = introSkip && simFrame?.race?.phase === 'intro'; introSkip = false;
+    const frames = await command(50, { count, input, orbit, cycle, skip_intro, now: Math.floor(performance.now()) });
     diagnostics.physicsRoundTripMs = performance.now() - submitted;
     diagnostics.physicsBatchSteps = count;
     if (token !== simGeneration) return;
     const previousFrame = simFrame, previousCamera = cameraFrame;
     for (const { frame, camera: cameraResult, water, train, scenery_uv, scenery_textures, race, ambient, snow } of frames) {
-      if(race)frame.race=race;
+      if(race){frame.race=race;startLightSound(race);}
       acceptFrame(frame);
       if(ambient&&terrain.ambientEffectsSource){terrain.ambientEffectsSource.frame=ambient;ambientEffectsRenderer?.accept(ambient);diagnostics.ambientEffects.frame=ambient;}
       if(snow&&snowRenderer){snowRenderer.accept(snow);Object.assign(diagnostics.snow,{time:snow.time,births:snow.total_emitted,activeEmitters:snow.active_emitters,live:terrain.snowSource.history.reduce((n,birth)=>n+Number(Math.fround(snow.time-birth.time)<=birth.life),0)});}
@@ -1509,6 +1527,17 @@ async function pumpSimulation() {
     if (token === simGeneration) { simReady = false; status(`Simulation stopped: ${error.message}`, true); }
   } finally { simBusy = false; }
 }
+// 321 LIGHTS sounds (002e79a0): beep01 as each red lamp lights, go with the
+// green lamp; Supercross also drops its start gate (00223bf0, gate.vag).
+let startLights = null;
+function startLightSound(race) {
+  const lights = race.lights ?? null;
+  if (lights !== startLights && lights != null && lights > 0) {
+    audio.oneShot(lights < 4 ? 'beep01.vag' : 'go.vag');
+    if (lights === 4 && /^sx/.test(raceSettings?.course ?? '')) audio.oneShot('gate.vag');
+  }
+  startLights = lights;
+}
 function acceptCameraFrame(frame) {
   if (frame?.position?.length !== 3 || frame?.target?.length !== 3 || ![...frame.position, ...frame.target, frame.fov].every(Number.isFinite)) throw new Error('Simulation returned an invalid camera pose.');
   cameraFrame = frame;
@@ -1517,7 +1546,9 @@ function acceptCameraFrame(frame) {
 }
 function presentCameraFrame(frame = presentedCamera ?? cameraFrame) {
   const aspect=canvas.width/canvas.height;
-  const chase=chasePresentation(frame,presentedFrame??simFrame,aspect,uphillSightline,terrainHeight);
+  // Pre-race shots and trackside TV cameras are authored per course: no
+  // chase adaptation.
+  const chase=frame.mode==='intro'||frame.mode==='tv'?cinematicPresentation(frame,aspect):chasePresentation(frame,presentedFrame??simFrame,aspect,uphillSightline,terrainHeight);
   const view=crashPresentation(chase,crashSettings.camera === 'tight' ? vehicle?.crashSubjects : null,aspect,terrainHeight);
   [camera.x, camera.y, camera.z] = view.position;
   camera.yaw = view.yaw;
@@ -1571,7 +1602,8 @@ function render(time) {
   playerIndicators.root.hidden = !simReady || lost || document.hidden || menuOpen;
   // Enabled Freestyle GPS owns speed even while its raster is warming up or
   // temporarily hidden. Only the explicit Off setting restores standalone MPH.
-  hud?.draw(simFrame?.hud, simReady && focused && !lost && !document.hidden && !menuOpen, { speedVisible: Boolean(raceSettings) || !minimapSettings.enabled });
+  hud?.draw(simFrame?.hud, simReady && focused && !lost && !document.hidden && !menuOpen && simFrame?.race?.phase !== 'intro', { speedVisible: Boolean(raceSettings) || !minimapSettings.enabled, lights: simFrame?.race?.lights ?? null });
+  raceOverlay.lamps = Boolean(hud?.lamps);
   raceOverlay.draw(simFrame?.race,simFrame,simReady && focused && !lost && !document.hidden && !menuOpen);
   if (lost || !gl || !terrain || document.hidden || (menuOpen && !liveMultiplayer())) { lastTime = time; stats.sample(time, 0, false); return; }
   const frameMs = time - (lastTime || time), dt = Math.min(.05, Math.max(0, frameMs / 1000)); lastTime = time;
@@ -1852,7 +1884,7 @@ $('reset').onclick = async (options) => {
   if (raceSettings) {
     // After the finish the CPU driver has the quad; only Restart reloads.
     if (race?.phase === 'finished' && options?.restart !== true) return;
-    if (options?.restart === true || race?.phase !== 'racing' || !race.track_point) { await loadGame(null, raceSettings.course ?? 'env01', raceSettings); return; }
+    if (options?.restart === true || race?.phase !== 'racing' || !race.track_point) { raceRestarting = options?.restart === true; await loadGame(null, raceSettings.course ?? 'env01', raceSettings); return; }
     start = await command(140, { position: race.track_point, yaw: race.track_heading, course: true, slot: null });
   }
   impactEvents.reset();
@@ -1906,6 +1938,9 @@ window.addEventListener('keydown', event => {
   if (!bound || !keyboardTarget()) return;
   event.preventDefault(); keys.add(event.code); if (simReady) gameplayBindings.observeKeys(keys, event.repeat ? null : event.code);
 });
+const inIntro = () => simReady && !menuOpen && simFrame?.race?.phase === 'intro';
+window.addEventListener('keydown', event => { if (!event.repeat && !event.ctrlKey && !event.metaKey && inIntro()) introSkip = true; }, true);
+window.addEventListener('pointerdown', event => { if (inIntro() && !$('toolbar').contains(event.target)) introSkip = true; }, true);
 window.addEventListener('keyup', event => { keys.delete(event.code); gameplayBindings.observeKeys(keys); });
 const clearInput = () => { speedRush.reset(); motorcyclePresentation.reset(); presentedFrame = presentedCamera = undefined; keys.clear(); pointers.clear(); touchControls.clear(); touchLean.clear(); gameplayBindings.cancel(); simAccumulator = 0; cameraCycle = false; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
 gameplayBindings.subscribe(clearInput);

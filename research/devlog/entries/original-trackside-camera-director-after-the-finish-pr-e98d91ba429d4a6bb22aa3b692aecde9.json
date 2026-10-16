@@ -1,0 +1,16 @@
+{
+  "id": "original-trackside-camera-director-after-the-finish-pr-e98d91ba429d4a6bb22aa3b692aecde9",
+  "timestamp": "2026-10-16T05:26:03.460645+00:00",
+  "recorded_at": "2026-10-16T05:26:36.544224+00:00",
+  "kind": "build",
+  "title": "Original trackside camera director after the finish (PR #118)",
+  "summary": "Three seconds after the race is over, the original camera director now follows the player, who is driven by the CPU, between each course's own trackside TV cameras. The change is implementation-ready in PR #118 with auto-merge armed; it is not publicly verified.",
+  "details": [
+    "Each course ships a <venue>nat.tv file with 13 to 25 cameras. Cuts are at least 2 seconds apart and move to a closer listed camera, or to the nearest one after 8 seconds. Each cut rolls that camera's weights to show a chase, slot, wheel, classic or lookback follow view, or the TV view, which zooms with distance and shakes when a racer flies past. Restarting restores the player's own camera. A stuck or off-track CPU-driven player now recovers like the CPUs, and OFF TRACK no longer shows after the finish.",
+    "Discoveries: the shipped camera files use keys the original never reads (CameraSwitchWaitTimer, Classic1), so the build's defaults apply; the FirstPerson weight selects the Classic camera in this build; the Blur weight is unused.",
+    "Verification: Rust unit tests for parsing, switching, weights, zoom and shake; Clippy; content browser tests test_race and test_frontend; host scripted 1-lap races on sx01 and env02 showed TV cuts and then follow-preset cuts while every racer kept driving. The attached capture is the sx01 race after the finish, from a wider angle beside the track with the finished rider in the stadium; it does not by itself show which preset was selected."
+  ],
+  "limitation": "Eased cuts keep the port's follow filters; a seeded random stream replaces libc rand; Blur, split-screen fallbacks and STOPCAM are not reproduced. These are host captures, not a verified public release. Next: original race HUD overlays and crowd and finish presentation (signs, lap history, LEAD, crowd sounds, camera flashes).",
+  "image": "/devlog-images/original-trackside-camera-director-after-the-finish-pr-e98d91ba429d4a6bb22aa3b692aecde9.png",
+  "caption": "Host capture of a scripted 1-lap SX01 race after the finish: a wider director view from beside the track, with the finished rider in the stadium (host capture, not a public release)."
+}

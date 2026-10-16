@@ -101,6 +101,9 @@ try {
   await page.keyboard.down('KeyW');
   await waitForSteps(page, 30);
   s = await state();
+  // The original 321 lamps step during the countdown, with their sounds loaded.
+  assert.match(await page.locator('#native-hud').getAttribute('data-lights'), /^[0-3]$/);
+  assert.deepEqual(s.audio.raceStart, ['beep01.vag', 'go.vag', 'gate.vag']);
   // The grid settles on its suspension under the brakes; throttle is ignored.
   assert(Math.hypot(s.frame.origin[0] - startOrigin[0], s.frame.origin[2] - startOrigin[2]) < 0.3, 'Countdown blocks throttle');
   assert(s.frame.grounded.every(Boolean), `Grid starts on the ground: ${JSON.stringify(s.frame.grounded)}`);

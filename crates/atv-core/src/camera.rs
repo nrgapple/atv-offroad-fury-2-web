@@ -606,6 +606,16 @@ impl FollowCamera {
         self.terrain_lift = 0.;
         self.wreck_seed = None;
     }
+    /// After-finish director cut (`001f3bb0` SetCamera): select a preset and
+    /// either keep the filtered pose so it eases in, or snap (`+0xdc`).
+    pub fn direct(&mut self, preset: usize, ease: bool) {
+        if preset < self.presets.len() {
+            self.selected = preset;
+        }
+        if !ease {
+            self.reset();
+        }
+    }
     pub fn wreck_camera(&self, actors: [WreckActor; 2]) -> Result<WreckCamera> {
         let (frame, angles) = self
             .wreck_seed

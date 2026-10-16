@@ -63,6 +63,14 @@ export class HeadUpDisplay {
         this.images.set(name, await f.image(name));
       }
     }
+    // Race start 321 LIGHTS (OverlayObject-10): race and Freeride course
+    // archives carry the lamp art; Training does not.
+    this.lamps = null;
+    try {
+      const names = ['321ron', '321roff', '321gon', '321goff'];
+      const images = await Promise.all(names.map(name => f.image(name)));
+      this.lamps = Object.fromEntries(names.map((name, i) => [name, images[i]]));
+    } catch { this.lamps = null; }
     this.ready = true;
     // The Rust controller parses the same original section. Keep resource bytes
     // out of source code and preserve the exact build's authoring overrides.
@@ -119,18 +127,19 @@ export class HeadUpDisplay {
     this.painted = false; this.lastKey = '';
   }
   snapshot() { return { draws: this.draws, clears: this.clears, backingBytes: this.canvas.width * this.canvas.height * 4 }; }
-  draw(hud, visible = true, { speedVisible = true } = {}) {
+  draw(hud, visible = true, { speedVisible = true, lights = null } = {}) {
+    if (!this.lamps) lights = null;
     if (hud) {
       this.canvas.dataset.renderer = 'rust'; this.canvas.dataset.speed = hud.speed_text;
       this.canvas.dataset.preload = String(hud.preload_visible); this.canvas.dataset.stunt = hud.stunt_visible ? hud.stunt_name : '';
     }
     this.canvas.dataset.speedVisible = String(speedVisible);
-    if (!this.ready || !visible || !hud || (!speedVisible && !hud.stunt_visible)) { this.release(); return; }
+    if (!this.ready || !visible || !hud || (!speedVisible && !hud.stunt_visible && lights == null)) { this.release(); return; }
     this.surfaceSize ??= observedSize(this.surface);
     const rect = this.surfaceSize, dpr = Math.min(devicePixelRatio || 1, 3);
     const width = Math.round(rect.width * dpr), height = Math.round(rect.height * dpr);
     if (width <= 0 || height <= 0) { this.release(); return; }
-    const key = JSON.stringify([hud, speedVisible, rect.width, rect.height, dpr]);
+    const key = JSON.stringify([hud, speedVisible, lights, rect.width, rect.height, dpr]);
     if (key === this.lastKey) return;
     const actual = this.ctx, list = new HudDrawList(); this.ctx = list;
     // Original logical frame is 640x448. Extend horizontal framing on wide
@@ -148,6 +157,16 @@ export class HeadUpDisplay {
         this.text(hud.speed_text, speedAt, speed, 1); this.text(hud.units, speedAt, speed, 2);
       }
       this.canvas.dataset.speedVisible = String(speedVisible);
+      this.canvas.dataset.lights = lights == null ? '' : String(lights);
+      if (lights != null) {
+        // Four 32x32 lamps from (256,208) in 640x448, centred on wide screens:
+        // three red lamps light one per second, then the green lamp at GO.
+        const left = this.logicalWidth / 2 - 64, top = logicalHeight * 208 / 448;
+        for (let lamp = 0; lamp < 4; lamp++) {
+          const name = lamp < 3 ? (lights > lamp ? '321ron' : '321roff') : (lights >= 4 ? '321gon' : '321goff');
+          this.ctx.drawImage(this.lamps[name], left + lamp * 32, top, 32, 32);
+        }
+      }
       if (hud.stunt_visible) {
         const stunt = this.layout.get('OverlayObject-12'), at = [this.logicalWidth / 2, compact ? logicalHeight * .62 : logicalHeight - 100];
         const common = { color: hud.stunt_color.join(','), alpha: hud.stunt_alpha };

@@ -85,6 +85,18 @@ struct Simulation {
     /// The original path driver that takes the player's vehicle after the
     /// finish line, created on the first post-finish frame.
     race_autopilot: Option<atv_core::race_ai::Driver>,
+    /// Seconds the CPU-driven player has been pinned below walking pace,
+    /// and a pending return to its race checkpoint (the CPU recovery rule).
+    race_autopilot_stuck: f32,
+    race_autopilot_reset: bool,
+    /// The course's pre-race camera shots (`<venue>nat<n>.vub`) and the
+    /// intro camera playing them before the countdown.
+    race_shots: Vec<Vec<atv_core::race_intro::ShotFrame>>,
+    race_intro: Option<atv_core::race_intro::Intro>,
+    /// The course's trackside cameras (`<venue>nat.tv`) and, after the
+    /// finish, the director with its delay clock and the player's preset.
+    race_tv: Option<atv_core::race_director::Cameras>,
+    race_director: Option<(f32, atv_core::race_director::Director, usize)>,
     /// Original quads selected for the CPU roster, by race slot.
     cpu_models: Vec<Option<cpu::CpuModel>>,
 }
@@ -908,6 +920,9 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 if let Some(water) = &mut sim.water {
                     water.advance(dt)?;
                 }
+                if std::mem::take(&mut sim.race_autopilot_reset) {
+                    vehicle.reset_now()?;
+                }
                 let frame =
                     vehicle.step_with_scene(terrain, input, dt, sim.water.as_ref(), || {
                         wreck.boundary_random_words()
@@ -1470,7 +1485,133 @@ pub(crate) struct CameraActor {
     /// Detached rider origin and velocity during a wreck.
     pub rider: Option<([f32; 3], [f32; 3])>,
 }
+/// The follow camera, replaced by the pre-race camera before the race.
 pub(crate) fn follow_camera(
+    sim: &mut Simulation,
+    actor: CameraActor,
+    orbit: f32,
+    dt: f32,
+) -> Result<serde_json::Value> {
+    let (rider, forward) = (
+        actor.origin,
+        atv_core::dynamics::basis(actor.orientation)[2],
+    );
+    let tv = race_director_camera(sim, rider, dt)?;
+    let mut output = chase_camera(sim, actor, orbit, dt)?;
+    if let Some(pose) = tv {
+        output["position"] = serde_json::json!(pose.position);
+        output["target"] = serde_json::json!(pose.target);
+        output["fov"] = serde_json::json!(pose.fov);
+        output["mode"] = serde_json::json!("tv");
+        return Ok(output);
+    }
+    let (Some(race), Some(intro)) = (sim.race.as_mut(), sim.race_intro.as_mut()) else {
+        return Ok(output);
+    };
+    if !race.holding() {
+        sim.race_intro = None;
+        return Ok(output);
+    }
+    let follow: atv_core::race_intro::Pose =
+        serde_json::from_value(output.clone()).map_err(|e| e.to_string())?;
+    let terrain = sim.terrain.as_ref().ok_or("load original terrain first")?;
+    let ground = |x: f32, z: f32| {
+        terrain
+            .contact(x, z)
+            .ok()
+            .flatten()
+            .map_or(f32::MIN, |c| c.height)
+    };
+    let pose = intro.step(
+        dt,
+        &atv_core::race_intro::Scene {
+            rider,
+            forward,
+            follow,
+            ground: &ground,
+        },
+    )?;
+    if intro.countdown_requested() {
+        race.start_countdown();
+    }
+    if let Some(pose) = pose {
+        output["position"] = serde_json::json!(pose.position);
+        output["target"] = serde_json::json!(pose.target);
+        output["fov"] = serde_json::json!(pose.fov);
+        output["mode"] = serde_json::json!("intro");
+    }
+    Ok(output)
+}
+/// The after-finish director (`001f3bb0`): three seconds after race over
+/// (`00215db0`), cut between the trackside cameras following the player.
+/// Follow-preset cuts change the follow camera; a TV cut returns its pose.
+fn race_director_camera(
+    sim: &mut Simulation,
+    rider: [f32; 3],
+    dt: f32,
+) -> Result<Option<atv_core::race_director::Pose>> {
+    let finished = sim.race.as_ref().is_some_and(|r| r.player_finished());
+    let Some(tv) = sim.race_tv.as_ref().filter(|_| finished) else {
+        end_race_director(sim);
+        return Ok(None);
+    };
+    if sim.race_director.is_none() {
+        let saved = sim.camera.as_ref().map_or(0, |c| c.selected);
+        let seed = 97211 + 6 * 47;
+        sim.race_director = Some((
+            0.,
+            atv_core::race_director::Director::new(tv.clone(), seed),
+            saved,
+        ));
+    }
+    let player_speed = sim
+        .motorcycle
+        .as_ref()
+        .map(|b| b.frame().speed_magnitude)
+        .or_else(|| sim.vehicle.as_ref().map(|v| v.frame().speed_magnitude))
+        .unwrap_or(0.);
+    let racers: Vec<_> = std::iter::once(atv_core::race_director::Racer {
+        origin: rider,
+        speed: player_speed,
+    })
+    .chain(sim.cpu_racers.iter().map(|cpu| {
+        let f = cpu.vehicle.frame();
+        atv_core::race_director::Racer {
+            origin: f.origin,
+            speed: f.speed_magnitude,
+        }
+    }))
+    .collect();
+    let (elapsed, director, _) = sim.race_director.as_mut().ok_or("director missing")?;
+    *elapsed += dt;
+    if *elapsed < atv_core::race_director::DELAY {
+        return Ok(None);
+    }
+    let step = director.step(dt, rider, &racers)?;
+    if let Some(atv_core::race_director::View::Follow { preset, ease }) = step.cut
+        && let Some(camera) = sim.camera.as_mut()
+    {
+        camera.direct(preset, ease);
+    }
+    Ok(step.tv)
+}
+/// Restart restores the player's own camera preset (`001f54b0`).
+fn end_race_director(sim: &mut Simulation) {
+    if let Some((_, _, saved)) = sim.race_director.take()
+        && let Some(camera) = sim.camera.as_mut()
+    {
+        camera.direct(saved, false);
+    }
+}
+/// Skip the pre-race camera on any button (`00212d40`).
+pub(crate) fn skip_race_intro(sim: &mut Simulation) {
+    if let (Some(race), Some(intro)) = (sim.race.as_mut(), sim.race_intro.as_mut())
+        && intro.skip()
+    {
+        race.start_countdown();
+    }
+}
+fn chase_camera(
     sim: &mut Simulation,
     actor: CameraActor,
     orbit: f32,
@@ -1614,7 +1755,7 @@ fn race_controls(sim: &mut Simulation) -> Result<Option<atv_core::vehicle::Vehic
         sim.race_autopilot = None;
         return Ok(None);
     };
-    if race.counting_down() {
+    if race.holding() {
         return Ok(Some(atv_core::vehicle::VehicleInput {
             brake: 1.,
             ..Default::default()
@@ -1622,6 +1763,8 @@ fn race_controls(sim: &mut Simulation) -> Result<Option<atv_core::vehicle::Vehic
     }
     if !race.player_finished() {
         sim.race_autopilot = None;
+        sim.race_autopilot_stuck = 0.;
+        sim.race_autopilot_reset = false;
         return Ok(None);
     }
     let pose = if let Some(bike) = &sim.motorcycle {
@@ -1654,6 +1797,19 @@ fn race_controls(sim: &mut Simulation) -> Result<Option<atv_core::vehicle::Vehic
             }
         })
         .collect();
+    // The authored CPU recovery also returns a stuck or off-track player.
+    if pose.riding && pose.speed_magnitude < 3. {
+        sim.race_autopilot_stuck += 1. / 60.;
+    } else {
+        sim.race_autopilot_stuck = 0.;
+    }
+    if pose.riding
+        && (race.off_track_time(None) > CPU_OFF_TRACK_RESET
+            || sim.race_autopilot_stuck > CPU_STUCK_RESET)
+    {
+        sim.race_autopilot_reset = true;
+        sim.race_autopilot_stuck = 0.;
+    }
     // Slot 4 follows the four CPU slots' driver random streams.
     let driver = sim
         .race_autopilot
@@ -1690,7 +1846,7 @@ fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
         // Every racer keeps its physics through the countdown (held on the
         // brakes) and after the finish, when the CPUs drive on.
         {
-            let hold = race.counting_down();
+            let hold = race.holding();
             let nodes = &sim
                 .rider_mesh
                 .as_ref()
@@ -1854,6 +2010,13 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
         .unwrap_or(false)
     {
         simulation(br#"{"cycle":true}"#, 47)?;
+    }
+    if value
+        .get("skip_intro")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        SIMULATION.with_borrow_mut(skip_race_intro);
     }
     let mut frames = Vec::with_capacity(count as usize);
     let now = value
@@ -2069,9 +2232,36 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         SIMULATION.with_borrow_mut(|sim| {
             sim.race_course = Some(course);
             sim.race = None;
+            sim.race_intro = None;
+            sim.race_shots.clear();
+            sim.race_tv = None;
+            end_race_director(sim);
             sim.cpu_racers.clear();
         });
         return Ok(result);
+    }
+    if op == 114 {
+        // The course's after-finish trackside cameras.
+        let text = std::str::from_utf8(input).map_err(|_| "TV cameras must be text")?;
+        let tv = atv_core::race_director::parse_tv(text)?;
+        return SIMULATION.with_borrow_mut(|sim| {
+            sim.race_tv = Some(tv);
+            Ok(b"null".to_vec())
+        });
+    }
+    if op == 113 {
+        // Pre-race camera shot `index` (0 starts the course's list).
+        let shot = atv_core::race_intro::parse_vub(input)?;
+        return SIMULATION.with_borrow_mut(|sim| {
+            if index == 0 {
+                sim.race_shots.clear();
+            }
+            if index != sim.race_shots.len() || index > 3 {
+                return Err("race camera shots must load in order".into());
+            }
+            sim.race_shots.push(shot);
+            Ok(b"null".to_vec())
+        });
     }
     if op == 96 {
         return SIMULATION.with_borrow_mut(|sim| {
@@ -2079,6 +2269,10 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
                 serde_json::from_slice(input).map_err(|e| e.to_string())?;
             if value.get("active").and_then(serde_json::Value::as_bool) == Some(false) {
                 sim.race = None;
+                sim.race_intro = None;
+                sim.race_shots.clear();
+                sim.race_tv = None;
+                end_race_director(sim);
                 sim.race_course = None;
                 sim.cpu_racers.clear();
                 sim.cpu_models.clear();
@@ -2127,9 +2321,19 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
                     None,
                 );
             }
+            // Race load plays the pre-race camera (`00210980` SetCamera(5));
+            // Restart Race (`00215460`) goes straight to the countdown.
+            sim.race_intro = None;
+            if value.get("intro").and_then(serde_json::Value::as_bool) != Some(false)
+                && !sim.race_shots.is_empty()
+            {
+                sim.race_intro = Some(atv_core::race_intro::Intro::new(sim.race_shots.clone()));
+                race.begin_intro();
+            }
             sim.cpu_racers = racers;
             sim.race = Some(race);
             sim.race_autopilot = None;
+            end_race_director(sim);
             if sim.motorcycle.is_none()
                 && let Some(vehicle) = sim.vehicle.as_mut()
             {

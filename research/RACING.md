@@ -55,9 +55,10 @@ for the scalar branches, not whole-race replay):
 - The flag 64 preload/jump helper, optional AI flags (aggression, `0x800` direct
   velocity), scene query category/order and actor update ordering.
 - Championship points, firework triggers and whole-race PS2 replay parity.
-- The pre-race camera shots, the after-finish TV director, the original race
-  overlays (lamp countdown, signs, lap history, LEAD) and the Stunt Score and
-  Profile Points results columns. See "Race start and race over" below.
+- The remaining original race overlays (signs,
+  lap history, LEAD), the Supercross start gate rotation, the race-load
+  announcer cue and the Stunt Score and Profile Points results columns. See
+  "Race start and race over" and "Pre-race camera and 321 lights" below.
 
 ## Initial preview (historical)
 
@@ -487,3 +488,89 @@ Port:
 Checks: Rust tests cover placement on flat ground, the wheel lift, the reset
 placement, the race-over estimates and the ordering tie-break; `test_race.mjs`
 checks the grid is grounded during the countdown and the new results menus.
+
+## Pre-race camera and 321 lights — 2026-10-16
+
+Exact-build evidence (private exports; bounded reading):
+
+- **Race load** (`00210980`): fade in from black over 500ms and select the
+  pre-race camera, mode 5 (QuadzillaPreRaceCamera on SimpleCutSceneCamera).
+- **Shots** (`0030b280`/`0030b570`, tick `0030bac0`): every
+  `<venue>nat<n>.vub` (n = 1–4) is joined into one sequence. All 32 race
+  archives ship `nat1` and `nat2`. A VUB is a u32 header (2, frames, 1), then
+  40-byte frames: unit forward, unit up, world position in feet, FOV in
+  degrees. Playback is 30 frames per second, linear between frames,
+  extrapolating at a shot's last frame. Position and FOV pass low-pass filters
+  (0.3s, 0.4s) that reset on each cut.
+- **Swoop** (`0030df00` case 5, single player): start 18ft from the rider at
+  −45° about +Y from its forward, 2ft over the ground plus 2ft; arc for 2.5s
+  around the midpoint to the follow pose about the unnormalized axis
+  (n × up) × n, with the angle linear in time. The look target and FOV blend
+  from rider + 3ft and 90° to the follow view.
+- **Countdown** (`0020f780`, `00248020`): starts once under 2.2s of swoop
+  remain, so it overlaps the swoop. It lasts 4.0s; the overlay steps each
+  second (`00217590`) and the race goes live at 4s.
+- **Skip** (`00212d40`): any button from a local pad before the countdown
+  starts returns to the follow camera and starts the countdown at once.
+- **Restart** (`00215460`) goes straight to the countdown, with no intro.
+- **321 LIGHTS** (QuadzillaCountdownOverlay, `002e79a0`, `002e81f0`): four
+  32×32 lamps from (256,208) in the 640×448 overlay space. Step 0 shows all
+  off; steps 1–3 light the three red lamps one per second, each with
+  `beep01.vag`; step 4 lights the green lamp with `go.vag` and hides 1s later.
+  The lamp art is in every race and Freeride course archive.
+- **Supercross gate** (`00223bf0`): at GO the DropGate rotates (45° over 1s
+  by default) and `gate.vag` plays.
+
+Port:
+
+- `race_intro::Intro` plays the shots and the swoop, and requests the
+  countdown at the original point. The follow camera keeps running underneath
+  and supplies the swoop's end pose. The browser shows intro poses as authored
+  (no widescreen, portrait or uphill chase adaptation) and hides the HUD.
+- Any key, tap on the game surface or controller button skips the intro; the
+  toolbar buttons keep their own actions. Restart Race skips the intro.
+- `Race::frame().lights` gives the lamp step. The HUD draws the original lamps
+  centred on wide screens, and the beep, go and gate sounds play from the
+  content package (`AUDIO.RES` gains the three samples). Without the lamp
+  art, the countdown digits remain.
+- Not reproduced: the fly-by/orbit fallbacks (every course has shots), the
+  race-load announcer cue `00217bb0`, and the Supercross gate rotation.
+
+## After-finish camera director — 2026-10-16
+
+Exact-build evidence (private exports; bounded reading):
+
+- **Timing.** Race over opens the results and arms a 3s timer (`00215db0`);
+  when it expires, end race (`001f1990`) hands the camera controller to the
+  director (`001f3bb0`). It always follows the player. Restart restores the
+  player's own camera (`001f54b0`) and resets the TV cameras.
+- **Cameras** (`0031b550`, `<venue>nat.tv` in every race archive):
+  `[CameraPositions]` NumberOfCameras, CameraSwitchMinWaitTimer (2s) and
+  CameraSwitchMaxWaitTimer (8s); per `[CameraN]` a world Position, FOV or
+  MaxFOV/MinFOV (70/10) with MaxFOVDistance/MinFOVDistance (200/20), the
+  NextCamera list and percentage weights Chase1, Chase2, Slot1, Slot2,
+  Classic, LookBack and FirstPerson. The shipped files' `CameraSwitchWaitTimer`
+  and `Classic1` keys are not read, so the defaults apply. `Blur` is loaded
+  but unused; no shipped camera is `Stationary`.
+- **Switching** (`0031bb50`, 3D distance to the rider): no cut within 2s of
+  the last one. Then cut to the closest listed next camera when it is closer
+  than the current one. When 8s pass without a cut, take the nearest camera if
+  it is at least twice as close (squared distance) as the last best-next
+  camera, else that best-next camera. The first camera is always Camera1.
+- **Each cut** rolls 0–99 against the cumulative weights: Chase1, Chase2,
+  Slot1, Slot2, Classic, LookBack select follow presets 0–5; FirstPerson
+  selects preset 4 (Classic) in this build; the remainder is the TV view. One
+  cut in four eases the follow camera in; the rest snap.
+- **TV view** (`001ac230`, `001ac580`): the camera's position, aimed 3ft above
+  the rider. FOV = MinFOV + (MaxFOV − MinFOV)(MaxFOVDistance − d) /
+  (MaxFOVDistance − MinFOVDistance) on the XZ distance d, clamped, with a 0.4s
+  filter that snaps on a cut. A racer passing within 55ft above 170ft/s shakes
+  the camera on alternate frames (`0031c2d0`).
+
+Port: `race_director::Director` reproduces these rules on the player's ATV or
+motorcycle. Follow cuts select the port's follow presets; an eased cut keeps
+the follow filters rather than seeding them from the TV pose. The libc `rand`
+stream is replaced by the port's seeded stream. The browser shows TV views as
+authored, like the intro shots. The CPU-driven player also gets the authored
+CPU recovery (5s off the track, or 4s under 3ft/s). Split-screen fallbacks
+and the STOPCAM cheat are not reproduced.
