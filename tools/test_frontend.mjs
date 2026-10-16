@@ -68,8 +68,7 @@ try {
   await pad(13);
   await page.waitForFunction(() => document.querySelector('#frontend').dataset.selection === '1');
   await pad(0, '**/devlog.html');
-  await page.getByRole('heading', { name: 'Development log', exact: true }).waitFor();
-  await page.getByRole('link', { name: 'Play current build' }).click();
+  await page.getByRole('link', { name: 'Play', exact: true }).click();
   await screen('title');
   await page.keyboard.press('Enter');
   await screen('main');
@@ -195,8 +194,7 @@ try {
   if (process.env.ATV_UI_SCREENSHOTS)
     await page.screenshot({ path: `${process.env.ATV_UI_SCREENSHOTS}-start-mobile.png` });
   await button(page, 'Dev log').tap();
-  await page.getByRole('heading', { name: 'Development log', exact: true }).waitFor();
-  await page.getByRole('link', { name: 'Play current build' }).tap();
+  await page.getByRole('link', { name: 'Play', exact: true }).tap();
   await screen('title');
   assertNoErrors(errors);
   console.log(
