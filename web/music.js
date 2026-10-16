@@ -94,6 +94,25 @@ export class MusicStream {
     if (this.gain) this.gain.gain.value = this.volume;
     this.save();
   }
+  // Races hold the song: none during the intro and countdown (00217bb0), a
+  // 1.5s fade at race over (0014f8d0); release starts the next song (GO).
+  hold(fade = 0) {
+    if (this.held || this.closed) { this.held = true; return; }
+    this.held = true;
+    const context = this.context(), stop = () => { if (!this.held) return; this.clearQueue(); this.finished = true; if (this.gain) this.gain.gain.value = this.volume; };
+    if (fade > 0 && this.gain && context?.state === 'running' && this.queue.length) {
+      const now = context.currentTime, remaining = Math.max(0, this.scheduledUntil - now);
+      const seconds = remaining < fade ? remaining * 0.8 : fade;
+      this.gain.gain.cancelScheduledValues(now); this.gain.gain.setValueAtTime(this.volume, now); this.gain.gain.linearRampToValueAtTime(0, now + seconds);
+      this.holdTimer = setTimeout(stop, seconds * 1000);
+    } else stop();
+  }
+  release() {
+    if (!this.held) return;
+    this.held = false; clearTimeout(this.holdTimer);
+    if (this.gain) { this.gain.gain.cancelScheduledValues(0); this.gain.gain.value = this.volume; }
+    void this.update();
+  }
   setEnabled(enabled) {
     enabled = Boolean(enabled);
     if (enabled === this.enabled || this.closed) return;
@@ -166,7 +185,7 @@ export class MusicStream {
   }
   async update() {
     const context = this.context();
-    if (!this.ready || this.closed || !this.enabled || this.failed || this.busy || context?.state !== 'running') return;
+    if (!this.ready || this.closed || !this.enabled || this.held || this.failed || this.busy || context?.state !== 'running') return;
     this.busy = true;
     const generation = this.generation;
     try {

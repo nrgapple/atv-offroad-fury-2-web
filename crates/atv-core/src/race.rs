@@ -49,6 +49,8 @@ pub struct Course {
     pub branches: Vec<(usize, usize)>,
     pub start_gate: Option<Gate>,
     pub finish_gate: Option<Gate>,
+    /// TDF tag 25, the third oriented box (Track +0x5c).
+    pub tag25_gate: Option<Gate>,
     pub rider_spacing: f32,
     pub sections: usize,
     /// Authored tag 10/11 edge points; consecutive pairs bound the track
@@ -101,6 +103,7 @@ impl Default for Course {
             branches: vec![],
             start_gate: None,
             finish_gate: None,
+            tag25_gate: None,
             rider_spacing: 8.,
             sections: 1,
             edges: vec![],
@@ -142,7 +145,7 @@ impl Course {
         let mut scale = None;
         let mut lane_limit = 3.;
         let mut leader_policy = [150., 0.9, 1.5, 0.5];
-        let mut gates = [None; 2];
+        let mut gates = [None; 3];
         let mut sections: Vec<Section> = Vec::new();
         let mut current: Option<usize> = None;
         let mut edges = Vec::new();
@@ -313,14 +316,12 @@ impl Course {
                     if !(0. ..=2048.).contains(&width) {
                         return Err("invalid TDF gate".into());
                     }
-                    if tag != 25 {
-                        gates[(tag - 15) as usize] = Some(Gate {
-                            center,
-                            forward,
-                            half_width,
-                            width,
-                        });
-                    }
+                    gates[if tag == 25 { 2 } else { (tag - 15) as usize }] = Some(Gate {
+                        center,
+                        forward,
+                        half_width,
+                        width,
+                    });
                 }
                 23 if in_point => {
                     sections[current.unwrap()]
@@ -382,7 +383,7 @@ impl Course {
         sections: &[Section],
         lane_limit: f32,
         leader_policy: [f32; 4],
-        gates: [Option<Gate>; 2],
+        gates: [Option<Gate>; 3],
     ) -> Result<Self> {
         let successor = |id: usize| -> Option<usize> {
             let links: Vec<usize> = sections[id].links.iter().flatten().copied().collect();
@@ -501,6 +502,7 @@ impl Course {
             branches: vec![],
             start_gate: gates[0],
             finish_gate: gates[1],
+            tag25_gate: gates[2],
             rider_spacing: 8.,
             sections: sections.len(),
             edges,
@@ -1058,6 +1060,9 @@ pub struct Frame {
     /// Stadium crowd cue, attached by the simulation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crowd: Option<crate::race_crowd::CrowdFrame>,
+    /// National drop gate world matrix, attached by the simulation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gate: Option<[f32; 16]>,
 }
 pub struct Race {
     pub course: Course,
@@ -1444,6 +1449,7 @@ impl Race {
                 .collect(),
             hud: None,
             crowd: None,
+            gate: None,
             opponents: self.opponents.clone(),
             standings: order
                 .into_iter()

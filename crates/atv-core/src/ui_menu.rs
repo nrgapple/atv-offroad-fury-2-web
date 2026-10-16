@@ -123,6 +123,15 @@ pub struct Request {
     pub minimap_orientation: String,
     #[serde(default = "default_steering_sensitivity")]
     pub mobile_steering_sensitivity: f32,
+    /// Original Pause → Overlays groups switched off (timing, lap, score,
+    /// info, speed, radar) and the Position row (name, place or off).
+    #[serde(default)]
+    pub race_overlays_off: Vec<String>,
+    #[serde(default = "default_race_position")]
+    pub race_position: String,
+}
+fn default_race_position() -> String {
+    "name".into()
 }
 fn default_quad() -> u16 {
     1
@@ -365,6 +374,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             | "players"
             | "hud-settings"
             | "minimap-config"
+            | "race-overlays"
             | "controls"
             | "bindings"
             | "music"
@@ -439,6 +449,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         "players" => "Lobby Players",
         "hud-settings" => "Display",
         "minimap-config" => "Minimap Configuration",
+        "race-overlays" => "Race Overlays",
         "controls" => "Controls",
         "bindings" => {
             if request.binding_device == "controller" {
@@ -1194,6 +1205,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                 ],
                 _ => vec![
                     ("Minimap configuration", "minimap-config"),
+                    ("Race overlays", "race-overlays"),
                     (speed_label, "speed-rush"),
                 ],
             };
@@ -1208,6 +1220,56 @@ pub fn layout(request: Request) -> Result<Frame> {
                     action,
                     [24., 92. + i as f32 * 54., w - 48., 54.],
                     request.selection % choices.len() == i,
+                );
+            }
+        }
+        "race-overlays" => {
+            // The original Pause → Overlays rows (002df120): each group On/Off;
+            // Position chooses the name list, the place number or nothing.
+            let on = |group: &str| {
+                if request.race_overlays_off.iter().any(|g| g == group) {
+                    "Off"
+                } else {
+                    "On"
+                }
+            };
+            let position = match request.race_position.as_str() {
+                "place" => "Place",
+                "off" => "Off",
+                _ => "Name",
+            };
+            let rows = [
+                (format!("Timing: {}", on("timing")), "overlay-timing"),
+                (format!("Lap: {}", on("lap")), "overlay-lap"),
+                (format!("Score: {}", on("score")), "overlay-score"),
+                (format!("Position: {position}"), "overlay-position"),
+                (format!("Informational: {}", on("info")), "overlay-info"),
+                (
+                    format!("Speedometer/Preload: {}", on("speed")),
+                    "overlay-speed",
+                ),
+                (format!("Radar: {}", on("radar")), "overlay-radar"),
+                ("Back".to_string(), "back"),
+            ];
+            let row = 52_f32.max(44. / scale);
+            let columns = if 92. + rows.len() as f32 * (row + 2.) > h - 12. {
+                2
+            } else {
+                1
+            };
+            let column_width = (w - 48.) / columns as f32;
+            for (i, (label, action)) in rows.iter().enumerate() {
+                f.choices.push((*action).into());
+                f.button(
+                    label,
+                    action,
+                    [
+                        24. + (i % columns) as f32 * column_width,
+                        92. + (i / columns) as f32 * (row + 2.),
+                        column_width,
+                        row,
+                    ],
+                    request.selection % rows.len() == i,
                 );
             }
         }
@@ -1546,6 +1608,8 @@ mod tests {
             minimap_corner: "top-right".into(),
             minimap_orientation: "north-up".into(),
             mobile_steering_sensitivity: 85.,
+            race_overlays_off: vec![],
+            race_position: "name".into(),
             race_laps: 3,
             race_cpu: 3,
             race_difficulty: 1,
@@ -1803,6 +1867,7 @@ mod tests {
                 "controls",
                 "hud-settings",
                 "minimap-config",
+                "race-overlays",
                 "bindings",
                 "music",
             ] {
@@ -1891,7 +1956,13 @@ mod tests {
     fn minimap_settings_fit_and_validate_sizes() {
         assert_eq!(
             layout(request("hud-settings", 390., 844.)).unwrap().choices,
-            ["minimap-config", "speed-rush", "fullscreen", "back"]
+            [
+                "minimap-config",
+                "race-overlays",
+                "speed-rush",
+                "fullscreen",
+                "back"
+            ]
         );
         for (w, h) in [
             (320., 568.),

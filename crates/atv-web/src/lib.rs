@@ -98,10 +98,13 @@ struct Simulation {
     crowd_wrecked: bool,
     crowd_laps: usize,
     stunt_landed: bool,
+    /// The player's last stunt chain result this step (landed or failed).
+    stunt_result: Option<bool>,
     /// The race TOY behind the ambient emitters, and the firework triggers
     /// with each racer's previous position.
     race_mode_toy: Option<String>,
     race_fireworks: Option<atv_core::race_fireworks::Controller>,
+    race_gate: Option<Option<atv_core::race_gate::DropGate>>,
     firework_positions: Vec<[f32; 3]>,
     /// The course's pre-race camera shots (`<venue>nat<n>.vub`) and the
     /// intro camera playing them before the countdown.
@@ -585,6 +588,7 @@ fn update_hud(
                     ..
                 } => {
                     sim.stunt_landed |= success;
+                    sim.stunt_result = Some(success);
                     sim.hud.finish_event(success, display_count)
                 }
                 _ => {}
@@ -2060,6 +2064,7 @@ fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
                 final_lap,
                 finishes,
                 single_player: true,
+                stunt: sim.stunt_result.take(),
             });
             race_frame.crowd = (frame.cue.is_some() || frame.stop_loop).then_some(frame);
         }
@@ -2103,6 +2108,11 @@ fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
             for (emitter, instance, fire) in commands {
                 ambient.set_mode_emitter(emitter, instance, fire);
             }
+        }
+        // National drop gate: standing until GO, then its linear swing.
+        if let Some(Some(gate)) = &sim.race_gate {
+            let live = matches!(race_frame.phase, "racing" | "finished");
+            race_frame.gate = Some(gate.matrix(gate.angle_at(live.then_some(race_frame.elapsed))));
         }
         race_frame.hud = Some(sim.race_hud.step(
             1. / 60.,
@@ -2374,6 +2384,7 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             sim.race_intro = None;
             sim.race_shots.clear();
             sim.race_tv = None;
+            sim.race_gate = None;
             end_race_director(sim);
             sim.cpu_racers.clear();
         });
@@ -2385,11 +2396,15 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         let request: serde_json::Value =
             serde_json::from_slice(input).map_err(|e| e.to_string())?;
         let text = |key: &str| request.get(key).and_then(serde_json::Value::as_str);
+        let prefix = match text("crowd_prefix") {
+            Some("Pro") => "Pro",
+            _ => "Am",
+        };
         let sounds = text("crowd")
-            .map(|t| atv_core::race_crowd::parse_crowd(t, "Am"))
+            .map(|t| atv_core::race_crowd::parse_crowd(t, prefix))
             .transpose()?;
         let samples: Vec<String> = sounds.as_ref().map_or_else(Vec::new, |s| {
-            [&s.boo, &s.cheer, &s.win, &s.stomp]
+            [&s.boo, &s.cheer, &s.oh, &s.win, &s.stomp]
                 .into_iter()
                 .flatten()
                 .cloned()
@@ -2416,6 +2431,16 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         });
         return serde_json::to_vec(&serde_json::json!({"soultree": soultree, "crowd": samples}))
             .map_err(|e| e.to_string());
+    }
+    if op == 116 {
+        // National drop gate of a race TOY: model and standing matrix.
+        let text = std::str::from_utf8(input).map_err(|_| "race TOY must be text")?;
+        let gate = atv_core::race_gate::parse(text)?;
+        let result = gate
+            .as_ref()
+            .map(|g| serde_json::json!({"model": g.model, "matrix": g.matrix(0.)}));
+        SIMULATION.with_borrow_mut(|sim| sim.race_gate = Some(gate));
+        return serde_json::to_vec(&result).map_err(|e| e.to_string());
     }
     if op == 114 {
         // The course's after-finish trackside cameras.

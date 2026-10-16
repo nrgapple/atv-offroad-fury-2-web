@@ -566,6 +566,12 @@ def main():
         if len(crowd_clips) != 18:
             raise ValueError('exact-build crowd reactions expected 18 clips')
         samples += [(path.removeprefix('/'), source(by_path[path]['path'])) for path in crowd_clips]
+        # Race intro/outro stingers (IntOut\intout.aud): INT001-INT006 at race
+        # load, OUT004 (win) and the OUT001 loop at race over (00217bb0, 00216260).
+        intout = sorted(path for path in by_path if re.fullmatch(r'/audio/intout/(int00[1-6]|out00[14])\.vag', path))
+        if len(intout) != 8:
+            raise ValueError('exact-build IntOut expected eight stereo cues')
+        samples += [(path.removeprefix('/'), source(by_path[path]['path'])) for path in intout]
         packed = pack_resource(samples)
         records.append({'path': '/AUDIO/AUDIO.RES', 'lba': by_path['/audio/audio.res']['lba'], 'directory': False, 'lazy': False, 'repacked': True, 'member_count': len(samples), **blob(packed)})
         music = config(Resource(originals['/STARTAPP.RES']).named('music.pb'))

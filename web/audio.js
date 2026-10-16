@@ -218,6 +218,38 @@ export class GameAudio {
     }
     this.stadiumDefinitions = soultree.filter(definition => this.buffers.has(definition.sample));
   }
+  // IntOut race stingers on their own voice, at the music volume: a random
+  // INT001-INT004 at race load, cut at GO; OUT004 after a win, handing over
+  // to the OUT001 loop 1s before it ends (00211490), or OUT001 after a loss.
+  async raceMusic(event, won = false) {
+    const music = this.music;
+    if (event === 'leave') { this.stopIntOut(); music?.release(); return; }
+    if (event === 'intro' || event === 'restart') { music?.hold(0); this.stopIntOut(); }
+    if (event === 'go') { this.stopIntOut(); music?.release(); return; }
+    if (event === 'over') { music?.hold(1.5); this.stopIntOut(); }
+    const cues = event === 'intro' ? [[`intout/int00${1 + Math.floor(Math.random() * 4)}.vag`, false]]
+      : event === 'over' ? (won ? [['intout/out004.vag', false], ['intout/out001.vag', true]] : [['intout/out001.vag', true]]) : [];
+    for (const [name] of cues) await this.loadSample(name).catch(() => {});
+    this.intOutPending = cues.length ? cues : null;
+  }
+  playIntOut() {
+    const cues = this.intOutPending;
+    if (!cues || !this.context || this.context.state !== 'running' || this.music?.enabled === false) return;
+    if (!cues.every(([name]) => this.buffers.get(name)?.buffer)) return;
+    this.intOutPending = null;
+    const gain = this.context.createGain(); gain.gain.value = this.music?.volume ?? 0.45; gain.connect(this.gain);
+    let at = this.context.currentTime;
+    this.intOutVoices = cues.map(([name, loop]) => {
+      const source = this.context.createBufferSource(); source.buffer = this.buffers.get(name).buffer; source.loop = loop; source.connect(gain);
+      source.start(at); const voice = { source, name, at }; at += Math.max(0, source.buffer.duration - 1); return voice;
+    });
+    this.intOutGain = gain; this.intOutStarts = (this.intOutStarts ?? 0) + 1;
+  }
+  stopIntOut() {
+    this.intOutPending = null;
+    for (const { source } of this.intOutVoices ?? []) { try { source.stop(); } catch {} source.disconnect(); }
+    this.intOutVoices = []; this.intOutGain?.disconnect(); this.intOutGain = null;
+  }
   crowdCue({ cue, stop_loop }) {
     if (!this.context || this.context.state !== 'running' || this.closed) return;
     if (stop_loop && this.crowdVoice?.looping) this.stopCrowd();
@@ -487,6 +519,7 @@ export class GameAudio {
       }
       await this.updateSpatial(generation);
       await this.updateStadium(generation, scene);
+      this.playIntOut();
       await this.updateEffects(generation);
       if (this.closed || !this.active || generation !== this.generation) return;
       if (!this.current && this.commands === 0 && this.config.samples[1].length) {
@@ -555,6 +588,7 @@ export class GameAudio {
   snapshot() {
     return { ready: this.ready, context: this.context?.state ?? 'locked', samples: this.buffers.size, oneShots: { ...this.oneShotPlays },
       raceStart: ['beep01.vag', 'go.vag', 'gate.vag'].filter(name => this.buffers.has(name)),
+      intOut: { pending: Boolean(this.intOutPending), voices: (this.intOutVoices ?? []).map(voice => voice.name), starts: this.intOutStarts ?? 0 },
       stadium: { loops: this.stadiumDefinitions?.length ?? 0, voices: this.stadiumVoices?.size ?? 0, crowdCues: this.crowdCues ?? 0, crowd: Boolean(this.crowdVoice) },
       weather: {active:this.weatherActive,muted:!this.active,voices:this.weatherSource?1:0,starts:this.weatherStarts,sample:'rain.vag',decoded:Boolean(this.buffers.get('rain.vag')?.buffer),sampleRate:this.buffers.get('rain.vag')?.info.sample_rate,loopStart:this.buffers.get('rain.vag')?.info.loop_start,loopEnd:this.buffers.get('rain.vag')?.info.loop_end,pcmBytes:this.buffers.get('rain.vag')?.buffer?this.buffers.get('rain.vag').buffer.length*this.buffers.get('rain.vag').buffer.numberOfChannels*4:0},
       menuMusic: {ready:this.menuTracks.length === 4,voices:this.menuSource ? 1 : 0,track:this.menuSource ? this.menuTracks[0].name : null,stereo:Boolean(this.menuTracks[0]?.buffer?.numberOfChannels === 2)},
@@ -586,7 +620,7 @@ export class GameAudio {
     this.stopSources();this.stopWeather();this.weatherActive=false;
     this.stopSpatial(this.remoteVoices);this.stopSpatial(this.remoteEffects);
     this.stopSpatial(); this.spatialReady = false; this.spatialPending = this.spatialHistory = null;
-    this.stopCrowd(); this.stopSpatial(this.stadiumVoices); this.stadiumDefinitions = [];
+    this.stopCrowd(); this.stopSpatial(this.stadiumVoices); this.stadiumDefinitions = []; this.stopIntOut();
     this.stopSpatial(this.effectVoices); this.effectsReady = false; this.effectFrames.length = 0;
     this.context?.close();
     this.buffers.clear();
