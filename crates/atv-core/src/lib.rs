@@ -32,6 +32,7 @@ pub mod obstacle;
 pub mod physics_data;
 pub mod psr;
 pub mod quad_pose;
+pub mod quad_sounds;
 pub mod ragdoll;
 pub mod resource;
 pub mod rider_control;
@@ -78,6 +79,7 @@ pub mod wheel;
 pub mod wheel_effects;
 pub mod wheel_stop;
 pub mod wheel_support;
+pub mod world_sounds;
 pub mod wreck;
 
 pub mod dynamics;

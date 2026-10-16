@@ -250,6 +250,57 @@ def selected_body_impact_names(table):
     return names
 
 
+def sound_path(value):
+    name = value.replace('\\', '/').lower().strip().removeprefix('audio/')
+    if not name or '..' in name or name.startswith('/') or len(name) > 260:
+        raise ValueError('invalid original sound path')
+    return name if name.endswith('.vag') else name + '.vag'
+
+
+def selected_rider_vocal_names(table):
+    """Female/Male Bang, wreck, Jostle and Fall lists (002cc7d0): loose disc VAGs."""
+    data = config(table)
+    names = set()
+    for gender in ('female', 'male'):
+        for kind in ('bang', 'smallwreck', 'medwreck', 'hardwreck', 'jostle', 'fall'):
+            section = data.get(gender + kind, {})
+            count = int(section.get('numsounds', '0'))
+            if not 1 <= count <= 64:
+                raise ValueError('invalid rider vocal bank count')
+            names |= {sound_path(section[f'sound_{i}']) for i in range(1, count + 1)}
+    return names
+
+
+def selected_chassis_names(table):
+    """002cd6c0 landing/water clips plus vehicle.aud QuadToQuadImpact and Wreck."""
+    data = config(table)
+    names = {'impact/landing.vag', 'impact/h2ohit02.vag'}
+    for kind in ('quadtoquadimpact', 'wreck'):
+        section = data[kind]
+        count = int(section['numsounds'])
+        if not 1 <= count <= 64:
+            raise ValueError('invalid chassis sound count')
+        names |= {sound_path(section[f'sound_{i}']) for i in range(1, count + 1)}
+    return names
+
+
+def selected_venue_sound_names(text):
+    """<venue>.aud terrain drive-on, ambient and non-OneShot Soultree samples."""
+    data = config(text)
+    head = data.get('sounds', {})
+    names = set()
+    for key, prefix in (('numterraindriveonsounds', 'terraindriveonsound'), ('numambientsounds', 'ambientsound'), ('numsoultreesounds', 'soultreesound')):
+        count = int(re.match(r'-?\d*', head.get(key, '0')).group() or 0)
+        if not 0 <= count <= 96:
+            raise ValueError('invalid venue sound count')
+        for i in range(1, count + 1):
+            section = data.get(f'{prefix}{i}', {})
+            if prefix == 'soultreesound' and section.get('oneshot', '0').strip().lower() in ('1', 't', 'true', 'on', 'y'):
+                continue
+            names.add(sound_path(section['soundresourcefile']))
+    return names
+
+
 def mesh_material_names(data):
     """Read the bounded PSG v3 material table, as in atv-core's mesh reader."""
     if take(data, 0, 4) != b'psg\0' or u32(data, 4) != 3:
@@ -556,7 +607,18 @@ def main():
         # loops (<venue>.aud); crowd.aud itself ships in each race archive.
         crowd_names = {'crowd/crowdf1/crdloop3.vag', 'crowd/crowdf1/crdloop4.vag',
                        'crowd/sx/crdloop5.vag', 'crowd/sx/crdloop6.vag'}
-        names = engine_names | train_names | body_names | menu_names | weather_names | race_names | crowd_names
+        # Recovered chassis (002cdb80) and per-venue world/drive-on sounds.
+        chassis_names = selected_chassis_names(Resource(originals['/AUDIOTBL.RES']).named('vehicle.aud'))
+        venue_names = set()
+        for path in STARTUP:
+            if not path.startswith('/TRACKS/'):
+                continue
+            venue = Resource(originals[path])
+            for i, (name, _, _) in enumerate(venue.members):
+                lowered = name.replace('\\', '/').lower()
+                if lowered.startswith('tracks/') and lowered.endswith('.aud'):
+                    venue_names |= selected_venue_sound_names(venue.extract(i))
+        names = engine_names | train_names | body_names | menu_names | weather_names | race_names | crowd_names | chassis_names | venue_names
         audio = Resource(source('/AUDIO/AUDIO.RES'))
         samples = [(name, audio.extract(i)) for i, (name, _, _) in enumerate(audio.members) if name.lower().removeprefix('audio/') in names]
         if len(samples) != len(names):
@@ -572,6 +634,12 @@ def main():
         if len(intout) != 8:
             raise ValueError('exact-build IntOut expected eight stereo cues')
         samples += [(path.removeprefix('/'), source(by_path[path]['path'])) for path in intout]
+        # Rider vocals (rider.aud Female/Male lists) are loose disc VAGs too.
+        vocal_names = selected_rider_vocal_names(Resource(originals['/AUDIOTBL.RES']).named('rider.aud'))
+        vocals = sorted(f'/audio/{name}' for name in vocal_names)
+        if len(vocals) != 93 or any(path not in by_path for path in vocals):
+            raise ValueError('exact-build rider vocals expected 93 loose clips')
+        samples += [(path.removeprefix('/'), source(by_path[path]['path'])) for path in vocals]
         packed = pack_resource(samples)
         records.append({'path': '/AUDIO/AUDIO.RES', 'lba': by_path['/audio/audio.res']['lba'], 'directory': False, 'lazy': False, 'repacked': True, 'member_count': len(samples), **blob(packed)})
         music = config(Resource(originals['/STARTAPP.RES']).named('music.pb'))
@@ -586,7 +654,7 @@ def main():
                 raise ValueError('music source is not VAG')
             chunks = [{'offset': offset, **blob(data[offset:offset + CHUNK])} for offset in range(0, len(data), CHUNK)]
             records.append({'path': entry['path'], 'lba': entry['lba'], 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(), 'directory': False, 'lazy': True, 'chunks': chunks})
-        manifest = {'version': 1, 'build': 'USA v2.00', 'source_build_sha256': SOURCE_SHA, 'engine_sample_count': len(engine_names), 'train_sample_count': len(train_names), 'rider_body_sample_count': len(body_names), 'weather_sample_count': len(weather_names), 'music_song_count': count, 'files': records}
+        manifest = {'version': 1, 'build': 'USA v2.00', 'source_build_sha256': SOURCE_SHA, 'engine_sample_count': len(engine_names), 'train_sample_count': len(train_names), 'rider_body_sample_count': len(body_names), 'weather_sample_count': len(weather_names), 'rider_vocal_sample_count': len(vocal_names), 'chassis_sample_count': len(chassis_names), 'venue_sound_sample_count': len(venue_names), 'music_song_count': count, 'files': records}
         temporary = output / 'manifest.json.tmp'
         temporary.write_text(json.dumps(manifest, indent=2) + '\n')
         temporary.replace(output / 'manifest.json')
