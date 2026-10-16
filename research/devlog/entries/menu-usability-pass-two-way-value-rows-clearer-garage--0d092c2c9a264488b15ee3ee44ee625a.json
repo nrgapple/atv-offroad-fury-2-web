@@ -1,0 +1,14 @@
+{
+  "id": "menu-usability-pass-two-way-value-rows-clearer-garage--0d092c2c9a264488b15ee3ee44ee625a",
+  "timestamp": "2026-10-16T01:16:43.038436+00:00",
+  "recorded_at": "2026-10-16T01:18:32.958371+00:00",
+  "kind": "build",
+  "title": "Menu usability pass: two-way value rows, clearer garage, pause polish",
+  "summary": "Race Course/Laps/CPU riders and Rider gear rows now have working previous and next buttons on every row (the arrows used to be decorative and taps only stepped forward). Garage: Rider gear moved to its own outlined button beside Done; the vehicle list is grouped into ATVs and Motorcycles and marks the current vehicle with a gold edge, so the gold bar only means focus. Single Player lists Freestyle, Race, Garage. Pause and settings value rows step both ways with Left/Right; music shows Music: On and Volume: 70%; pause groups get dividers; pager/footer controls look like buttons.",
+  "details": [
+    "Host Chromium against the local server with the current content package: test_frontend, test_race, test_race_courses (env02), test_rider_gear, test_settings, test_pause_menu, test_hd_settings, test_menu_preferences, test_menu_models and test_motorcycle_menu pass; Rust ui_menu tests and the frontend/render-support/diagnostics/speed-rush unit tests pass. Screenshots checked at 1280x720, 390x844 and 844x390."
+  ],
+  "limitation": "Host Chromium only; physical phones, Safari/WebKit and real controllers not checked. Not yet a verified public release (that follows the normal PR auto-merge and deploy).",
+  "image": "/devlog-images/menu-usability-pass-two-way-value-rows-clearer-garage--0d092c2c9a264488b15ee3ee44ee625a.png",
+  "caption": "Single Race at 1280x720: Course, Laps, and CPU riders rows with working previous and next navigation buttons. Desktop host capture; public release pending."
+}
