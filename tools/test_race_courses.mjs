@@ -147,6 +147,10 @@ try {
       `${id} roster models/outfits ${JSON.stringify(s.cpuRoster)}`
     );
     assert(!race.wrong_way, `${id} grid faces the race direction`);
+    // Supercross stadiums (CrowdPresent): camera flashes, Soultree crowd loops
+    // and the crowd reaction lists; outdoor courses have none.
+    if (id.startsWith('sx')) assert(s.crowd.flashPool > 0 && s.crowd.soultree > 0 && s.crowd.reactions > 0, `${id} stadium ${JSON.stringify(s.crowd)}`);
+    else assert.equal(s.crowd.flashPool, 0, `${id} has no stadium crowd`);
     // Riders line up across the original start gate, one RiderSpacing apart.
     const xs = race.opponents.map(o => o.origin);
     const gap = Math.hypot(xs[1][0] - xs[2][0], xs[1][2] - xs[2][2]);

@@ -6,7 +6,7 @@ export class GameAudio {
     this.codec = codec;
     this.report = report;
     this.context = null;
-    this.buffers = new Map(); this.oneShotPlays = {};
+    this.buffers = new Map(); this.oneShotPlays = {}; this.stadiumVoices = new Map(); this.stadiumDefinitions = [];
     this.sources = new Set();
     this.current = null;
     this.ready = false;
@@ -207,6 +207,43 @@ export class GameAudio {
     const source=this.context.createBufferSource();source.buffer=sample.buffer;source.loop=true;
     if(sample.info.loop_start!==null&&sample.info.loop_end!==null){source.loopStart=sample.info.loop_start/sample.info.sample_rate;source.loopEnd=sample.info.loop_end/sample.info.sample_rate;}
     source.connect(this.engineGain);source.start();this.weatherSource=source;this.weatherStarts++;
+  }
+  // CrowdPresent stadium: the crowd reaction clips (one crowd voice) and the
+  // venue's positional Soultree loops through the same stereo commands.
+  async loadStadium({ soultree, crowd }) {
+    this.stopCrowd(); this.stopSpatial(this.stadiumVoices); this.stadiumDefinitions = [];
+    for (const name of new Set([...crowd, ...soultree.map(definition => definition.sample)])) {
+      if (this.closed) return;
+      await this.loadSample(name).catch(() => {});
+    }
+    this.stadiumDefinitions = soultree.filter(definition => this.buffers.has(definition.sample));
+  }
+  crowdCue({ cue, stop_loop }) {
+    if (!this.context || this.context.state !== 'running' || this.closed) return;
+    if (stop_loop && this.crowdVoice?.looping) this.stopCrowd();
+    if (!cue) return;
+    // 002cc370: a playing clip keeps the voice; a Stomp loop gives way.
+    if (this.crowdVoice && !this.crowdVoice.looping) return;
+    const sample = this.buffers.get(cue.sample);
+    if (!sample?.buffer) return;
+    this.stopCrowd();
+    const source = this.context.createBufferSource(); source.buffer = sample.buffer; source.loop = cue.looping;
+    source.connect(this.engineGain); source.start();
+    const voice = { source, looping: cue.looping }; this.crowdVoice = voice; this.crowdCues = (this.crowdCues ?? 0) + 1;
+    source.onended = () => { if (this.crowdVoice === voice) this.crowdVoice = null; source.disconnect(); };
+  }
+  stopCrowd() { if (this.crowdVoice) { const { source } = this.crowdVoice; this.crowdVoice = null; try { source.stop(); } catch {} source.disconnect(); } }
+  async updateStadium(generation, scene) {
+    if (!this.stadiumDefinitions?.length || !scene?.camera) return;
+    const camera = { position: scene.camera.position, target: scene.camera.target };
+    const previous = this.stadiumCamera ?? camera; this.stadiumCamera = camera;
+    const payload = { dt: 1 / 60, camera, previous_camera: previous, cars: [], previous_cars: [], definitions: this.stadiumDefinitions };
+    const commands = JSON.parse(new TextDecoder().decode(await this.codec(73, new TextEncoder().encode(JSON.stringify(payload)))));
+    if (this.closed || !this.active || generation !== this.generation) return;
+    commands.forEach((command, index) => {
+      const voice = this.stadiumVoices.get(index) ?? this.playSpatial(index, this.stadiumDefinitions[index], this.stadiumVoices);
+      if (voice) this.applySpatial(voice, command);
+    });
   }
   async loadSpatial({ toy, isCurrent }) {
     try {
@@ -449,6 +486,7 @@ export class GameAudio {
         this.clutchWasDown=Boolean(input.clutch);
       }
       await this.updateSpatial(generation);
+      await this.updateStadium(generation, scene);
       await this.updateEffects(generation);
       if (this.closed || !this.active || generation !== this.generation) return;
       if (!this.current && this.commands === 0 && this.config.samples[1].length) {
@@ -517,6 +555,7 @@ export class GameAudio {
   snapshot() {
     return { ready: this.ready, context: this.context?.state ?? 'locked', samples: this.buffers.size, oneShots: { ...this.oneShotPlays },
       raceStart: ['beep01.vag', 'go.vag', 'gate.vag'].filter(name => this.buffers.has(name)),
+      stadium: { loops: this.stadiumDefinitions?.length ?? 0, voices: this.stadiumVoices?.size ?? 0, crowdCues: this.crowdCues ?? 0, crowd: Boolean(this.crowdVoice) },
       weather: {active:this.weatherActive,muted:!this.active,voices:this.weatherSource?1:0,starts:this.weatherStarts,sample:'rain.vag',decoded:Boolean(this.buffers.get('rain.vag')?.buffer),sampleRate:this.buffers.get('rain.vag')?.info.sample_rate,loopStart:this.buffers.get('rain.vag')?.info.loop_start,loopEnd:this.buffers.get('rain.vag')?.info.loop_end,pcmBytes:this.buffers.get('rain.vag')?.buffer?this.buffers.get('rain.vag').buffer.length*this.buffers.get('rain.vag').buffer.numberOfChannels*4:0},
       menuMusic: {ready:this.menuTracks.length === 4,voices:this.menuSource ? 1 : 0,track:this.menuSource ? this.menuTracks[0].name : null,stereo:Boolean(this.menuTracks[0]?.buffer?.numberOfChannels === 2)},
       musicPreview: this.musicPreview, voices: this.sources.size, commands: this.commands, sound: this.lastSound,
@@ -547,6 +586,7 @@ export class GameAudio {
     this.stopSources();this.stopWeather();this.weatherActive=false;
     this.stopSpatial(this.remoteVoices);this.stopSpatial(this.remoteEffects);
     this.stopSpatial(); this.spatialReady = false; this.spatialPending = this.spatialHistory = null;
+    this.stopCrowd(); this.stopSpatial(this.stadiumVoices); this.stadiumDefinitions = [];
     this.stopSpatial(this.effectVoices); this.effectsReady = false; this.effectFrames.length = 0;
     this.context?.close();
     this.buffers.clear();

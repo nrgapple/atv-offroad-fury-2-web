@@ -552,11 +552,20 @@ def main():
         weather_names = {'rain.vag'} #00213bf0, only the active scene Rain loop.
         # Race start: 321 countdown beep/go (002e79a0) and the Supercross gate drop.
         race_names = {'beep01.vag', 'go.vag', 'gate.vag'}
-        names = engine_names | train_names | body_names | menu_names | weather_names | race_names
+        # Supercross stadium crowd (CrowdPresent): the venue Soultree ambient
+        # loops (<venue>.aud); crowd.aud itself ships in each race archive.
+        crowd_names = {'crowd/crowdf1/crdloop3.vag', 'crowd/crowdf1/crdloop4.vag',
+                       'crowd/sx/crdloop5.vag', 'crowd/sx/crdloop6.vag'}
+        names = engine_names | train_names | body_names | menu_names | weather_names | race_names | crowd_names
         audio = Resource(source('/AUDIO/AUDIO.RES'))
         samples = [(name, audio.extract(i)) for i, (name, _, _) in enumerate(audio.members) if name.lower().removeprefix('audio/') in names]
         if len(samples) != len(names):
             raise ValueError('missing or duplicated selected runtime sound sample')
+        # The crowd reaction clips are loose disc files beside crowd.aud.
+        crowd_clips = sorted(path for path in by_path if re.fullmatch(r'/audio/crowd/(amcrowd|procrowd)/[a-z0-9]+\.vag', path))
+        if len(crowd_clips) != 18:
+            raise ValueError('exact-build crowd reactions expected 18 clips')
+        samples += [(path.removeprefix('/'), source(by_path[path]['path'])) for path in crowd_clips]
         packed = pack_resource(samples)
         records.append({'path': '/AUDIO/AUDIO.RES', 'lba': by_path['/audio/audio.res']['lba'], 'directory': False, 'lazy': False, 'repacked': True, 'member_count': len(samples), **blob(packed)})
         music = config(Resource(originals['/STARTAPP.RES']).named('music.pb'))

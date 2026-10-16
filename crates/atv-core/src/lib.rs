@@ -98,6 +98,7 @@ pub mod player_models;
 pub mod cpu_avoidance;
 pub mod race;
 pub mod race_ai;
+pub mod race_crowd;
 pub mod race_director;
 pub mod race_hud;
 pub mod race_intro;

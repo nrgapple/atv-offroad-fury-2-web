@@ -12,8 +12,91 @@ pub struct Definition {
     pub max_distance: f32,
     pub looping: bool,
     pub start_disabled: bool,
+    /// A fixed world source (venue Soultree sound) instead of a train car.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<Vec3>,
 }
 
+/// Venue `<venue>.aud` `[SoultreeSoundN]` world sounds: a sample, a world
+/// Position, MinDistance/MaxDistance and Looping. Every shipped Soultree
+/// sound has RandomTriggerPercent 100; other percentages are not reproduced.
+/// The file also holds bare authoring lines (the venue name), which are
+/// skipped rather than rejected.
+pub fn soultree_definitions(bytes: &[u8]) -> Result<Vec<Definition>> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut entries: Vec<(String, String, String)> = Vec::new();
+    let mut section = String::new();
+    for line in text.lines() {
+        let line = line.split(';').next().unwrap_or("").trim();
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            section = name.trim().to_string();
+        } else if let Some((key, value)) = line.split_once('=') {
+            entries.push((
+                section.clone(),
+                key.trim().to_string(),
+                value.trim().to_string(),
+            ));
+        }
+    }
+    let get = |section: &str, key: &str| {
+        entries
+            .iter()
+            .find(|(s, k, _)| s.eq_ignore_ascii_case(section) && k.eq_ignore_ascii_case(key))
+            .map(|(_, _, v)| v.as_str())
+    };
+    let count = get("Sounds", "NumSoultreeSounds")
+        .unwrap_or("0")
+        .parse::<usize>()
+        .map_err(|_| "invalid Soultree sound count")?;
+    if count > 64 {
+        return Err("Soultree sound count exceeds limit".into());
+    }
+    let mut result = Vec::new();
+    for index in 1..=count {
+        let section = format!("SoultreeSound{index}");
+        let number = |key: &str| -> Result<f32> {
+            get(&section, key)
+                .ok_or("Soultree sound field missing")?
+                .parse::<f32>()
+                .ok()
+                .filter(|v| v.is_finite())
+                .ok_or_else(|| "invalid Soultree sound field".into())
+        };
+        let position: Vec<f32> = get(&section, "Position")
+            .ok_or("Soultree sound needs a Position")?
+            .split(',')
+            .map(|v| v.trim().parse::<f32>())
+            .collect::<std::result::Result<_, _>>()
+            .map_err(|_| "invalid Soultree Position")?;
+        let [x, y, z] = position[..] else {
+            return Err("invalid Soultree Position".into());
+        };
+        let (min_distance, max_distance) = (number("MinDistance")?, number("MaxDistance")?);
+        if min_distance < 0. || max_distance <= min_distance {
+            return Err("invalid Soultree sound interval".into());
+        }
+        if get(&section, "RandomTriggerPercent")
+            .and_then(|v| v.parse::<f32>().ok())
+            .is_some_and(|p| p < 100.)
+        {
+            continue;
+        }
+        let sample = get(&section, "SoundResourceFile").ok_or("Soultree sound sample missing")?;
+        if sample.is_empty() || sample.contains("..") || sample.len() > 260 {
+            return Err("invalid Soultree sound resource".into());
+        }
+        result.push(Definition {
+            car: 0,
+            sample: sample.to_owned(),
+            min_distance,
+            max_distance,
+            looping: get(&section, "Looping").is_some_and(|v| v.eq_ignore_ascii_case("t")),
+            start_disabled: false,
+            position: Some([x, y, z]),
+        });
+    }
+    Ok(result)
+}
 /// Match TOY animation slots to the same procedural route family as train.rs.
 pub fn train_definitions(bytes: &[u8]) -> Result<Vec<Definition>> {
     let data = PhysicsData::parse(bytes)?;
@@ -89,6 +172,7 @@ pub fn train_definitions(bytes: &[u8]) -> Result<Vec<Definition>> {
                 max_distance,
                 looping: boolean(get(&section, "Looping").unwrap_or("FALSE"))?,
                 start_disabled: boolean(get(&section, "StartDisabled").unwrap_or("FALSE"))?,
+                position: None,
             });
         }
         car += 1;
@@ -157,6 +241,15 @@ pub fn scene_commands(input: SceneInput) -> Result<Vec<Command>> {
         .definitions
         .iter()
         .map(|definition| {
+            if let Some(position) = definition.position {
+                let source = Source {
+                    position,
+                    velocity: [0.; 3],
+                    min_distance: definition.min_distance,
+                    max_distance: definition.max_distance,
+                };
+                return command(source, &[listener]);
+            }
             let current = input
                 .cars
                 .get(definition.car)
@@ -341,6 +434,16 @@ pub fn command(source: Source, listeners: &[Listener]) -> Result<Command> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn soultree_sounds_are_fixed_world_loops() {
+        let aud = b"[Sounds]\r\n\r\nSX01\r\n\r\nNumSoultreeSounds=2\r\n\r\n[SoultreeSound1]\r\nSoundResourceFile=Crowd\\crowdf1\\crdloop4\r\nPosition=750.0,92.0,496.0\r\nLooping=T\r\nRandomTriggerPercent=100.0\r\nMaxDistance=300.0\r\nMinDistance=150.0\r\n[SoultreeSound2]\r\nSoundResourceFile=Crowd\\sx\\crdloop5\r\nPosition=1,2,3\r\nLooping=T\r\nRandomTriggerPercent=50.0\r\nMaxDistance=30.0\r\nMinDistance=10.0\r\n";
+        let defs = soultree_definitions(aud).unwrap();
+        assert_eq!(defs.len(), 1, "partial trigger chances are not reproduced");
+        assert_eq!(defs[0].sample, "Crowd\\crowdf1\\crdloop4");
+        assert_eq!(defs[0].position, Some([750., 92., 496.]));
+        assert!(defs[0].looping);
+        assert_eq!((defs[0].min_distance, defs[0].max_distance), (150., 300.));
+    }
     #[test]
     fn source_distance_boundaries_and_nearest_listener() {
         let source = Source {
