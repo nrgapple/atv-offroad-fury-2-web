@@ -38,6 +38,17 @@ export function worldBounds(bounds, matrix) {
   }
   return [...min, ...max].every(Number.isFinite) ? { min, max } : null;
 }
+// Longest world-bounds diagonal among `items` (each { bounds }). Every point of
+// a box admitted by a cull plane at distance D lies within D plus this reach.
+export function boundsReach(items, reach = 0) {
+  for (const { bounds } of items) {
+    if (!bounds) continue;
+    const x = bounds.max[0] - bounds.min[0], y = bounds.max[1] - bounds.min[1], z = bounds.max[2] - bounds.min[2];
+    const diagonal = Math.sqrt(x * x + y * y + z * z);
+    if (diagonal > reach) reach = diagonal;
+  }
+  return reach;
+}
 export function viewPlanes(matrix) {
   const planes = [];
   for (const row of [0, 1, 2]) for (const sign of [1, -1]) {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cameraAxes, sceneViewProjection, vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, shadowGlState, RenderScale } from './render-support.js';
+import { cameraAxes, sceneViewProjection, boundsReach, vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, shadowGlState, RenderScale } from './render-support.js';
 const identity = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
 const planes = viewPlanes(identity);
 test('boxes crossing clip planes survive, including near-plane and camera-containing boxes', () => {
@@ -228,4 +228,17 @@ test('adaptive render scale steps down on sustained slow frames and recovers', (
   assert.equal(scale.ratio, 1); assert.equal(scale.upAfter, 12, 'a failed recovery backs off');
   for (let i = 0; i < 4000; i++) scale.sample(8.3);
   assert.equal(scale.ratio, 1.5); assert.equal(scale.pixelRatio(2), 1.5);
+});
+test('depth range past the cull plane keeps every corner of an admitted straddling box', () => {
+  const camera = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 }, fogEnd = 768, f = 1 / Math.tan(Math.PI / 6);
+  const stand = { bounds: { min: [-200, 0, 700], max: [200, 120, 1000] } }, post = { bounds: { min: [0, 0, 10], max: [1, 5, 11] } };
+  assert.equal(boundsReach([post, stand, { bounds: null }]), Math.hypot(400, 120, 300));
+  const cull = viewPlanes(sceneViewProjection(camera, .46, f, 1, fogEnd));
+  assert(!outsideView(stand.bounds, cull));
+  assert(outsideView({ min: [-1, 0, 800], max: [1, 1, 900] }, cull));
+  const clipZ = (m, p) => { const w = m[3]*p[0]+m[7]*p[1]+m[11]*p[2]+m[15]; return (m[2]*p[0]+m[6]*p[1]+m[10]*p[2]+m[14]) / w; };
+  const corners = [0,1,2,3,4,5,6,7].map(c => [0,1,2].map(a => c & (1 << a) ? stand.bounds.max[a] : stand.bounds.min[a]));
+  const sliced = sceneViewProjection(camera, .46, f, 1, fogEnd), depth = sceneViewProjection(camera, .46, f, 1, fogEnd + boundsReach([stand]) + 1);
+  assert(corners.some(p => clipZ(sliced, p) > 1));
+  assert(corners.every(p => clipZ(depth, p) <= 1));
 });

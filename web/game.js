@@ -1,6 +1,6 @@
 import { SpeedRush, speedRushFocus, speedRushBounds } from './speed-rush.js';
 // Original content and vehicle component simulation run in the Rust worker.
-import { sceneViewProjection, vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, cinematicPresentation, RideEffectsSettings, ImpactEvents, severedIndices, meshNodeBounds, crashSubjects, crashPresentation, shadowGlState, observedSize, RenderScale, PAINT_PALETTE, paintGlsl, paintable } from './render-support.js';
+import { sceneViewProjection, boundsReach, vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, cinematicPresentation, RideEffectsSettings, ImpactEvents, severedIndices, meshNodeBounds, crashSubjects, crashPresentation, shadowGlState, observedSize, RenderScale, PAINT_PALETTE, paintGlsl, paintable } from './render-support.js';
 import { MAX_REMOTE_MODELS, Multiplayer, PlayerIndicators } from './multiplayer.js';
 import { Frontend } from './frontend.js';
 import { courseResource, parseLaunch } from './launch.js';
@@ -1349,9 +1349,13 @@ function matrix() {
   // Original00325e80 uses horizontal FOV. Preserve the4:3 vertical framing
   // while extending the view horizontally on widescreen displays.
   // 0012b360 applies the active fog end to the view's far clipping plane.
+  // Cull whole objects there, but extend the depth range by the largest
+  // object so an admitted stadium stand is not sliced open into the sky.
   const near = 1, far = terrain.world?.metadata.fog?.end ?? Math.max(terrain.sizeX, terrain.sizeZ) * 5;
   const f = (cameraFrame ? diagnostics.cameraPresentation.focalLength : 1 / Math.tan(Math.PI / 6)) * speedRush.focalScale;
-  return sceneViewProjection(camera, canvas.width / canvas.height, f, near, far);
+  const aspect = canvas.width / canvas.height, depthFar = far + boundsReach(sceneDraws, boundsReach(chunks)) + 1;
+  diagnostics.depthFar = depthFar;
+  return { viewProjection: sceneViewProjection(camera, aspect, f, near, depthFar), cull: sceneViewProjection(camera, aspect, f, near, far) };
 }
 function deadzone(value) { return Number.isFinite(value) && Math.abs(value) > .15 ? Math.sign(value) * (Math.abs(value) - .15) / .85 : 0; }
 function gamepad() {
@@ -1688,9 +1692,9 @@ function render(time) {
   // The FOV kick and the speed pass share one smoothed amount per frame.
   speedRush.update({speed:actor?.speed_magnitude??0,intensity:crashSettings.speed,
     active:simReady && focused && !menuOpen && !lost && actor?.wreck?.phase==='Riding',dt});
-  const viewProjection = matrix();
+  const { viewProjection, cull } = matrix();
   playerIndicators.draw(multiplayer?.remote ?? [], multiplayer?.state.lobby, viewProjection, simFrame?.origin ?? [0,0,0], simReady && !menuOpen);
-  const planes = viewPlanes(viewProjection);
+  const planes = viewPlanes(cull);
   let terrainDraws = 0, terrainTriangles = 0, sceneryDraws = 0, sceneryTriangles = 0, sceneryVisibleGroups = 0;
   gl.uniformMatrix4fv(uniforms.viewProjection, false, viewProjection); gl.uniform3f(uniforms.eye, camera.x, camera.y, camera.z);
   const crashView=diagnostics.cameraPresentation?.crash;
