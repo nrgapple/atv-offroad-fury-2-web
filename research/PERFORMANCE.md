@@ -457,3 +457,51 @@ which is CPU bone matrices (parse ≈3% of the throttled main thread). A race
 worker step costs about 2ms (p95 3.2ms) on the host for five physical quads,
 which a phone may multiply several times. Vegetation selection and sorting
 remain the largest main-thread renderer cost.
+
+## Graphics presets (2026-10-16)
+
+`tools/benchmark_graphics_presets.mjs` rides straight ahead from the spawn with
+the throttle held: 2 s warm-up, then an 8 s window, one fresh page per row, one
+host Mac (Chromium Metal). **Phone** is 390×844 at DPR3 with touch and CDP CPU
+throttling ×4 (canvas 585×1266 at RenderScale 1.5); **desktop** is 1280×720 at
+DPR1 unthrottled. "Callback" is main-thread time inside requestAnimationFrame
+callbacks (render plus HUD/minimap); "busy" is CDP `TaskDuration` per wall second;
+draws count every WebGL draw call per frame. Baseline is the main build at `7a346ab`
+(before presets). Headless Chromium is not vsync-locked here
+(about 75 callbacks/s with a bimodal 11/26 ms interval in every row, baseline
+included), so frame intervals are not a phone frame-rate measurement.
+
+| Profile | Map | Build / preset | Callback mean / p95 (ms) | Busy | Draws mean (max) | RenderScale min |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| Phone | Caribou (env01) | baseline | 0.87 / 2.4 | 0.27 | 100.0 (110) | 1.5 |
+| Phone | Caribou | Original | 0.89 / 2.5 | 0.29 | 100.2 (110) | 1.5 |
+| Phone | Caribou | Enhanced | 1.11 / 2.8 | 0.35 | 101.0 (111) | 1.5 |
+| Phone | Caribou | High | 0.77 / 2.1 | 0.22 | 101.4 (112) | 1.5 |
+| Phone | Supercross 1 (sx01) | baseline | 0.67 / 2.0 | 0.23 | 204.5 (263) | 1.5 |
+| Phone | Supercross 1 | Original | 0.56 / 1.7 | 0.19 | 204.8 (263) | 1.5 |
+| Phone | Supercross 1 | Enhanced | 0.71 / 2.0 | 0.22 | 206.0 (264) | 1.5 |
+| Phone | Supercross 1 | High | 0.57 / 1.6 | 0.17 | 205.8 (263) | 1.5 |
+| Phone | Water (env04) | baseline | 0.74 / 2.0 | 0.26 | 96.6 (99) | 1.5 |
+| Phone | Water | Original | 0.87 / 2.3 | 0.32 | 96.7 (99) | 1.5 |
+| Phone | Water | Enhanced | 0.70 / 1.9 | 0.23 | 97.6 (100) | 1.5 |
+| Phone | Water | High | 0.64 / 1.7 | 0.21 | 97.6 (100) | 1.5 |
+| Desktop | Caribou | baseline | 0.25 / 0.7 | 0.08 | 141.4 (187) | — |
+| Desktop | Caribou | Original | 0.20 / 0.5 | 0.07 | 140.3 (187) | — |
+| Desktop | Caribou | Enhanced | 0.21 / 0.5 | 0.07 | 141.3 (188) | — |
+| Desktop | Caribou | High | 0.21 / 0.5 | 0.06 | 141.1 (188) | — |
+| Desktop | Supercross 1 | baseline | 0.21 / 0.5 | 0.07 | 258.0 (468) | — |
+| Desktop | Supercross 1 | Original | 0.16 / 0.4 | 0.05 | 256.7 (468) | — |
+| Desktop | Supercross 1 | Enhanced | 0.19 / 0.5 | 0.06 | 259.7 (469) | — |
+| Desktop | Supercross 1 | High | 0.18 / 0.5 | 0.06 | 256.8 (469) | — |
+| Desktop | Water | baseline | 0.21 / 0.5 | 0.08 | 101.5 (105) | — |
+| Desktop | Water | Original | 0.19 / 0.5 | 0.07 | 101.5 (105) | — |
+| Desktop | Water | Enhanced | 0.25 / 0.6 | 0.09 | 102.4 (106) | — |
+| Desktop | Water | High | 0.21 / 0.5 | 0.07 | 102.3 (106) | — |
+
+Enhanced and High add exactly one draw (the contact shadows) and about 19 KB of
+GPU buffers; the dirt overlays add one texture fetch only on vehicle pixels.
+Run-to-run noise between single 8 s windows (±0.2 ms callback, ±0.08 busy) is
+larger than any preset difference, and no row lowered RenderScale. Anisotropic
+filtering is GPU sampling cost that these CPU-side numbers cannot show; the
+emulated phone runs on the host GPU, so physical-phone GPU cost is unmeasured.
+Reports: `work/verification/graphics-presets/{candidate,baseline}/benchmark.json`.

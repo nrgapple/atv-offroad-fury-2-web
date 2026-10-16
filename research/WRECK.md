@@ -54,8 +54,10 @@ The rider uses 13 original bone-local terrain contact points and its own rigid b
 Supported static type-0 props now receive the rider collision spokes; active
 wrecks use the Vehicle's shared scene cache with the native inclusive rider
 distance gate. Dynamic water contacts are connected as described in
-[water evidence](WATER.md). Physical vegetation proxies, moving props and
-compound/dynamic collision are not yet connected. A separate
+[water evidence](WATER.md). Shipped vegetation cylinder proxies and Arlington's
+moving train bodies are also connected to the detached rider; see
+[rider vegetation and moving-body contacts](#rider-vegetation-and-moving-body-contacts).
+Compound (type 1) and unshipped proxy kinds are not. A separate
 native wreck camera now tracks both the ATV and rider during this sequence.
 
 ## Validation scope
@@ -319,7 +321,11 @@ original `001e8690` cases (51,712 instructions) with varied height flag,
 positive/zero/negative cooldown, forward speed, hard landing and stunt safety
 match `rider_height_allowed` plus the Rust crash evaluator.
 
-The post-loop full-correction pass remains omitted in the port. `0011e7e0`
+The post-loop full-correction pass is connected for nonstatic actors (the moving
+train bodies; see [train contact](TRAIN_CONTACT.md)). Its original tail skips the
+query and solver when the restricted list is empty, so ordinary static/terrain
+riding never runs it. Other quads' colliders, which would also qualify, are not
+scene collision objects in the port. `0011e7e0`
 registers the runtime node class names `CollisionObject` and `Vegetation`;
 the global word at `00460f00` holds the registered CollisionObject tag, not a dynamic-body-only
 class or a literal 255 after initialization. `001dd830` builds a restricted
@@ -333,8 +339,8 @@ and clears it at the end. Node filters and category registration are independent
 of the parsed COL flags. The standard static placement loader `00206e90` passes
 mode `0x0d` to `00120510`, whose `0011eb90` call sets `bf.3`, then assigns
 category `00462d38`. These ordinary static COL placements are excluded from the
-restricted second pass; its omission must not be used to explain a normal
-static railing impact. Vehicle colliders use modes with `bf.3` clear. Other
+restricted second pass; it must not be used to explain a normal static railing
+impact. Vehicle colliders use modes with `bf.3` clear. Other
 loaders, exact pending-buffer handling and moving-body response still need
 validation. The current placement transport lacks native runtime category and
 filter metadata. A captured coupled rail impact, original candidate order and
@@ -382,5 +388,35 @@ acceptance helper matches432 native wrappers; checkpoint invocation remains the
 port's per-outer-update phase. Its original manager callback, player flags and
 Model matrix inputs are now recovered, while its ordering relative to quad
 physics and late water sampling remains unverified; see the boundary evidence.
-Vegetation clearance and complete launch/camera equivalence remain
-separate work.
+The `001ea050` plant exclusion (configured-proxy plants within twenty feet) now
+also screens boundary candidates through the shared cache. Other category
+filters and complete launch/camera equivalence remain separate work.
+
+## Rider vegetation and moving-body contacts
+
+The detached rider's cached scene query (`0011fd30`) reaches both shipped plant
+proxies and Arlington's dynamic list. The source evidence already exists
+privately. For plants: the complete 40-case `0011fd30` replay with actual
+`0011eeb0`, `00128090` and `001280b0` proxy bindings (13,392 instructions,
+`private/reports/wreck/rider-cache-dispatch-original.json`). For moving bodies:
+the shared cache's combined iterator, which visits the dynamic list after
+the static provider; the rider's inherited all-category mask, which train Body
+actors pass; and the detached rider's default
+solver friction flag (moving contacts keep friction, unlike the chassis caller's
+flag `+54=0`), from the 8-case constructor/dispatcher replay in
+[train contact](TRAIN_CONTACT.md). No additional rider-only behavior is recovered
+or added here.
+
+The port implements this in `Animator::step_with_scene`: plant cylinders go
+through the shared type-3 segment kernel (proxy expansion obeys actor bit `bf.0`),
+and train rows pass their `MotionState` to the 0.25-scale moving-target solver.
+Regressions cover attached cylinder contact and the query bit, and a moving
+body whose point velocity drags the detached rider while the same stationary
+geometry does not. In the browser, the steered ENV04 boundary route records
+active wreck-rider plant callbacks
+([vegetation evidence](VEGETATION_COLLISION.md)). No browser route yet captures
+a rider landing on a moving train car, so that combination is checked only by
+the component test and the original dispatch evidence.
+
+A rider in normal riding (phase 0) does not run this solver; that is the
+original phase gate in `001ee990`, not a missing connection.

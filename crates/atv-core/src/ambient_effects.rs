@@ -10,9 +10,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 mod fog;
+mod smoke;
 mod streams;
 pub const GPU_CAPACITY: usize = 400 * 12;
 pub const CAPACITY: usize = 600;
+/// Separate bounded slots for moving-actor emitters. The native scene CPU
+/// manager (`00209790` → `001435f0`) holds 1500 shared particles; the port's
+/// 600-slot static budget would otherwise let Arlington's waterfalls starve
+/// the locomotive smoke, which the larger native pool does not.
+pub const ACTOR_CAPACITY: usize = 128;
 #[derive(Deserialize)]
 pub struct Source {
     pub scene: String,
@@ -126,12 +132,33 @@ pub struct Placement {
     /// The race/mode TOY `[ParticleEmitterN]` number and 1-based instance
     /// that firework triggers address; None for the common TOY.
     pub mode_emitter: Option<(usize, usize)>,
+    /// Attachment to a moving scene actor (Arlington's procedural Smoke.slt)
+    /// rather than a static model; `position` follows supplied actor poses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actor: Option<Actor>,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct Actor {
+    /// Lower-case model name without path or `.slt`.
+    pub model: String,
+    /// Zero-based occurrence among actors of that model.
+    pub instance: usize,
+    pub offset: [f32; 3],
 }
 #[derive(Debug, Serialize)]
 pub struct Plan {
     pub declared: usize,
     pub placements: Vec<Placement>,
+    /// Attachments with no matching static model; each becomes an actor placement.
     pub unresolved: Vec<String>,
+}
+fn model_key(name: &str) -> String {
+    let name = name
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(name)
+        .to_ascii_lowercase();
+    name.strip_suffix(".slt").unwrap_or(&name).to_owned()
 }
 pub fn plan(source: &Source) -> Result<Plan> {
     // Particle sidecars never supply the gameplay spawn.
@@ -190,12 +217,29 @@ pub fn plan(source: &Source) -> Result<Plan> {
                         position,
                         start_on,
                         mode_emitter: from_mode.then_some((i, found)),
+                        actor: None,
                     });
                 }
                 if found < limit {
                     result
                         .unresolved
                         .push(format!("{filename}: {found}/{limit} attachment {attach}"));
+                }
+                //00241120 resolves animated scene objects too; their pose is
+                //supplied each step instead of inventing a static position.
+                for instance in found..limit {
+                    result.placements.push(Placement {
+                        filename: filename.clone(),
+                        type_id,
+                        position: [0.; 3],
+                        start_on,
+                        mode_emitter: from_mode.then_some((i, instance + 1)),
+                        actor: Some(Actor {
+                            model: model_key(attach),
+                            instance: instance - found,
+                            offset,
+                        }),
+                    });
                 }
             } else {
                 result.placements.push(Placement {
@@ -204,6 +248,7 @@ pub fn plan(source: &Source) -> Result<Plan> {
                     position: vector(&d, &section, "Position")?,
                     start_on,
                     mode_emitter: from_mode.then_some((i, 1)),
+                    actor: None,
                 });
             }
         }
@@ -278,6 +323,8 @@ struct Smoke {
     initial_age: f32,
     noise: [[f32; 3]; 2],
     minimum_speed: f32,
+    #[serde(default)]
+    motion: smoke::Motion,
 }
 #[derive(Clone, Default)]
 struct Timer {
@@ -362,6 +409,11 @@ struct Runtime {
     oscillator: fog::Oscillator,
     /// Particle group activation (`0020ec20` Deactivate / `00221840` start).
     active: bool,
+    /// Previous emitter position (`+0x40`); equals `placement.position` for
+    /// static emitters and after each step.
+    previous: [f32; 3],
+    /// Actor placements stay dormant until their first supplied pose.
+    posed: bool,
 }
 #[derive(Clone)]
 struct Particle {
@@ -398,12 +450,17 @@ pub struct Frame {
     pub dropped: u64,
     pub gpu_births: Vec<streams::Birth>,
     pub gpu_total: u64,
+    /// Current positions of posed moving-actor emitters (diagnostics).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub actors: Vec<[f32; 3]>,
 }
 #[derive(Debug, Serialize)]
 pub struct Metadata {
     pub atlas: Option<Atlas>,
     pub plan: Plan,
     pub active: usize,
+    /// Emitters bound to moving scene actors; dormant until a pose is supplied.
+    pub actors: Vec<String>,
     pub unsupported: Vec<String>,
     pub capacity: usize,
     pub cpu_active: usize,
@@ -451,10 +508,13 @@ impl Effects {
         };
         let mut runtime = vec![];
         let mut random_source = OriginalRandom::with_seed(1);
-        let mut unsupported = plan.unresolved.clone();
+        let mut unsupported = vec![];
         for placement in &plan.placements {
             // Placed raindrops and fog use the CPU atlas; Weather selection/Snow are separate.
-            if ![0, 2, 8, 11, 12].contains(&placement.type_id) {
+            // Moving actor attachment is connected for the type0 smoke path only.
+            if ![0, 2, 8, 11, 12].contains(&placement.type_id)
+                || (placement.actor.is_some() && placement.type_id != 0)
+            {
                 unsupported.push(format!(
                     "{}: original emitter type{} not connected",
                     placement.filename, placement.type_id
@@ -530,6 +590,18 @@ impl Effects {
                         vector(&d, "General Info", "MaximumVelocityNoise")?,
                     ],
                     minimum_speed: number(&d, "General Info", "MinimumEmissionSpeed", 0.)?,
+                    motion: smoke::Motion {
+                        size_ratio: number(&d, "General Info", "InitialSizeToSpeedRatio", 0.01)?,
+                        life_ratio: number(&d, "General Info", "LifeToSpeedRatio", 5.)?,
+                        distance_ratio: number(
+                            &d,
+                            "General Info",
+                            "ParticlesToDistanceRatio",
+                            0.01,
+                        )?,
+                        speed_ratio: number(&d, "General Info", "ParticlesToSpeedRatio", 0.)?,
+                        min_per_frame: number(&d, "General Info", "MinParticlesPerFrame", 0.)?,
+                    },
                 })
             } else {
                 None
@@ -586,6 +658,8 @@ impl Effects {
                 timer,
                 oscillator: fog::Oscillator::default(),
                 active: true,
+                previous: placement.position,
+                posed: placement.actor.is_none(),
             });
         }
         // Stream emitters keep their authored order while their worst-case
@@ -625,8 +699,18 @@ impl Effects {
             gpu_capacity: GPU_CAPACITY,
             atlas,
             plan,
+            actors: runtime
+                .iter()
+                .filter_map(|r| r.placement.actor.as_ref().map(|a| (r, a)))
+                .map(|(r, a)| format!("{} -> {}#{}", r.placement.filename, a.model, a.instance))
+                .collect(),
             unsupported,
-            capacity: CAPACITY,
+            capacity: CAPACITY
+                + if runtime.iter().any(|r| r.placement.actor.is_some()) {
+                    ACTOR_CAPACITY
+                } else {
+                    0
+                },
         };
         let mut effects = Self {
             runtime,
@@ -745,8 +829,14 @@ impl Effects {
         });
         let mut emitted = 0;
         let mut gpu_births = vec![];
+        let actor_live = self
+            .particles
+            .iter()
+            .filter(|p| self.runtime[p.emitter].placement.actor.is_some())
+            .count();
+        let mut live = [self.particles.len() - actor_live, actor_live];
         for (index, r) in self.runtime.iter_mut().enumerate() {
-            if r.definition.fog.is_some() {
+            if r.definition.fog.is_some() || !r.posed {
                 continue;
             }
             if r.first {
@@ -808,19 +898,41 @@ impl Effects {
             } else {
                 1.
             };
+            //0019c200 measures this step's emitter displacement; static is zero.
+            let delta: [f32; 3] = std::array::from_fn(|i| r.placement.position[i] - r.previous[i]);
+            let distance = smoke::distance(delta);
+            let speed = distance / dt;
+            let mut smoke_birth = None;
             let count = if let Some(smoke) = &d.smoke {
-                if smoke.minimum_speed > 0. {
+                if speed < smoke.minimum_speed {
                     0
                 } else {
-                    let amount = smoke.rate[0] * dt + r.phase;
-                    if amount > 1. {
+                    let m = &smoke.motion;
+                    let size = smoke::clamp(m.size_ratio * speed, smoke.size[0], smoke.size[1]);
+                    let life = smoke::clamp(m.life_ratio * speed, smoke.life[0], smoke.life[1]);
+                    let rate = smoke::clamp(
+                        m.distance_ratio * distance + m.speed_ratio * speed,
+                        smoke.rate[0] * dt,
+                        smoke.rate[1] * dt,
+                    );
+                    let amount = rate * 1. + r.phase;
+                    let count = if amount > 1. {
                         let count = amount as usize;
                         r.phase = amount - count as f32;
                         count
                     } else {
                         r.phase += amount;
                         0
-                    }
+                    };
+                    let count = m.min_per_frame.max(count as f32) as usize;
+                    let step = 1. / count as f32;
+                    smoke_birth = Some((
+                        size,
+                        life,
+                        smoke::velocity(base.velocity, delta),
+                        delta.map(|d| d * step),
+                    ));
+                    count
                 }
             } else {
                 emission_count(&mut r.phase, base.rate * dt * factor)
@@ -828,30 +940,35 @@ impl Effects {
             if count > 0 {
                 r.timer.emitted = true;
             }
+            let mut position = r.placement.position;
+            let class = usize::from(r.placement.actor.is_some());
             for _ in 0..count {
-                if self.particles.len() == CAPACITY {
+                if live[class] == [CAPACITY, ACTOR_CAPACITY][class] {
                     self.dropped += 1;
                     break;
                 }
-                if let Some(smoke) = &d.smoke {
-                    let life = smoke.life[0] * smoke.percent
-                        + smoke.life[0]
+                live[class] += 1;
+                if let (Some(smoke), Some((size, base_life, base_velocity, step))) =
+                    (&d.smoke, smoke_birth)
+                {
+                    let life = base_life * smoke.percent
+                        + base_life
                             * (1. - smoke.percent)
                             * (1. / (smoke.convergence * random(&mut self.random) + 1.));
-                    let mut velocity = base.velocity;
+                    let mut velocity = base_velocity;
                     for (axis, v) in velocity.iter_mut().enumerate() {
                         *v += smoke.noise[0][axis]
                             + (smoke.noise[1][axis] - smoke.noise[0][axis])
                                 * random(&mut self.random);
                     }
                     self.particles.push(Particle {
-                        position: r.placement.position,
+                        position,
                         velocity,
-                        size: smoke.size[0],
-                        initial_size: smoke.size[0],
-                        growth: smoke.size[0] * base.growth,
+                        size,
+                        initial_size: size,
+                        growth: size * base.growth,
                         life,
-                        age: smoke.life[0] * smoke.initial_age,
+                        age: base_life * smoke.initial_age,
                         frame: r.frame,
                         set_first: r.frame,
                         emitter: index,
@@ -863,6 +980,8 @@ impl Effects {
                     r.timer.emitted = true;
                     emitted += 1;
                     self.total += 1;
+                    // Later births walk back along this step's travel.
+                    position = std::array::from_fn(|i| position[i] - step[i]);
                     continue;
                 }
                 let rx = random(&mut self.random);
@@ -922,9 +1041,18 @@ impl Effects {
                 self.total += 1;
             }
         }
+        for r in &mut self.runtime {
+            r.previous = r.placement.position;
+        }
         let particles = self.sprites();
         self.frame = Frame {
             time: self.time,
+            actors: self
+                .runtime
+                .iter()
+                .filter(|r| r.placement.actor.is_some() && r.posed)
+                .map(|r| r.placement.position)
+                .collect(),
             particles,
             emitted,
             total_emitted: self.total,
@@ -995,6 +1123,52 @@ impl Effects {
     pub fn frame(&self) -> &Frame {
         &self.frame
     }
+    /// Treat the next supplied actor pose as a fresh placement (`0019a680`
+    /// dirty path: previous = current, no emission on that step).
+    pub fn relocate_actors(&mut self) {
+        for r in &mut self.runtime {
+            if r.placement.actor.is_some() && r.posed {
+                r.posed = false;
+                r.first = true;
+            }
+        }
+    }
+    /// Current world matrices of moving scene actors, before the fixed step
+    /// that reads them. `0019a680` takes the model translation (`00165af0`)
+    /// plus the authored offset through its basis (`001662f0`).
+    pub fn set_actor_poses<'a>(
+        &mut self,
+        poses: impl IntoIterator<Item = (&'a str, &'a [f32; 16])>,
+    ) {
+        let mut seen = BTreeMap::<String, usize>::new();
+        for (model, m) in poses {
+            let key = model_key(model);
+            let count = seen.entry(key.clone()).or_default();
+            let instance = *count;
+            *count += 1;
+            for r in &mut self.runtime {
+                let Some(actor) = &r.placement.actor else {
+                    continue;
+                };
+                if actor.model != key || actor.instance != instance {
+                    continue;
+                }
+                let o = actor.offset;
+                //001662f0 accumulates the rotated offset before adding it.
+                let position: [f32; 3] = std::array::from_fn(|axis| {
+                    m[12 + axis] + ((m[axis] * o[0] + m[4 + axis] * o[1]) + m[8 + axis] * o[2])
+                });
+                if !position.iter().all(|v| v.is_finite()) {
+                    continue;
+                }
+                r.placement.position = position;
+                if !r.posed {
+                    r.posed = true;
+                    r.previous = position;
+                }
+            }
+        }
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -1013,10 +1187,79 @@ mod tests {
         };
         let result = plan(&source).unwrap();
         assert_eq!(result.declared, 2);
-        assert_eq!(result.placements.len(), 2);
+        assert_eq!(result.placements.len(), 3);
         assert_eq!(result.placements[0].position, [10., 25., 30.]);
-        assert!(!result.placements[1].start_on);
+        assert!(result.placements[0].actor.is_none());
+        // The second instance is not a static model: it awaits an actor pose.
+        let actor = result.placements[1].actor.as_ref().unwrap();
+        assert_eq!((actor.model.as_str(), actor.instance), ("prop", 0));
+        assert_eq!(actor.offset, [0., 5., 0.]);
+        assert!(!result.placements[2].start_on);
         assert_eq!(result.unresolved, ["smoke.emt: 1/2 attachment prop.slt"]);
+    }
+    #[test]
+    fn moving_actor_smoke_waits_for_pose_then_follows_travel() {
+        let atlas = "[General Info]\nTextureMap=synthetic.tga\nNumFrames=2\nNumGroups=1\n[Frame0]\nUVLeft=0\nUVTop=0\nUVRight=1\nUVBottom=1\n[Frame1]\nUVLeft=1\nUVTop=0\nUVRight=2\nUVBottom=1\n[Group0]\nFirstFrame=0\nLastFrame=1\n";
+        let emt = "[General Info]\nParticleGroup=0\nEmitRate=1\nParticleLife=1000\nInitialSize=2\nGrowth=3\nAgeAtBirth=0\nVelocity=1,7,0\nEmitMode=3\nTimedTimeOn=0.5\nTimedTimeOff=0.5\nMinimumInitialSize=2\nMaximumInitialSize=9\nInitialSizeToSpeedRatio=0.1\nMinimumLife=900\nMaximumLife=4000\nLifeToSpeedRatio=20\nMinimumEmitRate=12\nMaximumEmitRate=30\nParticlesToDistanceRatio=0.05\n[Properties]\nHasVelocity=T\nGrows=T\nFades=T\n";
+        let source = Source {
+            scene: "[StaticModels]\nNumberOfStaticModels=0\n".into(),
+            common: String::new(),
+            mode: Some("[ParticleEmitters]\nNumberOfEmitters=1\n[ParticleEmitter1]\nTypeID=0\nAttachToSoultree=Puffer.slt\nOffsetFromSoultree=0,4,0\nEmitterFilename=puff.emt\nNumberOfInstances=1\n".into()),
+            prt: atlas.into(),
+            emts: BTreeMap::from([("puff.emt".into(), emt.into())]),
+        };
+        let (mut effects, metadata) = Effects::from_source(&source).unwrap();
+        assert_eq!(metadata.actors, ["puff.emt -> puffer#0"]);
+        assert!(metadata.unsupported.is_empty());
+        for _ in 0..30 {
+            effects.step(1. / 60.).unwrap();
+        }
+        assert_eq!(effects.frame.total_emitted, 0, "no phantom static emitter");
+        assert!(effects.frame.actors.is_empty());
+        // Level travel along +X at 30 ft/s: speed-scaled size, clamped life.
+        let mut matrix = [
+            1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 100., 50., -20., 1.,
+        ];
+        let mut births = vec![];
+        for _ in 0..120 {
+            effects.set_actor_poses([("animgeometry\\PUFFER.slt", &matrix)]);
+            let frame = effects.step(1. / 60.).unwrap();
+            births.push(frame.emitted);
+            assert_eq!(frame.actors, [[matrix[12], 54., -20.]]);
+            matrix[12] += 0.5;
+        }
+        assert_eq!(births[0], 0, "first posed step is the dirty gate");
+        let total: u64 = births.iter().sum();
+        // 0.05 ft⁻¹ × 0.5 ft is below 12/s × dt, so the minimum rate applies
+        // during the timed on-phases only. The native accumulator adds the
+        // carried phase twice below one particle, raising the effective rate.
+        assert_eq!(total, 28);
+        let p = &effects.particles[0];
+        assert!((p.initial_size - 3.).abs() < 1e-5, "0.1 × 30 ft/s");
+        assert!(p.life <= 900. && p.life >= 450.);
+        // Authored X is the travel side axis (0,0,-1); Y remains up.
+        assert!(
+            p.velocity
+                .iter()
+                .zip([0., 7., -1.])
+                .all(|(a, b)| (a - b).abs() < 1e-6),
+            "{:?}",
+            p.velocity
+        );
+        assert!(effects.particles.iter().all(|p| p.position[2] < -20.));
+        // A synchronized clock jump relocates instead of emitting along it.
+        let before = effects.frame.total_emitted;
+        effects.relocate_actors();
+        matrix[12] += 1000.;
+        effects.set_actor_poses([("puffer.slt", &matrix)]);
+        assert_eq!(effects.step(1. / 60.).unwrap().emitted, 0);
+        assert_eq!(effects.frame.total_emitted, before);
+        assert!(
+            effects
+                .particles
+                .iter()
+                .all(|p| p.position[0] < matrix[12] - 500.)
+        );
     }
     #[test]
     fn persistent_volume_initializes_off_and_stays_bounded_after_lifetime() {
@@ -1117,6 +1360,9 @@ mod tests {
             out_phase: u32,
             #[serde(default)]
             smoke: Option<Smoke>,
+            /// Moving type0 cases: emitter `+0x40` before this step.
+            #[serde(default)]
+            previous: Option<[f32; 3]>,
         }
         #[derive(Deserialize)]
         struct Report {
@@ -1161,10 +1407,13 @@ mod tests {
                     position: c.position,
                     start_on: true,
                     mode_emitter: None,
+                    actor: None,
                 },
                 definition,
                 oscillator: fog::Oscillator::default(),
                 active: true,
+                previous: c.previous.unwrap_or(c.position),
+                posed: true,
                 phase: c.phase,
                 first: false,
                 frame: if c.kind == 0 { 152 } else { 128 },
@@ -1213,6 +1462,10 @@ mod tests {
                     "mirror case{index}"
                 );
                 comparisons += 12;
+                if let Some(age) = native.get(11) {
+                    assert_eq!(p.age.to_bits(), *age, "age case{index}");
+                    comparisons += 1;
+                }
             }
         }
         println!("native ambient birth comparisons: {comparisons}");

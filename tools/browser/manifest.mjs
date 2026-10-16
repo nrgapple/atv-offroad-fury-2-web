@@ -60,6 +60,10 @@ export const TESTS = {
     reason:
       'Fails on unmodified origin/main too: the bailout no longer produces intact-ATV aerial ragdoll frames before impact'
   },
+  'test_graphics_presets.mjs': {
+    group: 'content',
+    note: 'Set ATV_GRAPHICS_BASELINE to a server running the previous main build for the Original pixel-identical gate'
+  },
   'test_hd_settings.mjs': {
     defaults: ['crash mode (original)', 'crash camera (tight)', 'chase camera (original)'],
     group: 'content'
@@ -231,6 +235,7 @@ export const TESTS = {
       'Fails on unmodified origin/main too: expects Pause to suspend the AudioContext; pause now keeps the soundtrack running (PR #40)'
   },
   'test_train_collisions.mjs': { group: 'content' },
+  'test_train_smoke.mjs': { group: 'content' },
   'test_training_start.mjs': { group: 'content' },
   'test_trick_wheel.mjs': { group: 'content-free' },
   'test_ui_polish.mjs': { group: 'content' },

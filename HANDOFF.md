@@ -81,14 +81,14 @@ section is authoritative.
 | Resource formats | Recovered layouts; all 487 archives parse | `FORMATS.md`, `GEOMETRY.md`, `IPUM.md` |
 | Maps | All 40 Freestyle venue families load (terrain, sky, scenery, vegetation) | `FREESTYLE_MAPS.md`, `MAP_FIDELITY.md` |
 | Rendering | Authored WebGL2 using recovered materials, animated UVs, fog, ice reflections, near-vegetation colors, water and wheel effects. LOD, vegetation visibility, lighting/shadows and GS precision incomplete | `MAP_FIDELITY.md`, `STADIUM_MATERIALS.md`, `PERFORMANCE.md` |
-| ATV physics | Recovered vehicle routines (suspension/travel stop, static contact, terrain contact, wheel support, drivetrain, rider force) on all 26 quads. Native fixed tick and whole-step parity unestablished; residual landing tire overlap unexplained | `MOVEMENT.md`, `CONTACT.md`, `TERRAIN_CONTACT.md`, `COUPLED_LANDING.md` |
+| ATV physics | Recovered vehicle routines (suspension/travel stop, static contact, terrain contact, wheel support, drivetrain, rider force) on all 26 quads. Native fixed tick and whole-step parity unestablished; residual landing/slope tire overlap mostly explained by original ordering and contact-model properties (one-step display order, travel bottoming, single-point contact) | `MOVEMENT.md`, `CONTACT.md`, `TERRAIN_CONTACT.md`, `COUPLED_LANDING.md` |
 | Collision | Recovered static COL queries, scene partition/candidate order, shipped vegetation proxies, moving train bodies. Some proxy kinds and model-COL resolution remain | `COLLISION.md`, `OBSTACLES.md`, `SCENE_COLLISION.md`, `VEGETATION_COLLISION.md`, `TRAIN_CONTACT.md` |
-| Wrecks and recovery | Recovered classifier, boundary launch, deep-water failure and recovery; post-loop full-correction pass omitted | `WRECK.md`, `BOUNDARY_LAUNCH.md`, `WATER_SNOW_GATE.md` |
+| Wrecks and recovery | Recovered classifier, boundary launch, deep-water failure and recovery; post-loop full-correction pass for moving bodies; detached rider contacts terrain, static props, vegetation proxies and train bodies | `WRECK.md`, `BOUNDARY_LAUNCH.md`, `WATER_SNOW_GATE.md` |
 | Rider and animation | Recovered MOT decoding, pose selection, crouch, stunt, wreck and hard-landing clips; the recovered hand solver stays gated off as in normal riding; foot IK, the event system and female hair unfinished | `ANIMATION.md` |
 | Stunts and scoring | Recovered scoring tick/finalization and repeat rollback for single-player driving; full chaining/modes incomplete | `HUD.md`, `TOUCH.md` |
 | Camera | Recovered follow camera and wreck camera; widescreen, portrait, uphill and tight-crash framing are browser adaptations | `CAMERA.md`, `HILL_CAMERA.md` |
 | Water, weather, ambient | Recovered buoyancy kernel and dynamic heights, visible surfaces; weather/emitters from source TOY records with bounded GPU adaptations | `WATER.md`, `WEATHER.md`, `AMBIENT_EFFECTS.md`, `WHEEL_EFFECTS.md` |
-| Arlington train | Route, wheel motion, collision and sound connected; smoke unfinished | `TRAIN.md`, `TRAIN_CONTACT.md` |
+| Arlington train | Route, wheel motion, collision, sound and locomotive smoke connected | `TRAIN.md`, `TRAIN_CONTACT.md` |
 | HUD and minimap | Authored controller using original layout/fonts/atlases; GPS minimap is authored | `HUD.md`, `MINIMAP.md` |
 | Menus and UI | Browser-native screens driven by Rust menu logic; profiles, championships, unlocks and saves missing | `UI.md`, `MENU_SCREENS.md`, `DESIGN_SYSTEM.md` |
 | Audio | Recovered VAG decoding, 21-song catalog/shuffle, engine banks, impacts, train; SPU2 mixer/reverb not reproduced | `AUDIO.md` |
@@ -161,10 +161,12 @@ the worktree's `target/`; keep bulk output on the SSD.
 - Progression, championships, unlocks, saves and split-screen are missing.
 - Race rules are authored; original track windows, finish-box test, start slots,
   difficulty mapping, firework triggers and points are open (`RACING.md`).
-- Rendering lacks original LOD/visibility policy, point lights, shadows, lens and
-  random weather effects, and native GS precision (`MAP_FIDELITY.md`).
-- Residual tire/terrain overlap on landings and cross-slope turns is measured
-  but not explained (`TERRAIN_CONTACT.md`, `COUPLED_LANDING.md`).
+- Rendering lacks original LOD/visibility policy, point lights, shadows, light
+  lens effects and native GS precision (`MAP_FIDELITY.md`). ScreenRain lens drops
+  are dormant in shipped content and intentionally not drawn (`WEATHER.md`).
+- Residual tire/terrain overlap on landings and cross-slope turns follows mostly
+  from original ordering and contact-model properties; about 0.12 ft on landings
+  is not decomposed, and hardware equality is unverified (`COUPLED_LANDING.md`).
 - Audio scheduling and the SPU2 mixer/reverb are approximations (`AUDIO.md`).
 - Motorcycle controller components are recovered, but the chassis collision
   hull, COL-v2 routing, stunt linking/scoring and native whole-step parity are

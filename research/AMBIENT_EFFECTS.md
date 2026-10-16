@@ -23,8 +23,11 @@ TypeID, attachment or position, instance count and StartOn (default true).
 constructs each native emitter family and applies its activation. `0019a680`
 transforms the authored local attachment offset through the model basis.
 The port resolves currently loaded static scene attachments and records each
-unresolved model name/count, including Arlington's moving Smoke.slt actor.
-A moving actor is not replaced with a phantom static emitter.
+unresolved model name/count. Unresolved instances become actor placements that
+stay dormant until a moving actor supplies its pose. Arlington's Smoke.slt is
+the only one in shipped content, so no phantom static emitter appears. Moving
+type0 displacement terms, the 128-slot actor reserve and their native gate are
+described in [TRAIN.md](TRAIN.md#locomotive-smoke).
 
 Static type8 fire/smoke follows `0019e150`: source rate × dt × 0.6, strict
 fractional emission gate with discarded remainder, four lifetime phases,
@@ -206,6 +209,6 @@ the same lifecycle gate also passes on motorcycles at desktop and portrait
 437 Rust tests and 135 JavaScript tests (five private Rust instruction gates and
 one private JS alpha gate are opt-in); formatting, strict Clippy, WASM build,
 `make verify` and 35 release tests (one skipped) pass. Public release remains
-owned by the release coordinator. Moving Arlington
-locomotive smoke, callback-gated hockey hats and other animated actor families
-remain explicit gaps.
+owned by the release coordinator. Moving Arlington locomotive smoke was later
+connected (TRAIN.md). Callback-gated hockey hats, zone-visibility gating and
+other animated actor families remain explicit gaps.

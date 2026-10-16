@@ -272,6 +272,10 @@ pub struct MaterialPass {
     pub scene_alpha_cutoff: f64,
     /// MudAnimator TextureMap_1 entries in authored order.
     pub mud_maps: Vec<String>,
+    /// ATV2 vehicle/rider dirt overlay: the base texture of the later shader
+    /// pass that declares `PixelAnimation` (for example `dirt250rm1` on the
+    /// quad body). Filled only for single-pass (vehicle) descriptions.
+    pub dirt_map: Option<String>,
 }
 
 /// Splits ordered ShaderPass_N sections; each result carries the shared
@@ -458,6 +462,7 @@ fn describe_pass(source: String, fallback: Option<&str>) -> Result<MaterialPass>
         },
         scene_alpha_cutoff: if cutout { reference } else { 0. },
         mud_maps,
+        dirt_map: None,
         source,
     })
 }
@@ -470,10 +475,32 @@ pub fn describe(text: &str, multi_pass: bool, fallback: Option<&str>) -> Result<
     } else {
         vec![text.to_owned()]
     };
-    sources
+    let mut passes = sources
         .into_iter()
         .map(|source| describe_pass(source, fallback))
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    if !multi_pass && let Some(first) = passes.first_mut() {
+        first.dirt_map = dirt_map(text);
+    }
+    Ok(passes)
+}
+
+/// Texture of the last non-base pass carrying a `PixelAnimation` assignment.
+/// The native animation routine is not recovered; this only names the map.
+fn dirt_map(text: &str) -> Option<String> {
+    let passes = pass_sources(text).ok()?;
+    passes
+        .iter()
+        .skip(1)
+        .rev()
+        .find(|pass| {
+            lines(pass).map(uncommented).any(|line| {
+                starts_with_key(line, 0, "PixelAnimation")
+                    && assignment(line, 0, "PixelAnimation")
+                        .is_some_and(|at| !trim(&line[at..]).is_empty())
+            })
+        })
+        .and_then(|pass| texture_binding(pass))
 }
 
 #[cfg(test)]
@@ -627,6 +654,41 @@ mod tests {
         )
         .unwrap();
         assert!(plane[0].reflective && !plane[0].unsupported_reflection);
+    }
+    #[test]
+    fn pixel_animation_pass_names_the_vehicle_dirt_overlay() {
+        let quad = "[General]\nTotalShaderPasses = 2\n[ShaderPass_1]\nmicroProgramName = TriStripDiffuseScaledCompressed\nTextureMap_1 = q01s01m1\nTextureCoordinateIndex_1 = 0\n[ShaderPass_2]\nTextureMap_1 = dirt250rm1\nTextureCoordinateIndex_1 = 0\nalphaTestOnOff = 1\n;Animation\nPixelAnimation = unique\n";
+        let passes = describe(quad, false, None).unwrap();
+        assert_eq!(passes.len(), 1);
+        assert_eq!(passes[0].binding.as_deref(), Some("q01s01m1"));
+        assert_eq!(passes[0].dirt_map.as_deref(), Some("dirt250rm1"));
+        // A specular second pass is skipped in favour of the animated third.
+        let helmet = "[General]\nTotalShaderPasses = 3\n[ShaderPass_1]\nTextureMap_1 = atv2_helmet\n[ShaderPass_2]\nmicroProgramName = SpecularMapCompressed\nTextureMap_1 = HelmetSpecular01 \n[ShaderPass_3]\nTextureMap_1 = dirtboot\nPixelAnimation = unique\n";
+        assert_eq!(
+            describe(helmet, false, None).unwrap()[0]
+                .dirt_map
+                .as_deref(),
+            Some("dirtboot")
+        );
+        // Unanimated, commented and blank declarations name no overlay.
+        for text in [
+            "[General]\nTotalShaderPasses = 2\n[ShaderPass_1]\nTextureMap_1 = a\n[ShaderPass_2]\nTextureMap_1 = b\n",
+            "[General]\nTotalShaderPasses = 2\n[ShaderPass_1]\nTextureMap_1 = a\n[ShaderPass_2]\nTextureMap_1 = b\n;PixelAnimation = unique\n",
+            "[General]\nTotalShaderPasses = 2\n[ShaderPass_1]\nTextureMap_1 = a\n[ShaderPass_2]\nTextureMap_1 = b\nPixelAnimation = \n",
+            "[ShaderPass_1]\nTextureMap_1 = a\nPixelAnimation = unique\n",
+        ] {
+            assert_eq!(
+                describe(text, false, None).unwrap()[0].dirt_map,
+                None,
+                "{text}"
+            );
+        }
+        assert!(
+            describe(quad, true, None)
+                .unwrap()
+                .iter()
+                .all(|p| p.dirt_map.is_none())
+        );
     }
     #[test]
     fn mud_maps_preserve_multiline_regex_backtracking() {

@@ -13,6 +13,25 @@ pub struct Definition {
     pub ring_initial_radius: f32,
     pub ring_delta_radius: f32,
     pub ring_initial_divisions: usize,
+    /// `NumParticleEmitters` (camera-relative WeatherEmitter list).
+    #[serde(default)]
+    pub particle_emitters: usize,
+    /// `MaxLensDrops`/`MaxWorldDrops`, read only by ScreenRain (defaults 20/100).
+    #[serde(default)]
+    pub max_lens_drops: usize,
+    #[serde(default)]
+    pub max_world_drops: usize,
+}
+impl Definition {
+    /// `00209dd0` creates ScreenRain only without an emitter list or ring
+    /// flag and only for the case-insensitive SltName `screenrain`. No
+    /// shipped USA v2.00 resource contains that name (all 742 disc files,
+    /// every archive member), so original lens/world drops never appear.
+    pub fn selects_screen_rain(&self) -> bool {
+        self.particle_emitters == 0
+            && !self.ring_emitters
+            && self.model.eq_ignore_ascii_case("screenrain")
+    }
 }
 #[derive(Debug, Serialize)]
 pub struct Selection {
@@ -22,6 +41,8 @@ pub struct Selection {
     pub sample: f32,
     pub effective_chance: f32,
     pub native_player_count: usize,
+    /// Active Weather that constructs the original ScreenRain object.
+    pub screen_rain: bool,
     pub scope: &'static str,
 }
 impl Definition {
@@ -104,6 +125,19 @@ impl Definition {
             ring_initial_radius: number("RingInitialRadius", 50.)?,
             ring_delta_radius: number("RingDeltaRadius", 50.)?,
             ring_initial_divisions: count("RingInitialDivisions", 4.)?,
+            particle_emitters: if number("UseRingEmitters", 0.)? != 0. {
+                0
+            } else {
+                count("NumParticleEmitters", 0.)?
+            },
+            max_lens_drops: count("MaxLensDrops", 20.)?,
+            max_world_drops: number("MaxWorldDrops", 100.).and_then(|v| {
+                if v.fract() != 0. || !(0. ..=1000.).contains(&v) {
+                    Err("unsupported Weather MaxWorldDrops".into())
+                } else {
+                    Ok(v as usize)
+                }
+            })?,
         };
         if !(0. ..=1.).contains(&result.chance) {
             return Err("Weather chance outside probability range".into());
@@ -129,6 +163,10 @@ pub fn select(
         .as_ref()
         .filter(|d| !active && !d.model.eq_ignore_ascii_case("NONE"))
         .map(|d| d.model.trim_end_matches(".slt").to_owned());
+    let screen_rain = active
+        && definition
+            .as_ref()
+            .is_some_and(Definition::selects_screen_rain);
     Ok(Selection {
         definition,
         active,
@@ -136,7 +174,8 @@ pub fn select(
         sample,
         effective_chance: chance,
         native_player_count: player_count,
-        scope: "source Weather selection; per-load browser RNG is independent of unrecovered native game-wide RNG; Snow rendering is configured independently; ScreenRain callbacks pending",
+        screen_rain,
+        scope: "source Weather selection; per-load browser RNG is independent of unrecovered native game-wide RNG; Snow rendering is configured independently; ScreenRain requires SltName screenrain, which no shipped resource declares",
     })
 }
 #[cfg(test)]
@@ -158,6 +197,44 @@ mod tests {
         assert!(select(Some(d.clone()), 0, 1).unwrap().active);
         assert!(!select(Some(d.clone()), 1, 2).unwrap().active);
         assert!(select(Some(d), 0, 2).unwrap().active);
+    }
+    #[test]
+    fn screen_rain_needs_its_exact_model_name_without_emitters() {
+        // Shipped rain declarations name placed rain geometry: no lens drops.
+        let placed = Definition::parse(
+            b"[Weather]\nChanceOfWeather=1\nSltName=synthetic_rain.slt\nWeatherType=rain\n",
+            b"",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(!placed.selects_screen_rain());
+        assert!(select(Some(placed), 0, 1).unwrap().active);
+        let lens = Definition::parse(
+            b"[Weather]\nChanceOfWeather=1\nSltName=ScreenRain\nWeatherType=RAIN\n",
+            b"",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!((lens.max_lens_drops, lens.max_world_drops), (20, 100));
+        assert!(lens.selects_screen_rain());
+        assert!(select(Some(lens.clone()), 0, 1).unwrap().screen_rain);
+        assert!(
+            !select(Some(lens), 1, 2).unwrap().screen_rain,
+            "multiplayer chance zero"
+        );
+        let emitters = Definition::parse(
+            b"[Weather]\nChanceOfWeather=1\nSltName=screenrain\nNumParticleEmitters=1\n",
+            b"",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(!emitters.selects_screen_rain());
+        // The legacy SCN [Rain] lens/world counts are never read.
+        assert!(
+            Definition::parse(b"[Rain]\nChanceOfRain=1\nMaxLensDrops=10\n", b"")
+                .unwrap()
+                .is_none()
+        );
     }
     #[test]
     fn ring_constructor_defaults_and_native_equality_survive() {

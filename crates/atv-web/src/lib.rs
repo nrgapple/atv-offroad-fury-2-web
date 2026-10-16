@@ -1460,6 +1460,16 @@ pub(crate) fn train_collision_objects(
         .collect::<Result<Vec<_>>>()
 }
 
+/// Moving procedural actors carrying original TOY emitters (Arlington's
+/// locomotive Smoke.slt) publish this step's pose before the particle step.
+fn pose_ambient_actors(
+    effects: &mut atv_core::ambient_effects::Effects,
+    train: Option<&atv_core::train::Frame>,
+) {
+    if let Some(train) = train {
+        effects.set_actor_poses(train.cars.iter().map(|c| (c.model.as_str(), &c.matrix)));
+    }
+}
 fn step_train_scene(sim: &mut Simulation, dt: f32) -> Result<Option<atv_core::train::Frame>> {
     let Some(train) = sim.train.as_mut() else {
         return Ok(None);
@@ -2244,7 +2254,10 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
         let ambient = SIMULATION.with_borrow_mut(|sim| {
             sim.ambient
                 .as_mut()
-                .map(|effects| effects.step(1. / 60.).cloned())
+                .map(|effects| {
+                    pose_ambient_actors(effects, train.as_ref());
+                    effects.step(1. / 60.).cloned()
+                })
                 .transpose()
         })?;
         let snow = SIMULATION.with_borrow_mut(|sim| -> Result<_> {
