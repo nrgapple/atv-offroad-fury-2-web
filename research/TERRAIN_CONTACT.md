@@ -2,8 +2,9 @@
 
 The full-resolution TR2 contact path now passes bounded original-instruction
 comparisons for height, interpolated normal and material. This closes a numerical
-terrain-query gap; it does not establish complete vehicle contact parity or
-explain the remaining tire overlap on landing and cross-slope turns.
+terrain-query gap; it does not establish complete vehicle contact parity. The
+remaining landing and cross-slope tire overlap is decomposed in
+[coupled landing](COUPLED_LANDING.md#residual-overlap-decomposition-2026-10-16).
 
 ## Verified correction
 

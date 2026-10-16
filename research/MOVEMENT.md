@@ -155,7 +155,9 @@ terrain samples in the browser landing trace improved from -1.9423ft to
 -0.48358ft minimum clearance. The earlier clean-landing test only established
 no false wreck; it did not establish acceptable tire clearance. The restored
 stop leaves shallow overlap and does not establish complete original landing
-or slope-turn parity.
+or slope-turn parity. The residual is decomposed (one-step display order, travel
+bottoming, single-point contact, vertical measurement) in
+[coupled landing](COUPLED_LANDING.md#residual-overlap-decomposition-2026-10-16).
 
 ## Full wheel spring replay and pitch attenuation
 
