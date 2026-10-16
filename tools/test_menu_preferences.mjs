@@ -93,6 +93,12 @@ try {
   await screen('single');
   await button(page, 'Race').tap();
   await screen('race');
+  // Pick a Supercross course and four laps, as the Freestyle course is picked.
+  await page.getByRole('tab', { name: /^Supercross/ }).tap();
+  await page.locator('.ms-race .ms-course[data-track-id=sx03]').tap();
+  await page.waitForFunction(() => document.querySelector('#frontend').dataset.raceCourse === 'sx03');
+  await page.getByRole('button', { name: 'Next Laps' }).tap();
+  await button(page, 'Laps: 4').waitFor();
   await page.locator('[data-action=racestart]').tap();
   await waitForGame(page, {
     timeout: 90000,
@@ -103,11 +109,24 @@ try {
   assert.equal((await saved()).quadId, 46);
   assert.equal((await saved()).riderId, 1);
   assert.equal((await saved()).freestyleEnvironment, 'env02', 'Race must preserve last Freestyle course');
+  assert.deepEqual((await saved()).race, { course: 'sx03', laps: 4, cpu: 3 });
   await page.reload();
   await single();
   await button(page, 'Freestyle').tap();
   await screen('tracks');
   assert.equal(await page.locator('#frontend').getAttribute('data-track'), 'env02');
+  await page.reload();
+  await single();
+  await button(page, 'Race').tap();
+  await screen('race');
+  assert.equal(await page.locator('#frontend').getAttribute('data-race-course'), 'sx03');
+  assert.equal(await page.locator('.ms-race .ms-course[aria-selected=true]').getAttribute('data-track-id'), 'sx03');
+  await button(page, 'Laps: 4').waitFor();
+  await page.screenshot({ path: `${output}/restored-race.png` });
+  // Browsing race courses without starting keeps the last race setup.
+  await page.getByRole('button', { name: 'Next Course' }).tap();
+  await page.waitForFunction(() => document.querySelector('#frontend').dataset.raceCourse !== 'sx03');
+  assert.equal((await saved()).race.course, 'sx03');
   assertNoErrors(errors);
   console.log(
     JSON.stringify({
@@ -117,6 +136,7 @@ try {
       lastPlayedCourse: true,
       browsingDoesNotOverwrite: true,
       raceSelection: true,
+      lastRaceSetup: true,
       errors
     })
   );

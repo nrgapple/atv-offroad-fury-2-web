@@ -2,17 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {loadPlayerSelection,savePlayerSelection,Frontend,unlockedCourses,normalizedAppearance,appearanceBytes,appearanceFromBytes} from './frontend.js';
 import {ENVIRONMENTS,courseResource} from './launch.js';
-const defaults={quadId:1,riderId:0,freestyleEnvironment:'env01',playerName:'Rider',appearance:{gear:[0,0,0,0,0,0,0],paint:0}};
+const defaults={quadId:1,riderId:0,freestyleEnvironment:'env01',race:{course:'env01',laps:3,cpu:3},playerName:'Rider',appearance:{gear:[0,0,0,0,0,0,0],paint:0}};
 test('saved vehicle, rider and last-played Freestyle course survive a storage roundtrip',()=>{
  for(const quadId of [1,26,27,46]) {
-  const choice={quadId,riderId:1,freestyleEnvironment:'free05',playerName:'Sam 🚀',appearance:{gear:[3,1,15,26,26,4,11],paint:6}};
+  const choice={quadId,riderId:1,freestyleEnvironment:'free05',race:{course:'sx05',laps:5,cpu:0},playerName:'Sam 🚀',appearance:{gear:[3,1,15,26,26,4,11],paint:6}};
   let stored;savePlayerSelection(choice,value=>stored=value);
   assert.deepEqual(loadPlayerSelection(()=>stored),choice);
  }
 });
 test('invalid or unavailable saved selection safely falls back per field',()=>{
  for(const playerName of ['', '   ', 'x'.repeat(25), 'bad\nname', 42])assert.equal(loadPlayerSelection(()=>JSON.stringify({playerName})).playerName,'Rider');
- for(const stored of [null,'bad','null','[]','42','{"freestyleEnvironment":["env02"]}','{"quadId":47,"riderId":7,"freestyleEnvironment":"private"}'])assert.deepEqual(loadPlayerSelection(()=>stored),defaults);
+ for(const stored of [null,'bad','null','[]','42','{"freestyleEnvironment":["env02"]}','{"quadId":47,"riderId":7,"freestyleEnvironment":"private"}','{"race":{"course":"free01","laps":9,"cpu":2}}','{"race":"sx01"}'])assert.deepEqual(loadPlayerSelection(()=>stored),defaults);
  assert.deepEqual(loadPlayerSelection(()=>{throw Error('denied');}),defaults);
  assert.doesNotThrow(()=>savePlayerSelection(defaults,()=>{throw Error('quota');}));
  assert.deepEqual(loadPlayerSelection(()=>'{"quadId":34,"riderId":1,"freestyleEnvironment":"gone"}'),{...defaults,quadId:34,riderId:1});
@@ -55,10 +55,25 @@ test('all venues are selectable regardless of source access and points, with one
 
 test('race setup cycles available original courses and starts the selected one',async()=>{
  const calls=[],menu={busy:false,notice:{},raceCourses:['env01','nat03','sx16'],raceSettings:{laps:3,cpu:3,difficulty:1,course:'env01'},
+  raceFilter:'all',tracks:[],raceTracks:Frontend.prototype.raceTracks,raceOrder:Frontend.prototype.raceOrder,
   refresh:async()=>{},show:async()=>{},fail(error){throw error;},launchSingle:async(map,racing)=>calls.push([map,racing.course])};
  await Frontend.prototype.run.call(menu,'racetrack',-1);assert.equal(menu.raceSettings.course,'sx16');
  await Frontend.prototype.run.call(menu,'racetrack',1);await Frontend.prototype.run.call(menu,'racetrack',1);assert.equal(menu.raceSettings.course,'nat03');
  await Frontend.prototype.run.call(menu,'racestart');assert.deepEqual(calls,[['nat03','nat03']]);
+ // An event tab limits stepping to its courses.
+ Object.assign(menu,{raceCourses:['env01','nat03','sx01','sx16'],raceFilter:'sx',raceSettings:{...menu.raceSettings,course:'sx16'}});
+ await Frontend.prototype.run.call(menu,'racetrack',1);assert.equal(menu.raceSettings.course,'sx01');
+ await Frontend.prototype.run.call(menu,'racetrack',1);assert.equal(menu.raceSettings.course,'sx16');
+});
+test('only a started race replaces the remembered race setup',async()=>{
+ const saved=[],menu={lastRace:{course:'env01',laps:3,cpu:3},lastFreestyleEnvironment:'free05',raceSettings:{course:'nat03',laps:5,cpu:0,difficulty:1},
+  multiplayer:null,start:async()=>{},saveSelection(){saved.push({race:this.lastRace,free:this.lastFreestyleEnvironment});},resume(){}};
+ await Frontend.prototype.launchSingle.call(menu,'nat03',{...menu.raceSettings});
+ assert.deepEqual(saved,[{race:{course:'nat03',laps:5,cpu:0},free:'free05'}]);
+ menu.raceSettings.course='sx02';menu.start=async()=>{throw Error('load failure');};
+ await assert.rejects(Frontend.prototype.launchSingle.call(menu,'sx02',{...menu.raceSettings}));
+ assert.deepEqual(menu.lastRace,{course:'nat03',laps:5,cpu:0});
+ await Frontend.prototype.launchSingle.call({...menu,start:async()=>{}},'env04',null);assert.equal(saved.at(-1).free,'env04');assert.deepEqual(saved.at(-1).race,{course:'nat03',laps:5,cpu:0});
 });
 
 test('rider gear steps through Original and the catalog; jersey carries matching sleeves',()=>{
