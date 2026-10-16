@@ -81,6 +81,8 @@ export class QuadSounds {
     try {
       const venue = json(await this.audio.codec(172, encoder.encode(JSON.stringify({ aud: aud ?? null }))));
       const names = new Set([...venue.drive, ...venue.ambient.map(a => a.sample), ...venue.soultree.map(s => s.sample)]);
+      // Original data: a venue with crowd sounds is a stadium for the Enhanced echo.
+      this.crowdVenue = [...venue.ambient, ...venue.soultree].some(source => source.sample.startsWith('crowd/'));
       for (const name of names) { if (this.audio.closed) return; await this.audio.loadSample(name).catch(() => {}); }
       const rates = {};
       for (const name of names) { const sample = this.audio.buffers.get(name); if (sample) rates[name] = sample.info.sample_rate; }

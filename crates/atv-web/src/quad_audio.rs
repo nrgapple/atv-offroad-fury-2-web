@@ -180,6 +180,29 @@ pub fn operation(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         return Err("quad audio request exceeds limit".into());
     }
     match op {
+        // Enhanced-sound echo type for the loaded venue (authored).
+        172 if index == 2 => {
+            let request: serde_json::Value =
+                serde_json::from_slice(input).map_err(|e| e.to_string())?;
+            let stadium = request
+                .get("stadium")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let enclosure = crate::SIMULATION.with_borrow(|sim| -> Result<f32> {
+                let (Some(terrain), Some(vehicle)) = (&sim.terrain, &sim.vehicle) else {
+                    return Ok(0.);
+                };
+                atv_core::echo::enclosure(
+                    |x, z| terrain.contact(x, z).map(|hit| hit.map(|h| h.height)),
+                    vehicle.frame().origin,
+                )
+            })?;
+            serde_json::to_vec(&serde_json::json!({
+                "echo": atv_core::echo::classify(stadium, enclosure),
+                "enclosure": enclosure,
+            }))
+            .map_err(|e| e.to_string())
+        }
         171 => {
             let request: Configure = serde_json::from_slice(input).map_err(|e| e.to_string())?;
             let banks = qs::VocalBanks::parse(request.rider.as_bytes())?;
