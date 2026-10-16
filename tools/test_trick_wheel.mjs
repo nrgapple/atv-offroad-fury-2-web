@@ -33,7 +33,7 @@ for (const [name, engine] of [
         window.wheelTricks = TRICK_WHEEL;
         const surface = document.querySelector('#game');
         if (synthetic) surface.setPointerCapture = () => {};
-        window.controls = mountTouchControls({ active: () => true, surface, flips: () => window.flipsOn === true });
+        window.controls = mountTouchControls({ active: () => true, surface });
         controls.feedback({ grounded: [false, false, false, false] });
       }, name === 'WebKit');
       const cdp = name === 'Chromium' ? await page.context().newCDPSession(page) : null;
@@ -168,35 +168,6 @@ for (const [name, engine] of [
           assert.deepEqual(await sample(), baseline, 'center release cancels');
         }
       }
-      // Optional Extras flips: gold labels outside the ring, each reachable
-      // from center and edge presses, submitted once on release.
-      await page.evaluate(() => { window.flipsOn = true; controls.refresh(); });
-      const flips = await page.evaluate(async () => (await import('/touch.js')).FLIP_WHEEL);
-      for (const spawn of [secondary, { ...secondary, x: 4, y: 4 }, { ...secondary, x: viewport.width - 4, y: viewport.height - 4 }]) {
-        for (const [index, flip] of flips.entries()) {
-          await touch('touchStart', [moved, spawn]);
-          for (const element of await page.locator('.touch-flip-choice, .touch-trick-cue, .touch-trick-choice').all()) {
-            const b = await element.boundingBox();
-            assert(b && b.x >= 0 && b.y >= 0 && b.x + b.width <= viewport.width && b.y + b.height <= viewport.height,
-              `flip wheel labels fit ${viewport.width}x${viewport.height}`);
-          }
-          const target = await page.locator('.touch-flip-choice').nth(index).boundingBox();
-          const chosen = { ...spawn, x: target.x + target.width / 2, y: target.y + target.height / 2 };
-          await touch('touchMove', [moved, chosen]);
-          assert.equal(await page.locator('.touch-trick-choice.selected').textContent(), flip.name);
-          assert.equal((await sample()).flip_request, null, 'flip preview does not start a flip');
-          if (index === 0 && spawn === secondary && [390, 844].includes(viewport.width))
-            await page.screenshot({ path: `${output}/flips-${name}-${viewport.width}x${viewport.height}.png` });
-          await touch('touchEnd', [chosen]);
-          const command = await sample();
-          assert.equal(command.flip_request, flip.flip);
-          assert.equal(command.stunt_modifiers, 0);
-          assert.equal(command.lean, baseline.lean);
-          assert.deepEqual(await sample(), baseline, 'flip is a single release pulse');
-        }
-      }
-      await page.evaluate(() => { window.flipsOn = false; controls.refresh(); });
-      assert.equal(await page.locator('.touch-flip-choice').first().isVisible(), false, 'Off hides flip labels');
       assert.equal(await page.evaluate(() => visualViewport.scale), scale, 'two-touch drags never zoom');
       assert.deepEqual(await page.evaluate(() => [scrollX, scrollY]), [0, 0]);
       const suppressed = await page.evaluate(() =>
@@ -237,7 +208,6 @@ for (const [name, engine] of [
         plainOutlinedText: true,
         noZoomScrollSelection: true,
         lifecycleCancellation: true,
-        optionalFlips: true,
         errors
       });
       await page.close();

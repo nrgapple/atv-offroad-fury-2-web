@@ -4,7 +4,7 @@
 
 In enhanced one-handed mode, keep the primary finger anywhere on the game surface to drive and brace. During a jump, place a second finger anywhere on the game surface to open a radial selector. Drag from its center toward one of ten named choices, then lift to submit that stunt once. The wheel previews selection without starting a trick; returning to the center and lifting cancels it. The wheel stays within the screen at edge presses, and the primary finger keeps its drive, steering and lean axes while the second finger selects. It does not request a held extension. The labels use plain white text with a black outline; selection is marked with an underline and gold pointer, without text backgrounds or button-like boxes.
 
-With the optional Extras **Flips** setting on, the wheel also shows gold Backflip (down) and 360 Left/Right labels outside a dashed ring. Dragging past the ring and lifting requests that flip. In two-finger mode, a long swipe down, left or right does the same. See [FLIPS.md](FLIPS.md).
+With the optional Extras **Flips** setting on, flips come from the driving thumb rather than this wheel. Pull it fully back, or fully left or right, and lift as you jump (up to 0.6 s into the air); a gold "LIFT → BACKFLIP" or "LIFT → 360" cue shows when that will work. See [FLIPS.md](FLIPS.md).
 
 These are authored touch-input adaptations that reuse ten existing stunt animations and the original Rust stunt inputs. The existing airborne, speed, reposition-timer and main-motion gates remain in force; the wheel changes neither animation nor physics. Browser checks cover real Chromium multi-touch and a synthetic WebKit pointer/capture fixture across portrait, landscape and small viewports. Physical-phone behavior remains unverified.
 

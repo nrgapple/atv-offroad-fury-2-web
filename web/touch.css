@@ -40,6 +40,8 @@ body.touch-driving #status.error { top: max(84px, calc(env(safe-area-inset-top) 
 #touch-controls[data-one-handed=true] .touch-rider-marker::after { top: 46px; left: 12px; height: 1px; width: 68px; }
 #touch-controls[data-one-handed=true] .touch-rider-marker i { left: 37px; top: 37px; width: 18px; height: 18px; transform: translate(var(--steer, 0px), var(--lean, 0px)); }
 #touch-controls[data-one-handed=true] .touch-rider-marker span { top: 118px; left: -25px; width: 144px; font-size: 9px; letter-spacing: .03em; }
+/* Optional flips: lifting now would flip. */
+#touch-controls[data-one-handed=true] .touch-rider-marker[data-flip=true] span { color: var(--atv-gold-light); font-size: 13px; }
 #touch-controls[data-one-handed=true] .touch-axis {
   display: block; position: absolute; font: 800 9px/1 var(--atv-font-label);
   color: var(--atv-silver-light); text-shadow: 0 1px 2px #000;
@@ -68,12 +70,3 @@ body.touch-driving #status.error { top: max(84px, calc(env(safe-area-inset-top) 
 .touch-trick-pointer::after { content: ''; position: absolute; right: -3px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--atv-gold-light); }
 .touch-trick-wheel[data-selected=true] .touch-trick-pointer { display: block; }
 .touch-trick-cue { position: absolute; top: 251px; left: 0; width: 248px; text-align: center; font-size: 9px; font-weight: 800; }
-/* Optional Extras flips: gold labels outside the ring, hint and cue above. */
-.touch-flip-choice, .touch-flip-hint, .touch-flip-ring { display: none; }
-/* Dashed boundary at FLIP_DISTANCE (132px): cross it to pick a flip. */
-.touch-trick-wheel[data-flips=true] .touch-flip-ring { display: block; position: absolute; inset: -8px; border: 2px dashed #f5d76e88; border-radius: 50%; }
-.touch-trick-wheel[data-flip=true] .touch-flip-ring { border-color: var(--atv-gold-light); }
-.touch-trick-wheel[data-flip=true] .touch-trick-pointer { width: 92px; }
-.touch-trick-wheel[data-flips=true] .touch-flip-choice { display: flex; color: var(--atv-gold-light); font-size: 12px; font-weight: 800; width: 44px; }
-.touch-trick-wheel[data-flips=true] .touch-flip-hint { display: block; color: var(--atv-gold-light); }
-.touch-trick-wheel[data-flips=true] .touch-trick-cue { top: -24px; }

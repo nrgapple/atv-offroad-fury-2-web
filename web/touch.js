@@ -28,25 +28,30 @@ export function trickWheelSelection(dx, dy) {
   const turn = (Math.atan2(dy, dx) + Math.PI / 2 + Math.PI * 2) % (Math.PI * 2);
   return TRICK_WHEEL[Math.round(turn / (Math.PI * 2) * TRICK_WHEEL.length) % TRICK_WHEEL.length];
 }
-// Optional Extras flips sit outside the trick ring: drag further to flip.
+// Optional Extras flips come from the driving thumb. Pull it fully back (or
+// fully left/right) and lift: on the ramp the lift is also the jump, and in
+// the first moments of air it still counts. Rust owns the timing window.
 // Down matches leaning back; left/right spin that way. No front flip exists.
-export const FLIP_DISTANCE = 132;
-export const FLIP_WHEEL = [
-  { name: 'Backflip', flip: 'backflip', angle: Math.PI / 2 },
-  { name: '360 Left', flip: 'left', angle: Math.PI },
-  { name: '360 Right', flip: 'right', angle: 0 },
+export const FLIPS = [
+  { name: 'Backflip', flip: 'backflip', cue: 'LIFT → BACKFLIP' },
+  { name: '360 Left', flip: 'left', cue: 'LIFT → 360 LEFT' },
+  { name: '360 Right', flip: 'right', cue: 'LIFT → 360 RIGHT' },
 ];
-export function flipWheelSelection(dx, dy) {
-  if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.hypot(dx, dy) < FLIP_DISTANCE) return null;
-  const angle = Math.atan2(dy, dx);
-  return FLIP_WHEEL.find(c => Math.abs(Math.atan2(Math.sin(angle - c.angle), Math.cos(angle - c.angle))) <= Math.PI / 6) ?? null;
+export const FLIP_PULL = .75;
+export function flipFromAxes(steer, lean) {
+  if (!Number.isFinite(steer) || !Number.isFinite(lean)) return null;
+  if (lean >= FLIP_PULL && lean >= Math.abs(steer)) return FLIPS[0];
+  if (Math.abs(steer) >= FLIP_PULL && Math.abs(steer) > lean) return steer < 0 ? FLIPS[1] : FLIPS[2];
+  return null;
 }
-// Two-finger mode: a long straight swipe down/left/right flips.
+// Held pull time in source stick-hold frames (60 = one second = full strength).
+const holdFrames = (since, now) => Math.max(0, Math.min(60, (now - since) * .06));
+// Two-finger mode: a long straight swipe down/left/right in the air flips.
 export const FLIP_SWIPE = 120;
 // Gesture mappings are browser adaptations of original modifier/direction inputs.
 export class TouchInput {
   constructor({ radial = false } = {}) { this.radial = radial; this.generation = 0; this.airborne = false; this.oneHanded = false; this.flips = false; this.steeringSensitivity = 100; this.clear(); }
-  clear() { this.generation++; this.pointer = null; this.secondary = null; this.pendingSelection = null; this.sampled = false; this.releasePending = false; }
+  clear() { this.generation++; this.pointer = null; this.secondary = null; this.pendingSelection = null; this.pendingFlip = null; this.sampled = false; this.releasePending = false; }
   owns(id) { return this.pointer?.id === id || this.secondary?.owns(id) === true; }
   begin(id, x = 0, y = 0, airborne = this.airborne) {
     if (this.pointer) {
@@ -88,11 +93,14 @@ export class TouchInput {
     if (pointer.mode === 'radial') {
       // Preview is reversible. No modifier is submitted until pointer release.
       const [startX, startY] = pointer.points[0];
-      pointer.selection = Math.hypot(x - startX, y - startY) < 8 ? null
-        : (this.flips && flipWheelSelection(x - pointer.x, y - pointer.y)) || trickWheelSelection(x - pointer.x, y - pointer.y);
+      pointer.selection = Math.hypot(x - startX, y - startY) < 8 ? null : trickWheelSelection(x - pointer.x, y - pointer.y);
       return;
     }
     if (pointer.mode === 'drive') {
+      if (this.oneHanded) {
+        const flip = flipFromAxes(steeringAxis(x - pointer.x, this.steeringSensitivity), clamp((y - pointer.y) / 70));
+        if (flip !== pointer.flip) { pointer.flip = flip; pointer.flipSince = now; }
+      }
       const back = y - pointer.y;
       pointer.axis = this.oneHanded ? 1 : back > 8 ? -clamp((back - 8) / 62) : 1;
       return;
@@ -117,10 +125,13 @@ export class TouchInput {
     if (Math.abs(turn) >= 5.2 && Math.hypot(x-pointer.x,y-pointer.y) <= Math.min(width,height)*.45)
       pointer.selection = { modifiers: 3, axes: [0, turn > 0 ? -1 : 1] };
   }
-  end(id, cancelled = false) {
+  end(id, cancelled = false, now = performance.now()) {
     if (this.secondary?.owns(id)) { this.secondary.end(id, cancelled); return; }
     if (this.pointer?.id !== id) return;
     if (cancelled) { this.clear(); return; }
+    // Lifting the pulled driving thumb launches a flip (Rust checks timing).
+    if (this.flips && this.oneHanded && this.pointer.flip)
+      this.pendingFlip = { flip: this.pointer.flip.flip, hold: holdFrames(this.pointer.flipSince, now) };
     if (this.pointer.mode === 'radial') this.pendingSelection = this.pointer.selection;
     if (this.pointer.mode === 'trick') {
       const sent = this.pointer.selectionSent;
@@ -142,7 +153,7 @@ export class TouchInput {
           ? (Math.abs(dy) >= Math.abs(dx) ? 'backflip' : dx < 0 ? 'left' : 'right') : null;
         const axes = diagonal ? (dy < 0 ? (dx < 0 ? [0,-1] : [1,0]) : (dx < 0 ? [-1,0] : [0,1]))
           : Math.abs(dy) >= Math.abs(dx) ? [0,Math.sign(dy)] : [Math.sign(dx),0];
-        pointer.selection = flip ? FLIP_WHEEL.find(c => c.flip === flip) : { modifiers: diagonal ? 2 : 1, axes };
+        pointer.selection = flip ? FLIPS.find(c => c.flip === flip) : { modifiers: diagonal ? 2 : 1, axes };
       }
     }
     const driving = pointer?.mode === 'drive';
@@ -164,8 +175,10 @@ export class TouchInput {
       : (pointer?.mode === 'trick' ? pointer.selection : null) ?? this.pendingSelection;
     if (pointer?.mode === 'trick' && pointer.selection) pointer.selectionSent = true;
     this.pendingSelection = null;
+    const launch = this.pendingFlip; this.pendingFlip = null;
     return { drive, preload_axis, steer, lean, stunt_modifiers: selection?.modifiers ?? 0,
-      stunt_x: selection?.axes?.[0] ?? 0, stunt_y: selection?.axes?.[1] ?? 0, flip_request: selection?.flip ?? null };
+      stunt_x: selection?.axes?.[0] ?? 0, stunt_y: selection?.axes?.[1] ?? 0,
+      flip_request: launch?.flip ?? selection?.flip ?? null, flip_launch: Boolean(launch), flip_hold: launch?.hold ?? 0 };
   }
 }
 
@@ -177,10 +190,17 @@ export class TouchLeanIntent {
     if (this.pointer) return false;
     this.pointer = { id, x, y, dx: 0, dy: 0 }; return true;
   }
-  move(id, x, y) {
+  move(id, x, y, now = performance.now()) {
     if (this.pointer?.id !== id) return;
     this.pointer.dx = x - this.pointer.x;
     this.pointer.dy = clamp((y - this.pointer.y) / 70);
+    const flip = flipFromAxes(this.steer, this.lean);
+    if (flip !== this.pointer.flip) { this.pointer.flip = flip; this.pointer.flipSince = now; }
+  }
+  /** Two-finger mode: the left pad's held full pull when the drive thumb lifts. */
+  launchFlip(now = performance.now()) {
+    const p = this.pointer;
+    return p?.flip ? { flip: p.flip.flip, hold: holdFrames(p.flipSince, now) } : null;
   }
   end(id) { if (this.pointer?.id === id) this.pointer = null; }
   get steer() { return steeringAxis(this.pointer?.dx ?? 0, this.sensitivity()); }
@@ -197,10 +217,13 @@ export function oneHandedFeedback(input, frame) {
   const pointer = input.pointer;
   const applied = frame?.applied_input;
   const current = applied?.touch_drive?.generation === input.generation && applied.touch_drive.held;
+  // Only promise a flip when lifting now would start one.
+  const canLaunch = frame?.preload_armed || frame?.preload_active || frame?.flip?.launch_window;
+  const flip = input.flips && input.oneHanded && canLaunch ? pointer?.flip : null;
   return {
     steer: pointer ? steeringAxis(pointer.currentX - pointer.x, input.steeringSensitivity) : 0,
     lean: pointer ? clamp((pointer.currentY - pointer.y) / 70) : 0,
-    cue: !pointer ? '' : input.secondary?.pointer && !input.airborne ? (current && applied.brake > 0 ? 'BRAKE → REVERSE' : 'REVERSE · BRACE') : frame?.preload_active ? 'PRELOADED' : frame?.preload_armed ? 'LIFT FOR PRELOAD' : current && applied.brake > 0 ? 'BRAKE · BRACE' : 'DRIVE · BRACE',
+    cue: !pointer ? '' : flip ? flip.cue : input.secondary?.pointer && !input.airborne ? (current && applied.brake > 0 ? 'BRAKE → REVERSE' : 'REVERSE · BRACE') : frame?.preload_active ? 'PRELOADED' : frame?.preload_armed ? 'LIFT FOR PRELOAD' : current && applied.brake > 0 ? 'BRAKE · BRACE' : 'DRIVE · BRACE',
   };
 }
 
@@ -215,16 +238,11 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
   parent.append(root);
   const marker = root.firstElementChild, label = marker.querySelector('span');
   const wheel = document.createElement('div'); wheel.className = 'touch-trick-wheel'; wheel.hidden = true;
-  wheel.innerHTML = '<div class="touch-flip-ring"></div><div class="touch-trick-ring"></div><div class="touch-trick-center">TRICKS<small>DRAG · RELEASE</small><small class="touch-flip-hint">FURTHER OUT = FLIP</small></div><i class="touch-trick-pointer"></i><span class="touch-trick-cue"></span>';
+  wheel.innerHTML = '<div class="touch-trick-ring"></div><div class="touch-trick-center">TRICKS<small>DRAG · RELEASE</small></div><i class="touch-trick-pointer"></i><span class="touch-trick-cue"></span>';
   const choices = TRICK_WHEEL.map((trick, index) => {
     const choice = document.createElement('b'); choice.className = 'touch-trick-choice'; choice.textContent = trick.name;
     const angle = index / TRICK_WHEEL.length * Math.PI * 2 - Math.PI / 2;
     choice.style.left = `${124 + Math.cos(angle) * 88}px`; choice.style.top = `${124 + Math.sin(angle) * 88}px`;
-    wheel.append(choice); return choice;
-  });
-  const flipChoices = FLIP_WHEEL.map(flip => {
-    const choice = document.createElement('b'); choice.className = 'touch-trick-choice touch-flip-choice'; choice.textContent = flip.name;
-    choice.style.left = `${124 + Math.cos(flip.angle) * 138}px`; choice.style.top = `${124 + Math.sin(flip.angle) * 138}px`;
     wheel.append(choice); return choice;
   });
   root.append(wheel);
@@ -234,27 +252,22 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
     if (pointer?.mode !== 'radial') return;
     // The displayed origin also owns selection, making every label reachable
     // near an edge. A stationary press never selects despite this adjustment.
-    // Flip labels sit outside the ring, so the wheel keeps more margin.
-    const [side, bottom] = input.flips ? [172, 166] : [126, 142];
-    pointer.x = innerWidth < side * 2 ? innerWidth / 2 : Math.max(side, Math.min(innerWidth - side, pointer.currentX));
-    pointer.y = Math.max(150, Math.min(innerHeight - bottom, pointer.currentY));
+    pointer.x = Math.max(126, Math.min(innerWidth - 126, pointer.currentX));
+    pointer.y = Math.max(150, Math.min(innerHeight - 142, pointer.currentY));
   };
   const presentWheel = () => {
     const pointer = input.secondary?.pointer;
     const visible = input.oneHanded && input.pointer && pointer?.mode === 'radial';
     wheel.hidden = !visible;
     if (!visible) { wheelKey = null; return; }
-    const index = TRICK_WHEEL.indexOf(pointer.selection), flipIndex = FLIP_WHEEL.indexOf(pointer.selection);
-    const key = [pointer.x, pointer.y, index, flipIndex, input.flips].join('|');
+    const index = TRICK_WHEEL.indexOf(pointer.selection);
+    const key = [pointer.x, pointer.y, index].join('|');
     if (key === wheelKey) return;
     wheelKey = key;
     wheel.style.left = `${pointer.x}px`; wheel.style.top = `${pointer.y}px`;
-    wheel.dataset.flips = String(input.flips);
-    wheel.dataset.selected = String(index >= 0 || flipIndex >= 0);
-    wheel.dataset.flip = String(flipIndex >= 0);
-    wheel.style.setProperty('--trick-angle', `${flipIndex >= 0 ? FLIP_WHEEL[flipIndex].angle : index / TRICK_WHEEL.length * Math.PI * 2 - Math.PI / 2}rad`);
+    wheel.dataset.selected = String(index >= 0);
+    wheel.style.setProperty('--trick-angle', `${index / TRICK_WHEEL.length * Math.PI * 2 - Math.PI / 2}rad`);
     choices.forEach((choice, i) => choice.classList.toggle('selected', i === index));
-    flipChoices.forEach((choice, i) => choice.classList.toggle('selected', i === flipIndex));
     wheel.querySelector('.touch-trick-cue').textContent = pointer.selection ? `${pointer.selection.name} · RELEASE` : 'CENTER TO CANCEL';
   };
   let presentationKey = null;
@@ -267,6 +280,7 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
     if (key === presentationKey) return;
     presentationKey = key;
     label.textContent = state.cue;
+    marker.dataset.flip = String(FLIPS.some(flip => flip.cue === state.cue));
     marker.style.setProperty('--steer', `${state.steer * 34}px`);
     marker.style.setProperty('--lean', `${state.lean * 34}px`);
     marker.style.setProperty('--angle', `${Math.atan2(state.lean, state.steer)}rad`);
@@ -309,7 +323,7 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
   const end = event => {
     if (!input.owns(event.pointerId)) return;
     if (event.type === 'pointerup' && input.secondary?.pointer?.mode === 'radial' && input.secondary.owns(event.pointerId)) input.move(event.pointerId, event.clientX, event.clientY);
-    event.preventDefault(); event.stopImmediatePropagation(); input.end(event.pointerId, event.type !== 'pointerup'); root.classList.toggle('held', Boolean(input.pointer)); present();
+    event.preventDefault(); event.stopImmediatePropagation(); input.end(event.pointerId, event.type !== 'pointerup', event.timeStamp); root.classList.toggle('held', Boolean(input.pointer)); present();
   };
   // WebKit's loupe can ignore CSS selection suppression. Cancel native touch
   // gestures on the active game surface as well; Pointer Events still own input.
