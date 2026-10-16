@@ -1,0 +1,14 @@
+{
+  "id": "stadium-stands-no-longer-sliced-open-at-the-fog-distan-ca06c613af6a449faa15c5bcf903d207",
+  "timestamp": "2026-10-16T18:19:08.503992+00:00",
+  "recorded_at": "2026-10-16T18:19:32.678593+00:00",
+  "kind": "verification",
+  "title": "Stadium stands no longer sliced open at the fog distance",
+  "summary": "The far clipping plane sat exactly at each track's fog end (768 units), so large scenery straddling it (stadium stand tiers, flagpoles) was cut pixel by pixel and the sky dome showed through, most visibly from the after-finish trackside TV cameras on Supercross venues. Whole-object culling at the fog end is unchanged; the depth range now extends by the largest object's bounds diagonal so admitted objects render whole and fade into fog. Not mobile-specific. Code PR #132 (fix/far-plane-clip).",
+  "details": [
+    "A unit test in web/render-support.test.mjs proves a straddling box was sliced by the old far plane and now fits the depth range. Forced TV-camera views on sx01 and sx16 at 390x844 portrait showed identical draw counts between baseline and fix, and on sx16 trackside camera [168,111,243] the upper stand tier and flagpoles now render (fogged) instead of showing sky. Paired benchmark (4 alternating pairs, 10 s each, 390x844 DPR3, headless Chromium Metal), mean render callback: env01 0.511 -> 0.516 ms, sx16 riding 0.519 -> 0.525 ms, sx16 TV pose 0.461 -> 0.468 ms, all within pair noise, frame pacing unchanged. Added CPU cost is about 5 microseconds per frame."
+  ],
+  "limitation": "The benchmark measures host CPU callback time, not phone GPU fill. The heavy distance fog on some venues (for example sx16) still washes far stands toward the fog colour by design, from the original fog parameters. Whether the PS2 culled per object or per triangle at the far plane is not verified.",
+  "image": "/devlog-images/stadium-stands-no-longer-sliced-open-at-the-fog-distan-ca06c613af6a449faa15c5bcf903d207.png",
+  "caption": "sx16 trackside TV camera, before (stand tier and flagpoles cut away to sky) and after (rendered whole and fogged)."
+}
