@@ -73,6 +73,19 @@ test('success commits a bounded lease; admission outages fail closed without lea
   assert.equal(failed.status, 503); assert.equal((await failed.text()).includes('private data'), false);
 });
 
+test('Free Ride claims use the per-IP connect limit and never take a room lease', async () => {
+  const claim = () => new Request('https://furyremastered.com/multiplayer/freeride', { method: 'POST', headers: { Origin: 'https://furyremastered.com', 'CF-Connecting-IP': '203.0.113.1' } });
+  const g = guarded({ backend: async () => Response.json({ code: 'FREERD01', key: 'private' }) });
+  let created = 0; g.env.ROOM_CREATE_LIMIT = { limit: async () => { created++; return { success: true }; } };
+  assert.equal((await worker.fetch(claim(), g.env)).status, 200);
+  assert.equal(g.calls(), 1); assert.equal(created, 0);
+  const budget = g.budget.values.get('budget');
+  assert.equal(budget.connects, 1); assert.equal(budget.creates, 0); assert.equal(budget.leases.length, 0);
+  const limited = guarded({ limit: false });
+  assert.equal((await worker.fetch(claim(), limited.env)).status, 429);
+  assert.equal(limited.calls(), 0);
+});
+
 test('security headers protect assets/errors/redirects and permit browser WASM and WebSockets', async () => {
   const env = { CANONICAL_ORIGIN: 'https://furyremastered.com', ASSETS: { fetch: async () => new Response('html', { headers: { 'Content-Type': 'text/html' } }) } };
   for (const path of ['https://furyremastered.com/play.html', 'https://www.furyremastered.com/play.html', 'https://furyremastered.com/content/source.iso']) {

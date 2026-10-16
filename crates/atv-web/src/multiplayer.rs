@@ -308,6 +308,8 @@ fn lobby(c: &mut Client, value: atv_net::Lobby) {
         .retain(|peer, _| value.players.iter().any(|p| p.id == *peer));
     c.lobby = Some(value);
 }
+/// Remote engine voices kept for the nearest riders.
+const ENGINE_VOICES: usize = 6;
 #[derive(Deserialize, Default)]
 struct Playing {
     peer: u8,
@@ -326,7 +328,7 @@ struct Presentation {
 }
 fn presentation(c: &mut Client, input: &[u8], now: u64, sim: &Simulation) -> Result<Vec<u8>> {
     let req: Presentation = serde_json::from_slice(input).map_err(|e| e.to_string())?;
-    if req.playing.len() > 4
+    if req.playing.len() > atv_net::MAX_PLAYERS
         || req.playing.iter().any(|p| {
             !p.duration.is_finite() || !p.playhead.is_finite() || p.duration < 0. || p.playhead < 0.
         })
@@ -356,9 +358,32 @@ fn presentation(c: &mut Client, input: &[u8], now: u64, sim: &Simulation) -> Res
             buffer.present(now, near).map(|pose| (id, pose))
         })
         .collect::<Vec<_>>();
+    // A full shared room would play nineteen engines at once. Only the
+    // nearest riders keep an engine voice; distant ones fall silent.
+    let mut ranked = sampled
+        .iter()
+        .filter(|(_, pose)| !pose.stale)
+        .map(|(id, pose)| {
+            let d = own.map_or(0., |o| {
+                o.iter()
+                    .zip(pose.snapshot.atv.position)
+                    .map(|(a, b)| (a - b) * (a - b))
+                    .sum::<f32>()
+            });
+            (d, *id)
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    let voiced = ranked
+        .iter()
+        .take(ENGINE_VOICES)
+        .map(|(_, id)| *id)
+        .collect::<std::collections::BTreeSet<_>>();
+    c.engines.retain(|id, _| voiced.contains(id));
     for (id, mut pose) in sampled {
         world::rebase(&mut pose.snapshot, sim)?;
         let s = &pose.snapshot;
+        let muted = !voiced.contains(&id);
         let spatial = command(
             Source {
                 position: s.atv.position,
@@ -369,7 +394,7 @@ fn presentation(c: &mut Client, input: &[u8], now: u64, sim: &Simulation) -> Res
             &[req.listener],
         )?;
         let mut engine = Value::Null;
-        if req.audible && !pose.stale && !c.engines.contains_key(&id) {
+        if req.audible && !pose.stale && !muted && !c.engines.contains_key(&id) {
             let config =
                 AUDIO_TABLE.with_borrow(|t| EngineAudioConfig::parse(t, s.atv_model as u32))?;
             c.engines.insert(
@@ -469,10 +494,77 @@ fn presentation(c: &mut Client, input: &[u8], now: u64, sim: &Simulation) -> Res
             ))
         };
         let (quad_matrices, rider_matrices) = matrices.unwrap_or_default();
-        peers.push(json!({"peer":id,"atv_model":s.atv_model,"rider_model":s.rider_model,"world_matrix":s.atv.to_column_major(),"quad_node_matrices":quad_matrices,"rider_world_matrix":s.rider.to_column_major(),"rider_node_matrices":rider_matrices,"position":s.atv.position,"platform":s.platform.as_ref().map(|p|p.car),"rider_state":s.rider_state,"crash_serial":s.crash_serial,"rpm":s.rpm,"stale":pose.stale,"extrapolated_ms":pose.extrapolated_ms,"spatial":spatial,"engine":engine,"crash":crash}));
+        peers.push(json!({"peer":id,"atv_model":s.atv_model,"rider_model":s.rider_model,"world_matrix":s.atv.to_column_major(),"quad_node_matrices":quad_matrices,"rider_world_matrix":s.rider.to_column_major(),"rider_node_matrices":rider_matrices,"position":s.atv.position,"platform":s.platform.as_ref().map(|p|p.car),"rider_state":s.rider_state,"crash_serial":s.crash_serial,"rpm":s.rpm,"stale":pose.stale,"muted":muted,"extrapolated_ms":pose.extrapolated_ms,"spatial":spatial,"engine":engine,"crash":crash}));
     }
     serde_json::to_vec(&json!({"state":status(c),"peers":peers})).map_err(|e| e.to_string())
 }
+/// Apply one relay packet received at `index` (browser milliseconds).
+fn receive(c: &mut Client, input: &[u8], index: usize) -> Result<()> {
+    let packet = mapped(atv_net::decode(input))?;
+    c.received += input.len() as u64;
+    match &packet {
+        Packet::Welcome {
+            peer,
+            code,
+            lobby: value,
+            key,
+        } => {
+            c.peer = Some(*peer);
+            c.code = String::from_utf8(code.to_vec()).map_err(|e| e.to_string())?;
+            c.key = key.iter().map(|b| format!("{b:02x}")).collect();
+            lobby(c, value.clone());
+        }
+        Packet::Lobby(value) => lobby(c, value.clone()),
+        Packet::Snapshot(s) => {
+            let allowed = c.lobby.as_ref().is_some_and(|l| {
+                l.started
+                    && l.players.iter().any(|p| {
+                        p.id == s.peer
+                            && p.atv_model == s.atv_model
+                            && p.rider_model == s.rider_model
+                    })
+            });
+            if allowed && Some(s.peer) != c.peer {
+                mapped(
+                    c.buffers
+                        .entry(s.peer)
+                        .or_default()
+                        .push(s.as_ref().clone(), index as u64),
+                )?;
+            }
+        }
+        Packet::Leave { peer } => {
+            c.buffers.remove(peer);
+            c.engines.remove(peer);
+            c.heard_crash.remove(peer);
+        }
+        Packet::Pong { nonce, server_ms } => {
+            let rtt = (index as u32).wrapping_sub(*nonce);
+            c.rtt_ms = Some(rtt);
+            // Prefer low-latency samples: half the round trip is the
+            // best available one-way estimate over TCP.
+            if rtt < 5000 {
+                let offset = *server_ms as f64 + f64::from(rtt) * 0.5 - index as f64;
+                match c.clock_offset_ms {
+                    Some(old) if rtt > c.clock_rtt_ms.saturating_add(20) => {
+                        c.clock_offset_ms = Some(old + (offset - old) * 0.05);
+                    }
+                    Some(old) if (offset - old).abs() < 250. => {
+                        c.clock_offset_ms = Some(old + (offset - old) * 0.3);
+                        c.clock_rtt_ms = c.clock_rtt_ms.min(rtt);
+                    }
+                    _ => {
+                        c.clock_offset_ms = Some(offset);
+                        c.clock_rtt_ms = rtt;
+                    }
+                }
+            }
+        }
+        _ => return Err("unexpected relay packet".into()),
+    }
+    Ok(())
+}
+
 pub fn dispatch(input: &[u8], op: u32, index: usize, sim: &Simulation) -> Result<Vec<u8>> {
     if input.len() > 65536 {
         return Err("multiplayer adapter input too large".into());
@@ -515,67 +607,23 @@ pub fn dispatch(input: &[u8], op: u32, index: usize, sim: &Simulation) -> Result
         }
         81 => snapshot(c, sim, index as u32, input.first() == Some(&1)),
         82 => {
-            let packet = mapped(atv_net::decode(input))?;
-            c.received += input.len() as u64;
-            match &packet {
-                Packet::Welcome {
-                    peer,
-                    code,
-                    lobby: value,
-                    key,
-                } => {
-                    c.peer = Some(*peer);
-                    c.code = String::from_utf8(code.to_vec()).map_err(|e| e.to_string())?;
-                    c.key = key.iter().map(|b| format!("{b:02x}")).collect();
-                    lobby(c, value.clone());
+            receive(c, input, index)?;
+            serde_json::to_vec(&json!({"state":status(c)})).map_err(|e| e.to_string())
+        }
+        // A full shared room delivers hundreds of relay messages a second;
+        // decode them in batches with one status reply, in arrival order.
+        // Each record is [u16 length][u32 received ms][packet], little endian.
+        113 => {
+            let mut rest = input;
+            while !rest.is_empty() {
+                if rest.len() < 6 {
+                    return Err("truncated receive batch".into());
                 }
-                Packet::Lobby(value) => lobby(c, value.clone()),
-                Packet::Snapshot(s) => {
-                    let allowed = c.lobby.as_ref().is_some_and(|l| {
-                        l.started
-                            && l.players.iter().any(|p| {
-                                p.id == s.peer
-                                    && p.atv_model == s.atv_model
-                                    && p.rider_model == s.rider_model
-                            })
-                    });
-                    if allowed && Some(s.peer) != c.peer {
-                        mapped(
-                            c.buffers
-                                .entry(s.peer)
-                                .or_default()
-                                .push(s.as_ref().clone(), index as u64),
-                        )?;
-                    }
-                }
-                Packet::Leave { peer } => {
-                    c.buffers.remove(peer);
-                    c.engines.remove(peer);
-                    c.heard_crash.remove(peer);
-                }
-                Packet::Pong { nonce, server_ms } => {
-                    let rtt = (index as u32).wrapping_sub(*nonce);
-                    c.rtt_ms = Some(rtt);
-                    // Prefer low-latency samples: half the round trip is the
-                    // best available one-way estimate over TCP.
-                    if rtt < 5000 {
-                        let offset = *server_ms as f64 + f64::from(rtt) * 0.5 - index as f64;
-                        match c.clock_offset_ms {
-                            Some(old) if rtt > c.clock_rtt_ms.saturating_add(20) => {
-                                c.clock_offset_ms = Some(old + (offset - old) * 0.05);
-                            }
-                            Some(old) if (offset - old).abs() < 250. => {
-                                c.clock_offset_ms = Some(old + (offset - old) * 0.3);
-                                c.clock_rtt_ms = c.clock_rtt_ms.min(rtt);
-                            }
-                            _ => {
-                                c.clock_offset_ms = Some(offset);
-                                c.clock_rtt_ms = rtt;
-                            }
-                        }
-                    }
-                }
-                _ => return Err("unexpected relay packet".into()),
+                let length = usize::from(u16::from_le_bytes([rest[0], rest[1]]));
+                let received = u32::from_le_bytes([rest[2], rest[3], rest[4], rest[5]]) as usize;
+                let packet = rest.get(6..6 + length).ok_or("truncated receive batch")?;
+                receive(c, packet, received)?;
+                rest = &rest[6 + length..];
             }
             serde_json::to_vec(&json!({"state":status(c)})).map_err(|e| e.to_string())
         }
@@ -616,7 +664,9 @@ pub fn dispatch(input: &[u8], op: u32, index: usize, sim: &Simulation) -> Result
 pub fn install_rig(input: &[u8], key: usize) -> Result<Vec<u8>> {
     let rig = animation::load(input, key)?;
     CLIENT.with_borrow_mut(|c| {
-        if c.rigs.len() >= 8 && !c.rigs.contains_key(&key) {
+        // Every rider in a full shared room may bring a different model;
+        // only rigs nobody in the roster uses are evicted.
+        if c.rigs.len() >= atv_net::MAX_PLAYERS && !c.rigs.contains_key(&key) {
             let active = c
                 .lobby
                 .as_ref()
@@ -652,6 +702,7 @@ mod tests {
             epoch: 1,
             map: 4,
             started,
+            public: false,
             players: vec![
                 Participant {
                     id: 0,
@@ -708,6 +759,45 @@ mod tests {
     }
     fn request(audible: bool) -> Vec<u8> {
         serde_json::to_vec(&json!({"listener":{"position":[0.,0.,0.],"forward":[0.,0.,1.],"velocity":[0.,0.,0.]},"audible":audible})).unwrap()
+    }
+    fn record(out: &mut Vec<u8>, packet: &Packet, received: u32) {
+        let bytes = atv_net::encode(packet).unwrap();
+        out.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
+        out.extend_from_slice(&received.to_le_bytes());
+        out.extend_from_slice(&bytes);
+    }
+    #[test]
+    fn receive_batches_apply_every_record_in_order_with_its_arrival_time() {
+        setup(false);
+        let mut batch = Vec::new();
+        record(
+            &mut batch,
+            &Packet::Welcome {
+                peer: 0,
+                code: *b"ABCD2345",
+                lobby: roster(true),
+                key: [2; 16],
+            },
+            100,
+        );
+        for (sequence, time) in [(1, 1000), (2, 1050), (3, 1100)] {
+            record(
+                &mut batch,
+                &Packet::Snapshot(remote(sequence, time).into()),
+                150 + sequence,
+            );
+        }
+        let output = dispatch(&batch, 113, 0, &Simulation::default()).unwrap();
+        let value: Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(value["state"]["peer"], 0);
+        CLIENT.with_borrow(|c| {
+            let (latest, received) = c.buffers[&1].latest().unwrap();
+            assert_eq!(latest.sequence, 3);
+            assert_eq!(received, 153);
+        });
+        // A truncated record rejects the batch rather than reading past it.
+        assert!(dispatch(&batch[..batch.len() - 1], 113, 0, &Simulation::default()).is_err());
+        assert!(dispatch(&[1, 0, 0], 113, 0, &Simulation::default()).is_err());
     }
     #[test]
     fn lobby_handshake_preserves_identity_and_female_model() {

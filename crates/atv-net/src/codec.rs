@@ -271,7 +271,15 @@ fn lobby(l: &Lobby) -> Result<()> {
     if l.players.is_empty() || l.players.len() > MAX_PLAYERS {
         return Err(Error::InvalidValue);
     }
-    let mut mask = 0u8;
+    let capacity = if l.public {
+        crate::PUBLIC_CAPACITY
+    } else {
+        crate::PRIVATE_CAPACITY
+    };
+    if l.players.len() > capacity {
+        return Err(Error::InvalidValue);
+    }
+    let mut mask = 0u32;
     for p in &l.players {
         participant(p)?;
         if mask & (1 << p.id) != 0 {
@@ -330,7 +338,7 @@ impl Writer {
         self.byte(l.host);
         self.u32(l.epoch);
         self.u16(l.map);
-        self.byte(u8::from(l.started));
+        self.byte(u8::from(l.started) | u8::from(l.public) << 1);
         self.byte(l.players.len() as u8);
         for p in &l.players {
             self.participant(p)?;
@@ -433,7 +441,10 @@ impl<'a> Reader<'a> {
         let host = self.peer()?;
         let epoch = self.u32()?;
         let map = self.u16()?;
-        let started = self.boolean()?;
+        let flags = self.byte()?;
+        if flags > 0b11 {
+            return Err(Error::InvalidValue);
+        }
         let n = self.byte()? as usize;
         if n > MAX_PLAYERS {
             return Err(Error::InvalidLength);
@@ -446,7 +457,8 @@ impl<'a> Reader<'a> {
             host,
             epoch,
             map,
-            started,
+            started: flags & 1 != 0,
+            public: flags & 2 != 0,
             players,
         };
         lobby(&l)?;

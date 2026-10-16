@@ -1,7 +1,22 @@
 //! Native test fixture bridge: exercise live sockets with the actual Rust codec.
-use std::io::{self, Read};
+//! `encode`/`decode` convert one packet; `stream` converts one JSON packet per
+//! input line into one hex line, so load tests avoid a process per packet.
+use std::io::{self, BufRead, Read, Write};
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("stream") {
+        let mut out = io::stdout().lock();
+        for line in io::stdin().lock().lines() {
+            let packet: atv_net::Packet = serde_json::from_str(&line?)?;
+            writeln!(out, "{}", hex(&atv_net::encode(&packet)?))?;
+            out.flush()?;
+        }
+        return Ok(());
+    }
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
     if std::env::args().nth(1).as_deref() == Some("decode") {
@@ -13,11 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", serde_json::to_string(&atv_net::decode(&bytes)?)?);
     } else {
         let packet: atv_net::Packet = serde_json::from_str(&input)?;
-        let bytes = atv_net::encode(&packet)?;
-        println!(
-            "{}",
-            bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
-        );
+        println!("{}", hex(&atv_net::encode(&packet)?));
     }
     Ok(())
 }

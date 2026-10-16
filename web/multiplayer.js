@@ -6,6 +6,23 @@ const appearanceOf = frontend => [...(frontend.appearance?.gear ?? [0,0,0,0,0,0,
 const SESSION = 'atv-mp-session';
 const KEY = /^[0-9a-f]{32}$/;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+// Shared Arlington Free Ride rooms use reserved codes FREERD01..FREERD25.
+export const PUBLIC_ROOM = /^FREERD\d\d$/;
+// Queued relay messages: poses beyond INBOX_POSES are dropped (newer ones
+// follow); control traffic beyond INBOX_LIMIT means the session is stuck.
+const INBOX_POSES = 192, INBOX_LIMIT = 256, BATCH_BYTES = 60000;
+// Pack queued messages as [u16 length][u32 received ms][packet] records.
+export function takeBatch(inbox) {
+  let size = 0, count = 0;
+  while (count < inbox.length && (count === 0 || size + 6 + inbox[count][0].length <= BATCH_BYTES)) size += 6 + inbox[count++][0].length;
+  const out = new Uint8Array(size), view = new DataView(out.buffer);
+  let at = 0;
+  for (const [bytes, received] of inbox.splice(0, count)) {
+    view.setUint16(at, bytes.length, true); view.setUint32(at + 2, received >>> 0, true);
+    out.set(bytes, at + 6); at += 6 + bytes.length;
+  }
+  return out;
+}
 // The relay returns a per-slot key in Welcome. This tab keeps it so a dropped
 // connection or a reload reclaims the same rider slot; it never enters links.
 function savedKey(code) {
@@ -28,7 +45,7 @@ export class Multiplayer {
     Object.assign(this, {codec,command,onState,onStart,onLeave,ready,paused,listener,audio,assets,clearAssets,spawn,report});
     this.state = {}; this.socket = null; this.remote = []; this.started = false; this.loading = false; this.generation = 0;
     this.loadedMap = null; this.readySent = false; this.key = undefined;
-    this.sendBusy = false; this.sampleBusy = false; this.receiveQueue = Promise.resolve(); this.pendingReceives = 0; this.droppedSnapshots = 0; this.lastDisconnect = null; this.reconnecting=false; this.reconnectUntil=0; this.reconnectAttempts=0; this.retryTimer=null; this.lastTraffic=0; this.lastPing=0; this.networkEncodeMs=0; this.networkEncodeCalls=0;
+    this.sendBusy = false; this.sampleBusy = false; this.receiveQueue = Promise.resolve(); this.inbox = []; this.draining = false; this.pendingReceives = 0; this.droppedSnapshots = 0; this.lastDisconnect = null; this.reconnecting=false; this.reconnectUntil=0; this.reconnectAttempts=0; this.retryTimer=null; this.lastTraffic=0; this.lastPing=0; this.networkEncodeMs=0; this.networkEncodeCalls=0;
     this.timer = setInterval(() => { void this.send(); if(this.paused?.()) void this.sample(); }, 50);
     // Pings keep the socket warm and refine the shared world clock.
     this.pingTimer = setInterval(() => { if (this.socket?.readyState === WebSocket.OPEN && this.state.peer != null && (performance.now()-this.lastTraffic>=10000 || performance.now()-this.lastPing>=15000 || ((this.state.rttMs==null || !this.state.clockSynced) && performance.now()-this.lastPing>=2000))) void this.ping(); }, 2000);
@@ -43,6 +60,8 @@ export class Multiplayer {
   async connect(code, frontend, key, resume=false, recovering=false) {
     await this.disconnect(false,recovering);
     const generation = ++this.generation;
+    // Messages queued for an earlier socket never reach the new session.
+    this.inbox = []; this.draining = false;
     const state = await this.command(80, {quad_id:frontend.quadId,rider_id:frontend.riderId});
     if (generation !== this.generation) return;
     this.state = state; this.started = resume; this.reconnecting=recovering; this.key = key; this.readySent = false;
@@ -55,25 +74,31 @@ export class Multiplayer {
       // Bounded work queue; a stalled worker must not retain unbounded packets.
       if (!(event.data instanceof ArrayBuffer) || event.data.byteLength > 8192) { socket.close(1008,'Message limit'); return; }
       // Mobile resume can deliver a burst of old poses. Drop surplus pose
-      // frames, leaving 16 queue slots for roster/control messages. Rust still
+      // frames, leaving room for roster/control messages. Rust still
       // validates every admitted packet; this sniff only decides what to drop.
       const header=new Uint8Array(event.data);
-      if(this.pendingReceives>=48 && header.length>=8 && header[0]===65 && header[1]===84 && header[2]===86 && header[3]===77 && ((header[4]===2 && header[5]===4)||(header[4]>=3 && header[5]===9))) { this.droppedSnapshots++; return; }
-      if(this.pendingReceives>=64) { socket.close(1008,'Control message backlog'); return; }
-      const received = Math.floor(performance.now()); this.pendingReceives++;
+      if(this.inbox.length>=INBOX_POSES && header.length>=8 && header[0]===65 && header[1]===84 && header[2]===86 && header[3]===77 && ((header[4]===2 && header[5]===4)||(header[4]>=3 && header[5]===9))) { this.droppedSnapshots++; return; }
+      if(this.inbox.length>=INBOX_LIMIT) { socket.close(1008,'Control message backlog'); return; }
+      this.inbox.push([header,Math.floor(performance.now())]); this.pendingReceives=this.inbox.length;
+      if(this.draining)return;
+      this.draining=true;
+      // A full shared room delivers hundreds of messages a second: Rust
+      // decodes everything queued since the last reply in one batch.
       this.receiveQueue = this.receiveQueue.then(async () => {
-        if (generation !== this.generation) return;
-        const result = JSON.parse(new TextDecoder().decode(await this.codec(82,new Uint8Array(event.data),received)));
-        if (generation !== this.generation) return;
-        this.state = result.state; this.onState(this.state);
-        if (this.state.key && this.state.key !== this.key) { this.key = this.state.key; saveKey(this.state.code, this.key); }
-        if(this.state.peer!=null && this.reconnecting) {
-          this.reconnecting=false;this.reconnectUntil=0;this.reconnectAttempts=0;
-          if(frontend.notice)frontend.notice.textContent='';
+        while (this.inbox.length && generation === this.generation) {
+          const batch=takeBatch(this.inbox); this.pendingReceives=this.inbox.length;
+          const result = JSON.parse(new TextDecoder().decode(await this.codec(113,batch)));
+          if (generation !== this.generation) return;
+          this.state = result.state; this.onState(this.state);
+          if (this.state.key && this.state.key !== this.key) { this.key = this.state.key; saveKey(this.state.code, this.key); }
+          if(this.state.peer!=null && this.reconnecting) {
+            this.reconnecting=false;this.reconnectUntil=0;this.reconnectAttempts=0;
+            if(frontend.notice)frontend.notice.textContent='';
+          }
+          if (this.started && !this.loading && this.ready()) void this.audio().loadRemoteModels(this.state.lobby?.players ?? []).catch(e=>this.report(e.message));
+          this.follow(generation);
         }
-        if (this.started && !this.loading && this.ready()) void this.audio().loadRemoteModels(this.state.lobby?.players ?? []).catch(e=>this.report(e.message));
-        this.follow(generation);
-      }).catch(error => {this.report(error.message); socket.close(1008,'Invalid session message');}).finally(()=>this.pendingReceives--);
+      }).catch(error => {this.report(error.message); socket.close(1008,'Invalid session message');}).finally(()=>{this.draining=false;});
     };
     socket.onclose = event => {
       if (generation !== this.generation) return;
@@ -86,7 +111,7 @@ export class Multiplayer {
       const rejoin=this.key;
       if(rejoin && retryable && !this.reconnectUntil)this.reconnectUntil=performance.now()+25000;
       const retry=rejoin&&retryable&&performance.now()<this.reconnectUntil;
-      const nextGeneration=++this.generation; this.clearAssets?.();
+      const nextGeneration=++this.generation; this.inbox=[]; this.pendingReceives=0; this.clearAssets?.();
       this.remote = []; this.state = {}; this.started = false; this.loading = false; this.readySent = false;
       void this.codec(84,new Uint8Array()); this.audio()?.remoteFrame([]);
       if(retry) {
@@ -152,8 +177,9 @@ export class Multiplayer {
   async meet(generation) {
     for (let i = 0; i < 12 && generation === this.generation; i++) {
       await sleep(250);
-      const host = this.state.lobby?.host;
-      const riding = this.remote.filter(peer => !peer.stale && peer.rider_state === 'Riding').sort((a,b) => (b.peer===host)-(a.peer===host) || a.peer-b.peer);
+      const host = this.state.lobby?.public ? null : this.state.lobby?.host;
+      // Private rooms meet the host; shared rooms spread arrivals over riders.
+      const riding = this.remote.filter(peer => !peer.stale && peer.rider_state === 'Riding').sort((a,b) => host==null ? Math.random()-.5 : (b.peer===host)-(a.peer===host) || a.peer-b.peer);
       for (const peer of riding) {
         if (generation !== this.generation) return;
         try { await this.spawn(peer.peer); return; } catch { /* Try the next rider, or keep the start line. */ }
@@ -164,6 +190,10 @@ export class Multiplayer {
   // that code again on the link's map when everyone has left.
   async host(frontend, code, map, open=false) {
     if(code && !/^[A-Z0-9]{8}$/.test(code)) throw new Error('Choose exactly 8 letters or numbers, or leave the code blank.');
+    // A shared room's code reopens Free Ride, which finds a room with space.
+    if(open && PUBLIC_ROOM.test(code)) return this.freeride(frontend);
+    if(PUBLIC_ROOM.test(code)) throw new Error('That code is reserved. Choose another.');
+    this.shared = false;
     const response = await fetch('/multiplayer/rooms',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(open?{code,open:true}:{code})});
     if (!response.ok) throw new Error(response.status===409?'Unable to create Game, game name already exists':response.status===429?'Too many lobby attempts or multiplayer is at capacity. Try again shortly.':`Game creation failed! (${response.status})`);
     const room = await response.json();
@@ -175,6 +205,16 @@ export class Multiplayer {
     saveKey(room.code,room.hostToken);
     await frontend.show('lobby'); await this.connect(room.code,frontend,room.hostToken);
     await this.configureLobby(map,true);
+  }
+  // Arlington Free Ride: no setup. The relay reserves a slot in the first
+  // shared room with space, which is already riding Arlington Stream.
+  async freeride(frontend) {
+    const response = await fetch('/multiplayer/freeride',{method:'POST'});
+    if (!response.ok) throw new Error(response.status===429?'Too many attempts or multiplayer is at capacity. Try again shortly.':response.status===503?'Arlington Free Ride is full or unavailable. Try again shortly.':`Unable to join Free Ride (${response.status}).`);
+    const room = await response.json();
+    if (!PUBLIC_ROOM.test(room.code ?? '') || !KEY.test(room.key ?? '')) throw new Error('Unable to join Free Ride.');
+    this.shared = true; saveKey(room.code,room.key);
+    await frontend.show('lobby'); await this.connect(room.code,frontend,room.key);
   }
   async action(action, frontend, setup) {
     if (action.startsWith('spawn:')) {
@@ -188,9 +228,11 @@ export class Multiplayer {
       await this.host(frontend,code,setup?.map ?? frontend.tracks?.[frontend.track]?.id ?? 'env01',true);
     } else if (action === 'share') {
       await copyRideUrl(this.inviteUrl(frontend),frontend.notice,'Invite link');
+    } else if (action === 'freeride') {
+      await this.freeride(frontend);
     } else if (action === 'leave') {
-      forgetKey();
-      await this.disconnect(); await frontend.show('multiplayer');
+      forgetKey(); const shared = this.shared;
+      await this.disconnect(); await frontend.show(shared ? 'main' : 'multiplayer');
     }
   }
   inviteUrl(frontend) {
@@ -227,7 +269,7 @@ export class Multiplayer {
   async disconnect(notify = true, preserveRecovery = false) {
     clearTimeout(this.retryTimer);this.retryTimer=null;
     if(!preserveRecovery){this.reconnecting=false;this.reconnectUntil=0;this.reconnectAttempts=0;this.loadedMap=null;}
-    this.generation++; this.clearAssets?.(); this.socket?.close(1000,'Left lobby'); this.socket = null; this.state = {}; this.started = false; this.loading = false; this.readySent = false; this.remote = [];
+    this.generation++; this.inbox = []; this.pendingReceives = 0; this.clearAssets?.(); this.socket?.close(1000,'Left lobby'); this.socket = null; this.state = {}; this.started = false; this.loading = false; this.readySent = false; this.remote = [];
     await this.codec(84,new Uint8Array()); this.audio()?.remoteFrame([]);
     if (notify) this.onState(this.state);
   }
@@ -268,7 +310,14 @@ export class Multiplayer {
 
 // Participant order follows original CompassArrow tint slots (002e68e0);
 // The smaller overhead arrow is authored vector artwork for sharp display.
-export const PLAYER_COLORS = ['#ff0000', '#0000ff', '#00ff00', '#ffff00'];
+// Slots 4-19 exist only in shared Free Ride rooms; their colors are authored.
+export const PLAYER_COLORS = ['#ff0000', '#0000ff', '#00ff00', '#ffff00',
+  '#ff8c00', '#00e5ff', '#ff3fd2', '#9b5cff', '#7cff6b', '#ffffff', '#ff6f91', '#3d7dff',
+  '#c8ff00', '#00b894', '#ffb3b3', '#b07a44', '#ff2e63', '#7fdbff', '#e0c3fc', '#ffd166'];
+// Name tags beyond the nearest few riders clutter a busy shared room.
+export const MAX_NAME_TAGS = 8, MAX_EDGE_TAGS = 3;
+// Distinct remote quad/rider models kept loaded: one per possible rider.
+export const MAX_REMOTE_MODELS = 20;
 export function screenMarker(position, view, width, height) {
   if (!position?.every(Number.isFinite)) return null;
   const point=[position[0],position[1]+7,position[2],1];
@@ -287,10 +336,14 @@ export class PlayerIndicators {
   draw(peers, lobby, view, origin, visible) {
     this.root.hidden=!visible;
     const live=new Set();
-    for(const peer of visible ? peers : []) {
-      if(peer.stale)continue;
+    const distance=peer=>peer.position?.every(Number.isFinite)?Math.hypot(...peer.position.map((v,i)=>v-(origin?.[i]??0))):Infinity;
+    const nearest=(visible ? peers : []).filter(peer=>!peer.stale).sort((a,b)=>distance(a)-distance(b)).slice(0,MAX_NAME_TAGS);
+    let edges=0;
+    for(const peer of nearest) {
       const player=lobby?.players.find(p=>p.id===peer.peer);if(!player)continue;
       const marker=screenMarker(peer.position,view,innerWidth,innerHeight);if(!marker)continue;
+      // Off-screen arrows point only toward the nearest few riders.
+      if(marker.edge && ++edges>MAX_EDGE_TAGS)continue;
       live.add(peer.peer);
       let node=this.nodes.get(peer.peer);
       if(!node) { node=document.createElement('div');node.className='player-indicator';const label=document.createElement('span'),arrow=document.createElementNS('http://www.w3.org/2000/svg','svg');arrow.setAttribute('viewBox','0 0 24 24');const shape=document.createElementNS('http://www.w3.org/2000/svg','path');shape.setAttribute('d','M12 2 L21 21 L12 17 L3 21 Z');arrow.append(shape);node.append(label,arrow);this.root.append(node);this.nodes.set(peer.peer,node); }

@@ -73,7 +73,9 @@ async function boundedBody(request) {
 export async function multiplayerRequest(request, env) {
   const path = new URL(request.url).pathname;
   const create = path === '/multiplayer/rooms' && request.method === 'POST';
-  const connect = /^\/multiplayer\/rooms\/[A-Z0-9]{8}$/.test(path) && request.method === 'GET';
+  // Claiming an Arlington Free Ride slot is admitted like joining a room: the
+  // shared rooms are a fixed set, so they never take a room-creation lease.
+  const connect = (/^\/multiplayer\/rooms\/[A-Z0-9]{8}$/.test(path) && request.method === 'GET') || (path === '/multiplayer/freeride' && request.method === 'POST');
   if (!create && !connect) return env.MULTIPLAYER.fetch(request);
   let body;
   if (create) {

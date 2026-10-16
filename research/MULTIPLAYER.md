@@ -431,3 +431,78 @@ Host verification on the local Rust relay, actual WASM and original content
 Workspace Rust tests, strict Clippy, formatting and the JavaScript suites pass.
 These are host checks, not public deployment, physical-phone or geographically
 separated latency evidence.
+
+## Arlington Free Ride (host checkpoint, 2026-10-16)
+
+The main menu has an **Arlington Free Ride** item between Multiplayer and
+Settings. It has no setup screen: one tap joins a shared room that is already
+riding Arlington Stream (`env08`). This is an authored browser mode, not an
+original-game online mode.
+
+- **Shared rooms.** `POST /multiplayer/freeride` checks shared rooms
+  `FREERD01`–`FREERD25` in order and reserves a slot in the first one with
+  space. Each room's Durable Object reserves the slot itself, so two riders
+  arriving at once cannot overfill it. The browser connects with the returned
+  slot key through the normal room route. Rider 21 opens `FREERD02`; later
+  arrivals fill the lowest-numbered room with space, so riders gather together.
+- **Room rules.**
+  - A shared room holds 20 riders; private rooms keep the original four.
+  - The map is fixed and nobody gets host controls: the relay ignores map
+    changes.
+  - There is no invite link and no 12-hour age limit.
+  - The room still closes 60 seconds after it empties, so idle hours cost
+    nothing. "Always open" means always joinable.
+  - Shared-room codes are reserved; they cannot be hosted or reopened as
+    private rooms.
+- **Admission.** The Worker admits claims like a room connect: the per-IP
+  connect limiter and the global connect budget apply. Claims take no
+  room-creation lease, because the 25 shared rooms are a fixed set.
+- **Names.** The remembered rider name is used. The default `Rider` becomes
+  `Rider ####` so strangers can tell riders apart. In shared rooms the relay
+  replaces any name caught by a very simple word filter
+  (`atv_net::public_name`) with `Rider <slot>`. Motorcycles fall back to ATV01,
+  as in Multiplayer.
+- **Protocol v6.** Slots go up to 20. The lobby's started byte becomes a flags
+  byte (bit 0 started, bit 1 shared room); the peer bitmask is 32-bit.
+  Protocol v5 tabs are asked to reload.
+- **Browser changes for 20 riders:**
+  - Relay messages queued during a worker decode are packed into one batch
+    (adapter op 113) with one status reply. Before this, a full room's ~380
+    messages/s overflowed the per-message queue and dropped about 1,600 pose
+    updates in 10 seconds.
+  - Only the nearest six riders keep a remote engine voice.
+  - At most eight name tags are shown, of which at most three are off-screen
+    arrows.
+  - Slots 4–19 use authored colors after the original red, blue, green and
+    yellow.
+  - The remote rig and GPU model caches hold one model per possible rider (20)
+    instead of eight.
+  - The Players page uses columns when 20 rows do not fit above Back.
+  - Arrivals spawn beside a random rider rather than slot 0.
+
+Host evidence (one Mac, Chromium/Metal headless, local `wrangler dev` relay,
+original content, 2026-10-16) from `tools/test_freeride.mjs`. Two real
+browsers (1280×896 and 390×844) and 18 synthetic riders using the Rust codec
+over Node WebSockets, at the 20 Hz near/fast cadence, each on a different
+quad/rider model:
+
+- Both browsers presented all 19 other riders, with 0 dropped pose updates and
+  247 remote GPU draws (13 per rider).
+- 75–85 FPS, 25.8–27.1 ms frame p95 and 1.1–1.7 ms render CPU.
+- 1–89 ms relay round trip, with at most six engine voices and eight name tags.
+- The filtered name was shown as `Rider 3`, the 21st claim opened `FREERD02`,
+  and Leave returned to the main menu.
+
+A relay-only load run with 20 synthetic riders at 20 Hz handled 380–400
+inbound and about 7,600 outbound messages a second, with a 0.4–13 ms ping
+round trip. A joined rider that stopped reading its socket did not stall the
+relay.
+
+Twice during early runs, before receive batching, the local `wrangler dev`
+process stopped answering every route, including `/multiplayer/version`, at
+0% CPU. It did not recur in later full-room runs. This is unexplained
+local-tooling behaviour, not a production observation.
+
+Production Durable Object CPU at full-room fan-out, physical phones and
+geographically separated latency have not been measured. Synthetic riders
+circle at a fixed height, so some sit under the terrain in screenshots.

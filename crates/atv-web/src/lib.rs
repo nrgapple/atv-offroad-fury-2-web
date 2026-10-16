@@ -2217,7 +2217,7 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         });
         return Ok(result);
     }
-    if (80..=85).contains(&op) || matches!(op, 109..=111) {
+    if (80..=85).contains(&op) || matches!(op, 109..=111 | 113) {
         return SIMULATION.with_borrow(|sim| multiplayer::dispatch(input, op, index, sim));
     }
     if op == 87 {
