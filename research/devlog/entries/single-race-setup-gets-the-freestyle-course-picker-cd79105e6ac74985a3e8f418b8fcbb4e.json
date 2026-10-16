@@ -1,0 +1,15 @@
+{
+  "id": "single-race-setup-gets-the-freestyle-course-picker-cd79105e6ac74985a3e8f418b8fcbb4e",
+  "timestamp": "2026-10-16T04:53:40.552053+00:00",
+  "recorded_at": "2026-10-16T04:54:40.418407+00:00",
+  "kind": "build",
+  "title": "Single Race setup gets the Freestyle course picker",
+  "summary": "Single Race setup now lists every published race course (32: Enduro, Nationals, Supercross) under event tabs with photo cards, a large preview with previous/next arrows and a Start Race button, Laps and CPU riders steppers below; Copy ride link sits beside Back. Q/E or shoulder buttons switch tabs; accepting the list starts the race.",
+  "details": [
+    "The last started race's course, laps and CPU riders are remembered across visits (like the last Freestyle course); browsing without starting does not overwrite it.",
+    "Verification: unit tests pass; content browser tests (test_race_courses with env01 and sx03, test_menu_preferences, test_race) pass; screenshots checked at desktop, tablet, short landscape and portrait."
+  ],
+  "limitation": "Menu-only change; race gameplay unchanged; on very short portrait phones (~640px tall) the course list shows about two courses at a time and scrolls.",
+  "image": "/devlog-images/single-race-setup-gets-the-freestyle-course-picker-cd79105e6ac74985a3e8f418b8fcbb4e.png",
+  "caption": "Single Race setup at desktop size with course picker, tabs, preview and controls shown"
+}
