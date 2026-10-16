@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 const FONT: &str = "tradegothic_boldcondensed_22s";
 const SELECTED_FONT: &str = "tradegothic_boldcondensed_22soff";
 const HEADER_FONT: &str = "tradegothic_boldcondenseditalic_-1fs_32ds";
+fn full_volume() -> usize {
+    100
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ControlRow {
@@ -73,6 +76,9 @@ pub struct Request {
     pub music_enabled: bool,
     #[serde(default)]
     pub music_volume: usize,
+    /// Sound-effect (vehicle, rider and world) volume, separate from music.
+    #[serde(default = "full_volume")]
+    pub sfx_volume: usize,
     #[serde(default)]
     pub menu_logo: bool,
     #[serde(default)]
@@ -1577,6 +1583,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                             "musictoggle",
                         ),
                         (format!("Volume: {}%", request.music_volume), "musicvolume"),
+                        (format!("SFX: {}%", request.sfx_volume), "sfxvolume"),
                     ]
                 } else {
                     vec![
@@ -1585,14 +1592,15 @@ pub fn layout(request: Request) -> Result<Frame> {
                         ("Defaults".to_string(), "bindreset"),
                     ]
                 };
+                let columns = actions.len() as f32;
                 for (i, (label, action)) in actions.iter().enumerate() {
                     f.button(
                         label,
                         action,
                         [
-                            20. + i as f32 * (w - 40.) / 3.,
+                            20. + i as f32 * (w - 40.) / columns,
                             h - 66.,
-                            (w - 40.) / 3.,
+                            (w - 40.) / columns,
                             54.,
                         ],
                         request.selection == f.choices.len(),
@@ -1639,6 +1647,7 @@ mod tests {
             music_status: String::new(),
             music_enabled: true,
             music_volume: 70,
+            sfx_volume: 100,
             menu_logo: true,
             menu_atv: true,
             diagnostics_mode: String::new(),

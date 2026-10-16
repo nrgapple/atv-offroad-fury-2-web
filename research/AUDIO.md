@@ -70,8 +70,8 @@ PS2. Initial history is seeded with the first browser snapshot rather than an
 unrecovered source sound-constructor history. Surround mixing, original mixer
 saturation, reverb and physical iOS listening remain unverified. Paused music
 preview silences vehicle/train output through the inherited gain lifecycle.
-Rider body impacts are described below. Additional rider vocals, chassis,
-surface and world sound scheduling remains open.
+Rider body impacts, rider vocals, chassis/surface sounds and venue world
+sounds are described below.
 
 ## Original rider body impacts
 
@@ -135,8 +135,121 @@ portrait capture shows the detached rider and original game view; sound proof
 comes from the separately instrumented audio nodes. This is host verification;
 public release verification remains separate.
 
-This component implements BodyImpact only. Rider vocals, chassis sounds and
-surface/skid/splash triggers require their own source event proof. The wheel
+BodyImpact is one of four rider/quad emitters; the others follow. The wheel
 particle placement routine previously investigated does not schedule sound.
 Hardware listening, SPU2 mixing/resampling and physical iOS playback remain
 unverified.
+
+## Rider vocals, chassis and surface sounds
+
+Exact-build evidence comes from private Ghidra exports of the shared sound
+table and four emitter classes; no instruction-comparison harness was run for
+this component, so these are decompiled-contract reconstructions with unit
+tests, not bounded native comparisons. `00213210` loads `rider.aud`'s twelve
+vocal lists and `vehicle.aud`'s QuadToQuadImpact and Wreck lists.
+
+**Rider vocals** (`002cc430`/`002cc640`/`002cc7d0`, request `002cc920`, update
+`002ccc60`, start `002ccdc0`): rider +268 selects the Female or Male lists.
+Events and triggers:
+
+| Event | List | Source trigger |
+| --- | --- | --- |
+| 1 Bang | Bang | `001eb6f0` quad-to-quad contact with local impact above 1 |
+| 2 Jostle | Jostle | `002daa50`, the hard-landing action of `001e8690` |
+| 3 wreck | Small below 20, Med below 40, else HardWreck | `001e8a20` wreck entry when the sampled impact is nonzero; `002ccc60` each wrecked frame when the rider body's sampled contact exceeds 3 |
+| 4 Fall | Fall | `001e8a20` when the quad is at least 30ft above the ground below it, or a boundary launch (+808) forced the wreck |
+
+Bang, Jostle and Fall step past an immediate repeat; the wreck lists always
+step on from a multi-sample pick. One voice: a request selects (consuming a
+random word) but starts only while nothing plays and the listener is within the
+100ft cull distance (min 30/max 100). The first wrecked frame with any rider
+contact stops a playing Fall yell and plays a wreck vocal. Position and Doppler
+use the same actor cache as BodyImpact.
+
+**Chassis** (`002cd4e0`/`002cd6c0`, update `002cdb80`; one voice, min 30/max
+70): `impact\landing.vag` once the quad has been more than 2ft above the ground
+(+9dc, written by `001e5260`) and then samples a world impact of at least 10
+while riding, at volume trunc(min(impact,60)/60×100); during a wreck, a
+chassis contact with impact at least 10 plays `Wreck[trunc(impact)/(60/n) − 1 +
+trunc(3·rand)]`; QuadToQuadImpact (`002cd990`, no-repeat, volume 60) on the
+same contact as Bang; `impact\h2ohit02.vag` (`002cdad0`, volume 100) when the
+body origin enters water moving downward (normalized −Y velocity above 0.3,
+`001d7280` with the +66c latch) and when a rider starts touching water
+(`001f0860`; mapped to the port's rider buoyancy contact flag, an inference).
+The voice position is fixed where a clip starts, as the original sets it only
+then. Recovery stops the drive-on emitter's collision sounds.
+
+**Terrain drive-on** (two `001c3330` material sound emitters at the front-left
+and front-right wheels, `001c3a90`/`001c3d80`/`001c3eb0`): `001e5260` stores
+each side's front-wheel terrain byte (−1 off the ground, 8 half a foot under
+water); sound `TerrainDriveOnSound[byte + 1]` plays when byte+1 is at least 2,
+so surface 0 is silent. Equal sides play one emitter at full scale, different
+sides both at 50%. Pitch is native + step·(mph − SampleSpeed) − trunc((step+1)·
+rand), with step = trunc(FreqSlope·(native/SampleSpeed) + 0.5); volume rises
+from MinVolume at MinSpeed to 100 at ResonantFreqSpeed and back to MinVolume at
+MaxSpeed, all integer arithmetic, mph = body speed × 0.68182. A record whose
+clip ended is only updated until a stop. Native SPU pitch is approximated from
+the VAG rate (rate·4096/48000); the bank's stored value is unrecovered.
+
+No skid sound exists in this build: there is no skid string, list or sample.
+Scene-object **material** drive-on and collision sounds (`MaterialDriveOnSoundN`,
+`MaterialCollisionSoundN`, objects mapped by `001fd550`/`001fd7a0` from the
+venue's `CollisionObjectsMaterialN` names) need an object sound-material id in
+scene collision and are not implemented; GAME01 and Training use only these.
+
+## Venue world sounds and crowd ambience
+
+Every venue's `<venue>.aud` is now loaded. **AmbientSound** records
+(`002053d0`, `00205230`, update `001c2880`) are unregistered 2D emitters at
+full volume: CycleTime accumulates, then a RandomTriggerPercent draw starts the
+clip when idle; a started loop is left alone. The shared play `001c1a50` draws
+the percent once per latch (+1c0 bit 4), which only a stop clears, so a
+non-100% ambient can fire at most once per map. **SoultreeSound** records
+(`00205920`, `00204b80`, factory `00173b20` with flags 2 | OneShot 1 | Looping 8)
+register with the manager `001736f0`: an emitter is in range when the nearest
+listener is closer than 1.2 × MaxDistance (`001c12e0`), an in-range idle
+emitter is (re)started through `001c1a50`, and a playing one out of range is
+stopped. Looping accepts the original numeric/T/F forms (`Looping=1` is common).
+All 121 OneShot fields are 0. The browser keeps at most 12 Soultree voices,
+nearest first (an authored bound; the original has 48 SPU2 voices).
+
+This covers the crowd ambience sets: FREE01–03 and all Supercross venues use
+the amateur `crowdf1` / pro `sx` Soultree loops (previously only CrowdPresent
+venues played them), and GAME01 (Coonce Arena) plays the indoor/hockey-arena
+`icrowd01`/`icrowd02` ambient loops. `Crowd\hockey.aud` (HCHEER/HOCKYEND/
+HOCKYWIN) belongs to the hockey event mode (`00335590`), which the port does
+not implement. The amateur/pro crowd reactions are described in `RACING.md`.
+
+## Separate SFX volume
+
+Settings → Audio has **SFX** beside the music volume (0–100% in 25% steps,
+saved as `atv-audio-v1` in browser storage). It scales the single bus that
+carries engine, train, crowd, rider, chassis, drive-on and world sounds; music,
+race stingers and menu music keep the music volume. The original game had
+separate Music and SFX volumes; the browser control is an adaptation.
+
+## Content and validation
+
+The R2-only compact `AUDIO.RES` gains 172 members (480 → 652, 14,564,439 →
+18,739,084 packed bytes): the 93 loose rider vocal VAGs both genders reference,
+12 chassis samples and 71 distinct venue drive-on/ambient/Soultree samples (4
+crowd loops were already present). No other runtime file changes, and an older
+package lacking them leaves these voices silent: vocal names, chassis clips
+and world sources whose sample is absent are dropped. Vocal clips stay encoded
+and decode on first use into a 24-clip LRU, rather than holding a whole bank of
+PCM.
+
+`tools/test_quad_audio.mjs` (content group) runs the actual Rust/WASM decisions
+against the original PCM with per-voice output instrumentation: a 70ft drop
+lands with `landing.vag` at volume 88; a 200ft drop wrecks with a HardWreck
+vocal (`mhurt17`); an off-map start's boundary launch plays a Fall yell
+(`myell04`); ENV01 snow starts `drv_snw2`; GAME01 plays its indoor crowd and SX01
+its Soultree crowd loops, all with nonzero output energy and no browser errors.
+An older content package keeps ENV07 driving with these voices silent. Phone
+emulation (host Chromium, 390×844 DPR3, CPU ×4, ENV07 with 55 Soultree and 4
+ambient sources, 20s of driving): the batched worker call ran 54 times per
+second with a 0.25ms mean (0.9ms p95) round trip, 1.5KB requests, two Soultree
+voices live and 66 buffer sources created; main-thread script time was within
+noise of the same run with the request emptied (1.28s vs 1.39s). Remote/CPU
+riders' vocals, material sounds, hockey reactions and hardware listening
+remain open.

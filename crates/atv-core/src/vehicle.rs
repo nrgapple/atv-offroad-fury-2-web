@@ -155,6 +155,19 @@ pub struct VehicleFrame {
     pub flip_events: Vec<crate::flip_tricks::Event>,
 }
 
+/// Recovered sound triggers accumulated until `take_audio_events`.
+/// `001e8a20` wreck entry, `001e8690`→`002daa50` hard-landing action and the
+/// `001eb6f0` quad-to-quad contact feed the rider vocal and chassis emitters.
+#[derive(Debug, Clone, Copy, Default, Serialize, serde::Deserialize)]
+pub struct AudioEvents {
+    pub wreck_entry: Option<crate::quad_sounds::WreckEntry>,
+    pub hard_landing: bool,
+    /// Strongest quad-to-quad contact's local impact magnitude (0 = none).
+    pub quad_contact: f32,
+    /// Magnitude of the latest step's sampled world impact (quad +d0).
+    pub impact: f32,
+}
+
 #[derive(Debug, Serialize)]
 pub struct WheelEffectState {
     pub time: f32,
@@ -258,6 +271,8 @@ pub struct Vehicle {
     water_height: f32,
     water_failure: crate::water_failure::Clock,
     landing_action: Option<crate::rider_pose::Landing>,
+    audio_events: AudioEvents,
+    audio_height: f32,
     stunt_landing_safe: bool,
     stunt_state_four: bool,
     forced_landing: bool,
@@ -464,6 +479,8 @@ impl Vehicle {
             water_height: -256.,
             water_failure: crate::water_failure::Clock::default(),
             landing_action: None,
+            audio_events: AudioEvents::default(),
+            audio_height: 0.,
             stunt_landing_safe: true,
             stunt_state_four: false,
             forced_landing: false,
@@ -586,6 +603,24 @@ impl Vehicle {
         self.rider_state.preload_armed = false;
         if !self.rider_state.preload_active {
             self.rider_state.timer = 0.0;
+        }
+    }
+    /// Sound triggers since the previous call (one simulation frame).
+    pub fn take_audio_events(&mut self) -> AudioEvents {
+        let impact = self.audio_events.impact;
+        let events = std::mem::take(&mut self.audio_events);
+        self.audio_events.impact = impact;
+        events
+    }
+    ///001e8a20 classifies the vocal from the height above the ground below
+    ///the quad, a boundary launch, and the sampled impact.
+    fn note_wreck_audio(&mut self, boundary: bool, impact: f32) {
+        if self.wreck.phase == crate::wreck::Phase::Riding && self.wreck_physics.is_some() {
+            self.audio_events.wreck_entry = Some(crate::quad_sounds::WreckEntry::classify(
+                self.audio_height,
+                boundary,
+                impact,
+            ));
         }
     }
     pub fn begin_wreck(&mut self, kind: crate::wreck::Kind) {
@@ -848,6 +883,10 @@ impl Vehicle {
             return false;
         };
         let delta_velocity = sub(response.velocity, self.body.linear_velocity);
+        self.audio_events.quad_contact = self
+            .audio_events
+            .quad_contact
+            .max(speed_magnitude(delta_velocity));
         self.body.center = add(self.body.center, response.displacement);
         self.body.linear_velocity = response.velocity;
         // The proxy spins about world Y; the body stores body-local rates.
@@ -870,6 +909,7 @@ impl Vehicle {
                 stunt_landing_safe: true,
             })
         {
+            self.note_wreck_audio(false, speed_magnitude(delta_velocity));
             self.begin_wreck(kind);
         }
         true
@@ -1753,6 +1793,7 @@ impl Vehicle {
             self.body_config.max_speed_squared = crate::boundary_launch::LAUNCH_MAX_SPEED_SQUARED;
             self.boundary_launch.begin();
             self.skip_vegetation_query = true;
+            self.note_wreck_audio(true, speed_magnitude(impact));
             self.begin_wreck(kind);
         }
         //001e5ff8 applies the deep-water clock after physics/edge launch and
@@ -1775,6 +1816,13 @@ impl Vehicle {
             inverse_transform(self.body.basis(), self.body.linear_velocity)[1],
             dt,
         )?;
+        self.audio_events.impact = speed_magnitude(impact);
+        {
+            let origin = self.body.origin(&self.body_config);
+            self.audio_height = terrain
+                .contact(origin[0], origin[2])?
+                .map_or(0., |ground| origin[1] - ground.height);
+        }
         if self.wreck.phase == crate::wreck::Phase::Riding
             && let Some(config) = &self.wreck_physics
         {
@@ -1810,8 +1858,11 @@ impl Vehicle {
                 forward_speed: inverse_transform(self.body.basis(), self.body.linear_velocity)[2],
                 stunt_landing_safe: self.stunt_landing_safe,
             }) {
+                self.audio_events.hard_landing |= landing_candidate.is_some();
+                self.note_wreck_audio(false, speed_magnitude(impact));
                 self.begin_wreck(kind);
             } else {
+                self.audio_events.hard_landing |= landing_candidate.is_some();
                 self.landing_action = landing_candidate;
             }
         }
