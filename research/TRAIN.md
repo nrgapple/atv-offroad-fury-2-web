@@ -6,7 +6,9 @@ carriage poses and wheel-node poses. The host integration draws the original
 runtime meshes. Status: live collision with all 11 train bodies, train
 encounters and the three original train samples passed public verification on
 2026-10-12 (see [TRAIN_CONTACT.md](TRAIN_CONTACT.md) and `DEPLOYMENT.md`);
-particle smoke and complete original train behavior remain unfinished. The
+locomotive smoke is connected as a host component (see
+[Locomotive smoke](#locomotive-smoke)); complete original train behavior remains
+unfinished. The
 sections below are dated history. Original
 resources, native exports, instruction probes and their output stay under ignored
 `private/` and `work/`. No disc executable or emulator runs in the browser.
@@ -124,7 +126,82 @@ ATV_TEST_URL=<host-or-public-url> PLAYWRIGHT_MODULE=<playwright-module> node too
 
 At this checkpoint this was host evidence, not a verified public release. The bridge then supplied no-hit for the
 train's scene-height override; dynamic train collision response and spatial loop
-sounds were later connected (see TRAIN_CONTACT.md). Particle smoke remains unfinished. The smoke PSG is the small original
-emitter marker, not a reconstructed smoke effect. These gaps must remain explicit
+sounds were later connected (see TRAIN_CONTACT.md), and locomotive smoke after
+that (below). The smoke PSG is the small original emitter marker the smoke
+attaches to. These gaps must remain explicit
 through host/public verification; moving rendered cars and wheels alone do not
 establish complete original train behavior or full handling parity.
+
+## Locomotive smoke
+
+Source: the Arlington Freestyle mode TOY declares one type0 emitter
+`locosmoke.emt` attached to `Smoke.slt` (the zero-lag procedural follower) with
+offset (0, 18, 0). `0019a680` copies the emitter position to its previous slot,
+then takes the actor's world translation (`00165af0`) plus the offset rotated by
+its basis (`001662f0`, X·x + Y·y, then + Z·z). The type0 update `0019c200` then
+uses this step's displacement:
+
+- distance = |current − previous|; speed = distance / dt. Below
+  `MinimumEmissionSpeed` nothing is emitted.
+- size = clamp(`InitialSizeToSpeedRatio`·speed, min, max initial size);
+  life = clamp(`LifeToSpeedRatio`·speed, `MinimumLife`, `MaximumLife`);
+  rate = clamp(`ParticlesToDistanceRatio`·distance + `ParticlesToSpeedRatio`·speed,
+  `MinimumEmitRate`·dt, `MaximumEmitRate`·dt), then the shared fractional
+  accumulator (which adds the carried phase twice below one particle) and
+  max(`MinParticlesPerFrame`, count).
+- Births start at the current position and step back by displacement / count,
+  so a fast emitter leaves a trail along its path.
+- Above 0.25 ft of travel the authored velocity is re-expressed in a travel
+  frame by VU macro code: n = travel direction, side = normalize(up × n)
+  (+Z replaces up when |n.x| and |n.z| are both below 1/64), up' = normalize(n ×
+  side), velocity = (Vx·side + Vy·up') + Vz·n. Particles never inherit the
+  train's velocity, so smoke stays where it was born while the train moves on.
+- `EmitMode=3` alternates 0.25 s on and 0.25 s off, giving separate puffs.
+
+At the route's ~44 ft/s the source file yields size 1 (growing 4 ft/s), life
+5,000 ms with the standard 0.5/1.0 jitter, and the minimum rate, so roughly 50
+smoke sprites are alive. The rest of the path (lifetime, growth, fade, lighting,
+atlas group 9, depth-sorted instanced draw) is the existing ambient CPU sprite
+path in [AMBIENT_EFFECTS.md](AMBIENT_EFFECTS.md); no new runtime content,
+texture or draw family is needed. Smoke shares the ambient alpha-blend instanced
+draw, so it adds at most one draw call (when no other ambient sprite is in view).
+
+Integration. The ambient planner now turns an attachment with no static model
+into an actor placement. It stays dormant until a pose arrives; there is no
+phantom static emitter. Each fixed step (ATV and motorcycle batches) passes the
+train frame's car matrices to `Effects::set_actor_poses` before the particle step.
+Multiplayer keeps the shared train clock unchanged. When synchronization jumps
+the route clock, `relocate_actors` treats the next pose like a freshly placed
+emitter, so smoke is not sprayed along the skipped stretch of route (port
+adaptation). Pause stops births; vehicle reset keeps the scene clock and smoke.
+
+Capacity. The native scene CPU manager is created by `00209790` through
+`001435f0` with 1,500 shared particles. The port's static budget remains 600, and
+on Arlington the waterfalls alone come close to filling it. Moving-actor emitters
+therefore get a separate bounded reserve of 128 slots (frame capacity 728 only
+when an actor emitter exists). This keeps the total below the native pool and
+leaves other maps unchanged.
+
+Evidence. A private finite interpreter runs the actual `0019c200` instructions
+for 400 moving cases (256,910 EE/VU-macro instructions, 778 births). These
+include static, sub-0.25 ft, near-vertical, horizontal and minimum-per-frame
+cases. Rust matches all 10,514 compared words: position, velocity, life, size,
+growth, frame, flags, age and the output phase. The existing static type0/2/8
+(7,272 and 6,216) and timer (2,000) gates still match. The timer/attachment
+gate is supplied, and the original LCG is a seeded service. Not covered: the
+zone-visibility test, under which `0019c200` emits only when the attached
+model's zone was reached by this frame's portal walk (`001a2a80`). The port
+has no zone visibility, so it emits whenever the timer allows. Also not
+covered: native update order between the train actor and the particle manager,
+and shared global RNG order.
+
+Host checks: Rust unit tests cover dormancy without a pose, the dirty first
+step, speed-scaled size/life, the minimum-rate count, the side-axis velocity
+and relocation. `tools/test_train_smoke.mjs` (content group) runs at desktop and
+390×844/DPR3 and checks the binding, ~44.7 ft/s emitter travel, ≥10 trailing
+sprites, the instanced draw, reset continuity, pause freezing births, and zero
+GL/page errors.
+Phone emulation (390×844/DPR3, ×4 CPU throttle, smoke in view, two alternating
+rounds): render CPU 1.94/1.43 ms before vs 1.55/1.44 ms after; worker batch
+0.74/0.67 ms vs 0.63/0.71 ms; 199 vs 200 draws. That is host noise, not a
+physical-phone result.

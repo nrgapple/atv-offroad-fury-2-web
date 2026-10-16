@@ -1,0 +1,16 @@
+{
+  "id": "physics-leftovers-audit-no-behavior-change-d19f3b1106e341b1b8804a5efafc8011",
+  "timestamp": "2026-10-16T20:10:40.300231+00:00",
+  "recorded_at": "2026-10-16T21:59:35.042161+00:00",
+  "kind": "verification",
+  "title": "Physics leftovers audit \u2014 no behavior change",
+  "summary": "An audit of remaining physics notes found two items already working and one no longer reproducing, and it explained most of the residual tire/terrain overlap. No gameplay behavior changed; the only code change is a regression test. Host verification only.",
+  "details": [
+    "Stale notes corrected: the thrown rider already collides with plant proxies and with Arlington's moving train bodies during wrecks. A new regression test confirms that moving-body point velocity drags the rider. Shipped in PR #134 (merge a118ed8).",
+    "ENV03 straight-throttle boundary stranding no longer reproduces on current main: 3/3 env03 and 1/1 env04 runs passed, and 1,500 steps from the old stranded pose ran without stranding. The original has no stuck timer, so none was added.",
+    "Residual tire/terrain overlap, explained: about 0.22 ft comes from one-frame ordering (springs are evaluated before integration and the frame is drawn after, as the original does), suspension bottoming on hard cross-slope landings, and single centre-plane contact per wheel. The vertical measurement also overstates the penetration by about 20% at 35 degrees. Ruled out: post-loop correction, smooth normals, wheel radius mismatch. About 0.12 ft remains unattributed."
+  ],
+  "limitation": "Host verification only; not publicly verified or checked on a physical phone. About 0.12 ft of residual overlap is still unattributed, and original-game handling fidelity is not claimed.",
+  "image": "/devlog-images/physics-leftovers-audit-no-behavior-change-d19f3b1106e341b1b8804a5efafc8011.png",
+  "caption": "Host capture of ENV03 riding at 54 mph from the old stranding pose; it no longer strands. A second capture of the ENV03 boundary-launch frame with the debug overlay was also inspected."
+}
