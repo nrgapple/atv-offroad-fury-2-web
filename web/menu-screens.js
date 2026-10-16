@@ -138,10 +138,23 @@ function brandLogo(fe) {
 
 function buildMenu(fe, left, panel) {
   const list = h('nav', {class:'ms-rows', 'aria-label':titles[fe.page]});
-  for (const action of fe.frame.choices) if (action !== 'back') list.append(row(fe, action));
+  for (const action of fe.frame.choices) {
+    if (action === 'back') continue;
+    const button = row(fe, action, action === 'freeride' ? freerideExtras() : []);
+    if (action === 'freeride') button?.classList.add('ms-freeride-row');
+    list.append(button);
+  }
   left.append(list);
   if (fe.page === 'multiplayer') panel.append(brandLogo(fe) ?? '');
   else rideStage(panel, brandLogo(fe));
+}
+
+// Arlington Free Ride is new, and shows how many people are riding it now.
+function freerideExtras() {
+  return [h('span', {class:'ms-new', text:'New', 'aria-hidden':'true'}), h('span', {class:'ms-live', 'aria-hidden':'true', hidden:true})];
+}
+export function ridersLabel(riders) {
+  return Number.isInteger(riders) && riders >= 0 ? `${riders} riding` : '';
 }
 
 function buildForm(fe, left, panel) {
@@ -370,6 +383,11 @@ function sync(fe) {
     const [label, ...rest] = target.label.split(': ');
     button.querySelector('.ms-row-label').textContent = value ? label : target.label;
     if (value) value.textContent = rest.join(': ');
+  }
+  for (const live of root.querySelectorAll('.ms-live')) {
+    const text = ridersLabel(fe.freerideRiders);
+    live.textContent = text; live.hidden = !text; live.dataset.empty = String(fe.freerideRiders === 0);
+    live.closest('button')?.setAttribute('aria-description', text ? `New. ${text} now.` : 'New.');
   }
   if (page === 'race') {
     const course = fe.raceSettings.course, track = fe.raceTracks().find(item => item.id === course);

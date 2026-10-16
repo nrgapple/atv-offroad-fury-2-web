@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {loadPlayerSelection,savePlayerSelection,Frontend,unlockedCourses,normalizedAppearance,appearanceBytes,appearanceFromBytes} from './frontend.js';
 import {ENVIRONMENTS,courseResource} from './launch.js';
+import {ridersLabel} from './menu-screens.js';
 const defaults={quadId:1,riderId:0,freestyleEnvironment:'env01',race:{course:'env01',laps:3,cpu:3},playerName:'Rider',appearance:{gear:[0,0,0,0,0,0,0],paint:0}};
 test('saved vehicle, rider and last-played Freestyle course survive a storage roundtrip',()=>{
  for(const quadId of [1,26,27,46]) {
@@ -87,4 +88,9 @@ test('rider gear steps through Original and the catalog; jersey carries matching
  assert.deepEqual(Frontend.prototype.gearRows.call(menu),['Original','Item 2','Original','Original','Original','Original','Black']);
  assert.deepEqual(appearanceFromBytes(appearanceBytes(menu.appearance)),menu.appearance);
  for(const bad of [{gear:[65,0,0,0,0,0,0],paint:0},{gear:[0,0],paint:1},{gear:[0,0,0,0,0,0,0],paint:11}])assert.deepEqual(normalizedAppearance(bad),bad.gear.length===7&&bad.paint===11?{gear:bad.gear,paint:0}:{...normalizedAppearance(null),paint:bad.paint<11?bad.paint:0});
+});
+
+test('the Free Ride menu row counts riders and hides an unknown count',()=>{
+  assert.equal(ridersLabel(0),'0 riding');assert.equal(ridersLabel(12),'12 riding');
+  for(const unknown of [null,undefined,-1,1.5,'3'])assert.equal(ridersLabel(unknown),'');
 });

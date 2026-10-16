@@ -44,6 +44,8 @@ async function route(request, env) {
     }
     const allowed = (env.GAME_ORIGINS ?? env.GAME_ORIGIN ?? url.origin).split(',').map(value => value.trim()).filter(Boolean);
     if (path === '/api/events') return usageEvent(request, env, allowed);
+    // The public Free Ride rider count: same-origin GETs carry no Origin header.
+    if (path === '/multiplayer/freeride/riders') return env.MULTIPLAYER ? multiplayerRequest(request, env) : new Response('Multiplayer unavailable', {status:503});
     if (path.startsWith('/multiplayer/')) {
       const origin = request.headers.get('Origin');
       if (!origin || !allowed.includes(origin)) return new Response('Origin denied', {status:403});

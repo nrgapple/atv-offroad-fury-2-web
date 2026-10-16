@@ -506,3 +506,40 @@ local-tooling behaviour, not a production observation.
 Production Durable Object CPU at full-room fan-out, physical phones and
 geographically separated latency have not been measured. Synthetic riders
 circle at a fixed height, so some sit under the terrain in screenshots.
+
+### Free Ride menu count, NEW tag and direct loading (host checkpoint, 2026-10-16)
+
+- **Direct loading.** Tapping Arlington Free Ride opens the Arlington loading
+  screen at once and stays there while the slot is claimed and the ride
+  starts. Earlier, the private-room lobby page flashed first.
+- **Live rider count.** The menu row has a NEW tag and a live "N riding"
+  count, refreshed every 15 seconds while the main menu is open. On phones
+  narrower than 380 px, the tag and count wrap onto a second line.
+  - Each shared room reports its rider count (connected plus reconnecting
+    riders) to one counter Durable Object (`freeride-stats`). Rooms report
+    from their alarm: within 5 seconds of a claim, otherwise every 30 seconds,
+    and 0 when the room closes. Reports never run on the rider message path.
+  - `GET /multiplayer/freeride/riders` sums reports less than 90 seconds old,
+    so a vanished room drops out on its own.
+  - The number is public and read-only. The route answers without an
+    `Origin` header, because same-origin GETs do not send one. The Worker
+    caches it for 10 seconds per edge location, and it never touches the
+    admission budget.
+- **Relay CPU.** The relay now keeps its broadcast recipients in memory and
+  rebuilds them only when a rider joins or leaves. Before, each of a full
+  room's ~400 poses a second deserialized every rider's attachment. In the
+  relay-only 20-rider, 20 Hz load, local `workerd` CPU fell from 26–31% to
+  18–21% of one core.
+
+Host evidence: three consecutive passes of `tools/test_freeride.mjs` on one
+Mac.
+
+- After the tap, only the loading screen appeared; no lobby page.
+- The 390 px main menu showed "20 riding".
+- All 19 other riders were presented with 0 dropped poses, at 73–79 FPS.
+
+The intermittent local `wrangler dev` stall reappeared once with the first
+counter design, which reported from the join and leave message path. During
+that stall, `workerd`'s main thread spun in its isolate lock queue at 99% CPU.
+It did not recur in the three runs after reports moved to the alarm and
+recipients were cached. Production behaviour is not measured.
