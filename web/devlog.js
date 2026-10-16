@@ -128,8 +128,6 @@ async function refresh() {
     if (!Array.isArray(log.entries)) throw new Error('Invalid checkpoint data');
     const next = JSON.stringify(log);
     if (next !== revision) {
-      $('build-state').textContent = log.status;
-      $('working-on').textContent = log.working_on ? `Current work: ${log.working_on}` : '';
       renderPortStatus(log.port_status);
       const entries = [...log.entries].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
       // Keep existing cards/images when appending new checkpoints during viewing.
@@ -144,10 +142,9 @@ async function refresh() {
       if (!revision) revealHashTarget();
       revision = next;
     }
-    $('updated').textContent = `Updated ${date(log.updated_at)} · Refreshes every 15 seconds`;
     loaded = true;
   } catch {
-    $('updated').textContent = loaded ? 'Refresh unavailable; showing the last loaded checkpoints.' : 'Could not load the log. Retrying in 15 seconds.';
+    if (!loaded) $('entries').replaceChildren(element('p', 'Could not load the log. Retrying in 15 seconds.', 'empty'));
   }
 }
 const tabs = { log: [$('tab-log'), $('panel-log')], board: [$('tab-board'), $('port-status')] };
