@@ -60,6 +60,10 @@ export const TESTS = {
     reason:
       'Fails on unmodified origin/main too: the bailout no longer produces intact-ATV aerial ragdoll frames before impact'
   },
+  'test_graphics_presets.mjs': {
+    group: 'content',
+    note: 'Set ATV_GRAPHICS_BASELINE to a server running the previous main build for the Original pixel-identical gate'
+  },
   'test_hd_settings.mjs': {
     defaults: ['crash mode (original)', 'crash camera (tight)', 'chase camera (original)'],
     group: 'content'

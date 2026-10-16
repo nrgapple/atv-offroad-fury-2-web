@@ -20,7 +20,9 @@ import { loadAmbientEffects, AmbientEffectsRenderer } from './ambient-effects.js
 import { loadWheelEffects, loadMotorcycleEffects, WheelEffectsRenderer, BloodRenderer, bloodCount } from './wheel-effects.js';
 import {loadSnow,SnowRenderer} from './weather.js';
 import {materialPassKey} from './scenery-materials.js';
-import { MotorcyclePresentation } from './motorcycle-presentation.js';
+import { MotorcyclePresentation, AtvPresentation } from './motorcycle-presentation.js';
+import { GraphicsSettings, VibrationSettings, Rumble, DirtBuildup, parseDirtZones } from './graphics.js';
+import { ContactShadows, shadowFootprint } from './vehicle-shadows.js';
 import { KeyboardHelp } from './keyboard-help.js';
 const $ = id => document.getElementById(id);
 const canvas = $('game');
@@ -55,6 +57,44 @@ crashSettings.onChange = () => {
   if(crashSettings.mode==='gorn' && terrain && !lost && !bloodRenderer)bloodRenderer=new BloodRenderer(gl);
   if (simFrame) acceptFrame({...simFrame,funny_crash:null},false);
 };
+// Display → Graphics. Original keeps the recovered renderer exactly; Enhanced
+// and High add only presentation (see research/GRAPHICS_PRESETS.md).
+const graphicsSettings = new GraphicsSettings();
+let graphics = graphicsSettings.features;
+const vibrationSettings = new VibrationSettings();
+const rumble = new Rumble({ pad: () => focused ? gamepad() : null, touch: coarsePointer });
+const atvPresentation = new AtvPresentation();
+let contactShadows, dirtBuildup = new DirtBuildup(), anisotropyExtension, anisotropicTextures = new Map();
+graphicsSettings.onChange = () => {
+  graphics = graphicsSettings.features; atvPresentation.reset(); presentedFrame = presentedCamera = undefined;
+  if (!graphics.contactShadows) { contactShadows?.dispose(); contactShadows = undefined; }
+  if (!lost) applyAnisotropy();
+  scheduleRender();
+};
+// Requested anisotropy clamped to the device; 0 (Original) never sets it.
+function anisotropyLevel() {
+  if (!graphics.anisotropy || !gl) return 0;
+  if (anisotropyExtension === undefined) {
+    anisotropyExtension = gl.getExtension('EXT_texture_filter_anisotropic') ?? null;
+    if (anisotropyExtension) anisotropyExtension.max = gl.getParameter(anisotropyExtension.MAX_TEXTURE_MAX_ANISOTROPY_EXT) || 1;
+  }
+  if (!anisotropyExtension) return 0;
+  return Math.max(1, Math.min(graphics.anisotropy, anisotropyExtension.max));
+}
+function anisotropic(texture, target = gl.TEXTURE_2D) {
+  anisotropicTextures.set(texture, target);
+  const level = anisotropyLevel();
+  if (level) { gl.bindTexture(target, texture); gl.texParameterf(target, anisotropyExtension.TEXTURE_MAX_ANISOTROPY_EXT, level); }
+  return texture;
+}
+function applyAnisotropy() {
+  const level = anisotropyLevel();
+  if (!anisotropyExtension) return;
+  gl.activeTexture(gl.TEXTURE0);
+  for (const [texture, target] of anisotropicTextures) { gl.bindTexture(target, texture); gl.texParameterf(target, anisotropyExtension.TEXTURE_MAX_ANISOTROPY_EXT, level || 1); }
+  gl.bindTexture(gl.TEXTURE_2D, fallbackTexture);
+  diagnostics.anisotropy = level;
+}
 
 // Restart Race goes straight to the countdown; a new race plays the intro.
 let raceRestarting = false;
@@ -445,7 +485,8 @@ async function baseTextures(mesh, materialArchive, materialEntries, cache = new 
       // tower lattice. FB_ONLY/source-alpha edge blending is not yet a complete GS match.
       image = { ...info, rgba, animationFrames, shader, reflective, pass, materialText, alphaTest: described.alpha_test, sceneAlphaFailure: described.scene_alpha_failure, sceneAlphaCutoff: described.scene_alpha_cutoff };
     } catch (error) { image = { shader, reflective, error: error.message }; }
-    const mudIndex = described.mud_maps.length > 1 ? findMaterial(`${described.mud_maps[1]}.pst`) : -1;
+    // MX MudAnimator maps, or the ATV2 PixelAnimation dirt pass (vehicle/rider).
+    const mudName = described.mud_maps.length > 1 ? described.mud_maps[1] : described.dirt_map, mudIndex = mudName ? findMaterial(`${mudName}.pst`) : -1;
     if (mudIndex >= 0) { const bytes=await codec(3,materialArchive,mudIndex); image.mud={...await json(7,bytes),rgba:await codec(8,bytes)}; }
     textures.set(passKey, image); cache.set(passKey, image);
     }
@@ -570,6 +611,7 @@ uniform sampler2D baseTexture;
 uniform bool useTexture;
 uniform sampler2D motorcycleMudTexture;
 uniform float motorcycleMudAmount;
+uniform bool mudReveal;
 uniform float alphaCutoff;
 uniform bool useTerrainTexture;
 uniform highp sampler2DArray terrainColors;
@@ -610,7 +652,10 @@ void main() {
     if (useEcosystem && ecoPerInstance) { if (sampled.a <= (ecoBillboard ? alphaCutoff : ecoReference)) discard; }
     else if (alphaFailPass ? sampled.a >= alphaCutoff : sampled.a < alphaCutoff) discard;
     base = applyPaint(sampled.rgb, quadPaint);
-    if (motorcycleMudAmount > 0.0) {vec4 mud = texture(motorcycleMudTexture,texcoord); base = mix(base,mud.rgb,clamp(mud.a*(255.0/128.0)*motorcycleMudAmount,0.0,1.0));}
+    if (motorcycleMudAmount > 0.0) {vec4 mud = texture(motorcycleMudTexture,texcoord);
+      // ATV2 dirt passes (authored reveal): heavier-alpha texels dirty first.
+      float weight = mudReveal ? clamp(mud.a*(255.0/128.0),0.0,1.0)*smoothstep(1.0-motorcycleMudAmount,1.12-motorcycleMudAmount,mud.a) : clamp(mud.a*(255.0/128.0)*motorcycleMudAmount,0.0,1.0);
+      base = mix(base,mud.rgb,weight);}
     // GS source alpha uses 128 for unity, while decoded PST bytes use 255.
     sourceAlpha = sceneryBlend ? clamp(sampled.a * (255.0 / 128.0), 0.0, 1.0) : 1.0;
   }
@@ -661,6 +706,7 @@ function initializeGl() {
   uniforms.quadBones = gl.getUniformLocation(program, 'quadBones[0]');
   uniforms.motorcycleMudTexture = gl.getUniformLocation(program,'motorcycleMudTexture');
   uniforms.motorcycleMudAmount = gl.getUniformLocation(program,'motorcycleMudAmount');
+  uniforms.mudReveal = gl.getUniformLocation(program,'mudReveal');
   gl.useProgram(program);gl.uniform1i(uniforms.motorcycleMudTexture,4);
   fallbackTexture = texture({ width: 1, height: 1, rgba: new Uint8Array([255, 255, 255, 255]) });
   gl.activeTexture(gl.TEXTURE4);gl.bindTexture(gl.TEXTURE_2D,fallbackTexture);gl.activeTexture(gl.TEXTURE0);
@@ -691,6 +737,7 @@ function clearMesh() {
   if(billboard){gl.deleteBuffer(billboard.instances);gl.deleteVertexArray(billboard.chunk.vao);gl.deleteBuffer(billboard.chunk.vertices);gl.deleteBuffer(billboard.chunk.indices);}
   ecoGroups = []; ecoBillboard = null;
   gpuTextures = [];
+  anisotropicTextures = new Map(); anisotropic(terrainAtlas, gl.TEXTURE_2D_ARRAY); anisotropic(terrainDetailMap);
   chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = [];
 }
 function texture({ width, height, rgba }) {
@@ -773,7 +820,8 @@ function setVehicle(source) {
   // Keep the original scene spawn height unless its bind-pose bounds intersect ground.
   position[1] = Math.max(position[1], terrainHeight(position[0], position[2]) - min[1]);
   if (source.mesh.nodes.length > 32) throw new Error('Quad node count exceeds supported GPU pose capacity.');
-  vehicle = { groups, nodes: source.mesh.nodes, nodeMatrices: new Float32Array(source.mesh.nodes.flatMap(node => node.world_matrix)), position, yaw: source.scene.yaw, length: max[2] - min[2], height: max[1] - min[1], materials: source.mesh.materials, textures: source.textures, rider: source.rider };
+  vehicle = { groups, nodes: source.mesh.nodes, nodeMatrices: new Float32Array(source.mesh.nodes.flatMap(node => node.world_matrix)), position, yaw: source.scene.yaw, length: max[2] - min[2], width: max[0] - min[0], height: max[1] - min[1], restLift: null, materials: source.mesh.materials, textures: source.textures, rider: source.rider };
+  vehicle.pelvis = pelvisNode(source.rider?.mesh?.nodes);
 }
 function transform(matrix, value, point = false) {
   return [0, 1, 2].map(row => matrix[row] * value[0] + matrix[4 + row] * value[1] + matrix[8 + row] * value[2] + (point ? matrix[12 + row] : 0));
@@ -1003,6 +1051,47 @@ function drawRemotePlayers() {
   gl.uniform2fv(uniforms.quadPaint,PAINT_PALETTE[0]);
   diagnostics.multiplayerDraws=draws; diagnostics.remoteGear={gear:gearPeers,paint:paintPeers};
 }
+// Rider rig node that carries the torso; contact shadows follow it when detached.
+function pelvisNode(nodes) {
+  if (!nodes?.length) return 0;
+  for (const pattern of [/pelvis/i, /hip/i, /torso|spine/i]) { const at = nodes.findIndex(node => pattern.test(node.name ?? '')); if (at >= 0) return at; }
+  return 0;
+}
+// World matrix of a rider node: model-space pose under its rider world.
+function nodeWorld(world, pose, node) {
+  const m = pose.length >= (node + 1) * 16 ? pose.subarray?.(node * 16, node * 16 + 16) ?? pose.slice(node * 16, node * 16 + 16) : null;
+  if (!m) return world;
+  const out = new Float32Array(16);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) out[c * 4 + r] = world[r] * m[c * 4] + world[4 + r] * m[c * 4 + 1] + world[8 + r] * m[c * 4 + 2] + world[12 + r] * m[c * 4 + 3];
+  return out;
+}
+// Enhanced/High soft contact shadows for the player, its detached rider, CPU
+// racers and remote riders, in one draw under the vegetation pass.
+function drawContactShadows({ viewProjection, actor, quadWorld, riderWorld, smoothRider, opponents }) {
+  const ground = (x, z) => terrainHeight(x, z), rest = vehicle.restLift ?? 1.5, footprints = [];
+  const distance = m => Math.hypot(m[12] - camera.x, m[13] - camera.y, m[14] - camera.z);
+  const quad = (m, strength = .6) => footprints.push(shadowFootprint({ matrix: m, length: vehicle.length, width: vehicle.width, lift: m[13] - ground(m[12], m[14]) - rest, distance: distance(m), strength }));
+  const rider = (m, strength = .45) => footprints.push(shadowFootprint({ matrix: m, length: 3, width: 2.2, lift: m[13] - ground(m[12], m[14]) - .9, distance: distance(m), strength }));
+  quad(quadWorld);
+  // Detached: Original/Crazy wreck rig, or the ragdoll's world-space bones.
+  if (actor?.rider_world_matrix || (funnyCrashes && simFrame?.funny_crash?.rider_node_matrices.length)) rider(nodeWorld(riderWorld, smoothRider, vehicle.pelvis));
+  for (const cpu of opponents) {
+    if (Math.hypot(cpu.origin[0] - camera.x, cpu.origin[2] - camera.z) > 240) continue;
+    const m = vehicleMatrix({ origin: cpu.origin, orientation: cpu.physical?.orientation ?? [Math.cos(cpu.yaw / 2), 0, Math.sin(cpu.yaw / 2), 0] });
+    quad(m);
+    if (cpu.physical?.rider_world_matrix) rider(nodeWorld(new Float32Array(cpu.physical.rider_world_matrix), new Float32Array(cpu.physical.rider_matrices.flat()), vehicle.pelvis));
+  }
+  for (const peer of multiplayer?.remote ?? []) {
+    if (!peer.world_matrix || peer.world_matrix.length !== 16) continue;
+    const m = new Float32Array(peer.world_matrix); quad(m);
+    const r = peer.rider_world_matrix;
+    if (r?.length === 16 && Math.hypot(r[12] - m[12], r[13] - m[13], r[14] - m[14]) > 1.5) rider(new Float32Array(r));
+  }
+  contactShadows ??= new ContactShadows(gl);
+  contactShadows.draw({ viewProjection, footprints, height: ground });
+  gl.useProgram(program);
+  diagnostics.contactShadows = { draws: contactShadows.draws, casters: contactShadows.casters, gpuBytes: contactShadows.gpuBytes };
+}
 function buildEcosystem() {
   const eco = terrain.ecosystem;
   diagnostics.vegetationPlacements = eco?.placements.length ?? 0;
@@ -1011,7 +1100,7 @@ function buildEcosystem() {
   eco.billboard = ecoBillboard = null;
   for (const [name, decoded] of eco.textures) {
     if (!decoded.rgba) continue;
-    const gpu = texture(decoded); textures.set(name, gpu); gpuTextures.push(gpu);
+    const gpu = anisotropic(texture(decoded)); textures.set(name, gpu); gpuTextures.push(gpu);
   }
   // Rust registers placements (00129b70 resampling) and owns per-frame
   // selection; this layer keeps meshes, materials and instance buffers.
@@ -1272,7 +1361,7 @@ function buildMesh() {
   }
   if (terrain.world) {
     const world = terrain.world, textures = new Map(), geometry = new Map();
-    for (const [name, decoded] of world.textures) { if (!decoded.rgba) continue; const gpu = texture(decoded); textures.set(name, gpu); gpuTextures.push(gpu); }
+    for (const [name, decoded] of world.textures) { if (!decoded.rgba) continue; const gpu = anisotropic(texture(decoded)); textures.set(name, gpu); gpuTextures.push(gpu); }
     for (const [name, mesh] of world.meshes) {
       const groups = [];
       for (const group of mesh.lods[0].groups) {
@@ -1290,7 +1379,7 @@ function buildMesh() {
         chunk.reflection = reflection;
         chunk.reflectionNodes = reflection ? new Float32Array(mesh.nodes.flatMap(node => node.world_matrix)) : null;
         chunk.texture = textures.get(material); chunk.alphaCutoff = decoded?.sceneAlphaCutoff ?? 0;
-        chunk.animationFrames = decoded?.animationFrames?.map(rgba => { const gpu = texture({...decoded,rgba}); gpuTextures.push(gpu); return gpu; });
+        chunk.animationFrames = decoded?.animationFrames?.map(rgba => { const gpu = anisotropic(texture({...decoded,rgba})); gpuTextures.push(gpu); return gpu; });
         chunk.prelit = prelit; chunk.material = material; chunk.passIndex=passIndex; chunk.additive=decoded?.pass?.additive??false; chunk.blend = decoded?.pass?.blend ?? false; chunk.alphaFailure = decoded?.sceneAlphaFailure ?? 0;
         chunk.depthWrite = decoded?.pass?.depth_write ?? true;
         chunk.fog = decoded?.pass?.fog ?? true;
@@ -1395,11 +1484,19 @@ function acceptFrame(frame, effects = true) {
     const severity = impactEvents.accept(frame, focused && !document.hidden && !menuOpen && !lost && !pageSuspended);
     // Authored boom belongs to the optional Crazy/Gorn crash presentation.
     if (severity >= 40 && funnyCrashes) audio.crashBoom(severity);
+    rumble.accept(simFrame, frame, severity, vibrationSettings.enabled && focused && !document.hidden && !menuOpen && !lost && !pageSuspended);
+    // Presentation-only dirt level; one step per delivered 60 Hz frame.
+    if (frame.vehicle_kind !== 'motorcycle') dirtBuildup.step(frame);
   }
   wheelEffectsRenderer?.accept(frame.wheel_particles);
   if (diagnostics.wheelEffects) { diagnostics.wheelEffects.frame = frame.wheel_particles; diagnostics.wheelEffects.particles = frame.wheel_particles?.particles.length ?? 0; }
   if (!frame?.origin?.every(Number.isFinite) || frame.origin.length !== 3 || !frame.orientation?.every(Number.isFinite) || frame.orientation.length !== 4 || !Number.isFinite(frame.speed) || !Number.isFinite(frame.rpm)) throw new Error('Simulation returned a nonfinite pose.');
   simFrame = frame;
+  // Resting body height above the visible ground, for contact-shadow lift.
+  if (graphics.contactShadows && vehicle && renderCore && frame.wreck?.phase === 'Riding' && frame.grounded?.every(Boolean)) {
+    const rest = frame.origin[1] - terrainHeight(frame.origin[0], frame.origin[2]);
+    if (Number.isFinite(rest)) vehicle.restLift = vehicle.restLift === null || vehicle.restLift === undefined ? rest : vehicle.restLift + (rest - vehicle.restLift) * .1;
+  }
   // A completed old batch may arrive after pause/blur/cancel. Keep its physical
   // frame, but do not overwrite cleared controls with the old touch generation.
   if (frame.applied_input && frame.applied_input.input_generation === gameplayBindings.generation + touchControls.generation) diagnostics.input = frame.applied_input;
@@ -1446,7 +1543,8 @@ function acceptFrame(frame, effects = true) {
 }
 async function startSimulation(source) {
   impactEvents.reset();
-  motorcyclePresentation.reset(); presentedFrame = presentedCamera = undefined;
+  motorcyclePresentation.reset(); atvPresentation.reset(); presentedFrame = presentedCamera = undefined;
+  dirtBuildup = new DirtBuildup(parseDirtZones(source.toy ? decoder.decode(source.toy) : ''));
   diagnostics.simulationSteps = 0;
   simReady = false; simFrame = undefined; cameraFrame = undefined; simAccumulator = 0; simGeneration++;
   if (!source.physics) return;
@@ -1557,6 +1655,8 @@ async function pumpSimulation() {
       void audio.update(1 / 60, frame.applied_input ?? input, frame, { train, camera: cameraResult });
     }
     motorcyclePresentation.accept(previousFrame, simFrame, previousCamera, cameraFrame, performance.now(), focused && !document.hidden && !menuOpen && !cycle);
+    if (graphics.interpolation) atvPresentation.accept(previousFrame, simFrame, previousCamera, cameraFrame, performance.now(), frames.length, focused && !document.hidden && !menuOpen && !cycle);
+    else atvPresentation.reset();
   } catch (error) {
     if (token === simGeneration) { simReady = false; status(`Simulation stopped: ${error.message}`, true); }
   } finally { simBusy = false; }
@@ -1647,7 +1747,9 @@ function render(time) {
   // changes; a live shared ride keeps its original simulation clock advancing.
   if (!document.hidden && !lost && terrain && (!menuOpen || liveMultiplayer()) && (focused || liveMultiplayer())) scheduleRender();
   touchControls.refresh();
-  const presentation = motorcyclePresentation.sample(simFrame, cameraFrame, time, focused && !lost && !menuOpen);
+  let presentation = motorcyclePresentation.sample(simFrame, cameraFrame, time, focused && !lost && !menuOpen);
+  // Enhanced/High: ATV frames between 60 Hz states (Original snaps to each).
+  const atvSmooth = !presentation.interpolated && graphics.interpolation && (presentation = atvPresentation.sample(simFrame, cameraFrame, time, focused && !lost && !menuOpen)).interpolated;
   presentedFrame = presentation.frame; presentedCamera = presentation.camera;
   minimap.draw(time, presentedFrame, simReady && !raceSettings && !lost && focused && !document.hidden && !menuOpen, multiplayer?.remote ?? []);
   playerIndicators.root.hidden = !simReady || lost || document.hidden || menuOpen;
@@ -1679,10 +1781,12 @@ function render(time) {
     playerIndicators.root.hidden = true; lastTime = time; stats.sample(time, 0, false); return;
   }
   diagnostics.motorcyclePresentation = simFrame?.vehicle_kind === 'motorcycle' ? { alpha: presentation.alpha, interpolated: presentation.interpolated, origin: (presentedFrame ?? simFrame).origin, orientation: (presentedFrame ?? simFrame).orientation } : null;
-  const smoothQuad = presentation.interpolated ? new Float32Array(presentedFrame.quad_node_matrices.flat()) : vehicle?.nodeMatrices;
-  const smoothRider = presentation.interpolated ? new Float32Array(presentedFrame.rider_node_matrices.flat()) : vehicle?.rider?.gpuPose;
+  const crashPose = atvSmooth && funnyCrashes ? presentedFrame.funny_crash : null;
+  const smoothQuad = presentation.interpolated ? new Float32Array((crashPose ?? presentedFrame).quad_node_matrices.flat()) : vehicle?.nodeMatrices;
+  const smoothRider = presentation.interpolated ? new Float32Array((crashPose?.rider_node_matrices.length ? crashPose : presentedFrame).rider_node_matrices.flat()) : vehicle?.rider?.gpuPose;
   const quadWorld=vehicle ? vehicleMatrix() : identity;
-  const riderWorld=funnyCrashes && simFrame?.funny_crash?.rider_node_matrices.length ? identity : simFrame?.rider_world_matrix ? new Float32Array(simFrame.rider_world_matrix) : quadWorld;
+  const riderFrame = atvSmooth ? presentedFrame : simFrame;
+  const riderWorld=funnyCrashes && simFrame?.funny_crash?.rider_node_matrices.length ? identity : riderFrame?.rider_world_matrix ? new Float32Array(riderFrame.rider_world_matrix) : quadWorld;
   gl.viewport(0, 0, width, height); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT); gl.useProgram(program);
   gl.uniform1f(uniforms.motorcycleMudAmount,0);
   gl.uniform1i(uniforms.useQuadPose, false); gl.uniform1i(uniforms.useEcosystem, false); gl.uniform1f(uniforms.alphaCutoff, 0);
@@ -1788,6 +1892,9 @@ function render(time) {
   gl.uniform1i(uniforms.sceneryReflectionPlane, 0);
   gl.uniform2f(uniforms.sceneryUvOffset, 0, 0); gl.depthMask(true); gl.depthFunc(gl.LESS); gl.disable(gl.BLEND);
   if (trainRenderer) { trainRenderer.draw(uniforms, fallbackTexture, Boolean(fog)); diagnostics.train.draws = trainRenderer.draws; diagnostics.train.triangles = trainRenderer.triangles; }
+  const opponents = (presentation.interpolated && presentedFrame?.race ? presentedFrame : simFrame)?.race?.opponents ?? [];
+  if (graphics.contactShadows && vehicle) drawContactShadows({ viewProjection, actor, quadWorld, riderWorld, smoothRider, opponents });
+  else diagnostics.contactShadows = null;
   drawEcosystem();
   gl.uniform1i(uniforms.unlit, false);
   if (vehicle) gl.uniformMatrix4fv(uniforms.model, false, vehicleMatrix());
@@ -1798,7 +1905,8 @@ function render(time) {
   for (const chunk of vehicleChunks) {
     gl.uniform2fv(uniforms.quadPaint, chunk.quad && paintable(chunk.material) ? playerPaint : PAINT_PALETTE[0]);
     gl.activeTexture(gl.TEXTURE4);gl.bindTexture(gl.TEXTURE_2D,chunk.mudTexture ?? fallbackTexture);
-    gl.uniform1f(uniforms.motorcycleMudAmount,simFrame?.vehicle_kind==='motorcycle' && chunk.mudTexture ? Math.max(...simFrame.mud_amount) : 0);
+    gl.uniform1i(uniforms.mudReveal,simFrame?.vehicle_kind!=='motorcycle');
+    gl.uniform1f(uniforms.motorcycleMudAmount,simFrame?.vehicle_kind==='motorcycle' && chunk.mudTexture ? Math.max(...simFrame.mud_amount) : graphics.dirt && chunk.mudTexture ? dirtBuildup.amount : 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.uniform1i(uniforms.fogEnabled,Boolean(fog)&&chunk.fog);
     gl.uniformMatrix4fv(uniforms.model, false, chunk.rider ? riderWorld : quadWorld);
@@ -1815,7 +1923,7 @@ function render(time) {
   gl.uniform2fv(uniforms.quadPaint, PAINT_PALETTE[0]);
   gl.uniform1f(uniforms.motorcycleMudAmount,0);
   let cpuDraws = 0, cpuTriangles = 0;
-  for (const [slot, cpu] of (simFrame?.race?.opponents ?? []).entries()) {
+  for (const [slot, cpu] of opponents.entries()) {
     if (Math.hypot(cpu.origin[0]-camera.x,cpu.origin[2]-camera.z) > 864) continue;
     const transform = vehicleMatrix({origin:cpu.origin,orientation:cpu.physical?.orientation ?? [Math.cos(cpu.yaw/2),0,Math.sin(cpu.yaw/2),0]});
     const riderTransform = cpu.physical?.rider_world_matrix ? new Float32Array(cpu.physical.rider_world_matrix) : transform;
@@ -1858,9 +1966,11 @@ function render(time) {
   } else speedRush.draws=0;
   diagnostics.visibility = { terrainDraws, terrainTriangles, sceneryDraws, sceneryTriangles, terrainCulled: chunks.length - terrainDraws, sceneryCulled: sceneDraws.length - sceneryVisibleGroups };
   diagnostics.frames++; diagnostics.renderRatio = renderScale.ratio;
+  diagnostics.graphics = { setting: graphicsSettings.preset, ...graphics, anisotropyApplied: graphics.anisotropy ? anisotropyLevel() : 0, interpolated: Boolean(atvSmooth), dirtLevel: dirtBuildup.level, dirtApplied: graphics.dirt ? dirtBuildup.amount : 0 };
+  diagnostics.vibration = { enabled: vibrationSettings.enabled, pulses: rumble.pulses, last: rumble.last };
   if (stats.mode !== 'off') {
     diagnostics.cpuDraws = cpuDraws; diagnostics.cpuTriangles = cpuTriangles;
-    diagnostics.drawCalls = speedRush.draws + cpuDraws + terrainDraws + sceneryDraws + vehicleChunks.length + (terrain.sky ? skyChunks.length : 0) + diagnostics.vegetationDraws + (waterRenderer?.draws ?? 0) + (trainRenderer?.draws ?? 0) + (wheelEffectsRenderer?.draws ?? 0) + (ambientEffectsRenderer?.draws ?? 0) + (snowRenderer?.draws ?? 0);
+    diagnostics.drawCalls = speedRush.draws + cpuDraws + terrainDraws + sceneryDraws + vehicleChunks.length + (terrain.sky ? skyChunks.length : 0) + diagnostics.vegetationDraws + (waterRenderer?.draws ?? 0) + (trainRenderer?.draws ?? 0) + (wheelEffectsRenderer?.draws ?? 0) + (ambientEffectsRenderer?.draws ?? 0) + (snowRenderer?.draws ?? 0) + (diagnostics.contactShadows?.draws ?? 0);
     diagnostics.drawTriangles = cpuTriangles + (terrainTriangles * 3 + sceneryTriangles * 3 + vehicleChunks.reduce((sum, c) => sum + c.count, 0) + (terrain.sky ? skyChunks.reduce((sum, c) => sum + c.count, 0) : 0)) / 3 + diagnostics.vegetationTriangles + (trainRenderer?.triangles ?? 0) + (wheelEffectsRenderer?.triangles ?? 0) + (ambientEffectsRenderer?.triangles ?? 0) + (snowRenderer?.triangles ?? 0);
   }
   if (diagnostics.frames === 1 || diagnostics.frames % 120 === 0) {
@@ -1943,7 +2053,7 @@ $('reset').onclick = async (options) => {
   }
   impactEvents.reset();
   simGeneration++; simReady = false; simAccumulator = 0; clearInput();
-  try { await audio.reset(); acceptFrame(await command(23, start)); await command(47, {}); orbit = 0; acceptCameraFrame(await command(46, { dt: 1 / 60, orbit })); simReady = true; buildMesh(); resetCamera(); }
+  try { await audio.reset(); dirtBuildup.reset(); acceptFrame(await command(23, start)); await command(47, {}); orbit = 0; acceptCameraFrame(await command(46, { dt: 1 / 60, orbit })); simReady = true; buildMesh(); resetCamera(); }
   catch (error) { status(error.message, true); }
 };
 $('menu').onclick = () => { void frontend?.show('pause'); };
@@ -1996,7 +2106,7 @@ const inIntro = () => simReady && !menuOpen && simFrame?.race?.phase === 'intro'
 window.addEventListener('keydown', event => { if (!event.repeat && !event.ctrlKey && !event.metaKey && inIntro()) introSkip = true; }, true);
 window.addEventListener('pointerdown', event => { if (inIntro() && !$('toolbar').contains(event.target)) introSkip = true; }, true);
 window.addEventListener('keyup', event => { keys.delete(event.code); gameplayBindings.observeKeys(keys); });
-const clearInput = () => { speedRush.reset(); motorcyclePresentation.reset(); presentedFrame = presentedCamera = undefined; keys.clear(); pointers.clear(); touchControls.clear(); touchLean.clear(); gameplayBindings.cancel(); simAccumulator = 0; cameraCycle = false; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
+const clearInput = () => { speedRush.reset(); motorcyclePresentation.reset(); atvPresentation.reset(); presentedFrame = presentedCamera = undefined; keys.clear(); pointers.clear(); touchControls.clear(); touchLean.clear(); gameplayBindings.cancel(); simAccumulator = 0; cameraCycle = false; diagnostics.input = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false }; };
 gameplayBindings.subscribe(clearInput);
 window.addEventListener('gamepaddisconnected', clearInput);
 const syncAudio = () => { if (!focused || document.hidden || lost || menuOpen || pageSuspended) impactEvents.reset(); void audio.setActive(focused && !document.hidden && !lost && !menuOpen && !pageSuspended).catch(error => { diagnostics.audioError = error.message; }); };
@@ -2007,7 +2117,7 @@ window.addEventListener('resize', () => { scheduleRender(); });
 canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; for(const model of remoteModels.values()){model.chunks=null;model.gpuTextures=[];for(const entry of model.gear?.values()??[])entry.gpu=null;} for(const cpu of raceCpuModels)cpu.gpu=null; diagnostics.ready = false; clearInput(); syncAudio(); frontend?.setLoading(true, 'Restoring graphics…'); status('Restoring graphics…'); });
 // Every old GPU handle belongs to the lost context, including vegetation instances.
 // Discard those references before buildMesh runs its normal resource cleanup.
-canvas.addEventListener('webglcontextrestored', () => { try { lost = false; glShadow?.reset(); speedRush = new SpeedRush(gl, { coarse: coarsePointer() }); snowRenderer=undefined; ambientEffectsRenderer=undefined; bloodRenderer = undefined; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); scheduleRender(); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
+canvas.addEventListener('webglcontextrestored', () => { try { lost = false; glShadow?.reset(); contactShadows = undefined; anisotropyExtension = undefined; anisotropicTextures = new Map(); speedRush = new SpeedRush(gl, { coarse: coarsePointer() }); snowRenderer=undefined; ambientEffectsRenderer=undefined; bloodRenderer = undefined; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); scheduleRender(); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
 window.addEventListener('pagehide', event => {
   usage.report(1);
   cancelAnimationFrame(frame); frame = 0; clearInput();
@@ -2044,7 +2154,7 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
       catch(error){if(isCurrent()){usage.rideFailed(onlineRide(environment));await frontend.show(multiplayer.shared?'main':'multiplayer');frontend.fail(error);throw error;}}
       finally{if(isCurrent())frontend.busy=false;}
     },onLeave:message=>{usage.rideEnded();for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show(multiplayer.shared?'main':'multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
-    frontend = new Frontend({minimapSettings,raceOverlays,menuRider:menuRiderAssets,modelAssets:selectionAssets,gearPreview:gearTextures,crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => startRide(environment,racing), active: open => { menuOpen = open; usage.setRiding(!open); if (open) usage.report(10); keyboardHelp.setRiding(!open); clearInput(); lastTime = 0; scheduleRender(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
+    frontend = new Frontend({minimapSettings,raceOverlays,menuRider:menuRiderAssets,modelAssets:selectionAssets,gearPreview:gearTextures,crashSettings,graphicsSettings,vibrationSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => startRide(environment,racing), active: open => { menuOpen = open; usage.setRiding(!open); if (open) usage.report(10); keyboardHelp.setRiding(!open); clearInput(); lastTime = 0; scheduleRender(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     hud = new HeadUpDisplay(frontend, canvas);
     document.body.classList.add('menu-open'); void frontend.init();
     usage.track('session_start', { entry: parseLaunch(location.search).requested ? 'link' : 'menu' });

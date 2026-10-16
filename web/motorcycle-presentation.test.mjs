@@ -29,3 +29,32 @@ test('resets, stunts, wrecks, camera changes, pauses and missed intervals snap s
   p.accept(a,b,c,c,0);assert.equal(p.sample(b,c,5,false).alpha,1);assert.equal(p.sample(b,c,6).alpha,1);
   p.accept(a,b,c,c,0,false);assert.equal(p.sample(b,c,5).alpha,1);
 });
+import { AtvPresentation } from './motorcycle-presentation.js';
+const atv = (x, extra = {}) => ({ wreck:{phase:'Riding'}, reset_count:0, origin:[x,0,0], orientation:[1,0,0,0], quad_node_matrices:[matrix(x)], rider_node_matrices:[matrix(x),matrix(x)], ...extra });
+test('ATV interpolation blends quad, rider, detached rider, crash poses, CPUs and camera on one clock', () => {
+  const p = new AtvPresentation(), cpu = x => ({ origin:[x,0,0], yaw:3.1, physical:{ orientation:[1,0,0,0], quad_matrices:[matrix(x)], rider_matrices:[matrix(x)], rider_world_matrix:matrix(x) } });
+  const a = atv(0, { rider_world_matrix:matrix(0), funny_crash:{quad_node_matrices:[matrix(0)],rider_node_matrices:[matrix(0)]}, race:{opponents:[cpu(0)]} });
+  const b = atv(4, { rider_world_matrix:matrix(4), funny_crash:{quad_node_matrices:[matrix(4)],rider_node_matrices:[matrix(4)]}, race:{opponents:[{...cpu(4),yaw:-3.1}]} });
+  p.accept(a, b, camera(0), camera(4), 100, 4);
+  const s = p.sample(b, camera(4), 100 + 1000/30);
+  assert(s.interpolated); assert(Math.abs(s.alpha - .5) < 1e-12);
+  for (const value of [s.frame.origin[0], s.frame.quad_node_matrices[0][12], s.frame.rider_node_matrices[1][12], s.frame.rider_world_matrix[12], s.frame.funny_crash.quad_node_matrices[0][12], s.frame.funny_crash.rider_node_matrices[0][12], s.frame.race.opponents[0].origin[0], s.frame.race.opponents[0].physical.quad_matrices[0][12], s.frame.race.opponents[0].physical.rider_world_matrix[12], s.camera.position[0]]) assert(Math.abs(value - 2) < 1e-12);
+  assert(Math.abs(Math.abs(s.frame.race.opponents[0].yaw) - Math.PI) < .01, 'yaw takes the short way round');
+  assert.equal(b.origin[0], 4, 'presentation never mutates Rust frames');
+  assert.equal(p.sample(b, camera(4), 100 + 1000).interpolated, false, 'the segment ends at the delivered frame');
+  assert.equal(p.sample(atv(5), camera(5), 120).interpolated, false, 'a newer frame without a segment shows as delivered');
+});
+test('ATV interpolation snaps resets, teleports, motorcycles, attach changes, camera cuts and pauses', () => {
+  const cases = [b => b.reset_count++, b => b.origin = [100,0,0], b => b.vehicle_kind = 'motorcycle', b => b.rider_world_matrix = matrix(1), b => b.funny_crash = {quad_node_matrices:[],rider_node_matrices:[]}, b => b.rider_node_matrices = [matrix(1)]];
+  for (const change of cases) {
+    const p = new AtvPresentation(), a = atv(0), b = atv(1); change(b);
+    p.accept(a, b, camera(0), camera(1), 0, 1); assert.equal(p.sample(b, camera(1), 5).interpolated, false);
+  }
+  const p = new AtvPresentation(), a = atv(0), b = atv(1);
+  p.accept(a, b, camera(0), {...camera(1), preset:1}, 0, 1); assert.equal(p.sample(b, camera(1), 5).interpolated, false);
+  p.accept(a, b, camera(0), camera(1), 0, 6); assert.equal(p.sample(b, camera(1), 5).interpolated, false, 'missed interval');
+  p.accept(a, b, camera(0), camera(1), 0, 1, false); assert.equal(p.sample(b, camera(1), 5).interpolated, false);
+  p.accept(a, b, camera(0), camera(1), 0, 1); assert.equal(p.sample(b, camera(1), 5, false).interpolated, false); assert.equal(p.sample(b, camera(1), 6).interpolated, false);
+  const c = atv(1, { race:{opponents:[{origin:[500,0,0]}]} }), d = atv(2, { race:{opponents:[{origin:[0,0,0]}]} });
+  p.accept(c, d, camera(0), camera(1), 0, 1); assert.deepEqual(p.sample(d, camera(1), 8).frame.race.opponents[0].origin, [0,0,0], 'a reset CPU snaps alone');
+});
