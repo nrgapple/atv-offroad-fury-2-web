@@ -1,7 +1,9 @@
 //! Browser start placement. These are authored port rules, not recovered
-//! original routines: race grids and race resets sit 2.5 ft above the terrain
-//! contact plane, and online riders start 8 ft apart by slot along the start's
-//! right-hand axis. Scene starts otherwise keep their authored height.
+//! original routines: race grids and race resets start 2.5 ft above the
+//! terrain contact plane (ATVs are then placed on the ground by the recovered
+//! `Vehicle::ground_pose`; motorcycles drop and settle during the countdown),
+//! and online riders start 8 ft apart by slot along the start's right-hand
+//! axis. Scene starts otherwise keep their authored height.
 use crate::{Result, terrain::Terrain};
 
 pub const COURSE_CLEARANCE: f64 = 2.5;

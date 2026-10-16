@@ -63,7 +63,7 @@ body:not(.menu-open) #help, body:not(.menu-open) #status:not(.error) { display: 
 .model-view span:empty { display: none; }
 
 #race-overlay { position: fixed; z-index: 2; top: max(76px, calc(var(--app-safe-top) + 66px)); left: max(14px, var(--app-safe-left)); right: max(14px, var(--app-safe-right)); pointer-events: none; font-family: var(--atv-font-display); font-variant-numeric: tabular-nums; color: #fff; text-shadow: 1px 2px 2px #000; }
-#race-overlay[hidden], .race-results[hidden] { display: none; }
+#race-overlay[hidden], .race-results[hidden], .race-menu[hidden], .race-show[hidden] { display: none; }
 .race-strip { display: flex; flex-wrap: wrap; gap: 12px 28px; font-size: clamp(15px, 2vw, 23px); }
 .race-place, .race-lap { color: #ffe375; }
 .race-times { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 5px; font-size: 14px; }
@@ -76,7 +76,10 @@ body:not(.menu-open) #help, body:not(.menu-open) #status:not(.error) { display: 
 .race-results { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 36px - var(--app-safe-top) - var(--app-safe-bottom)); overflow: auto; padding: 16px 20px; pointer-events: auto; background: #171717ed; border: 2px solid #d9d9d9; border-radius: 5px; text-shadow: none; }
 .race-results h2 { color: #ffe375; margin: 0 0 8px; }
 .race-results p { font: 14px system-ui, sans-serif; }
-.race-results ol { padding-left: 24px; font-size: 16px; line-height: 1.7; }
+.race-results table { width: 100%; border-collapse: collapse; font-size: 15px; line-height: 1.6; }
+.race-results th, .race-results td { padding: 0 6px; text-align: right; white-space: nowrap; }
+.race-results th:first-child, .race-results td:first-child { text-align: left; overflow: hidden; text-overflow: ellipsis; max-width: 12em; }
+.race-show { position: fixed; left: 50%; bottom: max(18px, calc(var(--app-safe-bottom) + 12px)); transform: translateX(-50%); min-height: 44px; padding: 0 20px; pointer-events: auto; }
 .race-results button { min-height: 44px; margin: 4px; font: 15px system-ui, sans-serif; }
 @media (orientation: portrait) { .race-strip { padding-right: 70px; gap: 6px 14px; font-size: 16px; } .race-times { margin-top: 9px; font-size: 12px; } .race-guide canvas { width: 112px; height: 88px; } }
 @media (max-height: 450px) and (orientation: landscape) { #race-overlay { top: max(68px, calc(var(--app-safe-top) + 58px)); } .race-strip { font-size: 15px; } .race-times { font-size: 12px; } .race-guide canvas { width: 96px; height: 76px; } .race-order { font-size: 11px; columns: 2; column-gap: 22px; } .race-guide { margin-top: 7px; } }

@@ -29,7 +29,7 @@ for the scalar branches, not whole-race replay):
 
 **Authored** (integration adaptations, not original behavior):
 
-- Race rules: countdown, laps, timing, ranking, results and HUD. Progress follows
+- Race rules: countdown, laps, timing, ranking and HUD. Progress follows
   the racing line inside the TDF edge polygon with an authored window (150ft
   ahead, 60ft behind); the original Track +0x34/+0x38 values and the native
   `001a95b0` finish-box test are not ported.
@@ -55,6 +55,9 @@ for the scalar branches, not whole-race replay):
 - The flag 64 preload/jump helper, optional AI flags (aggression, `0x800` direct
   velocity), scene query category/order and actor update ordering.
 - Championship points, firework triggers and whole-race PS2 replay parity.
+- The pre-race camera shots, the after-finish TV director, the original race
+  overlays (lamp countdown, signs, lap history, LEAD) and the Stunt Score and
+  Profile Points results columns. See "Race start and race over" below.
 
 ## Initial preview (historical)
 
@@ -434,3 +437,53 @@ Checks:
   env05, nat01 and sx07, with 127–164 rider contacts.
 - `test_race.mjs` and `test_race_courses.mjs` assert the roster names, models
   and outfit textures.
+
+## Race start and race over — 2026-10-16
+
+Exact-build evidence (private exports; bounded reading, not instruction
+comparisons):
+
+- **Grid placement `001dd440`.** The grid helper `001f8410` passes a ground
+  height; the placement routine keeps the heading horizontal, rolls the up axis
+  toward the terrain normal (up = f × (n × f)), raises the origin to the ground
+  and then lifts it by the deepest wheel-bottom penetration (wheel position
+  minus radius along up). Race resets reach it through `001e35d0`.
+- **Race over (RaceStatus `00248b20`).** The race ends once every human has
+  finished; the game does not wait for the CPUs. For each unfinished rider
+  +0xec = elapsed − leader time × (own distance / leader distance). At race
+  over its total becomes the leader's time plus that gap, its last lap
+  (gap + lap start time) / laps remaining, its best lap the faster of that and
+  any best, capped at total / laps, and it is marked finished. Times are then
+  made increasing down the running order by adding a random under one second.
+  The Race Results menu opens immediately (`00216260`); after a 3s timer
+  (`00215db0`) the end-race routine `001f1990` switches the camera director.
+- **Race Results menu** (`Overlays.pb` `[RaceOver Menu]`): Name, Total Time,
+  Best Lap, Stunt Score and Profile Points; X Continue, Square Hide/Unhide.
+  Continue leads to a Restart / Quit Event menu.
+
+Port:
+
+- ATV racers (player and CPUs) are placed with `Vehicle::ground_pose`. Race
+  checkpoint resets are placed before their next physics step. The lift axis is
+  a runtime global in the original; world up is assumed. Motorcycle race resets
+  keep the authored 2.5ft drop.
+- Physics runs through the countdown with every racer held on full brake, so
+  the grid settles on its suspension instead of hanging in the air until GO.
+  Settling earns no race distance.
+- The race-over estimate, tie-break and results follow the rules above. The
+  per-race random stream replaces the native global `rand`.
+- After the finish every racer keeps driving. The player's ATV or motorcycle
+  is driven by the recovered path driver (the user's account of the original:
+  the CPU takes over the player's quad). The exact-build routine for that
+  takeover is not identified; `001f9690` creates no driver for human racers,
+  and `001f1990` changes their rider state without an identified driver.
+  Player input, tricks and Reset are ignored until Restart.
+- The results table shows rider, total time and best lap, with Continue →
+  Restart / Quit Event and Hide Menu / Show Results. Stunt Score and Profile
+  Points are omitted: the port has no per-race stunt total or profiles.
+  Keyboard: Enter continues or confirms, Escape hides, shows or goes back.
+  Controller: A continues/confirms, B goes back or hides, X hides/shows.
+
+Checks: Rust tests cover placement on flat ground, the wheel lift, the reset
+placement, the race-over estimates and the ordering tie-break; `test_race.mjs`
+checks the grid is grounded during the countdown and the new results menus.

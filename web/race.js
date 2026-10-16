@@ -4,14 +4,23 @@ export class RaceOverlay {
   constructor({restart,quit,finish}) {
     this.restart=restart;this.quit=quit;this.finish=finish;this.course=null;this.resultShown=false;this.padArmed=false;this.busy=false;
     this.root=document.createElement('section');this.root.id='race-overlay';this.root.hidden=true;
-    this.root.innerHTML=`<div class="race-strip"><strong class="race-place"></strong><span class="race-lap"></span><span class="race-total"></span></div><div class="race-times"><span class="race-current"></span><span class="race-best"></span></div><div class="race-guide"><canvas width="140" height="110" aria-label="Race course radar"></canvas><div><strong class="race-direction"></strong><ol class="race-order"></ol></div></div><div class="race-countdown" role="status" aria-live="polite"></div><div class="race-results" hidden><h2>Race Results</h2><p class="race-summary"></p><ol></ol><button type="button" data-race-action="retry">Race Again</button><button type="button" data-race-action="quit">Single Player</button></div>`;
+    this.root.innerHTML=`<div class="race-strip"><strong class="race-place"></strong><span class="race-lap"></span><span class="race-total"></span></div><div class="race-times"><span class="race-current"></span><span class="race-best"></span></div><div class="race-guide"><canvas width="140" height="110" aria-label="Race course radar"></canvas><div><strong class="race-direction"></strong><ol class="race-order"></ol></div></div><div class="race-countdown" role="status" aria-live="polite"></div><div class="race-results" hidden><h2>Race Results</h2><p class="race-summary"></p><table><thead><tr><th scope="col">Rider</th><th scope="col">Total Time</th><th scope="col">Best Lap</th></tr></thead><tbody></tbody></table><div class="race-menu" data-menu="results"><button type="button" data-race-action="continue">Continue</button><button type="button" data-race-action="hide">Hide Menu</button></div><div class="race-menu" data-menu="quit" hidden><button type="button" data-race-action="retry">Restart</button><button type="button" data-race-action="quit">Quit Event</button></div></div><button type="button" class="race-show" data-race-action="show" hidden>Show Results</button>`;
     document.body.append(this.root);this.map=this.root.querySelector('canvas');this.ctx=this.map.getContext('2d');this.results=this.root.querySelector('.race-results');
-    this.root.querySelector('[data-race-action=retry]').onclick=()=>void this.act('retry');
-    this.root.querySelector('[data-race-action=quit]').onclick=()=>void this.act('quit');
-    window.addEventListener('keydown',e=>{if(this.root.hidden||this.results.hidden||e.repeat)return;if(e.code==='Escape'||(e.code==='Enter'&&e.target===document.getElementById('game'))){e.preventDefault();e.stopImmediatePropagation();void this.act(e.code==='Escape'?'quit':'retry');}},true);
+    this.show=this.root.querySelector('.race-show');
+    for(const b of this.root.querySelectorAll('[data-race-action]'))b.onclick=()=>void this.act(b.dataset.raceAction);
+    // Original race-over menu: Continue (X) opens Restart/Quit Event, and
+    // Hide Menu (Square) toggles the results to watch the riders drive on.
+    window.addEventListener('keydown',e=>{if(this.root.hidden||!this.resultShown||e.repeat)return;const game=e.target===document.getElementById('game');
+      const action=e.code==='Escape'?(this.menu==='quit'?'back':this.hidden?'show':'hide'):e.code==='Enter'&&(game||this.hidden)?(this.hidden?'show':this.menu==='quit'?'retry':'continue'):null;
+      if(action){e.preventDefault();e.stopImmediatePropagation();void this.act(action);}},true);
   }
-  async act(action) {if(this.busy)return;this.busy=true;try{await (action==='retry'?this.restart():this.quit());}catch(error){this.results.hidden=false;this.root.querySelector('.race-summary').textContent=error.message;}finally{this.busy=false;}}
-  setCourse(course) {this.course=course;this.resultShown=false;this.padArmed=false;this.root.hidden=true;this.results.hidden=true;this.orderKey='';}
+  async act(action) {
+    if(action==='continue'||action==='back'){this.setMenu(action==='continue'?'quit':'results');return;}
+    if(action==='hide'||action==='show'){this.hidden=action==='hide';this.results.hidden=this.hidden;this.show.hidden=!this.hidden;(this.hidden?this.show:this.results.querySelector(`[data-menu=${this.menu}] button`)).focus({preventScroll:true});return;}
+    if(this.busy)return;this.busy=true;try{await (action==='retry'?this.restart():this.quit());}catch(error){this.results.hidden=false;this.root.querySelector('.race-summary').textContent=error.message;}finally{this.busy=false;}
+  }
+  setMenu(menu) {this.menu=menu;for(const m of this.root.querySelectorAll('.race-menu'))m.hidden=m.dataset.menu!==menu;this.results.querySelector(`[data-menu=${menu}] button`).focus({preventScroll:true});}
+  setCourse(course) {this.course=course;this.resultShown=false;this.padArmed=false;this.hidden=false;this.root.hidden=true;this.results.hidden=true;this.show.hidden=true;this.orderKey='';}
   draw(race,player,visible) {
     this.root.hidden=!race||!visible;
     if(this.root.hidden)return;
@@ -34,13 +43,20 @@ export class RaceOverlay {
     if(key!==this.orderKey){this.orderKey=key;const list=this.root.querySelector('.race-order');list.replaceChildren(...race.standings.map(r=>{const li=document.createElement('li');li.textContent=r.name;li.classList.toggle('is-player',r.name==='YOU');return li;}));}
     this.radar(race,player);
     if(race.phase==='finished') {
-      this.results.hidden=false;set('.race-summary',`Place ${race.position} of ${race.field} · ${raceTime(race.elapsed)} · Best ${raceTime(race.best)}`);
-      if(!this.resultShown){this.resultShown=true;this.finish?.(race);this.results.querySelector('ol').replaceChildren(...race.standings.map(r=>{const li=document.createElement('li');li.textContent=`${r.name} — ${r.time==null?`${r.laps} laps`:raceTime(r.time)}`;return li;}));this.results.querySelector('button').focus({preventScroll:true});}
+      set('.race-summary',`Place ${race.position} of ${race.field} · ${raceTime(race.elapsed)} · Best ${raceTime(race.best)}`);
+      // Race over settles every time at once (unfinished CPUs are estimated
+      // as in the original); the riders keep driving behind the menu.
+      if(!this.resultShown){
+        this.resultShown=true;this.hidden=false;this.results.hidden=false;this.show.hidden=true;this.finish?.(race);
+        this.results.querySelector('tbody').replaceChildren(...race.standings.map(r=>{const tr=document.createElement('tr');tr.classList.toggle('is-player',r.name==='YOU');
+          for(const text of [`${r.position}. ${r.name}`,raceTime(r.time),raceTime(r.best)]){const td=document.createElement('td');td.textContent=text;tr.append(td);}return tr;}));
+        this.setMenu('results');
+      }
       let pad;try{pad=[...navigator.getGamepads()].find(p=>p?.connected!==false&&p);}catch{}
-      const held=pad?.buttons[0]?.pressed||pad?.buttons[1]?.pressed;
+      const pressed=i=>Boolean(pad?.buttons[i]?.pressed),held=pressed(0)||pressed(1)||pressed(2);
       if(!held)this.padArmed=true;
-      else if(this.padArmed){this.padArmed=false;void this.act(pad.buttons[1]?.pressed?'quit':'retry');}
-    } else this.results.hidden=true;
+      else if(this.padArmed){this.padArmed=false;void this.act(this.hidden?'show':pressed(2)?'hide':pressed(1)?(this.menu==='quit'?'back':'hide'):this.menu==='quit'?'retry':'continue');}
+    } else {this.results.hidden=true;this.show.hidden=true;}
   }
   radar(race,player) {
     if(!this.course)return;

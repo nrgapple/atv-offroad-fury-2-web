@@ -274,26 +274,36 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
             driving.reverse = false;
             driving.brake = driving.brake.max(brake);
         }
-        let locked = sim.race.as_ref().is_some_and(|r| r.locked());
-        if !locked {
-            let mask = raw
-                .get("stunt_modifiers")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0)
-                .try_into()
-                .map_err(|_| "invalid motorcycle stunt mask")?;
-            let axis = |name| {
-                raw.get(name)
-                    .and_then(serde_json::Value::as_f64)
-                    .unwrap_or(0.) as f32
+        // The countdown brake and the post-finish CPU driver replace the
+        // player's controls, including tricks and the clutch.
+        let imposed = super::race_controls(sim)?;
+        let bike = sim.motorcycle.as_mut().ok_or("start motorcycle first")?;
+        {
+            let (mask, axes, clutch) = if let Some(input) = imposed {
+                driving = input;
+                (0, [0.; 2], false)
+            } else {
+                let mask = raw
+                    .get("stunt_modifiers")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0)
+                    .try_into()
+                    .map_err(|_| "invalid motorcycle stunt mask")?;
+                let axis = |name| {
+                    raw.get(name)
+                        .and_then(serde_json::Value::as_f64)
+                        .unwrap_or(0.) as f32
+                };
+                (
+                    mask,
+                    [axis("stunt_x"), axis("stunt_y")],
+                    raw.get("clutch")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                )
             };
-            let axes = [axis("stunt_x"), axis("stunt_y")];
             bike.spin_controls(mask, axes)?;
-            bike.clutch_controls(
-                raw.get("clutch")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false),
-            );
+            bike.clutch_controls(clutch);
             if let Some(water) = &mut sim.water {
                 water.advance(1. / 60.)?;
             }
@@ -362,7 +372,8 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
             scenery_textures.insert(name.clone(), clock.tick(milliseconds));
         }
         let mut resolved = raw.clone();
-        resolved["throttle"] = serde_json::json!(if locked { 0. } else { driving.throttle });
+        resolved["throttle"] = serde_json::json!(driving.throttle);
+        resolved["steer"] = serde_json::json!(driving.steer);
         resolved["brake"] = serde_json::json!(driving.brake);
         resolved["reverse"] = serde_json::json!(driving.reverse);
         let driving_frame = frame(sim, &resolved)?;

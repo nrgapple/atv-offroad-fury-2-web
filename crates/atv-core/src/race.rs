@@ -938,21 +938,25 @@ impl Progress {
         }
     }
     fn update(&mut self, p: [f32; 3], course: &Course, time: f32, laps: u32, dt: f32) {
-        if self.finish.is_some() {
-            return;
-        }
         // Progress only moves inside the track polygon and the route window, so
         // cutting across the infield or a teleport cannot skip the course.
+        // After the finish the station still follows the rider, who keeps
+        // driving under CPU control, but the race result is settled.
         match course.locate(p, self.station, self.entered) {
             Some(located) => {
                 self.station = located.station;
                 self.entered = located.entered;
-                self.distance += located.offset;
+                if self.finish.is_none() {
+                    self.distance += located.offset;
+                }
                 self.off_track = 0.;
             }
             None => self.off_track += dt,
         }
         self.last = p;
+        if self.finish.is_some() {
+            return;
+        }
         self.furthest = self.furthest.max(self.distance);
         // A lap completes when the furthest progress passes the finish gate.
         while self.completed < laps
@@ -1004,6 +1008,9 @@ pub struct Standing {
     pub position: usize,
     pub laps: u32,
     pub time: Option<f32>,
+    pub best: Option<f32>,
+    /// Race-over estimate for a rider who had not crossed the line.
+    pub estimated: bool,
 }
 #[derive(Serialize)]
 pub struct Frame {
@@ -1039,6 +1046,9 @@ pub struct Race {
     opponents: Vec<Opponent>,
     progress: Vec<Progress>,
     pub contacts: u32,
+    /// Riders whose finish time was estimated at race over.
+    estimated: Vec<bool>,
+    random: crate::engine_audio::OriginalRandom,
 }
 impl Race {
     pub fn new(course: Course, laps: u32, names: Vec<String>, difficulty: u32) -> Result<Self> {
@@ -1079,7 +1089,7 @@ impl Race {
                 physical: None,
             })
             .collect();
-        let progress = opponents
+        let progress: Vec<_> = opponents
             .iter()
             .map(|o| Progress::new(o.origin, &course))
             .collect();
@@ -1091,12 +1101,19 @@ impl Race {
             elapsed: 0.,
             player,
             opponents,
+            estimated: vec![false; progress.len() + 1],
             progress,
             contacts: 0,
+            random: crate::engine_audio::OriginalRandom::with_seed(97211 + 5 * 47),
         })
     }
-    pub fn locked(&self) -> bool {
-        self.countdown > 0. || self.player.finish.is_some()
+    /// The countdown holds every racer on the grid; physics still settles.
+    pub fn counting_down(&self) -> bool {
+        self.countdown > 0.
+    }
+    /// The player has finished; their quad continues under CPU control.
+    pub fn player_finished(&self) -> bool {
+        self.player.finish.is_some()
     }
     pub fn step(&mut self, p: [f32; 3], dt: f32) {
         if self.countdown > 0. {
@@ -1105,15 +1122,95 @@ impl Race {
             return;
         }
         if self.player.finish.is_some() {
+            self.player
+                .update(p, &self.course, self.elapsed, self.laps, dt);
             return;
         }
         self.elapsed += dt;
         self.player
             .update(p, &self.course, self.elapsed, self.laps, dt);
+        if self.player.finish.is_some() {
+            self.race_over();
+        }
+    }
+    /// RaceStatus `00248b20` race over, once every human has finished: the
+    /// game does not wait for the CPUs. Each unfinished rider's gap behind
+    /// the leader is its elapsed time less the leader's time scaled by its
+    /// share of the leader's distance (+0xec). Its total becomes the leader's
+    /// time plus that gap, its last lap (gap + lap start) / laps remaining,
+    /// its best lap no slower than that or than total / laps. Times are then
+    /// made increasing down the running order with a random under 1s.
+    fn race_over(&mut self) {
+        let elapsed = self.elapsed;
+        let laps = self.laps;
+        let mut order: Vec<usize> = (0..=self.progress.len()).collect();
+        order.sort_by(|&a, &b| {
+            let (a, b) = (self.racer(a), self.racer(b));
+            match (a.finish, b.finish) {
+                (Some(a), Some(b)) => a.total_cmp(&b),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                _ => b.distance.total_cmp(&a.distance),
+            }
+        });
+        let leader = self.racer(order[0]);
+        let (leader_time, leader_distance) = (leader.finish.unwrap_or(elapsed), leader.distance);
+        let pace = if leader_distance > 0. {
+            leader_time / leader_distance
+        } else {
+            0.
+        };
+        for &i in &order {
+            let p = self.racer_mut(i);
+            if p.finish.is_some() {
+                continue;
+            }
+            let gap = (elapsed - pace * p.distance).max(0.);
+            let total = leader_time + gap;
+            let last = (gap + p.lap_start) / laps.saturating_sub(p.completed).max(1) as f32;
+            let mut best = p
+                .best
+                .map_or(last, |b| if last < b || b == 0. { last } else { b });
+            if total < laps as f32 * best {
+                best = total / laps as f32;
+            }
+            p.last_lap = last;
+            p.best = Some(best);
+            p.completed = laps;
+            p.finish = Some(total);
+            self.estimated[i] = true;
+        }
+        for k in 1..order.len() {
+            let previous = self.racer(order[k - 1]).finish.unwrap_or(elapsed);
+            let jitter = self.random.next_u31() as f32 * 4.656613e-10;
+            let p = self.racer_mut(order[k]);
+            if p.finish.is_some_and(|t| t < previous) {
+                p.finish = Some(previous + jitter);
+            }
+        }
+        for (o, p) in self.opponents.iter_mut().zip(&self.progress) {
+            o.finished = p.finish.is_some();
+        }
     }
     pub fn opponents(&self) -> &[Opponent] {
         &self.opponents
     }
+    /// Racer 0 is the player, then each CPU.
+    fn racer(&self, i: usize) -> &Progress {
+        if i == 0 {
+            &self.player
+        } else {
+            &self.progress[i - 1]
+        }
+    }
+    fn racer_mut(&mut self, i: usize) -> &mut Progress {
+        if i == 0 {
+            &mut self.player
+        } else {
+            &mut self.progress[i - 1]
+        }
+    }
+    /// The race clock runs between GO and the player's finish.
     pub fn running(&self) -> bool {
         self.countdown == 0. && self.elapsed > 0. && self.player.finish.is_none()
     }
@@ -1143,10 +1240,9 @@ impl Race {
     ) {
         let o = &mut self.opponents[index];
         let p = &mut self.progress[index];
-        if p.finish.is_some() {
-            return;
+        if p.finish.is_none() {
+            o.distance += distance(o.origin, origin);
         }
-        o.distance += distance(o.origin, origin);
         o.origin = origin;
         o.yaw = yaw;
         o.physical = physical;
@@ -1169,14 +1265,16 @@ impl Race {
         (self.course.point_at(s), self.course.heading_at(s))
     }
     pub fn frame(&self, yaw: f32) -> Frame {
-        let mut order: Vec<_> = std::iter::once(("YOU".to_string(), &self.player))
-            .chain(
-                self.opponents
-                    .iter()
-                    .zip(&self.progress)
-                    .map(|(o, p)| (o.name.clone(), p)),
-            )
-            .collect();
+        let mut order: Vec<_> =
+            std::iter::once(("YOU".to_string(), &self.player, self.estimated[0]))
+                .chain(
+                    self.opponents
+                        .iter()
+                        .zip(&self.progress)
+                        .zip(&self.estimated[1..])
+                        .map(|((o, p), e)| (o.name.clone(), p, *e)),
+                )
+                .collect();
         order.sort_by(|a, b| match (a.1.finish, b.1.finish) {
             (Some(a), Some(b)) => a.total_cmp(&b),
             (Some(_), None) => std::cmp::Ordering::Less,
@@ -1188,7 +1286,7 @@ impl Race {
         });
         let position = order
             .iter()
-            .position(|(_, p)| std::ptr::eq(*p, &self.player))
+            .position(|(_, p, _)| std::ptr::eq(*p, &self.player))
             .unwrap()
             + 1;
         let station = self.player.station;
@@ -1230,11 +1328,13 @@ impl Race {
             standings: order
                 .into_iter()
                 .enumerate()
-                .map(|(i, (name, p))| Standing {
+                .map(|(i, (name, p, estimated))| Standing {
                     name,
                     position: i + 1,
                     laps: p.completed,
                     time: p.finish,
+                    best: p.best,
+                    estimated,
                 })
                 .collect(),
         }
@@ -1406,19 +1506,101 @@ mod tests {
         }
     }
     #[test]
-    fn countdown_and_finish_are_locked() {
+    fn countdown_then_finish_hand_over_the_player() {
         let mut r = Race::new(course(), 1, vec![], 1).unwrap();
-        assert!(r.locked());
+        assert!(r.counting_down() && !r.player_finished());
         for _ in 0..181 {
             r.step([0.; 3], 1. / 60.);
         }
-        assert!(!r.locked());
+        assert!(!r.counting_down() && !r.player_finished());
         for p in [[0., 0., 100.], [100., 0., 100.], [100., 0., 0.], [0.; 3]] {
             r.step(p, 1.);
         }
-        assert!(r.locked());
+        assert!(r.player_finished() && !r.running());
         assert_eq!(r.frame(0.).phase, "finished");
         assert_eq!(r.frame(0.).best, Some(4.));
+        // After the finish the station follows the CPU-driven player.
+        r.step([0., 0., 60.], 1.);
+        assert_eq!(r.station(None).segment, 0);
+        assert!(r.station(None).fraction > 0.5);
+        assert_eq!(r.elapsed, 4.);
+    }
+    #[test]
+    fn race_over_estimates_unfinished_cpus_from_the_leader_pace() {
+        let mut r = Race::new(course(), 1, vec!["Half".into(), "Quarter".into()], 1).unwrap();
+        r.countdown = 0.;
+        // The CPUs reach 200ft and 100ft as the player completes 400ft in 4s.
+        let half = [
+            [0., 0., 100.],
+            [100., 0., 100.],
+            [100., 0., 100.],
+            [100., 0., 100.],
+        ];
+        let quarter = [
+            [0., 0., 50.],
+            [0., 0., 100.],
+            [0., 0., 100.],
+            [0., 0., 100.],
+        ];
+        for (i, p) in [[0., 0., 100.], [100., 0., 100.], [100., 0., 0.], [0.; 3]]
+            .into_iter()
+            .enumerate()
+        {
+            r.observe_cpu(0, half[i], 0., None);
+            r.observe_cpu(1, quarter[i], 0., None);
+            r.step(p, 1.);
+        }
+        assert!(r.player_finished());
+        let f = r.frame(0.);
+        assert!(f.opponents.iter().all(|o| o.finished));
+        let names: Vec<_> = f.standings.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["YOU", "Half", "Quarter"]);
+        // Gap = elapsed − leader time × distance share; total = leader + gap.
+        let half = &f.standings[1];
+        assert!(half.estimated && !f.standings[0].estimated);
+        assert!((half.time.unwrap() - 6.).abs() < 1e-4, "{:?}", half.time);
+        assert!((f.standings[2].time.unwrap() - 7.).abs() < 1e-4);
+        // Last lap (gap + lap start) / laps remaining; best is no slower.
+        assert!((half.best.unwrap() - 2.).abs() < 1e-4);
+        assert_eq!(f.standings[2].laps, 1);
+        // The results no longer change while everyone keeps driving.
+        r.observe_cpu(1, [100., 0., 100.], 0., None);
+        assert!((r.frame(0.).standings[2].time.unwrap() - 7.).abs() < 1e-4);
+    }
+    #[test]
+    fn race_over_keeps_estimates_increasing_down_the_order() {
+        let mut r = Race::new(course(), 1, vec!["A".into(), "B".into()], 1).unwrap();
+        r.countdown = 0.;
+        // B finished first by itself; A is close behind the player's line.
+        for (i, p) in [[0., 0., 100.], [100., 0., 100.], [100., 0., 0.], [0.; 3]]
+            .into_iter()
+            .enumerate()
+        {
+            r.observe_cpu(1, p, 0., None);
+            r.observe_cpu(
+                0,
+                [[0., 0., 99.], [99., 0., 100.], [100., 0., 2.], [2., 0., 0.]][i],
+                0.,
+                None,
+            );
+            r.step(
+                [
+                    [0., 0., 50.],
+                    [0., 0., 100.],
+                    [100., 0., 100.],
+                    [100., 0., 0.],
+                ][i],
+                1.,
+            );
+        }
+        r.step([0.; 3], 1.);
+        let times: Vec<_> = r
+            .frame(0.)
+            .standings
+            .iter()
+            .map(|s| s.time.unwrap())
+            .collect();
+        assert!(times.windows(2).all(|w| w[0] <= w[1]), "{times:?}");
     }
     #[test]
     fn shortcuts_reverse_and_reset_do_not_finish() {

@@ -101,7 +101,13 @@ try {
   await page.keyboard.down('KeyW');
   await waitForSteps(page, 30);
   s = await state();
-  assert.deepEqual(s.frame.origin, startOrigin, 'Countdown blocks throttle');
+  // The grid settles on its suspension under the brakes; throttle is ignored.
+  assert(Math.hypot(s.frame.origin[0] - startOrigin[0], s.frame.origin[2] - startOrigin[2]) < 0.3, 'Countdown blocks throttle');
+  assert(s.frame.grounded.every(Boolean), `Grid starts on the ground: ${JSON.stringify(s.frame.grounded)}`);
+  assert(
+    s.frame.race.opponents.every(o => o.physical?.grounded.some(Boolean)),
+    `CPU grid starts on the ground: ${JSON.stringify(s.frame.race.opponents.map(o => o.physical?.grounded))}`
+  );
   await button(page, 'Pause').tap();
   await screen('pause');
   // Time-based on purpose: let an in-flight step land, then prove the paused race stays frozen over wall-clock time.
@@ -201,7 +207,7 @@ try {
       best: 60,
       position: 2,
       lap_time: 63.4,
-      standings: player.race.standings.map((r, i) => ({ ...r, laps: 3, time: i < 2 ? 123.4 + i : null }))
+      standings: player.race.standings.map((r, i) => ({ ...r, laps: 3, time: 123.4 + i, best: 60 + i, estimated: i > 1 }))
     };
     window.resultFixture.draw(window.resultFixtureFrame, player, true);
   });
@@ -221,9 +227,14 @@ try {
     );
     if (output) await page.screenshot({ path: `${output}/race-results-${size.width}.png` });
   }
-  await button(page, 'Race Again').click();
+  assert.equal(await page.locator('.race-results tbody tr').count(), 5);
+  await button(page, 'Hide Menu').click();
+  assert(await page.locator('.race-results').isHidden(), 'Hide Menu reveals the riders');
+  await button(page, 'Show Results').click();
+  await button(page, 'Continue').click();
+  await button(page, 'Restart').click();
   assert.deepEqual(await page.evaluate(() => window.raceActions), ['retry']);
-  await button(page, 'Single Player').click();
+  await button(page, 'Quit Event').click();
   assert.deepEqual(await page.evaluate(() => window.raceActions), ['retry', 'quit']);
   assertNoErrors(errors);
   console.log(

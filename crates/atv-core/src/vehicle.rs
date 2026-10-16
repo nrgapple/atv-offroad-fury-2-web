@@ -37,6 +37,46 @@ fn speed_magnitude(velocity: Vec3) -> f32 {
 /// (00166510), then subtracts the current local CoG. Preserve its separate
 /// rotated point and negative rotated origin: subtracting world CoG first is
 /// algebraically equivalent but changes binary32 cancellation on large tracks.
+/// W,X,Y,Z quaternion whose `dynamics::basis` is the given orthonormal
+/// right/up/forward axes.
+fn quaternion_from_basis(b: [Vec3; 3]) -> [f32; 4] {
+    let trace = b[0][0] + b[1][1] + b[2][2];
+    let q = if trace > 0. {
+        let s = (trace + 1.).sqrt() * 2.;
+        [
+            0.25 * s,
+            (b[1][2] - b[2][1]) / s,
+            (b[2][0] - b[0][2]) / s,
+            (b[0][1] - b[1][0]) / s,
+        ]
+    } else if b[0][0] > b[1][1] && b[0][0] > b[2][2] {
+        let s = (1. + b[0][0] - b[1][1] - b[2][2]).sqrt() * 2.;
+        [
+            (b[1][2] - b[2][1]) / s,
+            0.25 * s,
+            (b[1][0] + b[0][1]) / s,
+            (b[2][0] + b[0][2]) / s,
+        ]
+    } else if b[1][1] > b[2][2] {
+        let s = (1. + b[1][1] - b[0][0] - b[2][2]).sqrt() * 2.;
+        [
+            (b[2][0] - b[0][2]) / s,
+            (b[1][0] + b[0][1]) / s,
+            0.25 * s,
+            (b[2][1] + b[1][2]) / s,
+        ]
+    } else {
+        let s = (1. + b[2][2] - b[0][0] - b[1][1]).sqrt() * 2.;
+        [
+            (b[0][1] - b[1][0]) / s,
+            (b[2][0] + b[0][2]) / s,
+            (b[2][1] + b[1][2]) / s,
+            0.25 * s,
+        ]
+    };
+    let length = q.iter().map(|v| v * v).sum::<f32>().sqrt();
+    q.map(|v| v / length)
+}
 fn apply_spring_world_force(body: &mut BodyState, config: &BodyConfig, force: Vec3, point: Vec3) {
     let basis = body.basis();
     let origin = body.origin(config);
@@ -230,6 +270,8 @@ pub struct Vehicle {
     /// racer's track position and direction to its vehicle interface every
     /// update (00248b20 callback +0x20); races recover there, facing forward.
     race_checkpoint: Option<(Vec3, f32)>,
+    /// A race checkpoint reset awaiting 001dd440 ground placement.
+    ground_placement: bool,
     reset_count: u32,
     flips: Option<crate::flip_tricks::FlipTricks>,
     flip_controls: (u8, [f32; 2]),
@@ -431,6 +473,7 @@ impl Vehicle {
             reset_origin: origin,
             reset_yaw: yaw,
             race_checkpoint: None,
+            ground_placement: false,
             reset_count: 0,
             flips: None,
             flip_controls: (0, [0.; 2]),
@@ -576,6 +619,56 @@ impl Vehicle {
     pub fn reset_now(&mut self) -> Result<()> {
         self.reset_to_checkpoint()
     }
+    /// 001dd440 ground placement (race grid, and race resets through
+    /// 001e35d0). The heading stays horizontal and the up axis rolls toward
+    /// the terrain normal (up = f × (n × f)); the origin is raised to the
+    /// ground, then lifted by the deepest wheel-bottom penetration. The lift
+    /// axis is a runtime global in the original; world up is assumed.
+    pub fn ground_pose(
+        &self,
+        terrain: &Terrain,
+        origin: Vec3,
+        yaw: f32,
+    ) -> Result<(Vec3, [f32; 4])> {
+        if !origin.iter().all(|v| v.is_finite()) || !yaw.is_finite() {
+            return Err("nonfinite placement".into());
+        }
+        let ground = terrain
+            .contact(origin[0], origin[2])?
+            .ok_or("placement lies outside the terrain")?;
+        let forward = [yaw.sin(), 0., yaw.cos()];
+        let right = wheel::cross(ground.normal, forward);
+        let length = dot(right, right).sqrt();
+        let right = if length > 1e-4 {
+            scale(right, 1. / length)
+        } else {
+            [yaw.cos(), 0., -yaw.sin()]
+        };
+        let up = wheel::cross(forward, right);
+        let orientation = quaternion_from_basis([right, up, forward]);
+        let mut origin = [origin[0], origin[1].max(ground.height), origin[2]];
+        let basis = crate::dynamics::basis(orientation);
+        let mut lift: f32 = 0.;
+        for (rest, config) in self.wheel_rest.iter().zip(&self.wheel_config) {
+            let bottom = sub(
+                add(origin, transform(basis, *rest)),
+                scale(up, config.radius),
+            );
+            if let Some(contact) = terrain.contact(bottom[0], bottom[2])? {
+                lift = lift.max(contact.height - bottom[1]);
+            }
+        }
+        origin[1] += lift;
+        Ok((origin, orientation))
+    }
+    /// Place a newly created racer on the ground, as the grid helper's
+    /// 001dd440 call does; wheel and suspension state start at rest.
+    pub fn place_on_ground(&mut self, terrain: &Terrain, origin: Vec3, yaw: f32) -> Result<()> {
+        let (origin, orientation) = self.ground_pose(terrain, origin, yaw)?;
+        self.body = BodyState::new(origin, orientation, &self.body_config)?;
+        self.ground_placement = false;
+        Ok(())
+    }
     fn reset_to_checkpoint(&mut self) -> Result<()> {
         let (reset_origin, reset_yaw) = self
             .race_checkpoint
@@ -589,6 +682,9 @@ impl Vehicle {
             [(reset_yaw * 0.5).cos(), 0., (reset_yaw * 0.5).sin(), 0.],
             &self.body_config,
         )?;
+        // Race checkpoints are placed on the ground before the next physics
+        // step, which has the terrain; Freestyle keeps the scene start.
+        self.ground_placement = self.race_checkpoint.is_some();
         self.pending_contact_corrections = ContactCorrections::default();
         self.crash_impact_speed = 0.;
         self.wheel_contact_points = [[0.; 3]; 4];
@@ -920,6 +1016,12 @@ impl Vehicle {
         //001e5870 checks +814 before physics, even when the rider is wrecked.
         if self.water_failure.reset_due() {
             self.reset_to_checkpoint()?;
+        }
+        if std::mem::take(&mut self.ground_placement)
+            && let Some((origin, yaw)) = self.race_checkpoint
+        {
+            let (origin, orientation) = self.ground_pose(terrain, origin, yaw)?;
+            self.body = BodyState::new(origin, orientation, &self.body_config)?;
         }
         self.landing_action = None;
         self.flip_events.clear();
@@ -1789,6 +1891,52 @@ impl Vehicle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn basis_quaternion_round_trips() {
+        for q in [
+            [1., 0., 0., 0.],
+            [0.3, 0.1, -0.9, 0.2],
+            [0., 1., 0., 0.],
+            [0.1, 0.2, 0.3, -0.9],
+            [0., 0., 0., 1.],
+        ] {
+            let length = q.iter().map(|v: &f32| v * v).sum::<f32>().sqrt();
+            let q = q.map(|v| v / length);
+            let b = crate::dynamics::basis(q);
+            let back = crate::dynamics::basis(quaternion_from_basis(b));
+            for (a, c) in b.iter().flatten().zip(back.iter().flatten()) {
+                assert!((a - c).abs() < 1e-5, "{q:?}");
+            }
+        }
+    }
+    #[test]
+    fn ground_placement_rests_wheels_on_the_terrain() {
+        let (mut vehicle, terrain) = fixture();
+        // Flat ground at 0: wheel centers sit one radius above the origin.
+        vehicle
+            .place_on_ground(&terrain, [500., -5., 500.], 0.7)
+            .unwrap();
+        let frame = vehicle.frame();
+        assert!(frame.origin[1].abs() < 1e-5);
+        let forward = crate::dynamics::basis(frame.orientation)[2];
+        assert!((forward[0] - 0.7f32.sin()).abs() < 1e-5 && forward[1].abs() < 1e-6);
+        // A start above the ground is kept (max of origin and ground).
+        let (origin, _) = vehicle.ground_pose(&terrain, [500., 3., 500.], 0.).unwrap();
+        assert_eq!(origin[1], 3.);
+        // The deepest wheel bottom lifts the whole quad out of the ground.
+        vehicle.wheel_rest[0][1] = 0.3;
+        let (origin, _) = vehicle.ground_pose(&terrain, [500., 0., 500.], 0.).unwrap();
+        assert!((origin[1] - 0.5).abs() < 1e-5);
+        // Race checkpoint resets are placed before the next physics step.
+        vehicle.wheel_rest[0][1] = 0.8;
+        vehicle.set_race_checkpoint(Some(([480., -3., 480.], 0.)));
+        vehicle.reset_now().unwrap();
+        assert_eq!(vehicle.frame().origin[1], -3.);
+        let frame = vehicle
+            .step(&terrain, VehicleInput::default(), 1. / 60.)
+            .unwrap();
+        assert!(frame.origin[1].abs() < 0.1, "{}", frame.origin[1]);
+    }
     #[test]
     fn deep_water_uses_cached_height_and_resets_to_retained_checkpoint() {
         let (mut vehicle, terrain) = fixture();
