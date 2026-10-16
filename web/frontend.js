@@ -1,6 +1,6 @@
 import { gameplayBindings } from './bindings.js';
 import { parseLaunch, buildRideUrl, copyRideUrl, ENVIRONMENTS, RACE_COURSES, COURSE_PREVIEWS, courseResource, loadingShotsResource } from './launch.js';
-import { renderScreen, screenPages, courseGroup } from './menu-screens.js';
+import { renderScreen, screenPages, courseGroup, COURSE_GROUPS } from './menu-screens.js';
 import { PAINT_PALETTE, paintGlsl, paintable } from './render-support.js';
 // Rust owns menu labels, supported choices and their order. This bridge lays out
 // the HD frontend screens (menu-screens.js) and ride panels, and binds input.
@@ -12,6 +12,9 @@ const overlayPages = new Set(['settings','extras','pause','players','hud-setting
 // Menu pages with quad/rider preview slots.
 const MODEL_PAGES = ['garage','gear','main','single','create-lobby','join-lobby'];
 const settingsPages = new Set(['settings','extras','hud-settings','minimap-config','controls','bindings','music']);
+// Value rows that step either way with Left/Right as well as cycling on a tap.
+const stepperActions = new Set(['racetrack','racelaps','racecpu','gearhelmet','gearjersey','gearpant','gearglove','gearboot','geargoggle','gearpaint']);
+const cycleActions = new Set(['speed-rush','crash-camera','chase-camera','funnycrashes','diagnostics','onehanded','minimap-orientation','minimap-shape','minimap-corner','minimap-toggle','musictoggle','musicvolume']);
 const fontName = 'tradegothic_boldcondensed_22s';
 const selectionKey = 'atv-player-selection';
 const trainingPreview = 'training-map-preview';
@@ -104,7 +107,7 @@ export class Frontend {
       if (e.target.matches?.('input') && e.code !== 'Escape') return;
       this.menuKeys.add(e.code);
       if (this.page === 'pause' && gameplayBindings.value('keyboard','pause',this.menuKeys,null) > .5) { e.preventDefault(); this.resume(); return; }
-      const action = ({ ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'accept', Space: 'accept', Escape: 'back', Backspace: 'back' })[e.code];
+      const action = ({ ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'accept', Space: 'accept', Escape: 'back', Backspace: 'back', PageUp: 'prevtab', PageDown: 'nexttab', KeyQ: 'prevtab', KeyE: 'nexttab' })[e.code];
       if (action) { e.preventDefault(); void this.action(action); }
     });
     window.addEventListener('pagehide', event => {
@@ -133,6 +136,9 @@ export class Frontend {
           if (p.buttons[13]?.pressed || p.axes[1] > .55) held.add('down');
           if (p.buttons[14]?.pressed || p.axes[0] < -.55) held.add('left');
           if (p.buttons[15]?.pressed || p.axes[0] > .55) held.add('right');
+          // Shoulder buttons switch the course list's event tabs.
+          if (p.buttons[4]?.pressed) held.add('prevtab');
+          if (p.buttons[5]?.pressed) held.add('nexttab');
         }
         if (!held.size) this.padBlocked = false;
         if (!this.root.hidden && !this.padBlocked) for (const action of held) if (!this.lastPad.has(action)) {
@@ -237,6 +243,10 @@ export class Frontend {
   trackOrder() {
     const order = this.tracks.map((_, index) => index);
     return this.trackFilter === 'all' ? order : order.filter(index => courseGroup(this.tracks[index].id) === this.trackFilter);
+  }
+  cycleTrackFilter(direction) {
+    const groups = COURSE_GROUPS.map(([key]) => key).filter(key => key === 'all' || this.tracks.some(track => courseGroup(track.id) === key));
+    this.setTrackFilter(groups[(groups.indexOf(this.trackFilter) + direction + groups.length) % groups.length]);
   }
   setTrackFilter(filter) {
     this.trackFilter = filter;
@@ -447,8 +457,8 @@ export class Frontend {
     if (this.busy || this.root.hidden) return;
     this.notice.textContent = '';
     if (['up','down'].includes(action) && ['title','main','single','garage','multiplayer','create-lobby','join-lobby','lobby','race','settings','extras','pause','players','hud-settings','minimap-config','controls','bindings','music'].includes(this.page)) {
-      const order = this.page === 'pause' ? this.pauseOrder : this.frame.choices;
-      const index = order.indexOf(this.frame.choices[this.selection]);
+      const order = this.page === 'pause' ? this.pauseOrder : this.page === 'garage' ? this.frame.choices.filter(choice => choice !== 'quadnext') : this.frame.choices;
+      const current = this.frame.choices[this.selection], index = order.indexOf(current === 'quadnext' ? 'quadprev' : current);
       this.selection = this.frame.choices.indexOf(order[(index + (action === 'up' ? -1 : 1) + order.length) % order.length]);
       this.scrollPauseSelection = this.isPausePanel(); this.scrollScreenSelection = !this.isPausePanel();
       if (this.page === 'bindings' && this.selection < 4) this.bindingRow = this.bindingPage * 4 + this.selection;
@@ -466,7 +476,14 @@ export class Frontend {
       // Every direction steps through the courses visible under the event filter.
       const order = this.trackOrder(), position = Math.max(0, order.indexOf(this.track)) + (['left','up'].includes(action) ? -1 : 1);
       this.track = order[(position + order.length) % order.length]; this.scrollScreenSelection = true;
-    } else if (['race','gear'].includes(this.page) && ['left','right'].includes(action)) { return this.run(this.frame.choices[this.selection],action === 'left' ? -1 : 1);
+    } else if (this.page === 'tracks' && ['prevtab','nexttab'].includes(action)) {
+      return this.cycleTrackFilter(action === 'prevtab' ? -1 : 1);
+    } else if (['race','gear'].includes(this.page) && ['left','right'].includes(action)) {
+      // Only value rows step; Left/Right on Start Race, Copy link or Back does nothing.
+      const current = this.frame.choices[this.selection];
+      if (stepperActions.has(current)) return this.run(current, action === 'left' ? -1 : 1, true);
+    } else if (['left','right'].includes(action) && cycleActions.has(this.frame.choices[this.selection]) && this.isPausePanel()) {
+      return this.run(this.frame.choices[this.selection], action === 'left' ? -1 : 1, true);
     } else if (this.page === 'minimap-config' && this.frame.choices[this.selection] === 'minimap-size' && ['left','right'].includes(action)) {
       this.minimapSettings?.setSize(this.minimapSettings.size + (action === 'left' ? -8 : 8));
     } else if (this.page === 'minimap-config' && this.frame.choices[this.selection] === 'minimap-zoom' && ['left','right'].includes(action)) {
@@ -492,7 +509,8 @@ export class Frontend {
     }
     await this.refresh();
   }
-  async run(action,direction=1) {
+  // `stepped` marks Left/Right (or an arrow button) rather than a tap that cycles.
+  async run(action,direction=1,stepped=false) {
     if (this.busy) return;
     try {
       if (action === 'copyride') return await copyRideUrl(this.rideUrl(),this.notice);
@@ -536,7 +554,11 @@ export class Frontend {
       else if (action === 'bindreset') gameplayBindings.reset(this.bindingDevice);
       else if (action.startsWith('song:')) { const music = this.audio?.()?.music; music?.setEnabled(true); music?.select(Number(action.slice(5))); this.songPreview = true; this.syncPreview(); }
       else if (action === 'musictoggle') { const music = this.audio?.()?.music; if (music) music.setEnabled(!music.snapshot().enabled); this.songPreview = true; this.syncPreview(); }
-      else if (action === 'musicvolume') { const music = this.audio?.()?.music; if (music) music.setVolume((Math.round(music.snapshot().volume * 4) + 1) % 5 / 4); }
+      else if (action === 'musicvolume') {
+        const music = this.audio?.()?.music, step = Math.round((music?.snapshot().volume ?? 0) * 4) + direction;
+        // A tap wraps 100% back to off; Left/Right stop at either end.
+        if (music) music.setVolume((stepped ? Math.min(4, Math.max(0, step)) : (step + 5) % 5) / 4);
+      }
       else if (action === 'steering-sensitivity') { this.pausePanel.querySelector('input[data-setting=steering-sensitivity]')?.focus(); return; }
       else if (action === 'minimap-zoom') { this.pausePanel.querySelector('input[data-setting="minimap-zoom"]')?.focus(); return; }
       else if (action === 'minimap-size') { this.pausePanel.querySelector('input[data-setting="minimap-size"]')?.focus(); return; }
@@ -545,11 +567,11 @@ export class Frontend {
       else if (action === 'minimap-corner') this.minimapSettings?.toggleCorner();
       else if (action === 'minimap-toggle') this.minimapSettings?.toggle();
       else if (action === 'onehanded') this.mobileControls?.toggleOneHanded();
-      else if (action === 'speed-rush') this.crashSettings?.toggleSpeed();
+      else if (action === 'speed-rush') this.crashSettings?.toggleSpeed(direction);
       else if (action === 'crash-camera') this.crashSettings?.toggleCamera();
       else if (action === 'chase-camera') this.crashSettings?.toggleChase();
-      else if (action === 'funnycrashes') this.crashSettings?.toggle();
-      else if (action === 'diagnostics') this.diagnosticsOverlay?.cycle();
+      else if (action === 'funnycrashes') this.crashSettings?.toggle(direction);
+      else if (action === 'diagnostics') this.diagnosticsOverlay?.cycle(direction);
       else if (action === 'resume') return this.resume();
       else if (action === 'reset') { await document.getElementById('reset').onclick({restart:true}); return this.resume(); }
       else if (action === 'fullscreen') {
@@ -879,6 +901,9 @@ export class Frontend {
         const copy = element('span','pause-label'); copy.append(element('span','pause-label-text'), element('small','pause-detail'));
         button.append(copy, element('span','pause-value'));
         button.onclick = () => { this.selection = this.frame.choices.indexOf(action); void this.run(action); };
+        // Page and Back controls carry a direction glyph so they read as navigation.
+        const glyph = /prev$/.test(action) || action === 'back' ? 'left' : /next$/.test(action) ? 'right' : '';
+        if (glyph) { const arrow = element('span',`pause-icon pause-icon-${glyph}`); arrow.setAttribute('aria-hidden','true'); if (glyph === 'left') button.prepend(arrow); else button.append(arrow); }
         focus(button, action); parent.append(button);
       };
       const addSlider = (parent, slider) => {
@@ -933,7 +958,8 @@ export class Frontend {
           else if (['back','pause','bindcancel','bindclear','bindreset','musictoggle','musicvolume'].includes(action)) addButton(footer,action);
           else addButton(settings,action);
         }
-        if (listPage && !this.capture) { paging.append(element('span','pause-page-count')); body.append(paging); }
+        // Previous / Page n of m / Next on one row.
+        if (listPage && !this.capture) { paging.firstChild?.after(element('span','pause-page-count')); body.append(paging); }
         if (footer.childElementCount) body.append(footer);
       }
       this.pausePanel.replaceChildren(header,body);

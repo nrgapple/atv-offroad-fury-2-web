@@ -528,12 +528,15 @@ pub fn layout(request: Request) -> Result<Frame> {
                 [20., 102., list_w, 58.],
                 request.selection == 0,
             );
+            // Ride modes come first; the Garage (ride setup) follows them.
             let items: &[(&str, &str)] = if main {
                 &[
                     ("Multiplayer", "multiplayer"),
                     ("Settings", "settings"),
                     ("Dev log", "devlog"),
                 ]
+            } else if request.race_available {
+                &[("Race", "race"), ("Garage", "garage")]
             } else {
                 &[("Garage", "garage")]
             };
@@ -546,15 +549,6 @@ pub fn layout(request: Request) -> Result<Frame> {
                     request.selection == i + 1,
                 );
             }
-            if !main && request.race_available {
-                f.choices.push("race".into());
-                f.button(
-                    "Race",
-                    "race",
-                    [20., 218., list_w, 58.],
-                    request.selection == 2,
-                );
-            }
             let detail_y = if main {
                 336.
             } else if request.race_available {
@@ -562,7 +556,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             } else {
                 236.
             };
-            let detail = if !main && request.selection == 2 {
+            let detail = if !main && request.race_available && request.selection == 1 {
                 "Race CPU riders on 32 original National and Supercross courses."
             } else if main && request.selection == 2 {
                 "Controls, display, audio and extras."
@@ -1421,22 +1415,22 @@ pub fn layout(request: Request) -> Result<Frame> {
                 );
                 let actions = if music {
                     vec![
-                        ("Back", "back"),
+                        ("Back".to_string(), "back"),
                         (
                             if request.music_enabled {
-                                "Music off"
+                                "Music: On".to_string()
                             } else {
-                                "Music on"
+                                "Music: Off".to_string()
                             },
                             "musictoggle",
                         ),
-                        ("Volume", "musicvolume"),
+                        (format!("Volume: {}%", request.music_volume), "musicvolume"),
                     ]
                 } else {
                     vec![
-                        ("Back", "back"),
-                        ("Clear", "bindclear"),
-                        ("Defaults", "bindreset"),
+                        ("Back".to_string(), "back"),
+                        ("Clear".to_string(), "bindclear"),
+                        ("Defaults".to_string(), "bindreset"),
                     ]
                 };
                 for (i, (label, action)) in actions.iter().enumerate() {
@@ -1650,7 +1644,7 @@ mod tests {
     fn race_availability_setup_and_restart_match_the_live_mode() {
         let mut r = request("single", 390., 844.);
         r.race_available = true;
-        assert_eq!(layout(r).unwrap().choices, ["tracks", "garage", "race"]);
+        assert_eq!(layout(r).unwrap().choices, ["tracks", "race", "garage"]);
         let f = layout(request("race", 844., 390.)).unwrap();
         assert_eq!(
             f.choices,

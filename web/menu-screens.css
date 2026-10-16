@@ -7,9 +7,9 @@
 :root { --ms-radius: 5px; }
 :where(.ms-screen) button { position: relative; margin: 0; padding: 0; color: inherit; background: none; border: 0; border-radius: 0; font: inherit; }
 :where(.ms-screen) button:focus-visible { outline: none; }
-:where(.ms-screen) button:focus-visible:not([aria-current=true]):not(.ms-garage-row[aria-current=true] button) { box-shadow: 0 0 0 3px #f6e061b3; }
+:where(.ms-screen) button:focus-visible:not([aria-current=true]):not(:is(.ms-garage-row, .ms-stepper)[aria-current=true] button) { box-shadow: 0 0 0 3px #f6e061b3; }
 /* Selection already follows focus on rows and lists, so they draw no ring. */
-.ms-screen :is(.ms-row, .ms-course, .ms-vehicle, .ms-tab):focus-visible { box-shadow: none; }
+.ms-screen :is(.ms-row, .ms-stepper-label, .ms-course, .ms-vehicle, .ms-tab):focus-visible { box-shadow: none; }
 
 .ms-screen {
   --ms-gutter: clamp(16px, 3.2vw, 44px);
@@ -53,8 +53,16 @@
 .ms-row-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-row-value { margin-left: auto; padding-left: 12px; color: #f1d84e; font-size: .86em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ms-row[aria-current=true] .ms-row-value { color: #3a2e00; }
-.ms-row-cycle[aria-current=true] .ms-row-value::before { content: ''; display: inline-block; width: 0; height: 0; margin-right: 10px; border: 7px solid transparent; border-right-color: currentColor; border-left-width: 0; vertical-align: 1px; }
-.ms-row-cycle[aria-current=true] .ms-row-value::after { content: ''; display: inline-block; width: 0; height: 0; margin-left: 10px; border: 7px solid transparent; border-left-color: currentColor; border-right-width: 0; vertical-align: 1px; }
+/* Value rows: the label is one button and the arrows either side of the
+   value are real previous/next buttons, shown on every row, not only the
+   focused one. The value keeps a fixed width so the arrows never move. */
+.ms-stepper { position: relative; padding-right: 0; cursor: default; }
+.ms-stepper-label { display: flex; align-items: center; gap: 14px; flex: 1 1 auto; min-width: 0; min-height: var(--ms-row); text-align: left; cursor: pointer; touch-action: manipulation; }
+.ms-stepper-control { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; }
+.ms-stepper .ms-row-value { flex: 0 1 9em; min-width: 2.5em; margin: 0; padding: 0; text-align: center; }
+.ms-stepper:not([aria-current=true]) .ms-cycle { opacity: .75; }
+/* Start Race follows the settings with a little air, like a separate action. */
+.ms-row-cta { margin-top: 10px; }
 
 
 /* Back sits bottom right on every screen; no console-specific button glyphs. */
@@ -91,6 +99,8 @@
 .ms-pill, .ms-start { display: inline-flex; align-items: center; justify-content: center; min-height: 52px; padding: 0 34px; border-radius: var(--ms-radius); background: var(--atv-gold-pill); box-shadow: inset 0 1px 0 #fffbe0, 0 2px 0 #0009; color: #0d0b00; font: italic 800 22px/1 var(--atv-font-display); letter-spacing: .06em; text-transform: uppercase; cursor: pointer; touch-action: manipulation; }
 .ms-ride { grid-area: ride; }
 @media (hover: hover) { .ms-pill:hover, .ms-start:hover { filter: brightness(1.08); } }
+/* A gold pill is gold already, so keyboard/controller focus adds a white ring. */
+.ms-pill:not(.ms-pill-secondary)[aria-current=true] { box-shadow: 0 0 0 3px #fff, inset 0 1px 0 #fffbe0, 0 2px 0 #0009; }
 
 /* Title: full-bleed scenery, centred lockup, pulsing Press Start. */
 .ms-screen.ms-title { grid-template-columns: 1fr; grid-template-rows: 1fr auto; grid-template-areas: "lockup" "actions"; }
@@ -129,10 +139,10 @@
 .ms-row-stack .ms-row-label { font-size: .62em; letter-spacing: .14em; text-transform: uppercase; color: #f1d84e; }
 .ms-garage-row[aria-current=true] .ms-row-stack .ms-row-label { color: #4a3a00; }
 .ms-row-stack .ms-row-value { margin: 0; padding: 0; color: inherit; font-size: .92em; }
-.ms-cycle { flex: none; width: 46px; height: 46px; display: grid; place-items: center; border-radius: var(--ms-radius); color: #f1d84e; cursor: pointer; touch-action: manipulation; }
+.ms-cycle { flex: none; width: 46px; height: 44px; display: grid; place-items: center; border-radius: var(--ms-radius); color: #f1d84e; cursor: pointer; touch-action: manipulation; }
 .ms-cycle svg { width: 16px; height: 16px; fill: currentColor; display: block; filter: drop-shadow(0 1px 2px #000a); }
-.ms-garage-row[aria-current=true] .ms-cycle { color: #1b1500; }
-.ms-garage-row[aria-current=true] .ms-cycle svg { filter: none; }
+:is(.ms-garage-row, .ms-stepper)[aria-current=true] .ms-cycle { color: #1b1500; }
+:is(.ms-garage-row, .ms-stepper)[aria-current=true] .ms-cycle svg { filter: none; }
 @media (hover: hover) { .ms-cycle:hover { background: #ffffff1f; } }
 .ms-rider-row[aria-disabled=true] { cursor: default; }
 .ms-rider-row[aria-disabled=true] .ms-switch { opacity: .4; }
@@ -142,16 +152,23 @@
 .ms-rider-row[aria-current=true] .ms-switch { background: #1b150026; }
 .ms-rider-row[aria-current=true] .ms-switch .is-on { background: #1b1500; color: #f6e061; }
 .ms-rider-row[aria-current=true] .ms-switch span:not(.is-on) { color: #3a2e00; }
-.ms-vehicles { display: flex; flex-direction: column; gap: 2px; padding: 0 12px 8px 0; }
-.ms-vehicle { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 0 14px 0 10px; border-radius: var(--ms-radius); text-align: left; cursor: pointer; touch-action: manipulation; }
+.ms-vehicles { display: flex; flex-direction: column; gap: 10px; padding: 8px 12px 8px 0; border-top: 1px solid #ffffff26; }
+.ms-vehicle-group { display: flex; flex-direction: column; gap: 2px; }
+.ms-list-heading { padding: 4px 14px; color: #f1d84e; font: 700 13px/1.2 var(--atv-font-display); letter-spacing: .16em; text-transform: uppercase; text-shadow: 0 1px 2px #000; }
+.ms-vehicle { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 0 14px 0 14px; border-radius: var(--ms-radius); text-align: left; cursor: pointer; touch-action: manipulation; }
 .ms-vehicle-name { min-width: 0; color: #e2e2e2; font: 700 clamp(16px, 1.6vw, 19px)/1.1 var(--atv-font-display); letter-spacing: .02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 1px 2px 0 #000b; }
 .ms-vehicle small { margin-left: auto; color: #e3c74a; font: 700 12px/1 var(--atv-font-display); letter-spacing: .08em; white-space: nowrap; }
-.ms-vehicle[aria-selected=true] { background: var(--atv-gold-pill); box-shadow: inset 0 1px 0 #fffbe0, 0 2px 0 #0009; }
-.ms-vehicle[aria-selected=true] .ms-vehicle-name { color: #0d0b00; text-shadow: none; }
-.ms-vehicle[aria-selected=true] small { color: #4a3a00; }
-.ms-vehicle[aria-selected=true] .ms-bullet { background: #1b1500; }
+.ms-vehicle[aria-selected=true] { background: #0000006b; box-shadow: inset 4px 0 0 #f1d84e; }
+.ms-vehicle[aria-selected=true] .ms-vehicle-name { color: #f6e061; }
 @media (hover: hover) { .ms-vehicle:hover:not([aria-selected=true]) { background: #ffffff14; } }
-.ms-done { align-self: flex-start; min-width: 180px; margin-right: 12px; }
+/* Rider gear (a separate page) and Done share the action bar under the list. */
+.ms-garage-actions { display: flex; gap: 10px; margin-right: 12px; }
+.ms-garage-actions .ms-pill { flex: 0 1 auto; }
+.ms-done { min-width: 180px; }
+.ms-pill-secondary { gap: 10px; padding: 0 18px 0 24px; background: #0000008c; box-shadow: inset 0 0 0 2px #f1d84e; color: #f6e061; font-style: normal; font-size: 19px; letter-spacing: .04em; text-transform: none; }
+.ms-chevron, .ms-chevron svg { display: block; width: 14px; height: 14px; fill: currentColor; }
+.ms-pill-secondary[aria-current=true] { background: var(--atv-gold-pill); box-shadow: inset 0 1px 0 #fffbe0, 0 2px 0 #0009; color: #0d0b00; }
+@media (hover: hover) { .ms-pill-secondary:hover:not([aria-current=true]) { background: #000000b3; filter: none; } }
 /* The rider stands just behind the ATV's rear wheel so the pair reads as one ride. */
 .ms-models { position: relative; flex: 1; min-height: 0; }
 .ms-models .ms-model { position: absolute; min-height: 0; }
@@ -207,7 +224,8 @@
   .ms-gear { --ms-stage: 26%; }
   .ms-gear .ms-left { overflow-y: auto; overscroll-behavior: contain; }
   .ms-garage .ms-plate { grid-template-columns: 1fr; }
-  .ms-done { align-self: stretch; margin-right: 0; }
+  .ms-garage-actions { margin-right: 0; }
+  .ms-garage-actions .ms-pill { flex: 1 1 0; min-width: 0; }
 }
 /* Very short phones keep every essential control on screen. */
 @media (orientation: portrait) and (max-height: 640px) {
@@ -222,7 +240,7 @@
   .ms-tracks .ms-panel, .ms-race .ms-panel, .ms-lobby .ms-panel { padding-bottom: 16px; }
   .ms-garage .ms-left { gap: 6px; padding-bottom: 8px; }
     .ms-garage .ms-side-heading { padding-top: 4px; }
-  .ms-done { min-height: 46px; }
+  .ms-garage-actions .ms-pill { min-height: 46px; }
   .ms-hints { min-height: 46px; }
   .ms-hints .ms-hint:not(.ms-hint-back) { display: none; }
 }
@@ -242,7 +260,7 @@
   .ms-course-thumb { width: 60px; height: 40px; }
   .ms-vehicle { min-height: 44px; }
   .ms-garage .ms-left { gap: 4px; padding-bottom: 6px; }
-  .ms-done { min-height: 44px; font-size: 18px; }
+  .ms-garage-actions .ms-pill { min-height: 44px; font-size: 18px; }
   .ms-garage .ms-hints { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -269,6 +287,16 @@
 .pause-panel button[aria-current=true] .pause-value, .pause-panel button[aria-current=true] .pause-detail { color: #3a2e00; }
 .pause-panel button[data-playing=true] { box-shadow: inset 4px 0 #f1d84e; }
 .pause-footer { border: 0; padding-top: 8px; }
+/* Pager: Previous / Page n of m / Next on one row, with direction glyphs. */
+.pause-pagination { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; }
+.pause-page-count { grid-column: auto; margin: 0; padding: 0 6px; font: 600 14px/1 var(--atv-font-display); white-space: nowrap; }
+.pause-icon { flex: none; width: 0; height: 0; border: 7px solid transparent; }
+.pause-icon-left { border-right-color: currentColor; border-left-width: 0; }
+.pause-icon-right { border-left-color: currentColor; border-right-width: 0; }
+/* Footer and pager controls read as buttons, not loose text. */
+.pause-panel :is(.pause-footer, .pause-pagination) button:not([aria-current=true]) { background: #ffffff0d; box-shadow: inset 0 0 0 1px #ffffff1f; }
+.pause-panel :is(.pause-footer, .pause-pagination) button { justify-content: center; gap: 10px; white-space: nowrap; }
+.pause-pagination button { padding: 0 12px; }
 .pause-slider { padding: 10px 22px; border-radius: var(--ms-radius); }
 .pause-slider:has(input[data-selected=true]) { background: #ffffff0f; }
 .pause-tips { border-left: 3px solid #e8c832; border-radius: 0; padding: 2px 0 2px 16px; }
@@ -284,8 +312,10 @@
 }
 /* One compact list, as in the original pause overlay. */
 .pause-panel[data-screen=pause] { width: min(520px, calc(100% - 48px)); }
-.pause-panel[data-screen=pause] .pause-groups { grid-template-columns: 1fr; gap: 14px; }
+.pause-panel[data-screen=pause] .pause-groups { grid-template-columns: 1fr; gap: 8px; }
 .pause-panel[data-screen=pause] .pause-group { grid-column: 1; grid-row: auto; gap: 2px; }
+/* Ride, Preferences and Session are separated by rules, not unexplained gaps. */
+.pause-panel[data-screen=pause] .pause-group:not(:empty) ~ .pause-group:not(:empty) { padding-top: 8px; border-top: 1px solid #ffffff1f; }
 @media (max-width: 580px) { .pause-panel[data-screen=pause] { width: calc(100% - 24px); } }
 
 /* Settings opened from the main menu sit on the frontend backdrop, not the ride. */

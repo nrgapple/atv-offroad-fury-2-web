@@ -283,9 +283,9 @@ try {
     await a.waitForFunction(() => document.querySelector('.pause-page-count').textContent.startsWith('Page 2'));
     await a.locator('.pause-panel button[data-action^="song:"]').first().click();
     await a.waitForFunction(() => document.querySelector('.pause-panel button[data-playing=true]'));
-    await button(a, 'Music off').click();
-    await button(a, 'Music on').click();
-    await button(a, 'Volume').click();
+    await button(a, 'Music: On').click();
+    await button(a, 'Music: Off').click();
+    await a.locator('.pause-panel [data-action=musicvolume]').click();
     await a.keyboard.press('Escape');
     await screen(a, 'settings');
     await a.keyboard.press('Escape');

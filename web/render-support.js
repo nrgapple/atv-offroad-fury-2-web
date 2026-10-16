@@ -157,8 +157,8 @@ export class RideEffectsSettings {
       this.mode = ['original','crazy','gorn'].includes(mode) ? mode : storage?.getItem('atv-funny-crashes') === 'true' ? 'crazy' : 'original';
     } catch { /* Session settings. */ }
   }
-  toggleSpeed() {
-    this.speed = ['off','low','normal','high'][(['off','low','normal','high'].indexOf(this.speed)+1)%4];
+  toggleSpeed(direction = 1) {
+    this.speed = ['off','low','normal','high'][(['off','low','normal','high'].indexOf(this.speed)+(direction < 0 ? 3 : 1))%4];
     try { this.storage?.setItem('atv-speed-rush',this.speed); } catch { /* Session settings. */ }
     this.onSpeedChange?.();
   }
@@ -174,8 +174,8 @@ export class RideEffectsSettings {
     this.onChaseChange?.();
   }
   get enabled() { return this.mode !== 'original'; }
-  toggle() {
-    this.mode = ['original','crazy','gorn'][(['original','crazy','gorn'].indexOf(this.mode)+1)%3];
+  toggle(direction = 1) {
+    this.mode = ['original','crazy','gorn'][(['original','crazy','gorn'].indexOf(this.mode)+(direction < 0 ? 2 : 1))%3];
     try { this.storage?.setItem('atv-crash-mode',this.mode); this.storage?.setItem('atv-funny-crashes',String(this.enabled)); } catch { /* Session settings. */ }
     this.onChange?.();
   }

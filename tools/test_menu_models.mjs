@@ -123,10 +123,10 @@ try {
   const rotated = await canvas.screenshot();
   await page.keyboard.press('ArrowRight');
   assert.notDeepEqual(await canvas.screenshot(), rotated);
-  // Keyboard menu navigation selects the rider row; controller navigation works
-  // with the same Rust choices (release after every simulated button press).
+  // Keyboard menu navigation selects the rider row (the vehicle row is one
+  // stop, so one Down reaches it); controller navigation works with the same
+  // Rust choices (release after every simulated button press).
   await page.mouse.click(10, 80);
-  await page.keyboard.press('ArrowDown');
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await ready('1:1');

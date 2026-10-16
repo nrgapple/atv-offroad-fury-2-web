@@ -87,6 +87,22 @@ function row(fe, action, extra = []) {
   return choice(fe, action, 'ms-row', h('span', {class:'ms-bullet', 'aria-hidden':'true'}), h('span', {class:'ms-row-label', text:target.label}), ...extra);
 }
 
+// A value row: tapping the label steps forward, and real arrow buttons either
+// side of the value step back or forward, so both drawn arrows work.
+function stepper(fe, action) {
+  const target = hit(fe, action); if (!target) return null;
+  const label = target.label.split(': ')[0];
+  const step = (direction, glyph, name) => {
+    const button = h('button', {type:'button', class:'ms-cycle', 'aria-label':`${name} ${label}`, dataset:{step:String(direction)}}, h('span', {html:glyph}));
+    button.onclick = () => { const index = fe.frame.choices.indexOf(action); if (index >= 0) fe.selection = index; void fe.run(action, direction, true); };
+    button.onpointermove = event => { if (event.pointerType === 'mouse' && (event.movementX || event.movementY)) selectChoice(fe, action); };
+    return button;
+  };
+  return h('div', {class:'ms-row ms-stepper', dataset:{row:action}},
+    choice(fe, action, 'ms-stepper-label', h('span', {class:'ms-bullet', 'aria-hidden':'true'}), h('span', {class:'ms-row-label', text:label})),
+    h('span', {class:'ms-stepper-control'}, step(-1, icon.left, 'Previous'), h('span', {class:'ms-row-value'}), step(1, icon.right, 'Next')));
+}
+
 // The original pages end with a hint pill; the port keeps one Back control in
 // that corner instead of console button glyphs, for touch, mouse and pads alike.
 function buildHints(fe) {
@@ -159,10 +175,10 @@ function buildLobby(fe, left, panel) {
 function buildRace(fe, left, panel) {
   const list = h('nav', {class:'ms-rows', 'aria-label':'Race setup'});
   for (const action of fe.frame.choices) {
-    const stepper = ['racetrack','racelaps','racecpu'].includes(action);
-    const item = row(fe, action, stepper ? [h('span', {class:'ms-row-value'})] : []);
-    if (stepper) item.classList.add('ms-row-cycle');
-    list.append(item);
+    const item = ['racetrack','racelaps','racecpu'].includes(action) ? stepper(fe, action) : row(fe, action);
+    // Start Race begins the actions below the race settings.
+    if (action === 'racestart') item?.classList.add('ms-row-cta');
+    list.append(item ?? '');
   }
   left.append(list);
   panel.append(trackFigure('ms-track-hero'));
@@ -174,12 +190,7 @@ function buildRace(fe, left, panel) {
 // quad and rider previews.
 function buildGear(fe, left, panel) {
   const list = h('nav', {class:'ms-rows', 'aria-label':'Rider gear'});
-  for (const action of fe.frame.choices) {
-    if (action === 'back') continue;
-    const item = row(fe, action, [h('span', {class:'ms-row-value'})]);
-    item?.classList.add('ms-row-cycle');
-    list.append(item ?? '');
-  }
+  for (const action of fe.frame.choices) if (action !== 'back') list.append(stepper(fe, action) ?? '');
   left.append(list);
   panel.append(h('div', {class:'ms-models'},
     h('div', {class:'ms-model ms-model-quad', dataset:{modelSlot:'quad'}}),
@@ -242,20 +253,25 @@ function buildGarage(fe, left, panel) {
   // One tap toggles the rider; the switch shows which one is riding.
   const rider = row(fe, 'riderchange', [h('span', {class:'ms-switch', 'aria-hidden':'true'}, h('span', {dataset:{rider:'0'}, text:'Male'}), h('span', {dataset:{rider:'1'}, text:'Female'}))]);
   rider?.classList.add('ms-garage-row', 'ms-rider-row');
-  const gear = row(fe, 'gear');
-  gear?.classList.add('ms-garage-row');
-  rows.append(vehicleRow, rider ?? '', gear ?? '');
+  rows.append(vehicleRow, rider ?? '');
   const catalog = fe.garageCatalog();
+  // The vehicle list is a picker for the row above: labelled groups and a
+  // quiet current-vehicle marker, so the gold bar only ever means focus.
   const list = h('div', {class:'ms-vehicles ms-scroll', role:'listbox', 'aria-label':'Vehicles'});
   for (const group of [...new Set(catalog.map(item => item.group))]) {
-    for (const item of catalog.filter(item => item.group === group)) {
-      const option = h('button', {type:'button', class:'ms-vehicle', role:'option', 'aria-label':item.label, dataset:{vehicle:String(item.id)}},
-        h('span', {class:'ms-bullet', 'aria-hidden':'true'}), h('span', {class:'ms-vehicle-name', text:item.label}), item.class ? h('small', {text:item.class}) : null);
-      option.onclick = () => void fe.run(`vehicle:${item.id}`);
-      list.append(option);
-    }
+    const name = group === 'Motorcycle' ? 'Motorcycles' : 'ATVs';
+    list.append(h('div', {class:'ms-vehicle-group', role:'group', 'aria-label':name}, h('p', {class:'ms-list-heading', 'aria-hidden':'true', text:name}),
+      ...catalog.filter(item => item.group === group).map(item => {
+        const option = h('button', {type:'button', class:'ms-vehicle', role:'option', 'aria-label':item.label, dataset:{vehicle:String(item.id)}},
+          h('span', {class:'ms-vehicle-name', text:item.label}), item.class ? h('small', {text:item.class}) : null);
+        option.onclick = () => void fe.run(`vehicle:${item.id}`);
+        return option;
+      })));
   }
-  left.append(rows, list, choice(fe, 'back', 'ms-pill ms-done', h('span', {text:hit(fe, 'back')?.label ?? 'Done'})));
+  // Rider gear opens its own page, so it sits with Done as a separate button
+  // (a chevron marks the new page) instead of looking like another vehicle row.
+  const gear = choice(fe, 'gear', 'ms-pill ms-pill-secondary ms-gear-link', h('span', {text:hit(fe, 'gear')?.label ?? 'Rider gear'}), h('span', {class:'ms-chevron', html:icon.right}));
+  left.append(rows, list, h('div', {class:'ms-garage-actions'}, gear ?? '', choice(fe, 'back', 'ms-pill ms-done', h('span', {text:hit(fe, 'back')?.label ?? 'Done'}))));
   panel.append(h('div', {class:'ms-plate ms-garage-plate'}, h('p', {class:'ms-ride-name'})),
     h('div', {class:'ms-models'},
       h('div', {class:'ms-model ms-model-quad', dataset:{modelSlot:'quad'}}),
@@ -306,7 +322,13 @@ function sync(fe) {
     if (target && node.tagName === 'BUTTON') node.setAttribute('aria-label', target.label);
     node.setAttribute('aria-current', String(node.dataset.action === selected));
   }
-  root.querySelector('[data-row=vehicle]')?.setAttribute('aria-current', String(['quadprev','quadnext'].includes(selected)));
+  for (const row of root.querySelectorAll('[data-row]')) row.setAttribute('aria-current', String(row.dataset.row === 'vehicle' ? ['quadprev','quadnext'].includes(selected) : row.dataset.row === selected));
+  for (const row of root.querySelectorAll('.ms-stepper')) {
+    const target = hit(fe, row.dataset.row); if (!target) continue;
+    const [label, ...rest] = target.label.split(': ');
+    row.querySelector('.ms-row-label').textContent = label;
+    row.querySelector('.ms-row-value').textContent = rest.join(': ');
+  }
   const focusTrack = page === 'tracks' ? fe.tracks[fe.track] : ['race','lobby','loading'].includes(page) ? fe.presentationTrack : null;
   const backdrop = root.querySelector('.ms-backdrop-photo'), backdropUrl = (focusTrack && fe.trackPhotoUrl(focusTrack)) || fe.backdropUrl;
   if (backdrop) {

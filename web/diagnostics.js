@@ -45,8 +45,8 @@ export class DiagnosticsOverlay {
     });
   }
   get label() { return ({ off: 'Off', performance: 'Performance', debug: 'Debug' })[this.mode]; }
-  cycle() {
-    this.mode = MODES[(MODES.indexOf(this.mode) + 1) % MODES.length];
+  cycle(direction = 1) {
+    this.mode = MODES[(MODES.indexOf(this.mode) + (direction < 0 ? MODES.length - 1 : 1)) % MODES.length];
     try { localStorage.setItem(DIAGNOSTICS_KEY, this.mode); } catch { /* In-memory control still works. */ }
     this.updated = -Infinity; this.sync(); this.present(performance.now());
   }
