@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 
 mod codec;
 mod compact;
+mod names;
 pub use compact::{AnimationState, Delta, apply_delta, delta};
+pub use names::{offensive_name, public_name};
 mod smoothing;
 mod transform;
 
@@ -17,8 +19,17 @@ pub use codec::{decode, encode};
 pub use smoothing::{PoseBuffer, SampledPose, SmoothingConfig};
 pub use transform::Transform;
 
-pub const VERSION: u8 = 5;
-pub const MAX_PLAYERS: usize = 4;
+pub const VERSION: u8 = 6;
+/// Protocol bound on participant slots. Private rooms keep the original four
+/// riders ([`PRIVATE_CAPACITY`]); shared Arlington Free Ride rooms hold more.
+pub const MAX_PLAYERS: usize = 20;
+pub const PRIVATE_CAPACITY: usize = 4;
+pub const PUBLIC_CAPACITY: usize = 20;
+/// Shared Free Ride rooms ride Arlington Stream (`env08`) only.
+pub const PUBLIC_MAP: u16 = 8;
+/// Shared rooms are numbered from 1; a full room opens the next one.
+pub const PUBLIC_ROOMS: u8 = 25;
+const PUBLIC_PREFIX: &[u8; 6] = b"FREERD";
 /// One-based lobby IDs reference this authored catalog; source resource keys
 /// remain stable even when their browser display names change.
 pub const MAP_ENVIRONMENTS: [&str; 40] = [
@@ -77,6 +88,21 @@ pub fn parse_room_code(value: &str) -> Result<RoomCode> {
     Ok(code)
 }
 
+/// Code of shared Free Ride room `number` (1-based), for example `FREERD01`.
+pub fn public_room_code(number: u8) -> Option<RoomCode> {
+    (1..=PUBLIC_ROOMS).contains(&number).then(|| {
+        let mut code = [0; ROOM_CODE_BYTES];
+        code[..6].copy_from_slice(PUBLIC_PREFIX);
+        code[6] = b'0' + number / 10;
+        code[7] = b'0' + number % 10;
+        code
+    })
+}
+/// Shared room codes are reserved: they cannot be hosted or reopened privately.
+pub fn is_public_room_code(code: &RoomCode) -> bool {
+    code.starts_with(PUBLIC_PREFIX)
+}
+
 pub fn sequence_newer(candidate: u32, previous: u32) -> bool {
     let delta = candidate.wrapping_sub(previous);
     delta != 0 && delta < 0x8000_0000
@@ -118,6 +144,9 @@ pub struct Lobby {
     pub epoch: u32,
     pub map: u16,
     pub started: bool,
+    /// Shared Free Ride room: no host controls, fixed map, larger capacity.
+    #[serde(default)]
+    pub public: bool,
     pub players: Vec<Participant>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

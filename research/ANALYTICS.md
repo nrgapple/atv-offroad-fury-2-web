@@ -23,7 +23,7 @@ The client posts one JSON event to `POST /api/events` (via `sendBeacon`, with a 
 | Event | Sent when | Fields |
 | --- | --- | --- |
 | `session_start` | The hosted game page starts | `entry` (`link` = opened with launch parameters, `menu`) |
-| `ride_start` | A ride finishes loading | `mode`, `activity`, `map`, `vehicle`, `quad`, `seconds` (load time); races add `laps` and `cpu`; multiplayer adds `players` |
+| `ride_start` | A ride finishes loading | `mode`, `activity`, `map`, `vehicle`, `quad`, `seconds` (load time); races add `laps` and `cpu`; multiplayer and Arlington Free Ride add `players`. `mode` is `single`, `multiplayer` or `freeride` |
 | `ride_failed` | A ride fails to load | `mode`, `activity`, `map`, `vehicle`, `quad` |
 | `ride_time` | When a menu opens (≥ 10 s), the page is hidden, the page closes, the rider leaves a lobby, or the next ride starts (≥ 1 s) | ride fields + `seconds` of visible riding outside menus since the last report; sum these values for total riding time |
 | `race_finish` | The Race Results screen first appears | ride fields + `place`, `field`, `seconds` (race time) |

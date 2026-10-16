@@ -37,6 +37,9 @@ pub struct Request {
     pub lobby_host: bool,
     #[serde(default)]
     pub lobby_started: bool,
+    /// Shared Arlington Free Ride room: no invites and no track changes.
+    #[serde(default)]
+    pub lobby_public: bool,
     pub width: f32,
     pub height: f32,
     pub selection: usize,
@@ -318,9 +321,10 @@ pub fn layout(request: Request) -> Result<Frame> {
         || request.room_code.len() > 64
         || request.player_name.len() > 32
         || request.lobby_status.len() > 256
-        || request.lobby_players.len() > 4
+        // Shared Free Ride rooms hold up to 20 riders; private rooms four.
+        || request.lobby_players.len() > 20
         || request.lobby_players.iter().any(|p| {
-            p.id.parse::<u8>().map_or(true, |id| id >= 4)
+            p.id.parse::<u8>().map_or(true, |id| id >= 20)
                 || p.label.len() > 64
                 || !["self", "ready", "waiting"].contains(&p.value.as_str())
         })
@@ -535,6 +539,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             let items: &[(&str, &str)] = if main {
                 &[
                     ("Multiplayer", "multiplayer"),
+                    ("Arlington Free Ride", "freeride"),
                     ("Settings", "settings"),
                     ("Dev log", "devlog"),
                 ]
@@ -553,7 +558,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                 );
             }
             let detail_y = if main {
-                336.
+                394.
             } else if request.race_available {
                 292.
             } else {
@@ -562,8 +567,10 @@ pub fn layout(request: Request) -> Result<Frame> {
             let detail = if !main && request.race_available && request.selection == 1 {
                 "Race CPU riders on 32 original National and Supercross courses."
             } else if main && request.selection == 2 {
-                "Controls, display, audio and extras."
+                "Drop straight into Arlington Stream with up to 20 riders online."
             } else if main && request.selection == 3 {
+                "Controls, display, audio and extras."
+            } else if main && request.selection == 4 {
                 "Progress, screenshots and what is next."
             } else {
                 detail
@@ -876,7 +883,11 @@ pub fn layout(request: Request) -> Result<Frame> {
                 list_w.min(w * 0.48 - 36.)
             };
             // Shown only while joining: the ride starts as soon as it loads.
-            let rows = [("Copy invite link", "share"), ("Leave Game", "leave")];
+            let rows: &[(&str, &str)] = if request.lobby_public {
+                &[("Leave Game", "leave")]
+            } else {
+                &[("Copy invite link", "share"), ("Leave Game", "leave")]
+            };
             let mut details_y = 100.;
             if !request.track_image.is_empty() {
                 let preview = if portrait {
@@ -1017,25 +1028,42 @@ pub fn layout(request: Request) -> Result<Frame> {
             f.footer(true);
         }
         "players" => {
-            let row = ((h - 170.) / 5.).clamp(44., 64.);
+            // A full shared room lists 20 riders: switch to columns of
+            // compact rows once they no longer fit above Back.
+            let count = request.lobby_players.len().max(1);
+            let max_rows = (((h - 170.) / 44.).floor() as usize).max(1);
+            let columns = count.div_ceil(max_rows);
+            let rows = count.div_ceil(columns).max(5);
+            let row = ((h - 170.) / rows as f32).clamp(36., 64.);
+            let column_w = (w - 48. - (columns - 1) as f32 * 8.) / columns as f32;
             for (i, player) in request.lobby_players.iter().enumerate() {
-                let y = 96. + i as f32 * row;
+                let x = 24. + (i / rows) as f32 * (column_w + 8.);
+                let y = 96. + (i % rows) as f32 * row;
                 if player.value == "self" || player.value == "waiting" {
                     let label = if player.value == "waiting" {
                         format!("{} / waiting", player.label)
                     } else {
                         player.label.clone()
                     };
-                    f.text(label, [30., y + 20.], 0.9, FONT, "210,210,210", w - 60.);
+                    f.text(
+                        label,
+                        [x + 6., y + (row - 24.) / 2. + 4.],
+                        0.9,
+                        FONT,
+                        "210,210,210",
+                        column_w - 12.,
+                    );
                 } else {
                     let action = format!("spawn:{}", player.id);
                     f.choices.push(action.clone());
+                    let label = format!("Spawn beside {}", player.label);
                     f.button(
-                        &format!("Spawn beside {}", player.label),
+                        if columns > 1 { &player.label } else { &label },
                         &action,
-                        [24., y, w - 48., row],
+                        [x, y, column_w, row],
                         request.selection == f.choices.len() - 1,
                     );
+                    f.hits.last_mut().unwrap().label = label;
                 }
             }
             f.choices.push("pause".into());
@@ -1065,18 +1093,21 @@ pub fn layout(request: Request) -> Result<Frame> {
                 // the next track for everyone.
                 choices.insert(2, ("Players", "players"));
                 choices.insert(3, ("Change ATV and Rider", "changeride"));
-                if request.lobby_host {
+                if request.lobby_host && !request.lobby_public {
                     choices.insert(4, ("Select Track", "hosttrack"));
                 }
             }
-            choices.push((
-                if online {
-                    "Copy invite link"
-                } else {
-                    "Copy ride link"
-                },
-                "copyride",
-            ));
+            // Shared Free Ride rooms have no invite: everyone just drops in.
+            if !request.lobby_public {
+                choices.push((
+                    if online {
+                        "Copy invite link"
+                    } else {
+                        "Copy ride link"
+                    },
+                    "copyride",
+                ));
+            }
             choices.push(("Dev log", "devlog"));
             choices.push(if online {
                 ("Leave Game", "leave")
@@ -1480,6 +1511,7 @@ mod tests {
             lobby_players: vec![],
             lobby_host: false,
             lobby_started: false,
+            lobby_public: false,
             width: w,
             height: h,
             selection: 0,
@@ -1553,6 +1585,67 @@ mod tests {
         let solo = layout(request("pause", 1280., 720.)).unwrap();
         assert!(!solo.choices.contains(&"changeride".to_string()));
         assert_eq!(solo.choices.last().unwrap(), "main");
+        // Shared Free Ride: change ride, find riders and leave; no host or invite rows.
+        let mut input = request("pause", 390., 844.);
+        input.lobby_status = "12/20 riders".into();
+        input.lobby_host = true;
+        input.lobby_public = true;
+        let public = layout(input).unwrap();
+        for row in ["changeride", "players", "leave"] {
+            assert!(public.choices.contains(&row.to_string()), "{row}");
+        }
+        for row in ["hosttrack", "copyride"] {
+            assert!(!public.choices.contains(&row.to_string()), "{row}");
+        }
+        let mut input = request("lobby", 390., 844.);
+        input.lobby_public = true;
+        assert_eq!(layout(input).unwrap().choices, ["leave"]);
+    }
+    #[test]
+    fn full_shared_room_players_fit_above_back_on_phones_and_desktop() {
+        for (width, height) in [(390., 844.), (844., 390.), (1280., 720.), (390., 600.)] {
+            let mut input = request("players", width, height);
+            input.lobby_players = (0..20)
+                .map(|id| ControlRow {
+                    id: id.to_string(),
+                    label: format!("Rider {id:02} with a long name"),
+                    value: if id == 0 { "self" } else { "ready" }.into(),
+                })
+                .collect();
+            let frame = layout(input).unwrap();
+            let spawns = frame
+                .hits
+                .iter()
+                .filter(|hit| hit.action.starts_with("spawn:"))
+                .collect::<Vec<_>>();
+            assert_eq!(spawns.len(), 19, "{width}x{height}");
+            let back = frame.hits.iter().find(|hit| hit.action == "pause").unwrap();
+            for hit in &spawns {
+                let [x, y, w, h] = hit.rect;
+                assert!(hit.label.starts_with("Spawn beside "));
+                assert!(
+                    x >= 0. && x + w <= frame.width + 0.5,
+                    "{width}x{height} {:?}",
+                    hit.rect
+                );
+                assert!(
+                    y + h <= back.rect[1] + 0.5,
+                    "{width}x{height} {:?}",
+                    hit.rect
+                );
+                assert!(h >= 36.);
+            }
+            // Rows never overlap one another.
+            for (i, a) in spawns.iter().enumerate() {
+                for b in &spawns[i + 1..] {
+                    let overlap = a.rect[0] < b.rect[0] + b.rect[2]
+                        && b.rect[0] < a.rect[0] + a.rect[2]
+                        && a.rect[1] < b.rect[1] + b.rect[3] - 0.5
+                        && b.rect[1] < a.rect[1] + a.rect[3] - 0.5;
+                    assert!(!overlap, "{width}x{height} {:?} {:?}", a.rect, b.rect);
+                }
+            }
+        }
     }
     #[test]
     fn lobby_preview_leaves_visible_actions_on_short_and_full_screens() {
@@ -1605,7 +1698,7 @@ mod tests {
     fn supported_routes_have_no_unfinished_choices() {
         assert_eq!(
             layout(request("main", 1280., 720.)).unwrap().choices,
-            ["single", "multiplayer", "settings", "devlog"]
+            ["single", "multiplayer", "freeride", "settings", "devlog"]
         );
         assert_eq!(
             layout(request("single", 1280., 720.)).unwrap().choices,

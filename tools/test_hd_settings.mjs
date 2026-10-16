@@ -43,6 +43,8 @@ try {
   await shot('main-320');
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.waitForFunction(() => document.querySelector('.model-view canvas')?.dataset.ready === 'true');
+  // Single Player, Multiplayer, Arlington Free Ride, then Settings.
+  await page.keyboard.press('ArrowDown');
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');

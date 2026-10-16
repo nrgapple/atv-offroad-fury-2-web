@@ -15,6 +15,7 @@ fn lobby() -> Lobby {
         epoch: 1,
         map: 4,
         started: false,
+        public: false,
         players: (0..4).map(participant).collect(),
     }
 }
@@ -641,4 +642,46 @@ fn rider_appearance_roundtrips_and_rejects_out_of_range_gear() {
     assert!(encode(&Packet::Lobby(l.clone())).is_err());
     l.players[1].appearance = [65, 0, 0, 0, 0, 0, 0, 0];
     assert!(encode(&Packet::Lobby(l)).is_err());
+}
+
+#[test]
+fn shared_free_ride_lobbies_hold_twenty_and_private_rooms_keep_four() {
+    let public = Lobby {
+        host: 19,
+        map: PUBLIC_MAP,
+        started: true,
+        public: true,
+        players: (0..PUBLIC_CAPACITY as u8).map(participant).collect(),
+        ..lobby()
+    };
+    let bytes = encode(&Packet::Lobby(public.clone())).unwrap();
+    assert!(bytes.len() < MAX_PACKET_BYTES);
+    assert_eq!(decode(&bytes).unwrap(), Packet::Lobby(public.clone()));
+    // Slot 20 does not exist, even in a shared room.
+    let mut over = public.clone();
+    over.players[19].id = 20;
+    assert!(encode(&Packet::Lobby(over)).is_err());
+    // A private room never exceeds the original four riders.
+    let private = Lobby {
+        public: false,
+        players: (0..5).map(participant).collect(),
+        ..lobby()
+    };
+    assert!(encode(&Packet::Lobby(private)).is_err());
+    // Unknown lobby flag bits are rejected.
+    let mut flags = encode(&Packet::Lobby(lobby())).unwrap();
+    let offset = 8 + 1 + 4 + 2;
+    flags[offset] = 4;
+    assert!(decode(&flags).is_err());
+}
+
+#[test]
+fn shared_room_codes_are_numbered_and_reserved() {
+    assert_eq!(public_room_code(1), Some(*b"FREERD01"));
+    assert_eq!(public_room_code(PUBLIC_ROOMS), Some(*b"FREERD25"));
+    assert_eq!(public_room_code(0), None);
+    assert_eq!(public_room_code(PUBLIC_ROOMS + 1), None);
+    let code = public_room_code(7).unwrap();
+    assert!(valid_room_code(&code) && is_public_room_code(&code));
+    assert!(!is_public_room_code(b"ABCD2345"));
 }

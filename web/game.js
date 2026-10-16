@@ -1,7 +1,7 @@
 import { SpeedRush, speedRushFocus, speedRushBounds } from './speed-rush.js';
 // Original content and vehicle component simulation run in the Rust worker.
 import { sceneViewProjection, vertexBounds, worldBounds, viewPlanes, outsideView, UphillSightline, chasePresentation, cinematicPresentation, RideEffectsSettings, ImpactEvents, severedIndices, meshNodeBounds, crashSubjects, crashPresentation, shadowGlState, observedSize, RenderScale, PAINT_PALETTE, paintGlsl, paintable } from './render-support.js';
-import { Multiplayer, PlayerIndicators } from './multiplayer.js';
+import { MAX_REMOTE_MODELS, Multiplayer, PlayerIndicators } from './multiplayer.js';
 import { Frontend } from './frontend.js';
 import { courseResource, parseLaunch } from './launch.js';
 import { UsageAnalytics } from './analytics.js';
@@ -799,7 +799,7 @@ async function remoteAssets(quad, rider) {
     if (multiplayer?.started && model.prepareAnimation) await model.prepareAnimation();
     return model;
   }
-  if(remoteModels.size>=8) {
+  if(remoteModels.size>=MAX_REMOTE_MODELS) {
     const active=new Set((multiplayer?.state?.lobby?.players??[]).map(p=>`${p.atv_model}:${p.rider_model}`));
     for(const [cachedKey,cached] of remoteModels) {if(!active.has(cachedKey)){disposeRemoteGpu(cached);remoteModels.delete(cachedKey);}}
   }
@@ -1868,7 +1868,7 @@ async function loadGame(file = null, environment = "env01", racing = null) {
 }
 // Anonymous usage context only: mode, venue, vehicle number and race settings.
 const vehicleKind = quad => quad > 26 ? 'motorcycle' : 'atv';
-const onlineRide = map => ({ mode: 'multiplayer', activity: 'freestyle', map, vehicle: 'atv', quad: frontend?.quadId });
+const onlineRide = map => ({ mode: multiplayer?.shared ? 'freeride' : 'multiplayer', activity: 'freestyle', map, vehicle: 'atv', quad: frontend?.quadId });
 async function startRide(environment, racing) {
   const quad = frontend?.quadId, started = performance.now();
   const ride = { mode: 'single', activity: racing ? 'race' : 'freestyle', map: environment, vehicle: vehicleKind(quad), quad, ...(racing ? { laps: racing.laps, cpu: racing.cpu } : {}) };
@@ -1989,9 +1989,9 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
         if(pose&&isCurrent()&&simReady){simGeneration++;simAccumulator=0;acceptFrame(await command(23,{origin:pose.origin,yaw:pose.yaw}));await command(47,{});orbit=0;acceptCameraFrame(await command(46,{dt:1/60,orbit}));buildMesh();}
         if(isCurrent()){frontend.raceActive=false;frontend.activeSetup={map:environment,activity:'freestyle',quadId:frontend.quadId,riderId:frontend.riderId};frontend.resume();usage.rideStarted({...onlineRide(environment),players:multiplayer.state.lobby?.players?.length},{seconds:(performance.now()-started)/1000});}
       }
-      catch(error){if(isCurrent()){usage.rideFailed(onlineRide(environment));await frontend.show('multiplayer');frontend.fail(error);throw error;}}
+      catch(error){if(isCurrent()){usage.rideFailed(onlineRide(environment));await frontend.show(multiplayer.shared?'main':'multiplayer');frontend.fail(error);throw error;}}
       finally{if(isCurrent())frontend.busy=false;}
-    },onLeave:message=>{usage.rideEnded();for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show('multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
+    },onLeave:message=>{usage.rideEnded();for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show(multiplayer.shared?'main':'multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
     frontend = new Frontend({minimapSettings,menuRider:menuRiderAssets,modelAssets:selectionAssets,gearPreview:gearTextures,crashSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => startRide(environment,racing), active: open => { menuOpen = open; usage.setRiding(!open); if (open) usage.report(10); keyboardHelp.setRiding(!open); clearInput(); lastTime = 0; scheduleRender(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     hud = new HeadUpDisplay(frontend, canvas);
     document.body.classList.add('menu-open'); void frontend.init();
