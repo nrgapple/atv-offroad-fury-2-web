@@ -38,7 +38,7 @@ export class RaceOverlay {
     // Off the track polygon progress pauses; point back to the racing line.
     const tx=(race.track_point?.[0]??player.origin[0])-player.origin[0],tz=(race.track_point?.[2]??player.origin[2])-player.origin[2];
     const back=Math.atan2(Math.sin(Math.atan2(tx,tz)-yaw),Math.cos(Math.atan2(tx,tz)-yaw));
-    const offTrack=race.off_track?`OFF TRACK ${Math.abs(back)<.4?'↑':back>0?'→':'←'} ${Math.round(Math.hypot(tx,tz))} ft${race.off_track_time>3?' · Reset to return':''}`:'';
+    const offTrack=race.off_track&&race.phase==='racing'?`OFF TRACK ${Math.abs(back)<.4?'↑':back>0?'→':'←'} ${Math.round(Math.hypot(tx,tz))} ft${race.off_track_time>3?' · Reset to return':''}`:'';
     this.root.dataset.offTrack=String(Boolean(race.off_track));
     set('.race-direction',offTrack||`${direction} · ${Math.round(Math.hypot(dx,dz))} ft`);
     // The original lamp art replaces the digits when the course carries it.
