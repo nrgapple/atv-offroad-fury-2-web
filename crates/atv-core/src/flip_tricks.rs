@@ -105,6 +105,22 @@ struct Pending {
 pub struct Frame {
     pub active: Option<Trick>,
     pub rotation: f32,
+    /// A launch request (thumb lift) would start a trick now: airborne within
+    /// the early window with no trick active. Lets touch cue "LIFT".
+    pub launch_window: bool,
+}
+
+/// Authored touch request. `launch` comes from lifting the driving thumb: on
+/// the ground it stays armed for the early window so it fires at takeoff, and
+/// in the air it is honored only within the early window. Otherwise (two-finger
+/// long swipe) it is honored at any point in the air and dropped on the ground.
+#[derive(Debug, Clone, Copy)]
+struct Request {
+    trick: Trick,
+    launch: bool,
+    /// Stick-hold frames (0..60) setting strength, as the source hold channel.
+    hold: f32,
+    timer: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -118,8 +134,7 @@ pub struct FlipTricks {
     airtime: f32,
     pending: Option<Pending>,
     events: Vec<Event>,
-    /// One-shot touch request, consumed by the next step.
-    request: Option<Trick>,
+    request: Option<Request>,
 }
 
 fn window(value: f32) -> f32 {
@@ -163,15 +178,21 @@ impl FlipTricks {
                 None
             },
             rotation: self.pending.map_or(0., |p| p.angle),
+            launch_window: self.airtime > 0.
+                && self.airtime < EARLY_AIR
+                && !self.exempts_air_angles(),
         }
     }
 
-    /// Authored touch adaptation: a flip picked on the touch trick wheel (or a
-    /// long swipe) starts at the early-air strength at any point in the air,
-    /// because a menu choice cannot meet the 0.6 s takeoff window. Ignored on
-    /// the ground or while a trick is already active.
-    pub fn request(&mut self, trick: Trick) {
-        self.request = Some(trick);
+    /// Authored touch adaptation; see `Request`. Ignored while a trick is
+    /// already active. `hold` is clamped to the source 0..60 frame window.
+    pub fn request(&mut self, trick: Trick, launch: bool, hold: f32) {
+        self.request = Some(Request {
+            trick,
+            launch,
+            hold: if hold.is_finite() { hold.max(0.) } else { 0. },
+            timer: EARLY_AIR,
+        });
     }
 
     pub fn take_events(&mut self) -> Vec<Event> {
@@ -225,19 +246,37 @@ impl FlipTricks {
             && !input.brake;
         let early_air = !input.grounded && self.airtime < EARLY_AIR;
         let trick_button = input.mask & 0xf == 4;
-        let request = self.request.take().filter(|_| !input.grounded);
+        let request = match self.request.take() {
+            Some(mut r) if input.grounded => {
+                r.timer -= h;
+                if r.launch && r.timer > 0. {
+                    self.request = Some(r);
+                }
+                None
+            }
+            Some(r) => (!r.launch || self.airtime < EARLY_AIR).then_some(r),
+            None => None,
+        };
         let mut torque = [0.; 3];
 
         // Backflip 004e4f20.
         let spin_busy = self.spin.active;
         let f = &mut self.backflip;
         let mut started = None;
-        let wanted = request == Some(Trick::Backflip) || early_air && trick_button && y > 0.8;
-        if !f.active && wanted && !spin_busy {
+        let wanted = match request {
+            Some(r) if r.trick == Trick::Backflip => Some(r.hold),
+            _ if early_air && trick_button && y > 0.8 => Some(0.),
+            _ => None,
+        };
+        if !f.active
+            && let Some(hold) = wanted
+            && !spin_busy
+        {
+            let low = 1.25 * BACKFLIP_TORQUE[0];
             *f = Spin {
                 active: true,
                 airborne: true,
-                torque: [-1.25 * BACKFLIP_TORQUE[0], 0.],
+                torque: [-(low + (BACKFLIP_TORQUE[1] - low) * window(hold)), 0.],
                 ..Spin::default()
             };
             started = Some(Trick::Backflip);
@@ -282,23 +321,27 @@ impl FlipTricks {
         let flipping = self.backflip.active;
         let s = &mut self.spin;
         let mut started = false;
-        let wanted = match request {
-            Some(Trick::ThreeSixtyLeft) => Some(-1.),
-            Some(Trick::ThreeSixtyRight) => Some(1.),
-            _ if early_air && trick_button && x.abs() > 0.7 => Some(x.signum()),
+        let wanted = match request.map(|r| (r.trick, r.hold)) {
+            Some((Trick::ThreeSixtyLeft, hold)) => Some((-1., hold)),
+            Some((Trick::ThreeSixtyRight, hold)) => Some((1., hold)),
+            _ if early_air && trick_button && x.abs() > 0.7 => Some((x.signum(), 0.)),
             _ => None,
         };
         if !s.active
-            && let Some(dir) = wanted
+            && let Some((dir, hold)) = wanted
             && !flipping
         {
             self.spin_dir = dir;
+            let t = window(hold);
+            let lerp = |[a, b]: [f32; 2]| a + (b - a) * t;
             *s = Spin {
                 active: true,
                 airborne: true,
                 torque: [
-                    -SPIN_TORQUE_X[0],
-                    dir * SPIN_TORQUE_Y[0].max(0.5 * SPIN_TORQUE_Y[1]),
+                    -lerp(SPIN_TORQUE_X),
+                    dir * SPIN_TORQUE_Y[0]
+                        .max(0.5 * SPIN_TORQUE_Y[1])
+                        .max(lerp(SPIN_TORQUE_Y)),
                 ],
                 ..Spin::default()
             };
@@ -510,21 +553,65 @@ mod tests {
     fn touch_requests_start_late_in_the_air_but_not_on_the_ground() {
         let h = 1. / 60.;
         let mut f = FlipTricks::new(-800.).unwrap();
-        f.request(Trick::Backflip);
+        f.request(Trick::Backflip, false, 0.);
         f.step(input(true, 0, [0., 0.]), [0.; 3], h).unwrap();
         assert!(!f.exempts_air_angles(), "ground requests are dropped");
         for _ in 0..90 {
             f.step(input(false, 0, [0., 0.]), [0.; 3], h).unwrap();
         }
         assert!(!f.exempts_air_angles());
-        f.request(Trick::ThreeSixtyLeft);
+        f.request(Trick::ThreeSixtyLeft, false, 0.);
         f.step(input(false, 0, [0., 0.]), [0.; 3], h).unwrap();
         assert_eq!(f.frame().active, Some(Trick::ThreeSixtyLeft));
         // A second request while spinning is ignored.
-        f.request(Trick::Backflip);
+        f.request(Trick::Backflip, false, 0.);
         let torque = f.step(input(false, 0, [0., 0.]), [0.; 3], h).unwrap();
         assert_eq!(f.frame().active, Some(Trick::ThreeSixtyLeft));
         assert!(torque[1] < 0.);
+    }
+
+    #[test]
+    fn thumb_lift_launch_arms_on_the_ramp_and_honors_only_the_early_air_window() {
+        let h = 1. / 60.;
+        // Lifted on the ramp lip: armed, fires at takeoff with hold strength.
+        let mut f = FlipTricks::new(-450.).unwrap();
+        f.request(Trick::Backflip, true, 60.);
+        for _ in 0..10 {
+            f.step(input(true, 0, [0., 0.]), [0.; 3], h).unwrap();
+        }
+        assert!(!f.exempts_air_angles());
+        f.step(input(false, 0, [0., 0.]), [0.; 3], h).unwrap();
+        assert_eq!(f.frame().active, Some(Trick::Backflip));
+        let torque = f.step(input(false, 0, [0., 0.]), [0.; 3], h).unwrap();
+        assert_eq!(
+            torque[0], -1400.,
+            "a full one-second pull is maximum strength"
+        );
+        // Lifted on flat ground with no jump: expires after the window.
+        let mut f = FlipTricks::new(-450.).unwrap();
+        f.request(Trick::ThreeSixtyRight, true, 0.);
+        for _ in 0..40 {
+            f.step(input(true, 0, [0., 0.]), [0.; 3], h).unwrap();
+        }
+        f.step(input(false, 0, [0., 0.]), [0.; 3], h).unwrap();
+        assert!(
+            !f.exempts_air_angles(),
+            "an expired lift does not flip later"
+        );
+        // Lifted early in the air: fires; late in the air: ignored.
+        assert!(f.frame().launch_window);
+        f.request(Trick::ThreeSixtyRight, true, 0.);
+        f.step(input(false, 0, [0., 0.]), [0.; 3], h).unwrap();
+        assert_eq!(f.frame().active, Some(Trick::ThreeSixtyRight));
+        assert!(!f.frame().launch_window);
+        let mut f = FlipTricks::new(-450.).unwrap();
+        for _ in 0..40 {
+            f.step(input(false, 0, [0., 0.]), [0.; 3], h).unwrap();
+        }
+        assert!(!f.frame().launch_window);
+        f.request(Trick::Backflip, true, 60.);
+        f.step(input(false, 0, [0., 0.]), [0.; 3], h).unwrap();
+        assert!(!f.exempts_air_angles(), "a late lift is just a release");
     }
 
     #[test]

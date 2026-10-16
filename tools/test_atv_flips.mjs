@@ -79,8 +79,8 @@ try {
     assertNoErrors(errors);
     await page.close();
   }
-  // Touch (default one-handed mode): a second finger in the air opens the
-  // trick wheel; dragging past its dashed ring and lifting picks Backflip.
+  // Touch (default one-handed mode): hold the driving thumb into the ramp,
+  // pull it fully back when the cue says LIFT → BACKFLIP, then lift to jump.
   {
     const errors = [];
     const page = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }, errors);
@@ -97,24 +97,22 @@ try {
     const touch = (type, points = []) => cdp.send('Input.dispatchTouchEvent', {
       type, touchPoints: points.map(point => ({ radiusX: 6, radiusY: 6, force: 1, ...point }))
     });
-    const thumb = { id: 1, x: 200, y: 640 };
+    const thumb = { id: 1, x: 200, y: 600 };
     await touch('touchStart', [thumb]);
     await page.waitForFunction(() => window.atvTerrainStatus.frame.preload_armed, null, { timeout: 45000, polling: 'raf' });
-    await touch('touchEnd', [thumb]);
-    await page.waitForFunction(() => !window.atvTerrainStatus.frame.grounded.some(Boolean), null, { timeout: 5000, polling: 'raf' });
-    await touch('touchStart', [thumb]);
-    const finger = { id: 2, x: 195, y: 330 };
-    await touch('touchStart', [thumb, finger]);
-    for (let i = 1; i <= 6; i++) await touch('touchMove', [thumb, { ...finger, y: finger.y + i * 28 }]);
-    const selected = await page.locator('.touch-trick-choice.selected').textContent();
+    for (let i = 1; i <= 5; i++) await touch('touchMove', [{ ...thumb, y: thumb.y + i * 13 }]);
+    await page.waitForFunction(() => document.querySelector('.touch-rider-marker span')?.textContent === 'LIFT → BACKFLIP',
+      null, { timeout: 2000, polling: 'raf' });
     if (process.env.ATV_FLIP_TOUCH_SCREENSHOT) await page.screenshot({ path: process.env.ATV_FLIP_TOUCH_SCREENSHOT });
-    await touch('touchEnd', [{ ...finger, y: finger.y + 168 }]);
+    await waitForSteps(page, 12);
+    await touch('touchEnd', [{ ...thumb, y: thumb.y + 65 }]);
     await page.waitForFunction(() => window.flipFrames.some(s => s.frame.flip?.active === 'Backflip'), null, { timeout: 5000, polling: 'raf' });
-    await touch('touchCancel');
-    const frames = await page.evaluate(() => window.flipFrames.map(({ frame }) => frame.flip));
-    assert.equal(selected, 'Backflip', 'dragging past the ring previews Backflip');
-    const peak = Math.max(...frames.map(f => f?.rotation ?? 0));
-    console.log(`touch: wheel selected ${selected}, backflip started, rotation ${(peak * 180 / Math.PI).toFixed(0)} deg so far`);
+    await page.waitForFunction(() => window.atvTerrainStatus.frame.grounded.some(Boolean)
+      || window.atvTerrainStatus.frame.wreck.phase !== 'Riding', null, { timeout: 15000, polling: 'raf' });
+    const frames = await page.evaluate(() => window.flipFrames.map(({ frame }) => ({ flip: frame.flip, phase: frame.wreck.phase })));
+    const peak = Math.max(...frames.filter(f => f.phase === 'Riding' && f.flip?.active === 'Backflip').map(f => f.flip.rotation));
+    assert(peak > AIR_LIMIT, `thumb-lift backflip passes the air limit while riding (peak ${peak.toFixed(2)})`);
+    console.log(`touch: pull back + lift on the ramp launched a backflip, peak ${(peak * 180 / Math.PI).toFixed(0)} deg`);
     assertNoErrors(errors);
     await page.close();
   }
