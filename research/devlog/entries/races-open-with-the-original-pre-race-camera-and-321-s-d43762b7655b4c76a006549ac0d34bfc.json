@@ -1,0 +1,14 @@
+{
+  "id": "races-open-with-the-original-pre-race-camera-and-321-s-d43762b7655b4c76a006549ac0d34bfc",
+  "timestamp": "2026-10-16T05:11:49.195485+00:00",
+  "recorded_at": "2026-10-16T05:12:18.078364+00:00",
+  "kind": "build",
+  "title": "Races open with the original pre-race camera and 321 start lights",
+  "summary": "Races now open the way the original does: a 500 ms fade from black, then each course's own authored camera shots at the original 30 fps, then a 2.5 s swoop from beside the rider into the chase camera. The countdown is the original 4 s 321 LIGHTS: three red lamps light one per second with the beep, then the green lamp with the go sound.",
+  "details": [
+    "Intro: the shots come from each course's own <venue>nat1/nat2.vub files. The countdown starts partway through the swoop, as in the original. Restart Race skips the intro, as in the original; any key, tap or controller button skips it. Start lights: the lamps are hidden 1 s after GO, and Supercross also plays its start-gate sound. The three original sounds were added to the hosted runtime audio package (additive, already published). Verification: Rust tests and Clippy, JS unit tests, and the content browser tests test_race.mjs and test_race_courses.mjs (the intro plays on all 32 courses and key skip works). A host sx01 run steps the lamps 0 to 4 with 3 beeps, 1 go sound and 1 gate sound. Screenshot is a host capture of the Supercross grid with two red lamps lit. PR #116, implementation-ready with auto-merge armed. Next: the after-finish TV camera director using each course's trackside cameras (<venue>nat.tv)."
+  ],
+  "limitation": "Fly-by and orbit fallbacks, the race-load announcer cue and the Supercross gate rotation are not reproduced. Host captures only; not yet a verified public release.",
+  "image": "/devlog-images/races-open-with-the-original-pre-race-camera-and-321-s-d43762b7655b4c76a006549ac0d34bfc.png",
+  "caption": "Supercross grid with the original 321 start lamps, two red lit (host capture)"
+}
