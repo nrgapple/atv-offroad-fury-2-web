@@ -13,6 +13,7 @@ pub mod drivetrain;
 pub mod ecosystem;
 pub mod elf;
 pub mod engine_audio;
+pub mod flip_tricks;
 pub mod fog;
 pub mod gore;
 pub mod grip;

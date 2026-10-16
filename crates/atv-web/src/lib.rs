@@ -75,6 +75,10 @@ struct Simulation {
     placement_epoch: u32,
     wreck_camera: Option<atv_core::camera::WreckCamera>,
     hud: atv_core::hud::State,
+    /// Optional flips: landed points shown for the remaining seconds.
+    flip_points: (f32, f32),
+    /// Optional flips: follow-camera heading held from the trick's start.
+    flip_heading: Option<[f32; 3]>,
     race_course: Option<atv_core::race::Course>,
     race: Option<atv_core::race::Race>,
     cpu_racers: Vec<CpuRacer>,
@@ -559,6 +563,33 @@ fn update_hud(
         points = score.display_points;
         sim.hud
             .set_score_cache(points, score.display_count, active)?;
+        for event in &frame.flip_events {
+            use atv_core::flip_tricks::Event;
+            match event {
+                Event::Started { name, .. } => {
+                    sim.hud.clear_wheelie_for_stunt();
+                    sim.hud.name_event(name);
+                }
+                Event::Landed { name, points, .. } => {
+                    sim.hud.name_event(name);
+                    sim.hud.finish_event(true, 1);
+                    sim.flip_points = (sim.flip_points.0 + points, 2.);
+                }
+                Event::Bailed { .. } => {
+                    sim.hud.finish_event(false, 1);
+                    sim.flip_points = (0., 0.);
+                }
+            }
+        }
+        if sim.flip_points.1 > 0. {
+            sim.flip_points.1 -= dt;
+            if !active {
+                sim.hud.set_extra_points(sim.flip_points.0)?;
+                points = sim.flip_points.0;
+            }
+        } else {
+            sim.flip_points.0 = 0.;
+        }
         let wheelie = animator.wheelie_frame();
         if wheelie.eligible {
             //002dd4b0 gives the wheelie cache precedence;002e3640 retains
@@ -725,6 +756,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     animator.reset_score_session();
                 }
                 sim.hud.reset();
+                sim.flip_points = (0., 0.);
                 sim.rider_mode = None;
                 sim.browser_drive.reset();
                 sim.input_generation = None;
@@ -823,6 +855,27 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     sim.input_generation = generation;
                 }
                 vehicle.set_stunt_landing_safe(safe);
+                vehicle.set_flips(
+                    raw.get("flips")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                )?;
+                let flip_mask = raw
+                    .get("stunt_modifiers")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0);
+                if flip_mask > 7 {
+                    return Err("invalid stunt modifiers".into());
+                }
+                let flip_axis = |key| {
+                    raw.get(key)
+                        .and_then(serde_json::Value::as_f64)
+                        .unwrap_or(0.) as f32
+                };
+                vehicle.set_flip_controls(
+                    flip_mask as u8,
+                    [flip_axis("stunt_x"), flip_axis("stunt_y")],
+                )?;
                 vehicle.set_rider_mode(sim.rider_mode);
                 vehicle.set_forced_landing(forced_landing);
                 let wreck = sim
@@ -1155,11 +1208,24 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     .as_ref()
                     .ok_or("start simulation first")?
                     .frame();
+                // The follow camera flattens body forward, which reverses
+                // as a backflip passes vertical. Hold the takeoff heading.
+                let flipping = vehicle.flip.is_some_and(|f| f.active.is_some());
+                if !flipping {
+                    sim.flip_heading = None;
+                } else if sim.flip_heading.is_none() {
+                    sim.flip_heading = Some(atv_core::dynamics::basis(vehicle.orientation)[2]);
+                }
                 let actor = CameraActor {
                     origin: vehicle.origin,
                     orientation: vehicle.orientation,
                     velocity: vehicle.linear_velocity,
-                    yaw_rate: vehicle.local_angular_velocity[1],
+                    yaw_rate: if flipping {
+                        0.
+                    } else {
+                        vehicle.local_angular_velocity[1]
+                    },
+                    heading: sim.flip_heading,
                     grounded: vehicle.grounded.iter().any(|v| *v),
                     rider: sim
                         .wreck_animator
@@ -1374,6 +1440,8 @@ pub(crate) struct CameraActor {
     pub orientation: [f32; 4],
     pub velocity: [f32; 3],
     pub yaw_rate: f32,
+    /// Optional follow heading replacing body forward (ATV flips).
+    pub heading: Option<[f32; 3]>,
     pub grounded: bool,
     /// Detached rider origin and velocity during a wreck.
     pub rider: Option<([f32; 3], [f32; 3])>,
@@ -1446,7 +1514,7 @@ pub(crate) fn follow_camera(
         .step(
             atv_core::camera::FollowInput {
                 origin: actor.origin,
-                forward: basis[2],
+                forward: actor.heading.unwrap_or(basis[2]),
                 velocity,
                 speed: ((velocity[0] * velocity[0] + velocity[1] * velocity[1])
                     + velocity[2] * velocity[2])

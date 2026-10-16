@@ -110,6 +110,9 @@ pub struct VehicleFrame {
     pub landing_action: Option<crate::rider_pose::Landing>,
     pub reset_count: u32,
     pub scene_query: SceneQueryFrame,
+    /// Optional Extras flips; absent while the option is off.
+    pub flip: Option<crate::flip_tricks::Frame>,
+    pub flip_events: Vec<crate::flip_tricks::Event>,
 }
 
 #[derive(Debug, Serialize)]
@@ -228,6 +231,9 @@ pub struct Vehicle {
     /// update (00248b20 callback +0x20); races recover there, facing forward.
     race_checkpoint: Option<(Vec3, f32)>,
     reset_count: u32,
+    flips: Option<crate::flip_tricks::FlipTricks>,
+    flip_controls: (u8, [f32; 2]),
+    flip_events: Vec<crate::flip_tricks::Event>,
 }
 impl Vehicle {
     pub fn new(mesh: &Mesh, data: &PhysicsData, origin: Vec3, yaw: f32) -> Result<Self> {
@@ -426,7 +432,30 @@ impl Vehicle {
             reset_yaw: yaw,
             race_checkpoint: None,
             reset_count: 0,
+            flips: None,
+            flip_controls: (0, [0.; 2]),
+            flip_events: Vec::new(),
         })
+    }
+    /// Optional Extras flips (authored, from MX vs. ATV Unleashed). Off drops
+    /// all flip state so the recovered ATV2 step is unchanged.
+    pub fn set_flips(&mut self, enabled: bool) -> Result<()> {
+        if !enabled {
+            self.flips = None;
+        } else if self.flips.is_none() {
+            self.flips = Some(crate::flip_tricks::FlipTricks::new(
+                self.rider_config.air_damping,
+            )?);
+        }
+        Ok(())
+    }
+    /// Trick button mask (Circle=1, Triangle=2, L1=4) and trick stick.
+    pub fn set_flip_controls(&mut self, mask: u8, axes: [f32; 2]) -> Result<()> {
+        if mask > 7 || axes.iter().any(|v| !v.is_finite()) {
+            return Err("invalid flip controls".into());
+        }
+        self.flip_controls = (mask, axes.map(|v| v.clamp(-1., 1.)));
+        Ok(())
     }
     pub fn enable_wrecks(&mut self, data: &PhysicsData) -> Result<()> {
         self.wreck_physics = Some(WreckPhysics {
@@ -583,6 +612,9 @@ impl Vehicle {
         self.stunt_state_four = false;
         self.chassis_contact_count = 0;
         self.obstacle_contact_count = 0;
+        if let Some(flips) = &mut self.flips {
+            flips.reset();
+        }
         self.reset_count = self.reset_count.wrapping_add(1);
         Ok(())
     }
@@ -801,6 +833,8 @@ impl Vehicle {
             landing_action: self.landing_action,
             reset_count: self.reset_count,
             scene_query: self.scene_query,
+            flip: self.flips.as_ref().map(|f| f.frame()),
+            flip_events: self.flip_events.clone(),
         }
     }
     /// Recovered riding inputs, with the separate touch preload also expressed
@@ -882,6 +916,7 @@ impl Vehicle {
             self.reset_to_checkpoint()?;
         }
         self.landing_action = None;
+        self.flip_events.clear();
         self.crash_impact_speed = 0.;
         let crashed = self.wreck.phase != crate::wreck::Phase::Riding;
         // 001e5260 decrements this riding cooldown before physics. The current
@@ -1324,6 +1359,28 @@ impl Vehicle {
                     &mut self.body.force,
                     &mut self.body.local_torque,
                 )?;
+                if let Some(flips) = &mut self.flips {
+                    let (mask, axes) = self.flip_controls;
+                    let torque = flips.step(
+                        crate::flip_tricks::Input {
+                            grounded: rider_grounded,
+                            vertical_speed: self.body.linear_velocity[1],
+                            forward_speed: inverse_transform(b, self.body.linear_velocity)[2],
+                            brake: brake > 0.,
+                            mask,
+                            // Without a trick button the trick stick is the
+                            // riding stick, as for the motorcycle.
+                            axes: if mask == 0 {
+                                [input.steer.clamp(-1., 1.), input.lean.clamp(-1., 1.)]
+                            } else {
+                                axes
+                            },
+                        },
+                        self.body.local_angular_velocity,
+                        step,
+                    )?;
+                    self.body.local_torque = add(self.body.local_torque, torque);
+                }
             }
             let mut corrections = if elapsed == 0. {
                 std::mem::take(&mut self.pending_contact_corrections)
@@ -1624,11 +1681,21 @@ impl Vehicle {
                 self.rider_contact_cooldown,
                 landing_candidate.is_some(),
             );
+            // Optional flips skip only the airborne angle limits while a trick
+            // drives the body; contact still uses the recovered ground limits.
+            let flip_exempt = self.flips.as_ref().is_some_and(|f| f.exempts_air_angles())
+                && !self.contacts.iter().any(|c| c.grounded)
+                && self.chassis_contact_count + self.obstacle_contact_count == 0;
+            let (pitch, roll) = if flip_exempt {
+                (0., 0.)
+            } else {
+                (angles[0], angles[2])
+            };
             if let Some(kind) = config.rules.evaluate(crate::wreck::Input {
                 local_impact,
                 vertical_limit_scale: 1.0,
-                pitch: angles[0],
-                roll: angles[2],
+                pitch,
+                roll,
                 wheel_contact: self.contacts.iter().any(|c| c.grounded),
                 body_contact: self.chassis_contact_count + self.obstacle_contact_count > 0,
                 rider_contact,
@@ -1639,6 +1706,13 @@ impl Vehicle {
             } else {
                 self.landing_action = landing_candidate;
             }
+        }
+        if let Some(flips) = &mut self.flips {
+            flips.settle(
+                self.contacts.iter().any(|c| c.grounded),
+                self.wreck.phase != crate::wreck::Phase::Riding,
+            );
+            self.flip_events.extend(flips.take_events());
         }
         //001ea4d0 permits a terrain-projected boundary checkpoint during flight.
         // Keep the port's outer-update sampling cadence; the original virtual
@@ -2336,6 +2410,65 @@ mod tests {
         for (normal, main) in traces[0].iter().zip(&traces[1]) {
             assert!(normal[0] < main[0] && main[0] < 0.0);
         }
+    }
+    #[test]
+    fn optional_flips_rotate_past_air_limits_and_off_keeps_original_rates() {
+        let dt = 1. / 60.;
+        let input = VehicleInput {
+            lean: 1.,
+            ..Default::default()
+        };
+        let mut rates = Vec::new();
+        for flips in [false, true] {
+            let (mut vehicle, terrain) = fixture();
+            enable_test_wrecks(&mut vehicle);
+            vehicle.body =
+                BodyState::new([500., 400., 500.], [1., 0., 0., 0.], &vehicle.body_config).unwrap();
+            vehicle.set_flips(flips).unwrap();
+            vehicle.set_flip_controls(4, [0., 1.]).unwrap();
+            let first = vehicle.step(&terrain, input, dt).unwrap();
+            assert_eq!(first.flip.is_some(), flips);
+            assert_eq!(
+                matches!(
+                    first.flip_events[..],
+                    [crate::flip_tricks::Event::Started {
+                        trick: crate::flip_tricks::Trick::Backflip,
+                        ..
+                    }]
+                ),
+                flips
+            );
+            let mut frame = first;
+            for _ in 0..150 {
+                frame = vehicle.step(&terrain, input, dt).unwrap();
+                assert_eq!(frame.wreck.phase, crate::wreck::Phase::Riding);
+            }
+            rates.push(frame.local_angular_velocity[0]);
+            if flips {
+                // Past the 1.5 rad test air limit: more than half a rotation.
+                assert!(frame.flip.unwrap().rotation > std::f32::consts::PI);
+            }
+        }
+        // Lean alone settles near AeroMoment/AeroDamping = 0.5 rad/s; the
+        // backflip adds Unleashed's 1000/450 rad/s.
+        assert!((rates[0] + 0.5).abs() < 0.05, "{rates:?}");
+        assert!(
+            (rates[1] - rates[0] + 1000. / 450.).abs() < 0.1,
+            "{rates:?}"
+        );
+    }
+    #[test]
+    fn flips_on_without_a_trick_keep_original_air_wrecks() {
+        let (mut vehicle, terrain) = fixture();
+        enable_test_wrecks(&mut vehicle);
+        vehicle.set_flips(true).unwrap();
+        // Upside down in the air with no trick active.
+        vehicle.body =
+            BodyState::new([500., 400., 500.], [0., 1., 0., 0.], &vehicle.body_config).unwrap();
+        let frame = vehicle
+            .step(&terrain, VehicleInput::default(), 1. / 60.)
+            .unwrap();
+        assert_ne!(frame.wreck.phase, crate::wreck::Phase::Riding);
     }
     use crate::{
         mesh::Node,

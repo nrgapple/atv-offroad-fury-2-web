@@ -10,7 +10,7 @@ export const keyName = code => NAMES[code] ?? code.replace(/^Key/, '').replace(/
 const SECTIONS = [
   ['Drive', [['throttle', 'Gas'], ['brake', 'Brake · hold to reverse'], [['steerLeft', 'steerRight'], 'Steer']]],
   ['Rider', [['preloadHold', 'Hold, release to jump'], ['leanBack', 'Lean back · wheelie'], ['leanForward', 'Lean forward']]],
-  ['Tricks', [[['stuntCircle', 'stuntTriangle'], 'In the air: hold, then tap a direction'], ['stuntL1', 'Add for combo tricks']]],
+  ['Tricks', [[['stuntCircle', 'stuntTriangle'], 'In the air: hold, then tap a direction'], ['stuntL1', 'Add for combo tricks · alone + back/side: flip (Extras)']]],
   ['Other', [['reset', 'Reset'], ['camera', 'Camera'], ['pause', 'Pause']]],
 ];
 

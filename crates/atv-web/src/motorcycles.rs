@@ -59,6 +59,7 @@ fn camera_actor(sim: &Simulation) -> Result<CameraActor> {
         orientation: f.orientation,
         velocity: f.linear_velocity,
         yaw_rate: f.local_angular_velocity[1],
+        heading: None,
         grounded: f.grounded.iter().any(|v| *v),
         rider: (f.wreck.phase != atv_core::wreck::Phase::Riding)
             .then(|| ([rider[12], rider[13], rider[14]], bike.rider_velocity())),
