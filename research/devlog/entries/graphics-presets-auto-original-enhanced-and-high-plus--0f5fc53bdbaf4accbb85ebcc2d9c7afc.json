@@ -1,0 +1,17 @@
+{
+  "id": "graphics-presets-auto-original-enhanced-and-high-plus--0f5fc53bdbaf4accbb85ebcc2d9c7afc",
+  "timestamp": "2026-10-16T18:35:40-04:00",
+  "recorded_at": "2026-10-16T22:37:16.803370+00:00",
+  "kind": "build",
+  "title": "Graphics presets: Auto, Original, Enhanced and High, plus Vibration",
+  "summary": "Settings > Display > Graphics now offers Auto, Original, Enhanced and High. Auto picks Enhanced on phones, touch and low-power devices and High on desktop. Original is pixel-identical to the previous build. PR #136 (1c01bd1) is live; PR #139 (344c7aa) is merged and its deploy was pending when this was written.",
+  "details": [
+    "Original: compared against the previous build at five fixed views per map on env01, sx01 and env04 at 390x844, DPR 3, with no pixel differences.",
+    "Enhanced: ATV render interpolation, 4x anisotropic filtering, contact shadows, dirt build-up (the original per-material dirt overlay passes and zone DirtAnim rates; the reveal pattern and wash are authored), wheel re-projection (at most 0.5 ft, clamped to suspension travel), tire tracks (original GenerateTireTrack mud zones plus authored lighter marks on dirt and snow, 600 segments for 15 s), water Fresnel and 24 lingering dust puffs.",
+    "High adds 16x anisotropic filtering, 3,600 track segments for 75 s, a vehicle-only 2048 px sun shadow map and 96 dust puffs. New Settings > Controls > Vibration (default On) drives controller rumble, or Android vibration, on hard landings and wrecks.",
+    "Phone-emulation measurements (390x844, DPR 3, CPU x4), draws Original/Enhanced/High: Caribou 100/103/116, sx01 205/208/221, env04 97/99/112. Main-thread callback differences were within noise and RenderScale never dropped. I inspected six more host captures (env05 chase Original/Enhanced/High, sx01 wreck shadows, env02 side views); the env05 chase views are nearly identical across presets, so only the clearer env02 pair is attached."
+  ],
+  "limitation": "GPU cost on physical phones is unmeasured; all numbers are host Chromium in phone emulation. CPU and remote riders get no dirt or tracks. Shadows land on terrain and scenery only. The dirt reveal pattern is authored, not original. Vibration was not felt on a physical device. The PR #139 changes were not live on the public site when this was written.",
+  "image": "/devlog-images/graphics-presets-auto-original-enhanced-and-high-plus--0f5fc53bdbaf4accbb85ebcc2d9c7afc.png",
+  "caption": "Host capture, env02, High preset, the same moment as the Original capture: the quad now casts a sun-shadow-map shadow on the terrain and leaves two tire tracks behind it. Original shows only a faint dark smudge under the quad."
+}

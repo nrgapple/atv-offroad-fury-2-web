@@ -1,0 +1,15 @@
+{
+  "id": "original-sound-parity-rider-voices-chassis-impacts-ter-22d5f0d26d55497ea1717e1fa1733bd3",
+  "timestamp": "2026-10-16T18:20:27-04:00",
+  "recorded_at": "2026-10-16T22:37:16.740085+00:00",
+  "kind": "build",
+  "title": "Original sound parity: rider voices, chassis impacts, terrain loops and venue ambience",
+  "summary": "The port now plays the original game's rider vocals, chassis impact sounds, per-venue terrain loops and every venue's ambient world sounds, with a separate SFX volume. PR #138 is merged and the code is deployed, but the expanded AUDIO.RES content has not been published to R2 yet, so on the public site these sounds are still silent.",
+  "details": [
+    "Rider vocals come from rider.aud, chosen by gender: Bang, Small/Med/HardWreck, Jostle and Fall. Fall plays when the rider is at least 30 ft up or was launched across the boundary. One rider voice plays at a time, within 100 ft range.",
+    "Chassis sounds: landing.vag after more than 2 ft of air with an impact of at least 10, the vehicle Wreck list, QuadToQuadImpact and the water-entry splash. Each venue gets its own TerrainDriveOn surface loops with the original speed-to-pitch and speed-to-volume curves. This build has no skid sound, so none was added.",
+    "Every venue's ambient Soultree world sounds are in, including the amateur crowds on FREE01-03 and the Coonce Arena indoor crowd, under the original 12-voice Soultree cap. Settings > Audio has a new separate SFX volume.",
+    "Evidence: reconstructed from the exact build's decompiled logic and checked by unit and browser tests. There are no bounded native instruction comparisons for these emitters, so timing and mixing details are not proven bit-exact. Verification (host Chromium): make check, and tools/test_quad_audio.mjs, which measures per-voice output energy."
+  ],
+  "limitation": "Public status: the new sounds are not audible on furyremastered.com until the expanded AUDIO.RES is uploaded to R2. Not reproduced: CPU and remote rider vocals, material collision sounds and hockey crowd reactions. Host Chromium only; nothing was listened to on a physical device."
+}
