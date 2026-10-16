@@ -28,9 +28,11 @@ was removed; see `git log -- research/RELEASE_QUEUE.md` for its history.
   mixed changes retain full tests, lint and release builds. Manual dispatch also
   forces this path. The explicit allowlist is in `tools/ci_changes.py`.
 
-The runtime lane also runs the content-free browser smoke group
-(`make browser-smoke`) against the freshly built `web/dist`, served with an empty
-content directory, using pinned Playwright 1.58.2 Chromium/WebKit. Content, native
+On pull requests the runtime lane also runs the content-free browser smoke group
+(`make browser-smoke`) against the freshly built `web/dist`; the main build after
+merge relies on that PR result. After deploying, CI verifies the commit, hashes and
+dev log on `https://furyremastered.com/` (the same Worker serves the workers.dev
+address). The smoke group serves an empty content directory and uses pinned Playwright 1.58.2 Chromium/WebKit. Content, native
 and relay browser groups stay local; see `BROWSER_TESTS.md`.
 
 A newer push cancels the superseded `web` build on the same branch, `main`

@@ -113,15 +113,16 @@ jobs:
           python3 tools/package_release.py --commit "$GITHUB_SHA"
       # Only the content-free group runs here: the built web/dist is served with an
       # empty content directory. Game content never enters CI. See research/BROWSER_TESTS.md.
+      # PRs run it; the main build after merge relies on that PR result.
       - name: Install pinned Playwright browsers
-        if: steps.prepare.outputs.build == 'true'
+        if: steps.prepare.outputs.build == 'true' && github.event_name != 'push'
         timeout-minutes: 8
         run: |
           npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/playwright" playwright@1.58.2
           "$RUNNER_TEMP/playwright/node_modules/.bin/playwright" install --with-deps --only-shell chromium webkit
           echo "PLAYWRIGHT_MODULE=$RUNNER_TEMP/playwright/node_modules/playwright" >> "$GITHUB_ENV"
       - name: Content-free browser smoke tests
-        if: steps.prepare.outputs.build == 'true'
+        if: steps.prepare.outputs.build == 'true' && github.event_name != 'push'
         timeout-minutes: 5
         run: make browser-smoke
       - name: Upload asset-free release
@@ -223,8 +224,6 @@ jobs:
         run: |
           python3 tools/verify_ci_deployment.py --release work/release --commit "$GITHUB_SHA" \
             --url https://furyremastered.com/
-          python3 tools/verify_ci_deployment.py --release work/release --commit "$GITHUB_SHA" \
-            --url https://atv-offroad-fury-2.champtoday.workers.dev/
       - name: Record deployment links and result
         if: always()
         env:
