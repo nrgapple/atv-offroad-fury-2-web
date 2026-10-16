@@ -1602,8 +1602,10 @@ function render(time) {
   playerIndicators.root.hidden = !simReady || lost || document.hidden || menuOpen;
   // Enabled Freestyle GPS owns speed even while its raster is warming up or
   // temporarily hidden. Only the explicit Off setting restores standalone MPH.
-  hud?.draw(simFrame?.hud, simReady && focused && !lost && !document.hidden && !menuOpen && simFrame?.race?.phase !== 'intro', { speedVisible: Boolean(raceSettings) || !minimapSettings.enabled, lights: simFrame?.race?.lights ?? null });
-  raceOverlay.lamps = Boolean(hud?.lamps);
+  // The original race overlays sit below the toolbar buttons.
+  const raceHud = raceSettings && simFrame?.race && simFrame.race.phase !== 'intro' ? simFrame.race : null;
+  hud?.draw(simFrame?.hud, simReady && focused && !lost && !document.hidden && !menuOpen && simFrame?.race?.phase !== 'intro', { speedVisible: Boolean(raceSettings) || !minimapSettings.enabled, lights: simFrame?.race?.lights ?? null, race: raceHud, frame: raceHud && (presentedFrame ?? simFrame), topInset: raceHud ? $('toolbar').getBoundingClientRect().bottom : 0 });
+  raceOverlay.lamps = Boolean(hud?.lamps); raceOverlay.native = Boolean(hud?.race);
   raceOverlay.draw(simFrame?.race,simFrame,simReady && focused && !lost && !document.hidden && !menuOpen);
   if (lost || !gl || !terrain || document.hidden || (menuOpen && !liveMultiplayer())) { lastTime = time; stats.sample(time, 0, false); return; }
   const frameMs = time - (lastTime || time), dt = Math.min(.05, Math.max(0, frameMs / 1000)); lastTime = time;
@@ -1852,7 +1854,7 @@ async function loadGame(file = null, environment = "env01", racing = null) {
     diagnostics.terrainTextures = 0;
     uploadTerrainTextures();
     if (hud && source.physics) {
-      await codec(63, await hud.init(environment));
+      await codec(63, await hud.init(environment, Boolean(racing)));
     }
     setVehicle(source); buildMesh(); await startSimulation(source); resetCamera();
     Object.assign(diagnostics, { ready: true, source: source.name, width, depth, min, max, frames: 0 });

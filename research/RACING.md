@@ -55,8 +55,7 @@ for the scalar branches, not whole-race replay):
 - The flag 64 preload/jump helper, optional AI flags (aggression, `0x800` direct
   velocity), scene query category/order and actor update ordering.
 - Championship points, firework triggers and whole-race PS2 replay parity.
-- The remaining original race overlays (signs,
-  lap history, LEAD), the Supercross start gate rotation, the race-load
+- The Supercross start gate rotation, the race-load
   announcer cue and the Stunt Score and Profile Points results columns. See
   "Race start and race over" and "Pre-race camera and 321 lights" below.
 
@@ -574,3 +573,46 @@ stream is replaced by the port's seeded stream. The browser shows TV views as
 authored, like the intro shots. The CPU-driven player also gets the authored
 CPU recovery (5s off the track, or 4s under 3ft/s). Split-screen fallbacks
 and the STOPCAM cheat are not reproduced.
+
+## Original race overlays — 2026-10-16
+
+Exact-build evidence (Overlays.pb `[OverlaySet1]` 1-player layout and private
+exports): LAP TIME (object 1, 609,23), LAP (2, 354,23), SCORE (3, 178,23),
+PLACE position tree (4, 20,23), BEST/TOTAL/LEAD (7, 609,23), infotext (11,
+320,304), radar (13, 20,305), signage (6, 320,80) and lap history (14,
+609,23, hiding 7). Text without a colour draws 190,190,190 (`002e0770`).
+Times are MM:SS.hh with rounded hundredths; 0 shows dashes.
+
+- **LEAD** (`00248b20` +0xec): riders ordered by race distance; an unfinished
+  rider's gap is its elapsed time less the leader's time scaled by its share
+  of the leader's distance (≥ 0); the leader's is minus the second rider's.
+  LEAD shows minus the player's gap, green when ≥ 0, red otherwise.
+- **Signage:** Too Deep (priority 2, blue countdown of the deep-water clock),
+  Off Track, Go Back! (priority 3, gold 5→1 countdown, then the rider is
+  returned to the course), Wrong Way (1), Final Lap! (1, 3s, when the last lap
+  begins) and First/Second/Third Place (1, 3s, at the finish). A sign replaces
+  the current one at equal or higher priority; hiding a sign restores the
+  highest waiting condition sign.
+- **Lap events** (`001e9a00`): "Lap Time" infotext for 2s (queue of 3, the
+  current one cut to 1s when more wait) and the lap history for 5s: the last
+  five laps slide in from +200 over 1s, hold, slide out; the best lap uses
+  76,181,255; BEST/TOTAL/LEAD fades out over 0.5s and back.
+- **Position tree** (`002e5150`/`002e5440`): one slot per rider, the name
+  sliding to its rank row in 0.3s; the player's name and place number in
+  218,192,31; the place number pulses to 1.6× (0.1s up, 0.3s hold, 0.1s down)
+  when the player's name arrives.
+- **Radar:** the race TOY `[Radar]` texture at native size, north-up, scaled
+  by (Right − Left) / width; 8×8 `radaricon_racer` dots, the player red.
+
+Port: `race_hud::RaceHud` owns the overlay clocks and attaches its frame to
+the race frame; `Race::frame` adds lap times, the best lap, LEAD and each
+rider's rank. `web/hud.js` draws the objects with their original layouts,
+fonts and icons from the race archive. Wide screens keep right-hand items on
+the right edge; phones use a 480-unit minimum width, move the right column
+below the compact speed meter and lower the signs. The text HUD remains a
+fallback without the race art. Off the track for 5s returns the player to the
+course, as the countdown sign and the manual describe.
+
+Not reproduced: SCORE uses the port's committed stunt points; the qualifying
+bar and new-record infotexts need championships and saved records; the Pause
+→ Overlays toggles; object 41 (place number) as an alternative to the tree.

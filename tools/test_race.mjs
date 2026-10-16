@@ -172,12 +172,17 @@ try {
   ]) {
     await page.setViewportSize(size);
     await waitForSteps(page, 30);
-    assert(await page.locator('#race-overlay').isVisible());
+    // The original overlays (native HUD canvas) replace the text HUD.
+    assert(await page.locator('#native-hud').isVisible());
     const hud = await page
       .locator('.race-strip,.race-times,.race-guide')
       .evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().toJSON()));
     for (const rect of hud)
       assert(rect.x >= 0 && rect.right <= size.width + 1 && rect.bottom <= size.height + 1, JSON.stringify(rect));
+    // The original race overlays replace the text HUD inside the viewport.
+    assert.notEqual(await page.locator('#native-hud').getAttribute('data-race'), '');
+    const native = await page.locator('#native-hud').boundingBox();
+    assert(native && native.x >= 0 && native.x + native.width <= size.width + 1 && native.y + native.height <= size.height + 1, JSON.stringify(native));
     if (output) await page.screenshot({ path: `${output}/race-driving-${name}.png` });
   }
   await button(page, 'Pause').click();

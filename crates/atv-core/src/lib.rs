@@ -99,6 +99,7 @@ pub mod cpu_avoidance;
 pub mod race;
 pub mod race_ai;
 pub mod race_director;
+pub mod race_hud;
 pub mod race_intro;
 pub mod race_roster;
 pub mod rider_gear;
