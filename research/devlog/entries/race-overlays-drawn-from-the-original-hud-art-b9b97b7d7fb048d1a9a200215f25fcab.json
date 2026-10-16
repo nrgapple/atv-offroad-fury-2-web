@@ -1,0 +1,16 @@
+{
+  "id": "race-overlays-drawn-from-the-original-hud-art-b9b97b7d7fb048d1a9a200215f25fcab",
+  "timestamp": "2026-10-16T12:24:58.486983+00:00",
+  "recorded_at": "2026-10-16T12:25:37.328798+00:00",
+  "kind": "build",
+  "title": "Race overlays drawn from the original HUD art",
+  "summary": "Races now use the original race HUD art, fonts and layout instead of the port's text HUD: LAP TIME, LAP, SCORE, the PLACE list with names sliding to their rank and the player's place pulsing, BEST/TOTAL/LEAD, the course radar map and the original signs. Phones get an adjusted layout so nothing collides with the speed meter.",
+  "details": [
+    "LEAD is the original time gap at the leader's pace, green when ahead and red when behind. After each lap a Lap Time popup and a 5-second lap history appear, with the best lap in blue. Signs: Off Track, Go Back! counts 5 to 1 and then returns the rider to the course, plus Too Deep countdown, Wrong Way, Final Lap! and First/Second/Third Place at the finish.",
+    "Discoveries: original overlay text without a colour is grey 190,190,190, and signs replace each other by priority (Off Track 3 over Too Deep 2 over the others at 1).",
+    "Verification (PR #122, implementation-ready, auto-merge armed): Rust unit tests for the overlay clocks and LEAD; content browser tests test_race, test_race_courses (asserting the original Off Track sign) and test_frontend; host captures in desktop, portrait and landscape; the off-track auto-return after 5 seconds was confirmed in all three. Next: Supercross crowd reactions and ambient crowd, stadium camera flashes and fireworks."
+  ],
+  "limitation": "SCORE uses the port's stunt points. The championship qualifying bar, new-record popups and the Pause to Overlays toggles are not reproduced. Host captures only; not a verified public release.",
+  "image": "/devlog-images/race-overlays-drawn-from-the-original-hud-art-b9b97b7d7fb048d1a9a200215f25fcab.png",
+  "caption": "Host phone-portrait capture: original HUD (place list, score, lap, lap time with BEST/TOTAL/LEAD, radar map) and the Off Track, Go Back! sign counting down at 3."
+}
