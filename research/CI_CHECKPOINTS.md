@@ -33,9 +33,12 @@ The runtime lane also runs the content-free browser smoke group
 content directory, using pinned Playwright 1.58.2 Chromium/WebKit. Content, native
 and relay browser groups stay local; see `BROWSER_TESTS.md`.
 
-Updated PRs cancel their superseded runs. Main deployments are never interrupted;
-main workflow concurrency remains serialized (GitHub may replace a pending run
-with the latest pending main). The trusted main build saves the Rust compilation
+A newer push cancels the superseded `web` build on the same branch, `main`
+included, since each main build deploys the whole application. The deploy job has
+its own `deploy-production` concurrency group: deploys run one at a time, are never
+interrupted, and an older build reaching it after a newer deploy is rejected.
+`main` requires the `web` check, so PRs use `gh pr merge --auto` and merge when it
+passes; branches need not be up to date with `main` first. The trusted main build saves the Rust compilation
 and registry cache, keyed by toolchain, lockfiles and commit; PRs only restore it.
 The separately validated `worker-build` executable cache remains exact-key only.
 No private content, credentials, screenshots or references enter either cache.

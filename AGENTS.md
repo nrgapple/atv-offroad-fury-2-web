@@ -24,7 +24,7 @@
 
 ## Ongoing progress and delivery
 
-- One named release owner handles each combined checkpoint. Implementation chats supply tested commits, required resources and inspected screenshots to that owner; do not duplicate publication or repeat completed checks. Claim ownership and record implementation-ready, merged, live and gallery-complete separately with tools/release_checkpoint.py; receipts stay in ignored shared private storage.
+- Code ships through the PR and auto-merge flow below; it needs no release owner or receipts. One named release owner handles R2 content/gallery uploads for each combined checkpoint. Implementation chats supply tested commits, required resources and inspected screenshots to that owner; do not duplicate publication or repeat completed checks. Claim ownership and record implementation-ready, merged, live and gallery-complete separately with tools/release_checkpoint.py; receipts stay in ignored shared private storage.
 - Commit and push coherent tested implementation checkpoints at completed component or integration gates. During longer work, report the last commit, current verification gate, remaining checks and blockers at least every 30 minutes. Include a dev-log checkpoint with evidence and limitations; distinguish host-only work from a verified public release. See `research/CI_CHECKPOINTS.md` for GitHub Actions and production deployment visibility.
 
 - Always delegate screenshot/dev-log maintenance to a separate lighter-model agent so it does not block game implementation. The user explicitly requested this ongoing division of work. Keep the main implementation agents focused on the port; send verified checkpoints and images to the blogging agent.
@@ -38,6 +38,9 @@
 
 ## Deployment goes through GitHub Actions
 
-- When tested work is ready, merge it into `main` without asking again (PRs are optional) and let the `Check and build` workflow deploy it. Follow the run and confirm `https://furyremastered.com/deployment.json` reports the merged commit. Successful runs take about five minutes.
-- If a main run fails or times out, fix forward or rerun its failed jobs (`gh run rerun <run-id> --failed`). Do not cancel main runs.
+- Ship small and often. When a change is tested, merge current `origin/main` into the task branch, resolve conflicts, rerun only the focused checks the conflict touched, push, then `gh pr create` and `gh pr merge --auto --merge --delete-branch`. Do not ask again and do not wait: the required `web` check gates the merge and the deploy follows automatically. Keep working; confirm `https://furyremastered.com/deployment.json` once at the end of the task.
+- Do not push to `main` directly. If PR CI fails, fix it on the branch; the queued auto-merge stays armed. A merge conflict after queuing is fixed the same way.
+- Test once, focused: run the content browser tests that cover what changed, once, at handoff. CI already runs `make check`, the build and the content-free smoke group on every PR, so do not repeat those as a separate local gate unless debugging, and do not rerun checks another chat already ran on the same commit. Full browser matrices are for explicit acceptance passes only.
+- Keep branches short-lived and merge `origin/main` in at each checkpoint so conflicts stay small. Browser tests use `tools/browser/harness.mjs` and must be listed in `tools/browser/manifest.mjs`.
+- A newer build supersedes an older one on the same branch, `main` included; deploys run one at a time and are never interrupted. If the latest main run fails, fix forward or rerun its failed jobs (`gh run rerun <run-id> --failed`).
 - `tools/deploy_local.py` cancels main runs and deploys from the host. Use it only when the user explicitly asks for a local deployment in the current conversation, passing `--user-requested`. It keeps the clean-checkout, allowlist, lock, R2 and public verification guards described in `research/CI_CHECKPOINTS.md`. No Mistakes remains disabled; the experimental release queue was removed.
