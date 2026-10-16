@@ -1,0 +1,17 @@
+{
+  "id": "arlington-locomotive-smoke-host-checkpoint-918b4323641b4364829e0d7c7862ef8f",
+  "timestamp": "2026-10-16T20:26:13.911854+00:00",
+  "recorded_at": "2026-10-16T21:59:35.001773+00:00",
+  "kind": "discovery",
+  "title": "Arlington locomotive smoke \u2014 host checkpoint",
+  "summary": "Arlington's steam locomotive now emits smoke from its moving Smoke.slt train part, recovered from the original's Freestyle TOY emitter behavior. Smoke puffs are drawn for ATVs and motorcycles. Host Chromium verification only; not a physical-phone result and not yet publicly verified.",
+  "details": [
+    "Recovered from the original: the Arlington Freestyle TOY attaches locosmoke.emt to the moving Smoke.slt train part 18 ft up. The emitter follows the part each fixed step. Puff size and lifetime and the emission rate follow emitter speed, births are spread along the path, and puffs do not inherit the train's velocity. Emission pulses 0.25 s on and 0.25 s off. The original moving-emitter routine was compared on 400 moving cases (256,910 instructions, 778 births); all 10,514 compared values match exactly.",
+    "Port choices: moving emitters get their own 128 particle slots (Arlington limit 728; other maps unchanged at 600). About 50 smoke puffs are live at once. Multiplayer train clock jumps restart the smoke at the new position. The effect works for ATVs and motorcycles. Shipped in PR #135 (merge 2ee0908).",
+    "Discovery: the original's ScreenRain lens-droplet effect is dormant in the shipped game. It activates only when a map names screenrain as its rain model, no shipped map does, and its four droplet textures are not on the disc, so no lens droplets are drawn, matching the shipped game.",
+    "Verification on the host: make check (456 core tests); new test_train_smoke.mjs at 1280x720 and at 390x844 with device pixel ratio 3; weather, train and ambient browser tests. Phone emulation with CPU x4 throttling showed render and worker cost changes within noise; draw calls went from 199 to 200 at Arlington."
+  ],
+  "limitation": "Host Chromium only; public deployment and physical-phone behavior are unverified. The original only emits when the train's map area is visible, while the port always emits. The native update and random-number order is unconfirmed. Port particle pool sizes differ from the original's 1,500.",
+  "image": "/devlog-images/arlington-locomotive-smoke-host-checkpoint-918b4323641b4364829e0d7c7862ef8f.png",
+  "caption": "Host Chromium, Arlington at 1280x720: dark locomotive smoke puffs rise from the train crossing the bridge. A matching 390x844 portrait capture was also inspected."
+}
