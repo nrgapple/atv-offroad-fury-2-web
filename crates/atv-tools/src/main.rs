@@ -1,3 +1,4 @@
+mod bike_probe;
 use atv_core::{Result, audio, collision, elf, iso, mesh, resource::Resource, terrain, texture};
 use serde_json::{Value, json};
 use std::{
@@ -226,6 +227,18 @@ fn run() -> Result<()> {
             let mesh=collision::decode_col(&b)?;
             write(&a[2],&serde_json::to_vec_pretty(&mesh).unwrap())?;
             println!("{} original vertices; {} indexed triangles", mesh.vertices.len(), mesh.triangles.len());
+        }
+        Some("bike-probe") if a.len()==5 || a.len()==6 => {
+            let bike=fs::read(&a[1]).map_err(|e|e.to_string())?;
+            let id:u16=a[2].parse().map_err(|_|"invalid motorcycle id")?;
+            let map=if a[3]=="flat" {b"flat".to_vec()} else {fs::read(&a[3]).map_err(|e|e.to_string())?};
+            let materials=match std::env::var("BIKE_PROBE_TOY") { Ok(path)=>Some(atv_core::materials::terrain_materials(&fs::read(path).map_err(|e|e.to_string())?)?), Err(_)=>None };
+            let report=bike_probe::run(&bike,id,&map,materials,a.get(5).map(String::as_str))?;
+            write(&a[4],&serde_json::to_vec(&report).unwrap())?;
+            for r in report["results"].as_array().into_iter().flatten() {
+                let mut s=r.clone(); s.as_object_mut().unwrap().remove("rows");
+                println!("{s}");
+            }
         }
         Some("elf") if a.len()==3 => {
             let b=fs::read(&a[1]).map_err(|e|e.to_string())?;let report=elf::inspect(&b)?;

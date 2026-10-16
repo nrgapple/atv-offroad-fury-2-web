@@ -1,6 +1,8 @@
-//! Ground bank component recovered from SLUS_211.04/GAME_REL 004dbd10.
-//! The original writes orientation, not a competing roll spring. The contact
-//! adapter and host trigonometry do not establish native whole-step parity.
+//! Ground bank geometry recovered from SLUS_211.04/GAME_REL 004dbd10: the bank
+//! angle about the forward axis against a reference that blends from vertical
+//! to the contact normal between the stand-upright speeds. The once-per-frame
+//! orientation write lives in `motorcycle_drive.rs`. Host trigonometry does not
+//! establish native whole-step parity.
 use super::*;
 use crate::wheel::cross;
 fn unit(v: V) -> V {
@@ -21,28 +23,13 @@ pub(super) fn rotate(q: [f32; 4], change: f32) -> [f32; 4] {
 }
 impl Motorcycle {
     pub(super) fn bank_reference(&self, normal: V, speed: f32) -> V {
-        let min = self.value("Roll Control", "MinStandUprightSpeed") * 1.46666;
-        let max = self.value("Roll Control", "MaxStandUprightSpeed") * 1.46666;
+        let (min, max) = (self.params.stand_min, self.params.stand_max);
         let blend = if speed <= 0. || max <= min {
             0.
         } else {
             ((speed - min) / (max - min)).clamp(0., 1.)
         };
         unit(add(scale([0., 1., 0.], 1. - blend), scale(normal, blend)))
-    }
-    pub(super) fn bank_target(&self, speed: f32, steer: f32) -> f32 {
-        let max = self.value("Roll Control", "MaxRollSpeed") * 1.46666;
-        let scale = if max > 0. {
-            (speed / max).clamp(0., 1.)
-        } else {
-            0.
-        };
-        -self.value("Roll Control", "MaxRollCommand").to_radians() * scale * steer
-    }
-    pub(super) fn apply_bank(&mut self, previous: f32, target: f32, normal: V, dt: f32) {
-        let next = previous + (target - previous) * self.value("Roll Control", "RollGain") * dt;
-        let actual = angle(self.body.basis(), normal);
-        self.body.orientation = rotate(self.body.orientation, next - actual);
     }
 }
 #[cfg(test)]

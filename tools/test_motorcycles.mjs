@@ -55,7 +55,10 @@ try {
     await waitForSteps(page, 30);
     const driven = await state();
     assert(Math.hypot(...driven.frame.origin.map((v, i) => v - initial.frame.origin[i])) > 5);
-    assert(driven.frame.wheel_angles.every(a => Math.abs(a) > 1));
+    // Wheel angles wrap to ±π like the source; both wheels must keep turning.
+    await waitForSteps(page, 2);
+    const rolling = await state();
+    assert(rolling.frame.wheel_angles.every((a, i) => Math.abs(a - driven.frame.wheel_angles[i]) > 1e-3));
     assert(driven.frame.wheel_particles.total_emitted.some(n => n > 0));
     assert.equal(driven.frame.wreck.phase, 'Riding');
     await page.keyboard.down('KeyA');
