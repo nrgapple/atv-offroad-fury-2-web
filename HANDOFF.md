@@ -88,7 +88,7 @@ section is authoritative.
 | Stunts and scoring | Recovered scoring tick/finalization and repeat rollback for single-player driving; full chaining/modes incomplete | `HUD.md`, `TOUCH.md` |
 | Camera | Recovered follow camera and wreck camera; widescreen, portrait, uphill and tight-crash framing are browser adaptations | `CAMERA.md`, `HILL_CAMERA.md` |
 | Water, weather, ambient | Recovered buoyancy kernel and dynamic heights, visible surfaces; weather/emitters from source TOY records with bounded GPU adaptations | `WATER.md`, `WEATHER.md`, `AMBIENT_EFFECTS.md`, `WHEEL_EFFECTS.md` |
-| Arlington train | Route, wheel motion, collision and sound connected; smoke unfinished | `TRAIN.md`, `TRAIN_CONTACT.md` |
+| Arlington train | Route, wheel motion, collision, sound and locomotive smoke connected | `TRAIN.md`, `TRAIN_CONTACT.md` |
 | HUD and minimap | Authored controller using original layout/fonts/atlases; GPS minimap is authored | `HUD.md`, `MINIMAP.md` |
 | Menus and UI | Browser-native screens driven by Rust menu logic; profiles, championships, unlocks and saves missing | `UI.md`, `MENU_SCREENS.md`, `DESIGN_SYSTEM.md` |
 | Audio | Recovered VAG decoding, 21-song catalog/shuffle, engine banks, impacts, train; SPU2 mixer/reverb not reproduced | `AUDIO.md` |
@@ -161,8 +161,9 @@ the worktree's `target/`; keep bulk output on the SSD.
 - Progression, championships, unlocks, saves and split-screen are missing.
 - Race rules are authored; original track windows, finish-box test, start slots,
   difficulty mapping, firework triggers and points are open (`RACING.md`).
-- Rendering lacks original LOD/visibility policy, point lights, shadows, lens and
-  random weather effects, and native GS precision (`MAP_FIDELITY.md`).
+- Rendering lacks original LOD/visibility policy, point lights, shadows, light
+  lens effects and native GS precision (`MAP_FIDELITY.md`). ScreenRain lens drops
+  are dormant in shipped content and intentionally not drawn (`WEATHER.md`).
 - Residual tire/terrain overlap on landings and cross-slope turns follows mostly
   from original ordering and contact-model properties; about 0.12 ft on landings
   is not decomposed, and hardware equality is unverified (`COUPLED_LANDING.md`).

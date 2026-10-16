@@ -390,7 +390,10 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
         let ambient = sim
             .ambient
             .as_mut()
-            .map(|effects| effects.step(1. / 60.).cloned())
+            .map(|effects| {
+                super::pose_ambient_actors(effects, train.as_ref());
+                effects.step(1. / 60.).cloned()
+            })
             .transpose()?;
         let snow = if let Some(snow) = sim.snow.as_mut() {
             Some(snow.step(position, std::array::from_fn(|i| target[i] - position[i]))?)

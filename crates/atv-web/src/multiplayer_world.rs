@@ -125,6 +125,11 @@ pub fn synchronize_train(sim: &mut Simulation, now: u64, dt: f32) -> Result<bool
         for _ in 0..16 {
             super::super::step_train_scene(sim, dt)?;
         }
+        // A clock jump relocates attached smoke like a dirty emitter rather
+        // than one step of travel along the skipped route.
+        if let Some(ambient) = sim.ambient.as_mut() {
+            ambient.relocate_actors();
+        }
         if let Some(platform) = attached {
             let matrix = sim
                 .train
