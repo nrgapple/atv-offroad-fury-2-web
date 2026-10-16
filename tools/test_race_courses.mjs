@@ -79,6 +79,21 @@ try {
   await page.keyboard.press('ArrowLeft');
   await changed(second);
   assert.equal(await course(), first);
+  // Both drawn arrows are real buttons: Previous steps back (wrapping to the
+  // last course), Next steps forward again.
+  await button(page, 'Previous Course').click();
+  await changed(first);
+  assert.notEqual(await course(), second, 'Previous Course steps backwards');
+  const previous = await course();
+  await button(page, 'Next Course').click();
+  await changed(previous);
+  assert.equal(await course(), first);
+  // Left/Right only step value rows: on Start Race they must not start a race.
+  await button(page, 'Start Race').focus();
+  await page.waitForFunction(() => document.querySelector('[data-action=racestart]')?.getAttribute('aria-current') === 'true');
+  await page.keyboard.press('ArrowLeft');
+  await nextFrames(page, 4);
+  assert.equal(await page.locator('#frontend').getAttribute('data-page'), 'race');
   for (const id of courses) {
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto(`${base}/play.html?mode=single&activity=race&map=${id}&cpu=4&laps=2&quad=1`);

@@ -162,13 +162,13 @@ try {
   const frozen = (await state()).frame;
   await page.waitForTimeout(200);
   assert.deepEqual((await state()).frame, frozen, 'Music preview keeps physics paused');
-  await click('Music off');
+  await click('Music: On');
   await page.waitForFunction(
     () => !window.atvTerrainStatus.audio.music.enabled && window.atvTerrainStatus.audio.music.voices === 0
   );
-  await click('Music on');
+  await click('Music: Off');
   await page.waitForFunction(() => window.atvTerrainStatus.audio.music.voices > 0);
-  await click('Volume');
+  await page.locator('.pause-panel [data-action=musicvolume]').click();
   assert.equal((await state()).audio.music.volume, 0.25 * Math.round((await state()).audio.music.volume * 4));
   await page.evaluate(() => window.dispatchEvent(new Event('blur')));
   await page.waitForFunction(

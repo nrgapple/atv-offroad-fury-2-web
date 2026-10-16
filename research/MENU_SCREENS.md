@@ -23,13 +23,30 @@ used; these are approximate composites, not captures.
 | Rows | Gold bullet; focused row grows into a glossy gold pill running off the left edge | Two-tone chrome-gold bar with a hard highlight split, small 5px corners and short hard shadows; no outline boxes or soft blurs |
 | Help | Dark translucent rounded box describing the focused row | Not shown: the original help strings describe modes the port does not have, and no invented descriptions are added |
 | Hints | Black pill with PS2 cross/triangle glyphs | Console glyphs dropped (players use touch, mouse, keyboard and modern pads); a plain Back control keeps that corner |
-| Select ATV & Rider | ATV and Rider are rows on one page beside a live 3D model | One page: ATV row with previous/next, Male/Female rider toggle, a list of every vehicle, and the ATV and rider models together on the stage |
+| Select ATV & Rider | ATV and Rider are rows on one page beside a live 3D model | One page: ATV row with previous/next, Male/Female rider toggle, a grouped list of every vehicle (ATVs, Motorcycles), and the ATV and rider models together on the stage. Rider gear opens its own page from a separate outlined button beside Done |
 | Select Track | Left rows, 384×256 track photo on the right | Event-type tabs (Enduro, Stunt, Nationals, Supercross, Arena), a course list with photo thumbnails and a large preview with Ride |
 | Pause | Near-black translucent rounded panel, italic title strip, gold pill | Same, as one compact list over the frozen ride |
 | 3D previews | Lit original models on the gray panel | Drawn opaque. The UI rider textures (`RIDEINFO.RES` `atv2_*_ui`) keep a specular/reflection mask in alpha (about 50/255 on shirt, pants and sleeves); treating it as transparency let the silver panel show through and turned the black jersey gray. Rider materials never alpha-cut |
 
 Original stats sliders, gear rows, profile pages and the four-player colour
 columns are not reproduced; the port has no matching systems yet.
+
+## Navigation and value rows
+
+- Value rows (race Course, Laps, CPU riders and every Rider gear row) have real
+  previous/next buttons either side of the value on every row; tapping the label
+  still steps forward. Left/Right step only value rows, so they never start a race,
+  copy a link or leave a page.
+- Pause and settings value rows (crashes, cameras, stats, speed rush, minimap,
+  one-handed mobile, music on/off and volume) cycle on a tap and step both ways with
+  Left/Right; volume stops at 0% and 100% with Left/Right.
+- Only keyboard/controller focus uses the gold bar. The garage marks the current
+  vehicle with a gold edge instead, and a focused gold pill (Done, Ride) gains a
+  white ring.
+- The garage's vehicle row is one stop for Up/Down. On Select Track, Q/E,
+  Page Up/Page Down and controller shoulder buttons switch the event tabs.
+- The pause list separates Ride, Preferences and Session with rules. Pager and footer
+  controls are drawn as buttons with direction glyphs on Previous, Next and Back.
 
 ## Artwork limits
 

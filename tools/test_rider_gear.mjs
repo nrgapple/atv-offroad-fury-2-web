@@ -25,6 +25,12 @@ try {
   await button(p,'Press START').click();await screen(p,'main');
   await button(p,'Single Player').click();await screen(p,'single');
   await button(p,'Garage').click();await screen(p,'garage');
+  // Down moves vehicle row → rider → Rider gear → Done, one stop per row.
+  if(name==='desktop'){
+   const current=()=>p.evaluate(()=>document.querySelector('#menu-buttons [aria-current=true][data-action]')?.dataset.action);
+   for(const expected of ['riderchange','gear','back']){await p.keyboard.press('ArrowDown');await p.waitForFunction(e=>document.querySelector('#menu-buttons [aria-current=true][data-action]')?.dataset.action===e,expected);}
+   assert.equal(await current(),'back');
+  }
   await button(p,'Rider gear').click();await screen(p,'gear');
   const label=prefix=>p.locator(`#menu-buttons button[aria-label^="${prefix}:"]`).getAttribute('aria-label');
   for(const prefix of ['Helmet','Jersey','Pants','Gloves','Boots','Goggles','Quad colour']){
@@ -33,6 +39,11 @@ try {
    await p.waitForFunction(([x,v])=>document.querySelector(`#menu-buttons button[aria-label^="${x}:"]`)?.getAttribute('aria-label')!==v,[prefix,before]);
   }
   assert.match(await label('Jersey'),/Jersey: (?!Original)/);
+  // The arrow buttons step either way: Previous undoes the forward step.
+  await button(p,'Previous Helmet').click();
+  await p.waitForFunction(()=>document.querySelector('#menu-buttons button[aria-label^="Helmet:"]')?.getAttribute('aria-label')==='Helmet: Original');
+  await button(p,'Next Helmet').click();
+  await p.waitForFunction(()=>document.querySelector('#menu-buttons button[aria-label^="Helmet:"]')?.getAttribute('aria-label')!=='Helmet: Original');
   const hits=await p.locator('#menu-buttons button').evaluateAll(b=>b.map(x=>({label:x.getAttribute('aria-label'),rect:x.getBoundingClientRect().toJSON()})));
   for(const hit of hits)assert(hit.rect.x>=0&&hit.rect.y>=0&&hit.rect.right<=viewport.width+1&&hit.rect.bottom<=viewport.height+1&&hit.rect.height>=34,JSON.stringify(hit));
   const saved=JSON.parse(await p.evaluate(()=>localStorage.getItem('atv-player-selection')));
