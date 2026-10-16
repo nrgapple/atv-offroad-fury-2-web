@@ -33,16 +33,24 @@ flip state, so the recovered ATV2 step is unchanged.
   motorcycle uses. Keyboard: L + E, or L + A/D.
 - **Touch (authored):** flips come from the driving thumb, not the trick wheel.
   In the default one-handed mode, hold the thumb for throttle into a ramp, pull
-  it fully back (75% of the pad or more), or fully left or right, and lift. The
-  lift is also the preload jump. The request (`flip_request` with
+  it straight back, left or right (within 30°) past the driving range, hold a
+  beat, and lift. The flip zone starts 105 px from where the thumb landed,
+  beyond full lean (70 px); sideways it is also at least 1.3× the full-lock
+  distance, which grows at low steering sensitivity. Ordinary full steering
+  or leaning therefore never flips. The thumb must stay in the zone for
+  220 ms before a lift counts, so sliding into it while lifting does nothing;
+  a thumb that rolls back out within 100 ms of lifting keeps the armed flip.
+  While a lift could flip, faint gold arcs outside the compass rim mark the
+  three zones; the entered arc fills over the 220 ms, then the cue turns gold
+  and supporting browsers vibrate briefly. The lift is also the preload jump. The request (`flip_request` with
   `flip_launch`) stays armed on the ground for 0.6 s, so it fires at takeoff.
   Lifting in the air counts only within the first 0.6 s, so ordinary releases
   later in a jump never flip. How long the pull was held before lifting sets
   the strength, like the source hold channel: one second gives maximum torque.
   The thumb cue turns gold, "LIFT → BACKFLIP" or "LIFT → 360 LEFT/RIGHT", only
   when lifting would start a flip (preload armed, or the early air window
-  reported by Rust). Two-finger mode reads the left pad's full pull when the
-  right drive thumb lifts on the ground. A long straight swipe (120 px or more)
+  reported by Rust). Two-finger mode reads the left pad with the same zone,
+  dwell and grace when the right drive thumb lifts on the ground. A long straight swipe (120 px or more)
   down, left or right with the right thumb in the air also flips there. While
   spinning, leaning forward slows a backflip, and steering against a 360 slows
   it.
@@ -77,7 +85,8 @@ flip state, so the recovered ATV2 step is unchanged.
   air (big freestyle jumps). A clean landed flip in the browser is not yet
   demonstrated.
 - Touch: `web/touch.test.mjs` covers:
-  - full versus partial pulls and Flips off;
+  - the flip zone beyond full lean and full lock, sensitivity, cone and Flips off;
+  - dwell (no flip when sliding in while lifting) and the lift grace;
   - single delivery and hold strength;
   - cancellation;
   - cue gating and the two-finger pad.

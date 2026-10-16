@@ -68,7 +68,14 @@ body.touch-driving #status.error { top: max(84px, calc(env(safe-area-inset-top) 
 #touch-controls[data-one-handed=true] .touch-rider-marker::after { top: 47px; left: 16px; height: 2px; width: 64px; }
 #touch-controls[data-one-handed=true] .touch-rider-marker i { left: 38px; top: 38px; transform: translate(var(--steer, 0px), var(--lean, 0px)); }
 #touch-controls[data-one-handed=true] .touch-rider-marker span { top: -24px; left: -24px; }
-/* Optional flips: lifting now would flip. */
+/* Optional flips: gold arcs outside the rim mark the flip zones (past the
+   driving range) while a lift could flip; the entered arc fills over the
+   dwell, then the cue turns gold and lifting flips. */
+.touch-flip-zone, .touch-flip-fill { fill: none; stroke-dasharray: 16.667 100; stroke-linecap: round; visibility: hidden; }
+.touch-flip-zone { stroke: var(--atv-gold); stroke-width: 3; opacity: .35; }
+.touch-flip-fill { stroke: var(--atv-gold-light); stroke-width: 5; filter: drop-shadow(0 0 3px #e5d360); }
+#touch-controls[data-one-handed=true] .touch-rider-marker[data-flips-ready=true] .touch-flip-zone { visibility: visible; }
+#touch-controls[data-one-handed=true] .touch-rider-marker[data-flips-ready=true]:not([data-flip-zone='']) .touch-flip-fill { visibility: visible; }
 #touch-controls[data-one-handed=true] .touch-rider-marker[data-flip=true] span { color: var(--atv-gold-light); font-size: 11px; }
 #touch-controls[data-one-handed=true][data-coach=true] .touch-axis {
   display: block; position: absolute; font: italic 800 9px/1 var(--atv-font-label);

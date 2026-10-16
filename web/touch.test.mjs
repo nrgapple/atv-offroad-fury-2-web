@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TouchInput, TouchLeanIntent, oneHandedFeedback, loadOneHandedPreference, loadSteeringSensitivity, normalizeSteeringSensitivity, DEFAULT_STEERING_SENSITIVITY, TRICK_WHEEL, trickWheelSelection, flipFromAxes } from './touch.js';
+import { TouchInput, TouchLeanIntent, oneHandedFeedback, loadOneHandedPreference, loadSteeringSensitivity, normalizeSteeringSensitivity, DEFAULT_STEERING_SENSITIVITY, TRICK_WHEEL, trickWheelSelection, flipZone } from './touch.js';
 
 test('ground right press drives, back drag brakes, release requests preload once', () => {
   const touch=new TouchInput();touch.begin(1,300,500);
@@ -132,7 +132,7 @@ test('compact feedback follows cardinal and diagonal commands without consuming 
   applied_input.touch_drive.generation--;
   assert.equal(oneHandedFeedback(touch, { applied_input }).cue, 'DRIVE · BRACE');
   touch.end(1);
-  assert.deepEqual(oneHandedFeedback(touch), { steer: 0, lean: 0, cue: '' });
+  assert.deepEqual(oneHandedFeedback(touch), { steer: 0, lean: 0, cue: '', flipZone: null, flipProgress: 0, flipsReady: false });
   assert.equal(touch.sample().preload_axis, -1);
 });
 
@@ -227,35 +227,56 @@ test('landing discards both radial preview and unconsumed release, takeoff reanc
   }
 });
 
-test('optional flips: lifting a fully pulled driving thumb launches the flip once, with hold strength', () => {
-  assert.equal(flipFromAxes(0, .8).flip, 'backflip'); assert.equal(flipFromAxes(-.9, .2).flip, 'left');
-  assert.equal(flipFromAxes(.9, -.5).flip, 'right'); assert.equal(flipFromAxes(.5, .5), null, 'partial pulls never flip');
-  assert.equal(flipFromAxes(0, -1), null, 'no front flip'); assert.equal(flipFromAxes(NaN, 1), null);
-  const lift = (flips, dx, dy, heldMs) => {
-    const t = new TouchInput(); t.setOneHanded(true); t.flips = flips; t.begin(1, 200, 600);
+test('optional flips: the flip zone lies past the driving range and needs a straight pull', () => {
+  assert.equal(flipZone(0, 110).flip, 'backflip'); assert.equal(flipZone(-110, 10).flip, 'left'); assert.equal(flipZone(110, -20).flip, 'right');
+  assert.equal(flipZone(0, 80), null, 'full lean back is still just leaning');
+  assert.equal(flipZone(-95, 0), null, 'full steering lock is still just steering');
+  assert.equal(flipZone(-150, 0, 50), null, 'low sensitivity moves the zone past its later full lock');
+  assert.equal(flipZone(-190, 0, 50).flip, 'left');
+  assert.equal(flipZone(90, 90), null, 'diagonals never flip'); assert.equal(flipZone(0, -140), null, 'no front flip');
+  assert.equal(flipZone(NaN, 140), null);
+});
+
+test('optional flips: lifting a thumb held in the flip zone launches once, with hold strength', () => {
+  const lift = (flips, dx, dy, heldMs, sensitivity = 100) => {
+    const t = new TouchInput(); t.setOneHanded(true); t.flips = flips; t.steeringSensitivity = sensitivity; t.begin(1, 200, 600);
     t.move(1, 200 + dx, 600 + dy, 1000); t.sample(); t.end(1, false, 1000 + heldMs); return [t.sample(), t.sample()];
   };
-  let [first, after] = lift(true, 0, 65, 500);
+  let [first, after] = lift(true, 0, 115, 500);
   assert.equal(first.flip_request, 'backflip'); assert.equal(first.flip_launch, true); assert.equal(first.flip_hold, 30);
   assert.equal(first.preload_axis, -1, 'the same lift is still the jump');
   assert.equal(after.flip_request, null, 'delivered once'); assert.equal(after.flip_launch, false);
-  assert.equal(lift(true, 0, 65, 4000)[0].flip_hold, 60, 'strength caps at one second');
-  assert.equal(lift(true, -70, 0, 100)[0].flip_request, 'left'); assert.equal(lift(true, 70, 10, 100)[0].flip_request, 'right');
-  assert.equal(lift(true, 0, 35, 500)[0].flip_request, null, 'a half pull is an ordinary lift');
-  assert.equal(lift(false, 0, 65, 500)[0].flip_request, null, 'Flips off');
+  assert.equal(lift(true, 0, 115, 4000)[0].flip_hold, 60, 'strength caps at one second');
+  assert.equal(lift(true, -115, 0, 300)[0].flip_request, 'left'); assert.equal(lift(true, 115, 10, 300)[0].flip_request, 'right');
+  assert.equal(lift(true, 0, 115, 150)[0].flip_request, null, 'sliding into the zone while lifting is not a flip');
+  assert.equal(lift(true, 0, 65, 500)[0].flip_request, null, 'a lean-back lift is an ordinary jump');
+  assert.equal(lift(true, -90, 0, 2000)[0].flip_request, null, 'lifting out of a hard turn is an ordinary jump');
+  assert.equal(lift(false, 0, 115, 500)[0].flip_request, null, 'Flips off');
+  const rolled = leaveAfter => {
+    const t = new TouchInput(); t.setOneHanded(true); t.flips = true; t.begin(1, 200, 600);
+    t.move(1, 200, 715, 1000); t.move(1, 200, 640, 1300); t.end(1, false, 1300 + leaveAfter); return t.sample().flip_request;
+  };
+  assert.equal(rolled(60), 'backflip', 'a thumb rolling out as it lifts keeps the armed flip');
+  assert.equal(rolled(250), null, 'returning toward the centre cancels the flip');
   const cancelled = new TouchInput(); cancelled.setOneHanded(true); cancelled.flips = true; cancelled.begin(1, 200, 600);
-  cancelled.move(1, 200, 670, 0); cancelled.end(1, true); assert.equal(cancelled.sample().flip_request, null, 'cancel never flips');
+  cancelled.move(1, 200, 720, 0); cancelled.end(1, true, 1000); assert.equal(cancelled.sample().flip_request, null, 'cancel never flips');
 });
 
-test('optional flips: the thumb cue promises a flip only when lifting would start one', () => {
-  const t = new TouchInput(); t.setOneHanded(true); t.flips = true; t.begin(1, 200, 600); t.move(1, 200, 670, 0);
-  assert.equal(oneHandedFeedback(t, { preload_armed: true }).cue, 'LIFT → BACKFLIP');
-  assert.equal(oneHandedFeedback(t, { flip: { launch_window: true } }).cue, 'LIFT → BACKFLIP');
-  assert.notEqual(oneHandedFeedback(t, { flip: { launch_window: false } }).cue, 'LIFT → BACKFLIP', 'late air or flat ground');
-  t.move(1, 270, 600, 10); assert.equal(oneHandedFeedback(t, { preload_armed: true }).cue, 'LIFT → 360 RIGHT');
-  t.flips = false; assert.equal(oneHandedFeedback(t, { preload_armed: true }).cue, 'LIFT FOR PRELOAD');
-  const pad = new TouchLeanIntent(() => 100); pad.begin(1, 100, 500); pad.move(1, 100, 560, 0);
-  assert.deepEqual(pad.launchFlip(250), { flip: 'backflip', hold: 15 }); pad.move(1, 100, 520, 300); assert.equal(pad.launchFlip(400), null);
+test('optional flips: the thumb cue promises a flip only once armed and when lifting would start one', () => {
+  const t = new TouchInput(); t.setOneHanded(true); t.flips = true; t.begin(1, 200, 600); t.move(1, 200, 720, 0);
+  const arming = oneHandedFeedback(t, { preload_armed: true }, 110);
+  assert.equal(arming.cue, 'LIFT FOR PRELOAD', 'no promise during the dwell'); assert.equal(arming.flipZone, 'backflip'); assert.equal(arming.flipProgress, .5);
+  assert.equal(oneHandedFeedback(t, { preload_armed: true }, 300).cue, 'LIFT → BACKFLIP');
+  assert.equal(oneHandedFeedback(t, { flip: { launch_window: true } }, 300).cue, 'LIFT → BACKFLIP');
+  const flat = oneHandedFeedback(t, { flip: { launch_window: false } }, 300);
+  assert.notEqual(flat.cue, 'LIFT → BACKFLIP', 'late air or flat ground'); assert.equal(flat.flipsReady, false); assert.equal(flat.flipZone, null);
+  t.move(1, 315, 600, 400); assert.equal(oneHandedFeedback(t, { preload_armed: true }, 700).cue, 'LIFT → 360 RIGHT');
+  t.flips = false; assert.equal(oneHandedFeedback(t, { preload_armed: true }, 700).cue, 'LIFT FOR PRELOAD');
+  const pad = new TouchLeanIntent(() => 100); pad.begin(1, 100, 500); pad.move(1, 100, 610, 0);
+  assert.equal(pad.launchFlip(100), null, 'the pad needs the same dwell');
+  assert.deepEqual(pad.launchFlip(250), { flip: 'backflip', hold: 15 }); pad.move(1, 100, 520, 300); assert.equal(pad.launchFlip(450), null);
+  const lean = new TouchLeanIntent(() => 100); lean.begin(1, 100, 500); lean.move(1, 100, 575, 0);
+  assert.equal(lean.launchFlip(2000), null, 'a full lean on the pad is not a flip');
 });
 
 test('optional flips: two-finger long swipes flip, short swipes and up keep the original tricks', () => {

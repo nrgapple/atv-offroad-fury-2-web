@@ -80,7 +80,8 @@ try {
     await page.close();
   }
   // Touch (default one-handed mode): hold the driving thumb into the ramp,
-  // pull it fully back when the cue says LIFT → BACKFLIP, then lift to jump.
+  // pull it back past the driving range, hold until the cue says LIFT →
+  // BACKFLIP (the zone arc fills over FLIP_DWELL), then lift to jump.
   {
     const errors = [];
     const page = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }, errors);
@@ -100,12 +101,12 @@ try {
     const thumb = { id: 1, x: 200, y: 600 };
     await touch('touchStart', [thumb]);
     await page.waitForFunction(() => window.atvTerrainStatus.frame.preload_armed, null, { timeout: 45000, polling: 'raf' });
-    for (let i = 1; i <= 5; i++) await touch('touchMove', [{ ...thumb, y: thumb.y + i * 13 }]);
+    for (let i = 1; i <= 9; i++) await touch('touchMove', [{ ...thumb, y: thumb.y + i * 13 }]);
     await page.waitForFunction(() => document.querySelector('.touch-rider-marker span')?.textContent === 'LIFT → BACKFLIP',
       null, { timeout: 2000, polling: 'raf' });
     if (process.env.ATV_FLIP_TOUCH_SCREENSHOT) await page.screenshot({ path: process.env.ATV_FLIP_TOUCH_SCREENSHOT });
     await waitForSteps(page, 12);
-    await touch('touchEnd', [{ ...thumb, y: thumb.y + 65 }]);
+    await touch('touchEnd', [{ ...thumb, y: thumb.y + 117 }]);
     await page.waitForFunction(() => window.flipFrames.some(s => s.frame.flip?.active === 'Backflip'), null, { timeout: 5000, polling: 'raf' });
     await page.waitForFunction(() => window.atvTerrainStatus.frame.grounded.some(Boolean)
       || window.atvTerrainStatus.frame.wreck.phase !== 'Riding', null, { timeout: 15000, polling: 'raf' });
