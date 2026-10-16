@@ -1,0 +1,16 @@
+{
+  "id": "supercross-crowd-reactions-ambience-and-camera-flashes-91841c134f8c4d8886377c3590ee8585",
+  "timestamp": "2026-10-16T12:49:56.562721+00:00",
+  "recorded_at": "2026-10-16T12:50:30.584812+00:00",
+  "kind": "build",
+  "title": "Supercross crowd reactions, ambience and camera flashes \u2014 implementation ready",
+  "summary": "All 16 Supercross stadiums now have the original crowd: reaction clips, eight positional ambient crowd loops per venue and the stands' camera flashes. Before this, the port drew every hidden flash model permanently. PR #124 is implementation-ready with auto-merge armed; it is not publicly verified.",
+  "details": [
+    "Crowd reactions: Boo when you wreck while leading, Cheer when you take the lead after 5 seconds, and Win when you finish first, through a single crowd voice. Ambience: eight positional crowd loops per venue, taken from the venue's own sound file. Camera flashes: the stands' hidden flash models light in random 0.09 s batches at 1% of the pool, bursting to 30% for top-three finishes and 40% for a landed stunt. The crowd clips and loops were added to the hosted audio package, which is additive and already published.",
+    "Discoveries: only scenes marked CrowdPresent build the crowd and flashes. That covers every Supercross scene and no Environment or National course. The reaction clips are loose disc files beside crowd.aud, which itself ships inside each race archive.",
+    "Verification: Rust unit tests; content browser tests test_race, test_race_courses (asserts the crowd on every sx course and none outdoors) and test_frontend. A host sx01 run showed a 187-model flash pool with one lit per batch and 8 crowd loops playing; in a scripted race won by the player there was a 56-flash finish burst and 4 crowd cues. Next: the Supercross start and finish firework sequences."
+  ],
+  "limitation": "Audio cannot be shown in a screenshot, and the image only shows the stadium and results screen; no flash or crowd sound is visible in it. The amateur crowd set is used; the setting that selects the pro set and its final-lap stomp is unrecovered. The 'Oh' trigger, AI stunt bursts, crowd volume and race-over music are not reproduced. These are host captures, not a verified public release.",
+  "image": "/devlog-images/supercross-crowd-reactions-ambience-and-camera-flashes-91841c134f8c4d8886377c3590ee8585.png",
+  "caption": "Host capture of a Supercross sx01 race results panel after a scripted player win: the player is first of five, with the stadium stands and floodlights blurred behind the panel. The crowd audio and flash bursts are not visible in this still."
+}
