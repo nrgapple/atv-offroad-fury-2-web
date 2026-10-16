@@ -218,6 +218,9 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
       if (vub < 0) break;
       await json(113, await codec(3, resource, vub), shot - 1);
     }
+    // After the finish a director cuts between these trackside cameras.
+    const tv = entries.findIndex(entry => memberNamed(entry, `${environment}nat.tv`));
+    if (tv >= 0) await json(114, await codec(3, resource, tv));
     // Rust places the grid behind the original TDF start gate.
     scene.position=course.start.position.slice(); scene.yaw=course.start.yaw;
     const ai = entries.findIndex(entry => memberNamed(entry,'airiders.pb'));
@@ -1543,8 +1546,9 @@ function acceptCameraFrame(frame) {
 }
 function presentCameraFrame(frame = presentedCamera ?? cameraFrame) {
   const aspect=canvas.width/canvas.height;
-  // The pre-race camera is authored per course: no chase adaptation.
-  const chase=frame.mode==='intro'?cinematicPresentation(frame,aspect):chasePresentation(frame,presentedFrame??simFrame,aspect,uphillSightline,terrainHeight);
+  // Pre-race shots and trackside TV cameras are authored per course: no
+  // chase adaptation.
+  const chase=frame.mode==='intro'||frame.mode==='tv'?cinematicPresentation(frame,aspect):chasePresentation(frame,presentedFrame??simFrame,aspect,uphillSightline,terrainHeight);
   const view=crashPresentation(chase,crashSettings.camera === 'tight' ? vehicle?.crashSubjects : null,aspect,terrainHeight);
   [camera.x, camera.y, camera.z] = view.position;
   camera.yaw = view.yaw;

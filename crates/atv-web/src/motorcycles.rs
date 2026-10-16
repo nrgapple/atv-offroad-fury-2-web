@@ -314,6 +314,9 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
             if let Some(water) = &mut sim.water {
                 water.advance(1. / 60.)?;
             }
+            if std::mem::take(&mut sim.race_autopilot_reset) {
+                bike.reset_now()?;
+            }
             bike.step(
                 sim.terrain.as_ref().ok_or("load terrain first")?,
                 driving,
