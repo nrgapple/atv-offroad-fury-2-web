@@ -1,0 +1,19 @@
+{
+  "id": "phone-flips-from-the-driving-thumb-a94e8a0b12de4374933e56e1b7ba5a4f",
+  "timestamp": "2026-10-16T04:02:49.556805+00:00",
+  "recorded_at": "2026-10-16T04:04:17.300298+00:00",
+  "kind": "build",
+  "title": "Phone flips from the driving thumb",
+  "summary": "With Flips on in Extras, phone players now flip with the thumb they drive with: pull it fully back (or left/right) as you hit a ramp and lift to jump into a backflip or 360.",
+  "details": [
+    "This replaces the trick-wheel flips from the previous update; the wheel is back to tricks only.",
+    "Lifting on the ramp is still the jump, and now launches the flip at takeoff. Lifting in the first 0.6 s of air also works; later releases never flip, so landings stay safe.",
+    "Holding the pull longer before lifting makes a faster flip, up to one second.",
+    "The thumb cue turns gold, LIFT \u2192 BACKFLIP or LIFT \u2192 360 LEFT/RIGHT, only when lifting will actually flip.",
+    "Two-finger mode: hold the left pad fully back or sideways when the right thumb lifts; long right-thumb swipes in the air still work.",
+    "Verified with real browser touches on env01: hold to the ramp, the gold cue appears, pull back and lift, and the backflip launches."
+  ],
+  "limitation": "The env01 starting jump is still too short for a full loop.",
+  "image": "/devlog-images/phone-flips-from-the-driving-thumb-a94e8a0b12de4374933e56e1b7ba5a4f.png",
+  "caption": "Holding the throttle into the ramp with the thumb pulled back: the gold cue says lifting now will backflip."
+}
