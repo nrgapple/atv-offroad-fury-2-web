@@ -40,7 +40,7 @@ function h(tag, props = {}, ...children) {
 export function renderScreen(fe) {
   const root = fe.buttons;
   const garageIds = fe.page === 'garage' ? fe.garageCatalog().map(item => item.id).join(',') : '';
-  const structure = JSON.stringify([fe.page, fe.frame.choices, fe.frame.hits.map(hit => hit.action), fe.trackFilter, garageIds, (fe.frame.inputs ?? []).map(input => input.action), Boolean(fe.backdropUrl)]);
+  const structure = JSON.stringify([fe.page, fe.frame.choices, fe.frame.hits.map(hit => hit.action), fe.trackFilter, fe.raceFilter, garageIds, (fe.frame.inputs ?? []).map(input => input.action), Boolean(fe.backdropUrl)]);
   if (structure !== root.dataset.structure || !root.firstChild) {
     root.dataset.structure = structure;
     root.replaceChildren(build(fe));
@@ -109,6 +109,9 @@ function buildHints(fe) {
   const bar = h('footer', {class:'ms-hints'});
   // The garage's gold Done button is its Back action; keep one accessible target.
   const back = fe.page === 'garage' ? null : choice(fe, 'back', 'ms-hint ms-hint-back', h('span', {class:'ms-back-icon', html:icon.left}), h('span', {text:hit(fe, 'back')?.label ?? 'Back'}));
+  // Race setup keeps its share link beside Back, out of the course list.
+  const share = fe.page === 'race' ? choice(fe, 'copyride', 'ms-hint ms-hint-back ms-hint-share', h('span', {text:hit(fe, 'copyride')?.label ?? 'Copy ride link'})) : null;
+  if (share) bar.append(share);
   if (back) bar.append(back);
   return bar;
 }
@@ -172,16 +175,53 @@ function buildLobby(fe, left, panel) {
   panel.append(trackFigure('ms-track-hero'));
 }
 
-function buildRace(fe, left, panel) {
-  const list = h('nav', {class:'ms-rows', 'aria-label':'Race setup'});
-  for (const action of fe.frame.choices) {
-    const item = ['racetrack','racelaps','racecpu'].includes(action) ? stepper(fe, action) : row(fe, action);
-    // Start Race begins the actions below the race settings.
-    if (action === 'racestart') item?.classList.add('ms-row-cta');
-    list.append(item ?? '');
+// Race setup mirrors Freestyle's course select: event tabs and a photo list of
+// every race course, the large framed preview with Start Race, and the lap and
+// CPU rider steppers under the list.
+function courseTabs(fe, groups, current, select) {
+  const tabs = h('div', {class:'ms-tabs', role:'tablist', 'aria-label':'Event type'});
+  for (const [key, label] of COURSE_GROUPS) {
+    const count = key === 'all' ? groups.length : groups.filter(id => courseGroup(id) === key).length;
+    if (!count) continue;
+    const tab = h('button', {type:'button', role:'tab', class:'ms-tab', 'aria-selected':String(current === key), dataset:{filter:key}}, label, h('small', {text:String(count)}));
+    tab.onclick = () => select(key);
+    tabs.append(tab);
   }
-  left.append(list);
-  panel.append(trackFigure('ms-track-hero'));
+  return tabs;
+}
+
+function courseCard(fe, track, onclick) {
+  const url = fe.trackPhotoUrl(track);
+  const card = h('button', {type:'button', class:'ms-course', role:'option', 'aria-label':track.name, dataset:{trackId:track.id}},
+    h('span', {class:'ms-course-thumb'}, url ? h('img', {alt:'', src:url}) : null),
+    h('span', {class:'ms-course-copy'}, h('span', {class:'ms-course-name', text:track.name}), h('small', {text:groupLabel(track.id)})));
+  card.onclick = onclick;
+  return card;
+}
+
+function buildRace(fe, left, panel) {
+  const tabs = courseTabs(fe, fe.raceCourses, fe.raceFilter, key => fe.setRaceFilter(key));
+  const list = h('div', {class:'ms-courses ms-scroll', role:'listbox', 'aria-label':'Race courses', dataset:{row:'racetrack'}});
+  for (const track of fe.raceOrder()) {
+    const card = courseCard(fe, track, () => fe.selectRaceCourse(track.id));
+    card.onfocus = () => selectChoice(fe, 'racetrack');
+    list.append(card);
+  }
+  const settings = h('nav', {class:'ms-rows ms-race-settings', 'aria-label':'Race setup'});
+  for (const action of ['racelaps','racecpu']) settings.append(stepper(fe, action) ?? '');
+  left.append(tabs, list, settings);
+  const hero = trackFigure('ms-track-hero');
+  hero.querySelector('figcaption').append(h('p', {class:'ms-track-mode'}));
+  const photo = hero.querySelector('.ms-photo');
+  // The photo arrows step the course, like Left/Right on the course list.
+  for (const [direction, glyph, name, side] of [[-1, icon.left, 'Previous Course', 'left'], [1, icon.right, 'Next Course', 'right']]) {
+    const arrow = h('button', {type:'button', class:`ms-arrow ms-arrow-${side}`, 'aria-label':name}, h('span', {html:glyph}));
+    arrow.onclick = () => { const index = fe.frame.choices.indexOf('racetrack'); if (index >= 0) fe.selection = index; void fe.run('racetrack', direction, true); };
+    photo.append(arrow);
+  }
+  const start = choice(fe, 'racestart', 'ms-pill ms-ride', h('span', {text:hit(fe, 'racestart')?.label ?? 'Start Race'}));
+  if (start) hero.querySelector('figcaption').append(start);
+  panel.append(hero);
 }
 
 // The original course loader (LdScreen): an action shot on the left, a black
@@ -207,23 +247,9 @@ function buildLoading(fe, left, panel) {
 }
 
 function buildTracks(fe, left, panel) {
-  const tabs = h('div', {class:'ms-tabs', role:'tablist', 'aria-label':'Event type'});
-  for (const [key, label] of COURSE_GROUPS) {
-    const count = key === 'all' ? fe.tracks.length : fe.tracks.filter(track => courseGroup(track.id) === key).length;
-    if (!count) continue;
-    const tab = h('button', {type:'button', role:'tab', class:'ms-tab', 'aria-selected':String(fe.trackFilter === key), dataset:{filter:key}}, label, h('small', {text:String(count)}));
-    tab.onclick = () => fe.setTrackFilter(key);
-    tabs.append(tab);
-  }
+  const tabs = courseTabs(fe, fe.tracks.map(track => track.id), fe.trackFilter, key => fe.setTrackFilter(key));
   const list = h('div', {class:'ms-courses ms-scroll', role:'listbox', 'aria-label':'Courses'});
-  for (const index of fe.trackOrder()) {
-    const track = fe.tracks[index], url = fe.trackPhotoUrl(track);
-    const card = h('button', {type:'button', class:'ms-course', role:'option', 'aria-label':track.name, dataset:{trackId:track.id}},
-      h('span', {class:'ms-course-thumb'}, url ? h('img', {alt:'', src:url}) : null),
-      h('span', {class:'ms-course-copy'}, h('span', {class:'ms-course-name', text:track.name}), h('small', {text:groupLabel(track.id)})));
-    card.onclick = () => fe.selectTrack(index);
-    list.append(card);
-  }
+  for (const index of fe.trackOrder()) list.append(courseCard(fe, fe.tracks[index], () => fe.selectTrack(index)));
   left.append(tabs, list);
   const hero = trackFigure('ms-track-hero');
   const photo = hero.querySelector('.ms-photo');
@@ -345,12 +371,20 @@ function sync(fe) {
     button.querySelector('.ms-row-label').textContent = value ? label : target.label;
     if (value) value.textContent = rest.join(': ');
   }
-  if (page === 'race' || page === 'lobby') {
-    setPhoto(root.querySelector('.ms-track-hero'), fe.trackPhotoUrl(fe.presentationTrack), fe.presentationTrack);
-    if (page === 'lobby') {
-      root.querySelector('.ms-code').textContent = state.room_code || '--------';
-      root.querySelector('.ms-status').textContent = state.lobby_status || 'Connecting…';
+  if (page === 'race') {
+    const course = fe.raceSettings.course, track = fe.raceTracks().find(item => item.id === course);
+    setPhoto(root.querySelector('.ms-track-hero'), fe.trackPhotoUrl(track), track);
+    root.querySelector('.ms-track-mode').textContent = `${groupLabel(course)} race`;
+    for (const card of root.querySelectorAll('.ms-course')) {
+      const current = card.dataset.trackId === course;
+      card.setAttribute('aria-selected', String(current));
+      if (current && (fe.scrollScreenSelection || fe.restoreScreenFocus)) card.scrollIntoView({block:'nearest', inline:'nearest'});
     }
+  }
+  if (page === 'lobby') {
+    setPhoto(root.querySelector('.ms-track-hero'), fe.trackPhotoUrl(fe.presentationTrack), fe.presentationTrack);
+    root.querySelector('.ms-code').textContent = state.room_code || '--------';
+    root.querySelector('.ms-status').textContent = state.lobby_status || 'Connecting…';
   }
   if (page === 'loading') {
     // Original action shots crossfade when available; otherwise the course photo.
@@ -394,7 +428,8 @@ function sync(fe) {
   }
   fe.restoringScreenFocus = true;
   if (fe.restoreScreenFocus || fe.scrollScreenSelection) {
-    const current = root.querySelector(`button[data-action="${selected}"]`);
+    // The race course list stands for the Course choice; its current card takes focus.
+    const current = page === 'race' && selected === 'racetrack' ? root.querySelector('.ms-course[aria-selected=true]') : root.querySelector(`button[data-action="${selected}"]`);
     if (current && (fe.scrollScreenSelection || !root.contains(document.activeElement))) current.focus({preventScroll:true});
   }
   fe.restoringScreenFocus = false; fe.restoreScreenFocus = false; fe.scrollScreenSelection = false;

@@ -21,10 +21,19 @@ const trainingPreview = 'training-map-preview';
 // Original STARTEVT etips.txt entries about riding technique. Tips about
 // profiles, championships, editors, mini-games or PS2 buttons are omitted.
 const ridingTips = [5,9,10,11,14,16,17,18,19,23,24,25,26,27];
+// Race setup offers 1-5 laps and 0, 3 or 4 CPU riders.
+const RACE_CPU = [0,3,4];
+const normalizedRace = value => ({
+  course: RACE_COURSES.includes(value?.course) ? value.course : 'env01',
+  laps: Number.isInteger(value?.laps) && value.laps >= 1 && value.laps <= 5 ? value.laps : 3,
+  cpu: RACE_CPU.includes(value?.cpu) ? value.cpu : 3,
+});
 const normalizedSelection = value => ({
   quadId: Number.isInteger(value?.quadId) && value.quadId >= 1 && value.quadId <= 46 ? value.quadId : 1,
   riderId: value?.riderId === 1 ? 1 : 0,
   freestyleEnvironment: ENVIRONMENTS.includes(value?.freestyleEnvironment) ? value.freestyleEnvironment : 'env01',
+  // The last started race's course, laps and CPU riders, like the Freestyle course.
+  race: normalizedRace(value?.race),
   // The multiplayer jersey name is remembered like the rest of the garage.
   playerName: typeof value?.playerName === 'string' && value.playerName.trim() && new TextEncoder().encode(value.playerName).length <= 24 && !/\p{Cc}/u.test(value.playerName) ? value.playerName : 'Rider',
   appearance: normalizedAppearance(value?.appearance),
@@ -75,11 +84,11 @@ export class Frontend {
     this.assets = new Map(); this.images = new Map(); this.fonts = new Map();
     this.initialized = false; this.layoutKey = ''; this.layoutPending = false; this.loaded = new Set(); this.page = 'loading'; this.selection = 0; this.track = 0; this.busy = false; this.lastPad = new Set(); this.alive = true;
     const savedSelection = loadPlayerSelection();
-    this.quadId = savedSelection.quadId; this.riderId = savedSelection.riderId; this.lastFreestyleEnvironment = savedSelection.freestyleEnvironment; this.playerName = savedSelection.playerName; this.appearance = savedSelection.appearance; this.trackMode = 'single'; this.roomCode = ''; this.createCode = ''; this.garageReturn = 'single';
+    this.quadId = savedSelection.quadId; this.riderId = savedSelection.riderId; this.lastFreestyleEnvironment = savedSelection.freestyleEnvironment; this.lastRace = savedSelection.race; this.playerName = savedSelection.playerName; this.appearance = savedSelection.appearance; this.trackMode = 'single'; this.roomCode = ''; this.createCode = ''; this.garageReturn = 'single';
     this.bindingDevice = 'keyboard'; this.bindingPage = 0; this.bindingRow = 0; this.musicPage = 0;
     this.capture = null; this.menuKeys = new Set();
-    this.raceSettings={laps:3,cpu:3,difficulty:1,course:'env01'};this.raceActive=false;this.raceAvailable=false;this.raceCourses=[];
-    this.trackFilter = 'all'; this.trackUrls = new Map(); this.backdropUrl = ''; this.shotUrls = new Map(); this.loadingShots = []; this.shotFrame = 0;
+    this.raceSettings={...this.lastRace,difficulty:1};this.raceActive=false;this.raceAvailable=false;this.raceCourses=[];
+    this.trackFilter = 'all'; this.raceFilter = 'all'; this.trackUrls = new Map(); this.backdropUrl = ''; this.shotUrls = new Map(); this.loadingShots = []; this.shotFrame = 0;
     gameplayBindings.subscribe(() => { this.layoutKey = ''; });
     window.addEventListener('keydown', e => {
       if (!this.capture) return;
@@ -259,6 +268,29 @@ export class Frontend {
     if (index === this.track) { void this.action('accept'); return; }
     this.track = index; this.layoutKey = ''; void this.refresh();
   }
+  // Race setup lists every published race course under the same event tabs.
+  raceTracks() {
+    return this.raceCourses.map(id => this.tracks.find(track => track.id === id) ?? {id, name:id.toUpperCase(), image:''});
+  }
+  raceOrder() {
+    const tracks = this.raceTracks();
+    return this.raceFilter === 'all' ? tracks : tracks.filter(track => courseGroup(track.id) === this.raceFilter);
+  }
+  cycleRaceFilter(direction) {
+    const groups = COURSE_GROUPS.map(([key]) => key).filter(key => key === 'all' || this.raceCourses.some(id => courseGroup(id) === key));
+    this.setRaceFilter(groups[(groups.indexOf(this.raceFilter) + direction + groups.length) % groups.length]);
+  }
+  setRaceFilter(filter) {
+    this.raceFilter = filter;
+    const order = this.raceOrder();
+    if (order.length && !order.some(track => track.id === this.raceSettings.course)) this.raceSettings.course = order[0].id;
+    this.scrollScreenSelection = true; this.layoutKey = ''; void this.refresh();
+  }
+  selectRaceCourse(id) {
+    if (this.busy || !this.raceCourses.includes(id)) return;
+    this.raceSettings.course = id; this.selection = Math.max(0, this.frame.choices.indexOf('racetrack'));
+    this.layoutKey = ''; void this.refresh();
+  }
   garageCatalog() {
     const online = this.onlineGarage();
     return (this.frame?.catalog ?? []).filter(item => !online || item.group === 'ATV');
@@ -348,7 +380,8 @@ export class Frontend {
     if (!setup.requested) return this.show('title');
     if (setup.errors.length) { await this.show('main'); this.notice.textContent = `Cannot open ride link. ${setup.errors.join(' ')}`; return; }
     Object.assign(this, {quadId:setup.quadId,riderId:setup.riderId,playerName:setup.playerName,roomCode:setup.room,createCode:setup.action==='create'?setup.room:''});
-    this.raceSettings = {...setup.raceSettings};
+    // Only race links change the race setup; a Freestyle link keeps the saved one.
+    if (setup.activity==='race') this.raceSettings = {...setup.raceSettings};
     this.track = Math.max(0,this.tracks.findIndex(t=>t.id===setup.map));
     const page = setup.mode==='multiplayer' ? (setup.action==='create'?'create-lobby':'join-lobby') : setup.activity==='race'?'race':'tracks';
     await this.show(page);
@@ -373,6 +406,7 @@ export class Frontend {
       this.raceActive = Boolean(racing);
       this.activeSetup = {map:environment,activity:racing?'race':'freestyle',quadId:this.quadId,riderId:this.riderId,raceSettings:racing?{...racing}:undefined};
       if (!racing) this.lastFreestyleEnvironment = environment;
+      else this.lastRace = normalizedRace({...racing, course:environment});
       this.saveSelection(); this.resume();
     } finally { this.busy = false; }
   }
@@ -478,6 +512,8 @@ export class Frontend {
       this.track = order[(position + order.length) % order.length]; this.scrollScreenSelection = true;
     } else if (this.page === 'tracks' && ['prevtab','nexttab'].includes(action)) {
       return this.cycleTrackFilter(action === 'prevtab' ? -1 : 1);
+    } else if (this.page === 'race' && ['prevtab','nexttab'].includes(action)) {
+      return this.cycleRaceFilter(action === 'prevtab' ? -1 : 1);
     } else if (['race','gear'].includes(this.page) && ['left','right'].includes(action)) {
       // Only value rows step; Left/Right on Start Race, Copy link or Back does nothing.
       const current = this.frame.choices[this.selection];
@@ -494,6 +530,8 @@ export class Frontend {
       return this.run(`${this.page === 'music' ? 'music' : 'bind'}${action === 'left' ? 'prev' : 'next'}`);
     } else if (action === 'accept') {
       if (this.page === 'title') return this.run(this.frame.choices[this.selection]);
+      // Accepting the course list starts the race, as Ride does in Freestyle.
+      if (this.page === 'race' && this.frame.choices[this.selection] === 'racetrack') return this.run('racestart');
       if (this.page === 'tracks') {
         const environment = this.tracks[this.track].id, mode = this.trackMode;
         this.busy = true;
@@ -538,9 +576,10 @@ export class Frontend {
         return;
       }
       if (['racetrack','racelaps','racecpu'].includes(action)) {
-        if (action === 'racetrack' && this.raceCourses.length) { const courses = this.raceCourses, at = Math.max(0, courses.indexOf(this.raceSettings.course)); this.raceSettings.course = courses[(at + direction + courses.length) % courses.length]; }
+        // Stepping the course walks the list shown under the current event tab.
+        if (action === 'racetrack' && this.raceCourses.length) { const courses = this.raceOrder().map(track => track.id), at = Math.max(0, courses.indexOf(this.raceSettings.course)); this.raceSettings.course = courses[(at + direction + courses.length) % courses.length]; this.scrollScreenSelection = true; }
         if (action === 'racelaps') this.raceSettings.laps = (this.raceSettings.laps - 1 + direction + 5) % 5 + 1;
-        if (action === 'racecpu') { const options = [0,3,4]; this.raceSettings.cpu = options[(options.indexOf(this.raceSettings.cpu) + direction + 3) % 3]; }
+        if (action === 'racecpu') this.raceSettings.cpu = RACE_CPU[(RACE_CPU.indexOf(this.raceSettings.cpu) + direction + RACE_CPU.length) % RACE_CPU.length];
         this.layoutKey = ''; await this.refresh(); return;
       }
       if (['keyboard','controller'].includes(action)) { this.bindingDevice = action; this.bindingPage = 0; this.bindingRow = 0; return this.show('bindings'); }
@@ -594,7 +633,7 @@ export class Frontend {
     finally { this.busy = false; }
   }
   saveSelection() {
-    savePlayerSelection({quadId:this.quadId, riderId:this.riderId, freestyleEnvironment:this.lastFreestyleEnvironment, playerName:this.playerName, appearance:this.appearance});
+    savePlayerSelection({quadId:this.quadId, riderId:this.riderId, freestyleEnvironment:this.lastFreestyleEnvironment, race:this.lastRace, playerName:this.playerName, appearance:this.appearance});
   }
   // Cycle one gear row through Original and the catalog items. The jersey sets
   // the shirt and its matching sleeves together, as the original store does.
@@ -785,7 +824,7 @@ export class Frontend {
     this.courseMeter?.remove(); this.courseMeter = null;
     if (screenPages.has(this.page)) {
       renderScreen(this);
-      Object.assign(this.root.dataset, {selection:String(this.selection), track:this.tracks[this.track]?.id ?? '', renderer:'rust', musicPage:String(this.musicPage), bindingPage:String(this.bindingPage)});
+      Object.assign(this.root.dataset, {selection:String(this.selection), track:this.tracks[this.track]?.id ?? '', raceCourse:this.raceSettings.course, renderer:'rust', musicPage:String(this.musicPage), bindingPage:String(this.bindingPage)});
       return;
     }
     delete this.buttons.dataset.structure;
