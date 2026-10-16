@@ -72,10 +72,13 @@ try {
             error('Dummy_hand_L', 'Dummy_Hand_L'),
             error('Dummy_hand_R', 'Dummy_Hand_R')
           );
+          // Released boots (feet down when slow, foot out in slides) leave
+          // their pegs by design; only pinned boots must stay attached.
+          const pins = window.atvTerrainStatus?.frame?.rider_foot_pins ?? [1, 1];
           probe.maxFoot = Math.max(
             probe.maxFoot,
-            error('Dummy_foot_L', 'Dummy_Foot_L'),
-            error('Dummy_foot_R', 'Dummy_Foot_R')
+            pins[0] >= 1 ? error('Dummy_foot_L', 'Dummy_Foot_L') : 0,
+            pins[1] >= 1 ? error('Dummy_foot_R', 'Dummy_Foot_R') : 0
           );
           const head = model.riderMesh.nodes.findIndex(n => n.name === 'Head'),
             pelvis = model.riderMesh.nodes.findIndex(n => n.name === 'Pelvis');
@@ -164,7 +167,9 @@ try {
   const frames = await page.evaluate(() => window.controlFrames.filter(s => s.frame.vehicle_kind === 'motorcycle'));
   const normal = frames.filter(s => s.frame.rider_grip_errors && s.frame.wreck.phase === 'Riding');
   report.maxGrip = Math.max(...normal.flatMap(s => s.frame.rider_grip_errors));
-  report.maxFoot = Math.max(...normal.flatMap(s => s.frame.rider_foot_errors));
+  report.maxFoot = Math.max(
+    ...normal.flatMap(s => s.frame.rider_foot_errors.filter((_, i) => s.frame.rider_foot_pins[i] >= 1))
+  );
   assert(report.maxGrip < 0.08, `Hands leave source grips: ${report.maxGrip}`);
   assert(report.maxFoot < 0.08, `Feet leave source pegs: ${report.maxFoot}`);
   assert(

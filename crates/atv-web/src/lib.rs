@@ -1291,7 +1291,7 @@ fn obstacle_input(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
 /// Bounded transport batch. Each step still runs the original vehicle operation,
 /// then the original camera operation, with the same fixed 1/60 second input.
 /// Retain intermediate frames so consumers such as audio see every step.
-fn train_collision_objects(
+pub(crate) fn train_collision_objects(
     sim: &Simulation,
 ) -> Result<Vec<atv_core::scene_collision::DynamicObstacle>> {
     let train = sim.train.as_ref().ok_or("load original train first")?;
@@ -1319,11 +1319,12 @@ fn step_train_scene(sim: &mut Simulation, dt: f32) -> Result<Option<atv_core::tr
     if !sim.train_collision_installed {
         return train.step(dt, |_| Ok(None)).map(Some);
     }
-    let scene = sim
-        .vehicle
-        .as_mut()
-        .and_then(Vehicle::scene_collision_mut)
-        .ok_or("missing live train collision scene")?;
+    let scene = match (sim.motorcycle.as_mut(), sim.vehicle.as_mut()) {
+        (Some(bike), _) => bike.scene_collision_mut(),
+        (None, Some(vehicle)) => vehicle.scene_collision_mut(),
+        _ => None,
+    }
+    .ok_or("missing live train collision scene")?;
     let scene = RefCell::new(scene);
     let bindings = &sim.train_collision;
     train
@@ -2140,11 +2141,22 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         return SIMULATION.with_borrow_mut(|sim| {
             let objects = train_collision_objects(sim)?;
             let count = objects.len();
-            sim.vehicle
-                .as_mut()
-                .and_then(Vehicle::scene_collision_mut)
-                .ok_or("load original scene collision first")?
-                .install_dynamic(objects)?;
+            if sim.motorcycle.is_some() {
+                // The bike already settled on its scene; rebuild it with the
+                // train installed before the first train-aware query.
+                let scene = motorcycles::motorcycle_scene(sim, true)?
+                    .ok_or("load original scene collision first")?;
+                sim.motorcycle
+                    .as_mut()
+                    .ok_or("missing motorcycle")?
+                    .set_scene(Some(scene));
+            } else {
+                sim.vehicle
+                    .as_mut()
+                    .and_then(Vehicle::scene_collision_mut)
+                    .ok_or("load original scene collision first")?
+                    .install_dynamic(objects)?;
+            }
             sim.train_collision_installed = true;
             serde_json::to_vec(&serde_json::json!({"bodies":count})).map_err(|e| e.to_string())
         });

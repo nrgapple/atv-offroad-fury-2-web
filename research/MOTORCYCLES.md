@@ -435,3 +435,58 @@ into the turn with grip error 0.0000016 ft and boot error 0.000037 ft (230
 paired steps); the touch stunt/wreck/recovery route passes (346 paired steps).
 `make check` passes. These are host results pending validated-main
 deployment; physical-device play and native whole-step comparison remain open.
+
+
+## Rider pose, chassis collision and scene contact (2026-10-16)
+
+Play feedback: elbows stuck out, riding felt rigid, crashing was too hard, and
+bikes passed through the Arlington train and some objects.
+
+- **Rider pose (MX rider system, adapted).** The source rider is an 18-part
+  powered ragdoll pinned to the grips and pegs, with no analytic IK. The port's
+  ATV2 hinge solver raised the elbows 0.3–0.4 ft to shoulder height. Limbs now
+  use a two-bone solve that keeps the clip's elbow/knee side and twist. Clip
+  time follows the filtered crab sweep (τ 0.15 s) instead of the steering
+  stick, lean blends fwd/mid/bck (τ 0.125 s), and the source stop/still/riding
+  speed bands (5/10/15 mph) select clips. Feet go down when slow and not
+  yawing, and the inside foot leaves its peg in a leaned slide; pins return
+  over 0.5 s / 2 s. Air crossfades at 3/s in and 2/s out.
+- **Flow (authored reduction).** One spring-damped pelvis offset uses the
+  source riding part springs/damping (≈1.5 Hz, ζ≈0.3, doubled at a stop),
+  driven by the pelvis-point load. Because the ragdoll's pins hold the pelvis
+  far tighter than one spring, the drive is scaled by 0.35 and travel limited
+  to (0.12, 0.2, 0.3) ft.
+- **Chassis collision (recovered).** The bike's COL v2 whisker rays
+  (`bikem.col`/`WreckBikem.col`, 50cc `bike50m.col`/`WreckBike50m.col`, ATV2
+  type-2 layout plus one header word) are tested once per frame: downward
+  rays against terrain, all rays against the scene. Each substep a contact
+  closing faster than 10 ft/s takes a zero-restitution impulse with angular
+  terms; otherwise a SpringStiffness/SpringDamping spring with
+  SpringMomentScale; friction is always 0.5·weight ramped over 10 ft/s of
+  slip. Impulses and bottoming feed the per-frame impact vector, so front,
+  back and side wrecks now come from real hits. Contact during a flip or
+  three-sixty, or touching down while a stunt is held, also wrecks. Wrecked
+  bikes rest on the wreck rays with roll free; the terrain clamp is now only
+  a sink guard. Packages built before these members existed fall back to
+  authored rays from the bike model's grips, pegs and wheels.
+- **Scene contact (adapter).** The bike now builds the same partitioned scene
+  as the ATV (static props, plant proxies, mud categories, moving train
+  bodies). Tires stand on moving surfaces using their point velocity, the
+  train installs into the bike's scene, and bike sessions load the map's
+  train/rain samples from AUDIO.RES. An explicit start pose now places an
+  existing bike, as it does for the ATV.
+- **Reverse fix.** The browser adapters set `reverse` both for reverse
+  throttle and for braking while rolling backwards; only reverse with
+  throttle now drives the reverse controller. Previously W on a slope after
+  rolling back could leave the bike stuck reversing.
+
+Host results (125 Race, source rays from a rebuilt private package): level
+wall impacts at 15 mph stop without a wreck, and 20/25/35 mph give Front
+wrecks, matching the recovered thresholds. Normal riding on ENV01 does not
+wreck 125/500 bikes; the light Mini wrecks when it cases rough bumps flat out.
+Browser gates pass: all 20 selections (1,683 paired steps), touch turns with
+grip error 0.005 ft and pinned-boot error 0.004 ft, stunt/wreck/recovery,
+the train broadside (wreck) and roof drop (rides the moving train), a tree
+hit at about 31 mph (Front wreck), and the ATV train-collision regression.
+The new collision members need the release owner's R2 package upload;
+until then the hosted bikes use the authored fallback rays.

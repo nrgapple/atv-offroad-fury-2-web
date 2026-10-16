@@ -330,6 +330,10 @@ pub(super) struct Drive {
     pub recovery: f32,
     pub hold: [f32; 3],
     pub impact: V,
+    /// World velocity change from impulses and bottoming in this substep.
+    pub substep_dv: V,
+    pub chassis_hit: bool,
+    pub head_hit: bool,
     pub airtime: f32,
     pub crab: f32,
     pub was_airborne: bool,
@@ -357,6 +361,8 @@ impl Drive {
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct TireState {
     pub grounded: bool,
+    /// Velocity of the supporting surface (a moving train), else zero.
+    pub ground: V,
     pub borrowed: bool,
     pub normal: V,
     pub point: V,
@@ -420,7 +426,13 @@ impl Motorcycle {
         // values are kept as targets for the same up-rate/instant-release filter.
         let mut gas = input.throttle;
         let mut brake = input.brake;
-        d.reverse = input.reverse;
+        // The browser drive adapters flag `reverse` both for reverse throttle
+        // and for braking while rolling backwards; only the former drives the
+        // source reverse controller.
+        d.reverse = input.reverse && input.throttle > 0. && input.brake == 0.;
+        if d.reverse {
+            gas = 0.;
+        }
         if gas > 0. && brake > 0. {
             if speed.abs() < 5. {
                 d.reverse = true;
@@ -583,6 +595,8 @@ impl Motorcycle {
         let p = self.params.clone();
         self.body.force = [0., -p.gravity_scale * p.weight, 0.];
         self.body.local_torque = [0.; 3];
+        self.drive.substep_dv = [0.; 3];
+        self.respond_chassis();
         let grounded = self.grounded_any();
         let speed = self.forward_speed();
         if !wreck {
@@ -651,6 +665,10 @@ impl Motorcycle {
                 self.drive.tires[1].omega = p.max_rpm() / RPM_PER_RAD / ratio;
             }
         }
+        // Latch the per-frame peak velocity change, including this substep
+        // (the effective behaviour of the source at its ~30 fps frame rate).
+        let local = dynamics::inverse_transform(self.body.basis(), self.drive.substep_dv);
+        self.drive.latch_impact(local);
         self.integrate(&p, h, wreck)
     }
 
@@ -987,18 +1005,29 @@ impl Motorcycle {
             state.load = 0.;
             let mut contact = terrain
                 .contact(bottom[0], bottom[2])?
-                .map(|c| (c.height, c.normal, c.surface as usize));
-            // Authored adapter: solid props from the existing map collision.
-            let ray = crate::collision::CollisionRay {
+                .map(|c| (c.height, c.normal, c.surface as usize, None));
+            // Authored adapter: wheels also stand on the scene's props, plant
+            // proxies and moving train bodies (with their point velocity).
+            let ray = [crate::collision::CollisionRay {
                 start: add(mount, [0., tire.strut, 0.]),
                 end: add(bottom, [0., -0.5, 0.]),
-            };
-            for hit in crate::wreck::query_static_segments(&[ray], &self.obstacles, 16)? {
-                if hit.world_normal[1] > 0.17 && contact.is_none_or(|c| hit.world_point[1] > c.0) {
-                    contact = Some((hit.world_point[1], hit.world_normal, 0));
+            }];
+            for (obstacle, motion, _) in &self.contacts {
+                for hit in
+                    crate::wreck::query_static_segments(&ray, std::slice::from_ref(obstacle), 4)?
+                {
+                    if hit.world_normal[1] > 0.17
+                        && contact.is_none_or(|c| hit.world_point[1] > c.0)
+                    {
+                        contact = Some((hit.world_point[1], hit.world_normal, 0, *motion));
+                    }
                 }
             }
-            if let Some((height, normal, surface)) = contact {
+            state.ground = [0.; 3];
+            if let Some((height, normal, surface, motion)) = contact {
+                if let Some(motion) = motion {
+                    state.ground = motion.point_velocity([bottom[0], height, bottom[2]]);
+                }
                 state.surface = surface.min(crate::motorcycle_tire::SURFACES - 1);
                 state.normal = normal;
                 let d = sub(mount, bottom);
@@ -1025,12 +1054,11 @@ impl Motorcycle {
                         let over = compression - tire.strut;
                         self.body.center = add(self.body.center, scale(normal, over * 0.9));
                         point = add(point, scale(normal, over * 0.9));
-                        let vn = dot(self.body.linear_velocity, normal);
+                        let vn = dot(sub(self.body.linear_velocity, state.ground), normal);
                         if vn < 0. {
                             let change = scale(up_world, -vn);
                             self.body.linear_velocity = add(self.body.linear_velocity, change);
-                            let local = dynamics::inverse_transform(basis, change);
-                            self.drive.latch_impact(local);
+                            self.drive.substep_dv = add(self.drive.substep_dv, change);
                             self.frame.crash_impact_speed = self.frame.crash_impact_speed.max(-vn);
                         }
                         let into = dot(self.body.force, normal);
@@ -1041,7 +1069,7 @@ impl Motorcycle {
                     }
                     state.compression = compression;
                     state.point = point;
-                    let vn = dot(self.body.velocity_at(point), normal);
+                    let vn = dot(sub(self.body.velocity_at(point), state.ground), normal);
                     state.load = tire.normal_load(self.springs[i], compression, vn);
                     self.body
                         .apply_world_force(scale(normal, state.load), point);
@@ -1112,7 +1140,7 @@ impl Motorcycle {
                 };
                 let long = unit(sub(heading, scale(n, dot(heading, n))));
                 let lat = crate::wheel::cross(n, long);
-                let v = self.body.velocity_at(state.point);
+                let v = sub(self.body.velocity_at(state.point), state.ground);
                 let (v_lat, v_long) = (dot(v, lat), dot(v, long));
                 let donut = i == 1 && self.drive.donut > 0.;
                 let l = tire.longitudinal(zone, torque, state.load, traction, donut);
@@ -1320,6 +1348,14 @@ impl Motorcycle {
             Some(Kind::Vertical)
         } else if !grounded && !tricking && pitch > p.air_pitch[1] {
             Some(Kind::Back)
+        } else if d.chassis_hit
+            && ((d.backflip.active && d.backflip.airborne) || (d.spin.active && d.spin.airborne))
+        {
+            // Code 11: any chassis contact during a flip or three-sixty.
+            Some(Kind::Back)
+        } else if (grounded || d.chassis_hit) && self.active_stunt.is_some() && self.stunt_hold {
+            // Code 12: touching down while a stunt animation is still held.
+            Some(Kind::Vertical)
         } else if landing
             && d.airtime > p.crossup_time
             && (crossup > p.crossup_wreck || crossup < 1. - p.crossup_wreck)
@@ -1335,6 +1371,8 @@ impl Motorcycle {
         let d = &mut self.drive;
         d.was_airborne = !grounded;
         d.impact = [0.; 3];
+        d.chassis_hit = false;
+        d.head_hit = false;
         kind
     }
 }

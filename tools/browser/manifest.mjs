@@ -110,6 +110,8 @@ export const TESTS = {
   'test_motorcycle_controls.mjs': { defaults: ['pins crash mode crazy'], group: 'content' },
   'test_motorcycle_crash.mjs': { defaults: ['pins crash mode crazy unless ATV_CRASH_MODE'], group: 'content' },
   'test_motorcycle_menu.mjs': { group: 'content' },
+  'test_motorcycle_train.mjs': { group: 'content' },
+  'test_motorcycle_vegetation.mjs': { group: 'content' },
   'test_motorcycles.mjs': { defaults: ['pins crash mode crazy'], group: 'content' },
   'test_multiplayer.mjs': {
     defaults: ['pins crash mode crazy'],

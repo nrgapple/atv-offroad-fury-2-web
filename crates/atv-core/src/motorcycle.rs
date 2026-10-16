@@ -27,6 +27,8 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 #[path = "motorcycle_balance.rs"]
 mod balance;
+#[path = "motorcycle_chassis.rs"]
+mod chassis;
 #[path = "motorcycle_drive.rs"]
 mod drive;
 #[path = "motorcycle_pose.rs"]
@@ -218,6 +220,10 @@ pub struct Model {
     pub pro: bool,
     steering_axis: V,
     grips: [usize; 2],
+    pub chassis: chassis::Chassis,
+    /// Rider PelvisBoxPosition (model space) and sweep side (see pose).
+    pelvis_box: V,
+    sweep_side: f32,
 }
 impl Model {
     pub fn load(bytes: &[u8], id: u16) -> Result<Self> {
@@ -324,7 +330,15 @@ impl Model {
             &archive,
             &format!("vehicle_{size}A.aud"),
         )?)?;
-        Ok(Self {
+        let chassis = chassis::Chassis::load(&archive, size)
+            .unwrap_or_else(|| chassis::Chassis::fallback(&mesh, wheel_rest, size));
+        let pelvis_box = tuning
+            .vector3("Animation", "PelvisBoxPosition")
+            .unwrap_or([0., 4.3, -1.7]);
+        let mut model = Self {
+            chassis,
+            pelvis_box,
+            sweep_side: 1.,
             mesh,
             rider,
             tuning,
@@ -338,7 +352,9 @@ impl Model {
             pro,
             steering_axis,
             grips,
-        })
+        };
+        model.sweep_side = model.sweep_side();
+        Ok(model)
     }
     pub fn pose(&self, steering: f32, angles: [f32; 2], compression: [f32; 2]) -> Vec<M> {
         let mut world = Vec::with_capacity(self.mesh.nodes.len());
@@ -409,6 +425,20 @@ pub struct Frame {
     pub wheelie_active: bool,
     pub stoppie_active: bool,
     pub crossup: f32,
+    /// Chassis whisker contacts this frame, those against moving bodies (the
+    /// train), and whether a tire stands on a moving body.
+    pub chassis_contact_count: usize,
+    pub dynamic_contact_count: usize,
+    pub moving_support: bool,
+    /// Scene meshes selected near the bike this frame, and the moving ones.
+    pub scene_candidates: usize,
+    pub dynamic_candidates: usize,
+    /// Chassis contacts against plant (tree) proxies this frame.
+    pub vegetation_contact_count: usize,
+    /// Rider pelvis spring offset (ft, bike frame).
+    pub rider_pelvis_offset: V,
+    /// Rider boot peg pins (0 released for feet down / foot out, 1 pinned).
+    pub rider_foot_pins: [f32; 2],
     pub boundary_launch: crate::boundary_launch::State,
     pub mud_amount: [f32; 2],
     pub surfaces: [usize; 2],
@@ -435,6 +465,8 @@ pub struct Motorcycle {
     boundary_random: crate::engine_audio::OriginalRandom,
     rider_body: Option<(M, V)>,
     pose_controls: pose::Controls,
+    /// Last two pelvis-box world positions for the rider load estimate.
+    pelvis_history: [Option<V>; 2],
     normal_pose: Option<animation::Pose>,
     visual_steer: f32,
     frame: Frame,
@@ -448,6 +480,15 @@ pub struct Motorcycle {
     pub time: f32,
     obstacles: Vec<crate::obstacle::StaticObstacle>,
     materials: Option<[crate::materials::TerrainMaterial; 8]>,
+    scene: Option<crate::scene_collision::SceneCollision>,
+    /// This frame's physical candidates (static props, plant proxies, train).
+    contacts: Vec<(
+        crate::obstacle::StaticObstacle,
+        Option<crate::train::MotionState>,
+        bool,
+    )>,
+    chassis_contacts: Vec<chassis::Contact>,
+    chassis_response: chassis::Response,
     pub last_input: VehicleInput,
     pub motion_name: String,
     pub motion_time: f32,
@@ -476,6 +517,7 @@ impl Motorcycle {
             &config,
         )?;
         let params = drive::Params::parse(&model.tuning)?;
+        let chassis_response = chassis::Response::parse(&model.tuning, params.weight);
         let drive = drive::Drive::new(&params);
         let springs = params.tires.map(|t| t.spring_stopped);
         let mut result = Self {
@@ -498,6 +540,7 @@ impl Motorcycle {
             boundary_random: crate::engine_audio::OriginalRandom::with_seed(1),
             rider_body: None,
             pose_controls: pose::Controls::default(),
+            pelvis_history: [None; 2],
             normal_pose: None,
             visual_steer: 0.,
             frame: Frame::default(),
@@ -511,6 +554,10 @@ impl Motorcycle {
             time: 0.,
             obstacles: Vec::new(),
             materials: None,
+            scene: None,
+            contacts: Vec::new(),
+            chassis_contacts: Vec::new(),
+            chassis_response,
             last_input: VehicleInput::default(),
             motion_name: "mx_turn_still_mid".into(),
             motion_time: 0.,
@@ -553,6 +600,7 @@ impl Motorcycle {
         self.reset_count = self.reset_count.wrapping_add(1);
         self.rider_body = None;
         self.pose_controls = pose::Controls::default();
+        self.pelvis_history = [None; 2];
         self.normal_pose = None;
         self.visual_steer = 0.;
         self.frame = Frame::default();
@@ -599,6 +647,17 @@ impl Motorcycle {
     pub fn set_race_checkpoint(&mut self, checkpoint: Option<(V, f32)>) {
         self.race_checkpoint = checkpoint
             .filter(|(origin, yaw)| origin.iter().all(|v| v.is_finite()) && yaw.is_finite());
+    }
+    /// Make `origin`/`yaw` the start pose and reset there.
+    pub fn place(&mut self, origin: V, yaw: f32) -> Result<()> {
+        if !yaw.is_finite() || origin.iter().any(|v| !v.is_finite()) {
+            return Err("invalid motorcycle placement".into());
+        }
+        self.start = origin;
+        self.start_yaw = yaw;
+        self.safe_origin = origin;
+        self.safe_yaw = yaw;
+        self.reset()
     }
     /// Manual reset: the race checkpoint when racing, otherwise the start.
     pub fn reset_now(&mut self) -> Result<()> {
@@ -682,6 +741,49 @@ impl Motorcycle {
     pub fn set_obstacles(&mut self, obstacles: Vec<crate::obstacle::StaticObstacle>) {
         self.obstacles = obstacles;
     }
+    /// The map's partitioned scene: static props, vegetation proxies and any
+    /// installed moving train bodies, as the ATV queries them.
+    pub fn set_scene(&mut self, scene: Option<crate::scene_collision::SceneCollision>) {
+        self.scene = scene;
+    }
+    pub fn scene_collision_mut(&mut self) -> Option<&mut crate::scene_collision::SceneCollision> {
+        self.scene.as_mut()
+    }
+    /// Once per frame: the physical meshes near the bike, with moving-target
+    /// motion. Without a partitioned scene, every static obstacle is a candidate.
+    fn select_contacts(&mut self) -> Result<()> {
+        let center = self.body.center;
+        let radius = 12. + dot(self.body.linear_velocity, self.body.linear_velocity).sqrt() / 30.;
+        self.contacts.clear();
+        let selected = if let Some(scene) = &mut self.scene {
+            let mud = scene.mud_obstacles().to_vec();
+            let eligible = |index: usize, _: &crate::obstacle::StaticObstacle| !mud[index];
+            let query = scene.cached_query(center, radius, eligible)?;
+            let selection = scene.physical_selection(
+                &query,
+                crate::scene_collision::PhysicalTrim::Supplied,
+                center,
+                radius,
+                false,
+                |index, _| !mud[index],
+            )?;
+            selection
+                .meshes
+                .into_iter()
+                .map(|m| (m.obstacle, m.motion, m.proxy_index.is_some()))
+                .collect()
+        } else {
+            self.obstacles
+                .iter()
+                .cloned()
+                .map(|o| (o, None, false))
+                .collect()
+        };
+        self.contacts = selected;
+        self.frame.scene_candidates = self.contacts.len();
+        self.frame.dynamic_candidates = self.contacts.iter().filter(|c| c.1.is_some()).count();
+        Ok(())
+    }
     /// The map's terrain zone coefficients (`.toy` TerrainZone1..8).
     pub fn set_materials(&mut self, materials: Option<[crate::materials::TerrainMaterial; 8]>) {
         self.materials = materials;
@@ -730,12 +832,13 @@ impl Motorcycle {
         self.frame.crash_impact_speed = 0.;
         self.preload_axis = input.preload_axis.unwrap_or(input.lean).clamp(-1., 1.);
         self.prepare(input, dt);
+        self.select_contacts()?;
+        self.detect_chassis(terrain)?;
         // The source world steps at 55 Hz: int(dt·55)+1 substeps per frame.
         let n = (dt * 55.) as usize + 1;
         let h = dt / n as f32;
         for _ in 0..n {
             self.substep(terrain, h)?;
-            self.obstacle_step(h)?;
             if self.wreck_body_step(terrain, h)? {
                 return Ok(());
             }
@@ -792,12 +895,23 @@ impl Motorcycle {
         } else {
             self.rider_body = None;
         }
-        self.pose_controls.step(
-            input,
-            self.frame.speed.abs(),
-            self.frame.grounded.iter().any(|v| *v),
-            dt,
-        );
+        let load = self.pelvis_load(dt);
+        let b = self.body.basis();
+        let pose_input = pose::Input {
+            lean: self.drive.lean,
+            crab: self.drive.crab,
+            max_crab: self.params.max_crossup,
+            speed: self.frame.speed_magnitude,
+            yaw_rate: self.body.world_angular_velocity()[1],
+            up_y: b[1][1],
+            grounded: self.frame.grounded.iter().any(|v| *v),
+            reverse: self.drive.reverse,
+            load,
+        };
+        self.pose_controls
+            .step(pose_input, self.model.sweep_side, dt);
+        self.frame.rider_foot_pins = self.pose_controls.feet;
+        self.frame.rider_pelvis_offset = self.pose_controls.pelvis;
         let (normal, visual) = self.model.normal_pose(
             self.pose_controls,
             self.angles,
@@ -830,74 +944,34 @@ impl Motorcycle {
             self.motion_time = if grounded {
                 motion.duration * ((input.steer + 1.) * 0.5)
             } else {
-                motion.duration * ((self.pose_controls.steer + 1.) * 0.5)
+                motion.duration * self.pose_controls.sweep
             };
         }
         Ok(())
     }
-    /// Authored swept probes keep the bike out of the map's solid props; the
-    /// closing-speed change feeds the recovered front/back/side wreck limits.
-    /// This is separate from the unrecovered MX COL-v2 routing.
-    fn obstacle_step(&mut self, h: f32) -> Result<()> {
-        let origin = self.body.origin(&self.body_config);
-        let basis = self.body.basis();
-        let speed = self.forward_speed();
-        let probes: Vec<_> = [
-            self.model.wheel_rest[0],
-            self.model.wheel_rest[1],
-            [0., 2., 0.],
-        ]
-        .into_iter()
-        .map(|p| {
-            let start = add(origin, dynamics::transform(basis, p));
-            let travel = add(
-                scale(self.body.linear_velocity, h),
-                scale(basis[2], speed.signum() * 0.8),
-            );
-            crate::collision::CollisionRay {
-                start,
-                end: add(start, travel),
-            }
-        })
-        .collect();
-        for hit in crate::wreck::query_static_segments(&probes, &self.obstacles, 8)? {
-            let closing = (-dot(self.body.linear_velocity, hit.world_normal)).max(0.);
-            if closing > 0. {
-                self.frame.crash_impact_speed = self.frame.crash_impact_speed.max(closing);
-                let change = scale(hit.world_normal, closing * 1.05);
-                self.body.linear_velocity = add(self.body.linear_velocity, change);
-                self.body.center = add(self.body.center, scale(hit.world_normal, 0.12));
-                let local = dynamics::inverse_transform(basis, change);
-                self.drive.latch_impact(local);
-            }
-        }
-        Ok(())
-    }
-    /// Wreck body handling. Authored stabilizer: the wrecked bike is held at
-    /// terrain + 0.5 ft with 12 % rebound and 0.97 damping because the source
-    /// chassis collision hull is not reconstructed. Respawn follows the
-    /// source 0.5 s settle plus MaxWreckTime. Returns true after recovery.
+    /// Wrecked bikes keep normal mass, gravity and roll freedom and rest on
+    /// the wreck whiskers and tires (source MX class 0 applies no wreck
+    /// damping/inertia). Respawn follows the source 0.5 s settle plus
+    /// MaxWreckTime; the unrecovered rider-settled gate is substituted by the
+    /// bike coming to rest (or 6 s). Returns true after recovery.
     fn wreck_body_step(&mut self, terrain: &Terrain, h: f32) -> Result<bool> {
         if self.frame.wreck.phase == crate::wreck::Phase::Riding {
             return Ok(false);
         }
         self.wreck_time += h;
         self.frame.wreck.timer = self.wreck_time;
-        let p = self.body.origin(&self.body_config);
-        let mut on_ground = self.drive.tires.iter().any(|t| t.grounded);
+        // Authored safety: never let a wreck sink through the terrain.
+        let p = self.body.center;
         if let Some(hit) = terrain.contact(p[0], p[2])?
-            && p[1] < hit.height + 0.5
+            && p[1] < hit.height
         {
-            on_ground = true;
-            let speed = (-self.body.linear_velocity[1]).max(0.);
-            self.frame.crash_impact_speed = self.frame.crash_impact_speed.max(speed);
-            self.body.center[1] += hit.height + 0.5 - p[1];
-            self.body.linear_velocity[1] = speed * 0.12;
-            self.body.linear_velocity[0] *= 0.97;
-            self.body.linear_velocity[2] *= 0.97;
-            self.body.local_angular_velocity = self.body.local_angular_velocity.map(|x| x * 0.97);
+            self.body.center[1] = hit.height;
+            self.body.linear_velocity[1] = self.body.linear_velocity[1].max(0.);
         }
-        if on_ground && self.wreck_time > 0.5 + self.params.max_wreck_time {
+        let speed = dot(self.body.linear_velocity, self.body.linear_velocity).sqrt();
+        if self.wreck_time > 0.5 + self.params.max_wreck_time
+            && (speed < 3. || self.wreck_time > 6.)
+        {
             self.recover()?;
             return Ok(true);
         }
@@ -910,6 +984,7 @@ impl Motorcycle {
         self.compression = d.tires.map(|t| t.display);
         self.angles = d.tires.map(|t| t.angle);
         self.frame.grounded = d.tires.map(|t| t.grounded);
+        self.frame.moving_support = d.tires.iter().any(|t| t.grounded && t.ground != [0.; 3]);
         self.frame.surfaces = d.tires.map(|t| t.surface);
         self.frame.wheelie_active = d.pitch_control && !d.stoppie;
         self.frame.stoppie_active = d.stoppie;
@@ -955,6 +1030,31 @@ impl Motorcycle {
                 }
             }
         }
+    }
+    /// Rider load at the pelvis box: (gravity − point acceleration) in the bike
+    /// frame minus the level 1 g, from the box's world track (which includes
+    /// the kinematic bank). Cleared by resets and wrecks.
+    fn pelvis_load(&mut self, dt: f32) -> V {
+        let point = add(
+            self.body.origin(&self.body_config),
+            dynamics::transform(self.body.basis(), self.model.pelvis_box),
+        );
+        let riding = self.frame.wreck.phase == crate::wreck::Phase::Riding;
+        let load = match self.pelvis_history {
+            [Some(p1), Some(p2)] if riding && dt > 0. => {
+                let a = scale(add(sub(point, scale(p1, 2.)), p2), 1. / (dt * dt));
+                let g = [0., -32.2, 0.];
+                let local = dynamics::inverse_transform(self.body.basis(), sub(g, a));
+                sub(local, [0., -32.2, 0.])
+            }
+            _ => [0.; 3],
+        };
+        self.pelvis_history = if riding {
+            [Some(point), self.pelvis_history[0]]
+        } else {
+            [None; 2]
+        };
+        load
     }
     /// Trick button mask and trick stick for preload/backflip/three-sixty.
     pub fn spin_controls(&mut self, mask: u8, axes: [f32; 2]) -> Result<()> {

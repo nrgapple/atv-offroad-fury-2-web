@@ -139,6 +139,30 @@ pub fn dispatch(input: &[u8], op: u32) -> Result<Vec<u8>> {
     let source: serde_json::Value = serde_json::from_slice(input).map_err(|e| e.to_string())?;
     SIMULATION.with_borrow_mut(|sim| dispatch_sim(sim, &source, op))
 }
+/// The bike's own partitioned scene, built like the ATV's: static props,
+/// vegetation proxies, mud categories and, once loaded, the moving train.
+pub fn motorcycle_scene(
+    sim: &Simulation,
+    train: bool,
+) -> Result<Option<atv_core::scene_collision::SceneCollision>> {
+    let Some(config) = sim.scene_partition else {
+        return Ok(None);
+    };
+    let mut scene = atv_core::scene_collision::SceneCollision::from_terrain(
+        config,
+        sim.obstacles.clone().unwrap_or_default(),
+        sim.ecosystem.as_ref(),
+        sim.terrain.as_ref().ok_or("load terrain first")?,
+        false,
+    )?;
+    if sim.mud_obstacles.len() == sim.obstacles.as_ref().map_or(0, Vec::len) {
+        scene.set_mud_obstacles(sim.mud_obstacles.clone())?;
+    }
+    if train {
+        scene.install_dynamic(train_collision_objects(sim)?)?;
+    }
+    Ok(Some(scene))
+}
 fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Result<Vec<u8>> {
     if op == 23 {
         if let Some(model) = sim.motorcycle_model.take() {
@@ -149,12 +173,21 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
                     .clone(),
             )
             .map_err(|e| e.to_string())?;
-            sim.motorcycle = Some(Motorcycle::new(model, origin, json_number(source, "yaw")?)?);
+            let mut bike = Motorcycle::new(model, origin, json_number(source, "yaw")?)?;
+            bike.set_scene(motorcycle_scene(sim, sim.train_collision_installed)?);
+            sim.motorcycle = Some(bike);
         } else {
-            sim.motorcycle
-                .as_mut()
-                .ok_or("load motorcycle first")?
-                .reset_now()?;
+            let bike = sim.motorcycle.as_mut().ok_or("load motorcycle first")?;
+            // Like the ATV start, an explicit pose places the bike there;
+            // otherwise reset to the race checkpoint or the start.
+            match source.get("origin") {
+                Some(origin) => {
+                    let origin: [f32; 3] =
+                        serde_json::from_value(origin.clone()).map_err(|e| e.to_string())?;
+                    bike.place(origin, json_number(source, "yaw")?)?;
+                }
+                None => bike.reset_now()?,
+            }
         }
         let bike = sim.motorcycle.as_mut().ok_or("missing motorcycle")?;
         bike.set_obstacles(sim.obstacles.clone().unwrap_or_default());

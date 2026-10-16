@@ -79,26 +79,32 @@ export class GameAudio {
     const sounds = motorcycle ? table : await archive('/AUDIO/AUDIO.RES');
     const normal = path => path.replaceAll('\\', '/').toLowerCase().replace(/^(?:audio|aud)\//, '');
     const lookup = new Map(sounds.entries.map((entry, index) => [normal(entry.name), index]));
+    // Motorcycles use their own engine bank, but the scene (train, rain) is
+    // still ATV2's: samples missing from the bike bank come from AUDIO.RES.
+    let sceneBank = null;
+    const find = async key => {
+      const own = lookup.get(key) ?? lookup.get(`${key}.vag`);
+      if (own !== undefined) return { bytes: sounds.bytes, index: own };
+      if (!motorcycle) return null;
+      sceneBank ??= archive('/AUDIO/AUDIO.RES').then(bank => ({
+        bytes: bank.bytes,
+        lookup: new Map(bank.entries.map((entry, index) => [normal(entry.name), index]))
+      }));
+      const bank = await sceneBank;
+      const index = bank.lookup.get(key) ?? bank.lookup.get(`${key}.vag`);
+      return index === undefined ? null : { bytes: bank.bytes, index };
+    };
     this.loadSample = async name => {
       if (this.buffers.has(name)) return;
-      const key = normal(name), index = lookup.get(key) ?? lookup.get(`${key}.vag`);
-      if (index === undefined) throw new Error(`Original sound sample is missing: ${name}`);
-      const vag = await this.codec(3, sounds.bytes, index);
+      const found = await find(normal(name));
+      if (!found) throw new Error(`Original sound sample is missing: ${name}`);
+      const vag = await this.codec(3, found.bytes, found.index);
       const info = await json(5, vag);
       const wave = await this.codec(4, vag);
       if (!isCurrent() || this.closed) return;
       this.buffers.set(name, { wave, info, buffer: null });
     };
-    this.loadWeatherSample = async () => {
-      if (this.buffers.has('rain.vag')) return;
-      //Motorcycles use their own engine bank, but Weather is still ATV2's scene.
-      if (!motorcycle) return this.loadSample('rain.vag');
-      const weatherBank=await archive('/AUDIO/AUDIO.RES');
-      const index=weatherBank.entries.findIndex(entry=>normal(entry.name)==='rain.vag');
-      if(index<0)throw new Error('Original rain sample is missing.');
-      const vag=await this.codec(3,weatherBank.bytes,index),info=await json(5,vag),wave=await this.codec(4,vag);
-      if(isCurrent()&&!this.closed)this.buffers.set('rain.vag',{wave,info,buffer:null});
-    };
+    this.loadWeatherSample = () => this.loadSample('rain.vag');
     // Keep encoded WAV until a user gesture creates/unlocks the audio context.
     for (const name of new Set([...this.config.samples.flat(),...(this.config.impact_samples ?? [])])) {
       if (!isCurrent() || this.closed) return;

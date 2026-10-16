@@ -133,6 +133,10 @@ def main():
             for mode in ('Race', 'Pro'):
                 name = f'Veh/mx_{mode}{size}P.phy'
                 members[name] = source(name)
+            # Chassis whisker rays for riding and wrecked bikes.
+            for name in (('Veh/Col/bike50m.col', 'Veh/Col/WreckBike50m.col') if size == 50
+                         else ('Veh/Col/bikem.col', 'Veh/Col/WreckBikem.col')):
+                members[name] = source(name)
             name = f'Aud/vehicle_{size}A.aud'
             members[name] = source(name)
             audio = config(members[name])
