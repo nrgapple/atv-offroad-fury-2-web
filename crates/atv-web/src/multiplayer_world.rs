@@ -354,6 +354,7 @@ mod tests {
                     epoch: 1,
                     map: 1,
                     started: true,
+                    public: false,
                     players: vec![atv_net::Participant {
                         id: 1,
                         name: "Guest".into(),

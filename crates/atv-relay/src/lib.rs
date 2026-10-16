@@ -1,11 +1,15 @@
 //! Authored Rust room service. Original PS2 networking is not executed here.
 use std::{cell::RefCell, rc::Rc};
 
-use atv_net::{Lobby, MAX_PLAYERS, Packet, Participant, ROOM_CODE_BYTES, RoomCode};
+use atv_net::{
+    Lobby, PRIVATE_CAPACITY, PUBLIC_CAPACITY, PUBLIC_MAP, PUBLIC_ROOMS, Packet, Participant,
+    ROOM_CODE_BYTES, RoomCode,
+};
 use serde::{Deserialize, Serialize};
 use worker::{wasm_bindgen::JsCast, *};
 
 const ROOT: &str = "/multiplayer/rooms";
+const FREERIDE: &str = "/multiplayer/freeride";
 const ROOM_KEY: &str = "room";
 const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const MAX_AGE_MS: f64 = 12. * 60. * 60. * 1000.;
@@ -47,6 +51,20 @@ struct Room {
     epoch: u32,
     map: u16,
     started: bool,
+    /// Shared Arlington Free Ride room: fixed map, no host controls, more
+    /// riders, and no age limit while anyone is riding.
+    #[serde(default)]
+    public: bool,
+}
+
+impl Room {
+    fn capacity(&self) -> usize {
+        if self.public {
+            PUBLIC_CAPACITY
+        } else {
+            PRIVATE_CAPACITY
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -94,11 +112,11 @@ fn recoverable_close(code: usize, reason: &str) -> bool {
         || (code == 1000 && reason == "Connection timed out")
 }
 fn room_reusable(room: &Room, instant: f64) -> bool {
-    room.closed || instant - room.created_ms > MAX_AGE_MS
+    room.closed || (!room.public && instant - room.created_ms > MAX_AGE_MS)
 }
 /// Lowest slot that is neither connected nor held for a reconnecting rider.
-fn free_slot(taken: impl Iterator<Item = u8> + Clone) -> Option<u8> {
-    (0..MAX_PLAYERS as u8).find(|id| taken.clone().all(|t| t != *id))
+fn free_slot(taken: impl Iterator<Item = u8> + Clone, capacity: usize) -> Option<u8> {
+    (0..capacity as u8).find(|id| taken.clone().all(|t| t != *id))
 }
 /// Reservations older than the reconnect grace, oldest first.
 fn expired(reserved: &[Reserved], instant: f64) -> Vec<Reserved> {
@@ -173,6 +191,37 @@ fn same_origin(req: &Request, env: &Env) -> Result<bool> {
     ))
 }
 
+/// A new room whose first slot is held for its creator (or first claimant).
+fn new_room(
+    code: RoomCode,
+    key: String,
+    admission_lease: Option<String>,
+    public: bool,
+) -> Result<Room> {
+    Ok(Room {
+        instance: random_token()?,
+        admission_lease,
+        generation: 0,
+        host: 0,
+        reserved: vec![Reserved {
+            peer: 0,
+            player: None,
+            key: key.clone(),
+            since_ms: now(),
+        }],
+        empty_since_ms: None,
+        code,
+        host_token: key,
+        created_ms: now(),
+        closed: false,
+        epoch: 1,
+        // Shared rooms are riding Arlington from the start.
+        map: if public { PUBLIC_MAP } else { 1 },
+        started: public,
+        public,
+    })
+}
+
 fn send(ws: &WebSocket, packet: &Packet) -> Result<()> {
     let bytes = atv_net::encode(packet).map_err(|e| Error::RustError(e.to_string()))?;
     ws.send_with_bytes(bytes)
@@ -216,6 +265,9 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
             match value.get("code").and_then(|v| v.as_str()) {
                 None | Some("") => None,
                 Some(code) => match atv_net::parse_room_code(code) {
+                    Ok(code) if atv_net::is_public_room_code(&code) => {
+                        return Response::error("That code is reserved", 400);
+                    }
                     Ok(code) => Some(code),
                     Err(_) => return Response::error("Use 8 letters or numbers", 400),
                 },
@@ -234,27 +286,12 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
             let mut init = RequestInit::new();
             init.method = Method::Post;
             init.body = Some(
-                serde_json::to_string(&Room {
-                    instance: random_token()?,
-                    admission_lease: admission_lease.clone(),
-                    generation: 0,
-                    host: 0,
-                    // Hold the creator's slot until its first connection.
-                    reserved: vec![Reserved {
-                        peer: 0,
-                        player: None,
-                        key: token.clone(),
-                        since_ms: now(),
-                    }],
-                    empty_since_ms: None,
+                serde_json::to_string(&new_room(
                     code,
-                    host_token: token.clone(),
-                    created_ms: now(),
-                    closed: false,
-                    epoch: 1,
-                    map: 1,
-                    started: false,
-                })?
+                    token.clone(),
+                    admission_lease.clone(),
+                    false,
+                )?)?
                 .into(),
             );
             let response = stub
@@ -272,7 +309,7 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
                     let live: serde_json::Value = response.json().await.unwrap_or_default();
                     return Response::from_json(&serde_json::json!({
                         "code": text, "open": true,
-                        "players": live.get("players"), "max": MAX_PLAYERS,
+                        "players": live.get("players"), "max": PRIVATE_CAPACITY,
                     }));
                 }
                 return Response::error("Lobby code is taken", 409);
@@ -282,6 +319,35 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
             }
         }
         return Response::error("Room creation unavailable", 503);
+    }
+    // Arlington Free Ride: reserve a slot in the lowest-numbered shared room
+    // with space, so riders gather together; a full room opens the next one.
+    // Each room reserves atomically, so racing arrivals cannot overfill it.
+    if req.path() == FREERIDE && req.method() == Method::Post {
+        for number in 1..=PUBLIC_ROOMS {
+            let code = atv_net::public_room_code(number).expect("public room number");
+            let text = std::str::from_utf8(&code).expect("ASCII room code");
+            let mut init = RequestInit::new();
+            init.method = Method::Post;
+            init.body =
+                Some(serde_json::to_string(&new_room(code, random_token()?, None, true)?)?.into());
+            let mut response = namespace
+                .id_from_name(text)?
+                .get_stub()?
+                .fetch_with_request(Request::new_with_init("https://room/claim", &init)?)
+                .await?;
+            match response.status_code() {
+                200 | 201 => {
+                    let claim: serde_json::Value = response.json().await?;
+                    return Response::from_json(&serde_json::json!({
+                        "code": text, "key": claim.get("key"),
+                    }));
+                }
+                409 => continue,
+                _ => return Response::error("Free Ride unavailable", 503),
+            }
+        }
+        return Response::error("Free Ride is full. Try again shortly.", 503);
     }
     if req.method() == Method::Get
         && let Some(code) = code_from_path(&req.path())
@@ -370,6 +436,7 @@ impl LobbyRoom {
             epoch: room.epoch,
             map: room.map,
             started: room.started,
+            public: room.public,
             players,
         })
     }
@@ -500,6 +567,32 @@ impl LobbyRoom {
         Ok(())
     }
 
+    /// Install a new (or reused) room record; its creator holds slot 0.
+    async fn install(&self, mut room: Room, claim: bool) -> Result<Response> {
+        let previous = self.room.borrow().clone();
+        room.generation = previous
+            .as_ref()
+            .map_or(1, |r| r.generation.wrapping_add(1));
+        // Old close events must never terminate a newly reused code.
+        for socket in self.state.get_websockets() {
+            let _ = socket.close(Some(1000), Some("Room replaced"));
+        }
+        let key = room.host_token.clone();
+        *self.room.borrow_mut() = Some(room.clone());
+        self.state.storage().put(ROOM_KEY, &room).await?;
+        self.record("room_created", None, "", None, None);
+        self.state.storage().set_alarm(30_000_i64).await?;
+        if let Some(old) = previous.as_ref().filter(|r| r.closed) {
+            // Install the replacement before any external admission await.
+            // A failed retirement remains bounded by the lease expiry.
+            let _ = self.release_lease(old).await;
+        }
+        if claim {
+            return Ok(Response::from_json(&serde_json::json!({ "key": key }))?.with_status(201));
+        }
+        Ok(Response::empty()?.with_status(201))
+    }
+
     async fn departed(&self, ws: &WebSocket, recoverable: bool) -> Result<()> {
         let Some(mut connection) = ws.deserialize_attachment::<Connection>()? else {
             return Ok(());
@@ -566,8 +659,40 @@ impl DurableObject for LobbyRoom {
     }
 
     async fn fetch(&self, mut req: Request) -> Result<Response> {
+        if req.path() == "/claim" && req.method() == Method::Post {
+            let fresh: Room = req.json().await?;
+            let previous = self.room.borrow().clone();
+            let Some(mut room) = previous.filter(|room| !room_reusable(room, now())) else {
+                // Nobody is here: open the shared room with this claimant in slot 0.
+                return self.install(fresh, true).await;
+            };
+            if !room.public {
+                return Response::error("Not a shared room", 409);
+            }
+            let taken = self
+                .connections()?
+                .iter()
+                .map(|(_, c)| c.peer)
+                .chain(room.reserved.iter().map(|r| r.peer))
+                .collect::<Vec<_>>();
+            let Some(peer) = free_slot(taken.iter().copied(), room.capacity()) else {
+                return Response::error("Game is full!", 409);
+            };
+            let key = random_token()?;
+            room.reserved.push(Reserved {
+                peer,
+                player: None,
+                key: key.clone(),
+                since_ms: now(),
+            });
+            room.empty_since_ms = None;
+            self.save(room).await?;
+            // Unused claims expire with the reconnect grace.
+            self.state.storage().set_alarm(5_000_i64).await?;
+            return Response::from_json(&serde_json::json!({ "key": key }));
+        }
         if req.path() == "/create" && req.method() == Method::Post {
-            let mut room: Room = req.json().await?;
+            let room: Room = req.json().await?;
             let previous = self.room.borrow().clone();
             if previous
                 .as_ref()
@@ -579,23 +704,7 @@ impl DurableObject for LobbyRoom {
                     Response::from_json(&serde_json::json!({"players": players}))?.with_status(409),
                 );
             }
-            room.generation = previous
-                .as_ref()
-                .map_or(1, |r| r.generation.wrapping_add(1));
-            // Old close events must never terminate a newly reused code.
-            for socket in self.state.get_websockets() {
-                let _ = socket.close(Some(1000), Some("Room replaced"));
-            }
-            *self.room.borrow_mut() = Some(room.clone());
-            self.state.storage().put(ROOM_KEY, &room).await?;
-            self.record("room_created", None, "", None, None);
-            self.state.storage().set_alarm(30_000_i64).await?;
-            if let Some(old) = previous.as_ref().filter(|r| r.closed) {
-                // Install the replacement before any external admission await.
-                // A failed retirement remains bounded by the lease expiry.
-                let _ = self.release_lease(old).await;
-            }
-            return Ok(Response::empty()?.with_status(201));
+            return self.install(room, false).await;
         }
         if !same_origin(&req, &self.env)? {
             return Response::error("Origin denied", 403);
@@ -656,7 +765,7 @@ impl DurableObject for LobbyRoom {
                     .map(|(_, c)| c.peer)
                     .chain(room.reserved.iter().map(|r| r.peer))
                     .collect::<Vec<_>>();
-                let Some(peer) = free_slot(taken.iter().copied()) else {
+                let Some(peer) = free_slot(taken.iter().copied(), room.capacity()) else {
                     self.record("connection_rejected", None, "Room is full", Some(409), None);
                     return Response::error("Game is full!", 409);
                 };
@@ -749,6 +858,10 @@ impl DurableObject for LobbyRoom {
                     return self.close_socket(&ws, 1008, "Unknown actor model");
                 }
                 player.id = connection.peer;
+                if room.public {
+                    // Strangers see this name: apply the shared-room filter.
+                    player.name = atv_net::public_name(&player.name, player.id);
+                }
                 connection.player = Some(player);
                 ws.serialize_attachment(&connection)?;
                 let mut room = room;
@@ -831,6 +944,10 @@ impl DurableObject for LobbyRoom {
                     return self.close_socket(&ws, 1008, "Unknown actor model");
                 }
                 player.id = connection.peer;
+                if room.public {
+                    // Strangers see this name: apply the shared-room filter.
+                    player.name = atv_net::public_name(&player.name, player.id);
+                }
                 connection.player = Some(player);
                 // The rider reloads with its new vehicle and reports Ready again.
                 connection.ready_map = 0;
@@ -853,7 +970,10 @@ impl DurableObject for LobbyRoom {
                 epoch,
                 map,
                 started,
-            } if connection.player.is_some() && self.lobby(None)?.host == connection.peer => {
+            } if connection.player.is_some()
+                && !room.public
+                && self.lobby(None)?.host == connection.peer =>
+            {
                 if !atv_net::valid_map(map) {
                     return self.close_socket(&ws, 1008, "Unknown environment");
                 }
@@ -952,7 +1072,7 @@ impl DurableObject for LobbyRoom {
             return Response::empty();
         }
         let instant = now();
-        if instant - room.created_ms > MAX_AGE_MS {
+        if !room.public && instant - room.created_ms > MAX_AGE_MS {
             self.finish("Room expired").await?;
             return Response::empty();
         }
@@ -1044,14 +1164,29 @@ mod tests {
         assert!(room_reusable(&room, 101. + MAX_AGE_MS));
         room.closed = true;
         assert!(room_reusable(&room, 101.));
+        assert_eq!(room.capacity(), PRIVATE_CAPACITY);
+        // A shared room never ages out while riders keep it alive.
+        room.closed = false;
+        room.public = true;
+        assert!(!room_reusable(&room, 101. + MAX_AGE_MS * 4.));
+        assert_eq!(room.capacity(), PUBLIC_CAPACITY);
     }
 
     #[test]
     fn slots_skip_connected_and_held_riders_and_holds_expire_after_grace() {
-        assert_eq!(free_slot([].into_iter()), Some(0));
-        assert_eq!(free_slot([0, 2].into_iter()), Some(1));
-        assert_eq!(free_slot([1, 0, 2].into_iter()), Some(3));
-        assert_eq!(free_slot([0, 1, 2, 3].into_iter()), None);
+        assert_eq!(free_slot([].into_iter(), 4), Some(0));
+        assert_eq!(free_slot([0, 2].into_iter(), 4), Some(1));
+        assert_eq!(free_slot([1, 0, 2].into_iter(), 4), Some(3));
+        assert_eq!(free_slot([0, 1, 2, 3].into_iter(), 4), None);
+        // Shared Free Ride rooms continue past the private four-rider limit.
+        assert_eq!(
+            free_slot([0, 1, 2, 3].into_iter(), PUBLIC_CAPACITY),
+            Some(4)
+        );
+        assert_eq!(
+            free_slot((0..20).collect::<Vec<_>>().into_iter(), PUBLIC_CAPACITY),
+            None
+        );
         let held = |peer, since_ms| Reserved {
             peer,
             player: None,
@@ -1178,6 +1313,7 @@ mod tests {
             epoch: 5,
             map: 9,
             started: true,
+            public: false,
         };
         let connection = Connection {
             instance: String::new(),

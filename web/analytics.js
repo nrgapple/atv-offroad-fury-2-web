@@ -8,7 +8,7 @@ export const MAX_EVENT_BYTES = 1024;
 export const EVENT_NAMES = Object.freeze(['session_start', 'ride_start', 'ride_failed', 'ride_time', 'race_finish']);
 const TEXT = {
   device: ['touch', 'desktop'], display: ['app', 'browser'], entry: ['link', 'menu'],
-  mode: ['single', 'multiplayer'], activity: ['freestyle', 'race'], map: ENVIRONMENTS, vehicle: ['atv', 'motorcycle'],
+  mode: ['single', 'multiplayer', 'freeride'], activity: ['freestyle', 'race'], map: ENVIRONMENTS, vehicle: ['atv', 'motorcycle'],
 };
 const NUMBER = { quad: [1, 46], seconds: [0, 86400], place: [1, 20], field: [1, 20], laps: [1, 5], cpu: [0, 4], players: [1, 16] };
 // Analytics Engine column order. Keep stable: queries address blobN/doubleN.

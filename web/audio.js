@@ -245,8 +245,9 @@ export class GameAudio {
     voice.source.onended=null;voice.source.stop();voice.source.disconnect();voice.left.disconnect();voice.right.disconnect();voice.merger.disconnect();map.delete(key);
   }
   remoteFrame(peers) {
-    const ids=new Set(peers.filter(p=>!p.stale).map(p=>p.peer));
-    for(const key of this.remoteVoices.keys()) if(!ids.has(key))this.stopRemote(this.remoteVoices,key);
+    const ids=new Set(peers.filter(p=>!p.stale).map(p=>p.peer)), voiced=new Set(peers.filter(p=>!p.stale&&!p.muted).map(p=>p.peer));
+    // Rust keeps engine voices only for the nearest riders in a full room.
+    for(const key of this.remoteVoices.keys()) if(!voiced.has(key))this.stopRemote(this.remoteVoices,key);
     for(const key of this.remoteEffects.keys()) if(!ids.has(key))this.stopRemote(this.remoteEffects,key);
     if(!this.active || this.context?.state!=='running' || this.closed)return;
     for(const peer of peers) {

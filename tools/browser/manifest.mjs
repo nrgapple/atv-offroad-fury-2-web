@@ -49,6 +49,11 @@ export const TESTS = {
   'test_enhanced_mobile.mjs': { group: 'content' },
   'test_fog.mjs': { group: 'content', native: { ATV_FOG_NATIVE: 'private/reports/map-fidelity/fog-native.json' } },
   'test_frontend.mjs': { group: 'content' },
+  'test_freeride.mjs': {
+    group: 'relay',
+    reason:
+      'needs the multiplayer relay at the same origin (shared Free Ride rooms, room WebSocket) and the Rust codec example; run with --url'
+  },
   'test_funny_crash.mjs': {
     defaults: ['pins crash mode crazy'],
     group: 'broken',
