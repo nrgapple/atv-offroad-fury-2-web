@@ -1,0 +1,14 @@
+{
+  "id": "sound-original-enhanced-with-engine-crossfades-and-a-v-7968f2bc9fc74195a230efd17f0ea20b",
+  "timestamp": "2026-10-16T18:32:12-04:00",
+  "recorded_at": "2026-10-16T22:37:16.772123+00:00",
+  "kind": "build",
+  "title": "Sound: Original / Enhanced, with engine crossfades and a venue echo",
+  "summary": "Settings now has Sound: Original / Enhanced, defaulting to Enhanced. Enhanced adds 120 ms engine crossfades and a shared echo for stadium venues; Original is the previous build's sound exactly. PR #140 is merged.",
+  "details": [
+    "Engine crossfades: the original state machine still decides which engine sample plays; Enhanced only blends between samples over 120 ms instead of switching hard.",
+    "Venue echo: one shared echo send (a lowpass and two damped delays, generated procedurally with no impulse-response files) feeds stadium venues and a coarse canyon class. Only NAT03 is classed as a canyon so far.",
+    "Original mode is exactly the PR #138 behaviour. Verification (host Chromium): tools/test_enhanced_audio.mjs."
+  ],
+  "limitation": "The crossfade and echo work on samples already published, but the new PR #138 sounds are still silent on the public site until the expanded AUDIO.RES is uploaded to R2. The canyon list is incomplete; nothing was listened to on a physical device."
+}
