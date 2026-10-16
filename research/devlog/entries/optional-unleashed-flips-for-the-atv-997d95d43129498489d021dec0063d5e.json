@@ -1,0 +1,18 @@
+{
+  "id": "optional-unleashed-flips-for-the-atv-997d95d43129498489d021dec0063d5e",
+  "timestamp": "2026-10-16T03:11:50.394764+00:00",
+  "recorded_at": "2026-10-16T03:13:43.997561+00:00",
+  "kind": "build",
+  "title": "Optional Unleashed flips for the ATV",
+  "summary": "Extras \u2192 Flips adds the MX vs. ATV Unleashed backflip and left/right three-sixty to the ATVs. It is off by default, so the original ATV2 ride is unchanged.",
+  "details": [
+    "Unleashed's ATV stunt list has a Backflip and Three Sixty Left/Right as special tricks; all eight Unleashed ATV physics files use the same flip tuning as the bikes. There is no front flip in Unleashed, so none was added.",
+    "Controls: hold L1 (keyboard L) alone and pull back (E) for a backflip, or flick sideways (A/D) for a 360, either on the ramp lip or just after takeoff.",
+    "Spin torques are scaled by ATV2's air damping so the ATV turns at Unleashed's rate, about 2\u20133 rad/s.",
+    "ATV2's in-air ejection angles are skipped only while a flip is active; landings still use the original ground and impact checks. A clean landing shows the trick name and 2000 points per rotation.",
+    "The follow camera now holds the takeoff heading mid-flip instead of swinging into the ground."
+  ],
+  "limitation": "The rider keeps the ATV2 air pose (no Unleashed flip animation yet). There are no touch controls for flips, CPU riders don't flip, and flip points are display-only.",
+  "image": "/devlog-images/optional-unleashed-flips-for-the-atv-997d95d43129498489d021dec0063d5e.png",
+  "caption": "Mid-backflip on env01 with Flips on: the ATV is upside down past ATV2's 85\u00b0 ejection angle and the HUD shows Backflip."
+}
