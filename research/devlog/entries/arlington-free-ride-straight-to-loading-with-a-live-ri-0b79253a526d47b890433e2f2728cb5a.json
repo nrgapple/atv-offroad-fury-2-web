@@ -1,0 +1,19 @@
+{
+  "id": "arlington-free-ride-straight-to-loading-with-a-live-ri-0b79253a526d47b890433e2f2728cb5a",
+  "timestamp": "2026-10-16T13:08:26.797783+00:00",
+  "recorded_at": "2026-10-16T13:12:26.576425+00:00",
+  "kind": "build",
+  "title": "Arlington Free Ride: straight to loading, with a live riding count on the menu",
+  "summary": "Tapping Arlington Free Ride now goes straight to the Arlington loading screen; previously a lobby page flashed for a moment first. The menu row carries a red NEW tag and a live count of riders. Host-only checkpoint; not yet verified on the public site.",
+  "details": [
+    "Menu: the main-menu row shows a red NEW tag and an 'N riding' count of everyone in Free Ride, refreshed every 15 seconds while the menu is open. On phones narrower than 380 px the tag and count wrap onto a second line under the full name.",
+    "Counting: shared rooms report their rider counts to a single counter on the relay, from their periodic alarm and within about 5 seconds of someone joining. The count is cached for 10 seconds at Cloudflare's edge.",
+    "Discovery: the relay re-read every rider's stored connection data for every position update it forwarded. It now keeps the list of riders to send to in memory, which cut relay CPU in a 20-rider, 20 Hz local load from 26-31% to 18-21% of one core.",
+    "Discovery: reporting counts from the join/leave path coincided with an intermittent stall of the local test relay. Reporting from the alarm instead did not stall in later runs.",
+    "Verification (host only: one Mac, local wrangler relay, original content): the Free Ride browser test passed 3 times in a row plus once after merging main. Only the loading screen appeared after the tap, and the 390 px menu showed '20 riding' for a full room. All 19 other riders were visible with 0 dropped position updates at 73-79 FPS. Menu screenshots were checked at 1280x720, 390x844 and 320x568."
+  ],
+  "limitation": "Not yet verified on the public site. Production relay CPU and real-world phones are not measured. The count can lag by up to about 30 seconds after someone leaves.",
+  "image": "/devlog-images/arlington-free-ride-straight-to-loading-with-a-live-ri-0b79253a526d47b890433e2f2728cb5a.png",
+  "caption": "Desktop (1280x720): main menu with Arlington Free Ride selected, showing the NEW tag and '7 riding'. Phone (390x844, '3 riding') and narrow phone (320x568, tag and count wrapped onto a second line) screenshots are stored alongside.",
+  "status": "host-only / implementation checkpoint (pending public verification)"
+}
