@@ -110,6 +110,8 @@ test('crash preferences persist, migrate and ignore obsolete shake preferences',
  settings.toggle();settings.toggle();assert.equal(new RideEffectsSettings(store).mode,'gorn');
  settings.toggleCamera();assert.equal(new RideEffectsSettings(store).camera,'original');
  settings.toggleChase();assert.equal(new RideEffectsSettings(store).chase,'assisted');assert.equal(values.get('atv-chase-camera'),'assisted');
+ settings.toggleFlips();assert.equal(new RideEffectsSettings(store).flips,'unleashed');assert.equal(values.get('atv-flips'),'unleashed');
+ settings.toggleFlips();assert.equal(new RideEffectsSettings(store).flipsEnabled,false);
  assert.equal(settings.shake,undefined);assert.equal(settings.toggleShake,undefined);
  const blocked=new RideEffectsSettings({getItem(){throw Error();},setItem(){throw Error();}});
  blocked.toggle();assert.equal(blocked.mode,'crazy');blocked.toggleChase();assert.equal(blocked.chaseAssist,true);
@@ -123,6 +125,8 @@ test('new players get original crashes and the recovered chase camera; saved cho
  assert.equal(new RideEffectsSettings(store(new Map([['atv-funny-crashes','true']]))).mode,'crazy','explicit legacy On is kept');
  assert.equal(new RideEffectsSettings(store(new Map([['atv-chase-camera','assisted']]))).chase,'assisted');
  assert.equal(new RideEffectsSettings(store(new Map([['atv-chase-camera','bogus']]))).chase,'original');
+ assert.equal(fresh.flips,'off');assert.equal(fresh.flipsEnabled,false);
+ assert.equal(new RideEffectsSettings(store(new Map([['atv-flips','bogus']]))).flipsEnabled,false);
 });
 test('impact audio retains contact gates without any camera transform',()=>{
  let clock=0;const events=new ImpactEvents(()=>clock);

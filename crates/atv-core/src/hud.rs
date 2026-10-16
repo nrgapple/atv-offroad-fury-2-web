@@ -193,6 +193,15 @@ impl State {
         self.points = points as i32;
         Ok(())
     }
+    /// Authored optional flips: show landed flip points while no original
+    /// stunt chain or wheelie owns the score text.
+    pub fn set_extra_points(&mut self, points: f32) -> Result<()> {
+        if !points.is_finite() {
+            return Err("invalid HUD trick score".into());
+        }
+        self.points = points as i32;
+        Ok(())
+    }
     pub fn wheelie_event(&mut self, event: crate::stunt_score::WheelieNotification) {
         use crate::stunt_score::WheelieNotification;
         match event {

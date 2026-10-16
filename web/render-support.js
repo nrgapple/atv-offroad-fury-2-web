@@ -147,12 +147,13 @@ export class RideEffectsSettings {
     if (storage === undefined) {
       try { storage = globalThis.localStorage; } catch { storage = null; }
     }
-    this.storage = storage; this.mode = 'original'; this.camera = 'tight'; this.chase = 'original'; this.speed = reducedMotion ? 'off' : 'normal';
+    this.storage = storage; this.mode = 'original'; this.camera = 'tight'; this.chase = 'original'; this.flips = 'off'; this.speed = reducedMotion ? 'off' : 'normal';
     try {
       const speed = storage?.getItem('atv-speed-rush');
       if (['off','low','normal','high'].includes(speed)) this.speed = speed;
       this.camera = storage?.getItem('atv-crash-camera') === 'original' ? 'original' : 'tight';
       this.chase = storage?.getItem('atv-chase-camera') === 'assisted' ? 'assisted' : 'original';
+      this.flips = storage?.getItem('atv-flips') === 'unleashed' ? 'unleashed' : 'off';
       const mode = storage?.getItem('atv-crash-mode');
       this.mode = ['original','crazy','gorn'].includes(mode) ? mode : storage?.getItem('atv-funny-crashes') === 'true' ? 'crazy' : 'original';
     } catch { /* Session settings. */ }
@@ -172,6 +173,12 @@ export class RideEffectsSettings {
     this.chase = this.chaseAssist ? 'original' : 'assisted';
     try { this.storage?.setItem('atv-chase-camera',this.chase); } catch { /* Session settings. */ }
     this.onChaseChange?.();
+  }
+  // Authored MX vs. ATV Unleashed backflip/three-sixty for the ATV. Off is original.
+  get flipsEnabled() { return this.flips === 'unleashed'; }
+  toggleFlips() {
+    this.flips = this.flipsEnabled ? 'off' : 'unleashed';
+    try { this.storage?.setItem('atv-flips',this.flips); } catch { /* Session settings. */ }
   }
   get enabled() { return this.mode !== 'original'; }
   toggle(direction = 1) {
