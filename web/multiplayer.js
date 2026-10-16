@@ -87,7 +87,7 @@ export class Multiplayer {
       this.receiveQueue = this.receiveQueue.then(async () => {
         while (this.inbox.length && generation === this.generation) {
           const batch=takeBatch(this.inbox); this.pendingReceives=this.inbox.length;
-          const result = JSON.parse(new TextDecoder().decode(await this.codec(113,batch)));
+          const result = JSON.parse(new TextDecoder().decode(await this.codec(118,batch)));
           if (generation !== this.generation) return;
           this.state = result.state; this.onState(this.state);
           if (this.state.key && this.state.key !== this.key) { this.key = this.state.key; saveKey(this.state.code, this.key); }

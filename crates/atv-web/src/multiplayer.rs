@@ -613,7 +613,7 @@ pub fn dispatch(input: &[u8], op: u32, index: usize, sim: &Simulation) -> Result
         // A full shared room delivers hundreds of relay messages a second;
         // decode them in batches with one status reply, in arrival order.
         // Each record is [u16 length][u32 received ms][packet], little endian.
-        113 => {
+        118 => {
             let mut rest = input;
             while !rest.is_empty() {
                 if rest.len() < 6 {
@@ -787,7 +787,7 @@ mod tests {
                 150 + sequence,
             );
         }
-        let output = dispatch(&batch, 113, 0, &Simulation::default()).unwrap();
+        let output = dispatch(&batch, 118, 0, &Simulation::default()).unwrap();
         let value: Value = serde_json::from_slice(&output).unwrap();
         assert_eq!(value["state"]["peer"], 0);
         CLIENT.with_borrow(|c| {
@@ -796,8 +796,8 @@ mod tests {
             assert_eq!(received, 153);
         });
         // A truncated record rejects the batch rather than reading past it.
-        assert!(dispatch(&batch[..batch.len() - 1], 113, 0, &Simulation::default()).is_err());
-        assert!(dispatch(&[1, 0, 0], 113, 0, &Simulation::default()).is_err());
+        assert!(dispatch(&batch[..batch.len() - 1], 118, 0, &Simulation::default()).is_err());
+        assert!(dispatch(&[1, 0, 0], 118, 0, &Simulation::default()).is_err());
     }
     #[test]
     fn lobby_handshake_preserves_identity_and_female_model() {

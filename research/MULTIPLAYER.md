@@ -467,7 +467,7 @@ original-game online mode.
   Protocol v5 tabs are asked to reload.
 - **Browser changes for 20 riders:**
   - Relay messages queued during a worker decode are packed into one batch
-    (adapter op 113) with one status reply. Before this, a full room's ~380
+    (adapter op 118) with one status reply. Before this, a full room's ~380
     messages/s overflowed the per-message queue and dropped about 1,600 pose
     updates in 10 seconds.
   - Only the nearest six riders keep a remote engine voice.
@@ -488,7 +488,7 @@ quad/rider model:
 
 - Both browsers presented all 19 other riders, with 0 dropped pose updates and
   247 remote GPU draws (13 per rider).
-- 75–85 FPS, 25.8–27.1 ms frame p95 and 1.1–1.7 ms render CPU.
+- 70–85 FPS across runs, 25.8–27.1 ms frame p95 and 1.1–1.7 ms render CPU.
 - 1–89 ms relay round trip, with at most six engine voices and eight name tags.
 - The filtered name was shown as `Rider 3`, the 21st claim opened `FREERD02`,
   and Leave returned to the main menu.

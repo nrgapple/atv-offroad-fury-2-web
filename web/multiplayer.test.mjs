@@ -33,7 +33,7 @@ function fixture() {
     calls.push({op,bytes,index});
     if(overrides.has(op)) return overrides.get(op)(bytes,index);
     if(op===85) return bytes;
-    if(op===113) return encode({state:defaultState,event:{}});
+    if(op===118) return encode({state:defaultState,event:{}});
     if(op===83) return encode({state:mp.state,peers:[]});
     return new Uint8Array();
   };
@@ -89,8 +89,8 @@ test('outbound snapshots allow only one encode and drop frames under socket back
 
 test('old receive result cannot replace new session state or launch its map',async()=>{
   const f=fixture();try {
-    const socket=await f.connect();const pending=deferred();f.overrides.set(113,()=>pending.promise);
-    socket.message();await flush();assert.equal(f.calls.filter(c=>c.op===113).length,1);
+    const socket=await f.connect();const pending=deferred();f.overrides.set(118,()=>pending.promise);
+    socket.message();await flush();assert.equal(f.calls.filter(c=>c.op===118).length,1);
     await f.mp.disconnect(false);f.mp.state={peer:2,code:'NEWROOM2'};
     pending.resolve(encode({state:{...f.defaultState,lobby:{...f.defaultState.lobby,started:true,map:7}},event:{}}));
     await f.mp.receiveQueue;
@@ -100,7 +100,7 @@ test('old receive result cannot replace new session state or launch its map',asy
 
 test('socket close cancels pending receive/sample and clears audio and visible peers',async()=>{
   const f=fixture();try {
-    const socket=await f.connect();const receive=deferred(),sample=deferred();f.overrides.set(113,()=>receive.promise);f.overrides.set(83,()=>sample.promise);
+    const socket=await f.connect();const receive=deferred(),sample=deferred();f.overrides.set(118,()=>receive.promise);f.overrides.set(83,()=>sample.promise);
     f.mp.started=true;f.mp.state={peer:0};f.mp.remote=[{peer:1}];
     socket.message();const rendering=f.mp.sample();await flush();
     socket.close(1000,'Host departed');const closedGeneration=f.mp.generation;
@@ -113,7 +113,7 @@ test('socket close cancels pending receive/sample and clears audio and visible p
 
 test('receive queue is bounded even when the worker is stalled and malformed frames close the socket',async()=>{
   const f=fixture();try {
-    const socket=await f.connect();const pending=deferred();f.overrides.set(113,()=>pending.promise);
+    const socket=await f.connect();const pending=deferred();f.overrides.set(118,()=>pending.promise);
     for(let n=0;n<256;n++)socket.message();assert.equal(f.mp.pendingReceives,256);
     socket.message();assert.equal(socket.closes.at(-1).code,1008);assert.equal(socket.closes.at(-1).reason,'Control message backlog');
     pending.resolve(encode({state:f.defaultState,event:{}}));await f.mp.receiveQueue;assert.equal(f.mp.pendingReceives,0);
@@ -125,7 +125,7 @@ test('receive queue is bounded even when the worker is stalled and malformed fra
 test('receive serialization preserves arrival ordering and stale queued packets skip decoding',async()=>{
   const f=fixture();try {
     const socket=await f.connect();const first=deferred();let count=0;
-    f.overrides.set(113,()=>{count++;return count===1?first.promise:encode({state:f.defaultState,event:{}});});
+    f.overrides.set(118,()=>{count++;return count===1?first.promise:encode({state:f.defaultState,event:{}});});
     socket.message();await flush();socket.message();await flush();assert.equal(count,1,'second receive must wait for first decode');
     await f.mp.disconnect(false);first.resolve(encode({state:f.defaultState,event:{}}));await f.mp.receiveQueue;
     assert.equal(count,1,'queued old-session frames must not reach the reset Rust client');assert.equal(f.mp.pendingReceives,0);
@@ -144,7 +144,7 @@ test('one outstanding presentation prevents worker backlog and cannot publish in
 
 test('codec rejection drains receives and closes current socket without retaining a presentation queue',async()=>{
   const f=fixture();try {
-    const socket=await f.connect();f.overrides.set(113,async()=>{throw Error('bad protocol version');});
+    const socket=await f.connect();f.overrides.set(118,async()=>{throw Error('bad protocol version');});
     socket.message();await f.mp.receiveQueue;
     assert.equal(f.mp.pendingReceives,0);assert.equal(socket.closes.at(-1).code,1008);assert(f.reports.includes('bad protocol version'));assert.deepEqual(f.mp.remote,[]);
   }finally{await f.cleanup();}
@@ -174,7 +174,7 @@ test('local pause flag crosses the Rust snapshot boundary without queueing extra
 test('one authoritative start loads only once and abandoned map completion cannot load audio into a replacement room',async()=>{
   const f=fixture();try {
     const socket=await f.connect();const pending=deferred();f.mp.onStart=map=>{f.starts.push(map);return pending.promise;};
-    f.overrides.set(113,async()=>encode({state:{...f.defaultState,environment:'env03',nextMap:4,lobby:{...f.defaultState.lobby,started:true,map:3}},event:{}}));
+    f.overrides.set(118,async()=>encode({state:{...f.defaultState,environment:'env03',nextMap:4,lobby:{...f.defaultState.lobby,started:true,map:3}},event:{}}));
     socket.message();await f.mp.receiveQueue;assert.deepEqual(f.starts,['env03']);
     await f.mp.disconnect(false);pending.resolve();await flush();assert.deepEqual(f.models,[]);
   }finally{await f.cleanup();}
@@ -196,14 +196,14 @@ test('superseded asynchronous session configuration cannot replace the newer soc
 test('host changes the track for everyone and every rider reloads onto the new map',async()=>{
   const f=fixture();try {
     const socket=await f.connect();
-    f.overrides.set(113,async()=>encode({state:{...f.defaultState,environment:'env08',lobby:{...f.defaultState.lobby,started:true,map:8}},event:{}}));
+    f.overrides.set(118,async()=>encode({state:{...f.defaultState,environment:'env08',lobby:{...f.defaultState.lobby,started:true,map:8}},event:{}}));
     socket.message();await f.mp.receiveQueue;await flush();
     assert.deepEqual(f.starts,['env08']);assert.equal(f.mp.loadedMap,'env08');
     assert.deepEqual(decode(socket.sent.at(-1)),{Ready:{map:8}},'arrival is reported after loading');
     f.mp.state={...f.mp.state,environment:'env08',lobby:{...f.mp.state.lobby,map:8,epoch:3}};
     await f.mp.setMap('free05');
     assert.deepEqual(decode(socket.sent.at(-1)),{SetLobby:{epoch:3,map:9,started:true}});
-    f.overrides.set(113,async()=>encode({state:{...f.defaultState,environment:'free05',lobby:{...f.defaultState.lobby,started:true,map:9,epoch:4}},event:{}}));
+    f.overrides.set(118,async()=>encode({state:{...f.defaultState,environment:'free05',lobby:{...f.defaultState.lobby,started:true,map:9,epoch:4}},event:{}}));
     socket.message();await f.mp.receiveQueue;await flush();
     assert.deepEqual(f.starts,['env08','free05']);assert.deepEqual(decode(socket.sent.at(-1)),{Ready:{map:9}});
     f.mp.state={...f.mp.state,peer:1};await assert.rejects(f.mp.setMap('env02'),/host/);
@@ -216,7 +216,7 @@ test('changing ATV and rider tells the room, then reloads the same map in place'
     const socket=await f.connect();const poses=[];
     f.mp.command=async(op,value)=>op===112?{origin:[1,2,3],yaw:0.5}:op===80?{peer:null}:null;
     f.mp.onStart=async(map,_current,pose)=>{f.starts.push(map);poses.push(pose);};
-    f.overrides.set(113,async()=>encode({state:{...f.defaultState,environment:'env03',lobby:{...f.defaultState.lobby,started:true,map:3}},event:{}}));
+    f.overrides.set(118,async()=>encode({state:{...f.defaultState,environment:'env03',lobby:{...f.defaultState.lobby,started:true,map:3}},event:{}}));
     socket.message();await f.mp.receiveQueue;await flush();
     f.frontend.quadId=14;f.frontend.riderId=0;
     await f.mp.changeRide(f.frontend);
@@ -249,7 +249,7 @@ test('an invite joins its live room, or opens that code again on the link map',a
 test('a ride that fails to load leaves the room instead of lingering in it',async()=>{
   const f=fixture();try {
     const socket=await f.connect();f.mp.onStart=async()=>{throw Error('Original ATV archive is missing.');};
-    f.overrides.set(113,async()=>encode({state:{...f.defaultState,lobby:{...f.defaultState.lobby,started:true}},event:{}}));
+    f.overrides.set(118,async()=>encode({state:{...f.defaultState,lobby:{...f.defaultState.lobby,started:true}},event:{}}));
     socket.message();await f.mp.receiveQueue;await flush();
     assert(f.reports.includes('Original ATV archive is missing.'));
     assert.equal(f.mp.socket,null);assert.deepEqual(f.mp.state,{});assert.equal(f.mp.started,false);
@@ -261,7 +261,7 @@ test('host close invalidates the pending map loader before it can resume a ride'
   const f=fixture();try {
     const socket=await f.connect(),pending=deferred();let current;
     f.mp.onStart=(_environment,isCurrent)=>{current=isCurrent;return pending.promise;};
-    f.overrides.set(113,async()=>encode({state:{...f.defaultState,lobby:{...f.defaultState.lobby,started:true}},event:{}}));
+    f.overrides.set(118,async()=>encode({state:{...f.defaultState,lobby:{...f.defaultState.lobby,started:true}},event:{}}));
     socket.message();await f.mp.receiveQueue;assert.equal(current(),true);
     socket.close(1000,'Host left');assert.equal(current(),false);
     pending.resolve();await flush();assert.equal(f.models.length,0);
@@ -308,7 +308,7 @@ test('distant, offscreen and rear player indicators stay finite and inside viewp
 
 test('a resumed browser discards old snapshot bursts without closing its lobby',async()=>{
  const f=fixture();try {
-   const socket=await f.connect(),pending=deferred();f.overrides.set(113,()=>pending.promise);
+   const socket=await f.connect(),pending=deferred();f.overrides.set(118,()=>pending.promise);
    const snapshot=new Uint8Array([65,84,86,77,2,4,0,0]).buffer;
    for(let i=0;i<250;i++)socket.message(snapshot);
    assert.equal(f.mp.pendingReceives,192);assert.equal(f.mp.droppedSnapshots,58);assert.equal(socket.closes.length,0);
@@ -323,7 +323,7 @@ test('any rider\'s transport loss retries its slot key without restarting the lo
   const socket=await f.connect();f.mp.state={...f.defaultState,lobby:{...f.defaultState.lobby,started:true}};f.mp.started=true;f.mp.loadedMap='env01';
   socket.close(1006,'');assert.equal(f.leaves.length,0);assert.equal(f.mp.reconnecting,true);
   f.timeouts.get(f.mp.retryTimer).fn();await flush();const next=f.sockets.at(-1);assert.notEqual(next,socket);
-  await next.open();f.overrides.set(113,()=>encode({state:{...f.defaultState,lobby:{...f.defaultState.lobby,started:true}},event:{}}));
+  await next.open();f.overrides.set(118,()=>encode({state:{...f.defaultState,lobby:{...f.defaultState.lobby,started:true}},event:{}}));
   next.message();await f.mp.receiveQueue;
   assert.equal(f.mp.reconnecting,false);assert.equal(f.mp.started,true);assert.deepEqual(f.starts,[]);
   assert.equal(new URL(next.url).searchParams.get('key'),KEY);
@@ -374,11 +374,11 @@ test('queued relay messages decode as one ordered batch of length-prefixed recor
   // A batch stays under the worker's input bound; the rest waits for the next.
   const many=Array.from({length:600},()=>[new Uint8Array(135),0]);takeBatch(many);assert.ok(many.length>0&&many.length<600);
   const f=fixture();try {
-    const socket=await f.connect();const pending=deferred();f.overrides.set(113,()=>pending.promise);
+    const socket=await f.connect();const pending=deferred();f.overrides.set(118,()=>pending.promise);
     socket.message(new Uint8Array([9]).buffer);await flush();
     socket.message(new Uint8Array([10]).buffer);socket.message(new Uint8Array([11]).buffer);
-    pending.resolve(encode({state:f.defaultState}));f.overrides.delete(113);await f.mp.receiveQueue;await flush();
-    const batches=f.calls.filter(c=>c.op===113).map(c=>[...c.bytes].filter((_,i,all)=>i%7===6));
+    pending.resolve(encode({state:f.defaultState}));f.overrides.delete(118);await f.mp.receiveQueue;await flush();
+    const batches=f.calls.filter(c=>c.op===118).map(c=>[...c.bytes].filter((_,i,all)=>i%7===6));
     assert.deepEqual(batches,[[9],[10,11]],'arrivals during a decode join the next batch in order');
   }finally{await f.cleanup();}
 });
