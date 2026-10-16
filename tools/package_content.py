@@ -414,7 +414,9 @@ def validate_motorcycle_resource(record, payload):
     if record.get('member_count') != len(archive.members):
         raise ValueError('motorcycle member count mismatch')
     for name, _, _ in archive.members:
-        if not re.fullmatch(r'(?:Veh|Rider|Aud|Part)/[A-Za-z0-9_ /.-]+\.(?:sub|psg|psm|pst|mot|mcf|ini|phy|aud|vag|emt|prt)', name, re.I):
+        # Chassis whisker rays are the only approved collision members.
+        chassis = re.fullmatch(r'Veh/Col/(?:bikem|WreckBikem|bike50m|WreckBike50m)\.col', name)
+        if not chassis and not re.fullmatch(r'(?:Veh|Rider|Aud|Part)/[A-Za-z0-9_ /.-]+\.(?:sub|psg|psm|pst|mot|mcf|ini|phy|aud|vag|emt|prt)', name, re.I):
             raise ValueError('unapproved motorcycle runtime member')
         if '..' in name or name.startswith('/'):
             raise ValueError('invalid motorcycle member path')
