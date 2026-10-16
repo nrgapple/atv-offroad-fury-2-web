@@ -1346,7 +1346,10 @@ function drivingInput() {
   input.input_generation = gameplayBindings.generation + touchControls.generation;
   if (touch.stunt_modifiers) Object.assign(input, { stunt_modifiers: touch.stunt_modifiers, stunt_x: touch.stunt_x, stunt_y: touch.stunt_y });
   if (touch.preload_axis !== null) input.preload_axis = touch.preload_axis;
-  if (touch.flip_request) input.flip_request = touch.flip_request;
+  // Two-finger mode: the left pad's full pull when the drive thumb lifts.
+  const padFlip = !touch.flip_request && touch.preload_axis === -1 && crashSettings.flipsEnabled && !touchControls.oneHanded ? touchLean.launchFlip() : null;
+  if (padFlip) Object.assign(input, { flip_request: padFlip.flip, flip_launch: true, flip_hold: padFlip.hold });
+  else if (touch.flip_request) Object.assign(input, { flip_request: touch.flip_request, flip_launch: touch.flip_launch, flip_hold: touch.flip_hold });
   input.throttle = Math.max(0, clamp(input.throttle)); input.brake = Math.max(0, clamp(input.brake));
   // Source +X is screen-right; preserve the native steering sign.
   input.steer = clamp(input.steer); // Rust clamps the combined physical lean; one-handed touch also supplies lean.

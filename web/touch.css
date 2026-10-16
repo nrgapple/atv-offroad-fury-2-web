@@ -68,6 +68,8 @@ body.touch-driving #status.error { top: max(84px, calc(env(safe-area-inset-top) 
 #touch-controls[data-one-handed=true] .touch-rider-marker::after { top: 47px; left: 16px; height: 2px; width: 64px; }
 #touch-controls[data-one-handed=true] .touch-rider-marker i { left: 38px; top: 38px; transform: translate(var(--steer, 0px), var(--lean, 0px)); }
 #touch-controls[data-one-handed=true] .touch-rider-marker span { top: -24px; left: -24px; }
+/* Optional flips: lifting now would flip. */
+#touch-controls[data-one-handed=true] .touch-rider-marker[data-flip=true] span { color: var(--atv-gold-light); font-size: 11px; }
 #touch-controls[data-one-handed=true][data-coach=true] .touch-axis {
   display: block; position: absolute; font: italic 800 9px/1 var(--atv-font-label);
   color: var(--atv-silver-light); text-shadow: 0 1px 2px #000, 0 0 2px #000;
@@ -111,15 +113,11 @@ body.touch-driving #touch-controls[data-hint=true]:not(.held) .touch-idle-hint {
 .touch-trick-sector { stroke-width: 1; }
 .touch-trick-sector.inner { fill: #08080894; stroke: #b9b9b955; }
 .touch-trick-sector.outer { fill: #210504b3; stroke: var(--atv-red-bright); }
-.touch-trick-sector.flip { display: none; }
-.touch-trick-wheel[data-flips=true] .touch-trick-sector.flip { display: inline; }
 .touch-trick-sector.selected { fill: url(#touch-trick-gold); fill-opacity: .9; stroke: var(--atv-gold-light); stroke-width: 2; }
 .touch-trick-hub { fill: #080808c4; stroke: #b9b9b980; stroke-width: 1.5; }
 .touch-trick-choice { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-size: 11px; font-weight: 800; line-height: 1.1; text-align: center; transition: transform .08s; }
 .touch-trick-choice.outer { font-size: 10px; }
 .touch-trick-choice.selected { transform: translate(-50%, -50%) scale(1.15); }
-.touch-flip-choice { display: none; }
-.touch-trick-wheel[data-flips=true] .touch-flip-choice { display: block; }
 .touch-trick-name { position: absolute; top: -26px; left: 0; width: 312px; text-align: center; font-size: 19px; font-weight: 800; line-height: 1.1; letter-spacing: .02em; color: var(--atv-gold-light); text-transform: uppercase; }
 .touch-trick-center { position: absolute; left: 126px; top: 150px; width: 60px; text-align: center; font-size: 10px; font-weight: 800; line-height: 1.2; }
 .touch-trick-cue { position: absolute; top: 314px; left: 0; width: 312px; height: 11px; text-align: center; font-size: 9px; font-weight: 800; line-height: 1.2; }

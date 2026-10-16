@@ -31,16 +31,21 @@ flip state, so the recovered ATV2 step is unchanged.
 - **Early-air request:** L1 plus pull-back or a side flick within 0.6 s of takeoff
   starts the trick at minimum strength. This is the same authored adaptation the
   motorcycle uses. Keyboard: L + E, or L + A/D.
-- **Touch (authored):** in the default one-handed mode, a second finger in the
-  air opens the trick wheel. With Flips on, **Backflip** (down), **360 Left**
-  and **360 Right** sectors join Cat Nac and Cordova in the red outer band,
-  which starts at 132 px. A short drag still picks the inner tricks; dragging
-  into a flip sector and lifting picks the flip, delivered once as `flip_request`. In two-finger mode, a
-  long straight swipe (120 px or more) down, left or right flips; short swipes
-  and up keep the original tricks. A touch request starts the flip at the
-  early-air strength at any point in the air, because a menu pick cannot meet the
-  0.6 s takeoff window. While spinning, leaning forward with the steering finger
-  slows a backflip, and steering against a 360 slows it.
+- **Touch (authored):** flips come from the driving thumb, not the trick wheel.
+  In the default one-handed mode, hold the thumb for throttle into a ramp, pull
+  it fully back (75% of the pad or more), or fully left or right, and lift. The
+  lift is also the preload jump. The request (`flip_request` with
+  `flip_launch`) stays armed on the ground for 0.6 s, so it fires at takeoff.
+  Lifting in the air counts only within the first 0.6 s, so ordinary releases
+  later in a jump never flip. How long the pull was held before lifting sets
+  the strength, like the source hold channel: one second gives maximum torque.
+  The thumb cue turns gold, "LIFT → BACKFLIP" or "LIFT → 360 LEFT/RIGHT", only
+  when lifting would start a flip (preload armed, or the early air window
+  reported by Rust). Two-finger mode reads the left pad's full pull when the
+  right drive thumb lifts on the ground. A long straight swipe (120 px or more)
+  down, left or right with the right thumb in the air also flips there. While
+  spinning, leaning forward slows a backflip, and steering against a 360 slows
+  it.
 - **Torque scaling:** rotation is damping-dominated in both games. ATV01 pitch
   inertia is about 44 slug·ft² against `AeroDamping` −800, a time constant near
   0.05 s. Torques are therefore scaled by |AeroDamping| / 450, which preserves
@@ -71,12 +76,15 @@ flip state, so the recovered ATV2 step is unchanged.
   a full loop, so that run bails on landing. A full backflip needs about 2 s of
   air (big freestyle jumps). A clean landed flip in the browser is not yet
   demonstrated.
-- Touch: `web/touch.test.mjs` covers the flip zones, single release delivery,
-  Flips off, and two-finger long swipes. `tools/test_trick_wheel.mjs` checks the
-  labels fit and select from center and edge presses at 390×844, 844×390,
-  320×568 and 667×375 in Chromium and in WebKit (WebKit uses synthetic pointer
-  events). `tools/test_atv_flips.mjs` uses real Chromium touches on env01:
-  wheel → outer-band Backflip sector → Backflip starts. Physical phones are not yet tested.
+- Touch: `web/touch.test.mjs` covers:
+  - full versus partial pulls and Flips off;
+  - single delivery and hold strength;
+  - cancellation;
+  - cue gating and the two-finger pad.
+  `tools/test_atv_flips.mjs` uses real Chromium touches on env01: hold the thumb
+  to the Caribou ramp, the gold cue appears, pull back and lift, and a backflip
+  launches past the air limit while riding (about 150° on that short hop).
+  Physical phones are not yet tested.
 - Not included: Unleashed rider/vehicle flip animations (the rider keeps the
   ATV2 air pose), recovery-time yaw suppression, CPU flips,
   multiplayer score sync, and front flips (Unleashed has none).

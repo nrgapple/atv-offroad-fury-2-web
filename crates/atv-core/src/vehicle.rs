@@ -449,10 +449,10 @@ impl Vehicle {
         }
         Ok(())
     }
-    /// One-shot touch flip request; ignored while the option is off.
-    pub fn request_flip(&mut self, trick: crate::flip_tricks::Trick) {
+    /// Touch flip request (see flip_tricks::Request); ignored while off.
+    pub fn request_flip(&mut self, trick: crate::flip_tricks::Trick, launch: bool, hold: f32) {
         if let Some(flips) = &mut self.flips {
-            flips.request(trick);
+            flips.request(trick, launch, hold);
         }
     }
     /// Trick button mask (Circle=1, Triangle=2, L1=4) and trick stick.
