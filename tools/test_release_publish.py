@@ -60,6 +60,13 @@ class PublicationTests(unittest.TestCase):
             uploader.upload(root / 'release', commit, release_scoped=True)
         return objects
 
+    def test_content_first_requires_an_additive_manifest(self):
+        live = json.dumps({'files': [{'path': '/A.RES'}, {'path': '/MX/BIKE125.RES'}]}).encode()
+        uploader.require_additive(json.dumps({'files': [{'path': '/A.RES'}, {'path': '/MX/BIKE125.RES'},
+                                                         {'path': '/NEW.RES'}]}).encode(), live)
+        with self.assertRaisesRegex(ValueError, 'remove live runtime'):
+            uploader.require_additive(json.dumps({'files': [{'path': '/A.RES'}]}).encode(), live)
+
     def test_stages_scoped_manifests_and_verifies_remote_bytes(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

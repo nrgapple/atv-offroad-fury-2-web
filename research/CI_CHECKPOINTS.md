@@ -84,6 +84,14 @@ The release owner then:
    skip the R2 upload: the checked text publication retains the approved image
    overlay. Confirm the public text and unchanged image references instead of
    downloading the unchanged runtime package again.
+   Runtime packages need not wait for the application deploy. Blobs are
+   content-addressed and inert until the manifest names them, so an additive
+   package (one the live app can still load) can go first, in parallel with CI:
+   `python3 tools/upload_cloudflare_content.py --content-only --checkpoint <id> --owner <owner>`.
+   It refuses a manifest that drops any runtime path the live site serves; when
+   it refuses because the local package is behind live, rebuild from the live
+   manifest instead of publishing the stale one. The gallery still follows the
+   deployed commit through the full upload above.
 4. After an R2/resource change, runs `python3 tools/verify_cloudflare.py --url https://furyremastered.com --commit <live-sha> --release <artifact>`
    and verifies the supported Workers address when required. Record
    `--stage gallery-complete` with evidence, including when no new PNGs were needed.

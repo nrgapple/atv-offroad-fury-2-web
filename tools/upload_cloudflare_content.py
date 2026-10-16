@@ -27,6 +27,96 @@ ACCOUNT = '92b7e16fd24d5fb585f866f5832a032b'
 BUCKET = 'atv-offroad-fury-2-content'
 
 
+def receipt_path():
+    return ROOT / 'private/reports/cloudflare-upload.json'
+
+
+def wrangler_token():
+    auth_path = Path.home() / 'Library/Preferences/.wrangler/config/default.toml'
+    match = re.search(r'^oauth_token\s*=\s*"([^"\n]+)"', auth_path.read_text(), re.MULTILINE)
+    if not match:
+        raise RuntimeError('Wrangler OAuth authentication is required')
+    return match.group(1)
+
+
+def known_objects(force=False):
+    receipt = receipt_path()
+    previous = json.loads(receipt.read_text()) if receipt.exists() and not force else {}
+    return {item['key']: item for item in previous.get('objects', [])} if previous.get('bucket') == BUCKET else {}
+
+
+def uploader(token, known):
+    def put(item):
+        key, data = item
+        record = {'key': key, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+        if all(known.get(key, {}).get(field) == record[field] for field in ('bytes', 'sha256')):
+            return dict(record, uploaded=False)
+        mime = 'application/json' if key.endswith('.json') else 'image/png' if key.endswith('.png') else 'application/octet-stream'
+        url = f'https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/r2/buckets/{BUCKET}/objects/{quote(key, safe="/")}'
+        for attempt in range(4):
+            request = Request(url, data=data, method='PUT', headers={
+                'Authorization': f'Bearer {token}', 'Content-Type': mime,
+                'Cache-Control': 'public, max-age=31536000, immutable' if key.endswith('.bin') else 'no-cache',
+            })
+            try:
+                with urlopen(request, timeout=90) as response:
+                    if response.status != 200:
+                        raise RuntimeError('R2 upload failed')
+                return dict(record, uploaded=True)
+            except (HTTPError, OSError):
+                if attempt == 3:
+                    raise RuntimeError(f'R2 upload failed for {key}') from None
+                time.sleep(2 ** attempt)
+    return put
+
+
+def require_additive(manifest_bytes, live_bytes):
+    """Content may go live ahead of an application deploy only when the live
+    application can still load it: every runtime path it uses must remain."""
+    new = {f['path'] for f in json.loads(manifest_bytes)['files']}
+    missing = sorted({f['path'] for f in json.loads(live_bytes)['files']} - new)
+    if missing:
+        raise ValueError(f'content-first upload would remove live runtime resources: {missing[:5]}')
+
+
+def upload_content(content=None, force=False, checkpoint=None, owner=None, live_manifest=None):
+    """Publish validated runtime blobs and the content manifest without waiting
+    for an application deploy. Blobs are content-addressed and inert until the
+    manifest names them; the manifest must stay additive for the live app. The
+    gallery still follows the deployed commit through the full upload."""
+    with publication_lock(ROOT):
+        require_owner(ROOT, checkpoint, owner)
+        content = (content or ROOT / 'private/reports/hosted-content').resolve()
+        if not content.is_relative_to((ROOT / 'private').resolve()):
+            raise ValueError('runtime package must remain under private storage')
+        files = validated_content(content)
+        manifest_bytes = (content / 'manifest.json').read_bytes()
+        if live_manifest is None:
+            with urlopen(Request('https://furyremastered.com/content/manifest.json',
+                                 headers={'User-Agent': 'Fury-release/1.0', 'Cache-Control': 'no-cache'}),
+                         timeout=60) as response:
+                live_manifest = response.read()
+        require_additive(manifest_bytes, live_manifest)
+        uploads = [(f'content/{path.name}', path.read_bytes()) for path in files if path.name != 'manifest.json']
+        known = known_objects(force)
+        put = uploader(wrangler_token(), known)
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            report = list(executor.map(put, uploads))
+        # Publish the pointer last; partial blob upload never exposes it.
+        if (content / 'manifest.json').read_bytes() != manifest_bytes:
+            raise ValueError('manifest changed during upload; pointer was not published')
+        report.append(put(('content/manifest.json', manifest_bytes)))
+        merged = dict(known)
+        merged.update({item['key']: item for item in report})
+        receipt = receipt_path()
+        previous = json.loads(receipt.read_text()) if receipt.exists() else {}
+        receipt.write_text(json.dumps({'bucket': BUCKET, 'commit': previous.get('commit'),
+                                       'objects': list(merged.values())}, indent=2) + '\n')
+        print(f'Content-first: validated {len(report)} runtime objects; uploaded '
+              f'{sum(item["uploaded"] for item in report)} changes')
+        return report
+
+
 def upload(release, commit, force=False, content=None, release_scoped=False, checkpoint=None, owner=None):
     with publication_lock(ROOT):
         if checkpoint is not None:
@@ -84,36 +174,10 @@ def _upload(release, commit, force=False, content=None, release_scoped=False):
             raise ValueError('invalid screenshot')
         uploads.append((image.lstrip('/'), data))
         seen.add(image)
-    auth_path = Path.home() / 'Library/Preferences/.wrangler/config/default.toml'
-    match = re.search(r'^oauth_token\s*=\s*"([^"\n]+)"', auth_path.read_text(), re.MULTILINE)
-    if not match:
-        raise RuntimeError('Wrangler OAuth authentication is required')
-    token = match.group(1)
-    destination = ROOT / 'private/reports/cloudflare-upload.json'
-    previous = json.loads(destination.read_text()) if destination.exists() and not force else {}
-    known = {item['key']: item for item in previous.get('objects', [])} if previous.get('bucket') == BUCKET else {}
-
-    def put(item):
-        key, data = item
-        record = {'key': key, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
-        if all(known.get(key, {}).get(field) == record[field] for field in ('bytes', 'sha256')):
-            return dict(record, uploaded=False)
-        mime = 'application/json' if key.endswith('.json') else 'image/png' if key.endswith('.png') else 'application/octet-stream'
-        url = f'https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/r2/buckets/{BUCKET}/objects/{quote(key, safe="/")}'
-        for attempt in range(4):
-            request = Request(url, data=data, method='PUT', headers={
-                'Authorization': f'Bearer {token}', 'Content-Type': mime,
-                'Cache-Control': 'public, max-age=31536000, immutable' if key.endswith('.bin') else 'no-cache',
-            })
-            try:
-                with urlopen(request, timeout=90) as response:
-                    if response.status != 200:
-                        raise RuntimeError('R2 upload failed')
-                return dict(record, uploaded=True)
-            except (HTTPError, OSError):
-                if attempt == 3:
-                    raise RuntimeError(f'R2 upload failed for {key}') from None
-                time.sleep(2 ** attempt)
+    token = wrangler_token()
+    destination = receipt_path()
+    known = known_objects(force)
+    put = uploader(token, known)
 
     report = []
     with ThreadPoolExecutor(max_workers=8) as executor:
@@ -148,14 +212,21 @@ def _upload(release, commit, force=False, content=None, release_scoped=False):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--release', required=True, type=Path)
-    parser.add_argument('--commit', required=True)
+    parser.add_argument('--release', type=Path)
+    parser.add_argument('--commit')
+    parser.add_argument('--content-only', action='store_true',
+                        help='Publish additive runtime content now, without waiting for the app deploy')
     parser.add_argument('--force-upload', action='store_true', help='Repair remote drift by re-uploading all validated objects')
     parser.add_argument('--release-scoped', action='store_true', help='Stage immutable release manifests before Worker deployment')
     parser.add_argument('--content', type=Path, help='Validated private runtime package')
     parser.add_argument('--checkpoint', required=True, help='Combined checkpoint claimed by its single release owner')
     parser.add_argument('--owner', required=True)
     args = parser.parse_args(argv)
+    if args.content_only:
+        upload_content(args.content, args.force_upload, checkpoint=args.checkpoint, owner=args.owner)
+        return
+    if args.release is None or args.commit is None:
+        parser.error('--release and --commit are required unless --content-only')
     upload(args.release, args.commit, args.force_upload, content=args.content, release_scoped=args.release_scoped,
            checkpoint=args.checkpoint, owner=args.owner)
 
