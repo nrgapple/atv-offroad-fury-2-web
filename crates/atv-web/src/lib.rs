@@ -89,6 +89,8 @@ struct Simulation {
     /// and a pending return to its race checkpoint (the CPU recovery rule).
     race_autopilot_stuck: f32,
     race_autopilot_reset: bool,
+    /// Original race overlay clocks (signs, infotext, lap history, names).
+    race_hud: atv_core::race_hud::RaceHud,
     /// The course's pre-race camera shots (`<venue>nat<n>.vub`) and the
     /// intro camera playing them before the countdown.
     race_shots: Vec<Vec<atv_core::race_intro::ShotFrame>>,
@@ -1764,7 +1766,10 @@ fn race_controls(sim: &mut Simulation) -> Result<Option<atv_core::vehicle::Vehic
     if !race.player_finished() {
         sim.race_autopilot = None;
         sim.race_autopilot_stuck = 0.;
-        sim.race_autopilot_reset = false;
+        // The Off Track sign counts down 5s, then the rider returns to the
+        // course (manual; RaceStatus +0x170 against the 5s rule of `00247570`).
+        sim.race_autopilot_reset =
+            race.running() && race.off_track_time(None) > atv_core::race_hud::RESET_SECONDS;
         return Ok(None);
     }
     let pose = if let Some(bike) = &sim.motorcycle {
@@ -1986,7 +1991,29 @@ fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
                 }
             }
         }
-        let race_frame = race.frame(yaw);
+        let mut race_frame = race.frame(yaw);
+        let too_deep = sim
+            .vehicle
+            .as_ref()
+            .filter(|_| sim.motorcycle.is_none())
+            .map(|v| v.frame().water_failure)
+            .filter(|w| w.submerged)
+            .map(|w| w.remaining);
+        race_frame.hud = Some(sim.race_hud.step(
+            1. / 60.,
+            &atv_core::race_hud::Input {
+                racing: race_frame.phase == "racing",
+                finished: race_frame.phase == "finished",
+                laps: race_frame.laps,
+                lap_times: &race_frame.lap_times,
+                best_lap: race_frame.best_lap,
+                place: race_frame.position,
+                ranks: &race_frame.ranks,
+                wrong_way: race_frame.wrong_way,
+                off_track: race_frame.off_track.then_some(race_frame.off_track_time),
+                too_deep,
+            },
+        ));
         return Ok(Some(race_frame));
     }
     Ok(None)
@@ -2333,6 +2360,7 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             sim.cpu_racers = racers;
             sim.race = Some(race);
             sim.race_autopilot = None;
+            sim.race_hud = atv_core::race_hud::RaceHud::default();
             end_race_director(sim);
             if sim.motorcycle.is_none()
                 && let Some(vehicle) = sim.vehicle.as_mut()

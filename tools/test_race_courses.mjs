@@ -166,7 +166,8 @@ try {
       s.frame.race.opponents.every(o => o.physical && o.physical.quad_matrices.flat().every(Number.isFinite)),
       `${id} CPU physics`
     );
-    assert(await page.locator('#race-overlay').isVisible());
+    // The original overlays (native HUD canvas) replace the text HUD.
+    assert(await page.locator('#native-hud').isVisible());
     if (output) await page.screenshot({ path: `${output}/race-course-${id}.png` });
     if (id === courses[0]) {
       // Leave the track: progress pauses, the HUD points back to the racing line,
@@ -176,7 +177,9 @@ try {
       await page.waitForFunction(() => window.atvTerrainStatus.frame.race.off_track, null, { timeout: 30000 });
       await page.keyboard.up('KeyW');
       const off = (await state()).frame.race;
-      assert.match(await page.locator('.race-direction').textContent(), /OFF TRACK/);
+      // The original "Off Track, Go Back!" sign (Single-Sign-2) counts down.
+      await page.waitForFunction(() => window.atvTerrainStatus.frame.race.hud?.sign?.id === 2, null, { timeout: 10000 });
+      assert.equal(await page.locator('#native-hud').getAttribute('data-race'), '2');
       await page.keyboard.press('Backspace');
       await page.waitForFunction(
         () => window.atvTerrainStatus.frame?.race && !window.atvTerrainStatus.frame.race.off_track,

@@ -27,7 +27,7 @@ export class RaceOverlay {
     // Race load fades in from black over 500ms (`00210980`) as the
     // pre-race camera starts; its shots play without the race HUD.
     if(race.phase==='intro'&&!this.faded){this.faded=true;const fade=this.root.querySelector('.race-fade');fade.classList.remove('is-fading');void fade.offsetWidth;fade.classList.add('is-fading');}
-    this.root.dataset.phase=race.phase;
+    this.root.dataset.phase=race.phase;this.root.dataset.native=String(Boolean(this.native));
     const set=(s,t)=>{const e=this.root.querySelector(s);if(e.textContent!==t)e.textContent=t;};
     set('.race-place',`PLACE ${race.position} / ${race.field}`);set('.race-lap',`LAP ${race.lap} / ${race.laps}`);set('.race-total',`TOTAL ${raceTime(race.elapsed)}`);
     set('.race-current',`LAP TIME ${raceTime(race.lap_time)}`);set('.race-best',`BEST ${raceTime(race.best)}`);

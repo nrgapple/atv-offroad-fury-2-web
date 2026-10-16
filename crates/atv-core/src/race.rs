@@ -909,6 +909,8 @@ struct Progress {
     lap_start: f32,
     best: Option<f32>,
     last_lap: f32,
+    /// Completed lap times, oldest first.
+    lap_times: Vec<f32>,
     /// Seconds since the rider last lay inside the track polygon.
     off_track: f32,
 }
@@ -935,6 +937,7 @@ impl Progress {
             lap_start: 0.,
             best: None,
             last_lap: 0.,
+            lap_times: Vec::new(),
             off_track: 0.,
         }
     }
@@ -966,6 +969,7 @@ impl Progress {
             self.completed += 1;
             let lap = time - self.lap_start;
             self.last_lap = lap;
+            self.lap_times.push(lap);
             self.lap_start = time;
             self.best = Some(self.best.map_or(lap, |v| v.min(lap)));
             if self.completed >= laps {
@@ -1040,6 +1044,17 @@ pub struct Frame {
     pub contacts: u32,
     pub opponents: Vec<Opponent>,
     pub standings: Vec<Standing>,
+    /// The player's completed lap times and the best one's index.
+    pub lap_times: Vec<f32>,
+    pub best_lap: Option<usize>,
+    /// Original LEAD (`00248b20` +0xec): positive seconds ahead of the next
+    /// rider when leading, negative seconds behind the leader otherwise.
+    pub lead: f32,
+    /// Rank of each rider slot: the player, then each CPU.
+    pub ranks: Vec<usize>,
+    /// Original race overlays, attached by the simulation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hud: Option<crate::race_hud::Frame>,
 }
 pub struct Race {
     pub course: Course,
@@ -1220,6 +1235,30 @@ impl Race {
     pub fn opponents(&self) -> &[Opponent] {
         &self.opponents
     }
+    /// RaceStatus gaps (`00248b20`): riders ordered by race distance; each
+    /// unfinished rider behind the leader is its elapsed time less the
+    /// leader's time scaled by its share of the leader's distance (≥ 0); the
+    /// leader's is minus the second rider's. LEAD shows minus the player's.
+    fn lead(&self) -> f32 {
+        let mut order: Vec<usize> = (0..=self.progress.len()).collect();
+        order.sort_by(|&a, &b| self.racer(b).distance.total_cmp(&self.racer(a).distance));
+        let leader = self.racer(order[0]);
+        let pace = if leader.distance > 0. {
+            leader.finish.unwrap_or(self.elapsed) / leader.distance
+        } else {
+            0.
+        };
+        let gap = |i: usize| {
+            let r = self.racer(i);
+            (self.elapsed - pace * r.distance).max(0.)
+        };
+        let player = if order[0] == 0 {
+            -order.get(1).map_or(0., |&i| gap(i))
+        } else {
+            gap(0)
+        };
+        -player
+    }
     /// Racer 0 is the player, then each CPU.
     fn racer(&self, i: usize) -> &Progress {
         if i == 0 {
@@ -1360,6 +1399,25 @@ impl Race {
             track_point: self.course.point_at(station),
             track_heading: heading,
             contacts: self.contacts,
+            lap_times: self.player.lap_times.clone(),
+            best_lap: self
+                .player
+                .lap_times
+                .iter()
+                .enumerate()
+                .min_by(|a, b| a.1.total_cmp(b.1))
+                .map(|(i, _)| i),
+            lead: self.lead(),
+            ranks: std::iter::once(&self.player)
+                .chain(&self.progress)
+                .map(|p| {
+                    order
+                        .iter()
+                        .position(|(_, q, _)| std::ptr::eq(*q, p))
+                        .map_or(0, |i| i + 1)
+                })
+                .collect(),
+            hud: None,
             opponents: self.opponents.clone(),
             standings: order
                 .into_iter()
@@ -1617,6 +1675,34 @@ mod tests {
         // The results no longer change while everyone keeps driving.
         r.observe_cpu(1, [100., 0., 100.], 0., None);
         assert!((r.frame(0.).standings[2].time.unwrap() - 7.).abs() < 1e-4);
+    }
+    #[test]
+    fn lead_is_the_time_gap_at_the_leaders_pace() {
+        let mut r = Race::new(course(), 2, vec!["CPU".into()], 1).unwrap();
+        r.countdown = 0.;
+        r.observe_cpu(0, [0., 0., 50.], 0., None);
+        r.step([0., 0., 100.], 1.);
+        r.observe_cpu(0, [0., 0., 100.], 0., None);
+        r.step([100., 0., 100.], 1.);
+        // Player leads at 200ft in 2s; the CPU at 100ft is 1s behind.
+        let f = r.frame(0.);
+        assert!((f.lead - 1.).abs() < 1e-4, "{}", f.lead);
+        assert_eq!(f.ranks, vec![1, 2]);
+        r.observe_cpu(0, [100., 0., 100.], 0., None);
+        r.observe_cpu(0, [100., 0., 0.], 0., None);
+        // Now the CPU leads at 300ft; the player at 200ft trails.
+        let f = r.frame(0.);
+        assert!(
+            (f.lead - -(2. - 2. / 300. * 200.)).abs() < 1e-4,
+            "{}",
+            f.lead
+        );
+        assert_eq!(f.ranks, vec![2, 1]);
+        r.step([100., 0., 0.], 1.);
+        r.step([0.; 3], 1.);
+        let f = r.frame(0.);
+        assert_eq!(f.lap_times, vec![4.]);
+        assert_eq!(f.best_lap, Some(0));
     }
     #[test]
     fn race_over_keeps_estimates_increasing_down_the_order() {

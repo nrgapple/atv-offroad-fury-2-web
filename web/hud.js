@@ -5,6 +5,18 @@ import { observedSize } from './render-support.js';
 const unquote = value => (value ?? '').replace(/^"/, '').replace(/"$/, '');
 const numbers = value => value?.split(',').map(s => Number(s.trim()));
 const fontDefault = 'tradegothic_boldcondensed_22s';
+// 002e0770: overlay text without a colour draws 190,190,190.
+const raceText = '190,190,190', raceGold = '218,192,31';
+// Original MM:SS.hh (rounded hundredths); 0 shows dashes.
+export const overlayTime = t => {
+  if (!t) return '--:--.--';
+  if (t > 5999.99) return '99:99.99';
+  if (t < -5999.99) return '-99:99.99';
+  const h = Math.floor(Math.abs(t) * 100 + .5), pad = n => String(n).padStart(2, '0');
+  return `${t < 0 ? '-' : ''}${pad(Math.floor(h / 6000))}:${pad(Math.floor(h / 100) % 60)}.${pad(h % 100)}`;
+};
+const RACE_OBJECTS = [1, 2, 3, 4, 7, 11, 14];
+const SIGNS = { 1: 'Single-Sign-1', 2: 'Single-Sign-2', 3: 'Single-Sign-3', 12: 'Single-Sign-12', 13: 'Single-Sign-13', 14: 'Single-Sign-14', 15: 'Single-Sign-15' };
 
 // Record text/icon draws before sizing a tightly bounded canvas.
 // Replaying the original transforms preserves DPR, filtering and glyph placement.
@@ -42,9 +54,10 @@ export class HeadUpDisplay {
     this.canvas.width = this.canvas.height = 1; this.painted = false; this.lastKey = ''; this.draws = 0; this.clears = 0;
     this.layout = new Map(); this.images = new Map(); this.tints = new Map();
   }
-  async init(environment) {
+  async init(environment, racing = false) {
     this.ready = false; this.lastKey = ''; this.clear();
     const f = this.frontend;
+    this.race = null;
     // Each authorized Freestyle runtime archive contains the original HUD art
     // and layout. Reuse the resource cache also used by the frontend.
     await f.archive('/STARTEVT.RES');
@@ -71,6 +84,9 @@ export class HeadUpDisplay {
       const images = await Promise.all(names.map(name => f.image(name)));
       this.lamps = Object.fromEntries(names.map((name, i) => [name, images[i]]));
     } catch { this.lamps = null; }
+    if (racing) {
+      try { this.race = await this.initRace(environment); } catch (error) { this.race = null; this.raceError = error.message; }
+    }
     this.ready = true;
     // The Rust controller parses the same original section. Keep resource bytes
     // out of source code and preserve the exact build's authoring overrides.
@@ -78,6 +94,96 @@ export class HeadUpDisplay {
     const headers = [...text.matchAll(/^\[([^\]\r\n]+)\][^\S\r\n]*\r?$/gm)];
     const index = headers.findIndex(m => m[1].toLowerCase() === 'overlayobject-12');
     return original.slice(headers[index].index, headers[index + 1]?.index ?? original.length);
+  }
+  // OverlaySet1 single-player race overlays, from the race archive: layouts,
+  // sign icons, the radar map from the race TOY and the radar racer icon.
+  async initRace(environment) {
+    const f = this.frontend;
+    await f.archive(courseResource(environment, true).archive);
+    const layout = new Map();
+    for (const n of RACE_OBJECTS) layout.set(n, (await f.document('Overlays.pb', `OverlayObject-${n}`)).get(`overlayobject-${n}`));
+    const signs = new Map();
+    for (const [id, name] of Object.entries(SIGNS)) signs.set(Number(id), (await f.document('Overlays.pb', name)).get(name.toLowerCase()));
+    for (const section of [...layout.values(), ...signs.values()]) {
+      for (let i = 1; i <= Number(section.numtext); i++) await f.font(unquote(section[`text${i}font`]) || fontDefault);
+      for (let i = 1; i <= Number(section.numicons); i++) { const name = unquote(section[`icon${i}texture`]); this.images.set(name, await f.image(name)); }
+    }
+    const radar = (await f.document(`${environment}nat.toy`, 'Radar')).get('radar');
+    const map = await f.image(radar.texture);
+    const racer = await f.image('radaricon_racer');
+    return { layout, signs, radar: { map, left: Number(radar.left), top: Number(radar.top), right: Number(radar.right), bottom: Number(radar.bottom) }, racer, tinted: new Map() };
+  }
+  tinted(image, rgb) {
+    const key = rgb, cache = this.race.tinted;
+    if (cache.has(key)) return cache.get(key);
+    const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+    const c = canvas.getContext('2d'); c.drawImage(image, 0, 0); c.globalCompositeOperation = 'multiply';
+    c.fillStyle = `rgb(${rgb})`; c.fillRect(0, 0, canvas.width, canvas.height);
+    c.globalCompositeOperation = 'destination-in'; c.drawImage(image, 0, 0);
+    cache.set(key, canvas); return canvas;
+  }
+  // Original 640x448 race layout: left items keep their x, right items keep
+  // their distance from the right edge, centred items stay centred; items in
+  // the lower half keep their distance from the bottom.
+  drawRace(race, frame, rect, dpr, topInset) {
+    // Phones keep a 480-unit minimum width (the gaps between the top items
+    // allow it) and drop the right column below the compact speed meter.
+    const compact = rect.width < 560, R = this.race, unit = Math.min(rect.height / 448, rect.width / 480);
+    const width = rect.width / unit, height = rect.height / unit, top = topInset / unit, meter = compact ? 118 / unit : 0;
+    const ax = x => x <= 213 ? x : x >= 427 ? width - (640 - x) : x + (width - 640) / 2 - (compact ? 30 : 0);
+    const ay = (y, x = 0) => y < 224 ? y + top + (x >= 427 ? meter : 0) : height - (448 - y);
+    const at = (x, y) => [ax(x), ay(y, x)];
+    const c = this.ctx, saved = this.logicalWidth; this.logicalWidth = width;
+    c.save(); c.setTransform(unit * dpr, 0, 0, unit * dpr, 0, 0);
+    const L = n => R.layout.get(n), hud = race.hud ?? {};
+    const text = (value, where, layout, i, options = {}) => this.text(value, where, layout, i, { color: options.color ?? layout[`text${i}color`] ?? raceText, ...options });
+    // LAP TIME, LAP, SCORE.
+    text('LAP TIME', at(609, 23), L(1), 1); text(overlayTime(race.lap_time), at(609, 23), L(1), 2);
+    text('LAP', at(354, 23), L(2), 1); text(`${race.lap} / ${race.laps}`, at(354, 23), L(2), 2);
+    text('SCORE', at(178, 23), L(3), 1); text(String(Math.floor((frame?.stunt_score?.committed_points ?? 0) + .5)), at(178, 23), L(3), 2);
+    // PLACE position tree: each rider slot's name slides to its rank.
+    const tree = L(4), names = ['YOU', ...race.opponents.map(o => o.name)].map(n => String(n).slice(0, 9));
+    text('PLACE', at(20, 23), tree, 1);
+    for (let rank = 1; rank <= Math.min(5, names.length); rank++) {
+      const player = race.position === rank;
+      text(String(rank), at(20, 23), tree, rank + 1, { color: player ? raceGold : raceText, scale: player ? hud.place_scale ?? 1 : 1 });
+    }
+    names.slice(0, 5).forEach((name, slot) => text(name, at(20, 23), tree, 7, { color: slot === 0 ? raceGold : raceText, offset: [0, hud.tree?.[slot] ?? (race.ranks?.[slot] - 1) * 23] }));
+    // BEST/TOTAL/LEAD, faded by the lap history; LEAD green ahead, red behind.
+    const listing = L(7), alpha = 255 * (hud.listing_alpha ?? 1);
+    if (alpha > 0) {
+      ['BEST:', 'TOTAL:', 'LEAD:'].forEach((label, i) => text(label, at(609, 23), listing, i + 1, { alpha }));
+      text(overlayTime(race.best ?? 0), at(609, 23), listing, 4, { alpha });
+      text(overlayTime(race.elapsed), at(609, 23), listing, 5, { alpha });
+      text(overlayTime(race.lead), at(609, 23), listing, 6, { alpha, color: race.lead >= 0 ? '30,215,30' : '200,60,60' });
+    }
+    if (hud.history) {
+      const history = L(14), where = [ax(609) + hud.history.offset, ay(23, 609)];
+      hud.history.rows.forEach((row, i) => {
+        const color = row.best ? (history.bestlapcolor ?? '76,181,255').replace(/\s/g, '') : raceText;
+        text(`Lap ${row.lap}`, where, history, i * 2 + 1, { color }); text(overlayTime(row.time), where, history, i * 2 + 2, { color });
+      });
+    }
+    // Infotext and signage.
+    if (hud.infotext) text(hud.infotext, at(320, 304), L(11), 1);
+    const sign = hud.sign && R.signs.get(hud.sign.id);
+    if (sign) {
+      // Phones show signs below the stacked top items.
+      const where = at(320, 80); if (compact) where[1] += meter + 120; this.icon(where, sign, 1);
+      const counted = hud.sign.digit != null;
+      if (counted) text(String(hud.sign.digit), where, sign, 1);
+      text(unquote(sign[`text${counted ? 2 : 1}text`]), where, sign, counted ? 2 : 1);
+    }
+    // Radar: north-up course map at native size, racer dots drawn last-first.
+    const { map, left, top: north, right } = R.radar, scale = (right - left) / map.width, origin = at(20, 305);
+    c.drawImage(map, origin[0], origin[1], map.width, map.height);
+    const dot = (p, rgb) => {
+      const x = Math.max(0, Math.min(map.width - 8, Math.trunc((p[0] - left) / scale))), y = Math.max(0, Math.min(map.height - 8, Math.trunc((north - p[2]) / scale)));
+      c.drawImage(rgb ? this.tinted(R.racer, rgb) : R.racer, origin[0] + x, origin[1] + y, 8, 8);
+    };
+    for (const cpu of [...race.opponents].reverse()) dot(cpu.origin, null);
+    if (frame?.origin) dot(frame.origin, '255,0,0');
+    c.restore(); this.logicalWidth = saved;
   }
   clear() {
     if (!this.painted) return;
@@ -127,19 +233,20 @@ export class HeadUpDisplay {
     this.painted = false; this.lastKey = '';
   }
   snapshot() { return { draws: this.draws, clears: this.clears, backingBytes: this.canvas.width * this.canvas.height * 4 }; }
-  draw(hud, visible = true, { speedVisible = true, lights = null } = {}) {
+  draw(hud, visible = true, { speedVisible = true, lights = null, race = null, frame = null, topInset = 0 } = {}) {
+    if (!this.race) race = null;
     if (!this.lamps) lights = null;
     if (hud) {
       this.canvas.dataset.renderer = 'rust'; this.canvas.dataset.speed = hud.speed_text;
       this.canvas.dataset.preload = String(hud.preload_visible); this.canvas.dataset.stunt = hud.stunt_visible ? hud.stunt_name : '';
     }
     this.canvas.dataset.speedVisible = String(speedVisible);
-    if (!this.ready || !visible || !hud || (!speedVisible && !hud.stunt_visible && lights == null)) { this.release(); return; }
+    if (!this.ready || !visible || !hud || (!speedVisible && !hud.stunt_visible && lights == null && !race)) { this.release(); return; }
     this.surfaceSize ??= observedSize(this.surface);
     const rect = this.surfaceSize, dpr = Math.min(devicePixelRatio || 1, 3);
     const width = Math.round(rect.width * dpr), height = Math.round(rect.height * dpr);
     if (width <= 0 || height <= 0) { this.release(); return; }
-    const key = JSON.stringify([hud, speedVisible, lights, rect.width, rect.height, dpr]);
+    const key = JSON.stringify([hud, speedVisible, lights, race && { ...race, opponents: race.opponents.map(o => [o.name, o.origin]), standings: null }, race && frame?.origin, race && frame?.stunt_score?.committed_points, topInset, rect.width, rect.height, dpr]);
     if (key === this.lastKey) return;
     const actual = this.ctx, list = new HudDrawList(); this.ctx = list;
     // Original logical frame is 640x448. Extend horizontal framing on wide
@@ -158,6 +265,8 @@ export class HeadUpDisplay {
       }
       this.canvas.dataset.speedVisible = String(speedVisible);
       this.canvas.dataset.lights = lights == null ? '' : String(lights);
+      this.canvas.dataset.race = race ? (race.hud?.sign?.id ?? 'on') : '';
+      if (race) this.drawRace(race, frame, rect, dpr, topInset);
       if (lights != null) {
         // Four 32x32 lamps from (256,208) in 640x448, centred on wide screens:
         // three red lamps light one per second, then the green lamp at GO.
@@ -184,7 +293,8 @@ export class HeadUpDisplay {
     // changes antialiased edge rounding in Canvas2D. Trim only unused right/bottom
     // space for speed; animated stunts retain their original full backing size.
     const left = 0, top = 0;
-    const right = hud.stunt_visible ? width : Math.min(width, Math.ceil((bounds[2] + 2) / 64) * 64), bottom = hud.stunt_visible ? height : Math.min(height, Math.ceil((bounds[3] + 2) / 64) * 64);
+    const full = hud.stunt_visible || race;
+    const right = full ? width : Math.min(width, Math.ceil((bounds[2] + 2) / 64) * 64), bottom = full ? height : Math.min(height, Math.ceil((bounds[3] + 2) / 64) * 64);
     if (right <= left || bottom <= top) { this.release(); return; }
     this.canvas.hidden = false;
     Object.assign(this.canvas.style, { inset: `${top / dpr}px auto auto ${left / dpr}px`, width: `${(right-left) / dpr}px`, height: `${(bottom-top) / dpr}px` });
