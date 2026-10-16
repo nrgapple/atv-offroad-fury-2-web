@@ -10,6 +10,14 @@ use worker::{wasm_bindgen::JsCast, *};
 
 const ROOT: &str = "/multiplayer/rooms";
 const FREERIDE: &str = "/multiplayer/freeride";
+/// Public, read-only total of riders across shared Free Ride rooms.
+const FREERIDE_RIDERS: &str = "/multiplayer/freeride/riders";
+/// Durable Object name of the rider counter; never a valid room code.
+const STATS: &str = "freeride-stats";
+const STATS_KEY: &str = "riders";
+/// A room's report counts until this old. Live rooms report at least every
+/// 30 seconds from their alarm, so a vanished room drops out on its own.
+const STATS_FRESH_MS: f64 = 90_000.;
 const ROOM_KEY: &str = "room";
 const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const MAX_AGE_MS: f64 = 12. * 60. * 60. * 1000.;
@@ -222,6 +230,20 @@ fn new_room(
     })
 }
 
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+struct RoomRiders {
+    riders: usize,
+    at_ms: f64,
+}
+/// Riders in rooms that reported recently.
+fn fresh_riders(rooms: &std::collections::BTreeMap<String, RoomRiders>, instant: f64) -> usize {
+    rooms
+        .values()
+        .filter(|r| instant - r.at_ms < STATS_FRESH_MS)
+        .map(|r| r.riders)
+        .sum()
+}
+
 fn send(ws: &WebSocket, packet: &Packet) -> Result<()> {
     let bytes = atv_net::encode(packet).map_err(|e| Error::RustError(e.to_string()))?;
     ws.send_with_bytes(bytes)
@@ -229,6 +251,23 @@ fn send(ws: &WebSocket, packet: &Packet) -> Result<()> {
 
 #[event(fetch)]
 pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
+    // The main menu shows how many people are in Free Ride. Same-origin GETs
+    // carry no Origin header, and this number is public, so it is answered
+    // before the origin check; the Worker caches it briefly at the edge.
+    if req.path() == FREERIDE_RIDERS && req.method() == Method::Get {
+        let mut total = env
+            .durable_object("LOBBIES")?
+            .id_from_name(STATS)?
+            .get_stub()?
+            .fetch_with_request(Request::new("https://counter/stats/total", Method::Get)?)
+            .await?;
+        let value: serde_json::Value = total.json().await?;
+        let mut response = Response::from_json(&value)?;
+        response
+            .headers_mut()
+            .set("Cache-Control", "public, max-age=10")?;
+        return Ok(response);
+    }
     if !same_origin(&req, &env)? {
         return Response::error("Origin denied", 403);
     }
@@ -367,6 +406,10 @@ pub struct LobbyRoom {
     state: State,
     env: Env,
     room: Rc<RefCell<Option<Room>>>,
+    /// Joined, active sockets, kept in memory so a full room's ~400 poses a
+    /// second do not each deserialize every rider's attachment. Cleared
+    /// whenever a rider joins or leaves; a woken (hibernated) object rebuilds it.
+    recipients: RefCell<Option<Vec<WebSocket>>>,
 }
 
 impl LobbyRoom {
@@ -522,10 +565,28 @@ impl LobbyRoom {
         ws.close(Some(code), Some(reason))
     }
 
+    fn invalidate_recipients(&self) {
+        *self.recipients.borrow_mut() = None;
+    }
+
     fn broadcast(&self, packet: &Packet, except: Option<&WebSocket>) -> Result<()> {
         let bytes = atv_net::encode(packet).map_err(|e| Error::RustError(e.to_string()))?;
-        for (ws, connection) in self.connections()? {
-            if except != Some(&ws) && connection.player.is_some() {
+        let cached = self.recipients.borrow().clone();
+        let recipients = match cached {
+            Some(recipients) => recipients,
+            None => {
+                let recipients = self
+                    .connections()?
+                    .into_iter()
+                    .filter(|(_, connection)| connection.player.is_some())
+                    .map(|(ws, _)| ws)
+                    .collect::<Vec<_>>();
+                *self.recipients.borrow_mut() = Some(recipients.clone());
+                recipients
+            }
+        };
+        for ws in recipients {
+            if except != Some(&ws) {
                 // A failed peer send must not turn another rider's valid message into an error.
                 if ws.send_with_bytes(&bytes).is_err() {
                     let _ = self.close_socket(&ws, 1011, "Send failed");
@@ -540,6 +601,7 @@ impl LobbyRoom {
             return Ok(());
         }
         self.record("room_closed", None, reason, None, None);
+        self.report_riders(Some(0)).await;
         let saved = {
             let mut room = self.room.borrow_mut();
             if let Some(room) = room.as_mut() {
@@ -558,6 +620,7 @@ impl LobbyRoom {
             }
             let _ = ws.close(Some(1000), Some(reason));
         }
+        self.invalidate_recipients();
         self.state.storage().set_alarm(CLEANUP_MS).await?;
         let closed = self.room.borrow().clone();
         if let Some(room) = closed {
@@ -579,6 +642,7 @@ impl LobbyRoom {
         }
         let key = room.host_token.clone();
         *self.room.borrow_mut() = Some(room.clone());
+        self.invalidate_recipients();
         self.state.storage().put(ROOM_KEY, &room).await?;
         self.record("room_created", None, "", None, None);
         self.state.storage().set_alarm(30_000_i64).await?;
@@ -593,6 +657,36 @@ impl LobbyRoom {
         Ok(Response::empty()?.with_status(201))
     }
 
+    /// Tell the rider counter how many riders a shared room holds. Counting
+    /// is best effort and never affects the room itself. Rooms report from
+    /// their alarm (within 5 seconds of a claim, else every 30 seconds), never
+    /// from the rider message path.
+    async fn report_riders(&self, riders: Option<usize>) {
+        let Some(room) = self.room.borrow().clone().filter(|room| room.public) else {
+            return;
+        };
+        let riders = riders.unwrap_or_else(|| self.lobby(None).map_or(0, |l| l.players.len()));
+        let report = async {
+            let mut init = RequestInit::new();
+            init.method = Method::Post;
+            init.body = Some(
+                serde_json::json!({"room": String::from_utf8_lossy(&room.code), "riders": riders})
+                    .to_string()
+                    .into(),
+            );
+            self.env
+                .durable_object("LOBBIES")?
+                .id_from_name(STATS)?
+                .get_stub()?
+                .fetch_with_request(Request::new_with_init(
+                    "https://counter/stats/report",
+                    &init,
+                )?)
+                .await
+        };
+        let _ = report.await;
+    }
+
     async fn departed(&self, ws: &WebSocket, recoverable: bool) -> Result<()> {
         let Some(mut connection) = ws.deserialize_attachment::<Connection>()? else {
             return Ok(());
@@ -602,6 +696,7 @@ impl LobbyRoom {
         }
         connection.active = false;
         ws.serialize_attachment(&connection)?;
+        self.invalidate_recipients();
         let Some(mut room) = self.room.borrow().clone() else {
             return Ok(());
         };
@@ -655,10 +750,56 @@ impl DurableObject for LobbyRoom {
             *cached.borrow_mut() = storage.get::<Room>(ROOM_KEY).await?;
             Ok(())
         });
-        Self { state, env, room }
+        Self {
+            state,
+            env,
+            room,
+            recipients: RefCell::new(None),
+        }
     }
 
     async fn fetch(&self, mut req: Request) -> Result<Response> {
+        // Rider counter instance (named STATS): shared rooms report here.
+        if req.path() == "/stats/report" && req.method() == Method::Post {
+            let value: serde_json::Value = req.json().await?;
+            let (Some(room), Some(riders)) = (
+                value["room"]
+                    .as_str()
+                    .filter(|room| room.len() <= ROOM_CODE_BYTES),
+                value["riders"]
+                    .as_u64()
+                    .filter(|n| *n as usize <= PUBLIC_CAPACITY),
+            ) else {
+                return Response::error("Invalid rider report", 400);
+            };
+            let storage = self.state.storage();
+            let instant = now();
+            let mut rooms = storage
+                .get::<std::collections::BTreeMap<String, RoomRiders>>(STATS_KEY)
+                .await?
+                .unwrap_or_default();
+            rooms.retain(|_, r| instant - r.at_ms < STATS_FRESH_MS);
+            rooms.insert(
+                room.to_string(),
+                RoomRiders {
+                    riders: riders as usize,
+                    at_ms: instant,
+                },
+            );
+            storage.put(STATS_KEY, &rooms).await?;
+            return Ok(Response::empty()?.with_status(204));
+        }
+        if req.path() == "/stats/total" && req.method() == Method::Get {
+            let rooms = self
+                .state
+                .storage()
+                .get::<std::collections::BTreeMap<String, RoomRiders>>(STATS_KEY)
+                .await?
+                .unwrap_or_default();
+            return Response::from_json(
+                &serde_json::json!({"riders": fresh_riders(&rooms, now())}),
+            );
+        }
         if req.path() == "/claim" && req.method() == Method::Post {
             let fresh: Room = req.json().await?;
             let previous = self.room.borrow().clone();
@@ -749,6 +890,7 @@ impl DurableObject for LobbyRoom {
                     reclaimed = Some(connection.peer);
                     connection.active = false;
                     socket.serialize_attachment(&connection)?;
+                    self.invalidate_recipients();
                     let _ = self.close_socket(socket, 1000, "Connection replaced");
                 }
             }
@@ -864,6 +1006,7 @@ impl DurableObject for LobbyRoom {
                 }
                 connection.player = Some(player);
                 ws.serialize_attachment(&connection)?;
+                self.invalidate_recipients();
                 let mut room = room;
                 let present =
                     self.connections()?.iter().any(|(other, c)| {
@@ -1116,6 +1259,7 @@ impl DurableObject for LobbyRoom {
         if idle {
             self.finish("Empty room expired").await?;
         } else {
+            self.report_riders(None).await;
             self.state
                 .storage()
                 .set_alarm(if holding { 5_000_i64 } else { 30_000_i64 })
@@ -1170,6 +1314,19 @@ mod tests {
         room.public = true;
         assert!(!room_reusable(&room, 101. + MAX_AGE_MS * 4.));
         assert_eq!(room.capacity(), PUBLIC_CAPACITY);
+    }
+
+    #[test]
+    fn rider_count_sums_only_rooms_that_reported_recently() {
+        let mut rooms = std::collections::BTreeMap::new();
+        let at = |riders, at_ms| RoomRiders { riders, at_ms };
+        rooms.insert("FREERD01".to_string(), at(20, 1_000.));
+        rooms.insert("FREERD02".to_string(), at(3, 50_000.));
+        rooms.insert("FREERD03".to_string(), at(0, 60_000.));
+        assert_eq!(fresh_riders(&rooms, 60_000.), 23);
+        // FREERD01 stopped reporting; its riders no longer count.
+        assert_eq!(fresh_riders(&rooms, 1_000. + STATS_FRESH_MS), 3);
+        assert_eq!(fresh_riders(&std::collections::BTreeMap::new(), 0.), 0);
     }
 
     #[test]

@@ -51,6 +51,24 @@
 .ms-bullet { flex: none; width: 14px; height: 14px; border-radius: 50%; background: var(--atv-gold-bullet); box-shadow: 0 1px 2px #000, inset 0 -1px 1px #0006; transition: transform .16s; }
 .ms-row[aria-current=true] .ms-bullet { transform: scale(0); }
 .ms-row-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Arlington Free Ride: a NEW tag and the live rider count. */
+.ms-new { flex: none; padding: .22em .5em .18em; border-radius: 999px; background: linear-gradient(#ff4a3a, #c4140c); box-shadow: 0 0 0 1px #ffd0c0aa inset, 0 0 12px #ff3a2a88; color: #fff; font-size: .5em; letter-spacing: .12em; text-transform: uppercase; text-shadow: 0 1px 0 #6008; animation: ms-new-glow 2.4s ease-in-out infinite; }
+@keyframes ms-new-glow { 50% { box-shadow: 0 0 0 1px #ffd0c0aa inset, 0 0 20px #ff5a3acc; } }
+.ms-live { flex: none; margin-left: auto; padding-left: 10px; display: flex; align-items: center; gap: .4em; color: #9ff07a; font-size: .62em; letter-spacing: .04em; white-space: nowrap; }
+.ms-live[hidden] { display: none; }
+.ms-live::before { content: ''; width: .62em; height: .62em; border-radius: 50%; background: #5df03a; box-shadow: 0 0 8px #5df03a; animation: ms-live-pulse 1.6s ease-in-out infinite; }
+.ms-live[data-empty=true] { color: #d8d8d8; }
+.ms-live[data-empty=true]::before { background: #9a9a9a; box-shadow: none; animation: none; }
+.ms-row[aria-current=true] .ms-live { color: #123d05; text-shadow: none; }
+.ms-row[aria-current=true] .ms-live::before { background: #1f8a0a; box-shadow: none; }
+@keyframes ms-live-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .ms-new, .ms-live::before { animation: none; } }
+/* Narrow phones: keep the full name, with the tag and count on a second line. */
+@media (max-width: 380px) {
+  .ms-freeride-row { flex-wrap: wrap; row-gap: 2px; padding-top: 6px; padding-bottom: 6px; }
+  .ms-freeride-row .ms-row-label { flex: 1 1 calc(100% - 28px); }
+  .ms-freeride-row .ms-new { margin-left: 28px; }
+}
 .ms-row-value { margin-left: auto; padding-left: 12px; color: #f1d84e; font-size: .86em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ms-row[aria-current=true] .ms-row-value { color: #3a2e00; }
 /* Value rows: the label is one button and the arrows either side of the

@@ -70,8 +70,22 @@ async function boundedBody(request) {
   return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
 }
 
+// The main menu's Free Ride rider count is public and read-only. Each edge
+// location answers it from cache for ten seconds, so menu views across all
+// players reach the relay's single counter only a few times a minute.
+const FREERIDE_RIDERS = '/multiplayer/freeride/riders';
+async function freerideRiders(request, env) {
+  const cache = globalThis.caches?.default, key = new Request(new URL(FREERIDE_RIDERS, request.url));
+  const cached = await cache?.match(key);
+  if (cached) return cached;
+  const response = await env.MULTIPLAYER.fetch(new Request(key));
+  if (response.ok && cache) await cache.put(key, response.clone());
+  return response;
+}
+
 export async function multiplayerRequest(request, env) {
   const path = new URL(request.url).pathname;
+  if (path === FREERIDE_RIDERS) return request.method === 'GET' ? freerideRiders(request, env) : new Response('Method not allowed', { status: 405, headers: { Allow: 'GET' } });
   const create = path === '/multiplayer/rooms' && request.method === 'POST';
   // Claiming an Arlington Free Ride slot is admitted like joining a room: the
   // shared rooms are a fixed set, so they never take a room-creation lease.

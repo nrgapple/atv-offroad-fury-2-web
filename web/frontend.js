@@ -479,6 +479,7 @@ export class Frontend {
         if (page !== 'lobby') for (const track of this.tracks) await this.trackPhoto(track);
       }
       this.page = page; this.selection = 0; this.layoutKey = '';
+      this.watchFreerideRiders(page === 'main');
       if (this.isPausePanel()) this.resetPauseScroll = true;
       this.syncPreview();
       // A previous worker layout may still be in flight during rapid navigation.
@@ -703,6 +704,22 @@ export class Frontend {
     })().catch(() => []);
     return this.tipsPending;
   }
+  // The main menu shows how many people are riding Arlington Free Ride.
+  watchFreerideRiders(on) {
+    clearInterval(this.freerideTimer); this.freerideTimer = null;
+    if (!on) return;
+    const poll = async () => {
+      if (this.page !== 'main' || this.root.hidden || globalThis.document?.hidden) return;
+      try {
+        const response = await fetch('/multiplayer/freeride/riders');
+        const riders = response.ok ? (await response.json()).riders : null;
+        this.freerideRiders = Number.isInteger(riders) && riders >= 0 ? riders : null;
+      } catch { this.freerideRiders = null; }
+      if (this.page === 'main') { this.layoutKey = ''; void this.refresh(); }
+    };
+    void poll();
+    this.freerideTimer = setInterval(poll, 15000); this.freerideTimer?.unref?.();
+  }
   async beginLoading(environment) {
     if (!this.initialized) this.setLoading(true, 'Preparing course…');
     this.loadingTrack = this.tracks.find(track => track.id === environment) ?? this.tracks[this.track];
@@ -714,7 +731,11 @@ export class Frontend {
       this.shotTimer = setInterval(() => { if (this.page !== 'loading') return this.stopShots(); this.shotFrame++; this.layoutKey = ''; void this.refresh(); }, 2500);
     });
     void this.loadTips().then(tips => { if (this.page !== 'loading' || !tips.length) return; this.loadingTip = tips[Math.floor(Math.random() * tips.length)]; this.layoutKey = ''; void this.refresh(); });
-    await this.show('loading'); this.busy = true;
+    // Free Ride opens the loading screen before claiming a slot; the ride
+    // itself then continues on that screen instead of opening it again.
+    if (this.page === 'loading' && !this.root.hidden) { this.layoutKey = ''; await this.refresh(); }
+    else await this.show('loading');
+    this.busy = true;
     // Yield a frame so the loading UI is painted before decoding/upload work.
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   }

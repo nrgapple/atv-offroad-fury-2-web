@@ -8,6 +8,7 @@ const KEY = /^[0-9a-f]{32}$/;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Shared Arlington Free Ride rooms use reserved codes FREERD01..FREERD25.
 export const PUBLIC_ROOM = /^FREERD\d\d$/;
+export const FREERIDE_ENVIRONMENT = 'env08';
 // Queued relay messages: poses beyond INBOX_POSES are dropped (newer ones
 // follow); control traffic beyond INBOX_LIMIT means the session is stuck.
 const INBOX_POSES = 192, INBOX_LIMIT = 256, BATCH_BYTES = 60000;
@@ -209,12 +210,20 @@ export class Multiplayer {
   // Arlington Free Ride: no setup. The relay reserves a slot in the first
   // shared room with space, which is already riding Arlington Stream.
   async freeride(frontend) {
+    // Go straight to the Arlington loading screen; the shared room is already
+    // riding, so there is no lobby page to show while the slot is claimed.
+    await frontend.beginLoading?.(FREERIDE_ENVIRONMENT);
     const response = await fetch('/multiplayer/freeride',{method:'POST'});
     if (!response.ok) throw new Error(response.status===429?'Too many attempts or multiplayer is at capacity. Try again shortly.':response.status===503?'Arlington Free Ride is full or unavailable. Try again shortly.':`Unable to join Free Ride (${response.status}).`);
     const room = await response.json();
     if (!PUBLIC_ROOM.test(room.code ?? '') || !KEY.test(room.key ?? '')) throw new Error('Unable to join Free Ride.');
     this.shared = true; saveKey(room.code,room.key);
-    await frontend.show('lobby'); await this.connect(room.code,frontend,room.key);
+    await this.connect(room.code,frontend,room.key);
+    // Stay on the loading screen until the ride starts. A failed load or a
+    // dropped connection is reported by its own handler and ends the wait.
+    const generation = this.generation, deadline = performance.now() + 180000;
+    while (generation === this.generation && !(this.loadedMap === FREERIDE_ENVIRONMENT && !this.loading) && performance.now() < deadline) await sleep(100);
+    if (generation === this.generation && this.loadedMap !== FREERIDE_ENVIRONMENT) throw new Error('Arlington Free Ride took too long to start. Try again.');
   }
   async action(action, frontend, setup) {
     if (action.startsWith('spawn:')) {

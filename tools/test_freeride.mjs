@@ -122,15 +122,28 @@ async function rider(viewport) {
   const context = await browser.newContext({ viewport, hasTouch: true });
   const page = await context.newPage();
   watchErrors(page, errors);
-  await page.addInitScript(() => Object.defineProperty(document, 'hasFocus', { value: () => true }));
+  await page.addInitScript(() => {
+    Object.defineProperty(document, 'hasFocus', { value: () => true });
+    // Record every menu screen shown, to prove Free Ride skips the lobby page.
+    window.screensSeen = [];
+    new MutationObserver(() => {
+      const screen = document.querySelector('[data-screen]')?.dataset.screen;
+      if (screen && window.screensSeen.at(-1) !== screen) window.screensSeen.push(screen);
+    }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-screen'] });
+  });
   return page;
 }
 const state = page => page.evaluate(() => window.atvTerrainStatus);
 async function freeRide(page) {
   await page.goto(base + '/play.html');
   await button(page, 'Press START').click({ timeout: 90000 });
-  // The main menu offers Free Ride beside Single Player and Multiplayer.
-  await button(page, 'Arlington Free Ride').click();
+  // The main menu offers Free Ride beside Single Player and Multiplayer, with
+  // a NEW tag and the number of people riding it.
+  const row = button(page, 'Arlington Free Ride');
+  await row.locator('.ms-new').waitFor();
+  await row.locator('.ms-live:not([hidden])').waitFor({ timeout: 20000 });
+  const riding = Number((await row.locator('.ms-live').textContent()).match(/^(\d+) riding$/)[1]);
+  await row.click();
   await page.waitForFunction(
     () => {
       const s = window.atvTerrainStatus;
@@ -145,6 +158,11 @@ async function freeRide(page) {
   const s = await state(page);
   assert.equal(s.multiplayerError, undefined, s.multiplayerError);
   assert.equal(s.multiplayer.state.environment, 'env08');
+  // The tap goes straight to the loading screen: no lobby page flashes first.
+  const seen = await page.evaluate(() => window.screensSeen);
+  const after = seen.slice(seen.lastIndexOf('main') + 1);
+  assert.deepEqual(after, ['loading'], `screens after the tap: ${after.join(' → ')}`);
+  s.ridingBefore = riding;
   return s;
 }
 const remotes = (page, count, timeout = 60000) =>
@@ -163,7 +181,8 @@ try {
   assert.match(self.name, /^Rider \d{4}$/);
   // A fresh relay (or 90 s after a previous run's held slots) starts empty.
   assert.equal(s.multiplayer.state.lobby.players.length, 1, 'FREERD01 should start empty');
-  report.first = { code: s.multiplayer.state.code, peer: s.multiplayer.state.peer };
+  report.first = { code: s.multiplayer.state.code, peer: s.multiplayer.state.peer, ridingBefore: s.ridingBefore };
+  assert.equal(s.ridingBefore, 0, 'nobody rides before the first browser');
   const b = await rider({ width: 390, height: 844 });
   s = await freeRide(b);
   assert.equal(s.multiplayer.state.code, 'FREERD01');
@@ -190,6 +209,17 @@ try {
     names.join(', ')
   );
   report.filteredName = true;
+
+  // A rider on the main menu sees the live count of everyone riding.
+  const watcher = await rider({ width: 390, height: 844 });
+  await watcher.goto(base + '/play.html');
+  await button(watcher, 'Press START').click({ timeout: 90000 });
+  await watcher.waitForFunction(full => document.querySelector('.ms-live')?.textContent === `${full} riding`, full, {
+    timeout: 45000
+  });
+  report.menuCount = `${full} riding`;
+  if (process.env.ATV_FREERIDE_SCREENSHOT)
+    await watcher.screenshot({ path: process.env.ATV_FREERIDE_SCREENSHOT.replace('.png', '-menu-count.png') });
 
   // The 21st rider opens the next shared room.
   if (full >= 20) {

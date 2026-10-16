@@ -86,6 +86,24 @@ test('Free Ride claims use the per-IP connect limit and never take a room lease'
   assert.equal(limited.calls(), 0);
 });
 
+test('the public Free Ride rider count skips admission and is cached at the edge', async () => {
+  const count = () => new Request('https://furyremastered.com/multiplayer/freeride/riders');
+  let relayed = 0;
+  const g = guarded({ backend: async () => { relayed++; return Response.json({ riders: 7 }, { headers: { 'Cache-Control': 'public, max-age=10' } }); } });
+  const store = new Map();
+  globalThis.caches = { default: { match: async r => store.get(r.url)?.clone(), put: async (r, response) => { store.set(r.url, response); } } };
+  try {
+    for (let i = 0; i < 3; i++) {
+      const response = await worker.fetch(count(), g.env);
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { riders: 7 });
+    }
+    assert.equal(relayed, 1);
+    assert.equal(g.budget.values.size, 0, 'reading the count never touches the admission budget');
+    assert.equal((await worker.fetch(new Request('https://furyremastered.com/multiplayer/freeride/riders', { method: 'POST' }), g.env)).status, 405);
+  } finally { delete globalThis.caches; }
+});
+
 test('security headers protect assets/errors/redirects and permit browser WASM and WebSockets', async () => {
   const env = { CANONICAL_ORIGIN: 'https://furyremastered.com', ASSETS: { fetch: async () => new Response('html', { headers: { 'Content-Type': 'text/html' } }) } };
   for (const path of ['https://furyremastered.com/play.html', 'https://www.furyremastered.com/play.html', 'https://furyremastered.com/content/source.iso']) {
