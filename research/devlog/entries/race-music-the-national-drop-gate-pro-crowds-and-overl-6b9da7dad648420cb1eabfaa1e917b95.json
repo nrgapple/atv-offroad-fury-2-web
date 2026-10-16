@@ -1,0 +1,18 @@
+{
+  "id": "race-music-the-national-drop-gate-pro-crowds-and-overl-6b9da7dad648420cb1eabfaa1e917b95",
+  "timestamp": "2026-10-16T16:47:35.558870+00:00",
+  "recorded_at": "2026-10-16T16:55:37.215295+00:00",
+  "kind": "build",
+  "title": "Race music, the National drop gate, Pro crowds and overlay toggles",
+  "summary": "Races now use the original music cues, National courses stand the original sponsor-panel start gate in front of the grid and drop it at GO, Supercross Pro and Amateur tracks use their own crowds, and Settings brings back the original race overlay toggles.",
+  "details": [
+    "Music: a random intro stinger plays over the intro camera with no song, and is cut at GO when the next song starts. At the finish the song fades over 1.5 s and the win stinger hands off to the looping results music; after a loss the results music plays straight away.",
+    "Start gate: on the eight Nationals the sponsor-panel gate stands in front of the field and swings flat at GO with its sound; Restart stands it back up. Discovery: only the Nationals have a drop gate, Supercross never had one, so an earlier Supercross gate sound was removed. On nat01 the authored gate sits behind the grid.",
+    "Crowds: the original picks the crowd set from each track's Pro or Amateur category, so Supercross Pro tracks now use the Pro crowd (with the final-lap stomp) and Amateur tracks the Amateur crowd. The crowd cheers a landed stunt chain and groans at a failed one.",
+    "Overlays: Settings > Display > Race overlays restores the original toggles: Timing, Lap, Score, Position (name, place or off), Informational, Speedometer and Radar.",
+    "Verification: Rust unit tests; content browser tests test_race, test_race_courses and test_frontend; host checks of nat03 (gate stands, then lies flat with the gate sound), nat01 (intro stinger, then song at GO), sx03 (Pro crowd, and the win stinger handing off to the results loop) and env01 (Place and Radar-off toggles)."
+  ],
+  "limitation": "The original volumes for race music and crowd are unknown, so levels are estimates. These are host captures from PR #130 (implementation-ready), not a verified public release; audio cannot be shown in a screenshot.",
+  "image": "/devlog-images/race-music-the-national-drop-gate-pro-crowds-and-overl-6b9da7dad648420cb1eabfaa1e917b95.png",
+  "caption": "nat03 countdown on the host: the row of sponsor panels stands in front of the grid, with the start lights showing three red and one green. The keyboard controls panel is open over the lower HUD."
+}
