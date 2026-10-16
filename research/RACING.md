@@ -648,3 +648,31 @@ loops, and the content package adds the 18 crowd clips and four loops to
 `AUDIO.RES`. Previously every flash model was drawn permanently. Freestyle on
 a Supercross venue keeps the loops and constant flashes. AI stunt bursts,
 crowd volume and the race-over `IntOut` music are not reproduced.
+
+## Supercross fireworks — 2026-10-16
+
+Exact-build evidence (private exports; loader `00222170`, crossing handler
+`00223c60`, controller `002217f0`/`00221730`, start `00221840`, countdown
+Deactivate `0020ec20`): each Supercross race TOY declares 28 stream and
+explosion emitters with `StartOn=T`, `[PreRaceFireworks]` listing every
+instance and `[FireworkTriggers]`.
+
+- From load (through the pre-race camera) the emitters run their authored
+  EmitMode 2 random on/off cycles; every countdown update deactivates the
+  pre-race group, so the stadium falls quiet for the countdown.
+- A trigger is an upright gate (TriggerPosition, TriggerLook, TriggerWidth,
+  TriggerHeight). A racer crossing it fires its emitter groups in turn,
+  TimeBetweenGroups apart; each started emitter is forced to one-shot for one
+  on-period and the previous group stops. It fires once on the lap equal to
+  TriggerOnLap (clamped to the last lap), or on every lap with
+  TriggerEveryLap. RaceOrderMatters limits a non-leader to group 0;
+  DontTriggerForAI ignores CPUs. The controller only starts when idle.
+- Trigger 2 is the start gate (lap 0): six pairs of shooters 0.15s apart as
+  the field crosses after GO. Trigger 1 is the finish gate on the last lap.
+
+Port: `race_fireworks::Controller` runs the triggers and sequence and drives
+the ambient emitters by race TOY emitter and instance. A race with firework
+triggers keeps every stream emitter instead of the static packet budget; the
+bounded GPU ring takes the bursts. The gate test is an authored plane
+crossing, not the RaceStatus gate (`002487c0`); the gate drop rotation is
+still not reproduced.
