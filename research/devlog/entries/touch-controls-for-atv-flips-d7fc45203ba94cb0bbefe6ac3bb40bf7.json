@@ -1,0 +1,17 @@
+{
+  "id": "touch-controls-for-atv-flips-d7fc45203ba94cb0bbefe6ac3bb40bf7",
+  "timestamp": "2026-10-16T03:43:44.622366+00:00",
+  "recorded_at": "2026-10-16T03:45:23.567396+00:00",
+  "kind": "build",
+  "title": "Touch controls for ATV flips",
+  "summary": "With Flips on in Extras, phone players can now backflip and 360: drag past the trick wheel's dashed ring and lift.",
+  "details": [
+    "One-handed mode (default): put a second finger down in the air to open the trick wheel. A short drag still picks the named tricks; dragging further, past the dashed gold ring, picks Backflip (straight down, like leaning back) or 360 Left/Right.",
+    "Two-finger mode: a long swipe down, left or right in the air flips; short swipes keep the original tricks.",
+    "A flip picked by touch can start any time in the air. While spinning, push the steering finger forward to slow a backflip, or steer against a 360 to slow it.",
+    "Verified in Chromium and WebKit at four phone sizes (labels fit, each flip selectable from the middle and the edges, sent once on release), and with real touches in the game on env01, where the backflip started."
+  ],
+  "limitation": "The starting jump on env01 is still too short for a full loop; a clean landed flip needs a bigger jump.",
+  "image": "/devlog-images/touch-controls-for-atv-flips-d7fc45203ba94cb0bbefe6ac3bb40bf7.png",
+  "caption": "Phone portrait, in the air: dragging past the dashed ring selects Backflip; 360 Left/Right sit to the sides."
+}
