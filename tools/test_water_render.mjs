@@ -220,6 +220,11 @@ try {
             await page.waitForFunction(() => window.waterPixelEvidence);
             const frame = await page.evaluate(() => window.waterDrawFrame);
             await page.setViewportSize({ width: 844, height: 390 });
+            // The canvas follows a ResizeObserver; capture only once it is landscape.
+            await page.waitForFunction(() => {
+              const canvas = document.querySelector('#game');
+              return canvas.width > canvas.height;
+            });
             await page.evaluate(() => {
               window.waterPixelEvidence = null;
               window.captureWaterPixels = true;

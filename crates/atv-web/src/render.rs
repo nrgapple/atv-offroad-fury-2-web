@@ -12,6 +12,11 @@ struct Render {
     vegetation: Option<vegetation_render::Vegetation>,
     /// visible, scanned, far, transition, near, groups, then per-group counts.
     counts: Vec<u32>,
+    /// Enhanced/High wheel re-projection: the player's quad linkage and its
+    /// original suspension travel, sampled again with presentation-only
+    /// compression. Never connected to the simulation.
+    quad: Option<(atv_core::quad_pose::QuadPose, f32)>,
+    quad_matrices: Vec<f32>,
 }
 thread_local! { static RENDER: RefCell<Render> = RefCell::default(); }
 
@@ -46,6 +51,27 @@ pub fn dispatch(input: &[u8], op: u32) -> Result<Vec<u8>> {
             render.counts = vec![0; 6 + vegetation.groups.len()];
             render.vegetation = Some(vegetation);
             serde_json::to_vec(&result).map_err(|e| e.to_string())
+        }
+        // u32 PSG length, the player's original quad PSG, then its physics text.
+        144 => {
+            render.quad = None;
+            let length = input
+                .get(..4)
+                .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize)
+                .filter(|length| *length <= input.len() - 4)
+                .ok_or("invalid quad linkage framing")?;
+            let mesh = atv_core::mesh::decode_psg(&input[4..4 + length])?;
+            let physics = atv_core::physics_data::PhysicsData::parse(&input[4 + length..])?;
+            let travel = physics.first_scalar("Suspension", "Compression")?;
+            if !(travel.is_finite() && travel > 0.) {
+                return Err("invalid suspension travel".into());
+            }
+            let pose = atv_core::quad_pose::QuadPose::new(&mesh)?;
+            let nodes = mesh.nodes.len();
+            render.quad = Some((pose, travel));
+            render.quad_matrices = vec![0.; nodes * 16];
+            serde_json::to_vec(&serde_json::json!({"nodes": nodes, "travel": travel}))
+                .map_err(|e| e.to_string())
         }
         // Verification only: every render placement and the last selection.
         143 => {
@@ -119,6 +145,42 @@ pub extern "C" fn render_vegetation_instances() -> *const f32 {
     })
 }
 
+/// Samples the loaded quad linkage with presentation compression, each value
+/// clamped to [0, travel]. Returns the node count (0 when unavailable); the
+/// column-major matrices follow at `render_quad_pose_matrices`.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn render_quad_pose(
+    steering: f64,
+    angle_0: f64,
+    angle_1: f64,
+    angle_2: f64,
+    angle_3: f64,
+    compression_0: f64,
+    compression_1: f64,
+    compression_2: f64,
+    compression_3: f64,
+) -> u32 {
+    RENDER.with_borrow_mut(|render| {
+        let Some((pose, travel)) = render.quad.as_ref() else {
+            return 0;
+        };
+        let clamp = |c: f64| (c as f32).clamp(0., *travel);
+        let compression = [compression_0, compression_1, compression_2, compression_3].map(clamp);
+        let angles = [angle_0, angle_1, angle_2, angle_3].map(|a| a as f32);
+        let Ok(matrices) = pose.sample(steering as f32, angles, compression) else {
+            return 0;
+        };
+        render.quad_matrices.clear();
+        render.quad_matrices.extend(matrices.iter().flatten());
+        matrices.len() as u32
+    })
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn render_quad_pose_matrices() -> *const f32 {
+    RENDER.with_borrow(|render| render.quad_matrices.as_ptr())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,5 +206,12 @@ mod tests {
             "load render terrain first"
         );
         assert!(dispatch(&[], 143).is_err());
+        assert_eq!(render_quad_pose(0., 0., 0., 0., 0., 0., 0., 0., 0.), 0);
+        assert!(
+            dispatch(&[9, 0, 0, 0, 1], 144)
+                .unwrap_err()
+                .contains("framing")
+        );
+        assert!(dispatch(&[1, 0, 0, 0, 1, b'x'], 144).is_err());
     }
 }

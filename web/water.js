@@ -47,7 +47,7 @@ void main() {
   gl_Position = viewProjection * vec4(point, 1.0);
   prepareFog(length(point - eye), gl_Position);
 }`;
-const fragmentSource = `#version 300 es
+const fragmentSource = fresnel => `#version 300 es
 precision highp float;
 precision highp int;
 in vec3 waterPoint;
@@ -67,7 +67,8 @@ ${fogFragmentShader}
 void main() {
   vec3 point = waterPoint;
   // Original Dx/Dz texture pairs and BumpScale supply the visual normals.
-  // Reflection coordinates remain the portable mapping. No artistic Fresnel, generated tint or second wave clock.
+  // Reflection coordinates remain the portable mapping. No generated tint or second wave clock;
+  // the Original variant has no Fresnel term.
   vec2 gradient = vec2(0.0);
   for (int i=0; i<4; i++) {
     if (i >= gradientCount) break;
@@ -86,7 +87,15 @@ void main() {
   vec2 environmentUV = reflected.xz * 0.5 + 0.5;
   vec4 sampled = texture(environmentMap, environmentUV);
   vec3 surface = sampled.rgb * environmentColor;
-  color = vec4(mix(fogColor, surface, fogCoverage()), clamp(sampled.a * (255.0 / 128.0), 0.0, 1.0));
+${fresnel ? `
+  // Enhanced/High authored Fresnel (Schlick, F0 0.02): see-through looking
+  // down, mirror-like at grazing angles. Compiled only into that variant.
+  float facing = clamp(dot(normalize(eye - point), normal), 0.0, 1.0);
+  float f = 0.02 + 0.98 * pow(1.0 - facing, 5.0);
+  float alpha = clamp(clamp(sampled.a * (255.0 / 128.0), 0.0, 1.0) * 0.55 + f * 0.75, 0.0, 1.0);
+  surface *= 0.85 + 0.35 * f;
+  color = vec4(mix(fogColor, surface, fogCoverage()), alpha);` : `
+  color = vec4(mix(fogColor, surface, fogCoverage()), clamp(sampled.a * (255.0 / 128.0), 0.0, 1.0));`}
 }`;
 function filteredTextureBytes(width,height,layers=1){
   let bytes=0;for(;;){bytes+=width*height*layers*4;if(width===1&&height===1)return bytes;width=Math.max(1,width>>1);height=Math.max(1,height>>1);}
@@ -122,10 +131,7 @@ export class WaterRenderer {
     if(height.textures.length>gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS)) throw new Error('Water height atlas exceeds GPU layer capacity.');this.channelCount=height.channels.length;
     this.gradientSource=source.gradients;this.heightSource=height;this.gradientWaves=new Float32Array(16);this.gradientSecond=new Float32Array(8);this.origins=new Float32Array(16);this.inverseWidths=new Float32Array(16);this.widths=new Float32Array(16);this.channels=new Float32Array(32);this.tiled=new Int32Array(8);
     height.channels.forEach((channel,i)=>{this.inverseWidths.set(channel.inverse_width,i*2);this.widths.set(channel.width,i*2);this.channels.set([channel.dimension,channel.scale,channel.positive?1:-1,channel.layer],i*4);this.tiled[i]=Number(channel.tiled);});
-    const vertex=compile(gl,gl.VERTEX_SHADER,vertexSource),fragment=compile(gl,gl.FRAGMENT_SHADER,fragmentSource);
-    this.program=gl.createProgram();gl.attachShader(this.program,vertex);gl.attachShader(this.program,fragment);gl.linkProgram(this.program);gl.deleteShader(vertex);gl.deleteShader(fragment);
-    if (!gl.getProgramParameter(this.program,gl.LINK_STATUS)) throw new Error(`Water program: ${gl.getProgramInfoLog(this.program)}`);
-    this.uniforms=Object.fromEntries(['viewProjection','eye','forward','right','up','projection','screenBounds','baseHeight','farDistance','channelCount','origins[0]','inverseWidths[0]','widths[0]','channels[0]','tiled[0]','heightMaps','environmentMap','gradientMaps','gradientCount','gradientWaves[0]','gradientSecond[0]','environmentColor','fogColor','fogPacking','fogEnabled'].map(name=>[name,gl.getUniformLocation(this.program,name)]));
+    this.variants=[this.link(false)];[this.program,this.uniforms]=this.variants[0];
     this.vao=gl.createVertexArray();this.vertices=gl.createBuffer();this.indices=gl.createBuffer();
     gl.bindVertexArray(this.vao);gl.bindBuffer(gl.ARRAY_BUFFER,this.vertices);
     gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,8,0);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,this.indices);
@@ -185,7 +191,14 @@ export class WaterRenderer {
       this.gradientSecond.set([layers[pair[1]],second],i*2);
     });
   }
-  draw({camera,viewProjection,focalLength,aspect,farDistance,fogColor,fog}) {
+  link(fresnel) {
+    const gl=this.gl,vertex=compile(gl,gl.VERTEX_SHADER,vertexSource),fragment=compile(gl,gl.FRAGMENT_SHADER,fragmentSource(fresnel));
+    const program=gl.createProgram();gl.attachShader(program,vertex);gl.attachShader(program,fragment);gl.linkProgram(program);gl.deleteShader(vertex);gl.deleteShader(fragment);
+    if (!gl.getProgramParameter(program,gl.LINK_STATUS)) throw new Error(`Water program: ${gl.getProgramInfoLog(program)}`);
+    return [program,Object.fromEntries(['viewProjection','eye','forward','right','up','projection','screenBounds','baseHeight','farDistance','channelCount','origins[0]','inverseWidths[0]','widths[0]','channels[0]','tiled[0]','heightMaps','environmentMap','gradientMaps','gradientCount','gradientWaves[0]','gradientSecond[0]','environmentColor','fogColor','fogPacking','fogEnabled'].map(name=>[name,gl.getUniformLocation(program,name)]))];
+  }
+  draw({camera,viewProjection,focalLength,aspect,farDistance,fogColor,fog,fresnel=false}) {
+    const variant=fresnel?(this.variants[1]??=this.link(true)):this.variants[0];this.program=variant[0];this.uniforms=variant[1];
     const gl=this.gl,u=this.uniforms;this.draws=0;
     if (!this.frame || gl.isContextLost() || !gl.drawingBufferWidth || !gl.drawingBufferHeight) return;
     const started=performance.now();
@@ -227,6 +240,6 @@ export class WaterRenderer {
     this.cpuMilliseconds=performance.now()-started;
   }
   dispose() {
-    const gl=this.gl;for (const query of [...this.timerPending,...this.timerFree]) gl.deleteQuery(query);gl.deleteTexture(this.heightMaps);gl.deleteTexture(this.environment);gl.deleteTexture(this.gradientMaps);gl.deleteBuffer(this.vertices);gl.deleteBuffer(this.indices);gl.deleteVertexArray(this.vao);gl.deleteProgram(this.program);this.frame=null;
+    const gl=this.gl;for (const query of [...this.timerPending,...this.timerFree]) gl.deleteQuery(query);gl.deleteTexture(this.heightMaps);gl.deleteTexture(this.environment);gl.deleteTexture(this.gradientMaps);gl.deleteBuffer(this.vertices);gl.deleteBuffer(this.indices);gl.deleteVertexArray(this.vao);for(const [program] of this.variants)gl.deleteProgram(program);this.frame=null;
   }
 }

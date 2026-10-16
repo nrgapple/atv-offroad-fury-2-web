@@ -6,9 +6,9 @@ export const GRAPHICS_PRESETS = ['auto', 'original', 'enhanced', 'high'];
 // What each resolved preset turns on. `anisotropy` is the requested maximum;
 // the renderer clamps it to the device limit and 0 never touches the sampler.
 export function presetFeatures(preset) {
-  if (preset === 'high') return { preset, interpolation: true, anisotropy: 16, contactShadows: true, dirt: true };
-  if (preset === 'enhanced') return { preset, interpolation: true, anisotropy: 4, contactShadows: true, dirt: true };
-  return { preset: 'original', interpolation: false, anisotropy: 0, contactShadows: false, dirt: false };
+  if (preset === 'high') return { preset, interpolation: true, anisotropy: 16, contactShadows: true, dirt: true, wheelReprojection: true, tireTracks: { capacity: 3600, life: 75 }, shadowMap: 2048, fresnel: true, dust: 96 };
+  if (preset === 'enhanced') return { preset, interpolation: true, anisotropy: 4, contactShadows: true, dirt: true, wheelReprojection: true, tireTracks: { capacity: 600, life: 15 }, shadowMap: 0, fresnel: true, dust: 24 };
+  return { preset: 'original', interpolation: false, anisotropy: 0, contactShadows: false, dirt: false, wheelReprojection: false, tireTracks: null, shadowMap: 0, fresnel: false, dust: 0 };
 }
 
 // Auto picks Enhanced on phones, tablets, touch-primary and low-power devices
@@ -105,12 +105,14 @@ export class Rumble {
 // vehicle gains (or, if negative, loses) ChangeAmount of 255 dirt steps. Zones
 // without them change nothing. The native consumer is not instruction-verified.
 export function parseDirtZones(text) {
-  const zones = Array.from({ length: 8 }, () => ({ time: 0, amount: 0 }));
+  const zones = Array.from({ length: 8 }, () => ({ time: 0, amount: 0, tireTrack: false, dust: false }));
   let zone = -1;
   for (const raw of String(text ?? '').split(/\r?\n/)) {
     const line = raw.split(';')[0].trim();
     const section = /^\[\s*TerrainZone(\d+)\s*\]$/i.exec(line);
     if (line.startsWith('[')) { zone = section && +section[1] >= 1 && +section[1] <= 8 ? +section[1] - 1 : -1; continue; }
+    const flag = zone >= 0 && /^(GenerateTireTrack|GenerateDust)\s*=\s*([TF])/i.exec(line);
+    if (flag) { zones[zone][flag[1].toLowerCase() === 'generatetiretrack' ? 'tireTrack' : 'dust'] = flag[2].toUpperCase() === 'T'; continue; }
     const field = zone >= 0 && /^(DirtAnimChangeTime|DirtAnimChangeAmount)\s*=\s*(-?[\d.]+)\s*$/i.exec(line);
     if (!field) continue;
     const value = Number(field[2]);
@@ -154,4 +156,28 @@ export class DirtBuildup {
     while (this.timer >= time - 1e-6) { this.timer -= time; this.level = Math.max(0, Math.min(255, this.level + amount)); }
     return this.amount;
   }
+}
+
+// Enhanced/High visual wheel re-projection. The recovered order draws wheels
+// from the compression stored before integration (one frame stale), so landing
+// tires can sit about 0.2 ft inside the visible ground. This returns raised
+// presentation compressions for wheels whose bottom is below the visible
+// terrain at their centre, or null when nothing changes. The renderer clamps
+// each value to the quad's suspension travel; the simulation never sees it.
+export const MAX_WHEEL_LIFT = .5;
+export function wheelReprojection(frame, height) {
+  const effects = frame?.wheel_effects, compression = frame?.wheel_compression;
+  if (!effects || !Array.isArray(compression) || compression.length !== 4 || frame.wreck?.phase !== 'Riding' || frame.funny_crash) return null;
+  const [, x, , z] = frame.orientation ?? [1, 0, 0, 0];
+  const up = Math.max(.5, 1 - 2 * (x * x + z * z));
+  let changed = false;
+  const result = compression.map((c, i) => {
+    const center = effects.centers?.[i], radius = effects.radii?.[i];
+    if (!center || !Number.isFinite(radius)) return c;
+    const ground = height(center[0], center[2]), depth = ground - (center[1] - radius);
+    if (!(depth > .01)) return c;
+    changed = true;
+    return c + Math.min(depth / up, MAX_WHEEL_LIFT);
+  });
+  return changed ? result : null;
 }
