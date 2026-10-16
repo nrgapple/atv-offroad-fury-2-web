@@ -1,0 +1,17 @@
+{
+  "id": "one-handed-touch-compass-and-sector-trick-wheel-redesi-305ecfca3798413cad688ae41af9df81",
+  "timestamp": "2026-10-16T04:05:58.461751+00:00",
+  "recorded_at": "2026-10-16T04:06:05.091059+00:00",
+  "kind": "build",
+  "title": "One-handed touch compass and sector trick wheel redesign",
+  "summary": "The touch trick wheel now selects by position, and the drive compass is redesigned around the thumb. The work is on PR #107 and is not public until that merges and deploys.",
+  "details": [
+    "Trick wheel: the eight inner sectors match the two-finger swipe directions. Cat Nac and Cordova, plus the optional flips, sit in a red outer band. The selected sector fills gold and its full name shows above the wheel. Labels are one-line and outlined.",
+    "Compass: silver rim, a red throttle arc over the top, and the cue text sits above the ring, clear of the thumb. Preload uses the original HUD colours: a blue pulse (LIFT FOR PRELOAD) means lift now, an orange burst (PRELOADED) means it was achieved.",
+    "Axis labels, crosshair and the idle 'Hold anywhere to ride' hint are first-run coaching only and fade once the rider has learned the controls. The compass dims while the trick wheel is open.",
+    "Verification on PR #107: touch unit tests pass (24). test_trick_wheel passes in Chromium and WebKit at four viewports. test_enhanced_mobile, test_atv_flips, test_mobile_ui and test_touch pass on actual content in Chromium. Screenshots were captured and inspected by the implementation agent. Other captures (first-run idle hint, compass lift-for-preload, orange PRELOADED burst) are kept in ignored private/reports/devlog-images/touch-ui-redesign-*.png."
+  ],
+  "limitation": "This is an authored browser touch adaptation, not the original PS2 UI. There has been no physical iOS or Android testing. Three touch tests (test_one_handed_touch, test_steering_sensitivity, test_mobile_utilities) remain in the manifest's broken group because they fail on unmodified main for menu-navigation reasons. Not publicly verified: it becomes public only once PR #107 merges and deploys.",
+  "image": "/devlog-images/one-handed-touch-compass-and-sector-trick-wheel-redesi-305ecfca3798413cad688ae41af9df81.png",
+  "caption": "New sector trick wheel over gameplay on a phone viewport: Cat Nac is selected in the red outer band, filled gold, with its full name above the wheel; the compass dims beneath it."
+}
