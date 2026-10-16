@@ -25,6 +25,8 @@ try {
     let state = await waitForGame(page);
     assert.equal(state.weather.active, expected);
     assert.equal(state.weather.native_player_count, 1);
+    // Shipped rain names placed geometry; 00209dd0 builds ScreenRain only for SltName screenrain.
+    assert.equal(state.weather.screen_rain, false);
     assert.equal(Boolean(state.weather.removed_model), !expected && ['nat06', 'sx13'].includes(environment));
     if (expected) {
       assert(state.rainRender.sourceInstances > 0);

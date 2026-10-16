@@ -230,6 +230,7 @@ export const TESTS = {
       'Fails on unmodified origin/main too: expects Pause to suspend the AudioContext; pause now keeps the soundtrack running (PR #40)'
   },
   'test_train_collisions.mjs': { group: 'content' },
+  'test_train_smoke.mjs': { group: 'content' },
   'test_training_start.mjs': { group: 'content' },
   'test_trick_wheel.mjs': { group: 'content-free' },
   'test_ui_polish.mjs': { group: 'content' },
