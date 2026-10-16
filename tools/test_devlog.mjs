@@ -42,8 +42,15 @@ try {
   );
   const latestRecorded = metadata.entries.at(-1);
   assert.equal(await desktop.locator(`#checkpoint-${latestRecorded.id} h2`).textContent(), latestRecorded.title);
-  assert.match(await desktop.locator('#count').textContent(), new RegExp(`^${metadata.entries.length} recorded$`));
+  assert.match(await desktop.locator('#count').textContent(), new RegExp(`^${metadata.entries.length}$`));
   assert.ok(Array.isArray(features) && features.length > 0, 'metadata must define feature areas');
+  // The feature board is a separate tab; checkpoints are shown first.
+  assert.equal(await desktop.locator('#port-status').isHidden(), true);
+  await desktop.locator('#tab-board').click();
+  assert.equal(await desktop.locator('#panel-log').isHidden(), true);
+  assert.equal(await desktop.locator('#tab-board').getAttribute('aria-selected'), 'true');
+  assert.equal(new URL(desktop.url()).hash, '#board');
+  assert.equal(await desktop.locator('#board-count').textContent(), String(features.length));
   const featureCount = features.length;
   const trainFeature = features.find(feature => feature.id === 'arlington-train');
   assert.ok(trainFeature, 'metadata must define the Arlington train feature');
@@ -77,6 +84,13 @@ try {
   }
   await desktop.locator('#feature-category').selectOption('');
   await desktop.locator('#feature-status').selectOption('');
+  await desktop.locator('.status-count[data-status="LIVE"]').click();
+  assert.equal(await desktop.locator('#feature-status').inputValue(), 'LIVE');
+  assert.equal(await desktop.locator('.status-count[data-status="LIVE"]').getAttribute('aria-pressed'), 'true');
+  for (const card of await desktop.locator('.feature-card:not([hidden])').all())
+    assert.equal(await card.getAttribute('data-status'), 'LIVE');
+  await desktop.locator('.status-count[data-status="LIVE"]').click();
+  assert.equal(await desktop.locator('#feature-status').inputValue(), '');
 
   const crashDetails = desktop.locator('#feature-crash-recovery details');
   await crashDetails.locator('summary').click();
@@ -105,13 +119,14 @@ try {
     hasTouch: true
   });
   await observeErrors(mobile);
-  await mobile.goto(new URL('/devlog.html', base).href, { waitUntil: 'networkidle' });
+  await mobile.goto(new URL('/devlog.html#board', base).href, { waitUntil: 'networkidle' });
   await mobile.waitForFunction(() => document.querySelector('#feature-count')?.textContent.includes('features'));
   const dimensions = await mobile.evaluate(() => ({
     width: document.documentElement.clientWidth,
     scrollWidth: document.documentElement.scrollWidth
   }));
   assert.ok(dimensions.scrollWidth <= dimensions.width, `mobile horizontal overflow: ${JSON.stringify(dimensions)}`);
+  assert.equal(await mobile.locator('#tab-board').getAttribute('aria-selected'), 'true', '#board deep link opens the board tab');
   await mobile.locator('#feature-category').selectOption('Vehicle');
   await mobile.locator('#feature-status').selectOption('PARTIAL');
   const mobileFiltered = mobile.locator('.feature-card:not([hidden])');

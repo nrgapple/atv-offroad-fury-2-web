@@ -3,39 +3,47 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#080e26">
+  <meta name="theme-color" content="#140303">
   <title>Fury Remastered · Development log</title>
+  <link rel="stylesheet" href="design-system.css">
   <link rel="stylesheet" href="devlog.css">
   <script type="module" src="devlog.js"></script>
 </head>
 <body>
-  <header>
-    <div><a class="game-name" href="/play.html"><img src="fury-remastered.svg" width="960" height="320" alt="Fury Remastered"></a><h1>Development log</h1></div>
-    <a class="game-link" href="/play.html">Play current build</a>
+  <header class="topbar">
+    <a class="game-name" href="/"><img src="fury-remastered.svg" width="960" height="320" alt="Fury Remastered"></a>
+    <h1>Dev Log</h1>
+    <a class="game-link" href="/play.html">Play <span aria-hidden="true">▸</span></a>
   </header>
-  <main>
-    <section class="current" aria-labelledby="current-title">
-      <div class="section-label">CURRENT BUILD</div>
+  <section class="current" aria-labelledby="current-title">
+    <div class="current-inner">
+      <div class="section-label">Current build</div>
       <h2 id="current-title">Faithful Rust / WebAssembly port</h2>
       <p id="build-state">Loading progress…</p>
       <p id="working-on"></p>
       <div class="refresh"><span class="light" aria-hidden="true"></span><span id="updated" role="status">Checking for updates</span></div>
+    </div>
+  </section>
+  <div id="main-anchor"></div>
+  <nav class="tabs" role="tablist" aria-label="Development log sections">
+    <button type="button" role="tab" id="tab-log" aria-controls="panel-log" aria-selected="true">Checkpoints <span id="count" class="tab-count"></span></button>
+    <button type="button" role="tab" id="tab-board" aria-controls="port-status" aria-selected="false" tabindex="-1">Feature board <span id="board-count" class="tab-count"></span></button>
+  </nav>
+  <main>
+    <section id="panel-log" role="tabpanel" aria-labelledby="tab-log">
+      <div id="entries" class="entries"></div>
+      <noscript>This log needs JavaScript. <a href="devlog.json">Read the checkpoint data.</a></noscript>
     </section>
-    <section id="port-status" class="port-status" aria-labelledby="port-status-title">
+    <section id="port-status" class="port-status" role="tabpanel" aria-labelledby="tab-board" hidden>
       <div class="port-status-heading">
-        <div>
-          <div class="section-label">FEATURE BOARD</div>
-          <h2 id="port-status-title">What is connected, and what is still missing</h2>
-          <p id="port-status-note">Loading the current feature map…</p>
-        </div>
-        <p id="port-release" class="port-release"></p>
+        <h2 id="port-status-title">What is connected, and what is still missing</h2>
+        <p id="port-status-note">Loading the current feature map…</p>
       </div>
-      <div id="status-summary" class="status-summary" aria-label="Count of feature areas by status"></div>
-      <p class="status-count-note">Counts describe feature areas, not percent of the game completed.</p>
-      <div class="next-priorities">
-        <h3>Next priorities</h3>
+      <div id="status-summary" class="status-summary" aria-label="Filter by status"></div>
+      <details id="next-priorities" class="next-priorities" open>
+        <summary>Next priorities</summary>
         <ol id="port-priorities"></ol>
-      </div>
+      </details>
       <div class="status-filters" aria-label="Filter feature board">
         <label>Category
           <select id="feature-category"><option value="">All categories</option></select>
@@ -52,10 +60,11 @@
         <span id="feature-count" role="status" aria-live="polite"></span>
       </div>
       <div id="feature-board" class="feature-board" aria-live="polite"></div>
+      <details class="port-release-box">
+        <summary>Last fully verified public release</summary>
+        <p id="port-release" class="port-release"></p>
+      </details>
     </section>
-    <div class="timeline-heading"><h2>Checkpoints</h2><span id="count"></span></div>
-    <div id="entries"></div>
-    <noscript>This log needs JavaScript. <a href="devlog.json">Read the checkpoint data.</a></noscript>
   </main>
   <footer>Screenshots are captured from the build at each checkpoint. Older screenshots show earlier states. The port is not complete.</footer>
 </body>

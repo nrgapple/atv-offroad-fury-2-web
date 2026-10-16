@@ -55,11 +55,18 @@ function renderPortStatus(port) {
   const counts = new Map(statusNames.map(([status]) => [status, 0]));
   for (const feature of port.features) counts.set(feature.status, (counts.get(feature.status) || 0) + 1);
   $('status-summary').replaceChildren(...statusNames.map(([status, label]) => {
-    const cell = element('div', undefined, 'status-count');
+    const cell = element('button', undefined, 'status-count');
+    cell.type = 'button';
     cell.dataset.status = status;
     cell.append(element('strong', String(counts.get(status) || 0)), element('span', label));
+    cell.onclick = () => {
+      const select = $('feature-status');
+      select.value = select.value === status ? '' : status;
+      filterFeatures();
+    };
     return cell;
   }));
+  $('board-count').textContent = String(port.features.length);
   $('port-priorities').replaceChildren(...(port.next_priorities || []).map((priority) => element('li', priority)));
   const category = $('feature-category');
   const selectedCategory = category.value;
@@ -85,6 +92,7 @@ function filterFeatures() {
     if (visible) shown++;
   }
   $('feature-count').textContent = `Showing ${shown} of ${cards.length} features`;
+  for (const chip of $('status-summary').children) chip.setAttribute('aria-pressed', String(chip.dataset.status === status));
   if (cards.length && shown === 0) {
     let empty = $('feature-board').querySelector('.feature-empty');
     if (!empty) { empty = element('p', 'No features match both filters.', 'feature-empty'); $('feature-board').append(empty); }
@@ -132,7 +140,8 @@ async function refresh() {
         const node = entryCard(entry); node.dataset.revision = encoded; return node;
       });
       $('entries').replaceChildren(...cards);
-      $('count').textContent = `${entries.length} recorded`;
+      $('count').textContent = String(entries.length);
+      if (!revision) revealHashTarget();
       revision = next;
     }
     $('updated').textContent = `Updated ${date(log.updated_at)} · Refreshes every 15 seconds`;
@@ -141,6 +150,37 @@ async function refresh() {
     $('updated').textContent = loaded ? 'Refresh unavailable; showing the last loaded checkpoints.' : 'Could not load the log. Retrying in 15 seconds.';
   }
 }
+const tabs = { log: [$('tab-log'), $('panel-log')], board: [$('tab-board'), $('port-status')] };
+function showTab(name, { focus = false, remember = false } = {}) {
+  for (const [key, [tab, panel]] of Object.entries(tabs)) {
+    const active = key === name;
+    tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
+    panel.hidden = !active;
+    if (active && focus) tab.focus();
+  }
+  if (remember) history.replaceState(null, '', name === 'board' ? '#board' : location.pathname + location.search);
+}
+function tabForHash() {
+  return location.hash === '#board' || location.hash.startsWith('#feature-') ? 'board' : 'log';
+}
+function revealHashTarget() {
+  showTab(tabForHash());
+  const target = location.hash.length > 1 && document.getElementById(decodeURIComponent(location.hash.slice(1)));
+  if (target && target.closest('[role=tabpanel]')) target.scrollIntoView();
+}
+for (const [name, [tab]] of Object.entries(tabs)) {
+  tab.addEventListener('click', () => { showTab(name, { remember: true }); scrollTo({ top: Math.min(scrollY, $('main-anchor').offsetTop) }); });
+  tab.addEventListener('keydown', event => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    showTab(name === 'log' ? 'board' : 'log', { focus: true, remember: true });
+  });
+}
+addEventListener('hashchange', revealHashTarget);
+showTab(tabForHash());
+// Long priority lists push the board below the fold on phones; start them collapsed there.
+if (matchMedia('(max-width: 600px)').matches) $('next-priorities').open = false;
 await refresh();
 setInterval(() => { if (!document.hidden) void refresh(); }, 15000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) void refresh(); });
