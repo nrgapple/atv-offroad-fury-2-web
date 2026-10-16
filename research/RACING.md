@@ -616,3 +616,63 @@ course, as the countdown sign and the manual describe.
 Not reproduced: SCORE uses the port's committed stunt points; the qualifying
 bar and new-record infotexts need championships and saved records; the Pause
 → Overlays toggles; object 41 (place number) as an alternative to the tree.
+
+## Stadium crowd and camera flashes — 2026-10-16
+
+Exact-build evidence (private exports): only scenes with `[Sounds]
+CrowdPresent=T` (all 16 Supercross venues) build the crowd emitter
+(`00213bf0`, `002cb9b0`) and the camera flash manager (`0020f780`).
+
+- **Crowd reactions** (`Audio\Crowd\crowd.aud`, in each race archive): one
+  non-positional crowd voice. Boo when the player wrecks while leading
+  (`001e8a20`); Cheer when the player takes the lead after at least 5s of
+  racing (`001ea930`); the looping Stomp when the final lap begins with the
+  player second (`001e9a00`), stopped when a CPU leads or any racer finishes
+  (`002cc320`); Win when the player finishes first (`00216190`). Boo and
+  Cheer step past an immediate repeat. A playing clip blocks new ones; a
+  Stomp loop gives way. The Am lists are used: the setting that selects Pro
+  (and its Stomp) is unrecovered, and the Oh trigger is unidentified.
+- **Ambient crowd:** each venue `<venue>.aud` places 8 looping
+  `[SoultreeSoundN]` sounds (`crdloop3`–`6`) with Min/MaxDistance, played
+  through the train's recovered stereo attenuation (`00172e70`).
+- **Camera flashes** (`0020f2c0`, `0020ee10`, `[CameraFlash]` in the venue
+  TOY): every `cameraflash.slt` scene model is hidden and pooled (187–493 per
+  venue). Batches of trunc(p · N) random models light for 0.09s. p is
+  ConstantFlashPercent (0.01); a burst ramps it to its target over half of
+  BurstDuration (2s) and back: PlayerWin (0.3) for a player win, AIFinish (0.3)
+  for any other top-3 finish, PlayerStunt (0.4) for a landed player stunt.
+
+Port: `race_crowd` holds the crowd cues and the flash manager; the
+browser hides the pooled models outside the lit batch, plays the cues and
+loops, and the content package adds the 18 crowd clips and four loops to
+`AUDIO.RES`. Previously every flash model was drawn permanently. Freestyle on
+a Supercross venue keeps the loops and constant flashes. AI stunt bursts,
+crowd volume and the race-over `IntOut` music are not reproduced.
+
+## Supercross fireworks — 2026-10-16
+
+Exact-build evidence (private exports; loader `00222170`, crossing handler
+`00223c60`, controller `002217f0`/`00221730`, start `00221840`, countdown
+Deactivate `0020ec20`): each Supercross race TOY declares 28 stream and
+explosion emitters with `StartOn=T`, `[PreRaceFireworks]` listing every
+instance and `[FireworkTriggers]`.
+
+- From load (through the pre-race camera) the emitters run their authored
+  EmitMode 2 random on/off cycles; every countdown update deactivates the
+  pre-race group, so the stadium falls quiet for the countdown.
+- A trigger is an upright gate (TriggerPosition, TriggerLook, TriggerWidth,
+  TriggerHeight). A racer crossing it fires its emitter groups in turn,
+  TimeBetweenGroups apart; each started emitter is forced to one-shot for one
+  on-period and the previous group stops. It fires once on the lap equal to
+  TriggerOnLap (clamped to the last lap), or on every lap with
+  TriggerEveryLap. RaceOrderMatters limits a non-leader to group 0;
+  DontTriggerForAI ignores CPUs. The controller only starts when idle.
+- Trigger 2 is the start gate (lap 0): six pairs of shooters 0.15s apart as
+  the field crosses after GO. Trigger 1 is the finish gate on the last lap.
+
+Port: `race_fireworks::Controller` runs the triggers and sequence and drives
+the ambient emitters by race TOY emitter and instance. A race with firework
+triggers keeps every stream emitter instead of the static packet budget; the
+bounded GPU ring takes the bursts. The gate test is an authored plane
+crossing, not the RaceStatus gate (`002487c0`); the gate drop rotation is
+still not reproduced.

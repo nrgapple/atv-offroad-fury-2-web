@@ -1,0 +1,14 @@
+{
+  "id": "supercross-races-fire-the-original-firework-show-794526183ef44fd5878faef964567051",
+  "timestamp": "2026-10-16T13:03:20.392311+00:00",
+  "recorded_at": "2026-10-16T13:03:49.824594+00:00",
+  "kind": "build",
+  "title": "Supercross races fire the original firework show",
+  "summary": "Supercross races now run the original firework show. The stadium fireworks cycle through the pre-race camera intro, fall silent for the countdown, then the start-gate fireworks fire in six quick groups as the field crosses the gate after GO, and the finish-gate burst fires on the last lap. Before this, the fireworks cycled randomly for the whole race and a fixed budget dropped some of them.",
+  "details": [
+    "Discovery: each Supercross race file defines its firework triggers as upright gates, with the lap each one fires on, the delay between groups and whether only the leader gets the full show. The original's random on/off timer would re-enable a stopped firework, so the port now tracks activation explicitly, like the original controller. Verification: Rust unit tests for trigger parsing, gate crossing, group sequencing and once-per-race firing; content browser tests test_race, test_race_courses and test_frontend; a host sx01 run measured firework particle births rising through the intro, flat during the countdown, and a burst about 1s after GO. Tracked in PR #126, implementation-ready with auto-merge armed. Next open items: race-over music and the start-gate drop."
+  ],
+  "limitation": "The gate test is an authored crossing check, and the start-gate drop rotation is not reproduced. Evidence is host captures, not a verified public release; not yet publicly verified.",
+  "image": "/devlog-images/supercross-races-fire-the-original-firework-show-794526183ef44fd5878faef964567051.png",
+  "caption": "Host capture of the Supercross intro view before the race: dark firework burst streaks are visible over the track and in the sky. The keyboard-controls overlay is also showing."
+}

@@ -123,6 +123,9 @@ pub struct Placement {
     pub type_id: usize,
     pub position: [f32; 3],
     pub start_on: bool,
+    /// The race/mode TOY `[ParticleEmitterN]` number and 1-based instance
+    /// that firework triggers address; None for the common TOY.
+    pub mode_emitter: Option<(usize, usize)>,
 }
 #[derive(Debug, Serialize)]
 pub struct Plan {
@@ -139,10 +142,13 @@ pub fn plan(source: &Source) -> Result<Plan> {
         unresolved: vec![],
     };
     //002427b0 appends sections from successive TOYs; mode is not a replacement.
-    for source_text in [Some(source.common.as_str()), source.mode.as_deref()]
-        .into_iter()
-        .flatten()
-        .filter(|s| !s.is_empty())
+    for (from_mode, source_text) in [
+        (false, Some(source.common.as_str())),
+        (true, source.mode.as_deref()),
+    ]
+    .into_iter()
+    .filter_map(|(m, s)| s.map(|s| (m, s)))
+    .filter(|(_, s)| !s.is_empty())
     {
         let Some(d) = emitter_document(source_text)? else {
             continue;
@@ -177,13 +183,14 @@ pub fn plan(source: &Source) -> Result<Plan> {
                             + m[4 + axis] * offset[1]
                             + m[8 + axis] * offset[2]
                     });
+                    found += 1;
                     result.placements.push(Placement {
                         filename: filename.clone(),
                         type_id,
                         position,
                         start_on,
+                        mode_emitter: from_mode.then_some((i, found)),
                     });
-                    found += 1;
                 }
                 if found < limit {
                     result
@@ -196,6 +203,7 @@ pub fn plan(source: &Source) -> Result<Plan> {
                     type_id,
                     position: vector(&d, &section, "Position")?,
                     start_on,
+                    mode_emitter: from_mode.then_some((i, 1)),
                 });
             }
         }
@@ -352,6 +360,8 @@ struct Runtime {
     frame: usize,
     timer: Timer,
     oscillator: fog::Oscillator,
+    /// Particle group activation (`0020ec20` Deactivate / `00221840` start).
+    active: bool,
 }
 #[derive(Clone)]
 struct Particle {
@@ -575,13 +585,23 @@ impl Effects {
                 first: true,
                 timer,
                 oscillator: fog::Oscillator::default(),
+                active: true,
             });
         }
         // Stream emitters keep their authored order while their worst-case
         // packets fit; race-only firework sets beyond the bounded GPU packet
-        // are reported instead of failing the whole course load.
+        // are reported instead of failing the whole course load. A race with
+        // firework triggers keeps every emitter: the countdown stops them and
+        // the triggers fire a few at a time into the bounded ring.
+        let sequenced = source
+            .mode
+            .as_deref()
+            .is_some_and(|m| m.to_ascii_lowercase().contains("[fireworktriggers]"));
         let mut stream_budget = 0usize;
         runtime.retain(|r| {
+            if sequenced {
+                return true;
+            }
             let Some(c) = r.definition.stream.as_ref() else {
                 return true;
             };
@@ -733,6 +753,9 @@ impl Effects {
                 r.first = false;
                 continue;
             } //0019a680 constructor dirty-position gate.
+            if !r.active {
+                continue;
+            }
             if !r.timer.active(
                 r.definition.emit_mode,
                 r.definition.on_range,
@@ -939,6 +962,36 @@ impl Effects {
             })
             .collect()
     }
+    /// Firework controller start (`00221840`): force one-shot emission for
+    /// one on-period and activate; or stop the emitter.
+    pub fn set_mode_emitter(&mut self, emitter: usize, instance: usize, fire: bool) {
+        for r in &mut self.runtime {
+            if r.placement.mode_emitter != Some((emitter, instance)) {
+                continue;
+            }
+            if fire {
+                let [low, high] = r.definition.on_range;
+                r.definition.emit_mode = 1;
+                r.active = true;
+                r.timer = Timer {
+                    on: true,
+                    remaining: low + (high - low) * random(&mut self.random),
+                    delay: 0.,
+                    emitted: false,
+                };
+            } else {
+                r.active = false;
+                r.timer.on = false;
+            }
+        }
+    }
+    /// ParticleGroupController Deactivate (`0020ec20`): stop every race
+    /// TOY emitter, as the countdown does for the pre-race fireworks.
+    pub fn stop_mode_emitters(&mut self, emitters: &[(usize, usize)]) {
+        for &(emitter, instance) in emitters {
+            self.set_mode_emitter(emitter, instance, false);
+        }
+    }
     pub fn frame(&self) -> &Frame {
         &self.frame
     }
@@ -1107,9 +1160,11 @@ mod tests {
                     type_id: c.kind,
                     position: c.position,
                     start_on: true,
+                    mode_emitter: None,
                 },
                 definition,
                 oscillator: fog::Oscillator::default(),
+                active: true,
                 phase: c.phase,
                 first: false,
                 frame: if c.kind == 0 { 152 } else { 128 },

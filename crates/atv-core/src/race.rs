@@ -1055,6 +1055,9 @@ pub struct Frame {
     /// Original race overlays, attached by the simulation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hud: Option<crate::race_hud::Frame>,
+    /// Stadium crowd cue, attached by the simulation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crowd: Option<crate::race_crowd::CrowdFrame>,
 }
 pub struct Race {
     pub course: Course,
@@ -1070,6 +1073,9 @@ pub struct Race {
     /// Riders whose finish time was estimated at race over.
     estimated: Vec<bool>,
     random: crate::engine_audio::OriginalRandom,
+    /// Finish-line crossings since the last `take_finishes` (`00216190`):
+    /// (is the player, finishing place). Race-over estimates do not cross.
+    finishes: Vec<(bool, usize)>,
 }
 impl Race {
     pub fn new(course: Course, laps: u32, names: Vec<String>, difficulty: u32) -> Result<Self> {
@@ -1128,6 +1134,7 @@ impl Race {
             progress,
             contacts: 0,
             random: crate::engine_audio::OriginalRandom::with_seed(97211 + 5 * 47),
+            finishes: Vec::new(),
         })
     }
     /// The intro and countdown hold every racer on the grid; physics still
@@ -1170,6 +1177,7 @@ impl Race {
         self.player
             .update(p, &self.course, self.elapsed, self.laps, dt);
         if self.player.finish.is_some() {
+            self.finishes.push((true, self.finished_count()));
             self.race_over();
         }
     }
@@ -1259,6 +1267,18 @@ impl Race {
         };
         -player
     }
+    fn finished_count(&self) -> usize {
+        std::iter::once(&self.player)
+            .chain(&self.progress)
+            .filter(|p| p.finish.is_some())
+            .count()
+    }
+    pub fn laps_completed(&self, cpu: Option<usize>) -> u32 {
+        self.rider(cpu).completed
+    }
+    pub fn take_finishes(&mut self) -> Vec<(bool, usize)> {
+        std::mem::take(&mut self.finishes)
+    }
     /// Racer 0 is the player, then each CPU.
     fn racer(&self, i: usize) -> &Progress {
         if i == 0 {
@@ -1310,8 +1330,13 @@ impl Race {
         o.origin = origin;
         o.yaw = yaw;
         o.physical = physical;
+        let was = p.finish.is_some();
         p.update(origin, &self.course, self.elapsed, self.laps, 1. / 60.);
         o.finished = p.finish.is_some();
+        if !was && o.finished {
+            let place = self.finished_count();
+            self.finishes.push((false, place));
+        }
     }
     fn rider(&self, cpu: Option<usize>) -> &Progress {
         cpu.map_or(&self.player, |i| &self.progress[i])
@@ -1418,6 +1443,7 @@ impl Race {
                 })
                 .collect(),
             hud: None,
+            crowd: None,
             opponents: self.opponents.clone(),
             standings: order
                 .into_iter()

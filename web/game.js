@@ -70,6 +70,7 @@ let simReady = false, simBusy = false, simAccumulator = 0, simFrame, simStart, s
 const motorcyclePresentation = new MotorcyclePresentation();
 const uphillSightline = new UphillSightline();
 let presentedFrame, presentedCamera;
+let litFlashes = new Set();
 let sceneChunks = [], sceneDraws = [], skyChunks = [], ecoGroups = [], ecoBillboard;
 let waterRenderer;
 let trainRenderer;
@@ -267,6 +268,12 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
     if (toyIndex < 0) throw new Error('Original terrain materials are missing.');
     toy = await codec(3, sceneArchive, toyIndex);
   }
+  // CrowdPresent stadiums: crowd.aud lists (races) and <venue>.aud Soultree loops.
+  let crowd = null;
+  if (sceneMetadata.crowd_present) {
+    const text = async name => { const i = entries.findIndex(entry => memberNamed(entry, name)); return i < 0 ? null : decoder.decode(await codec(3, resource, i)); };
+    crowd = { aud: racing ? await text('crowd.aud') : null, soultree: await text(`${environment}.aud`) };
+  }
   const materialFile = files.find(entry => entry.path === model.quad_materials);
   if (!materialFile) throw new Error('Original ATV materials archive is missing.');
   const materialArchive = await read(file, materialFile.lba * 2048, materialFile.bytes), materialEntries = await json(2, materialArchive);
@@ -398,7 +405,7 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
     parts.forEach((p, i) => { view.setUint32(i * 4, p.length, true); bundle.set(p, at); at += p.length; });
     entry.bundle = bundle;
   }
-  return { weather, snow, cpuRiderPose, motorcycle: model.motorcycle ? {archive:quadArchive,id:model.quad_id} : null, bytes, environment, course, cpuNames, cpuRoster, spacingSources, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, ambientEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
+  return { crowd, weather, snow, cpuRiderPose, motorcycle: model.motorcycle ? {archive:quadArchive,id:model.quad_id} : null, bytes, environment, course, cpuNames, cpuRoster, spacingSources, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, ambientEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
 }
 async function baseTextures(mesh, materialArchive, materialEntries, cache = new Map(), multiPass = false) {
   const findMaterial = name => materialEntries.findIndex(entry => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase());
@@ -1285,11 +1292,15 @@ function buildMesh() {
       }
       geometry.set(name, groups);
     }
+    // Stadium cameraflash.slt models are hidden and lit in random batches
+    // (0020f2c0); each keeps its pool index in scene order.
+    let flashes = 0;
     for (const model of world.metadata.models) {
+      const flash = world.metadata.crowd_present && model.name.toLowerCase() === 'cameraflash' ? flashes++ : -1;
       const groups = geometry.get(model.name);
       if (!groups?.length) continue;
       sceneInstances++;
-      for (const chunk of groups) { const matrix = new Float32Array(model.world_matrix); sceneDraws.push({ name: model.name, chunk, matrix, bounds: worldBounds(chunk.bounds, matrix), unlit: chunk.prelit || !model.use_lighting }); sceneTriangles += chunk.count / 3; }
+      for (const chunk of groups) { const matrix = new Float32Array(model.world_matrix); sceneDraws.push({ name: model.name, chunk, matrix, flash, bounds: worldBounds(chunk.bounds, matrix), unlit: chunk.prelit || !model.use_lighting }); sceneTriangles += chunk.count / 3; }
     }
   }
   gl.bindVertexArray(null);
@@ -1453,6 +1464,14 @@ async function startSimulation(source) {
   acceptFrame(await command(23, simStart));
   cpuQuadMatrices = vehicle.nodeMatrices.slice(); cpuRiderMatrices = new Float32Array((source.cpuRiderPose ?? vehicle.rider.pose).world_matrices.flat());
   for (const [index, entry] of (source.course ? source.cpuRoster ?? [] : []).entries()) await json(106, entry.bundle, index);
+  // Stadium crowd: reactions (races), flashes and Soultree ambient loops.
+  litFlashes = new Set();
+  const flashPool = source.world.metadata.crowd_present ? source.world.metadata.models.filter(model => model.name.toLowerCase() === 'cameraflash').length : 0;
+  let stadium = { soultree: [], crowd: [] };
+  try { stadium = await command(115, { crowd: source.course ? source.crowd?.aud ?? null : null, toy: source.toy ? decoder.decode(source.toy) : null, flash_pool: flashPool, soultree: source.crowd?.soultree ?? null }); }
+  catch (error) { diagnostics.crowdError = error.message; await command(115, {}).catch(() => {}); }
+  diagnostics.crowd = { flashPool, soultree: stadium.soultree.length, reactions: stadium.crowd.length };
+  void audio.loadStadium(stadium).catch(error => { diagnostics.audioError = error.message; });
   const intro = !raceRestarting; raceRestarting = false;
   if (source.course) await command(96,{active:true,intro,laps:raceSettings.laps,difficulty:raceSettings.difficulty,names:source.cpuNames.slice(0,raceSettings.cpu),spacing_sources:source.spacingSources});
   raceCourse = source.course;
@@ -1510,8 +1529,9 @@ async function pumpSimulation() {
     diagnostics.physicsBatchSteps = count;
     if (token !== simGeneration) return;
     const previousFrame = simFrame, previousCamera = cameraFrame;
-    for (const { frame, camera: cameraResult, water, train, scenery_uv, scenery_textures, race, ambient, snow } of frames) {
-      if(race){frame.race=race;startLightSound(race);}
+    for (const { frame, camera: cameraResult, water, train, scenery_uv, scenery_textures, race, ambient, snow, flashes } of frames) {
+      if(race){frame.race=race;startLightSound(race);if(race.crowd)audio.crowdCue(race.crowd);}
+      if(flashes){litFlashes=new Set(flashes);diagnostics.flashes=flashes.length;}
       acceptFrame(frame);
       if(ambient&&terrain.ambientEffectsSource){terrain.ambientEffectsSource.frame=ambient;ambientEffectsRenderer?.accept(ambient);diagnostics.ambientEffects.frame=ambient;}
       if(snow&&snowRenderer){snowRenderer.accept(snow);Object.assign(diagnostics.snow,{time:snow.time,births:snow.total_emitted,activeEmitters:snow.active_emitters,live:terrain.snowSource.history.reduce((n,birth)=>n+Number(Math.fround(snow.time-birth.time)<=birth.life),0)});}
@@ -1696,7 +1716,8 @@ function render(time) {
   gl.uniform3f(uniforms.surfaceColor, .68, .70, .73);
   let previousSceneryChunk=null,previousSceneryUnlit=null,materialUpdates=0,rainDraws=0,rainVisibleInstances=0,rainMaterialUpdates=0;
   const rainName=terrain.rainModelName;
-  for (const { name, chunk, matrix, unlit, bounds } of sceneDraws) {
+  for (const { name, chunk, matrix, unlit, bounds, flash } of sceneDraws) {
+    if(flash>=0&&!litFlashes.has(flash))continue;
     if(outsideView(bounds,planes))continue;
     const rain=name.toLowerCase()===rainName;
     if(rain){rainDraws++;rainVisibleInstances++;}
