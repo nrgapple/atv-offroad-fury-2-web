@@ -98,6 +98,11 @@ struct Simulation {
     crowd_wrecked: bool,
     crowd_laps: usize,
     stunt_landed: bool,
+    /// The race TOY behind the ambient emitters, and the firework triggers
+    /// with each racer's previous position.
+    race_mode_toy: Option<String>,
+    race_fireworks: Option<atv_core::race_fireworks::Controller>,
+    firework_positions: Vec<[f32; 3]>,
     /// The course's pre-race camera shots (`<venue>nat<n>.vub`) and the
     /// intro camera playing them before the countdown.
     race_shots: Vec<Vec<atv_core::race_intro::ShotFrame>>,
@@ -1857,6 +1862,10 @@ fn race_controls(sim: &mut Simulation) -> Result<Option<atv_core::vehicle::Vehic
 fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
     if let Some(race) = &mut sim.race {
         let player = race_player(sim.vehicle.as_ref(), sim.motorcycle.as_ref())?;
+        let laps_before: Vec<u32> = std::iter::once(None)
+            .chain((0..race.opponents().len()).map(Some))
+            .map(|r| race.laps_completed(r))
+            .collect();
         race.step(player.origin, 1. / 60.);
         let [w, x, y, z] = player.orientation;
         let yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
@@ -2054,6 +2063,47 @@ fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
             });
             race_frame.crowd = (frame.cue.is_some() || frame.stop_loop).then_some(frame);
         }
+        // Supercross fireworks: the countdown stops the pre-race set; racers
+        // crossing the start/finish triggers fire their groups (00223c60).
+        if sim.race_fireworks.is_none() {
+            let fireworks = sim
+                .race_mode_toy
+                .as_deref()
+                .map(atv_core::race_fireworks::parse)
+                .transpose()?
+                .unwrap_or_default();
+            sim.race_fireworks = Some(atv_core::race_fireworks::Controller::new(
+                fireworks,
+                race_frame.laps,
+            ));
+        }
+        let current: Vec<[f32; 3]> = std::iter::once(player.origin)
+            .chain(race_frame.opponents.iter().map(|o| o.origin))
+            .collect();
+        if sim.firework_positions.len() != current.len() {
+            sim.firework_positions = current.clone();
+        }
+        let racers: Vec<_> = current
+            .iter()
+            .zip(&sim.firework_positions)
+            .enumerate()
+            .map(|(i, (now, before))| atv_core::race_fireworks::Racer {
+                previous: *before,
+                current: *now,
+                laps: laps_before.get(i).copied().unwrap_or(0),
+                place: race_frame.ranks.get(i).copied().unwrap_or(0),
+                cpu: i > 0,
+            })
+            .collect();
+        sim.firework_positions = current;
+        let commands = sim.race_fireworks.as_mut().map_or_else(Vec::new, |c| {
+            c.step(1. / 60., race_frame.phase == "countdown", &racers)
+        });
+        if let Some(ambient) = sim.ambient.as_mut() {
+            for (emitter, instance, fire) in commands {
+                ambient.set_mode_emitter(emitter, instance, fire);
+            }
+        }
         race_frame.hud = Some(sim.race_hud.step(
             1. / 60.,
             &atv_core::race_hud::Input {
@@ -2207,7 +2257,11 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
                 .map_err(|e| e.to_string());
         }
         let (effects, metadata) = atv_core::ambient_effects::Effects::from_source(&source)?;
-        SIMULATION.with_borrow_mut(|sim| sim.ambient = Some(effects));
+        SIMULATION.with_borrow_mut(|sim| {
+            sim.ambient = Some(effects);
+            sim.race_mode_toy = source.mode.clone();
+            sim.race_fireworks = None;
+        });
         return serde_json::to_vec(&metadata).map_err(|e| e.to_string());
     }
     if op == 132 {
@@ -2459,6 +2513,8 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             sim.race_hud = atv_core::race_hud::RaceHud::default();
             sim.crowd_laps = 0;
             sim.crowd_wrecked = false;
+            sim.race_fireworks = None;
+            sim.firework_positions.clear();
             end_race_director(sim);
             if sim.motorcycle.is_none()
                 && let Some(vehicle) = sim.vehicle.as_mut()

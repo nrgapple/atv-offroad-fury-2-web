@@ -1273,6 +1273,9 @@ impl Race {
             .filter(|p| p.finish.is_some())
             .count()
     }
+    pub fn laps_completed(&self, cpu: Option<usize>) -> u32 {
+        self.rider(cpu).completed
+    }
     pub fn take_finishes(&mut self) -> Vec<(bool, usize)> {
         std::mem::take(&mut self.finishes)
     }
