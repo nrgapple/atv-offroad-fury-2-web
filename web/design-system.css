@@ -3,6 +3,8 @@
 :root {
   --atv-red: #9c1414;
   --atv-red-deep: #210504;
+  /* Brand red lifted for thin strokes over the dark 3D scene. */
+  --atv-red-bright: #e0262a;
   --atv-silver: #b9b9b9;
   --atv-silver-light: #e9e9e9;
   --atv-ink: #080808;
@@ -12,6 +14,8 @@
   --atv-gold-light: #fffaa1;
   --atv-gold-deep: #a99900;
   --atv-orange: #f4a13c;
+  /* Original HUD preload opportunity (blue) beside achieved preload (orange). */
+  --atv-preload-blue: #3f9cff;
   --atv-focus: var(--atv-gold-light);
   --atv-surface: linear-gradient(160deg, #383838ed, #080808d9);
   --atv-metal-edge: #b9b9b98c;

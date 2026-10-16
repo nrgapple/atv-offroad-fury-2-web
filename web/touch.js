@@ -10,23 +10,31 @@ export function loadSteeringSensitivity(read = () => localStorage.getItem('atv-m
 }
 // Scale displacement BEFORE clipping so a larger drag can still reach full lock.
 const steeringAxis = (dx, sensitivity) => clamp(dx / 70 * sensitivity / 100);
-// Clockwise from twelve o'clock. These reuse the ten existing touch stunts.
+// Screen angles (y down). The eight inner sectors sit where the standard
+// two-finger swipes point; the circle stunts sit in the outer band above,
+// Cat Nac to the clockwise side. These reuse the ten existing touch stunts.
+const deg = d => d * Math.PI / 180;
 export const TRICK_WHEEL = [
-  { name: 'Nac Nac', modifiers: 1, axes: [0, -1] },
-  { name: 'Point Back', modifiers: 2, axes: [1, 0] },
-  { name: 'Bar Hop', modifiers: 1, axes: [1, 0] },
-  { name: 'Cat Nac', modifiers: 3, axes: [0, -1] },
-  { name: 'Cliff Hanger', modifiers: 2, axes: [0, 1] },
-  { name: 'No Footed Can Can', modifiers: 1, axes: [0, 1] },
-  { name: 'Nothing', modifiers: 2, axes: [-1, 0] },
-  { name: 'Cordova', modifiers: 3, axes: [0, 1] },
-  { name: 'Suicide No Hander', modifiers: 1, axes: [-1, 0] },
-  { name: 'Heel Clicker', modifiers: 2, axes: [0, -1] },
+  { name: 'Nac Nac', label: 'Nac Nac', modifiers: 1, axes: [0, -1], angle: deg(-90), span: deg(22.5) },
+  { name: 'Point Back', label: 'Point Back', modifiers: 2, axes: [1, 0], angle: deg(-45), span: deg(22.5) },
+  { name: 'Bar Hop', label: 'Bar Hop', modifiers: 1, axes: [1, 0], angle: 0, span: deg(22.5) },
+  { name: 'Cliff Hanger', label: 'Cliff Hanger', modifiers: 2, axes: [0, 1], angle: deg(45), span: deg(22.5) },
+  { name: 'No Footed Can Can', label: 'Can Can', modifiers: 1, axes: [0, 1], angle: deg(90), span: deg(22.5) },
+  { name: 'Nothing', label: 'Nothing', modifiers: 2, axes: [-1, 0], angle: deg(135), span: deg(22.5) },
+  { name: 'Suicide No Hander', label: 'No Hander', modifiers: 1, axes: [-1, 0], angle: deg(180), span: deg(22.5) },
+  { name: 'Heel Clicker', label: 'Heel Clicker', modifiers: 2, axes: [0, -1], angle: deg(-135), span: deg(22.5) },
+  { name: 'Cat Nac', label: 'Cat Nac', modifiers: 3, axes: [0, -1], angle: deg(-60), span: deg(22.5), outer: true },
+  { name: 'Cordova', label: 'Cordova', modifiers: 3, axes: [0, 1], angle: deg(-120), span: deg(22.5), outer: true },
 ];
+// The outer band starts here; its gaps (including straight up) fall
+// through to the inner sector in that direction.
+export const OUTER_DISTANCE = 132;
+const INNER_TRICKS = TRICK_WHEEL.filter(t => !t.outer), OUTER_TRICKS = TRICK_WHEEL.filter(t => t.outer);
+const sectorAt = (choices, angle) => choices.find(c => Math.abs(Math.atan2(Math.sin(angle - c.angle), Math.cos(angle - c.angle))) <= c.span) ?? null;
 export function trickWheelSelection(dx, dy) {
   if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.hypot(dx, dy) < 28) return null;
-  const turn = (Math.atan2(dy, dx) + Math.PI / 2 + Math.PI * 2) % (Math.PI * 2);
-  return TRICK_WHEEL[Math.round(turn / (Math.PI * 2) * TRICK_WHEEL.length) % TRICK_WHEEL.length];
+  const angle = Math.atan2(dy, dx);
+  return (Math.hypot(dx, dy) >= OUTER_DISTANCE && sectorAt(OUTER_TRICKS, angle)) || sectorAt(INNER_TRICKS, angle);
 }
 // Optional Extras flips come from the driving thumb. Pull it fully back (or
 // fully left/right) and lift: on the ramp the lift is also the jump, and in
@@ -227,60 +235,104 @@ export function oneHandedFeedback(input, frame) {
   };
 }
 
+// First-run coaching: compass axis labels and the idle hint show for the
+// first COACH_RIDES page sessions, wheel instructions for the first
+// COACH_WHEEL wheel opens. Storage denial keeps coaching for this session.
+const COACH_RIDES = 3, COACH_WHEEL = 5;
+const coachCount = key => { try { return Number(localStorage.getItem(key)) || 0; } catch { return 0; } };
+const saveCoachCount = (key, value) => { try { localStorage.setItem(key, String(value)); } catch { /* Session-only count. */ } };
+const SVG_NS = 'http://www.w3.org/2000/svg';
+// Wheel geometry in CSS pixels from its centre; the outer band starts at OUTER_DISTANCE.
+const WHEEL_RADIUS = 156, HUB = 28, INNER_EDGE = 126, INNER_LABEL = 80, OUTER_LABEL = 143, SIDE_MARGIN = 160;
+const sectorPath = ({ angle, span }, inner, outer, gap) => {
+  const a0 = angle - span + gap, a1 = angle + span - gap;
+  const at = (r, a) => `${(r * Math.cos(a)).toFixed(2)} ${(r * Math.sin(a)).toFixed(2)}`;
+  return `M${at(inner, a0)}L${at(outer, a0)}A${outer} ${outer} 0 0 1 ${at(outer, a1)}L${at(inner, a1)}A${inner} ${inner} 0 0 0 ${at(inner, a0)}Z`;
+};
+
 export function mountTouchControls({ active, focus, surface, parent = document.body, utilities = document.querySelector('#toolbar'), flips = () => false }) {
   const input = new TouchInput();
   input.setOneHanded(loadOneHandedPreference());
   input.steeringSensitivity = loadSteeringSensitivity();
   let touched = false, airborne = false, lastFrame = null;
+  let rides = coachCount('atv-touch-coach-rides'), wheelOpens = coachCount('atv-touch-coach-wheel'), rodeThisSession = false;
   const utilityPointers = new Map();
   const root = document.createElement('div'); root.id = 'touch-controls'; root.setAttribute('aria-hidden', 'true');
-  root.innerHTML = '<div class="touch-rider-marker"><b class="touch-axis forward">FWD</b><b class="touch-axis back">BACK</b><b class="touch-axis left">L</b><b class="touch-axis right">R</b><em class="touch-direction"></em><i></i><span>PRELOAD</span></div>';
+  root.innerHTML = '<div class="touch-rider-marker"><svg class="touch-ring" viewBox="0 0 96 96"><defs><linearGradient id="touch-ring-metal" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f4f4f4"/><stop offset=".45" stop-color="#9a9a9a"/><stop offset=".55" stop-color="#5c5c5c"/><stop offset="1" stop-color="#c9c9c9"/></linearGradient></defs><circle class="touch-ring-shadow" cx="48" cy="48" r="46.5"/><circle class="touch-ring-rim" cx="48" cy="48" r="44"/><circle class="touch-ring-throttle" cx="48" cy="48" r="44" pathLength="100"/><circle class="touch-ring-preload" cx="48" cy="48" r="38.5" pathLength="100"/></svg><b class="touch-axis forward">FWD</b><b class="touch-axis back">BACK</b><b class="touch-axis left">L</b><b class="touch-axis right">R</b><em class="touch-direction"></em><i></i><span>PRELOAD</span></div>' +
+    '<div class="touch-idle-hint"><i></i><b></b><small></small></div>';
   parent.append(root);
   const marker = root.firstElementChild, label = marker.querySelector('span');
+  const throttleArc = marker.querySelector('.touch-ring-throttle');
+  const hint = root.querySelector('.touch-idle-hint');
   const wheel = document.createElement('div'); wheel.className = 'touch-trick-wheel'; wheel.hidden = true;
-  wheel.innerHTML = '<div class="touch-trick-ring"></div><div class="touch-trick-center">TRICKS<small>DRAG · RELEASE</small></div><i class="touch-trick-pointer"></i><span class="touch-trick-cue"></span>';
-  const choices = TRICK_WHEEL.map((trick, index) => {
-    const choice = document.createElement('b'); choice.className = 'touch-trick-choice'; choice.textContent = trick.name;
-    const angle = index / TRICK_WHEEL.length * Math.PI * 2 - Math.PI / 2;
-    choice.style.left = `${124 + Math.cos(angle) * 88}px`; choice.style.top = `${124 + Math.sin(angle) * 88}px`;
-    wheel.append(choice); return choice;
-  });
+  wheel.innerHTML = `<svg class="touch-trick-sectors" viewBox="${-WHEEL_RADIUS} ${-WHEEL_RADIUS} ${WHEEL_RADIUS * 2} ${WHEEL_RADIUS * 2}"><defs><radialGradient id="touch-trick-gold" cx="0" cy="0" r="${WHEEL_RADIUS}" gradientUnits="userSpaceOnUse"><stop offset=".2" stop-color="#fff7b8"/><stop offset=".55" stop-color="#e5d360"/><stop offset="1" stop-color="#a88604"/></radialGradient></defs><circle class="touch-trick-hub" r="${HUB - 2}"/></svg><span class="touch-trick-name"></span><div class="touch-trick-center"></div><span class="touch-trick-cue"></span>`;
+  const sectors = wheel.firstElementChild;
+  // Sector shapes precede labels so the selection reads by position before text.
+  const addSector = (choice, inner, outer, kind) => {
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', sectorPath(choice, inner, outer, kind === 'inner' ? .035 : .025));
+    path.setAttribute('class', `touch-trick-sector ${kind}`);
+    sectors.insertBefore(path, sectors.querySelector('.touch-trick-hub')); return path;
+  };
+  const addLabel = (choice, radius, className) => {
+    const element = document.createElement('b'); element.className = className; element.textContent = choice.label;
+    element.style.left = `${WHEEL_RADIUS + Math.cos(choice.angle) * radius}px`; element.style.top = `${WHEEL_RADIUS + Math.sin(choice.angle) * radius}px`;
+    wheel.append(element); return element;
+  };
+  const trickSectors = TRICK_WHEEL.map(trick => trick.outer ? addSector(trick, OUTER_DISTANCE + 2, WHEEL_RADIUS, 'outer') : addSector(trick, HUB, INNER_EDGE, 'inner'));
+  const choices = TRICK_WHEEL.map(trick => addLabel(trick, trick.outer ? OUTER_LABEL : INNER_LABEL, `touch-trick-choice${trick.outer ? ' outer' : ''}`));
   root.append(wheel);
+  const wheelName = wheel.querySelector('.touch-trick-name'), wheelCenter = wheel.querySelector('.touch-trick-center'), wheelCue = wheel.querySelector('.touch-trick-cue');
   let wheelKey = null;
   const placeWheel = () => {
     const pointer = input.secondary?.pointer;
     if (pointer?.mode !== 'radial') return;
     // The displayed origin also owns selection, making every label reachable
     // near an edge. A stationary press never selects despite this adjustment.
-    pointer.x = Math.max(126, Math.min(innerWidth - 126, pointer.currentX));
-    pointer.y = Math.max(150, Math.min(innerHeight - 142, pointer.currentY));
+    // The top margin keeps the trick name above the wheel; the bottom the cue.
+    pointer.x = innerWidth < SIDE_MARGIN * 2 ? innerWidth / 2 : Math.max(SIDE_MARGIN, Math.min(innerWidth - SIDE_MARGIN, pointer.currentX));
+    pointer.y = Math.max(WHEEL_RADIUS + 26, Math.min(innerHeight - WHEEL_RADIUS - 16, pointer.currentY));
   };
   const presentWheel = () => {
     const pointer = input.secondary?.pointer;
-    const visible = input.oneHanded && input.pointer && pointer?.mode === 'radial';
+    const visible = Boolean(input.oneHanded && input.pointer && pointer?.mode === 'radial');
+    if (visible && wheel.hidden) saveCoachCount('atv-touch-coach-wheel', ++wheelOpens);
     wheel.hidden = !visible;
+    root.dataset.wheel = String(visible);
     if (!visible) { wheelKey = null; return; }
     const index = TRICK_WHEEL.indexOf(pointer.selection);
-    const key = [pointer.x, pointer.y, index].join('|');
+    const coach = wheelOpens <= COACH_WHEEL;
+    const key = [pointer.x, pointer.y, index, coach].join('|');
     if (key === wheelKey) return;
     wheelKey = key;
     wheel.style.left = `${pointer.x}px`; wheel.style.top = `${pointer.y}px`;
     wheel.dataset.selected = String(index >= 0);
-    wheel.style.setProperty('--trick-angle', `${index / TRICK_WHEEL.length * Math.PI * 2 - Math.PI / 2}rad`);
+    wheel.dataset.coach = String(coach);
+    trickSectors.forEach((sector, i) => sector.classList.toggle('selected', i === index));
     choices.forEach((choice, i) => choice.classList.toggle('selected', i === index));
-    wheel.querySelector('.touch-trick-cue').textContent = pointer.selection ? `${pointer.selection.name} · RELEASE` : 'CENTER TO CANCEL';
+    wheelName.textContent = pointer.selection?.name ?? '';
+    wheelCenter.textContent = coach && !pointer.selection ? 'TRICKS' : '';
+    wheelCue.textContent = !coach ? '' : pointer.selection ? 'LIFT TO PERFORM · CENTER CANCELS' : 'DRAG TO A TRICK · LIFT TO PERFORM';
   };
   let presentationKey = null;
   const present = () => {
     root.dataset.oneHanded = String(input.oneHanded);
+    root.dataset.coach = String(rides <= COACH_RIDES);
+    root.dataset.hint = String(!rodeThisSession && rides < COACH_RIDES);
+    root.dataset.drive = input.oneHanded && input.secondary?.pointer && !input.airborne ? 'reverse' : 'forward';
     presentWheel();
+    // The red throttle arc fills like a gauge with the held drive axis.
+    const throttle = input.pointer?.mode === 'drive' ? Math.max(0, input.pointer.axis) : 0;
+    throttleArc.style.strokeDasharray = `${(root.dataset.drive === 'reverse' ? 1 : throttle) * 42} 100`;
     if (!input.oneHanded) return;
     const state = oneHandedFeedback(input, lastFrame);
-    const key = [state.steer, state.lean, state.cue].join('|');
+    // The release burst keeps naming achieved preload after the thumb lifts.
+    const cue = state.cue || (lastFrame?.preload_active ? 'PRELOADED' : '');
+    const key = [state.steer, state.lean, cue].join('|');
     if (key === presentationKey) return;
     presentationKey = key;
-    label.textContent = state.cue;
-    marker.dataset.flip = String(FLIPS.some(flip => flip.cue === state.cue));
+    label.textContent = cue;
+    marker.dataset.flip = String(FLIPS.some(flip => flip.cue === cue));
     marker.style.setProperty('--steer', `${state.steer * 34}px`);
     marker.style.setProperty('--lean', `${state.lean * 34}px`);
     marker.style.setProperty('--angle', `${Math.atan2(state.lean, state.steer)}rad`);
@@ -288,11 +340,17 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
   };
   const airLabel = () => input.flips ? 'SWIPE · LONG SWIPE FLIPS' : 'SWIPE / CIRCLE';
   const coarse = window.matchMedia('(any-pointer: coarse)');
+  let hintMode = null;
   const refresh = () => {
     input.flips = Boolean(flips());
     if (input.secondary) input.secondary.flips = input.flips;
     root.hidden = !active();
     document.body.classList.toggle('touch-driving', !root.hidden && (coarse.matches || touched));
+    if (hintMode !== input.oneHanded) {
+      hintMode = input.oneHanded;
+      hint.querySelector('b').textContent = input.oneHanded ? 'HOLD ANYWHERE TO RIDE' : 'HOLD RIGHT SIDE TO RIDE';
+      hint.querySelector('small').textContent = input.oneHanded ? 'DRAG TO STEER & LEAN · LIFT ON RAMPS TO JUMP' : 'LEFT THUMB STEERS & LEANS · LIFT ON RAMPS TO JUMP';
+    }
     present();
   };
   const clear = () => { input.clear(); utilityPointers.clear(); lastFrame = null; root.classList.remove('held'); root.dataset.preload = 'idle'; refresh(); };
@@ -305,9 +363,12 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
     if (input.secondary?.owns(event.pointerId)) placeWheel();
     surface.setPointerCapture(event.pointerId); root.classList.add('held');
     if (input.pointer?.id === event.pointerId) {
-      // Keep the visual compass and labels on screen without moving the input origin.
-      marker.style.left = `${input.oneHanded ? Math.max(74, Math.min(innerWidth - 74, event.clientX)) : event.clientX}px`;
-      marker.style.top = `${input.oneHanded ? Math.max(82, Math.min(innerHeight - 92, event.clientY)) : event.clientY}px`;
+      if (!rodeThisSession) { rodeThisSession = true; saveCoachCount('atv-touch-coach-rides', ++rides); }
+      // Keep the visual compass and its cue (above the ring, clear of the
+      // thumb) on screen without moving the input origin.
+      const [side, top, bottom] = input.oneHanded ? [74, 82, 60] : [72, 64, 40];
+      marker.style.left = `${Math.max(side, Math.min(innerWidth - side, event.clientX))}px`;
+      marker.style.top = `${Math.max(top, Math.min(innerHeight - bottom, event.clientY))}px`;
       marker.style.setProperty('--drive', '-30px');
     }
     if (!input.oneHanded) label.textContent = airborne ? airLabel() : 'PRELOAD';

@@ -107,7 +107,8 @@ for (const [name, engine] of [
         const target = await page.locator('.touch-trick-choice').nth(index).boundingBox();
         const selected = { ...secondary, x: target.x + target.width / 2, y: target.y + target.height / 2 };
         await touch('touchMove', [moved, selected]);
-        assert.equal(await page.locator('.touch-trick-choice.selected').textContent(), trick.name);
+        assert.equal(await page.locator('.touch-trick-choice.selected').textContent(), trick.label);
+        assert.equal(await page.locator('.touch-trick-name').textContent(), trick.name, 'full name shown above the wheel');
         assert(
           await page
             .locator('.touch-trick-choice, .touch-trick-cue, .touch-trick-center, .touch-rider-marker span')
@@ -159,9 +160,9 @@ for (const [name, engine] of [
           const target = await page.locator('.touch-trick-choice').nth(index).boundingBox();
           const chosen = { ...second, x: target.x + target.width / 2, y: target.y + target.height / 2 };
           await touch('touchMove', [moved, chosen]);
-          assert.equal(await page.locator('.touch-trick-choice.selected').textContent(), tricks[index].name);
+          assert.equal(await page.locator('.touch-trick-choice.selected').textContent(), tricks[index].label);
           const center = await wheel.boundingBox();
-          const neutral = { ...second, x: center.x + 124, y: center.y + 124 };
+          const neutral = { ...second, x: center.x + center.width / 2, y: center.y + center.height / 2 };
           await touch('touchMove', [moved, neutral]);
           assert.equal(await page.locator('.touch-trick-choice.selected').count(), 0);
           await touch('touchEnd', [neutral]);

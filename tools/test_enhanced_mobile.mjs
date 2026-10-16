@@ -104,8 +104,8 @@ try {
       polling: 'raf'
     });
     await touch('touchStart', [primary, second]);
-    const index = gesture === 'up' ? 0 : gesture === 'cat-nac' ? 3 : 7;
-    const target = await page.locator('.touch-trick-choice').nth(index).boundingBox();
+    const label = gesture === 'up' ? 'Nac Nac' : gesture === 'cat-nac' ? 'Cat Nac' : 'Cordova';
+    const target = await page.locator('.touch-trick-choice', { hasText: label }).boundingBox();
     const swipe = { ...second, x: target.x + target.width / 2, y: target.y + target.height / 2 };
     await touch('touchMove', [primary, swipe]);
     const preview = await page.evaluate(() => ({
