@@ -240,6 +240,13 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
         .filter(|n| (1..=4).contains(n))
         .ok_or("invalid motorcycle batch")?;
     let raw = source.get("input").ok_or("missing motorcycle input")?;
+    if source
+        .get("skip_intro")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        super::skip_race_intro(sim);
+    }
     let mut frames = Vec::new();
     for _ in 0..count {
         let mut driving: VehicleInput =

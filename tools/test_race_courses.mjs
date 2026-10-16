@@ -112,7 +112,7 @@ try {
     await page.goto(`${base}/play.html?mode=single&activity=race&map=${id}&cpu=4&laps=2&quad=1`);
     await page.waitForFunction(
       () =>
-        window.atvTerrainStatus?.frame?.race?.phase === 'countdown' ||
+        window.atvTerrainStatus?.frame?.race?.phase === 'intro' ||
         document.querySelector('#frontend')?.dataset.error,
       null,
       { timeout: 180000 }
@@ -122,6 +122,15 @@ try {
       null,
       `${id}: ${await page.locator('#menu-notice').textContent()}`
     );
+    // The course's own pre-race camera shots play first; any key skips them.
+    await page.waitForFunction(() => window.atvTerrainStatus.followCamera?.mode === 'intro', null, { timeout: 10000 });
+    const shot = (await state()).followCamera.position;
+    const grid = (await state()).frame.origin;
+    assert(Math.hypot(shot[0] - grid[0], shot[2] - grid[2]) > 20, `${id} intro shot leaves the chase view`);
+    if (output) await page.screenshot({ path: `${output}/race-intro-${id}.png` });
+    await page.keyboard.press('Space');
+    await page.waitForFunction(() => window.atvTerrainStatus.frame.race.phase === 'countdown', null, { timeout: 10000 });
+    await page.waitForFunction(() => window.atvTerrainStatus.followCamera?.mode !== 'intro', null, { timeout: 10000 });
     let s = await state();
     const race = s.frame.race;
     assert.equal(race.field, 5, id);

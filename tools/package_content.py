@@ -550,7 +550,9 @@ def main():
             raise ValueError('exact-build rider BodyImpact bank expected four samples')
         menu_names = {f'ui/uitune{i}{channel}.vag' for i in range(1, 5) for channel in 'lr'}
         weather_names = {'rain.vag'} #00213bf0, only the active scene Rain loop.
-        names = engine_names | train_names | body_names | menu_names | weather_names
+        # Race start: 321 countdown beep/go (002e79a0) and the Supercross gate drop.
+        race_names = {'beep01.vag', 'go.vag', 'gate.vag'}
+        names = engine_names | train_names | body_names | menu_names | weather_names | race_names
         audio = Resource(source('/AUDIO/AUDIO.RES'))
         samples = [(name, audio.extract(i)) for i, (name, _, _) in enumerate(audio.members) if name.lower().removeprefix('audio/') in names]
         if len(samples) != len(names):

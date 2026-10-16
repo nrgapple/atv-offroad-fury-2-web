@@ -98,6 +98,7 @@ pub mod player_models;
 pub mod cpu_avoidance;
 pub mod race;
 pub mod race_ai;
+pub mod race_intro;
 pub mod race_roster;
 pub mod rider_gear;
 
