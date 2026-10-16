@@ -1153,7 +1153,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                     ),
                     (
                         if request.flips {
-                            "Flips: Unleashed (L1 + stick)"
+                            "Flips: Unleashed backflip & 360"
                         } else {
                             "Flips: Off (original)"
                         },
@@ -1792,7 +1792,7 @@ mod tests {
         let enhanced = labels(enhanced);
         assert_eq!(enhanced[0], "Crashes: Crazy");
         assert_eq!(enhanced[2], "Chase camera: Assisted");
-        assert_eq!(enhanced[3], "Flips: Unleashed (L1 + stick)");
+        assert_eq!(enhanced[3], "Flips: Unleashed backflip & 360");
     }
     #[test]
     fn minimap_settings_fit_and_validate_sizes() {

@@ -70,11 +70,51 @@ try {
     } else {
       assert(frames.every(f => f.flip === null && (f.events ?? []).length === 0), 'Off must not construct flip state');
       // ATV2 lean alone settles at AeroMoment*ScaleX/AeroDamping = 1 rad/s
-      // (the final airborne sample carries the touchdown impact).
-      const rates = air.slice(0, -1).map(f => Math.abs(f.angular[0]));
+      // (the last samples before touchdown carry contact impacts).
+      const start = frames.findIndex(f => !f.grounded), end = frames.findIndex((f, i) => i > start && f.grounded);
+      const rates = frames.slice(start, end - 3).map(f => Math.abs(f.angular[0]));
       assert(Math.max(...rates) < 1.05, `Off keeps the recovered ATV2 air pitch rate (max ${Math.max(...rates).toFixed(2)})`);
       console.log('flips off: no flip state, original air rates');
     }
+    assertNoErrors(errors);
+    await page.close();
+  }
+  // Touch (default one-handed mode): a second finger in the air opens the
+  // trick wheel; dragging past its dashed ring and lifting picks Backflip.
+  {
+    const errors = [];
+    const page = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }, errors);
+    await page.addInitScript(() => localStorage.setItem('atv-flips', 'unleashed'));
+    await captureSimulation(page, 'flipFrames');
+    const url = new URL('/play.html', base);
+    url.searchParams.set('drive', '1');
+    url.searchParams.set('environment', 'env01');
+    await page.goto(url.href);
+    await waitForGame(page, { until: () => window.atvTerrainStatus.simulation });
+    await page.bringToFront();
+    await page.locator('#game').focus();
+    const cdp = await page.context().newCDPSession(page);
+    const touch = (type, points = []) => cdp.send('Input.dispatchTouchEvent', {
+      type, touchPoints: points.map(point => ({ radiusX: 6, radiusY: 6, force: 1, ...point }))
+    });
+    const thumb = { id: 1, x: 200, y: 640 };
+    await touch('touchStart', [thumb]);
+    await page.waitForFunction(() => window.atvTerrainStatus.frame.preload_armed, null, { timeout: 45000, polling: 'raf' });
+    await touch('touchEnd', [thumb]);
+    await page.waitForFunction(() => !window.atvTerrainStatus.frame.grounded.some(Boolean), null, { timeout: 5000, polling: 'raf' });
+    await touch('touchStart', [thumb]);
+    const finger = { id: 2, x: 195, y: 330 };
+    await touch('touchStart', [thumb, finger]);
+    for (let i = 1; i <= 6; i++) await touch('touchMove', [thumb, { ...finger, y: finger.y + i * 28 }]);
+    const selected = await page.locator('.touch-trick-choice.selected').textContent();
+    if (process.env.ATV_FLIP_TOUCH_SCREENSHOT) await page.screenshot({ path: process.env.ATV_FLIP_TOUCH_SCREENSHOT });
+    await touch('touchEnd', [{ ...finger, y: finger.y + 168 }]);
+    await page.waitForFunction(() => window.flipFrames.some(s => s.frame.flip?.active === 'Backflip'), null, { timeout: 5000, polling: 'raf' });
+    await touch('touchCancel');
+    const frames = await page.evaluate(() => window.flipFrames.map(({ frame }) => frame.flip));
+    assert.equal(selected, 'Backflip', 'dragging past the ring previews Backflip');
+    const peak = Math.max(...frames.map(f => f?.rotation ?? 0));
+    console.log(`touch: wheel selected ${selected}, backflip started, rotation ${(peak * 180 / Math.PI).toFixed(0)} deg so far`);
     assertNoErrors(errors);
     await page.close();
   }

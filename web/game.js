@@ -79,6 +79,7 @@ const keys = new Set(), pointers = new Map();
 const touchLean = new TouchLeanIntent(() => touchControls.steeringSensitivity);
 const touchControls = mountTouchControls({
   surface: canvas,
+  flips: () => crashSettings.flipsEnabled,
   active: () => simReady && focused && !document.hidden && !menuOpen && !lost,
   focus: () => { focused = true; canvas.focus({ preventScroll: true }); syncAudio(); scheduleRender(); },
 });
@@ -1345,6 +1346,7 @@ function drivingInput() {
   input.input_generation = gameplayBindings.generation + touchControls.generation;
   if (touch.stunt_modifiers) Object.assign(input, { stunt_modifiers: touch.stunt_modifiers, stunt_x: touch.stunt_x, stunt_y: touch.stunt_y });
   if (touch.preload_axis !== null) input.preload_axis = touch.preload_axis;
+  if (touch.flip_request) input.flip_request = touch.flip_request;
   input.throttle = Math.max(0, clamp(input.throttle)); input.brake = Math.max(0, clamp(input.brake));
   // Source +X is screen-right; preserve the native steering sign.
   input.steer = clamp(input.steer); // Rust clamps the combined physical lean; one-handed touch also supplies lean.
