@@ -876,6 +876,19 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     flip_mask as u8,
                     [flip_axis("stunt_x"), flip_axis("stunt_y")],
                 )?;
+                match raw.get("flip_request").and_then(serde_json::Value::as_str) {
+                    None => {}
+                    Some("backflip") => {
+                        vehicle.request_flip(atv_core::flip_tricks::Trick::Backflip)
+                    }
+                    Some("left") => {
+                        vehicle.request_flip(atv_core::flip_tricks::Trick::ThreeSixtyLeft)
+                    }
+                    Some("right") => {
+                        vehicle.request_flip(atv_core::flip_tricks::Trick::ThreeSixtyRight)
+                    }
+                    Some(_) => return Err("invalid flip request".into()),
+                }
                 vehicle.set_rider_mode(sim.rider_mode);
                 vehicle.set_forced_landing(forced_landing);
                 let wreck = sim

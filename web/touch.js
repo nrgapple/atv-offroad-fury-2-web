@@ -28,15 +28,30 @@ export function trickWheelSelection(dx, dy) {
   const turn = (Math.atan2(dy, dx) + Math.PI / 2 + Math.PI * 2) % (Math.PI * 2);
   return TRICK_WHEEL[Math.round(turn / (Math.PI * 2) * TRICK_WHEEL.length) % TRICK_WHEEL.length];
 }
+// Optional Extras flips sit outside the trick ring: drag further to flip.
+// Down matches leaning back; left/right spin that way. No front flip exists.
+export const FLIP_DISTANCE = 132;
+export const FLIP_WHEEL = [
+  { name: 'Backflip', flip: 'backflip', angle: Math.PI / 2 },
+  { name: '360 Left', flip: 'left', angle: Math.PI },
+  { name: '360 Right', flip: 'right', angle: 0 },
+];
+export function flipWheelSelection(dx, dy) {
+  if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.hypot(dx, dy) < FLIP_DISTANCE) return null;
+  const angle = Math.atan2(dy, dx);
+  return FLIP_WHEEL.find(c => Math.abs(Math.atan2(Math.sin(angle - c.angle), Math.cos(angle - c.angle))) <= Math.PI / 6) ?? null;
+}
+// Two-finger mode: a long straight swipe down/left/right flips.
+export const FLIP_SWIPE = 120;
 // Gesture mappings are browser adaptations of original modifier/direction inputs.
 export class TouchInput {
-  constructor({ radial = false } = {}) { this.radial = radial; this.generation = 0; this.airborne = false; this.oneHanded = false; this.steeringSensitivity = 100; this.clear(); }
+  constructor({ radial = false } = {}) { this.radial = radial; this.generation = 0; this.airborne = false; this.oneHanded = false; this.flips = false; this.steeringSensitivity = 100; this.clear(); }
   clear() { this.generation++; this.pointer = null; this.secondary = null; this.pendingSelection = null; this.sampled = false; this.releasePending = false; }
   owns(id) { return this.pointer?.id === id || this.secondary?.owns(id) === true; }
   begin(id, x = 0, y = 0, airborne = this.airborne) {
     if (this.pointer) {
       if (!this.oneHanded || this.owns(id) || this.secondary?.pointer) return false;
-      this.secondary = new TouchInput({ radial: true });
+      this.secondary = new TouchInput({ radial: true }); this.secondary.flips = this.flips;
       return this.secondary.begin(id, x, y, airborne);
     }
     this.secondary = null;
@@ -73,7 +88,8 @@ export class TouchInput {
     if (pointer.mode === 'radial') {
       // Preview is reversible. No modifier is submitted until pointer release.
       const [startX, startY] = pointer.points[0];
-      pointer.selection = Math.hypot(x - startX, y - startY) < 8 ? null : trickWheelSelection(x - pointer.x, y - pointer.y);
+      pointer.selection = Math.hypot(x - startX, y - startY) < 8 ? null
+        : (this.flips && flipWheelSelection(x - pointer.x, y - pointer.y)) || trickWheelSelection(x - pointer.x, y - pointer.y);
       return;
     }
     if (pointer.mode === 'drive') {
@@ -122,9 +138,11 @@ export class TouchInput {
       const length = pointer.points.slice(1).reduce((sum,p,i) => sum+Math.hypot(p[0]-pointer.points[i][0],p[1]-pointer.points[i][1]),0);
       if (distance >= 36 && distance / length >= .985) {
         const diagonal = Math.min(Math.abs(dx),Math.abs(dy)) > Math.max(Math.abs(dx),Math.abs(dy))*.5;
+        const flip = this.flips && !diagonal && distance >= FLIP_SWIPE && !(Math.abs(dy) >= Math.abs(dx) && dy < 0)
+          ? (Math.abs(dy) >= Math.abs(dx) ? 'backflip' : dx < 0 ? 'left' : 'right') : null;
         const axes = diagonal ? (dy < 0 ? (dx < 0 ? [0,-1] : [1,0]) : (dx < 0 ? [-1,0] : [0,1]))
           : Math.abs(dy) >= Math.abs(dx) ? [0,Math.sign(dy)] : [Math.sign(dx),0];
-        pointer.selection = { modifiers: diagonal ? 2 : 1, axes };
+        pointer.selection = flip ? FLIP_WHEEL.find(c => c.flip === flip) : { modifiers: diagonal ? 2 : 1, axes };
       }
     }
     const driving = pointer?.mode === 'drive';
@@ -141,11 +159,13 @@ export class TouchInput {
     if (driving) { this.sampled = true; preload_axis = 1; }
     else if (this.releasePending) { this.releasePending = false; preload_axis = -1; }
     const secondary = this.oneHanded && pointer && this.airborne ? this.secondary?.sample(now) : null;
-    const selection = secondary?.stunt_modifiers ? { modifiers: secondary.stunt_modifiers, axes: [secondary.stunt_x, secondary.stunt_y] } : (pointer?.mode === 'trick' ? pointer.selection : null) ?? this.pendingSelection;
+    const selection = secondary?.flip_request ? { flip: secondary.flip_request }
+      : secondary?.stunt_modifiers ? { modifiers: secondary.stunt_modifiers, axes: [secondary.stunt_x, secondary.stunt_y] }
+      : (pointer?.mode === 'trick' ? pointer.selection : null) ?? this.pendingSelection;
     if (pointer?.mode === 'trick' && pointer.selection) pointer.selectionSent = true;
     this.pendingSelection = null;
     return { drive, preload_axis, steer, lean, stunt_modifiers: selection?.modifiers ?? 0,
-      stunt_x: selection?.axes[0] ?? 0, stunt_y: selection?.axes[1] ?? 0 };
+      stunt_x: selection?.axes?.[0] ?? 0, stunt_y: selection?.axes?.[1] ?? 0, flip_request: selection?.flip ?? null };
   }
 }
 
@@ -184,7 +204,7 @@ export function oneHandedFeedback(input, frame) {
   };
 }
 
-export function mountTouchControls({ active, focus, surface, parent = document.body, utilities = document.querySelector('#toolbar') }) {
+export function mountTouchControls({ active, focus, surface, parent = document.body, utilities = document.querySelector('#toolbar'), flips = () => false }) {
   const input = new TouchInput();
   input.setOneHanded(loadOneHandedPreference());
   input.steeringSensitivity = loadSteeringSensitivity();
@@ -195,11 +215,16 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
   parent.append(root);
   const marker = root.firstElementChild, label = marker.querySelector('span');
   const wheel = document.createElement('div'); wheel.className = 'touch-trick-wheel'; wheel.hidden = true;
-  wheel.innerHTML = '<div class="touch-trick-ring"></div><div class="touch-trick-center">TRICKS<small>DRAG · RELEASE</small></div><i class="touch-trick-pointer"></i><span class="touch-trick-cue"></span>';
+  wheel.innerHTML = '<div class="touch-flip-ring"></div><div class="touch-trick-ring"></div><div class="touch-trick-center">TRICKS<small>DRAG · RELEASE</small><small class="touch-flip-hint">FURTHER OUT = FLIP</small></div><i class="touch-trick-pointer"></i><span class="touch-trick-cue"></span>';
   const choices = TRICK_WHEEL.map((trick, index) => {
     const choice = document.createElement('b'); choice.className = 'touch-trick-choice'; choice.textContent = trick.name;
     const angle = index / TRICK_WHEEL.length * Math.PI * 2 - Math.PI / 2;
     choice.style.left = `${124 + Math.cos(angle) * 88}px`; choice.style.top = `${124 + Math.sin(angle) * 88}px`;
+    wheel.append(choice); return choice;
+  });
+  const flipChoices = FLIP_WHEEL.map(flip => {
+    const choice = document.createElement('b'); choice.className = 'touch-trick-choice touch-flip-choice'; choice.textContent = flip.name;
+    choice.style.left = `${124 + Math.cos(flip.angle) * 138}px`; choice.style.top = `${124 + Math.sin(flip.angle) * 138}px`;
     wheel.append(choice); return choice;
   });
   root.append(wheel);
@@ -209,22 +234,27 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
     if (pointer?.mode !== 'radial') return;
     // The displayed origin also owns selection, making every label reachable
     // near an edge. A stationary press never selects despite this adjustment.
-    pointer.x = Math.max(126, Math.min(innerWidth - 126, pointer.currentX));
-    pointer.y = Math.max(150, Math.min(innerHeight - 142, pointer.currentY));
+    // Flip labels sit outside the ring, so the wheel keeps more margin.
+    const [side, bottom] = input.flips ? [172, 166] : [126, 142];
+    pointer.x = innerWidth < side * 2 ? innerWidth / 2 : Math.max(side, Math.min(innerWidth - side, pointer.currentX));
+    pointer.y = Math.max(150, Math.min(innerHeight - bottom, pointer.currentY));
   };
   const presentWheel = () => {
     const pointer = input.secondary?.pointer;
     const visible = input.oneHanded && input.pointer && pointer?.mode === 'radial';
     wheel.hidden = !visible;
     if (!visible) { wheelKey = null; return; }
-    const index = TRICK_WHEEL.indexOf(pointer.selection);
-    const key = [pointer.x, pointer.y, index].join('|');
+    const index = TRICK_WHEEL.indexOf(pointer.selection), flipIndex = FLIP_WHEEL.indexOf(pointer.selection);
+    const key = [pointer.x, pointer.y, index, flipIndex, input.flips].join('|');
     if (key === wheelKey) return;
     wheelKey = key;
     wheel.style.left = `${pointer.x}px`; wheel.style.top = `${pointer.y}px`;
-    wheel.dataset.selected = String(index >= 0);
-    wheel.style.setProperty('--trick-angle', `${index / TRICK_WHEEL.length * Math.PI * 2 - Math.PI / 2}rad`);
+    wheel.dataset.flips = String(input.flips);
+    wheel.dataset.selected = String(index >= 0 || flipIndex >= 0);
+    wheel.dataset.flip = String(flipIndex >= 0);
+    wheel.style.setProperty('--trick-angle', `${flipIndex >= 0 ? FLIP_WHEEL[flipIndex].angle : index / TRICK_WHEEL.length * Math.PI * 2 - Math.PI / 2}rad`);
     choices.forEach((choice, i) => choice.classList.toggle('selected', i === index));
+    flipChoices.forEach((choice, i) => choice.classList.toggle('selected', i === flipIndex));
     wheel.querySelector('.touch-trick-cue').textContent = pointer.selection ? `${pointer.selection.name} · RELEASE` : 'CENTER TO CANCEL';
   };
   let presentationKey = null;
@@ -242,8 +272,11 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
     marker.style.setProperty('--angle', `${Math.atan2(state.lean, state.steer)}rad`);
     marker.style.setProperty('--length', `${Math.hypot(state.steer, state.lean) * 34}px`);
   };
+  const airLabel = () => input.flips ? 'SWIPE · LONG SWIPE FLIPS' : 'SWIPE / CIRCLE';
   const coarse = window.matchMedia('(any-pointer: coarse)');
   const refresh = () => {
+    input.flips = Boolean(flips());
+    if (input.secondary) input.secondary.flips = input.flips;
     root.hidden = !active();
     document.body.classList.toggle('touch-driving', !root.hidden && (coarse.matches || touched));
     present();
@@ -263,7 +296,7 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
       marker.style.top = `${input.oneHanded ? Math.max(82, Math.min(innerHeight - 92, event.clientY)) : event.clientY}px`;
       marker.style.setProperty('--drive', '-30px');
     }
-    if (!input.oneHanded) label.textContent = airborne ? 'SWIPE / CIRCLE' : 'PRELOAD';
+    if (!input.oneHanded) label.textContent = airborne ? airLabel() : 'PRELOAD';
     refresh();
   };
   const move = event => {
@@ -351,7 +384,7 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
       const state = frame.preload_active ? 'active' : frame.preload_armed ? 'armed' : frame.preload_available ? 'available' : 'idle';
       root.dataset.preload = state;
       if (input.oneHanded) present();
-      else label.textContent = airborne ? (frame.stunt?.name ?? 'SWIPE / CIRCLE') : state === 'armed' ? 'RELEASE' : state === 'active' ? 'PRELOADED' : 'BRACED';
+      else label.textContent = airborne ? (frame.stunt?.name ?? airLabel()) : state === 'armed' ? 'RELEASE' : state === 'active' ? 'PRELOADED' : 'BRACED';
     },
     sample() { refresh(); if (!active()) clear(); return input.sample(); },
     get engaged() { return touched; },

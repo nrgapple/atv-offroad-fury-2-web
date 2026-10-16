@@ -118,6 +118,8 @@ pub struct FlipTricks {
     airtime: f32,
     pending: Option<Pending>,
     events: Vec<Event>,
+    /// One-shot touch request, consumed by the next step.
+    request: Option<Trick>,
 }
 
 fn window(value: f32) -> f32 {
@@ -140,6 +142,7 @@ impl FlipTricks {
             airtime: 0.,
             pending: None,
             events: Vec::new(),
+            request: None,
         })
     }
 
@@ -161,6 +164,14 @@ impl FlipTricks {
             },
             rotation: self.pending.map_or(0., |p| p.angle),
         }
+    }
+
+    /// Authored touch adaptation: a flip picked on the touch trick wheel (or a
+    /// long swipe) starts at the early-air strength at any point in the air,
+    /// because a menu choice cannot meet the 0.6 s takeoff window. Ignored on
+    /// the ground or while a trick is already active.
+    pub fn request(&mut self, trick: Trick) {
+        self.request = Some(trick);
     }
 
     pub fn take_events(&mut self) -> Vec<Event> {
@@ -214,13 +225,15 @@ impl FlipTricks {
             && !input.brake;
         let early_air = !input.grounded && self.airtime < EARLY_AIR;
         let trick_button = input.mask & 0xf == 4;
+        let request = self.request.take().filter(|_| !input.grounded);
         let mut torque = [0.; 3];
 
         // Backflip 004e4f20.
         let spin_busy = self.spin.active;
         let f = &mut self.backflip;
         let mut started = None;
-        if !f.active && early_air && trick_button && y > 0.8 && !spin_busy {
+        let wanted = request == Some(Trick::Backflip) || early_air && trick_button && y > 0.8;
+        if !f.active && wanted && !spin_busy {
             *f = Spin {
                 active: true,
                 airborne: true,
@@ -269,14 +282,23 @@ impl FlipTricks {
         let flipping = self.backflip.active;
         let s = &mut self.spin;
         let mut started = false;
-        if !s.active && early_air && trick_button && x.abs() > 0.7 && !flipping {
-            self.spin_dir = x.signum();
+        let wanted = match request {
+            Some(Trick::ThreeSixtyLeft) => Some(-1.),
+            Some(Trick::ThreeSixtyRight) => Some(1.),
+            _ if early_air && trick_button && x.abs() > 0.7 => Some(x.signum()),
+            _ => None,
+        };
+        if !s.active
+            && let Some(dir) = wanted
+            && !flipping
+        {
+            self.spin_dir = dir;
             *s = Spin {
                 active: true,
                 airborne: true,
                 torque: [
                     -SPIN_TORQUE_X[0],
-                    x.signum() * SPIN_TORQUE_Y[0].max(0.5 * SPIN_TORQUE_Y[1]),
+                    dir * SPIN_TORQUE_Y[0].max(0.5 * SPIN_TORQUE_Y[1]),
                 ],
                 ..Spin::default()
             };
@@ -482,6 +504,27 @@ mod tests {
             })
         );
         assert!(!f.exempts_air_angles());
+    }
+
+    #[test]
+    fn touch_requests_start_late_in_the_air_but_not_on_the_ground() {
+        let h = 1. / 60.;
+        let mut f = FlipTricks::new(-800.).unwrap();
+        f.request(Trick::Backflip);
+        f.step(input(true, 0, [0., 0.]), [0.; 3], h).unwrap();
+        assert!(!f.exempts_air_angles(), "ground requests are dropped");
+        for _ in 0..90 {
+            f.step(input(false, 0, [0., 0.]), [0.; 3], h).unwrap();
+        }
+        assert!(!f.exempts_air_angles());
+        f.request(Trick::ThreeSixtyLeft);
+        f.step(input(false, 0, [0., 0.]), [0.; 3], h).unwrap();
+        assert_eq!(f.frame().active, Some(Trick::ThreeSixtyLeft));
+        // A second request while spinning is ignored.
+        f.request(Trick::Backflip);
+        let torque = f.step(input(false, 0, [0., 0.]), [0.; 3], h).unwrap();
+        assert_eq!(f.frame().active, Some(Trick::ThreeSixtyLeft));
+        assert!(torque[1] < 0.);
     }
 
     #[test]

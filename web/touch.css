@@ -68,3 +68,12 @@ body.touch-driving #status.error { top: max(84px, calc(env(safe-area-inset-top) 
 .touch-trick-pointer::after { content: ''; position: absolute; right: -3px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--atv-gold-light); }
 .touch-trick-wheel[data-selected=true] .touch-trick-pointer { display: block; }
 .touch-trick-cue { position: absolute; top: 251px; left: 0; width: 248px; text-align: center; font-size: 9px; font-weight: 800; }
+/* Optional Extras flips: gold labels outside the ring, hint and cue above. */
+.touch-flip-choice, .touch-flip-hint, .touch-flip-ring { display: none; }
+/* Dashed boundary at FLIP_DISTANCE (132px): cross it to pick a flip. */
+.touch-trick-wheel[data-flips=true] .touch-flip-ring { display: block; position: absolute; inset: -8px; border: 2px dashed #f5d76e88; border-radius: 50%; }
+.touch-trick-wheel[data-flip=true] .touch-flip-ring { border-color: var(--atv-gold-light); }
+.touch-trick-wheel[data-flip=true] .touch-trick-pointer { width: 92px; }
+.touch-trick-wheel[data-flips=true] .touch-flip-choice { display: flex; color: var(--atv-gold-light); font-size: 12px; font-weight: 800; width: 44px; }
+.touch-trick-wheel[data-flips=true] .touch-flip-hint { display: block; color: var(--atv-gold-light); }
+.touch-trick-wheel[data-flips=true] .touch-trick-cue { top: -24px; }

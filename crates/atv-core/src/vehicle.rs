@@ -449,6 +449,12 @@ impl Vehicle {
         }
         Ok(())
     }
+    /// One-shot touch flip request; ignored while the option is off.
+    pub fn request_flip(&mut self, trick: crate::flip_tricks::Trick) {
+        if let Some(flips) = &mut self.flips {
+            flips.request(trick);
+        }
+    }
     /// Trick button mask (Circle=1, Triangle=2, L1=4) and trick stick.
     pub fn set_flip_controls(&mut self, mask: u8, axes: [f32; 2]) -> Result<()> {
         if mask > 7 || axes.iter().any(|v| !v.is_finite()) {
