@@ -37,6 +37,35 @@ fn flat() -> Terrain {
         depth_cells: 16,
     }
 }
+/// A vertical test wall facing -z at `z`, 200 ft wide and 60 ft tall.
+fn wall(z: f32) -> atv_core::obstacle::StaticObstacle {
+    use atv_core::collision::{CollisionMesh, RayTreeNode, Triangle};
+    let vertices = vec![[2148., 0., z], [1948., 0., z], [2048., 60., z]];
+    atv_core::obstacle::StaticObstacle {
+        mesh: std::rc::Rc::new(CollisionMesh {
+            transform: [1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0.],
+            vertices,
+            vertex_normal_bits: None,
+            triangles: vec![Triangle {
+                indices: [0, 1, 2],
+                normal: [0., 0., -1.],
+                distance: z,
+                invalid_plane_bits: None,
+            }],
+            broad_phase_nodes: 1,
+            nodes: vec![RayTreeNode {
+                center: [2048., 30., z],
+                half_extents: [100., 30., 0.],
+                bound_measure: 100. * 100. + 30. * 30.,
+                children: [0x8000, 0x8000],
+            }],
+            flags: 0,
+        }),
+        world_matrix: [
+            1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+        ],
+    }
+}
 fn terrain_from(res: &[u8]) -> Result<Terrain> {
     if res == b"flat" {
         return Ok(flat());
@@ -105,6 +134,16 @@ fn speed(b: &Motorcycle) -> f32 {
     b.frame().speed / MPH
 }
 
+fn cruise(b: &Motorcycle, mph: f32) -> VehicleInput {
+    let s = speed(b);
+    if s < mph - 1. {
+        input(1., 0., 0., 0.)
+    } else if s > mph + 0.5 {
+        input(0., 0.3, 0., 0.)
+    } else {
+        input(0.25, 0., 0., 0.)
+    }
+}
 fn scripts() -> Vec<(&'static str, f32, Script)> {
     vec![
         ("launch", 10., |_, _| input(1., 0., 0., 0.)),
@@ -148,6 +187,10 @@ fn scripts() -> Vec<(&'static str, f32, Script)> {
             let steer = if (8. ..8.4).contains(&t) { 1. } else { 0. };
             input(if hold { 1. } else { 0.45 }, 0., steer, 0.)
         }),
+        ("wall-15mph", 14., |_, b| cruise(b, 15.)),
+        ("wall-20mph", 14., |_, b| cruise(b, 20.)),
+        ("wall-25mph", 14., |_, b| cruise(b, 25.)),
+        ("wall-35mph", 14., |_, b| cruise(b, 35.)),
         ("wheelie", 10., |t, _| {
             input(1., 0., 0., if t > 4. { 1. } else { 0. })
         }),
@@ -175,8 +218,14 @@ pub fn run(
         let model = Model::load(bike_res, id)?;
         let mut bike = Motorcycle::new(model, origin, yaw)?;
         bike.set_materials(materials);
+        if name.starts_with("wall-") {
+            bike.set_obstacles(vec![wall(origin[2] + 300.)]);
+        }
         let mut rows = vec![];
         let mut wrecks = 0;
+        let mut kinds = Vec::new();
+        let mut peak_impact = 0f32;
+        let mut previous_mph = 0f32;
         let mut was_riding = true;
         let mut previous_yaw = None;
         let steps = (duration / DT) as usize;
@@ -188,7 +237,10 @@ pub fn run(
             let riding = f.wreck.phase == Phase::Riding;
             if was_riding && !riding {
                 wrecks += 1;
+                kinds.push(format!("{:?}@{t:.2}s/{:.1}mph", f.wreck.kind, previous_mph));
             }
+            peak_impact = peak_impact.max(f.crash_impact_speed);
+            previous_mph = f.speed / MPH;
             was_riding = riding;
             let (roll, pitch, heading) = angles(f.orientation);
             let yaw_rate = previous_yaw.map_or(0., |p: f32| {
@@ -214,6 +266,8 @@ pub fn run(
                 "grounded": f.grounded, "compression": f.wheel_compression,
                 "rpm": f.rpm, "gear": f.gear, "riding": riding,
                 "y": f.origin[1],
+                "pelvis": f.rider_pelvis_offset,
+                "feet": f.rider_foot_pins,
             }));
         }
         let col = |k: &str| -> Vec<f32> {
@@ -239,7 +293,10 @@ pub fn run(
             / rows.len() as f32;
         results.push(json!({
             "script": name,
+            "source_chassis": bike.model.chassis.source,
             "wrecks": wrecks,
+            "wreck_kinds": kinds,
+            "peak_impact": peak_impact,
             "mph_at": [at(&mph,2.),at(&mph,4.),at(&mph,6.),at(&mph,duration-0.1)],
             "max_mph": mph.iter().cloned().fold(0., f32::max),
             "pitch_range_deg": [pitch.iter().cloned().fold(f32::MAX,f32::min), pitch.iter().cloned().fold(f32::MIN,f32::max)],

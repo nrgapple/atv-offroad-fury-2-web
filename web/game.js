@@ -1446,7 +1446,7 @@ async function startSimulation(source) {
   orbit = 0; acceptCameraFrame(await command(46, { dt: 1 / 60, orbit }));
   if (source.train) {
     source.train.frame = await json(67, source.train.resource, source.train.modeIndex);
-    diagnostics.trainCollision = source.motorcycle ? null : await command(69, {});
+    diagnostics.trainCollision = await command(69, {});
     trainRenderer?.accept(source.train.frame);
     diagnostics.train = { time: source.train.frame.time, duration: source.train.frame.duration, cars: source.train.frame.cars.filter(car => car.use_collision).length, wheelNodes: source.train.frame.wheel_matrices?.length ?? 0, frame: source.train.frame };
   } else diagnostics.train = null;

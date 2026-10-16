@@ -346,20 +346,31 @@ impl CollisionRayTree {
     }
 }
 pub fn decode_ray_tree(data: &[u8]) -> Result<CollisionRayTree> {
+    let tree = decode_ray_tree_version(data, 1)?;
+    tree.chassis_points()?;
+    Ok(tree)
+}
+/// MX vs. ATV Unleashed COL version 2 ray trees (bike chassis whiskers) share
+/// ATV2's type-2 layout after one extra header word at offset 16.
+pub fn decode_mx_ray_tree(data: &[u8]) -> Result<CollisionRayTree> {
+    decode_ray_tree_version(data, 2)
+}
+fn decode_ray_tree_version(data: &[u8], version: u32) -> Result<CollisionRayTree> {
     if u32le(data, 0)? != 1234
         || slice(data, 4, 4)? != b"col\0"
-        || u32le(data, 8)? != 1
+        || u32le(data, 8)? != version
         || u32le(data, 12)? != 2
     {
         return Err("unsupported COL ray-tree signature/version/type".into());
     }
+    let base = if version == 2 { 4 } else { 0 };
     let mut transform = [0.; 16];
     for (i, x) in transform.iter_mut().enumerate() {
-        *x = float(data, 16 + i * 4)?;
+        *x = float(data, base + 16 + i * 4)?;
     }
-    let query_capacity = u32le(data, 80)?;
-    let node_count = u32le(data, 84)? as usize;
-    let ray_count = u32le(data, 88)? as usize;
+    let query_capacity = u32le(data, base + 80)?;
+    let node_count = u32le(data, base + 84)? as usize;
+    let ray_count = u32le(data, base + 88)? as usize;
     if query_capacity > 32768
         || node_count == 0
         || node_count > 32768
@@ -368,13 +379,14 @@ pub fn decode_ray_tree(data: &[u8]) -> Result<CollisionRayTree> {
     {
         return Err("COL ray-tree counts outside supported bounds".into());
     }
-    let rays_at = 92 + node_count * 32;
+    let nodes_at = base + 92;
+    let rays_at = nodes_at + node_count * 32;
     if data.len() != rays_at + ray_count * 24 {
         return Err("COL ray-tree extent mismatch".into());
     }
     let mut nodes = Vec::with_capacity(node_count);
     for i in 0..node_count {
-        let at = 92 + i * 32;
+        let at = nodes_at + i * 32;
         nodes.push(RayTreeNode {
             bound_measure: float(data, at)?,
             center: vector(data, at + 4)?,
@@ -385,19 +397,26 @@ pub fn decode_ray_tree(data: &[u8]) -> Result<CollisionRayTree> {
     let mut rays = Vec::with_capacity(ray_count);
     for i in 0..ray_count {
         let at = rays_at + i * 24;
-        rays.push(CollisionRay {
+        let ray = CollisionRay {
             start: vector(data, at)?,
             end: vector(data, at + 12)?,
-        });
+        };
+        if ray
+            .start
+            .iter()
+            .chain(ray.end.iter())
+            .any(|v| !v.is_finite())
+        {
+            return Err("nonfinite COL ray".into());
+        }
+        rays.push(ray);
     }
-    let tree = CollisionRayTree {
+    Ok(CollisionRayTree {
         transform,
         query_capacity,
         nodes,
         rays,
-    };
-    tree.chassis_points()?;
-    Ok(tree)
+    })
 }
 #[cfg(test)]
 mod ray_tests {
