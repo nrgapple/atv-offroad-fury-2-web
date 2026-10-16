@@ -94,7 +94,7 @@ section is authoritative.
 | Audio | Recovered VAG decoding, 21-song catalog/shuffle, engine banks, impacts, train; SPU2 mixer/reverb not reproduced | `AUDIO.md` |
 | Racing | All 32 race courses; recovered CPU driver decisions inside authored race rules; difficulty mapping missing | `RACING.md` |
 | Multiplayer | Authored four-player Freeride through the Rust relay; authored rider contacts; no split-screen or original protocol | `MULTIPLAYER.md`, `MULTIPLAYER_ORIGINAL.md`, `SECURITY.md` |
-| Motorcycles | Authored two-wheel controller with MX vs. ATV Unleashed resources/tuning; Single Player only | `MOTORCYCLES.md` |
+| Motorcycles | Riding controller recovered component by component from MX vs. ATV Unleashed (steer/bank, tires/suspension, engine/clutch, wheelie/stoppie, air control, preload, flips, wreck rules) through authored terrain/surface/input adapters; native whole-step parity unmeasured; Single Player only | `MOTORCYCLES.md` |
 | Crash effects | Optional authored presentation layer (Crazy/Gorn); enhancement-isolation checks show it leaves the simulation unchanged | `CRASH_EFFECTS.md` |
 | Input | Remappable keyboard/controller bindings; one-handed and two-thumb touch are authored adaptations | `CONTROLS.md`, `TOUCH.md` |
 | Progression and saves | Not implemented; Garage selections and settings persist locally | — |
@@ -166,8 +166,9 @@ the worktree's `target/`; keep bulk output on the SSD.
 - Residual tire/terrain overlap on landings and cross-slope turns is measured
   but not explained (`TERRAIN_CONTACT.md`, `COUPLED_LANDING.md`).
 - Audio scheduling and the SPU2 mixer/reverb are approximations (`AUDIO.md`).
-- Motorcycles rely on authored stabilizers; a real controller recovery has not
-  started (`MOTORCYCLES.md`).
+- Motorcycle controller components are recovered, but the chassis collision
+  hull, COL-v2 routing, stunt linking/scoring and native whole-step parity are
+  open; wrecked bikes still use an authored terrain clamp (`MOTORCYCLES.md`).
 - Multiplayer has no server reconciliation; contacts are authored, and
   geographically separated latency is untested (`MULTIPLAYER.md`).
 - Physical iOS/Android devices, Safari install flows and Bluetooth controllers

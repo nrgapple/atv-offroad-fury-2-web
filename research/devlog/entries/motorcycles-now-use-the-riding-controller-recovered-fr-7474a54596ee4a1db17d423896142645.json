@@ -1,0 +1,18 @@
+{
+  "id": "motorcycles-now-use-the-riding-controller-recovered-fr-7474a54596ee4a1db17d423896142645",
+  "timestamp": "2026-10-16T00:59:13.653239+00:00",
+  "recorded_at": "2026-10-16T01:01:17.202646+00:00",
+  "kind": "build",
+  "title": "Motorcycles now use the riding controller recovered from MX vs. ATV Unleashed",
+  "summary": "Host checkpoint: the authored arcade motorcycle physics were replaced by the original game's riding controller, recovered component by component from the MX vs. ATV Unleashed game module. ATV2 maps supply their own surface grip, traction, braking and drag to it through an adapter.",
+  "details": [
+    "Recovered components: speed-scaled steering (0.9x at standstill falling to 0.2x at 75 mph) with a kinematic lean and the roll axis locked on the ground; tire side-force curves and suspension (spring blends from stopped to moving stiffness, bottoming push-out); engine with static/kinetic clutch, per-gear rev limit, automatic shifting and clutch dump; wheelie/stoppie pitch servos; airborne self-levelling (unroll/unyaw) and damping; ramp preload; backflip/three-sixty; and the original wreck rules.",
+    "Discoveries: in the original the grounded bike cannot tip over, because lean is set directly from steer and speed. Yaw comes only from tire forces, with a hard 3 rad/s cap, and tire forces act near the centre of gravity. The air auto-levels when the stick is centred. ATV2 terrain zone numbers mean different things per map, so MX zone numbers cannot be reused directly.",
+    "Verification (host native probe on a level plane and ENV01): full steer at 30 mph peak yaw 5.1 -> 2.9 rad/s; a 0.4 s steer tap at 50 mph 5.2 -> 3.3 rad/s; 10 s full throttle 60 -> 73 mph; full throttle plus lean back now holds a ~47 degree wheelie (before: none); a 2 s ENV01 jump now lands level (before: 60 degrees nose up).",
+    "Verification (host browser gates): all 20 motorcycle selections load, drive, steer, clutch, emit particles and reset, with 1,991 exact paired enhancement-off/on steps. Touch left/right turns lean the bike and rider into the turn (230 paired steps; grip error 0.0000016 ft, boot error 0.000037 ft). The touch stunt/wreck/recovery route passes (346 paired steps). make check passes.",
+    "Screenshot: a desktop-viewport browser capture from a host build (not a physical phone) showing one of the 20 motorcycle selections riding on the snow course with a dust trail behind the rear wheel at 15 mph. The black rectangle on the rider's back is a visible texture/rendering artifact in the capture, not part of this change."
+  ],
+  "limitation": "Host-only checkpoint, not yet publicly deployed. Native whole-step parity is unmeasured. The chassis collision hull and COL-v2 routing are not reconstructed, so wrecked bikes still use an authored terrain clamp. Stunt linking and scoring are not recovered. Preload only fires on a rising ramp face above ~20 mph, as in the original. Holding full lean-back with throttle over bumps loops the bike into a crash. Physical phones and controllers were not tested.",
+  "image": "/devlog-images/motorcycles-now-use-the-riding-controller-recovered-fr-7474a54596ee4a1db17d423896142645.png",
+  "caption": "Host-build browser capture (desktop viewport, not a physical phone): a motorcycle selection riding at 15 mph on the recovered MX controller, with a dust trail behind the rear wheel. The black patch on the rider's back appears in every capture and is unrelated to this physics change."
+}
