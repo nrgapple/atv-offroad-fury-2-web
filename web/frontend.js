@@ -14,7 +14,7 @@ const MODEL_PAGES = ['garage','gear','main','single','create-lobby','join-lobby'
 const settingsPages = new Set(['settings','extras','hud-settings','minimap-config','race-overlays','controls','bindings','music']);
 // Value rows that step either way with Left/Right as well as cycling on a tap.
 const stepperActions = new Set(['racetrack','racelaps','racecpu','gearhelmet','gearjersey','gearpant','gearglove','gearboot','geargoggle','gearpaint']);
-const cycleActions = new Set(['graphics','vibration','speed-rush','crash-camera','chase-camera','flips','funnycrashes','diagnostics','onehanded','minimap-orientation','minimap-shape','minimap-corner','minimap-toggle','musictoggle','musicvolume','sfxvolume','overlay-timing','overlay-lap','overlay-score','overlay-position','overlay-info','overlay-speed','overlay-radar']);
+const cycleActions = new Set(['graphics','vibration','speed-rush','crash-camera','chase-camera','flips','funnycrashes','diagnostics','onehanded','minimap-orientation','minimap-shape','minimap-corner','minimap-toggle','musictoggle','musicvolume','sfxvolume','soundmode','overlay-timing','overlay-lap','overlay-score','overlay-position','overlay-info','overlay-speed','overlay-radar']);
 const fontName = 'tradegothic_boldcondensed_22s';
 const selectionKey = 'atv-player-selection';
 const trainingPreview = 'training-map-preview';
@@ -613,6 +613,7 @@ export class Frontend {
         // A tap wraps 100% back to off; Left/Right stop at either end.
         if (music) music.setVolume((stepped ? Math.min(4, Math.max(0, step)) : (step + 5) % 5) / 4);
       }
+      else if (action === 'soundmode') { const audio = this.audio?.(); audio?.setSoundMode?.(audio.settings?.mode === 'original' ? 'enhanced' : 'original'); }
       else if (action === 'sfxvolume') {
         const audio = this.audio?.(), step = Math.round((audio?.settings?.sfx ?? 1) * 4) + direction;
         if (audio?.setSfxVolume) audio.setSfxVolume((stepped ? Math.min(4, Math.max(0, step)) : (step + 5) % 5) / 4);
@@ -686,7 +687,7 @@ export class Frontend {
       minimap_orientation:this.minimapSettings?.orientation ?? 'north-up',minimap_shape:this.minimapSettings?.shape ?? 'circle',minimap_corner:this.minimapSettings?.corner ?? 'top-right',minimap_enabled:this.minimapSettings?.enabled ?? true,minimap_size:this.minimapSettings?.size ?? 160,minimap_zoom:this.minimapSettings?.zoom ?? 50,race_overlays_off:[...(this.raceOverlays?.off ?? [])],race_position:this.raceOverlays?.position ?? 'name',funny_crashes:this.crashSettings?.enabled ?? false,crash_mode:this.crashSettings?.mode ?? 'original',original_camera:this.crashSettings?.camera === 'original',chase_assist:this.crashSettings?.chase === 'assisted',flips:this.crashSettings?.flipsEnabled ?? false,speed_rush:this.crashSettings?.speed ?? 'off',graphics_preset:this.graphicsSettings?.preset ?? 'auto',graphics_resolved:this.graphicsSettings?.resolved ?? '',vibration:this.vibrationSettings?.enabled ?? true,mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
       music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
-      music_page:this.musicPage,music_status:musicState ? `${musicState.enabled ? 'On' : 'Off'} / Volume ${Math.round(musicState.volume * 100)}% / ${musicState.title || 'Choose a song'}` : '',music_enabled:musicState?.enabled ?? true,music_volume:Math.round((musicState?.volume ?? .7)*100),sfx_volume:Math.round((this.audio?.()?.settings?.sfx ?? 1)*100),menu_logo:this.images.has('brand-logo'),menu_atv:this.images.has('multi_atv01')};
+      music_page:this.musicPage,music_status:musicState ? `${musicState.enabled ? 'On' : 'Off'} / Volume ${Math.round(musicState.volume * 100)}% / ${musicState.title || 'Choose a song'}` : '',music_enabled:musicState?.enabled ?? true,music_volume:Math.round((musicState?.volume ?? .7)*100),sfx_volume:Math.round((this.audio?.()?.settings?.sfx ?? 1)*100),sound_mode:this.audio?.()?.settings?.mode ?? 'enhanced',menu_logo:this.images.has('brand-logo'),menu_atv:this.images.has('multi_atv01')};
     let key = JSON.stringify(request);
     if (this.layoutKey === key) return;
     this.layoutPending = true;

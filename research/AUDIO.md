@@ -253,3 +253,37 @@ voices live and 66 buffer sources created; main-thread script time was within
 noise of the same run with the request emptied (1.28s vs 1.39s). Remote/CPU
 riders' vocals, material sounds, hockey reactions and hardware listening
 remain open.
+
+## Optional Enhanced sound
+
+Settings → Audio → **Sound: Enhanced / Original** (default Enhanced, saved in
+`atv-audio-v1`). Original is the recovered baseline above, unchanged: engine
+voices connect straight to the SFX bus and transitions cut. Both Enhanced
+layers are authored, not original:
+
+- **Engine crossfade.** The recovered engine state machine still chooses every
+  target sample and transition; only a non-overlapping transition changes. The
+  previous voice ramps out and the new one ramps in over 120ms through one gain
+  node per engine voice, instead of a hard stop. Overlapping commands and the
+  reported playhead for the Rust state machine are unchanged.
+- **One shared echo send.** A single bus is fed once from the SFX bus (never
+  per voice): a lowpass and two damped feedback delays (left/right), mixed back
+  into the master. Stadium: 83/127ms, feedback 0.32, 2.8kHz damping, send 0.16.
+  Canyon: 210/290ms, feedback 0.38, 2.2kHz, send 0.14. Open venues create no
+  nodes. Stadiums come from original data: CrowdPresent or a venue whose
+  `<venue>.aud` uses crowd samples (all Supercross venues, FREE01–03 and the
+  GAME01 arena). Canyons use an authored terrain measure at the spawn: at least
+  10 of 16 headings rise 35ft or more within 300ft. Across the Freestyle venues
+  only NAT03 qualifies; this coarse spawn-based test is not a recovered
+  classification. Music, race stingers and menu music bypass the echo. No IR
+  file, HRTF or PannerNode is used; the recovered stereo/Doppler commands are
+  kept.
+
+Cost: the echo is eight nodes per venue. An offline render of 20s of noise
+through the bus in host Chromium took about 0.9ms per audio second for either
+preset, versus 0.2–0.9ms for the bare graph (CPU throttling does not reach the
+audio thread, so this bounds render work rather than phone timing). The
+crossfade adds one gain node per engine transition. `tools/test_enhanced_audio.mjs`
+checks the stadium bus with nonzero echo output and engine crossfades on SX01,
+the NAT03 canyon, no bus on ENV04, and switching to Original through the menu,
+which persists and stops crossfading while engine transitions continue.

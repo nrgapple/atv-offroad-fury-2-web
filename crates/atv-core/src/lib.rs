@@ -10,6 +10,7 @@ pub mod collision;
 pub mod contact;
 pub mod crash_effects;
 pub mod drivetrain;
+pub mod echo;
 pub mod ecosystem;
 pub mod elf;
 pub mod engine_audio;
