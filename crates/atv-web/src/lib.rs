@@ -91,6 +91,13 @@ struct Simulation {
     race_autopilot_reset: bool,
     /// Original race overlay clocks (signs, infotext, lap history, names).
     race_hud: atv_core::race_hud::RaceHud,
+    /// Stadium crowd (CrowdPresent venues): race reaction cues and the
+    /// camera flashes, with the edges they react to.
+    race_crowd: Option<atv_core::race_crowd::Crowd>,
+    flashes: Option<atv_core::race_crowd::Flashes>,
+    crowd_wrecked: bool,
+    crowd_laps: usize,
+    stunt_landed: bool,
     /// The course's pre-race camera shots (`<venue>nat<n>.vub`) and the
     /// intro camera playing them before the countdown.
     race_shots: Vec<Vec<atv_core::race_intro::ShotFrame>>,
@@ -571,7 +578,10 @@ fn update_hud(
                     success,
                     display_count,
                     ..
-                } => sim.hud.finish_event(success, display_count),
+                } => {
+                    sim.stunt_landed |= success;
+                    sim.hud.finish_event(success, display_count)
+                }
                 _ => {}
             }
         }
@@ -1469,6 +1479,9 @@ struct SimulationBatchFrame {
     scenery_uv: std::collections::BTreeMap<String, [f32; 2]>,
     scenery_textures: std::collections::BTreeMap<String, usize>,
     snow: Option<atv_core::weather::SnowFrame>,
+    /// Lit `cameraflash.slt` pool indices this step.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    flashes: Option<Vec<u16>>,
 }
 
 /// Seconds a CPU may stay outside the track polygon before recovering.
@@ -1999,6 +2012,48 @@ fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
             .map(|v| v.frame().water_failure)
             .filter(|w| w.submerged)
             .map(|w| w.remaining);
+        // Crowd reactions and flash bursts (00216190, 002164b0).
+        let finishes = race.take_finishes();
+        let wrecked = sim
+            .vehicle
+            .as_ref()
+            .filter(|_| sim.motorcycle.is_none())
+            .is_some_and(|v| v.frame().wreck.phase != atv_core::wreck::Phase::Riding)
+            || sim
+                .motorcycle
+                .as_ref()
+                .is_some_and(|b| b.frame().wreck.phase != atv_core::wreck::Phase::Riding);
+        let wreck_began = wrecked && !sim.crowd_wrecked;
+        sim.crowd_wrecked = wrecked;
+        let laps_done = race_frame.lap_times.len();
+        let final_lap = laps_done > sim.crowd_laps && laps_done as u32 + 1 == race_frame.laps;
+        sim.crowd_laps = laps_done;
+        if let Some(flashes) = sim.flashes.as_mut() {
+            let config = flashes.config();
+            for &(player, place) in &finishes {
+                if place <= 3 {
+                    flashes.burst(if player && place == 1 {
+                        config.player_win
+                    } else {
+                        config.ai_finish
+                    });
+                }
+            }
+            if std::mem::take(&mut sim.stunt_landed) {
+                flashes.burst(config.player_stunt);
+            }
+        }
+        if let Some(crowd) = sim.race_crowd.as_mut() {
+            let frame = crowd.step(&atv_core::race_crowd::Events {
+                elapsed: race_frame.elapsed,
+                player_rank: race_frame.position,
+                player_wrecked: wreck_began,
+                final_lap,
+                finishes,
+                single_player: true,
+            });
+            race_frame.crowd = (frame.cue.is_some() || frame.stop_loop).then_some(frame);
+        }
         race_frame.hud = Some(sim.race_hud.step(
             1. / 60.,
             &atv_core::race_hud::Input {
@@ -2122,7 +2177,10 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
             snow.step(position, std::array::from_fn(|i| target[i] - position[i]))
                 .map(Some)
         })?;
+        let flashes = SIMULATION
+            .with_borrow_mut(|sim| sim.flashes.as_mut().map(|f| f.step(1. / 60.).to_vec()));
         frames.push(SimulationBatchFrame {
+            flashes,
             ambient,
             race,
             frame,
@@ -2267,6 +2325,44 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         });
         return Ok(result);
     }
+    if op == 115 {
+        // Stadium crowd for a CrowdPresent venue: crowd.aud (races), the
+        // venue TOY [CameraFlash], the cameraflash.slt pool and <venue>.aud.
+        let request: serde_json::Value =
+            serde_json::from_slice(input).map_err(|e| e.to_string())?;
+        let text = |key: &str| request.get(key).and_then(serde_json::Value::as_str);
+        let sounds = text("crowd")
+            .map(|t| atv_core::race_crowd::parse_crowd(t, "Am"))
+            .transpose()?;
+        let samples: Vec<String> = sounds.as_ref().map_or_else(Vec::new, |s| {
+            [&s.boo, &s.cheer, &s.win, &s.stomp]
+                .into_iter()
+                .flatten()
+                .cloned()
+                .collect()
+        });
+        let crowd = sounds.map(|sounds| atv_core::race_crowd::Crowd::new(sounds, 97211 + 7 * 47));
+        let pool = request
+            .get("flash_pool")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0) as usize;
+        let flashes = (pool > 0).then(|| {
+            let config = text("toy")
+                .and_then(atv_core::race_crowd::parse_flash_config)
+                .unwrap_or_default();
+            atv_core::race_crowd::Flashes::new(config, pool, 97211 + 8 * 47)
+        });
+        let soultree = text("soultree")
+            .map(|t| atv_core::spatial_audio::soultree_definitions(t.as_bytes()))
+            .transpose()?
+            .unwrap_or_default();
+        SIMULATION.with_borrow_mut(|sim| {
+            sim.race_crowd = crowd;
+            sim.flashes = flashes;
+        });
+        return serde_json::to_vec(&serde_json::json!({"soultree": soultree, "crowd": samples}))
+            .map_err(|e| e.to_string());
+    }
     if op == 114 {
         // The course's after-finish trackside cameras.
         let text = std::str::from_utf8(input).map_err(|_| "TV cameras must be text")?;
@@ -2361,6 +2457,8 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             sim.race = Some(race);
             sim.race_autopilot = None;
             sim.race_hud = atv_core::race_hud::RaceHud::default();
+            sim.crowd_laps = 0;
+            sim.crowd_wrecked = false;
             end_race_director(sim);
             if sim.motorcycle.is_none()
                 && let Some(vehicle) = sim.vehicle.as_mut()

@@ -616,3 +616,35 @@ course, as the countdown sign and the manual describe.
 Not reproduced: SCORE uses the port's committed stunt points; the qualifying
 bar and new-record infotexts need championships and saved records; the Pause
 → Overlays toggles; object 41 (place number) as an alternative to the tree.
+
+## Stadium crowd and camera flashes — 2026-10-16
+
+Exact-build evidence (private exports): only scenes with `[Sounds]
+CrowdPresent=T` (all 16 Supercross venues) build the crowd emitter
+(`00213bf0`, `002cb9b0`) and the camera flash manager (`0020f780`).
+
+- **Crowd reactions** (`Audio\Crowd\crowd.aud`, in each race archive): one
+  non-positional crowd voice. Boo when the player wrecks while leading
+  (`001e8a20`); Cheer when the player takes the lead after at least 5s of
+  racing (`001ea930`); the looping Stomp when the final lap begins with the
+  player second (`001e9a00`), stopped when a CPU leads or any racer finishes
+  (`002cc320`); Win when the player finishes first (`00216190`). Boo and
+  Cheer step past an immediate repeat. A playing clip blocks new ones; a
+  Stomp loop gives way. The Am lists are used: the setting that selects Pro
+  (and its Stomp) is unrecovered, and the Oh trigger is unidentified.
+- **Ambient crowd:** each venue `<venue>.aud` places 8 looping
+  `[SoultreeSoundN]` sounds (`crdloop3`–`6`) with Min/MaxDistance, played
+  through the train's recovered stereo attenuation (`00172e70`).
+- **Camera flashes** (`0020f2c0`, `0020ee10`, `[CameraFlash]` in the venue
+  TOY): every `cameraflash.slt` scene model is hidden and pooled (187–493 per
+  venue). Batches of trunc(p · N) random models light for 0.09s. p is
+  ConstantFlashPercent (0.01); a burst ramps it to its target over half of
+  BurstDuration (2s) and back: PlayerWin (0.3) for a player win, AIFinish (0.3)
+  for any other top-3 finish, PlayerStunt (0.4) for a landed player stunt.
+
+Port: `race_crowd` holds the crowd cues and the flash manager; the
+browser hides the pooled models outside the lit batch, plays the cues and
+loops, and the content package adds the 18 crowd clips and four loops to
+`AUDIO.RES`. Previously every flash model was drawn permanently. Freestyle on
+a Supercross venue keeps the loops and constant flashes. AI stunt bursts,
+crowd volume and the race-over `IntOut` music are not reproduced.

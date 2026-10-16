@@ -397,7 +397,8 @@ fn dispatch_sim(sim: &mut Simulation, source: &serde_json::Value, op: u32) -> Re
         } else {
             None
         };
-        frames.push(serde_json::json!({"frame":driving_frame,"camera":camera,"water":water,"train":train,"race":race,"scenery_uv":scenery_uv,"scenery_textures":scenery_textures,"ambient":ambient,"snow":snow}));
+        let flashes = sim.flashes.as_mut().map(|f| f.step(1. / 60.).to_vec());
+        frames.push(serde_json::json!({"frame":driving_frame,"camera":camera,"water":water,"train":train,"race":race,"scenery_uv":scenery_uv,"scenery_textures":scenery_textures,"ambient":ambient,"snow":snow,"flashes":flashes}));
     }
     serde_json::to_vec(&frames).map_err(|e| e.to_string())
 }
