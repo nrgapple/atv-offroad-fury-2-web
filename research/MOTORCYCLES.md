@@ -1,30 +1,22 @@
 # Motorcycle reconstruction
 
-**Status: the motorcycle controller is authored, not recovered.** Resources
-(PSR records, PSG/SUB meshes, PST textures, MOT clips, audio) and named tuning
-values come from MX vs. ATV Unleashed, but the integrator, tire/suspension
-model, stunt timing and wreck handling in `crates/atv-core/src/motorcycle.rs`
-are authored arcade code. Only the ground bank angle
-(`motorcycle_balance.rs`, GAME_REL `004dbd10`) cites a recovered routine, and it
-runs through an authored contact adapter. Native whole-step parity is unmeasured.
+**Status: the riding controller is recovered component by component from the
+MX vs. ATV Unleashed game module, running through authored adapters.** Steer,
+bank, tires/suspension, engine/clutch/shifting, wheelie/stoppie, airborne
+control, preload, backflip/three-sixty and the wreck decision chain follow
+SLUS_211.04/GAME_REL routines (see "Recovered riding controller" below). ATV2
+terrain/obstacle contact, ATV2 map surface coefficients, browser input, the
+wreck body and a few airborne trick shortcuts are authored adapters, and the
+chassis collision hull and COL-v2 routing are not reconstructed. Native
+whole-step parity is unmeasured; describe the bikes as a recovered controller
+through adapters, not a decompiled or verified-equivalent port. Sections below
+dated before 2026-10-15 describe the earlier authored controller.
 
-Known non-original constraints (marked `Authored stabilizer:` in the code):
+Remaining authored stabilizers (marked `Authored stabilizer:` in the code):
 
-- per-wheel spring force capped at `weight * 8`; fixed lateral-slip (`mass * 8`)
-  and braking (`mass * 10`) velocity-kill gains ahead of the tuned friction clamps;
-- over-travel push-out of up to 0.3 ft along the contact normal, removing 70% of
-  the inward normal velocity;
-- wreck body held at terrain + 0.5 ft with 0.12 rebound and 0.97 damping;
-- detached rider clamped to terrain with 0.85 horizontal friction;
-- grounded wreck trigger when roll exceeds `max(AirborneRollWreckAngle, 1.4 rad)`
-  or pitch exceeds a fixed 1.4 rad, and a minimum wreck time of 1.75 s
-  (`.max(1.75)`).
-
-A real recovery would require Ghidra analysis of the SLUS_211.04/GAME_REL.BIN
-bike controller, tire and wreck routines (update order, units, gates), then an
-instruction-level oracle comparison of whole steps against the Rust controller,
-like the ATV physics oracle work kept under ignored `work/physics`. Until then,
-describe motorcycles as an authored controller using source resources and tuning.
+- wreck body held at terrain + 0.5 ft with 0.12 rebound and 0.97 damping, in
+  place of the unreconstructed chassis collision springs;
+- detached rider clamped to terrain with 0.85 horizontal friction.
 
 "Paired steps" below are the enhancement-isolation check from
 `tools/crash_isolation.mjs` (enhanced vs Original-mode WASM workers, zero
@@ -346,3 +338,100 @@ clutch/particles/reset gate passes1,588 paired steps; airborne cross-up also
 passes24 normal air frames at0.510509 radians and537 paired steps. These are
 host checks pending validated-main/public verification. Full native controller
 parity, every control/terrain combination and physical-phone play remain open.
+
+
+## Recovered riding controller (2026-10-15)
+
+The authored arcade controller handled badly: full steer at 30 mph produced a
+5 rad/s yaw rate (a ~9 ft radius, ~7 g), small bumps bottomed the forks and
+threw the bike ~20 ft up, the air had no self-levelling so throttle pitched the
+nose to 60°, and a fixed lateral velocity-kill scrubbed speed in turns. It is
+replaced by the original's logic, recovered from the exact GAME_REL module with
+the existing private Ghidra project (reports stay under ignored
+`private/reports/mx-unleashed/physics-map/`).
+
+Recovered behavior, by component:
+
+- **Frame structure.** The physics world runs `int(dt·55)+1` substeps (one at
+  60 fps). Once per frame before physics: input filtering, kinematic steer,
+  donut factor, stopped/moving spring blend, auto-shift, clutch dump and
+  centre-of-gravity travel. Each substep: gravity, low-speed hold,
+  wheelie/stoppie, preload, backflip, three-sixty, engine, drag, airborne
+  control, reverse, tires, rev limiter, then constant-acceleration integration
+  with body-frame rate clamps (20, YawRateLimit, 20). Once per frame after
+  physics: the kinematic bank and derived state, then the wreck chain.
+- **Steering and lean.** Stick X is slew-limited (XAxisRateLimit), scaled by
+  MaxSteerAngle and a SteerScale ramp between SteerSpeed1/2 (125: 0.9 at
+  standstill to 0.2 at 75 mph). The roll axis is locked on the ground and the
+  bank is written once per frame toward −MaxRollCommand·min(v/MaxRollSpeed,1)·
+  steer at RollGain; the grounded bike cannot tip over. There is no yaw
+  controller: yaw comes from tire side forces with a hard YawRateLimit.
+- **Tires and suspension.** Spring = Spring×Weight, blended from
+  SpringWhenStopped between 10 and 20 mph; ReboundDampingRatio damps
+  compression and BounceDampingRatio extension, at the contact point, with no
+  force cap. Bottoming pushes out 90% of the overshoot and removes approach
+  speed. Side force is the parametric RoundOff/DropOff/Scale/SpeedScale curve
+  (a load-proportional lateral damper in practice) with Braking/Slipping sets;
+  drive and brake torque pass through a MaxDriveForce·N threshold to
+  SkidDriveForce·N spin/lock. Tire forces act at the CG with
+  BodyTireForcePosition as the moment arm.
+- **Engine.** HP·5252/RPM torque, engine braking, a static/kinetic clutch,
+  gear×final ratio to the rear tire, per-gear rev limit, predicted-rpm
+  shifting and a clutch dump (hold clutch+gas, release) that scales torque and
+  moves the CG back. Drag is 0.5·Drag·v².
+- **Air.** Stick torques from AirborneControlMoment. With the stick centred,
+  Unroll/Unyaw level the bike and turn it toward its travel; steering switches
+  to AirborneDamping, so the stick commands a rate. Brake gyro is on; gas gyro
+  is off by default as in the source. Lateral AirborneControlForce drift.
+- **Preload and tricks.** Preload is a world-up force for PreloadTime after a
+  back-then-forward gesture on a rising ramp face above ~20 mph; strength
+  scales with hold time. Backflip/three-sixty use the trick-button ramp
+  gestures, start torque from hold time and bleed with opposing stick.
+- **Wrecks.** Directional impact limits, the freestyle landing limit, ground
+  pitch 75°, airborne pitch 85°/89° and roll 89°, cross-up landings beyond
+  ~44° after 0.75 s of air, and landing during a stunt clip. Respawn follows
+  the source 0.5 s plus MaxWreckTime.
+
+Adapters and deliberate choices:
+
+- ATV2 maps number their eight terrain zones per map (ENV01 zone 3 is ice,
+  zone 7 off-track snow), so MX zone numbering cannot be reused. The bike uses
+  MX zone 1 (standard track dirt) scaled by the map's own TerrainZone
+  SurfaceFriction (side force), SurfaceTraction (drive threshold),
+  SurfaceBraking and SurfaceDrag (added to WheelDrag).
+- Browser analog throttle/brake use the source's ramp-up/instant-release
+  filter as targets; the source buttons are digital.
+- Hold durations for preload/flip strength are counted in frames of held
+  stick, matching the source's 0–60 windows. The source channel's exact
+  semantics are inferred.
+- An airborne shortcut (trick button plus pull-back or side flick early in a
+  jump) starts a minimum-strength flip or spin alongside the source ramp
+  gestures, preserving the port's existing trick input.
+- Spawn grants no clutch-dump boost (the source timer may grant a race-start
+  holeshot; unconfirmed).
+- The source quirk where an airborne wheel's brake torque still slows the body
+  during a wheelie is not reproduced.
+
+Native host probe (`atv-tools bike-probe`, scripted inputs on a level plane and
+on ENV01 with its TerrainZone table; 125 Race unless noted):
+
+| Scenario | Authored controller | Recovered controller |
+| --- | --- | --- |
+| Full steer at 30 mph, peak yaw rate | 5.1 rad/s | 2.9 rad/s (limit 3) |
+| 0.4 s steer tap at 50 mph, peak yaw rate | 5.2 rad/s | 3.3 rad/s |
+| 10 s full throttle, level | 60 mph | 73 mph (drag limit ~81) |
+| Full throttle + lean back, level | no wheelie | holds ~47° wheelie |
+| ENV01 2 s jump, landing pitch | 60° nose up | level |
+
+Holding full lean-back with throttle over ENV01 bumps still loops the bike
+into a wreck on every class, as pulling back in the air does in the source.
+The Mini/125/250/500 probes show no wrecks in braking, turning, slalom or
+straight runs.
+
+Host browser gates pass on the recovered controller: all 20 selections load,
+drive, steer, clutch-dump, emit particles and reset (1,991 exact paired
+enhancement Off/On steps); actual touch left/right turns lean bike and rider
+into the turn with grip error 0.0000016 ft and boot error 0.000037 ft (230
+paired steps); the touch stunt/wreck/recovery route passes (346 paired steps).
+`make check` passes. These are host results pending validated-main
+deployment; physical-device play and native whole-step comparison remain open.

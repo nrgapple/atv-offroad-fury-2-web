@@ -22,7 +22,7 @@ Codex has helped with most of the implementation and reverse engineering. We wor
 | **Quads and riders** | All 26 original in-race quads, with their own resources, tuning and engine banks; male and female rider choices. Garage selections are available without the original unlock progression. |
 | **Mobile controls** | One-handed throttle, steering and rider lean, with an optional second touch for braking/reverse and airborne tricks. A standard two-thumb layout is also available. |
 | **Online multiplayer** | Up to four ATV riders in Freeride, drop-in style: host on any track and friends join from the invite link at any time, appearing beside you. Change ATV or track without leaving, and the ride carries on if anyone (including the host) drops or leaves. Remote riders have animated quads, spatial engine audio, overhead names and GPS markers. |
-| **Motorcycles** | Single Player includes 20 choices across 16 bike designs and 50/125/250/500 profiles, including labeled Race/Pro setups. These use an authored two-wheel Rust controller (not recovered MX physics) with models, animation, sound and tuning values from **MX vs. ATV Unleashed**, not ATV2. Motorcycles are not yet available in multiplayer. |
+| **Motorcycles** | Single Player includes 20 choices across 16 bike designs and 50/125/250/500 profiles, including labeled Race/Pro setups. Their riding physics are recovered from **MX vs. ATV Unleashed** (not ATV2) and use that game's models, animation, sound and tuning. Motorcycles are not yet available in multiplayer. |
 | **Race preview** | Single Player → Race offers every original race course: eight Environment Nationals, eight Nationals and sixteen Supercross tracks, decoded from their own TDF route graphs with start straights, alternate lines and original start/finish gates. Countdown, laps, timing, radar and results are included. The ATV field includes four independently simulated CPU riders with recovered driving decisions. CPU corner speed on courses without authored speed limits, full original race rules and progression remain unfinished. |
 | **GPS and speed HUD** | A configurable minimap combines terrain, heading, speed and preload feedback. Choose shape, corner, size and zoom; tap it to switch north-up/heading-up. |
 | **Sound and settings** | All 21 original songs, per-quad engine audio, selected impact and train sounds, music selection and remappable keyboard/controller bindings. Music continues through the pause menu. |
@@ -71,13 +71,13 @@ See the [URL parameter reference and examples](research/PLAY_LINKS.md). Multipla
 
 ## Motorcycles in Single Player
 
-The garage also includes motorcycles whose resources and tuning come from the separate **MX vs. ATV Unleashed** disc. Their authored two-wheel controller (not a recovered MX controller) connects suspension, engine/gears, clutch, rider lean, preload, stunts, particles and wreck/recovery. Bike brands sharing a class profile do not imply separately recovered per-brand physics.
+The garage also includes motorcycles whose resources and tuning come from the separate **MX vs. ATV Unleashed** disc. Their riding controller is recovered from that game's own code: speed-scaled steering with a kinematic lean, tire grip curves and suspension, engine, clutch and gears, wheelies and stoppies, self-levelling in the air, ramp preload, backflips and three-sixties, and its crash rules. ATV2 maps supply their own surface grip, traction, braking and drag. Bike brands sharing a class profile do not imply separately recovered per-brand physics.
 
 <img src="https://furyremastered.com/devlog-images/public-motorcycle-touch-steering-and-rider-contact-now-b584ab85.png" width="300" alt="Motorcycle and rider on a snowy course in the public browser build, shown in portrait with touch controls.">
 
 *Public motorcycle checkpoint, October 13: portrait browser riding and touch steering. This is a browser capture, not a physical-phone photograph.*
 
-Use **V** for clutch on keyboard; existing lean, preload and stunt controls apply. The controller clutch defaults to left-stick press. Full original motorcycle-controller, animation and stunt parity are not established. See [motorcycle evidence and limits](research/MOTORCYCLES.md).
+Use **V** for clutch on keyboard; hold V with the throttle and release for a clutch-dump launch. Lean back with throttle for a wheelie; lean fully forward while braking for a stoppie. Hold **Space** approaching a jump and release at the lip for a preload pop (the original only fires on a rising ramp face above about 20 mph). With **L** held, push forward then pull back on a ramp face for a backflip, or flick sideways for a three-sixty; L plus a direction early in a jump also works. The controller clutch defaults to left-stick press. Whole-controller native parity, chassis collision and full stunt linking are not established. See [motorcycle evidence and limits](research/MOTORCYCLES.md).
 
 ## Keyboard and controllers
 
