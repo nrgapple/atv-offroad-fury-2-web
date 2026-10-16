@@ -1,0 +1,20 @@
+{
+  "id": "arlington-free-ride-one-tap-into-a-shared-room-of-up-t-346525c1f5e046cc9c6f2b75e3215c01",
+  "timestamp": "2026-10-16T11:59:16.421132+00:00",
+  "recorded_at": "2026-10-16T12:00:35.371786+00:00",
+  "kind": "build",
+  "title": "Arlington Free Ride: one tap into a shared room of up to 20 riders",
+  "summary": "A new main-menu item, Arlington Free Ride, needs no setup: one tap joins a shared room that is already riding Arlington Stream. Host-only checkpoint; not yet verified on the public site.",
+  "details": [
+    "Shared rooms FREERD01 to FREERD25 hold up to 20 riders each and fill lowest first; rider 21 opens the next room. There are no host controls, no track changes and no invite link. Private multiplayer rooms keep the original four riders.",
+    "Riders on the default name get 'Rider ####'. A simple word filter replaces offensive names with 'Rider <slot>'. Motorcycles fall back to the stock ATV. The relay protocol is now v6, so older open tabs must reload.",
+    "Discovery: with 20 riders the browser decoded each relay message in its own worker round trip, dropped about 1,600 pose updates in 10 s and showed only 15 of 19 riders. It now decodes queued messages in batches.",
+    "Discovery: the remote model cache held only 8 distinct quad/rider models; it now holds 20. Off-screen name arrows are capped to the nearest 3 so labels stop piling up on phones.",
+    "Verification (host only: one Mac, Chromium/Metal headless, local wrangler relay, original content): tools/test_freeride.mjs ran 2 real browsers plus 18 synthetic riders at 20 Hz, each on a different model. Both browsers showed all 19 other riders with 0 dropped pose updates and 247 remote draws, at 70-85 FPS and 1-89 ms relay round trip, with at most 6 engine voices and 8 name tags. The 21st arrival opened FREERD02 and Leave returned to the main menu.",
+    "A relay-only run with 20 riders at 20 Hz handled about 400 messages/s in and about 7,600/s out."
+  ],
+  "limitation": "Not yet verified on the public site. Production relay CPU with a full room, physical phones and real-world latency are not measured. Synthetic riders circle at a fixed height, so some sit under the terrain in screenshots. This is an authored browser mode, not an original-game online mode.",
+  "image": "/devlog-images/arlington-free-ride-one-tap-into-a-shared-room-of-up-t-346525c1f5e046cc9c6f2b75e3215c01.png",
+  "caption": "Desktop (1280x896): a full Arlington Free Ride room with 19 remote riders, name arrows and the performance overlay. Portrait phone (390x844) and main-menu screenshots are stored alongside.",
+  "status": "host-only / implementation checkpoint (pending public verification)"
+}
