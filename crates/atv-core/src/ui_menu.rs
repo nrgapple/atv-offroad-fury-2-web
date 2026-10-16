@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 const FONT: &str = "tradegothic_boldcondensed_22s";
 const SELECTED_FONT: &str = "tradegothic_boldcondensed_22soff";
 const HEADER_FONT: &str = "tradegothic_boldcondenseditalic_-1fs_32ds";
+fn full_volume() -> usize {
+    100
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ControlRow {
@@ -73,6 +76,12 @@ pub struct Request {
     pub music_enabled: bool,
     #[serde(default)]
     pub music_volume: usize,
+    /// Sound-effect (vehicle, rider and world) volume, separate from music.
+    #[serde(default = "full_volume")]
+    pub sfx_volume: usize,
+    /// Authored optional sound layer: "enhanced" (default) or "original".
+    #[serde(default)]
+    pub sound_mode: String,
     #[serde(default)]
     pub menu_logo: bool,
     #[serde(default)]
@@ -371,6 +380,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         || request.rider_id > 1
         || request.loading_status.len() > 128
         || request.track_name.len() > 128
+        || request.sound_mode.len() > 16
         || request.track_image.len() > 128
         || request.capture_label.len() > 128
         || request.binding_device.len() > 32
@@ -1577,6 +1587,15 @@ pub fn layout(request: Request) -> Result<Frame> {
                             "musictoggle",
                         ),
                         (format!("Volume: {}%", request.music_volume), "musicvolume"),
+                        (format!("SFX: {}%", request.sfx_volume), "sfxvolume"),
+                        (
+                            if request.sound_mode == "original" {
+                                "Sound: Original".to_string()
+                            } else {
+                                "Sound: Enhanced".to_string()
+                            },
+                            "soundmode",
+                        ),
                     ]
                 } else {
                     vec![
@@ -1585,14 +1604,15 @@ pub fn layout(request: Request) -> Result<Frame> {
                         ("Defaults".to_string(), "bindreset"),
                     ]
                 };
+                let columns = actions.len() as f32;
                 for (i, (label, action)) in actions.iter().enumerate() {
                     f.button(
                         label,
                         action,
                         [
-                            20. + i as f32 * (w - 40.) / 3.,
+                            20. + i as f32 * (w - 40.) / columns,
                             h - 66.,
-                            (w - 40.) / 3.,
+                            (w - 40.) / columns,
                             54.,
                         ],
                         request.selection == f.choices.len(),
@@ -1609,6 +1629,30 @@ pub fn layout(request: Request) -> Result<Frame> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn audio_page_has_separate_sfx_volume_and_sound_mode() {
+        let mut r = request("music", 390., 844.);
+        r.sfx_volume = 75;
+        let frame = layout(r).unwrap();
+        for action in ["musicvolume", "sfxvolume", "soundmode"] {
+            assert!(frame.choices.iter().any(|c| c == action), "{action}");
+        }
+        let label = |action: &str| {
+            frame
+                .hits
+                .iter()
+                .find(|h| h.action == action)
+                .unwrap()
+                .label
+                .clone()
+        };
+        assert_eq!(label("sfxvolume"), "SFX: 75%");
+        assert_eq!(label("soundmode"), "Sound: Enhanced");
+        let mut r = request("music", 390., 844.);
+        r.sound_mode = "original".into();
+        let frame = layout(r).unwrap();
+        assert!(frame.hits.iter().any(|h| h.label == "Sound: Original"));
+    }
     fn request(page: &str, w: f32, h: f32) -> Request {
         Request {
             page: page.into(),
@@ -1639,6 +1683,8 @@ mod tests {
             music_status: String::new(),
             music_enabled: true,
             music_volume: 70,
+            sfx_volume: 100,
+            sound_mode: String::new(),
             menu_logo: true,
             menu_atv: true,
             diagnostics_mode: String::new(),

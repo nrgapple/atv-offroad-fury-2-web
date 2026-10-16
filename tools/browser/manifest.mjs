@@ -46,6 +46,7 @@ export const TESTS = {
     reason:
       "Fails on unmodified origin/main too: pause menu no longer has a 'Stats: Off (F3)' row (settings moved under the Settings hub)"
   },
+  'test_enhanced_audio.mjs': { group: 'content' },
   'test_enhanced_mobile.mjs': { group: 'content' },
   'test_fog.mjs': { group: 'content', native: { ATV_FOG_NATIVE: 'private/reports/map-fidelity/fog-native.json' } },
   'test_frontend.mjs': { group: 'content' },
@@ -164,6 +165,7 @@ export const TESTS = {
   'test_portrait_camera.mjs': { defaults: ['follow camera', 'chase camera (original)'], group: 'content' },
   'test_race.mjs': { group: 'content' },
   'test_race_ai.mjs': { group: 'content' },
+  'test_quad_audio.mjs': { group: 'content' },
   'test_race_courses.mjs': { group: 'content' },
   'test_rails.mjs': { group: 'content' },
   'test_reflections.mjs': {

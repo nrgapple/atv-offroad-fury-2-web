@@ -246,7 +246,7 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
   const {archive:archivePath,sceneStem,modeStem,placements} = courseResource(environment,racing);
   const memberNamed = (entry, name) => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase();
   status('Loading original engine sounds…');
-  await audio.load({ file, files, read, isCurrent: () => token === generation, quadId: frontend?.quadId ?? 1 });
+  await audio.load({ file, files, read, isCurrent: () => token === generation, quadId: frontend?.quadId ?? 1, female: frontend?.riderId === 1 });
   const archive = files.find(entry => entry.path === archivePath);
   if (!archive) throw new Error(`Original ${environment.toUpperCase()} terrain archive is missing.`);
   status('Reading original terrain…');
@@ -328,10 +328,10 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
   }
   // CrowdPresent stadiums: crowd.aud lists (races) and <venue>.aud Soultree loops.
   let crowd = null;
-  if (sceneMetadata.crowd_present) {
-    const text = async name => { const i = entries.findIndex(entry => memberNamed(entry, name)); return i < 0 ? null : decoder.decode(await codec(3, resource, i)); };
-    crowd = { aud: racing ? await text('crowd.aud') : null, soultree: await text(`${environment}.aud`) };
-  }
+  const venueText = async name => { const i = entries.findIndex(entry => memberNamed(entry, name)); return i < 0 ? null : decoder.decode(await codec(3, resource, i)); };
+  // <venue>.aud: drive-on, ambient and Soultree world sounds for every venue.
+  const venueAud = await venueText(`${environment}.aud`);
+  if (sceneMetadata.crowd_present) crowd = { aud: racing ? await venueText('crowd.aud') : null, soultree: venueAud };
   const materialFile = files.find(entry => entry.path === model.quad_materials);
   if (!materialFile) throw new Error('Original ATV materials archive is missing.');
   const materialArchive = await read(file, materialFile.lba * 2048, materialFile.bytes), materialEntries = await json(2, materialArchive);
@@ -469,7 +469,7 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
     parts.forEach((p, i) => { view.setUint32(i * 4, p.length, true); bundle.set(p, at); at += p.length; });
     entry.bundle = bundle;
   }
-  return { crowd, weather, snow, cpuRiderPose, motorcycle: model.motorcycle ? {archive:quadArchive,id:model.quad_id} : null, bytes, environment, course, cpuNames, cpuRoster, spacingSources, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, ambientEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
+  return { crowd, venueAud, weather, snow, cpuRiderPose, motorcycle: model.motorcycle ? {archive:quadArchive,id:model.quad_id} : null, bytes, environment, course, cpuNames, cpuRoster, spacingSources, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, ambientEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
 }
 async function baseTextures(mesh, materialArchive, materialEntries, cache = new Map(), multiPass = false) {
   const findMaterial = name => materialEntries.findIndex(entry => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase());
@@ -1669,6 +1669,7 @@ async function startSimulation(source) {
   catch (error) { diagnostics.crowdError = error.message; await command(115, {}).catch(() => {}); }
   diagnostics.crowd = { flashPool, prefix: crowdPrefix, soultree: stadium.soultree.length, reactions: stadium.crowd.length };
   void audio.loadStadium(stadium).catch(error => { diagnostics.audioError = error.message; });
+  void audio.loadVenue(source.venueAud ?? null, { stadium: Boolean(source.world.metadata.crowd_present) }).catch(error => { diagnostics.audioError = error.message; });
   const intro = !raceRestarting; raceRestarting = false;
   if (source.course) await command(96,{active:true,intro,laps:raceSettings.laps,difficulty:raceSettings.difficulty,names:source.cpuNames.slice(0,raceSettings.cpu),spacing_sources:source.spacingSources});
   raceCourse = source.course;
