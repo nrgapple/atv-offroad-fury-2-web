@@ -107,7 +107,8 @@ for (const [name, engine] of [
         const target = await page.locator('.touch-trick-choice').nth(index).boundingBox();
         const selected = { ...secondary, x: target.x + target.width / 2, y: target.y + target.height / 2 };
         await touch('touchMove', [moved, selected]);
-        assert.equal(await page.locator('.touch-trick-choice.selected').textContent(), trick.name);
+        assert.equal(await page.locator('.touch-trick-choice.selected').textContent(), trick.label);
+        assert.equal(await page.locator('.touch-trick-name').textContent(), trick.name, 'full name shown above the wheel');
         assert(
           await page
             .locator('.touch-trick-choice, .touch-trick-cue, .touch-trick-center, .touch-rider-marker span')
@@ -159,9 +160,9 @@ for (const [name, engine] of [
           const target = await page.locator('.touch-trick-choice').nth(index).boundingBox();
           const chosen = { ...second, x: target.x + target.width / 2, y: target.y + target.height / 2 };
           await touch('touchMove', [moved, chosen]);
-          assert.equal(await page.locator('.touch-trick-choice.selected').textContent(), tricks[index].name);
+          assert.equal(await page.locator('.touch-trick-choice.selected').textContent(), tricks[index].label);
           const center = await wheel.boundingBox();
-          const neutral = { ...second, x: center.x + 124, y: center.y + 124 };
+          const neutral = { ...second, x: center.x + center.width / 2, y: center.y + center.height / 2 };
           await touch('touchMove', [moved, neutral]);
           assert.equal(await page.locator('.touch-trick-choice.selected').count(), 0);
           await touch('touchEnd', [neutral]);
@@ -178,12 +179,12 @@ for (const [name, engine] of [
           for (const element of await page.locator('.touch-flip-choice, .touch-trick-cue, .touch-trick-choice').all()) {
             const b = await element.boundingBox();
             assert(b && b.x >= 0 && b.y >= 0 && b.x + b.width <= viewport.width && b.y + b.height <= viewport.height,
-              `flip wheel labels fit ${viewport.width}x${viewport.height}`);
+              `flip wheel labels fit ${viewport.width}x${viewport.height}: ${await element.textContent()} ${JSON.stringify(b)}`);
           }
           const target = await page.locator('.touch-flip-choice').nth(index).boundingBox();
           const chosen = { ...spawn, x: target.x + target.width / 2, y: target.y + target.height / 2 };
           await touch('touchMove', [moved, chosen]);
-          assert.equal(await page.locator('.touch-trick-choice.selected').textContent(), flip.name);
+          assert.equal(await page.locator('.touch-trick-choice.selected').textContent(), flip.label);
           assert.equal((await sample()).flip_request, null, 'flip preview does not start a flip');
           if (index === 0 && spawn === secondary && [390, 844].includes(viewport.width))
             await page.screenshot({ path: `${output}/flips-${name}-${viewport.width}x${viewport.height}.png` });

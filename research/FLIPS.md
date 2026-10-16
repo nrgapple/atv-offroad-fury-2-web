@@ -32,10 +32,10 @@ flip state, so the recovered ATV2 step is unchanged.
   starts the trick at minimum strength. This is the same authored adaptation the
   motorcycle uses. Keyboard: L + E, or L + A/D.
 - **Touch (authored):** in the default one-handed mode, a second finger in the
-  air opens the trick wheel. With Flips on, gold **Backflip** (down), **360 Left**
-  and **360 Right** labels sit outside the trick names, past a dashed ring at
-  132 px. A short drag still picks the named tricks; dragging past the ring and
-  lifting picks the flip, delivered once as `flip_request`. In two-finger mode, a
+  air opens the trick wheel. With Flips on, **Backflip** (down), **360 Left**
+  and **360 Right** sectors join Cat Nac and Cordova in the red outer band,
+  which starts at 132 px. A short drag still picks the inner tricks; dragging
+  into a flip sector and lifting picks the flip, delivered once as `flip_request`. In two-finger mode, a
   long straight swipe (120 px or more) down, left or right flips; short swipes
   and up keep the original tricks. A touch request starts the flip at the
   early-air strength at any point in the air, because a menu pick cannot meet the
@@ -76,7 +76,7 @@ flip state, so the recovered ATV2 step is unchanged.
   labels fit and select from center and edge presses at 390×844, 844×390,
   320×568 and 667×375 in Chromium and in WebKit (WebKit uses synthetic pointer
   events). `tools/test_atv_flips.mjs` uses real Chromium touches on env01:
-  wheel → past the ring → Backflip starts. Physical phones are not yet tested.
+  wheel → outer-band Backflip sector → Backflip starts. Physical phones are not yet tested.
 - Not included: Unleashed rider/vehicle flip animations (the rider keeps the
   ATV2 air pose), recovery-time yaw suppression, CPU flips,
   multiplayer score sync, and front flips (Unleashed has none).

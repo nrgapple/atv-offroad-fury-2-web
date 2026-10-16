@@ -12,7 +12,8 @@ The menu reconstruction in `crates/atv-core/src/ui_menu.rs` retains the recovere
 | Metal / edge | `--atv-silver`, `--atv-silver-light` | `#b9b9b9`, `#e9e9e9`; silver rim and highlights |
 | Instrument recess | `--atv-ink`, `--atv-charcoal`, `--atv-surface` | Dark charcoal with a subtle diagonal bevel |
 | Selection / direction | `--atv-gold`, `--atv-gold-light`, `--atv-gold-deep` | Menu-derived gold with a pale-to-dark selected gradient |
-| Armed preload | `--atv-orange` | Orange accent adapted from the original preload meter |
+| Preload | `--atv-preload-blue`, `--atv-orange` | Blue = lift now (original HUD opportunity), orange = achieved preload |
+| Touch accent | `--atv-red-bright` | Brand red lifted for thin throttle/outer-band strokes over the 3D scene |
 | Label / focus | `--atv-text`, `--atv-focus` | Light gray text; pale gold keyboard focus |
 | Rhythm | `--atv-space-1/2/3` | 4 / 8 / 12px |
 | Mobile target | `--atv-control-hit` | 44px minimum width and height |
@@ -36,7 +37,9 @@ Original menus and HUD keep the recovered font atlas through the authorized cont
 
 Keep an accessible button name, an optional decorative 16px icon, and a short visible label. Idle uses dark metal; pointer hover and keyboard focus use gold. Pressed uses the menu selection gradient with dark text. Disabled retains native disabled behavior and reduced opacity. Keep the full target at least 44px even when the label is small. Place controls inside safe-area insets and above noninteractive HUD art; hide them when menus open.
 
-The touch compass uses a silver instrument ring, faint crosshair, gold direction line and beveled gold thumb marker. Available preload highlights the ring in gold, armed preload uses orange plus the existing “LIFT FOR PRELOAD” cue, and active preload uses pale gold plus “PRELOADED”. Text communicates the state alongside color. On release the one-finger marker disappears immediately. The original 34px axis projection and input origin stay unchanged; visual clamping keeps edge touches legible. The entire overlay is noninteractive and hidden from assistive technology because it duplicates gesture feedback.
+The touch compass is a silver-rimmed dark recess with a beveled gold thumb ball and gold direction line. A red throttle arc fills over the top of the rim (from eight o'clock, where the thumb does not cover it) with the held drive axis, and turns silver for one-handed reverse. The state cue sits above the ring, also clear of the thumb. Preload follows the original HUD colors: available preload faintly rings the recess in blue, armed preload pulses blue with “LIFT FOR PRELOAD”, and achieved preload fills orange with “PRELOADED”. In one-finger mode, release normally hides the compass immediately; releasing into native preload force instead leaves a short orange burst with the “PRELOADED” cue. FWD/BACK/L/R labels and the crosshair are first-run coaching for the first three page sessions (`atv-touch-coach-rides`), as is a pulsing “Hold anywhere to ride” hint that shows until the first hold of the session. The compass dims while the trick wheel is open. The original 34px axis projection and input origin stay unchanged; visual clamping keeps edge touches legible. The entire overlay is noninteractive and hidden from assistive technology because it duplicates gesture feedback. Reduced-motion preferences disable the pulses and sweeps.
+
+The airborne trick wheel selects by position. Eight inner sectors sit where the standard two-finger swipes point, and Cat Nac/Cordova sit in a red outer band above (clockwise side for Cat Nac). With Flips on, Backflip and the 360s share that band. Faint dark sectors with silver separators show the layout; the chosen sector fills with the menu gold gradient, and its full name appears in large gold lettering above the wheel. Labels remain plain white outlined text without boxes, shortened to one line (“Can Can”, “No Hander”, “360 L”). Center and line-below instructions are coaching for the first five wheel opens (`atv-touch-coach-wheel`).
 
 ## Adding UI
 

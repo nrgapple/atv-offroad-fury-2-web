@@ -165,13 +165,13 @@ test('radial preview is reversible, commits all ten stunts only on release, and 
   for (const [index, trick] of TRICK_WHEEL.entries()) {
     const t = new TouchInput(); t.setOneHanded(true); t.begin(1, 300, 500, true); t.move(1, 335, 535);
     const baseline = t.sample(); assert(t.begin(2, 100, 500, true)); assert(!t.begin(3, 200, 500, true));
-    const angle = index / TRICK_WHEEL.length * Math.PI * 2 - Math.PI / 2;
-    t.move(2, 100 + Math.cos(angle) * 90, 500 + Math.sin(angle) * 90);
+    const { angle } = trick, radius = trick.outer ? 143 : 90;
+    t.move(2, 100 + Math.cos(angle) * radius, 500 + Math.sin(angle) * radius);
     assert.equal(t.secondary.pointer.selection.name, trick.name);
     assert.equal(t.sample(10000).stunt_modifiers, 0, 'preview never starts a stunt');
     t.move(2, 100, 500); assert.equal(t.secondary.pointer.selection, null, 'center cancels preview');
     t.move(2, 190, 500); assert.notEqual(t.secondary.pointer.selection, null, 'can change mind');
-    t.move(2, 100 + Math.cos(angle) * 90, 500 + Math.sin(angle) * 90);
+    t.move(2, 100 + Math.cos(angle) * radius, 500 + Math.sin(angle) * radius);
     t.end(2); const committed = t.sample();
     assert.equal(committed.stunt_modifiers, trick.modifiers); assert.equal(committed.stunt_x, trick.axes[0]); assert.equal(committed.stunt_y, trick.axes[1]);
     assert.equal(committed.steer, baseline.steer); assert.equal(committed.lean, baseline.lean);
@@ -184,6 +184,18 @@ test('radial sectors include a neutral center and wrap cleanly at twelve oclock'
   assert.equal(trickWheelSelection(0, 0), null); assert.equal(trickWheelSelection(27, 0), null);
   assert.equal(trickWheelSelection(NaN, 70), null); assert.equal(trickWheelSelection(0, Infinity), null);
   assert.equal(trickWheelSelection(-1, -90).name, 'Nac Nac'); assert.equal(trickWheelSelection(1, -90).name, 'Nac Nac');
+});
+
+test('inner sectors match the standard swipe directions; circle stunts sit in the outer band above', () => {
+  const at = (degrees, radius = 90, flips = false) => trickWheelSelection(Math.cos(degrees * Math.PI / 180) * radius, Math.sin(degrees * Math.PI / 180) * radius, flips)?.name;
+  for (const [degrees, name] of [[-90, 'Nac Nac'], [-45, 'Point Back'], [0, 'Bar Hop'], [45, 'Cliff Hanger'],
+    [90, 'No Footed Can Can'], [135, 'Nothing'], [180, 'Suicide No Hander'], [-135, 'Heel Clicker']]) assert.equal(at(degrees), name);
+  assert.equal(at(-60, 145), 'Cat Nac', 'clockwise circle on the clockwise side'); assert.equal(at(-120, 145), 'Cordova');
+  assert.equal(at(-90, 145), 'Nac Nac', 'straight up stays Nac Nac past the band gap');
+  assert.equal(at(90, 145), 'No Footed Can Can', 'without flips the lower band falls through');
+  assert.equal(at(90, 145, true), 'Backflip'); assert.equal(at(-60, 145, true), 'Cat Nac', 'flips keep circle stunts');
+  assert.equal(at(-60, 131), 'Point Back', 'inside the band stays an inner trick');
+  assert.equal(new Set(TRICK_WHEEL.map(t => t.label.length <= 12)).size, 1, 'labels fit one line');
 });
 
 test('second ground contact requests reverse without altering brace or primary origin', () => {

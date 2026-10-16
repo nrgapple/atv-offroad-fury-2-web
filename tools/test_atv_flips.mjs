@@ -80,7 +80,7 @@ try {
     await page.close();
   }
   // Touch (default one-handed mode): a second finger in the air opens the
-  // trick wheel; dragging past its dashed ring and lifting picks Backflip.
+  // trick wheel; dragging into its outer-band Backflip sector and lifting picks it.
   {
     const errors = [];
     const page = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }, errors);
@@ -112,7 +112,7 @@ try {
     await page.waitForFunction(() => window.flipFrames.some(s => s.frame.flip?.active === 'Backflip'), null, { timeout: 5000, polling: 'raf' });
     await touch('touchCancel');
     const frames = await page.evaluate(() => window.flipFrames.map(({ frame }) => frame.flip));
-    assert.equal(selected, 'Backflip', 'dragging past the ring previews Backflip');
+    assert.equal(selected, 'Backflip', 'dragging into the outer band previews Backflip');
     const peak = Math.max(...frames.map(f => f?.rotation ?? 0));
     console.log(`touch: wheel selected ${selected}, backflip started, rotation ${(peak * 180 / Math.PI).toFixed(0)} deg so far`);
     assertNoErrors(errors);
