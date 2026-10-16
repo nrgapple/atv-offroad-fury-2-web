@@ -195,8 +195,10 @@ The vegetation path is now traced separately from ordinary COL0 placements.
 records support a COL0 mesh (kind0), an open sixteen-sided cylinder built from32
 side triangles (kind1), a sphere actor (kind2), or a box actor (kind3).
 `001280b0` applies packed placement coordinates and signed height/width scale
-ratios to those shared proxy actors before querying them. Physical proxy contacts
-are still unimplemented; a visible plant model is not evidence of its collider.
+ratios to those shared proxy actors before querying them. Shipped cylinder proxy
+contacts are now connected for the chassis, wheels and detached rider (see
+[vegetation proxies](VEGETATION_COLLISION.md)); a visible plant model is still not
+evidence of its collider.
 
 `00129640` sets the packed coordinate unit to the greatest spatial-partition
 width/depth divided by 65,536, and independently rounds reciprocal 65,536/extent.
