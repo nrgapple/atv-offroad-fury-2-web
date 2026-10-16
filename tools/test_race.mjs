@@ -52,7 +52,7 @@ try {
     await waitForAnimations(page);
     await nextFrames(page, 2);
     const hits = await page
-      .locator('#menu-buttons button')
+      .locator('#menu-buttons button:not(.ms-course):not([role=tab])')
       .evaluateAll(buttons =>
         buttons.map(b => ({ label: b.getAttribute('aria-label'), rect: b.getBoundingClientRect().toJSON() }))
       );

@@ -25,7 +25,8 @@ try {
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 }, hasTouch: true }, errors);
   const screen = name => waitForScreen(page, name);
   const state = () => page.evaluate(() => window.atvTerrainStatus);
-  // Menu: the Course row cycles every published original course in both directions.
+  // Menu: like Freestyle, every published race course is listed under event
+  // tabs; the photo arrows and Left/Right step it in both directions.
   await page.goto(base);
   await screen('title');
   await button(page, 'Press START').click();
@@ -34,7 +35,8 @@ try {
   await screen('single');
   await button(page, 'Race').click();
   await screen('race');
-  const course = () => page.locator('#menu-buttons button[aria-label^="Course: "]').getAttribute('aria-label');
+  assert.equal(await page.locator('.ms-race .ms-course').count(), RACE_COURSES.length, 'Race lists every original race course');
+  const course = () => page.locator('#frontend').getAttribute('data-race-course');
   const first = await course();
   for (const [name, size] of [
     ['desktop', { width: 1280, height: 720 }],
@@ -44,10 +46,11 @@ try {
     await page.setViewportSize(size);
     await waitForAnimations(page);
     await nextFrames(page, 2);
+    // Course cards and event tabs scroll inside their lists; the lists themselves stay on screen.
     const hits = await page
-      .locator('#menu-buttons button')
+      .locator('#menu-buttons button:not(.ms-course):not([role=tab]), #menu-buttons .ms-courses, #menu-buttons .ms-tabs')
       .evaluateAll(buttons =>
-        buttons.map(b => ({ label: b.getAttribute('aria-label'), rect: b.getBoundingClientRect().toJSON() }))
+        buttons.map(b => ({ label: b.getAttribute('aria-label') ?? b.className, rect: b.getBoundingClientRect().toJSON() }))
       );
     for (const hit of hits) {
       assert(
@@ -56,8 +59,11 @@ try {
       );
       assert(hit.rect.height >= 44, JSON.stringify(hit));
     }
-    for (const [i, a] of hits.entries())
-      for (const b of hits.slice(i + 1))
+    const list = hits.find(hit => hit.label === 'Race courses');
+    assert(list.rect.height >= 96, `course list shows at least two courses: ${JSON.stringify(list)}`);
+    const controls = hits.filter(hit => !['Race courses', 'ms-tabs'].includes(hit.label));
+    for (const [i, a] of controls.entries())
+      for (const b of controls.slice(i + 1))
         assert(
           a.rect.right <= b.rect.x ||
             b.rect.right <= a.rect.x ||
@@ -67,13 +73,8 @@ try {
         );
     if (output) await page.screenshot({ path: `${output}/race-courses-setup-${name}.png` });
   }
-  const changed = from =>
-    page.waitForFunction(
-      from =>
-        document.querySelector('#menu-buttons button[aria-label^="Course: "]')?.getAttribute('aria-label') !== from,
-      from
-    );
-  await page.locator('#menu-buttons button[aria-label^="Course: "]').click();
+  const changed = from => page.waitForFunction(from => document.querySelector('#frontend').dataset.raceCourse !== from, from);
+  await button(page, 'Next Course').click();
   await changed(first);
   const second = await course();
   await page.keyboard.press('ArrowLeft');
@@ -88,6 +89,18 @@ try {
   await button(page, 'Next Course').click();
   await changed(previous);
   assert.equal(await course(), first);
+  // An event tab narrows the list, and a course card picks that course directly.
+  await page.getByRole('tab', { name: /^Supercross/ }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.ms-race .ms-course')].every(card => card.dataset.trackId.startsWith('sx')));
+  assert.match(await course(), /^sx/);
+  const pick = await page.locator('.ms-race .ms-course').last().getAttribute('data-track-id');
+  await page.locator('.ms-race .ms-course').last().click();
+  await page.waitForFunction(pick => document.querySelector('#frontend').dataset.raceCourse === pick, pick);
+  assert.equal(await page.locator('.ms-race .ms-course[aria-selected=true]').getAttribute('data-track-id'), pick);
+  await page.keyboard.press('ArrowRight');
+  await changed(pick);
+  assert.match(await course(), /^sx/, 'Stepping stays within the event tab');
+  await page.getByRole('tab', { name: /^All/ }).click();
   // Left/Right only step value rows: on Start Race they must not start a race.
   await button(page, 'Start Race').focus();
   await page.waitForFunction(() => document.querySelector('[data-action=racestart]')?.getAttribute('aria-current') === 'true');
