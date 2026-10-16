@@ -9,12 +9,13 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
   web:
+    # A newer push supersedes an older build on the same branch, main included:
+    # each main build deploys the whole application, so only the latest matters.
+    concurrency:
+      group: build-${{ github.ref }}
+      cancel-in-progress: true
     outputs:
       publish: ${{ steps.plan.outputs.publish }}
     permissions:
@@ -172,6 +173,11 @@ jobs:
   deploy:
     name: Deploy and verify production
     needs: web
+    # Deploys run one at a time and are never interrupted; an older build that
+    # reaches this job after a newer deploy is rejected below.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
     if: vars.FURY_DEPLOYMENT_MODE != 'local' && needs.web.outputs.publish == 'true' && github.repository == 'nrgapple/atv-offroad-fury-2-web' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.actor == github.repository_owner
     runs-on: ubuntu-latest
     timeout-minutes: 10
