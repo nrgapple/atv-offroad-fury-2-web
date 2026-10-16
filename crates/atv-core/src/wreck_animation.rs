@@ -1986,4 +1986,75 @@ mod tests {
         assert_eq!(bypassed.phase, Phase::Attached);
         assert_eq!(bypassed.origin, [50., 20., 50.]);
     }
+
+    ///Cached rider dispatch (0011fd30) visits Arlington's dynamic list after
+    ///static/plant nodes. A moving body's point velocity enters the rider's
+    ///contact response (default friction flag1), unlike stationary geometry.
+    #[test]
+    fn rider_contact_with_a_moving_body_uses_its_point_velocity() {
+        let mut observed = Vec::new();
+        for speed in [0., 30.] {
+            let (mut animator, nodes, terrain, materials) = fixture();
+            let vehicle = start_fixture(&mut animator, &nodes);
+            let mut prop =
+                crate::wreck::tests::surface([[-30., 20., -30.], [0., 20., 30.], [30., 20., -30.]]);
+            prop.world_matrix[12] = 50.;
+            prop.world_matrix[14] = 50.;
+            let mut previous = prop.world_matrix;
+            previous[12] -= speed / 60.;
+            let motion = crate::train::MotionState {
+                current: prop.world_matrix,
+                previous,
+                reciprocal_dt: 60.,
+            };
+            let mut scene = collision_scene(vec![], None);
+            scene
+                .install_dynamic(vec![crate::scene_collision::DynamicObstacle {
+                    obstacle: prop,
+                    motion,
+                }])
+                .unwrap();
+            //The first contact detaches with the quad's velocity; the
+            //following detached Ground frames then slide on the moving body.
+            let mut touched = 0;
+            for _ in 0..10 {
+                animator
+                    .step_with_scene(
+                        1. / 60.,
+                        vehicle,
+                        &nodes,
+                        &terrain,
+                        &materials,
+                        None,
+                        Some(&mut scene),
+                        false,
+                    )
+                    .unwrap();
+                let frame = animator.frame().unwrap();
+                touched += usize::from(
+                    frame.static_contact_count > 0
+                        && frame.scene_query.dynamic_contact_callbacks > 0,
+                );
+            }
+            assert!(touched > 1);
+            let frame = animator.frame().unwrap();
+            assert!(frame.scene_query.cached);
+            assert_ne!(frame.phase, Phase::Attached);
+            assert_eq!(frame.scene_query.selected_dynamic, 1);
+            assert_eq!(frame.scene_query.selected_static, 0);
+            assert!(animator.integration_active);
+            // The procedural pose is not pushed by the rider (zero-mass target).
+            assert_eq!(scene.dynamic()[0].motion, motion);
+            observed.push(frame);
+        }
+        let (still, moving) = (&observed[0], &observed[1]);
+        assert!(
+            moving.linear_velocity[0] > still.linear_velocity[0] + 0.1
+                && moving.origin[0] > still.origin[0],
+            "moving support must drag the rider: {:?} vs {:?}",
+            moving.linear_velocity,
+            still.linear_velocity
+        );
+        assert!(moving.linear_velocity.iter().all(|v| v.is_finite()));
+    }
 }

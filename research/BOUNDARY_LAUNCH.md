@@ -60,8 +60,10 @@ including height mutation before rejection. The Vehicle now evaluates these
 gates outside the Riding-only branch and follows with the nine static clearance
 rays. It retains the port's once-per-outer-update checkpoint sampling phase;
 the original manager callback is now recovered, but its ordering relative to
-quad physics and the late water cache remains unverified. Vegetation
-clearance/category coverage remains separate work. The existing wreck camera and clips
+quad physics and the late water cache remains unverified. The same clearance
+step applies `001ea050`'s plant exclusion through the shared cache (see
+[vegetation proxies](VEGETATION_COLLISION.md)); other category filters remain
+separate work. The existing wreck camera and clips
 are reused; a dedicated whole-game boundary camera replay has not been made.
 
 Private probes execute800 original boundary blocks, including `0020aec0`, with
