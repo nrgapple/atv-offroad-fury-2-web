@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GraphicsSettings, VibrationSettings, DirtBuildup, Rumble, detectGraphicsTier, parseDirtZones, presetFeatures, rumbleStrength } from './graphics.js';
+import { TrackBuilder, TRACK_FLOATS, trackStrength } from './tire-tracks.js';
+import { GraphicsSettings, VibrationSettings, DirtBuildup, Rumble, detectGraphicsTier, parseDirtZones, presetFeatures, rumbleStrength, wheelReprojection, MAX_WHEEL_LIFT } from './graphics.js';
 
 const store = (values = {}) => ({ values, getItem: k => values[k] ?? null, setItem(k, v) { values[k] = String(v); } });
 const env = ({ ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', touch = 0, coarse = false, fine = true, cores = 8, memory = 8, mobile } = {}) => ({
@@ -39,7 +40,9 @@ test('presets persist, cycle in both directions and report the Auto resolution',
 });
 
 test('Original enables nothing; Enhanced caps anisotropy at 4x and High at 16x', () => {
-  assert.deepEqual(presetFeatures('original'), { preset: 'original', interpolation: false, anisotropy: 0, contactShadows: false, dirt: false });
+  assert.deepEqual(presetFeatures('original'), { preset: 'original', interpolation: false, anisotropy: 0, contactShadows: false, dirt: false, wheelReprojection: false, tireTracks: null, shadowMap: 0, fresnel: false, dust: 0 });
+  assert(presetFeatures('high').tireTracks.capacity > presetFeatures('enhanced').tireTracks.capacity && presetFeatures('high').shadowMap && !presetFeatures('enhanced').shadowMap);
+  assert(presetFeatures('high').dust > presetFeatures('enhanced').dust);
   assert.equal(presetFeatures('bogus').preset, 'original');
   assert.equal(presetFeatures('enhanced').anisotropy, 4);
   assert.equal(presetFeatures('high').anisotropy, 16);
@@ -75,14 +78,14 @@ test('rumble scales with impact, prefers the controller and rate-limits one impa
   assert(!new Rumble({ pad: () => pad }).accept({ ...riding, reset_count: 1 }, wreck, 0, true), 'a reset is not a wreck');
 });
 
-const toy = `[Other]\nDirtAnimChangeTime=9\n[TerrainZone1]\nSurfaceDrag = 0.0\nGenerateDirt=T\nDirtAnimChangeTime=0.4\nDirtAnimChangeAmount=1\n;DirtAnimChangeAmount=7\n[TerrainZone2]\nGenerateDirt=T\n[TerrainZone3]\nDirtAnimChangeTime = 1.5 ; ice\nDirtAnimChangeAmount = -2\n[TerrainZone9]\nDirtAnimChangeTime=1\n`;
+const toy = `[Other]\nDirtAnimChangeTime=9\nGenerateTireTrack=T\n[TerrainZone1]\nSurfaceDrag = 0.0\nGenerateDirt=T\nGenerateDust=T\nDirtAnimChangeTime=0.4\nDirtAnimChangeAmount=1\n;DirtAnimChangeAmount=7\n[TerrainZone2]\nGenerateDirt=T\nGenerateTireTrack=T\nGenerateDust=F\n[TerrainZone3]\nDirtAnimChangeTime = 1.5 ; ice\nDirtAnimChangeAmount = -2\n[TerrainZone9]\nDirtAnimChangeTime=1\n`;
 test('original TOY dirt zone fields are read per terrain zone', () => {
   const zones = parseDirtZones(toy);
   assert.equal(zones.length, 8);
-  assert.deepEqual(zones[0], { time: .4, amount: 1 });
-  assert.deepEqual(zones[1], { time: 0, amount: 0 });
-  assert.deepEqual(zones[2], { time: 1.5, amount: -2 });
-  assert.deepEqual(zones[7], { time: 0, amount: 0 });
+  assert.deepEqual(zones[0], { time: .4, amount: 1, tireTrack: false, dust: true });
+  assert.deepEqual(zones[1], { time: 0, amount: 0, tireTrack: true, dust: false });
+  assert.deepEqual(zones[2], { time: 1.5, amount: -2, tireTrack: false, dust: false });
+  assert.deepEqual(zones[7], { time: 0, amount: 0, tireTrack: false, dust: false });
   assert.equal(parseDirtZones(null)[0].time, 0);
 });
 
@@ -106,4 +109,65 @@ test('dirt builds above 10 mph on dirty zones, washes off in water and clears on
   dirt.reset(); assert.equal(dirt.level, 0, 'a player reset cleans the quad');
   assert.equal(new DirtBuildup().step(frame()), 0, 'maps without dirt fields stay clean');
   assert.equal(new DirtBuildup().step(null), 0);
+});
+
+test('wheel re-projection lifts only wheels inside the visible ground, within the cap', () => {
+  const f = { wreck: { phase: 'Riding' }, orientation: [1, 0, 0, 0], wheel_compression: [.1, .2, .3, .4],
+    wheel_effects: { centers: [[0, 1, 0], [0, 1, 0], [0, 1, 0], [0, 5, 0]], radii: [.8, .8, .8, .8] } };
+  const ground = [1.3, .2, 2, 0];
+  let i = 0; const r = wheelReprojection(f, () => ground[i++]);
+  assert(Math.abs(r[0] - (.1 + .5)) < 1e-9, 'sunk 0.5 ft rises 0.5 ft');
+  assert.equal(r[1], .2, 'a wheel above ground keeps its compression');
+  assert.equal(r[2], .3 + MAX_WHEEL_LIFT, 'deep overlap is capped');
+  assert.equal(r[3], .4);
+  assert.equal(f.wheel_compression[0], .1, 'the frame is never modified');
+  assert.equal(wheelReprojection(f, () => 0), null, 'nothing to change');
+  assert.equal(wheelReprojection({ ...f, wreck: { phase: 'Ejected' } }, () => 9), null, 'wrecks keep the simulated pose');
+  assert.equal(wheelReprojection({ ...f, funny_crash: {} }, () => 9), null);
+  assert.equal(wheelReprojection({ ...f, wheel_effects: null }, () => 9), null);
+  const tilted = wheelReprojection({ ...f, orientation: [Math.cos(.5), Math.sin(.5), 0, 0] }, (x, z) => 1.3);
+  assert(tilted[0] > .1 + .5 - 1e-9 && tilted[0] <= .1 + MAX_WHEEL_LIFT, 'body-axis lift grows on a pitched body');
+  assert.equal(wheelReprojection(f, () => NaN), null);
+});
+
+test('tire tracks follow original zone flags and ring-buffer each wheel', () => {
+  const zones = parseDirtZones(toy);
+  assert.equal(trackStrength(zones[1], false), .5, 'GenerateTireTrack ruts');
+  assert.equal(trackStrength(zones[0], false), .26, 'dirt-building zones leave light marks');
+  assert.equal(trackStrength(zones[2], false), 0, 'cleaning zones leave none');
+  assert.equal(trackStrength(zones[3], true), .5, 'MUD scenery ruts');
+  const b = new TrackBuilder(6), at = (x, extra = {}) => ({ ...frame({ zone: 1, ...extra }), wreck: { phase: 'Riding' }, wheel_effects: { ...frame({ zone: 1, ...extra }).wheel_effects, time: x, centers: [[x, 1, 0], [x, 1, 2], [x, 1, 4], [x, 1, 6]] } });
+  b.step(at(0), zones, () => 0); assert.equal(b.count, 0, 'first contact only starts a strip');
+  b.step(at(.3), zones, () => 0); assert.equal(b.count, 0, 'short moves wait');
+  b.step(at(1), zones, () => 0); assert.equal(b.count, 4, 'one segment per wheel');
+  assert.deepEqual([...b.data.subarray(0, TRACK_FLOATS)].map(v => +v.toFixed(3)), [0, .04, .36, -1, 0, 1, .5]);
+  b.step(at(2), zones, () => 0); assert.equal(b.count, 6); assert.equal(b.next, 2, 'the ring wraps');
+  assert.equal(b.total, 8);
+  b.step(at(9), zones, () => 0); assert.equal(b.total, 8, 'teleports break the strip');
+  b.step(at(10, { grounded: [false, false, false, false] }), zones, () => 0); b.step(at(11), zones, () => 0); assert.equal(b.total, 8, 'airborne breaks the strip');
+  b.step(at(12, { water: 5 }), zones, () => 0); assert.equal(b.total, 8, 'water leaves no track');
+  b.step({ ...at(13), wreck: { phase: 'Ejected' } }, zones, () => 0); assert(b.wheels.every(w => w === null));
+  b.reset(); assert.equal(b.count, 0); assert(b.data.every(v => v === 0));
+  const dry = new TrackBuilder(4); dry.step(at(0, { zone: 2 }), zones, () => 0); dry.step(at(1, { zone: 2 }), zones, () => 0); assert.equal(dry.count, 0);
+});
+
+import { DustEmitter, DUST_FLOATS } from './lingering-dust.js';
+import { lightMatrices } from './shadow-map.js';
+test('lingering dust emits capped puffs only on GenerateDust zones at speed', () => {
+  const zones = parseDirtZones(toy), tint = () => [.5, .4, .3];
+  const at = (t, extra = {}) => { const f = frame({ zone: 0, ...extra }); return { ...f, wreck: { phase: 'Riding' }, wheel_effects: { ...f.wheel_effects, time: t } }; };
+  const e = new DustEmitter(4);
+  for (let i = 0; i < 660; i++) e.step(at(i / 60), zones, tint);
+  assert.equal(e.live, 4, 'the pool is capped'); assert(e.emitted > 4, 'and recycled');
+  assert.deepEqual([...e.data.subarray(6, 9)].map(v => +v.toFixed(2)), [.5, .4, .3], 'tinted by the terrain under the wheel');
+  const quiet = new DustEmitter(8);
+  for (const f of [at(0, { zone: 1 }), at(0, { speed: 10 }), at(0, { mud: true }), at(0, { water: 5 }), at(0, { grounded: [true, true, false, false] }), { ...at(0), wreck: { phase: 'Ejected' } }]) for (let i = 0; i < 60; i++) quiet.step(f, zones, tint);
+  assert.equal(quiet.emitted, 0, 'no dust off dusty zones, slow, in mud/water, airborne or wrecked');
+  assert.equal(e.data.length, 4 * DUST_FLOATS); e.reset(); assert.equal(e.live, 0);
+});
+test('the vehicle shadow box is texel-snapped around the rider and maps it to the centre', () => {
+  const m = lightMatrices([100.3, 20, 50.7], [-.6, 1, .35], 1024);
+  const p = [100.3, 20, 50.7, 1], c = [0, 1, 2, 3].map(r => m.texture[r] * p[0] + m.texture[4 + r] * p[1] + m.texture[8 + r] * p[2] + m.texture[12 + r]);
+  for (const v of c.slice(0, 3)) assert(v > .45 && v < .55, `centre maps near 0.5: ${c}`);
+  const low = lightMatrices([0, 0, 0], [1, 0, 0], 512); assert(low.clip.every(Number.isFinite), 'a horizon sun is clamped upward');
 });

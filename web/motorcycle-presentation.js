@@ -78,6 +78,8 @@ function blendOpponents(a, b, t) {
   });
 }
 export class AtvPresentation {
+  // Overridable source of the drawn quad pose (Enhanced wheel re-projection).
+  quadPose(frame) { return frame.quad_node_matrices; }
   reset() { this.segment = null; }
   // `ticks` is the number of 60 Hz steps between the two frames.
   accept(previous, current, previousCamera, currentCamera, now, ticks, continuous = true) {
@@ -93,7 +95,7 @@ export class AtvPresentation {
     if (t >= 1) return { frame, camera, alpha: 1, interpolated: false };
     const a = s.previous, b = frame;
     const shown = { ...b, origin: lerpInto(a.origin, b.origin, t), orientation: slerpish(a.orientation, b.orientation, t),
-      quad_node_matrices: blendMatrices(a.quad_node_matrices, b.quad_node_matrices, t), rider_node_matrices: blendMatrices(a.rider_node_matrices, b.rider_node_matrices, t),
+      quad_node_matrices: blendMatrices(this.quadPose(a), this.quadPose(b), t), rider_node_matrices: blendMatrices(a.rider_node_matrices, b.rider_node_matrices, t),
       rider_world_matrix: b.rider_world_matrix ? lerpInto(a.rider_world_matrix, b.rider_world_matrix, t) : b.rider_world_matrix,
       funny_crash: blendCrash(a.funny_crash, b.funny_crash, t) };
     if (a.race && b.race) shown.race = { ...b.race, opponents: blendOpponents(a.race.opponents, b.race.opponents, t) };

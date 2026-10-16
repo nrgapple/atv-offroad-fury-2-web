@@ -17,7 +17,7 @@ window.__graphicsAudit = {
     render(10000); render(10000);
     const pixels = new Uint8Array(canvas.width * canvas.height * 4); gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
     const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', pixels))].map(v => v.toString(16).padStart(2, '0')).join('');
-    return { hash, resolution: [canvas.width, canvas.height], graphics: diagnostics.graphics ?? null, shadows: diagnostics.contactShadows ?? null, max: gl.getExtension('EXT_texture_filter_anisotropic') ? gl.getParameter(gl.getExtension('EXT_texture_filter_anisotropic').MAX_TEXTURE_MAX_ANISOTROPY_EXT) : 0 };
+    return { hash, resolution: [canvas.width, canvas.height], graphics: diagnostics.graphics ?? null, shadows: diagnostics.contactShadows ?? null, shadowMap: diagnostics.shadowMap ?? null, max: gl.getExtension('EXT_texture_filter_anisotropic') ? gl.getParameter(gl.getExtension('EXT_texture_filter_anisotropic').MAX_TEXTURE_MAX_ANISOTROPY_EXT) : 0 };
   }
 };`;
 const browser = await launch();
@@ -47,12 +47,14 @@ try {
       assert.equal(original.graphics.preset, 'original');
       assert.equal(original.graphics.anisotropyApplied, 0);
       assert.equal(original.shadows, null, 'Original submits no contact shadows');
+      assert.equal(original.shadowMap, null, 'Original renders no shadow map');
       if (reference) assert.equal(original.hash, (await draw(reference, 'original', yaw)).hash, `${env}/${yaw}: Original differs from the baseline renderer`);
       const view = { yaw, original: original.hash };
       for (const preset of ['enhanced', 'high']) {
         const enhanced = await draw(candidate, preset, yaw);
         assert.equal(enhanced.graphics.anisotropyApplied, Math.min(preset === 'high' ? 16 : 4, enhanced.max || 0));
         assert.equal(enhanced.shadows?.draws, 1, `${env}: one contact-shadow draw`);
+        assert.equal(Boolean(enhanced.shadowMap?.draws), preset === 'high', `${env}: only High renders the shadow map`);
         assert(enhanced.shadows.casters >= 1);
         view[preset] = enhanced.hash;
       }
@@ -84,8 +86,8 @@ try {
       if (data?.op === 50) window.__batches.push(Object.keys(JSON.parse(new TextDecoder().decode(data.bytes)).input).sort().join(','));
       return post.call(this, data, ...rest);
     };
-    window.__interpolated = 0;
-    const sample = () => { if (window.atvTerrainStatus?.graphics?.interpolated) window.__interpolated++; requestAnimationFrame(sample); };
+    window.__interpolated = 0; window.__lifts = 0;
+    const sample = () => { const g = window.atvTerrainStatus?.graphics; if (g?.interpolated) window.__interpolated++; if (g?.wheelLift > 0) window.__lifts++; requestAnimationFrame(sample); };
     requestAnimationFrame(sample);
   });
   await page.goto(`${base}/play.html?drive=1&environment=env01`);
@@ -112,21 +114,27 @@ try {
   assert.equal((await status()).vibration.enabled, false, 'vibration persists across reload');
   await page.locator('#game').focus();
   await page.keyboard.down('KeyW'); await waitForSteps(page, 180); await page.keyboard.up('KeyW');
-  const originalRide = await page.evaluate(() => ({ interpolated: window.__interpolated, batches: [...new Set(window.__batches)] }));
+  const originalRide = await page.evaluate(() => ({ interpolated: window.__interpolated, lifts: window.__lifts, batches: [...new Set(window.__batches)] }));
   assert.equal(originalRide.interpolated, 0, 'Original never interpolates');
+  assert.equal(originalRide.lifts, 0, 'Original keeps the recovered wheel placement');
   await page.evaluate(() => { localStorage.setItem('atv-graphics', 'high'); localStorage.setItem('atv-vibration', 'on'); });
   await page.reload();
   await waitForGame(page, { until: () => window.atvTerrainStatus.simulation && window.atvTerrainStatus.graphics });
   await page.locator('#game').focus();
   await page.keyboard.down('KeyW'); await waitForSteps(page, 600); await page.keyboard.up('KeyW');
-  const highRide = await page.evaluate(() => ({ interpolated: window.__interpolated, batches: [...new Set(window.__batches)], graphics: window.atvTerrainStatus.graphics, shadows: window.atvTerrainStatus.contactShadows }));
+  const highRide = await page.evaluate(() => { const s = window.atvTerrainStatus; return { interpolated: window.__interpolated, lifts: window.__lifts, batches: [...new Set(window.__batches)], graphics: s.graphics, shadows: s.contactShadows, tracks: s.tireTracks, dust: s.lingeringDust, shadowMap: s.shadowMap }; });
+  assert(highRide.graphics.wheelLinkage, 'the render core holds the quad linkage for wheel re-projection');
+  assert(highRide.lifts > 0, 'sunk wheels are re-projected onto the visible ground');
+  assert(highRide.tracks?.segments > 0 && highRide.tracks.draws === 1, 'tire tracks build behind the wheels in one draw');
+  assert(highRide.dust?.live > 0 && highRide.dust.live <= 96, 'lingering dust stays within the High cap');
+  assert(highRide.shadowMap?.draws > 0 && highRide.shadowMap.size === 2048, 'High renders the vehicle shadow map');
   assert(highRide.interpolated > 0, 'High presents interpolated ATV frames');
   assert.deepEqual(highRide.batches, originalRide.batches, 'the simulation receives the same input fields in every preset');
   assert(highRide.graphics.dirtLevel > 0, 'riding on dirt builds up the original dirt passes');
   assert(highRide.shadows?.draws === 1);
   await page.keyboard.press('KeyR');
   await page.waitForFunction(() => window.atvTerrainStatus.graphics?.dirtLevel === 0, null, { timeout: 15000 });
-  results.live = { auto: auto.preset, originalRide, highRide: { interpolated: highRide.interpolated, dirtLevel: highRide.graphics.dirtLevel }, resetClearsDirt: true };
+  results.live = { auto: auto.preset, originalRide, highRide: { interpolated: highRide.interpolated, lifts: highRide.lifts, dirtLevel: highRide.graphics.dirtLevel, tracks: highRide.tracks, dust: highRide.dust, shadowMap: highRide.shadowMap }, resetClearsDirt: true };
   // A real Supercross start-straight wreck rumbles a connected controller.
   const pad = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await pad.addInitScript(() => {

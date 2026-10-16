@@ -2589,7 +2589,7 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         });
     }
 
-    if (141..=143).contains(&op) {
+    if (141..=144).contains(&op) {
         return render::dispatch(input, op);
     }
     if op == 140 {
