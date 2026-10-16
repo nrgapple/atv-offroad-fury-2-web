@@ -27,9 +27,14 @@
 .race-results { padding: 0 20px 18px; overflow: auto; }
 .race-results h2, #keyboard-help h2 { margin: 0 -20px 12px; padding: 6px 20px 8px; background: linear-gradient(90deg, #ffffff38 0, #ffffff14 55%, #fff0); color: #f6f6f6; font: italic 800 26px/1.1 var(--atv-font-display); letter-spacing: .015em; text-transform: none; text-shadow: 2px 3px 0 #000a; }
 .race-results p { color: #d8d8d8; font: 600 16px/1.4 var(--atv-font-display); }
-.race-results ol { font: 700 17px/1.7 var(--atv-font-display); }
+.race-results table { font: 700 16px/1.7 var(--atv-font-display); }
+.race-results th { color: #bdbdbd; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; }
+.race-results tr.is-player td { color: var(--hud-gold); }
+.race-menu { margin-top: 10px; }
+.race-show { border: 0; border-radius: var(--ms-radius); background: #0c0c0cdb; color: #f2f2f2; font: 700 16px/1 var(--atv-font-display); letter-spacing: .03em; box-shadow: 0 4px 0 #0009; cursor: pointer; }
+.race-show:focus-visible { outline: none; box-shadow: 0 0 0 3px #f6e061b3; }
 .race-results button { min-height: 46px; margin: 6px 6px 0 0; padding: 0 22px; border: 0; border-radius: var(--ms-radius); background: #ffffff14; color: #f2f2f2; font: 700 17px/1 var(--atv-font-display); letter-spacing: .03em; cursor: pointer; }
-.race-results button:first-of-type { background: var(--atv-gold-pill); color: #0d0b00; box-shadow: inset 0 1px 0 #fffbe0, 0 2px 0 #0009; }
+.race-results .race-menu button:first-of-type { background: var(--atv-gold-pill); color: #0d0b00; box-shadow: inset 0 1px 0 #fffbe0, 0 2px 0 #0009; }
 .race-results button:focus-visible { outline: none; box-shadow: 0 0 0 3px #f6e061b3; }
 #keyboard-help { padding: 0 16px 14px; }
 #keyboard-help header { margin: 0 -16px 10px; padding: 0 16px 0 0; }

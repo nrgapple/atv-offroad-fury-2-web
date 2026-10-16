@@ -82,6 +82,9 @@ struct Simulation {
     race_course: Option<atv_core::race::Course>,
     race: Option<atv_core::race::Race>,
     cpu_racers: Vec<CpuRacer>,
+    /// The original path driver that takes the player's vehicle after the
+    /// finish line, created on the first post-finish frame.
+    race_autopilot: Option<atv_core::race_ai::Driver>,
     /// Original quads selected for the CPU roster, by race slot.
     cpu_models: Vec<Option<cpu::CpuModel>>,
 }
@@ -761,6 +764,10 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                 sim.browser_drive.reset();
                 sim.input_generation = None;
                 sim.resolved_input = None;
+                // A race Reset starts on the ground at the track point.
+                if sim.race.is_some() {
+                    place_racer(&mut vehicle, sim.terrain.as_ref())?;
+                }
                 let frame = vehicle.frame();
                 sim.placement_epoch = sim.placement_epoch.wrapping_add(1);
                 sim.effects_dt = 0.;
@@ -1585,6 +1592,93 @@ fn race_player(
         &vehicle.ok_or("start simulation first")?.frame(),
     ))
 }
+/// 001dd440 ground placement for the player's race grid and race resets;
+/// the browser start keeps its heading.
+fn place_racer(vehicle: &mut Vehicle, terrain: Option<&terrain::Terrain>) -> Result<()> {
+    let terrain = terrain.ok_or("load original terrain first")?;
+    let f = vehicle.frame();
+    let [w, x, y, z] = f.orientation;
+    let yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
+    let ground = terrain
+        .contact(f.origin[0], f.origin[2])?
+        .ok_or("race start outside terrain")?
+        .height;
+    vehicle.place_on_ground(terrain, [f.origin[0], ground, f.origin[2]], yaw)
+}
+/// Player controls imposed by the race: full brake on the grid during the
+/// countdown, then the original path driver once the player has finished.
+/// The CPU-driver takeover after the finish follows the original game's
+/// observed presentation; its exact-build routine is not identified.
+fn race_controls(sim: &mut Simulation) -> Result<Option<atv_core::vehicle::VehicleInput>> {
+    let Some(race) = &sim.race else {
+        sim.race_autopilot = None;
+        return Ok(None);
+    };
+    if race.counting_down() {
+        return Ok(Some(atv_core::vehicle::VehicleInput {
+            brake: 1.,
+            ..Default::default()
+        }));
+    }
+    if !race.player_finished() {
+        sim.race_autopilot = None;
+        return Ok(None);
+    }
+    let pose = if let Some(bike) = &sim.motorcycle {
+        let f = bike.frame();
+        atv_core::race_ai::DriverPose {
+            origin: f.origin,
+            orientation: f.orientation,
+            speed_magnitude: f.speed_magnitude,
+            grounded: f.grounded.iter().any(|v| *v),
+            riding: f.wreck.phase == atv_core::wreck::Phase::Riding,
+        }
+    } else {
+        (&sim
+            .vehicle
+            .as_ref()
+            .ok_or("start simulation first")?
+            .frame())
+            .into()
+    };
+    let terrain = sim.terrain.as_ref().ok_or("missing terrain")?;
+    let contact = terrain.contact(pose.origin[0], pose.origin[2])?;
+    let peers: Vec<_> = sim
+        .cpu_racers
+        .iter()
+        .map(|cpu| {
+            let f = cpu.vehicle.frame();
+            atv_core::cpu_avoidance::Peer {
+                origin: f.origin,
+                velocity: f.linear_velocity,
+            }
+        })
+        .collect();
+    // Slot 4 follows the four CPU slots' driver random streams.
+    let driver = sim
+        .race_autopilot
+        .get_or_insert_with(|| atv_core::race_ai::Driver::new(4, 1));
+    let scene = sim
+        .vehicle
+        .as_ref()
+        .filter(|_| sim.motorcycle.is_none())
+        .and_then(|v| v.scene_collision());
+    let (input, _) = driver.step(
+        &race.course,
+        &pose,
+        0.,
+        0.,
+        1. / 60.,
+        atv_core::race_ai::Context {
+            peers: &peers,
+            scene,
+            clearance: contact.as_ref().map_or(0., |c| pose.origin[1] - c.height),
+            terrain_normal: contact.as_ref().map_or([0., 1., 0.], |c| c.normal),
+            station: Some(race.station(None)),
+        },
+    )?;
+    Ok(Some(input))
+}
 /// Race progress, real CPU racers and rider contact for either player vehicle.
 fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
     if let Some(race) = &mut sim.race {
@@ -1593,7 +1687,10 @@ fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
         let [w, x, y, z] = player.orientation;
         let yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
         let terrain = sim.terrain.as_ref().ok_or("missing terrain")?;
-        if race.running() {
+        // Every racer keeps its physics through the countdown (held on the
+        // brakes) and after the finish, when the CPUs drive on.
+        {
+            let hold = race.counting_down();
             let nodes = &sim
                 .rider_mesh
                 .as_ref()
@@ -1621,25 +1718,32 @@ fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
                 materials: sim.materials.as_ref().ok_or("CPU materials missing")?,
                 water: sim.water.as_ref(),
                 dynamic: &dynamic,
+                hold,
             };
             // Race checkpoints stay on the racing line at each rider's
-            // last on-track station, facing the race direction.
+            // last on-track station, facing the race direction. ATVs are
+            // then placed on the ground (001dd440); the motorcycle reset keeps
+            // the authored 2.5ft drop.
             let on_line = |(point, heading): ([f32; 3], f32)| -> Result<([f32; 3], f32)> {
                 let height = terrain
                     .contact(point[0], point[2])?
                     .map_or(point[1], |c| c.height);
-                Ok(([point[0], height + 2.5, point[2]], heading))
+                Ok(([point[0], height, point[2]], heading))
             };
-            let checkpoint = Some(on_line(race.checkpoint(None))?);
+            let (point, heading) = on_line(race.checkpoint(None))?;
             if let Some(bike) = sim.motorcycle.as_mut() {
-                bike.set_race_checkpoint(checkpoint);
+                bike.set_race_checkpoint(Some((
+                    [
+                        point[0],
+                        point[1] + atv_core::spawn::COURSE_CLEARANCE as f32,
+                        point[2],
+                    ],
+                    heading,
+                )));
             } else if let Some(vehicle) = sim.vehicle.as_mut() {
-                vehicle.set_race_checkpoint(checkpoint);
+                vehicle.set_race_checkpoint(Some((point, heading)));
             }
             for (index, cpu) in sim.cpu_racers.iter_mut().enumerate() {
-                if race.opponents()[index].finished {
-                    continue;
-                }
                 cpu.vehicle
                     .set_race_checkpoint(Some(on_line(race.checkpoint(Some(index)))?));
                 let peers: Vec<_> = std::iter::once(atv_core::cpu_avoidance::Peer {
@@ -1664,7 +1768,8 @@ fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
                 )?;
                 let [w, x, y, z] = frame.orientation;
                 let cpu_yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
-                if repositioned {
+                // Settling on the grid earns no race distance.
+                if repositioned || hold {
                     race.reposition_cpu(index, frame.origin, cpu_yaw, Some(physical));
                 } else {
                     race.observe_cpu(index, frame.origin, cpu_yaw, Some(physical.clone()));
@@ -1689,10 +1794,8 @@ fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
             // poses and each racer applies its own half.
             let mut bodies: Vec<(Option<usize>, RacePlayer)> = vec![(None, player)];
             for (index, cpu) in sim.cpu_racers.iter().enumerate() {
-                if !race.opponents()[index].finished {
-                    let f = cpu.vehicle.frame();
-                    bodies.push((Some(index), RacePlayer::from(&f)));
-                }
+                let f = cpu.vehicle.frame();
+                bodies.push((Some(index), RacePlayer::from(&f)));
             }
             for a in 0..bodies.len() {
                 for b in a + 1..bodies.len() {
@@ -1769,18 +1872,27 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
             multiplayer::collide(sim, step_now, 1. / 60.)?;
             Ok(frame)
         })?;
-        let locked = SIMULATION.with_borrow(|sim| sim.race.as_ref().is_some_and(|r| r.locked()));
-        let bytes = if locked {
-            SIMULATION.with_borrow_mut(|sim| {
-                let player = sim
-                    .vehicle
-                    .as_ref()
-                    .ok_or("start simulation first")?
-                    .frame();
-                simulation_frame(sim, &player)
-            })?
-        } else {
-            simulation(&step, 24)?
+        // During the countdown and after the finish the race supplies the
+        // player's controls; tricks and touch/keyboard intents are dropped.
+        let bytes = match SIMULATION.with_borrow_mut(race_controls)? {
+            Some(input) => {
+                let mut controls = serde_json::json!({
+                    "throttle": input.throttle,
+                    "brake": input.brake,
+                    "steer": input.steer,
+                    "lean": input.lean,
+                    "reverse": false,
+                });
+                for key in ["crash_mode", "funny_crashes"] {
+                    if let Some(v) = driving.get(key) {
+                        controls[key] = v.clone();
+                    }
+                }
+                let step = serde_json::to_vec(&serde_json::json!({"dt":1.0/60.0,"input":controls}))
+                    .map_err(|e| e.to_string())?;
+                simulation(&step, 24)?
+            }
+            None => simulation(&step, 24)?,
         };
         let frame = serialized_operation(bytes)?;
         let race = SIMULATION.with_borrow_mut(step_race)?;
@@ -2017,6 +2129,12 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             }
             sim.cpu_racers = racers;
             sim.race = Some(race);
+            sim.race_autopilot = None;
+            if sim.motorcycle.is_none()
+                && let Some(vehicle) = sim.vehicle.as_mut()
+            {
+                place_racer(vehicle, sim.terrain.as_ref())?;
+            }
             Ok(b"null".to_vec())
         });
     }

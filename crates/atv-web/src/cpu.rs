@@ -7,6 +7,8 @@ pub struct World<'a> {
     pub materials: &'a [TerrainMaterial; 8],
     pub water: Option<&'a atv_core::water_animation::LiveField>,
     pub dynamic: &'a [atv_core::scene_collision::DynamicObstacle],
+    /// The countdown holds the grid on the brakes while the quads settle.
+    pub hold: bool,
 }
 /// A CPU racer's own original quad: physics, mesh/linkage, chassis contact
 /// points with wreck rays, and actor (obstacle) rays from its ATV archive.
@@ -76,8 +78,7 @@ pub fn create_cpu_racer(
     origin[1] = terrain
         .contact(origin[0], origin[2])?
         .ok_or("CPU grid outside terrain")?
-        .height
-        + 2.5;
+        .height;
     // Each CPU rides its own original quad when the roster installed one.
     let model = sim.cpu_models.get(index).and_then(Option::as_ref);
     let mesh = model
@@ -87,6 +88,7 @@ pub fn create_cpu_racer(
         .map_or(sim.physics.as_ref(), |m| Some(&m.physics))
         .ok_or("CPU physics missing")?;
     let mut vehicle = Vehicle::new(mesh, physics, origin, yaw)?;
+    vehicle.place_on_ground(terrain, origin, yaw)?;
     vehicle.enable_wrecks(physics)?;
     vehicle.set_wreck_rays(
         model
@@ -178,9 +180,9 @@ impl CpuRacer {
             before.origin[0] + before.linear_velocity[0] * 0.5,
             before.origin[2] + before.linear_velocity[2] * 0.5,
         )?;
-        let (input, decisions) = self.driver.step(
+        let (mut input, decisions) = self.driver.step(
             course,
-            &before,
+            &(&before).into(),
             player_speed,
             gap,
             DT,
@@ -199,14 +201,22 @@ impl CpuRacer {
             crashed: before.wreck.phase != atv_core::wreck::Phase::Riding,
             ..atv_core::stunt::Input::default()
         };
+        if world.hold {
+            input = atv_core::vehicle::VehicleInput {
+                brake: 1.,
+                ..Default::default()
+            };
+        }
         let durations = std::array::from_fn(|i| self.rider.stunt_duration(i).unwrap_or(f32::MAX));
-        if let Some(id) = self.driver.stunt_choice(
-            course,
-            &before,
-            self.rider.stunt_frame().is_some(),
-            &durations,
-            DT,
-        ) {
+        if !world.hold
+            && let Some(id) = self.driver.stunt_choice(
+                course,
+                &before,
+                self.rider.stunt_frame().is_some(),
+                &durations,
+                DT,
+            )
+        {
             self.rider.request_cpu_stunt(id, stunt_input);
         }
         self.vehicle

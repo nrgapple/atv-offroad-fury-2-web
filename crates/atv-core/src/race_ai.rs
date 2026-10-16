@@ -215,6 +215,27 @@ pub struct Decisions {
     pub route_error: f32,
     pub lane_offset: f32,
 }
+/// The rigid-body state the path driver reads: ATV CPUs, and the player's
+/// ATV or motorcycle once it is driven after the finish.
+#[derive(Clone, Copy, Debug)]
+pub struct DriverPose {
+    pub origin: [f32; 3],
+    pub orientation: [f32; 4],
+    pub speed_magnitude: f32,
+    pub grounded: bool,
+    pub riding: bool,
+}
+impl From<&VehicleFrame> for DriverPose {
+    fn from(f: &VehicleFrame) -> Self {
+        Self {
+            origin: f.origin,
+            orientation: f.orientation,
+            speed_magnitude: f.speed_magnitude,
+            grounded: f.grounded.iter().any(|v| *v),
+            riding: f.wreck.phase == crate::wreck::Phase::Riding,
+        }
+    }
+}
 pub struct Context<'a> {
     pub peers: &'a [crate::cpu_avoidance::Peer],
     pub scene: Option<&'a crate::scene_collision::SceneCollision>,
@@ -308,7 +329,7 @@ impl Driver {
     pub fn step(
         &mut self,
         course: &Course,
-        frame: &VehicleFrame,
+        frame: &DriverPose,
         player_speed: f32,
         progress_difference: f32,
         dt: f32,
@@ -321,7 +342,7 @@ impl Driver {
             Some(station) => course.project_near(frame.origin, station),
             None => course.project(frame.origin),
         };
-        if frame.wreck.phase != crate::wreck::Phase::Riding {
+        if !frame.riding {
             return Ok((
                 VehicleInput::default(),
                 Decisions {
@@ -411,7 +432,7 @@ impl Driver {
             0.,
             tangent[2] + (target[2] - frame.origin[2]) * 0.05,
         ]);
-        let airborne = !frame.grounded.iter().any(|v| *v);
+        let airborne = !frame.grounded;
         let lean = if airborne && context.clearance > 20. {
             let desired = [
                 corrected[0] * 0.9816,

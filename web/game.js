@@ -1850,6 +1850,8 @@ $('reset').onclick = async (options) => {
   const race = simFrame?.race;
   let start = simStart;
   if (raceSettings) {
+    // After the finish the CPU driver has the quad; only Restart reloads.
+    if (race?.phase === 'finished' && options?.restart !== true) return;
     if (options?.restart === true || race?.phase !== 'racing' || !race.track_point) { await loadGame(null, raceSettings.course ?? 'env01', raceSettings); return; }
     start = await command(140, { position: race.track_point, yaw: race.track_heading, course: true, slot: null });
   }
