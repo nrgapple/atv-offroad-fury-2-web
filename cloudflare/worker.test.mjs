@@ -47,6 +47,30 @@ test('hashed blobs preserve cache, MIME, length, conditional and HEAD semantics'
   assert.equal(await (await worker.fetch(request(path, { method: 'HEAD' }), env)).text(), '');
 });
 
+test('music streams serve audio/mp4 byte ranges from immutable R2 objects', async () => {
+  const reads = [], body = '0123456789';
+  const env = { CONTENT: { head: async key => key === `content/${'c'.repeat(64)}.m4a` ? object(body) : null,
+    get: async (key, options) => { reads.push(options?.range ?? null); const { offset = 0, length = body.length } = options?.range ?? {}; return object(body.slice(offset, offset + length)); } } };
+  const path = `/content/${'c'.repeat(64)}.m4a`;
+  const whole = await worker.fetch(request(path), env);
+  assert.equal(whole.status, 200); assert.equal(await whole.text(), body);
+  assert.equal(whole.headers.get('Content-Type'), 'audio/mp4'); assert.equal(whole.headers.get('Accept-Ranges'), 'bytes');
+  assert.match(whole.headers.get('Cache-Control'), /immutable/);
+  for (const [range, text, contentRange] of [['bytes=2-5', '2345', 'bytes 2-5/10'], ['bytes=7-', '789', 'bytes 7-9/10'], ['bytes=-3', '789', 'bytes 7-9/10'], ['bytes=8-99', '89', 'bytes 8-9/10']]) {
+    const part = await worker.fetch(request(path, { headers: { Range: range } }), env);
+    assert.equal(part.status, 206, range); assert.equal(await part.text(), text, range);
+    assert.equal(part.headers.get('Content-Range'), contentRange); assert.equal(part.headers.get('Content-Length'), String(text.length));
+  }
+  const invalid = await worker.fetch(request(path, { headers: { Range: 'bytes=10-' } }), env);
+  assert.equal(invalid.status, 416); assert.equal(invalid.headers.get('Content-Range'), 'bytes */10');
+  const head = await worker.fetch(request(path, { method: 'HEAD', headers: { Range: 'bytes=0-1' } }), env);
+  assert.equal(head.status, 206); assert.equal(await head.text(), ''); assert.equal(head.headers.get('Content-Length'), '2');
+  assert.equal((await worker.fetch(request(path, { headers: { 'If-None-Match': '"test-etag"' } }), env)).status, 304);
+  assert.deepEqual(reads, [null, { offset: 2, length: 4 }, { offset: 7, length: 3 }, { offset: 7, length: 3 }, { offset: 8, length: 2 }]);
+  assert.equal((await worker.fetch(request(`/content/${'d'.repeat(64)}.m4a`), env)).status, 404);
+  assert.equal((await worker.fetch(request('/content/source.m4a'), env)).status, 404);
+});
+
 test('gallery overlays only screenshots whose authored checkpoint matches CI', async () => {
   const log = { entries: [{ id: 'match', title: 'Same' }, { id: 'changed', title: 'New' }] };
   const overlay = { entries: [

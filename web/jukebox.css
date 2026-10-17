@@ -1,0 +1,96 @@
+/* Jukebox player (jukebox.js). Original Jukebox page art: the red snow
+   backdrop and the spinning CD; red/silver/gold tokens from design-system.css. */
+.pause-panel[data-screen=jukebox] { width: min(1080px, calc(100% - 48px)); display: flex; flex-direction: column; }
+.jb-header { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 16px; flex-wrap: wrap; }
+.jb-header h1 { margin: 0; }
+.jb-source { font-size: 13px; letter-spacing: .04em; text-transform: uppercase; }
+.jb-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 28px; align-items: start; flex: none; }
+.jb-now { display: grid; gap: 14px; min-width: 0; }
+
+/* "Cover": the original backdrop with the original disc turning on it. */
+.jb-art { position: relative; aspect-ratio: 640 / 448; max-height: 36vh; width: 100%; overflow: hidden; background: #2a0505; border-top: 3px solid var(--atv-silver); box-shadow: inset 0 0 0 1px #ffffff1a, 0 14px 40px #0008; }
+.jb-art-photo { position: absolute; inset: 0; background: var(--jb-backdrop, radial-gradient(ellipse at 30% 30%, #7a1212, #210504)) center / cover no-repeat; }
+.jb-art::after { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 42%, #0000 0, #0000 30%, #12020299 100%), linear-gradient(180deg, #0000 55%, #0b0101d9); pointer-events: none; }
+.jb-disc { position: absolute; z-index: 1; left: 50%; top: 42%; height: 60%; aspect-ratio: 1; transform: translate(-50%, -50%); filter: drop-shadow(0 8px 14px #000a);
+  background: var(--jb-disc, none) 0 0 / calc(var(--jb-disc-frames, 20) * 100%) 100% no-repeat; image-rendering: auto;
+  animation: jb-turn 1.6s steps(var(--jb-disc-frames, 20)) infinite; animation-play-state: paused; }
+.pause-panel:not([data-art=original]) .jb-disc { border-radius: 50%; background: radial-gradient(circle, #222 0 9%, #ddd 10% 15%, #0000 16%), conic-gradient(#f3d6f0, #c9e4ff, #f6f3c4, #d8f7e2, #f3d6f0); animation: none; }
+.pause-panel[data-playing=true] .jb-disc { animation-play-state: running; }
+/* Stopped, the disc rests face-on on its first frame. */
+.pause-panel:not([data-playing=true]) .jb-disc { animation: none; }
+@keyframes jb-turn { to { background-position: calc(100% * var(--jb-disc-frames, 20) / (var(--jb-disc-frames, 20) - 1)) 0; } }
+.jb-bars { position: absolute; z-index: 2; left: 6%; right: 6%; bottom: 5%; width: 88%; height: 18%; opacity: .9; }
+.jb-meta { display: grid; gap: 2px; min-width: 0; }
+.jb-meta p, .jb-meta h2 { margin: 0; overflow-wrap: anywhere; }
+.jb-genre { color: var(--atv-orange); font: italic 800 12px/1.2 var(--atv-font-label); letter-spacing: .08em; text-transform: uppercase; }
+.jb-title { color: var(--atv-gold-light); font: italic 800 clamp(24px, 3.2vw, 34px)/1.05 var(--atv-font-label); text-transform: uppercase; text-shadow: 0 2px 4px #000; }
+.jb-artist { color: var(--atv-silver-light); font-size: 17px; font-weight: 600; }
+.jb-seek { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; }
+.jb-seek input, .jb-volume input { width: 100%; min-width: 0; }
+.jb-time { min-width: 3.2em; color: #bbb7b2; font: 600 13px/1 var(--atv-font-label); font-variant-numeric: tabular-nums; text-align: center; }
+.jb-transport { display: flex; justify-content: center; align-items: center; gap: 18px; }
+.pause-panel .jb-transport button { width: auto; min-height: 0; padding: 0; justify-content: center; border-radius: 50%; background: transparent; }
+.pause-panel .jb-transport button::before { display: none; }
+.jb-transport svg { display: block; fill: currentColor; }
+.pause-panel .jb-transport .jb-skip { width: 52px; height: 52px; color: var(--atv-silver-light); }
+.jb-skip svg { width: 28px; height: 28px; }
+.pause-panel .jb-transport .jb-play { width: 72px; height: 72px; color: #1b1500; background: var(--atv-gold-pill); box-shadow: inset 0 1px 0 #fff8, 0 4px 14px #0009; }
+.pause-panel .jb-transport .jb-play:hover { color: #000; background: var(--atv-gold-pill); filter: brightness(1.06); }
+.jb-play svg { width: 34px; height: 34px; }
+.pause-panel .jb-transport button[aria-current=true] { outline: 3px solid var(--atv-gold-light); outline-offset: 3px; }
+.pause-panel .jb-transport .jb-skip[aria-current=true] { color: #0d0b00; }
+.jb-volume { display: grid; grid-template-columns: auto minmax(0, 1fr) 3.2em; align-items: center; gap: 12px; color: var(--atv-silver); }
+.jb-volume-icon svg { display: block; width: 22px; height: 22px; fill: currentColor; }
+.jb-volume-value { color: var(--atv-gold-light); font: 600 13px/1 var(--atv-font-label); text-align: right; }
+.jb-seek:has(input[data-selected=true]), .jb-volume:has(input[data-selected=true]) { box-shadow: inset 3px 0 var(--atv-gold); padding-left: 10px; }
+
+/* Track list */
+.jb-tracks { min-width: 0; max-height: min(62vh, 640px); overflow-y: auto; overscroll-behavior: contain; scrollbar-color: #51545c transparent; border-top: 1px solid #ffffff1c; }
+.jb-list { list-style: none; margin: 0; padding: 0; }
+.jb-list li { border-bottom: 1px solid #ffffff10; }
+.pause-panel .jb-track { display: grid; grid-template-columns: 2.2em minmax(0, 1fr) auto 18px; align-items: center; gap: 12px; min-height: 52px; padding: 8px 12px 8px 16px; font-size: 15px; }
+.jb-num { color: #8f8a85; font: 600 13px/1 var(--atv-font-label); font-variant-numeric: tabular-nums; }
+.jb-track-copy { display: grid; min-width: 0; }
+.jb-track-title { color: var(--atv-text); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jb-track-artist { color: #a9a49f; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jb-track-genre { color: #8f8a85; font: italic 700 11px/1 var(--atv-font-label); letter-spacing: .06em; text-transform: uppercase; }
+.jb-track[data-playing=true] .jb-track-title, .jb-track[data-playing=true] .jb-num { color: var(--atv-gold-light); }
+.jb-track[data-playing=true] { background: linear-gradient(90deg, #e5d36014, #0000 70%); }
+.jb-eq { display: flex; align-items: flex-end; gap: 2px; height: 14px; visibility: hidden; }
+.jb-eq i { width: 4px; height: 30%; background: var(--atv-gold); }
+.jb-track[data-playing=true] .jb-eq { visibility: visible; }
+/* The focused row takes the shared gold selection pill, with dark text. */
+.pause-panel .jb-track[aria-current=true] :is(.jb-num, .jb-track-title, .jb-track-artist, .jb-track-genre) { color: #0d0b00; }
+.pause-panel .jb-track[aria-current=true] .jb-eq i { background: #3a2e00; }
+.pause-panel[data-playing=true] .jb-track[data-playing=true] .jb-eq i { animation: jb-eq .9s ease-in-out infinite alternate; }
+.jb-eq i:nth-child(2) { animation-delay: -.3s !important; }
+.jb-eq i:nth-child(3) { animation-delay: -.6s !important; }
+@keyframes jb-eq { from { height: 20%; } to { height: 100%; } }
+.jb-footer { margin-top: 18px; }
+.pause-panel .jb-back { justify-content: flex-start; gap: 10px; width: auto; flex: 0 0 auto; }
+.jb-back-icon svg { display: block; width: 16px; height: 16px; fill: currentColor; }
+
+/* Opened from the main menu: full-screen frontend page. */
+#frontend[data-context=menu] .pause-panel[data-screen=jukebox] { width: 100%; }
+#frontend[data-context=menu] .pause-panel[data-screen=jukebox] > * { max-width: 1180px; }
+#frontend[data-context=menu] .pause-panel[data-screen=jukebox] .jb-tracks { max-height: calc(100vh - 210px); }
+/* Focus and scrollIntoView must not pan the frontend's oversized backdrop. */
+#frontend[data-page=jukebox] { overflow: clip; }
+
+@media (max-width: 760px), (orientation: portrait) {
+  .pause-panel[data-screen=jukebox] { width: calc(100% - 24px); }
+  .jb-body { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .jb-art { aspect-ratio: 16 / 9; max-height: none; }
+  .jb-disc { top: 45%; }
+  .jb-tracks { max-height: none; overflow: visible; }
+}
+@media (max-height: 520px) and (orientation: landscape) {
+  .jb-art { aspect-ratio: 2 / 1; }
+  .jb-now { gap: 8px; }
+  .pause-panel .jb-transport .jb-play { width: 56px; height: 56px; }
+  .pause-panel .jb-transport .jb-skip { width: 44px; height: 44px; }
+  .jb-tracks { max-height: calc(100vh - 150px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jb-disc, .pause-panel[data-playing=true] .jb-track[data-playing=true] .jb-eq i { animation: none; }
+}

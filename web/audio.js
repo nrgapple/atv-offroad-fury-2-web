@@ -6,6 +6,7 @@ import { CROSSFADE_SECONDS, createEchoBus, fadeOut } from './audio-enhance.js';
 import { openArchive } from './content.js';
 // Browser audio preferences (the original had separate Music and SFX volume).
 const SETTINGS_KEY = 'atv-audio-v1';
+const MUSIC_GESTURES = ['pointerup', 'touchend', 'keydown', 'click'];
 export function loadAudioSettings(storage = (() => { try { return globalThis.window?.localStorage ?? null; } catch { return null; } })()) {
   // Sound: Enhanced is the default; Original keeps the recovered baseline.
   const settings = { sfx: 1, mode: 'enhanced' };
@@ -63,6 +64,9 @@ export class GameAudio {
     this.unlock = () => this.resume().catch(error => this.report(error.message));
     window.addEventListener('pointerdown', this.unlock);
     window.addEventListener('keydown', this.unlock);
+    // The streamed soundtrack needs a play() inside an activating gesture.
+    this.unlockMusic = () => this.music.unlock();
+    for (const type of MUSIC_GESTURES) window.addEventListener(type, this.unlockMusic);
   }
   async resume() {
     if (this.closed || (!this.active && !this.musicPreview)) return;
@@ -715,6 +719,7 @@ export class GameAudio {
     this.ready = false;
     window.removeEventListener('pointerdown', this.unlock);
     window.removeEventListener('keydown', this.unlock);
+    for (const type of MUSIC_GESTURES) window.removeEventListener(type, this.unlockMusic);
     this.stopSources();this.stopWeather();this.weatherActive=false;
     this.stopSpatial(this.remoteVoices);this.stopSpatial(this.remoteEffects);
     this.stopSpatial(); this.spatialReady = false; this.spatialPending = this.spatialHistory = null;

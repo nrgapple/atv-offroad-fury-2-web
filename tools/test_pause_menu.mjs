@@ -137,6 +137,7 @@ try {
         'resume',
         'reset',
         'settings',
+        'jukebox',
         'copyride',
         'devlog',
         'main'
@@ -387,6 +388,7 @@ try {
           'changeride',
           ...(menu === a ? ['hosttrack'] : []),
           'settings',
+          'jukebox',
           'copyride',
           'devlog',
           'leave'

@@ -91,7 +91,7 @@ section is authoritative.
 | Arlington train | Route, wheel motion, collision, sound and locomotive smoke connected | `TRAIN.md`, `TRAIN_CONTACT.md` |
 | HUD and minimap | Authored controller using original layout/fonts/atlases; GPS minimap is authored | `HUD.md`, `MINIMAP.md` |
 | Menus and UI | Browser-native screens driven by Rust menu logic; profiles, championships, unlocks and saves missing | `UI.md`, `MENU_SCREENS.md`, `DESIGN_SYSTEM.md` |
-| Audio | Recovered VAG decoding, 21-song catalog/shuffle, engine banks, impacts, train; SPU2 mixer/reverb not reproduced | `AUDIO.md` |
+| Audio | Recovered VAG decoding, 21-song catalog/shuffle streamed as AAC with VAG fallback, Jukebox player, engine banks, impacts, train; SPU2 mixer/reverb not reproduced | `AUDIO.md` |
 | Racing | All 32 race courses; recovered CPU driver decisions (Normal/Expert, jump preload, track-edge and cheat flags) inside authored race rules | `RACING.md` |
 | Multiplayer | Authored four-player Freeride through the Rust relay; authored rider contacts; no split-screen or original protocol | `MULTIPLAYER.md`, `MULTIPLAYER_ORIGINAL.md`, `SECURITY.md` |
 | Motorcycles | Riding controller recovered component by component from MX vs. ATV Unleashed (steer/bank, tires/suspension, engine/clutch, wheelie/stoppie, air control, preload, flips, wreck rules) through authored terrain/surface/input adapters; native whole-step parity unmeasured; Single Player only | `MOTORCYCLES.md` |

@@ -17,6 +17,11 @@ export function contentSource(manifest, fetchBlob) {
       end += chunk.bytes;
     }
     if (end !== record.bytes) throw new Error('Truncated hosted content record.');
+    // Soundtrack songs may also name a browser-playable encoding that a media
+    // element streams with ranged reads; the VAG chunks remain the fallback.
+    const stream = record.stream;
+    if (stream !== undefined && !(/^\/AUDIO\/MUSIC\/[A-Z0-9_]+\.VAG$/.test(record.path) && stream?.type === 'audio/mp4' && integer(stream.bytes) && stream.bytes > 0 && stream.bytes <= MAX_BLOB
+      && /^[a-f0-9]{64}$/.test(stream.sha256) && stream.url === `/content/${stream.sha256}.m4a` && Number.isFinite(stream.seconds) && stream.seconds > 0)) throw new Error('Invalid hosted music stream.');
     files.push({ ...record, chunks });
   }
   files.sort((a, b) => a.lba - b.lba);

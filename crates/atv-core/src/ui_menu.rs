@@ -426,6 +426,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             | "controls"
             | "bindings"
             | "music"
+            | "jukebox"
     );
     let mut f = Frame {
         width: w,
@@ -507,6 +508,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             }
         }
         "music" => "Audio",
+        "jukebox" => "Jukebox",
         _ => return Err("unknown menu page".into()),
     };
     if request.page != "title" {
@@ -600,6 +602,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                     ("Multiplayer", "multiplayer"),
                     ("Arlington Free Ride", "freeride"),
                     ("Settings", "settings"),
+                    ("Jukebox", "jukebox"),
                     ("Dev log", "devlog"),
                 ]
             } else if request.race_available {
@@ -607,17 +610,19 @@ pub fn layout(request: Request) -> Result<Frame> {
             } else {
                 &[("Garage", "garage")]
             };
+            // Six main rows fit the 448-unit landscape height at 50 units.
+            let row = if main && !portrait { 50. } else { 58. };
             for (i, (label, action)) in items.iter().enumerate() {
                 f.choices.push((*action).into());
                 f.button(
                     label,
                     action,
-                    [20., 160. + i as f32 * 58., list_w, 58.],
+                    [20., 102. + row + i as f32 * row, list_w, row],
                     request.selection == i + 1,
                 );
             }
             let detail_y = if main {
-                394.
+                104. + row * 6.
             } else if request.race_available {
                 292.
             } else {
@@ -630,6 +635,8 @@ pub fn layout(request: Request) -> Result<Frame> {
             } else if main && request.selection == 3 {
                 "Controls, display, audio and extras."
             } else if main && request.selection == 4 {
+                "Play the original soundtrack."
+            } else if main && request.selection == 5 {
                 "Progress, screenshots and what is next."
             } else {
                 detail
@@ -1158,6 +1165,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                     "reset",
                 ),
                 ("Settings", "settings"),
+                ("Jukebox", "jukebox"),
             ];
             let online = !request.lobby_status.is_empty();
             if online {
@@ -1486,6 +1494,69 @@ pub fn layout(request: Request) -> Result<Frame> {
                 f.choices.push((*action).into());
             }
         }
+        "jukebox" => {
+            // Original Jukebox page (PAGE14 Jukebox.dat): transport and the
+            // catalog list. The browser lays out the player; Rust owns the
+            // actions, labels and keyboard order.
+            let controls = [
+                (
+                    if request.music_enabled {
+                        "Pause".to_string()
+                    } else {
+                        "Play".to_string()
+                    },
+                    "jukeplay",
+                ),
+                ("Previous track".to_string(), "jukeprev"),
+                ("Next track".to_string(), "jukenext"),
+                ("Seek".to_string(), "jukeseek"),
+                (format!("Volume: {}%", request.music_volume), "jukevolume"),
+            ];
+            // Physical touch minimums: 44px portrait, 36px compact landscape.
+            let min_row = (if portrait { 44. } else { 36. } / scale).max(36.);
+            let top = if portrait { 82. } else { 78. };
+            let control_h = min_row.max(48.);
+            let control_w = (w - 48.) / controls.len() as f32;
+            for (i, (label, action)) in controls.iter().enumerate() {
+                f.button(
+                    label,
+                    action,
+                    [24. + i as f32 * control_w, top, control_w, control_h],
+                    request.selection == f.choices.len(),
+                );
+                f.choices.push((*action).into());
+            }
+            let list_top = top + control_h + 8.;
+            let available = (h - 76. - list_top).max(min_row);
+            let rows = request.music_rows.len().max(1);
+            let columns = rows.div_ceil(((available / min_row).floor() as usize).max(1));
+            let per_column = rows.div_ceil(columns);
+            let row = (available / per_column as f32).min(min_row.max(48.));
+            let column_w = (w - 48.) / columns as f32;
+            for (i, song) in request.music_rows.iter().enumerate() {
+                let action = format!("song:{}", song.id);
+                f.button(
+                    "",
+                    &action,
+                    [
+                        24. + (i / per_column) as f32 * column_w,
+                        list_top + (i % per_column) as f32 * row,
+                        column_w,
+                        row,
+                    ],
+                    request.selection == f.choices.len(),
+                );
+                f.hits.last_mut().unwrap().label = format!("{}: {}", song.label, song.value);
+                f.choices.push(action);
+            }
+            f.button(
+                "Back",
+                "back",
+                [24., h - 68., 132., 56.],
+                request.selection == f.choices.len(),
+            );
+            f.choices.push("back".into());
+        }
         "bindings" | "music" => {
             let music = request.page == "music";
             if !request.capture_label.is_empty() {
@@ -1665,6 +1736,53 @@ mod tests {
         r.sound_mode = "original".into();
         let frame = layout(r).unwrap();
         assert!(frame.hits.iter().any(|h| h.label == "Sound: Original"));
+    }
+    fn jukebox_rows() -> Vec<ControlRow> {
+        (0..21)
+            .map(|i| ControlRow {
+                id: i.to_string(),
+                label: format!("Song {i}"),
+                value: format!("Artist {i}"),
+            })
+            .collect()
+    }
+    #[test]
+    fn jukebox_lists_every_song_with_transport_and_is_reachable() {
+        let mut r = request("jukebox", 390., 844.);
+        r.music_rows = jukebox_rows();
+        r.music_volume = 45;
+        let frame = layout(r).unwrap();
+        assert_eq!(
+            &frame.choices[..5],
+            ["jukeplay", "jukeprev", "jukenext", "jukeseek", "jukevolume"]
+        );
+        assert_eq!(frame.choices.len(), 5 + 21 + 1);
+        assert_eq!(frame.choices.last().unwrap(), "back");
+        let label = |action: &str| {
+            frame
+                .hits
+                .iter()
+                .find(|h| h.action == action)
+                .unwrap()
+                .label
+                .clone()
+        };
+        assert_eq!(label("jukeplay"), "Pause");
+        assert_eq!(label("jukevolume"), "Volume: 45%");
+        assert_eq!(label("song:20"), "Song 20: Artist 20");
+        let mut stopped = request("jukebox", 1280., 720.);
+        stopped.music_enabled = false;
+        assert!(
+            layout(stopped)
+                .unwrap()
+                .hits
+                .iter()
+                .any(|h| h.label == "Play")
+        );
+        for page in ["pause", "main"] {
+            let menu = layout(request(page, 390., 844.)).unwrap();
+            assert!(menu.choices.iter().any(|c| c == "jukebox"), "{page}");
+        }
     }
     fn request(page: &str, w: f32, h: f32) -> Request {
         Request {
@@ -1872,7 +1990,14 @@ mod tests {
     fn supported_routes_have_no_unfinished_choices() {
         assert_eq!(
             layout(request("main", 1280., 720.)).unwrap().choices,
-            ["single", "multiplayer", "freeride", "settings", "devlog"]
+            [
+                "single",
+                "multiplayer",
+                "freeride",
+                "settings",
+                "jukebox",
+                "devlog"
+            ]
         );
         assert_eq!(
             layout(request("single", 1280., 720.)).unwrap().choices,
@@ -2000,8 +2125,13 @@ mod tests {
                 "race-overlays",
                 "bindings",
                 "music",
+                "jukebox",
             ] {
-                let f = layout(request(page, w, h)).unwrap();
+                let mut r = request(page, w, h);
+                if page == "jukebox" {
+                    r.music_rows = jukebox_rows();
+                }
+                let f = layout(r).unwrap();
                 let scale = w / f.width;
                 for hit in &f.hits {
                     let [x, y, width, height] = hit.rect;

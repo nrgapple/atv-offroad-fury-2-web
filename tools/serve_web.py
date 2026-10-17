@@ -12,7 +12,7 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1] / 'web/dist'
 PROJECT = Path(__file__).resolve().parents[1]
 CONTENT = PROJECT / 'private/reports/hosted-content'
-ALLOWED = {'fury-remastered-home-180-v1.png', 'fury-remastered-home-192-v1.png', 'fury-remastered-home-512-v1.png', 'app-icon.svg', 'apple-touch-icon.png', 'app-icon-512.png', 'fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'play.html', 'design-system.css', 'game.css', 'game.js', 'render-support.js', 'speed-rush.js', 'scenery-materials.js', 'race.js', 'multiplayer.js', 'water.js', 'fog.js', 'train.js', 'wheel-effects.js', 'weather.js', 'ambient-effects.js', 'ambient-streams.js', 'motorcycle-presentation.js', 'graphics.js', 'vehicle-shadows.js', 'tire-tracks.js', 'shadow-map.js', 'lingering-dust.js', 'keyboard-help.js', 'analytics.js', 'menu-screens.js', 'hud.js', 'minimap.js', 'diagnostics.js', 'frontend.js', 'launch.js', 'touch.js', 'touch.css', 'menu-screens.css', 'hud.css', 'content.js', 'audio.js', 'quad-sounds.js', 'audio-enhance.js', 'music.js', 'deployment.json', 'devlog.html', 'devlog.css', 'devlog.js', 'devlog.json', 'workbench.html', 'style.css', 'app.js', 'worker.js', 'input.js', 'controls.js', 'bindings.js', 'atv_web.wasm'}
+ALLOWED = {'fury-remastered-home-180-v1.png', 'fury-remastered-home-192-v1.png', 'fury-remastered-home-512-v1.png', 'app-icon.svg', 'apple-touch-icon.png', 'app-icon-512.png', 'fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'play.html', 'design-system.css', 'game.css', 'game.js', 'render-support.js', 'speed-rush.js', 'scenery-materials.js', 'race.js', 'multiplayer.js', 'water.js', 'fog.js', 'train.js', 'wheel-effects.js', 'weather.js', 'ambient-effects.js', 'ambient-streams.js', 'motorcycle-presentation.js', 'graphics.js', 'vehicle-shadows.js', 'tire-tracks.js', 'shadow-map.js', 'lingering-dust.js', 'keyboard-help.js', 'analytics.js', 'menu-screens.js', 'jukebox.js', 'hud.js', 'minimap.js', 'diagnostics.js', 'frontend.js', 'launch.js', 'touch.js', 'touch.css', 'menu-screens.css', 'jukebox.css', 'hud.css', 'content.js', 'audio.js', 'quad-sounds.js', 'audio-enhance.js', 'music.js', 'deployment.json', 'devlog.html', 'devlog.css', 'devlog.js', 'devlog.json', 'workbench.html', 'style.css', 'app.js', 'worker.js', 'input.js', 'controls.js', 'bindings.js', 'atv_web.wasm'}
 
 class StaticServer(ThreadingHTTPServer):
     # ES-module startup opens more connections than Python's default five-slot
@@ -28,11 +28,13 @@ class Handler(SimpleHTTPRequestHandler):
         path = unquote(urlsplit(self.path).path)
         if path == '/': path = '/index.html'
         image = re.fullmatch(r'/devlog-images/[a-z0-9-]+\.png', path)
-        content = re.fullmatch(r'/content/(?:manifest\.json|[a-f0-9]{64}\.bin)', path)
+        content = re.fullmatch(r'/content/(?:manifest\.json|[a-f0-9]{64}\.(?:bin|m4a))', path)
         app_icon = re.fullmatch(r'/app-icons/[a-f0-9]{64}\.png', path)
         if (path.removeprefix('/') not in ALLOWED and not image and not content and not app_icon and path != '/apple-touch-icon-precomposed.png') or not path.startswith('/'):
             self.send_error(404)
             return None
+        if path.endswith('.m4a'):
+            return self.send_stream(path)
         if path == '/devlog.json':
             data = (json.dumps(read_devlog(PROJECT), indent=2) + '\n').encode()
             self.send_response(200)
@@ -43,6 +45,34 @@ class Handler(SimpleHTTPRequestHandler):
         self.path = path
         return super().send_head()
 
+    def send_stream(self, path):
+        # Media elements read soundtrack streams in byte ranges, as from R2.
+        try:
+            data = (CONTENT / path.rsplit('/', 1)[1]).read_bytes()
+        except OSError:
+            self.send_error(404)
+            return None
+        start, end, status = 0, len(data) - 1, 200
+        match = re.fullmatch(r'bytes=(\d*)-(\d*)', self.headers.get('Range', ''))
+        if match and (match[1] or match[2]):
+            start = max(0, len(data) - int(match[2])) if not match[1] else int(match[1])
+            if match[1] and match[2]:
+                end = min(end, int(match[2]))
+            if start > end:
+                self.send_response(416)
+                self.send_header('Content-Range', f'bytes */{len(data)}')
+                self.end_headers()
+                return None
+            status = 206
+        self.send_response(status)
+        self.send_header('Content-Type', 'audio/mp4')
+        self.send_header('Accept-Ranges', 'bytes')
+        self.send_header('Content-Length', str(end - start + 1))
+        if status == 206:
+            self.send_header('Content-Range', f'bytes {start}-{end}/{len(data)}')
+        self.end_headers()
+        return io.BytesIO(data[start:end + 1])
+
     def translate_path(self, path):
         if path in ['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png', '/app-icon-512.png']:
             path = '/fury-remastered-home-' + ('512' if path == '/app-icon-512.png' else '180') + '-v1.png'
@@ -50,7 +80,7 @@ class Handler(SimpleHTTPRequestHandler):
             return str(PROJECT / 'private/reports/app-icons' / path.rsplit('/', 1)[1])
         # Only the explicitly requested log and PNG checkpoint gallery are
         # exposed outside dist. Source media and other reports stay inaccessible.
-        if re.fullmatch(r'/content/(?:manifest\.json|[a-f0-9]{64}\.bin)', path):
+        if re.fullmatch(r'/content/(?:manifest\.json|[a-f0-9]{64}\.(?:bin|m4a))', path):
             return str(CONTENT / path.rsplit('/', 1)[1])
         if re.fullmatch(r'/devlog-images/[a-z0-9-]+\.png', path):
             return str(PROJECT / 'private/reports/devlog-images' / path.rsplit('/', 1)[1])
@@ -59,7 +89,7 @@ class Handler(SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self'; media-src blob:; img-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self'; media-src 'self' blob:; img-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
         super().end_headers()
 
 def main():

@@ -51,12 +51,12 @@ def uploader(token, known):
         record = {'key': key, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
         if all(known.get(key, {}).get(field) == record[field] for field in ('bytes', 'sha256')):
             return dict(record, uploaded=False)
-        mime = 'application/json' if key.endswith('.json') else 'image/png' if key.endswith('.png') else 'application/octet-stream'
+        mime = 'application/json' if key.endswith('.json') else 'image/png' if key.endswith('.png') else 'audio/mp4' if key.endswith('.m4a') else 'application/octet-stream'
         url = f'https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/r2/buckets/{BUCKET}/objects/{quote(key, safe="/")}'
         for attempt in range(4):
             request = Request(url, data=data, method='PUT', headers={
                 'Authorization': f'Bearer {token}', 'Content-Type': mime,
-                'Cache-Control': 'public, max-age=31536000, immutable' if key.endswith('.bin') else 'no-cache',
+                'Cache-Control': 'public, max-age=31536000, immutable' if key.endswith(('.bin', '.m4a')) else 'no-cache',
             })
             try:
                 with urlopen(request, timeout=90) as response:

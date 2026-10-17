@@ -16,6 +16,56 @@ The pause Music screen can preview selected songs while vehicle sounds remain si
 
 Validation: focused tests cover all 21 catalog selections, bounded PCM scheduling, contiguous end-of-song transitions, in-flight selection cancellation, pause/resume including an in-flight chunk, persisted settings and selection history, failed-request recovery and paused preview without engine playback. Host Chromium validation on port 4176 also selected all 21 original tracks through the actual Rust/WASM decoder and hosted runtime manifest. Each produced bounded scheduled PCM; the run recorded 63 chunks, a 65,536-byte maximum decode input, zero underruns and zero browser/music errors. Music off froze the playhead with no live voices, and Music on resumed its clock. This exercises the start of every song; end-of-song transitions use focused synthetic tests. Public menu/release verification remains separate. These checks establish player behavior and playback-clock progress, not a listening comparison or full original audio parity.
 
+## Streamed soundtrack and the Jukebox
+
+The content package now carries a browser encoding of each song beside its
+original VAG. `tools/package_content.py` decodes every song with the same Rust
+`VagStream` decoder the fallback uses (`atv-tools music-wav`), then encodes AAC-LC
+160 kbps in faststart MP4 (`ffmpeg`, AudioToolbox when present; byte-identical
+across runs). The 21 streams total 87.4 MB against 218.4 MB of VAG (GOLDEN: 3.79 MB
+for 9.47 MB). Each song record gains `stream: {url, bytes, sha256, type, seconds}`
+with a hash-addressed `/content/<sha256>.m4a` URL. This is an authored lossy
+re-encoding of the decoded ADPCM, not an original file; the VAG chunks stay in the
+package unchanged.
+
+When every song has a stream, `MusicStream` plays through one `<audio>` element
+routed by `MediaElementAudioSourceNode` into the existing music gain, so volume,
+race holds/fades and the master bus behave as before. The browser fetches byte
+ranges and decodes natively off the main thread; there is no WASM decoding or
+per-chunk PCM conversion, and songs are seekable. The Rust catalog and shuffle
+still choose every song. The Worker serves `.m4a` objects as `audio/mp4` with
+single `Range` requests (206/416) and immutable caching; iOS Safari requires
+ranges for media. The element pauses whenever the AudioContext is not running.
+A silent blob WAV is played inside the first activating gesture so later song
+changes are allowed on mobile. Autoplay refusal waits for the next gesture; any
+other play or media error switches the session to the VAG decoder and restarts
+the song. A package missing any stream (the published one until this upload)
+keeps the decoder for the whole catalog.
+
+The **Jukebox** (Main Menu and Pause) follows the original `Jukebox.dat` page in
+`PAGE14.RES`, now packaged as a lazy record. It shows that page's red snow
+backdrop (`bk_jukebox`) and its 20-frame spinning CD (`cd64.atm`), the genre,
+title and artist from `music.pb`, a seek bar, previous/play-pause/next, music
+volume, all 21 songs, and a small spectrum from an `AnalyserNode` on the music
+gain. The disc has no album covers; the CD and backdrop are the only original
+soundtrack artwork. The layout, transport, seeking and spectrum are authored.
+Play/Pause is the existing Music on/off setting. Left/Right scrub ten seconds on
+the seek bar, step volume by 5%, or change track elsewhere. The decoder fallback
+is not seekable, so the seek bar is disabled there.
+
+Validation: unit tests cover streaming through a fake element (no VAG reads or
+decodes), seeking and clamping, ended → shuffle, history, on/off, race holds,
+context suspension, autoplay refusal, decoder fallback on failure and mixed
+packages. Worker tests cover ranges, suffix/open ranges, 416, HEAD and 304.
+`tools/test_jukebox.mjs` (content group, host Chromium) opens Main → Jukebox and
+Pause → Jukebox with the actual package. Every stream response was `audio/mp4`
+with 206 range responses. It checks the original art, all 21 rows, row
+selection, seeking to mid-song, pause freezing the position, next/previous,
+keyboard scrubbing, 390×844 touch sizes without horizontal overflow, and the
+ride overlay. `tools/test_music.mjs` now forces the decoder path. A host probe
+against the published (stream-free) package played through the decoder with the
+drawn disc and a disabled seek bar. Physical iOS/Android playback is unverified.
+
 ## Moving Arlington train body sounds
 
 The original Arlington Freestyle TOY binds eleven body-attached sound emitters
