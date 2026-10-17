@@ -1,0 +1,14 @@
+{
+  "id": "smooth-sky-on-enhanced-and-high-4a3343fcc1a54becb3157a803054f42f",
+  "timestamp": "2026-10-17T16:09:04.319993+00:00",
+  "recorded_at": "2026-10-17T16:09:45.843603+00:00",
+  "kind": "build",
+  "title": "Smooth sky on Enhanced and High",
+  "summary": "On phones the sky looked pixelated. Sky faces are 4x4 grids of 128-texel MPEG-intra (IPUM) tiles stretched about 5-6x in portrait, which exposes 8x8 block edges, stripe and dot ringing inside blocks (a grid over haze and distant mountains) and 2x2 chroma steps. Enhanced and High now use a second decode of the same original tiles plus bicubic sampling.",
+  "details": [
+    "MPEG-4 Annex F deblocking runs per macroblock quantizer. A quantizer-scaled bilateral denoise (5x5 luma, 3x3 chroma) keeps cloud edges and horizon silhouettes. Chroma uses centred triangle upsampling instead of 2x2 steps, and the sky is sampled with a nine-tap Catmull-Rom filter. Tiles carry 4-texel overlapping borders (texels 120-127 match the neighbour's 0-7), so the filters never touch a clamped edge. Cost is about 24 ms native per 64-tile sky and about 4 MB extra memory. Verification: atv-core ipu unit tests pass; test_graphics_presets.mjs passes (Original after High is pixel-identical, Enhanced and High report skySmooth); phone-size screenshots (390x844 at 3x) checked on env08 and env06. Implementation PR #147 (branch feat/sky-quality, commit d0a5e81), queued with auto-merge."
+  ],
+  "limitation": "Original preset is unchanged by design. This cleans the original art but adds no new detail: the sky is still 512 texels per 90 degrees, so it is soft rather than sharp. Host-verified only; not yet confirmed on the public site.",
+  "image": "/devlog-images/smooth-sky-on-enhanced-and-high-4a3343fcc1a54becb3157a803054f42f.png",
+  "caption": "env08 sky crop on a 390x844 phone at 3x, Enhanced preset: smooth gradient and clean cloud edges. The Original preset of the same crop shows the 8x8 block grid and stripe ringing (compared during testing; env06 overcast horizon also checked)."
+}
