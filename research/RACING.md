@@ -819,6 +819,17 @@ show zero differing outputs against the Rust functions:
   instructions. The others end the section or pick a different nearest
   segment.
 
+Host Chromium, four CPUs and an idle player, 40s per run. Mean/max CPU route
+error in feet for current main, this branch without the tail, and this branch:
+nat01 6.6/25, 7.5/42 and 10.3/150 (two earlier main runs: 6.5/27, 9.0/131;
+two runs without the tail: 10.5/106, 9.3/131); env01 7.0/28, 6.4/28 and
+8.4/43; sx07 8.1/33, 8.0/35 and 7.7/36; env02 11.7–12.4/34–37 on main and
+12.2/40 with the tail. The tail fired in 358–687 of about 8,300 CPU frames.
+Run-to-run spread is large, but on nat01 and env01 the recovered tail tends to
+widen CPU lines. It is kept as the original behavior. Worker cost did not
+change: 1.0–1.1 ms mean and 1.2–1.3 ms p95 per five-quad step on main and
+this branch (env01, env02, nat01, 30s each).
+
 These cover the interpreter's binary32 model, not PS2 hardware rounding.
 The port finds the nearest probe segment in the station window instead of the
 whole section and tests the four-corner edge quad instead of the native
