@@ -60,7 +60,7 @@ try {
   assert.equal(layout.tracks, 21);
   assert.match(layout.disc, /^url\("blob:/); assert.match(layout.photo, /^url\("blob:/);
   assert.equal(layout.title, first.title);
-  assert.equal(layout.source, 'Streaming the original soundtrack');
+  assert.equal(layout.source, 'Streaming');
   assert(layout.overflow <= 0, 'no horizontal overflow');
 
   // Track selection.
@@ -106,18 +106,29 @@ try {
   await page.keyboard.press('ArrowRight');
   await page.waitForFunction(value => window.atvTerrainStatus.audio.music.positionSeconds > value + 8, before, { timeout: 10000 });
 
-  // Portrait phone layout.
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.waitForTimeout(400); // Time-based on purpose: the menu re-lays out through the worker after a resize.
-  const portrait = await page.evaluate(() => {
-    const panel = document.querySelector('.pause-panel'), play = panel.querySelector('[data-action=jukeplay]').getBoundingClientRect();
-    const rows = [...panel.querySelectorAll('.jb-track')].map(row => row.getBoundingClientRect().height);
-    return { overflow: panel.scrollWidth - panel.clientWidth, play: play.width, rows: Math.min(...rows) };
-  });
-  assert(portrait.overflow <= 0, 'portrait has no horizontal overflow');
-  assert(portrait.play >= 44 && portrait.rows >= 44, `portrait touch targets ${JSON.stringify(portrait)}`);
-  await optionalScreenshot(page, 'ATV_JUKEBOX_SCREENSHOTS', 'main-390');
-  await page.setViewportSize({ width: 1280, height: 800 });
+  // Fixed layout at every size: the panel never scrolls, only the track list
+  // does; Back and the player never cover the list; touch targets stay usable.
+  for (const size of [{ width: 390, height: 844 }, { width: 320, height: 568 }, { width: 667, height: 375 }, { width: 844, height: 390 }, { width: 1280, height: 800 }]) {
+    await page.setViewportSize(size);
+    await page.waitForTimeout(400); // Time-based on purpose: the menu re-lays out through the worker after a resize.
+    const layout = await page.evaluate(() => {
+      const panel = document.querySelector('.pause-panel'), list = panel.querySelector('.jb-tracks');
+      const rect = node => node.getBoundingClientRect();
+      const back = rect(panel.querySelector('[data-action=back]')), tracks = rect(list), now = rect(panel.querySelector('.jb-now'));
+      const rows = [...panel.querySelectorAll('.jb-track')].map(row => rect(row).height);
+      return { pageScroll: panel.scrollHeight - panel.clientHeight, overflow: panel.scrollWidth - panel.clientWidth, listScrolls: list.scrollHeight > list.clientHeight,
+        backClear: back.bottom <= tracks.top + 1 && back.bottom <= now.top + 1, listVisible: tracks.height, bottom: tracks.bottom - window.innerHeight,
+        play: rect(panel.querySelector('[data-action=jukeplay]')).width, rows: Math.min(...rows), volume: rect(panel.querySelector('input[data-setting=jukevolume]')).width };
+    });
+    const label = `${size.width}x${size.height} ${JSON.stringify(layout)}`;
+    assert(layout.pageScroll <= 1, `panel must not scroll: ${label}`);
+    assert(layout.overflow <= 0, `no horizontal overflow: ${label}`);
+    assert(layout.listScrolls && layout.listVisible >= 120, `the track list scrolls in its own region: ${label}`);
+    assert(layout.backClear, `Back stays above the player and list: ${label}`);
+    assert(layout.bottom <= 1, `list ends on screen: ${label}`);
+    assert(layout.play >= 44 && layout.rows >= 44 && layout.volume >= 60, `touch targets: ${label}`);
+    await optionalScreenshot(page, 'ATV_JUKEBOX_SCREENSHOTS', `main-${size.width}x${size.height}`);
+  }
 
   await page.locator('[data-action=back]').click();
   await waitForScreen(page, 'main');
@@ -133,6 +144,11 @@ try {
   await button(page, 'Jukebox').click();
   await waitForScreen(page, 'jukebox');
   const ride = await playing(page);
+  const rideLayout = await page.evaluate(() => {
+    const panel = document.querySelector('.pause-panel');
+    return { pageScroll: panel.scrollHeight - panel.clientHeight, volume: panel.querySelector('input[data-setting=jukevolume]').getBoundingClientRect().width };
+  });
+  assert(rideLayout.pageScroll <= 1 && rideLayout.volume >= 60, `ride Jukebox layout ${JSON.stringify(rideLayout)}`);
   assert.equal(await page.evaluate(() => document.querySelector('#frontend').dataset.context), '', 'ride Jukebox keeps the pause overlay');
   await advances(page, ride.positionSeconds);
   await optionalScreenshot(page, 'ATV_JUKEBOX_SCREENSHOTS', 'pause-1280');
