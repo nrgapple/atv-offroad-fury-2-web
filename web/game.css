@@ -122,7 +122,8 @@ body:not(.menu-open) #help, body:not(.menu-open) #status:not(.error) { display: 
 /* Pause is an accessible, responsive browser overlay over the live ride. */
 #frontend[data-page=pause] { background: #080b10a6; }
 #frontend[data-page=pause] #menu-canvas, #frontend[data-page=pause] #menu-buttons { display: none; }
-.pause-panel[hidden] { display: none; }
+/* Screen rules such as the Jukebox's display: flex must not reveal a hidden panel. */
+.pause-panel[hidden] { display: none !important; }
 .pause-panel { position: absolute; inset: 24px; margin: auto; width: min(820px, calc(100% - 48px)); height: fit-content; max-height: calc(100% - 48px); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 30px; background: #16191ef5; border: 1px solid #ffffff24; border-radius: 16px; box-shadow: 0 24px 80px #0009; color: #f4f5f7; font: 15px/1.45 system-ui, sans-serif; }
 .pause-panel header { padding-bottom: 22px; border-bottom: 1px solid #ffffff1c; margin-bottom: 22px; }
 .pause-panel h1 { font-size: 32px; letter-spacing: -.03em; line-height: 1.2; margin: 0 0 8px; }
