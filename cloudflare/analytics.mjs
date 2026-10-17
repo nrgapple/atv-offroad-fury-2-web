@@ -6,9 +6,11 @@ const accepted = () => new Response(null, { status: 204, headers: { 'Cache-Contr
 
 export async function usageEvent(request, env, allowed) {
   if (request.method !== 'POST') return new Response('Method not allowed', { status: 405, headers: { Allow: 'POST' } });
-  // Beacons may omit Origin; fetch metadata still proves a same-origin page sent them.
+  // Beacons may omit Origin, and Safari sends `Origin: null` for no-cors beacons
+  // under the site's no-referrer policy; fetch metadata still proves a
+  // same-origin page sent them.
   const origin = request.headers.get('Origin');
-  if (origin ? !allowed.includes(origin) : request.headers.get('Sec-Fetch-Site') !== 'same-origin') return new Response('Origin denied', { status: 403 });
+  if (origin && origin !== 'null' ? !allowed.includes(origin) : request.headers.get('Sec-Fetch-Site') !== 'same-origin') return new Response('Origin denied', { status: 403 });
   const length = request.headers.get('Content-Length');
   if (length !== null && (!/^\d+$/.test(length) || Number(length) > MAX_EVENT_BYTES)) return new Response('Event too large', { status: 413 });
   let event;
