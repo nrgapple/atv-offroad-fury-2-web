@@ -1,0 +1,17 @@
+{
+  "id": "controller-bindings-use-original-style-button-glyphs-b1e3c36254a54c13bf92c015615e6148",
+  "timestamp": "2026-10-17T22:45:29.472761+00:00",
+  "recorded_at": "2026-10-17T22:46:17.265794+00:00",
+  "kind": "build",
+  "title": "Controller bindings use original-style button glyphs",
+  "summary": "Pause \u2192 Controls \u2192 Controller bindings now draws each binding with PS2-style glyphs redrawn after the original Controller Settings page (PAGE17). Chord buttons are joined by the original blue \"+\". An original-style translucent panel groups ATV, Stunt and Camera controls from the live controller profile.",
+  "details": [
+    "Glyph colours sampled from the original button textures; vectors only, no original texture shipped.",
+    "Only actions the port has are listed; the original's fixed presets and Look Back, Thrill, Pan, Dolly and Zoom cameras are omitted, as are unbound actions.",
+    "Text labels now read Cross / R2, Left stick left; pads reporting a non-standard mapping keep raw Button/Axis names.",
+    "Verified: unit tests, test_settings.mjs and test_bindings.mjs browser tests, inspected 1280\u00d7800 and 390\u00d7844 captures (PR #158)."
+  ],
+  "limitation": "Face buttons use PlayStation shapes, as in the original; Xbox/Nintendo letter glyphs are not shown. No physical controller was tested. Host captures, not a verified public release.",
+  "image": "/devlog-images/controller-bindings-use-original-style-button-glyphs-b1e3c36254a54c13bf92c015615e6148.png",
+  "caption": "Host capture: Controller bindings with original-style glyphs and summary panel, 1280\u00d7800."
+}

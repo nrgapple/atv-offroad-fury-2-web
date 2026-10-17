@@ -1,4 +1,5 @@
 // Gameplay mappings. Gesture adaptation stays in touch.js; native force gates stay in Rust.
+import { bindingText } from './pad-glyphs.js';
 export const ACTIONS = [
   ['throttle','Gas'], ['brake','Brake'], ['steerLeft','Steer left'], ['steerRight','Steer right'],
   ['leanForward','Lean forward'], ['leanBack','Lean back'], ['reverse','Reverse'],
@@ -80,7 +81,9 @@ export class GameplayBindings {
   save() { try {this.storage?.setItem(STORAGE_KEY,JSON.stringify({...this.profile,version:PROFILE_VERSION}));this.storageError=null;}catch{this.storageError='Settings work for this session; browser storage is unavailable.';} }
   subscribe(listener) {this.listeners.add(listener);return()=>this.listeners.delete(listener);}
   changed() {this.cancel();this.save();for(const listener of this.listeners)listener();}
-  rows(device) { if(!this.profile[device])throw Error('Unknown input device');return ACTIONS.map(a=>({...a,label:(device==='keyboard'&&KEYBOARD_LABELS[a.id])||a.label,binding:clone(this.profile[device][a.id]),labelBinding:bindingLabel(this.profile[device][a.id])})); }
+  // Controller rows use standard-layout names (Cross, R2, Left stick left);
+  // pass standard=false for a pad that reports a non-standard mapping.
+  rows(device,standard=true) { if(!this.profile[device])throw Error('Unknown input device');return ACTIONS.map(a=>({...a,label:(device==='keyboard'&&KEYBOARD_LABELS[a.id])||a.label,binding:clone(this.profile[device][a.id]),labelBinding:device==='controller'?bindingText(this.profile[device][a.id],standard):bindingLabel(this.profile[device][a.id])})); }
   setBinding(device,id,binding) { if(!ids.has(id))throw Error('Unknown control');const next=normalize(device,binding);this.profile[device][id]=next;this.changed(); }
   reset(device) {if(!this.profile[device])throw Error('Unknown input device');this.profile[device]=clone(DEFAULTS[device]);this.changed();}
   value(device,id,keys,pad) {return Math.max(0,...(this.profile[device]?.[id]??[]).map(b=>amount(b,keys,pad)));}

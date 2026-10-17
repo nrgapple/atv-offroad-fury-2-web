@@ -93,7 +93,7 @@ try {
   await page.evaluate(() => (window.settingsPad.buttons[5] = { pressed: true, value: 1 }));
   await nextFrames(page, 6);
   await page.evaluate(() => (window.settingsPad.buttons[5] = { pressed: false, value: 0 }));
-  await page.getByRole('button', { name: 'Gas: Button 5', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Gas: R1', exact: true }).waitFor();
   // Signed stick-axis remapping is also captured by actual controller movement.
   await page.getByRole('button', { name: /^Steer left:/ }).click();
   await page.getByRole('button', { name: 'Cancel', exact: true }).waitFor();
@@ -101,7 +101,7 @@ try {
   await page.evaluate(() => (window.settingsPad.axes[2] = -0.8));
   await nextFrames(page, 6);
   await page.evaluate(() => (window.settingsPad.axes[2] = 0));
-  await page.getByRole('button', { name: /^Steer left: Axis 2/ }).waitFor();
+  await page.getByRole('button', { name: /^Steer left: Right stick left/ }).waitFor();
   await screenshot('controller');
   for (const button of await page.locator('#menu-buttons button').all())
     assert((await button.boundingBox()).height >= 44);
@@ -133,7 +133,7 @@ try {
   await click('Clear');
   await page.getByRole('button', { name: 'Gas: Unbound', exact: true }).waitFor();
   await click('Defaults');
-  await page.getByRole('button', { name: /^Gas: Button 0 \/ Button 7$/ }).waitFor();
+  await page.getByRole('button', { name: /^Gas: Cross \/ R2$/ }).waitFor();
   await click('Back');
   await screen('controls');
   await click('Back');
