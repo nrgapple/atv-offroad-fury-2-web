@@ -2,16 +2,17 @@ import { gameplayBindings } from './bindings.js';
 import { parseLaunch, buildRideUrl, copyRideUrl, ENVIRONMENTS, RACE_COURSES, COURSE_PREVIEWS, courseResource, loadingShotsResource } from './launch.js';
 import { renderScreen, screenPages, courseGroup, COURSE_GROUPS } from './menu-screens.js';
 import { PAINT_PALETTE, paintGlsl, paintable } from './render-support.js';
+import { renderJukebox, stopJukebox, JUKEBOX_SEEK_STEP } from './jukebox.js';
 // Rust owns menu labels, supported choices and their order. This bridge lays out
 // the HD frontend screens (menu-screens.js) and ride panels, and binds input.
 const base = name => name.replaceAll('\\', '/').split('/').at(-1).toLowerCase();
 const unquote = value => (value ?? '').replace(/^"/, '').replace(/"$/, '');
 const fields = section => Object.fromEntries([...section.fields].reverse().map(f => [f.key.toLowerCase(), f.value]));
 const sections = doc => new Map(doc.sections.map(s => [s.name.toLowerCase(), fields(s)]));
-const overlayPages = new Set(['settings','extras','pause','players','hud-settings','minimap-config','race-overlays','controls','bindings','music']);
+const overlayPages = new Set(['settings','extras','pause','players','hud-settings','minimap-config','race-overlays','controls','bindings','music','jukebox']);
 // Menu pages with quad/rider preview slots.
 const MODEL_PAGES = ['garage','gear','main','single','create-lobby','join-lobby'];
-const settingsPages = new Set(['settings','extras','hud-settings','minimap-config','race-overlays','controls','bindings','music']);
+const settingsPages = new Set(['settings','extras','hud-settings','minimap-config','race-overlays','controls','bindings','music','jukebox']);
 // Value rows that step either way with Left/Right as well as cycling on a tap.
 const stepperActions = new Set(['racetrack','racelaps','racecpu','racedifficulty','gearhelmet','gearjersey','gearpant','gearglove','gearboot','geargoggle','gearpaint']);
 const cycleActions = new Set(['graphics','vibration','speed-rush','crash-camera','chase-camera','flips','funnycrashes','diagnostics','onehanded','minimap-orientation','minimap-shape','minimap-corner','minimap-toggle','musictoggle','musicvolume','sfxvolume','soundmode','overlay-timing','overlay-lap','overlay-score','overlay-position','overlay-info','overlay-speed','overlay-radar']);
@@ -155,7 +156,7 @@ export class Frontend {
         if (!this.root.hidden && !this.padBlocked) for (const action of held) if (!this.lastPad.has(action)) {
           if (action === 'pause' && this.page === 'garage' && this.garageReturn === 'pause' && !this.busy) void this.leaveGarage();
           else if (action === 'pause' && this.page === 'tracks' && this.trackMode === 'change' && !this.busy) { this.trackMode = 'single'; this.resume(); }
-          else if (action === 'pause' && ['settings','extras','pause','players','hud-settings','minimap-config','race-overlays','controls','bindings','music','multiplayer','create-lobby','join-lobby','lobby','garage'].includes(this.page) && !this.busy && this.activeSetup && !this.menuSettings()) this.resume();
+          else if (action === 'pause' && ['settings','extras','pause','players','hud-settings','minimap-config','race-overlays','controls','bindings','music','jukebox','multiplayer','create-lobby','join-lobby','lobby','garage'].includes(this.page) && !this.busy && this.activeSetup && !this.menuSettings()) this.resume();
           else void this.action(action === 'pause' ? 'accept' : action);
         }
         this.lastPad = held;
@@ -452,8 +453,9 @@ export class Frontend {
   menuSettings(page = this.page) { return settingsPages.has(page) && this.settingsReturn === 'main'; }
   syncPreview() {
     const rideMenu = this.isPausePanel() && !this.menuSettings();
-    // The racing soundtrack plays in ride menus, or once a song is chosen on Audio.
-    const soundtrack = rideMenu || (this.page === 'music' && this.songPreview);
+    // The racing soundtrack plays in ride menus and the Jukebox, or once a
+    // song is chosen on Audio.
+    const soundtrack = rideMenu || this.page === 'jukebox' || (this.page === 'music' && this.songPreview);
     void this.audio?.()?.setMusicPreview((this.isPausePanel() || ['title','main','single','tracks','garage','multiplayer','create-lobby','join-lobby','lobby','race','loading','music'].includes(this.page)) && !this.root.hidden && !document.hidden && document.hasFocus(), !soundtrack).catch(error => this.fail(error));
   }
   beginCapture(id) {
@@ -483,7 +485,7 @@ export class Frontend {
     for (const atom of atoms) if (!this.capture.atoms.some(a => JSON.stringify(a) === JSON.stringify(atom) || ('axis' in atom && a.axis === atom.axis)) && this.capture.atoms.length < 4) this.capture.atoms.push(atom);
     if (!atoms.length && this.capture.atoms.length) this.finishCapture();
   }
-  resume() { this.stopShots(); this.animatePage(true); this.setLoading(false); this.clearModelViews(); this.cancelCapture(); this.root.hidden = true; this.active(false); void this.audio?.()?.setMusicPreview(false); }
+  resume() { stopJukebox(this); this.stopShots(); this.animatePage(true); this.setLoading(false); this.clearModelViews(); this.cancelCapture(); this.root.hidden = true; this.active(false); void this.audio?.()?.setMusicPreview(false); }
   async show(page, { previews = true } = {}) {
     this.padBlocked = true;
     const previous = this.root.hidden ? null : this.canvas;
@@ -520,7 +522,7 @@ export class Frontend {
   async action(action) {
     if (this.busy || this.root.hidden) return;
     this.notice.textContent = '';
-    if (['up','down'].includes(action) && ['title','main','single','garage','multiplayer','create-lobby','join-lobby','lobby','race','settings','extras','pause','players','hud-settings','minimap-config','race-overlays','controls','bindings','music'].includes(this.page)) {
+    if (['up','down'].includes(action) && ['title','main','single','garage','multiplayer','create-lobby','join-lobby','lobby','race','settings','extras','pause','players','hud-settings','minimap-config','race-overlays','controls','bindings','music','jukebox'].includes(this.page)) {
       const order = this.page === 'pause' ? this.pauseOrder : this.page === 'garage' ? this.frame.choices.filter(choice => choice !== 'quadnext') : this.frame.choices;
       const current = this.frame.choices[this.selection], index = order.indexOf(current === 'quadnext' ? 'quadprev' : current);
       this.selection = this.frame.choices.indexOf(order[(index + (action === 'up' ? -1 : 1) + order.length) % order.length]);
@@ -533,6 +535,7 @@ export class Frontend {
       if (this.page === 'tracks' && this.trackMode !== 'single') { const mode = this.trackMode; this.trackMode = 'single'; return this.show(mode === 'host' ? 'create-lobby' : 'pause'); }
       if (this.page === 'lobby') return this.run('leave');
       if (this.page === 'settings') return this.show(this.settingsReturn ?? 'main');
+      if (this.page === 'jukebox') return this.show(this.jukeboxReturn ?? 'main');
       return this.show(({settings:this.settingsReturn ?? 'main',extras:'settings',players:'pause',bindings:'controls',music:'settings','hud-settings':'settings','minimap-config':'hud-settings','race-overlays':'hud-settings',controls:'settings',main:'title',single:'main',tracks:'single',race:'single','create-lobby':'multiplayer','join-lobby':'multiplayer',multiplayer:'main'})[this.page] ?? 'title');
     } else if (this.page === 'garage' && ['left','right'].includes(action)) {
       return this.run(action === 'left' ? 'quadprev' : 'quadnext');
@@ -556,6 +559,12 @@ export class Frontend {
       this.minimapSettings?.setZoom(this.minimapSettings.zoom + (action === 'left' ? -25 : 25));
     } else if (this.page === 'controls' && this.frame.choices[this.selection] === 'steering-sensitivity' && ['left','right'].includes(action)) {
       this.mobileControls?.setSteeringSensitivity(this.mobileControls.steeringSensitivity + (action === 'left' ? -5 : 5));
+    } else if (this.page === 'jukebox' && ['left','right'].includes(action)) {
+      // Left/Right scrub the seek bar, step the volume, or change track.
+      const current = this.frame.choices[this.selection], music = this.audio?.()?.music, sign = action === 'left' ? -1 : 1;
+      if (current === 'jukeseek') music?.seek(music.snapshot().positionSeconds + sign * JUKEBOX_SEEK_STEP);
+      else if (current === 'jukevolume') music?.setVolume(Math.round(music.volume * 20 + sign) / 20);
+      else return this.run(sign < 0 ? 'jukeprev' : 'jukenext');
     } else if (['bindings','music'].includes(this.page) && ['left','right'].includes(action)) {
       return this.run(`${this.page === 'music' ? 'music' : 'bind'}${action === 'left' ? 'prev' : 'next'}`);
     } else if (action === 'accept') {
@@ -583,6 +592,7 @@ export class Frontend {
     try {
       if (action === 'copyride') return await copyRideUrl(this.rideUrl(),this.notice);
       if (action === 'settings') { this.settingsReturn = this.page === 'pause' ? 'pause' : 'main'; return this.show('settings'); }
+      if (action === 'jukebox') { this.jukeboxReturn = this.settingsReturn = this.page === 'pause' ? 'pause' : 'main'; return this.show('jukebox'); }
       if (action === 'garage') { this.garageReturn = this.page; return this.show('garage'); }
       if (action === 'changeride') { this.garageReturn = 'pause'; this.rideBeforeGarage = [this.quadId, this.riderId, appearanceBytes(this.appearance).join('.')]; return this.show('garage'); }
       if (action === 'hosttrack') {
@@ -635,6 +645,9 @@ export class Frontend {
       } else if (action === 'bindclear') { const row = gameplayBindings.rows(this.bindingDevice)[this.bindingRow]; if (row) gameplayBindings.setBinding(this.bindingDevice,row.id,[]); }
       else if (action === 'bindreset') gameplayBindings.reset(this.bindingDevice);
       else if (action.startsWith('song:')) { const music = this.audio?.()?.music; music?.setEnabled(true); music?.select(Number(action.slice(5))); this.songPreview = true; this.syncPreview(); }
+      else if (action === 'jukeplay') { const music = this.audio?.()?.music; if (music) { music.setEnabled(!music.snapshot().enabled); void music.update(); } }
+      else if (action === 'jukeprev' || action === 'jukenext') { const music = this.audio?.()?.music; music?.setEnabled(true); if (action === 'jukeprev') music?.previous(); else music?.next(); }
+      else if (action === 'jukeseek' || action === 'jukevolume') { this.pausePanel.querySelector(`input[data-setting="${action}"]`)?.focus(); return; }
       else if (action === 'musictoggle') { const music = this.audio?.()?.music; if (music) music.setEnabled(!music.snapshot().enabled); this.songPreview = true; this.syncPreview(); }
       else if (action === 'musicvolume') {
         const music = this.audio?.()?.music, step = Math.round((music?.snapshot().volume ?? 0) * 4) + direction;
@@ -714,7 +727,7 @@ export class Frontend {
     const request = {lobby_players:(lobby?.players??[]).map(p=>({id:String(p.id),label:`${p.name}${p.id===this.multiplayer.state.peer?' (You)':''}`,value:p.id===this.multiplayer.state.peer?'self':(this.multiplayer.remote.find(r=>r.peer===p.id && !r.stale)?'ready':'waiting')})),race_laps:this.raceSettings.laps,race_cpu:this.raceSettings.cpu,race_difficulty:this.raceSettings.difficulty,race_available:this.raceAvailable,race_course:this.raceSettings.course,gear_rows:this.page === 'gear' ? this.gearRows() : [],race_active:this.raceActive,quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? (this.page==='create-lobby'?this.createCode:this.roomCode),lobby_status:lobby ? (lobby.public ? `Arlington Free Ride / ${lobby.players.length}/20 riders` : `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}`) : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),lobby_public:Boolean(lobby?.public),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:track?.name ?? '',track_image:(this.page === 'lobby' && track?.id === 'training' && this.images.has(trainingPreview) ? trainingPreview : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
       minimap_orientation:this.minimapSettings?.orientation ?? 'north-up',minimap_shape:this.minimapSettings?.shape ?? 'circle',minimap_corner:this.minimapSettings?.corner ?? 'top-right',minimap_enabled:this.minimapSettings?.enabled ?? true,minimap_size:this.minimapSettings?.size ?? 160,minimap_zoom:this.minimapSettings?.zoom ?? 50,race_overlays_off:[...(this.raceOverlays?.off ?? [])],race_position:this.raceOverlays?.position ?? 'name',funny_crashes:this.crashSettings?.enabled ?? false,crash_mode:this.crashSettings?.mode ?? 'original',original_camera:this.crashSettings?.camera === 'original',chase_assist:this.crashSettings?.chase === 'assisted',flips:this.crashSettings?.flipsEnabled ?? false,speed_rush:this.crashSettings?.speed ?? 'off',graphics_preset:this.graphicsSettings?.preset ?? 'auto',graphics_resolved:this.graphicsSettings?.resolved ?? '',vibration:this.vibrationSettings?.enabled ?? true,mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
-      music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
+      music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'jukebox' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:row.artist})) : this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
       music_page:this.musicPage,music_status:musicState ? `${musicState.enabled ? 'On' : 'Off'} / Volume ${Math.round(musicState.volume * 100)}% / ${musicState.title || 'Choose a song'}` : '',music_enabled:musicState?.enabled ?? true,music_volume:Math.round((musicState?.volume ?? .7)*100),sfx_volume:Math.round((this.audio?.()?.settings?.sfx ?? 1)*100),sound_mode:this.audio?.()?.settings?.mode ?? 'enhanced',menu_logo:this.images.has('brand-logo'),menu_atv:this.images.has('multi_atv01')};
     let key = JSON.stringify(request);
     if (this.layoutKey === key) return;
@@ -892,7 +905,8 @@ export class Frontend {
     this.root.dataset.context = this.menuSettings() ? 'menu' : '';
     if (this.backdropUrl) this.root.style.setProperty('--ms-backdrop', `url("${this.backdropUrl}")`);
     this.root.dataset.page = this.page;
-    if (this.isPausePanel()) { this.rebuildPausePanel(); return; }
+    if (this.page !== 'jukebox') stopJukebox(this);
+    if (this.isPausePanel()) { if (this.page === 'jukebox') renderJukebox(this); else this.rebuildPausePanel(); return; }
     this.courseMeter?.remove(); this.courseMeter = null;
     if (screenPages.has(this.page)) {
       renderScreen(this);
@@ -1035,7 +1049,7 @@ export class Frontend {
         label.append(heading,input); parent.append(label);
       };
       if (this.page === 'pause') {
-        const groups = [['ride',['resume','reset','players','changeride','hosttrack']],['preferences',['settings']],['session',['copyride','devlog','main','leave']]];
+        const groups = [['ride',['resume','reset','players','changeride','hosttrack']],['preferences',['settings','jukebox']],['session',['copyride','devlog','main','leave']]];
         this.pauseOrder = [];
         for (const [name,actions] of groups) {
           const group = section(`pause-${name}`);

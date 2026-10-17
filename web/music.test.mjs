@@ -5,9 +5,17 @@ const encode = value => new TextEncoder().encode(JSON.stringify(value));
 const decode = value => JSON.parse(new TextDecoder().decode(value));
 const flush = async () => { for (let i = 0; i < 30; i++) await new Promise(resolve => setImmediate(resolve)); };
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
-function fixture({ songBytes = 65536 * 8, storage = null } = {}) {
+function fakeElement() {
+  const listeners = {};
+  return { src: '', paused: true, muted: false, currentTime: 0, duration: NaN, preload: '', plays: 0, reject: null, buffered: { length: 0 },
+    addEventListener(type, callback) { (listeners[type] ??= []).push(callback); }, emit(type) { for (const callback of listeners[type] ?? []) callback(); },
+    play() { this.plays++; if (this.reject) return Promise.reject(Object.assign(new Error(this.reject), { name: this.reject })); this.paused = false; return Promise.resolve(); },
+    pause() { this.paused = true; }, removeAttribute(name) { if (name === 'src') this.src = ''; }, load() {} };
+}
+function fixture({ songBytes = 65536 * 8, storage = null, element = null, streams = Boolean(element) } = {}) {
   const songs = Array.from({ length: 21 }, (_, index) => ({ filename: `Music/song${index}.vag`, title: `Track ${index}`, artist: `Artist ${index}`, genre: 'Rock', locked: false }));
-  const files = [{ path: '/STARTAPP.RES', lba: 0, bytes: 16 }, ...songs.map((song, index) => ({ path: `/AUDIO/${song.filename}`, lba: (index + 1) * 1000, bytes: 2016 + songBytes }))];
+  const streamRecord = index => ({ url: `/content/${String(index).padStart(64, '0')}.m4a`, bytes: 1000 + index, sha256: String(index).padStart(64, '0'), type: 'audio/mp4', seconds: 180 + index });
+  const files = [{ path: '/STARTAPP.RES', lba: 0, bytes: 16 }, ...songs.map((song, index) => ({ path: `/AUDIO/${song.filename}`, lba: (index + 1) * 1000, bytes: 2016 + songBytes, ...(streams && (streams === true || streams(index)) ? { stream: streamRecord(index) } : {}) }))];
   const calls = [], reads = [], sources = [], reports = [];
   let next = 0, decoding = null, readHook = null;
   const codec = async (op, bytes, index) => {
@@ -26,9 +34,13 @@ function fixture({ songBytes = 65536 * 8, storage = null } = {}) {
     const index = Math.floor(offset / (1000 * 2048)) - 1;
     return new Uint8Array(count).fill(Math.max(0, index));
   };
+  const contextListeners = [];
   const context = {
-    currentTime: 0, state: 'running',
-    createGain: () => ({ gain: { value: 1 }, connect() {}, disconnect() {} }),
+    currentTime: 0, state: 'running', mediaNodes: 0,
+    addEventListener(type, callback) { if (type === 'statechange') contextListeners.push(callback); },
+    setState(state) { this.state = state; for (const callback of contextListeners) callback(); },
+    createMediaElementSource() { this.mediaNodes++; return { connect() {}, disconnect() {} }; },
+    createGain: () => ({ gain: { value: 1, cancelScheduledValues() {}, setValueAtTime() {}, linearRampToValueAtTime() {} }, connect() {}, disconnect() {} }),
     createBuffer: (channels, frames, rate) => ({ duration: frames / rate, getChannelData: () => new Float32Array(frames) }),
     createBufferSource() {
       const source = { started: false, stopped: false, connect() {}, disconnect() {}, start(at, offset = 0) { this.at = at; this.offset = offset; this.started = true; }, stop() { this.stopped = true; } };
@@ -36,6 +48,7 @@ function fixture({ songBytes = 65536 * 8, storage = null } = {}) {
     },
   };
   const stream = new MusicStream(codec, () => context, () => ({}), message => reports.push(message), storage);
+  stream.mediaFactory = () => element;
   const load = () => stream.load({ file: {}, files, read, isCurrent: () => true });
   const advance = dt => { context.currentTime += dt; for (const source of sources) if (!source.stopped && source.started && source.at + source.buffer.duration - source.offset <= context.currentTime) { source.stopped = true; source.onended?.(); } };
   return { stream, codec, context, calls, sources, reads, reports, load, advance, hook: callback => { readHook = callback; } };
@@ -157,4 +170,75 @@ test('Next uses the audible song when the following track is already buffered', 
   assert(f.stream.snapshot().selectedIndex > 0, 'Short tracks allow multiple queued songs');
   f.stream.next(); await flush();
   assert.equal(f.stream.snapshot().title, 'Track 1', 'Next must not skip the prebuffered track');
+});
+
+test('streamed songs play through one media element with no VAG reads or PCM decoding', async () => {
+  const element = fakeElement(), f = fixture({ element }); await f.load();
+  assert.equal(f.stream.media, true);
+  await f.stream.update();
+  assert.equal(f.reads.length, 1, 'only the catalog archive is read');
+  assert(!f.calls.some(call => call.op === 42 || call.op === 43));
+  assert.equal(element.src, `/content/${'0'.padStart(64, '0')}.m4a`);
+  assert.equal(element.paused, false); assert.equal(f.context.mediaNodes, 1);
+  let snapshot = f.stream.snapshot();
+  assert.equal(snapshot.mode, 'stream'); assert.equal(snapshot.seekable, true); assert.equal(snapshot.durationSeconds, 180);
+  assert.equal(snapshot.title, 'Track 0'); assert.equal(snapshot.genre, 'Rock'); assert.equal(snapshot.voices, 1);
+  assert(f.stream.select(7)); await flush();
+  assert.equal(element.src, `/content/${'7'.padStart(64, '0')}.m4a`); assert.equal(f.stream.snapshot().selectedIndex, 7);
+  assert(f.stream.seek(60)); assert.equal(f.stream.snapshot().positionSeconds, 60);
+  f.stream.seek(10_000); assert.equal(element.currentTime, 186.75);
+  f.stream.seek(-5); assert.equal(element.currentTime, 0);
+  assert.equal(f.context.mediaNodes, 1, 'one element source for the whole session');
+  assert.equal(f.reports.length, 0);
+});
+
+test('a finished stream continues with the original shuffle; previous returns through history', async () => {
+  const element = fakeElement(), f = fixture({ element }); await f.load(); await f.stream.update();
+  element.paused = true; element.emit('ended'); await flush();
+  assert.equal(f.stream.snapshot().title, 'Track 1'); assert.equal(element.paused, false);
+  assert(f.stream.previous()); await flush();
+  assert.equal(f.stream.snapshot().title, 'Track 0');
+  assert(f.stream.next()); await flush();
+  assert.equal(f.stream.snapshot().title, 'Track 1', 'next walks forward history before a new shuffle pick');
+});
+
+test('stream on/off, race holds and a suspended context pause the element', async () => {
+  const element = fakeElement(), f = fixture({ element }); await f.load(); await f.stream.update();
+  const src = element.src;
+  f.stream.setEnabled(false); assert.equal(element.paused, true);
+  await f.stream.update(); assert.equal(element.paused, true);
+  f.stream.setEnabled(true); await flush();
+  assert.equal(element.paused, false); assert.equal(element.src, src, 'on resumes the same song');
+  f.context.setState('suspended'); assert.equal(element.paused, true);
+  f.context.setState('running'); await f.stream.update(); assert.equal(element.paused, false);
+  f.stream.hold(0); assert.equal(element.paused, true);
+  await f.stream.update(); assert.equal(element.paused, true, 'held music stays silent');
+  f.stream.release(); await flush();
+  assert.equal(element.paused, false); assert.notEqual(element.src, src, 'GO starts the next song');
+});
+
+test('autoplay refusal waits for a gesture; an unplayable stream falls back to the decoder', async () => {
+  const element = fakeElement(), f = fixture({ element }); await f.load();
+  element.reject = 'NotAllowedError'; await f.stream.update();
+  assert.equal(f.stream.media, true); assert.equal(element.paused, true);
+  element.reject = null; f.stream.unlock(); await flush();
+  assert.equal(element.plays, 2); assert.equal(element.paused, false);
+  element.reject = 'NotAllowedError'; f.stream.select(3); await flush();
+  f.stream.setEnabled(false); element.reject = null; f.stream.unlock(); await flush();
+  assert.equal(element.paused, true, 'a gesture never restarts music the player turned off');
+  assert.equal(element.muted, false);
+  const other = fakeElement(), g = fixture({ element: other }); await g.load();
+  other.reject = 'NotSupportedError'; await g.stream.update(); await flush();
+  assert.equal(g.stream.media, false); assert.equal(g.stream.snapshot().mode, 'decoder');
+  assert(g.calls.some(call => call.op === 43), 'the same song now decodes from the VAG');
+  assert.match(g.reports[0], /decoding the original audio/);
+});
+
+test('a package without every stream keeps the decoder for the whole catalog', async () => {
+  const element = fakeElement(), f = fixture({ element, streams: index => index !== 3 }); await f.load();
+  assert.equal(f.stream.media, false);
+  await f.stream.update();
+  assert.equal(element.src, ''); assert(f.calls.some(call => call.op === 43));
+  assert.equal(f.stream.snapshot().seekable, false);
+  assert.equal(f.stream.seek(10), false);
 });

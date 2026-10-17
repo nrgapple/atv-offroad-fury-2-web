@@ -79,6 +79,7 @@ export const TESTS = {
       'Fails on unmodified origin/main too: standalone safe-area check: #menu-background never satisfies the expected inset/size'
   },
   'test_ios_fullscreen.mjs': { group: 'content' },
+  'test_jukebox.mjs': { group: 'content' },
   'test_launch_links.mjs': {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (Host/Join Game, room WebSocket); run with --url'

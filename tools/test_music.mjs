@@ -1,4 +1,4 @@
-// Opt-in browser check against actual catalog + Rust decoder + hosted content.
+// Opt-in browser check against actual catalog + Rust decoder fallback + hosted content.
 // No music payloads, disc contents or screenshots are written to the repository.
 import assert from 'node:assert/strict';
 import { assertNoErrors, base, launch, newPage } from './browser/harness.mjs';
@@ -42,6 +42,8 @@ try {
       message => errors.push(message),
       null
     );
+    // The original-decoder path: streams are covered by test_jukebox.mjs.
+    stream.mediaFactory = () => null;
     await stream.load({
       ...content,
       read: (file, offset, count) => file.readRange(offset, count),

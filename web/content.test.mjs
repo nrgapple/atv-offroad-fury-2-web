@@ -30,6 +30,17 @@ test('hosted reader rejects altered bytes, foreign URLs and chunk gaps', async (
   manifest.files[0].chunks[1].offset = 3;
   assert.throws(() => contentSource(manifest, () => {}), /extent/);
 });
+test('music streams must be same-origin hash-addressed AAC on soundtrack songs', () => {
+  const sha256 = 'a'.repeat(64), stream = { url: `/content/${sha256}.m4a`, bytes: 3, sha256, type: 'audio/mp4', seconds: 187.8 };
+  const { manifest } = fixture(); manifest.files[0].stream = stream;
+  assert.equal(contentSource(manifest, () => {}).files[0].stream.url, stream.url);
+  for (const change of [{ url: 'https://example.com/a.m4a' }, { url: `/content/${sha256}.bin` }, { type: 'audio/ogg' }, { bytes: 0 }, { seconds: 0 }, { sha256: 'b'.repeat(64) }]) {
+    const altered = structuredClone(manifest); Object.assign(altered.files[0].stream, change);
+    assert.throws(() => contentSource(altered, () => {}), /music stream/);
+  }
+  const archive = structuredClone(manifest); archive.files[0].path = '/UI/RESOURCE/PAGEA/PAGE14.RES';
+  assert.throws(() => contentSource(archive, () => {}), /music stream/);
+});
 test('loading-screen icon archives are accepted, other extensions are not', () => {
   const { manifest } = fixture();
   manifest.files[0].path = '/UI/LOADICON/ENVA/E01_OB.LSI';

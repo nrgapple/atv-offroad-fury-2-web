@@ -7,9 +7,12 @@ hosting destination. Never add these outputs, the source disc or executable to G
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import struct
+import subprocess
+import tempfile
 import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,6 +56,10 @@ STARTUP += tuple(f'/TRACKS/TRACKSB/SX{i:02}/S{i:02}_NAT.RES' for i in range(1,17
 # Original Profile Store gear catalog (uiRider.txt only) for rider customization.
 STARTUP += ('/UI/RESOURCE/RIDEINFO.RES',)
 STARTUP += tuple(f'/UI/RESOURCE/TP/TP_{group}.RES' for group in ('PNAT','ASX','PSX','HOCK'))
+# Original Jukebox page (backdrop, spinning CD, slider art), fetched when the
+# music player opens.
+JUKEBOX = '/UI/RESOURCE/PAGEA/PAGE14.RES'
+STARTUP += (JUKEBOX,)
 
 # Original loading-screen action shots for every Freestyle venue except Training,
 # which ships only progress-bar art. Each course's file is fetched lazily.
@@ -476,6 +483,30 @@ def validate_motorcycle_resource(record, payload):
             raise ValueError('invalid motorcycle member path')
 
 
+STREAM_BITRATE = '160k'
+
+
+def music_stream(vag, work):
+    """Encode one soundtrack VAG for browser streaming: the Rust stream decoder
+    writes PCM, then AAC-LC in MP4 (playable by every target browser, faststart
+    so playback begins on the first ranged read). Output is deterministic."""
+    cargo = os.environ.get('CARGO', str(Path.home() / '.cargo/bin/cargo'))
+    source, wav, encoded = work / 'song.vag', work / 'song.wav', work / 'song.m4a'
+    source.write_bytes(vag)
+    result = subprocess.run([cargo, 'run', '--locked', '--release', '-q', '-p', 'atv-tools', '--', 'music-wav', str(source), str(wav)],
+                            cwd=ROOT, check=True, capture_output=True, text=True)
+    info = json.loads(result.stdout)
+    encoders = subprocess.run(['ffmpeg', '-hide_banner', '-encoders'], check=True, capture_output=True, text=True).stdout
+    codec = 'aac_at' if re.search(r'^\s*A\S*\s+aac_at\s', encoders, re.M) else 'aac'
+    subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-i', str(wav), '-map_metadata', '-1',
+                    '-c:a', codec, '-b:a', STREAM_BITRATE, '-movflags', '+faststart', '-fflags', '+bitexact',
+                    '-flags:a', '+bitexact', str(encoded)], check=True)
+    data = encoded.read_bytes()
+    if data[4:8] != b'ftyp' or b'moov' not in data[:65536]:
+        raise ValueError('music stream is not a faststart MP4')
+    return data, round(info['frames'] / info['sample_rate'], 3)
+
+
 def validated_content(directory):
     """Validate and return only manifest-authorized runtime files for Sites."""
     directory = Path(directory)
@@ -514,6 +545,18 @@ def validated_content(directory):
             validate_motorcycle_resource(record, payload)
         if end != record['bytes'] or whole.hexdigest() != record['sha256']:
             raise ValueError('hosted resource digest mismatch')
+        stream = record.get('stream')
+        if stream is not None:
+            digest = stream.get('sha256', '')
+            if not re.fullmatch(r'/AUDIO/MUSIC/[A-Z0-9_]+\.VAG', record['path']) or not re.fullmatch(r'[a-f0-9]{64}', digest) or stream.get('url') != f'/content/{digest}.m4a' or stream.get('type') != 'audio/mp4':
+                raise ValueError('invalid music stream reference')
+            path = directory / f'{digest}.m4a'
+            if path.is_symlink() or not 0 < path.stat().st_size <= MAX_FILE:
+                raise ValueError('invalid music stream file')
+            payload = path.read_bytes()
+            if len(payload) != stream.get('bytes') or hashlib.sha256(payload).hexdigest() != digest:
+                raise ValueError('music stream digest mismatch')
+            allowed.add(path)
     return sorted(allowed)
 
 
@@ -591,7 +634,7 @@ def main():
                 outfits = ai_outfit_names(Resource(originals['/TRACKS/TRACKSA/ENV01/E01_NAT.RES']).named('airiders.pb'))
                 outfits |= gear_catalog_names(source('/UI/RESOURCE/RIDEINFO.RES'))
                 data = compact_rider_materials(originals['/RIDER/MRIDER.RES'], data, (originals['/RIDER/FRIDER.RES'],), outfits)
-            record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith(('/QUAD/', '/UI/LOADICON/')) or path in ('/RIDER/FRIDER.RES',), **blob(data)}
+            record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith(('/QUAD/', '/UI/LOADICON/')) or path in ('/RIDER/FRIDER.RES', JUKEBOX), **blob(data)}
             if data != originals[path]:
                 record.update(repacked=True, member_count=len(Resource(data).members))
             records.append(record)
@@ -650,19 +693,28 @@ def main():
         count = int(music['songs']['numberofsongs'])
         if count != 21:
             raise ValueError('exact-build music catalog expected 21 songs')
-        for i in range(1, count + 1):
-            path = '/AUDIO/' + music[f'song {i}']['filename'].replace('\\', '/')
-            entry = by_path[path.lower()]
-            data = source(path)
-            if data[:4] != b'VAGp' and data[:12] != bytes(12):
-                raise ValueError('music source is not VAG')
-            chunks = [{'offset': offset, **blob(data[offset:offset + CHUNK])} for offset in range(0, len(data), CHUNK)]
-            records.append({'path': entry['path'], 'lba': entry['lba'], 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(), 'directory': False, 'lazy': True, 'chunks': chunks})
+        with tempfile.TemporaryDirectory(dir=output) as work:
+            for i in range(1, count + 1):
+                path = '/AUDIO/' + music[f'song {i}']['filename'].replace('\\', '/')
+                entry = by_path[path.lower()]
+                data = source(path)
+                if data[:4] != b'VAGp' and data[:12] != bytes(12):
+                    raise ValueError('music source is not VAG')
+                chunks = [{'offset': offset, **blob(data[offset:offset + CHUNK])} for offset in range(0, len(data), CHUNK)]
+                # The VAG chunks stay as the decoder fallback; the stream is
+                # what browsers normally play.
+                encoded, seconds = music_stream(data, Path(work))
+                digest = hashlib.sha256(encoded).hexdigest()
+                if not 0 < len(encoded) <= MAX_FILE:
+                    raise ValueError('music stream exceeds 25MiB static limit')
+                (output / f'{digest}.m4a').write_bytes(encoded)
+                stream = {'url': f'/content/{digest}.m4a', 'bytes': len(encoded), 'sha256': digest, 'type': 'audio/mp4', 'seconds': seconds}
+                records.append({'path': entry['path'], 'lba': entry['lba'], 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(), 'directory': False, 'lazy': True, 'chunks': chunks, 'stream': stream})
         manifest = {'version': 1, 'build': 'USA v2.00', 'source_build_sha256': SOURCE_SHA, 'engine_sample_count': len(engine_names), 'train_sample_count': len(train_names), 'rider_body_sample_count': len(body_names), 'weather_sample_count': len(weather_names), 'rider_vocal_sample_count': len(vocal_names), 'chassis_sample_count': len(chassis_names), 'venue_sound_sample_count': len(venue_names), 'music_song_count': count, 'files': records}
         temporary = output / 'manifest.json.tmp'
         temporary.write_text(json.dumps(manifest, indent=2) + '\n')
         temporary.replace(output / 'manifest.json')
-        print(json.dumps({'manifest': str(output / 'manifest.json'), 'records': len(records), 'startup_bytes': sum(r['bytes'] for r in records if not r['lazy']), 'music_bytes': sum(r['bytes'] for r in records if r['path'].endswith('.VAG')), 'audio_archive_bytes': len(packed), 'blobs': len(list(output.glob('*.bin')))}))
+        print(json.dumps({'manifest': str(output / 'manifest.json'), 'records': len(records), 'startup_bytes': sum(r['bytes'] for r in records if not r['lazy']), 'music_bytes': sum(r['bytes'] for r in records if r['path'].endswith('.VAG')), 'music_stream_bytes': sum(r['stream']['bytes'] for r in records if 'stream' in r), 'audio_archive_bytes': len(packed), 'blobs': len(list(output.glob('*.bin')))}))
 
 
 if __name__ == '__main__':

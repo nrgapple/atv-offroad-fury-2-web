@@ -4,6 +4,37 @@ const BLOB = /^\/content\/[a-f0-9]{64}\.bin$/;
 const IMAGE = /^\/devlog-images\/[a-z0-9-]+\.png$/;
 const APP_ICON = /^\/app-icons\/[a-f0-9]{64}\.png$/;
 const MANIFEST = /^\/content\/manifests\/([a-f0-9]{40})\.json$/;
+const STREAM = /^\/content\/[a-f0-9]{64}\.m4a$/;
+
+// Soundtrack streams play through a media element, which reads byte ranges
+// (iOS Safari requires them). One range per request; anything else gets the
+// whole immutable object.
+async function stream(request, env, key) {
+  const object = await env.CONTENT.head(key);
+  if (!object) return new Response('Not found', { status: 404 });
+  const headers = new Headers({
+    'Content-Type': 'audio/mp4', 'Accept-Ranges': 'bytes', ETag: object.httpEtag,
+    'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff',
+  });
+  if (request.headers.get('If-None-Match') === object.httpEtag) return new Response(null, { status: 304, headers });
+  const match = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get('Range') ?? '');
+  let start = 0, end = object.size - 1, partial = false;
+  if (match && (match[1] || match[2])) {
+    partial = true;
+    if (!match[1]) start = Math.max(0, object.size - Number(match[2]));
+    else { start = Number(match[1]); if (match[2]) end = Math.min(end, Number(match[2])); }
+    if (start > end || start >= object.size) {
+      headers.set('Content-Range', `bytes */${object.size}`);
+      return new Response(null, { status: 416, headers });
+    }
+    headers.set('Content-Range', `bytes ${start}-${end}/${object.size}`);
+  }
+  headers.set('Content-Length', String(end - start + 1));
+  if (request.method === 'HEAD') return new Response(null, { status: partial ? 206 : 200, headers });
+  const body = await env.CONTENT.get(key, partial ? { range: { offset: start, length: end - start + 1 } } : undefined);
+  if (!body) return new Response('Not found', { status: 404 });
+  return new Response(body.body, { status: partial ? 206 : 200, headers });
+}
 
 function canonical(value) {
   if (Array.isArray(value)) return JSON.stringify(value.map(item => JSON.parse(canonical(item))));
@@ -66,6 +97,7 @@ async function route(request, env) {
       return env.ASSETS.fetch(new Request(iconUrl, request));
     }
     const appleIcon = /^app-icons\/[a-f0-9]{64}\.png$/.test(iconAliasKey ?? '');
+    if (STREAM.test(path)) return stream(request, env, path.slice(1));
     if (path === '/content/manifest.json' || MANIFEST.test(path) || BLOB.test(path) || IMAGE.test(path) || APP_ICON.test(path) || appleIcon) {
       const pinned = path.match(MANIFEST);
       const key = appleIcon ? iconAliasKey : pinned ? `releases/${pinned[1]}/manifest.json` : path === '/content/manifest.json' && env.RELEASE_COMMIT ? `releases/${env.RELEASE_COMMIT}/manifest.json` : path.slice(1);

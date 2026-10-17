@@ -180,6 +180,20 @@ fn run() -> Result<()> {
             let b=fs::read(&a[1]).map_err(|e|e.to_string())?; let audio=audio::decode_vag(&b)?;
             write(&a[2],&audio.wav())?;println!("{}",serde_json::to_string_pretty(&audio.info).unwrap());
         }
+        // Soundtrack VAG -> PCM WAV through the same streaming decoder the
+        // browser fallback uses; the content packager encodes this for streaming.
+        Some("music-wav") if a.len()==3 => {
+            let b=fs::read(&a[1]).map_err(|e|e.to_string())?;
+            let mut stream=audio::VagStream::new(&b,b.len())?;
+            let info=stream.info.clone();
+            let data=b.get(info.data_offset..info.data_offset+info.data_bytes).ok_or("truncated VAG stream")?;
+            let stride=usize::from(info.channels)*16;
+            let mut samples=Vec::with_capacity(info.frames_max*usize::from(info.channels));
+            for chunk in data.chunks(stride*4096) { samples.extend(stream.decode_chunk(chunk)?); }
+            let frames=samples.len()/usize::from(info.channels);
+            let pcm=audio::Audio{info:audio::AudioInfo{sample_rate:info.sample_rate,channels:info.channels,frames,loop_start:None,loop_end:None},samples};
+            write(&a[2],&pcm.wav())?;println!("{}",serde_json::to_string(&pcm.info).unwrap());
+        }
         Some("camera-presets") if a.len()==4 => {
             let bytes=fs::read(&a[1]).map_err(|e|e.to_string())?;
             let layout=a[2].parse().map_err(|_|"invalid viewport layout")?;
