@@ -82,7 +82,16 @@ async function route(request, env) {
       return new Response(request.method === 'HEAD' ? null : object.body, { headers });
     }
     if (path.startsWith('/content/') || path.startsWith('/devlog-images/') || path.startsWith('/app-icons/')) return new Response('Not found', { status: 404 });
-    return env.ASSETS.fetch(request);
+    const response = await env.ASSETS.fetch(request);
+    // Pages reference app files as name?v=<deployed commit>. Those bytes never
+    // change, so repeat visits skip revalidating every module; any other
+    // version keeps the default revalidation.
+    if (response.ok && env.BUILD_COMMIT && url.search === `?v=${env.BUILD_COMMIT}`) {
+      const immutable = new Response(response.body, response);
+      immutable.headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+      return immutable;
+    }
+    return response;
 }
 
 export default { async fetch(request, env) { return secureResponse(await withWebAnalytics(await route(request, env), request, env), request, { webAnalytics: webAnalyticsEnabled(env) }); } };

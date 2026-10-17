@@ -24,6 +24,8 @@ thread_local! { static MENU_RIDER: RefCell<Option<atv_core::menu_preview::Rider>
 struct Buffers {
     input: Vec<u8>,
     output: Vec<u8>,
+    /// Archives kept for repeated member extraction, keyed by the page.
+    resident: std::collections::HashMap<u32, Vec<u8>>,
 }
 thread_local! { static BUFFERS: RefCell<Buffers> = RefCell::default(); }
 
@@ -1368,6 +1370,21 @@ pub extern "C" fn output_ptr() -> *const u8 {
 #[unsafe(no_mangle)]
 pub extern "C" fn output_len() -> usize {
     BUFFERS.with_borrow(|b| b.output.len())
+}
+
+/// Moves the current input into a resident slot without copying it.
+#[unsafe(no_mangle)]
+pub extern "C" fn resident_store(key: u32) {
+    BUFFERS.with_borrow_mut(|b| {
+        let input = std::mem::take(&mut b.input);
+        b.resident.insert(key, input);
+    });
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn resident_drop(key: u32) {
+    BUFFERS.with_borrow_mut(|b| {
+        b.resident.remove(&key);
+    });
 }
 
 fn obstacle_input(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
@@ -3077,16 +3094,35 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn run(op: u32, index: usize) -> u32 {
-    BUFFERS.with_borrow_mut(|b| match dispatch(&b.input, op, index) {
+    BUFFERS.with_borrow_mut(|b| finish(&mut b.output, dispatch(&b.input, op, index)))
+}
+/// Runs `op` on a resident archive; 2 means the key is not resident.
+#[unsafe(no_mangle)]
+pub extern "C" fn run_resident(op: u32, index: usize, key: u32) -> u32 {
+    BUFFERS.with_borrow_mut(|b| {
+        let Buffers {
+            resident, output, ..
+        } = b;
+        match resident.get(&key) {
+            Some(input) => finish(output, dispatch(input, op, index)),
+            None => {
+                output.clear();
+                2
+            }
+        }
+    })
+}
+fn finish(output: &mut Vec<u8>, result: Result<Vec<u8>>) -> u32 {
+    match result {
         Ok(out) => {
-            b.output = out;
+            *output = out;
             1
         }
         Err(e) => {
-            b.output = e.into_bytes();
+            *output = e.into_bytes();
             0
         }
-    })
+    }
 }
 
 #[cfg(test)]

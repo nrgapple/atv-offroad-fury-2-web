@@ -23,30 +23,39 @@ export function contentSource(manifest, fetchBlob) {
   for (let i = 1; i < files.length; i++) {
     if (files[i].lba * 2048 < files[i - 1].lba * 2048 + files[i - 1].bytes) throw new Error('Overlapping hosted content records.');
   }
-  async function get(chunk, lazy) {
+  async function get(chunk, lazy, priority, prefetching = false) {
     if (!cache.has(chunk.url)) {
       const result = (async () => {
-        const bytes = new Uint8Array(await fetchBlob(chunk.url));
+        const bytes = new Uint8Array(await fetchBlob(chunk.url, priority));
         if (bytes.byteLength !== chunk.bytes || await digest(bytes) !== chunk.sha256) throw new Error('Hosted content integrity check failed.');
         return bytes;
       })();
-      cache.set(chunk.url, { result, lazy });
+      cache.set(chunk.url, { result, lazy, prefetched: prefetching });
       result.catch(() => cache.delete(chunk.url));
     }
     const value = cache.get(chunk.url);
+    if (prefetching) return value.result;
+    value.prefetched = false;
     // Retain startup archives and only the two latest soundtrack chunks.
+    // A prefetched file stays until the read it was fetched for consumes it.
     cache.delete(chunk.url); cache.set(chunk.url, value);
-    const music = [...cache].filter(([, item]) => item.lazy);
+    const music = [...cache].filter(([, item]) => item.lazy && !item.prefetched);
     for (const [key] of music.slice(0, -2)) cache.delete(key);
     return value.result;
   }
+  const record = path => files.find(item => item.path.toLowerCase() === path.toLowerCase());
   const file = {
     size: files.reduce((maximum, entry) => Math.max(maximum, entry.lba * 2048 + entry.bytes), 0),
     async readRange(offset, count) {
       if (!integer(offset) || !integer(count) || count > 128 * 1024 * 1024) throw new Error('Invalid content read.');
       const entry = files.find(item => offset >= item.lba * 2048 && offset + count <= item.lba * 2048 + item.bytes);
       if (!entry) throw new Error('Content read is outside the hosted package.');
-      const start = offset - entry.lba * 2048, end = start + count, result = new Uint8Array(count);
+      const start = offset - entry.lba * 2048, end = start + count;
+      // A whole-chunk read shares the verified cached bytes instead of copying
+      // them again; readers treat archive bytes as immutable.
+      const whole = entry.chunks.find(chunk => chunk.offset === start && chunk.bytes === count);
+      if (whole) return get(whole, entry.lazy);
+      const result = new Uint8Array(count);
       for (const chunk of entry.chunks) {
         const low = Math.max(start, chunk.offset), high = Math.min(end, chunk.offset + chunk.bytes);
         if (low >= high) continue;
@@ -56,13 +65,23 @@ export function contentSource(manifest, fetchBlob) {
       return result;
     },
   };
-  return { file, files };
+  // Start downloading files a load is about to read, so they arrive in
+  // parallel instead of one request after another. Reads reuse the same
+  // in-flight request; a failed prefetch is retried by the real read.
+  function prefetch(paths, priority) {
+    for (const path of paths) {
+      const entry = path && record(path);
+      if (!entry) continue;
+      for (const chunk of entry.chunks.slice(0, entry.lazy ? 1 : undefined)) get(chunk, entry.lazy, priority, true).catch(() => {});
+    }
+  }
+  return { file, files, prefetch };
 }
 export async function openHostedContent() {
   const response = await fetch('/content/manifest.json');
   if (!response.ok) throw new Error(`Original content package is unavailable (${response.status}).`);
-  return contentSource(await response.json(), async url => {
-    const response = await fetch(url);
+  return contentSource(await response.json(), async (url, priority) => {
+    const response = await fetch(url, priority ? { priority } : undefined);
     if (!response.ok) throw new Error(`Original game content could not load (${response.status}).`);
     return response.arrayBuffer();
   });

@@ -154,3 +154,15 @@ test('authored Home Screen icons use checked static assets including Safari alia
     }
   }
 });
+
+test('app files stamped with the deployed commit are immutable; other versions revalidate', async () => {
+  const commit = 'c'.repeat(40);
+  const env = { BUILD_COMMIT: commit, ASSETS: { fetch: async request => new URL(request.url).pathname === '/missing.js' ? new Response('no', { status: 404 }) : new Response('asset', { headers: { 'Cache-Control': 'public, max-age=0, must-revalidate' } }) } };
+  const current = await worker.fetch(request(`/game.js?v=${commit}`), env);
+  assert.equal(await current.text(), 'asset');
+  assert.equal(current.headers.get('Cache-Control'), 'public, max-age=31536000, immutable');
+  for (const path of [`/game.js?v=${'d'.repeat(40)}`, '/game.js', '/play.html', `/game.js?v=${commit}&x=1`, `/missing.js?v=${commit}`]) {
+    assert.doesNotMatch((await worker.fetch(request(path), env)).headers.get('Cache-Control') ?? '', /immutable/, path);
+  }
+  assert.doesNotMatch((await worker.fetch(request(`/game.js?v=${commit}`), { ...env, BUILD_COMMIT: undefined })).headers.get('Cache-Control') ?? '', /immutable/);
+});

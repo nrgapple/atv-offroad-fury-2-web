@@ -33,6 +33,13 @@ const canvas = $('game');
 const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, stencil: true, powerPreference: 'high-performance' });
 const glShadow = gl ? shadowGlState(gl) : null;
 const canvasSize = observedSize(canvas, el => ({ width: el.clientWidth, height: el.clientHeight }));
+// The race HUD clears the toolbar. Measure it again only after the toolbar or
+// viewport changes; a per-frame read forced layout after race text updates.
+let toolbarEdge = null;
+const toolbarBottom = () => toolbarEdge ??= $('toolbar').getBoundingClientRect().bottom;
+const remeasureToolbar = () => { toolbarEdge = null; };
+if (typeof ResizeObserver === 'function') new ResizeObserver(remeasureToolbar).observe($('toolbar'));
+window.addEventListener('resize', remeasureToolbar);
 const renderScale = new RenderScale();
 const status = (text, error = false) => { if (!error) frontend?.loadingStage(text); else frontend?.setLoading(false); $('status').textContent = text; $('status').classList.toggle('error', error); };
 const decoder = new TextDecoder();
@@ -186,6 +193,7 @@ worker.onmessage = ({ data }) => {
   if (data.startupError) { renderCoreFailed(new Error(data.startupError)); status(data.startupError, true); return; }
   const request = pending.get(data.id);
   if (!request) return;
+  if (data.missing) { request.retry(); return; }
   pending.delete(data.id);
   if (Number.isFinite(data.wasmBytes)) diagnostics.wasmBytes = data.wasmBytes;
   if (request.op === 50 && Number.isFinite(data.operationMs)) diagnostics.physicsBatchMs = data.operationMs;
@@ -201,11 +209,30 @@ worker.onerror = event => {
   for (const request of pending.values()) request.reject(new Error('Decoder failed; reload the page.'));
   pending.clear();
 };
+// Archive parsing (2) and member extraction (3) reuse one large input many
+// times. The worker keeps recently used inputs under a key, so a call sends
+// only the key; an evicted or collected input is sent again in full.
+const RESIDENT_LIMIT = 48 * 1048576;
+const residentKeys = new WeakMap(), resident = new Map();
+const residentDrop = key => { if (resident.delete(key)) worker.postMessage({ release: key }); };
+const residentRelease = new FinalizationRegistry(residentDrop);
+let residentNext = 0;
+function codecMessage(id, op, index, bytes, resend = false) {
+  if ((op !== 2 && op !== 3) || bytes.byteLength < 65536 || bytes.byteLength > RESIDENT_LIMIT) return { id, op, index, bytes };
+  let key = residentKeys.get(bytes);
+  if (key === undefined) { key = ++residentNext; residentKeys.set(bytes, key); residentRelease.register(bytes, key); }
+  const held = resident.has(key) && !resend;
+  resident.delete(key); resident.set(key, bytes.byteLength);
+  if (held) return { id, op, index, key };
+  let total = [...resident.values()].reduce((sum, size) => sum + size, 0);
+  for (const [old, size] of resident) { if (total <= RESIDENT_LIMIT || old === key) break; residentDrop(old); total -= size; }
+  return { id, op, index, key, bytes };
+}
 function codec(op, bytes, index = 0) {
   return new Promise((resolve, reject) => {
     const id = ++requestId;
-    pending.set(id, { resolve, reject, op });
-    worker.postMessage({ id, op, index, bytes });
+    pending.set(id, { resolve, reject, op, retry: () => worker.postMessage(codecMessage(id, op, index, bytes, true)) });
+    worker.postMessage(codecMessage(id, op, index, bytes));
   });
 }
 async function json(op, bytes, index = 0) { return JSON.parse(decoder.decode(await codec(op, bytes, index))); }
@@ -242,11 +269,21 @@ async function discTerrain(file, token) {
   if (hash !== '11b80faea827c5550df607d24c8c4f38a9e44cf55e3ecac9e1daeb3aca9d7c49') throw new Error('Disc executable does not match USA v2.00.');
   return terrainFromContent(file, files, token);
 }
+// Request every archive a ride reads up front so they download in parallel;
+// the sound bank yields bandwidth to the course and vehicle.
+async function prefetchRide(content, environment, racing) {
+  const { archive, placements } = courseResource(environment, racing);
+  const model = await json(89, new Uint8Array([frontend?.riderId ?? 0]), frontend?.quadId ?? 1).catch(() => null);
+  const rider = model && !model.motorcycle ? [model.rider, '/ANIMSRDR.RES', '/RIDER/RIDER_MT.RES'] : [];
+  content.prefetch([archive, placements, model?.quad, model?.quad_materials, ...rider, '/OVERLAYS.RES', '/STARTEVT.RES', '/AUDIOTBL.RES']);
+  content.prefetch(['/AUDIO/AUDIO.RES'], 'low');
+}
 async function terrainFromContent(file, files, token, environment = "env01", racing = false) {
   const {archive:archivePath,sceneStem,modeStem,placements} = courseResource(environment,racing);
   const memberNamed = (entry, name) => entry.name.split(/[\\/]/).at(-1).toLowerCase() === name.toLowerCase();
-  status('Loading original engine sounds…');
-  await audio.load({ file, files, read, isCurrent: () => token === generation, quadId: frontend?.quadId ?? 1, female: frontend?.riderId === 1 });
+  // Sounds decode alongside the course; the ride still starts with them loaded.
+  const audioLoaded = audio.load({ file, files, read, isCurrent: () => token === generation, quadId: frontend?.quadId ?? 1, female: frontend?.riderId === 1 });
+  audioLoaded.catch(() => {});
   const archive = files.find(entry => entry.path === archivePath);
   if (!archive) throw new Error(`Original ${environment.toUpperCase()} terrain archive is missing.`);
   status('Reading original terrain…');
@@ -469,6 +506,7 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
     parts.forEach((p, i) => { view.setUint32(i * 4, p.length, true); bundle.set(p, at); at += p.length; });
     entry.bundle = bundle;
   }
+  await audioLoaded;
   return { crowd, venueAud, weather, snow, cpuRiderPose, motorcycle: model.motorcycle ? {archive:quadArchive,id:model.quad_id} : null, bytes, environment, course, cpuNames, cpuRoster, spacingSources, name: entries[index].name, scene, cameraPresets, mesh, meshBytes, physics, chassis, actorRays, collisions: { meshes: collisionMeshes, placements: collisionPlacements }, water, train, wheelEffects, ambientEffects, toy, textures, sky, terrainTextures: { layout, images, detail }, ecosystem, world: { metadata: sceneMetadata, meshes: sceneMeshes, textures: sceneTextures, unsupported }, rider: { mesh: riderMesh, pose, textures: riderTextures } };
 }
 async function baseTextures(mesh, materialArchive, materialEntries, cache = new Map(), multiPass = false) {
@@ -1029,13 +1067,34 @@ const peerAppearance = peer => { const bytes = multiplayer?.state?.lobby?.player
 // Rider mesh material → AIRiders outfit field.
 const outfitSlot = material => /helmet/i.test(material) ? 'helmet' : /glove/i.test(material) ? 'glove' : /goggle/i.test(material) ? 'goggle' : /pant/i.test(material) ? 'pant' : /shirt/i.test(material) ? 'shirt' : /sleeve/i.test(material) ? 'sleeve' : /boot/i.test(material) ? 'boot' : null;
 function disposeCpuOutfits() { for (const cpu of raceCpuModels) for (const texture of cpu.gpu?.values() ?? []) gl.deleteTexture(texture); for (const cpu of raceCpuModels) cpu.gpu = null; }
+// Node matrices arrive as [[16 floats], ...]; copy them into a reused buffer
+// instead of allocating flattened arrays for every rider every frame.
+function bonesInto(rows, target) {
+  const out = target?.length === rows.length * 16 ? target : new Float32Array(rows.length * 16);
+  for (let i = 0; i < rows.length; i++) out.set(rows[i], i * 16);
+  return out;
+}
+// Quad and rider chunks share one bone palette and model matrix each; upload
+// them only when a chunk switches between the two.
+function drawPosedChunks(chunks, transforms, bones, prepare) {
+  let draws = 0, current = null;
+  for (const chunk of chunks) {
+    const part = chunk.rider ? 1 : 0;
+    if (part !== current) { current = part; gl.uniformMatrix4fv(uniforms.model, false, transforms[part]); gl.uniformMatrix4fv(uniforms.quadBones, false, bones[part]); }
+    const bound = prepare(chunk);
+    gl.uniform1i(uniforms.fogEnabled, Boolean(terrain.world?.metadata.fog) && chunk.fog);
+    gl.uniform1i(uniforms.useTexture, Boolean(bound)); gl.bindTexture(gl.TEXTURE_2D, bound ?? fallbackTexture);
+    gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0); draws++;
+  }
+  return draws;
+}
 function drawRosterCpu(cpu, slot, transform, riderTransform) {
   const roster = raceCpuModels[slot], model = roster?.model;
   if (!model?.source) return 0;
   let quad, rider;
   if (cpu.physical) {
     if (cpu.physical.quad_matrices.length !== model.source.mesh.nodes.length || cpu.physical.rider_matrices.length !== model.source.riderMesh.nodes.length) return 0;
-    quad = new Float32Array(cpu.physical.quad_matrices.flat()); rider = new Float32Array(cpu.physical.rider_matrices.flat());
+    quad = roster.quadBones = bonesInto(cpu.physical.quad_matrices, roster.quadBones); rider = roster.riderBones = bonesInto(cpu.physical.rider_matrices, roster.riderBones);
   } else {
     // Grid before the first physics step: the quad's rest pose and the
     // player's seated pose (same rider rig).
@@ -1045,38 +1104,26 @@ function drawRosterCpu(cpu, slot, transform, riderTransform) {
   }
   buildRemoteGpu(model);
   if (!roster.gpu) { roster.gpu = new Map(); for (const [name, decoded] of roster.outfit ?? []) roster.gpu.set(name, texture(decoded)); }
-  let draws = 0;
   gl.uniform1i(uniforms.useQuadPose, true);
-  for (const chunk of model.chunks ?? []) {
-    const outfit = chunk.rider ? roster.gpu.get(chunk.material) : null, bound = outfit ?? chunk.texture;
-    gl.uniformMatrix4fv(uniforms.model, false, chunk.rider ? riderTransform : transform);
-    gl.uniformMatrix4fv(uniforms.quadBones, false, chunk.rider ? rider : quad);
-    gl.uniform1i(uniforms.fogEnabled, Boolean(terrain.world?.metadata.fog) && chunk.fog);
-    gl.uniform1i(uniforms.useTexture, Boolean(bound)); gl.bindTexture(gl.TEXTURE_2D, bound ?? fallbackTexture);
-    gl.bindVertexArray(chunk.vao); gl.drawElements(gl.TRIANGLES, chunk.count, gl.UNSIGNED_SHORT, 0); draws++;
-  }
-  return draws;
+  return drawPosedChunks(model.chunks ?? [], [transform, riderTransform], [quad, rider], chunk => (chunk.rider ? roster.gpu.get(chunk.material) : null) ?? chunk.texture);
 }
+const peerBones = new Map();
 function drawRemotePlayers() {
   let draws=0, gearPeers=0, paintPeers=0;
   for (const peer of multiplayer?.remote ?? []) {
     const model=remoteModels.get(`${peer.atv_model}:${peer.rider_model}`); if (!model?.source) continue;
     if (peer.quad_node_matrices.length!==model.source.mesh.nodes.length || peer.rider_node_matrices.length!==model.source.riderMesh.nodes.length) continue;
     buildRemoteGpu(model);
-    const quad=new Float32Array(peer.quad_node_matrices.flat()), rider=new Float32Array(peer.rider_node_matrices.flat());
+    const bones=peerBones.get(peer.peer) ?? {};peerBones.set(peer.peer,bones);
+    const quad=bones.quad=bonesInto(peer.quad_node_matrices,bones.quad), rider=bones.rider=bonesInto(peer.rider_node_matrices,bones.rider);
     const quadWorld=new Float32Array(peer.world_matrix), riderWorld=new Float32Array(peer.rider_world_matrix);
     gl.uniform1i(uniforms.useQuadPose,true);
     const appearance = peer.atv_model <= 26 ? peerAppearance(peer.peer) : null, gear = peerGear(model, appearance), paint = PAINT_PALETTE[appearance?.paint ?? 0] ?? PAINT_PALETTE[0];
     if (gear?.size) gearPeers++; if (appearance?.paint) paintPeers++;
-    for (const chunk of model.chunks ?? []) {
-      const bound = (chunk.rider && gear?.get(chunk.material)) || chunk.texture;
-      gl.uniformMatrix4fv(uniforms.model,false,chunk.rider?riderWorld:quadWorld);
-      gl.uniformMatrix4fv(uniforms.quadBones,false,chunk.rider?rider:quad);
-      gl.uniform1i(uniforms.fogEnabled,Boolean(terrain.world?.metadata.fog)&&chunk.fog);
+    draws+=drawPosedChunks(model.chunks ?? [],[quadWorld,riderWorld],[quad,rider],chunk=>{
       gl.uniform2fv(uniforms.quadPaint,!chunk.rider&&paintable(chunk.material)?paint:PAINT_PALETTE[0]);
-      gl.uniform1i(uniforms.useTexture,Boolean(bound));gl.bindTexture(gl.TEXTURE_2D,bound??fallbackTexture);
-      gl.bindVertexArray(chunk.vao);gl.drawElements(gl.TRIANGLES,chunk.count,gl.UNSIGNED_SHORT,0);draws++;
-    }
+      return (chunk.rider && gear?.get(chunk.material)) || chunk.texture;
+    });
   }
   gl.uniform2fv(uniforms.quadPaint,PAINT_PALETTE[0]);
   diagnostics.multiplayerDraws=draws; diagnostics.remoteGear={gear:gearPeers,paint:paintPeers};
@@ -1844,7 +1891,7 @@ function render(time) {
   // temporarily hidden. Only the explicit Off setting restores standalone MPH.
   // The original race overlays sit below the toolbar buttons.
   const raceHud = raceSettings && simFrame?.race && simFrame.race.phase !== 'intro' ? simFrame.race : null;
-  hud?.draw(simFrame?.hud, simReady && focused && !lost && !document.hidden && !menuOpen && simFrame?.race?.phase !== 'intro', { speedVisible: raceSettings ? raceOverlays.shown('speed') : !minimapSettings.enabled, lights: simFrame?.race?.lights ?? null, race: raceHud, frame: raceHud && (presentedFrame ?? simFrame), topInset: raceHud ? $('toolbar').getBoundingClientRect().bottom : 0, overlays: raceOverlays });
+  hud?.draw(simFrame?.hud, simReady && focused && !lost && !document.hidden && !menuOpen && simFrame?.race?.phase !== 'intro', { speedVisible: raceSettings ? raceOverlays.shown('speed') : !minimapSettings.enabled, lights: simFrame?.race?.lights ?? null, race: raceHud, frame: raceHud && (presentedFrame ?? simFrame), topInset: raceHud ? toolbarBottom() : 0, overlays: raceOverlays });
   raceOverlay.lamps = Boolean(hud?.lamps); raceOverlay.native = Boolean(hud?.race);
   raceOverlay.draw(simFrame?.race,simFrame,simReady && focused && !lost && !document.hidden && !menuOpen);
   if (lost || !gl || !terrain || document.hidden || (menuOpen && !liveMultiplayer())) { lastTime = time; stats.sample(time, 0, false); return; }
@@ -2094,6 +2141,7 @@ async function loadGame(file = null, environment = "env01", racing = null) {
     else {
       const content = await (hostedContent ??= openHostedContent());
       if (token !== generation) return;
+      await prefetchRide(content, environment, Boolean(racing));
       source = await terrainFromContent(content.file, content.files, token, environment,Boolean(racing));
     }
     diagnostics.contentSource = file ? 'local-file' : 'hosted-original';

@@ -27,6 +27,8 @@ export class GameAudio {
     this.sources = new Set();
     this.current = null;
     this.ready = false;
+    // Resolves once the sample bank is open; the course loads alongside it.
+    this.bankOpened = Promise.resolve();
     this.active = true;
     this.menuTracks = []; this.menuSource = null; this.menuMusicMode = false;
     this.musicPreview = false;
@@ -97,7 +99,12 @@ export class GameAudio {
     this.echo?.dispose(); this.echo = null;
     if (type) this.echo = createEchoBus(this.context, this.engineGain, this.gain, type);
   }
-  async load({ file, files, read, isCurrent, quadId = 1, female = false }) {
+  load(options) {
+    let opened;
+    this.bankOpened = new Promise(resolve => { opened = resolve; });
+    return this.loadBank(options, opened).finally(opened);
+  }
+  async loadBank({ file, files, read, isCurrent, quadId = 1, female = false }, opened) {
     this.stopWeather();this.weatherActive=false;
     const text = new TextDecoder();
     const json = async (op, bytes, index = 0) => JSON.parse(text.decode(await this.codec(op, bytes, index)));
@@ -145,6 +152,7 @@ export class GameAudio {
       this.buffers.set(name, { wave, info, buffer: null });
     };
     this.loadWeatherSample = () => this.loadSample('rain.vag');
+    opened();
     // Keep encoded WAV until a user gesture creates/unlocks the audio context.
     for (const name of new Set([...this.config.samples.flat(),...(this.config.impact_samples ?? [])])) {
       if (!isCurrent() || this.closed) return;
@@ -240,7 +248,7 @@ export class GameAudio {
   async loadWeather({ selection, isCurrent }) {
     this.stopWeather();this.weatherActive=Boolean(selection?.active&&selection.definition?.kind==='rain');
     if(!this.weatherActive)return;
-    try {await this.loadWeatherSample();if(!isCurrent()||this.closed)this.weatherActive=false;}
+    try {await this.bankOpened;await this.loadWeatherSample();if(!isCurrent()||this.closed)this.weatherActive=false;}
     catch(error){if(isCurrent()&&!this.closed){this.weatherActive=false;this.report(`Rain sound: ${error.message}`);}}
   }
   stopWeather(){if(this.weatherSource){this.weatherSource.stop();this.weatherSource.disconnect();this.weatherSource=null;}}
@@ -258,12 +266,14 @@ export class GameAudio {
   // (loadVenue) under the original range rules, for every venue.
   async loadStadium({ crowd }) {
     this.stopCrowd(); this.stopSpatial(this.stadiumVoices); this.stadiumDefinitions = [];
+    await this.bankOpened;
     for (const name of new Set(crowd)) {
       if (this.closed) return;
       await this.loadSample(name).catch(() => {});
     }
   }
   async loadVenue(aud, { stadium = false } = {}) {
+    await this.bankOpened;
     if (this.closed || !this.loadSample) return;
     await this.quad.loadVenue(aud);
     try {
@@ -334,6 +344,7 @@ export class GameAudio {
   }
   async loadSpatial({ toy, isCurrent }) {
     try {
+      await this.bankOpened;
       const definitions = JSON.parse(new TextDecoder().decode(await this.codec(72, toy)));
       for (const name of new Set(definitions.map(definition => definition.sample))) {
         if (!isCurrent() || this.closed) return;
@@ -349,6 +360,7 @@ export class GameAudio {
     }
   }
   async loadRemoteModels(players) {
+    if (!this.loadSample) await this.bankOpened;
     if (!this.engineTable || !this.loadSample || this.closed) return;
     for (const player of players) {
       if (this.remoteLoaded.has(player.atv_model)) { await this.remoteLoaded.get(player.atv_model); continue; }
