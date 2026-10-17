@@ -30,7 +30,7 @@ export function courseResource(environment, racing = false) {
 const aliases = {
   map:['map','environment'], quad:['quad','vehicle','atv'], rider:['rider'], player:['player','name'],
   mode:['mode'], activity:['activity'], action:['action'], room:['room','lobby'], play:['play','drive'],
-  laps:['laps'], cpu:['cpu'],
+  laps:['laps'], cpu:['cpu'], difficulty:['difficulty'], cheats:['cheats','cheat'],
 };
 const modeAliases = {single:'single', 'single-player':'single', singleplayer:'single', sp:'single', multiplayer:'multiplayer', multi:'multiplayer', mp:'multiplayer'};
 const activityAliases = {freestyle:'freestyle',freeride:'freestyle',race:'race'};
@@ -69,6 +69,13 @@ export function parseLaunch(search, tracks = ENVIRONMENTS.map(id=>({id,name:id})
   const room = (values.room ?? '').toUpperCase();
   if ('room' in values && !/^[A-Z0-9]{8}$/.test(room)) errors.push('Room must contain exactly 8 letters or numbers.');
   const laps = integer('laps',v=>v>=1&&v<=5,3), cpu = integer('cpu',v=>[0,3,4].includes(v),3);
+  const difficulty = pick('difficulty',{normal:1,'1':1,expert:2,'2':2},1);
+  // The original EATDIRT (Aggressive AI) and BRINGIT (All Out AI) race cheats.
+  const cheats = {};
+  for (const code of ('cheats' in values ? values.cheats.toLowerCase().split(',') : [])) {
+    const key = {eatdirt:'aggressive',bringit:'all_out'}[code.trim()];
+    if (key) cheats[key] = true; else errors.push(`Unsupported cheat: ${code.trim() || '(empty)'}.`);
+  }
   if (mode==='single' && ('room' in values || 'action' in values)) errors.push('Room/action requires mode=multiplayer.');
   if (mode==='multiplayer') {
     if (!action) errors.push('Multiplayer needs room=CODE to join, or action=create.');
@@ -77,15 +84,20 @@ export function parseLaunch(search, tracks = ENVIRONMENTS.map(id=>({id,name:id})
     if (activity!=='freestyle') errors.push('Multiplayer supports Freeride only.');
   }
   if (activity==='race' && map && !RACE_COURSES.includes(map)) errors.push('Races use the original Environment, National and Supercross courses.');
-  if (activity!=='race' && ('laps' in values || 'cpu' in values)) errors.push('Laps/cpu requires activity=race.');
-  return {requested:true,errors,mode,activity,action,play,map:map??'env01',quadId,riderId,playerName,room,raceSettings:{laps,cpu,difficulty:1,course:map??'env01'}};
+  if (activity!=='race' && ['laps','cpu','difficulty','cheats'].some(key=>key in values)) errors.push('Laps/cpu/difficulty/cheats requires activity=race.');
+  return {requested:true,errors,mode,activity,action,play,map:map??'env01',quadId,riderId,playerName,room,raceSettings:{laps,cpu,difficulty,course:map??'env01',...cheats}};
 }
 export function buildRideUrl(origin, setup, {includePlayer = true} = {}) {
   const url = new URL('/play.html',origin);
   const entries = {mode:setup.mode??'single',activity:setup.activity??'freestyle',map:setup.map??'env01',quad:setup.quadId??1,rider:setup.riderId??0};
   if (entries.mode==='multiplayer') { entries.action='join'; entries.room=setup.room; }
   if (includePlayer && setup.playerName) entries.player=setup.playerName;
-  if (entries.activity==='race') {entries.laps=setup.raceSettings?.laps??3;entries.cpu=setup.raceSettings?.cpu??3;}
+  if (entries.activity==='race') {
+    entries.laps=setup.raceSettings?.laps??3;entries.cpu=setup.raceSettings?.cpu??3;
+    if (setup.raceSettings?.difficulty===2) entries.difficulty='expert';
+    const cheats=[setup.raceSettings?.aggressive&&'eatdirt',setup.raceSettings?.all_out&&'bringit'].filter(Boolean);
+    if (cheats.length) entries.cheats=cheats.join(',');
+  }
   entries.play=1;
   for(const [key,value] of Object.entries(entries)) if(value!=null)url.searchParams.set(key,String(value));
   // Share only valid supported setups, never the current page's unrelated query/hash.

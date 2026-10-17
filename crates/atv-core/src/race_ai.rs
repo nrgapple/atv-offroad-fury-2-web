@@ -1,6 +1,7 @@
 //! Authored reconstruction of the National path driver's recovered decisions.
 //! Exact-build 0024f9d0 / 001f9690 / 002536b0 with 00252080 direction
-//! avoidance and001e9650 clip eligibility. Physics belongs to Vehicle.
+//! avoidance, the racer jump hooks 0024ebb0 / 001ebb10 and 001e9650 clip
+//! eligibility. Physics belongs to Vehicle.
 use crate::{
     Result,
     race::Course,
@@ -199,6 +200,35 @@ pub fn low_clearance_lean(previous: f32, terrain_normal: [f32; 3], forward: [f32
     let target = 10. * -dot(terrain_normal, forward);
     (previous * (1. - 0.1) + 0.1 * target).clamp(-1., 1.)
 }
+/// Race creation (`001f9690`) AI flags that depend on the race settings.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Options {
+    /// Expert difficulty. Race prep stores Expert as settings+0x610 = 3
+    /// (`002f64a0`), and race creation then leaves out AI flag 0x400: no
+    /// ahead-of-the-player speed limit (`002536b0`). Normal (and None) set it.
+    pub expert: bool,
+    /// EATDIRT "Aggressive AI" cheat (settings+0x618 → AI flag 0x4000000).
+    pub aggressive: bool,
+    /// BRINGIT "All Out AI" cheat (settings+0x1880 → AI flag 0x800): the
+    /// driver also pulls the quad's velocity toward its target (`001ebaf0`).
+    pub all_out: bool,
+}
+impl Options {
+    /// Race-prep difficulty index: 0 None, 1 Normal, 2 Expert (`0021add0`).
+    pub fn difficulty(difficulty: u32) -> Self {
+        Self {
+            expert: difficulty == 2,
+            ..Self::default()
+        }
+    }
+}
+/// All Out AI (flag 0x800) request for this frame: the racer blends its
+/// horizontal velocity 0.5% toward `velocity` while grounded (`001ebaf0`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DirectVelocity {
+    pub velocity: [f32; 2],
+    pub grounded: bool,
+}
 #[derive(serde::Serialize, Debug, Clone, Copy)]
 pub struct Decisions {
     pub active: bool,
@@ -214,6 +244,10 @@ pub struct Decisions {
     pub route_distance: f32,
     pub route_error: f32,
     pub lane_offset: f32,
+    /// Lean-flick rate the jump hook supplies for a preload (0 when none).
+    pub preload_flick: f32,
+    #[serde(skip)]
+    pub direct: Option<DirectVelocity>,
 }
 /// The rigid-body state the path driver reads: ATV CPUs, and the player's
 /// ATV or motorcycle once it is driven after the finish.
@@ -224,6 +258,12 @@ pub struct DriverPose {
     pub speed_magnitude: f32,
     pub grounded: bool,
     pub riding: bool,
+    /// Rider status +0x50 / +0x48 from the previous physics step, which the
+    /// racer copies into AI flags 0x20000 / 0x10000 (`001eb380`).
+    pub preload_available: bool,
+    pub preload_armed: bool,
+    /// Rider status +0x88 / +0x8c: PreloadMinAxisRate, PreloadMaxAxisRate.
+    pub preload_rates: [f32; 2],
 }
 impl From<&VehicleFrame> for DriverPose {
     fn from(f: &VehicleFrame) -> Self {
@@ -233,6 +273,9 @@ impl From<&VehicleFrame> for DriverPose {
             speed_magnitude: f.speed_magnitude,
             grounded: f.grounded.iter().any(|v| *v),
             riding: f.wreck.phase == crate::wreck::Phase::Riding,
+            preload_available: f.preload_available,
+            preload_armed: f.preload_armed,
+            preload_rates: [0.; 2],
         }
     }
 }
@@ -245,6 +288,7 @@ pub struct Context<'a> {
     pub station: Option<crate::race::Station>,
 }
 pub struct Driver {
+    options: Options,
     random: crate::engine_audio::OriginalRandom,
     goal: f32,
     last_target: usize,
@@ -253,12 +297,19 @@ pub struct Driver {
     trick_timer: f32,
     air_timer: f32,
     trick_attempted: bool,
+    /// AI flag 0x8000: armed on an ordinary node before a flag 2/4 drop.
+    drop_ready: bool,
+    /// AI flag 0x1000000: the preload strength for this jump is chosen.
+    preload_chosen: bool,
+    /// Racer +0x4c: the chosen preload strength.
+    preload_strength: f32,
 }
 impl Driver {
-    pub fn new(index: usize, _difficulty: u32) -> Self {
+    pub fn new(index: usize, options: Options) -> Self {
         let mut random = crate::engine_audio::OriginalRandom::with_seed(97211 + index as u64 * 47);
         let goal = random.next_u31() as f32 * 4.656613e-10 * 12. - 6.;
         Self {
+            options,
             random,
             goal,
             last_target: usize::MAX,
@@ -267,6 +318,9 @@ impl Driver {
             trick_timer: 0.,
             air_timer: 0.,
             trick_attempted: false,
+            drop_ready: false,
+            preload_chosen: false,
+            preload_strength: 0.,
         }
     }
     pub fn repositioned(&mut self) {
@@ -359,6 +413,8 @@ impl Driver {
                     route_distance: p.distance,
                     route_error: p.error,
                     lane_offset: self.lane,
+                    preload_flick: 0.,
+                    direct: None,
                 },
             ));
         }
@@ -396,6 +452,7 @@ impl Driver {
             context.peers,
             course.flags.get(p.segment).copied().unwrap_or(0),
             context.scene,
+            self.options.aggressive,
         )?;
         // 0024f840 leaves the original heading when the correction is zero.
         let direction = if avoidance.velocity[0] != 0. || avoidance.velocity[2] != 0. {
@@ -408,7 +465,7 @@ impl Driver {
         let horizontal = normalize([forward[0], 0., forward[2]]);
         let right = [horizontal[2], 0., -horizontal[0]];
         let angle = dot(direction, right).atan2(dot(direction, horizontal));
-        let steer = (5. * angle)
+        let mut steer = (5. * angle)
             .clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2)
             .sin();
         let mut desired_speed = if on_track {
@@ -416,16 +473,8 @@ impl Driver {
         } else {
             50.
         };
-        desired_speed = leader_speed(
-            desired_speed,
-            player_speed,
-            progress_difference,
-            60.,
-            course.leader_policy,
-        );
-        let (throttle, brake) = pedals(frame.speed_magnitude, desired_speed);
-        // The ground route uses no guessed corner/braking lean. The airborne
-        // feedback reconstructs the ordinary high-clearance 0024f9d0 branch;
+        // The ground route uses no corner/braking lean. The airborne feedback
+        // reconstructs the ordinary high-clearance 0024f9d0 branch;
         // low-clearance terrain-normal feedback is separate from native stunt choice.
         let corrected = normalize([
             tangent[0] + (target[0] - frame.origin[0]) * 0.05,
@@ -448,15 +497,49 @@ impl Driver {
                 .sin()
         } else if airborne {
             low_clearance_lean(self.lean, context.terrain_normal, forward)
+        } else if course.flags.get(p.segment).copied().unwrap_or(0) & 8 != 0 {
+            // Grounded on a flag-8 node (RaceStatus +0xbc): constructor +0x258.
+            0.6
         } else {
             0.
         };
+        // Racer hook 0024ebb0 (VehicleAIInterface +0x28) on the aim node.
+        let jump = self.jump_hook(course, aim.segment, frame, context.clearance, steer, lean);
+        steer = jump.0;
+        let mut lean = jump.1.clamp(-1., 1.);
+        // AI +0xf4 keeps this lean; the release below only changes the input.
         self.lean = lean;
+        // Flag 0x400 is set for every difficulty except Expert.
+        if !self.options.expert {
+            desired_speed = leader_speed(
+                desired_speed,
+                player_speed,
+                progress_difference,
+                60.,
+                course.leader_policy,
+            );
+        }
+        let (throttle, brake) = pedals(frame.speed_magnitude, desired_speed);
+        let direct = self.options.all_out.then(|| DirectVelocity {
+            velocity: [direction[0] * desired_speed, direction[2] * desired_speed],
+            grounded: frame.grounded,
+        });
+        // Racer post-update 001ebb10: an armed preload on a flag-0x40 aim node
+        // is released by easing the lean to -0.3 and supplying the lean-flick
+        // rate that yields the chosen strength. The AI never measures a pad
+        // flick, so every other frame supplies none.
+        let mut preload_flick = 0.;
+        if frame.preload_armed && course.flags.get(aim.segment).copied().unwrap_or(0) & 0x40 != 0 {
+            let [minimum, maximum] = frame.preload_rates;
+            preload_flick = self.preload_strength * -(maximum - minimum) - minimum;
+            lean = -0.3;
+        }
         let input = VehicleInput {
             throttle,
             brake,
             steer,
             lean,
+            lean_flick_rate: Some(preload_flick),
             ..VehicleInput::default()
         };
         Ok((
@@ -475,13 +558,274 @@ impl Driver {
                 route_distance: p.distance,
                 route_error: p.error,
                 lane_offset: lane,
+                preload_flick,
+                direct,
             },
         ))
+    }
+    /// 0024ebb0: drop and jump handling for the aim node. Flags 2 and 4 hold
+    /// a lean-back, straight line from 1ft / 2.5ft (constructor +0x270 /
+    /// +0x26c) above the terrain until the latch clears; no shipped TDF uses
+    /// them. A flag-0x40 jump with preload available (rising ramp face)
+    /// chooses a strength once, 0.05 (race creation +0x260) × TDF tag 27 ×
+    /// the shortfall below the node's target speed, then leans back to arm
+    /// it and forward once armed. Returns (steer, lean).
+    fn jump_hook(
+        &mut self,
+        course: &Course,
+        node: usize,
+        frame: &DriverPose,
+        clearance: f32,
+        mut steer: f32,
+        mut lean: f32,
+    ) -> (f32, f32) {
+        let flags = course.flags.get(node).copied().unwrap_or(0);
+        if flags & 6 != 0 {
+            let threshold = if flags & 2 != 0 { -1. } else { -2.5 };
+            if clearance <= threshold || !self.drop_ready {
+                self.drop_ready = false;
+                if clearance < 0. {
+                    steer = 0.;
+                    if flags & 2 != 0 {
+                        lean = 0.3;
+                    }
+                }
+            } else {
+                lean = -1.;
+                steer = 0.;
+            }
+        } else if !frame.preload_available || flags & 0x40 == 0 {
+            self.drop_ready = true;
+            self.preload_chosen = false;
+        } else {
+            if !self.preload_chosen {
+                let speed = course.speeds.get(node).copied().unwrap_or(-1.);
+                let target = if speed >= 0. { speed } else { 150. };
+                let scale = course.preload_scales.get(node).copied().unwrap_or(0.);
+                self.preload_strength =
+                    (0.05 * scale * (target - frame.speed_magnitude)).clamp(0., 1.);
+                self.preload_chosen = true;
+            }
+            if frame.preload_armed {
+                lean = -1.;
+            } else if lean < 0.9 {
+                lean = 1.;
+            }
+        }
+        (steer, lean)
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// 100ft square loop; a rider at (0, 0, 50) on segment 0 aims 25ft ahead,
+    /// still on segment 0.
+    fn square(flags: u32, speed: f32) -> Course {
+        Course {
+            points: vec![
+                [0., 0., 0.],
+                [0., 0., 100.],
+                [100., 0., 100.],
+                [100., 0., 0.],
+            ],
+            widths: vec![30.; 4],
+            flags: vec![flags, 0, 0, 0],
+            speeds: vec![speed, speed, speed, speed],
+            airtimes: vec![0.; 4],
+            preload_scales: vec![1.; 4],
+            ..Course::default()
+        }
+    }
+    fn pose(speed: f32, available: bool, armed: bool) -> DriverPose {
+        DriverPose {
+            origin: [0., 0., 50.],
+            orientation: [1., 0., 0., 0.],
+            speed_magnitude: speed,
+            grounded: true,
+            riding: true,
+            preload_available: available,
+            preload_armed: armed,
+            preload_rates: [1., 80.],
+        }
+    }
+    fn drive(
+        driver: &mut Driver,
+        course: &Course,
+        pose: &DriverPose,
+        ahead: f32,
+        clearance: f32,
+    ) -> (VehicleInput, Decisions) {
+        driver
+            .step(
+                course,
+                pose,
+                20.,
+                ahead,
+                1. / 60.,
+                Context {
+                    peers: &[],
+                    scene: None,
+                    clearance,
+                    terrain_normal: [0., 1., 0.],
+                    station: None,
+                },
+            )
+            .unwrap()
+    }
+    #[test]
+    fn expert_difficulty_drops_the_ahead_of_player_speed_limit() {
+        let course = square(0, -1.);
+        for (difficulty, expected) in [(0, 75.), (1, 75.), (2, 150.)] {
+            let mut driver = Driver::new(0, Options::difficulty(difficulty));
+            let (input, d) = drive(&mut driver, &course, &pose(100., false, false), 200., 1.);
+            assert_eq!(d.desired_speed, expected, "difficulty {difficulty}");
+            assert_eq!(input.brake, if expected < 100. { 1. } else { 0. });
+        }
+        // Behind the player both difficulties keep the TDF target.
+        let mut normal = Driver::new(0, Options::difficulty(1));
+        assert_eq!(
+            drive(&mut normal, &course, &pose(100., false, false), -50., 1.)
+                .1
+                .desired_speed,
+            150.
+        );
+    }
+    #[test]
+    fn grounded_riders_lean_on_flag_eight_nodes_only() {
+        let mut driver = Driver::new(0, Options::default());
+        let (input, _) = drive(
+            &mut driver,
+            &square(8, -1.),
+            &pose(60., false, false),
+            0.,
+            1.,
+        );
+        assert!((input.lean - 0.6).abs() < 1e-6);
+        let (input, _) = drive(
+            &mut driver,
+            &square(0, -1.),
+            &pose(60., false, false),
+            0.,
+            1.,
+        );
+        assert_eq!((input.lean, input.lean_flick_rate), (0., Some(0.)));
+    }
+    #[test]
+    fn jump_hook_arms_then_releases_the_chosen_preload_strength() {
+        let course = square(0x40, 80.);
+        let mut driver = Driver::new(0, Options::default());
+        // Not on a rising ramp face: nothing happens.
+        let (input, _) = drive(&mut driver, &course, &pose(70., false, false), 0., 1.);
+        assert_eq!((input.lean, input.lean_flick_rate), (0., Some(0.)));
+        // Preload available: 0.05 × tag 27 × (80 − 70) = 0.5, lean back to arm.
+        let (input, _) = drive(&mut driver, &course, &pose(70., true, false), 0., 1.);
+        assert_eq!((input.lean, input.lean_flick_rate), (1., Some(0.)));
+        // Armed: lean −0.3 with the flick that the rider control turns back
+        // into strength (rate + min) / (−max + min) = 0.5. The strength was
+        // chosen once, so the faster approach now does not change it.
+        let (input, d) = drive(&mut driver, &course, &pose(95., true, true), 0., 1.);
+        assert_eq!(input.lean, -0.3);
+        let flick = input.lean_flick_rate.unwrap();
+        assert_eq!(flick, d.preload_flick);
+        assert!(((flick + 1.) / (-80. + 1.) - 0.5).abs() < 1e-6);
+        // Leaving the jump resets the choice; at or above the node speed the
+        // strength is zero and the flick (−min) cannot trigger a preload.
+        drive(
+            &mut driver,
+            &square(0, 80.),
+            &pose(95., true, false),
+            0.,
+            1.,
+        );
+        drive(&mut driver, &course, &pose(95., true, false), 0., 1.);
+        let (input, _) = drive(&mut driver, &course, &pose(95., true, true), 0., 1.);
+        assert_eq!(input.lean_flick_rate, Some(-1.));
+        // The 150ft/s sentinel is the target for an unlimited jump node.
+        let mut driver = Driver::new(0, Options::default());
+        drive(
+            &mut driver,
+            &square(0x40, -1.),
+            &pose(140., true, false),
+            0.,
+            1.,
+        );
+        let (input, _) = drive(
+            &mut driver,
+            &square(0x40, -1.),
+            &pose(140., true, true),
+            0.,
+            1.,
+        );
+        assert!(((input.lean_flick_rate.unwrap() + 1.) / -79. - 0.5).abs() < 1e-6);
+    }
+    #[test]
+    fn drop_nodes_need_an_ordinary_node_first_then_hold_a_straight_lean_back() {
+        let mut driver = Driver::new(0, Options::default());
+        let (input, _) = drive(
+            &mut driver,
+            &square(2, -1.),
+            &pose(60., false, false),
+            0.,
+            1.,
+        );
+        assert_ne!(input.lean, -1.);
+        drive(
+            &mut driver,
+            &square(0, -1.),
+            &pose(60., false, false),
+            0.,
+            1.,
+        );
+        let (input, _) = drive(
+            &mut driver,
+            &square(2, -1.),
+            &pose(60., false, false),
+            0.,
+            1.,
+        );
+        assert_eq!((input.lean, input.steer), (-1., 0.));
+        // Below the terrain reference the latch clears: lean 0.3, no steering.
+        let (input, _) = drive(
+            &mut driver,
+            &square(2, -1.),
+            &pose(60., false, false),
+            0.,
+            -2.,
+        );
+        assert_eq!((input.lean, input.steer), (0.3, 0.));
+        let (input, _) = drive(
+            &mut driver,
+            &square(2, -1.),
+            &pose(60., false, false),
+            0.,
+            1.,
+        );
+        assert_ne!(input.lean, -1.);
+    }
+    #[test]
+    fn all_out_ai_requests_the_target_velocity_only_with_the_cheat() {
+        let course = square(0, -1.);
+        let mut driver = Driver::new(0, Options::default());
+        assert!(
+            drive(&mut driver, &course, &pose(60., false, false), 0., 1.)
+                .1
+                .direct
+                .is_none()
+        );
+        let mut driver = Driver::new(
+            0,
+            Options {
+                all_out: true,
+                ..Options::default()
+            },
+        );
+        let (_, d) = drive(&mut driver, &course, &pose(60., false, false), 0., 1.);
+        let direct = d.direct.unwrap();
+        assert!(direct.grounded);
+        let [x, z] = direct.velocity;
+        assert!(((x * x + z * z).sqrt() - d.desired_speed).abs() < 1e-3);
+        assert!(z > 0.);
+    }
     #[test]
     fn landing_feedback_tracks_surface_pitch_and_saturates_without_ground_bias() {
         assert_eq!(low_clearance_lean(0., [0., 1., 0.], [0., 0., 1.]), 0.);

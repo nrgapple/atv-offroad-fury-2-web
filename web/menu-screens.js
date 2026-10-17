@@ -189,8 +189,8 @@ function buildLobby(fe, left, panel) {
 }
 
 // Race setup mirrors Freestyle's course select: event tabs and a photo list of
-// every race course, the large framed preview with Start Race, and the lap and
-// CPU rider steppers under the list.
+// every race course, the large framed preview with Start Race, and the lap,
+// CPU rider and difficulty steppers under the list.
 function courseTabs(fe, groups, current, select) {
   const tabs = h('div', {class:'ms-tabs', role:'tablist', 'aria-label':'Event type'});
   for (const [key, label] of COURSE_GROUPS) {
@@ -221,7 +221,7 @@ function buildRace(fe, left, panel) {
     list.append(card);
   }
   const settings = h('nav', {class:'ms-rows ms-race-settings', 'aria-label':'Race setup'});
-  for (const action of ['racelaps','racecpu']) settings.append(stepper(fe, action) ?? '');
+  for (const action of ['racelaps','racecpu','racedifficulty']) settings.append(stepper(fe, action) ?? '');
   left.append(tabs, list, settings);
   const hero = trackFigure('ms-track-hero');
   hero.querySelector('figcaption').append(h('p', {class:'ms-track-mode'}));

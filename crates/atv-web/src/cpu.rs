@@ -72,7 +72,7 @@ pub fn create_cpu_racer(
     mut origin: [f32; 3],
     yaw: f32,
     index: usize,
-    difficulty: u32,
+    options: atv_core::race_ai::Options,
 ) -> Result<CpuRacer> {
     let terrain = sim.terrain.as_ref().ok_or("CPU terrain missing")?;
     origin[1] = terrain
@@ -152,7 +152,7 @@ pub fn create_cpu_racer(
         wreck,
         mode: None,
         stuck: 0.,
-        driver: atv_core::race_ai::Driver::new(index, difficulty),
+        driver: atv_core::race_ai::Driver::new(index, options),
     })
 }
 impl CpuRacer {
@@ -180,9 +180,11 @@ impl CpuRacer {
             before.origin[0] + before.linear_velocity[0] * 0.5,
             before.origin[2] + before.linear_velocity[2] * 0.5,
         )?;
+        let mut pose: atv_core::race_ai::DriverPose = (&before).into();
+        pose.preload_rates = self.vehicle.preload_rates();
         let (mut input, decisions) = self.driver.step(
             course,
-            &(&before).into(),
+            &pose,
             player_speed,
             gap,
             DT,
@@ -204,8 +206,11 @@ impl CpuRacer {
         if world.hold {
             input = atv_core::vehicle::VehicleInput {
                 brake: 1.,
+                lean_flick_rate: Some(0.),
                 ..Default::default()
             };
+        } else if let Some(direct) = decisions.direct {
+            self.vehicle.pull_velocity(direct.velocity, direct.grounded);
         }
         let durations = std::array::from_fn(|i| self.rider.stunt_duration(i).unwrap_or(f32::MAX));
         if !world.hold

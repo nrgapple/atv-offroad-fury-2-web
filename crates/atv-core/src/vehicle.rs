@@ -104,6 +104,9 @@ pub struct VehicleInput {
     /// Full brake before excluding a held, remappable reverse chord. Rust owns
     /// the original speed gate; `brake` retains other independent brake inputs.
     pub reverse_chord_brake: Option<f32>,
+    /// Lean-flick rate supplied directly (racer +0x850), as the CPU driver does
+    /// (`001ebb10`); None measures the rider's own lean gesture (`001eb0d0`).
+    pub lean_flick_rate: Option<f32>,
 }
 /// Presentation-only: keep the strongest contact speed and where it occurred.
 fn observe_impact(speed: &mut f32, point: &mut Vec3, closing: f32, at: Vec3) {
@@ -874,6 +877,25 @@ impl Vehicle {
         }
         true
     }
+    /// Rider config PreloadMinAxisRate / PreloadMaxAxisRate (rider status
+    /// +0x88 / +0x8c), which the CPU driver's preload release reads.
+    pub fn preload_rates(&self) -> [f32; 2] {
+        [
+            self.rider_config.preload_min_rate,
+            self.rider_config.preload_max_rate,
+        ]
+    }
+    /// All Out AI (`001ebaf0`): while grounded, blend the horizontal velocity
+    /// 0.5% toward the driver's target velocity before this frame's physics.
+    /// The routine's matching write to the quad's derived world angular rate
+    /// (+0x294) is not reproduced; its consumer is untraced.
+    pub fn pull_velocity(&mut self, target: [f32; 2], grounded: bool) {
+        if grounded && target.iter().all(|v| v.is_finite()) {
+            let v = &mut self.body.linear_velocity;
+            v[0] = v[0] * 0.995 + target[0] * 0.005;
+            v[2] = v[2] * 0.995 + target[1] * 0.005;
+        }
+    }
     pub fn network_platform(&self) -> Option<crate::train::MotionState> {
         self.supports
             .iter()
@@ -1002,6 +1024,7 @@ impl Vehicle {
             input.lean,
             input.preload_axis.unwrap_or(0.0),
             input.reverse_chord_brake.unwrap_or(0.0),
+            input.lean_flick_rate.unwrap_or(0.0),
         ]
         .iter()
         .all(|x| x.is_finite())
@@ -1307,10 +1330,13 @@ impl Vehicle {
         }
         self.clock_ms += dt * 1000.0;
         let lean = if self.forced_landing { 0. } else { raw_axes[1] };
-        let lean_rate = self.lean_gesture.sample(
-            input.preload_axis.unwrap_or(lean).clamp(-1.0, 1.0),
-            self.clock_ms,
-        )?;
+        let lean_rate = match input.lean_flick_rate {
+            Some(rate) => rate,
+            None => self.lean_gesture.sample(
+                input.preload_axis.unwrap_or(lean).clamp(-1.0, 1.0),
+                self.clock_ms,
+            )?,
+        };
         //00146850 updates these at the outer update cadence. Host atan2 remains
         // a provisional backend until the original lookup table is loaded.
         let angles = rider_control::body_angles(self.body.orientation, f32::atan2);
@@ -2339,6 +2365,72 @@ mod tests {
         assert!(!results[1].preload_armed);
         assert_eq!(results[1].preload_strength, 0.);
         assert!(results[0].linear_velocity[1] > results[1].linear_velocity[1]);
+    }
+
+    #[test]
+    fn supplied_lean_flick_replaces_the_gesture_and_sets_preload_strength() {
+        let mut results = Vec::new();
+        for supplied in [None, Some(0.), Some(f32::NAN)] {
+            let (mut vehicle, terrain) = fixture();
+            vehicle.body =
+                BodyState::new([500., -1., 500.], [1., 0., 0., 0.], &vehicle.body_config).unwrap();
+            vehicle
+                .step(&terrain, VehicleInput::default(), 1. / 60.)
+                .unwrap();
+            vehicle.body.linear_velocity = [0., 10., 50.];
+            let held = vehicle
+                .step(
+                    &terrain,
+                    VehicleInput {
+                        lean: 1.,
+                        lean_flick_rate: supplied.map(|_| 0.),
+                        ..Default::default()
+                    },
+                    1. / 60.,
+                )
+                .unwrap();
+            assert!(held.preload_armed, "lean back arms: {held:?}");
+            // NaN stands for the CPU's own 001ebb10 rate for strength 0.5.
+            let [minimum, maximum] = vehicle.preload_rates();
+            let rate = supplied.map(|r: f32| {
+                if r.is_nan() {
+                    0.5 * -(maximum - minimum) - minimum
+                } else {
+                    r
+                }
+            });
+            let released = vehicle
+                .step(
+                    &terrain,
+                    VehicleInput {
+                        lean: -1.,
+                        lean_flick_rate: rate,
+                        ..Default::default()
+                    },
+                    1. / 60.,
+                )
+                .unwrap();
+            results.push(released);
+        }
+        // The browser gesture measures the 1 → −1 flick and releases.
+        assert!(results[0].preload_active);
+        // A CPU that supplies no flick never releases on its lean alone.
+        assert!(!results[1].preload_active && results[1].preload_strength == 0.);
+        // The supplied rate gives exactly the requested strength.
+        assert!(results[2].preload_active);
+        assert!((results[2].preload_strength - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn all_out_velocity_pull_only_acts_on_the_ground() {
+        let (mut vehicle, _) = fixture();
+        vehicle.body.linear_velocity = [0., 3., 50.];
+        vehicle.pull_velocity([100., 150.], false);
+        assert_eq!(vehicle.body.linear_velocity, [0., 3., 50.]);
+        vehicle.pull_velocity([100., 150.], true);
+        assert!((vehicle.body.linear_velocity[0] - 0.5).abs() < 1e-6);
+        assert_eq!(vehicle.body.linear_velocity[1], 3.);
+        assert!((vehicle.body.linear_velocity[2] - 50.5).abs() < 1e-4);
     }
 
     #[test]

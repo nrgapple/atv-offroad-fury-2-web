@@ -835,6 +835,7 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         .get("reverse")
                         .and_then(serde_json::Value::as_bool)
                         .ok_or("missing reverse input")?,
+                    lean_flick_rate: None,
                 };
                 sim.funny_crashes.set_mode(
                     raw.get("crash_mode")
@@ -1802,14 +1803,15 @@ fn race_controls(sim: &mut Simulation) -> Result<Option<atv_core::vehicle::Vehic
             speed_magnitude: f.speed_magnitude,
             grounded: f.grounded.iter().any(|v| *v),
             riding: f.wreck.phase == atv_core::wreck::Phase::Riding,
+            preload_available: false,
+            preload_armed: false,
+            preload_rates: [0.; 2],
         }
     } else {
-        (&sim
-            .vehicle
-            .as_ref()
-            .ok_or("start simulation first")?
-            .frame())
-            .into()
+        let vehicle = sim.vehicle.as_ref().ok_or("start simulation first")?;
+        let mut pose: atv_core::race_ai::DriverPose = (&vehicle.frame()).into();
+        pose.preload_rates = vehicle.preload_rates();
+        pose
     };
     let terrain = sim.terrain.as_ref().ok_or("missing terrain")?;
     let contact = terrain.contact(pose.origin[0], pose.origin[2])?;
@@ -1821,6 +1823,7 @@ fn race_controls(sim: &mut Simulation) -> Result<Option<atv_core::vehicle::Vehic
             atv_core::cpu_avoidance::Peer {
                 origin: f.origin,
                 velocity: f.linear_velocity,
+                human: None,
             }
         })
         .collect();
@@ -1840,7 +1843,7 @@ fn race_controls(sim: &mut Simulation) -> Result<Option<atv_core::vehicle::Vehic
     // Slot 4 follows the four CPU slots' driver random streams.
     let driver = sim
         .race_autopilot
-        .get_or_insert_with(|| atv_core::race_ai::Driver::new(4, 1));
+        .get_or_insert_with(|| atv_core::race_ai::Driver::new(4, Default::default()));
     let scene = sim
         .vehicle
         .as_ref()
@@ -1891,6 +1894,7 @@ fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
                     atv_core::cpu_avoidance::Peer {
                         origin: frame.origin,
                         velocity: frame.linear_velocity,
+                        human: None,
                     }
                 })
                 .collect();
@@ -1930,12 +1934,15 @@ fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
             } else if let Some(vehicle) = sim.vehicle.as_mut() {
                 vehicle.set_race_checkpoint(Some((point, heading)));
             }
+            // RaceStatus +0x150: the human's track direction (aggression branch).
+            let player_track = race.course.tangent(race.station(None).segment);
             for (index, cpu) in sim.cpu_racers.iter_mut().enumerate() {
                 cpu.vehicle
                     .set_race_checkpoint(Some(on_line(race.checkpoint(Some(index)))?));
                 let peers: Vec<_> = std::iter::once(atv_core::cpu_avoidance::Peer {
                     origin: player.origin,
                     velocity: player.linear_velocity,
+                    human: Some(player_track),
                 })
                 .chain(
                     snapshots
@@ -2503,17 +2510,23 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             {
                 course.rider_spacing = spacing;
             }
-            let mut race =
-                atv_core::race::Race::new(course, integer("laps")?, names, integer("difficulty")?)?;
+            let difficulty = integer("difficulty")?;
+            let mut race = atv_core::race::Race::new(course, integer("laps")?, names, difficulty)?;
+            // Race creation 001f9690: difficulty plus the original EATDIRT and
+            // BRINGIT cheat settings (play-link only; off by default).
+            let flag = |key| value.get(key).and_then(serde_json::Value::as_bool) == Some(true);
+            let options = atv_core::race_ai::Options {
+                aggressive: flag("aggressive"),
+                all_out: flag("all_out"),
+                ..atv_core::race_ai::Options::difficulty(difficulty)
+            };
             // A motorcycle player races the original CPU roster on its quads,
             // as in MX vs. ATV mixed fields.
             let racers = race
                 .opponents()
                 .iter()
                 .enumerate()
-                .map(|(index, cpu)| {
-                    cpu::create_cpu_racer(sim, cpu.origin, cpu.yaw, index, integer("difficulty")?)
-                })
+                .map(|(index, cpu)| cpu::create_cpu_racer(sim, cpu.origin, cpu.yaw, index, options))
                 .collect::<Result<Vec<_>>>()?;
             for (index, cpu) in racers.iter().enumerate() {
                 race.observe_cpu(
