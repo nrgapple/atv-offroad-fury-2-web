@@ -1,12 +1,18 @@
 // Original decoded samples; selection and transition rules run in Rust.
 // Browser resampling/mixing is not a bit-exact SPU2 implementation.
-import { MusicStream } from './music.js';
+import { MediaOutput, MusicStream } from './music.js';
 import { QuadSounds } from './quad-sounds.js';
 import { CROSSFADE_SECONDS, createEchoBus, fadeOut } from './audio-enhance.js';
 import { openArchive } from './content.js';
 // Browser audio preferences (the original had separate Music and SFX volume).
 const SETTINGS_KEY = 'atv-audio-v1';
 const MUSIC_GESTURES = ['pointerup', 'touchend', 'keydown', 'click'];
+// Capture phase: touch driving controls stop their events at the target, and a
+// race must still unlock audio from those touches.
+const CAPTURE = { capture: true };
+// The streamed soundtrack's element outlives each ride's GameAudio (see MediaOutput).
+let musicOutput;
+const sharedMusicOutput = () => musicOutput === undefined ? (musicOutput = MediaOutput.create()) : musicOutput;
 export function loadAudioSettings(storage = (() => { try { return globalThis.window?.localStorage ?? null; } catch { return null; } })()) {
   // Sound: Enhanced is the default; Original keeps the recovered baseline.
   // Silent switch: 'play' keeps sound on like a native game; 'mute' follows it.
@@ -68,16 +74,17 @@ export class GameAudio {
     this.effectLast = null;
     this.effectCamera = null;
     this.music = new MusicStream(codec, () => this.context, () => this.gain, report);
+    this.music.outputFactory = sharedMusicOutput;
     this.music.bindMediaSession();
     this.settings = loadAudioSettings();
     this.audioSession = applyAudioSession(this.settings.silent);
     this.quad = new QuadSounds(this);
     this.unlock = () => this.resume().catch(error => this.report(error.message));
-    window.addEventListener('pointerdown', this.unlock);
-    window.addEventListener('keydown', this.unlock);
+    window.addEventListener('pointerdown', this.unlock, CAPTURE);
+    window.addEventListener('keydown', this.unlock, CAPTURE);
     // The streamed soundtrack needs a play() inside an activating gesture.
     this.unlockMusic = () => this.music.unlock();
-    for (const type of MUSIC_GESTURES) window.addEventListener(type, this.unlockMusic);
+    for (const type of MUSIC_GESTURES) window.addEventListener(type, this.unlockMusic, CAPTURE);
   }
   async resume() {
     if (this.closed || (!this.active && !this.musicPreview)) return;
@@ -675,6 +682,9 @@ export class GameAudio {
     const generation = ++this.previewGeneration;
     this.musicPreview = Boolean(active);
     this.menuMusicMode = originalMenu;
+    // The original menus mean the ride was left (Quit to Main Menu keeps it
+    // loaded underneath): end any race hold and the finish sting.
+    if (active && originalMenu) void this.raceMusic('leave');
     if (!active || !originalMenu) this.stopMenuMusic();
     if (this.musicTimer !== null) { clearInterval(this.musicTimer); this.musicTimer = null; }
     if (this.musicPreview) {
@@ -733,9 +743,9 @@ export class GameAudio {
     this.stopMenuMusic(); this.menuGain?.disconnect(); this.menuTracks = [];
     this.music.close();
     this.ready = false;
-    window.removeEventListener('pointerdown', this.unlock);
-    window.removeEventListener('keydown', this.unlock);
-    for (const type of MUSIC_GESTURES) window.removeEventListener(type, this.unlockMusic);
+    window.removeEventListener('pointerdown', this.unlock, CAPTURE);
+    window.removeEventListener('keydown', this.unlock, CAPTURE);
+    for (const type of MUSIC_GESTURES) window.removeEventListener(type, this.unlockMusic, CAPTURE);
     this.stopSources();this.stopWeather();this.weatherActive=false;
     this.stopSpatial(this.remoteVoices);this.stopSpatial(this.remoteEffects);
     this.stopSpatial(); this.spatialReady = false; this.spatialPending = this.spatialHistory = null;

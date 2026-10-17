@@ -25,11 +25,15 @@ test('usage events reject foreign origins, bad bodies and other methods', async 
   assert.equal((await worker.fetch(post({ name: 'session_start' }, { Origin: 'https://evil.example' }), env)).status, 403);
   assert.equal((await worker.fetch(post({ name: 'session_start' }, {}), env)).status, 403);
   assert.equal((await worker.fetch(post({ name: 'session_start' }, { 'Sec-Fetch-Site': 'same-origin' }), env)).status, 204);
+  // Safari beacons under Referrer-Policy: no-referrer carry an opaque origin.
+  assert.equal((await worker.fetch(post({ name: 'session_start' }, { Origin: 'null', 'Sec-Fetch-Site': 'same-origin' }), env)).status, 204);
+  assert.equal((await worker.fetch(post({ name: 'session_start' }, { Origin: 'null' }), env)).status, 403);
+  assert.equal((await worker.fetch(post({ name: 'session_start' }, { Origin: 'null', 'Sec-Fetch-Site': 'cross-site' }), env)).status, 403);
   assert.equal((await worker.fetch(post('not json'), env)).status, 400);
   assert.equal((await worker.fetch(post({ name: 'drop_table' }), env)).status, 400);
   assert.equal((await worker.fetch(post('x'.repeat(2048)), env)).status, 413);
   assert.equal((await worker.fetch(new Request(`${ORIGIN}/api/events`), env)).status, 405);
-  assert.equal(USAGE.points.length, 1);
+  assert.equal(USAGE.points.length, 2);
 });
 
 test('rate limits and missing bindings drop events without errors', async () => {

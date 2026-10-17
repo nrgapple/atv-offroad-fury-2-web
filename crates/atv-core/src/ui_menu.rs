@@ -148,6 +148,25 @@ pub struct Request {
     pub minimap_orientation: String,
     #[serde(default = "default_steering_sensitivity")]
     pub mobile_steering_sensitivity: f32,
+    /// Controller Settings (port enhancement; the original has none): the
+    /// Auto / pinned pad label, response curves in percent (100 leaves the
+    /// input unchanged) and the stick dead zone in percent.
+    #[serde(default)]
+    pub controller_label: String,
+    /// Controller binding preset name (Fury Remastered, ATV Offroad Fury 2,
+    /// MX vs. ATV Unleashed or Custom).
+    #[serde(default)]
+    pub controller_preset: String,
+    #[serde(default = "default_controller_sensitivity")]
+    pub controller_steering: f32,
+    #[serde(default = "default_controller_sensitivity")]
+    pub controller_lean: f32,
+    #[serde(default = "default_controller_sensitivity")]
+    pub controller_triggers: f32,
+    #[serde(default = "default_controller_sensitivity")]
+    pub controller_camera: f32,
+    #[serde(default = "default_controller_deadzone")]
+    pub controller_deadzone: f32,
     /// Original Pause → Overlays groups switched off (timing, lap, score,
     /// info, speed, radar) and the Position row (name, place or off).
     #[serde(default)]
@@ -181,6 +200,12 @@ fn default_minimap_corner() -> String {
 }
 fn default_steering_sensitivity() -> f32 {
     85.
+}
+fn default_controller_sensitivity() -> f32 {
+    100.
+}
+fn default_controller_deadzone() -> f32 {
+    15.
 }
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -363,6 +388,17 @@ pub fn layout(request: Request) -> Result<Frame> {
         || !(240.0..=16384.0).contains(&request.height)
         || !request.mobile_steering_sensitivity.is_finite()
         || !(50.0..=150.0).contains(&request.mobile_steering_sensitivity)
+        || [
+            request.controller_steering,
+            request.controller_lean,
+            request.controller_triggers,
+            request.controller_camera,
+        ]
+        .iter()
+        .any(|v| !(50.0..=150.0).contains(v))
+        || !(0.0..=40.0).contains(&request.controller_deadzone)
+        || request.controller_label.len() > 128
+        || request.controller_preset.len() > 64
         || !matches!(request.minimap_shape.as_str(), "circle" | "square")
         || !matches!(request.minimap_corner.as_str(), "top-right" | "bottom-left")
         || !matches!(
@@ -432,6 +468,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             | "minimap-config"
             | "race-overlays"
             | "controls"
+            | "controller-settings"
             | "bindings"
             | "music"
             | "jukebox"
@@ -508,6 +545,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         "minimap-config" => "Minimap Configuration",
         "race-overlays" => "Race Overlays",
         "controls" => "Controls",
+        "controller-settings" => "Controller Settings",
         "bindings" => {
             if request.binding_device == "controller" {
                 "Controller"
@@ -1491,7 +1529,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             f.choices.push("steering-sensitivity".into());
             for (i, (label, action)) in [
                 ("Keyboard bindings", "keyboard"),
-                ("Controller bindings", "controller"),
+                ("Controller settings", "controller"),
                 (
                     if request.one_handed_mobile {
                         "One-handed mobile: On"
@@ -1520,6 +1558,118 @@ pub fn layout(request: Request) -> Result<Frame> {
                     request.selection == i + 1,
                 );
                 f.choices.push((*action).into());
+            }
+        }
+        "controller-settings" => {
+            // Named after the original Options → Controller Settings page.
+            // Preset switches between the port layout and each original
+            // game's default layout; the sliders are port enhancements (the
+            // original has no sensitivity options).
+            let label = format!("Controller: {}", request.controller_label);
+            let preset = format!("Preset: {}", request.controller_preset);
+            let sliders = [
+                (
+                    "pad-steering",
+                    "Steering sensitivity",
+                    request.controller_steering,
+                    50.,
+                    150.,
+                ),
+                (
+                    "pad-lean",
+                    "Lean sensitivity",
+                    request.controller_lean,
+                    50.,
+                    150.,
+                ),
+                (
+                    "pad-triggers",
+                    "Gas / brake sensitivity",
+                    request.controller_triggers,
+                    50.,
+                    150.,
+                ),
+                (
+                    "pad-camera",
+                    "Camera orbit sensitivity",
+                    request.controller_camera,
+                    50.,
+                    150.,
+                ),
+                (
+                    "pad-deadzone",
+                    "Stick dead zone",
+                    request.controller_deadzone,
+                    0.,
+                    40.,
+                ),
+            ];
+            let buttons = [
+                ("Controller bindings", "padbindings"),
+                ("Defaults", "paddefaults"),
+                ("Back", "back"),
+            ];
+            // Portrait: one column with Defaults and Back sharing the last row.
+            // Landscape: rows left, sliders right. Both fit the 448-unit
+            // minimum height with 44px portrait touch targets.
+            let row = if portrait {
+                (44. / scale).max(48.)
+            } else {
+                54.
+            };
+            let (button_w, slider_x, slider_w) = if portrait {
+                (w - 48., 30., w - 60.)
+            } else {
+                let column = (w - 72.) / 2.;
+                (column, 48. + column, column)
+            };
+            let mut y = if portrait { 72. } else { 80. };
+            f.button(
+                &label,
+                "padselect",
+                [24., y, button_w, row],
+                request.selection == 0,
+            );
+            f.choices.push("padselect".into());
+            y += row + 2.;
+            f.button(
+                &preset,
+                "padpreset",
+                [24., y, button_w, row],
+                request.selection == 1,
+            );
+            f.choices.push("padpreset".into());
+            let mut slider_y = if portrait { y + row + 8. } else { 80. };
+            for (i, (action, label, value, min, max)) in sliders.into_iter().enumerate() {
+                f.sliders.push(Slider {
+                    action,
+                    label,
+                    rect: [slider_x, slider_y, slider_w, 44.],
+                    value,
+                    min,
+                    max,
+                    step: 5.,
+                    selected: request.selection == 2 + i,
+                });
+                f.choices.push(action.into());
+                slider_y += 46.;
+            }
+            y = if portrait {
+                slider_y + 4.
+            } else {
+                y + row + 4.
+            };
+            for (i, (label, action)) in buttons.into_iter().enumerate() {
+                let rect = match (portrait, i) {
+                    (true, 1) => [24., y, (button_w - 8.) / 2., row],
+                    (true, 2) => [32. + (button_w - 8.) / 2., y, (button_w - 8.) / 2., row],
+                    _ => [24., y, button_w, row],
+                };
+                f.button(label, action, rect, request.selection == 7 + i);
+                f.choices.push(action.into());
+                if !(portrait && i == 1) {
+                    y += row + 2.;
+                }
             }
         }
         "jukebox" => {
@@ -1866,6 +2016,13 @@ mod tests {
             minimap_corner: "top-right".into(),
             minimap_orientation: "north-up".into(),
             mobile_steering_sensitivity: 85.,
+            controller_label: "Auto (press a button)".into(),
+            controller_preset: "Fury Remastered".into(),
+            controller_steering: 100.,
+            controller_lean: 100.,
+            controller_triggers: 100.,
+            controller_camera: 100.,
+            controller_deadzone: 15.,
             race_overlays_off: vec![],
             race_position: "name".into(),
             race_laps: 3,
@@ -2127,6 +2284,63 @@ mod tests {
         );
     }
     #[test]
+    fn controller_settings_page_lists_selection_sliders_and_bindings() {
+        for (w, h) in [(390., 844.), (390., 568.), (844., 390.), (1280., 720.)] {
+            let f = layout(request("controller-settings", w, h)).unwrap();
+            assert_eq!(
+                f.choices,
+                [
+                    "padselect",
+                    "padpreset",
+                    "pad-steering",
+                    "pad-lean",
+                    "pad-triggers",
+                    "pad-camera",
+                    "pad-deadzone",
+                    "padbindings",
+                    "paddefaults",
+                    "back"
+                ]
+            );
+            assert_eq!(f.hits[0].label, "Controller: Auto (press a button)");
+            assert_eq!(f.hits[1].label, "Preset: Fury Remastered");
+            assert_eq!(f.sliders.len(), 5);
+            for slider in &f.sliders {
+                let [x, y, width, height] = slider.rect;
+                assert!(x >= 0. && y >= 0. && x + width <= f.width && y + height <= f.height);
+                for hit in &f.hits {
+                    let [hx, hy, hw, hh] = hit.rect;
+                    assert!(
+                        x >= hx + hw || hx >= x + width || y >= hy + hh || hy >= y + height,
+                        "slider {} overlaps {}",
+                        slider.label,
+                        hit.label
+                    );
+                }
+            }
+        }
+        let controls = layout(request("controls", 390., 844.)).unwrap();
+        assert!(
+            controls
+                .hits
+                .iter()
+                .any(|h| h.label == "Controller settings" && h.action == "controller")
+        );
+        for (field, value) in [
+            ("controller_steering", 49.),
+            ("controller_camera", 151.),
+            ("controller_deadzone", 41.),
+        ] {
+            let mut r = request("controller-settings", 390., 844.);
+            match field {
+                "controller_steering" => r.controller_steering = value,
+                "controller_camera" => r.controller_camera = value,
+                _ => r.controller_deadzone = value,
+            }
+            assert!(layout(r).is_err(), "{field} {value}");
+        }
+    }
+    #[test]
     fn touch_regions_fit_viewport_at_all_aspects() {
         for (w, h) in [
             (390., 844.),
@@ -2150,6 +2364,7 @@ mod tests {
                 "extras",
                 "pause",
                 "controls",
+                "controller-settings",
                 "hud-settings",
                 "minimap-config",
                 "race-overlays",

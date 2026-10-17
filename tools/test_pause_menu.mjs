@@ -240,6 +240,8 @@ try {
     await a.waitForFunction(() => document.querySelector('.pause-page-count').textContent.startsWith('Page 2'));
     await a.keyboard.press('Escape');
     await screen(a, 'controls');
+    await button(a, 'Controller settings').click();
+    await submenuLayout('controller-settings');
     await button(a, 'Controller bindings').click();
     await submenuLayout('bindings');
     await shot(a, 'controller');
@@ -259,7 +261,7 @@ try {
     await nextFrames(a, 3);
     await a.evaluate(() => (window.pausePad.buttons[6] = { pressed: false, value: 0 }));
     await a.waitForSelector('.pause-capture', { state: 'detached' });
-    assert.match(await controllerRow.getAttribute('aria-label'), /6|trigger/i);
+    assert.match(await controllerRow.getAttribute('aria-label'), /: L2$/);
     await button(a, 'Defaults').click();
     await controllerRow.focus();
     await nextFrames(a, 3);
@@ -274,6 +276,8 @@ try {
       await a.locator('.pause-panel button[data-action^="bind:"]').nth(1).getAttribute('data-action')
     );
     await a.evaluate(() => (window.pausePad = null));
+    await a.keyboard.press('Escape');
+    await screen(a, 'controller-settings');
     await a.keyboard.press('Escape');
     await screen(a, 'controls');
     await a.keyboard.press('Escape');

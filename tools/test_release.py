@@ -40,6 +40,14 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn(f'import "./hud.js?v={COMMIT}"', versioned_source(sample, COMMIT))
         self.assertEqual(versioned_source("fetch('/content/manifest.json');", COMMIT), "fetch('/content/manifest.json');")
 
+    def test_service_worker_names_its_deploy_and_keeps_a_stable_url(self):
+        # Packaging gives sw.js its deploy version (so its bytes change every
+        # deploy) while the registration URL stays unversioned.
+        worker = versioned_source((ROOT / 'web/sw.js').read_text(), COMMIT)
+        self.assertIn(f"var VERSION_PROBE = 'game.js?v={COMMIT}';", worker)
+        self.assertIn("register('/sw.js', { scope: '/' })", versioned_source((ROOT / 'web/offline.js').read_text(), COMMIT))
+        self.assertIn('<script type="module" src="offline.js?v=' + COMMIT, versioned_source((ROOT / 'web/play.html').read_text(), COMMIT))
+
     def test_authored_module_dependencies_are_packaged(self):
         # A valid hash list alone cannot catch an omitted imported module.
         for name in STATIC_FILES:

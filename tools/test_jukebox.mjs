@@ -82,11 +82,12 @@ try {
   await advances(page, seekTo);
   await optionalScreenshot(page, 'ATV_JUKEBOX_SCREENSHOTS', 'main-1280');
 
-  // Pause freezes the position; Play resumes the same song.
+  // Pause freezes the position without turning the saved Music setting off;
+  // Play resumes the same song.
   await page.locator('[data-action=jukeplay]').click();
   await page.waitForFunction(() => !window.atvTerrainStatus.audio.music.playing);
   const paused = await music(page);
-  assert.equal(paused.enabled, false);
+  assert.equal(paused.paused, true); assert.equal(paused.enabled, true);
   await page.waitForTimeout(400); // Time-based on purpose: a paused stream's position must not move.
   assert.equal((await music(page)).positionSeconds, paused.positionSeconds);
   await page.locator('[data-action=jukeplay]').click();

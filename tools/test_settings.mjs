@@ -75,6 +75,8 @@ try {
   await screen('settings');
   await click('Controls');
   await screen('controls');
+  await click('Controller settings');
+  await screen('controller-settings');
   await click('Controller bindings');
   await screen('bindings');
   await page.evaluate(() => {
@@ -106,6 +108,46 @@ try {
   for (const button of await page.locator('#menu-buttons button').all())
     assert((await button.boundingBox()).height >= 44);
   await click('Back');
+  await screen('controller-settings');
+  // Controller Settings: the pad row names the pad in use, sliders persist.
+  await page.getByRole('button', { name: 'Controller: Auto (settings-test)', exact: true }).waitFor();
+  const slider = async (action, value) => {
+    await page.locator(`input[data-setting="${action}"]`).evaluate((input, v) => {
+      input.value = String(v);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }, value);
+  };
+  await slider('pad-triggers', 50);
+  await slider('pad-steering', 150);
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const saved = JSON.parse(localStorage.getItem('atv2-controller-v1'));
+      return [saved.triggers, saved.steering, saved.lean, saved.deadzone];
+    }),
+    [50, 150, 100, 15]
+  );
+  await click('Controller: Auto (settings-test)');
+  await page.getByRole('button', { name: 'Controller: settings-test', exact: true }).waitFor();
+  // Presets: the remapped profile is Custom; each original layout is one tap
+  // away and Custom comes back after the presets.
+  const preset = name => page.getByRole('button', { name: `Preset: ${name}`, exact: true });
+  for (const [from, to] of [['Custom', 'Fury Remastered'], ['Fury Remastered', 'ATV Offroad Fury 2'], ['ATV Offroad Fury 2', 'MX vs. ATV Unleashed']]) {
+    await preset(from).click();
+    await preset(to).waitFor();
+  }
+  await click('Controller bindings');
+  await screen('bindings');
+  await page.getByRole('button', { name: 'Gas: Cross', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Next' }).click();
+  await page.getByRole('button', { name: 'Next' }).click();
+  await page.getByRole('button', { name: 'Stunt L1: R1', exact: true }).waitFor();
+  await click('Back');
+  await screen('controller-settings');
+  await preset('MX vs. ATV Unleashed').click();
+  await preset('Custom').waitFor();
+  await screenshot('controller-settings');
+  await click('Back');
+  await screen('controls');
   await click('Back');
   await screen('settings');
   await click('Back');
@@ -118,8 +160,9 @@ try {
     window.settingsPad.index = 1;
     Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [idle, window.settingsPad] });
   });
-  await page.evaluate(() => (window.settingsPad.buttons[5] = { pressed: true, value: 0.75 }));
-  await page.waitForFunction(() => window.atvTerrainStatus.input?.throttle === 0.75);
+  // The pinned pad keeps working; 50% gas sensitivity squares a half trigger.
+  await page.evaluate(() => (window.settingsPad.buttons[5] = { pressed: true, value: 0.5 }));
+  await page.waitForFunction(() => window.atvTerrainStatus.input?.throttle === 0.25);
   await page.evaluate(() => (window.settingsPad = null));
   await page.waitForFunction(() => window.atvTerrainStatus.input?.throttle === 0);
   await click('Pause');
@@ -128,12 +171,18 @@ try {
   await screen('settings');
   await click('Controls');
   await screen('controls');
+  await click('Controller settings');
+  await screen('controller-settings');
   await click('Controller bindings');
   await screen('bindings');
   await click('Clear');
   await page.getByRole('button', { name: 'Gas: Unbound', exact: true }).waitFor();
   await click('Defaults');
   await page.getByRole('button', { name: /^Gas: Cross \/ R2$/ }).waitFor();
+  await click('Back');
+  await screen('controller-settings');
+  await click('Defaults');
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('atv2-controller-v1')).triggers === 100);
   await click('Back');
   await screen('controls');
   await click('Back');

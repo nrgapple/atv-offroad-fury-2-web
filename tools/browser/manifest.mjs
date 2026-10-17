@@ -153,6 +153,7 @@ export const TESTS = {
       'Not a browser test: drives a running Rust relay (ATV_RELAY_URL) through WS_MODULE and the atv-relay codec example build'
   },
   'test_music.mjs': { group: 'content' },
+  'test_offline.mjs': { group: 'content' },
   'test_one_handed_touch.mjs': {
     group: 'broken',
     reason:
@@ -169,6 +170,7 @@ export const TESTS = {
   'test_pwa_ios.mjs': { group: 'content' },
   'test_quad_audio.mjs': { group: 'content' },
   'test_race_courses.mjs': { group: 'content' },
+  'test_race_music.mjs': { group: 'content' },
   'test_rails.mjs': { group: 'content' },
   'test_reflections.mjs': {
     group: 'content',

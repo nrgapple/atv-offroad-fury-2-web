@@ -29,6 +29,62 @@ function silentUrl() {
     return URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }));
   } catch { return null; }
 }
+// One streaming element and output graph for the whole page. Every ride builds
+// a fresh GameAudio, but a media element can feed only one Web Audio source
+// node ever and mobile browsers unlock playback per element, so rides borrow
+// this instead of making their own. It keeps its own context: GameAudio closes
+// its context between rides.
+const MUSIC_MASTER = 0.65; // GameAudio's master gain, which decoded music passes through.
+export class MediaOutput {
+  constructor(element, createContext) {
+    Object.assign(this, { element, createContext, owner: null, context: null, gain: null, analyser: null, primed: false, silent: null });
+    element.preload = 'auto';
+    element.addEventListener('ended', () => this.owner?.mediaEvent('ended'));
+    element.addEventListener('error', () => { if (element.src !== this.silent) this.owner?.mediaEvent('error'); });
+    element.addEventListener('waiting', () => this.owner?.mediaEvent('waiting'));
+  }
+  static create() {
+    const element = mediaDefault();
+    return element && new MediaOutput(element, () => { const AudioContext = globalThis.AudioContext || globalThis.webkitAudioContext; return AudioContext ? new AudioContext() : null; });
+  }
+  graph() {
+    if (!this.context) {
+      const context = this.createContext();
+      if (!context) return null;
+      this.context = context;
+      this.gain = context.createGain();
+      const master = context.createGain(); master.gain.value = MUSIC_MASTER;
+      this.gain.connect(master); master.connect(context.destination);
+      context.createMediaElementSource(this.element).connect(this.gain);
+    }
+    if (this.context.state === 'suspended') this.context.resume?.()?.catch?.(() => {});
+    return this.context;
+  }
+  // Called synchronously from a user gesture. `wanted` says whether the
+  // current song should be audible; otherwise it is primed muted and paused.
+  unlock(wanted) {
+    this.graph();
+    if (this.primed) return;
+    const element = this.element, real = Boolean(element.src) && element.src !== this.silent;
+    this.primed = true;
+    if (real && !element.paused) return;
+    if (!real) {
+      this.silent ??= silentUrl();
+      if (!this.silent) return;
+      element.src = this.silent;
+    }
+    const quiet = real && !wanted();
+    element.muted = quiet;
+    const playing = element.play();
+    const settle = () => { if (element.src === this.silent || (quiet && !wanted())) element.pause(); element.muted = false; };
+    playing?.then?.(settle, () => { element.muted = false; this.primed = false; });
+  }
+  release(owner) {
+    if (this.owner !== owner) return;
+    this.owner = null;
+    this.element.pause(); this.element.removeAttribute('src'); this.element.load?.();
+  }
+}
 
 export class MusicStream {
   constructor(codec, context, destination, report = () => {}, storage = storageDefault()) {
@@ -39,10 +95,14 @@ export class MusicStream {
     this.chunks = 0; this.underruns = 0; this.history = []; this.historyIndex = -1;
     this.song = null; this.entry = null; this.offset = 0; this.finished = true;
     this.pending = null; this.selectedIndex = -1; this.suspended = false;
-    this.mediaFactory = mediaDefault; this.media = false; this.element = null; this.streams = [];
+    this.mediaFactory = mediaDefault; this.media = false; this.element = null; this.out = null; this.streams = []; this.paused = false;
+    // GameAudio passes the page-wide output; tests and standalone use a private one.
+    this.outputFactory = () => { const element = this.mediaFactory(); return element ? new MediaOutput(element, () => this.context()) : null; };
     try {
       const saved = JSON.parse(storage?.getItem(SETTINGS_KEY) ?? 'null');
-      if (typeof saved?.enabled === 'boolean') this.enabled = saved.enabled;
+      // Version 2: the first Jukebox saved its Pause button as Music off;
+      // restore music once for settings written before that fix.
+      if (typeof saved?.enabled === 'boolean' && (saved.v === 2 || saved.enabled)) this.enabled = saved.enabled;
       if (Number.isFinite(saved?.volume)) this.volume = clamp(saved.volume);
       if (Array.isArray(saved?.history)) this.history = saved.history.filter(item => typeof item === 'string').slice(-64);
       if (Number.isInteger(saved?.historyIndex)) this.historyIndex = Math.max(-1, Math.min(this.history.length - 1, saved.historyIndex));
@@ -78,7 +138,7 @@ export class MusicStream {
   }
   get tracks() { return (this.library?.songs ?? []).map((song, index) => ({ ...song, index })); }
   save() {
-    try { this.storage?.setItem(SETTINGS_KEY, JSON.stringify({ enabled: this.enabled, volume: this.volume, history: this.history, historyIndex: this.historyIndex })); } catch { /* Optional persistence. */ }
+    try { this.storage?.setItem(SETTINGS_KEY, JSON.stringify({ v: 2, enabled: this.enabled, volume: this.volume, history: this.history, historyIndex: this.historyIndex })); } catch { /* Optional persistence. */ }
   }
   current(generation) { return !this.closed && generation === this.generation && this.isCurrent?.(); }
   async load({ file, files, read, isCurrent }) {
@@ -105,55 +165,57 @@ export class MusicStream {
     // Stream only when every song has one; an older content package keeps
     // the decoder for the whole catalog.
     this.streams = library.songs.map(song => files.find(item => item.path.toLowerCase() === this.path(song))?.stream ?? null);
-    if (!this.element && this.streams.every(Boolean)) this.element = this.mediaFactory();
-    this.media = Boolean(this.element);
+    if (!this.out && this.streams.every(Boolean)) this.out = this.outputFactory();
+    this.media = Boolean(this.out); this.element = this.out?.element ?? null;
     this.ready = true;
   }
-  // Streaming element lifecycle. The element feeds the music gain, so volume,
-  // race fades and the master bus behave exactly as for decoded PCM.
-  attachElement(context) {
-    if (this.mediaNode || !this.element) return;
-    const element = this.element;
-    element.preload = 'auto';
-    element.addEventListener('ended', () => { if (this.closed || !this.media) return; this.finished = true; void this.update(); });
-    element.addEventListener('error', () => { if (!this.closed && this.media && this.mediaWanted && element.src !== this.silent) this.fallback('stream error'); });
-    element.addEventListener('waiting', () => { if (this.mediaWanted) this.underruns++; });
-    this.mediaNode = context.createMediaElementSource(element);
-    this.mediaNode.connect(this.gain);
-    // A suspended context would leave the element running silently ahead.
-    context.addEventListener?.('statechange', () => { if (context.state !== 'running') this.pauseQueue(); });
+  // Streaming element lifecycle. The shared output's gain is the music gain,
+  // so volume and race fades behave as for decoded PCM.
+  attachOutput(context) {
+    if (!this.out.graph()) throw new Error('This browser does not expose Web Audio.');
+    if (this.out.owner !== this) { this.out.owner = this; this.gain = this.out.gain; this.gain.gain.value = this.held ? 0 : this.volume; }
+    // A suspended ride context (pause, hidden tab) must also stop the stream.
+    if (!this.watching) { this.watching = true; context.addEventListener?.('statechange', () => { if (context.state !== 'running') this.pauseQueue(); }); }
+  }
+  mediaEvent(type) {
+    if (this.closed || !this.media) return;
+    if (type === 'ended') { this.finished = true; void this.update(); }
+    else if (type === 'error' && this.mediaWanted) this.fallback('stream error');
+    else if (type === 'waiting' && this.mediaWanted) this.underruns++;
   }
   // Called synchronously from a user gesture.
   unlock() {
-    if (!this.media || this.primed || this.closed || !this.element) return;
-    const element = this.element, wanted = () => this.mediaWanted && this.enabled && !this.held;
-    const real = Boolean(element.src) && element.src !== this.silent;
-    this.primed = true;
-    if (real && !element.paused) return;
-    if (!real) {
-      this.silent ??= silentUrl();
-      if (!this.silent) return;
-      element.src = this.silent;
-    }
-    // A song that should stay quiet (music off, race hold) is primed muted.
-    const quiet = real && !wanted();
-    element.muted = quiet;
-    const playing = element.play();
-    const settle = () => { if (element.src === this.silent || (quiet && !wanted())) element.pause(); element.muted = false; };
-    playing?.then?.(settle, () => { element.muted = false; this.primed = false; });
+    if (!this.media || this.closed || !this.out) return;
+    this.out.unlock(() => this.mediaWanted && this.enabled && !this.paused && !this.held);
+  }
+  // The Jukebox Pause button: a transient pause, unlike the saved Music
+  // on/off setting that also governs the menu tune.
+  // `resume` false clears a pause without restarting (leaving the Jukebox).
+  setPaused(paused, resume = true) {
+    paused = Boolean(paused);
+    if (paused === this.paused || this.closed) return;
+    this.paused = paused;
+    if (paused) this.pauseQueue(); else if (resume) void this.update();
   }
   // Switch the whole session to decoded VAG streaming and restart the song.
   fallback(reason) {
     if (!this.media) return;
     this.media = false; this.mediaWanted = false;
-    try { this.element.pause(); this.element.removeAttribute('src'); this.element.load?.(); } catch { /* Element already gone. */ }
-    this.report(`Music stream unavailable (${reason}); decoding the original audio instead.`);
+    try { this.out.release(this); } catch { /* Element already gone. */ }
+    this.gain = null; // The decoder builds its own gain on the ride context.
+    if (globalThis.navigator?.onLine !== false) this.report(`Music stream unavailable (${reason}); decoding the original audio instead.`);
     const index = this.selectedIndex;
     this.finished = true; this.offset = 0;
     if (index >= 0) this.request({ kind: 'select', index }); else void this.update();
   }
   // Live spectrum for the Jukebox display: a passive tap on the music gain.
   analyser() {
+    if (this.media) {
+      const out = this.out;
+      if (!out?.gain || !out.context.createAnalyser) return null;
+      if (!out.analyser) { out.analyser = out.context.createAnalyser(); out.analyser.fftSize = 64; out.analyser.smoothingTimeConstant = 0.78; out.gain.connect(out.analyser); }
+      return out.analyser;
+    }
     const context = this.context();
     if (!this.gain || !context?.createAnalyser) return null;
     if (!this.analyserNode) {
@@ -214,7 +276,7 @@ export class MusicStream {
   hold(fade = 0) {
     if (this.held || this.closed) { this.held = true; return; }
     this.held = true; this.syncMediaSession();
-    const context = this.context(), stop = () => { if (!this.held) return; this.clearQueue(); if (this.media) { this.mediaWanted = false; this.element.pause(); } this.finished = true; if (this.gain) this.gain.gain.value = this.volume; };
+    const context = this.media ? this.out.context : this.context(), stop = () => { if (!this.held) return; this.clearQueue(); if (this.media) { this.mediaWanted = false; this.element.pause(); } this.finished = true; if (this.gain) this.gain.gain.value = this.volume; };
     const sounding = this.media ? this.mediaWanted && !this.element.paused : this.queue.length > 0;
     if (fade > 0 && this.gain && context?.state === 'running' && sounding) {
       const now = context.currentTime, remaining = this.media ? Math.max(0, (this.element.duration || Infinity) - this.element.currentTime) : Math.max(0, this.scheduledUntil - now);
@@ -308,12 +370,12 @@ export class MusicStream {
   }
   async update() {
     const context = this.context();
-    if (!this.ready || this.closed || !this.enabled || this.held || this.failed || this.busy || context?.state !== 'running') return;
+    if (!this.ready || this.closed || !this.enabled || this.paused || this.held || this.failed || this.busy || context?.state !== 'running') return;
     this.busy = true;
     const generation = this.generation;
     try {
-      if (!this.gain) { this.gain = context.createGain(); this.gain.gain.value = this.volume; this.gain.connect(this.destination()); }
       if (this.media) { await this.updateMedia(context, generation); return; }
+      if (!this.gain) { this.gain = context.createGain(); this.gain.gain.value = this.volume; this.gain.connect(this.destination()); }
       this.resumeQueue(context);
       let iterations = 0;
       while (this.scheduledUntil - context.currentTime < 3 && iterations++ < 8) {
@@ -350,24 +412,25 @@ export class MusicStream {
         }
         this.schedule(segment, context); this.chunks++;
       }
-    } catch (error) { if (this.current(generation)) { this.failed = true; this.report(`Music: ${error.message}`); } }
+    // Offline, the soundtrack (never cached; see research/OFFLINE.md) stays silent without an error.
+    } catch (error) { if (this.current(generation)) { this.failed = true; if (globalThis.navigator?.onLine !== false) this.report(`Music: ${error.message}`); } }
     finally { this.busy = false; if (!this.closed && generation !== this.generation) void this.update(); }
   }
   async updateMedia(context, generation) {
-    this.attachElement(context);
+    this.attachOutput(context);
     this.suspended = false;
     if (this.finished) {
       const action = this.pending ?? { kind: 'next' }; this.pending = null;
       if (!await this.beginSong(action, generation)) return;
     }
-    if (!this.current(generation) || !this.enabled || this.held || context.state !== 'running') return;
+    if (!this.current(generation) || !this.enabled || this.paused || this.held || context.state !== 'running') return;
     this.mediaWanted = true;
     if (!this.element.paused) return;
     try { await this.element.play(); this.chunks++; }
     catch (error) {
       // Autoplay policy: wait for the next gesture (unlock) and tick. Other
       // failures mean this browser cannot stream; decode the VAG instead.
-      if (error?.name === 'NotAllowedError') { this.primed = false; return; }
+      if (error?.name === 'NotAllowedError') { this.out.primed = false; return; }
       if (error?.name !== 'AbortError' && this.current(generation)) this.fallback(error?.name ?? 'play failed');
     }
   }
@@ -380,7 +443,7 @@ export class MusicStream {
         selectedIndex: this.selectedIndex, playingIndex: this.selectedIndex, title: song?.title ?? null, artist: song?.artist ?? null, genre: song?.genre ?? null,
         positionSeconds: song ? element.currentTime || 0 : 0, durationSeconds: song ? stream?.seconds ?? (Number.isFinite(element.duration) ? element.duration : 0) : 0,
         chunks: this.chunks, underruns: this.underruns, queuedSeconds: buffered, voices: song && !element.paused ? 1 : 0,
-        mode: 'stream', seekable: Boolean(song), playing: Boolean(song) && !element.paused, streamBytes: stream?.bytes ?? 0 };
+        mode: 'stream', seekable: Boolean(song), playing: Boolean(song) && !element.paused, paused: this.paused, streamBytes: stream?.bytes ?? 0 };
     }
     const now = this.context()?.currentTime ?? 0;
     const playing = this.playingSegment();
@@ -391,12 +454,13 @@ export class MusicStream {
       durationSeconds: playing?.duration ?? (this.info ? this.info.frames_max / this.info.sample_rate : 0),
       chunks: this.chunks, underruns: this.underruns,
       queuedSeconds: this.suspended ? this.queue.reduce((sum, segment) => sum + segment.buffer.duration - segment.offset, 0) : Math.max(0, this.scheduledUntil - now), voices: this.voices.size,
-      genre: song?.genre ?? null, mode: 'decoder', seekable: false, playing: this.voices.size > 0 && !this.suspended, streamBytes: 0 };
+      genre: song?.genre ?? null, mode: 'decoder', seekable: false, paused: this.paused, playing: this.voices.size > 0 && !this.suspended, streamBytes: 0 };
   }
   close() {
     this.generation++; this.closed = true; this.ready = false; this.syncMediaSession();
-    this.clearQueue(); this.gain?.disconnect(); this.analyserNode?.disconnect();
-    if (this.element) { this.element.pause(); this.element.removeAttribute('src'); this.element.load?.(); this.mediaNode?.disconnect(); }
-    if (this.silent) URL.revokeObjectURL(this.silent);
+    this.clearQueue(); this.analyserNode?.disconnect();
+    // The shared output outlives this ride: stop it, keep its graph.
+    if (this.out?.owner === this) { this.out.release(this); if (this.gain) this.gain.gain.value = 0; }
+    else if (this.gain !== this.out?.gain) this.gain?.disconnect();
   }
 }
