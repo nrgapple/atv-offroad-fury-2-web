@@ -1,0 +1,17 @@
+{
+  "id": "controller-presets-from-atv-offroad-fury-2-and-mx-vs-a-21ba35c08bea480796fa75cb9e5b1700",
+  "timestamp": "2026-10-17T23:08:31.753342+00:00",
+  "recorded_at": "2026-10-17T23:09:08.116433+00:00",
+  "kind": "build",
+  "title": "Controller presets from ATV Offroad Fury 2 and MX vs. ATV Unleashed",
+  "summary": "Controller Settings now has a Preset row that switches the controller layout between Fury Remastered (the port default), ATV Offroad Fury 2's original default layout and MX vs. ATV Unleashed's default layout. Edited bindings are kept as Custom.",
+  "details": [
+    "ATV Offroad Fury 2 preset follows the original Controller Settings Preset 1: \u00d7 gas, \u25a1 brake, \u25a1+\u00d7 reverse, \u25cb/\u25b3/L1 stunts, L1+R1 reset, SELECT camera, right stick orbit.",
+    "MX vs. ATV Unleashed preset follows its Preset 1 pictures: \u00d7 gas, \u25a1 brake, L1 clutch, \u25cb Stunt 1, \u25b3 Stunt 2, R1 stunt modifier, SELECT camera, right stick orbit; it shows no reset button, so reset stays in the Pause menu.",
+    "Cameras the port does not have (Look Back, Thrill, Dolly, Zoom) are left out, so those buttons stay free.",
+    "Verified: Rust menu tests, unit tests, and test_settings, test_pause_menu, test_bindings browser tests (PR #167)."
+  ],
+  "limitation": "Only each game's default preset is offered (not ATV2 Presets 2\u20134 or Unleashed's other layouts). No physical controller was tested. Host captures, not a verified public release.",
+  "image": "/devlog-images/controller-presets-from-atv-offroad-fury-2-and-mx-vs-a-21ba35c08bea480796fa75cb9e5b1700.png",
+  "caption": "Host capture: Controller bindings under the MX vs. ATV Unleashed preset, 1280\u00d7800."
+}
