@@ -1,0 +1,16 @@
+{
+  "id": "tire-tracks-ruts-from-speed-scuffs-from-real-contact-s-6e3e2ad07a3d49f2b61132bdb845fa3f",
+  "timestamp": "2026-10-17T16:19:48.695645+00:00",
+  "recorded_at": "2026-10-17T16:19:48.695645+00:00",
+  "kind": "build",
+  "title": "Tire tracks: ruts from speed, scuffs from real contact slip",
+  "summary": "Enhanced/High tire tracks now follow the physics contact. The simulation reports per-wheel contact slip (sideways scrub and tread minus ground speed in the tire force frame; presentation only). Soft mud ruts under any rolling wheel; firm dirt/snow only take a faint press at speed and nothing when slow. Slides, wheelspin and lockup tear wider untreaded scuffs that fade when the tire grips again. Marks multiply the lit ground (2\u00d7) with world-space breakup instead of flat black.",
+  "details": [
+    "Discovery: the original wheel model never slips longitudinally while rolling; tread speed only departs from ground speed when braking locks a wheel on low-braking surfaces or throttle spins it on low-drive surfaces. Measured slip on env01: straight/gripping ~0–3 ft/s, full-lock slides 12–30 ft/s, wheelspin up to ~17 ft/s.",
+    "Graphics unit tests, atv-core (487) and atv-web Rust tests, fmt/clippy, test_graphics_presets.mjs browser test; local Playwright drives on env01/env02/env04 with before/after screenshots."
+  ],
+  "limitation": "Host-only screenshots; thresholds tuned by eye; player quad only (not CPU racers, remote riders or motorcycles); no mud-map screenshot yet.",
+  "image": "/devlog-images/tire-tracks-slip-after-env01.png",
+  "caption": "Enhanced tire tracks on env01: patchy streaked slide marks starting only where the tires broke loose (new), compared to old uniform thin dark lines on every path.",
+  "status": "Host verification (not verified public release)"
+}
