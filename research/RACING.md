@@ -20,7 +20,16 @@ for the scalar branches, not whole-race replay):
   and sine saturation, 1ft/s throttle/brake deadband (`002509ac`), and the
   ahead-only leader speed policy with its 60ft/s floor (`002536b0`).
 - Direction avoidance `0024f840` → `00252080`: peer near/far relative velocity,
-  eight-ray static attenuation and vegetation response.
+  eight-ray static attenuation, vegetation response and the track-edge tail
+  (AI flag 0x400000). The 0x10 response scale reads the aim node.
+- Difficulty: race creation `001f9690` sets AI flag 0x400 (the leader speed
+  limit) for every difficulty except Expert. Race setup offers Normal/Expert.
+- Jump hook `0024ebb0` and preload release `001ebb10` (flag 0x40 jumps), the
+  grounded flag-8 lean, and the EATDIRT/BRINGIT cheat branches (AI flags
+  0x4000000 aggression, 0x800 velocity pull `001ebaf0`), link-only.
+- Corner speed: the original has no corner braking. On courses whose TDF
+  speeds are all the 150ft/s sentinel the target stays 150ft/s; only the
+  leader limit, throttle/brake deadband and physics slow a CPU.
 - Low-air lean feedback and the National trick gate (10-second interval, 10%
   trial, TDF airtime fit, `001e9650` clip eligibility).
 - CPU wreck decision, passive body, wreck clips and rider controller reuse the
@@ -45,15 +54,11 @@ for the scalar branches, not whole-race replay):
 
 **Missing or unverified:**
 
-- Difficulty mapping: `race_ai::Driver::new` ignores its `_difficulty`
-  argument, and the frontend always sends difficulty 1. Only the motorcycle
-  preview speeds use it.
-- Corner braking where every TDF speed is the 150ft/s sentinel (e.g. `env02`,
-  `nat01`); none is guessed.
-- Native start slots/event start nodes (`001f8410` cases 3–10), roster/quad
-  diversity, costumes and roster-specific tuning.
-- The flag 64 preload/jump helper, optional AI flags (aggression, `0x800` direct
-  velocity), scene query category/order and actor update ordering.
+- Native start slots (`001f8410` cases 3–10, slot table `001f6350`): recovered
+  below but not connected; the grid keeps the symmetric row.
+- Championship-only difficulty effects (see "CPU difficulty" below), the All
+  Out AI filters and angular-rate write, scene query category/order and actor
+  update ordering.
 - Championship points, firework triggers and whole-race PS2 replay parity.
 - The Supercross start gate rotation, the race-load
   announcer cue and the Stunt Score and Profile Points results columns. See
@@ -723,3 +728,110 @@ original placement (4.66ft behind the TDF tag-15 box, `001f8410` cases 3–10,
 which use the same box). On most Nationals the gate stands about 7–8ft past
 that box, ~12ft ahead of the riders (nat03, nat05); on nat01 the authored
 gate stands 12ft before the box, so it lies behind the grid there.
+
+## CPU difficulty, jumps, track edge and cheats — 2026-10-16
+
+Exact-build evidence (private exports; bounded instruction comparisons where
+stated).
+
+**Difficulty.** Race settings +0x610 holds the difficulty: the debug command
+line maps `Easy`/`norm`/`Hard` to 1/2/3 (`0021add0`), and race prep
+(`00277560`, `00289d50`, `0026b7a0`) stores the event difficulty through
+`002f64a0`: event index 2 → 3 (Expert), 0 or 1 → 2 (Normal). A binary-wide
+scan of loads/stores at +0x610 finds the settings readers only in race
+creation `001f9690`, the championship roster draw `0021f680` and two
+unrelated routines. Race creation:
+
+- sets AI flag 0x400 unless +0x610 = 3, and `0024f9d0` calls the leader
+  speed limit `002536b0` only with that flag. An Expert CPU ahead of the
+  player keeps its TDF target speed; a Normal one slows to the leader policy.
+- in a championship (+0x36d, set by `00289d50`), when not Expert and for race
+  modes 0/3/5, scales a racer +0x178 table (count +0x80, values +0x88) by
+  0.925. The table is unidentified and the port has no championships.
+
+No other difficulty input to CPU driving was found. The manual's "blow a jump
+now and then" (Normal) has no separate code path in single races. A guess,
+not verified: the leader limit slows a leading Normal CPU before a jump. Easy (1) is stored only
+by `00265620` and behaves like Normal in race creation.
+
+Port: `race_ai::Options::difficulty` (1 Normal, 2 Expert) drops the leader
+limit for Expert. Race setup has a Difficulty row (Normal/Expert, saved with
+the last race), and play links accept `difficulty=normal|expert`.
+
+**Jumps** (`0024ebb0`, VehicleAIInterface +0x28 after the lean, on the aim
+node +0x278). Flags 2/4 hold a straight lean −1 while the clearance stays above
+−1ft/−2.5ft (constructor +0x270/+0x26c) after an ordinary node armed the latch
+(AI flag 0x8000); no shipped TDF uses them. A flag 0x40 node with the rider's
+preload available (status +0x50 → AI flag 0x20000) chooses a strength once
+(AI flag 0x1000000): +0x264 (0) + 0.05 (race creation +0x260) × (TDF tag 27 ×
+(target − speed)), clamped to 0–1, 150ft/s for an unset target. It leans 1 to
+arm (unless already ≥ 0.9) and −1 once armed (status +0x48 → 0x10000). The
+racer post-update `001ebb10` then leans −0.3 and supplies the lean-flick rate
+strength × −(max − min) − min, which rider control turns back into that
+strength; `001e7940` clears the rate every frame. TDF tag 27 is node +0x4c
+(`00179680`); every point of the 32 courses has it (0 or 1). 0–21 nodes per
+course carry flag 0x40 (none on env02). Grounded on a flag-8 node (RaceStatus +0xbc) the lean
+is constructor +0x258 = 0.6.
+
+**Track edge** (00252080 tail `00253498`–`00253660`, AI flag 0x400000, set
+for every CPU). A probe 20ft (+0x2f4) along the requested heading is located
+on the nearest segment of the AI's section (`0017b6a0`). When it lies inside
+neither that segment's edge polygon nor the next one's (`0017bb50`), and the
+corrected velocity v points right of the direction t of the rider's
+RaceStatus +0xbc node (`0017d980`),
+cross = vx·tz − vz·tx > 0, then v loses cross·t (+0x2f0 = 1). The heading
+turns further right. Nothing happens on the other side. This is the only
+corner-related correction; it changes direction, not target speed. The port
+uses the race station for that node; like RaceStatus it stays on the last
+on-track node while the rider is off the track polygon. (Using the rider's
+nearest segment instead, an earlier draft, rotated t through hairpins and let
+the tail push off-track CPUs further out on nat01.)
+
+**Cheats** (`0033ede0`): EATDIRT toggles settings+0x618 (AI flag 0x4000000),
+BRINGIT settings+0x1880 (AI flag 0x800). With aggression the peer loop skips
+ordinary avoidance of a human racer (RaceStatus flag 4); a human outside the
+0.5 facing cone, within 100ft (+0x2dc) and travelling the same way (its
+RaceStatus +0x150 track direction) pulls the velocity to 0.8 v + 0.2 |v| ·
+the direction to it. All Out AI requests direction × target speed and
+`001ebaf0` blends the grounded quad's horizontal velocity 0.5% toward it each
+frame. Its write to quad +0x294 and the AI +0x90/+0x94/+0x98 filters are not
+reproduced. The port exposes both only as `cheats=eatdirt,bringit` links.
+
+**Start slots** (not connected). `001f6350` fills a slot table 1…n and,
+unless settings+0x7d8, swaps each pair with probability 0.5, so the player can
+start in any slot. For race modes 3–10 `001f8410` places rider k at the tag 15
+box center − 4.66 × forward + sign × (slot − n/2) × RiderSpacing × (fz, 0,
+−fx). The sign is −1 when the first two node directions of section 0 turn
+with a positive cross-product y, else 1. Race scenes declare no extra start
+markers. Connecting this needs the player's own start slot in the browser
+spawn and restart path, so the port keeps its symmetric row.
+
+Private comparisons (finite binary32 interpreter over the original bytes,
+delay slots included, no hooks; `private/reports/racing/cpu-ai-probes.json`)
+show zero differing outputs against the Rust functions:
+
+- `0024ebb0`: 3,000 cases, 115,933 instructions;
+- `001ebb10`: 1,500 cases, 50,219 instructions;
+- the peer loop `00252e28`–`00253494` with the aggression branch: 3,000 cases,
+  1,020 with an aggressive CPU and a human peer, 1,175,927 instructions;
+- the track-edge tail with the real `0017b6a0`/`0017bb50`/`0017d980`: 2,778 of
+  3,000 synthetic six-node sections compared (828 changed), 1,832,450
+  instructions. The others end the section or pick a different nearest
+  segment.
+
+Host Chromium, four CPUs and an idle player, 40s per run. Mean/max CPU route
+error in feet for current main, this branch without the tail, and this branch:
+nat01 6.6/25, 7.5/42 and 10.3/150 (two earlier main runs: 6.5/27, 9.0/131;
+two runs without the tail: 10.5/106, 9.3/131); env01 7.0/28, 6.4/28 and
+8.4/43; sx07 8.1/33, 8.0/35 and 7.7/36; env02 11.7–12.4/34–37 on main and
+12.2/40 with the tail. The tail fired in 358–687 of about 8,300 CPU frames.
+Run-to-run spread is large, but on nat01 and env01 the recovered tail tends to
+widen CPU lines. It is kept as the original behavior. Worker cost did not
+change: 1.0–1.1 ms mean and 1.2–1.3 ms p95 per five-quad step on main and
+this branch (env01, env02, nat01, 30s each).
+
+These cover the interpreter's binary32 model, not PS2 hardware rounding.
+The port finds the nearest probe segment in the station window instead of the
+whole section and tests the four-corner edge quad instead of the native
+hexagon. It does not prove whole-race behavior.
+

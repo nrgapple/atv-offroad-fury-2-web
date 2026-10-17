@@ -1671,7 +1671,7 @@ async function startSimulation(source) {
   void audio.loadStadium(stadium).catch(error => { diagnostics.audioError = error.message; });
   void audio.loadVenue(source.venueAud ?? null, { stadium: Boolean(source.world.metadata.crowd_present) }).catch(error => { diagnostics.audioError = error.message; });
   const intro = !raceRestarting; raceRestarting = false;
-  if (source.course) await command(96,{active:true,intro,laps:raceSettings.laps,difficulty:raceSettings.difficulty,names:source.cpuNames.slice(0,raceSettings.cpu),spacing_sources:source.spacingSources});
+  if (source.course) await command(96,{active:true,intro,laps:raceSettings.laps,difficulty:raceSettings.difficulty,aggressive:Boolean(raceSettings.aggressive),all_out:Boolean(raceSettings.all_out),names:source.cpuNames.slice(0,raceSettings.cpu),spacing_sources:source.spacingSources});
   raceCourse = source.course;
   raceOverlay.setCourse(raceCourse);
   disposeCpuOutfits(); raceCpuModels = [];

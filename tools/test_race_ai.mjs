@@ -18,11 +18,12 @@ try {
   await screen('single');
   await button(page, 'Race').click();
   await screen('race');
-  assert.equal(
-    await page.getByRole('button', { name: /Difficulty:/ }).count(),
-    0,
-    'Only the recovered National pace is offered'
-  );
+  // The original Normal/Expert choice; Normal keeps the leader speed policy.
+  await button(page, 'Difficulty: Normal').waitFor();
+  await page.getByRole('button', { name: 'Next Difficulty' }).click();
+  await button(page, 'Difficulty: Expert').waitFor();
+  await page.getByRole('button', { name: 'Next Difficulty' }).click();
+  await button(page, 'Difficulty: Normal').waitFor();
   await button(page, 'CPU riders: 3').click();
   await button(page, 'CPU riders: 4').waitFor();
   await button(page, 'Start Race').click();
@@ -35,6 +36,8 @@ try {
       brake: 0,
       coast: 0,
       limited: 0,
+      preloads: 0,
+      edges: 0,
       maxError: 0
     }));
     let last = -1;
@@ -50,6 +53,8 @@ try {
           s.brake += d.brake === 1;
           s.coast += d.throttle === 0;
           s.limited += d.ahead_distance > 150 && d.desired_speed <= 75.01;
+          s.preloads += d.preload_flick !== 0;
+          s.edges += d.avoidance?.track_edge === true;
           s.maxError = Math.max(s.maxError, d.route_error);
         });
       }
@@ -109,12 +114,50 @@ try {
     rows.some(r => r.draws > 0),
     'Physical CPU matrices reach actual GPU draws'
   );
+  assert(
+    decisions.some(d => d.preloads > 0),
+    'The racer jump hook releases a preload on a flagged Caribou jump'
+  );
+  assert(
+    decisions.some(d => d.edges > 0),
+    'The track-edge tail turns a CPU whose 20ft probe leaves the track'
+  );
   await button(page, 'Pause').click();
   await screen('pause');
   // Time-based on purpose: proves the paused race frame does not change.
   const before = await page.evaluate(() => window.atvTerrainStatus.frame);
   await page.waitForTimeout(500);
   assert.deepEqual(await page.evaluate(() => window.atvTerrainStatus.frame), before);
+  // Expert (play link): race creation leaves out the leader speed policy, so
+  // CPUs well ahead of the idle player keep their TDF target speed.
+  const expert = await newPage(browser, { viewport: { width: 844, height: 390 }, hasTouch: true }, errors);
+  await expert.goto(`${base}/play.html?activity=race&map=env01&cpu=4&difficulty=expert`);
+  await expert.waitForFunction(() => window.atvTerrainStatus.frame?.race?.elapsed >= 15, null, { timeout: 180000 });
+  const expertSpeeds = await expert.evaluate(
+    () =>
+      new Promise(resolve => {
+        const seen = { ahead: 0, full: 0 };
+        let last = -1;
+        const observe = () => {
+          const race = window.atvTerrainStatus.frame?.race;
+          if (race.elapsed !== last) {
+            last = race.elapsed;
+            for (const d of race.opponents.map(o => o.physical?.decisions)) {
+              if (!d?.active || d.ahead_distance <= 150) continue;
+              seen.ahead++;
+              seen.full += d.desired_speed >= 149;
+            }
+          }
+          if (race.elapsed >= 25) resolve(seen);
+          else requestAnimationFrame(observe);
+        };
+        requestAnimationFrame(observe);
+      })
+  );
+  assert(expertSpeeds.ahead > 0, 'Expert CPUs pull away from the idle player');
+  // Normal caps a far-ahead CPU at about half the 150ft/s sentinel.
+  assert(expertSpeeds.full > 0, `Expert keeps the full TDF target: ${JSON.stringify(expertSpeeds)}`);
+  await expert.close();
   assertNoErrors(errors);
   console.log(
     JSON.stringify({

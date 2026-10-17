@@ -28,6 +28,17 @@ test('race settings survive roundtrip; incomplete modes are rejected',()=>{
  assert.deepEqual(parse('?activity=race&map=sx07').raceSettings,{laps:3,cpu:3,difficulty:1,course:'sx07'});
  for(const q of ['?activity=race&map=free05','?activity=race&map=training','?mode=mp&room=ABCD1234&activity=race','?room=ABCD1234&quad=27','?laps=2','?activity=race&cpu=5'])assert(parse(q).errors.length,q);
 });
+test('race difficulty and the original AI cheats are race-only link settings',()=>{
+ assert.deepEqual(parse('?activity=race&map=nat01&difficulty=expert').raceSettings,{laps:3,cpu:3,difficulty:2,course:'nat01'});
+ assert.equal(parse('?activity=race&difficulty=Normal').raceSettings.difficulty,1);
+ assert.deepEqual(parse('?activity=race&cheats=EATDIRT,bringit').raceSettings,{laps:3,cpu:3,difficulty:1,course:'env01',aggressive:true,all_out:true});
+ const settings={laps:2,cpu:4,difficulty:2,course:'sx07',aggressive:true};
+ const url=new URL(buildRideUrl('https://example.test',{activity:'race',map:'sx07',raceSettings:settings}));
+ assert.equal(url.searchParams.get('difficulty'),'expert');assert.equal(url.searchParams.get('cheats'),'eatdirt');
+ assert.deepEqual(parse(url.search).raceSettings,settings);
+ assert.equal(new URL(buildRideUrl('https://example.test',{activity:'race',raceSettings:{laps:3,cpu:3,difficulty:1}})).searchParams.has('difficulty'),false);
+ for(const q of ['?difficulty=expert','?cheats=eatdirt','?activity=race&difficulty=hard','?activity=race&difficulty=0','?activity=race&cheats=nofog','?activity=race&cheats='])assert(parse(q).errors.length,q);
+});
 test('malformed, conflicting and duplicate values never silently launch',()=>{
  for(const q of ['?map=nope','?map=','?map=env01&map=env02','?map=env01&environment=env01','?quad=1&atv=2','?quad=0','?quad=47','?quad=1.5','?quad=0x10','?rider=2','?player=','?player=%00','?player='+encodeURIComponent('🏁'.repeat(9)),'?mode=single&room=ABCD1234','?room=ABCD','?play=maybe','?activity=supercross','?action=delete','?activity=race&laps=6'])assert(parse(q).errors.length,q);
 });

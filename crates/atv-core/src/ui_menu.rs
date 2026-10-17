@@ -686,20 +686,33 @@ pub fn layout(request: Request) -> Result<Frame> {
                 "255,226,107",
                 w - 60.,
             );
-            // Five full-height rows fit portrait. Landscape moves the share
-            // link beside Back so every target keeps its 44px minimum.
+            // The browser lays these rows out; landscape keeps the share
+            // link beside Back. Difficulty uses the original race-prep names
+            // (`0021add0`): 1 Normal, 2 Expert.
+            let difficulty = if request.race_difficulty == 2 {
+                "Expert"
+            } else {
+                "Normal"
+            };
             let rows = [
                 (format!("Course: {name}"), "racetrack"),
                 (format!("Laps: {}", request.race_laps.max(1)), "racelaps"),
                 (format!("CPU riders: {}", request.race_cpu), "racecpu"),
+                (format!("Difficulty: {difficulty}"), "racedifficulty"),
                 ("Start Race".to_string(), "racestart"),
                 ("Copy ride link".to_string(), "copyride"),
             ];
+            // Landscape puts Start Race under the preview, as the browser's
+            // hero pill does, and packs the four value rows above the footer.
+            let preview = [w * 0.55, 100., w * 0.4, (h - 210.).min(w * 0.4 * 0.64)];
             for (i, (label, action)) in rows.iter().enumerate() {
-                let rect = if !portrait && *action == "copyride" {
-                    [168., h - 68., 200., 56.]
-                } else {
-                    [24., 140. + i as f32 * 56., list_w.max(290.), 54.]
+                let rect = match (portrait, *action) {
+                    (true, _) => [24., 140. + i as f32 * 56., list_w.max(290.), 54.],
+                    (false, "copyride") => [168., h - 68., 200., 56.],
+                    (false, "racestart") => {
+                        [preview[0], preview[1] + preview[3] + 8., preview[2], 54.]
+                    }
+                    (false, _) => [24., 130. + i as f32 * 46., list_w.max(290.), 44.],
                 };
                 f.choices.push((*action).into());
                 f.button(label, action, rect, request.selection % rows.len() == i);
@@ -707,7 +720,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             if !portrait {
                 f.draw.push(Draw::Preview {
                     image: request.track_image.clone(),
-                    rect: [w * 0.55, 100., w * 0.4, (h - 210.).min(w * 0.4 * 0.64)],
+                    rect: preview,
                 });
             }
             f.footer(true);
@@ -1914,8 +1927,28 @@ mod tests {
         let f = layout(request("race", 844., 390.)).unwrap();
         assert_eq!(
             f.choices,
-            ["racetrack", "racelaps", "racecpu", "racestart", "copyride"]
+            [
+                "racetrack",
+                "racelaps",
+                "racecpu",
+                "racedifficulty",
+                "racestart",
+                "copyride"
+            ]
         );
+        let label = |difficulty| {
+            let mut r = request("race", 390., 844.);
+            r.race_difficulty = difficulty;
+            layout(r)
+                .unwrap()
+                .hits
+                .into_iter()
+                .find(|h| h.action == "racedifficulty")
+                .unwrap()
+                .label
+        };
+        assert_eq!(label(1), "Difficulty: Normal");
+        assert_eq!(label(2), "Difficulty: Expert");
         for (i, a) in f.hits.iter().enumerate() {
             for b in &f.hits[i + 1..] {
                 let [ax, ay, aw, ah] = a.rect;

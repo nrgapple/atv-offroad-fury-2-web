@@ -36,6 +36,9 @@ pub struct Course {
     pub flags: Vec<u32>,
     pub speeds: Vec<f32>,
     pub airtimes: Vec<f32>,
+    /// TDF tag 27 (node +0x4c): scale on the AI jump preload (`0024ebb0`).
+    #[serde(skip)]
+    pub preload_scales: Vec<f32>,
     pub lane_limit: f32,
     pub leader_policy: [f32; 4],
     pub loop_start: usize,
@@ -95,6 +98,7 @@ impl Default for Course {
             flags: vec![],
             speeds: vec![],
             airtimes: vec![],
+            preload_scales: vec![],
             lane_limit: 3.,
             leader_policy: [150., 0.9, 1.5, 0.5],
             loop_start: 0,
@@ -128,6 +132,7 @@ struct Section {
     point_flags: Vec<u32>,
     speeds: Vec<f32>,
     airtimes: Vec<f32>,
+    preload_scales: Vec<f32>,
     links: Vec<Option<usize>>,
     closed: bool,
 }
@@ -338,6 +343,11 @@ impl Course {
                 26 if in_point => {
                     sections[current.unwrap()].airtimes.push(float(bytes, at)?);
                 }
+                27 if in_point => {
+                    sections[current.unwrap()]
+                        .preload_scales
+                        .push(float(bytes, at)?);
+                }
                 19..=22 => {
                     in_tail = true;
                     leader_policy[(tag - 19) as usize] = float(bytes, at)?;
@@ -365,6 +375,7 @@ impl Course {
             s.point_flags.len() != s.points.len()
                 || s.speeds.len() != s.points.len()
                 || s.airtimes.len() != s.points.len()
+                || s.preload_scales.len() != s.points.len()
                 || s.links.iter().any(Option::is_none)
         }) || !(0. ..=30.).contains(&lane_limit)
             || leader_policy[0] <= 0.
@@ -470,6 +481,7 @@ impl Course {
             .collect();
         let speeds = field(&|s, l| s.speeds[l]);
         let airtimes = field(&|s, l| s.airtimes[l]);
+        let preload_scales = field(&|s, l| s.preload_scales[l]);
         let flags = ordered
             .iter()
             .map(|i| sections[route[*i].section].point_flags[route[*i].local])
@@ -494,6 +506,7 @@ impl Course {
             flags,
             speeds,
             airtimes,
+            preload_scales,
             lane_limit,
             leader_policy,
             loop_start,
@@ -767,6 +780,19 @@ impl Course {
             }
         }
         best.map(|(_, l)| l)
+    }
+    /// Whether `p` lies inside the authored edge polygon of `segment` alone
+    /// (`0017bb50`), without the start-apron allowance of the race query.
+    pub fn within(&self, p: [f32; 3], segment: usize) -> bool {
+        let n = self.next(segment);
+        quad(
+            p,
+            self.edge(segment),
+            self.edge(n),
+            self.points[segment],
+            self.points[n],
+        )
+        .is_some()
     }
     /// Fraction along `segment` when `p` lies inside its edge polygon.
     fn inside(&self, p: [f32; 3], segment: usize) -> Option<f32> {
@@ -1901,6 +1927,7 @@ mod tests {
         assert_eq!(c.points[1], [2304., 0., 2394.]);
         assert_eq!(c.widths[0], 27.);
         assert_eq!(c.airtimes, vec![1.; 8]);
+        assert_eq!(c.preload_scales, vec![1.; 8]);
         for length in 0..data.len() {
             assert!(Course::parse(&data[..length]).is_err());
         }

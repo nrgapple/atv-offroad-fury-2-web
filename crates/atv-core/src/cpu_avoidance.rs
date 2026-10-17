@@ -1,12 +1,17 @@
 //! National AI direction correction, SCUS_972.11 00252080 / 0024f840.
-//! Peer equations and ray attenuation are recovered; scene eligibility/order
-//! and the optional aggression branch remain separate integration gates.
+//! Peer equations, ray attenuation, the track-edge tail (AI flag 0x400000)
+//! and the optional aggression branch (the EATDIRT "Aggressive AI" cheat, AI
+//! flag 0x4000000) are recovered; scene eligibility/order remains a separate
+//! integration gate.
 use crate::{Result, collision::CollisionRay, scene_collision::SceneCollision, wheel::Vec3};
 
 #[derive(Clone, Copy)]
 pub struct Peer {
     pub origin: Vec3,
     pub velocity: Vec3,
+    /// Some for a human racer (RaceStatus flag 4): its track direction
+    /// (RaceStatus +0x150), read only by the aggression branch.
+    pub human: Option<Vec3>,
 }
 #[derive(Debug, Default, Clone, Copy, serde::Serialize)]
 pub struct Response {
@@ -14,7 +19,12 @@ pub struct Response {
     pub peers: usize,
     pub obstacle_hits: usize,
     pub vegetation: usize,
+    /// The track-edge tail turned the heading this frame.
+    pub track_edge: bool,
 }
+/// Track-edge probe distance along the requested heading (constructor
+/// +0x2f4, 20ft).
+pub const TRACK_EDGE_PROBE: f32 = 20.;
 fn dot(a: Vec3, b: Vec3) -> f32 {
     (a[0] * b[0] + a[1] * b[1]) + a[2] * b[2]
 }
@@ -36,15 +46,31 @@ fn normalized(a: Vec3) -> Vec3 {
 
 /// Original ordinary peer loop. The caller excludes the actor itself and
 /// supplies other race actors in a stable order, including wrecked riders.
-pub fn peers(origin: Vec3, velocity: Vec3, peers: &[Peer], lane_flags: u32) -> Response {
-    peers_with_forward(origin, velocity, normalized(velocity), peers, lane_flags)
+pub fn peers(
+    origin: Vec3,
+    velocity: Vec3,
+    peers: &[Peer],
+    lane_flags: u32,
+    aggressive: bool,
+) -> Response {
+    peers_with_forward(
+        origin,
+        velocity,
+        normalized(velocity),
+        peers,
+        lane_flags,
+        aggressive,
+    )
 }
-fn peers_with_forward(
+/// The peer loop with the heading `forward` taken from the requested
+/// velocity before the scene corrections (`00252e28`–`00253494`).
+pub fn peers_with_forward(
     origin: Vec3,
     mut velocity: Vec3,
     forward: Vec3,
     peers: &[Peer],
     lane_flags: u32,
+    aggressive: bool,
 ) -> Response {
     let mut encounters = 0;
     for peer in peers {
@@ -54,6 +80,24 @@ fn peers_with_forward(
         let facing = dot(normal, forward);
         if facing > f32::from_bits(0x3f34fdf4) {
             normal = normalized(sub(normal, scale(forward, facing * 0.01)));
+        }
+        if aggressive && let Some(track) = peer.human {
+            // 00253314: an aggressive CPU never avoids a human. When the human
+            // is beside or behind (outside the 0.5 facing cone), within 100ft
+            // and travelling the same way along the track, it steers into them.
+            if facing < 0.5 && squared <= 10000. && dot(forward, track) >= 0. {
+                encounters += 1;
+                // |v| as 1 / rsqrt.s(1, v·v), zero for a zero velocity.
+                let squared = dot(velocity, velocity);
+                let length = if squared == 0. {
+                    0.
+                } else {
+                    1. / (1. / f64::from(squared).sqrt()) as f32
+                };
+                let speed = 0.2 * length;
+                velocity = std::array::from_fn(|i| velocity[i] * 0.8 + normal[i] * speed);
+            }
+            continue;
         }
         if squared < 144. {
             encounters += 1;
@@ -79,8 +123,7 @@ fn peers_with_forward(
     Response {
         velocity,
         peers: encounters,
-        obstacle_hits: 0,
-        vegetation: 0,
+        ..Response::default()
     }
 }
 
@@ -130,6 +173,21 @@ pub fn vegetation(
     }
 }
 
+/// 00252080 tail (00253498–00253660), run after the peer loop when AI flag
+/// 0x400000 is set (race creation `001f9690` sets it for every CPU). The
+/// caller has found the point `TRACK_EDGE_PROBE` ahead along the requested
+/// heading outside the edge polygons of its nearest segment and the next
+/// one. `segment` is the rider's current node to the next node; `0017d980`
+/// normalizes it in 3D. Only when the corrected velocity points to the
+/// (+z, −x) side of that direction t, i.e. cross = vx·tz − vz·tx > 0, does
+/// the velocity lose cross·t (constructor +0x2f0 = 1); the other side is
+/// left unchanged.
+pub fn track_edge(velocity: Vec3, segment: Vec3) -> Option<Vec3> {
+    let t = normalized(segment);
+    let cross = velocity[0] * t[2] - velocity[2] * t[0];
+    (cross > 0.).then(|| std::array::from_fn(|i| velocity[i] - 1. * (cross * t[i])))
+}
+
 /// Original 100ft ray hit weighting; applied successively to the requested
 /// velocity before 0024f840 normalizes the horizontal steering direction.
 pub fn attenuate(velocity: Vec3, direction: Vec3, distance: f32) -> Vec3 {
@@ -144,6 +202,7 @@ pub fn direction(
     peers_input: &[Peer],
     lane_flags: u32,
     scene: Option<&SceneCollision>,
+    aggressive: bool,
 ) -> Result<Response> {
     let forward = normalized(velocity);
     let mut corrected = velocity;
@@ -206,7 +265,14 @@ pub fn direction(
             }
         }
     }
-    let mut response = peers_with_forward(origin, corrected, forward, peers_input, lane_flags);
+    let mut response = peers_with_forward(
+        origin,
+        corrected,
+        forward,
+        peers_input,
+        lane_flags,
+        aggressive,
+    );
     response.obstacle_hits = hits;
     response.vegetation = plants;
     Ok(response)
@@ -229,9 +295,11 @@ mod tests {
                     [0., 0., 50.],
                     &[Peer {
                         origin: [0., 0., 100.],
-                        velocity: [0.; 3]
+                        velocity: [0.; 3],
+                        human: None,
                     }],
-                    0
+                    0,
+                    false,
                 )
                 .velocity[2]
         );
@@ -253,14 +321,14 @@ mod tests {
             |_| Ok(0.),
         )
         .unwrap();
-        let result = direction([0.; 3], [0., 0., 50.], &[], 0, Some(&scene)).unwrap();
+        let result = direction([0.; 3], [0., 0., 50.], &[], 0, Some(&scene), false).unwrap();
         assert!(result.obstacle_hits > 0);
         assert!(
             result.velocity[0] < 0.,
             "obstacle on right deflects heading left"
         );
         assert!(result.velocity[2] < 50.);
-        let away = direction([0.; 3], [0., 0., -50.], &[], 0, Some(&scene)).unwrap();
+        let away = direction([0.; 3], [0., 0., -50.], &[], 0, Some(&scene), false).unwrap();
         assert_eq!(away.obstacle_hits, 0);
         assert_eq!(away.velocity, [0., 0., -50.]);
     }
@@ -269,15 +337,19 @@ mod tests {
         let peer = |z, speed| Peer {
             origin: [0., 0., z],
             velocity: [0., 0., speed],
+            human: None,
         };
-        let near = peers([0.; 3], [0., 0., 50.], &[peer(8., 0.)], 0);
+        let near = peers([0.; 3], [0., 0., 50.], &[peer(8., 0.)], 0, false);
         assert_eq!(near.peers, 1);
         assert!((near.velocity[2] - 16.5).abs() < 0.0001);
-        let parallel = peers([0.; 3], [0., 0., 50.], &[peer(8., 50.)], 0);
+        let parallel = peers([0.; 3], [0., 0., 50.], &[peer(8., 50.)], 0, false);
         assert!((parallel.velocity[2] - 49.).abs() < 0.0001);
-        assert_eq!(peers([0.; 3], [0., 0., 50.], &[peer(100., 0.)], 0).peers, 1);
         assert_eq!(
-            peers([0.; 3], [0., 0., 50.], &[peer(100.01, 0.)], 0).peers,
+            peers([0.; 3], [0., 0., 50.], &[peer(100., 0.)], 0, false).peers,
+            1
+        );
+        assert_eq!(
+            peers([0.; 3], [0., 0., 50.], &[peer(100.01, 0.)], 0, false).peers,
             0
         );
         let left = peers(
@@ -286,10 +358,68 @@ mod tests {
             &[Peer {
                 origin: [3., 0., 8.],
                 velocity: [0.; 3],
+                human: None,
             }],
             0,
+            false,
         );
         assert!(left.velocity[0] < -10.);
+    }
+    #[test]
+    fn track_edge_turns_only_toward_one_side_of_the_node_direction() {
+        let t = [0., 0., 1.];
+        assert_eq!(track_edge([10., 0., 50.], t), Some([10., 0., 40.]));
+        assert_eq!(track_edge([-10., 0., 50.], t), None);
+        assert_eq!(track_edge([0., 0., 50.], t), None);
+        // A 3D node direction also takes cross·ty from the vertical.
+        let t = [0., 0.6, 0.8];
+        let v = track_edge([10., 0., 50.], t).unwrap();
+        assert!((v[1] + 4.8).abs() < 1e-5 && (v[2] - 43.6).abs() < 1e-5);
+    }
+    #[test]
+    fn aggressive_ai_steers_into_a_human_beside_it_and_never_avoids_one() {
+        let human = |origin, track| Peer {
+            origin,
+            velocity: [0., 0., 50.],
+            human: Some(track),
+        };
+        let forward = [0., 0., 1.];
+        // Beside, same direction: 0.8 v + 0.2 |v| toward the human.
+        let side = peers(
+            [0.; 3],
+            [0., 0., 50.],
+            &[human([10., 0., 0.], forward)],
+            0,
+            true,
+        );
+        assert_eq!(side.peers, 1);
+        assert!((side.velocity[0] - 10.).abs() < 0.0001);
+        assert!((side.velocity[2] - 40.).abs() < 0.0001);
+        // Same rider without the cheat is avoided as an ordinary peer.
+        let ordinary = peers(
+            [0.; 3],
+            [0., 0., 50.],
+            &[human([10., 0., 0.], forward)],
+            0,
+            false,
+        );
+        assert!(ordinary.velocity[0] < 0.);
+        // Ahead in the 0.5 facing cone, travelling the other way, or beyond
+        // 100ft: no response at all, not even ordinary avoidance.
+        for (origin, track) in [
+            ([0., 0., 8.], forward),
+            ([10., 0., 0.], [0., 0., -1.]),
+            ([100.01, 0., 0.], forward),
+        ] {
+            let r = peers([0.; 3], [0., 0., 50.], &[human(origin, track)], 0, true);
+            assert_eq!((r.peers, r.velocity), (0, [0., 0., 50.]));
+        }
+        // CPU peers keep the ordinary response under the cheat.
+        let cpu = Peer {
+            human: None,
+            ..human([3., 0., 8.], forward)
+        };
+        assert!(peers([0.; 3], [0., 0., 50.], &[cpu], 0, true).velocity[0] < 0.);
     }
     #[test]
     fn source_ray_hit_weight_steers_away_from_obstruction() {

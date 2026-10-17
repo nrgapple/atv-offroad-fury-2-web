@@ -32,6 +32,8 @@ saved selections. Successfully started Single Player selections are saved normal
 | `play` | `1` / `true` (default): start/join; `0` / `false`: show setup without network admission/loading |
 | `laps` | Race only, 1–5; default 3 |
 | `cpu` | Race only, 0, 3 or 4; default 3 |
+| `difficulty` | Race only, `normal` / `1` (default) or `expert` / `2`: the original race-prep difficulty (see `RACING.md`) |
+| `cheats` | Race only, comma-separated original race cheat codes: `eatdirt` (Aggressive AI) and `bringit` (All Out AI); off by default |
 
 Compatibility aliases: `environment` for map, `vehicle` / `atv` for quad,
 `name` for player, `lobby` for room, `drive` for play. Existing
@@ -48,6 +50,7 @@ in the Main Menu before gameplay or networking begins.
 - [Vancouver on quad 26](https://furyremastered.com/?map=free05&quad=26)
 - [Caribou National, two laps, no CPUs](https://furyremastered.com/?activity=race&map=env01&quad=2&laps=2&cpu=0)
 - [Supercross race on sx07 with four CPUs](https://furyremastered.com/?activity=race&map=sx07&cpu=4)
+- [Expert race on nat01 with four CPUs](https://furyremastered.com/?activity=race&map=nat01&cpu=4&difficulty=expert)
 - [Create and start a Vancouver multiplayer ride](https://furyremastered.com/?mode=multiplayer&action=create&map=free05&quad=14&player=Host)
 - [Prepare a Tioga ride without starting](https://furyremastered.com/?map=env02&quad=14&rider=1&play=0)
 
@@ -57,7 +60,7 @@ Names and other text should be encoded with `URLSearchParams` or normal URL enco
 
 **Copy ride link** in Pause captures the actual running Single Player setup, or
 an invite for the connected room. The Race setup page also copies its selected
-laps/CPU/vehicle/rider setup. **Copy invite link** in the lobby now makes a direct
+laps/CPU/difficulty/vehicle/rider setup (and any cheats the race was started with). **Copy invite link** in the lobby now makes a direct
 join URL carrying the room and vehicle/rider setup. Invites omit the inviter's
 name so guests can supply their own `player` parameter. Only supported setup
 fields are serialized; unrelated current-page query/hash and owner tokens are

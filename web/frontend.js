@@ -13,7 +13,7 @@ const overlayPages = new Set(['settings','extras','pause','players','hud-setting
 const MODEL_PAGES = ['garage','gear','main','single','create-lobby','join-lobby'];
 const settingsPages = new Set(['settings','extras','hud-settings','minimap-config','race-overlays','controls','bindings','music']);
 // Value rows that step either way with Left/Right as well as cycling on a tap.
-const stepperActions = new Set(['racetrack','racelaps','racecpu','gearhelmet','gearjersey','gearpant','gearglove','gearboot','geargoggle','gearpaint']);
+const stepperActions = new Set(['racetrack','racelaps','racecpu','racedifficulty','gearhelmet','gearjersey','gearpant','gearglove','gearboot','geargoggle','gearpaint']);
 const cycleActions = new Set(['graphics','vibration','speed-rush','crash-camera','chase-camera','flips','funnycrashes','diagnostics','onehanded','minimap-orientation','minimap-shape','minimap-corner','minimap-toggle','musictoggle','musicvolume','sfxvolume','soundmode','overlay-timing','overlay-lap','overlay-score','overlay-position','overlay-info','overlay-speed','overlay-radar']);
 const fontName = 'tradegothic_boldcondensed_22s';
 const selectionKey = 'atv-player-selection';
@@ -21,12 +21,14 @@ const trainingPreview = 'training-map-preview';
 // Original STARTEVT etips.txt entries about riding technique. Tips about
 // profiles, championships, editors, mini-games or PS2 buttons are omitted.
 const ridingTips = [5,9,10,11,14,16,17,18,19,23,24,25,26,27];
-// Race setup offers 1-5 laps and 0, 3 or 4 CPU riders.
+// Race setup offers 1-5 laps, 0, 3 or 4 CPU riders and the original Normal (1)
+// or Expert (2) difficulty.
 const RACE_CPU = [0,3,4];
 const normalizedRace = value => ({
   course: RACE_COURSES.includes(value?.course) ? value.course : 'env01',
   laps: Number.isInteger(value?.laps) && value.laps >= 1 && value.laps <= 5 ? value.laps : 3,
   cpu: RACE_CPU.includes(value?.cpu) ? value.cpu : 3,
+  difficulty: value?.difficulty === 2 ? 2 : 1,
 });
 const normalizedSelection = value => ({
   quadId: Number.isInteger(value?.quadId) && value.quadId >= 1 && value.quadId <= 46 ? value.quadId : 1,
@@ -87,7 +89,7 @@ export class Frontend {
     this.quadId = savedSelection.quadId; this.riderId = savedSelection.riderId; this.lastFreestyleEnvironment = savedSelection.freestyleEnvironment; this.lastRace = savedSelection.race; this.playerName = savedSelection.playerName; this.appearance = savedSelection.appearance; this.trackMode = 'single'; this.roomCode = ''; this.createCode = ''; this.garageReturn = 'single';
     this.bindingDevice = 'keyboard'; this.bindingPage = 0; this.bindingRow = 0; this.musicPage = 0;
     this.capture = null; this.menuKeys = new Set();
-    this.raceSettings={...this.lastRace,difficulty:1};this.raceActive=false;this.raceAvailable=false;this.raceCourses=[];
+    this.raceSettings={...this.lastRace};this.raceActive=false;this.raceAvailable=false;this.raceCourses=[];
     this.trackFilter = 'all'; this.raceFilter = 'all'; this.trackUrls = new Map(); this.backdropUrl = ''; this.shotUrls = new Map(); this.loadingShots = []; this.shotFrame = 0;
     gameplayBindings.subscribe(() => { this.layoutKey = ''; });
     window.addEventListener('keydown', e => {
@@ -590,11 +592,12 @@ export class Frontend {
         catch(error) { await this.show('race');this.fail(error); } finally { this.busy = false; }
         return;
       }
-      if (['racetrack','racelaps','racecpu'].includes(action)) {
+      if (['racetrack','racelaps','racecpu','racedifficulty'].includes(action)) {
         // Stepping the course walks the list shown under the current event tab.
         if (action === 'racetrack' && this.raceCourses.length) { const courses = this.raceOrder().map(track => track.id), at = Math.max(0, courses.indexOf(this.raceSettings.course)); this.raceSettings.course = courses[(at + direction + courses.length) % courses.length]; this.scrollScreenSelection = true; }
         if (action === 'racelaps') this.raceSettings.laps = (this.raceSettings.laps - 1 + direction + 5) % 5 + 1;
         if (action === 'racecpu') this.raceSettings.cpu = RACE_CPU[(RACE_CPU.indexOf(this.raceSettings.cpu) + direction + RACE_CPU.length) % RACE_CPU.length];
+        if (action === 'racedifficulty') this.raceSettings.difficulty = this.raceSettings.difficulty === 2 ? 1 : 2;
         this.layoutKey = ''; await this.refresh(); return;
       }
       if (['keyboard','controller'].includes(action)) { this.bindingDevice = action; this.bindingPage = 0; this.bindingRow = 0; return this.show('bindings'); }
