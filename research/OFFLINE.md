@@ -152,7 +152,7 @@ These notes come from vendor documentation, not device testing.
   marked immutable.
 - `tools/test_offline.mjs` (content group; `node tools/run_browser_tests.mjs --only test_offline.mjs`):
   serves a packaged copy of `web/dist` on its own port, checks that the worker
-  controls the page and precached the shell (57 files on 2026-10-17), that
+  controls the page and precached the shell (59 files on 2026-10-17), that
   first-visit and ride content is cached and served by the worker on relaunch
   without re-downloading, that streams, ranged reads, `/multiplayer/` and
   `/api/events` bypass it, then stops the server and relaunches `/` → main menu
