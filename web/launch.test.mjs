@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseLaunch,buildRideUrl,copyRideUrl,ENVIRONMENTS,RACE_COURSES,courseResource,loadingShotsResource} from './launch.js';
+import {parseLaunch,menuShortcut,buildRideUrl,copyRideUrl,ENVIRONMENTS,RACE_COURSES,courseResource,loadingShotsResource} from './launch.js';
 const parse = search=>parseLaunch(search);
 test('ordinary and cache/marketing-only visits retain the title',()=>{
  for(const q of ['', '?v=123&utm_source=test','#room=ABCD1234']) assert.equal(parse(q).requested,false);
@@ -77,4 +77,12 @@ test('every Freestyle venue except Training maps to its original loading shots',
   assert.equal(loadingShotsResource('game01'), '/UI/LOADICON/GAME/G01_SO.LSI');
   assert.equal(loadingShotsResource('training'), null);
   assert.equal(new Set(ENVIRONMENTS.map(loadingShotsResource).filter(Boolean)).size, ENVIRONMENTS.length - 1);
+});
+test('app shortcuts open a menu only for an exact menu-only query',()=>{
+  assert.equal(menuShortcut('?menu=freeride'),'tracks');
+  assert.equal(menuShortcut('?menu=Race'),'race');
+  for (const search of ['','?menu=garage','?menu=race&map=env02','?menu=race&menu=freeride','?play=1'])
+    assert.equal(menuShortcut(search),null,search);
+  // A shortcut is not a ride link, so it never replaces the saved selection.
+  assert.equal(parseLaunch('?menu=race').requested,false);
 });

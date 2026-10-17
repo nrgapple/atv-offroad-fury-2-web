@@ -87,6 +87,14 @@ export function parseLaunch(search, tracks = ENVIRONMENTS.map(id=>({id,name:id})
   if (activity!=='race' && ['laps','cpu','difficulty','cheats'].some(key=>key in values)) errors.push('Laps/cpu/difficulty/cheats requires activity=race.');
   return {requested:true,errors,mode,activity,action,play,map:map??'env01',quadId,riderId,playerName,room,raceSettings:{laps,cpu,difficulty,course:map??'env01',...cheats}};
 }
+// App shortcuts (manifest "shortcuts") open a menu with the saved rider, quad
+// and race setup. Unlike ride links, they never replace the player's selection.
+const MENU_SHORTCUTS = {freeride:'tracks', race:'race'};
+export function menuShortcut(search) {
+  const params = new URLSearchParams(search), keys = [...params.keys()];
+  if (keys.length !== 1 || keys[0] !== 'menu') return null;
+  return MENU_SHORTCUTS[params.get('menu').toLowerCase()] ?? null;
+}
 export function buildRideUrl(origin, setup, {includePlayer = true} = {}) {
   const url = new URL('/play.html',origin);
   const entries = {mode:setup.mode??'single',activity:setup.activity??'freestyle',map:setup.map??'env01',quad:setup.quadId??1,rider:setup.riderId??0};

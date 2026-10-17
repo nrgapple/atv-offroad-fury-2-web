@@ -111,22 +111,53 @@ try {
       start: manifest.start_url,
       scope: manifest.scope,
       apple,
-      sizes: records.map(r => r.size)
+      sizes: records.map(r => r.size),
+      purposes: manifest.icons.map(icon => icon.purpose),
+      orientation: manifest.orientation,
+      shortcuts: manifest.shortcuts.map(shortcut => shortcut.url),
+      screenshots: manifest.screenshots.map(shot => shot.form_factor)
     };
   });
   assert.equal(metadata.name, 'Fury Remastered');
   assert.equal(metadata.display, 'standalone');
   assert.equal(metadata.start, '/play.html');
   assert.equal(metadata.scope, '/');
-  assert.deepEqual(metadata.sizes, [180, 192, 512]);
+  assert.deepEqual(metadata.sizes, [180, 192, 512, 192, 512]);
+  assert.deepEqual(metadata.purposes, ['any', 'any', 'maskable', 'maskable']);
+  assert.equal(metadata.orientation, 'any', 'portrait and landscape both stay available');
+  assert.deepEqual(metadata.shortcuts, ['/play.html?menu=freeride', '/play.html?menu=race', '/devlog.html']);
+  assert.deepEqual(metadata.screenshots, ['wide', 'wide', 'narrow']);
+  const favicon = await page.request.get(base + '/favicon.ico');
+  assert.equal(favicon.status(), 200);
+  assert.deepEqual([...(await favicon.body()).subarray(0, 6)], [0, 0, 1, 0, 3, 0]);
+  // Launch screens: this device's portrait and landscape sizes, drawn on the idle title.
+  const screens = await page.waitForFunction(() => {
+    const links = [...document.querySelectorAll('link[rel="apple-touch-startup-image"]')];
+    return links.length === 2 && links.map(link => ({ media: link.media, size: link.dataset.size, png: link.href.startsWith('data:image/png;base64,') }));
+  }, null, { timeout: 15000 }).then(handle => handle.jsonValue());
+  const ratio = await page.evaluate(() => devicePixelRatio);
+  assert.deepEqual(screens, [
+    { media: '(orientation: portrait)', size: `${390 * ratio}x${844 * ratio}`, png: true },
+    { media: '(orientation: landscape)', size: `${844 * ratio}x${390 * ratio}`, png: true }
+  ]);
+  // Read each PNG header here: the local server's CSP has no data: images.
+  const decoded = (await page.evaluate(() => [...document.querySelectorAll('link[rel="apple-touch-startup-image"]')].map(link => link.href)))
+    .map(href => Buffer.from(href.split(',')[1], 'base64'))
+    .map(png => `${png.readUInt32BE(16)}x${png.readUInt32BE(20)}`);
+  assert.deepEqual(decoded, screens.map(screen => screen.size));
   assert.equal(new URL(metadata.apple).search, '');
   for (const path of ['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png']) {
     const response = await page.request.get(base + path);
     assert.equal(response.status(), 200);
     assert.match(response.headers()['content-type'], /image\/png/);
   }
+  if (output) {
+    const { writeFile } = await import('node:fs/promises');
+    const hrefs = await page.evaluate(() => [...document.querySelectorAll('link[rel="apple-touch-startup-image"]')].map(link => link.href));
+    for (const [i, href] of hrefs.entries()) await writeFile(`${output}/launch-${i ? 'landscape' : 'portrait'}.png`, Buffer.from(href.split(',')[1], 'base64'));
+  }
   checks.push(
-    'manifest identity/start/scope, all three Fury Remastered PNG responses and decoded sizes, conventional Safari root URLs'
+    'manifest identity/start/scope/orientation/shortcuts/screenshots, Home Screen and maskable PNG responses and decoded sizes, favicon.ico, conventional Safari root URLs, both launch screens'
   );
   const rects = await page.evaluate(() => {
     const r = id => {
@@ -194,6 +225,8 @@ try {
   ]) {
     const p = await title(options);
     assert.equal(await p.locator('#app-install-banner').isVisible(), false);
+    await p.waitForTimeout(3500);
+    assert.equal(await p.locator('link[rel="apple-touch-startup-image"]').count(), 0, 'installed app skips launch screens');
     await p.evaluate(() => {
       document.documentElement.style.setProperty('--app-safe-top', '54px');
       document.documentElement.style.setProperty('--app-safe-bottom', '34px');

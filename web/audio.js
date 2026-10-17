@@ -9,16 +9,25 @@ const SETTINGS_KEY = 'atv-audio-v1';
 const MUSIC_GESTURES = ['pointerup', 'touchend', 'keydown', 'click'];
 export function loadAudioSettings(storage = (() => { try { return globalThis.window?.localStorage ?? null; } catch { return null; } })()) {
   // Sound: Enhanced is the default; Original keeps the recovered baseline.
-  const settings = { sfx: 1, mode: 'enhanced' };
+  // Silent switch: 'play' keeps sound on like a native game; 'mute' follows it.
+  const settings = { sfx: 1, mode: 'enhanced', silent: 'play' };
   try {
     const saved = JSON.parse(storage?.getItem(SETTINGS_KEY) ?? 'null');
     if (Number.isFinite(saved?.sfx)) settings.sfx = Math.max(0, Math.min(1, saved.sfx));
     if (saved?.mode === 'original' || saved?.mode === 'enhanced') settings.mode = saved.mode;
+    if (saved?.silent === 'play' || saved?.silent === 'mute') settings.silent = saved.silent;
   } catch { /* Private browsing or corrupt preferences keep the defaults. */ }
   return settings;
 }
 export function saveAudioSettings(settings, storage = (() => { try { return globalThis.window?.localStorage ?? null; } catch { return null; } })()) {
   try { storage?.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* Optional persistence. */ }
+}
+// iOS/iPadOS Safari (16.4+) mutes Web Audio with the Ring/Silent switch unless
+// the page declares playback audio. Playback pauses other apps' music, so
+// 'mute' selects ambient audio, which mixes with it and follows the switch.
+export function applyAudioSession(silent, session = globalThis.navigator?.audioSession) {
+  if (!session) return false;
+  try { session.type = silent === 'mute' ? 'ambient' : 'playback'; return true; } catch { return false; }
 }
 export class GameAudio {
   constructor(codec, report = () => {}) {
@@ -59,7 +68,9 @@ export class GameAudio {
     this.effectLast = null;
     this.effectCamera = null;
     this.music = new MusicStream(codec, () => this.context, () => this.gain, report);
+    this.music.bindMediaSession();
     this.settings = loadAudioSettings();
+    this.audioSession = applyAudioSession(this.settings.silent);
     this.quad = new QuadSounds(this);
     this.unlock = () => this.resume().catch(error => this.report(error.message));
     window.addEventListener('pointerdown', this.unlock);
@@ -90,6 +101,11 @@ export class GameAudio {
     this.settings.sfx = Math.max(0, Math.min(1, Number(volume) || 0));
     saveAudioSettings(this.settings);
     if (this.engineGain) this.engineGain.gain.value = this.active ? this.settings.sfx : 0;
+  }
+  setSilentMode(silent) {
+    this.settings.silent = silent === 'mute' ? 'mute' : 'play';
+    saveAudioSettings(this.settings);
+    applyAudioSession(this.settings.silent);
   }
   get enhanced() { return this.settings.mode === 'enhanced'; }
   setSoundMode(mode) {
