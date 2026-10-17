@@ -1,0 +1,18 @@
+{
+  "id": "cpu-racing-normal-expert-difficulty-jumps-track-edge-a-c4f5464bf6e2424abaa0c7b102a7709c",
+  "timestamp": "2026-10-17T01:08:11.212248+00:00",
+  "recorded_at": "2026-10-17T01:12:51.907028+00:00",
+  "kind": "build",
+  "title": "CPU racing: Normal/Expert difficulty, jumps, track edge and cheat flags",
+  "summary": "Single races now have a Difficulty row (Normal or Expert), saved with the other race settings and settable with a difficulty=normal|expert play-link parameter. CPU riders also gained the original jump hook, preload release, flag-8 lean, track-edge velocity correction and the EATDIRT/BRINGIT AI flags. PR #142 (4cdfe80) is merged; its deploy was pending when this was written. Host-verified only; not tried on a physical phone.",
+  "details": [
+    "Difficulty recovered: race creation sets AI flag 0x400 unless the setting is Expert, and the path driver applies the leader speed limit only when that flag is set. So Normal CPUs are held back by the leader limit and Expert CPUs are not. No other difficulty input to single-race CPU driving was found. Championship-only difficulty effects are documented, not ported.",
+    "Corner braking: the original has none on courses whose target speeds are the 150 ft/s sentinel, so none was added. The original flag-0x400000 track-edge velocity correction (a 20 ft heading probe against the nearest and next segment, right side only) was implemented with two adaptations: the nearest segment comes from the station window, and a four-corner quad replaces the native hexagon.",
+    "Also recovered: the CPU jump hook and preload release on flag-0x40 nodes (TDF tag 27 is now parsed on all 32 courses), a 0.6 lean on flag-8 nodes, the 0x10 response scale reading the aim node, and the original EATDIRT aggression and BRINGIT All Out AI flags. The cheat flags are reachable only through an authored cheats=eatdirt,bringit link parameter.",
+    "Evidence: bounded instruction comparisons against the original code with zero differing binary32 outputs: jump hook 3,000 cases, preload release 1,500, peer loop including aggression 3,000 (1.18M instructions), track-edge correction 2,778 compared cases (1.83M instructions).",
+    "Verification: Rust tests (487 + 21), clippy and fmt, test_race, test_race_ai (Difficulty row, Expert link, preload releases, track-edge activations) and test_race_courses. Worker step cost is unchanged at about 1.0 ms mean on host for five quads on env01, env02 and nat01. I inspected two host captures, the race setup screen with Difficulty: Expert (attached) and an Expert Caribou race at 6 s."
+  ],
+  "limitation": "The track-edge correction, though original, widened measured CPU route error on nat01 in host runs (max 25 ft to 150 ft in one 40 s run; run-to-run spread is large). The port's segment and polygon adaptations may be the cause; this is not resolved. Original start slots are recovered but not connected. All Out AI filters and championship difficulty effects are not connected. A pre-existing test_cpu_behavior.mjs resetDistance failure exists on main too. No whole-race or hardware parity is claimed, and nothing was tried on a physical phone.",
+  "image": "/devlog-images/cpu-racing-normal-expert-difficulty-jumps-track-edge-a-c4f5464bf6e2424abaa0c7b102a7709c.png",
+  "caption": "Host capture: single race setup with Difficulty set to Expert, Caribou Peak, 3 laps, 4 CPU riders."
+}
