@@ -110,6 +110,8 @@ test('routes cache only app shell, pages, manifests and content blobs; everythin
   assert.equal(route(`/content/manifests/${V}.json`), 'manifest');
   assert.equal(route('/manifest.webmanifest'), 'static');
   assert.equal(route('/fury-remastered-home-180-v1.png'), 'static');
+  assert.equal(route('/fury-remastered-maskable-512-v1.png'), 'static');
+  assert.equal(route('/favicon.ico'), 'static');
   assert.equal(route(blob, 'GET', 'cors', true), null, 'ranged reads pass through');
   assert.equal(route(`/content/${'d'.repeat(64)}.m4a`), null, 'soundtrack streams pass through');
   assert.equal(route(blob, 'POST'), null);
@@ -203,6 +205,7 @@ test('content blobs are cache-first, stored only when their bytes match their ha
   assert.equal((await sw.request(path)).text, good);
   sw.network.offline = true;
   assert.equal((await sw.request(path)).text, good, 'served from cache offline');
+  assert.equal((await sw.request(wrong)).response.type, 'error', 'an offline cache miss is a network error, not a rejected respondWith');
   sw.network.offline = false;
   await sw.request(wrong);
   await sw.request(`/content/${'e'.repeat(64)}.bin`);

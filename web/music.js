@@ -48,6 +48,34 @@ export class MusicStream {
       if (Number.isInteger(saved?.historyIndex)) this.historyIndex = Math.max(-1, Math.min(this.history.length - 1, saved.historyIndex));
     } catch { /* Private browsing or corrupt preferences must not block music. */ }
   }
+  // Control Center, the lock screen, headphone buttons and keyboard media keys
+  // drive the soundtrack like the Jukebox transport (play/pause = Music on/off).
+  bindMediaSession(session = globalThis.navigator?.mediaSession) {
+    if (!session || this.session) return;
+    this.session = session;
+    const handlers = {
+      play: () => { this.setEnabled(true); void this.update(); },
+      pause: () => this.setEnabled(false),
+      nexttrack: () => { this.setEnabled(true); this.next(); },
+      previoustrack: () => { this.setEnabled(true); this.previous(); },
+    };
+    for (const [action, handler] of Object.entries(handlers)) {
+      try { session.setActionHandler(action, handler); } catch { /* Unsupported action. */ }
+    }
+    this.syncMediaSession();
+  }
+  syncMediaSession() {
+    const session = this.session, song = this.song;
+    if (!session) return;
+    try {
+      if (song && song !== this.sessionSong && typeof globalThis.MediaMetadata === 'function') {
+        this.sessionSong = song;
+        session.metadata = new globalThis.MediaMetadata({ title: song.title ?? 'Fury Remastered', artist: song.artist ?? '', album: 'Fury Remastered soundtrack',
+          artwork: [{ src: '/fury-remastered-home-512-v1.png', sizes: '512x512', type: 'image/png' }] });
+      }
+      session.playbackState = song && this.enabled && !this.held && !this.closed ? 'playing' : 'paused';
+    } catch { /* Media Session is optional. */ }
+  }
   get tracks() { return (this.library?.songs ?? []).map((song, index) => ({ ...song, index })); }
   save() {
     try { this.storage?.setItem(SETTINGS_KEY, JSON.stringify({ enabled: this.enabled, volume: this.volume, history: this.history, historyIndex: this.historyIndex })); } catch { /* Optional persistence. */ }
@@ -185,7 +213,7 @@ export class MusicStream {
   // 1.5s fade at race over (0014f8d0); release starts the next song (GO).
   hold(fade = 0) {
     if (this.held || this.closed) { this.held = true; return; }
-    this.held = true;
+    this.held = true; this.syncMediaSession();
     const context = this.context(), stop = () => { if (!this.held) return; this.clearQueue(); if (this.media) { this.mediaWanted = false; this.element.pause(); } this.finished = true; if (this.gain) this.gain.gain.value = this.volume; };
     const sounding = this.media ? this.mediaWanted && !this.element.paused : this.queue.length > 0;
     if (fade > 0 && this.gain && context?.state === 'running' && sounding) {
@@ -197,7 +225,7 @@ export class MusicStream {
   }
   release() {
     if (!this.held) return;
-    this.held = false; clearTimeout(this.holdTimer);
+    this.held = false; clearTimeout(this.holdTimer); this.syncMediaSession();
     if (this.gain) { this.gain.gain.cancelScheduledValues(0); this.gain.gain.value = this.volume; }
     void this.update();
   }
@@ -206,7 +234,7 @@ export class MusicStream {
     if (enabled === this.enabled || this.closed) return;
     this.enabled = enabled;
     if (!enabled) this.pauseQueue();
-    this.save();
+    this.save(); this.syncMediaSession();
     if (enabled) void this.update();
   }
   stopSource(segment) {
@@ -275,7 +303,7 @@ export class MusicStream {
       this.history = this.history.slice(0, this.historyIndex + 1);
       this.history.push(song.filename); this.history = this.history.slice(-64); this.historyIndex = this.history.length - 1;
     }
-    this.save();
+    this.save(); this.syncMediaSession();
     return true;
   }
   async update() {
@@ -367,7 +395,7 @@ export class MusicStream {
       genre: song?.genre ?? null, mode: 'decoder', seekable: false, playing: this.voices.size > 0 && !this.suspended, streamBytes: 0 };
   }
   close() {
-    this.generation++; this.closed = true; this.ready = false;
+    this.generation++; this.closed = true; this.ready = false; this.syncMediaSession();
     this.clearQueue(); this.gain?.disconnect(); this.analyserNode?.disconnect();
     if (this.element) { this.element.pause(); this.element.removeAttribute('src'); this.element.load?.(); this.mediaNode?.disconnect(); }
     if (this.silent) URL.revokeObjectURL(this.silent);

@@ -44,10 +44,11 @@ Other `fury-*` cache names (older schemas) are deleted on activation.
 | `/<name>.js|css|wasm?v=<40 hex>` | cache-first across all caches; only this worker's own version is written from the network |
 | `/content/<sha256>.bin` | cache-first; a network response is written only when it is a 200 basic response whose bytes hash to the file name |
 | `/content/manifest.json`, `/content/manifests/<commit>.json` | network-first with cache fallback (same 4 s timeout) |
-| `/manifest.webmanifest`, `/fury-remastered.svg`, `/fury-remastered-home-*-v*.png`, `/apple-touch-icon*.png` | network-first with cache fallback |
+| `/manifest.webmanifest`, `/favicon.ico`, `/fury-remastered.svg`, `/fury-remastered-{home,maskable}-*-v*.png`, `/apple-touch-icon*.png` | network-first with cache fallback |
 | everything else | not intercepted: non-GET, any `Range` request, `/content/*.m4a` streams, `/multiplayer/*` (including WebSocket upgrades), `/api/events`, `/devlog.json`, `/devlog-images/*`, `/deployment.json`, cross-origin (Cloudflare beacon) |
 
-Only 200, non-redirected, same-origin (`basic`) responses are stored. Opaque,
+A cache miss while offline answers a plain network error (`Response.error()`),
+not a rejected `respondWith`. Only 200, non-redirected, same-origin (`basic`) responses are stored. Opaque,
 partial (206), error and redirected responses never are. Storage failures
 (quota) are swallowed; play continues from the network.
 
@@ -117,7 +118,9 @@ fails to load. Soundtrack streams are never cached; offline the music falls back
 to the original VAG chunks and, when those are not cached either, stays silent.
 `web/music.js` suppresses its error status while `navigator.onLine` is false so
 an offline ride shows no audio error. Courses never loaded online are
-unavailable offline and fail with the normal content error. Multiplayer requires
+unavailable offline and fail with the normal content error. A lazy file whose
+online download was cut short (for example by leaving the page mid-load) is not
+cached; the observed case (`ATV01_MT.RES`) was non-fatal offline. Multiplayer requires
 connectivity.
 
 ## Storage and eviction (iOS and others)
@@ -149,13 +152,17 @@ These notes come from vendor documentation, not device testing.
   marked immutable.
 - `tools/test_offline.mjs` (content group; `node tools/run_browser_tests.mjs --only test_offline.mjs`):
   serves a packaged copy of `web/dist` on its own port, checks that the worker
-  controls the page and precached the shell (53 files on 2026-10-17), that
+  controls the page and precached the shell (57 files on 2026-10-17), that
   first-visit and ride content is cached and served by the worker on relaunch
   without re-downloading, that streams, ranged reads, `/multiplayer/` and
   `/api/events` bypass it, then stops the server and relaunches `/` → main menu
   and env01 offline. Passes in headless Chromium (with `context.setOffline`) and
-  WebKit (`ATV_UI_BROWSER=webkit`, server stopped only, because Playwright's
-  WebKit offline emulation also fails worker-served navigations).
+  WebKit (`ATV_UI_BROWSER=webkit`): Playwright's WebKit offline emulation also
+  fails worker-served navigations, so WebKit gets the stopped server with
+  `navigator.onLine` overridden to false, and its page errors for expected
+  offline misses ("Response served by service worker is an error") are ignored.
+  Offline misses are listed: soundtrack fallback chunks and, in some runs, one
+  lazy file cut short online; neither stopped the ride.
 
 Not verified: physical iOS/Android devices, Home Screen installation, real
 eviction and `persist()` outcomes, the production Cloudflare Worker serving

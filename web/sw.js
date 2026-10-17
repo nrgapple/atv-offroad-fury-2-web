@@ -27,7 +27,7 @@ var MANIFEST = /^\/content\/(?:manifest\.json|manifests\/([a-f0-9]{40})\.json)$/
 var ASSET = /^\/[a-z0-9_-]+\.(?:js|css|wasm)$/;
 var VERSIONED = /^\?v=([a-f0-9]{40})$/;
 // Unversioned shell files whose bytes may change between deploys.
-var STATIC = /^\/(?:manifest\.webmanifest|fury-remastered\.svg|fury-remastered-home-\d+-v\d+\.png|apple-touch-icon(?:-precomposed)?\.png)$/;
+var STATIC = /^\/(?:manifest\.webmanifest|favicon\.ico|fury-remastered\.svg|fury-remastered-(?:home|maskable)-\d+-v\d+\.png|apple-touch-icon(?:-precomposed)?\.png)$/;
 
 // Which strategy handles a request, or null to leave it to the network untouched:
 // non-GET, ranged (soundtrack .m4a streams), cross-origin, /multiplayer/, /api/,
@@ -65,7 +65,7 @@ function pageKey(path) { return path === '/' ? '/index.html' : path; }
 function references(text, base) {
   var found = [], match;
   var versioned = /(["'])(?:\.\/)?([a-z0-9_-]+\.(?:js|css|wasm)\?v=[a-f0-9]{40})\1/g;
-  var fixed = /(["'])((?:\.?\/)?[a-z0-9_-]+(?:[.-][a-z0-9]+)*\.(?:png|svg|webmanifest))\1/g;
+  var fixed = /(["'])((?:\.?\/)?[a-z0-9_-]+(?:[.-][a-z0-9]+)*\.(?:png|svg|ico|webmanifest))\1/g;
   while ((match = versioned.exec(text))) found.push(new URL(match[2], base).href);
   while ((match = fixed.exec(text))) found.push(new URL(match[2], base).href);
   return found;
@@ -108,7 +108,7 @@ async function networkFirst(network, lookup, timeout) {
     var first = await Promise.race([network, expired]);
     if (first && first.status < 500) return first;
     var cached = await lookup();
-    return cached || (first || network);
+    return cached || first || await network;
   } catch (error) {
     return (await lookup()) || Response.error();
   } finally {
@@ -196,7 +196,9 @@ function respond(event, kind, request) {
     var cache = kind === 'blob' ? await caches.open(CONTENT) : null;
     var hit = cache ? await cache.match(request.url, { ignoreVary: true }) : await caches.match(request.url, { ignoreVary: true });
     if (hit) return hit;
-    var response = await fetch(request);
+    var response;
+    // A plain network error, not a rejected respondWith (which WebKit logs as a page error).
+    try { response = await fetch(request); } catch (error) { return Response.error(); }
     if (cacheable(response)) {
       // The Worker serves any ?v= with the current bytes, so only this
       // deploy's version is written; other versions are read-only here.
