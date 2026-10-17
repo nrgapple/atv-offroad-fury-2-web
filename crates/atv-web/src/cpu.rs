@@ -58,6 +58,17 @@ impl CpuModel {
         })
     }
 }
+/// Seconds a riding CPU has stayed below walking pace. The grid hold keeps
+/// the clock at zero: otherwise every CPU braked through the intro and
+/// countdown would trip the stuck recovery at GO and all reset onto the same
+/// racing-line checkpoint, stacked on top of each other.
+fn stuck_clock(stuck: f32, hold: bool, riding: bool, speed: f32, dt: f32) -> f32 {
+    if !hold && riding && speed.abs() < 3. {
+        stuck + dt
+    } else {
+        0.
+    }
+}
 pub struct CpuRacer {
     pub vehicle: Vehicle,
     driver: atv_core::race_ai::Driver,
@@ -289,11 +300,13 @@ impl CpuRacer {
             )?);
         }
         let frame = self.vehicle.frame();
-        if frame.wreck.phase == atv_core::wreck::Phase::Riding && frame.speed.abs() < 3. {
-            self.stuck += DT;
-        } else {
-            self.stuck = 0.;
-        }
+        self.stuck = stuck_clock(
+            self.stuck,
+            world.hold,
+            frame.wreck.phase == atv_core::wreck::Phase::Riding,
+            frame.speed,
+            DT,
+        );
         let rider_wreck = self.wreck.frame();
         let rider_matrices = if rider_wreck.is_some() {
             self.wreck.pose(world.nodes)?.world_matrices
@@ -338,5 +351,25 @@ impl CpuRacer {
         self.mode = None;
         self.driver.repositioned();
         Ok(())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::stuck_clock;
+    #[test]
+    fn grid_hold_never_counts_as_stuck() {
+        let mut stuck = 0.;
+        // Intro and 4s countdown on the brakes.
+        for _ in 0..600 {
+            stuck = stuck_clock(stuck, true, true, 0., 1. / 60.);
+        }
+        assert_eq!(stuck, 0.);
+        // After GO a pinned CPU accumulates; moving or wrecking clears it.
+        for _ in 0..60 {
+            stuck = stuck_clock(stuck, false, true, 1., 1. / 60.);
+        }
+        assert!((stuck - 1.).abs() < 1e-4);
+        assert_eq!(stuck_clock(stuck, false, true, 5., 1. / 60.), 0.);
+        assert_eq!(stuck_clock(stuck, false, false, 0., 1. / 60.), 0.);
     }
 }

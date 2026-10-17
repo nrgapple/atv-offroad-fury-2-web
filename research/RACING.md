@@ -48,6 +48,8 @@ for the scalar branches, not whole-race replay):
   global random stream.
 - Off-track (5 s) and stuck (under 3ft/s for 4 s) CPU recovery to the race
   checkpoint; the original consumer of the off-track timer is unrecovered.
+  The stuck clock runs only after GO: counting the braked grid hold reset
+  every CPU at GO onto one shared checkpoint, stacked on each other.
 - Rider-to-rider contact through the multiplayer `peer_contact` proxy.
 - The motorcycle race preview is kinematic route following at fixed speeds; it
   never runs for ATV racers.
