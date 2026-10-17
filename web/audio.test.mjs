@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { GameAudio } from './audio.js';
+import { GameAudio, applyAudioSession, loadAudioSettings } from './audio.js';
 
 test('paused Music preview advances streaming without starting engine audio; focus exit suspends it', async () => {
   const listeners = new Map();
@@ -339,4 +339,20 @@ test('the original Rain loop has one scene voice, retains phase through ATV rese
     await audio.loadWeather({selection:{active:false,definition:{kind:'rain'}},isCurrent:()=>true});assert(voice.stopped);assert.equal(audio.weatherSource,null);assert.equal(loads,1);
     await audio.loadWeather({selection,isCurrent:()=>true});await audio.update(1/60,{throttle:0},frame);const second=audio.weatherSource;assert.equal(audio.weatherStarts,2);audio.close();assert(second.stopped);assert.equal(audio.weatherSource,null);assert(nodes.filter(node=>node.started).every(node=>node.stopped));
   }finally{audio.close();globalThis.window=previousWindow;}
+});
+
+test('silent switch preference selects the iOS audio session type', () => {
+  const memory = new Map(), storage = { getItem: key => memory.get(key) ?? null, setItem: (key, value) => memory.set(key, value) };
+  assert.equal(loadAudioSettings(storage).silent, 'play');
+  memory.set('atv-audio-v1', JSON.stringify({ silent: 'mute' }));
+  assert.equal(loadAudioSettings(storage).silent, 'mute');
+  memory.set('atv-audio-v1', JSON.stringify({ silent: 'loud' }));
+  assert.equal(loadAudioSettings(storage).silent, 'play');
+  const session = { type: 'auto' };
+  assert.equal(applyAudioSession('play', session), true);
+  assert.equal(session.type, 'playback');
+  applyAudioSession('mute', session);
+  assert.equal(session.type, 'ambient');
+  assert.equal(applyAudioSession('play', undefined), false);
+  assert.equal(applyAudioSession('play', { set type(_) { throw new Error('read-only'); } }), false);
 });

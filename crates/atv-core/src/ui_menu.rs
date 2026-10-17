@@ -82,6 +82,10 @@ pub struct Request {
     /// Authored optional sound layer: "enhanced" (default) or "original".
     #[serde(default)]
     pub sound_mode: String,
+    /// iOS Ring/Silent switch handling ("play" or "mute"); empty when the
+    /// browser has no audio session API, which hides the row.
+    #[serde(default)]
+    pub silent_mode: String,
     #[serde(default)]
     pub menu_logo: bool,
     #[serde(default)]
@@ -381,6 +385,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         || request.loading_status.len() > 128
         || request.track_name.len() > 128
         || request.sound_mode.len() > 16
+        || !matches!(request.silent_mode.as_str(), "" | "play" | "mute")
         || request.track_image.len() > 128
         || request.capture_label.len() > 128
         || request.binding_device.len() > 32
@@ -1283,13 +1288,25 @@ pub fn layout(request: Request) -> Result<Frame> {
             if request.page == "hud-settings" && request.fullscreen {
                 choices.push(("Fullscreen", "fullscreen"));
             }
+            if request.page == "extras" && !request.silent_mode.is_empty() {
+                choices.push((
+                    if request.silent_mode == "mute" {
+                        "Silent switch: Mute game"
+                    } else {
+                        "Silent switch: Play sound"
+                    },
+                    "silentmode",
+                ));
+            }
             choices.push(("Back", "back"));
+            // Seven rows still fit the 448-unit landscape height at 44+ units.
+            let row = 54f32.min((h - 100.) / choices.len() as f32);
             for (i, (label, action)) in choices.iter().enumerate() {
                 f.choices.push((*action).into());
                 f.button(
                     label,
                     action,
-                    [24., 92. + i as f32 * 54., w - 48., 54.],
+                    [24., 92. + i as f32 * row, w - 48., row],
                     request.selection % choices.len() == i,
                 );
             }
@@ -1816,6 +1833,7 @@ mod tests {
             music_volume: 70,
             sfx_volume: 100,
             sound_mode: String::new(),
+            silent_mode: String::new(),
             menu_logo: true,
             menu_atv: true,
             diagnostics_mode: String::new(),
@@ -2211,6 +2229,35 @@ mod tests {
         assert_eq!(enhanced[0], "Crashes: Crazy");
         assert_eq!(enhanced[2], "Chase camera: Assisted");
         assert_eq!(enhanced[3], "Flips: Unleashed backflip & 360");
+    }
+    #[test]
+    fn silent_switch_row_appears_only_with_an_audio_session_and_fits() {
+        let plain = layout(request("extras", 390., 844.)).unwrap();
+        assert!(!plain.choices.iter().any(|c| c == "silentmode"));
+        for (w, h, mode, label) in [
+            (390., 844., "play", "Silent switch: Play sound"),
+            (844., 390., "mute", "Silent switch: Mute game"),
+            (320., 568., "play", "Silent switch: Play sound"),
+        ] {
+            let mut r = request("extras", w, h);
+            r.silent_mode = mode.into();
+            let frame = layout(r).unwrap();
+            assert_eq!(frame.choices[5], "silentmode");
+            assert_eq!(frame.choices.last().unwrap(), "back");
+            let hit = frame
+                .hits
+                .iter()
+                .find(|h| h.action == "silentmode")
+                .unwrap();
+            assert_eq!(hit.label, label);
+            for hit in &frame.hits {
+                assert!(hit.rect[1] + hit.rect[3] <= frame.height + 0.001);
+                assert!(hit.rect[3] >= 44.);
+            }
+        }
+        let mut invalid = request("extras", 390., 844.);
+        invalid.silent_mode = "loud".into();
+        assert!(layout(invalid).is_err());
     }
     #[test]
     fn minimap_settings_fit_and_validate_sizes() {
