@@ -921,6 +921,11 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                     sim.input_generation = generation;
                 }
                 vehicle.set_stunt_landing_safe(safe);
+                vehicle.set_realistic_train(
+                    raw.get("realistic_train")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                );
                 vehicle.set_flips(
                     raw.get("flips")
                         .and_then(serde_json::Value::as_bool)

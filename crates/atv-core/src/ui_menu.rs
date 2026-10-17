@@ -120,6 +120,9 @@ pub struct Request {
     /// Authored MX vs. ATV Unleashed backflip/three-sixty; off is original.
     #[serde(default)]
     pub flips: bool,
+    /// Authored train riding relative to the moving support; off is original.
+    #[serde(default)]
+    pub realistic_train: bool,
     #[serde(default)]
     pub speed_rush: String,
     /// Display → Graphics choice (auto/original/enhanced/high) and, for Auto,
@@ -1276,6 +1279,14 @@ pub fn layout(request: Request) -> Result<Frame> {
                         },
                         "flips",
                     ),
+                    (
+                        if request.realistic_train {
+                            "Train riding: Realistic"
+                        } else {
+                            "Train riding: Original"
+                        },
+                        "train-riding",
+                    ),
                     (diagnostics, "diagnostics"),
                 ],
                 _ => vec![
@@ -1299,8 +1310,8 @@ pub fn layout(request: Request) -> Result<Frame> {
                 ));
             }
             choices.push(("Back", "back"));
-            // Seven rows still fit the 448-unit landscape height at 44+ units.
-            let row = 54f32.min((h - 100.) / choices.len() as f32);
+            // Eight rows still fit the 448-unit landscape height at 44+ units.
+            let row = 54f32.min((h - 96.) / choices.len() as f32);
             for (i, (label, action)) in choices.iter().enumerate() {
                 f.choices.push((*action).into());
                 f.button(
@@ -1843,6 +1854,7 @@ mod tests {
             original_camera: false,
             chase_assist: false,
             flips: false,
+            realistic_train: false,
             speed_rush: "normal".into(),
             graphics_preset: String::new(),
             graphics_resolved: String::new(),
@@ -2208,6 +2220,7 @@ mod tests {
                     "crash-camera",
                     "chase-camera",
                     "flips",
+                    "train-riding",
                     "diagnostics",
                     "back"
                 ]
@@ -2221,14 +2234,17 @@ mod tests {
         assert_eq!(original[0], "Crashes: Original");
         assert_eq!(original[2], "Chase camera: Original");
         assert_eq!(original[3], "Flips: Off (original)");
+        assert_eq!(original[4], "Train riding: Original");
         let mut enhanced = request("extras", 390., 844.);
         enhanced.crash_mode = "crazy".into();
         enhanced.chase_assist = true;
         enhanced.flips = true;
+        enhanced.realistic_train = true;
         let enhanced = labels(enhanced);
         assert_eq!(enhanced[0], "Crashes: Crazy");
         assert_eq!(enhanced[2], "Chase camera: Assisted");
         assert_eq!(enhanced[3], "Flips: Unleashed backflip & 360");
+        assert_eq!(enhanced[4], "Train riding: Realistic");
     }
     #[test]
     fn silent_switch_row_appears_only_with_an_audio_session_and_fits() {
@@ -2242,7 +2258,7 @@ mod tests {
             let mut r = request("extras", w, h);
             r.silent_mode = mode.into();
             let frame = layout(r).unwrap();
-            assert_eq!(frame.choices[5], "silentmode");
+            assert_eq!(frame.choices[6], "silentmode");
             assert_eq!(frame.choices.last().unwrap(), "back");
             let hit = frame
                 .hits

@@ -165,6 +165,33 @@ pub struct StictionInput {
     pub stiction_speed: f32,
 }
 pub fn gravity_stiction(input: StictionInput) -> Result<Vec3> {
+    validate_stiction(input)?;
+    if !input.all_contacts {
+        return Ok([0.; 3]);
+    }
+    let weight = f32::from_bits(0x4200cccd) * input.mass;
+    Ok(plane_stiction(
+        input,
+        [weight * 0.0, weight * 1.0, weight * 0.0],
+    ))
+}
+
+/// Authored realistic train riding: the same contact-plane stiction applied to
+/// the force that holds the quad to an accelerating support (mass times the
+/// support's acceleration), so the tires hold it through curves without the
+/// steady sideways creep a pure velocity damper needs. Not part of 001d8540.
+pub fn support_stiction(input: StictionInput, acceleration: Vec3) -> Result<Vec3> {
+    validate_stiction(input)?;
+    if acceleration.iter().any(|v| !v.is_finite()) {
+        return Err("nonfinite support acceleration".into());
+    }
+    if !input.all_contacts {
+        return Ok([0.; 3]);
+    }
+    Ok(plane_stiction(input, acceleration.map(|a| a * input.mass)))
+}
+
+fn validate_stiction(input: StictionInput) -> Result<()> {
     if input
         .normal
         .iter()
@@ -182,11 +209,11 @@ pub fn gravity_stiction(input: StictionInput) -> Result<Vec3> {
     {
         return Err("nonfinite gravity stiction input".into());
     }
-    if !input.all_contacts {
-        return Ok([0.; 3]);
-    }
-    let weight = f32::from_bits(0x4200cccd) * input.mass;
-    let up_force = [weight * 0.0, weight * 1.0, weight * 0.0];
+    Ok(())
+}
+
+/// `up_force` is the force the tires supply to hold the quad on the plane.
+fn plane_stiction(input: StictionInput, up_force: Vec3) -> Vec3 {
     let normal_projection = (input.normal[0] * up_force[0] + input.normal[1] * up_force[1])
         + input.normal[2] * up_force[2];
     let tangent_force =
@@ -217,7 +244,7 @@ pub fn gravity_stiction(input: StictionInput) -> Result<Vec3> {
             force[i] += along[i];
         }
     }
-    Ok(force)
+    force
 }
 
 /// The final local-velocity settling stage. Returns None when the original

@@ -297,6 +297,10 @@ pub struct Vehicle {
     flips: Option<crate::flip_tricks::FlipTricks>,
     flip_controls: (u8, [f32; 2]),
     flip_events: Vec<crate::flip_tricks::Event>,
+    /// Authored Extras option: grip, drag and settling act relative to a
+    /// moving support (the Arlington train) and its body contacts keep
+    /// friction. Off retains the recovered world-frame 001d8540 path.
+    realistic_train: bool,
 }
 impl Vehicle {
     pub fn new(mesh: &Mesh, data: &PhysicsData, origin: Vec3, yaw: f32) -> Result<Self> {
@@ -501,6 +505,7 @@ impl Vehicle {
             flips: None,
             flip_controls: (0, [0.; 2]),
             flip_events: Vec::new(),
+            realistic_train: false,
         })
     }
     /// Optional Extras flips (authored, from MX vs. ATV Unleashed). Off drops
@@ -514,6 +519,10 @@ impl Vehicle {
             )?);
         }
         Ok(())
+    }
+    /// Optional Extras realistic train riding (authored). Off is original.
+    pub fn set_realistic_train(&mut self, enabled: bool) {
+        self.realistic_train = enabled;
     }
     /// Touch flip request (see flip_tricks::Request); ignored while off.
     pub fn request_flip(&mut self, trick: crate::flip_tricks::Trick, launch: bool, hold: f32) {
@@ -961,6 +970,28 @@ impl Vehicle {
                 }
             })
     }
+    /// Realistic train riding: the moving support's velocity field, weighted by
+    /// the share of grounded wheels standing on it so partial contact while
+    /// driving on or off blends in. Original mode and static ground are zero.
+    fn support_frame(&self) -> SupportFrame {
+        let grounded = self.contacts.iter().filter(|c| c.grounded).count();
+        let platform = self.network_platform().filter(|_| self.realistic_train);
+        let Some(motion) = platform.filter(|_| grounded > 0) else {
+            return SupportFrame::default();
+        };
+        let moving = self
+            .supports
+            .iter()
+            .zip(&self.contacts)
+            .filter(|(s, c)| c.grounded && s.motion.is_some())
+            .count();
+        let share = moving as f32 / grounded as f32;
+        SupportFrame {
+            motion: Some(motion),
+            share,
+            angular: scale(motion.angular_velocity(), share),
+        }
+    }
     pub fn translate_network(&mut self, displacement: Vec3) {
         self.body.center = add(self.body.center, displacement);
         for point in &mut self.wheel_contact_points {
@@ -1140,8 +1171,15 @@ impl Vehicle {
             input.reverse && !self.forced_landing
         };
         self.applied_drive_controls = (throttle, brake, reverse);
-        let speed = inverse_transform(self.body.basis(), self.body.linear_velocity)[2];
-        let magnitude = speed_magnitude(self.body.linear_velocity);
+        // Realistic train riding measures riding speed against the moving
+        // support under the previous frame's grounded wheels.
+        let support_frame = self.support_frame();
+        let riding_velocity = sub(
+            self.body.linear_velocity,
+            support_frame.velocity_at(self.body.center),
+        );
+        let speed = inverse_transform(self.body.basis(), riding_velocity)[2];
+        let magnitude = speed_magnitude(riding_velocity);
         // 001dd830 snapshots grip/rider gates and stored support normals before
         // the outer wheel queries. Substeps keep those controller inputs fixed.
         let rider_grounded = self.contacts.iter().any(|c| c.grounded);
@@ -1461,24 +1499,36 @@ impl Vehicle {
             if !rider_grounded {
                 self.body.force[1] -= self.airborne_gravity * f32::from_bits(0x4200cccd);
             }
+            let ground_velocity = support_frame.velocity_at(self.body.center);
+            let relative_velocity = sub(self.body.linear_velocity, ground_velocity);
             if all_contacts {
-                self.body.force = add(
-                    self.body.force,
-                    grip::gravity_stiction(grip::StictionInput {
-                        all_contacts: true,
-                        mass: self.body_config.mass,
-                        normal: average_normal,
-                        forward: b[2],
-                        local_forward_speed: inverse_transform(b, self.body.linear_velocity)[2],
-                        brake,
-                        stiction_speed: self.stiction_speed,
-                    })?,
-                );
+                let stiction = grip::StictionInput {
+                    all_contacts: true,
+                    mass: self.body_config.mass,
+                    normal: average_normal,
+                    forward: b[2],
+                    local_forward_speed: inverse_transform(b, relative_velocity)[2],
+                    brake,
+                    stiction_speed: self.stiction_speed,
+                };
+                self.body.force = add(self.body.force, grip::gravity_stiction(stiction)?);
+                if support_frame.motion.is_some() {
+                    self.body.force = add(
+                        self.body.force,
+                        grip::support_stiction(
+                            stiction,
+                            support_frame.acceleration_at(self.body.center),
+                        )?,
+                    );
+                }
             }
             if rider_grounded {
                 let [front_velocity, rear_velocity] = grip::contact_point_velocities(
-                    inverse_transform(b, self.body.linear_velocity),
-                    self.body.local_angular_velocity,
+                    inverse_transform(b, relative_velocity),
+                    sub(
+                        self.body.local_angular_velocity,
+                        inverse_transform(b, support_frame.angular),
+                    ),
                     self.body_config.center_of_mass,
                 );
                 self.rear_contact_speed = rear_velocity[2];
@@ -1506,13 +1556,13 @@ impl Vehicle {
                 }
                 self.body.force = add(
                     self.body.force,
-                    grip::material_drag(self.body.linear_velocity, magnitude, m.drag)?,
+                    grip::material_drag(relative_velocity, magnitude, m.drag)?,
                 );
                 if let Some(local) = grip::settle_local_velocity(
-                    inverse_transform(b, self.body.linear_velocity),
+                    inverse_transform(b, relative_velocity),
                     brake != 0.,
                 )? {
-                    self.body.linear_velocity = transform(b, local);
+                    self.body.linear_velocity = add(transform(b, local), ground_velocity);
                 }
             }
             if !crashed {
@@ -1536,7 +1586,7 @@ impl Vehicle {
                         pitch: angles[0],
                         roll: angles[2],
                         local_angular_velocity: self.body.local_angular_velocity,
-                        local_forward_speed: inverse_transform(b, self.body.linear_velocity)[2],
+                        local_forward_speed: inverse_transform(b, relative_velocity)[2],
                         world_vertical_speed: self.body.linear_velocity[1],
                         world_body_right: b[0],
                         zero_right_fallback: [0.; 3],
@@ -1697,7 +1747,9 @@ impl Vehicle {
                     if let Some(target) = target {
                         let mut config = self.chassis_config;
                         //001dcc70 disables moving-target tangential friction.
-                        config.friction_scale = 0.;
+                        if !self.realistic_train {
+                            config.friction_scale = 0.;
+                        }
                         target.resolve_contact(
                             &mut self.body,
                             &self.body_config,
@@ -1790,7 +1842,9 @@ impl Vehicle {
                 {
                     self.dynamic_secondary_contacts += 1;
                     let mut config = self.chassis_config;
-                    config.friction_scale = 0.;
+                    if !self.realistic_train {
+                        config.friction_scale = 0.;
+                    }
                     target.resolve_contact_with_position_scale(
                         &mut self.body,
                         &self.body_config,
@@ -1975,6 +2029,31 @@ impl Vehicle {
             self.linkage_matrices = Some(matrices);
         }
         Ok(self.frame())
+    }
+}
+
+/// Moving-support velocity field used by realistic train riding.
+#[derive(Debug, Clone, Copy, Default)]
+struct SupportFrame {
+    motion: Option<crate::train::MotionState>,
+    share: f32,
+    /// Weighted world angular velocity of the support.
+    angular: Vec3,
+}
+impl SupportFrame {
+    fn velocity_at(&self, point: Vec3) -> Vec3 {
+        self.motion
+            .map_or([0.; 3], |m| scale(m.point_velocity(point), self.share))
+    }
+    /// Steady-rotation (centripetal) acceleration; the route keeps a constant
+    /// speed, so the support's linear acceleration is not tracked.
+    fn acceleration_at(&self, point: Vec3) -> Vec3 {
+        self.motion.map_or([0.; 3], |m| {
+            scale(
+                wheel::cross(m.angular_velocity(), m.point_velocity(point)),
+                self.share,
+            )
+        })
     }
 }
 
@@ -2378,6 +2457,53 @@ mod tests {
             let delta = traces[1].linear_velocity[axis] - traces[0].linear_velocity[axis];
             assert!((delta - force / mass * (1.5 / 60.)).abs() < 0.00001);
         }
+    }
+
+    #[test]
+    fn realistic_train_grips_and_drags_relative_to_the_moving_support() {
+        // A support translating sideways at 30 ft/s with no rotation.
+        let train = [30., 0., 0.];
+        let mut previous = [0.; 16];
+        for i in [0, 5, 10, 15] {
+            previous[i] = 1.;
+        }
+        previous[12..15].copy_from_slice(&[500., 40., 500.]);
+        let mut current = previous;
+        current[12] += train[0] / 60.;
+        let motion = crate::train::MotionState {
+            current,
+            previous,
+            reciprocal_dt: 60.,
+        };
+        let run = |velocity: Vec3, moving: bool, realistic: bool| {
+            let (mut vehicle, terrain) = fixture();
+            vehicle.body =
+                BodyState::new([500., 50., 500.], [1., 0., 0., 0.], &vehicle.body_config).unwrap();
+            vehicle.body.linear_velocity = velocity;
+            for material in vehicle.materials.as_mut().unwrap() {
+                material.drag = 1.;
+            }
+            for (contact, support) in vehicle.contacts.iter_mut().zip(&mut vehicle.supports) {
+                contact.grounded = true;
+                support.motion = moving.then_some(motion);
+            }
+            vehicle.set_realistic_train(realistic);
+            vehicle
+                .step(&terrain, VehicleInput::default(), 1. / 60.)
+                .unwrap()
+                .linear_velocity
+        };
+        let at_rest = run([0.; 3], false, false);
+        // Riding along: the quad behaves as if parked on static ground.
+        let riding = run(train, true, true);
+        for axis in 0..3 {
+            assert!((riding[axis] - train[axis] - at_rest[axis]).abs() < 1e-3);
+        }
+        // Original: world-frame grip and drag pull the quad back off the train.
+        let original = run(train, true, false);
+        assert!(original[0] < train[0] + at_rest[0] - 1.);
+        // Option on without a moving support leaves the static path unchanged.
+        assert_eq!(run(train, false, true), run(train, false, false));
     }
 
     #[test]

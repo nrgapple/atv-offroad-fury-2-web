@@ -168,13 +168,14 @@ export class RideEffectsSettings {
     if (storage === undefined) {
       try { storage = globalThis.localStorage; } catch { storage = null; }
     }
-    this.storage = storage; this.mode = 'original'; this.camera = 'tight'; this.chase = 'original'; this.flips = 'off'; this.speed = reducedMotion ? 'off' : 'normal';
+    this.storage = storage; this.mode = 'original'; this.camera = 'tight'; this.chase = 'original'; this.flips = 'off'; this.train = 'original'; this.speed = reducedMotion ? 'off' : 'normal';
     try {
       const speed = storage?.getItem('atv-speed-rush');
       if (['off','low','normal','high'].includes(speed)) this.speed = speed;
       this.camera = storage?.getItem('atv-crash-camera') === 'original' ? 'original' : 'tight';
       this.chase = storage?.getItem('atv-chase-camera') === 'assisted' ? 'assisted' : 'original';
       this.flips = storage?.getItem('atv-flips') === 'unleashed' ? 'unleashed' : 'off';
+      this.train = storage?.getItem('atv-train-riding') === 'realistic' ? 'realistic' : 'original';
       const mode = storage?.getItem('atv-crash-mode');
       this.mode = ['original','crazy','gorn'].includes(mode) ? mode : storage?.getItem('atv-funny-crashes') === 'true' ? 'crazy' : 'original';
     } catch { /* Session settings. */ }
@@ -200,6 +201,12 @@ export class RideEffectsSettings {
   toggleFlips() {
     this.flips = this.flipsEnabled ? 'off' : 'unleashed';
     try { this.storage?.setItem('atv-flips',this.flips); } catch { /* Session settings. */ }
+  }
+  // Authored train riding: grip and drag measured against the moving train. Off is original.
+  get realisticTrain() { return this.train === 'realistic'; }
+  toggleTrain() {
+    this.train = this.realisticTrain ? 'original' : 'realistic';
+    try { this.storage?.setItem('atv-train-riding',this.train); } catch { /* Session settings. */ }
   }
   get enabled() { return this.mode !== 'original'; }
   toggle(direction = 1) {
