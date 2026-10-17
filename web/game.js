@@ -210,17 +210,21 @@ worker.onerror = event => {
   pending.clear();
 };
 // Archive parsing (2) and member extraction (3) reuse one large input many
-// times. The worker keeps recently used inputs under a key, so a call sends
+// times. The worker keeps recently used archives under a key, so a call sends
 // only the key; an evicted or collected input is sent again in full.
 const RESIDENT_LIMIT = 48 * 1048576;
-const residentKeys = new WeakMap(), resident = new Map();
+const residentKeys = new WeakMap(), resident = new Map(), extractedOnce = new WeakSet();
 const residentDrop = key => { if (resident.delete(key)) worker.postMessage({ release: key }); };
 const residentRelease = new FinalizationRegistry(residentDrop);
 let residentNext = 0;
 function codecMessage(id, op, index, bytes, resend = false) {
   if ((op !== 2 && op !== 3) || bytes.byteLength < 65536 || bytes.byteLength > RESIDENT_LIMIT) return { id, op, index, bytes };
   let key = residentKeys.get(bytes);
-  if (key === undefined) { key = ++residentNext; residentKeys.set(bytes, key); residentRelease.register(bytes, key); }
+  if (key === undefined) {
+    // A one-off extraction (a single member's blocks) is not worth keeping.
+    if (op === 3 && !extractedOnce.has(bytes)) { extractedOnce.add(bytes); return { id, op, index, bytes }; }
+    key = ++residentNext; residentKeys.set(bytes, key); residentRelease.register(bytes, key);
+  }
   const held = resident.has(key) && !resend;
   resident.delete(key); resident.set(key, bytes.byteLength);
   if (held) return { id, op, index, key };
