@@ -795,6 +795,35 @@ mod tests {
             "steeper return: {:?}",
             d.avoidance.velocity
         );
+        // The node direction is the race station's (RaceStatus +0xbc), not the
+        // nearest segment: a station still on segment 3 (heading −x) uses
+        // that direction for the same pose.
+        let mut velocities = Vec::new();
+        for segment in [0, 3] {
+            let mut driver = Driver::new(0, Options::default());
+            let (_, d) = driver
+                .step(
+                    &course,
+                    &at(-40.),
+                    20.,
+                    0.,
+                    1. / 60.,
+                    Context {
+                        peers: &[],
+                        scene: None,
+                        clearance: 1.,
+                        terrain_normal: [0., 1., 0.],
+                        station: Some(crate::race::Station {
+                            segment,
+                            fraction: 0.5,
+                        }),
+                    },
+                )
+                .unwrap();
+            assert!(d.avoidance.track_edge && d.route_segment == 0, "{d:?}");
+            velocities.push(d.avoidance.velocity);
+        }
+        assert_ne!(velocities[0], velocities[1]);
     }
     #[test]
     fn grounded_riders_lean_on_flag_eight_nodes_only() {
