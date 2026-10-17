@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TrackBuilder, TRACK_FLOATS, trackStrength } from './tire-tracks.js';
+import { TrackBuilder, TRACK_FLOATS, trackStrength, wheelMark } from './tire-tracks.js';
 import { GraphicsSettings, VibrationSettings, DirtBuildup, Rumble, detectGraphicsTier, parseDirtZones, presetFeatures, rumbleStrength, wheelReprojection, MAX_WHEEL_LIFT } from './graphics.js';
 
 const store = (values = {}) => ({ values, getItem: k => values[k] ?? null, setItem(k, v) { values[k] = String(v); } });
@@ -132,15 +132,17 @@ test('wheel re-projection lifts only wheels inside the visible ground, within th
 
 test('tire tracks follow original zone flags and ring-buffer each wheel', () => {
   const zones = parseDirtZones(toy);
-  assert.equal(trackStrength(zones[1], false), .5, 'GenerateTireTrack ruts');
-  assert.equal(trackStrength(zones[0], false), .26, 'dirt-building zones leave light marks');
+  assert.equal(trackStrength(zones[1], false), 1, 'GenerateTireTrack ground is soft');
+  assert.equal(trackStrength(zones[0], false), .35, 'dirt-building zones are firm');
   assert.equal(trackStrength(zones[2], false), 0, 'cleaning zones leave none');
-  assert.equal(trackStrength(zones[3], true), .5, 'MUD scenery ruts');
+  assert.equal(trackStrength(zones[3], true), 1, 'MUD scenery is soft');
   const b = new TrackBuilder(6), at = (x, extra = {}) => ({ ...frame({ zone: 1, ...extra }), wreck: { phase: 'Riding' }, wheel_effects: { ...frame({ zone: 1, ...extra }).wheel_effects, time: x, centers: [[x, 1, 0], [x, 1, 2], [x, 1, 4], [x, 1, 6]] } });
   b.step(at(0), zones, () => 0); assert.equal(b.count, 0, 'first contact only starts a strip');
   b.step(at(.3), zones, () => 0); assert.equal(b.count, 0, 'short moves wait');
   b.step(at(1), zones, () => 0); assert.equal(b.count, 4, 'one segment per wheel');
-  assert.deepEqual([...b.data.subarray(0, TRACK_FLOATS)].map(v => +v.toFixed(3)), [0, .04, .36, -1, 0, 1, .5]);
+  const rut = wheelMark(1, 30, [0, 0]).rut;
+  assert.deepEqual([...b.data.subarray(0, TRACK_FLOATS)].map(v => +v.toFixed(3)), [0, .04, .36, -1, 0, 1, 0, 0, 1], 'strips fade in from nothing');
+  assert.equal(+b.data[2 * TRACK_FLOATS + 6].toFixed(3), +rut.toFixed(3), 'and reach the rolling rut');
   b.step(at(2), zones, () => 0); assert.equal(b.count, 6); assert.equal(b.next, 2, 'the ring wraps');
   assert.equal(b.total, 8);
   b.step(at(9), zones, () => 0); assert.equal(b.total, 8, 'teleports break the strip');
@@ -149,6 +151,27 @@ test('tire tracks follow original zone flags and ring-buffer each wheel', () => 
   b.step({ ...at(13), wreck: { phase: 'Ejected' } }, zones, () => 0); assert(b.wheels.every(w => w === null));
   b.reset(); assert.equal(b.count, 0); assert(b.data.every(v => v === 0));
   const dry = new TrackBuilder(4); dry.step(at(0, { zone: 2 }), zones, () => 0); dry.step(at(1, { zone: 2 }), zones, () => 0); assert.equal(dry.count, 0);
+});
+
+test('tire marks come from speed, ground softness and contact slip', () => {
+  assert(wheelMark(1, 5, [0, 0]).rut < wheelMark(1, 30, [0, 0]).rut * .6, 'slow rolling ruts mud less');
+  assert(wheelMark(.35, 5, [0, 0]).rut < .01, 'slow rolling barely marks firm dirt');
+  assert(wheelMark(.35, 40, [0, 0]).rut < wheelMark(1, 40, [0, 0]).rut * .25, 'firm dirt only lightly presses');
+  assert.equal(wheelMark(.35, 30, [2, 1]).scuff, 0, 'a gripping turn does not scuff');
+  assert(wheelMark(.35, 30, [-14, 0]).scuff > .6, 'a sideways slide scuffs');
+  assert(wheelMark(.35, 10, [0, 18]).scuff > .6, 'wheelspin scuffs');
+  assert(wheelMark(.35, 10, [0, -18]).scuff > .6, 'a locked wheel scuffs');
+  assert.deepEqual(wheelMark(0, 40, [20, 20]), { rut: 0, scuff: 0 }, 'unmarked ground stays clean');
+  const zones = parseDirtZones(toy), b = new TrackBuilder(40);
+  const at = (x, slip, speed = 30) => { const f = frame({ zone: 0, speed }); return { ...f, wreck: { phase: 'Riding' }, wheel_effects: { ...f.wheel_effects, time: x, slip: [slip, slip, slip, slip], centers: [[x, 1, 0], [x, 1, 2], [x, 1, 4], [x, 1, 6]] } }; };
+  const end = () => b.data.subarray(((b.next + b.capacity - 1) % b.capacity) * 6 * TRACK_FLOATS + 2 * TRACK_FLOATS);
+  for (let x = 0; x <= 5; x++) b.step(at(x, [0, 0], 4), zones, () => 0);
+  assert.equal(b.total, 0, 'slow rolling on firm dirt leaves nothing');
+  for (let x = 6; x <= 8; x++) b.step(at(x, [12, 0]), zones, () => 0);
+  assert(b.total > 0 && end()[7] > .5, 'sliding on firm dirt leaves scuffs');
+  for (let x = 9; x <= 11; x++) b.step(at(x, [0, 0]), zones, () => 0);
+  assert.equal(end()[7], 0, 'scuffs end when the tire grips again');
+  assert(end()[6] > 0 && end()[6] < .15, 'leaving only a faint rolling press at speed');
 });
 
 import { DustEmitter, DUST_FLOATS } from './lingering-dust.js';

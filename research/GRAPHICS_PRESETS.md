@@ -24,7 +24,7 @@ receives the same input fields in every preset.
 | Soft contact shadows (player, detached rider, CPU racers, remote riders) | Off | On | On | Authored; the original has no vehicle shadows |
 | Dirt build-up on quad and rider | Off | On | On | Original dirt textures and zone rates; authored reveal, water wash and reset |
 | Visual wheel re-projection | Off (recovered wheel placement) | On | On | Authored presentation of the documented one-frame order effect |
-| Tire tracks | Off | 600 segments, 15 s | 3,600 segments, 75 s | Original GenerateTireTrack/dirt zone flags; authored decals |
+| Tire tracks | Off | 600 segments, 15 s | 3,600 segments, 75 s | Original GenerateTireTrack/dirt zone flags; ruts from speed, scuffs from contact slip |
 | Vehicle-only sun shadow map | Off | Off | 2048², 48 ft box | Authored |
 | Water Fresnel | Off (original pass) | On | On | Authored |
 | Lingering dust | Off | 24 puffs | 96 puffs | Original GenerateDust flags and terrain texture colours; authored puffs |
@@ -130,14 +130,25 @@ still dip slightly (cause 3 in that note).
 
 `TireTrackRenderer` (`web/tire-tracks.js`) keeps one fixed ring of quads for all
 four wheels (Enhanced 600 segments fading over 15 s of simulation time; High
-3,600 over 75 s; 151 KB and 605 KB) and draws them in one call after the contact
-shadows, multiplying the ground with a soft-edged lug pattern. A segment is laid
-every 0.6 ft of travel while a wheel is grounded, dry and moving faster than
-2 ft/s; strips break in the air, in water, during wrecks and on jumps over 4 ft.
-Zones flagged `GenerateTireTrack=T` in the original TOY (the mud zones) and MUD
-scenery leave dark ruts; other zones whose `DirtAnimChangeTime` dirties the quad
-(dirt, snow) leave lighter authored marks; cleaning or unflagged zones leave
-none. The CPU copy survives context loss and is re-uploaded. Player only.
+3,600 over 75 s; 130 KB and 778 KB) and draws them in one call after the contact
+shadows. Segments are laid every 0.6 ft of travel while a wheel is grounded, dry
+and moving faster than 2 ft/s; strips break in the air, in water, during wrecks
+and on jumps over 4 ft. Zones flagged `GenerateTireTrack=T` in the original TOY
+(the mud zones) and MUD scenery are soft; other zones whose `DirtAnimChangeTime`
+dirties the quad (dirt, snow) are firm; cleaning or unflagged zones leave none.
+
+What a wheel leaves follows its physics contact. `wheel_effects.slip` reports,
+per grounded wheel, the sideways contact speed across the tire plane and the
+tread speed minus ground speed, in the same contact frame as the tire force
+step. Rolling presses a treaded rut: deep in mud at any speed, faint on firm
+ground and only above about 8 ft/s. Sideways scrub above 3 ft/s or wheelspin
+and lockup above 4 ft/s tear a wider, untreaded scuff that fades back out
+when the tire grips again; a gripping turn stays under the threshold (about
+2 ft/s measured on env01, while full-lock slides reach 12–30 ft/s). Marks
+modulate the lit ground (2× multiply), so dry
+scuffs churn darker grooves and lighter ridges, mud smears darker, and
+world-space noise breaks marks up instead of one uniform colour. The CPU copy
+survives context loss and is re-uploaded. Player only.
 
 ### Vehicle-only shadow map (High)
 
