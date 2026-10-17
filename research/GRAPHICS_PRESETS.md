@@ -40,7 +40,11 @@ It blends origin (quaternion nlerp), quad and rider bone matrices, the detached
 rider's world matrix, Crazy/Gorn ragdoll/debris matrices, CPU racer poses
 (per racer, yaw on the short arc) and the chase camera. It snaps on resets,
 moves over 30 ft, rig changes, attach/detach, crash-presentation changes, camera
-preset/mode changes, pauses and gaps over four steps. The presented frame is a
+preset/mode changes, pauses and gaps over four steps. Each node matrix blends
+as a rigid transform (shortest-arc quaternion, per-axis scale, translation);
+blending the 16 entries directly shrank fast-spinning wheels mid-interval
+(about 30% thinner at 1.6 rad per step, roughly 60 mph), which showed as wheel
+flicker in Enhanced/High. The presented frame is a
 copy; the Rust frame, HUD, audio, effects and multiplayer sends keep using the
 simulation frame. Remote riders already arrive through the `atv-net`
 Hermite smoothing sampled every render frame, so they need no second layer.

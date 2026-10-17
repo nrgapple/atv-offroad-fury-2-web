@@ -58,3 +58,14 @@ test('ATV interpolation snaps resets, teleports, motorcycles, attach changes, ca
   const c = atv(1, { race:{opponents:[{origin:[500,0,0]}]} }), d = atv(2, { race:{opponents:[{origin:[0,0,0]}]} });
   p.accept(c, d, camera(0), camera(1), 0, 1); assert.deepEqual(p.sample(d, camera(1), 8).frame.race.opponents[0].origin, [0,0,0], 'a reset CPU snaps alone');
 });
+import { blendMatrix } from './motorcycle-presentation.js';
+test('node blends stay rigid: a fast-spinning wheel keeps its size mid-interval', () => {
+  // A wheel rotating about X by 1.6 rad between ticks (about 60 mph), mirrored and scaled nodes too.
+  const spin = (angle, sx = 1, x = 0) => [sx,0,0,0, 0,Math.cos(angle),Math.sin(angle),0, 0,-Math.sin(angle),Math.cos(angle),0, x,1,2,1];
+  for (const sx of [1, -1, 2]) {
+    const m = blendMatrix(spin(0.2, sx, 0), spin(1.8, sx, 4), 0.5), expected = spin(1, sx, 2);
+    for (let c = 0; c < 3; c++) assert(Math.abs(Math.hypot(m[c*4], m[c*4+1], m[c*4+2]) - Math.abs(c ? 1 : sx)) < 1e-9, `axis ${c} keeps its length`);
+    m.forEach((v, i) => assert(Math.abs(v - expected[i]) < 1e-9, `entry ${i}: ${v} vs ${expected[i]}`));
+  }
+  assert.deepEqual(blendMatrix(spin(0.3), spin(0.3), 0.7).map(v => Math.round(v * 1e9) / 1e9), spin(0.3).map(v => Math.round(v * 1e9) / 1e9));
+});

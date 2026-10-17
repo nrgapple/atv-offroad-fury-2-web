@@ -74,7 +74,8 @@ struct QuadAudio {
     vocals: Option<qs::RiderVocals>,
     chassis: qs::Chassis,
     motion: RiderMotionCache,
-    chassis_source: Option<(Vec3, Vec3)>,
+    /// Position, velocity and volume of the clip the chassis voice started.
+    chassis_source: Option<(Vec3, Vec3, i32)>,
     water: qs::WaterEntry,
     rider_water: qs::RiderWater,
     drive: [qs::DriveEmitter; 2],
@@ -364,8 +365,8 @@ fn batch(input: &[u8]) -> Result<Vec<u8>> {
                     result.chassis = cue.or(result.chassis.take());
                     result.stop_collisions = stop;
                     // 002cdb80 sets the voice position only when a clip starts.
-                    if result.chassis.is_some() {
-                        q.chassis_source = Some((frame.origin, frame.velocity));
+                    if let Some(cue) = &result.chassis {
+                        q.chassis_source = Some((frame.origin, frame.velocity, cue.volume));
                     }
                     if !venue.terrain.is_empty() {
                         result.drive = qs::drive_on(
@@ -439,14 +440,14 @@ fn batch(input: &[u8]) -> Result<Vec<u8>> {
                             .map_err(|e| e.to_string())?,
                     );
                 }
-                if let Some((position, velocity)) = q.chassis_source {
+                if let Some((position, velocity, volume)) = q.chassis_source {
                     let command = spatial_audio::command(
                         source(position, velocity, qs::CHASSIS_MIN, qs::CHASSIS_MAX),
                         std::slice::from_ref(listener),
                     )?;
                     spatial.insert(
                         "chassis".into(),
-                        serde_json::to_value(gains(&command, 100, 1.))
+                        serde_json::to_value(gains(&command, volume, 1.))
                             .map_err(|e| e.to_string())?,
                     );
                 }
@@ -549,6 +550,33 @@ mod tests {
         assert_eq!(frame["vocal"]["sample"], "rider/mgrunt/mgrunt01.vag");
         assert_eq!(frame["chassis"]["volume"], 60);
         assert!(result["spatial"]["vocal"]["left"].as_f64().unwrap() > 0.);
+        // 002cdb80 scales the landing by its impact; the chassis voice gain
+        // follows the cue volume instead of playing every clip at full scale.
+        let landing = |impact: f32| {
+            let mut airborne = QuadFrame::default();
+            airborne.chassis.airborne = true;
+            let mut lands = QuadFrame::default();
+            lands.chassis.impact = impact;
+            let frame = |quad: &QuadFrame| serde_json::json!({"dt": 1. / 60., "camera": camera(10.), "previous_camera": camera(10.), "quad": quad});
+            let request = serde_json::json!({
+                "frames": [frame(&airborne), frame(&lands)], "world_dt": 2. / 60.,
+            });
+            let result: serde_json::Value =
+                serde_json::from_slice(&operation(request.to_string().as_bytes(), 173, 0).unwrap())
+                    .unwrap();
+            let chassis = &result["spatial"]["chassis"];
+            (
+                result["frames"][1]["chassis"]["volume"].as_i64().unwrap(),
+                chassis["left"].as_f64().unwrap() + chassis["right"].as_f64().unwrap(),
+            )
+        };
+        let (soft, soft_gain) = landing(15.);
+        let (hard, hard_gain) = landing(60.);
+        assert_eq!((soft, hard), (25, 100));
+        assert!(
+            soft_gain > 0. && soft_gain < hard_gain * 0.3,
+            "{soft_gain} vs {hard_gain}"
+        );
         assert_eq!(result["world"]["ambient"][0]["action"], "start");
         assert!(operation(b"{}", 175, 0).is_err());
     }
