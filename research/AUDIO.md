@@ -177,7 +177,8 @@ body origin enters water moving downward (normalized −Y velocity above 0.3,
 `001d7280` with the +66c latch) and when a rider starts touching water
 (`001f0860`; mapped to the port's rider buoyancy contact flag, an inference).
 The voice position is fixed where a clip starts, as the original sets it only
-then. Recovery stops the drive-on emitter's collision sounds.
+then. The chosen cue volume scales that voice's gain (`0014ed40`); earlier
+builds played every chassis clip, including soft landings, at full volume. Recovery stops the drive-on emitter's collision sounds.
 
 **Terrain drive-on** (two `001c3330` material sound emitters at the front-left
 and front-right wheels, `001c3a90`/`001c3d80`/`001c3eb0`): `001e5260` stores
