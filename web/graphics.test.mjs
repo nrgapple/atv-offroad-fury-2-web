@@ -40,9 +40,10 @@ test('presets persist, cycle in both directions and report the Auto resolution',
 });
 
 test('Original enables nothing; Enhanced caps anisotropy at 4x and High at 16x', () => {
-  assert.deepEqual(presetFeatures('original'), { preset: 'original', interpolation: false, anisotropy: 0, contactShadows: false, dirt: false, wheelReprojection: false, tireTracks: null, shadowMap: 0, fresnel: false, dust: 0 });
+  assert.deepEqual(presetFeatures('original'), { preset: 'original', interpolation: false, anisotropy: 0, contactShadows: false, dirt: false, wheelReprojection: false, tireTracks: null, shadowMap: 0, fresnel: false, dust: 0, skySmooth: false });
   assert(presetFeatures('high').tireTracks.capacity > presetFeatures('enhanced').tireTracks.capacity && presetFeatures('high').shadowMap && !presetFeatures('enhanced').shadowMap);
   assert(presetFeatures('high').dust > presetFeatures('enhanced').dust);
+  assert(presetFeatures('high').skySmooth && presetFeatures('enhanced').skySmooth);
   assert.equal(presetFeatures('bogus').preset, 'original');
   assert.equal(presetFeatures('enhanced').anisotropy, 4);
   assert.equal(presetFeatures('high').anisotropy, 16);

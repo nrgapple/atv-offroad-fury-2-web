@@ -28,6 +28,7 @@ receives the same input fields in every preset.
 | Vehicle-only sun shadow map | Off | Off | 2048², 48 ft box | Authored |
 | Water Fresnel | Off (original pass) | On | On | Authored |
 | Lingering dust | Off | 24 puffs | 96 puffs | Original GenerateDust flags and terrain texture colours; authored puffs |
+| Smooth sky | Off (original decode, bilinear) | On | On | Original CUB tiles; authored deblock, denoise, chroma upsampling and bicubic sampling |
 | Motorcycle interpolation and MX mud | Unchanged in every preset | | | Existing behavior (see `MOTORCYCLES.md`) |
 | Vibration (Settings → Controls) | Independent of the preset | | | Authored adaptation of the original vibration option |
 
@@ -56,7 +57,7 @@ simulation state by up to one batch (16.7–66.7 ms), as with motorcycles.
 
 `EXT_texture_filter_anisotropic` with `TEXTURE_MAX_ANISOTROPY_EXT` set on the
 terrain array atlas, the terrain detail map, scenery materials (including ATM
-frames) and vegetation textures. Sky tiles, vehicles, riders and effect atlases
+frames) and vegetation textures. Sky tiles (see Smooth sky), vehicles, riders and effect atlases
 are left alone. Changing the preset updates every registered texture in place;
 Original restores 1, which is the sampler default, and the gate confirms the
 frame returns to the identical pixels. Context restoration re-registers textures
@@ -169,6 +170,32 @@ water, above 15 ft/s. Each puff takes the mean colour of the original terrain
 texture layer under the wheel and fades into the fog colour. The pool is capped
 (Enhanced 24, High 96) and drawn as one instanced call; the recovered wheel dust
 and spray are untouched.
+
+### Smooth sky
+
+Each sky face is 4×4 MPEG-intra (IPUM) tiles of 128² texels, so a phone in
+portrait stretches every sky texel over roughly 5–6 device pixels. That exposes
+the compression: 8×8 block edges, low-amplitude stripe and dot patterns inside
+blocks (most visible as a grid over haze and distant mountains), and 2×2 colour
+steps from nearest-neighbour chroma.
+
+Enhanced and High upload a second decode of the same original tiles,
+`Image::smoothed_rgba` (`crates/atv-core/src/ipu.rs`, codec op 39):
+
+1. MPEG-4 Annex F deblocking of every interior 8×8 edge on Y, Cb and Cr, using
+   each macroblock's quantizer (every observed sky uses scale code 3).
+2. A bilateral filter (5×5 luma, 3×3 chroma) whose range falls off over about
+   1.6 quantizer steps, so ringing flattens while cloud edges and horizon
+   silhouettes keep their contrast.
+3. Centred triangle (3/4, 1/4) chroma upsampling instead of repeated samples.
+
+The sky pass then samples with nine-tap Catmull-Rom bicubic (`skyBicubic`)
+instead of bilinear. Tiles carry 4-texel overlapping borders (texels 120–127
+of one tile match 0–7 of its neighbour), so neither filter reaches a clamped
+edge and tile seams stay continuous. Measured natively, smoothing adds about
+24 ms per 64-tile sky. Both decodes stay in memory (about 4 MB extra per sky)
+so switching presets only re-uploads the textures; Original reuploads the
+original bytes and renders identically (`test_graphics_presets.mjs`).
 
 ### Vibration
 

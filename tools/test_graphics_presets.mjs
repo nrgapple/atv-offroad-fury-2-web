@@ -46,6 +46,7 @@ try {
       const original = await draw(candidate, 'original', yaw);
       assert.equal(original.graphics.preset, 'original');
       assert.equal(original.graphics.anisotropyApplied, 0);
+      assert.equal(original.graphics.skySmooth, false, 'Original keeps the original sky decode');
       assert.equal(original.shadows, null, 'Original submits no contact shadows');
       assert.equal(original.shadowMap, null, 'Original renders no shadow map');
       if (reference) assert.equal(original.hash, (await draw(reference, 'original', yaw)).hash, `${env}/${yaw}: Original differs from the baseline renderer`);
@@ -53,6 +54,7 @@ try {
       for (const preset of ['enhanced', 'high']) {
         const enhanced = await draw(candidate, preset, yaw);
         assert.equal(enhanced.graphics.anisotropyApplied, Math.min(preset === 'high' ? 16 : 4, enhanced.max || 0));
+        assert.equal(enhanced.graphics.skySmooth, true, `${env}: ${preset} smooths the sky`);
         assert.equal(enhanced.shadows?.draws, 1, `${env}: one contact-shadow draw`);
         assert.equal(Boolean(enhanced.shadowMap?.draws), preset === 'high', `${env}: only High renders the shadow map`);
         assert(enhanced.shadows.casters >= 1);

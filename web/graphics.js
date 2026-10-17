@@ -6,9 +6,9 @@ export const GRAPHICS_PRESETS = ['auto', 'original', 'enhanced', 'high'];
 // What each resolved preset turns on. `anisotropy` is the requested maximum;
 // the renderer clamps it to the device limit and 0 never touches the sampler.
 export function presetFeatures(preset) {
-  if (preset === 'high') return { preset, interpolation: true, anisotropy: 16, contactShadows: true, dirt: true, wheelReprojection: true, tireTracks: { capacity: 3600, life: 75 }, shadowMap: 2048, fresnel: true, dust: 96 };
-  if (preset === 'enhanced') return { preset, interpolation: true, anisotropy: 4, contactShadows: true, dirt: true, wheelReprojection: true, tireTracks: { capacity: 600, life: 15 }, shadowMap: 0, fresnel: true, dust: 24 };
-  return { preset: 'original', interpolation: false, anisotropy: 0, contactShadows: false, dirt: false, wheelReprojection: false, tireTracks: null, shadowMap: 0, fresnel: false, dust: 0 };
+  if (preset === 'high') return { preset, interpolation: true, anisotropy: 16, contactShadows: true, dirt: true, wheelReprojection: true, tireTracks: { capacity: 3600, life: 75 }, shadowMap: 2048, fresnel: true, dust: 96, skySmooth: true };
+  if (preset === 'enhanced') return { preset, interpolation: true, anisotropy: 4, contactShadows: true, dirt: true, wheelReprojection: true, tireTracks: { capacity: 600, life: 15 }, shadowMap: 0, fresnel: true, dust: 24, skySmooth: true };
+  return { preset: 'original', interpolation: false, anisotropy: 0, contactShadows: false, dirt: false, wheelReprojection: false, tireTracks: null, shadowMap: 0, fresnel: false, dust: 0, skySmooth: false };
 }
 
 // Auto picks Enhanced on phones, tablets, touch-primary and low-power devices
