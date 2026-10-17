@@ -14,7 +14,12 @@
 .ms-screen {
   --ms-gutter: clamp(16px, 3.2vw, 44px);
   --ms-row: clamp(48px, 6.4vh, 60px);
-  position: absolute; inset: 0; overflow: hidden; isolation: isolate;
+  /* The screen reaches past the safe-area stage so its backdrop fills the
+     Home Screen app's status bar and home indicator; the padding keeps the
+     grid content inside the stage. */
+  position: absolute; overflow: hidden; isolation: isolate;
+  inset: calc(-1 * var(--app-safe-top)) calc(-1 * var(--app-safe-right)) calc(-1 * var(--app-safe-bottom)) calc(-1 * var(--app-safe-left));
+  padding: var(--app-safe-top) var(--app-safe-right) var(--app-safe-bottom) var(--app-safe-left);
   display: grid; grid-template-columns: minmax(300px, 44%) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas: "header panel" "left panel" "hints hints";
   color: var(--atv-menu-text); font-family: var(--atv-font-display); font-weight: 700;

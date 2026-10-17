@@ -133,6 +133,8 @@ try {
   await page.locator('[data-action=back]').click();
   await waitForScreen(page, 'main');
   await page.waitForFunction(() => !document.getAnimations().some(a => a.effect?.target?.id === 'menu-stage'));
+  // The Jukebox's flex layout must not keep the hidden panel over the main menu.
+  assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.pause-panel')).display), 'none', 'Back closes the Jukebox panel');
 
   // Pause → Jukebox during a ride; the soundtrack keeps streaming.
   await button(page, 'Single Player').click();
