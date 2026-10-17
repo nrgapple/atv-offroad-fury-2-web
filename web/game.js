@@ -1791,6 +1791,7 @@ async function pumpSimulation() {
     input.funny_crashes = funnyCrashes;
     input.crash_mode = crashSettings.mode;
     input.flips = crashSettings.flipsEnabled;
+    input.realistic_train = crashSettings.realisticTrain;
     // Menu/reset transitions cancel input before any further physics is queued.
     if (actions.pause) { void frontend?.show('pause'); return; }
     if (actions.reset) { await $('reset').onclick(); return; }

@@ -311,3 +311,50 @@ MUD hit/height callback and ordinary terrain support. Recovery and camera retain
 their own source filters. The observed ENV04 raised-MUD trace exposed this
 missing chassis exclusion; no altered tire-grounding or roost threshold was
 introduced to make the effect appear.
+
+## Riding on the train: original baseline and Extras realistic option
+
+### Original (default)
+
+Wheel springs and wheel spin already subtract the moving support's point
+velocity (`001ecc40`, above). The body grip routine `001d8540` does not. A static
+scan of its body (`001d8540`–`1d9314`) finds no read of the wheel moving-support
+actor (`+27c`) or cached ground velocity (`+c0`). Its only calls are
+transform helpers (`00165420`, `00166370`, `00166400`, `001662f0`, `001ab580`) and two
+virtual velocity getters on the quad's own bodies. This is static evidence, not
+an instruction replay. Lateral tire grip, the material speed-squared drag,
+gravity stiction and low-speed settling therefore act on world velocity. The
+chassis caller also disables moving-target friction (`001dcc70`).
+
+On the train this means the tires fight the train's motion instead of the deck.
+`tools/test_train_riding.mjs` puts the quad on a flatbed at the car's own
+velocity (44.7 ft/s) through the long left curve (~12.5°/s, ~0.3 g). Coasting,
+it slides 63 ft off the car within six seconds. Braked across the deck, it is
+thrown off and wrecks. On straights the drift is small (well under 1 ft in 6 s).
+
+### Extras → Train riding: Realistic (authored, off by default)
+
+`Vehicle::set_realistic_train` (worker input `realistic_train`, `localStorage`
+`atv-train-riding`) measures riding against the support under the previous
+frame's grounded wheels, matching the original's snapshot gates:
+
+- Lateral grip uses contact-point velocity relative to the train's velocity field
+  (linear plus angular), so the quad turns with the car.
+- Material drag, gravity stiction's speed fade and `settle_local_velocity` use
+  relative velocity; settling adds the train velocity back.
+- The engine, steering-speed scale and rider body-shift use relative speed.
+- Train body contacts keep the configured chassis friction instead of zero, so a
+  quad scraping a passing car is dragged along it.
+- Support stiction: the original stiction is reused on the contact plane, applied
+  to mass × the train's centripetal acceleration (ω × v). The recovered lateral
+  grip is a pure velocity damper and needs a steady ~1 ft/s sideways creep to
+  hold 0.3 g. Real tires hold this with static friction.
+- The train's share is weighted by the fraction of grounded wheels on it, so
+  driving on or off a car blends smoothly. Airborne, nothing changes: the quad
+  keeps whatever velocity it left the car with.
+
+With the option on, the same curve cases drift 0.3 ft and stay Riding with four
+wheels down. Driving into the side of a passing car still produces body contact
+and the ordinary wreck classifier. Static ground behaves the same either way:
+with no moving support the frame is zero and the authored test checks bitwise
+equality. Motorcycles keep their own moving-support path and are unchanged.
