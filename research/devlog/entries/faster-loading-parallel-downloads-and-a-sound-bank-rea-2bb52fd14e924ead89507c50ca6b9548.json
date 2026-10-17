@@ -12,5 +12,5 @@
     "Race frames no longer force a layout to read the toolbar position; CPU and remote riders reuse bone buffers.",
     "Repeat visits stop revalidating app files stamped with the deployed commit."
   ],
-  "limitation": "The ride still waits for its sounds to finish loading."
+  "limitation": "Host Chromium simulations of phone network and CPU, not physical-phone measurements. The chunked sound bank package publishes after this client is live; until then rides use the single-file bank (13.0 s case). The ride still waits for its sounds to finish loading."
 }
