@@ -87,7 +87,7 @@ graphicsSettings.onChange = () => {
   if (lingeringDust && lingeringDust.emitter.capacity !== graphics.dust) { if (!lost) lingeringDust.dispose(); lingeringDust = undefined; }
   if (shadowMap && shadowMap.size !== graphics.shadowMap) { if (!lost) shadowMap.dispose(); shadowMap = undefined; }
   if (tireTracks && (tireTracks.builder.capacity !== graphics.tireTracks?.capacity)) { if (!lost) tireTracks.dispose(); tireTracks = undefined; }
-  if (!lost) applyAnisotropy();
+  if (!lost) { applyAnisotropy(); refreshSkyTextures(); }
   scheduleRender();
 };
 // Requested anisotropy clamped to the device; 0 (Original) never sets it.
@@ -450,7 +450,10 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
   const skyBytes = await codec(3, resource, skyIndex), sky = await json(38, skyBytes);
   for (const tile of sky.tiles) {
     if (token !== generation) throw new Error('Opening cancelled.');
-    tile.rgba = await codec(35, skyBytes.slice(tile.offset, tile.offset + tile.bytes));
+    const tileBytes = skyBytes.slice(tile.offset, tile.offset + tile.bytes);
+    tile.rgba = await codec(35, tileBytes);
+    // Enhanced/High: deblocked, denoised and smoothly upsampled original tiles.
+    tile.smoothRgba = await codec(39, tileBytes);
   }
   status('Reading original scene models…');
   const sceneMeshes = new Map(), sceneTextures = new Map(), unsupported = [];
@@ -687,11 +690,25 @@ uniform vec3 sunlightDirection;
 uniform vec3 fogColor;
 uniform bool unlit;
 uniform bool skyPass;
+uniform bool skyBicubic;
 uniform vec2 quadPaint;
 out vec4 color;
 ${fogFragmentShader}
 ${paintGlsl}
 ${shadowReceiverGlsl}
+// Catmull-Rom bicubic from nine bilinear taps. Sky tiles are magnified about
+// 4-6x; bilinear shows diamond-shaped texel steps there. Tiles carry 4-texel
+// borders, so the two-texel footprint never reaches a clamped edge.
+vec4 bicubicSample(sampler2D tex, vec2 uv) {
+  vec2 size = vec2(textureSize(tex, 0)), position = uv * size;
+  vec2 center = floor(position - .5) + .5, f = position - center;
+  vec2 w0 = f * (-.5 + f * (1. - .5 * f)), w1 = 1. + f * f * (-2.5 + 1.5 * f);
+  vec2 w2 = f * (.5 + f * (2. - 1.5 * f)), w3 = f * f * (-.5 + .5 * f), w12 = w1 + w2;
+  vec2 t0 = (center - 1.) / size, t3 = (center + 2.) / size, t12 = (center + w2 / w12) / size;
+  return textureLod(tex, vec2(t0.x, t0.y), 0.) * w0.x * w0.y + textureLod(tex, vec2(t12.x, t0.y), 0.) * w12.x * w0.y + textureLod(tex, vec2(t3.x, t0.y), 0.) * w3.x * w0.y
+    + textureLod(tex, vec2(t0.x, t12.y), 0.) * w0.x * w12.y + textureLod(tex, vec2(t12.x, t12.y), 0.) * w12.x * w12.y + textureLod(tex, vec2(t3.x, t12.y), 0.) * w3.x * w12.y
+    + textureLod(tex, vec2(t0.x, t3.y), 0.) * w0.x * w3.y + textureLod(tex, vec2(t12.x, t3.y), 0.) * w12.x * w3.y + textureLod(tex, vec2(t3.x, t3.y), 0.) * w3.x * w3.y;
+}
 void main() {
   // Let both crash actors remain visible through foreground foliage. A stable
   // screen-door fade keeps tree context without extra translucent draw passes.
@@ -709,7 +726,7 @@ void main() {
   if (surfaceColor.x >= 0.0) base = surfaceColor;
   float sourceAlpha = 1.0;
   if (useTexture) {
-    vec4 sampled = texture(baseTexture, texcoord);
+    vec4 sampled = skyPass && skyBicubic ? clamp(bicubicSample(baseTexture, texcoord), 0., 1.) : texture(baseTexture, texcoord);
     if (useVertexColor) sampled *= (useEcosystem ? authoredColor / fogInterpolation.y : authoredColor) / 128.0;
     //002fe710 overrides TEST with GREATER/KEEP and a per-placement reference.
     if (useEcosystem && ecoPerInstance) { if (sampled.a <= (ecoBillboard ? alphaCutoff : ecoReference)) discard; }
@@ -756,7 +773,7 @@ function initializeGl() {
   program = gl.createProgram(); gl.attachShader(program, vertex); gl.attachShader(program, fragment); gl.linkProgram(program);
   gl.deleteShader(vertex); gl.deleteShader(fragment);
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
-  uniforms = Object.fromEntries(['viewProjection', 'model', 'eye', 'heights', 'surfaceColor', 'baseTexture', 'useTexture', 'useTerrainTexture', 'terrainColors', 'terrainMapping', 'terrainDetail', 'terrainDetailScale', 'terrainSpacing', 'ambientLight', 'sunlightColor', 'sunlightDirection', 'fogColor', 'unlit', 'skyPass', 'useVertexColor', 'sceneryBlend', 'sceneryUvOffset', 'alphaFailPass', 'crashFocus'].map(name => [name, gl.getUniformLocation(program, name)]));
+  uniforms = Object.fromEntries(['viewProjection', 'model', 'eye', 'heights', 'surfaceColor', 'baseTexture', 'useTexture', 'useTerrainTexture', 'terrainColors', 'terrainMapping', 'terrainDetail', 'terrainDetailScale', 'terrainSpacing', 'ambientLight', 'sunlightColor', 'sunlightDirection', 'fogColor', 'unlit', 'skyPass', 'skyBicubic', 'useVertexColor', 'sceneryBlend', 'sceneryUvOffset', 'alphaFailPass', 'crashFocus'].map(name => [name, gl.getUniformLocation(program, name)]));
   uniforms.useEcosystem = gl.getUniformLocation(program, 'useEcosystem');
   uniforms.sceneryReflectionPlane = gl.getUniformLocation(program, 'sceneryReflectionPlane');
   uniforms.fogPacking = gl.getUniformLocation(program, 'fogPacking');
@@ -819,6 +836,17 @@ function texture({ width, height, rgba }) {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
   gl.generateMipmap(gl.TEXTURE_2D);
   return result;
+}
+function skyPixels(tile) { return graphics.skySmooth && tile.smoothRgba ? tile.smoothRgba : tile.rgba; }
+// Preset changes swap the sky between the original decode and the smoothed one.
+function refreshSkyTextures() {
+  if (!gl || lost) return;
+  for (const chunk of skyChunks) {
+    const tile = chunk.skyTile;
+    gl.bindTexture(gl.TEXTURE_2D, chunk.texture);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, tile.size, tile.size, gl.RGBA, gl.UNSIGNED_BYTE, skyPixels(tile));
+    gl.generateMipmap(gl.TEXTURE_2D);
+  }
 }
 function uploadTerrainTextures() {
   const source = terrain?.textures;
@@ -1478,7 +1506,8 @@ function buildMesh() {
     const vertices = new Float32Array(32);
     tile.positions.forEach((position, index) => vertices.set([...position, 0, 1, 0, ...uv[index]], index * 8));
     const chunk = upload(vertices, new Uint16Array([0, 2, 1, 1, 2, 3]), true);
-    chunk.texture = texture({ width: tile.size, height: tile.size, rgba: tile.rgba });
+    chunk.texture = texture({ width: tile.size, height: tile.size, rgba: skyPixels(tile) });
+    chunk.skyTile = tile;
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     skyChunks.push(chunk); gpuTextures.push(chunk.texture);
@@ -1971,7 +2000,7 @@ function render(time) {
   if (terrain.sky) {
     const skyMatrix = new Float32Array(identity); skyMatrix.set(terrain.sky.origin, 12);
     gl.uniformMatrix4fv(uniforms.model, false, skyMatrix);
-    gl.uniform1i(uniforms.skyPass, true); gl.uniform1i(uniforms.useTexture, true);
+    gl.uniform1i(uniforms.skyPass, true); gl.uniform1i(uniforms.useTexture, true); gl.uniform1i(uniforms.skyBicubic, Boolean(graphics.skySmooth));
     gl.uniform1i(uniforms.fogEnabled, false);
     gl.activeTexture(gl.TEXTURE0); gl.depthMask(false); gl.disable(gl.DEPTH_TEST);
     for (const chunk of skyChunks) {
@@ -1980,7 +2009,7 @@ function render(time) {
     }
     gl.depthMask(true); gl.enable(gl.DEPTH_TEST);
   }
-  gl.uniformMatrix4fv(uniforms.model, false, identity); gl.uniform1i(uniforms.skyPass, false); gl.uniform1i(uniforms.useTexture, false);
+  gl.uniformMatrix4fv(uniforms.model, false, identity); gl.uniform1i(uniforms.skyPass, false); gl.uniform1i(uniforms.skyBicubic, false); gl.uniform1i(uniforms.useTexture, false);
   gl.uniform1i(uniforms.fogEnabled, Boolean(fog));
   gl.uniform1i(uniforms.useTerrainTexture, Boolean(terrain.textures));
   if (shadowActive) gl.uniform1i(uniforms.shadowReceive, true);

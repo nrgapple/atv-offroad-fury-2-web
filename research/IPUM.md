@@ -12,6 +12,10 @@ MPEG VLC/quantization tables are adapted from MIT-licensed PL_MPEG. Attribution,
 
 Synthetic tests cover a neutral MPEG intra macroblock, all truncated prefixes, coding flags, dimensions and malformed terminal codes. The decoder does not yet support multi-frame movie timing or other IPU coding flags.
 
+`Image::smoothed_rgba` is a separate authored presentation decode (deblocking,
+bilateral denoise, triangle chroma upsampling) used only for the Enhanced/High
+sky; `rgba` is unchanged. See [GRAPHICS_PRESETS.md](GRAPHICS_PRESETS.md).
+
 Stadium `stbscreen.atm` pixel-format-2 frames reuse this single-image decoder.
 The ATM reader now accepts their length-prefixed compressed PST mip payloads
 and checks every frame's container extent before decoding a selected frame.
