@@ -45,9 +45,10 @@ ceil(max(minimum, rate*dt)) birth count at each fixed simulation step. A single
 WebGL instanced draw uses the original GPU particle texture and the previously
 recovered mode2 velocity/alpha contract. Snow clears gravity, uses minimum Y
 −10,000, source color/alpha and lifetime jitter, source X/Z velocity spread,
-mirroring and source half-atlas selection. Original ScreenRain
-lens/world sprites and framebuffer-copy droplets are also unconnected; none of
-these inspected map Weather blocks selects ScreenRain. Rain audio initialization
+mirroring and source half-atlas selection. ScreenRain lens/world drops are
+dormant original code that no shipped resource selects; see
+[ScreenRain activation](#screenrain-lens-and-world-drops-dormant-in-shipped-content).
+Rain audio initialization
 at 00213bf0 requests `rain.vag` with looping flag 0x81 and sets volume 100 at
 002c9cc0. The browser now plays that source sample as one looping voice through
 the engine gain, including the motorcycle path, which loads the ATV audio bank
@@ -87,7 +88,7 @@ frame, not a measured physical-phone FPS gain. Test hooks and source-derived
 fixtures stay private; `tools/test_weather.mjs` is an opt-in host/public gate.
 
 Weather selection, rain rendering optimization, ambient placed emitters,
-Snow/ScreenRain and complete PS2 weather fidelity remain separate gates.
+Snow and complete PS2 weather fidelity remain separate gates.
 
 Seven actual-resource browser cases cover rain/dry selection in all three rain
 venues, dry Caribou Freestyle, portrait ATV and motorcycle rain, pause/resume,
@@ -136,7 +137,7 @@ emitters remain unconnected. Portable billboard projection, shared GPU packet
 batch lifetime/UV ordering, PS2 render queue/GS rounding and hardware parity are
 still limits. Freeport's persistent placed type 12 fog is connected; see
 [ambient fog implementation and remaining limits](AMBIENT_EFFECTS.md). ScreenRain
-lens/world droplets and their original callbacks remain unconnected. Ambient's
+is never selected by shipped content (next section). Ambient's
 placed type 8 raindrops are a separate source effect, documented in the same
 component report.
 
@@ -157,3 +158,51 @@ context loss, with zero uploads on subsequent render-only frames and zero GL or
 page errors. Real pause stops births and scene time. Physical vehicle reset op23
 preserves Snow time/emission IDs; existing Race Backspace performs a full race
 reload/map replacement, which intentionally starts a fresh manager.
+
+## ScreenRain lens and world drops: dormant in shipped content
+
+The executable contains a complete ScreenRain object (`ScreenRain.cpp`), but
+the shipped USA v2.00 game never creates it. The browser therefore draws no lens
+droplets on any map, including the three rain venues, in every graphics preset.
+
+Activation. `00209dd0` takes the ScreenRain branch only when the selected
+Weather has no `NumParticleEmitters` list, `UseRingEmitters` is off, and
+`SltName` equals `screenrain` (case-insensitive compare `0036f6b0`). It then
+allocates the object (`00219300`, the only call site) and configures it
+(`00219650`, the only call site) with `MaxLensDrops` (default 20),
+`MaxWorldDrops` (default 100), `Color`, `ColorOffsetStart` and
+`ColorOffsetEnd`, all read by the Weather loader `00208cc0`. Freeport, NAT06 and
+SX13 name `sx13rain.slt`/`nat06rain.slt`, so they keep the placed rain cards and
+take the plain Rain branch. A byte census of all 742 disc files and every member
+of every archive (all parse and extract) finds `screenrain` only in the
+executable; no TOY, SCN or other resource declares it. `MaxLensDrops`/
+`MaxWorldDrops` also appear in the legacy SCN `[Rain]` blocks (ENV04/05/07, for
+example `ChanceOfRain=0.1`, `MaxLensDrops=10`), but the executable contains no
+`ChanceOfRain` key at all; those blocks are never read.
+
+Textures. `00219650` asks for `particle\drip`, `drop`, `ring` and `splat`
+(16×16). None exists in any archive. The fallback `00219b50` would build a
+procedural radial map (alpha `(1 − r/8)·256`, inner highlight 8 below radius 5,
+outer shade 246). Each lens drop is a 16×16 copy of the framebuffer under it,
+brightened and darkened by those maps (`00219100`, saturating byte add/subtract).
+
+Motion (`00219da0`, 640×448 screen space). The live count grows by one per
+update up to `MaxLensDrops`. Each drop drifts outward from (320, 224) by a random
+fraction of half its size, and down 4 px per update. Its life decreases by
+dt × 1 and its alpha by dt × 2. A drop leaving the screen, expiring or reaching
+zero alpha respawns at a random position, or (half the time) next to the
+following drop, with alpha 255. World drops (`0021a420`) are screen-space
+streaks driven by camera displacement (×0.2 and ×0.1 terms).
+
+Port decision. Rendering these would add behavior the shipped game never shows,
+so nothing is drawn. Rust recovers the activation rule only:
+`weather::Definition::selects_screen_rain` and the `screen_rain` field of the
+selection (false on every shipped map). The Rust test covers the exact name, the
+emitter-list exclusion, multiplayer chance zero and the unread legacy `[Rain]`
+block. `tools/test_weather_lifecycle.mjs` asserts `screen_rain` is false for every
+real rain case. A lens-drop overlay would be an authored enhancement for a
+non-Original preset and needs an explicit product decision. Cost is zero: no
+shader, texture, buffer or per-frame work exists for it. Freeport rain at
+390×844/DPR3 with ×4 CPU throttling measured the same before and after
+(render CPU 0.8–1.2 ms vs 1.2–1.7 ms, worker batch 0.46–0.49 ms vs 0.44–0.53 ms,
+96 draws both; host-emulation noise, not a physical-phone result).

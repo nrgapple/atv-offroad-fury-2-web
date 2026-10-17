@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 const FONT: &str = "tradegothic_boldcondensed_22s";
 const SELECTED_FONT: &str = "tradegothic_boldcondensed_22soff";
 const HEADER_FONT: &str = "tradegothic_boldcondenseditalic_-1fs_32ds";
+fn full_volume() -> usize {
+    100
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ControlRow {
@@ -73,6 +76,12 @@ pub struct Request {
     pub music_enabled: bool,
     #[serde(default)]
     pub music_volume: usize,
+    /// Sound-effect (vehicle, rider and world) volume, separate from music.
+    #[serde(default = "full_volume")]
+    pub sfx_volume: usize,
+    /// Authored optional sound layer: "enhanced" (default) or "original".
+    #[serde(default)]
+    pub sound_mode: String,
     #[serde(default)]
     pub menu_logo: bool,
     #[serde(default)]
@@ -109,6 +118,15 @@ pub struct Request {
     pub flips: bool,
     #[serde(default)]
     pub speed_rush: String,
+    /// Display → Graphics choice (auto/original/enhanced/high) and, for Auto,
+    /// the preset this device resolves to. Original is the recovered renderer.
+    #[serde(default)]
+    pub graphics_preset: String,
+    #[serde(default)]
+    pub graphics_resolved: String,
+    /// Controls → Vibration (controller rumble / phone vibration), default on.
+    #[serde(default = "default_vibration")]
+    pub vibration: bool,
     #[serde(default)]
     pub minimap_enabled: bool,
     #[serde(default = "default_minimap_size")]
@@ -129,6 +147,9 @@ pub struct Request {
     pub race_overlays_off: Vec<String>,
     #[serde(default = "default_race_position")]
     pub race_position: String,
+}
+fn default_vibration() -> bool {
+    true
 }
 fn default_race_position() -> String {
     "name".into()
@@ -310,6 +331,24 @@ impl Frame {
     }
 }
 
+/// Display → Graphics row. Auto names the preset it resolved to on this device.
+fn graphics_label(request: &Request) -> String {
+    let name = |preset: &str| match preset {
+        "original" => "Original",
+        "enhanced" => "Enhanced",
+        "high" => "High",
+        _ => "",
+    };
+    match request.graphics_preset.as_str() {
+        "original" | "enhanced" | "high" => {
+            format!("Graphics: {}", name(&request.graphics_preset))
+        }
+        _ if !request.graphics_resolved.is_empty() => {
+            format!("Graphics: Auto ({})", name(&request.graphics_resolved))
+        }
+        _ => "Graphics: Auto".into(),
+    }
+}
 pub fn layout(request: Request) -> Result<Frame> {
     if !request.width.is_finite()
         || !request.height.is_finite()
@@ -341,12 +380,21 @@ pub fn layout(request: Request) -> Result<Frame> {
         || request.rider_id > 1
         || request.loading_status.len() > 128
         || request.track_name.len() > 128
+        || request.sound_mode.len() > 16
         || request.track_image.len() > 128
         || request.capture_label.len() > 128
         || request.binding_device.len() > 32
         || request.music_status.len() > 256
         || request.control_rows.len() > 32
         || request.music_rows.len() > 64
+        || !matches!(
+            request.graphics_preset.as_str(),
+            "" | "auto" | "original" | "enhanced" | "high"
+        )
+        || !matches!(
+            request.graphics_resolved.as_str(),
+            "" | "original" | "enhanced" | "high"
+        )
         || request.gear_rows.len() > 8
         || request.gear_rows.iter().any(|row| row.len() > 64)
         || request
@@ -1181,6 +1229,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                 "high" => "Speed rush: High",
                 _ => "Speed rush: Off",
             };
+            let graphics_label = graphics_label(&request);
             let mut choices = match request.page.as_str() {
                 "settings" => vec![
                     ("Controls", "controls"),
@@ -1217,6 +1266,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                     (diagnostics, "diagnostics"),
                 ],
                 _ => vec![
+                    (graphics_label.as_str(), "graphics"),
                     ("Minimap configuration", "minimap-config"),
                     ("Race overlays", "race-overlays"),
                     (speed_label, "speed-rush"),
@@ -1414,6 +1464,14 @@ pub fn layout(request: Request) -> Result<Frame> {
                     },
                     "onehanded",
                 ),
+                (
+                    if request.vibration {
+                        "Vibration: On"
+                    } else {
+                        "Vibration: Off"
+                    },
+                    "vibration",
+                ),
                 ("Back", "back"),
             ]
             .iter()
@@ -1542,6 +1600,15 @@ pub fn layout(request: Request) -> Result<Frame> {
                             "musictoggle",
                         ),
                         (format!("Volume: {}%", request.music_volume), "musicvolume"),
+                        (format!("SFX: {}%", request.sfx_volume), "sfxvolume"),
+                        (
+                            if request.sound_mode == "original" {
+                                "Sound: Original".to_string()
+                            } else {
+                                "Sound: Enhanced".to_string()
+                            },
+                            "soundmode",
+                        ),
                     ]
                 } else {
                     vec![
@@ -1550,14 +1617,15 @@ pub fn layout(request: Request) -> Result<Frame> {
                         ("Defaults".to_string(), "bindreset"),
                     ]
                 };
+                let columns = actions.len() as f32;
                 for (i, (label, action)) in actions.iter().enumerate() {
                     f.button(
                         label,
                         action,
                         [
-                            20. + i as f32 * (w - 40.) / 3.,
+                            20. + i as f32 * (w - 40.) / columns,
                             h - 66.,
-                            (w - 40.) / 3.,
+                            (w - 40.) / columns,
                             54.,
                         ],
                         request.selection == f.choices.len(),
@@ -1574,6 +1642,30 @@ pub fn layout(request: Request) -> Result<Frame> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn audio_page_has_separate_sfx_volume_and_sound_mode() {
+        let mut r = request("music", 390., 844.);
+        r.sfx_volume = 75;
+        let frame = layout(r).unwrap();
+        for action in ["musicvolume", "sfxvolume", "soundmode"] {
+            assert!(frame.choices.iter().any(|c| c == action), "{action}");
+        }
+        let label = |action: &str| {
+            frame
+                .hits
+                .iter()
+                .find(|h| h.action == action)
+                .unwrap()
+                .label
+                .clone()
+        };
+        assert_eq!(label("sfxvolume"), "SFX: 75%");
+        assert_eq!(label("soundmode"), "Sound: Enhanced");
+        let mut r = request("music", 390., 844.);
+        r.sound_mode = "original".into();
+        let frame = layout(r).unwrap();
+        assert!(frame.hits.iter().any(|h| h.label == "Sound: Original"));
+    }
     fn request(page: &str, w: f32, h: f32) -> Request {
         Request {
             page: page.into(),
@@ -1604,6 +1696,8 @@ mod tests {
             music_status: String::new(),
             music_enabled: true,
             music_volume: 70,
+            sfx_volume: 100,
+            sound_mode: String::new(),
             menu_logo: true,
             menu_atv: true,
             diagnostics_mode: String::new(),
@@ -1614,6 +1708,9 @@ mod tests {
             chase_assist: false,
             flips: false,
             speed_rush: "normal".into(),
+            graphics_preset: String::new(),
+            graphics_resolved: String::new(),
+            vibration: true,
             minimap_enabled: true,
             minimap_size: 160.,
             minimap_zoom: 50.,
@@ -1990,6 +2087,7 @@ mod tests {
         assert_eq!(
             layout(request("hud-settings", 390., 844.)).unwrap().choices,
             [
+                "graphics",
                 "minimap-config",
                 "race-overlays",
                 "speed-rush",
@@ -2071,6 +2169,60 @@ mod tests {
             r.minimap_zoom = zoom;
             assert!(layout(r).is_err());
         }
+    }
+    #[test]
+    fn graphics_and_vibration_rows_name_the_saved_choices() {
+        let label = |preset: &str, resolved: &str| {
+            let mut r = request("hud-settings", 390., 844.);
+            r.graphics_preset = preset.into();
+            r.graphics_resolved = resolved.into();
+            let frame = layout(r).unwrap();
+            frame
+                .hits
+                .iter()
+                .find(|h| h.action == "graphics")
+                .unwrap()
+                .label
+                .clone()
+        };
+        assert_eq!(label("", ""), "Graphics: Auto");
+        assert_eq!(label("auto", "enhanced"), "Graphics: Auto (Enhanced)");
+        assert_eq!(label("auto", "high"), "Graphics: Auto (High)");
+        assert_eq!(label("original", "high"), "Graphics: Original");
+        assert_eq!(label("enhanced", ""), "Graphics: Enhanced");
+        assert_eq!(label("high", "enhanced"), "Graphics: High");
+        for (preset, resolved) in [("ultra", ""), ("auto", "auto"), ("auto", "ultra")] {
+            let mut r = request("hud-settings", 390., 844.);
+            r.graphics_preset = preset.into();
+            r.graphics_resolved = resolved.into();
+            assert!(layout(r).is_err(), "{preset}/{resolved}");
+        }
+        let controls = |vibration| {
+            let mut r = request("controls", 390., 844.);
+            r.vibration = vibration;
+            let frame = layout(r).unwrap();
+            let hit = frame.hits.iter().find(|h| h.action == "vibration").unwrap();
+            (frame.choices.clone(), hit.label.clone())
+        };
+        let (choices, on) = controls(true);
+        assert_eq!(
+            choices,
+            [
+                "steering-sensitivity",
+                "keyboard",
+                "controller",
+                "onehanded",
+                "vibration",
+                "back"
+            ]
+        );
+        assert_eq!(on, "Vibration: On");
+        assert_eq!(controls(false).1, "Vibration: Off");
+        // An older frontend without the field keeps vibration on.
+        let parsed: Request =
+            serde_json::from_str(r#"{"page":"controls","width":390,"height":844,"selection":0}"#)
+                .unwrap();
+        assert!(parsed.vibration);
     }
     #[test]
     fn invalid_menu_requests_are_rejected() {

@@ -112,3 +112,67 @@ checks pass for this component gate. Browser integration and public delivery are
 the release agent's next gate. No new public result is claimed here. The finite
 instruction interpreter remains a bounded arithmetic model, not PS2 hardware
 execution. See [movement](MOVEMENT.md) and [terrain contact](TERRAIN_CONTACT.md).
+
+## Residual overlap decomposition (2026-10-16)
+
+This time-boxed audit asks where the remaining rendered overlap comes from. It
+changes no runtime behavior. A private scratch probe (ignored `work/clearance-probe/`,
+outputs in `private/reports/coupled-landing-overlap-decomposition.txt`) reads the same inputs as `terrain_clearance`: the original
+ATV01 PSG, the ENV01 TR2 and per-step browser traces from main `7a346ab`. For each
+overlapping tire vertex it records the angle from body-down around the axle, the
+lateral offset from the wheel's centre plane, and the vertical and normal-direction
+clearance. It also renders the same frame's linkage at the **previous** frame's body
+pose. At 60 Hz a frame is one substep, so that previous pose is the pose this
+frame's spring evaluation used.
+
+| Trace | Rendered, vertical | Rendered, along normal | Spring-time pose, along normal | Spring-time pose, centre plane only |
+| --- | ---: | ---: | ---: | ---: |
+| Clean preload landing (184 riding steps) | -0.349 ft | -0.348 ft | -0.126 ft | -0.119 ft |
+| Slope turn (439 riding steps, 35° cross-slope landing) | -0.640 ft | -0.522 ft | -0.439 ft | -0.331 ft |
+
+Observed contributors:
+
+1. **One-step display order (about 0.22 ft on the landing).** The worst landing
+   vertices sit within 30° of body-down at the centre plane. The body-down
+   bottom point itself is 0.35 ft below terrain while the reported compression
+   is only 0.33 ft. The spring compression is computed before the substep's
+   body integration, but the frame is drawn after it. At landing the front of the
+   quad drops about 0.25–0.37 ft per step (linear plus pitch rate). The
+   original orders this the same way. In `001dd830` the four `001ed330` springs
+   run before the body's integration virtual in each substep; the post-loop
+   `001edcd0` then rebuilds the visual wheel offsets from the stored compression
+   `+0x23c` without re-querying terrain, and `001d65c0` runs afterwards. The port
+   reproduces this order.
+2. **Travel bottoming on hard cross-slope landings.** In the slope trace the
+   worst wheel reaches the full 0.95 ft travel (ATV01 `Compression`) with the
+   four-point stop engaged. `00196cf0` only removes inward velocity and force
+   (600-case comparison in [movement](MOVEMENT.md)); it applies no positional
+   correction, so depth beyond travel stays visible for a few frames.
+3. **Single-point wheel contact.** `001ed330` contacts the terrain plane at one
+   point on the wheel's centre plane. When the body's roll differs from a 35°
+   slope, the tire's outer edge (lateral offset about 0.4 ft) sits a further
+   ~0.11 ft lower. Tire curvature against curved terrain is likewise not modelled.
+4. **Measurement.** `terrain_clearance` reports vertical clearance, which
+   overstates normal penetration by 1/cos(slope) (about 20% at 35°).
+
+Ruled out as causes of terrain-landing overlap:
+
+- The post-loop full-correction pass is connected for nonstatic actors. The
+  original tail skips its query and solver when the restricted list is empty
+  (24-case tail replay in [train contact](TRAIN_CONTACT.md)), so it never runs
+  for ordinary terrain landings.
+- Smooth normals: the type-3 query policy defaults to zero (`00326bb0`, copied by
+  `00327810`). Wheel/terrain normals are the TR2 interpolated normals, which already
+  match bit for bit ([terrain contact](TERRAIN_CONTACT.md)).
+- Visual versus physical wheel size: the visible tire YZ radius is 0.7987/0.7456 ft
+  (front/rear), against physical radii from bounds half-Y of 0.7985/0.7429 ft.
+  The bounds centres are within 0.0002 ft of the wheel node origin.
+
+Conclusion: most of the measured overlap follows from recovered original ordering
+and contact-model properties, so no physics change is made. A residual of about
+0.12 ft at the spring-time pose on the landing is not decomposed further; the
+frame-cached outer support plane on curved terrain is a candidate, not
+established. None of this is a PS2 capture, so equal visual overlap on hardware
+remains unverified. Re-projecting the visual wheels after integration would
+reduce the overlap, but it would be an explicit presentation enhancement, not
+original behavior.

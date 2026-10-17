@@ -105,8 +105,8 @@ component implementations. They do not establish original full-scene parity.
   [weather evidence and limits](WEATHER.md). Rain chance follows per-venue
   declarations, and browser randomness remains independent of the recovered
   native global RNG. Freeport's scrolling rain cards are geometry/material
-  animation, separate from Weather selection. ScreenRain lens/world droplets and
-  their original callbacks remain unconnected. Snow terrain or sky art does not
+  animation, separate from Weather selection. ScreenRain lens/world drops are
+  never selected by shipped content, so none are drawn (`WEATHER.md`). Snow terrain or sky art does not
   imply an all-map snowstorm or a day/night cycle.
 - Ambient particles: the source TOY census now covers all 40 venues. Placed
   types 0, 2, 8, 11 and 12 have source-derived browser implementations; see

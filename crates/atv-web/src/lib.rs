@@ -16,6 +16,7 @@ mod cpu;
 mod motorcycles;
 use cpu::CpuRacer;
 mod multiplayer;
+mod quad_audio;
 mod render;
 thread_local! { static MENU_RIDER: RefCell<Option<atv_core::menu_preview::Rider>> = const { RefCell::new(None) }; }
 
@@ -403,6 +404,7 @@ fn simulation_frame(
     frame: &atv_core::vehicle::VehicleFrame,
 ) -> Result<Vec<u8>> {
     multiplayer::observe_wreck(frame.wreck.phase != atv_core::wreck::Phase::Riding);
+    let audio_events = sim.vehicle.as_mut().map(|v| v.take_audio_events());
     let matrices = if let Some(matrices) = sim.vehicle.as_ref().and_then(|v| v.linkage_matrices()) {
         std::borrow::Cow::Borrowed(matrices)
     } else {
@@ -418,6 +420,7 @@ fn simulation_frame(
         )
     };
     let mut value = serde_json::to_value(frame).map_err(|error| error.to_string())?;
+    let mut wheel_centers = None;
     if let (Some(vehicle), Some(pose), Some(terrain)) = (&sim.vehicle, &sim.quad_pose, &sim.terrain)
     {
         let mut effects =
@@ -447,6 +450,7 @@ fn simulation_frame(
             })
             .collect::<Result<Vec<_>>>()?;
         effects["centers"] = serde_json::json!(centers);
+        wheel_centers = Some(centers);
         effects["terrain_heights"] = serde_json::json!(terrain_heights);
         effects["water_heights"] = serde_json::json!(water_heights);
         value["wheel_effects"] = effects;
@@ -460,6 +464,25 @@ fn simulation_frame(
         .unwrap_or(serde_json::Value::Null);
     value["quad_node_matrices"] =
         serde_json::to_value(&matrices).map_err(|error| error.to_string())?;
+    // Recovered vocal/chassis/drive-on triggers for this frame.
+    if let (Some(vehicle), Some(terrain), Some(events)) =
+        (sim.vehicle.as_ref(), sim.terrain.as_ref(), audio_events)
+    {
+        let surfaces = vehicle.wheel_effect_state().surfaces;
+        let ground = terrain
+            .contact(frame.origin[0], frame.origin[2])?
+            .map(|hit| hit.height);
+        let water = sim.water.as_ref().map(|_| frame.water_height);
+        value["quad_audio"] = serde_json::to_value(quad_audio::quad_frame(
+            events,
+            frame,
+            surfaces,
+            ground,
+            water,
+            wheel_centers.as_ref().map_or(&[][..], |c| &c[..]),
+        ))
+        .map_err(|e| e.to_string())?;
+    }
     if let Some(animator) = &sim.rider_animator {
         let mesh = sim.rider_mesh.as_ref().ok_or("rider mesh missing")?;
         value["rider_node_matrices"] =
@@ -1438,6 +1461,16 @@ pub(crate) fn train_collision_objects(
         .collect::<Result<Vec<_>>>()
 }
 
+/// Moving procedural actors carrying original TOY emitters (Arlington's
+/// locomotive Smoke.slt) publish this step's pose before the particle step.
+fn pose_ambient_actors(
+    effects: &mut atv_core::ambient_effects::Effects,
+    train: Option<&atv_core::train::Frame>,
+) {
+    if let Some(train) = train {
+        effects.set_actor_poses(train.cars.iter().map(|c| (c.model.as_str(), &c.matrix)));
+    }
+}
 fn step_train_scene(sim: &mut Simulation, dt: f32) -> Result<Option<atv_core::train::Frame>> {
     let Some(train) = sim.train.as_mut() else {
         return Ok(None);
@@ -2228,7 +2261,10 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
         let ambient = SIMULATION.with_borrow_mut(|sim| {
             sim.ambient
                 .as_mut()
-                .map(|effects| effects.step(1. / 60.).cloned())
+                .map(|effects| {
+                    pose_ambient_actors(effects, train.as_ref());
+                    effects.step(1. / 60.).cloned()
+                })
                 .transpose()
         })?;
         let snow = SIMULATION.with_borrow_mut(|sim| -> Result<_> {
@@ -2263,6 +2299,9 @@ fn simulation_batch(input: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
+    if matches!(op, 171..=174) {
+        return quad_audio::operation(input, op, index);
+    }
     if matches!(op, 130 | 131) {
         if input.len() > 4 * 1024 * 1024 {
             return Err("ambient source exceeds limit".into());
@@ -2563,7 +2602,7 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         });
     }
 
-    if (141..=143).contains(&op) {
+    if (141..=144).contains(&op) {
         return render::dispatch(input, op);
     }
     if op == 140 {

@@ -1,6 +1,23 @@
 // Original decoded samples; selection and transition rules run in Rust.
 // Browser resampling/mixing is not a bit-exact SPU2 implementation.
 import { MusicStream } from './music.js';
+import { QuadSounds } from './quad-sounds.js';
+import { CROSSFADE_SECONDS, createEchoBus, fadeOut } from './audio-enhance.js';
+// Browser audio preferences (the original had separate Music and SFX volume).
+const SETTINGS_KEY = 'atv-audio-v1';
+export function loadAudioSettings(storage = (() => { try { return globalThis.window?.localStorage ?? null; } catch { return null; } })()) {
+  // Sound: Enhanced is the default; Original keeps the recovered baseline.
+  const settings = { sfx: 1, mode: 'enhanced' };
+  try {
+    const saved = JSON.parse(storage?.getItem(SETTINGS_KEY) ?? 'null');
+    if (Number.isFinite(saved?.sfx)) settings.sfx = Math.max(0, Math.min(1, saved.sfx));
+    if (saved?.mode === 'original' || saved?.mode === 'enhanced') settings.mode = saved.mode;
+  } catch { /* Private browsing or corrupt preferences keep the defaults. */ }
+  return settings;
+}
+export function saveAudioSettings(settings, storage = (() => { try { return globalThis.window?.localStorage ?? null; } catch { return null; } })()) {
+  try { storage?.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* Optional persistence. */ }
+}
 export class GameAudio {
   constructor(codec, report = () => {}) {
     this.codec = codec;
@@ -38,6 +55,8 @@ export class GameAudio {
     this.effectLast = null;
     this.effectCamera = null;
     this.music = new MusicStream(codec, () => this.context, () => this.gain, report);
+    this.settings = loadAudioSettings();
+    this.quad = new QuadSounds(this);
     this.unlock = () => this.resume().catch(error => this.report(error.message));
     window.addEventListener('pointerdown', this.unlock);
     window.addEventListener('keydown', this.unlock);
@@ -52,13 +71,33 @@ export class GameAudio {
       this.gain.gain.value = 0.65;
       this.gain.connect(this.context.destination);
       this.engineGain = this.context.createGain();
-      this.engineGain.gain.value = this.active ? 1 : 0;
+      this.engineGain.gain.value = this.active ? this.settings.sfx : 0;
       this.engineGain.connect(this.gain);
+      this.applyEcho();
     }
     await this.context.resume();
     if (this.musicPreview && this.menuMusicMode) void this.playMenuMusic();
   }
-  async load({ file, files, read, isCurrent, quadId = 1 }) {
+  // Sound effects (engine, vehicle, rider, world) share one SFX bus.
+  setSfxVolume(volume) {
+    this.settings.sfx = Math.max(0, Math.min(1, Number(volume) || 0));
+    saveAudioSettings(this.settings);
+    if (this.engineGain) this.engineGain.gain.value = this.active ? this.settings.sfx : 0;
+  }
+  get enhanced() { return this.settings.mode === 'enhanced'; }
+  setSoundMode(mode) {
+    this.settings.mode = mode === 'original' ? 'original' : 'enhanced';
+    saveAudioSettings(this.settings);
+    this.applyEcho();
+  }
+  // One shared echo send from the SFX bus, only in Enhanced mode.
+  applyEcho() {
+    const type = this.enhanced ? this.echoType : null;
+    if (this.echo?.type === type || !this.context) return;
+    this.echo?.dispose(); this.echo = null;
+    if (type) this.echo = createEchoBus(this.context, this.engineGain, this.gain, type);
+  }
+  async load({ file, files, read, isCurrent, quadId = 1, female = false }) {
     this.stopWeather();this.weatherActive=false;
     const text = new TextDecoder();
     const json = async (op, bytes, index = 0) => JSON.parse(text.decode(await this.codec(op, bytes, index)));
@@ -94,6 +133,7 @@ export class GameAudio {
       const index = bank.lookup.get(key) ?? bank.lookup.get(`${key}.vag`);
       return index === undefined ? null : { bytes: bank.bytes, index };
     };
+    this.findSample = name => find(normal(name));
     this.loadSample = async name => {
       if (this.buffers.has(name)) return;
       const found = await find(normal(name));
@@ -118,7 +158,11 @@ export class GameAudio {
     }
     const riderIndex = table.entries.findIndex(entry => /(^|[\\/])rider\.aud$/i.test(entry.name));
     if (!motorcycle && riderIndex < 0) throw new Error('Original rider sound table is missing.');
-    if (!motorcycle) await this.loadEffects({ bytes: await this.codec(3, table.bytes, riderIndex), isCurrent });
+    if (!motorcycle) {
+      const rider = await this.codec(3, table.bytes, riderIndex);
+      await this.loadEffects({ bytes: rider, isCurrent });
+      await this.quad.configure({ rider, vehicle: this.engineTable, female, isCurrent });
+    }
     if (!isCurrent() || this.closed) return;
     await this.music.load({ file, files, read, isCurrent });
     await this.loadMenuMusic({ file, files, read, isCurrent });
@@ -210,13 +254,24 @@ export class GameAudio {
   }
   // CrowdPresent stadium: the crowd reaction clips (one crowd voice) and the
   // venue's positional Soultree loops through the same stereo commands.
-  async loadStadium({ soultree, crowd }) {
+  // The venue's Soultree loops now play through the shared world sounds
+  // (loadVenue) under the original range rules, for every venue.
+  async loadStadium({ crowd }) {
     this.stopCrowd(); this.stopSpatial(this.stadiumVoices); this.stadiumDefinitions = [];
-    for (const name of new Set([...crowd, ...soultree.map(definition => definition.sample)])) {
+    for (const name of new Set(crowd)) {
       if (this.closed) return;
       await this.loadSample(name).catch(() => {});
     }
-    this.stadiumDefinitions = soultree.filter(definition => this.buffers.has(definition.sample));
+  }
+  async loadVenue(aud, { stadium = false } = {}) {
+    if (this.closed || !this.loadSample) return;
+    await this.quad.loadVenue(aud);
+    try {
+      const venue = JSON.parse(new TextDecoder().decode(await this.codec(172, new TextEncoder().encode(JSON.stringify({ stadium: stadium || this.quad.crowdVenue })), 2)));
+      if (this.closed) return;
+      this.echoType = venue.echo === 'open' ? null : venue.echo; this.enclosure = venue.enclosure;
+      this.applyEcho();
+    } catch (error) { if (!this.closed) this.report(`Echo: ${error.message}`); }
   }
   // IntOut race stingers on their own voice, at the music volume: a random
   // INT001-INT004 at race load, cut at GO; OUT004 after a win, handing over
@@ -349,7 +404,9 @@ export class GameAudio {
   play(name, sound, overlap) {
     const sample = this.buffers.get(name);
     if (!sample?.buffer || this.closed) return;
-    if (!overlap) this.stopSources();
+    // Enhanced crossfades the previous engine voice; Original cuts it.
+    const crossfade = this.enhanced && !overlap && this.sources.size > 0;
+    if (!overlap) { if (crossfade) this.fadeSources(); else this.stopSources(); }
     const source = this.context.createBufferSource();
     source.buffer = sample.buffer;
     source.loop = sound === 'Idle'; // Original idle load flags include0x80.
@@ -357,10 +414,16 @@ export class GameAudio {
       source.loopStart = sample.info.loop_start / sample.info.sample_rate;
       source.loopEnd = sample.info.loop_end / sample.info.sample_rate;
     }
-    source.connect(this.engineGain);
-    const voice = { source, started: this.context.currentTime, duration: sample.buffer.duration, loop: source.loop };
+    let fade = null;
+    if (this.enhanced) {
+      fade = this.context.createGain(); fade.connect(this.engineGain);
+      if (crossfade) { const now = this.context.currentTime; fade.gain.setValueAtTime(0, now); fade.gain.linearRampToValueAtTime(1, now + CROSSFADE_SECONDS); }
+      this.crossfades = (this.crossfades ?? 0) + Number(crossfade);
+    }
+    source.connect(fade ?? this.engineGain);
+    const voice = { source, fade, started: this.context.currentTime, duration: sample.buffer.duration, loop: source.loop };
     this.sources.add(voice);
-    source.onended = () => { this.sources.delete(voice); source.disconnect(); };
+    source.onended = () => { this.sources.delete(voice); source.disconnect(); fade?.disconnect(); };
     source.start();
     this.current = voice;
     this.commands++;
@@ -383,11 +446,21 @@ export class GameAudio {
     const filter=this.context.createBiquadFilter();filter.type='lowpass';filter.frequency.value=650;noise.connect(filter);filter.connect(envelope);noise.start(now);
     bass.onended=()=>{bass.disconnect();noise.disconnect();filter.disconnect();envelope.disconnect();};
   }
+  fadeSources() {
+    for (const voice of this.sources) {
+      const fade = voice.fade;
+      voice.source.onended = () => { voice.source.disconnect(); fade?.disconnect(); };
+      fadeOut(this.context, voice);
+    }
+    this.sources.clear();
+    this.current = null;
+  }
   stopSources() {
     for (const voice of this.sources) {
       voice.source.onended = null;
       voice.source.stop();
       voice.source.disconnect();
+      voice.fade?.disconnect();
     }
     this.sources.clear();
     this.current = null;
@@ -503,6 +576,7 @@ export class GameAudio {
     if (!this.ready || !this.active || this.closed) return;
     this.captureSpatial(dt, scene);
     this.captureEffects(dt, frame, scene);
+    this.quad.capture(dt, frame, scene);
     void this.music.update();
     this.elapsed += dt;
     if (this.busy || !this.context || this.context.state !== 'running') return;
@@ -521,6 +595,7 @@ export class GameAudio {
       await this.updateStadium(generation, scene);
       this.playIntOut();
       await this.updateEffects(generation);
+      await this.quad.update(generation);
       if (this.closed || !this.active || generation !== this.generation) return;
       if (!this.current && this.commands === 0 && this.config.samples[1].length) {
         // Original002cae30 loads and selects the last idle sample before updates.
@@ -547,7 +622,7 @@ export class GameAudio {
     this.elapsed = 0;
     if (!active) this.effectFrames.length = 0;
     if (!this.context) return;
-    this.engineGain.gain.value = active ? 1 : 0;
+    this.engineGain.gain.value = active ? this.settings.sfx : 0;
     if (active || this.musicPreview) await this.resume();
     else await this.context.suspend();
   }
@@ -584,6 +659,7 @@ export class GameAudio {
     this.effectFrames.length = 0;
     this.stopSpatial(this.effectVoices);
     if (this.effectsReady) await this.codec(78, new Uint8Array());
+    await this.quad.reset();
   }
   snapshot() {
     return { ready: this.ready, context: this.context?.state ?? 'locked', samples: this.buffers.size, oneShots: { ...this.oneShotPlays },
@@ -603,7 +679,7 @@ export class GameAudio {
         }) }, effects: { ready: this.effectsReady, voices: this.effectVoices.size, starts: this.effectStarts,
           selections: this.effectSelections, last: this.effectLast, queuedFrames: this.effectFrames.length,
           samples: this.effectsConfig?.body_impact.map(name => ({ name, decoded: Boolean(this.buffers.get(name)?.buffer) })) ?? [] },
-      crashBooms:this.boomStarts ?? 0,
+      crashBooms:this.boomStarts ?? 0, sfxVolume: this.settings.sfx, soundMode: this.settings.mode, echo: this.echo ? { type: this.echo.type, nodes: this.echo.nodes } : null, echoType: this.echoType ?? null, enclosure: this.enclosure ?? null, crossfades: this.crossfades ?? 0, quad: this.quad.snapshot(),
       multiplayer: {voices:this.remoteVoices.size,impacts:this.remoteEffects.size,starts:this.remoteStarts,playing:this.remotePlaying()},
       music: this.music.snapshot() };
   }
@@ -622,6 +698,8 @@ export class GameAudio {
     this.stopSpatial(); this.spatialReady = false; this.spatialPending = this.spatialHistory = null;
     this.stopCrowd(); this.stopSpatial(this.stadiumVoices); this.stadiumDefinitions = []; this.stopIntOut();
     this.stopSpatial(this.effectVoices); this.effectsReady = false; this.effectFrames.length = 0;
+    this.quad.close();
+    this.echo?.dispose(); this.echo = null;
     this.context?.close();
     this.buffers.clear();
   }

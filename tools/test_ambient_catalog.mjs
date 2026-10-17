@@ -52,7 +52,7 @@ try {
       assertNoErrors(errors);
       assert(state.weather, 'weather selection metadata accompanies ambient load');
       if (state.fx) {
-        assert(state.fx.frame.particles.length <= 600);
+        assert(state.fx.frame.particles.length <= state.fx.capacity && state.fx.capacity <= 600 + 128);
         assert(state.fx.draws <= 2);
         assert(state.fx.frame.particles.every(p => [...p.position, p.size, p.alpha].every(Number.isFinite)));
         if (state.fx.active && !declarationOnly)

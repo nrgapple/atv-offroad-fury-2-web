@@ -46,6 +46,7 @@ export const TESTS = {
     reason:
       "Fails on unmodified origin/main too: pause menu no longer has a 'Stats: Off (F3)' row (settings moved under the Settings hub)"
   },
+  'test_enhanced_audio.mjs': { group: 'content' },
   'test_enhanced_mobile.mjs': { group: 'content' },
   'test_fog.mjs': { group: 'content', native: { ATV_FOG_NATIVE: 'private/reports/map-fidelity/fog-native.json' } },
   'test_frontend.mjs': { group: 'content' },
@@ -59,6 +60,10 @@ export const TESTS = {
     group: 'broken',
     reason:
       'Fails on unmodified origin/main too: the bailout no longer produces intact-ATV aerial ragdoll frames before impact'
+  },
+  'test_graphics_presets.mjs': {
+    group: 'content',
+    note: 'Set ATV_GRAPHICS_BASELINE to a server running the previous main build for the Original pixel-identical gate'
   },
   'test_hd_settings.mjs': {
     defaults: ['crash mode (original)', 'crash camera (tight)', 'chase camera (original)'],
@@ -160,6 +165,7 @@ export const TESTS = {
   'test_portrait_camera.mjs': { defaults: ['follow camera', 'chase camera (original)'], group: 'content' },
   'test_race.mjs': { group: 'content' },
   'test_race_ai.mjs': { group: 'content' },
+  'test_quad_audio.mjs': { group: 'content' },
   'test_race_courses.mjs': { group: 'content' },
   'test_rails.mjs': { group: 'content' },
   'test_reflections.mjs': {
@@ -230,6 +236,7 @@ export const TESTS = {
       'Fails on unmodified origin/main too: expects Pause to suspend the AudioContext; pause now keeps the soundtrack running (PR #40)'
   },
   'test_train_collisions.mjs': { group: 'content' },
+  'test_train_smoke.mjs': { group: 'content' },
   'test_training_start.mjs': { group: 'content' },
   'test_trick_wheel.mjs': { group: 'content-free' },
   'test_ui_polish.mjs': { group: 'content' },

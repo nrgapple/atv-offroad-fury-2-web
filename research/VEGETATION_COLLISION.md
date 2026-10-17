@@ -269,12 +269,32 @@ The hit is still Riding; this route establishes a physical tree contact, not a
 verified tree-triggered wreck or wheel/rider tree impact. The ordinary failed
 Nac Nac separation/ground/recovery/driving route passes separately.
 
-Straight-throttle boundary routes now time out on both ENV04 and ENV03. ENV04
-records repeated wreck/deflection; ENV03 has no physical plant records and becomes
-stranded tilted with no grounded wheels after one recovery. No causal claim is
-made about the new vegetation geometry from these routes. Boundary launch
-kernels remain source-verified, but a controlled normal-input browser route and
-broader recovery investigation are needed. Full-game parity remains unclaimed.
+Straight-throttle boundary routes timed out on both ENV04 and ENV03 at checkpoint
+`0541085` (2026-10-12). ENV04 recorded repeated wreck/deflection; ENV03 has no
+physical plant records and became stranded tilted with no grounded wheels after
+one recovery. That ENV03 trace ends with 12,315 consecutive Riding frames at
+body up Y 0.382, linear and angular velocity near zero, no wheel contact and
+no wreck request. Before settling, up Y moved back and forth across the native
+0.4 chassis-terrain gate (0.400, 0.408, 0.379, 0.337, 0.382).
+
+On main `7a346ab` (2026-10-16) the unmodified straight route
+(`tools/test_boundary_launch.mjs`, `ATV_BOUNDARY_MAP=env03`) passed three of
+three runs: launch, rider separation, inward recovery and cleared boundary state.
+Two runs also wrecked near the edge, recovered and then launched. The ENV04
+straight route passed once. A diagnostic restart at the old trace's recovery
+pose and heading (diagnostic only; the start pose is overridden, then normal
+keyboard throttle is held) drove 1,500 steps without stranding. The stranding
+therefore does not reproduce on current main. The trace predates later
+vehicle, wreck and contact changes, and its inputs cannot be replayed exactly, so
+which change removed it is not established.
+
+The quad update `001e5260` has no stuck or no-wheel-contact timer: its timers are
+deep water (`+0x814`), the wheelie window (`+0x91c`), the wreck/recovery and
+boundary clocks, and two quarter-second wheel-surface holds (`+0x9a0/+0x9a4`).
+A frozen tilted pose with all wheels off therefore has no automatic original
+recovery. The manual reset (the original's Practice-only L1+R1; R/Backspace or
+the Reset ATV button in the port) is the recovery path. No authored timeout or
+upright snap was added. Full-game parity remains unclaimed.
 
 The corrected normal-keyboard steered ENV04 boundary route passes launch,
 separation, paired expansion flags and inward automatic recovery across 2,126
