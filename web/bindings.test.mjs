@@ -43,7 +43,7 @@ test('reset chord emits once and cancellation cannot synthesize reset or preload
 test('every gameplay action can persist, reload, clear, and restore defaults',()=>{
  const memory=new Map(),storage={getItem:k=>memory.get(k),setItem:(k,v)=>memory.set(k,v)};const b=new GameplayBindings(storage);
  for(const {id}of ACTIONS){b.setBinding('keyboard',id,{key:'KeyZ'});b.setBinding('controller',id,{button:10});}
- const restored=new GameplayBindings(storage);assert(restored.rows('keyboard').every(r=>r.labelBinding==='Z'));assert(restored.rows('controller').every(r=>r.labelBinding==='Button 10'));
+ const restored=new GameplayBindings(storage);assert(restored.rows('keyboard').every(r=>r.labelBinding==='Z'));assert(restored.rows('controller').every(r=>r.labelBinding==='L3'));assert(restored.rows('controller',false).every(r=>r.labelBinding==='Button 10'));
  restored.setBinding('keyboard','throttle',[]);assert(!restored.usesKey('KeyW'));assert.equal(restored.read(new Set(['KeyW']),null).input.keyboard_drive.held,false);
  restored.reset('keyboard');assert(restored.usesKey('KeyW'));assert.equal(restored.read(new Set(['KeyW']),null).input.keyboard_drive.axis,1);
  for(const binding of [{button:-1},{axis:0,sign:0},{button:Infinity},{chord:[{button:1},{button:1}]}])assert.throws(()=>b.setBinding('controller','throttle',binding));
@@ -123,7 +123,7 @@ test('saved v1 keyboard profiles adopt new defaults but keep customized rows',()
  const b=new GameplayBindings(storage),row=id=>b.rows('keyboard').find(r=>r.id===id).labelBinding;
  assert.equal(row('throttle'),'W / ArrowUp');assert.equal(row('reverse'),'Unbound');assert.equal(row('reset'),'R / Backspace');
  assert.equal(row('preloadHold'),'P','Customized row is kept');assert.equal(row('pause'),'Escape','New default drops a key a custom row already uses');
- assert.equal(b.rows('controller').find(r=>r.id==='throttle').labelBinding,'Button 5');
+ assert.equal(b.rows('controller').find(r=>r.id==='throttle').labelBinding,'R1');
  assert.equal(JSON.parse(memory.get(STORAGE_KEY)).version,2);
  b.setBinding('keyboard','leanForward',{key:'ArrowUp'});assert.equal(new GameplayBindings(storage).rows('keyboard').find(r=>r.id==='leanForward').labelBinding,'ArrowUp','v2 profiles are not migrated again');
  assert.equal(b.rows('keyboard').find(r=>r.id==='brake').label,'Brake / reverse');assert.equal(b.rows('controller').find(r=>r.id==='brake').label,'Brake');

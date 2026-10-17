@@ -5,6 +5,7 @@
   "start_url": "/play.html",
   "scope": "/",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#210504",
   "theme_color": "#9c1414",
   "icons": [
@@ -19,6 +20,64 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
+    },
+    {
+      "src": "/fury-remastered-maskable-192-v1.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/fury-remastered-maskable-512-v1.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Free Ride",
+      "short_name": "Free Ride",
+      "description": "Choose a course and ride freely.",
+      "url": "/play.html?menu=freeride",
+      "icons": [{ "src": "/fury-remastered-home-192-v1.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Single Race",
+      "short_name": "Race",
+      "description": "Set up a race against CPU riders.",
+      "url": "/play.html?menu=race",
+      "icons": [{ "src": "/fury-remastered-home-192-v1.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Dev log",
+      "short_name": "Dev log",
+      "description": "Follow the port's progress.",
+      "url": "/devlog.html",
+      "icons": [{ "src": "/fury-remastered-home-192-v1.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/devlog-images/races-use-the-original-cpu-roster-their-own-atvs-rider-19a747ccaa7342508b83162d9834bc33.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Supercross race against the original CPU roster"
+    },
+    {
+      "src": "/devlog-images/speed-rush-v2-crisp-atv-wind-lines-and-fov-kick-01384609e78c41ab8532f98e0aecfefa.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Free riding through snow"
+    },
+    {
+      "src": "/devlog-images/phone-flips-from-the-driving-thumb-a94e8a0b12de4374933e56e1b7ba5a4f.png",
+      "sizes": "390x844",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Portrait touch controls on a phone"
     }
   ],
   "description": "ATV and motocross riding in your browser.",

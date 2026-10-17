@@ -10,6 +10,7 @@ import { mountTouchControls, TouchLeanIntent } from './touch.js';
 import { GameAudio } from './audio.js';
 import { openHostedContent } from './content.js';
 import { gameplayBindings } from './bindings.js';
+import { activeGamepad } from './gamepads.js';
 import { HeadUpDisplay, RaceOverlaySettings } from './hud.js';
 import { FreestyleMinimap, MinimapSettings } from './minimap.js';
 import { DiagnosticsOverlay } from './diagnostics.js';
@@ -27,7 +28,9 @@ import { TireTrackRenderer } from './tire-tracks.js';
 import { LingeringDustRenderer } from './lingering-dust.js';
 import { VehicleShadowMap, lightMatrices, shadowReceiverGlsl } from './shadow-map.js';
 import { KeyboardHelp } from './keyboard-help.js';
+import { createScreenWakeLock } from './wake-lock.js';
 const $ = id => document.getElementById(id);
+const screenWake = createScreenWakeLock();
 const canvas = $('game');
 // Stencil marks the player's own ATV/rider so the speed pass leaves it crisp.
 const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, stencil: true, powerPreference: 'high-performance' });
@@ -48,7 +51,7 @@ const worker = new Worker('worker.js', { type: 'module' });
 const pending = new Map();
 let requestId = 0, generation = 0, terrain, vehicle, program, uniforms, chunks = [], vehicleChunks = [], gpuTextures = [], fallbackTexture, terrainAtlas, terrainTextureMap, terrainDetailMap, frame = 0, lastTime = 0, lost = false;
 let pageSuspended = false;
-let focused = document.hasFocus(), gamepadsAvailable = true, menuOpen = true;
+let focused = document.hasFocus(), menuOpen = true;
 let frontend, hostedContent, hud, multiplayer;
 const remoteModels = new Map();
 const minimapSettings = new MinimapSettings();
@@ -1600,14 +1603,8 @@ function matrix() {
   return { viewProjection: sceneViewProjection(camera, aspect, f, near, depthFar), cull: sceneViewProjection(camera, aspect, f, near, far) };
 }
 function deadzone(value) { return Number.isFinite(value) && Math.abs(value) > .15 ? Math.sign(value) * (Math.abs(value) - .15) / .85 : 0; }
-function gamepad() {
-  let pad;
-  if (gamepadsAvailable) {
-    try { pad = navigator.getGamepads?.()?.find(pad => pad?.connected); }
-    catch { gamepadsAvailable = false; }
-  }
-  return pad;
-}
+// The controller in use, not merely the first one listed (see gamepads.js).
+function gamepad() { return activeGamepad() ?? undefined; }
 function drivingInput() {
   const empty = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false };
   if (!focused || document.hidden || menuOpen) return { input: empty, actions: {} };
@@ -2341,7 +2338,7 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
       catch(error){if(isCurrent()){usage.rideFailed(onlineRide(environment));await frontend.show(multiplayer.shared?'main':'multiplayer');frontend.fail(error);throw error;}}
       finally{if(isCurrent())frontend.busy=false;}
     },onLeave:message=>{usage.rideEnded();for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show(multiplayer.shared?'main':'multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
-    frontend = new Frontend({minimapSettings,raceOverlays,menuRider:menuRiderAssets,modelAssets:selectionAssets,gearPreview:gearTextures,crashSettings,graphicsSettings,vibrationSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => startRide(environment,racing), active: open => { menuOpen = open; usage.setRiding(!open); if (open) usage.report(10); keyboardHelp.setRiding(!open); clearInput(); lastTime = 0; scheduleRender(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
+    frontend = new Frontend({minimapSettings,raceOverlays,menuRider:menuRiderAssets,modelAssets:selectionAssets,gearPreview:gearTextures,crashSettings,graphicsSettings,vibrationSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => startRide(environment,racing), active: open => { menuOpen = open; void screenWake.set(!open); usage.setRiding(!open); if (open) usage.report(10); keyboardHelp.setRiding(!open); clearInput(); lastTime = 0; scheduleRender(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     hud = new HeadUpDisplay(frontend, canvas);
     document.body.classList.add('menu-open'); void frontend.init();
     usage.track('session_start', { entry: parseLaunch(location.search).requested ? 'link' : 'menu' });

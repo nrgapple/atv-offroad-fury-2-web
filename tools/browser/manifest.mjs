@@ -166,6 +166,7 @@ export const TESTS = {
   'test_portrait_camera.mjs': { defaults: ['follow camera', 'chase camera (original)'], group: 'content' },
   'test_race.mjs': { group: 'content' },
   'test_race_ai.mjs': { group: 'content' },
+  'test_pwa_ios.mjs': { group: 'content' },
   'test_quad_audio.mjs': { group: 'content' },
   'test_race_courses.mjs': { group: 'content' },
   'test_rails.mjs': { group: 'content' },
