@@ -1,7 +1,8 @@
 //! National AI direction correction, SCUS_972.11 00252080 / 0024f840.
-//! Peer equations, ray attenuation and the optional aggression branch (the
-//! EATDIRT "Aggressive AI" cheat, AI flag 0x4000000) are recovered; scene
-//! eligibility/order remains a separate integration gate.
+//! Peer equations, ray attenuation, the track-edge tail (AI flag 0x400000)
+//! and the optional aggression branch (the EATDIRT "Aggressive AI" cheat, AI
+//! flag 0x4000000) are recovered; scene eligibility/order remains a separate
+//! integration gate.
 use crate::{Result, collision::CollisionRay, scene_collision::SceneCollision, wheel::Vec3};
 
 #[derive(Clone, Copy)]
@@ -18,7 +19,12 @@ pub struct Response {
     pub peers: usize,
     pub obstacle_hits: usize,
     pub vegetation: usize,
+    /// The track-edge tail turned the heading this frame.
+    pub track_edge: bool,
 }
+/// Track-edge probe distance along the requested heading (constructor
+/// +0x2f4, 20ft).
+pub const TRACK_EDGE_PROBE: f32 = 20.;
 fn dot(a: Vec3, b: Vec3) -> f32 {
     (a[0] * b[0] + a[1] * b[1]) + a[2] * b[2]
 }
@@ -56,7 +62,9 @@ pub fn peers(
         aggressive,
     )
 }
-fn peers_with_forward(
+/// The peer loop with the heading `forward` taken from the requested
+/// velocity before the scene corrections (`00252e28`–`00253494`).
+pub fn peers_with_forward(
     origin: Vec3,
     mut velocity: Vec3,
     forward: Vec3,
@@ -79,7 +87,14 @@ fn peers_with_forward(
             // and travelling the same way along the track, it steers into them.
             if facing < 0.5 && squared <= 10000. && dot(forward, track) >= 0. {
                 encounters += 1;
-                let speed = dot(velocity, velocity).sqrt() * 0.2;
+                // |v| as 1 / rsqrt.s(1, v·v), zero for a zero velocity.
+                let squared = dot(velocity, velocity);
+                let length = if squared == 0. {
+                    0.
+                } else {
+                    1. / (1. / f64::from(squared).sqrt()) as f32
+                };
+                let speed = 0.2 * length;
                 velocity = std::array::from_fn(|i| velocity[i] * 0.8 + normal[i] * speed);
             }
             continue;
@@ -108,8 +123,7 @@ fn peers_with_forward(
     Response {
         velocity,
         peers: encounters,
-        obstacle_hits: 0,
-        vegetation: 0,
+        ..Response::default()
     }
 }
 
@@ -157,6 +171,21 @@ pub fn vegetation(
         vegetation: encountered,
         ..Response::default()
     }
+}
+
+/// 00252080 tail (00253498–00253660), run after the peer loop when AI flag
+/// 0x400000 is set (race creation `001f9690` sets it for every CPU). The
+/// caller has found the point `TRACK_EDGE_PROBE` ahead along the requested
+/// heading outside the edge polygons of its nearest segment and the next
+/// one. `segment` is the rider's current node to the next node; `0017d980`
+/// normalizes it in 3D. Only when the corrected velocity points to the
+/// (+z, −x) side of that direction t, i.e. cross = vx·tz − vz·tx > 0, does
+/// the velocity lose cross·t (constructor +0x2f0 = 1); the other side is
+/// left unchanged.
+pub fn track_edge(velocity: Vec3, segment: Vec3) -> Option<Vec3> {
+    let t = normalized(segment);
+    let cross = velocity[0] * t[2] - velocity[2] * t[0];
+    (cross > 0.).then(|| std::array::from_fn(|i| velocity[i] - 1. * (cross * t[i])))
 }
 
 /// Original 100ft ray hit weighting; applied successively to the requested
@@ -335,6 +364,17 @@ mod tests {
             false,
         );
         assert!(left.velocity[0] < -10.);
+    }
+    #[test]
+    fn track_edge_turns_only_toward_one_side_of_the_node_direction() {
+        let t = [0., 0., 1.];
+        assert_eq!(track_edge([10., 0., 50.], t), Some([10., 0., 40.]));
+        assert_eq!(track_edge([-10., 0., 50.], t), None);
+        assert_eq!(track_edge([0., 0., 50.], t), None);
+        // A 3D node direction also takes cross·ty from the vertical.
+        let t = [0., 0.6, 0.8];
+        let v = track_edge([10., 0., 50.], t).unwrap();
+        assert!((v[1] + 4.8).abs() < 1e-5 && (v[2] - 43.6).abs() < 1e-5);
     }
     #[test]
     fn aggressive_ai_steers_into_a_human_beside_it_and_never_avoids_one() {

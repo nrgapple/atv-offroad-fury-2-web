@@ -33,7 +33,7 @@ columns are not reproduced; the port has no matching systems yet.
 
 ## Navigation and value rows
 
-- Value rows (race Course, Laps, CPU riders and every Rider gear row) have real
+- Value rows (race Course, Laps, CPU riders, Difficulty and every Rider gear row) have real
   previous/next buttons either side of the value on every row; tapping the label
   still steps forward. Left/Right step only value rows, so they never start a race,
   copy a link or leave a page.

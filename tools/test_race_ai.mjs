@@ -37,6 +37,7 @@ try {
       coast: 0,
       limited: 0,
       preloads: 0,
+      edges: 0,
       maxError: 0
     }));
     let last = -1;
@@ -53,6 +54,7 @@ try {
           s.coast += d.throttle === 0;
           s.limited += d.ahead_distance > 150 && d.desired_speed <= 75.01;
           s.preloads += d.preload_flick !== 0;
+          s.edges += d.avoidance?.track_edge === true;
           s.maxError = Math.max(s.maxError, d.route_error);
         });
       }
@@ -115,6 +117,10 @@ try {
   assert(
     decisions.some(d => d.preloads > 0),
     'The racer jump hook releases a preload on a flagged Caribou jump'
+  );
+  assert(
+    decisions.some(d => d.edges > 0),
+    'The track-edge tail turns a CPU whose 20ft probe leaves the track'
   );
   await button(page, 'Pause').click();
   await screen('pause');

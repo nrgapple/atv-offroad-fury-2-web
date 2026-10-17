@@ -781,6 +781,19 @@ impl Course {
         }
         best.map(|(_, l)| l)
     }
+    /// Whether `p` lies inside the authored edge polygon of `segment` alone
+    /// (`0017bb50`), without the start-apron allowance of the race query.
+    pub fn within(&self, p: [f32; 3], segment: usize) -> bool {
+        let n = self.next(segment);
+        quad(
+            p,
+            self.edge(segment),
+            self.edge(n),
+            self.points[segment],
+            self.points[n],
+        )
+        .is_some()
+    }
     /// Fraction along `segment` when `p` lies inside its edge polygon.
     fn inside(&self, p: [f32; 3], segment: usize) -> Option<f32> {
         let n = self.next(segment);

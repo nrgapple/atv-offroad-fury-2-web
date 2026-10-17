@@ -203,9 +203,9 @@ pub fn low_clearance_lean(previous: f32, terrain_normal: [f32; 3], forward: [f32
 /// Race creation (`001f9690`) AI flags that depend on the race settings.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Options {
-    /// Expert difficulty. Race prep stores Expert as settings+0x610 = 3
+    /// Expert difficulty. Race prep stores Expert as settings +0x610 = 3
     /// (`002f64a0`), and race creation then leaves out AI flag 0x400: no
-    /// ahead-of-the-player speed limit (`002536b0`). Normal (and None) set it.
+    /// ahead-of-the-player speed limit (`002536b0`). Normal and Easy set it.
     pub expert: bool,
     /// EATDIRT "Aggressive AI" cheat (settings+0x618 → AI flag 0x4000000).
     pub aggressive: bool,
@@ -214,7 +214,8 @@ pub struct Options {
     pub all_out: bool,
 }
 impl Options {
-    /// Race-prep difficulty index: 0 None, 1 Normal, 2 Expert (`0021add0`).
+    /// Event difficulty index as race prep reads it (`002f64a0`): 2 Expert
+    /// (settings +0x610 = 3); 0 and 1 are Normal (+0x610 = 2).
     pub fn difficulty(difficulty: u32) -> Self {
         Self {
             expert: difficulty == 2,
@@ -297,12 +298,7 @@ pub struct Driver {
     trick_timer: f32,
     air_timer: f32,
     trick_attempted: bool,
-    /// AI flag 0x8000: armed on an ordinary node before a flag 2/4 drop.
-    drop_ready: bool,
-    /// AI flag 0x1000000: the preload strength for this jump is chosen.
-    preload_chosen: bool,
-    /// Racer +0x4c: the chosen preload strength.
-    preload_strength: f32,
+    jump: JumpLatch,
 }
 impl Driver {
     pub fn new(index: usize, options: Options) -> Self {
@@ -318,9 +314,7 @@ impl Driver {
             trick_timer: 0.,
             air_timer: 0.,
             trick_attempted: false,
-            drop_ready: false,
-            preload_chosen: false,
-            preload_strength: 0.,
+            jump: JumpLatch::default(),
         }
     }
     pub fn repositioned(&mut self) {
@@ -446,14 +440,38 @@ impl Driver {
             aim.point[2] - lane * tangent[0],
         ];
         let desired = normalize([target[0] - frame.origin[0], 0., target[2] - frame.origin[2]]);
-        let avoidance = crate::cpu_avoidance::direction(
+        // 00252080 reads the 0x10 response scale from the aim node (+0x278).
+        let mut avoidance = crate::cpu_avoidance::direction(
             frame.origin,
             desired.map(|v| v * frame.speed_magnitude),
             context.peers,
-            course.flags.get(p.segment).copied().unwrap_or(0),
+            course.flags.get(aim.segment).copied().unwrap_or(0),
             context.scene,
             self.options.aggressive,
         )?;
+        // RaceStatus +0xbc: the race station's node, which stays on the last
+        // on-track node while the rider is off the track polygon.
+        let node = context.station.map_or(p.segment, |s| s.segment);
+        // AI flag 0x400000 tail: probe 20ft along the requested heading; the
+        // nearest segment comes from the station window here instead of the
+        // native whole-section search (`0017b6a0`).
+        let probe = std::array::from_fn(|i| {
+            frame.origin[i] + desired[i] * crate::cpu_avoidance::TRACK_EDGE_PROBE
+        });
+        let near = match context.station {
+            Some(station) => course.project_near(probe, station),
+            None => course.project(probe),
+        };
+        if !course.within(probe, near.segment)
+            && !course.within(probe, course.next(near.segment))
+            && let Some(velocity) = crate::cpu_avoidance::track_edge(
+                avoidance.velocity,
+                sub(course.points[course.next(node)], course.points[node]),
+            )
+        {
+            avoidance.velocity = velocity;
+            avoidance.track_edge = true;
+        }
         // 0024f840 leaves the original heading when the correction is zero.
         let direction = if avoidance.velocity[0] != 0. || avoidance.velocity[2] != 0. {
             normalize([avoidance.velocity[0], 0., avoidance.velocity[2]])
@@ -497,16 +515,36 @@ impl Driver {
                 .sin()
         } else if airborne {
             low_clearance_lean(self.lean, context.terrain_normal, forward)
-        } else if course.flags.get(p.segment).copied().unwrap_or(0) & 8 != 0 {
+        } else if course.flags.get(node).copied().unwrap_or(0) & 8 != 0 {
             // Grounded on a flag-8 node (RaceStatus +0xbc): constructor +0x258.
             0.6
         } else {
             0.
         };
         // Racer hook 0024ebb0 (VehicleAIInterface +0x28) on the aim node.
-        let jump = self.jump_hook(course, aim.segment, frame, context.clearance, steer, lean);
-        steer = jump.0;
-        let mut lean = jump.1.clamp(-1., 1.);
+        let aim_flags = course.flags.get(aim.segment).copied().unwrap_or(0);
+        let (hook_steer, hook_lean) = jump_hook(
+            &mut self.jump,
+            JumpNode {
+                flags: aim_flags,
+                speed: course.speeds.get(aim.segment).copied().unwrap_or(-1.),
+                preload_scale: course
+                    .preload_scales
+                    .get(aim.segment)
+                    .copied()
+                    .unwrap_or(0.),
+            },
+            JumpRider {
+                speed: frame.speed_magnitude,
+                preload_available: frame.preload_available,
+                preload_armed: frame.preload_armed,
+                clearance: context.clearance,
+            },
+            steer,
+            lean,
+        );
+        steer = hook_steer;
+        let mut lean = hook_lean.clamp(-1., 1.);
         // AI +0xf4 keeps this lean; the release below only changes the input.
         self.lean = lean;
         // Flag 0x400 is set for every difficulty except Expert.
@@ -529,9 +567,13 @@ impl Driver {
         // rate that yields the chosen strength. The AI never measures a pad
         // flick, so every other frame supplies none.
         let mut preload_flick = 0.;
-        if frame.preload_armed && course.flags.get(aim.segment).copied().unwrap_or(0) & 0x40 != 0 {
-            let [minimum, maximum] = frame.preload_rates;
-            preload_flick = self.preload_strength * -(maximum - minimum) - minimum;
+        if let Some(flick) = preload_release(
+            frame.preload_armed,
+            aim_flags,
+            self.jump.preload_strength,
+            frame.preload_rates,
+        ) {
+            preload_flick = flick;
             lean = -0.3;
         }
         let input = VehicleInput {
@@ -563,57 +605,99 @@ impl Driver {
             },
         ))
     }
-    /// 0024ebb0: drop and jump handling for the aim node. Flags 2 and 4 hold
-    /// a lean-back, straight line from 1ft / 2.5ft (constructor +0x270 /
-    /// +0x26c) above the terrain until the latch clears; no shipped TDF uses
-    /// them. A flag-0x40 jump with preload available (rising ramp face)
-    /// chooses a strength once, 0.05 (race creation +0x260) × TDF tag 27 ×
-    /// the shortfall below the node's target speed, then leans back to arm
-    /// it and forward once armed. Returns (steer, lean).
-    fn jump_hook(
-        &mut self,
-        course: &Course,
-        node: usize,
-        frame: &DriverPose,
-        clearance: f32,
-        mut steer: f32,
-        mut lean: f32,
-    ) -> (f32, f32) {
-        let flags = course.flags.get(node).copied().unwrap_or(0);
-        if flags & 6 != 0 {
-            let threshold = if flags & 2 != 0 { -1. } else { -2.5 };
-            if clearance <= threshold || !self.drop_ready {
-                self.drop_ready = false;
-                if clearance < 0. {
-                    steer = 0.;
-                    if flags & 2 != 0 {
-                        lean = 0.3;
-                    }
-                }
-            } else {
-                lean = -1.;
+}
+/// Racer +0x4c and the AI flags 0x8000 / 0x1000000 that `0024ebb0` keeps.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct JumpLatch {
+    /// AI flag 0x8000: set on an ordinary node, read by a flag 2/4 drop.
+    pub drop_ready: bool,
+    /// AI flag 0x1000000: the preload strength for this jump is chosen.
+    pub preload_chosen: bool,
+    /// Racer +0x4c: the chosen preload strength.
+    pub preload_strength: f32,
+}
+/// The aim node (AI +0x278) fields `0024ebb0` reads: flags (+4), TDF tag 18
+/// target speed (+0x44, −1 = none) and tag 27 preload scale (+0x4c).
+#[derive(Debug, Clone, Copy)]
+pub struct JumpNode {
+    pub flags: u32,
+    pub speed: f32,
+    pub preload_scale: f32,
+}
+/// The racer state `0024ebb0` reads: speed (AI +0xa0), rider status +0x50 /
+/// +0x48 through AI flags 0x20000 / 0x10000, and the height above the
+/// ground reference (AI +100 − +0x234).
+#[derive(Debug, Clone, Copy)]
+pub struct JumpRider {
+    pub speed: f32,
+    pub preload_available: bool,
+    pub preload_armed: bool,
+    pub clearance: f32,
+}
+/// Constructor `0024ef20` values: preload bias +0x264, the flag 4 / flag 2
+/// clearance thresholds +0x26c / +0x270; race creation sets the gain +0x260.
+const PRELOAD_BIAS: f32 = 0.;
+const PRELOAD_GAIN: f32 = 0.05;
+const DROP_CLEARANCE: [f32; 2] = [-2.5, -1.];
+/// `0024ebb0` (VehicleAIInterface +0x28): drop and jump handling for the
+/// aim node. A flag 2 / 4 node holds a lean −1, straight line while the
+/// clearance stays above −1ft / −2.5ft and an ordinary node armed the latch;
+/// below zero clearance it straightens (flag 2 also leans 0.3). No shipped
+/// TDF uses flags 2 or 4. A flag 0x40 node with preload available (a rising
+/// ramp face) chooses a strength once, bias + gain × (tag 27 × (target −
+/// speed)) clamped to 0–1 with 150ft/s for an unset target, then leans 1
+/// to arm the preload (unless already ≥ 0.9) and −1 once armed. Any other
+/// node, or no preload available, re-arms the drop latch and clears the
+/// choice. Returns (steer, lean).
+pub fn jump_hook(
+    latch: &mut JumpLatch,
+    node: JumpNode,
+    rider: JumpRider,
+    mut steer: f32,
+    mut lean: f32,
+) -> (f32, f32) {
+    let flags = node.flags;
+    if flags & 6 != 0 {
+        let threshold = DROP_CLEARANCE[usize::from(flags & 2 != 0)];
+        if rider.clearance <= threshold || !latch.drop_ready {
+            latch.drop_ready = false;
+            if rider.clearance < 0. {
                 steer = 0.;
+                if flags & 2 != 0 {
+                    lean = 0.3;
+                }
             }
-        } else if !frame.preload_available || flags & 0x40 == 0 {
-            self.drop_ready = true;
-            self.preload_chosen = false;
         } else {
-            if !self.preload_chosen {
-                let speed = course.speeds.get(node).copied().unwrap_or(-1.);
-                let target = if speed >= 0. { speed } else { 150. };
-                let scale = course.preload_scales.get(node).copied().unwrap_or(0.);
-                self.preload_strength =
-                    (0.05 * scale * (target - frame.speed_magnitude)).clamp(0., 1.);
-                self.preload_chosen = true;
-            }
-            if frame.preload_armed {
-                lean = -1.;
-            } else if lean < 0.9 {
-                lean = 1.;
-            }
+            lean = -1.;
+            steer = 0.;
         }
-        (steer, lean)
+    } else if !rider.preload_available || flags & 0x40 == 0 {
+        latch.drop_ready = true;
+        latch.preload_chosen = false;
+    } else {
+        if !latch.preload_chosen {
+            let target = if node.speed >= 0. { node.speed } else { 150. };
+            let strength =
+                PRELOAD_BIAS + PRELOAD_GAIN * (node.preload_scale * (target - rider.speed));
+            latch.preload_strength = strength.clamp(0., 1.);
+            latch.preload_chosen = true;
+        }
+        if rider.preload_armed {
+            lean = -1.;
+        } else if lean < 0.9 {
+            lean = 1.;
+        }
     }
+    (steer, lean)
+}
+/// Racer post-update `001ebb10`: with the preload armed on a flag 0x40 aim
+/// node the racer input leans −0.3 and supplies the lean-flick rate
+/// strength × −(max − min) − min (rider status +0x8c / +0x88), which the
+/// rider control turns back into that strength. The AI never measures a pad
+/// flick; `001e7940` consumes and clears the rate every frame.
+pub fn preload_release(armed: bool, aim_flags: u32, strength: f32, rates: [f32; 2]) -> Option<f32> {
+    let [minimum, maximum] = rates;
+    (armed && aim_flags & 0x40 != 0).then(|| strength * -(maximum - minimum) - minimum)
 }
 #[cfg(test)]
 mod tests {
@@ -688,6 +772,28 @@ mod tests {
                 .1
                 .desired_speed,
             150.
+        );
+    }
+    #[test]
+    fn track_edge_tail_acts_only_when_the_probe_leaves_the_track() {
+        let course = square(0, -1.);
+        let at = |x: f32| DriverPose {
+            origin: [x, 0., 50.],
+            ..pose(60., false, false)
+        };
+        let mut driver = Driver::new(0, Options::default());
+        // On the road the 20ft probe stays inside the 30ft-wide polygon.
+        let (_, d) = drive(&mut driver, &course, &at(0.), 0., 1.);
+        assert!(!d.avoidance.track_edge);
+        // Off the -x side the heading back (+x) crosses the +z node direction
+        // positively and loses that cross product along it.
+        let (_, d) = drive(&mut driver, &course, &at(-40.), 0., 1.);
+        assert!(d.avoidance.track_edge);
+        let [x, _, z] = d.avoidance.velocity;
+        assert!(
+            x > 0. && z < x,
+            "steeper return: {:?}",
+            d.avoidance.velocity
         );
     }
     #[test]
