@@ -1,0 +1,14 @@
+{
+  "id": "saved-iphone-app-screen-stays-awake-silent-switch-soun-e00067c4b7134806bd25ddbd165366f4",
+  "timestamp": "2026-10-17T22:37:49.652015+00:00",
+  "recorded_at": "2026-10-17T22:44:03.266239+00:00",
+  "kind": "build",
+  "title": "Saved iPhone app: screen stays awake, silent-switch sound, lock-screen music controls and launch screens",
+  "summary": "PR #156 (feat/pwa-ios, commit b081c34) makes the saved Home Screen app behave more like a native iPhone app: the screen stays awake while riding, sound follows a silent-switch setting, the soundtrack appears in Control Center, and a saved app opens on a brand launch screen. Host-verified only; not live until the PR merges and deploys.",
+  "details": [
+    "Screen wake lock: held while riding so controller and keyboard play no longer dims or locks the screen; released in menus and pause and re-requested on return. Saved iOS Home Screen apps support this from iOS 18.4. Silent switch: Settings > Extras gains 'Silent switch: Play sound' (default; Safari audio session 'playback') or 'Mute game' ('ambient': follows the switch and mixes with other apps' music); hidden on browsers without navigator.audioSession. Media Session: soundtrack title, artist and artwork show in Control Center, and play/pause/next/previous from Control Center, headphones and media keys act as the Jukebox transport; game audio still pauses while the app is hidden. iOS launch screens: Safari draws this device's portrait and landscape launch images (brand gradient plus wordmark) on the idle title screen, so a saved app opens on a brand screen instead of blank. The screenshot is the generated 390x844 portrait launch image. Manifest: maskable Android icons, orientation 'any' (portrait and landscape), long-press shortcuts for Free Ride, Single Race and Dev log (Android/desktop only; iOS ignores shortcuts), install screenshots, /favicon.ico and dev log page icons. '?menu=freeride|race' opens that menu keeping the saved rider and quad. Verification (host): unit tests for wake lock, audio session, media session, shortcuts and launch-screen sizes; Rust menu layout test; new content browser test test_pwa_ios.mjs passes; test_app_identity, test_hd_settings, test_jukebox and test_settings pass; the new test_install_app checks pass in Chromium and WebKit (the test stops at a pre-existing standalone safe-area failure)."
+  ],
+  "limitation": "iOS APIs are synthetic in tests; confirmation of launch screens, silent switch and wake lock on a physical iPhone/iPad is pending. iOS still offers no install prompt, orientation lock, rumble or vibration for web apps. Offline caching is a separate change. Not live until PR #156 merges and deploys.",
+  "image": "/devlog-images/saved-iphone-app-screen-stays-awake-silent-switch-soun-e00067c4b7134806bd25ddbd165366f4.png",
+  "caption": "Generated 390x844 iOS portrait launch screen: brand gradient and Fury Remastered wordmark (host render)"
+}
