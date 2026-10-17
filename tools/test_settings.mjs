@@ -111,6 +111,13 @@ try {
   await click('Back');
   await screen('pause');
   await click('Resume');
+  // Windows Chrome often lists an idle virtual pad (Steam Input, DS4Windows)
+  // ahead of the real controller; driving must follow the pad in use.
+  await page.evaluate(() => {
+    const idle = { connected: true, index: 0, id: 'Steam Virtual Gamepad', mapping: 'standard', axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })) };
+    window.settingsPad.index = 1;
+    Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [idle, window.settingsPad] });
+  });
   await page.evaluate(() => (window.settingsPad.buttons[5] = { pressed: true, value: 0.75 }));
   await page.waitForFunction(() => window.atvTerrainStatus.input?.throttle === 0.75);
   await page.evaluate(() => (window.settingsPad = null));

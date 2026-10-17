@@ -1,4 +1,5 @@
 import { gameplayBindings } from './bindings.js';
+import { activeGamepad } from './gamepads.js';
 import { standardPad, bindingGlyphs, controllerSummary } from './pad-glyphs.js';
 import { parseLaunch, menuShortcut, buildRideUrl, copyRideUrl, ENVIRONMENTS, RACE_COURSES, COURSE_PREVIEWS, courseResource, loadingShotsResource } from './launch.js';
 import { renderScreen, screenPages, courseGroup, COURSE_GROUPS } from './menu-screens.js';
@@ -141,7 +142,7 @@ export class Frontend {
       if (this.installHelp?.open) { this.padBlocked = true; this.lastPad.clear(); this.pollFrame = requestAnimationFrame(this.poll); return; }
       if (!document.hidden && document.hasFocus()) {
         let pads = []; try { pads = [...navigator.getGamepads()].filter(Boolean); } catch { /* browser without gamepad permission */ }
-        if (this.capture) { this.pollCapture(pads.find(p => p.connected !== false)); this.pollFrame = requestAnimationFrame(this.poll); return; }
+        if (this.capture) { this.pollCapture(activeGamepad()); this.pollFrame = requestAnimationFrame(this.poll); return; }
         const held = new Set();
         for (const p of pads) {
           if (p.buttons[0]?.pressed) held.add('accept');
@@ -719,10 +720,7 @@ export class Frontend {
     }
     this.appearance = a;
   }
-  padStandard() {
-    let pad = null; try { pad = [...(navigator.getGamepads?.() ?? [])].find(p => p?.connected !== false && p); } catch { /* no gamepad permission */ }
-    return standardPad(pad);
-  }
+  padStandard() { return standardPad(activeGamepad()); }
   gearRows() {
     // The original catalog names pants/sleeves generically ("pants 10"); their
     // index matches the jersey line of the same brand.

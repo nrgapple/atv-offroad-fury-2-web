@@ -11,7 +11,7 @@ import shutil
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_FILES = {'fury-remastered-home-180-v1.png', 'fury-remastered-home-192-v1.png', 'fury-remastered-home-512-v1.png', 'fury-remastered-maskable-192-v1.png', 'fury-remastered-maskable-512-v1.png', 'favicon.ico', 'fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'play.html', 'design-system.css', 'game.css', 'game.js', 'render-support.js', 'speed-rush.js', 'scenery-materials.js', 'race.js', 'multiplayer.js', 'water.js', 'fog.js', 'train.js', 'wheel-effects.js', 'weather.js', 'ambient-effects.js', 'ambient-streams.js', 'motorcycle-presentation.js', 'graphics.js', 'vehicle-shadows.js', 'tire-tracks.js', 'shadow-map.js', 'lingering-dust.js', 'keyboard-help.js', 'analytics.js', 'menu-screens.js', 'jukebox.js', 'hud.js', 'minimap.js', 'diagnostics.js', 'frontend.js', 'launch.js', 'touch.js', 'touch.css', 'menu-screens.css', 'jukebox.css', 'hud.css', 'content.js', 'audio.js', 'quad-sounds.js', 'audio-enhance.js', 'devlog.html',
                 'devlog.css', 'devlog.js', 'workbench.html', 'style.css', 'app.js',
-                'worker.js', 'input.js', 'controls.js', 'bindings.js', 'pad-glyphs.js', 'atv_web.wasm', 'music.js', 'wake-lock.js'}
+                'worker.js', 'input.js', 'controls.js', 'bindings.js', 'gamepads.js', 'pad-glyphs.js', 'atv_web.wasm', 'music.js', 'wake-lock.js'}
 RELEASE_STATIC_FILES = STATIC_FILES | {'deployment.json', 'devlog.json'}
 RELAY_FILES = {'index.js', 'index_bg.wasm'}
 EXPECTED_FILES = {'release.json'} | {'static/' + name for name in RELEASE_STATIC_FILES} | {'relay/' + name for name in RELAY_FILES}
