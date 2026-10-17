@@ -1,0 +1,16 @@
+{
+  "id": "streamed-soundtrack-and-a-jukebox-player-fb61720882354ee3a2a83a8527fd2d6e",
+  "timestamp": "2026-10-17T20:51:32.408542+00:00",
+  "recorded_at": "2026-10-17T20:52:04.994341+00:00",
+  "kind": "build",
+  "title": "Streamed soundtrack and a Jukebox player",
+  "summary": "All 21 original songs now stream as AAC through one media element (ranged reads, native decoding, seekable) instead of being decoded from 1 MiB VAG chunks in WebAssembly. A new Jukebox in the Main Menu and Pause uses the original Jukebox page art: the red snow backdrop and the spinning CD from PAGE14.RES.",
+  "details": [
+    "The packager decodes each VAG with the same Rust stream decoder and encodes deterministic AAC-LC 160 kbps: 87.4 MB for the soundtrack instead of 218.4 MB. The Rust catalog and shuffle still choose every song. The Worker serves /content/<sha256>.m4a as audio/mp4 with byte ranges. Any missing stream or playback failure falls back to the original VAG decoder.",
+    "The Jukebox has genre, title and artist from music.pb, a seek bar, previous/play-pause/next, volume, a spectrum and all 21 songs, with keyboard and controller navigation. The disc ships no album covers, so the original CD and backdrop are the artwork.",
+    "Host Chromium: tools/test_jukebox.mjs passes Main and Pause Jukebox with 206 audio/mp4 range responses, selection, seeking, pause and resume, next and previous, and 390x844 touch sizes. test_music (decoder fallback), test_pause_menu, test_frontend and test_touch pass. Against the previously published package it plays through the decoder without errors."
+  ],
+  "limitation": "AAC is an authored re-encoding of the decoded ADPCM, not an original file. Physical iOS and Android playback is unverified. The layout, transport and spectrum are authored, not a recovered native Jukebox.",
+  "image": "/devlog-images/streamed-soundtrack-and-a-jukebox-player-fb61720882354ee3a2a83a8527fd2d6e.png",
+  "caption": "Main Menu \u2192 Jukebox, paused on Courage (Alien Ant Farm) with the original spinning-CD and snow backdrop art."
+}
