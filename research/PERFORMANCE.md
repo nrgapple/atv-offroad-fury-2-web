@@ -536,3 +536,71 @@ shadow map 16 MB (High only). The 2048² depth pass and four-tap comparisons are
 GPU work these host measurements cannot price on a phone GPU, which is why Auto
 keeps phones on Enhanced (blob shadow only). Report:
 `work/verification/graphics-presets/pr2/benchmark.json`.
+
+## Load path and decoder traffic (2026-10-17)
+
+Method: host Chromium (Metal), `play.html?drive=1&environment=env01` deep link,
+fresh in-memory profile (cold), a local server with the live 218-record content
+manifest. "Phone network" throttles CDP to 25 Mbps / 70 ms RTT; "×4 CPU" is CDP
+CPU throttling. The local server does not compress app files (production serves
+brotli), so app JS/WASM bytes are pessimistic; content blobs are not compressed in
+either. Baseline is main `bb7171d`. These are host simulations, not phone results.
+
+What slowed startup on the baseline:
+
+- **Serial downloads.** Each archive read was awaited before the next request.
+  `terrainFromContent` awaited the whole audio pipeline (bank download, every
+  sample decode, soundtrack and menu tunes) before requesting the course.
+- **Title screen gated on the sound bank.** `Frontend.init` awaited the soundtrack
+  catalog and menu tunes, i.e. all 18.7 MB of `AUDIO.RES`, before the title.
+- **Loading screen previews.** Opening the loading screen fetched all six course
+  preview archives (≈2.5 MB) and decoded every track photo.
+- **Decoder copies.** Every archive parse/extract (ops 2/3) structured-cloned the
+  whole archive to the worker and copied it into WASM: 2,412 MB over 2,427 calls
+  to reach a ride, 630 ms of main-thread `postMessage` at ×4 CPU.
+- **Whole sound bank per ride.** A freestyle ride plays a few hundred KB of the
+  bank (one quad's engine set, impacts, venue sounds), but downloaded all of it:
+  engines for all 26 quads (9.8 MB), race stingers (4 MB), rider vocals (3.3 MB).
+- **Repeat visits** revalidated every `?v=<commit>` app file
+  (`max-age=0, must-revalidate`).
+- **Race frames** read `#toolbar.getBoundingClientRect()` after the race overlay
+  rewrote its timers, forcing a layout every frame; CPU and remote riders
+  allocated flattened bone arrays and re-uploaded identical bone/model uniforms for
+  every chunk.
+
+Changes: ride archives are prefetched together (the bank at low fetch priority);
+menu music loads behind the title; the loading screen decodes only its own photo
+(ride links skip the course-list photos); archives stay resident in Rust memory
+under a key (48 MB LRU, reused archives only) so an extraction posts a key;
+whole-chunk reads share the verified cached bytes; the sound bank is opened by
+directory and a member is inflated from only the 24 KiB blocks it spans (wrapped
+as a one-member container for the existing Rust extractor); the content package
+splits `AUDIO.RES` into 256 KiB chunks (same compressed bytes); app files stamped
+with the deployed commit are served `immutable`; the toolbar edge is measured on
+resize; rider bones reuse buffers and upload once per quad/rider part.
+
+| Cold `drive=1` ride ready | Baseline | This build, live package | + chunked sound bank |
+| --- | ---: | ---: | ---: |
+| Phone network | 16.3 s | 13.0 s | 8.9 s |
+| Unthrottled (page clock) | 2.45 s | 1.49 s | — |
+| ×4 CPU, unthrottled network | 5.5 s | 3.7 s | — |
+| Decoder bytes posted | 2,412 MB | 49 MB | — |
+| Main-thread `postMessage`, ×4 CPU | 630 ms | 40 ms | — |
+| `AUDIO.RES` bytes downloaded | 18.7 MB | 18.7 MB | 5.1 MB |
+
+Every one of the bank's 652 members, and all members of `AUDIOTBL.RES`,
+`RIDER_MT.RES`, `E01_FR.RES` and `BIKE250.RES`, extracts byte-identically
+through the block path versus whole-archive extraction. Rider vocals warm after the
+ride is ready and race stingers during race load, so no sound waits on the
+network mid-ride. With today's single-blob package the reader still works and
+downloads the bank once. The chunked package must publish only after this client
+is live: the previous client fetches a record's chunks one at a time.
+
+Considered and not changed: chunking `RIDER_MT.RES` cut its bytes 3.7→1.6 MB but
+its member reads become serial after the terrain, so the ride was no faster
+(9.06 s vs 8.94 s) and race CPU outfits would add serial fetches. Starting the ride
+before sounds finish would save ~4 s more on a cold slow link but changes the
+"ride starts with sound" behavior that content tests assert. A warm visit with a
+real disk profile already reuses content from the HTTP cache (1.1 MB over the
+network), so no Cache Storage layer was added. WASM is 829 KB brotli; physics
+batches average about 1 ms on the host during a four-CPU race.
