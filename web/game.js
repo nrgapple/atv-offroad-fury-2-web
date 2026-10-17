@@ -10,6 +10,7 @@ import { mountTouchControls, TouchLeanIntent } from './touch.js';
 import { GameAudio } from './audio.js';
 import { openHostedContent } from './content.js';
 import { gameplayBindings } from './bindings.js';
+import { activeGamepad } from './gamepads.js';
 import { HeadUpDisplay, RaceOverlaySettings } from './hud.js';
 import { FreestyleMinimap, MinimapSettings } from './minimap.js';
 import { DiagnosticsOverlay } from './diagnostics.js';
@@ -50,7 +51,7 @@ const worker = new Worker('worker.js', { type: 'module' });
 const pending = new Map();
 let requestId = 0, generation = 0, terrain, vehicle, program, uniforms, chunks = [], vehicleChunks = [], gpuTextures = [], fallbackTexture, terrainAtlas, terrainTextureMap, terrainDetailMap, frame = 0, lastTime = 0, lost = false;
 let pageSuspended = false;
-let focused = document.hasFocus(), gamepadsAvailable = true, menuOpen = true;
+let focused = document.hasFocus(), menuOpen = true;
 let frontend, hostedContent, hud, multiplayer;
 const remoteModels = new Map();
 const minimapSettings = new MinimapSettings();
@@ -1602,14 +1603,8 @@ function matrix() {
   return { viewProjection: sceneViewProjection(camera, aspect, f, near, depthFar), cull: sceneViewProjection(camera, aspect, f, near, far) };
 }
 function deadzone(value) { return Number.isFinite(value) && Math.abs(value) > .15 ? Math.sign(value) * (Math.abs(value) - .15) / .85 : 0; }
-function gamepad() {
-  let pad;
-  if (gamepadsAvailable) {
-    try { pad = navigator.getGamepads?.()?.find(pad => pad?.connected); }
-    catch { gamepadsAvailable = false; }
-  }
-  return pad;
-}
+// The controller in use, not merely the first one listed (see gamepads.js).
+function gamepad() { return activeGamepad() ?? undefined; }
 function drivingInput() {
   const empty = { throttle: 0, brake: 0, steer: 0, lean: 0, reverse: false };
   if (!focused || document.hidden || menuOpen) return { input: empty, actions: {} };

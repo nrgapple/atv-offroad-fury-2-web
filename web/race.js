@@ -1,4 +1,5 @@
 // Presentation only: race clocks, rank, checkpoints and CPU poses come from Rust.
+import { activeGamepad } from './gamepads.js';
 export const raceTime = value => value == null ? '--:--.--' : `${Math.floor(value/60)}:${(value%60).toFixed(2).padStart(5,'0')}`;
 export class RaceOverlay {
   constructor({restart,quit,finish}) {
@@ -56,7 +57,7 @@ export class RaceOverlay {
           for(const text of [`${r.position}. ${r.name}`,raceTime(r.time),raceTime(r.best)]){const td=document.createElement('td');td.textContent=text;tr.append(td);}return tr;}));
         this.setMenu('results');
       }
-      let pad;try{pad=[...navigator.getGamepads()].find(p=>p?.connected!==false&&p);}catch{}
+      const pad=activeGamepad();
       const pressed=i=>Boolean(pad?.buttons[i]?.pressed),held=pressed(0)||pressed(1)||pressed(2);
       if(!held)this.padArmed=true;
       else if(this.padArmed){this.padArmed=false;void this.act(this.hidden?'show':pressed(2)?'hide':pressed(1)?(this.menu==='quit'?'back':'hide'):this.menu==='quit'?'retry':'continue');}

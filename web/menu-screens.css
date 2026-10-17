@@ -430,3 +430,29 @@
   .ms-stat dt, .ms-stats-speed { font-size: 12px; }
   .ms-stats .ms-meter { height: 7px; }
 }
+
+/* Controller bindings, after the original Controller Settings page (PAGE17):
+   slate PS2 button glyphs, a blue "+" between chord buttons, and a translucent
+   gray rounded summary panel with a black rim. The summary lists only actions
+   this port has, read from the live controller profile. */
+.pad-binding, .pad-chord { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 3px; vertical-align: middle; }
+.pad-binding { gap: 4px 6px; margin-top: 4px; }
+.pad-glyph { flex: none; display: inline-block; width: 28px; height: 28px; filter: drop-shadow(0 2px 0 #000b); }
+.pad-glyph svg { display: block; width: 100%; height: 100%; }
+.pad-plus { color: #7ba3d8; font: 800 17px/1 var(--atv-font-display); text-shadow: 1px 1px 0 #000c; }
+.pad-or { color: #9a9a9a; font: 700 15px/1 var(--atv-font-display); }
+.pad-unbound { color: #c4c4c4; font: 700 13px/1.2 var(--atv-font-display); }
+.pause-panel button[aria-current=true] .pad-plus { color: #24466f; text-shadow: none; }
+.pause-panel button[aria-current=true] .pad-or { color: #5a4a00; }
+.pad-summary-slot { margin-top: 22px; }
+.pad-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 26px; padding: 18px 22px; border: 2px solid #000; border-radius: 14px; background: #3f3f3fa8; box-shadow: 0 4px 0 #0007; }
+.pad-summary-group { display: grid; gap: 4px; align-content: start; }
+.pad-summary-title { margin: 4px 0 2px; color: #6b9dcf; font: 700 clamp(16px, 1.6vw, 19px)/1.2 var(--atv-font-display); letter-spacing: .03em; text-shadow: 1px 2px 0 #000c; }
+.pad-summary-row { display: grid; grid-template-columns: 112px minmax(0, 1fr); align-items: center; gap: 12px; min-height: 32px; margin: 0; color: #c8c8c8; font: 700 clamp(15px, 1.5vw, 18px)/1.2 var(--atv-font-display); letter-spacing: .02em; text-shadow: 1px 2px 0 #000c; }
+.pad-summary-row .pad-binding { margin: 0; flex-wrap: nowrap; }
+.pad-summary-row .pad-glyph { width: 30px; height: 30px; }
+/* Wide menu screens: the panel takes the empty right side, as in the original. */
+@media (min-width: 1100px) and (min-height: 560px) {
+  #frontend[data-context=menu] .pad-summary-slot { position: absolute; top: clamp(96px, 14vh, 128px); left: calc(620px + 2 * clamp(16px, 3.2vw, 44px)); right: clamp(16px, 3.2vw, 44px); max-width: 560px; margin: 0; }
+  #frontend[data-context=menu] .pad-summary { grid-template-columns: 1fr; }
+}
