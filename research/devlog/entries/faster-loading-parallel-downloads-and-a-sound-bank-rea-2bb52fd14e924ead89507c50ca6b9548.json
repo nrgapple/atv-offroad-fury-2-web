@@ -1,0 +1,16 @@
+{
+  "id": "faster-loading-parallel-downloads-and-a-sound-bank-rea-2bb52fd14e924ead89507c50ca6b9548",
+  "timestamp": "2026-10-17T06:53:07.009767+00:00",
+  "recorded_at": "2026-10-17T06:53:07.009767+00:00",
+  "kind": "build",
+  "title": "Faster loading: parallel downloads and a sound bank read by the sample",
+  "summary": "Startup no longer downloads archives one after another, the title screen no longer waits for the whole 18.7 MB sound bank, and archive decoding stops copying each archive to the decoder for every member. In host Chromium on a simulated 25 Mbps / 70 ms phone network, a cold ride link reached the ride in 13.0 s instead of 16.3 s, and in 8.9 s once the sound bank is published in 256 KiB chunks.",
+  "details": [
+    "Course, vehicle and rider archives are requested together; sounds load alongside the course instead of before it.",
+    "Decoder traffic to reach a ride fell from 2,412 MB to 49 MB: archives stay resident in Rust memory and each extraction sends a key.",
+    "The sound bank is opened by its directory and a sample is inflated from only the 24 KiB blocks it spans; a freestyle ride downloads about 5 MB of the 18.7 MB bank once the chunked package is live.",
+    "Race frames no longer force a layout to read the toolbar position; CPU and remote riders reuse bone buffers.",
+    "Repeat visits stop revalidating app files stamped with the deployed commit."
+  ],
+  "limitation": "The ride still waits for its sounds to finish loading."
+}
