@@ -1,0 +1,18 @@
+{
+  "id": "controllers-the-pad-in-use-controller-choice-and-sensi-5a0812745c8d46bba1e00278d3813102",
+  "timestamp": "2026-10-17T23:01:51.167773+00:00",
+  "recorded_at": "2026-10-17T23:02:26.055285+00:00",
+  "kind": "build",
+  "title": "Controllers: the pad in use, controller choice and sensitivity",
+  "summary": "Gameplay now follows the controller you are actually using, not the first one the browser lists. Chrome on Windows often lists idle virtual pads first (Steam Input, DS4Windows), which left a real controller doing nothing while riding. A new Controller Settings page (Settings \u2192 Controls, from the main menu or Pause) chooses Auto or a specific connected controller and tunes steering, lean, gas/brake and camera sensitivity plus the stick dead zone.",
+  "details": [
+    "Fix shipped in PR #160 (live); Controller Settings in PR #161.",
+    "Named after the original Options \u2192 Controller Settings page. The original ControllerSelect page let four split-screen players press \u00d7 to claim a pad; Auto plays that role for one rider.",
+    "Sensitivity is a port enhancement (the original has none): 100% keeps the current response and full stick travel always reaches full lock; the 15% default dead zone is unchanged.",
+    "Menus follow the same controller, so idle devices cannot navigate them.",
+    "Verified: Rust menu tests, unit tests, and test_settings, test_pause_menu, test_bindings, test_frontend browser tests; a regression test lists an idle virtual pad first."
+  ],
+  "limitation": "Not tested on a physical Windows machine or real controller. Host captures; Controller Settings is not yet a verified public release.",
+  "image": "/devlog-images/controllers-the-pad-in-use-controller-choice-and-sensi-5a0812745c8d46bba1e00278d3813102.png",
+  "caption": "Host capture: Controller Settings page, 1280\u00d7800."
+}

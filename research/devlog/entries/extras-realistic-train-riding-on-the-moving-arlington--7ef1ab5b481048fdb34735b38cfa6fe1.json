@@ -1,0 +1,16 @@
+{
+  "id": "extras-realistic-train-riding-on-the-moving-arlington--7ef1ab5b481048fdb34735b38cfa6fe1",
+  "timestamp": "2026-10-17T23:06:16.069349+00:00",
+  "recorded_at": "2026-10-17T23:06:16.102482+00:00",
+  "kind": "build",
+  "title": "Extras: realistic train riding on the moving Arlington train",
+  "summary": "A new Extras row, Train riding: Realistic (off by default), makes the quad hold its place on a moving train car. Original behavior stays the default. In the original, suspension and wheel spin already subtract the train's velocity, but the body grip routine 001d8540 does not: a static scan finds no read of the moving-support actor or the ground velocity, so lateral grip, drag, stiction and settling act against world velocity. PR #165 (branch feat/train-physics) is the change; host-only verification until its deploy is confirmed.",
+  "details": [
+    "Original baseline measured on the Arlington flatbed through the long left curve (train 44.7 ft/s, about 12.5 deg/s, about 0.3 g): the quad slides 63 ft off the deck in 6 s while coasting. Braked across the deck, it drifts 186 ft and wrecks.",
+    "Train riding: Realistic (authored, off by default): grip, drag, stiction, settling, engine speed, steering scale and rider shift are measured against the train's velocity field. Train body contacts keep chassis friction. Contact-plane stiction was added for the train's centripetal acceleration, and the train's share is weighted by how many grounded wheels are on the train. The same two cases give 0.3 ft of drift, and the rider stays Riding with four wheels down.",
+    "Verification: new browser test tools/test_train_riding.mjs and the existing test_train_collisions.mjs pass locally. Core unit test: riding along matches a quad parked on static ground, and the static path is bit-identical. I inspected the Extras capture on a host server serving the PR build (Extras page with Train riding: Realistic, set through the atv-train-riding setting). A second capture of the quad on the flatbed was not usable (the resumed game left the quad on the slope beside the track), so it is not published."
+  ],
+  "limitation": "Side impacts are largely the same in both modes: the train stops or wrecks the quad, and realistic adds only some drag along the car. Motorcycles are unchanged. Host-only verification; not confirmed on the public deployment, and the screenshot shows the settings row, not riding itself.",
+  "image": "/devlog-images/extras-realistic-train-riding-on-the-moving-arlington--7ef1ab5b481048fdb34735b38cfa6fe1.png",
+  "caption": "Extras settings page with Train riding set to Realistic (host build of PR #165)."
+}
