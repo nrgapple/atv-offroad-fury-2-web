@@ -170,6 +170,7 @@ export const TESTS = {
   'test_pwa_ios.mjs': { group: 'content' },
   'test_quad_audio.mjs': { group: 'content' },
   'test_race_courses.mjs': { group: 'content' },
+  'test_race_music.mjs': { group: 'content' },
   'test_rails.mjs': { group: 'content' },
   'test_reflections.mjs': {
     group: 'content',
