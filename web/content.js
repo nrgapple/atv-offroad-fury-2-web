@@ -56,12 +56,13 @@ export function contentSource(manifest, fetchBlob) {
       const whole = entry.chunks.find(chunk => chunk.offset === start && chunk.bytes === count);
       if (whole) return get(whole, entry.lazy);
       const result = new Uint8Array(count);
-      for (const chunk of entry.chunks) {
+      // Chunks of one read download together.
+      await Promise.all(entry.chunks.map(async chunk => {
         const low = Math.max(start, chunk.offset), high = Math.min(end, chunk.offset + chunk.bytes);
-        if (low >= high) continue;
+        if (low >= high) return;
         const bytes = await get(chunk, entry.lazy);
         result.set(bytes.subarray(low - chunk.offset, high - chunk.offset), low - start);
-      }
+      }));
       return result;
     },
   };
