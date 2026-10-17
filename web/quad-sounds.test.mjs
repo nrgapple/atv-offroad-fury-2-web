@@ -32,7 +32,7 @@ test('voice chains are persistent and only swap their buffer source', () => {
 test('vocal clips decode lazily into a bounded cache', async () => {
   const codecCalls = [];
   const audio = { closed: false, report() {}, context: { decodeAudioData: async () => ({ duration: 1 }) },
-    findSample: async name => ({ bytes: new Uint8Array([1]), index: name.length }),
+    findSample: async name => ({ bank: { member: index => audio.codec(3, new Uint8Array([1]), index) }, index: name.length }),
     codec: async op => { codecCalls.push(op); return op === 5 ? new TextEncoder().encode('{"sample_rate":44100}') : new Uint8Array(4); } };
   const quad = new QuadSounds(audio);
   for (let i = 0; i < MAX_DECODED_VOCALS + 6; i++) await quad.vocalBuffer(`rider/mgrunt/${i}.vag`);

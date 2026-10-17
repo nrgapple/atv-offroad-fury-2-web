@@ -157,7 +157,7 @@ export class QuadSounds {
     if (!sample) {
       const found = await this.audio.findSample(name);
       if (!found) return null;
-      const vag = await this.audio.codec(3, found.bytes, found.index);
+      const vag = await found.bank.member(found.index);
       const info = json(await this.audio.codec(5, vag)), wave = await this.audio.codec(4, vag);
       const buffer = await this.context.decodeAudioData(wave.buffer.slice(wave.byteOffset, wave.byteOffset + wave.byteLength));
       sample = { buffer, info }; this.stats.decodes++;
