@@ -356,3 +356,25 @@ test('silent switch preference selects the iOS audio session type', () => {
   assert.equal(applyAudioSession('play', undefined), false);
   assert.equal(applyAudioSession('play', { set type(_) { throw new Error('read-only'); } }), false);
 });
+
+test('returning to the original menus ends a race hold and the finish sting', async () => {
+  const previousWindow = globalThis.window;
+  class Context {
+    constructor() { this.state = 'suspended'; this.destination = {}; this.currentTime = 0; }
+    createGain() { return { gain: { value: 1 }, connect() {}, disconnect() {} }; }
+    async resume() { this.state = 'running'; }
+    async suspend() { this.state = 'suspended'; }
+    async close() { this.state = 'closed'; }
+  }
+  globalThis.window = { AudioContext: Context, addEventListener() {}, removeEventListener() {} };
+  const audio = new GameAudio(async () => new Uint8Array());
+  audio.music.update = async () => {}; audio.loadSample = async () => {};
+  try {
+    await audio.raceMusic('over');
+    assert.equal(audio.music.held, true); assert(audio.intOutPending, 'finish sting queued');
+    await audio.setMusicPreview(true, false);
+    assert.equal(audio.music.held, true, 'Pause during a race keeps the race hold');
+    await audio.setMusicPreview(true, true);
+    assert.equal(audio.music.held, false); assert.equal(audio.intOutPending, null);
+  } finally { audio.close(); globalThis.window = previousWindow; }
+});

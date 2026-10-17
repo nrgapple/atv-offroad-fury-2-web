@@ -71,6 +71,8 @@ function applyArt(panel, art) {
 export function stopJukebox(fe) {
   if (fe.jukeboxFrame) cancelAnimationFrame(fe.jukeboxFrame);
   fe.jukeboxFrame = 0;
+  // A Jukebox pause ends with the Jukebox: rides and menus keep their music.
+  fe.audio?.()?.music?.setPaused?.(false, false);
 }
 
 function build(fe, panel, music) {
@@ -178,7 +180,7 @@ function sync(fe, panel) {
   volume.setAttribute('aria-valuetext', `${percent}%`);
   set('.jb-volume-value', `${percent}%`);
   const play = panel.querySelector('[data-action=jukeplay] .jb-play-icon');
-  const glyph = state.enabled ? 'pause' : 'play';
+  const glyph = state.enabled && !state.paused ? 'pause' : 'play';
   if (play && play.dataset.glyph !== glyph) { play.dataset.glyph = glyph; play.innerHTML = icon[glyph]; }
   for (const button of panel.querySelectorAll('.jb-track')) {
     const index = Number(button.dataset.action.slice(5));

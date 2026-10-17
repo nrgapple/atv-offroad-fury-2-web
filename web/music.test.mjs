@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MusicStream } from './music.js';
+import { MediaOutput, MusicStream } from './music.js';
 const encode = value => new TextEncoder().encode(JSON.stringify(value));
 const decode = value => JSON.parse(new TextDecoder().decode(value));
 const flush = async () => { for (let i = 0; i < 30; i++) await new Promise(resolve => setImmediate(resolve)); };
@@ -268,4 +268,42 @@ test('media session mirrors the song and drives the soundtrack transport', () =>
     assert.deepEqual(calls.filter(call => call !== 'update').slice(0, 2), ['next', 'previous']);
     stream.hold(); assert.equal(session.playbackState, 'paused');
   } finally { globalThis.MediaMetadata = previous; }
+});
+
+test('rides share one media output: one source node, priming survives a new GameAudio', async () => {
+  const element = fakeElement(), f = fixture({ element }); await f.load();
+  const output = new MediaOutput(element, () => f.context);
+  f.stream.close();
+  const first = fixture({ element }); first.stream.outputFactory = () => output; await first.load();
+  await first.stream.update();
+  assert.equal(element.paused, false); assert.equal(output.owner, first.stream);
+  first.stream.unlock(); assert.equal(output.primed, true);
+  first.stream.close();
+  assert.equal(element.paused, true); assert.equal(element.src, ''); assert.equal(output.owner, null);
+  const second = fixture({ element }); second.stream.outputFactory = () => output; await second.load();
+  await second.stream.update();
+  assert.equal(output.owner, second.stream); assert.equal(element.paused, false);
+  assert.equal(f.context.mediaNodes, 1, 'the element is connected once for the page');
+  assert.equal(output.primed, true, 'a new ride does not need another gesture');
+  element.emit('ended'); await flush();
+  assert.equal(second.stream.snapshot().title, 'Track 1', 'events reach the current ride only');
+});
+
+test('Jukebox pause is transient: Music stays on, the saved setting is untouched', async () => {
+  const saved = new Map(), storage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
+  const element = fakeElement(), f = fixture({ element, storage }); await f.load(); await f.stream.update();
+  const src = element.src;
+  f.stream.setPaused(true);
+  assert.equal(element.paused, true); assert.equal(f.stream.enabled, true); assert.equal(f.stream.snapshot().paused, true);
+  await f.stream.update(); assert.equal(element.paused, true, 'a paused Jukebox stays quiet');
+  assert.notEqual(JSON.parse(saved.get('atv-soundtrack-v1')).enabled, false);
+  f.stream.setPaused(false); await flush();
+  assert.equal(element.paused, false); assert.equal(element.src, src);
+});
+
+test('settings saved by the first Jukebox (Pause stored as Music off) restore music once', () => {
+  const read = value => { const storage = { getItem: () => JSON.stringify(value), setItem() {} }; return new MusicStream(async () => {}, () => null, () => ({}), () => {}, storage).enabled; };
+  assert.equal(read({ enabled: false, volume: 0.5 }), true, 'pre-fix "off" is restored');
+  assert.equal(read({ v: 2, enabled: false, volume: 0.5 }), false, 'a choice saved after the fix is kept');
+  assert.equal(read({ v: 2, enabled: true }), true);
 });

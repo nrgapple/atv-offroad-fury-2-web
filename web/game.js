@@ -2164,6 +2164,7 @@ async function loadGame(file = null, environment = "env01", racing = null) {
   status('Opening terrain…'); diagnostics.ready = false;
   minimap.setTerrain(null);
   audio.close(); audio = new GameAudio(codec, message => { diagnostics.audioError = message; status(`Audio: ${message}`, true); });
+  raceMusicPhase = null; // A new ride's audio starts unheld; its intro must hold again.
   frontend?.syncPreview();
   delete diagnostics.audioError; void audio.resume().catch(error => { diagnostics.audioError = error.message; });
   simReady = false; simGeneration++; simAccumulator = 0; simFrame = undefined; $('disc').disabled = true;

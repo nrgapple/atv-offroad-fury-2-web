@@ -42,6 +42,20 @@ other play or media error switches the session to the VAG decoder and restarts
 the song. A package missing any stream (the published one until this upload)
 keeps the decoder for the whole catalog.
 
+Every ride builds a fresh `GameAudio` and closes its context, but a media
+element can feed only one Web Audio source node ever and mobile browsers unlock
+playback per element. One page-wide `MediaOutput` therefore owns the element,
+its own small context, the music gain and a 0.65 master matching `GameAudio`.
+Each ride's `MusicStream` borrows it, and the first gesture's unlock lasts for
+the session. Gesture listeners use the capture phase because the touch driving
+controls stop their events at the target. The ride context still gates playback:
+its suspension pauses the element. Returning to the original menus sends the race
+`leave` event, ending a hold and the finish sting that Quit to Main Menu
+previously left behind. The race phase resets with each load. The Jukebox
+Pause is transient (`setPaused`). It no longer writes the saved Music setting,
+which also silences the menu tune. Settings saved before that fix restore music
+once.
+
 The **Jukebox** (Main Menu and Pause) follows the original `Jukebox.dat` page in
 `PAGE14.RES`, now packaged as a lazy record. It shows that page's red snow
 backdrop (`bk_jukebox`) and its 20-frame spinning CD (`cd64.atm`), the genre,
