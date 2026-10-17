@@ -3076,6 +3076,8 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
         30 => serde_json::to_vec(&terrain::texture_layout(input)?),
         35 => return Ok(atv_core::ipu::decode_ipum(input)?.rgba),
         36 => serde_json::to_vec(&atv_core::ipu::decode_ipum(input)?.info),
+        // Authored deblocked/denoised RGBA for the Enhanced and High sky.
+        39 => return Ok(atv_core::ipu::decode_ipum(input)?.smoothed_rgba()),
         37 => serde_json::to_vec(&atv_core::scene::parse(input)?),
         38 => serde_json::to_vec(&atv_core::sky::layout(input)?),
         31 => {
