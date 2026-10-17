@@ -52,7 +52,7 @@ def verify(base, commit, release=None):
         body, mime = get(served_key)
         if len(body) != item['bytes'] or hashlib.sha256(body).hexdigest() != item['sha256']:
             raise ValueError(f'public object differs: {item["key"]}')
-        wanted = 'image/png' if item['key'].endswith('.png') else 'application/json' if item['key'].endswith('.json') else 'application/octet-stream'
+        wanted = 'image/png' if item['key'].endswith('.png') else 'application/json' if item['key'].endswith('.json') else 'audio/mp4' if item['key'].endswith('.m4a') else 'application/octet-stream'
         if mime != wanted:
             raise ValueError(f'public object MIME mismatch: {item["key"]}')
         return item['key']
