@@ -242,3 +242,30 @@ test('a package without every stream keeps the decoder for the whole catalog', a
   assert.equal(f.stream.snapshot().seekable, false);
   assert.equal(f.stream.seek(10), false);
 });
+
+test('media session mirrors the song and drives the soundtrack transport', () => {
+  const handlers = {}, session = { metadata: null, playbackState: 'none', setActionHandler: (action, fn) => { handlers[action] = fn; } };
+  const previous = globalThis.MediaMetadata;
+  globalThis.MediaMetadata = class { constructor(init) { Object.assign(this, init); } };
+  try {
+    const stream = new MusicStream(async () => new Uint8Array(), () => null, () => ({}), () => {}, null);
+    const calls = [];
+    stream.next = () => calls.push('next'); stream.previous = () => calls.push('previous'); stream.update = async () => calls.push('update');
+    stream.bindMediaSession(session);
+    assert.deepEqual(Object.keys(handlers).sort(), ['nexttrack', 'pause', 'play', 'previoustrack']);
+    assert.equal(session.playbackState, 'paused');
+    stream.song = { title: 'Song A', artist: 'Band' }; stream.syncMediaSession();
+    assert.equal(session.metadata.title, 'Song A');
+    assert.equal(session.metadata.artist, 'Band');
+    assert.equal(session.metadata.artwork[0].src, '/fury-remastered-home-512-v1.png');
+    assert.equal(session.playbackState, 'playing');
+    handlers.pause();
+    assert.equal(stream.enabled, false);
+    assert.equal(session.playbackState, 'paused');
+    handlers.nexttrack();
+    assert.equal(stream.enabled, true);
+    handlers.previoustrack(); handlers.play();
+    assert.deepEqual(calls.filter(call => call !== 'update').slice(0, 2), ['next', 'previous']);
+    stream.hold(); assert.equal(session.playbackState, 'paused');
+  } finally { globalThis.MediaMetadata = previous; }
+});

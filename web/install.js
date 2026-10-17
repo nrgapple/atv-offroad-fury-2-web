@@ -110,4 +110,54 @@ export function mountInstallBanner(win = window, doc = document) {
   update();
   return { update };
 }
-if (typeof window !== 'undefined' && typeof document !== 'undefined') { mountGameViewport(); mountInstallBanner(); }
+// iOS shows an apple-touch-startup-image while a saved web app launches, and a
+// blank screen without one. It only uses an image matching the device's exact
+// pixel size, so rather than ship dozens of per-device PNGs, Safari renders this
+// device's portrait and landscape screens (brand gradient + authored wordmark)
+// shortly after the title appears. Add to Home Screen reads them from the page.
+export const LAUNCH_SCREEN_DELAY_MS = 2500;
+export function launchScreenSizes(screen, pixelRatio) {
+  const ratio = Math.min(4, Math.max(1, Number(pixelRatio) || 1));
+  const short = Math.min(screen.width, screen.height), long = Math.max(screen.width, screen.height);
+  if (!(short > 0) || long > 2000) return [];
+  const px = value => Math.round(value * ratio);
+  return [
+    { orientation: 'portrait', width: px(short), height: px(long) },
+    { orientation: 'landscape', width: px(long), height: px(short) },
+  ];
+}
+export function drawLaunchScreen(canvas, logo, { width, height }) {
+  canvas.width = width; canvas.height = height;
+  const context = canvas.getContext('2d');
+  const gradient = context.createLinearGradient(0, 0, 0, height);
+  gradient.addColorStop(0, '#a61818'); gradient.addColorStop(0.48, '#740a0a'); gradient.addColorStop(1, '#2a0202');
+  context.fillStyle = gradient; context.fillRect(0, 0, width, height);
+  // The 3:1 wordmark spans 72% of a portrait width, 42% of a landscape width.
+  const logoWidth = Math.min(width * (height > width ? 0.72 : 0.42), height * 0.9 * 3);
+  context.drawImage(logo, (width - logoWidth) / 2, (height - logoWidth / 3) / 2, logoWidth, logoWidth / 3);
+  return canvas.toDataURL('image/png');
+}
+export function mountLaunchScreens(win = window, doc = document, delay = LAUNCH_SCREEN_DELAY_MS) {
+  const standalone = win.navigator.standalone === true || win.matchMedia('(display-mode: standalone)').matches;
+  if (!isAppleMobile(win.navigator) || standalone || doc.querySelector('link[rel="apple-touch-startup-image"]')) return null;
+  // Render on the idle title screen only, never over loading or a ride.
+  const idle = () => { const frontend = doc.getElementById('frontend'); return !frontend || (frontend.dataset.page === 'title' && !frontend.hidden); };
+  return new Promise(resolve => win.setTimeout(async function render(attempt = 0) {
+    if (!idle()) { if (attempt < 60) win.setTimeout(() => render(attempt + 1), 1000); else resolve(false); return; }
+    try {
+      const logo = new win.Image();
+      logo.src = '/fury-remastered.svg';
+      await logo.decode();
+      for (const size of launchScreenSizes(win.screen, win.devicePixelRatio)) {
+        const link = doc.createElement('link');
+        link.rel = 'apple-touch-startup-image';
+        link.media = `(orientation: ${size.orientation})`;
+        link.dataset.size = `${size.width}x${size.height}`;
+        link.href = drawLaunchScreen(doc.createElement('canvas'), logo, size);
+        doc.head.append(link);
+      }
+      resolve(true);
+    } catch { resolve(false); /* Launch screens are cosmetic. */ }
+  }, delay));
+}
+if (typeof window !== 'undefined' && typeof document !== 'undefined') { mountGameViewport(); mountInstallBanner(); void mountLaunchScreens(); }

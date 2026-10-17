@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isAppleMobile, isDismissed, INSTALL_DISMISS_MS } from './install.js';
+import { isAppleMobile, isDismissed, INSTALL_DISMISS_MS, launchScreenSizes } from './install.js';
 
 test('Home Screen help recognizes iPhone and desktop-identifying iPad, not a touchless Mac', () => {
   assert.equal(isAppleMobile({ userAgent: 'iPhone', platform: 'iPhone', maxTouchPoints: 5 }), true);
@@ -29,4 +29,15 @@ test('installed Apple viewport fills the bounded status-bar gap and rotates with
   assert.deepEqual(gameViewport(keyboard, true, true), { width: 390, height: 500 });
   const zoom = { ...portrait, visualViewport: { width: 195, height: 392.5, scale: 2 } };
   assert.deepEqual(gameViewport(zoom, true, true), { width: 390, height: 785 });
+});
+
+test('launch screens match this device in both orientations at device pixels', () => {
+  assert.deepEqual(launchScreenSizes({ width: 402, height: 874 }, 3), [
+    { orientation: 'portrait', width: 1206, height: 2622 },
+    { orientation: 'landscape', width: 2622, height: 1206 },
+  ]);
+  // A landscape-reporting iPad still yields a portrait-first pair.
+  assert.deepEqual(launchScreenSizes({ width: 1366, height: 1024 }, 2).map(size => [size.width, size.height]), [[2048, 2732], [2732, 2048]]);
+  assert.deepEqual(launchScreenSizes({ width: 0, height: 0 }, 2), []);
+  assert.equal(launchScreenSizes({ width: 390, height: 844 }, undefined)[0].width, 390);
 });

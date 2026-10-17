@@ -27,7 +27,18 @@ class AppIconTests(unittest.TestCase):
         icons = {item['size']: item for item in metadata['icons']}
         self.assertEqual(set(icons), {180, 192, 512})
         manifest = json.loads((ROOT / 'web/manifest.webmanifest').read_text())
-        self.assertEqual([icon['src'] for icon in manifest['icons']], ['/' + icons[size]['file'] for size in [192, 512]])
+        maskable = {item['size']: item for item in metadata['maskable']}
+        self.assertEqual([icon['src'] for icon in manifest['icons']], ['/' + icons[size]['file'] for size in [192, 512]] + ['/' + maskable[size]['file'] for size in [192, 512]])
+        self.assertEqual([icon['purpose'] for icon in manifest['icons']], ['any', 'any', 'maskable', 'maskable'])
+        for size, icon in maskable.items():
+            data = base64.b64decode(icon['base64'], validate=True)
+            self.assertEqual(hashlib.sha256(data).hexdigest(), icon['sha256'])
+            self.assertEqual(struct.unpack('>II', data[16:24]), (size, size))
+            self.assertIn(icon['file'], STATIC_FILES)
+        favicon = base64.b64decode(metadata['favicon']['base64'], validate=True)
+        self.assertEqual(hashlib.sha256(favicon).hexdigest(), metadata['favicon']['sha256'])
+        self.assertEqual(favicon[:6], b'\0\0\1\0\3\0')
+        self.assertIn('favicon.ico', STATIC_FILES)
         for name in ['index.html', 'play.html']:
             self.assertIn('/' + icons[180]['file'], (ROOT / 'web' / name).read_text())
         for size, icon in icons.items():

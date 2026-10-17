@@ -36,7 +36,10 @@ for (const [path, size] of pngs) {
   assert.equal(png.readUInt32BE(16), size);
   assert.equal(png.readUInt32BE(20), size);
 }
+assert.deepEqual(manifest.icons.map(icon => icon.purpose), ['any', 'any', 'maskable', 'maskable']);
+const favicon = Buffer.from(await (await get('/favicon.ico')).arrayBuffer());
+assert.deepEqual([...favicon.subarray(0, 6)], [0, 0, 1, 0, 3, 0], 'favicon.ico holds 16/32/48px images');
 assert.match(await (await get('/fury-remastered.svg')).text(), /<title(?:\s[^>]*)?>Fury Remastered<\/title>/);
 console.log(
-  'PASS: Fury Remastered page identity/vector branding, standalone manifest, authored-logo 180/192/512px PNGs and Safari/legacy aliases served successfully. Existing iOS bookmark caching needs hardware verification.'
+  'PASS: Fury Remastered page identity/vector branding, standalone manifest, authored-logo 180/192/512px and maskable 192/512px PNGs, favicon.ico and Safari/legacy aliases served successfully. Existing iOS bookmark caching needs hardware verification.'
 );

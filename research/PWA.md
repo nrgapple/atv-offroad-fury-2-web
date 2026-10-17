@@ -1,8 +1,13 @@
 # Home Screen installation
 
 Fury Remastered's authored manifest uses a stable `/` identity and scope, a
-`/play.html` start URL, standalone display, game category, description and PNG
-icons at 192 and 512 pixels and an explicit 180px Apple touch icon. All current
+`/play.html` start URL, standalone display, `any` orientation (portrait and
+landscape are both supported), game category, description and PNG icons at 192
+and 512 pixels and an explicit 180px Apple touch icon. Maskable 192/512px icons
+put the wordmark inside Android's central 80% safe circle, and `/favicon.ico`
+carries 16/32/48px images; all are rendered by the same authoring tool and
+shipped through the same checked metadata as the Home Screen icons. Existing
+icon entries keep their bytes unless the tool runs with `--force`. All current
 Home Screen icons use the full authored Fury Remastered SVG wordmark on a red
 gradient, matching the in-app branding. `tools/build_fury_app_icons.mjs` renders
 the three sizes from `web/fury-remastered.svg`; `web/fury-app-icons.json` stores
@@ -83,3 +88,52 @@ OS-level installation and automatic prompt eligibility are not established by it
 All three icon PNGs decode at their expected dimensions, and conventional Safari
 root icon paths return PNG responses. Screenshots are kept in ignored private storage. Public verification follows a
 passing current-main CI deployment and validated screenshot-gallery upload.
+
+## iOS and PWA integrations
+
+Checked against WebKit/MDN on 2026-10-17. All are progressive: browsers
+without an API keep their previous behavior.
+
+- **Screen wake lock** (`web/wake-lock.js`): held while riding, released by
+  menus/pause, requested again on return to the page or on the next gesture if
+  a request was refused. Controller and keyboard play produce no touches, so the
+  screen would otherwise dim and lock. Saved iOS Home Screen apps only gained
+  working wake locks in iOS 18.4 ([WebKit 254545](https://bugs.webkit.org/show_bug.cgi?id=254545)).
+- **Silent switch** (`navigator.audioSession`, Safari 16.4+): Settings → Extras
+  shows *Silent switch: Play sound* (default, `playback`) or *Mute game*
+  (`ambient`, follows the switch and mixes with other apps' music). `playback`
+  pauses other apps' audio when the game sounds. The row is hidden where the API
+  is missing. Stored in `atv-audio-v1` as `silent`.
+- **Media Session**: the soundtrack publishes title, artist and artwork, and
+  play/pause/next/previous from Control Center, headphones and media keys act as
+  the Jukebox transport (pause = Music off). The game still pauses audio while
+  hidden, so lock-screen playback does not continue in the background.
+- **Launch screens**: iOS ignores the manifest's background for launch and only
+  uses an `apple-touch-startup-image` whose pixels match the device. Instead of
+  shipping dozens of device PNGs, `install.js` draws this device's portrait and
+  landscape images (icon gradient + authored wordmark) as PNG data URLs once the
+  idle title shows, in Safari only and never when already installed.
+- **Manifest shortcuts and screenshots**: long-press shortcuts (Android/desktop
+  Chromium; iOS ignores them) open Free Ride (`/play.html?menu=freeride`), Single
+  Race (`?menu=race`) or the dev log. A `menu`-only query opens that menu with the
+  saved rider/quad/race setup; it is not a ride link and never overwrites the
+  saved selection. Install-dialog screenshots reference existing public gallery
+  images under `/devlog-images/` (two wide, one portrait).
+- `mobile-web-app-capable` accompanies the Apple capability tag, and the dev log
+  page now links the favicon and Apple touch icon (without the app manifest, so a
+  saved dev log does not claim the game's identity).
+
+Not used: Web Push and app badges need a push backend and permission prompts
+for little benefit; iOS offers no install prompt, orientation lock, iPhone
+element fullscreen, controller rumble or vibration to web apps.
+
+Verification (host, synthetic iOS APIs): unit tests for wake lock, audio
+session, media session, shortcuts and launch-screen sizes; Rust menu layout
+test for the Extras row at 390x844, 844x390 and 320x568; `test_pwa_ios.mjs`
+(content group) covers the Extras row in both orientations, persistence,
+shortcut menus, wake lock across pause/resume and Media Session metadata;
+`test_install_app.mjs` now checks maskable icons, favicon, manifest
+shortcuts/screenshots/orientation and both generated launch screens in Chromium
+and WebKit before its existing known standalone safe-area failure. Physical
+iPhone/iPad confirmation of the launch screen, silent switch and wake lock is
+still needed.
