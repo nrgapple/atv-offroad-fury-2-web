@@ -27,6 +27,8 @@ Reverse consumes the brake binding used in its active chord, matching Cross + Sq
 
 The mapping profile exposes sixteen actions: throttle, brake, two steering directions, two lean directions, reverse, three stunt modifiers, preload hold/release, camera change, two camera orbit directions, reset and pause. Pause → Controls edits keyboard/controller mappings separately, including single keys, buttons, signed axes and up to four-input chords. Clear removes the selected binding; restore defaults affects the selected device. The authored profile is stored locally in the browser, with session-only behavior if storage is unavailable. Menu navigation retains its fixed accessible controls independently of gameplay remapping.
 
+**Which controller.** Gameplay, rumble, race-result buttons and binding capture follow the pad in use (`web/gamepads.js`), not the first pad the browser lists. Chrome on Windows often lists idle devices first (Steam Input or DS4Windows virtual pads, HID interfaces of some keyboards, mice and wheels); reading only index 0 left a real controller doing nothing in rides while menus, which scan every pad, still responded. A button press or a stick move of more than 0.35 from rest selects a pad; the last used pad keeps priority. Axes that rest beyond ±0.5 at first sight (idle triggers, hat switches, pedals) are measured from that resting value. With no input yet, a standard-mapping pad is preferred.
+
 ## All 24 stunt selections
 
 The manual's printed page 8 and the Rust stunt table agree on every modifier/direction pair below. Directions refer to the left stick; simultaneous modifiers form the six groups. L1 alone is not a listed stunt group.
