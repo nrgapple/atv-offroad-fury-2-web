@@ -180,6 +180,9 @@ pub struct WheelEffectState {
     pub surfaces: [usize; 4],
     pub wheel_tangential_speeds: [f32; 4],
     pub throttle: f32,
+    /// Presentation-only contact slip (ft/s) in the tire force frame:
+    /// [sideways scrub, tread speed minus ground speed]. Zero when airborne.
+    pub slip: [[f32; 2]; 4],
 }
 
 ///Most recent quad query, before the shared cache is used for recovery.
@@ -597,6 +600,16 @@ impl Vehicle {
                 self.wheels[i].angular_speed * self.wheel_config[i].radius
             }),
             throttle: self.applied_drive_controls.0,
+            slip: std::array::from_fn(|i| {
+                if !self.contacts[i].grounded {
+                    return [0., 0.];
+                }
+                let right = transform(self.body.basis(), self.wheel_right[i]);
+                let forward = wheel::cross(right, self.supports[i].normal);
+                let velocity = self.body.velocity_at(self.wheel_contact_points[i]);
+                let tread = self.wheels[i].angular_speed * self.wheel_config[i].radius;
+                [dot(velocity, right), tread - dot(velocity, forward)]
+            }),
         }
     }
     /// Browser lifecycle cancellation is not a physical stick release. Forget
