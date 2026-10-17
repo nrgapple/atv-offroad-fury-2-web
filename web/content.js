@@ -68,11 +68,12 @@ export function contentSource(manifest, fetchBlob) {
   // Start downloading files a load is about to read, so they arrive in
   // parallel instead of one request after another. Reads reuse the same
   // in-flight request; a failed prefetch is retried by the real read.
-  function prefetch(paths, priority) {
+  // `head` fetches only the first chunk, e.g. an archive read by directory.
+  function prefetch(paths, priority, { head = false } = {}) {
     for (const path of paths) {
       const entry = path && record(path);
       if (!entry) continue;
-      for (const chunk of entry.chunks.slice(0, entry.lazy ? 1 : undefined)) get(chunk, entry.lazy, priority, true).catch(() => {});
+      for (const chunk of entry.chunks.slice(0, entry.lazy || head ? 1 : undefined)) get(chunk, entry.lazy, priority, true).catch(() => {});
     }
   }
   return { file, files, prefetch };
@@ -85,4 +86,62 @@ export async function openHostedContent() {
     if (!response.ok) throw new Error(`Original game content could not load (${response.status}).`);
     return response.arrayBuffer();
   });
+}
+
+// Version-3 resource containers, read through their directory so a caller
+// downloads only the members it uses. A compressed member is inflated from
+// just the 24 KiB blocks it spans, wrapped as a one-member container for the
+// Rust extractor. Anything unexpected falls back to reading the whole file.
+// `warm(index)` only downloads a member's bytes, for reads that follow soon.
+const BLOCK = 0x6000;
+function blockResource(lengths, offset, bytes, blocks) {
+  const table = 2 * lengths.length + 2, name = 13, out = new Uint8Array(20 + table + 8 + name + blocks.byteLength), view = new DataView(out.buffer);
+  [3, 12 + table, 0x340, 0, table].forEach((value, i) => view.setUint32(i * 4, value, true));
+  lengths.forEach((length, i) => view.setUint16(20 + i * 2, length - 1, true));
+  const directory = 20 + table;
+  [1, name, 1].forEach((value, i) => view.setUint32(directory + i * 4, value, true));
+  out[directory + 12] = 0x6d; // "m"
+  view.setUint32(directory + 13, offset, true); view.setUint32(directory + 17, bytes, true);
+  out.set(blocks, directory + 8 + name);
+  return out;
+}
+export async function openArchive({ file, read, codec, entry }) {
+  const base = entry.lba * 2048, total = entry.bytes;
+  const view = bytes => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const word = (bytes, at) => at + 4 <= bytes.byteLength ? view(bytes).getUint32(at, true) : NaN;
+  const half = (bytes, at) => at + 2 <= bytes.byteLength ? view(bytes).getUint16(at, true) : NaN;
+  let head = await read(file, base, Math.min(total, 65536));
+  const flags = word(head, 8), known = word(head, 0) === 3 && word(head, 12) === 0 && (flags === 0x100 || flags === 0x340);
+  const directory = known ? word(head, 4) + 8 : NaN;
+  if (directory >= 20 && directory + 8 <= total) {
+    if (directory + 8 > head.byteLength) head = await read(file, base, directory + 8);
+    const count = word(head, directory), payload = directory + 8 + word(head, directory + 4);
+    if (payload <= total && payload > head.byteLength) head = await read(file, base, payload);
+    const names = new TextDecoder(), entries = [];
+    for (let at = directory + 8; payload <= head.byteLength && entries.length < count && at + 4 <= payload;) {
+      const length = word(head, at);
+      if (!(length > 0) || at + 12 + length > payload) break;
+      entries.push({ name: names.decode(head.subarray(at + 4, at + 4 + length)).replaceAll('\\', '/'), offset: word(head, at + 4 + length), bytes: word(head, at + 8 + length) });
+      at += 12 + length;
+    }
+    if (count > 0 && entries.length === count) {
+      if (flags === 0x100 && entries.every(e => payload + e.offset + e.bytes <= total))
+        return { entries, member: index => read(file, base + payload + entries[index].offset, entries[index].bytes), warm: index => read(file, base + payload + entries[index].offset, entries[index].bytes).then(() => {}) };
+      const lengths = [], starts = [payload];
+      if (flags === 0x340 && word(head, 16) === directory - 20 && directory > 22 && half(head, directory - 2) === 0)
+        for (let at = 20; at < directory - 2; at += 2) { lengths.push(half(head, at) + 1); starts.push(starts.at(-1) + lengths.at(-1)); }
+      if (lengths.length && starts.at(-1) === total && entries.every(e => e.offset + e.bytes <= lengths.length * BLOCK)) {
+        const span = index => { const { offset, bytes } = entries[index], first = Math.floor(offset / BLOCK), last = Math.floor((offset + Math.max(bytes, 1) - 1) / BLOCK); return { offset, bytes, first, last }; };
+        const blocks = ({ first, last }) => read(file, base + starts[first], starts[last + 1] - starts[first]);
+        return { entries, warm: async index => { await blocks(span(index)); }, async member(index) {
+          const member = span(index);
+          if (!member.bytes) return new Uint8Array(0);
+          return codec(3, blockResource(lengths.slice(member.first, member.last + 1), member.offset - member.first * BLOCK, member.bytes, await blocks(member)), 0);
+        } };
+      }
+    }
+  }
+  const bytes = head.byteLength === total ? head : await read(file, base, total);
+  const entries = JSON.parse(new TextDecoder().decode(await codec(2, bytes)));
+  return { entries, member: index => codec(3, bytes, index), warm: async () => {} };
 }

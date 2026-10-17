@@ -70,6 +70,7 @@ export class QuadSounds {
   async configure({ rider, vehicle, female, isCurrent }) {
     try {
       const config = json(await this.audio.codec(171, encoder.encode(JSON.stringify({ rider: decoder.decode(rider), vehicle: decoder.decode(vehicle), female }))));
+      this.audio.prefetchSamples?.(config.chassis);
       for (const name of config.chassis) { if (!isCurrent() || this.audio.closed) return; await this.audio.loadSample(name).catch(() => {}); }
       for (const name of config.vocals) if (await this.audio.findSample?.(name)) this.vocalNames.add(name);
       if (!isCurrent() || this.audio.closed) return;
@@ -83,6 +84,7 @@ export class QuadSounds {
       const names = new Set([...venue.drive, ...venue.ambient.map(a => a.sample), ...venue.soultree.map(s => s.sample)]);
       // Original data: a venue with crowd sounds is a stadium for the Enhanced echo.
       this.crowdVenue = [...venue.ambient, ...venue.soultree].some(source => source.sample.startsWith('crowd/'));
+      this.audio.prefetchSamples?.(names);
       for (const name of names) { if (this.audio.closed) return; await this.audio.loadSample(name).catch(() => {}); }
       const rates = {};
       for (const name of names) { const sample = this.audio.buffers.get(name); if (sample) rates[name] = sample.info.sample_rate; }

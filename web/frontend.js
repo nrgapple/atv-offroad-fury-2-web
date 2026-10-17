@@ -392,7 +392,7 @@ export class Frontend {
       // The soundtrack catalog and menu tunes stream in behind the title
       // screen instead of holding it until the whole sound bank downloads.
       const content = await this.content, audio = this.audio?.();
-      content.prefetch?.(['/AUDIO/AUDIO.RES'], 'low');
+      content.prefetch?.(['/AUDIO/AUDIO.RES'], 'low', { head: true });
       if (audio) void (async () => {
         await audio.music.load({ ...content, read: this.read, isCurrent: () => this.alive });
         await audio.loadMenuMusic({ ...content, read: this.read, isCurrent: () => this.alive });

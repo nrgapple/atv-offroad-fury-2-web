@@ -276,7 +276,8 @@ async function prefetchRide(content, environment, racing) {
   const model = await json(89, new Uint8Array([frontend?.riderId ?? 0]), frontend?.quadId ?? 1).catch(() => null);
   const rider = model && !model.motorcycle ? [model.rider, '/ANIMSRDR.RES', '/RIDER/RIDER_MT.RES'] : [];
   content.prefetch([archive, placements, model?.quad, model?.quad_materials, ...rider, '/OVERLAYS.RES', '/STARTEVT.RES', '/AUDIOTBL.RES']);
-  content.prefetch(['/AUDIO/AUDIO.RES'], 'low');
+  // The sound bank is read by directory: only its first chunk is needed up front.
+  content.prefetch(['/AUDIO/AUDIO.RES'], 'low', { head: true });
 }
 async function terrainFromContent(file, files, token, environment = "env01", racing = false) {
   const {archive:archivePath,sceneStem,modeStem,placements} = courseResource(environment,racing);
@@ -284,6 +285,8 @@ async function terrainFromContent(file, files, token, environment = "env01", rac
   // Sounds decode alongside the course; the ride still starts with them loaded.
   const audioLoaded = audio.load({ file, files, read, isCurrent: () => token === generation, quadId: frontend?.quadId ?? 1, female: frontend?.riderId === 1 });
   audioLoaded.catch(() => {});
+  // Race intro/outro stingers play on cue; have them local before the race.
+  if (racing) void audio.bankOpened.then(() => audio.prefetchSamples?.(['int001', 'int002', 'int003', 'int004', 'out001', 'out004'].map(name => `intout/${name}.vag`)));
   const archive = files.find(entry => entry.path === archivePath);
   if (!archive) throw new Error(`Original ${environment.toUpperCase()} terrain archive is missing.`);
   status('Reading original terrain…');
