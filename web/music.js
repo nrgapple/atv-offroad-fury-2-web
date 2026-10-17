@@ -147,7 +147,7 @@ export class MusicStream {
     if (!this.media) return;
     this.media = false; this.mediaWanted = false;
     try { this.element.pause(); this.element.removeAttribute('src'); this.element.load?.(); } catch { /* Element already gone. */ }
-    this.report(`Music stream unavailable (${reason}); decoding the original audio instead.`);
+    if (globalThis.navigator?.onLine !== false) this.report(`Music stream unavailable (${reason}); decoding the original audio instead.`);
     const index = this.selectedIndex;
     this.finished = true; this.offset = 0;
     if (index >= 0) this.request({ kind: 'select', index }); else void this.update();
@@ -350,7 +350,8 @@ export class MusicStream {
         }
         this.schedule(segment, context); this.chunks++;
       }
-    } catch (error) { if (this.current(generation)) { this.failed = true; this.report(`Music: ${error.message}`); } }
+    // Offline, the soundtrack (never cached; see research/OFFLINE.md) stays silent without an error.
+    } catch (error) { if (this.current(generation)) { this.failed = true; if (globalThis.navigator?.onLine !== false) this.report(`Music: ${error.message}`); } }
     finally { this.busy = false; if (!this.closed && generation !== this.generation) void this.update(); }
   }
   async updateMedia(context, generation) {

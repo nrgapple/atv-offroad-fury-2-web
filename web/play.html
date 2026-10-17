@@ -33,7 +33,7 @@
     <div class="app-install-heading"><img src="/fury-remastered-home-180-v1.png" width="56" height="56" alt=""><div><p>Fury Remastered</p><h2 id="app-install-title">Add to Home Screen</h2></div></div>
     <p id="app-install-description">Launch straight into the game from your Home Screen, with more room to ride.</p>
     <ol id="app-install-steps"></ol>
-    <p class="app-install-note">An internet connection is required to load the game and play online.</p>
+    <p class="app-install-note">Courses you have ridden in the app keep working offline; online play and the soundtrack need a connection.</p>
     <button id="app-install-close" type="button" class="atv-control">Got it</button>
   </dialog>
   <canvas id="game" aria-label="Original terrain and ATV reconstruction" tabindex="0"></canvas>
@@ -62,5 +62,6 @@
   <p id="status" role="status"></p>
   <p id="help" hidden>Free camera · drag to look · WASD to move · Q/E up/down · controller sticks or touch</p>
   <script type="module" src="game.js"></script>
+  <script type="module" src="offline.js"></script>
 </body>
 </html>
