@@ -3,6 +3,7 @@
 import { MusicStream } from './music.js';
 import { QuadSounds } from './quad-sounds.js';
 import { CROSSFADE_SECONDS, createEchoBus, fadeOut } from './audio-enhance.js';
+import { openArchive } from './content.js';
 // Browser audio preferences (the original had separate Music and SFX volume).
 const SETTINGS_KEY = 'atv-audio-v1';
 export function loadAudioSettings(storage = (() => { try { return globalThis.window?.localStorage ?? null; } catch { return null; } })()) {
@@ -27,6 +28,8 @@ export class GameAudio {
     this.sources = new Set();
     this.current = null;
     this.ready = false;
+    // Resolves once the sample bank is open; the course loads alongside it.
+    this.bankOpened = Promise.resolve();
     this.active = true;
     this.menuTracks = []; this.menuSource = null; this.menuMusicMode = false;
     this.musicPreview = false;
@@ -97,15 +100,19 @@ export class GameAudio {
     this.echo?.dispose(); this.echo = null;
     if (type) this.echo = createEchoBus(this.context, this.engineGain, this.gain, type);
   }
-  async load({ file, files, read, isCurrent, quadId = 1, female = false }) {
+  load(options) {
+    let opened;
+    this.bankOpened = new Promise(resolve => { opened = resolve; });
+    return this.loadBank(options, opened).finally(opened);
+  }
+  async loadBank({ file, files, read, isCurrent, quadId = 1, female = false }, opened) {
     this.stopWeather();this.weatherActive=false;
     const text = new TextDecoder();
     const json = async (op, bytes, index = 0) => JSON.parse(text.decode(await this.codec(op, bytes, index)));
     const archive = async path => {
       const entry = files.find(item => item.path.toLowerCase() === path.toLowerCase());
       if (!entry) throw new Error(`Original audio archive is missing: ${path}`);
-      const bytes = await read(file, entry.lba * 2048, entry.bytes);
-      return { bytes, entries: await json(2, bytes) };
+      return openArchive({ file, read, codec: this.codec, entry });
     };
     const motorcycle = quadId >= 27;
     const selection = motorcycle ? await json(89, new Uint8Array([0]), quadId) : null;
@@ -113,7 +120,7 @@ export class GameAudio {
     const table = await archive(motorcycle ? selection.quad : '/AUDIOTBL.RES');
     const tableIndex = table.entries.findIndex(entry => motorcycle ? entry.name.replaceAll('\\','/').split('/').at(-1).toLowerCase() === `vehicle_${size}a.aud` : /(^|[\\/])vehicle\.aud$/i.test(entry.name));
     if (tableIndex < 0) throw new Error('Original vehicle audio table is missing.');
-    this.engineTable = await this.codec(3, table.bytes, tableIndex);
+    this.engineTable = await table.member(tableIndex);
     this.config = await json(motorcycle ? 101 : 32, this.engineTable, quadId);
     const sounds = motorcycle ? table : await archive('/AUDIO/AUDIO.RES');
     const normal = path => path.replaceAll('\\', '/').toLowerCase().replace(/^(?:audio|aud)\//, '');
@@ -123,30 +130,35 @@ export class GameAudio {
     let sceneBank = null;
     const find = async key => {
       const own = lookup.get(key) ?? lookup.get(`${key}.vag`);
-      if (own !== undefined) return { bytes: sounds.bytes, index: own };
+      if (own !== undefined) return { bank: sounds, index: own };
       if (!motorcycle) return null;
       sceneBank ??= archive('/AUDIO/AUDIO.RES').then(bank => ({
-        bytes: bank.bytes,
+        bank,
         lookup: new Map(bank.entries.map((entry, index) => [normal(entry.name), index]))
       }));
-      const bank = await sceneBank;
-      const index = bank.lookup.get(key) ?? bank.lookup.get(`${key}.vag`);
-      return index === undefined ? null : { bytes: bank.bytes, index };
+      const scene = await sceneBank;
+      const index = scene.lookup.get(key) ?? scene.lookup.get(`${key}.vag`);
+      return index === undefined ? null : { bank: scene.bank, index };
     };
     this.findSample = name => find(normal(name));
+    // Start every listed sample's download together; decoding stays in order.
+    this.prefetchSamples = names => { for (const name of names) if (!this.buffers.has(name)) void find(normal(name)).then(found => found?.bank.warm(found.index)).catch(() => {}); };
     this.loadSample = async name => {
       if (this.buffers.has(name)) return;
       const found = await find(normal(name));
       if (!found) throw new Error(`Original sound sample is missing: ${name}`);
-      const vag = await this.codec(3, found.bytes, found.index);
+      const vag = await found.bank.member(found.index);
       const info = await json(5, vag);
       const wave = await this.codec(4, vag);
       if (!isCurrent() || this.closed) return;
       this.buffers.set(name, { wave, info, buffer: null });
     };
     this.loadWeatherSample = () => this.loadSample('rain.vag');
+    opened();
     // Keep encoded WAV until a user gesture creates/unlocks the audio context.
-    for (const name of new Set([...this.config.samples.flat(),...(this.config.impact_samples ?? [])])) {
+    const engine = new Set([...this.config.samples.flat(),...(this.config.impact_samples ?? [])]);
+    this.prefetchSamples([...engine, 'beep01.vag', 'go.vag', 'gate.vag']);
+    for (const name of engine) {
       if (!isCurrent() || this.closed) return;
       await this.loadSample(name);
     }
@@ -159,7 +171,7 @@ export class GameAudio {
     const riderIndex = table.entries.findIndex(entry => /(^|[\\/])rider\.aud$/i.test(entry.name));
     if (!motorcycle && riderIndex < 0) throw new Error('Original rider sound table is missing.');
     if (!motorcycle) {
-      const rider = await this.codec(3, table.bytes, riderIndex);
+      const rider = await table.member(riderIndex);
       await this.loadEffects({ bytes: rider, isCurrent });
       await this.quad.configure({ rider, vehicle: this.engineTable, female, isCurrent });
     }
@@ -168,6 +180,8 @@ export class GameAudio {
     await this.loadMenuMusic({ file, files, read, isCurrent });
     if (!isCurrent() || this.closed) return;
     this.ready = true;
+    // Rider vocals decode when first heard; fetch them now that the ride is up.
+    this.prefetchSamples([...this.quad.vocalNames]);
   }
   async loadMenuMusic({ file, files, read, isCurrent }) {
     if (this.menuTracks.length || this.closed) return;
@@ -183,14 +197,15 @@ export class GameAudio {
     if (Number(values.numtracks) !== 4) throw new Error('Original UI expected four tunes');
     const audio = files.find(item => item.path === '/AUDIO/AUDIO.RES');
     if (!audio) throw new Error('Original menu sound archive missing');
-    const bank = await read(file, audio.lba * 2048, audio.bytes), samples = await json(2, bank), tracks = [];
+    const bank = await openArchive({ file, read, codec: this.codec, entry: audio }), samples = bank.entries, tracks = [];
+    const tune = (i, channel) => { const suffix = `${values['track'+i]}${channel}.vag`.toLowerCase(); return [suffix, samples.findIndex(e => e.name.replaceAll('\\', '/').toLowerCase().endsWith('/'+suffix))]; };
+    for (let i = 1; i <= 4; i++) for (const channel of ['l', 'r']) { const [, index] = tune(i, channel); if (index >= 0) void bank.warm(index).catch(() => {}); }
     for (let i = 1; i <= 4; i++) {
       const pair = [], info = [];
       for (const channel of ['l', 'r']) {
-        const suffix = `${values['track'+i]}${channel}.vag`.toLowerCase();
-        const index = samples.findIndex(e => e.name.replaceAll('\\', '/').toLowerCase().endsWith('/'+suffix));
+        const [suffix, index] = tune(i, channel);
         if (index < 0) throw new Error(`Original UI tune missing: ${suffix}`);
-        const vag = await this.codec(3, bank, index);
+        const vag = await bank.member(index);
         info.push(await json(5,vag));
         pair.push(await this.codec(4,vag));
         if (!isCurrent() || this.closed) return;
@@ -227,6 +242,7 @@ export class GameAudio {
   async loadEffects({ bytes, isCurrent }) {
     try {
       const config = JSON.parse(new TextDecoder().decode(await this.codec(76, bytes)));
+      this.prefetchSamples?.(config.body_impact);
       for (const name of new Set(config.body_impact)) {
         if (!isCurrent() || this.closed) return;
         await this.loadSample(name);
@@ -240,7 +256,7 @@ export class GameAudio {
   async loadWeather({ selection, isCurrent }) {
     this.stopWeather();this.weatherActive=Boolean(selection?.active&&selection.definition?.kind==='rain');
     if(!this.weatherActive)return;
-    try {await this.loadWeatherSample();if(!isCurrent()||this.closed)this.weatherActive=false;}
+    try {await this.bankOpened;await this.loadWeatherSample();if(!isCurrent()||this.closed)this.weatherActive=false;}
     catch(error){if(isCurrent()&&!this.closed){this.weatherActive=false;this.report(`Rain sound: ${error.message}`);}}
   }
   stopWeather(){if(this.weatherSource){this.weatherSource.stop();this.weatherSource.disconnect();this.weatherSource=null;}}
@@ -258,12 +274,15 @@ export class GameAudio {
   // (loadVenue) under the original range rules, for every venue.
   async loadStadium({ crowd }) {
     this.stopCrowd(); this.stopSpatial(this.stadiumVoices); this.stadiumDefinitions = [];
+    await this.bankOpened;
+    this.prefetchSamples?.(crowd);
     for (const name of new Set(crowd)) {
       if (this.closed) return;
       await this.loadSample(name).catch(() => {});
     }
   }
   async loadVenue(aud, { stadium = false } = {}) {
+    await this.bankOpened;
     if (this.closed || !this.loadSample) return;
     await this.quad.loadVenue(aud);
     try {
@@ -334,7 +353,9 @@ export class GameAudio {
   }
   async loadSpatial({ toy, isCurrent }) {
     try {
+      await this.bankOpened;
       const definitions = JSON.parse(new TextDecoder().decode(await this.codec(72, toy)));
+      this.prefetchSamples?.(definitions.map(definition => definition.sample));
       for (const name of new Set(definitions.map(definition => definition.sample))) {
         if (!isCurrent() || this.closed) return;
         await this.loadSample(name);
@@ -349,6 +370,7 @@ export class GameAudio {
     }
   }
   async loadRemoteModels(players) {
+    if (!this.loadSample) await this.bankOpened;
     if (!this.engineTable || !this.loadSample || this.closed) return;
     for (const player of players) {
       if (this.remoteLoaded.has(player.atv_model)) { await this.remoteLoaded.get(player.atv_model); continue; }

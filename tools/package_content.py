@@ -15,6 +15,9 @@ import zlib
 ROOT = Path(__file__).resolve().parents[1]
 BLOCK = 0x6000
 CHUNK = 1024 * 1024
+# The sound bank is read block by block, so small chunks keep a ride's
+# download close to the samples it actually plays.
+AUDIO_CHUNK = 256 * 1024
 MAX_FILE = 25 * 1024 * 1024
 SOURCE_SHA = '11b80faea827c5550df607d24c8c4f38a9e44cf55e3ecac9e1daeb3aca9d7c49'
 STARTUP = (
@@ -641,7 +644,8 @@ def main():
             raise ValueError('exact-build rider vocals expected 93 loose clips')
         samples += [(path.removeprefix('/'), source(by_path[path]['path'])) for path in vocals]
         packed = pack_resource(samples)
-        records.append({'path': '/AUDIO/AUDIO.RES', 'lba': by_path['/audio/audio.res']['lba'], 'directory': False, 'lazy': False, 'repacked': True, 'member_count': len(samples), **blob(packed)})
+        chunks = [{'offset': offset, **blob(packed[offset:offset + AUDIO_CHUNK])} for offset in range(0, len(packed), AUDIO_CHUNK)]
+        records.append({'path': '/AUDIO/AUDIO.RES', 'lba': by_path['/audio/audio.res']['lba'], 'bytes': len(packed), 'sha256': hashlib.sha256(packed).hexdigest(), 'directory': False, 'lazy': False, 'repacked': True, 'member_count': len(samples), 'chunks': chunks})
         music = config(Resource(originals['/STARTAPP.RES']).named('music.pb'))
         count = int(music['songs']['numberofsongs'])
         if count != 21:

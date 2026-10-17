@@ -26,8 +26,9 @@ export async function captureCrashIsolation(page) {
     this.baseline.addEventListener('message',({data}) => receive(baseline,enhanced,data));
    }
    postMessage(message, ...args) {
-    this.meta.set(message.id,message.op);
-    const mirror = {...message, bytes:message.bytes.slice()};
+    // Resident archives travel as a key after their first call; releases carry no id.
+    if (message.id !== undefined) this.meta.set(message.id,message.op);
+    const mirror = message.bytes ? {...message, bytes:message.bytes.slice()} : {...message};
     if ([24,50].includes(message.op)) {
      const command=JSON.parse(new TextDecoder().decode(mirror.bytes));
      command.input.funny_crashes=false;command.input.crash_mode='original'; mirror.bytes=new TextEncoder().encode(JSON.stringify(command));

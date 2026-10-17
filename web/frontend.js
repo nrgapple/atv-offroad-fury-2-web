@@ -165,8 +165,13 @@ export class Frontend {
     };
     this.pollFrame = requestAnimationFrame(this.poll);
   }
-  async archive(path) {
-    if (this.loaded.has(path)) return;
+  archive(path) {
+    if (this.loaded.has(path)) return Promise.resolve();
+    this.archivesPending ??= new Map();
+    if (!this.archivesPending.has(path)) this.archivesPending.set(path, this.loadArchive(path).finally(() => this.archivesPending.delete(path)));
+    return this.archivesPending.get(path);
+  }
+  async loadArchive(path) {
     const { file, files } = await this.content;
     const record = files.find(f => f.path === path);
     if (!record) throw new Error(`Original menu resource missing: ${path}`);
@@ -216,6 +221,17 @@ export class Frontend {
     if (!blob) throw new Error('Menu image encoding failed');
     return URL.createObjectURL(blob);
   }
+  // Course preview archives register in their original order, so a member
+  // name shared by two archives always resolves to the earlier one. Loading
+  // stops at the archive holding `image` when one is named.
+  async previewArchives(image) {
+    const content = await this.content, archives = COURSE_PREVIEWS.filter(archive => content.files.some(f => f.path === archive));
+    if (!image) content.prefetch?.(archives);
+    for (const archive of archives) {
+      if (image && this.assets.has(base(`${image}.pst`))) return;
+      await this.archive(archive);
+    }
+  }
   // Original course photographs ship as two halves; join them once into a
   // blob URL so every HD screen can use a normal responsive <img>.
   async trackPhoto(track) {
@@ -223,6 +239,7 @@ export class Frontend {
     let url = '';
     if (track.id === 'training') url = await this.trainingMapPreview() ? `/devlog-images/${trainingPreview}.png` : '';
     else if (track.image) {
+      await this.previewArchives(`${track.image}b`);
       const a = await this.image(`${track.image}a`), b = await this.image(`${track.image}b`), joined = document.createElement('canvas');
       joined.width = a.width + b.width; joined.height = Math.max(a.height, b.height);
       const c = joined.getContext('2d', {willReadFrequently:true}); c.drawImage(a, 0, 0); c.drawImage(b, a.width, 0, b.width, a.height);
@@ -372,9 +389,15 @@ export class Frontend {
         if (index >= 0) this.gearCatalog = await this.json(107, await this.codec(3, bytes, index));
       }
       // The original catalog is available before a terrain/engine is loaded.
-      const content = await this.content;
-      await this.audio?.()?.music.load({ ...content, read: this.read, isCurrent: () => this.alive });
-      await this.audio?.()?.loadMenuMusic({ ...content, read: this.read, isCurrent: () => this.alive });
+      // The soundtrack catalog and menu tunes stream in behind the title
+      // screen instead of holding it until the whole sound bank downloads.
+      const content = await this.content, audio = this.audio?.();
+      content.prefetch?.(['/AUDIO/AUDIO.RES'], 'low', { head: true });
+      if (audio) void (async () => {
+        await audio.music.load({ ...content, read: this.read, isCurrent: () => this.alive });
+        await audio.loadMenuMusic({ ...content, read: this.read, isCurrent: () => this.alive });
+        this.syncPreview(); this.layoutKey = ''; void this.refresh();
+      })().catch(error => audio.report(error.message));
       this.initialized = true;
       if (showTitle) await this.openLaunch(location.search);
     } catch (error) { this.fail(error); }
@@ -388,7 +411,9 @@ export class Frontend {
     if (setup.activity==='race') this.raceSettings = {...setup.raceSettings};
     this.track = Math.max(0,this.tracks.findIndex(t=>t.id===setup.map));
     const page = setup.mode==='multiplayer' ? (setup.action==='create'?'create-lobby':'join-lobby') : setup.activity==='race'?'race':'tracks';
-    await this.show(page);
+    // A ride link goes straight to its loading screen; the course photos
+    // behind it load when that menu is next opened.
+    await this.show(page, { previews: !setup.play });
     if (!setup.play) return;
     try {
       if (setup.mode==='multiplayer') {
@@ -459,7 +484,7 @@ export class Frontend {
     if (!atoms.length && this.capture.atoms.length) this.finishCapture();
   }
   resume() { this.stopShots(); this.animatePage(true); this.setLoading(false); this.clearModelViews(); this.cancelCapture(); this.root.hidden = true; this.active(false); void this.audio?.()?.setMusicPreview(false); }
-  async show(page) {
+  async show(page, { previews = true } = {}) {
     this.padBlocked = true;
     const previous = this.root.hidden ? null : this.canvas;
     this.captureTransition(previous);
@@ -476,11 +501,11 @@ export class Frontend {
     if (page !== 'music') this.songPreview = false;
     this.busy = true; this.root.hidden = false; this.active(true); this.notice.textContent = ''; this.buttons.replaceChildren();
     try {
-      if (page === 'tracks' || page === 'loading' || page === 'race' || page === 'lobby') {
+      if (page === 'loading') await this.trackPhoto(this.loadingTrack);
+      else if (previews && (page === 'tracks' || page === 'race' || page === 'lobby')) {
         if (!this.loaded.has('/UI/RESOURCE/TP/TP_ANAT.RES')) this.setLoading(true, 'Preparing course previews…');
-        const {files} = await this.content;
-        for (const archive of COURSE_PREVIEWS) if (files.some(f=>f.path===archive)) await this.archive(archive);
-        if (page !== 'lobby') for (const track of this.tracks) await this.trackPhoto(track);
+        await this.previewArchives();
+        if (page !== 'lobby') await Promise.all(this.tracks.map(track => this.trackPhoto(track)));
       }
       this.page = page; this.selection = 0; this.layoutKey = '';
       this.watchFreerideRiders(page === 'main');
