@@ -119,14 +119,18 @@ function build(fe, panel, music) {
     h('div', { class: 'jb-meta', 'aria-live': 'polite' },
       h('p', { class: 'jb-genre' }), h('h2', { class: 'jb-title' }), h('p', { class: 'jb-artist' })),
     h('div', { class: 'jb-seek' }, h('span', { class: 'jb-time jb-elapsed', text: '0:00' }), seek, h('span', { class: 'jb-time jb-duration', text: '0:00' })),
-    h('div', { class: 'jb-transport' },
-      control('jukeprev', 'jb-skip', [h('span', { html: icon.prev })]),
-      control('jukeplay', 'jb-play', [h('span', { class: 'jb-play-icon', html: icon.play })]),
-      control('jukenext', 'jb-skip', [h('span', { html: icon.next })])),
-    h('label', { class: 'jb-volume' }, h('span', { class: 'jb-volume-icon', html: icon.volume }), volume, h('output', { class: 'jb-volume-value' })));
-  const header = h('header', { class: 'pause-header jb-header' }, h('h1', { id: 'pause-title', text: 'Jukebox' }), h('p', { class: 'pause-status jb-source' }));
-  const footer = h('footer', { class: 'pause-footer jb-footer' }, control('back', 'jb-back', [h('span', { class: 'jb-back-icon', html: icon.back }), h('span', { text: hit('back')?.label ?? 'Back' })]));
-  panel.replaceChildren(header, h('div', { class: 'jb-body' }, now, h('section', { class: 'jb-tracks', 'aria-label': 'Original soundtrack' }, tracks)), footer);
+    h('div', { class: 'jb-controls' },
+      h('div', { class: 'jb-transport' },
+        control('jukeprev', 'jb-skip', [h('span', { html: icon.prev })]),
+        control('jukeplay', 'jb-play', [h('span', { class: 'jb-play-icon', html: icon.play })]),
+        control('jukenext', 'jb-skip', [h('span', { html: icon.next })])),
+      h('label', { class: 'jb-volume' }, h('span', { class: 'jb-volume-icon', html: icon.volume }), volume, h('output', { class: 'jb-volume-value' }))));
+  // Back sits in the header so it never covers the list; only the track list
+  // scrolls, the player stays put.
+  const header = h('header', { class: 'pause-header jb-header' },
+    control('back', 'jb-back', [h('span', { class: 'jb-back-icon', html: icon.back }), h('span', { class: 'jb-back-label', text: hit('back')?.label ?? 'Back' })]),
+    h('h1', { id: 'pause-title', text: 'Jukebox' }), h('p', { class: 'pause-status jb-source' }));
+  panel.replaceChildren(header, h('div', { class: 'jb-body' }, now, h('section', { class: 'jb-tracks', 'aria-label': 'Original soundtrack' }, tracks)));
 }
 
 function drawBars(panel, music, playing) {
@@ -157,7 +161,7 @@ function sync(fe, panel) {
   set('.jb-title', state.title ?? 'Choose a song');
   set('.jb-artist', state.artist ?? (state.ready ? `${state.songs} original songs` : 'Loading the soundtrack…'));
   set('.jb-genre', state.genre ?? 'Original soundtrack');
-  set('.jb-source', state.failed ? 'Music unavailable' : state.mode === 'stream' ? 'Streaming the original soundtrack' : 'Original audio decoder');
+  set('.jb-source', state.failed ? 'Music unavailable' : state.mode === 'stream' ? 'Streaming' : 'Original decoder');
   set('.jb-duration', clock(state.durationSeconds));
   const seek = panel.querySelector('input[data-setting=jukeseek]');
   seek.disabled = !state.seekable || !song;
@@ -209,11 +213,22 @@ export function renderJukebox(fe) {
   if (fe.scrollPauseSelection || fe.resetPauseScroll || changed) {
     const target = panel.querySelector(`[data-action="${selected}"]`);
     target?.focus({ preventScroll: true });
-    if (fe.scrollPauseSelection) target?.scrollIntoView({ block: 'nearest' });
+    // Scroll only the track list; scrollIntoView would also pan the page.
+    const list = panel.querySelector('.jb-tracks');
+    if (fe.scrollPauseSelection && target && list?.contains(target)) {
+      const row = target.getBoundingClientRect(), box = list.getBoundingClientRect();
+      if (row.top < box.top) list.scrollTop -= box.top - row.top;
+      else if (row.bottom > box.bottom) list.scrollTop += row.bottom - box.bottom;
+    }
   }
   fe.resetPauseScroll = false; fe.scrollPauseSelection = false; fe.restoringPauseFocus = false;
   Object.assign(fe.root.dataset, { selection: String(fe.selection), renderer: 'rust' });
   sync(fe, panel);
+  // Open with the playing song in view inside the list.
+  if (changed) {
+    const list = panel.querySelector('.jb-tracks'), row = panel.querySelector('.jb-track[data-playing=true]');
+    if (list && row) { const a = row.getBoundingClientRect(), b = list.getBoundingClientRect(); list.scrollTop += a.top - b.top - (b.height - a.height) / 2; }
+  }
   if (!fe.jukeboxFrame) {
     const tick = () => {
       if (fe.page !== 'jukebox' || fe.root.hidden) { fe.jukeboxFrame = 0; return; }
