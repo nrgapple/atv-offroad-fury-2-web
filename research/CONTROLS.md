@@ -33,6 +33,21 @@ The mapping profile exposes sixteen actions: throttle, brake, two steering direc
 
 **Controller Settings.** Settings → Controls → Controller settings (reachable from the main menu and Pause) is named after the original Options → Controller Settings page, whose fixed Preset 1–4 layouts are covered here by Controller bindings. The original ControllerSelect page (PAGE17 `QuadzillaUIPageControllerSelect`) let up to four split-screen players claim a pad by pressing × beside a rotating `controller.slt` model. This port has one rider per browser, so its Controller row offers **Auto** (the pad you press, which plays that claiming role) or one connected pad pinned by name and stored locally; an absent pinned pad falls back to Auto. Menus follow the same pad, so idle devices cannot navigate them. Steering, lean, gas/brake, camera-orbit sensitivity (50–150%) and the stick dead zone (0–40%) are port enhancements: the original has no such options, and each quad's `.phy` fixes `XAxisDeadZone = 0.0`. Sensitivity reshapes the analog response as `value^(100/s)`, so 100% leaves input unchanged and full travel always reaches full lock; the default 15% dead zone is the port's existing stick dead zone. Keyboard and touch input are unaffected; touch keeps its own steering sensitivity.
 
+**Controller presets.** Controller Settings → Preset switches the controller profile between **Fury Remastered** (the port default above, with trigger gas/brake and R3 camera), **ATV Offroad Fury 2** and **MX vs. ATV Unleashed**, plus **Custom** once bindings are edited. Edited bindings are kept as Custom when a preset is chosen, and Controller bindings → Defaults selects Fury Remastered. Both original games had the same menu: pick a preset, view its Driving/Stunt/Camera layout and toggle vibration.
+
+| Action | ATV Offroad Fury 2 (PAGE17 Preset 1) | MX vs. ATV Unleashed (`presets_*_1`) |
+| --- | --- | --- |
+| Steer / lean | Left stick, D-pad | Left stick, D-pad |
+| Gas / brake | Cross / Square | Cross / Square |
+| Reverse | Square + Cross | Square + Cross (no reverse is pictured; the port chord is kept) |
+| Stunt modifiers | Circle, Triangle, L1 | Circle (Stunt 1), Triangle (Stunt 2), R1 (Stunt modifier) |
+| Clutch | none in the original; L3 kept for the port's motorcycles | L1 |
+| Camera / orbit | SELECT (Camera Presets) / right stick (Pan Camera) | SELECT / right stick |
+| Reset | L1 + R1 | none pictured; unbound (Pause → Reset) |
+| Pause | START | START |
+
+ATV2 also had Presets 2–4 (Circle/Triangle, Cross/Circle and R1/L1 gas/brake) and Unleashed five more driving layouts; only each game's default is offered. Their Look Back (L2), Thrill (R2), Dolly and Zoom cameras have no port action, so those buttons stay free.
+
 ## All 24 stunt selections
 
 The manual's printed page 8 and the Rust stunt table agree on every modifier/direction pair below. Directions refer to the left stick; simultaneous modifiers form the six groups. L1 alone is not a listed stunt group.

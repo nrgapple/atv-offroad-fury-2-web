@@ -128,6 +128,23 @@ try {
   );
   await click('Controller: Auto (settings-test)');
   await page.getByRole('button', { name: 'Controller: settings-test', exact: true }).waitFor();
+  // Presets: the remapped profile is Custom; each original layout is one tap
+  // away and Custom comes back after the presets.
+  const preset = name => page.getByRole('button', { name: `Preset: ${name}`, exact: true });
+  for (const [from, to] of [['Custom', 'Fury Remastered'], ['Fury Remastered', 'ATV Offroad Fury 2'], ['ATV Offroad Fury 2', 'MX vs. ATV Unleashed']]) {
+    await preset(from).click();
+    await preset(to).waitFor();
+  }
+  await click('Controller bindings');
+  await screen('bindings');
+  await page.getByRole('button', { name: 'Gas: Cross', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Next' }).click();
+  await page.getByRole('button', { name: 'Next' }).click();
+  await page.getByRole('button', { name: 'Stunt L1: R1', exact: true }).waitFor();
+  await click('Back');
+  await screen('controller-settings');
+  await preset('MX vs. ATV Unleashed').click();
+  await preset('Custom').waitFor();
   await screenshot('controller-settings');
   await click('Back');
   await screen('controls');

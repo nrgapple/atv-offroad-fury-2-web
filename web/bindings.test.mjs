@@ -128,3 +128,27 @@ test('saved v1 keyboard profiles adopt new defaults but keep customized rows',()
  b.setBinding('keyboard','leanForward',{key:'ArrowUp'});assert.equal(new GameplayBindings(storage).rows('keyboard').find(r=>r.id==='leanForward').labelBinding,'ArrowUp','v2 profiles are not migrated again');
  assert.equal(b.rows('keyboard').find(r=>r.id==='brake').label,'Brake / reverse');assert.equal(b.rows('controller').find(r=>r.id==='brake').label,'Brake');
 });
+test('controller presets: port default, ATV Offroad Fury 2 and MX vs. ATV Unleashed',()=>{
+ const memory=new Map(),storage={getItem:k=>memory.get(k)??null,setItem:(k,v)=>memory.set(k,v)};
+ const b=new GameplayBindings(storage),label=id=>b.rows('controller').find(r=>r.id===id).labelBinding;
+ assert.equal(b.controllerPreset(),'remastered');assert.equal(b.controllerPresetLabel(),'Fury Remastered');
+ b.cycleControllerPreset(1);assert.equal(b.controllerPreset(),'atv2');
+ assert.deepEqual(['throttle','brake','reverse','stuntL1','camera','reset','pause','cameraLeft'].map(label),
+  ['Cross','Square','Square + Cross','L1','SELECT','L1 + R1','START','Right stick left']);
+ b.cycleControllerPreset(1);assert.equal(b.controllerPresetLabel(),'MX vs. ATV Unleashed');
+ assert.deepEqual(['throttle','brake','clutch','stuntCircle','stuntTriangle','stuntL1','camera','reset'].map(label),
+  ['Cross','Square','L1','Circle','Triangle','R1','SELECT','Unbound']);
+ assert.equal(new GameplayBindings(storage).controllerPreset(),'unleashed','persists');
+ b.cycleControllerPreset(1);assert.equal(b.controllerPreset(),'remastered','no Custom until bindings are edited');
+ // Edited bindings become Custom and survive switching presets.
+ b.setBinding('controller','throttle',{button:5});assert.equal(b.controllerPresetLabel(),'Custom');
+ b.cycleControllerPreset(1);assert.equal(b.controllerPreset(),'remastered','Custom steps on to the first preset');
+ const restored=new GameplayBindings(storage);restored.cycleControllerPreset(-1);
+ assert.equal(restored.controllerPreset(),'custom');assert.equal(restored.rows('controller').find(r=>r.id==='throttle').labelBinding,'R1');
+ restored.reset('controller');assert.equal(restored.controllerPreset(),'remastered');
+ restored.cycleControllerPreset(-1);assert.equal(restored.controllerPreset(),'custom','Defaults keep Custom selectable');
+ // Gameplay reads the preset: Unleashed R1 is the stunt modifier.
+ restored.applyControllerPreset('unleashed');
+ const pad={connected:true,index:0,id:'p',axes:[0,0,0,0],buttons:Array.from({length:17},(_,i)=>({pressed:i===5,value:Number(i===5)}))};
+ assert.equal(restored.read(new Set(),pad).input.stunt_modifiers,4);
+});
