@@ -21,6 +21,22 @@ const DEFAULTS = {
   keyboard: { throttle:[key('KeyW'),key('ArrowUp')], brake:[key('KeyS'),key('ArrowDown')], steerLeft:[key('KeyA'),key('ArrowLeft')], steerRight:[key('KeyD'),key('ArrowRight')], leanForward:[key('KeyQ')], leanBack:[key('KeyE'),key('ShiftLeft')], reverse:[], stuntCircle:[key('KeyJ')], stuntTriangle:[key('KeyK')], stuntL1:[key('KeyL')], clutch:[key('KeyV')], preloadHold:[key('Space')], camera:[key('KeyC')], cameraLeft:[key('KeyZ')],cameraRight:[key('KeyX')],reset:[key('KeyR'),key('Backspace')],pause:[key('Escape'),key('KeyP')] },
   controller: {throttle:[button(0),button(7)],brake:[button(2),button(6)],steerLeft:[axis(0,-1),button(14)],steerRight:[axis(0,1),button(15)],leanForward:[axis(1,-1),button(12)],leanBack:[axis(1,1),button(13)],reverse:[{chord:[button(0),button(2)]}],stuntCircle:[button(1)],stuntTriangle:[button(3)],stuntL1:[button(4)],clutch:[button(10)],preloadHold:[],camera:[button(11)],cameraLeft:[axis(2,-1)],cameraRight:[axis(2,1)],reset:[{chord:[button(4),button(5)]}],pause:[button(9)]},
 };
+// Controller presets. Fury Remastered is the port default. The others follow
+// each original game's default layout: ATV Offroad Fury 2's Controller
+// Settings Preset 1 (PAGE17) and MX vs. ATV Unleashed's Preset 1
+// (presets_driving_1 / presets_stunt_1 / presets_camera_1). Their unported
+// cameras (Look Back, Thrill, Dolly, Zoom) have no action here; see CONTROLS.md.
+const PAD_COMMON = {steerLeft:[axis(0,-1),button(14)],steerRight:[axis(0,1),button(15)],leanForward:[axis(1,-1),button(12)],leanBack:[axis(1,1),button(13)],
+  throttle:[button(0)],brake:[button(2)],reverse:[{chord:[button(2),button(0)]}],stuntCircle:[button(1)],stuntTriangle:[button(3)],preloadHold:[],
+  camera:[button(8)],cameraLeft:[axis(2,-1)],cameraRight:[axis(2,1)],pause:[button(9)]};
+export const CONTROLLER_PRESETS = Object.freeze({
+  remastered: {label:'Fury Remastered', profile:DEFAULTS.controller},
+  // Original: L1 is the third stunt modifier and L1 + R1 resets; no clutch, so L3 keeps the motorcycle clutch.
+  atv2: {label:'ATV Offroad Fury 2', profile:{...PAD_COMMON,stuntL1:[button(4)],clutch:[button(10)],reset:[{chord:[button(4),button(5)]}]}},
+  // Unleashed: R1 is the stunt modifier and L1 the clutch; it shows no reset button.
+  unleashed: {label:'MX vs. ATV Unleashed', profile:{...PAD_COMMON,stuntL1:[button(5)],clutch:[button(4)],reset:[]}},
+});
+const sameProfile = (a,b) => ACTIONS.every(({id})=>JSON.stringify(a[id])===JSON.stringify(b[id]));
 // Version 1 keyboard defaults. Saved rows still equal to these adopt the new
 // defaults; rows a player customized are kept exactly.
 const V1_KEYBOARD = { throttle:[key('KeyW')], brake:[key('KeyS')], steerLeft:[key('KeyA'),key('ArrowLeft')], steerRight:[key('KeyD'),key('ArrowRight')], leanForward:[key('KeyQ'),key('ArrowUp')], leanBack:[key('KeyE'),key('ArrowDown')], reverse:[key('KeyR')], stuntCircle:[key('KeyJ')], stuntTriangle:[key('KeyK')], stuntL1:[key('KeyL')], clutch:[key('KeyV')], preloadHold:[key('Space')], camera:[key('KeyC')], cameraLeft:[],cameraRight:[],reset:[key('Backspace')],pause:[key('Escape')] };
@@ -70,23 +86,39 @@ export function bindingLabel(bindings) {
 export class GameplayBindings {
   constructor(storage) {
     if(storage===undefined) {try{storage=globalThis.localStorage;}catch{storage=null;}}
-    this.storage=storage;this.profile=clone(DEFAULTS);this.previous=new Set();this.blocked=new Set();this.preloadHeld=false;this.storageError=null;this.listeners=new Set();this.controllerIdentity=undefined;this.generation=0;this.keyboardHeld=new Set();this.queuedActions=new Set();this.pressed=new Map();this.pressCount=0;this.clock=()=>globalThis.performance?.now?.()??Date.now();
+    this.storage=storage;this.profile=clone(DEFAULTS);this.customController=null;this.previous=new Set();this.blocked=new Set();this.preloadHeld=false;this.storageError=null;this.listeners=new Set();this.controllerIdentity=undefined;this.generation=0;this.keyboardHeld=new Set();this.queuedActions=new Set();this.pressed=new Map();this.pressCount=0;this.clock=()=>globalThis.performance?.now?.()??Date.now();
     try {
       const saved=JSON.parse(storage?.getItem(STORAGE_KEY)??'null');
       if(saved) {
         for(const device of ['keyboard','controller']) for(const {id} of ACTIONS) this.profile[device][id]=normalize(device,saved[device][id] ?? DEFAULTS[device][id]);
+        if(saved.customController) try {this.customController=Object.fromEntries(ACTIONS.map(({id})=>[id,normalize('controller',saved.customController[id]??[])]));} catch {this.customController=null;}
         if(saved.version!==PROFILE_VERSION) {this.profile.keyboard=migrateKeyboard(saved.keyboard);this.save();}
       }
     } catch { this.profile=clone(DEFAULTS); }
   }
-  save() { try {this.storage?.setItem(STORAGE_KEY,JSON.stringify({...this.profile,version:PROFILE_VERSION}));this.storageError=null;}catch{this.storageError='Settings work for this session; browser storage is unavailable.';} }
+  save() { try {this.storage?.setItem(STORAGE_KEY,JSON.stringify({...this.profile,...(this.customController?{customController:this.customController}:{}),version:PROFILE_VERSION}));this.storageError=null;}catch{this.storageError='Settings work for this session; browser storage is unavailable.';} }
   subscribe(listener) {this.listeners.add(listener);return()=>this.listeners.delete(listener);}
   changed() {this.cancel();this.save();for(const listener of this.listeners)listener();}
   // Controller rows use standard-layout names (Cross, R2, Left stick left);
   // pass standard=false for a pad that reports a non-standard mapping.
   rows(device,standard=true) { if(!this.profile[device])throw Error('Unknown input device');return ACTIONS.map(a=>({...a,label:(device==='keyboard'&&KEYBOARD_LABELS[a.id])||a.label,binding:clone(this.profile[device][a.id]),labelBinding:device==='controller'?bindingText(this.profile[device][a.id],standard):bindingLabel(this.profile[device][a.id])})); }
   setBinding(device,id,binding) { if(!ids.has(id))throw Error('Unknown control');const next=normalize(device,binding);this.profile[device][id]=next;this.changed(); }
-  reset(device) {if(!this.profile[device])throw Error('Unknown input device');this.profile[device]=clone(DEFAULTS[device]);this.changed();}
+  reset(device) {if(!this.profile[device])throw Error('Unknown input device');if(device==='controller')return this.applyControllerPreset('remastered');this.profile[device]=clone(DEFAULTS[device]);this.changed();}
+  /** 'remastered', 'atv2', 'unleashed', or 'custom' for edited bindings. */
+  controllerPreset() {return Object.keys(CONTROLLER_PRESETS).find(id=>sameProfile(this.profile.controller,CONTROLLER_PRESETS[id].profile))??'custom';}
+  controllerPresetLabel() {const id=this.controllerPreset();return id==='custom'?'Custom':CONTROLLER_PRESETS[id].label;}
+  // Choosing a preset keeps edited bindings as "Custom" so they can be chosen again.
+  applyControllerPreset(id) {
+    if(id!=='custom'&&!CONTROLLER_PRESETS[id])throw Error('Unknown controller preset');
+    if(id==='custom'&&!this.customController)return;
+    if(this.controllerPreset()==='custom')this.customController=clone(this.profile.controller);
+    this.profile.controller=clone(id==='custom'?this.customController:CONTROLLER_PRESETS[id].profile);this.changed();
+  }
+  cycleControllerPreset(direction=1) {
+    const options=[...Object.keys(CONTROLLER_PRESETS),...(this.customController||this.controllerPreset()==='custom'?['custom']:[])];
+    const at=Math.max(0,options.indexOf(this.controllerPreset()));
+    this.applyControllerPreset(options[(at+direction+options.length)%options.length]);
+  }
   // Controller values use the Controller Settings dead zone and response
   // curves (identity at the defaults); keyboard keys are unaffected.
   value(device,id,keys,pad) {

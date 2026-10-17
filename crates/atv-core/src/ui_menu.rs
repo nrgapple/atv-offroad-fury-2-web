@@ -150,6 +150,10 @@ pub struct Request {
     /// input unchanged) and the stick dead zone in percent.
     #[serde(default)]
     pub controller_label: String,
+    /// Controller binding preset name (Fury Remastered, ATV Offroad Fury 2,
+    /// MX vs. ATV Unleashed or Custom).
+    #[serde(default)]
+    pub controller_preset: String,
     #[serde(default = "default_controller_sensitivity")]
     pub controller_steering: f32,
     #[serde(default = "default_controller_sensitivity")]
@@ -391,6 +395,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         .any(|v| !(50.0..=150.0).contains(v))
         || !(0.0..=40.0).contains(&request.controller_deadzone)
         || request.controller_label.len() > 128
+        || request.controller_preset.len() > 64
         || !matches!(request.minimap_shape.as_str(), "circle" | "square")
         || !matches!(request.minimap_corner.as_str(), "top-right" | "bottom-left")
         || !matches!(
@@ -1546,9 +1551,11 @@ pub fn layout(request: Request) -> Result<Frame> {
         }
         "controller-settings" => {
             // Named after the original Options → Controller Settings page.
-            // Its fixed presets map to Controller bindings; the sliders are
-            // port enhancements (the original has no sensitivity options).
+            // Preset switches between the port layout and each original
+            // game's default layout; the sliders are port enhancements (the
+            // original has no sensitivity options).
             let label = format!("Controller: {}", request.controller_label);
+            let preset = format!("Preset: {}", request.controller_preset);
             let sliders = [
                 (
                     "pad-steering",
@@ -1591,8 +1598,6 @@ pub fn layout(request: Request) -> Result<Frame> {
                 ("Defaults", "paddefaults"),
                 ("Back", "back"),
             ];
-            // Portrait: one column. Landscape: rows left, sliders right, so
-            // the page fits the 448-unit minimum height.
             // Portrait: one column with Defaults and Back sharing the last row.
             // Landscape: rows left, sliders right. Both fit the 448-unit
             // minimum height with 44px portrait touch targets.
@@ -1607,7 +1612,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                 let column = (w - 72.) / 2.;
                 (column, 48. + column, column)
             };
-            let mut y = if portrait { 76. } else { 80. };
+            let mut y = if portrait { 72. } else { 80. };
             f.button(
                 &label,
                 "padselect",
@@ -1615,6 +1620,14 @@ pub fn layout(request: Request) -> Result<Frame> {
                 request.selection == 0,
             );
             f.choices.push("padselect".into());
+            y += row + 2.;
+            f.button(
+                &preset,
+                "padpreset",
+                [24., y, button_w, row],
+                request.selection == 1,
+            );
+            f.choices.push("padpreset".into());
             let mut slider_y = if portrait { y + row + 8. } else { 80. };
             for (i, (action, label, value, min, max)) in sliders.into_iter().enumerate() {
                 f.sliders.push(Slider {
@@ -1625,10 +1638,10 @@ pub fn layout(request: Request) -> Result<Frame> {
                     min,
                     max,
                     step: 5.,
-                    selected: request.selection == 1 + i,
+                    selected: request.selection == 2 + i,
                 });
                 f.choices.push(action.into());
-                slider_y += 48.;
+                slider_y += 46.;
             }
             y = if portrait {
                 slider_y + 4.
@@ -1641,7 +1654,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                     (true, 2) => [32. + (button_w - 8.) / 2., y, (button_w - 8.) / 2., row],
                     _ => [24., y, button_w, row],
                 };
-                f.button(label, action, rect, request.selection == 6 + i);
+                f.button(label, action, rect, request.selection == 7 + i);
                 f.choices.push(action.into());
                 if !(portrait && i == 1) {
                     y += row + 2.;
@@ -1992,6 +2005,7 @@ mod tests {
             minimap_orientation: "north-up".into(),
             mobile_steering_sensitivity: 85.,
             controller_label: "Auto (press a button)".into(),
+            controller_preset: "Fury Remastered".into(),
             controller_steering: 100.,
             controller_lean: 100.,
             controller_triggers: 100.,
@@ -2265,6 +2279,7 @@ mod tests {
                 f.choices,
                 [
                     "padselect",
+                    "padpreset",
                     "pad-steering",
                     "pad-lean",
                     "pad-triggers",
@@ -2276,6 +2291,7 @@ mod tests {
                 ]
             );
             assert_eq!(f.hits[0].label, "Controller: Auto (press a button)");
+            assert_eq!(f.hits[1].label, "Preset: Fury Remastered");
             assert_eq!(f.sliders.len(), 5);
             for slider in &f.sliders {
                 let [x, y, width, height] = slider.rect;
