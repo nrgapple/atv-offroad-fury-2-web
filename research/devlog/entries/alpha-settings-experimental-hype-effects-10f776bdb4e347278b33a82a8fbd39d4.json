@@ -1,0 +1,14 @@
+{
+  "id": "alpha-settings-experimental-hype-effects-10f776bdb4e347278b33a82a8fbd39d4",
+  "timestamp": "2026-10-18T01:29:12.185724+00:00",
+  "recorded_at": "2026-10-18T01:34:42.551521+00:00",
+  "kind": "build",
+  "title": "Alpha settings: experimental hype effects",
+  "summary": "Settings has a new Alpha (experimental) page with six off-by-default toggles the user can try and rate: Air slow-mo (0.3\u00d7 at the apex of big jumps, Freestyle only), Big-air camera (pull back and lower in big air, compresses on landing), Speed & air muffle (the soundtrack is muffled at speed and in big air, with a wind rush; it snaps back on landing), Apex sun glare, Landing burst (dust ring, dirt clods and a thump), and Heavy mud (faster dirt buildup, landing splats). None changes the recovered physics; slow motion only delays when the next fixed 1/60 s step runs.",
+  "details": [
+    "unit tests in web/hype.test.mjs; a Rust menu test; a content browser test (tools/test_alpha_hype.mjs) that launches a real 24 ft jump on Caribou Peak and Sonora Dunes and measured slow motion at 0.3\u00d7 (about 51\u201357 ms of real time per 60 Hz step), big-air framing, glare, muffle, a landing compression, about 45 burst particles, and mud rising. Arcade flips are in development separately and will join the page."
+  ],
+  "limitation": "the audio muffle and thump were not listened to in automated runs; the glare has no occlusion; physical phones and controllers are untested; all tuning is a first pass awaiting the user's feedback. This is a host-verified checkpoint, not yet a verified public release.",
+  "image": "/devlog-images/alpha-settings-experimental-hype-effects-10f776bdb4e347278b33a82a8fbd39d4.png",
+  "caption": "Dirt clods from the landing burst after touchdown (the steep top-down view is the original follow camera after the test's near-vertical launch)"
+}
