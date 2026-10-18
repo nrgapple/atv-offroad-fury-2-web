@@ -1,0 +1,13 @@
+{
+  "id": "touch-arcade-flips-sideways-drag-leans-in-the-air-360--b1aebccc47df4b66abcb7125e3af59a7",
+  "timestamp": "2026-10-18T02:02:52.774838+00:00",
+  "recorded_at": "2026-10-18T02:02:52.774838+00:00",
+  "kind": "build",
+  "title": "Touch Arcade flips: sideways drag leans in the air, 360 past full lock",
+  "summary": "With Alpha > Arcade flips on touch, a sideways thumb drag in the air used to start a 360 once it passed about a quarter of full lock. A thumb is rarely centred, so riders could not lean left or right to line up a landing. Touch now sends a separate 360 axis. A sideways drag within the steering range stays the original ATV2 air lean (yaw/roll moment) and does not engage Arcade. The 360 starts at the Unleashed 360 reach (105 px, or 1.3x full lock) and reaches full rate 50 px further out. While airborne the one-handed compass shows only the left/right gold arcs, which fill with the spin rate; the cue reads LEAN / FLIP, or SPIN <- 360 / SPIN 360 ->. Keyboard and controllers are unchanged.",
+  "details": [
+    "PR #177 (feat/touch-air-lean). Verification on the host: cargo test -p atv-core arcade, including a new vehicle test that full steer with a zero spin axis never engages Arcade; the new web/touch.test.mjs case; and tools/test_arcade_flips.mjs on env01 with real Chromium touches. A full-lock drag in the air stayed disengaged at steer 1.00, and dragging past full lock spun right (about 60 degrees before landing on that short hop). No screenshots were taken for this entry."
+  ],
+  "limitation": "Host-verified only, not a verified public release. Physical phones are not yet tested. The spin-zone distances are authored and not tuned on a device. Tuning was checked only on env01's Caribou ramp.",
+  "status": "Touch air lean and 360 split host-verified; not yet a verified public release; phone tuning pending"
+}
