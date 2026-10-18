@@ -24,6 +24,7 @@ export const TESTS = {
   'test_ambient_catalog.mjs': { group: 'content' },
   'test_ambient_effects.mjs': { group: 'content' },
   'test_app_identity.mjs': { group: 'content-free' },
+  'test_alpha_hype.mjs': { group: 'content' },
   'test_atv_flips.mjs': { group: 'content' },
   'test_bindings.mjs': { group: 'content' },
   'test_body_impact_audio.mjs': {

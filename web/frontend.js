@@ -11,10 +11,10 @@ const base = name => name.replaceAll('\\', '/').split('/').at(-1).toLowerCase();
 const unquote = value => (value ?? '').replace(/^"/, '').replace(/"$/, '');
 const fields = section => Object.fromEntries([...section.fields].reverse().map(f => [f.key.toLowerCase(), f.value]));
 const sections = doc => new Map(doc.sections.map(s => [s.name.toLowerCase(), fields(s)]));
-const overlayPages = new Set(['settings','extras','pause','players','hud-settings','minimap-config','race-overlays','controls','controller-settings','bindings','music','jukebox']);
+const overlayPages = new Set(['settings','extras','alpha','pause','players','hud-settings','minimap-config','race-overlays','controls','controller-settings','bindings','music','jukebox']);
 // Menu pages with quad/rider preview slots.
 const MODEL_PAGES = ['garage','gear','main','single','create-lobby','join-lobby'];
-const settingsPages = new Set(['settings','extras','hud-settings','minimap-config','race-overlays','controls','controller-settings','bindings','music','jukebox']);
+const settingsPages = new Set(['settings','extras','alpha','hud-settings','minimap-config','race-overlays','controls','controller-settings','bindings','music','jukebox']);
 // Value rows that step either way with Left/Right as well as cycling on a tap.
 const stepperActions = new Set(['racetrack','racelaps','racecpu','racedifficulty','gearhelmet','gearjersey','gearpant','gearglove','gearboot','geargoggle','gearpaint']);
 const cycleActions = new Set(['graphics','vibration','speed-rush','crash-camera','chase-camera','flips','train-riding','funnycrashes','diagnostics','onehanded','minimap-orientation','minimap-shape','minimap-corner','minimap-toggle','musictoggle','musicvolume','sfxvolume','soundmode','silentmode','overlay-timing','overlay-lap','overlay-score','overlay-position','overlay-info','overlay-speed','overlay-radar']);
@@ -70,8 +70,8 @@ export function unlockedCourses(tracks, files) {
 }
 
 export class Frontend {
-  constructor({ codec, json, content, read, start, active, audio, diagnosticsOverlay, mobileControls, multiplayer, crashSettings, minimapSettings, raceOverlays, modelAssets, menuRider, gearPreview, graphicsSettings, vibrationSettings }) {
-    Object.assign(this, { codec, json, content, read, start, active, audio, diagnosticsOverlay, mobileControls, multiplayer, crashSettings, minimapSettings, raceOverlays, modelAssets, menuRider, gearPreview, graphicsSettings, vibrationSettings });
+  constructor({ codec, json, content, read, start, active, audio, diagnosticsOverlay, mobileControls, multiplayer, crashSettings, minimapSettings, raceOverlays, modelAssets, menuRider, gearPreview, graphicsSettings, vibrationSettings, alphaSettings }) {
+    Object.assign(this, { codec, json, content, read, start, active, audio, diagnosticsOverlay, mobileControls, multiplayer, crashSettings, minimapSettings, raceOverlays, modelAssets, menuRider, gearPreview, graphicsSettings, vibrationSettings, alphaSettings });
     this.gearCatalog = null;
     this.root = document.getElementById('frontend'); this.canvas = document.getElementById('menu-canvas');
     this.ctx = this.canvas.getContext('2d'); this.buttons = document.getElementById('menu-buttons');
@@ -163,7 +163,7 @@ export class Frontend {
         if (!this.root.hidden && !this.padBlocked) for (const action of held) if (!this.lastPad.has(action)) {
           if (action === 'pause' && this.page === 'garage' && this.garageReturn === 'pause' && !this.busy) void this.leaveGarage();
           else if (action === 'pause' && this.page === 'tracks' && this.trackMode === 'change' && !this.busy) { this.trackMode = 'single'; this.resume(); }
-          else if (action === 'pause' && ['settings','extras','pause','players','hud-settings','minimap-config','race-overlays','controls','controller-settings','bindings','music','jukebox','multiplayer','create-lobby','join-lobby','lobby','garage'].includes(this.page) && !this.busy && this.activeSetup && !this.menuSettings()) this.resume();
+          else if (action === 'pause' && ['settings','extras','alpha','pause','players','hud-settings','minimap-config','race-overlays','controls','controller-settings','bindings','music','jukebox','multiplayer','create-lobby','join-lobby','lobby','garage'].includes(this.page) && !this.busy && this.activeSetup && !this.menuSettings()) this.resume();
           else void this.action(action === 'pause' ? 'accept' : action);
         }
         this.lastPad = held;
@@ -531,7 +531,7 @@ export class Frontend {
   async action(action) {
     if (this.busy || this.root.hidden) return;
     this.notice.textContent = '';
-    if (['up','down'].includes(action) && ['title','main','single','garage','multiplayer','create-lobby','join-lobby','lobby','race','settings','extras','pause','players','hud-settings','minimap-config','race-overlays','controls','controller-settings','bindings','music','jukebox'].includes(this.page)) {
+    if (['up','down'].includes(action) && ['title','main','single','garage','multiplayer','create-lobby','join-lobby','lobby','race','settings','extras','alpha','pause','players','hud-settings','minimap-config','race-overlays','controls','controller-settings','bindings','music','jukebox'].includes(this.page)) {
       const order = this.page === 'pause' ? this.pauseOrder : this.page === 'garage' ? this.frame.choices.filter(choice => choice !== 'quadnext') : this.frame.choices;
       const current = this.frame.choices[this.selection], index = order.indexOf(current === 'quadnext' ? 'quadprev' : current);
       this.selection = this.frame.choices.indexOf(order[(index + (action === 'up' ? -1 : 1) + order.length) % order.length]);
@@ -545,7 +545,7 @@ export class Frontend {
       if (this.page === 'lobby') return this.run('leave');
       if (this.page === 'settings') return this.show(this.settingsReturn ?? 'main');
       if (this.page === 'jukebox') return this.show(this.jukeboxReturn ?? 'main');
-      return this.show(({settings:this.settingsReturn ?? 'main',extras:'settings',players:'pause',bindings:this.bindingDevice === 'controller' ? 'controller-settings' : 'controls','controller-settings':'controls',music:'settings','hud-settings':'settings','minimap-config':'hud-settings','race-overlays':'hud-settings',controls:'settings',main:'title',single:'main',tracks:'single',race:'single','create-lobby':'multiplayer','join-lobby':'multiplayer',multiplayer:'main'})[this.page] ?? 'title');
+      return this.show(({settings:this.settingsReturn ?? 'main',extras:'settings',alpha:'settings',players:'pause',bindings:this.bindingDevice === 'controller' ? 'controller-settings' : 'controls','controller-settings':'controls',music:'settings','hud-settings':'settings','minimap-config':'hud-settings','race-overlays':'hud-settings',controls:'settings',main:'title',single:'main',tracks:'single',race:'single','create-lobby':'multiplayer','join-lobby':'multiplayer',multiplayer:'main'})[this.page] ?? 'title');
     } else if (this.page === 'garage' && ['left','right'].includes(action)) {
       return this.run(action === 'left' ? 'quadprev' : 'quadnext');
     } else if (this.page === 'tracks' && ['left','right','up','down'].includes(action)) {
@@ -560,7 +560,7 @@ export class Frontend {
       // Only value rows step; Left/Right on Start Race, Copy link or Back does nothing.
       const current = this.frame.choices[this.selection];
       if (stepperActions.has(current)) return this.run(current, action === 'left' ? -1 : 1, true);
-    } else if (['left','right'].includes(action) && cycleActions.has(this.frame.choices[this.selection]) && this.isPausePanel()) {
+    } else if (['left','right'].includes(action) && (cycleActions.has(this.frame.choices[this.selection]) || this.frame.choices[this.selection]?.startsWith('alpha:')) && this.isPausePanel()) {
       return this.run(this.frame.choices[this.selection], action === 'left' ? -1 : 1, true);
     } else if (this.page === 'minimap-config' && this.frame.choices[this.selection] === 'minimap-size' && ['left','right'].includes(action)) {
       this.minimapSettings?.setSize(this.minimapSettings.size + (action === 'left' ? -8 : 8));
@@ -634,7 +634,7 @@ export class Frontend {
         return;
       }
       else if (['host','join','share','leave'].includes(action)) { if (['host','join'].includes(action) && this.quadId>=27) throw new Error('Choose an ATV for multiplayer. Motorcycles are available in Single Player.'); if (['host','join'].includes(action)) this.saveSelection(); return await this.multiplayer.action(action, this); }
-      else if (['main','single','tracks','settings','extras','pause','players','hud-settings','minimap-config','race-overlays','controls','music','multiplayer','create-lobby','join-lobby','lobby','race','gear'].includes(action)) return await this.show(action);
+      else if (['main','single','tracks','settings','extras','alpha','pause','players','hud-settings','minimap-config','race-overlays','controls','music','multiplayer','create-lobby','join-lobby','lobby','race','gear'].includes(action)) return await this.show(action);
       if (action.startsWith('gear') && action !== 'gear') { this.stepGear(action.slice(4), direction); this.saveSelection(); this.layoutKey = ''; await this.refresh(); return; }
       if (action === 'racestart') {
         try { await this.launchSingle(this.raceSettings.course, {...this.raceSettings}); }
@@ -696,6 +696,7 @@ export class Frontend {
       else if (action === 'crash-camera') this.crashSettings?.toggleCamera();
       else if (action === 'chase-camera') this.crashSettings?.toggleChase();
       else if (action === 'flips') this.crashSettings?.toggleFlips();
+      else if (action.startsWith('alpha:')) this.alphaSettings?.toggle(action.slice(6));
       else if (action === 'train-riding') this.crashSettings?.toggleTrain();
       else if (action === 'funnycrashes') this.crashSettings?.toggle(direction);
       else if (action === 'diagnostics') this.diagnosticsOverlay?.cycle(direction);
@@ -748,7 +749,7 @@ export class Frontend {
     const music = this.audio?.()?.music, musicState = music?.snapshot();
     const lobby = this.multiplayer?.state?.lobby;
     const request = {lobby_players:(lobby?.players??[]).map(p=>({id:String(p.id),label:`${p.name}${p.id===this.multiplayer.state.peer?' (You)':''}`,value:p.id===this.multiplayer.state.peer?'self':(this.multiplayer.remote.find(r=>r.peer===p.id && !r.stale)?'ready':'waiting')})),race_laps:this.raceSettings.laps,race_cpu:this.raceSettings.cpu,race_difficulty:this.raceSettings.difficulty,race_available:this.raceAvailable,race_course:this.raceSettings.course,gear_rows:this.page === 'gear' ? this.gearRows() : [],race_active:this.raceActive,quad_id:this.quadId,rider_id:this.riderId,player_name:this.playerName,room_code:this.multiplayer?.state?.code ?? (this.page==='create-lobby'?this.createCode:this.roomCode),lobby_status:lobby ? (lobby.public ? `Arlington Free Ride / ${lobby.players.length}/20 riders` : `${lobby.players.length}/4 riders / ${lobby.players.map(p => p.name).join(', ')}`) : '',lobby_started:Boolean(lobby?.started),lobby_host:Boolean(lobby && this.multiplayer.state.peer === lobby.host),lobby_public:Boolean(lobby?.public),page:this.page,loading_status:this.loadingStatus,width:stage.clientWidth,height:stage.clientHeight,selection:this.selection,track_name:track?.name ?? '',track_image:(this.page === 'lobby' && track?.id === 'training' && this.images.has(trainingPreview) ? trainingPreview : track?.image) ?? '',fullscreen:Boolean(document.fullscreenEnabled),
-      minimap_orientation:this.minimapSettings?.orientation ?? 'north-up',minimap_shape:this.minimapSettings?.shape ?? 'circle',minimap_corner:this.minimapSettings?.corner ?? 'top-right',minimap_enabled:this.minimapSettings?.enabled ?? true,minimap_size:this.minimapSettings?.size ?? 160,minimap_zoom:this.minimapSettings?.zoom ?? 50,race_overlays_off:[...(this.raceOverlays?.off ?? [])],race_position:this.raceOverlays?.position ?? 'name',funny_crashes:this.crashSettings?.enabled ?? false,crash_mode:this.crashSettings?.mode ?? 'original',original_camera:this.crashSettings?.camera === 'original',chase_assist:this.crashSettings?.chase === 'assisted',flips:this.crashSettings?.flipsEnabled ?? false,realistic_train:this.crashSettings?.realisticTrain ?? false,speed_rush:this.crashSettings?.speed ?? 'off',graphics_preset:this.graphicsSettings?.preset ?? 'auto',graphics_resolved:this.graphicsSettings?.resolved ?? '',vibration:this.vibrationSettings?.enabled ?? true,controller_label:this.page === 'controller-settings' ? controllerLabel() : '',controller_preset:this.page === 'controller-settings' ? gameplayBindings.controllerPresetLabel() : '',controller_steering:controllerSettings.steering,controller_lean:controllerSettings.lean,controller_triggers:controllerSettings.triggers,controller_camera:controllerSettings.camera,controller_deadzone:controllerSettings.deadzone,mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice,this.padStandard()).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
+      minimap_orientation:this.minimapSettings?.orientation ?? 'north-up',minimap_shape:this.minimapSettings?.shape ?? 'circle',minimap_corner:this.minimapSettings?.corner ?? 'top-right',minimap_enabled:this.minimapSettings?.enabled ?? true,minimap_size:this.minimapSettings?.size ?? 160,minimap_zoom:this.minimapSettings?.zoom ?? 50,race_overlays_off:[...(this.raceOverlays?.off ?? [])],race_position:this.raceOverlays?.position ?? 'name',funny_crashes:this.crashSettings?.enabled ?? false,crash_mode:this.crashSettings?.mode ?? 'original',original_camera:this.crashSettings?.camera === 'original',chase_assist:this.crashSettings?.chase === 'assisted',flips:this.crashSettings?.flipsEnabled ?? false,alpha_rows:this.page === 'alpha' ? (this.alphaSettings?.rows() ?? []) : [],realistic_train:this.crashSettings?.realisticTrain ?? false,speed_rush:this.crashSettings?.speed ?? 'off',graphics_preset:this.graphicsSettings?.preset ?? 'auto',graphics_resolved:this.graphicsSettings?.resolved ?? '',vibration:this.vibrationSettings?.enabled ?? true,controller_label:this.page === 'controller-settings' ? controllerLabel() : '',controller_preset:this.page === 'controller-settings' ? gameplayBindings.controllerPresetLabel() : '',controller_steering:controllerSettings.steering,controller_lean:controllerSettings.lean,controller_triggers:controllerSettings.triggers,controller_camera:controllerSettings.camera,controller_deadzone:controllerSettings.deadzone,mobile_steering_sensitivity:this.mobileControls?.steeringSensitivity ?? 85,one_handed_mobile:this.mobileControls?.oneHanded ?? true,diagnostics_mode:this.diagnosticsOverlay?.mode ?? 'off',control_rows:this.page === 'bindings' ? gameplayBindings.rows(this.bindingDevice,this.padStandard()).map(row => ({id:row.id,label:row.label,value:row.labelBinding})) : [],
       binding_device:this.bindingDevice,binding_page:this.bindingPage,capture_label:this.capture?.label ?? '',
       music_ready:Boolean(music?.tracks?.length),music_rows:this.page === 'jukebox' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:row.artist})) : this.page === 'music' ? music.tracks.map(row => ({id:String(row.index),label:row.title,value:`${row.index === musicState.playingIndex && musicState.enabled ? 'Playing / ' : row.index === musicState.selectedIndex ? 'Selected / ' : ''}${row.artist}`})) : [],
       music_page:this.musicPage,music_status:musicState ? `${musicState.enabled ? 'On' : 'Off'} / Volume ${Math.round(musicState.volume * 100)}% / ${musicState.title || 'Choose a song'}` : '',music_enabled:(musicState?.enabled ?? true) && !(this.page === 'jukebox' && musicState?.paused),music_volume:Math.round((musicState?.volume ?? .7)*100),sfx_volume:Math.round((this.audio?.()?.settings?.sfx ?? 1)*100),sound_mode:this.audio?.()?.settings?.mode ?? 'enhanced',silent_mode:this.audio?.()?.audioSession ? (this.audio().settings?.silent ?? 'play') : '',menu_logo:this.images.has('brand-logo'),menu_atv:this.images.has('multi_atv01')};
@@ -1118,7 +1119,7 @@ export class Frontend {
       this.pausePanel.replaceChildren(header,body,...(this.padSummary ? [this.padSummary] : []));
     }
     this.pausePanel.dataset.screen = this.page;
-    this.pausePanel.querySelector('h1').textContent = ({settings:'Settings',extras:'Extras',pause:'Pause',controls:'Controls','controller-settings':'Controller Settings','hud-settings':'Display','minimap-config':'Minimap',bindings:this.bindingDevice === 'controller' ? 'Controller' : 'Keyboard',music:'Audio',players:'Players',lobby:'Lobby'})[this.page];
+    this.pausePanel.querySelector('h1').textContent = ({settings:'Settings',extras:'Extras',alpha:'Alpha',pause:'Pause',controls:'Controls','controller-settings':'Controller Settings','hud-settings':'Display','minimap-config':'Minimap',bindings:this.bindingDevice === 'controller' ? 'Controller' : 'Keyboard',music:'Audio',players:'Players',lobby:'Lobby'})[this.page];
     // Only live state appears under the title (the soundtrack's on/volume/song).
     this.pausePanel.querySelector('.pause-header .pause-status').textContent = this.page === 'music' ? state.music_status : '';
     const padRows = padPage ? gameplayBindings.rows('controller', standard) : null;

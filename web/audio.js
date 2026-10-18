@@ -73,7 +73,7 @@ export class GameAudio {
     this.effectSelections = 0;
     this.effectLast = null;
     this.effectCamera = null;
-    this.music = new MusicStream(codec, () => this.context, () => this.gain, report);
+    this.music = new MusicStream(codec, () => this.context, () => this.musicBus ?? this.gain, report);
     this.music.outputFactory = sharedMusicOutput;
     this.music.bindMediaSession();
     this.settings = loadAudioSettings();
@@ -98,6 +98,11 @@ export class GameAudio {
       this.engineGain = this.context.createGain();
       this.engineGain.gain.value = this.active ? this.settings.sfx : 0;
       this.engineGain.connect(this.gain);
+      // Decoded music passes a low-pass the Alpha muffle closes; open by default.
+      if (this.context.createBiquadFilter) {
+        this.musicBus = this.context.createBiquadFilter(); this.musicBus.type = 'lowpass'; this.musicBus.frequency.value = 22000; this.musicBus.Q.value = .7;
+        this.musicLevel = this.context.createGain(); this.musicBus.connect(this.musicLevel); this.musicLevel.connect(this.gain);
+      }
       this.applyEcho();
     }
     await this.context.resume();
@@ -494,6 +499,57 @@ export class GameAudio {
     const noise=this.context.createBufferSource();noise.buffer=buffer;
     const filter=this.context.createBiquadFilter();filter.type='lowpass';filter.frequency.value=650;noise.connect(filter);filter.connect(envelope);noise.start(now);
     bass.onended=()=>{bass.disconnect();noise.disconnect();filter.disconnect();envelope.disconnect();};
+  }
+  // Alpha hype: 0 leaves the soundtrack open; 1 muffles it to a distant thud.
+  // `wind` (0..1) adds a filtered rush on the SFX bus. Fast settles snap back.
+  setHype(muffle, wind = 0, fast = false) {
+    if (!this.context || this.closed || this.context.state !== 'running') return;
+    const amount = Math.max(0, Math.min(1, muffle)), cutoff = 22000 * Math.pow(320 / 22000, amount), level = 1 - .3 * amount;
+    const now = this.context.currentTime, tc = fast ? .02 : .06;
+    this.hypeMuffle = amount;
+    // Decoded music uses this context; the streamed soundtrack keeps its own.
+    const out = this.music.out;
+    for (const [filter, gain] of [[this.musicBus, this.musicLevel], [out?.filter, out?.muffleGain]]) {
+      if (!filter || !gain) continue;
+      const at = filter.context.currentTime;
+      filter.frequency.setTargetAtTime(cutoff, at, tc); gain.gain.setTargetAtTime(level, at, tc);
+    }
+    const w = Math.max(0, Math.min(1, wind));
+    if (w > .001 && !this.wind) {
+      const buffer = this.context.createBuffer(1, this.context.sampleRate * 2, this.context.sampleRate), data = buffer.getChannelData(0);
+      let seed = 91, last = 0;
+      for (let i = 0; i < data.length; i++) { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; last = last * .96 + (seed / 2147483648 - 1) * .2; data[i] = last; }
+      const source = this.context.createBufferSource(); source.buffer = buffer; source.loop = true;
+      const band = this.context.createBiquadFilter(); band.type = 'bandpass'; band.frequency.value = 500; band.Q.value = .6;
+      const gain = this.context.createGain(); gain.gain.value = 0;
+      source.connect(band); band.connect(gain); gain.connect(this.engineGain); source.start();
+      this.wind = { source, band, gain };
+    }
+    if (this.wind) {
+      this.wind.gain.gain.setTargetAtTime(.32 * w * w, now, fast ? .03 : .15);
+      this.wind.band.frequency.setTargetAtTime(380 + 900 * w, now, .2);
+    }
+  }
+  stopHype() {
+    if (this.wind) { try { this.wind.source.stop(); } catch { /* Already stopped. */ } for (const node of Object.values(this.wind)) node.disconnect(); this.wind = null; }
+    if (this.context && this.context.state !== 'closed') this.setHype(0, 0, true);
+  }
+  // Alpha landing burst: a deep thump scaled by landing speed (ft/s).
+  landingThump(severity) {
+    if (!this.active || this.closed || !this.context || this.context.state !== 'running') return;
+    const now = this.context.currentTime, level = Math.min(.55, Math.max(0, severity - 8) / 80);
+    if (level <= 0) return;
+    this.thumps = (this.thumps ?? 0) + 1;
+    const envelope = this.context.createGain();
+    envelope.gain.setValueAtTime(level, now); envelope.gain.exponentialRampToValueAtTime(.001, now + .42);
+    envelope.connect(this.engineGain);
+    const bass = this.context.createOscillator(); bass.type = 'sine'; bass.frequency.setValueAtTime(78, now); bass.frequency.exponentialRampToValueAtTime(34, now + .3);
+    bass.connect(envelope); bass.start(now); bass.stop(now + .45);
+    const buffer = this.context.createBuffer(1, Math.ceil(this.context.sampleRate * .16), this.context.sampleRate), data = buffer.getChannelData(0);
+    let seed = 29; for (let i = 0; i < data.length; i++) { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; data[i] = (seed / 2147483648 - 1) * (1 - i / data.length) * .6; }
+    const crunch = this.context.createBufferSource(); crunch.buffer = buffer;
+    const filter = this.context.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 900; crunch.connect(filter); filter.connect(envelope); crunch.start(now);
+    bass.onended = () => { bass.disconnect(); crunch.disconnect(); filter.disconnect(); envelope.disconnect(); };
   }
   fadeSources() {
     for (const voice of this.sources) {

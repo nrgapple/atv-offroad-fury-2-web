@@ -68,6 +68,9 @@ pub struct Request {
     /// quad colour), named from the original Profile Store catalog.
     #[serde(default)]
     pub gear_rows: Vec<String>,
+    /// Settings → Alpha: experimental authored toggles (id, name, On/Off).
+    #[serde(default)]
+    pub alpha_rows: Vec<ControlRow>,
     #[serde(default)]
     pub music_page: usize,
     #[serde(default)]
@@ -440,6 +443,17 @@ pub fn layout(request: Request) -> Result<Frame> {
             "" | "original" | "enhanced" | "high"
         )
         || request.gear_rows.len() > 8
+        || request.alpha_rows.len() > 12
+        || request.alpha_rows.iter().any(|row| {
+            row.id.is_empty()
+                || row.id.len() > 40
+                || !row
+                    .id
+                    .bytes()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+                || row.label.len() > 48
+                || row.value.len() > 16
+        })
         || request.gear_rows.iter().any(|row| row.len() > 64)
         || request
             .control_rows
@@ -462,6 +476,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         request.page.as_str(),
         "settings"
             | "extras"
+            | "alpha"
             | "pause"
             | "players"
             | "hud-settings"
@@ -540,6 +555,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         "pause" => "Pause",
         "settings" => "Settings",
         "extras" => "Extras",
+        "alpha" => "Alpha",
         "players" => "Lobby Players",
         "hud-settings" => "Display",
         "minimap-config" => "Minimap Configuration",
@@ -1290,6 +1306,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                     ("Display", "hud-settings"),
                     ("Audio", "music"),
                     ("Extras", "extras"),
+                    ("Alpha (experimental)", "alpha"),
                 ],
                 "extras" => vec![
                     (crash_label, "funnycrashes"),
@@ -1357,6 +1374,31 @@ pub fn layout(request: Request) -> Result<Frame> {
                     action,
                     [24., 92. + i as f32 * row, w - 48., row],
                     request.selection % choices.len() == i,
+                );
+            }
+        }
+        "alpha" => {
+            // Experimental authored toggles. The browser owns the list so new
+            // experiments need no menu change; each row cycles On/Off.
+            let mut rows: Vec<(String, String)> = request
+                .alpha_rows
+                .iter()
+                .map(|row| {
+                    (
+                        format!("{}: {}", row.label, row.value),
+                        format!("alpha:{}", row.id),
+                    )
+                })
+                .collect();
+            rows.push(("Back".into(), "back".into()));
+            let row = 54f32.min((h - 96.) / rows.len() as f32);
+            for (i, (label, action)) in rows.iter().enumerate() {
+                f.choices.push(action.clone());
+                f.button(
+                    label,
+                    action,
+                    [24., 92. + i as f32 * row, w - 48., row],
+                    request.selection % rows.len() == i,
                 );
             }
         }
@@ -1988,6 +2030,7 @@ mod tests {
             music_ready: true,
             music_rows: vec![],
             gear_rows: vec![],
+            alpha_rows: vec![],
             music_page: 0,
             music_status: String::new(),
             music_enabled: true,
@@ -2362,6 +2405,7 @@ mod tests {
                 "loading",
                 "settings",
                 "extras",
+                "alpha",
                 "pause",
                 "controls",
                 "controller-settings",
@@ -2460,6 +2504,33 @@ mod tests {
         assert_eq!(enhanced[2], "Chase camera: Assisted");
         assert_eq!(enhanced[3], "Flips: Unleashed backflip & 360");
         assert_eq!(enhanced[4], "Train riding: Realistic");
+    }
+    #[test]
+    fn alpha_page_lists_browser_toggles_and_validates_ids() {
+        let settings = layout(request("settings", 390., 844.)).unwrap();
+        assert!(settings.choices.iter().any(|c| c == "alpha"));
+        let mut r = request("alpha", 390., 844.);
+        r.alpha_rows = ["air-slowmo", "big-air-camera"]
+            .iter()
+            .map(|id| ControlRow {
+                id: (*id).into(),
+                label: "Air slow-mo".into(),
+                value: "On".into(),
+            })
+            .collect();
+        let frame = layout(r).unwrap();
+        assert_eq!(
+            frame.choices,
+            ["alpha:air-slowmo", "alpha:big-air-camera", "back"]
+        );
+        assert_eq!(frame.hits[0].label, "Air slow-mo: On");
+        let mut invalid = request("alpha", 390., 844.);
+        invalid.alpha_rows = vec![ControlRow {
+            id: "Bad Id".into(),
+            label: "x".into(),
+            value: "On".into(),
+        }];
+        assert!(layout(invalid).is_err());
     }
     #[test]
     fn silent_switch_row_appears_only_with_an_audio_session_and_fits() {
