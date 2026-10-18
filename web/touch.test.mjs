@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TouchInput, TouchLeanIntent, oneHandedFeedback, loadOneHandedPreference, loadSteeringSensitivity, normalizeSteeringSensitivity, DEFAULT_STEERING_SENSITIVITY, TRICK_WHEEL, trickWheelSelection, flipZone } from './touch.js';
+import { TouchInput, TouchLeanIntent, oneHandedFeedback, loadOneHandedPreference, loadSteeringSensitivity, normalizeSteeringSensitivity, DEFAULT_STEERING_SENSITIVITY, TRICK_WHEEL, trickWheelSelection, flipZone, arcadeSpinAxis, SPIN_RAMP } from './touch.js';
 
 test('ground right press drives, back drag brakes, release requests preload once', () => {
   const touch=new TouchInput();touch.begin(1,300,500);
@@ -290,4 +290,28 @@ test('optional flips: two-finger long swipes flip, short swipes and up keep the 
   const up = swipe(true, 0, -130); assert.equal(up.flip_request, null); assert.equal(up.stunt_modifiers, 1);
   const short = swipe(true, 0, 60); assert.equal(short.flip_request, null); assert.deepEqual([short.stunt_modifiers, short.stunt_y], [1, 1]);
   const off = swipe(false, 0, 130); assert.equal(off.flip_request, null); assert.equal(off.stunt_modifiers, 1);
+});
+
+test('arcade flips: a sideways drag leans in the air; the 360 axis starts past full lock', () => {
+  // Default sensitivity 100: full lock at 70 px, spin from the 105 px flip reach.
+  assert.equal(arcadeSpinAxis(70), 0); assert.equal(arcadeSpinAxis(-105), 0);
+  assert.equal(arcadeSpinAxis(105 + SPIN_RAMP / 2), .5); assert.equal(arcadeSpinAxis(-105 - SPIN_RAMP * 3), -1);
+  // Low sensitivity moves full lock, and the spin start, further out.
+  assert.equal(arcadeSpinAxis(130, 50), 0); assert(arcadeSpinAxis(190, 50) > 0);
+  assert.equal(arcadeSpinAxis(NaN), 0);
+  const touch = new TouchInput(); touch.setOneHanded(true); touch.steeringSensitivity = 100; touch.arcade = true;
+  touch.begin(1, 300, 500, true);
+  touch.move(1, 370, 500); let sample = touch.sample();
+  assert.equal(sample.steer, 1); assert.equal(sample.spin, 0);
+  let feedback = oneHandedFeedback(touch, null);
+  assert.equal(feedback.spinZones, true); assert.equal(feedback.flipZone, null); assert.equal(feedback.cue, 'LEAN · FLIP');
+  touch.move(1, 300 - 105 - SPIN_RAMP, 540); sample = touch.sample();
+  assert.equal(sample.steer, -1); assert.equal(sample.spin, -1);
+  feedback = oneHandedFeedback(touch, null);
+  assert.equal(feedback.flipZone, 'left'); assert.equal(feedback.flipProgress, 1); assert.equal(feedback.cue, 'SPIN ← 360');
+  // On the ground the compass is unchanged.
+  touch.setAirborne(false); assert.equal(oneHandedFeedback(touch, null).spinZones, undefined);
+  const pad = new TouchLeanIntent(() => 100); pad.begin(2, 100, 500);
+  pad.move(2, 160, 500); assert.equal(pad.spin, 0); assert(pad.steer > .8);
+  pad.move(2, 100 + 105 + SPIN_RAMP, 500); assert.equal(pad.spin, 1); assert.equal(pad.steer, 1);
 });

@@ -162,6 +162,7 @@ const touchLean = new TouchLeanIntent(() => touchControls.steeringSensitivity);
 const touchControls = mountTouchControls({
   surface: canvas,
   flips: () => crashSettings.flipsEnabled && !arcadeFlips(),
+  arcade: arcadeFlips,
   active: () => simReady && focused && !document.hidden && !menuOpen && !lost,
   focus: () => { focused = true; canvas.focus({ preventScroll: true }); syncAudio(); scheduleRender(); },
 });
@@ -1624,11 +1625,15 @@ function drivingInput() {
   if (!focused || document.hidden || menuOpen) return { input: empty, actions: {} };
   const clamp = value => Math.max(-1, Math.min(1, value));
   const { input, actions } = gameplayBindings.read(keys, gamepad());
+  const padSteer = input.steer;
   input.steer += touchLean.steer;
   input.lean += touchLean.lean;
   const touch = touchControls.sample();
   input.touch_drive = touch.drive;
   input.steer += touch.steer; input.lean += touch.lean;
+  // Arcade flips: touch steering stays the original air lean; its 360 axis
+  // starts past full lock. Keys and controllers still spin with steering.
+  if (arcadeFlips()) input.arcade_spin = clamp(padSteer + touchLean.spin + touch.spin);
   // Cancellation also resets the native lean-flick history. A resumed forward
   // lean must not release a preload that was abandoned by blur/menu/disconnect.
   input.input_generation = gameplayBindings.generation + touchControls.generation;
