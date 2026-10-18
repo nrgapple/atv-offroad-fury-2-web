@@ -1,5 +1,5 @@
 // Real-content gate for the iOS/PWA integrations: silent-switch audio session,
-// app shortcut menus, the riding screen wake lock and Media Session metadata.
+// app shortcut menus, the riding screen wake lock, and no Media Session card.
 // iOS APIs are synthetic stand-ins here; physical-device behavior is unverified.
 import assert from 'node:assert/strict';
 import { assertNoErrors, base, button, launch, newPage, waitForGame, waitForScreen } from './browser/harness.mjs';
@@ -90,15 +90,12 @@ try {
   await r.waitForFunction(() => window.fakeWake.held === 1 && window.fakeWake.requests === 2);
   checks.push('screen wake lock held while riding, released on pause, reacquired on resume');
 
-  // Media Session mirrors the streamed soundtrack.
-  await r.waitForFunction(() => Boolean(navigator.mediaSession?.metadata?.title), null, { timeout: 60000 });
-  const media = await r.evaluate(() => ({ title: navigator.mediaSession.metadata.title, album: navigator.mediaSession.metadata.album,
-    playing: navigator.mediaSession.playbackState, song: window.atvTerrainStatus.audio.music.title }));
-  assert.equal(media.title, media.song);
-  assert.equal(media.album, 'Fury Remastered soundtrack');
-  assert.equal(media.playing, 'playing');
+  // The soundtrack belongs to the game: no Now Playing card or system controls.
+  await r.waitForFunction(() => window.atvTerrainStatus.audio.music.playing, null, { timeout: 60000 });
+  const media = await r.evaluate(() => ({ metadata: navigator.mediaSession?.metadata ?? null, state: navigator.mediaSession?.playbackState ?? 'none' }));
+  assert.equal(media.metadata, null); assert.equal(media.state, 'none');
   await r.close();
-  checks.push('Media Session metadata and playback state follow the current song');
+  checks.push('the playing soundtrack publishes no Media Session metadata or controls');
   assertNoErrors(errors);
   console.log(`PASS: ${checks.join('; ')}. Synthetic iOS APIs; physical iPhone/iPad behavior is unverified.`);
 } finally {

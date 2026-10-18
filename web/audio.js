@@ -75,7 +75,7 @@ export class GameAudio {
     this.effectCamera = null;
     this.music = new MusicStream(codec, () => this.context, () => this.musicBus ?? this.gain, report);
     this.music.outputFactory = sharedMusicOutput;
-    this.music.bindMediaSession();
+    this.music.releaseMediaSession();
     this.settings = loadAudioSettings();
     this.audioSession = applyAudioSession(this.settings.silent);
     this.quad = new QuadSounds(this);

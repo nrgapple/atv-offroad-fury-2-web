@@ -1,6 +1,7 @@
 // Real-content music lifecycle across menus and a race: the menu tune, a
 // transient Jukebox pause (not the saved Music setting), the race intro hold,
-// music at GO, Restart Race, Quit to Main Menu and the Jukebox afterwards.
+// music at GO, Restart Race, Quit to Main Menu, the Jukebox afterwards, and
+// leaving/returning to the app (Music stays on; no system media controls).
 import assert from 'node:assert/strict';
 import { assertNoErrors, base, button, launch, newPage, waitForScreen } from './browser/harness.mjs';
 const browser = await launch(); const errors = [];
@@ -32,6 +33,21 @@ await button(page, 'Quit to Main Menu').click(); await waitForScreen(page, 'main
 await until('menu tune after quitting a race', st => st.menu === 1 && !st.m.playing);
 await button(page, 'Jukebox').click(); await waitForScreen(page, 'jukebox');
 await until('jukebox after a race', st => st.m.playing);
+// Leaving the app: the song unloads, Music stays on, nothing is published to
+// the system media controls, and the same song resumes on return.
+const playingBefore = (await until('jukebox playing before leaving', st => st.m.playing)).m;
+const setHidden = hidden => page.evaluate(hidden => {
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (hidden ? 'hidden' : 'visible') });
+  document.dispatchEvent(new Event('visibilitychange'));
+}, hidden);
+await setHidden(true);
+const away = await until('unloaded while away', st => !st.m.playing && st.m.enabled);
+const session = await page.evaluate(() => ({ metadata: navigator.mediaSession?.metadata ?? null, state: navigator.mediaSession?.playbackState ?? 'none' }));
+assert.equal(session.metadata, null); assert.equal(session.state, 'none');
+await setHidden(false);
+const back = await until('same song resumes on return', st => st.m.playing && st.m.title === playingBefore.title && st.m.pos >= away.m.pos);
+assert(back.m.pos >= playingBefore.pos, 'resumes where it was, not from the start');
 assertNoErrors(errors);
-console.log('PASS: menu tune, transient Jukebox pause, race intro hold, music at GO, Restart Race, quit to menu and Jukebox after a race');
+console.log('PASS: menu tune, transient Jukebox pause, race intro hold, music at GO, Restart Race, quit to menu, Jukebox after a race, leave and return');
 await browser.close();
