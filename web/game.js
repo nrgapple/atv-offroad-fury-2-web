@@ -82,6 +82,9 @@ const rumble = new Rumble({ pad: () => focused ? gamepad() : null, touch: coarse
 const atvPresentation = new AtvPresentation();
 // Settings → Alpha: experimental authored presentation, each off by default.
 const alphaSettings = new AlphaSettings(), hype = new HypeDirector();
+// Alpha "Arcade flips" (authored, research/FLIPS.md): analog air rotation that
+// implies flips and replaces the Unleashed gestures.
+const arcadeFlips = () => alphaSettings.enabled('arcade-flips');
 let burstRenderer, airBlurRenderer, hypeAudio = [0, 0];
 alphaSettings.onChange = (id, on) => {
   if (id === 'heavy-mud') dirtBuildup.setHeavy(on, heavyMudZones);
@@ -158,7 +161,7 @@ const keys = new Set(), pointers = new Map();
 const touchLean = new TouchLeanIntent(() => touchControls.steeringSensitivity);
 const touchControls = mountTouchControls({
   surface: canvas,
-  flips: () => crashSettings.flipsEnabled,
+  flips: () => crashSettings.flipsEnabled && !arcadeFlips(),
   active: () => simReady && focused && !document.hidden && !menuOpen && !lost,
   focus: () => { focused = true; canvas.focus({ preventScroll: true }); syncAudio(); scheduleRender(); },
 });
@@ -1632,7 +1635,7 @@ function drivingInput() {
   if (touch.stunt_modifiers) Object.assign(input, { stunt_modifiers: touch.stunt_modifiers, stunt_x: touch.stunt_x, stunt_y: touch.stunt_y });
   if (touch.preload_axis !== null) input.preload_axis = touch.preload_axis;
   // Two-finger mode: the left pad's full pull when the drive thumb lifts.
-  const padFlip = !touch.flip_request && touch.preload_axis === -1 && crashSettings.flipsEnabled && !touchControls.oneHanded ? touchLean.launchFlip() : null;
+  const padFlip = !touch.flip_request && touch.preload_axis === -1 && crashSettings.flipsEnabled && !arcadeFlips() && !touchControls.oneHanded ? touchLean.launchFlip() : null;
   if (padFlip) Object.assign(input, { flip_request: padFlip.flip, flip_launch: true, flip_hold: padFlip.hold });
   else if (touch.flip_request) Object.assign(input, { flip_request: touch.flip_request, flip_launch: touch.flip_launch, flip_hold: touch.flip_hold });
   input.throttle = Math.max(0, clamp(input.throttle)); input.brake = Math.max(0, clamp(input.brake));
@@ -1804,6 +1807,7 @@ async function pumpSimulation() {
     input.funny_crashes = funnyCrashes;
     input.crash_mode = crashSettings.mode;
     input.flips = crashSettings.flipsEnabled;
+    input.arcade_flips = arcadeFlips();
     input.realistic_train = crashSettings.realisticTrain;
     // Menu/reset transitions cancel input before any further physics is queued.
     if (actions.pause) { void frontend?.show('pause'); return; }

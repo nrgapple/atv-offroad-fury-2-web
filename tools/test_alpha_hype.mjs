@@ -72,7 +72,7 @@ try {
   await button(page, 'Alpha (experimental)').click();
   await waitForScreen(page, 'alpha');
   const rows = await page.locator('.pause-panel button').evaluateAll(b => b.map(x => x.getAttribute('aria-label')));
-  assert.deepEqual(rows, ['Air slow-mo: On', 'Big-air camera: On', 'Speed & air muffle: On', 'Air dark blur: On', 'Landing burst: On', 'Heavy mud: On', 'Back']);
+  assert.deepEqual(rows, ['Air slow-mo: On', 'Big-air camera: On', 'Speed & air muffle: On', 'Air dark blur: On', 'Landing burst: On', 'Heavy mud: On', 'Arcade flips: Off', 'Back']);
   await button(page, 'Air slow-mo: On').click();
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('atv-alpha')).includes('air-slowmo') === false);
   await optionalScreenshot(page, 'ATV_ALPHA_SCREENSHOTS', 'menu');

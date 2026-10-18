@@ -3,8 +3,9 @@
 **Status: authored experiments, each off by default.** None of these exist in
 ATV Offroad Fury 2. The user asked for experimental "hype and immersion"
 presentation to try and rate, separate from the established Extras. Every row
-is an independent On/Off toggle saved in `localStorage['atv-alpha']`. None of
-them changes the recovered vehicle solver; slow motion only delays when the
+is an independent On/Off toggle saved in `localStorage['atv-alpha']`. Except Arcade
+flips (an authored gameplay option, see below), none changes the recovered
+vehicle solver; slow motion only delays when the
 next fixed 1/60 s step is requested.
 
 The browser owns the list (`web/alpha.js`, `ALPHA_FEATURES`); the Rust menu
@@ -27,7 +28,7 @@ touchdown speed. A jump counts as big air only with a real launch: after 0.45 s 
 | Landing burst | Hard landings (from 10 ft/s, full at 55 ft/s) throw a ring of terrain-tinted dust and ballistic dirt clods, with a deep thump on the SFX bus. Water landings are skipped. Dust next to the lens is thinned so it never fills the frame. |
 | Heavy mud | The existing quad/rider dirt overlay soils three times faster, the source zone dirt rule runs four times faster, dusty zones without a rule also soil, and hard landings splat extra mud. Water still washes it off, and Reset still cleans it. It works on every graphics preset. |
 
-Arcade flips are being developed separately and will join this page.
+| Arcade flips | Gameplay, not presentation: the riding stick steers rotation in the air (backflips, front flips, 360s, corks), the preload has a lip-pop timing bonus, and the HUD names landed tricks. It implies flips whatever the Extras row says and replaces the Unleashed gestures; original landing and wreck gates still decide. See [FLIPS.md](FLIPS.md#arcade-flips-alpha). |
 
 ## Verification
 

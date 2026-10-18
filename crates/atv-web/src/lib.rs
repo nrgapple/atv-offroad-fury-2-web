@@ -926,11 +926,19 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                         .and_then(serde_json::Value::as_bool)
                         .unwrap_or(false),
                 );
+                // Alpha "Arcade flips" implies flips regardless of the Extras row.
+                let arcade_flips = raw
+                    .get("arcade_flips")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
                 vehicle.set_flips(
-                    raw.get("flips")
-                        .and_then(serde_json::Value::as_bool)
-                        .unwrap_or(false),
+                    arcade_flips
+                        || raw
+                            .get("flips")
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or(false),
                 )?;
+                vehicle.set_arcade_flips(arcade_flips)?;
                 let flip_mask = raw
                     .get("stunt_modifiers")
                     .and_then(serde_json::Value::as_u64)
