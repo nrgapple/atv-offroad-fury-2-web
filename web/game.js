@@ -60,6 +60,19 @@ const minimap = new FreestyleMinimap(minimapSettings);
 const playerIndicators = new PlayerIndicators();
 const crashSettings = new RideEffectsSettings(undefined, matchMedia('(prefers-reduced-motion: reduce)').matches);
 let funnyCrashes = crashSettings.enabled;
+// Alpha "Arcade flips" (authored, research/FLIPS.md): analog air rotation that
+// implies flips and replaces the Unleashed gestures. Temporary switch until the
+// Settings → Alpha page lands: ?arcadeFlips=1 (or 0) saves localStorage
+// atv-arcade-flips.
+const arcadeFlips = (() => {
+  let on = false;
+  try {
+    const param = new URLSearchParams(location.search).get('arcadeFlips');
+    if (param !== null) localStorage.setItem('atv-arcade-flips', param === '1' ? 'on' : 'off');
+    on = localStorage.getItem('atv-arcade-flips') === 'on';
+  } catch { /* Off. */ }
+  return () => on;
+})();
 const impactEvents = new ImpactEvents();
 const coarsePointer = () => { try { return matchMedia('(pointer: coarse)').matches; } catch { return false; } };
 let speedRush = new SpeedRush(gl, { coarse: coarsePointer() });
@@ -147,7 +160,7 @@ const keys = new Set(), pointers = new Map();
 const touchLean = new TouchLeanIntent(() => touchControls.steeringSensitivity);
 const touchControls = mountTouchControls({
   surface: canvas,
-  flips: () => crashSettings.flipsEnabled,
+  flips: () => crashSettings.flipsEnabled && !arcadeFlips(),
   active: () => simReady && focused && !document.hidden && !menuOpen && !lost,
   focus: () => { focused = true; canvas.focus({ preventScroll: true }); syncAudio(); scheduleRender(); },
 });
@@ -1621,7 +1634,7 @@ function drivingInput() {
   if (touch.stunt_modifiers) Object.assign(input, { stunt_modifiers: touch.stunt_modifiers, stunt_x: touch.stunt_x, stunt_y: touch.stunt_y });
   if (touch.preload_axis !== null) input.preload_axis = touch.preload_axis;
   // Two-finger mode: the left pad's full pull when the drive thumb lifts.
-  const padFlip = !touch.flip_request && touch.preload_axis === -1 && crashSettings.flipsEnabled && !touchControls.oneHanded ? touchLean.launchFlip() : null;
+  const padFlip = !touch.flip_request && touch.preload_axis === -1 && crashSettings.flipsEnabled && !arcadeFlips() && !touchControls.oneHanded ? touchLean.launchFlip() : null;
   if (padFlip) Object.assign(input, { flip_request: padFlip.flip, flip_launch: true, flip_hold: padFlip.hold });
   else if (touch.flip_request) Object.assign(input, { flip_request: touch.flip_request, flip_launch: touch.flip_launch, flip_hold: touch.flip_hold });
   input.throttle = Math.max(0, clamp(input.throttle)); input.brake = Math.max(0, clamp(input.brake));
@@ -1791,6 +1804,7 @@ async function pumpSimulation() {
     input.funny_crashes = funnyCrashes;
     input.crash_mode = crashSettings.mode;
     input.flips = crashSettings.flipsEnabled;
+    input.arcade_flips = arcadeFlips();
     input.realistic_train = crashSettings.realisticTrain;
     // Menu/reset transitions cancel input before any further physics is queued.
     if (actions.pause) { void frontend?.show('pause'); return; }
