@@ -97,3 +97,102 @@ flip state, so the recovered ATV2 step is unchanged.
 - Not included: Unleashed rider/vehicle flip animations (the rider keeps the
   ATV2 air pose), recovery-time yaw suppression, CPU flips,
   multiplayer score sync, and front flips (Unleashed has none).
+
+## Arcade flips (alpha)
+
+**Status: authored for this port, off by default.** No source game has it: ATV2
+has no flips, and Unleashed only has the canned backflip/three-sixty above (no
+front flip). It lives in `crates/atv-core/src/arcade_flips.rs`, behind the input
+flag `arcade_flips`, switched by Settings → Alpha → "Arcade flips"
+(`arcade-flips` in `localStorage['atv-alpha']`, see [ALPHA.md](ALPHA.md)).
+Arcade implies flips whatever the Extras row says and replaces the Unleashed
+gestures; with it off, Flips Off and Flips Unleashed run exactly the code above.
+
+### Controls
+
+The riding stick sets the air rotation rate directly; no trick button.
+
+| Input | Back/front flip (pitch) | 360 (yaw) | Lip pop |
+| --- | --- | --- | --- |
+| Keyboard | E/Shift lean back, Q lean forward | A/D | release Space at the lip |
+| Controller | left stick down / up | left stick left / right | the original lean flick (back, then forward) at the lip |
+| Touch, one-handed | touch again in the air, drag down / up from where the thumb lands (70 px = full) | drag left / right (steering sensitivity applies) | lift the drive thumb at the lip |
+| Touch, two-finger | left pad down / up | left pad left / right | lift the right drive thumb at the lip |
+
+- Hold to keep spinning, let go to bleed it out (time constant 0.25 s, about a
+  fifth of a turn from full rate), push the other way to brake and reverse.
+- Pitch and yaw together turn about one tilted axis: a cork.
+- Rotation engages once the stick passes 0.25 in the air and stays engaged until
+  touchdown. Smaller inputs leave the original ATV2 air control untouched.
+- A held original stunt modifier (J/K/L, Circle/Triangle/L1, a trick-wheel
+  pick) gives the stick back to that stunt; the commanded rate bleeds out.
+- One-handed touch: lifting the drive thumb is the preload jump, so rotation
+  needs a second touch in the air (the drive thumb's displacement from where it
+  lands is the stick). The thumb flip zones, gold arcs and "LIFT →" cues are
+  off in Arcade; two-finger flip swipes are off too.
+
+### Model and tuning (`arcade_flips.rs`)
+
+- A commanded pitch/yaw rate moves toward `stick × max` at `SPIN_UP` 14 rad/s²
+  (`BRAKE` 30 rad/s² when the stick opposes the rotation or eases off) and
+  decays with `RELEASE_TAU` 0.25 s when released. Full stick is `PITCH_RATE`
+  5.5 rad/s and `YAW_RATE` 6 rad/s; past a 0.15 dead zone the response is
+  |u|^1.5 so analog sticks get fine control.
+- The body tracks that rate: torque = |AeroDamping| × (rate + `TRACK_GAIN` ×
+  (rate − ω)), `TRACK_GAIN` 1. The feed-forward cancels the original damping at
+  the commanded rate; the original lean moment still adds a little. With
+  ATV01 (AeroDamping −800, inertia about 44 on every axis, 1/60 s
+  Adams–Bashforth steps) the loop is well inside the integrator's stability
+  limit.
+- **Lip pop:** the recovered preload pushes for 0.25 s. If that impulse is
+  still active at takeoff, quality is 1 up to `POP_PERFECT` 0.05 s after it
+  fired, falling linearly to 0 at `POP_WINDOW` 0.25 s. A perfect pop adds
+  `POP_LIFT` 4 ft/s takeoff speed and `POP_AUTHORITY` +25% rate and spin-up for
+  that jump. Releasing late does nothing: the original preload cannot fire in
+  the air. Measured on env01's Caribou ramp (keyboard, 20 steps after the
+  preload armed), takeoff came 4 frames after the release, which the port
+  reads as 0.10 s and quality 0.75. Releasing at once lifted off 22 frames later
+  (no pop) with much less air; the original preload already rewards timing.
+- **Wrecks:** only the airborne pitch/roll limits are skipped while the rotation
+  is engaged with no wheel or body contact. Touchdown ends it before the
+  recovered ground-angle, impact and stunt-landing gates run. There is no
+  landing assistance and no rotation snapping, so over-rotation wrecks.
+- **Names (display only):** at touchdown the rotation about the combined
+  pitch/yaw axis is counted in turns (each within 60° of a full turn).
+  Three-quarters or more nose-over is a flip ("Backflip", "Front Flip",
+  "Double Backflip"), three-quarters or more spin is "360", "720", …, and the
+  rest is a cork ("Cork 360", "Cork 720", "Front Cork 360"). The name shows
+  only after the landing survives 0.25 s; a wreck in that window, or while
+  spinning, shows the failure pulse. Points use the Unleashed 2000 per turn as
+  above and stay out of the recovered ATV2 score.
+- The follow camera holds the takeoff heading while the rotation is engaged,
+  as for Unleashed tricks.
+
+### Verification
+
+- `cargo test -p atv-core` covers rate tracking, release bleed, braking, front
+  flips, spins, corks, analog scaling, the 0.25 engage threshold, stunt
+  modifiers, names, landing confirmation and bails, the lip pop (quality, lift
+  paid once, authority), a vehicle-level front flip past the air limits, and
+  that switching Arcade on and off leaves Unleashed identical to a fresh
+  Unleashed vehicle.
+- `tools/test_arcade_flips.mjs` (content group) on env01 with real key and
+  touch events: held lean-back backflip and held lean-forward front flip, let
+  go at about 275°, landed at about 370–385° with the HUD showing "Backflip" /
+  "Front Flip" (lip pop 0.67–0.75); holding lean-back through touchdown
+  (about 545°) wrecks; one-handed touch (lift for the jump, touch again and
+  pull down) landed a backflip. `ATV_ARCADE_SCREENSHOT=<prefix>` saves
+  mid-flip frames. `tools/test_atv_flips.mjs` still passes unchanged.
+- A cork ("Cork 360") and a 360 also landed on that ramp in manual runs.
+
+### Limits
+
+- Authored feel; tuning was checked on env01's Caribou ramp only (about 1.6 s of
+  air), not on big freestyle jumps, so multiple rotations are verified only in
+  Rust tests. Physical phones and controllers are not yet tested.
+- Names come from body-local rate integrals, so sequential rotations (a flip
+  then a spin) also count as a cork. Roll is not counted.
+- Controller pop uses the original lean flick, so a stick still pushed forward
+  at takeoff starts a front flip; let the stick return to centre after the flick.
+- The rider keeps the ATV2 air pose; CPU riders and multiplayer peers do not
+  flip.
