@@ -127,10 +127,13 @@ const MPH = 5280 / 3600, STEP = 1 / 60;
 // Authored adaptation around the source zone rule: one shared level for the
 // quad and rider, original dirt overlays, water washing and reset clearing.
 export class DirtBuildup {
-  constructor(zones = parseDirtZones('')) { this.zones = zones; this.reset(); }
+  constructor(zones = parseDirtZones('')) { this.zones = this.sourceZones = zones; this.rate = 1; this.reset(); }
   // A player Reset (or a new ride) cleans the quad; wreck recovery keeps it.
   reset() { this.level = 0; this.timer = 0; this.zone = -1; }
   get amount() { return this.level / 255; }
+  // Alpha Heavy mud: faster soiling, dusty zones soil too, landings splat.
+  setHeavy(heavy, zones) { this.heavy = heavy; this.rate = heavy ? 3 : 1; this.zones = heavy ? zones(this.sourceZones) : this.sourceZones; }
+  splat(steps) { this.level = Math.max(0, Math.min(255, this.level + steps)); }
   // Exactly one call per accepted 60 Hz simulation frame.
   step(frame, dt = STEP) {
     if (!frame) return this.amount;
@@ -152,7 +155,7 @@ export class DirtBuildup {
     if (mud) { time = time > 0 ? Math.min(time, .1) : .1; amount = Math.max(amount, 1); }
     if (zone !== this.zone) { this.zone = zone; this.timer = 0; }
     if (!(time > 0) || !amount) return this.amount;
-    this.timer += dt;
+    this.timer += dt * this.rate;
     while (this.timer >= time - 1e-6) { this.timer -= time; this.level = Math.max(0, Math.min(255, this.level + amount)); }
     return this.amount;
   }

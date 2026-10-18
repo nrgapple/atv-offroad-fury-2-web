@@ -15,12 +15,15 @@ const LET_GO = 4.8;
 async function open(browser, options) {
   const errors = [];
   const page = await newPage(browser, options, errors);
-  await page.addInitScript(() => localStorage.setItem('atv2-keyboard-help-seen-v1', '1'));
+  await page.addInitScript(() => {
+    localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
+    // Settings → Alpha → Arcade flips.
+    localStorage.setItem('atv-alpha', JSON.stringify(['arcade-flips']));
+  });
   await captureSimulation(page, 'arcadeFrames');
   const url = new URL('/play.html', base);
   url.searchParams.set('drive', '1');
   url.searchParams.set('environment', 'env01');
-  url.searchParams.set('arcadeFlips', '1');
   await page.goto(url.href);
   await waitForGame(page, { until: () => window.atvTerrainStatus.simulation });
   await page.bringToFront();

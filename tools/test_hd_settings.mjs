@@ -54,7 +54,7 @@ try {
       .locator('.pause-panel button')
       .allTextContents()
       .then(a => a.map(t => t.trim())),
-    ['Controls', 'Display', 'Audio', 'Extras', 'Back']
+    ['Controls', 'Display', 'Audio', 'Extras', 'Alpha (experimental)', 'Back']
   );
   for (const size of [
     { width: 320, height: 568 },
@@ -66,9 +66,9 @@ try {
     await page.setViewportSize(size);
     await page.waitForTimeout(100);
     await shot(`settings-${size.width}`);
-    for (const name of ['Controls', 'Display', 'Audio', 'Extras']) {
+    for (const name of ['Controls', 'Display', 'Audio', 'Extras', 'Alpha (experimental)']) {
       await click(name);
-      await screen({ Controls: 'controls', Display: 'hud-settings', Audio: 'music', Extras: 'extras' }[name]);
+      await screen({ Controls: 'controls', Display: 'hud-settings', Audio: 'music', Extras: 'extras', 'Alpha (experimental)': 'alpha' }[name]);
       const panel = await page.locator('.pause-panel').boundingBox();
       assert(
         panel.x >= 0 &&

@@ -26,6 +26,9 @@ import { GraphicsSettings, VibrationSettings, Rumble, DirtBuildup, parseDirtZone
 import { ContactShadows, shadowFootprint } from './vehicle-shadows.js';
 import { TireTrackRenderer } from './tire-tracks.js';
 import { LingeringDustRenderer } from './lingering-dust.js';
+import { AlphaSettings } from './alpha.js';
+import { HypeDirector, heavyMudZones } from './hype.js';
+import { BurstRenderer, GlareRenderer } from './hype-gl.js';
 import { VehicleShadowMap, lightMatrices, shadowReceiverGlsl } from './shadow-map.js';
 import { KeyboardHelp } from './keyboard-help.js';
 import { createScreenWakeLock } from './wake-lock.js';
@@ -60,19 +63,6 @@ const minimap = new FreestyleMinimap(minimapSettings);
 const playerIndicators = new PlayerIndicators();
 const crashSettings = new RideEffectsSettings(undefined, matchMedia('(prefers-reduced-motion: reduce)').matches);
 let funnyCrashes = crashSettings.enabled;
-// Alpha "Arcade flips" (authored, research/FLIPS.md): analog air rotation that
-// implies flips and replaces the Unleashed gestures. Temporary switch until the
-// Settings → Alpha page lands: ?arcadeFlips=1 (or 0) saves localStorage
-// atv-arcade-flips.
-const arcadeFlips = (() => {
-  let on = false;
-  try {
-    const param = new URLSearchParams(location.search).get('arcadeFlips');
-    if (param !== null) localStorage.setItem('atv-arcade-flips', param === '1' ? 'on' : 'off');
-    on = localStorage.getItem('atv-arcade-flips') === 'on';
-  } catch { /* Off. */ }
-  return () => on;
-})();
 const impactEvents = new ImpactEvents();
 const coarsePointer = () => { try { return matchMedia('(pointer: coarse)').matches; } catch { return false; } };
 let speedRush = new SpeedRush(gl, { coarse: coarsePointer() });
@@ -90,6 +80,17 @@ let graphics = graphicsSettings.features;
 const vibrationSettings = new VibrationSettings();
 const rumble = new Rumble({ pad: () => focused ? gamepad() : null, touch: coarsePointer });
 const atvPresentation = new AtvPresentation();
+// Settings → Alpha: experimental authored presentation, each off by default.
+const alphaSettings = new AlphaSettings(), hype = new HypeDirector();
+// Alpha "Arcade flips" (authored, research/FLIPS.md): analog air rotation that
+// implies flips and replaces the Unleashed gestures.
+const arcadeFlips = () => alphaSettings.enabled('arcade-flips');
+let burstRenderer, glareRenderer, hypeAudio = [0, 0];
+alphaSettings.onChange = (id, on) => {
+  if (id === 'heavy-mud') dirtBuildup.setHeavy(on, heavyMudZones);
+  if (id === 'music-muffle' && !on) { audio.stopHype(); hypeAudio = [0, 0]; }
+  if (id === 'landing-burst' && !on) burstRenderer?.reset();
+};
 atvPresentation.quadPose = frame => (graphics.wheelReprojection && visualQuad.get(frame)) || frame.quad_node_matrices;
 // The quad pose the renderer draws for a simulation frame.
 const drawnQuadPose = frame => funnyCrashes && frame.funny_crash ? frame.funny_crash.quad_node_matrices : atvPresentation.quadPose(frame);
@@ -1650,6 +1651,7 @@ function acceptFrame(frame, effects = true) {
     rumble.accept(simFrame, frame, severity, vibrationSettings.enabled && focused && !document.hidden && !menuOpen && !lost && !pageSuspended);
     // Presentation-only dirt level; one step per delivered 60 Hz frame.
     if (frame.vehicle_kind !== 'motorcycle') dirtBuildup.step(frame);
+    hype.step(frame, renderCore ? terrainHeight : null);
     if (graphics.tireTracks && !lost && renderCore && frame.vehicle_kind !== 'motorcycle') (tireTracks ??= new TireTrackRenderer(gl, graphics.tireTracks)).step(frame, dirtBuildup.zones, terrainHeight);
     if (graphics.dust && !lost && frame.vehicle_kind !== 'motorcycle') (lingeringDust ??= new LingeringDustRenderer(gl, graphics.dust)).step(frame, dirtBuildup.zones, dustTint);
   }
@@ -1724,6 +1726,7 @@ async function startSimulation(source) {
   impactEvents.reset();
   motorcyclePresentation.reset(); atvPresentation.reset(); presentedFrame = presentedCamera = undefined;
   dirtBuildup = new DirtBuildup(parseDirtZones(source.toy ? decoder.decode(source.toy) : '')); tireTracks?.reset(); lingeringDust?.reset();
+  dirtBuildup.setHeavy(alphaSettings.enabled('heavy-mud'), heavyMudZones); hype.reset(); burstRenderer?.reset();
   diagnostics.simulationSteps = 0;
   simReady = false; simFrame = undefined; cameraFrame = undefined; simAccumulator = 0; simGeneration++;
   if (!source.physics) return;
@@ -1836,8 +1839,9 @@ async function pumpSimulation() {
       acceptCameraFrame(cameraResult);
       void audio.update(1 / 60, frame.applied_input ?? input, frame, { train, camera: cameraResult });
     }
-    motorcyclePresentation.accept(previousFrame, simFrame, previousCamera, cameraFrame, performance.now(), focused && !document.hidden && !menuOpen && !cycle);
-    if (graphics.interpolation) atvPresentation.accept(previousFrame, simFrame, previousCamera, cameraFrame, performance.now(), frames.length, focused && !document.hidden && !menuOpen && !cycle);
+    motorcyclePresentation.accept(previousFrame, simFrame, previousCamera, cameraFrame, performance.now(), focused && !document.hidden && !menuOpen && !cycle, hype.timeScale);
+    // Alpha slow motion interpolates even on Original so it stays smooth.
+    if (graphics.interpolation || hype.timeScale < 1) atvPresentation.accept(previousFrame, simFrame, previousCamera, cameraFrame, performance.now(), frames.length, focused && !document.hidden && !menuOpen && !cycle, hype.timeScale);
     else atvPresentation.reset();
   } catch (error) {
     if (token === simGeneration) { simReady = false; status(`Simulation stopped: ${error.message}`, true); }
@@ -1881,7 +1885,9 @@ function presentCameraFrame(frame = presentedCamera ?? cameraFrame) {
   const aspect=canvas.width/canvas.height;
   // Pre-race shots and trackside TV cameras are authored per course: no
   // chase adaptation.
-  const chase=frame.mode==='intro'||frame.mode==='tv'?cinematicPresentation(frame,aspect):chasePresentation(frame,presentedFrame??simFrame,aspect,uphillSightline,terrainHeight);
+  const cinematic=frame.mode==='intro'||frame.mode==='tv';
+  const shot=!cinematic&&alphaSettings.enabled('big-air-camera')?hype.camera(frame,terrainHeight):frame;
+  const chase=cinematic?cinematicPresentation(frame,aspect):chasePresentation(shot,presentedFrame??simFrame,aspect,uphillSightline,terrainHeight);
   const view=crashPresentation(chase,crashSettings.camera === 'tight' ? vehicle?.crashSubjects : null,aspect,terrainHeight);
   [camera.x, camera.y, camera.z] = view.position;
   camera.yaw = view.yaw;
@@ -1919,6 +1925,25 @@ function updateCamera(dt) {
   camera.z = Math.max(-span, Math.min(terrain.sizeZ + span, camera.z));
   camera.y = Math.max(terrain.min - span * .2, Math.min(terrain.max + span * 2, camera.y));
 }
+// Alpha hype: real-time shaping of slow motion, landing effects and sound.
+function updateHype(dt) {
+  const live = simReady && focused && !menuOpen && !lost && !document.hidden;
+  // Slow motion would stretch race clocks and shared rides; Freestyle only.
+  const { landed } = hype.update(live ? dt : 0, { slowmo: live && alphaSettings.enabled('air-slowmo') && !raceSettings && !liveMultiplayer() });
+  if (landed && live) {
+    const effects = simFrame?.wheel_effects, wet = effects?.centers?.some((c, i) => effects.water_heights?.[i] > c[1] - (effects.radii?.[i] ?? .8) * .5);
+    if (alphaSettings.enabled('landing-burst') && !wet && renderCore) {
+      const [x, , z] = landed.position, v = simFrame?.linear_velocity ?? [0, 0, 0];
+      (burstRenderer ??= new BurstRenderer(gl, 192)).emitter.burst([x, terrainHeight(x, z), z], landed.severity, effects?.time ?? 0, dustTint(x, z), [v[0], v[2]]);
+      audio.landingThump(landed.severity);
+    }
+    if (dirtBuildup.heavy && !wet && simFrame?.vehicle_kind !== 'motorcycle') dirtBuildup.splat(Math.min(60, landed.severity * .9));
+  }
+  if (alphaSettings.enabled('music-muffle')) {
+    const next = live ? [hype.muffle, hype.wind] : [0, 0];
+    if (Math.abs(next[0] - hypeAudio[0]) > .004 || Math.abs(next[1] - hypeAudio[1]) > .004) { audio.setHype(next[0], next[1], hype.slam > 0); hypeAudio = next; }
+  }
+}
 function scheduleRender() {
   if (!frame && !pageSuspended) frame = requestAnimationFrame(render);
 }
@@ -1931,7 +1956,7 @@ function render(time) {
   touchControls.refresh();
   let presentation = motorcyclePresentation.sample(simFrame, cameraFrame, time, focused && !lost && !menuOpen);
   // Enhanced/High: ATV frames between 60 Hz states (Original snaps to each).
-  const atvSmooth = !presentation.interpolated && graphics.interpolation && (presentation = atvPresentation.sample(simFrame, cameraFrame, time, focused && !lost && !menuOpen)).interpolated;
+  const atvSmooth = !presentation.interpolated && (graphics.interpolation || hype.timeScale < 1) && (presentation = atvPresentation.sample(simFrame, cameraFrame, time, focused && !lost && !menuOpen)).interpolated;
   presentedFrame = presentation.frame; presentedCamera = presentation.camera;
   minimap.draw(time, presentedFrame, simReady && !raceSettings && !lost && focused && !document.hidden && !menuOpen, multiplayer?.remote ?? []);
   playerIndicators.root.hidden = !simReady || lost || document.hidden || menuOpen;
@@ -1947,9 +1972,10 @@ function render(time) {
   if (simReady && focused && !menuOpen && devicePixelRatio > 1) renderScale.sample(frameMs);
   const ratio = renderScale.pixelRatio(devicePixelRatio), width = Math.max(1, Math.round(canvasSize.width * ratio)), height = Math.max(1, Math.round(canvasSize.height * ratio));
   if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+  updateHype(dt);
   if (!menuOpen) updateCamera(dt);
   if (simReady && !simulationPaused()) {
-    simAccumulator = Math.min(.1, simAccumulator + dt); void pumpSimulation();
+    simAccumulator = Math.min(.1, simAccumulator + dt * hype.timeScale); void pumpSimulation();
     // Input callbacks may synchronously reset/pause and clear presentation.
     if(!simReady||simulationPaused()||!presentedFrame){stats.sample(time,performance.now()-started,false);return;}
     const center = diagnostics.terrainDetailCenter;
@@ -2094,7 +2120,7 @@ function render(time) {
     gl.uniform2fv(uniforms.quadPaint, chunk.quad && paintable(chunk.material) ? playerPaint : PAINT_PALETTE[0]);
     gl.activeTexture(gl.TEXTURE4);gl.bindTexture(gl.TEXTURE_2D,chunk.mudTexture ?? fallbackTexture);
     gl.uniform1i(uniforms.mudReveal,simFrame?.vehicle_kind!=='motorcycle');
-    gl.uniform1f(uniforms.motorcycleMudAmount,simFrame?.vehicle_kind==='motorcycle' && chunk.mudTexture ? Math.max(...simFrame.mud_amount) : graphics.dirt && chunk.mudTexture ? dirtBuildup.amount : 0);
+    gl.uniform1f(uniforms.motorcycleMudAmount,simFrame?.vehicle_kind==='motorcycle' && chunk.mudTexture ? Math.max(...simFrame.mud_amount) : (graphics.dirt || dirtBuildup.heavy) && chunk.mudTexture ? dirtBuildup.amount : 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.uniform1i(uniforms.fogEnabled,Boolean(fog)&&chunk.fog);
     gl.uniformMatrix4fv(uniforms.model, false, chunk.rider ? riderWorld : quadWorld);
@@ -2151,11 +2177,15 @@ function render(time) {
     lingeringDust.draw({ viewProjection, camera, now: simFrame?.wheel_effects?.time ?? 0, light: [1.1, 1.1, 1.1], fogColor, fogEnd: fog?.end ?? 768 });
     diagnostics.lingeringDust = { draws: lingeringDust.draws, live: lingeringDust.emitter.live, capacity: lingeringDust.emitter.capacity, gpuBytes: lingeringDust.gpuBytes };
   } else diagnostics.lingeringDust = null;
+  if (burstRenderer && alphaSettings.enabled('landing-burst')) burstRenderer.draw({ viewProjection, camera, now: simFrame?.wheel_effects?.time ?? 0, light: [1.1, 1.1, 1.1], fogColor, fogEnd: fog?.end ?? 768 });
   if(speedRush.amount>0){
     speedRush.draw({width,height,active:true,intensity:crashSettings.speed,
       focus:speedRushFocus(viewProjection,[camera.x,camera.y,camera.z],actor?.linear_velocity??simFrame?.linear_velocity??[0,0,0]),
       vehicle:speedRushBounds(viewProjection,actor.origin)});
   } else speedRush.draws=0;
+  if (alphaSettings.enabled('apex-glare') && hype.glare > .002) (glareRenderer ??= new GlareRenderer(gl)).draw({ width, height, amount: hype.glare, viewProjection, sunDirection, sunColor, yaw: camera.yaw });
+  else if (glareRenderer) glareRenderer.draws = 0;
+  diagnostics.hype = { ...hype.snapshot(), alpha: [...alphaSettings.on], burstLive: burstRenderer?.emitter.live ?? 0, glareDraws: glareRenderer?.draws ?? 0, glareSun: glareRenderer?.sun ?? null, thumps: audio.thumps ?? 0, musicMuffle: audio.hypeMuffle ?? 0 };
   diagnostics.visibility = { terrainDraws, terrainTriangles, sceneryDraws, sceneryTriangles, terrainCulled: chunks.length - terrainDraws, sceneryCulled: sceneDraws.length - sceneryVisibleGroups };
   diagnostics.frames++; diagnostics.renderRatio = renderScale.ratio;
   diagnostics.graphics = { setting: graphicsSettings.preset, ...graphics, anisotropyApplied: graphics.anisotropy ? anisotropyLevel() : 0, interpolated: Boolean(atvSmooth), dirtLevel: dirtBuildup.level, dirtApplied: graphics.dirt ? dirtBuildup.amount : 0, wheelLinkage: Boolean(quadLinkage), wheelLift };
@@ -2253,7 +2283,7 @@ $('reset').onclick = async (options) => {
   }
   impactEvents.reset();
   simGeneration++; simReady = false; simAccumulator = 0; clearInput();
-  try { await audio.reset(); dirtBuildup.reset(); tireTracks?.reset(); lingeringDust?.reset(); acceptFrame(await command(23, start)); await command(47, {}); orbit = 0; acceptCameraFrame(await command(46, { dt: 1 / 60, orbit })); simReady = true; buildMesh(); resetCamera(); }
+  try { await audio.reset(); dirtBuildup.reset(); tireTracks?.reset(); lingeringDust?.reset(); hype.reset(); burstRenderer?.reset(); acceptFrame(await command(23, start)); await command(47, {}); orbit = 0; acceptCameraFrame(await command(46, { dt: 1 / 60, orbit })); simReady = true; buildMesh(); resetCamera(); }
   catch (error) { status(error.message, true); }
 };
 $('menu').onclick = () => { void frontend?.show('pause'); };
@@ -2317,7 +2347,7 @@ window.addEventListener('resize', () => { scheduleRender(); });
 canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; for(const model of remoteModels.values()){model.chunks=null;model.gpuTextures=[];for(const entry of model.gear?.values()??[])entry.gpu=null;} for(const cpu of raceCpuModels)cpu.gpu=null; diagnostics.ready = false; clearInput(); syncAudio(); frontend?.setLoading(true, 'Restoring graphics…'); status('Restoring graphics…'); });
 // Every old GPU handle belongs to the lost context, including vegetation instances.
 // Discard those references before buildMesh runs its normal resource cleanup.
-canvas.addEventListener('webglcontextrestored', () => { try { lost = false; glShadow?.reset(); contactShadows = undefined; shadowMap = undefined; anisotropyExtension = undefined; anisotropicTextures = new Map(); tireTracks?.restore(); lingeringDust?.restore(); speedRush = new SpeedRush(gl, { coarse: coarsePointer() }); snowRenderer=undefined; ambientEffectsRenderer=undefined; bloodRenderer = undefined; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); scheduleRender(); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
+canvas.addEventListener('webglcontextrestored', () => { try { lost = false; glShadow?.reset(); contactShadows = undefined; shadowMap = undefined; anisotropyExtension = undefined; anisotropicTextures = new Map(); tireTracks?.restore(); lingeringDust?.restore(); burstRenderer?.restore(); glareRenderer = undefined; speedRush = new SpeedRush(gl, { coarse: coarsePointer() }); snowRenderer=undefined; ambientEffectsRenderer=undefined; bloodRenderer = undefined; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); scheduleRender(); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
 window.addEventListener('pagehide', event => {
   usage.report(1);
   cancelAnimationFrame(frame); frame = 0; clearInput();
@@ -2354,7 +2384,7 @@ try { if (!gl) throw new Error('WebGL 2 is required to render this terrain.'); i
       catch(error){if(isCurrent()){usage.rideFailed(onlineRide(environment));await frontend.show(multiplayer.shared?'main':'multiplayer');frontend.fail(error);throw error;}}
       finally{if(isCurrent())frontend.busy=false;}
     },onLeave:message=>{usage.rideEnded();for(const model of remoteModels.values())disposeRemoteGpu(model);remoteModels.clear();if(frontend){void frontend.show(multiplayer.shared?'main':'multiplayer').then(()=>{frontend.notice.textContent=message;});}}});
-    frontend = new Frontend({minimapSettings,raceOverlays,menuRider:menuRiderAssets,modelAssets:selectionAssets,gearPreview:gearTextures,crashSettings,graphicsSettings,vibrationSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => startRide(environment,racing), active: open => { menuOpen = open; void screenWake.set(!open); usage.setRiding(!open); if (open) usage.report(10); keyboardHelp.setRiding(!open); clearInput(); lastTime = 0; scheduleRender(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
+    frontend = new Frontend({minimapSettings,raceOverlays,menuRider:menuRiderAssets,modelAssets:selectionAssets,gearPreview:gearTextures,crashSettings,graphicsSettings,vibrationSettings,alphaSettings,multiplayer,codec, json, content: hostedContent, read, diagnosticsOverlay: stats, mobileControls: touchControls, audio: () => audio, start: (environment,racing) => startRide(environment,racing), active: open => { menuOpen = open; void screenWake.set(!open); usage.setRiding(!open); if (open) usage.report(10); keyboardHelp.setRiding(!open); clearInput(); lastTime = 0; scheduleRender(); document.body.classList.toggle('menu-open', open); syncAudio(); if (!open) canvas.focus({preventScroll:true}); }});
     hud = new HeadUpDisplay(frontend, canvas);
     document.body.classList.add('menu-open'); void frontend.init();
     usage.track('session_start', { entry: parseLaunch(location.search).requested ? 'link' : 'menu' });

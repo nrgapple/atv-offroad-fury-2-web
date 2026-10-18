@@ -103,10 +103,10 @@ flip state, so the recovered ATV2 step is unchanged.
 **Status: authored for this port, off by default.** No source game has it: ATV2
 has no flips, and Unleashed only has the canned backflip/three-sixty above (no
 front flip). It lives in `crates/atv-core/src/arcade_flips.rs`, behind the input
-flag `arcade_flips`. Arcade implies flips whatever the Extras row says and
-replaces the Unleashed gestures; with it off, Flips Off and Flips Unleashed run
-exactly the code above. Until the Settings → Alpha page lands, the switch is
-`?arcadeFlips=1` (or `0`), saved as localStorage `atv-arcade-flips`.
+flag `arcade_flips`, switched by Settings → Alpha → "Arcade flips"
+(`arcade-flips` in `localStorage['atv-alpha']`, see [ALPHA.md](ALPHA.md)).
+Arcade implies flips whatever the Extras row says and replaces the Unleashed
+gestures; with it off, Flips Off and Flips Unleashed run exactly the code above.
 
 ### Controls
 
@@ -195,4 +195,4 @@ The riding stick sets the air rotation rate directly; no trick button.
 - Controller pop uses the original lean flick, so a stick still pushed forward
   at takeoff starts a front flip; let the stick return to centre after the flick.
 - The rider keeps the ATV2 air pose; CPU riders and multiplayer peers do not
-  flip. Toggle still pending the Settings → Alpha page.
+  flip.
