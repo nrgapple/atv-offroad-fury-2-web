@@ -116,8 +116,8 @@ The riding stick sets the air rotation rate directly; no trick button.
 | --- | --- | --- | --- |
 | Keyboard | E/Shift lean back, Q lean forward | A/D | release Space at the lip |
 | Controller | left stick down / up | left stick left / right | the original lean flick (back, then forward) at the lip |
-| Touch, one-handed | touch again in the air, drag down / up from where the thumb lands (70 px = full) | drag left / right (steering sensitivity applies) | lift the drive thumb at the lip |
-| Touch, two-finger | left pad down / up | left pad left / right | lift the right drive thumb at the lip |
+| Touch, one-handed | touch again in the air, drag down / up from where the thumb lands (70 px = full) | drag left / right past full lock (see below) | lift the drive thumb at the lip |
+| Touch, two-finger | left pad down / up | left pad left / right past full lock | lift the right drive thumb at the lip |
 
 - Hold to keep spinning, let go to bleed it out (time constant 0.25 s, about a
   fifth of a turn from full rate), push the other way to brake and reverse.
@@ -130,6 +130,14 @@ The riding stick sets the air rotation rate directly; no trick button.
   needs a second touch in the air (the drive thumb's displacement from where it
   lands is the stick). The thumb flip zones, gold arcs and "LIFT →" cues are
   off in Arcade; two-finger flip swipes are off too.
+- Touch side lean: a thumb is rarely centred, so a sideways drag within the
+  steering range stays the original ATV2 air lean (yaw/roll moment) and does
+  not engage Arcade, which lets a flip be lined up for the landing. The 360
+  axis (`arcade_spin`) starts at the Unleashed 360 reach, 105 px or 1.3× full
+  lock, and is full 50 px further out. While airborne the compass shows only
+  the left/right gold arcs, which fill with the spin rate; the cue reads
+  "LEAN · FLIP" or "SPIN ← 360" / "SPIN 360 →". Keys and controllers still
+  spin with steering.
 
 ### Model and tuning (`arcade_flips.rs`)
 
@@ -181,7 +189,8 @@ The riding stick sets the air rotation rate directly; no trick button.
   go at about 275°, landed at about 370–385° with the HUD showing "Backflip" /
   "Front Flip" (lip pop 0.67–0.75); holding lean-back through touchdown
   (about 545°) wrecks; one-handed touch (lift for the jump, touch again and
-  pull down) landed a backflip. `ATV_ARCADE_SCREENSHOT=<prefix>` saves
+  pull down) landed a backflip; a full-lock sideways drag in the air stayed
+  disengaged, and dragging past full lock spun the ATV. `ATV_ARCADE_SCREENSHOT=<prefix>` saves
   mid-flip frames. `tools/test_atv_flips.mjs` still passes unchanged.
 - A cork ("Cork 360") and a 360 also landed on that ramp in manual runs.
 

@@ -296,6 +296,8 @@ pub struct Vehicle {
     reset_count: u32,
     flips: Option<crate::flip_tricks::FlipTricks>,
     flip_controls: (u8, [f32; 2]),
+    /// Touch Arcade spin axis; None spins with the riding steer.
+    arcade_spin: Option<f32>,
     flip_events: Vec<crate::flip_tricks::Event>,
     /// Authored Extras option: grip, drag and settling act relative to a
     /// moving support (the Arlington train) and its body contacts keep
@@ -504,6 +506,7 @@ impl Vehicle {
             reset_count: 0,
             flips: None,
             flip_controls: (0, [0.; 2]),
+            arcade_spin: None,
             flip_events: Vec::new(),
             realistic_train: false,
         })
@@ -548,6 +551,15 @@ impl Vehicle {
             return Err("invalid flip controls".into());
         }
         self.flip_controls = (mask, axes.map(|v| v.clamp(-1., 1.)));
+        Ok(())
+    }
+    /// Arcade 360 axis separate from steering (touch). Steering then keeps
+    /// only the original air lean; None spins with the steer as before.
+    pub fn set_arcade_spin(&mut self, spin: Option<f32>) -> Result<()> {
+        if spin.is_some_and(|v| !v.is_finite()) {
+            return Err("invalid arcade spin".into());
+        }
+        self.arcade_spin = spin.map(|v| v.clamp(-1., 1.));
         Ok(())
     }
     pub fn enable_wrecks(&mut self, data: &PhysicsData) -> Result<()> {
@@ -1624,7 +1636,10 @@ impl Vehicle {
                             } else {
                                 axes
                             },
-                            stick: [input.steer.clamp(-1., 1.), input.lean.clamp(-1., 1.)],
+                            stick: [
+                                self.arcade_spin.unwrap_or(input.steer.clamp(-1., 1.)),
+                                input.lean.clamp(-1., 1.),
+                            ],
                             // rider_control starts the preload impulse at 0.25 s.
                             preload_age: self
                                 .rider_state
@@ -2979,6 +2994,45 @@ mod tests {
         }
         let off = fly(None, -1.);
         assert!(off.iter().all(|f| f.flip.is_none()));
+    }
+    #[test]
+    fn arcade_spin_axis_leaves_steering_to_the_original_air_lean() {
+        let dt = 1. / 60.;
+        let fly = |spin: Option<f32>| {
+            let (mut vehicle, terrain) = fixture();
+            enable_test_wrecks(&mut vehicle);
+            vehicle.set_arcade_flips(true).unwrap();
+            vehicle.set_arcade_spin(spin).unwrap();
+            vehicle.body =
+                BodyState::new([500., 400., 500.], [1., 0., 0., 0.], &vehicle.body_config).unwrap();
+            let input = VehicleInput {
+                steer: 1.,
+                ..Default::default()
+            };
+            (0..60)
+                .map(|_| vehicle.step(&terrain, input, dt).unwrap())
+                .last()
+                .unwrap()
+        };
+        // Full steer spins by default; with a zero spin axis it only leans
+        // at the original air rate and never engages.
+        let steered = fly(None);
+        assert!(steered.flip.unwrap().arcade.unwrap().engaged);
+        let leaned = fly(Some(0.));
+        assert!(!leaned.flip.unwrap().arcade.unwrap().engaged);
+        assert!(
+            leaned.local_angular_velocity[1].abs() < 1.,
+            "{:?}",
+            leaned.local_angular_velocity
+        );
+        assert!(
+            steered.local_angular_velocity[1].abs() > 4.,
+            "{:?}",
+            steered.local_angular_velocity
+        );
+        // The spin axis alone spins.
+        assert!(fly(Some(1.)).flip.unwrap().arcade.unwrap().engaged);
+        assert!(fixture().0.set_arcade_spin(Some(f32::NAN)).is_err());
     }
     #[test]
     fn arcade_lip_pop_adds_takeoff_speed_only_with_an_active_preload() {

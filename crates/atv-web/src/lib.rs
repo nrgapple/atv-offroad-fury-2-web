@@ -939,6 +939,12 @@ fn simulation(input: &[u8], op: u32) -> Result<Vec<u8>> {
                             .unwrap_or(false),
                 )?;
                 vehicle.set_arcade_flips(arcade_flips)?;
+                // Touch Arcade: the 360 axis apart from the steering lean.
+                vehicle.set_arcade_spin(
+                    raw.get("arcade_spin")
+                        .and_then(serde_json::Value::as_f64)
+                        .map(|v| v as f32),
+                )?;
                 let flip_mask = raw
                     .get("stunt_modifiers")
                     .and_then(serde_json::Value::as_u64)

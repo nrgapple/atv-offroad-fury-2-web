@@ -2,7 +2,7 @@
 // Caribou ramp a held lean-back backflips and a held lean-forward front flips;
 // letting go near a full turn lands them, and the HUD names the trick. Touch:
 // lift the one-handed thumb for the preload jump, touch again in the air and
-// pull down. Drives only through real Chromium key and touch events.
+// pull down; a sideways drag leans, past full lock it spins. Drives only through real Chromium key and touch events.
 import assert from 'node:assert/strict';
 import { captureSimulation } from './capture_simulation.mjs';
 import { assertNoErrors, base, launch, newPage, optionalScreenshot, waitForGame, waitForSteps } from './browser/harness.mjs';
@@ -167,7 +167,68 @@ try {
     assertNoErrors(errors);
     await page.close();
   }
-  console.log('PASS Arcade flips: steered backflip and front flip landed with HUD names, over-rotation wrecks; touch rotates in the air');
+  // Touch: a full-lock sideways drag in the air only leans (the original air
+  // control); dragging past full lock starts the 360.
+  {
+    const { page, errors } = await open(browser, {
+      viewport: { width: 390, height: 844 },
+      hasTouch: true,
+      isMobile: true
+    });
+    const cdp = await page.context().newCDPSession(page);
+    const touch = (type, points = []) =>
+      cdp.send('Input.dispatchTouchEvent', {
+        type,
+        touchPoints: points.map(point => ({ radiusX: 6, radiusY: 6, force: 1, ...point }))
+      });
+    const thumb = { id: 1, x: 200, y: 600 };
+    await touch('touchStart', [thumb]);
+    await page.waitForFunction(() => window.atvTerrainStatus.frame.preload_armed, null, {
+      timeout: 45000,
+      polling: 'raf'
+    });
+    await waitForSteps(page, 20);
+    await touch('touchEnd', [thumb]);
+    await page.waitForFunction(() => !window.atvTerrainStatus.frame.grounded.some(Boolean), null, {
+      timeout: 5000,
+      polling: 'raf'
+    });
+    // Default sensitivity 85: full lock at 82 px, the 360 from about 107 px.
+    const air = { id: 2, x: 120, y: 520 };
+    await touch('touchStart', [air]);
+    for (let i = 1; i <= 9; i++) await touch('touchMove', [{ ...air, x: air.x + i * 10 }]);
+    await waitForSteps(page, 15);
+    const lean = await page.evaluate(() => {
+      const frame = window.atvTerrainStatus.frame;
+      return {
+        steer: window.atvTerrainStatus.input?.steer,
+        spin: window.atvTerrainStatus.input?.arcade_spin,
+        engaged: frame.flip?.arcade?.engaged,
+        grounded: frame.grounded.some(Boolean),
+        cue: document.querySelector('.touch-rider-marker span')?.textContent ?? ''
+      };
+    });
+    assert(!lean.grounded, 'still airborne after the lean drag');
+    assert.equal(lean.engaged, false, `full-lock drag leans without spinning (${JSON.stringify(lean)})`);
+    for (let i = 1; i <= 8; i++) await touch('touchMove', [{ ...air, x: air.x + 90 + i * 10 }]);
+    await page.waitForFunction(
+      () => {
+        const frame = window.atvTerrainStatus.frame;
+        return Math.abs(frame.flip?.arcade?.yaw ?? 0) > 1 || frame.grounded.some(Boolean);
+      },
+      null,
+      { timeout: 5000, polling: 'raf' }
+    );
+    const spun = await page.evaluate(() => ({ ...window.atvTerrainStatus.frame.flip?.arcade, cue: document.querySelector('.touch-rider-marker span')?.textContent ?? '' }));
+    await touch('touchEnd', [{ ...air, x: air.x + 170 }]);
+    assert(spun.engaged && spun.yaw > 1, `dragging past full lock spins right (${JSON.stringify(spun)})`);
+    console.log(
+      `touch: full-lock drag leaned (steer ${lean.steer?.toFixed(2)}, cue ${lean.cue}); past full lock spun ${((spun.yaw * 180) / Math.PI).toFixed(0)} deg (cue ${spun.cue})`
+    );
+    assertNoErrors(errors);
+    await page.close();
+  }
+  console.log('PASS Arcade flips: steered backflip and front flip landed with HUD names, over-rotation wrecks; touch rotates in the air, sideways drag leans until past full lock');
 } finally {
   await browser.close();
 }

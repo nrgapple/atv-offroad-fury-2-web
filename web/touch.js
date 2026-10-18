@@ -57,9 +57,18 @@ export function flipZone(dx, dy, sensitivity = 100) {
   const distance = Math.hypot(dx, dy), angle = Math.atan2(dy, dx);
   const toward = target => Math.abs(Math.atan2(Math.sin(angle - target), Math.cos(angle - target))) <= FLIP_CONE;
   if (distance >= FLIP_REACH && toward(Math.PI / 2)) return FLIPS[0];
-  const fullLock = 70 * 100 / Math.max(1, sensitivity);
-  if (distance < Math.max(FLIP_REACH, fullLock * 1.3)) return null;
+  if (distance < sideReach(sensitivity)) return null;
   return toward(Math.PI) ? FLIPS[1] : toward(0) ? FLIPS[2] : null;
+}
+// Sideways zones start past full lock, which grows at low sensitivity.
+const sideReach = sensitivity => Math.max(FLIP_REACH, 70 * 100 / Math.max(1, sensitivity) * 1.3);
+// Alpha Arcade flips: in the air a sideways drag keeps the original lean
+// (steering), so a landing can be lined up. The 360 axis starts at the same
+// reach as the Unleashed 360 zones and is full SPIN_RAMP px further out.
+export const SPIN_RAMP = 50;
+export function arcadeSpinAxis(dx, sensitivity = 100) {
+  const over = Math.abs(Number.isFinite(dx) ? dx : 0) - sideReach(sensitivity);
+  return over > 0 ? Math.sign(dx) * clamp(over / SPIN_RAMP) : 0;
 }
 // Held pull time in source stick-hold frames (60 = one second = full strength).
 const holdFrames = (since, now) => Math.max(0, Math.min(60, (now - since) * .06));
@@ -79,7 +88,7 @@ const flipLaunch = (pointer, now) => {
 export const FLIP_SWIPE = 120;
 // Gesture mappings are browser adaptations of original modifier/direction inputs.
 export class TouchInput {
-  constructor({ radial = false } = {}) { this.radial = radial; this.generation = 0; this.airborne = false; this.oneHanded = false; this.flips = false; this.steeringSensitivity = 100; this.clear(); }
+  constructor({ radial = false } = {}) { this.radial = radial; this.generation = 0; this.airborne = false; this.oneHanded = false; this.flips = false; this.arcade = false; this.steeringSensitivity = 100; this.clear(); }
   clear() { this.generation++; this.pointer = null; this.secondary = null; this.pendingSelection = null; this.pendingFlip = null; this.sampled = false; this.releasePending = false; }
   owns(id) { return this.pointer?.id === id || this.secondary?.owns(id) === true; }
   begin(id, x = 0, y = 0, airborne = this.airborne) {
@@ -186,6 +195,7 @@ export class TouchInput {
     const driving = pointer?.mode === 'drive';
     const leaning = this.oneHanded && pointer && ['drive','lean'].includes(pointer.mode);
     const steer = leaning ? steeringAxis(pointer.currentX-pointer.x, this.steeringSensitivity) : 0;
+    const spin = leaning ? arcadeSpinAxis(pointer.currentX-pointer.x, this.steeringSensitivity) : 0;
     const lean = leaning ? clamp((pointer.currentY-pointer.y)/70) : 0;
     const drive = { generation: this.generation, held: driving, axis: driving ? pointer.axis : 0, grounded_only: false };
     if (this.oneHanded) {
@@ -203,7 +213,7 @@ export class TouchInput {
     if (pointer?.mode === 'trick' && pointer.selection) pointer.selectionSent = true;
     this.pendingSelection = null;
     const launch = this.pendingFlip; this.pendingFlip = null;
-    return { drive, preload_axis, steer, lean, stunt_modifiers: selection?.modifiers ?? 0,
+    return { drive, preload_axis, steer, lean, spin, stunt_modifiers: selection?.modifiers ?? 0,
       stunt_x: selection?.axes?.[0] ?? 0, stunt_y: selection?.axes?.[1] ?? 0,
       flip_request: launch?.flip ?? selection?.flip ?? null, flip_launch: Boolean(launch), flip_hold: launch?.hold ?? 0 };
   }
@@ -227,6 +237,7 @@ export class TouchLeanIntent {
   launchFlip(now = performance.now()) { return this.pointer ? flipLaunch(this.pointer, now) : null; }
   end(id) { if (this.pointer?.id === id) this.pointer = null; }
   get steer() { return steeringAxis(this.pointer?.dx ?? 0, this.sensitivity()); }
+  get spin() { return arcadeSpinAxis(this.pointer?.dx ?? 0, this.sensitivity()); }
   get lean() { return this.pointer?.dy ?? 0; }
 }
 
@@ -243,6 +254,16 @@ export function oneHandedFeedback(input, frame, now = performance.now()) {
   // Only promise a flip when lifting now would start one.
   const canLaunch = Boolean(input.flips && input.oneHanded && pointer && (frame?.preload_armed || frame?.preload_active || frame?.flip?.launch_window));
   const flip = canLaunch && flipArmed(pointer, now) ? pointer.flip : null;
+  // Arcade in the air: the side arcs mark where the 360 starts and fill with its rate.
+  if (input.arcade && input.oneHanded && pointer && input.airborne) {
+    const spin = arcadeSpinAxis(pointer.currentX - pointer.x, input.steeringSensitivity);
+    return {
+      flipZone: spin < 0 ? 'left' : spin > 0 ? 'right' : null, flipProgress: Math.abs(spin), flipsReady: true, spinZones: true,
+      steer: steeringAxis(pointer.currentX - pointer.x, input.steeringSensitivity),
+      lean: clamp((pointer.currentY - pointer.y) / 70),
+      cue: spin < 0 ? 'SPIN ← 360' : spin > 0 ? 'SPIN 360 →' : 'LEAN · FLIP',
+    };
+  }
   return {
     // Compass arming feedback: which flip zone the thumb is in and how far through the dwell.
     flipZone: canLaunch ? pointer.flip?.flip ?? null : null,
@@ -271,7 +292,7 @@ const sectorPath = ({ angle, span }, inner, outer, gap) => {
   return `M${at(inner, a0)}L${at(outer, a0)}A${outer} ${outer} 0 0 1 ${at(outer, a1)}L${at(inner, a1)}A${inner} ${inner} 0 0 0 ${at(inner, a0)}Z`;
 };
 
-export function mountTouchControls({ active, focus, surface, parent = document.body, utilities = document.querySelector('#toolbar'), flips = () => false }) {
+export function mountTouchControls({ active, focus, surface, parent = document.body, utilities = document.querySelector('#toolbar'), flips = () => false, arcade = () => false }) {
   const input = new TouchInput();
   input.setOneHanded(loadOneHandedPreference());
   input.steeringSensitivity = loadSteeringSensitivity();
@@ -355,7 +376,7 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
     if (armed && flipBuzzed !== state.flipZone) { flipBuzzed = state.flipZone; try { navigator.vibrate?.(12); } catch { /* Unsupported. */ } }
     if (!armed) flipBuzzed = null;
     const progress = Math.round(state.flipProgress * 20) / 20;
-    const key = [state.steer, state.lean, cue, state.flipsReady, state.flipZone, progress].join('|');
+    const key = [state.steer, state.lean, cue, state.flipsReady, state.flipZone, progress, Boolean(state.spinZones)].join('|');
     if (key === presentationKey) return;
     presentationKey = key;
     label.textContent = cue;
@@ -363,6 +384,7 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
     // Zone arcs appear only when a lift could flip; the entered arc fills over the dwell.
     marker.dataset.flipsReady = String(state.flipsReady);
     marker.dataset.flipZone = state.flipZone ?? '';
+    marker.dataset.spinZones = String(Boolean(state.spinZones));
     const zone = FLIP_ARCS.find(([flip]) => flip === state.flipZone);
     if (zone) flipFill.setAttribute('transform', `rotate(${zone[1] - 30} 48 48)`);
     flipFill.style.strokeDasharray = `${progress * 100 / 6} 100`;
@@ -375,7 +397,7 @@ export function mountTouchControls({ active, focus, surface, parent = document.b
   const coarse = window.matchMedia('(any-pointer: coarse)');
   let hintMode = null;
   const refresh = () => {
-    input.flips = Boolean(flips());
+    input.flips = Boolean(flips()); input.arcade = Boolean(arcade());
     if (input.secondary) input.secondary.flips = input.flips;
     root.hidden = !active();
     document.body.classList.toggle('touch-driving', !root.hidden && (coarse.matches || touched));
