@@ -104,10 +104,12 @@ without an API keep their previous behavior.
   (`ambient`, follows the switch and mixes with other apps' music). `playback`
   pauses other apps' audio when the game sounds. The row is hidden where the API
   is missing. Stored in `atv-audio-v1` as `silent`.
-- **Media Session**: the soundtrack publishes title, artist and artwork, and
-  play/pause/next/previous from Control Center, headphones and media keys act as
-  the Jukebox transport (pause = Music off). The game still pauses audio while
-  hidden, so lock-screen playback does not continue in the background.
+- **Media Session: deliberately not used.** The soundtrack is game music, not
+  something to keep listening to outside the game. Publishing it put a Now
+  Playing card on the lock screen and in Control Center, and the system "pause"
+  sent when leaving the app saved Music as off. The player now clears metadata
+  and action handlers, and unloads the song while the page is hidden; it resumes
+  at the same position on return.
 - **Launch screens**: iOS ignores the manifest's background for launch and only
   uses an `apple-touch-startup-image` whose pixels match the device. Instead of
   shipping dozens of device PNGs, `install.js` draws this device's portrait and
@@ -128,10 +130,10 @@ for little benefit; iOS offers no install prompt, orientation lock, iPhone
 element fullscreen, controller rumble or vibration to web apps.
 
 Verification (host, synthetic iOS APIs): unit tests for wake lock, audio
-session, media session, shortcuts and launch-screen sizes; Rust menu layout
+session, cleared media session, shortcuts and launch-screen sizes; Rust menu layout
 test for the Extras row at 390x844, 844x390 and 320x568; `test_pwa_ios.mjs`
 (content group) covers the Extras row in both orientations, persistence,
-shortcut menus, wake lock across pause/resume and Media Session metadata;
+shortcut menus, wake lock across pause/resume and the absence of Media Session metadata;
 `test_install_app.mjs` now checks maskable icons, favicon, manifest
 shortcuts/screenshots/orientation and both generated launch screens in Chromium
 and WebKit before its existing known standalone safe-area failure. Physical

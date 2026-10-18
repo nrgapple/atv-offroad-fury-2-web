@@ -56,6 +56,13 @@ Pause is transient (`setPaused`). It no longer writes the saved Music setting,
 which also silences the menu tune. Settings saved before that fix restore music
 once.
 
+The soundtrack publishes nothing to the system media controls. Media Session
+metadata and action handlers are cleared, so iOS shows no Now Playing card and no
+lock-screen pause can turn Music off. When the page is hidden the song is unloaded
+(`MusicStream.park`). On return the ride reloads the same song at the same
+position. Settings version 3 restores, once, a Music off that version 2 could
+have saved from the system pause.
+
 The **Jukebox** (Main Menu and Pause) follows the original `Jukebox.dat` page in
 `PAGE14.RES`, now packaged as a lazy record. It shows that page's red snow
 backdrop (`bk_jukebox`) and its 20-frame spinning CD (`cd64.atm`), the genre,

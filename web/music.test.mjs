@@ -243,31 +243,27 @@ test('a package without every stream keeps the decoder for the whole catalog', a
   assert.equal(f.stream.seek(10), false);
 });
 
-test('media session mirrors the song and drives the soundtrack transport', () => {
-  const handlers = {}, session = { metadata: null, playbackState: 'none', setActionHandler: (action, fn) => { handlers[action] = fn; } };
-  const previous = globalThis.MediaMetadata;
-  globalThis.MediaMetadata = class { constructor(init) { Object.assign(this, init); } };
-  try {
-    const stream = new MusicStream(async () => new Uint8Array(), () => null, () => ({}), () => {}, null);
-    const calls = [];
-    stream.next = () => calls.push('next'); stream.previous = () => calls.push('previous'); stream.update = async () => calls.push('update');
-    stream.bindMediaSession(session);
-    assert.deepEqual(Object.keys(handlers).sort(), ['nexttrack', 'pause', 'play', 'previoustrack']);
-    assert.equal(session.playbackState, 'paused');
-    stream.song = { title: 'Song A', artist: 'Band' }; stream.syncMediaSession();
-    assert.equal(session.metadata.title, 'Song A');
-    assert.equal(session.metadata.artist, 'Band');
-    assert.equal(session.metadata.artwork[0].src, '/fury-remastered-home-512-v1.png');
-    assert.equal(session.playbackState, 'playing');
-    handlers.pause();
-    assert.equal(stream.enabled, false);
-    assert.equal(session.playbackState, 'paused');
-    handlers.nexttrack();
-    assert.equal(stream.enabled, true);
-    handlers.previoustrack(); handlers.play();
-    assert.deepEqual(calls.filter(call => call !== 'update').slice(0, 2), ['next', 'previous']);
-    stream.hold(); assert.equal(session.playbackState, 'paused');
-  } finally { globalThis.MediaMetadata = previous; }
+test('the soundtrack takes no system media controls and publishes no Now Playing card', () => {
+  const handlers = {}, session = { metadata: { title: 'old' }, playbackState: 'playing', setActionHandler: (action, fn) => { handlers[action] = fn; } };
+  const stream = new MusicStream(async () => new Uint8Array(), () => null, () => ({}), () => {}, null);
+  stream.releaseMediaSession(session);
+  assert.equal(session.metadata, null); assert.equal(session.playbackState, 'none');
+  for (const action of ['play', 'pause', 'nexttrack', 'previoustrack']) assert.equal(handlers[action], null, action);
+  assert.equal(stream.enabled, true);
+});
+
+test('leaving the app unloads the song; returning resumes it where it was', async () => {
+  const element = fakeElement(), f = fixture({ element }); await f.load(); await f.stream.update();
+  const src = element.src; element.currentTime = 42.5;
+  f.stream.park();
+  assert.equal(element.paused, true); assert.equal(element.src, '', 'no loaded media left for the system to show');
+  assert.equal(f.stream.enabled, true, 'Music stays on');
+  assert.equal(f.stream.snapshot().positionSeconds, 42.5); assert.equal(f.stream.snapshot().title, 'Track 0');
+  element.currentTime = 0;
+  await f.stream.update(); element.emit('loadedmetadata');
+  assert.equal(element.src, src, 'the same song'); assert.equal(element.currentTime, 42.5); assert.equal(element.paused, false);
+  f.stream.park(); f.stream.select(4); await flush();
+  assert.equal(element.src, `/content/${'4'.padStart(64, '0')}.m4a`, 'a new choice replaces the parked song');
 });
 
 test('rides share one media output: one source node, priming survives a new GameAudio', async () => {
@@ -301,9 +297,10 @@ test('Jukebox pause is transient: Music stays on, the saved setting is untouched
   assert.equal(element.paused, false); assert.equal(element.src, src);
 });
 
-test('settings saved by the first Jukebox (Pause stored as Music off) restore music once', () => {
+test('settings that could save Music off without the player asking restore music once', () => {
   const read = value => { const storage = { getItem: () => JSON.stringify(value), setItem() {} }; return new MusicStream(async () => {}, () => null, () => ({}), () => {}, storage).enabled; };
   assert.equal(read({ enabled: false, volume: 0.5 }), true, 'pre-fix "off" is restored');
-  assert.equal(read({ v: 2, enabled: false, volume: 0.5 }), false, 'a choice saved after the fix is kept');
-  assert.equal(read({ v: 2, enabled: true }), true);
+  assert.equal(read({ v: 2, enabled: false, volume: 0.5 }), true, 'an "off" the lock-screen pause could have saved is restored');
+  assert.equal(read({ v: 3, enabled: false, volume: 0.5 }), false, 'a choice saved after the fix is kept');
+  assert.equal(read({ v: 3, enabled: true }), true);
 });

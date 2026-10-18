@@ -42,6 +42,10 @@ export class MediaOutput {
     element.addEventListener('ended', () => this.owner?.mediaEvent('ended'));
     element.addEventListener('error', () => { if (element.src !== this.silent) this.owner?.mediaEvent('error'); });
     element.addEventListener('waiting', () => this.owner?.mediaEvent('waiting'));
+    // Leaving the app unloads the song: nothing plays outside the game and iOS
+    // keeps no Now Playing card. The ride resumes it on return.
+    globalThis.document?.addEventListener?.('visibilitychange', () => { if (globalThis.document.hidden) this.owner?.park(); });
+    globalThis.addEventListener?.('pagehide', () => this.owner?.park());
   }
   static create() {
     const element = mediaDefault();
@@ -106,45 +110,27 @@ export class MusicStream {
     this.outputFactory = () => { const element = this.mediaFactory(); return element ? new MediaOutput(element, () => this.context()) : null; };
     try {
       const saved = JSON.parse(storage?.getItem(SETTINGS_KEY) ?? 'null');
-      // Version 2: the first Jukebox saved its Pause button as Music off;
-      // restore music once for settings written before that fix.
-      if (typeof saved?.enabled === 'boolean' && (saved.v === 2 || saved.enabled)) this.enabled = saved.enabled;
+      // Versions before 3 could save Music off without the player asking: the
+      // first Jukebox Pause button and the lock-screen pause. Restore it once.
+      if (typeof saved?.enabled === 'boolean' && (saved.v >= 3 || saved.enabled)) this.enabled = saved.enabled;
       if (Number.isFinite(saved?.volume)) this.volume = clamp(saved.volume);
       if (Array.isArray(saved?.history)) this.history = saved.history.filter(item => typeof item === 'string').slice(-64);
       if (Number.isInteger(saved?.historyIndex)) this.historyIndex = Math.max(-1, Math.min(this.history.length - 1, saved.historyIndex));
     } catch { /* Private browsing or corrupt preferences must not block music. */ }
   }
-  // Control Center, the lock screen, headphone buttons and keyboard media keys
-  // drive the soundtrack like the Jukebox transport (play/pause = Music on/off).
-  bindMediaSession(session = globalThis.navigator?.mediaSession) {
-    if (!session || this.session) return;
-    this.session = session;
-    const handlers = {
-      play: () => { this.setEnabled(true); void this.update(); },
-      pause: () => this.setEnabled(false),
-      nexttrack: () => { this.setEnabled(true); this.next(); },
-      previoustrack: () => { this.setEnabled(true); this.previous(); },
-    };
-    for (const [action, handler] of Object.entries(handlers)) {
-      try { session.setActionHandler(action, handler); } catch { /* Unsupported action. */ }
-    }
-    this.syncMediaSession();
-  }
-  syncMediaSession() {
-    const session = this.session, song = this.song;
+  // The soundtrack belongs to the game, not to the system media controls:
+  // publish no Now Playing metadata and take no lock-screen/Control Center
+  // actions (a system "pause" when leaving the app used to save Music off).
+  releaseMediaSession(session = globalThis.navigator?.mediaSession) {
     if (!session) return;
-    try {
-      if (song && song !== this.sessionSong && typeof globalThis.MediaMetadata === 'function') {
-        this.sessionSong = song;
-        session.metadata = new globalThis.MediaMetadata({ title: song.title ?? 'Fury Remastered', artist: song.artist ?? '', album: 'Fury Remastered soundtrack',
-          artwork: [{ src: '/fury-remastered-home-512-v1.png', sizes: '512x512', type: 'image/png' }] });
-      }
-      session.playbackState = song && this.enabled && !this.held && !this.closed ? 'playing' : 'paused';
-    } catch { /* Media Session is optional. */ }
+    for (const action of ['play', 'pause', 'stop', 'nexttrack', 'previoustrack', 'seekto', 'seekbackward', 'seekforward']) {
+      try { session.setActionHandler(action, null); } catch { /* Unsupported action. */ }
+    }
+    try { session.metadata = null; session.playbackState = 'none'; } catch { /* Media Session is optional. */ }
   }
   get tracks() { return (this.library?.songs ?? []).map((song, index) => ({ ...song, index })); }
   save() {
-    try { this.storage?.setItem(SETTINGS_KEY, JSON.stringify({ v: 2, enabled: this.enabled, volume: this.volume, history: this.history, historyIndex: this.historyIndex })); } catch { /* Optional persistence. */ }
+    try { this.storage?.setItem(SETTINGS_KEY, JSON.stringify({ v: 3, enabled: this.enabled, volume: this.volume, history: this.history, historyIndex: this.historyIndex })); } catch { /* Optional persistence. */ }
   }
   current(generation) { return !this.closed && generation === this.generation && this.isCurrent?.(); }
   async load({ file, files, read, isCurrent }) {
@@ -196,6 +182,14 @@ export class MusicStream {
   }
   // The Jukebox Pause button: a transient pause, unlike the saved Music
   // on/off setting that also governs the menu tune.
+  park() {
+    if (!this.media || this.out?.owner !== this || !this.song || this.parked) return;
+    const element = this.element;
+    if (!element.src || element.src === this.out.silent) return;
+    this.parked = { url: this.entry.stream.url, time: element.currentTime || 0 };
+    this.mediaWanted = false;
+    element.pause(); element.removeAttribute('src'); element.load?.();
+  }
   // `resume` false clears a pause without restarting (leaving the Jukebox).
   setPaused(paused, resume = true) {
     paused = Boolean(paused);
@@ -234,7 +228,8 @@ export class MusicStream {
   seek(seconds) {
     if (!this.media || !this.element || !this.song || !Number.isFinite(seconds)) return false;
     const duration = this.streams[this.selectedIndex]?.seconds ?? this.element.duration;
-    this.element.currentTime = Math.max(0, Math.min(seconds, Math.max(0, duration - 0.25)));
+    const time = Math.max(0, Math.min(seconds, Math.max(0, duration - 0.25)));
+    if (this.parked) this.parked.time = time; else this.element.currentTime = time;
     return true;
   }
   path(song) { return `/AUDIO/${song.filename.replaceAll('\\', '/')}`.toLowerCase(); }
@@ -242,7 +237,7 @@ export class MusicStream {
     if (!this.ready || this.closed) return false;
     this.generation++; this.pending = action; this.failed = false;
     this.clearQueue(); this.finished = true; this.offset = 0;
-    if (this.media) { this.mediaWanted = false; this.element.pause(); }
+    if (this.media) { this.mediaWanted = false; this.parked = null; this.element.pause(); }
     if (Number.isInteger(action.index)) this.selectedIndex = action.index;
     void this.update();
     return true;
@@ -281,7 +276,7 @@ export class MusicStream {
   // 1.5s fade at race over (0014f8d0); release starts the next song (GO).
   hold(fade = 0) {
     if (this.held || this.closed) { this.held = true; return; }
-    this.held = true; this.syncMediaSession();
+    this.held = true;
     const context = this.media ? this.out.context : this.context(), stop = () => { if (!this.held) return; this.clearQueue(); if (this.media) { this.mediaWanted = false; this.element.pause(); } this.finished = true; if (this.gain) this.gain.gain.value = this.volume; };
     const sounding = this.media ? this.mediaWanted && !this.element.paused : this.queue.length > 0;
     if (fade > 0 && this.gain && context?.state === 'running' && sounding) {
@@ -293,7 +288,7 @@ export class MusicStream {
   }
   release() {
     if (!this.held) return;
-    this.held = false; clearTimeout(this.holdTimer); this.syncMediaSession();
+    this.held = false; clearTimeout(this.holdTimer);
     if (this.gain) { this.gain.gain.cancelScheduledValues(0); this.gain.gain.value = this.volume; }
     void this.update();
   }
@@ -302,7 +297,7 @@ export class MusicStream {
     if (enabled === this.enabled || this.closed) return;
     this.enabled = enabled;
     if (!enabled) this.pauseQueue();
-    this.save(); this.syncMediaSession();
+    this.save();
     if (enabled) void this.update();
   }
   stopSource(segment) {
@@ -356,6 +351,7 @@ export class MusicStream {
     const entry = this.files.find(item => item.path.toLowerCase() === this.path(song));
     if (!entry) throw new Error(`Original music file is missing: ${song.filename}`);
     if (this.media) {
+      this.parked = null;
       this.element.src = entry.stream.url;
       this.info = null;
     } else {
@@ -371,7 +367,7 @@ export class MusicStream {
       this.history = this.history.slice(0, this.historyIndex + 1);
       this.history.push(song.filename); this.history = this.history.slice(-64); this.historyIndex = this.history.length - 1;
     }
-    this.save(); this.syncMediaSession();
+    this.save();
     return true;
   }
   async update() {
@@ -431,6 +427,12 @@ export class MusicStream {
     }
     if (!this.current(generation) || !this.enabled || this.paused || this.held || context.state !== 'running') return;
     this.mediaWanted = true;
+    if (this.parked) {
+      const { url, time } = this.parked, element = this.element;
+      this.parked = null; element.src = url;
+      const seek = () => { try { element.currentTime = time; } catch { /* Not seekable yet. */ } };
+      if (element.readyState >= 1) seek(); else element.addEventListener('loadedmetadata', seek, { once: true });
+    }
     if (!this.element.paused) return;
     try { await this.element.play(); this.chunks++; }
     catch (error) {
@@ -447,7 +449,7 @@ export class MusicStream {
       try { for (let i = 0; i < element.buffered.length; i++) if (element.buffered.start(i) <= element.currentTime && element.buffered.end(i) >= element.currentTime) buffered = element.buffered.end(i) - element.currentTime; } catch { /* No buffered ranges yet. */ }
       return { ready: this.ready, failed: this.failed, enabled: this.enabled, volume: this.volume, songs: this.library?.songs.length ?? 0,
         selectedIndex: this.selectedIndex, playingIndex: this.selectedIndex, title: song?.title ?? null, artist: song?.artist ?? null, genre: song?.genre ?? null,
-        positionSeconds: song ? element.currentTime || 0 : 0, durationSeconds: song ? stream?.seconds ?? (Number.isFinite(element.duration) ? element.duration : 0) : 0,
+        positionSeconds: song ? this.parked?.time ?? (element.currentTime || 0) : 0, durationSeconds: song ? stream?.seconds ?? (Number.isFinite(element.duration) ? element.duration : 0) : 0,
         chunks: this.chunks, underruns: this.underruns, queuedSeconds: buffered, voices: song && !element.paused ? 1 : 0,
         mode: 'stream', seekable: Boolean(song), playing: Boolean(song) && !element.paused, paused: this.paused, streamBytes: stream?.bytes ?? 0 };
     }
@@ -463,7 +465,7 @@ export class MusicStream {
       genre: song?.genre ?? null, mode: 'decoder', seekable: false, paused: this.paused, playing: this.voices.size > 0 && !this.suspended, streamBytes: 0 };
   }
   close() {
-    this.generation++; this.closed = true; this.ready = false; this.syncMediaSession();
+    this.generation++; this.closed = true; this.ready = false;
     this.clearQueue(); this.analyserNode?.disconnect();
     // The shared output outlives this ride: stop it, keep its graph.
     if (this.out?.owner === this) { this.out.release(this); if (this.gain) this.gain.gain.value = 0; }
