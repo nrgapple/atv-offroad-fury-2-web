@@ -520,6 +520,18 @@ impl Vehicle {
         }
         Ok(())
     }
+    /// Optional Alpha "Arcade flips" (authored): analog air rotation, front
+    /// flips, corks and a lip pop. Implies flips; off restores the Unleashed
+    /// style when flips stay enabled.
+    pub fn set_arcade_flips(&mut self, enabled: bool) -> Result<()> {
+        if enabled {
+            self.set_flips(true)?;
+        }
+        if let Some(flips) = &mut self.flips {
+            flips.set_arcade(enabled);
+        }
+        Ok(())
+    }
     /// Optional Extras realistic train riding (authored). Off is original.
     pub fn set_realistic_train(&mut self, enabled: bool) {
         self.realistic_train = enabled;
@@ -1612,11 +1624,22 @@ impl Vehicle {
                             } else {
                                 axes
                             },
+                            stick: [input.steer.clamp(-1., 1.), input.lean.clamp(-1., 1.)],
+                            // rider_control starts the preload impulse at 0.25 s.
+                            preload_age: self
+                                .rider_state
+                                .preload_active
+                                .then_some(0.25 - self.rider_state.timer),
                         },
                         self.body.local_angular_velocity,
                         step,
                     )?;
                     self.body.local_torque = add(self.body.local_torque, torque);
+                    // Arcade lip pop: extra takeoff speed over this substep.
+                    let lift = flips.take_lift();
+                    if lift != 0. {
+                        self.body.force[1] += self.body_config.mass * lift / step;
+                    }
                 }
             }
             let mut corrections = if elapsed == 0. {
@@ -2891,6 +2914,96 @@ mod tests {
         assert!(
             (rates[1] - rates[0] + 1000. / 450.).abs() < 0.1,
             "{rates:?}"
+        );
+    }
+    #[test]
+    fn arcade_flips_front_flip_past_air_limits_and_unleashed_is_unchanged() {
+        let dt = 1. / 60.;
+        let fly = |style: Option<bool>, lean: f32| {
+            let (mut vehicle, terrain) = fixture();
+            enable_test_wrecks(&mut vehicle);
+            vehicle.body =
+                BodyState::new([500., 400., 500.], [1., 0., 0., 0.], &vehicle.body_config).unwrap();
+            if let Some(arcade) = style {
+                vehicle.set_flips(true).unwrap();
+                // Toggling the style back must leave no Arcade trace.
+                vehicle.set_arcade_flips(true).unwrap();
+                vehicle.set_arcade_flips(arcade).unwrap();
+            }
+            let input = VehicleInput {
+                lean,
+                ..Default::default()
+            };
+            (0..120)
+                .map(|_| vehicle.step(&terrain, input, dt).unwrap())
+                .collect::<Vec<_>>()
+        };
+        // Arcade: pushing forward front-flips past the air limits while riding.
+        let arcade = fly(Some(true), -1.);
+        let last = arcade.last().unwrap();
+        assert_eq!(last.wreck.phase, crate::wreck::Phase::Riding);
+        let flip = last.flip.unwrap();
+        assert_eq!(flip.active, Some(crate::flip_tricks::Trick::FrontFlip));
+        assert!(
+            flip.arcade.unwrap().pitch < -std::f32::consts::PI,
+            "{flip:?}"
+        );
+        // Nose-down rate near the full-stick Arcade rate (fixture damping -80).
+        assert!(
+            last.local_angular_velocity[0] > 4.5,
+            "{:?}",
+            last.local_angular_velocity
+        );
+        // Without Arcade the same lean stays at the original rate, and the
+        // Unleashed style after toggling matches a fresh Unleashed vehicle.
+        let fresh = fly(Some(false), -1.);
+        let toggled = {
+            let (mut vehicle, terrain) = fixture();
+            enable_test_wrecks(&mut vehicle);
+            vehicle.body =
+                BodyState::new([500., 400., 500.], [1., 0., 0., 0.], &vehicle.body_config).unwrap();
+            vehicle.set_flips(true).unwrap();
+            let input = VehicleInput {
+                lean: -1.,
+                ..Default::default()
+            };
+            (0..120)
+                .map(|_| vehicle.step(&terrain, input, dt).unwrap())
+                .collect::<Vec<_>>()
+        };
+        for (a, b) in fresh.iter().zip(&toggled) {
+            assert_eq!(a.orientation, b.orientation);
+            assert_eq!(a.local_angular_velocity, b.local_angular_velocity);
+            assert_eq!(a.wreck.phase, b.wreck.phase);
+            assert!(a.flip.unwrap().arcade.is_none());
+        }
+        let off = fly(None, -1.);
+        assert!(off.iter().all(|f| f.flip.is_none()));
+    }
+    #[test]
+    fn arcade_lip_pop_adds_takeoff_speed_only_with_an_active_preload() {
+        let dt = 1. / 60.;
+        let launch = |preload: bool| {
+            let (mut vehicle, terrain) = fixture();
+            vehicle.set_arcade_flips(true).unwrap();
+            vehicle.body =
+                BodyState::new([500., 400., 500.], [1., 0., 0., 0.], &vehicle.body_config).unwrap();
+            if preload {
+                vehicle.rider_state.preload_active = true;
+                vehicle.rider_state.timer = 0.25;
+            }
+            // Adams-Bashforth: a one-step impulse settles over two steps.
+            for _ in 0..2 {
+                vehicle.step(&terrain, VehicleInput::default(), dt).unwrap();
+            }
+            vehicle.body.linear_velocity[1]
+        };
+        // A preload of zero strength adds no impulse of its own here, so the
+        // difference is the perfect-timing pop.
+        let lift = launch(true) - launch(false);
+        assert!(
+            (lift - crate::arcade_flips::POP_LIFT).abs() < 0.01,
+            "{lift}"
         );
     }
     #[test]

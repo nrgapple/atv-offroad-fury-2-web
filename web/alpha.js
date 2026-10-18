@@ -1,6 +1,6 @@
-// Settings → Alpha: experimental authored presentation toggles the user tries
-// and rates. Every entry is off by default, none changes the recovered
-// simulation, and removing an entry here removes its menu row.
+// Settings → Alpha: experimental authored toggles the user tries and rates.
+// Every entry is off by default and removing one removes its menu row. Only
+// Arcade flips changes the simulation (authored air rotation while it is on).
 export const ALPHA_FEATURES = [
   { id: 'air-slowmo', label: 'Air slow-mo' },
   { id: 'big-air-camera', label: 'Big-air camera' },
@@ -8,6 +8,7 @@ export const ALPHA_FEATURES = [
   { id: 'apex-glare', label: 'Apex sun glare' },
   { id: 'landing-burst', label: 'Landing burst' },
   { id: 'heavy-mud', label: 'Heavy mud' },
+  { id: 'arcade-flips', label: 'Arcade flips' },
 ];
 
 const KEY = 'atv-alpha';

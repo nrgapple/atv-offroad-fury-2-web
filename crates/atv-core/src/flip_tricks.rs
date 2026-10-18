@@ -38,6 +38,12 @@ pub enum Trick {
     Backflip,
     ThreeSixtyLeft,
     ThreeSixtyRight,
+    /// Arcade flips only (authored; Unleashed has no front flip).
+    FrontFlip,
+    /// Arcade flips: a flat spin about the body's up axis.
+    Spin,
+    /// Arcade flips: pitch and yaw together.
+    Cork,
 }
 impl Trick {
     pub fn name(self, rotations: u32) -> String {
@@ -45,6 +51,9 @@ impl Trick {
             Trick::Backflip => "Backflip",
             Trick::ThreeSixtyLeft => "Three Sixty Left",
             Trick::ThreeSixtyRight => "Three Sixty Right",
+            Trick::FrontFlip => "Front Flip",
+            Trick::Spin => "360",
+            Trick::Cork => "Cork",
         };
         match rotations {
             0 | 1 => base.into(),
@@ -84,6 +93,11 @@ pub struct Input {
     pub mask: u8,
     /// Trick stick: x right, y pulled back.
     pub axes: [f32; 2],
+    /// Riding stick (steer, lean back), read only by Arcade flips.
+    pub stick: [f32; 2],
+    /// Time since the original preload impulse fired, while it is active.
+    /// Read only by Arcade flips (lip pop timing).
+    pub preload_age: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -108,6 +122,9 @@ pub struct Frame {
     /// A launch request (thumb lift) would start a trick now: airborne within
     /// the early window with no trick active. Lets touch cue "LIFT".
     pub launch_window: bool,
+    /// Present only in the Arcade flips style.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arcade: Option<crate::arcade_flips::Frame>,
 }
 
 /// Authored touch request. `launch` comes from lifting the driving thumb: on
@@ -135,6 +152,8 @@ pub struct FlipTricks {
     pending: Option<Pending>,
     events: Vec<Event>,
     request: Option<Request>,
+    /// Authored Arcade flips style; replaces the Unleashed tricks entirely.
+    arcade: Option<crate::arcade_flips::ArcadeFlips>,
 }
 
 fn window(value: f32) -> f32 {
@@ -158,17 +177,49 @@ impl FlipTricks {
             pending: None,
             events: Vec::new(),
             request: None,
+            arcade: None,
         })
+    }
+
+    /// Switch between the Unleashed tricks and the authored Arcade style.
+    /// Changing style drops any trick in progress.
+    pub fn set_arcade(&mut self, enabled: bool) {
+        if enabled != self.arcade.is_some() {
+            let scale = self.scale;
+            self.reset();
+            self.arcade =
+                enabled.then(|| crate::arcade_flips::ArcadeFlips::new(scale * SOURCE_AIR_DAMPING));
+        }
+    }
+
+    pub fn is_arcade(&self) -> bool {
+        self.arcade.is_some()
+    }
+
+    /// Extra takeoff vertical speed (ft/s) from an Arcade lip pop, once.
+    pub fn take_lift(&mut self) -> f32 {
+        self.arcade.as_mut().map_or(0., |a| a.take_lift())
     }
 
     /// Airborne wreck angle checks are skipped while a trick is active, as in
     /// the Unleashed wreck chain 004e24a0. Touchdown ends the trick first, so
     /// ground angles and impacts still apply on landing.
     pub fn exempts_air_angles(&self) -> bool {
+        if let Some(a) = &self.arcade {
+            return a.exempts_air_angles();
+        }
         self.backflip.active || self.spin.active
     }
 
     pub fn frame(&self) -> Frame {
+        if let Some(a) = &self.arcade {
+            return Frame {
+                active: a.active(),
+                rotation: a.rotation(),
+                launch_window: false,
+                arcade: Some(a.frame()),
+            };
+        }
         Frame {
             active: if self.backflip.active && self.backflip.airborne {
                 Some(Trick::Backflip)
@@ -181,12 +232,16 @@ impl FlipTricks {
             launch_window: self.airtime > 0.
                 && self.airtime < EARLY_AIR
                 && !self.exempts_air_angles(),
+            arcade: None,
         }
     }
 
     /// Authored touch adaptation; see `Request`. Ignored while a trick is
     /// already active. `hold` is clamped to the source 0..60 frame window.
     pub fn request(&mut self, trick: Trick, launch: bool, hold: f32) {
+        if self.arcade.is_some() {
+            return;
+        }
         self.request = Some(Request {
             trick,
             launch,
@@ -196,14 +251,24 @@ impl FlipTricks {
     }
 
     pub fn take_events(&mut self) -> Vec<Event> {
-        std::mem::take(&mut self.events)
+        let mut events = std::mem::take(&mut self.events);
+        if let Some(a) = &mut self.arcade {
+            events.extend(a.take_events());
+        }
+        events
     }
 
     pub fn reset(&mut self) {
+        let arcade = self.arcade.is_some();
         *self = Self {
             scale: self.scale,
             ..Self::new(SOURCE_AIR_DAMPING).expect("nonzero damping")
         };
+        if arcade {
+            self.arcade = Some(crate::arcade_flips::ArcadeFlips::new(
+                self.scale * SOURCE_AIR_DAMPING,
+            ));
+        }
     }
 
     fn spin_trick(&self) -> Trick {
@@ -230,10 +295,24 @@ impl FlipTricks {
             || ![input.vertical_speed, input.forward_speed]
                 .iter()
                 .chain(input.axes.iter())
+                .chain(input.stick.iter())
+                .chain(input.preload_age.iter())
                 .chain(angular_velocity.iter())
                 .all(|v| v.is_finite())
         {
             return Err("invalid flip trick input".into());
+        }
+        if let Some(a) = &mut self.arcade {
+            return Ok(a.step(
+                crate::arcade_flips::Input {
+                    grounded: input.grounded,
+                    stick: input.stick.map(|v| v.clamp(-1., 1.)),
+                    modifiers: input.mask != 0,
+                    preload_age: input.preload_age,
+                },
+                angular_velocity,
+                h,
+            ));
         }
         let [x, y] = input.axes;
         for (hold, held) in self.hold.iter_mut().zip([y.abs() > 0.7, x.abs() > 0.7]) {
@@ -403,6 +482,10 @@ impl FlipTricks {
     /// After the wreck checks for this frame: credit a clean landing or record
     /// a bail. A trick that ends in the air still waits for the landing.
     pub fn settle(&mut self, grounded: bool, wrecked: bool) {
+        if let Some(a) = &mut self.arcade {
+            a.settle(wrecked);
+            return;
+        }
         if wrecked {
             self.backflip = Spin::default();
             self.spin = Spin::default();
@@ -441,6 +524,8 @@ mod tests {
             brake: false,
             mask,
             axes,
+            stick: [0.; 2],
+            preload_age: None,
         }
     }
 
