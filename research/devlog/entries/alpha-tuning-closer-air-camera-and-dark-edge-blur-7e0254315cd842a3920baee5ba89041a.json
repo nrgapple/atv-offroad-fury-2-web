@@ -1,0 +1,14 @@
+{
+  "id": "alpha-tuning-closer-air-camera-and-dark-edge-blur-7e0254315cd842a3920baee5ba89041a",
+  "timestamp": "2026-10-18T01:48:05.436540+00:00",
+  "recorded_at": "2026-10-18T01:51:11.298538+00:00",
+  "kind": "build",
+  "title": "Alpha tuning: closer air camera and dark edge blur",
+  "summary": "changes from the user's feedback on the Alpha hype effects (PR #174). The Big-air camera now closes in behind the rider instead of pulling back, so the flight feels personal. A new Air dark blur replaces the Apex sun glare, which looked washed out: the edges darken, desaturate and blur toward the centre in big air, and clear on touchdown. The air effects now need a real launch (at least 4 ft above takeoff, 12 ft or more above the ground, about half a second airborne; slow-mo needs an apex at least 14 ft up and 8 ft above takeoff), so rolling off the side of a hill no longer triggers them.",
+  "details": [
+    "new unit tests for a hillside drop (nothing fires) and a medium kicker (no slow-mo); the content browser test passes on Caribou Peak and Sonora Dunes."
+  ],
+  "limitation": "tuning is still first-pass pending user feedback; audio not listened to; physical phones untested; this is host-verified, not yet a verified public release.",
+  "image": "/devlog-images/alpha-tuning-closer-air-camera-and-dark-edge-blur-7e0254315cd842a3920baee5ba89041a.png",
+  "caption": "Sonora Dunes at the apex: the camera sits close behind the rider and the frame's edges darken and blur"
+}

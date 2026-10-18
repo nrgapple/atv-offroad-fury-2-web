@@ -1,0 +1,14 @@
+{
+  "id": "arcade-flips-alpha-55108c4847de4cd7b68722e0840698e7",
+  "timestamp": "2026-10-18T01:33:10.712948+00:00",
+  "recorded_at": "2026-10-18T01:51:04.231085+00:00",
+  "kind": "build",
+  "title": "Arcade flips (Alpha)",
+  "summary": "a new Settings \u2192 Alpha toggle, Arcade flips (off by default; PR #173). In the air the player controls the rotation directly: lean back to backflip, lean forward to front flip, steer to spin. Holding keeps it spinning, letting go slows it down, and pushing the other way brakes. Flip and spin together make corks, and big air allows doubles and 720s. Releasing the jump right at the ramp lip gives a pop: a little more height and spin. Landing is not assisted: every original landing and wreck check still decides, so bad landings crash. Controls: keyboard E/Shift backflip, Q front flip, A/D spin, release Space at the lip; controller left stick; one-handed touch: lift the drive thumb to jump, then touch again in the air and drag down/up to flip and left/right to spin (70 px is full rate); two-finger touch uses the left pad. HUD names include Backflip, Front Flip, Double Backflip, 360, 720 and Cork 360/720. Off and Unleashed flips are unchanged.",
+  "details": [
+    "Rust tests (rotation control, front flips, combos, pop timing, Off/Unleashed unchanged) and a content browser test on Caribou Peak with real keys and touches: backflip landed at about 375\u00b0, front flip at about 378\u00b0, a one-handed touch backflip at about 391\u00b0, and holding lean-back through touchdown wrecked as intended."
+  ],
+  "limitation": "doubles and 720s are proven only in Rust tests, not on a real big jump in the browser; corks and 360s landed only in manual runs; untested on physical phones and controllers; CPU riders and multiplayer peers don't flip; trick names sum per-axis rotation, so a flip followed by a spin is also called a cork. This is a host-verified checkpoint, not yet a verified public release.",
+  "image": "/devlog-images/arcade-flips-alpha-55108c4847de4cd7b68722e0840698e7.png",
+  "caption": "Arcade flips: mid-backflip on Caribou Peak, steered by holding lean-back"
+}
