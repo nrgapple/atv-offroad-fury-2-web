@@ -13,8 +13,8 @@ function menu(page,width,height,speed_rush='normal') {
  return JSON.parse(text);
 }
 for(const [width,height]of [[390,844],[1280,720]]) {
- for(const page of ['title','main','pause','controls','music','extras'])assert(menu(page,width,height).choices.length>0);
- assert.deepEqual(menu('settings',width,height).choices,['controls','hud-settings','music','extras','back']);
+ for(const page of ['title','main','pause','controls','music','extras','alpha'])assert(menu(page,width,height).choices.length>0);
+ assert.deepEqual(menu('settings',width,height).choices,['controls','hud-settings','music','extras','alpha','back']);
  for(const speed of ['off','low','normal','high']) {
   const frame=menu('hud-settings',width,height,speed);
   assert(frame.choices.includes('speed-rush'));

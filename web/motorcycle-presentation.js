@@ -35,13 +35,14 @@ const compatible = (a, b, ca, cb) => normal(a) && normal(b) && a.reset_count ===
 
 export class MotorcyclePresentation {
   reset() { this.segment = null; }
-  accept(previous, current, previousCamera, currentCamera, now, continuous = true) {
+  // `scale` < 1 (Alpha slow motion) stretches each 60 Hz interval in real time.
+  accept(previous, current, previousCamera, currentCamera, now, continuous = true, scale = 1) {
     this.reset();
     if (!continuous || !compatible(previous, current, previousCamera, currentCamera)) return;
     const ticks = current.motorcycle_tick - previous.motorcycle_tick;
     // Do not animate a missed/resumed interval or a reset across the map.
     if (ticks > 4) return;
-    this.segment = { previous, current, previousCamera, currentCamera, now, duration: ticks * 1000 / 60 };
+    this.segment = { previous, current, previousCamera, currentCamera, now, duration: ticks * 1000 / 60 / scale };
   }
   sample(frame, camera, now, active = true) {
     const s = this.segment;
@@ -112,10 +113,10 @@ export class AtvPresentation {
   quadPose(frame) { return frame.quad_node_matrices; }
   reset() { this.segment = null; }
   // `ticks` is the number of 60 Hz steps between the two frames.
-  accept(previous, current, previousCamera, currentCamera, now, ticks, continuous = true) {
+  accept(previous, current, previousCamera, currentCamera, now, ticks, continuous = true, scale = 1) {
     this.reset();
     if (!continuous || !(ticks >= 1 && ticks <= 4) || !atvCompatible(previous, current) || !previousCamera || !currentCamera || previousCamera.preset !== currentCamera.preset || previousCamera.mode !== currentCamera.mode) return;
-    this.segment = { previous, current, previousCamera, currentCamera, now, duration: ticks * 1000 / 60 };
+    this.segment = { previous, current, previousCamera, currentCamera, now, duration: ticks * 1000 / 60 / scale };
   }
   sample(frame, camera, now, active = true) {
     const s = this.segment;

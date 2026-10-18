@@ -54,7 +54,13 @@ export class MediaOutput {
       this.context = context;
       this.gain = context.createGain();
       const master = context.createGain(); master.gain.value = MUSIC_MASTER;
-      this.gain.connect(master); master.connect(context.destination);
+      // Alpha muffle: an open low-pass and level ahead of the master gain.
+      if (context.createBiquadFilter) {
+        this.filter = context.createBiquadFilter(); this.filter.type = 'lowpass'; this.filter.frequency.value = 22000; this.filter.Q.value = .7;
+        this.muffleGain = context.createGain();
+        this.gain.connect(this.filter); this.filter.connect(this.muffleGain); this.muffleGain.connect(master);
+      } else this.gain.connect(master);
+      master.connect(context.destination);
       context.createMediaElementSource(this.element).connect(this.gain);
     }
     if (this.context.state === 'suspended') this.context.resume?.()?.catch?.(() => {});
