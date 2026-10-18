@@ -5,7 +5,7 @@ export const ALPHA_FEATURES = [
   { id: 'air-slowmo', label: 'Air slow-mo' },
   { id: 'big-air-camera', label: 'Big-air camera' },
   { id: 'music-muffle', label: 'Speed & air muffle' },
-  { id: 'apex-glare', label: 'Apex sun glare' },
+  { id: 'air-blur', label: 'Air dark blur' },
   { id: 'landing-burst', label: 'Landing burst' },
   { id: 'heavy-mud', label: 'Heavy mud' },
 ];
