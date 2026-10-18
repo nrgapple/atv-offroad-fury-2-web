@@ -1,5 +1,5 @@
 // Alpha hype WebGL effects (authored): a landing burst of dust and thrown dirt,
-// and a screen-space sun glare around the apex of big jumps.
+// and a dark radial blur around the edges in big air.
 export const BURST_FLOATS = 13; // x, y, z, birth, vx, vy, vz, life, size, kind, r, g, b
 
 function compile(gl, type, source) {
@@ -118,72 +118,58 @@ void main(){ float r = dot(v, v); if (r >= 1.0) discard; float a = 1.0 - r; resu
   dispose() { const gl = this.gl; gl.deleteVertexArray(this.vao); gl.deleteBuffer(this.corners); gl.deleteBuffer(this.instances); gl.deleteProgram(this.program); }
 }
 
-// Screen position (0..1, y up) of a world direction at infinity, or null when
-// it lies behind the camera. `m` is a column-major view-projection matrix.
-export function projectDirection(m, d) {
-  const x = m[0] * d[0] + m[4] * d[1] + m[8] * d[2], y = m[1] * d[0] + m[5] * d[1] + m[9] * d[2], w = m[3] * d[0] + m[7] * d[1] + m[11] * d[2];
-  if (!(w > 1e-4)) return null;
-  return [(x / w + 1) / 2, (y / w + 1) / 2];
-}
-
-export class GlareRenderer {
-  constructor(gl) { this.gl = gl; this.draws = 0; this.failed = false; this.sun = null; this.restore(); }
+// Big-air tunnel: copies the frame and blurs it radially towards the centre,
+// darkening and desaturating the edges. The rider in the middle stays sharp.
+export class AirBlurRenderer {
+  constructor(gl) { this.gl = gl; this.draws = 0; this.failed = false; this.width = this.height = 0; this.restore(); }
   restore() {
     const gl = this.gl;
+    this.width = this.height = 0;
     try {
       this.program = link(gl, `#version 300 es
 void main(){ vec2 p = vec2(gl_VertexID == 1 ? 3.0 : -1.0, gl_VertexID == 2 ? 3.0 : -1.0); gl_Position = vec4(p, 0.0, 1.0); }`, `#version 300 es
 precision mediump float;
-uniform vec2 resolution, sun;
-uniform float amount, visible;
-uniform vec3 tint;
+uniform sampler2D scene;
+uniform vec2 resolution;
+uniform float amount;
 out vec4 result;
-float blob(vec2 uv, vec2 at, float size, float aspect){ vec2 d = (uv - at) * vec2(aspect, 1.0); return exp(-dot(d, d) * size); }
 void main(){
   vec2 uv = gl_FragCoord.xy / resolution;
-  float aspect = resolution.x / resolution.y;
-  vec2 d = (uv - sun) * vec2(aspect, 1.0);
-  float r2 = dot(d, d);
-  vec3 c = tint * (1.6 * exp(-r2 * 60.0) + 0.55 * exp(-r2 * 5.0) + 0.35 * exp(-abs(d.y) * 120.0) * exp(-abs(d.x) * 1.8)) * visible;
-  // Lens ghosts on the line through the screen centre.
-  vec2 axis = vec2(0.5) - sun;
-  c += vec3(1.0, 0.75, 0.45) * 0.20 * blob(uv, sun + axis * 0.6, 220.0, aspect) * visible;
-  c += vec3(0.55, 0.85, 1.0) * 0.16 * blob(uv, sun + axis * 1.25, 90.0, aspect) * visible;
-  c += vec3(0.85, 0.6, 1.0) * 0.12 * blob(uv, sun + axis * 1.7, 500.0, aspect) * visible;
-  // A warm exposure lift across the whole frame sells the bright sky.
-  c += tint * 0.1;
-  result = vec4(c * amount, 1.0);
+  vec2 d = (uv - 0.5) * vec2(resolution.x / resolution.y, 1.0);
+  float r = length(d);
+  float edge = smoothstep(0.18, 0.85, r) * amount;
+  // Zoom blur: ten taps stepping towards the centre, longer at the edges.
+  vec2 step = (uv - 0.5) * edge * 0.035;
+  vec3 c = vec3(0.0);
+  for (int i = 0; i < 10; i++) c += texture(scene, uv - step * float(i)).rgb;
+  c /= 10.0;
+  float grey = dot(c, vec3(0.299, 0.587, 0.114));
+  c = mix(c, vec3(grey), 0.45 * edge);
+  c *= 1.0 - 0.7 * smoothstep(0.25, 1.0, r) * amount;
+  result = vec4(c, 1.0);
 }`);
-      this.uniforms = Object.fromEntries(['resolution', 'sun', 'amount', 'visible', 'tint'].map(n => [n, gl.getUniformLocation(this.program, n)]));
-      this.vao = gl.createVertexArray();
+      this.uniforms = Object.fromEntries(['scene', 'resolution', 'amount'].map(n => [n, gl.getUniformLocation(this.program, n)]));
+      this.vao = gl.createVertexArray(); this.texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this.texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     } catch (error) { this.failed = true; this.error = String(error); }
   }
-  draw({ width, height, amount, viewProjection, sunDirection, sunColor = [1, .95, .8], yaw = 0 }) {
+  draw({ width, height, amount }) {
     this.draws = 0;
     if (this.failed || !(amount > .002)) return 0;
-    const gl = this.gl, length = Math.hypot(...sunDirection) || 1, dir = sunDirection.map(v => v / length);
-    let sun = projectDirection(viewProjection, dir), visible = 1;
-    if (!sun) {
-      // Sun behind the camera: leak its light in over the top edge on its side.
-      // Mirror it in front of the camera to find its side, whatever handedness.
-      const f = [Math.sin(yaw), 0, Math.cos(yaw)], along = dir[0] * f[0] + dir[2] * f[2];
-      const mirrored = projectDirection(viewProjection, [dir[0] - 2 * along * f[0], Math.max(dir[1], .2), dir[2] - 2 * along * f[2]]);
-      sun = [mirrored ? Math.max(-.1, Math.min(1.1, mirrored[0])) : .5, 1.18]; visible = .6;
-    }
-    // Off-screen suns fade their core and ghosts but keep the warm wash.
-    const outside = Math.max(0, Math.abs(sun[0] - .5) - .5, Math.abs(sun[1] - .5) - .5);
-    visible *= Math.exp(-outside * 2.5);
-    this.sun = sun;
-    const tint = sunColor.map(v => Math.min(1, .55 + .6 * v));
-    gl.disable(gl.DEPTH_TEST); gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.texture);
+    if (width !== this.width || height !== this.height) { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB8, width, height, 0, gl.RGB, gl.UNSIGNED_BYTE, null); this.width = width; this.height = height; }
+    gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 0, 0, width, height);
+    gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND); gl.depthMask(false);
     gl.useProgram(this.program); gl.bindVertexArray(this.vao);
-    const u = this.uniforms;
-    gl.uniform2f(u.resolution, width, height); gl.uniform2f(u.sun, sun[0], sun[1]); gl.uniform1f(u.amount, Math.min(1, amount));
-    gl.uniform1f(u.visible, visible); gl.uniform3fv(u.tint, tint);
+    gl.uniform1i(this.uniforms.scene, 0); gl.uniform2f(this.uniforms.resolution, width, height); gl.uniform1f(this.uniforms.amount, Math.min(1, amount));
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    gl.disable(gl.BLEND); gl.depthMask(true); gl.enable(gl.DEPTH_TEST); gl.bindVertexArray(null);
+    gl.bindVertexArray(null); gl.depthMask(true); gl.enable(gl.DEPTH_TEST);
     this.draws = 1;
     return 1;
   }
-  dispose() { if (this.vao) this.gl.deleteVertexArray(this.vao); if (this.program) this.gl.deleteProgram(this.program); this.vao = this.program = null; }
+  get textureBytes() { return this.width * this.height * 3; }
+  dispose() { const gl = this.gl; if (this.vao) gl.deleteVertexArray(this.vao); if (this.texture) gl.deleteTexture(this.texture); if (this.program) gl.deleteProgram(this.program); this.vao = this.texture = this.program = null; }
 }

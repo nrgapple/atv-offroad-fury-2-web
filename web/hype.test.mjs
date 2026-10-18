@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { HypeDirector, SLOWMO, heavyMudZones } from './hype.js';
-import { BurstEmitter, projectDirection } from './hype-gl.js';
+import { BurstEmitter } from './hype-gl.js';
 import { AlphaSettings, ALPHA_FEATURES } from './alpha.js';
 import { DirtBuildup } from './graphics.js';
 
@@ -22,7 +22,7 @@ function jump(director, vy0, { onFrame = () => {}, real = 1 / 60 } = {}) {
   return director;
 }
 
-test('small hops stay ordinary: no apex, slow motion, glare or framing change', () => {
+test('small hops stay ordinary: no apex, slow motion, blur or framing change', () => {
   const d = new HypeDirector(); let maxAir = 0;
   jump(d, 12, { onFrame: (_, h) => { maxAir = Math.max(maxAir, h.air); } });
   assert.equal(d.apexes, 0); assert.equal(d.slowmos, 0); assert.equal(d.timeScale, 1);
@@ -42,14 +42,15 @@ test('a big jump fires one apex slow motion that returns to full speed before to
   assert(d.dipVelocity < 0 || d.dip < 0, 'landing compresses the camera');
 });
 
-test('slow motion is skipped when disabled and big-air framing still pulls back', () => {
+test('slow motion is skipped when disabled and big-air framing still closes in', () => {
   const d = new HypeDirector(); let maxAir = 0;
   d.step(frame(1, 0, true), flat);
   let y = 1, vy = 40;
   for (let i = 0; i < 120; i++) { vy -= 32 / 60; y += vy / 60; d.step(frame(y, vy, false), flat); d.update(1 / 60, { slowmo: false }); maxAir = Math.max(maxAir, d.air); }
   assert.equal(d.slowmos, 0); assert.equal(d.timeScale, 1); assert(maxAir > .5);
   const f = { position: [0, 30, -10], target: [0, 26, 0], fov: 60 }, shot = d.camera(f, flat);
-  assert(Math.hypot(...shot.position.map((v, i) => v - shot.target[i])) > Math.hypot(...f.position.map((v, i) => v - f.target[i])));
+  assert(Math.hypot(...shot.position.map((v, i) => v - shot.target[i])) < .8 * Math.hypot(...f.position.map((v, i) => v - f.target[i])));
+  assert(d.blur > .5, 'big air darkens and blurs the edges');
   assert(shot.fov > f.fov);
   assert(d.muffle > .4 && d.wind > .4, 'big air muffles music and raises wind');
 });
@@ -76,13 +77,6 @@ test('landing burst scales with severity and ignores soft landings', () => {
   assert.equal(e.live, Math.min(64, hard));
 });
 
-test('sun projection rejects directions behind the camera', () => {
-  // Identity-like projection with w = -z (looking down -z).
-  const m = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, -1, 0, 0, 0, 0]);
-  assert.deepEqual(projectDirection(m, [0, 0, -1]), [.5, .5]);
-  assert.equal(projectDirection(m, [0, 0, 1]), null);
-});
-
 test('alpha settings persist known ids only and default every feature off', () => {
   const values = new Map(), store = { getItem: k => values.get(k), setItem: (k, v) => values.set(k, v) };
   const a = new AlphaSettings(store);
@@ -104,4 +98,25 @@ test('heavy mud soils faster, dusty zones soil, and turning it off restores the 
   dirt.setHeavy(true, heavyMudZones); assert.equal(dirt.rate, 3); assert.equal(dirt.zones[1].amount, 1);
   dirt.splat(400); assert.equal(dirt.level, 255);
   dirt.setHeavy(false, heavyMudZones); assert.equal(dirt.zones, zones); assert.equal(dirt.rate, 1);
+});
+
+test('rolling off a hillside never counts as big air, however far the ground drops', () => {
+  const d = new HypeDirector(); let maxAir = 0, maxBlur = 0;
+  // Ground falls away at 40 ft/s while the quad drops from rest, no launch.
+  const ground = { y: 0 }, height = () => ground.y;
+  d.step(frame(1, 0, true), height);
+  let y = 1, vy = 0;
+  for (let i = 0; i < 75; i++) {
+    vy -= 32 / 60; y += vy / 60; ground.y -= 40 / 60;
+    d.step(frame(y, vy, false), height); d.update(1 / 60, { slowmo: true });
+    maxAir = Math.max(maxAir, d.air); maxBlur = Math.max(maxBlur, d.blur);
+  }
+  assert(d.peak > 12, `clearance grew to ${d.peak}`);
+  assert.equal(d.apexes, 0); assert.equal(d.slowmos, 0); assert(maxAir < .01 && maxBlur < .01, `${maxAir} ${maxBlur}`);
+});
+
+test('a medium kicker gets no slow motion and little framing', () => {
+  const d = new HypeDirector(); let maxAir = 0;
+  jump(d, 22, { onFrame: (_, h) => { maxAir = Math.max(maxAir, h.air); } });
+  assert.equal(d.slowmos, 0); assert(maxAir < .2, `air ${maxAir}`);
 });

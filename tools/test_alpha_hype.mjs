@@ -10,7 +10,7 @@ try {
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await page.addInitScript(() => {
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
-    localStorage.setItem('atv-alpha', JSON.stringify(window.alphaOverride ?? ['air-slowmo', 'big-air-camera', 'music-muffle', 'apex-glare', 'landing-burst', 'heavy-mud']));
+    localStorage.setItem('atv-alpha', JSON.stringify(window.alphaOverride ?? ['air-slowmo', 'big-air-camera', 'music-muffle', 'air-blur', 'landing-burst', 'heavy-mud']));
     const NativeWorker = Worker;
     window.Worker = class extends NativeWorker { constructor(...args) { super(...args); window.alphaWorker = this; } };
     window.hypeSamples = [];
@@ -50,7 +50,7 @@ try {
   // Slow motion: real time per 60 Hz step stretches to at least ~2x during the apex.
   const slow = samples.filter(s => s.timeScale < .5);
   const stretch = slow.length > 2 ? (slow.at(-1).now - slow[0].now) / Math.max(1, slow.at(-1).steps - slow[0].steps) : 0;
-  const result = { glareSun: samples.find(s => s.glareSun)?.glareSun ?? null, launched, minScale, stretchMsPerStep: stretch, maxAir: max('air'), maxGlare: max('glare'), glareDraws: max('glareDraws'), maxMuffle: max('musicMuffle'),
+  const result = { launched, minScale, stretchMsPerStep: stretch, maxAir: max('air'), maxBlur: max('blur'), blurDraws: max('blurDraws'), maxMuffle: max('musicMuffle'),
     hypeMuffle: max('muffle'), minDip: Math.min(...samples.map(s => s.dip)), burstLive: max('burstLive'), landing, dirtStart: samples[0].dirt, dirtEnd: samples.at(-1).dirt, slowmos: samples.at(-1).slowmos };
   console.log(JSON.stringify(result));
   assert.equal(result.slowmos, 1, 'one apex slow motion');
@@ -58,7 +58,7 @@ try {
   assert(stretch > 30, `real ms per step during slow motion ${stretch}`);
   assert(samples.at(-1).timeScale === 1, 'full speed after landing');
   assert(result.maxAir > .5, 'big-air framing engaged');
-  assert(result.maxGlare > .3 && result.glareDraws === 1, 'apex glare drawn');
+  assert(result.maxBlur > .5 && result.blurDraws === 1, 'air dark blur drawn');
   assert(result.hypeMuffle > .5, 'muffle engaged in the air');
   assert(landing?.severity > 20, 'hard landing detected');
   assert(result.minDip < -.2, 'landing camera compression');
@@ -72,7 +72,7 @@ try {
   await button(page, 'Alpha (experimental)').click();
   await waitForScreen(page, 'alpha');
   const rows = await page.locator('.pause-panel button').evaluateAll(b => b.map(x => x.getAttribute('aria-label')));
-  assert.deepEqual(rows, ['Air slow-mo: On', 'Big-air camera: On', 'Speed & air muffle: On', 'Apex sun glare: On', 'Landing burst: On', 'Heavy mud: On', 'Arcade flips: Off', 'Back']);
+  assert.deepEqual(rows, ['Air slow-mo: On', 'Big-air camera: On', 'Speed & air muffle: On', 'Air dark blur: On', 'Landing burst: On', 'Heavy mud: On', 'Arcade flips: Off', 'Back']);
   await button(page, 'Air slow-mo: On').click();
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('atv-alpha')).includes('air-slowmo') === false);
   await optionalScreenshot(page, 'ATV_ALPHA_SCREENSHOTS', 'menu');

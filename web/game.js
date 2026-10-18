@@ -28,7 +28,7 @@ import { TireTrackRenderer } from './tire-tracks.js';
 import { LingeringDustRenderer } from './lingering-dust.js';
 import { AlphaSettings } from './alpha.js';
 import { HypeDirector, heavyMudZones } from './hype.js';
-import { BurstRenderer, GlareRenderer } from './hype-gl.js';
+import { BurstRenderer, AirBlurRenderer } from './hype-gl.js';
 import { VehicleShadowMap, lightMatrices, shadowReceiverGlsl } from './shadow-map.js';
 import { KeyboardHelp } from './keyboard-help.js';
 import { createScreenWakeLock } from './wake-lock.js';
@@ -85,7 +85,7 @@ const alphaSettings = new AlphaSettings(), hype = new HypeDirector();
 // Alpha "Arcade flips" (authored, research/FLIPS.md): analog air rotation that
 // implies flips and replaces the Unleashed gestures.
 const arcadeFlips = () => alphaSettings.enabled('arcade-flips');
-let burstRenderer, glareRenderer, hypeAudio = [0, 0];
+let burstRenderer, airBlurRenderer, hypeAudio = [0, 0];
 alphaSettings.onChange = (id, on) => {
   if (id === 'heavy-mud') dirtBuildup.setHeavy(on, heavyMudZones);
   if (id === 'music-muffle' && !on) { audio.stopHype(); hypeAudio = [0, 0]; }
@@ -2183,9 +2183,9 @@ function render(time) {
       focus:speedRushFocus(viewProjection,[camera.x,camera.y,camera.z],actor?.linear_velocity??simFrame?.linear_velocity??[0,0,0]),
       vehicle:speedRushBounds(viewProjection,actor.origin)});
   } else speedRush.draws=0;
-  if (alphaSettings.enabled('apex-glare') && hype.glare > .002) (glareRenderer ??= new GlareRenderer(gl)).draw({ width, height, amount: hype.glare, viewProjection, sunDirection, sunColor, yaw: camera.yaw });
-  else if (glareRenderer) glareRenderer.draws = 0;
-  diagnostics.hype = { ...hype.snapshot(), alpha: [...alphaSettings.on], burstLive: burstRenderer?.emitter.live ?? 0, glareDraws: glareRenderer?.draws ?? 0, glareSun: glareRenderer?.sun ?? null, thumps: audio.thumps ?? 0, musicMuffle: audio.hypeMuffle ?? 0 };
+  if (alphaSettings.enabled('air-blur') && hype.blur > .002) (airBlurRenderer ??= new AirBlurRenderer(gl)).draw({ width, height, amount: hype.blur });
+  else if (airBlurRenderer) airBlurRenderer.draws = 0;
+  diagnostics.hype = { ...hype.snapshot(), alpha: [...alphaSettings.on], burstLive: burstRenderer?.emitter.live ?? 0, blurDraws: airBlurRenderer?.draws ?? 0, thumps: audio.thumps ?? 0, musicMuffle: audio.hypeMuffle ?? 0 };
   diagnostics.visibility = { terrainDraws, terrainTriangles, sceneryDraws, sceneryTriangles, terrainCulled: chunks.length - terrainDraws, sceneryCulled: sceneDraws.length - sceneryVisibleGroups };
   diagnostics.frames++; diagnostics.renderRatio = renderScale.ratio;
   diagnostics.graphics = { setting: graphicsSettings.preset, ...graphics, anisotropyApplied: graphics.anisotropy ? anisotropyLevel() : 0, interpolated: Boolean(atvSmooth), dirtLevel: dirtBuildup.level, dirtApplied: graphics.dirt ? dirtBuildup.amount : 0, wheelLinkage: Boolean(quadLinkage), wheelLift };
@@ -2347,7 +2347,7 @@ window.addEventListener('resize', () => { scheduleRender(); });
 canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); lost = true; for(const model of remoteModels.values()){model.chunks=null;model.gpuTextures=[];for(const entry of model.gear?.values()??[])entry.gpu=null;} for(const cpu of raceCpuModels)cpu.gpu=null; diagnostics.ready = false; clearInput(); syncAudio(); frontend?.setLoading(true, 'Restoring graphics…'); status('Restoring graphics…'); });
 // Every old GPU handle belongs to the lost context, including vegetation instances.
 // Discard those references before buildMesh runs its normal resource cleanup.
-canvas.addEventListener('webglcontextrestored', () => { try { lost = false; glShadow?.reset(); contactShadows = undefined; shadowMap = undefined; anisotropyExtension = undefined; anisotropicTextures = new Map(); tireTracks?.restore(); lingeringDust?.restore(); burstRenderer?.restore(); glareRenderer = undefined; speedRush = new SpeedRush(gl, { coarse: coarsePointer() }); snowRenderer=undefined; ambientEffectsRenderer=undefined; bloodRenderer = undefined; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); scheduleRender(); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
+canvas.addEventListener('webglcontextrestored', () => { try { lost = false; glShadow?.reset(); contactShadows = undefined; shadowMap = undefined; anisotropyExtension = undefined; anisotropicTextures = new Map(); tireTracks?.restore(); lingeringDust?.restore(); burstRenderer?.restore(); airBlurRenderer = undefined; speedRush = new SpeedRush(gl, { coarse: coarsePointer() }); snowRenderer=undefined; ambientEffectsRenderer=undefined; bloodRenderer = undefined; wheelEffectsRenderer = undefined; trainRenderer = undefined; waterRenderer = undefined; chunks = []; vehicleChunks = []; sceneChunks = []; sceneDraws = []; skyChunks = []; ecoGroups = []; ecoBillboard = null; gpuTextures = []; initializeGl(); if (terrain) { buildMesh(); uploadTerrainTextures(); } syncAudio(); diagnostics.ready = Boolean(terrain); frontend?.setLoading(false); scheduleRender(); status(simReady ? 'Physics reconstruction. Handling, collisions, animation and sound are incomplete.' : 'Static terrain.'); } catch (error) { status(error.message, true); } });
 window.addEventListener('pagehide', event => {
   usage.report(1);
   cancelAnimationFrame(frame); frame = 0; clearInput();

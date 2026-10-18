@@ -7,18 +7,20 @@ const clamp01 = v => Math.max(0, Math.min(1, v));
 const smooth = (edge0, edge1, v) => { const t = clamp01((v - edge0) / (edge1 - edge0)); return t * t * (3 - 2 * t); };
 const approach = (value, target, dt, tc) => value + (target - value) * (1 - Math.exp(-dt / tc));
 
-// Feet above the terrain under the quad. Below BIG the jump is ordinary.
-export const BIG_AIR = 7, FULL_AIR = 24, APEX_MIN = 10;
+// A big jump needs a real launch: the quad must climb RISE ft above its
+// takeoff height and reach BIG_AIR ft above the terrain (FULL_AIR saturates).
+// Rolling off a hillside never climbs, however far the ground falls away.
+export const BIG_AIR = 12, FULL_AIR = 30, RISE = [4, 10], APEX_MIN = 14, APEX_RISE = 8, MIN_AIR_TIME = .45;
 // Slow motion (real seconds): ease in, hold, ease out to full speed.
 export const SLOWMO = { scale: .3, easeIn: .12, hold: .55, easeOut: .3 };
 
 export class HypeDirector {
   constructor() { this.reset(); }
   reset() {
-    this.previous = null; this.airTime = 0; this.clearance = 0; this.peak = 0; this.speed = 0;
+    this.previous = null; this.airTime = 0; this.clearance = 0; this.peak = 0; this.speed = 0; this.takeoff = 0; this.rise = 0;
     this.apexFired = false; this.apexAge = Infinity; this.apexes = 0; this.landings = 0; this.landing = null;
     this.riding = false; this.grounded = true;
-    this.air = 0; this.glare = 0; this.muffle = 0; this.wind = 0; this.slam = 0; this.dip = 0; this.dipVelocity = 0;
+    this.air = 0; this.blur = 0; this.muffle = 0; this.wind = 0; this.slam = 0; this.dip = 0; this.dipVelocity = 0;
     this.slow = null; this.timeScale = 1; this.slowmos = 0;
     this.seenApexes = 0; this.seenLandings = 0;
   }
@@ -26,7 +28,7 @@ export class HypeDirector {
   step(frame, height) {
     const old = this.previous; this.previous = frame;
     if (!frame?.origin || !old || old.reset_count !== frame.reset_count || Math.hypot(...frame.origin.map((v, i) => v - old.origin[i])) > 40) {
-      this.airTime = 0; this.peak = 0; this.apexFired = false; this.apexAge = Infinity; this.grounded = true; this.riding = false; return;
+      this.airTime = 0; this.peak = 0; this.rise = 0; this.apexFired = false; this.apexAge = Infinity; this.grounded = true; this.riding = false; return;
     }
     this.riding = frame.wreck?.phase === 'Riding';
     this.grounded = Boolean(frame.grounded?.some(Boolean));
@@ -39,18 +41,20 @@ export class HypeDirector {
         this.landing = { severity: Math.max(0, -oldVy), airTime: this.airTime, peak: this.peak, position: [...frame.origin] };
         this.landings++;
       }
-      this.airTime = 0; this.peak = 0; this.apexFired = false; this.apexAge = Infinity;
+      this.airTime = 0; this.peak = 0; this.rise = 0; this.apexFired = false; this.apexAge = Infinity;
       return;
     }
-    this.airTime += STEP; this.peak = Math.max(this.peak, this.clearance);
+    if (!this.airTime) this.takeoff = old.origin[1];
+    this.airTime += STEP; this.peak = Math.max(this.peak, this.clearance); this.rise = Math.max(this.rise, frame.origin[1] - this.takeoff);
     if (this.apexFired) this.apexAge += STEP;
-    if (!this.apexFired && this.riding && oldVy > 0 && vy <= 0 && this.clearance >= APEX_MIN && this.airTime > .25) {
+    if (!this.apexFired && this.riding && oldVy > 0 && vy <= 0 && this.clearance >= APEX_MIN && this.rise >= APEX_RISE && this.airTime > .25) {
       this.apexFired = true; this.apexAge = 0; this.apexes++;
     }
   }
   // Big-air amount (0..1) for the frame being shown: the highest point of the
   // jump so far, held until touchdown so the framing never sags mid-fall.
-  get airTarget() { return this.riding && !this.grounded ? smooth(BIG_AIR, FULL_AIR, this.peak) : 0; }
+  get airTarget() { return this.big; }
+  get big() { return this.riding && !this.grounded && this.airTime >= MIN_AIR_TIME ? smooth(BIG_AIR, FULL_AIR, this.peak) * smooth(RISE[0], RISE[1], this.rise) : 0; }
   // Once per rendered frame with real seconds. Options select enabled effects.
   update(dt, { slowmo = false } = {}) {
     dt = Math.max(0, Math.min(.1, dt));
@@ -69,9 +73,11 @@ export class HypeDirector {
     } else this.timeScale = 1;
     const target = this.airTarget;
     this.air = approach(this.air, target, dt, target > this.air ? .4 : .22);
-    // Glare blooms around the apex of a big jump and fades on the way down.
-    const glareTarget = this.apexAge < .9 && !this.grounded ? smooth(BIG_AIR, FULL_AIR, this.peak) : 0;
-    this.glare = approach(this.glare, glareTarget, dt, glareTarget > this.glare ? .18 : .45);
+    // Dark edge blur builds through big air, peaks around the apex and clears
+    // quickly at touchdown.
+    const big = this.big;
+    const blurTarget = big * (.75 + .25 * (this.apexAge < .9 ? 1 : 0));
+    this.blur = approach(this.blur, blurTarget, dt, blurTarget > this.blur ? .3 : .12);
     // Landing: camera compression spring and the music slamming back in.
     if (landed && this.landing) {
       const hit = Math.min(70, this.landing.severity) * (.4 + .6 * smooth(2, FULL_AIR, this.landing.peak));
@@ -90,14 +96,14 @@ export class HypeDirector {
     this.wind = approach(this.wind, windTarget, dt, this.slam > 0 ? .05 : .35);
     return { landed: landed ? this.landing : null, apex };
   }
-  // Big-air chase framing: pull back, drop the eye so the height reads and
-  // widen slightly; landings compress the camera downwards and spring back.
+  // Big-air chase framing: close in behind the rider so the flight feels
+  // personal, widen slightly; landings compress the camera and spring back.
   camera(frame, height) {
     const a = this.air, dip = this.dip;
     if (a < .001 && Math.abs(dip) < .001) return frame;
-    // Pull back horizontally only: a steep falling view must not climb higher.
-    const offset = frame.target.map((v, i) => v - frame.position[i]), pull = 1 + .45 * a;
-    const position = [frame.target[0] - offset[0] * pull, frame.position[1] - 3 * a, frame.target[2] - offset[2] * pull];
+    // Close in towards the aim point; a steep falling view also flattens out.
+    const offset = frame.target.map((v, i) => v - frame.position[i]), pull = 1 - .4 * a;
+    const position = [frame.target[0] - offset[0] * pull, frame.target[1] - offset[1] * (1 - .6 * a), frame.target[2] - offset[2] * pull];
     const floor = height?.(position[0], position[2]);
     if (Number.isFinite(floor)) position[1] = Math.max(position[1], floor + 2);
     const target = [...frame.target];
@@ -105,8 +111,8 @@ export class HypeDirector {
     return { ...frame, position, target, fov: frame.fov * (1 + .1 * a) };
   }
   snapshot() {
-    return { airTime: this.airTime, clearance: this.clearance, peak: this.peak, air: this.air, glare: this.glare, muffle: this.muffle, wind: this.wind,
-      dip: this.dip, timeScale: this.timeScale, slowmos: this.slowmos, apexes: this.apexes, landings: this.landings, landing: this.landing };
+    return { airTime: this.airTime, clearance: this.clearance, peak: this.peak, air: this.air, blur: this.blur, muffle: this.muffle, wind: this.wind,
+      rise: this.rise, dip: this.dip, timeScale: this.timeScale, slowmos: this.slowmos, apexes: this.apexes, landings: this.landings, landing: this.landing };
   }
 }
 
