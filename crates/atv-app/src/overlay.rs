@@ -46,6 +46,9 @@ pub struct HudInput<'a> {
     /// A race's latest frame, the committed stunt points and the drawn
     /// player origin (the race overlays and 321 lamps).
     pub race: Option<(&'a atv_core::race::Frame, f32, [f32; 3])>,
+    /// Other riders in a multiplayer room, the player's origin and the
+    /// scene's view-projection (name tags and map markers).
+    pub peers: Option<(&'a [atv_ui::hud::peers::Peer], [f32; 3], [f32; 16])>,
 }
 
 /// A press on a toolbar button or the minimap (utility pointers in touch.js).
@@ -59,6 +62,9 @@ struct Press {
 
 pub const MOUSE: u64 = u64::MAX;
 
+/// A laid-out menu: view, state, paint, hits and scroll range.
+type MenuCache = (Viewport, pause::State, DisplayList, Vec<(Rect, u32)>, f32);
+
 /// Laid-out race results: inputs (view, state, summary), paint and hits.
 type ResultsCache = (Viewport, Results, String, DisplayList, Vec<(Rect, u32)>);
 
@@ -66,6 +72,8 @@ type ResultsCache = (Viewport, Results, String, DisplayList, Vec<(Rect, u32)>);
 type ToolbarCache = (Viewport, toolbar::State, DisplayList, Vec<(Rect, u32)>);
 
 pub struct Overlay {
+    /// Name tags drawn on the latest frame (tests).
+    pub tags: usize,
     pub fonts: Fonts,
     renderer: Renderer,
     pub settings: Settings,
@@ -103,6 +111,17 @@ pub struct Overlay {
     pub prefs: Preferences,
     /// Controller glyph rasters for the bindings pages.
     glyphs: atv_ui::menu::glyphs::GlyphImages,
+    /// The ride's soundtrack player view (set by the host each frame while
+    /// a menu is open) and the original Jukebox art.
+    pub music: Option<atv_ui::menu::jukebox::MusicView>,
+    pub jukebox_art: Option<atv_ui::menu::jukebox::Art>,
+    /// The Jukebox was opened: the host loads its art once.
+    pub jukebox_art_wanted: bool,
+    /// The last menu layout: its inputs, paint, hits and scroll range.
+    menu_cache: Option<MenuCache>,
+    /// The Jukebox has centred its playing row since it opened.
+    jukebox_centred: bool,
+    created: web_time::Instant,
     /// The pause menu while the ride is paused.
     pub menu: Option<PauseMenu>,
     menu_hits: Vec<(Rect, u32)>,
@@ -152,6 +171,7 @@ impl Overlay {
             results: Results::default(),
             results_cache: None,
             help_open: false,
+            tags: 0,
             help_until: None,
             ride_started: false,
             toolbar_cache: None,
@@ -160,6 +180,12 @@ impl Overlay {
             pad_name: None,
             prefs,
             glyphs: Default::default(),
+            music: None,
+            jukebox_art: None,
+            jukebox_art_wanted: false,
+            menu_cache: None,
+            jukebox_centred: false,
+            created: web_time::Instant::now(),
             menu: None,
             menu_hits: Vec::new(),
             menu_scroll_max: 0.,
@@ -238,6 +264,7 @@ impl Overlay {
             bindings,
             pad_name: self.pad_name.clone(),
             view: self.view,
+            music: self.music.as_ref(),
         };
         Some(f(menu, &mut ctx, &self.menu_hits, self.menu_scroll_max))
     }
@@ -513,6 +540,17 @@ impl Overlay {
             preload_fill: h.hud.preload_fill,
             preload_blue_alpha: h.hud.preload_blue_alpha as f32,
         });
+        self.minimap.peers = hud
+            .as_ref()
+            .and_then(|h| h.peers)
+            .map(|(peers, ..)| {
+                peers
+                    .iter()
+                    .filter(|p| !p.stale)
+                    .map(|p| (p.slot, p.position))
+                    .collect()
+            })
+            .unwrap_or_default();
         // Races hide the GPS map (minimap.draw's !raceSettings).
         self.minimap.update(
             now,
@@ -658,6 +696,19 @@ impl Overlay {
             .filter(|_| active)
             .map(|start| ((now - start) / 500.) as f32)
             .filter(|t| *t < 1.);
+        // Name tags over other riders, under the map and menus.
+        if let Some((peers, origin, vp)) = shown.and_then(|h| h.peers) {
+            self.tags = atv_ui::hud::peers::paint_tags(
+                &mut self.fonts,
+                &mut self.list,
+                &view,
+                peers,
+                origin,
+                &vp,
+            );
+        } else {
+            self.tags = 0;
+        }
         if map_visible {
             self.minimap.paint(&view, &mut self.fonts, &mut self.list);
             self.hits.push((map, MINIMAP));
@@ -750,6 +801,38 @@ impl Overlay {
         }
     }
 
+    /// Registers the original Jukebox art (PAGE14 backdrop and CD frames).
+    pub fn set_jukebox_art(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        art: atv_game::jukebox::JukeboxArt,
+    ) {
+        let backdrop = art.backdrop.map(|(w, h, rgba)| {
+            let id = self.renderer.add_image(device, queue, w, h, &rgba);
+            (id, [w as f32, h as f32])
+        });
+        let disc_size = art
+            .disc
+            .first()
+            .map_or([0.; 2], |(w, h, _)| [*w as f32, *h as f32]);
+        let disc = art
+            .disc
+            .iter()
+            .map(|(w, h, rgba)| self.renderer.add_image(device, queue, *w, *h, rgba))
+            .collect();
+        self.jukebox_art = Some(atv_ui::menu::jukebox::Art {
+            backdrop,
+            disc,
+            disc_size,
+        });
+    }
+
+    /// The Jukebox page is open (it animates every frame).
+    pub fn jukebox_open(&self) -> bool {
+        self.menu.as_ref().is_some_and(|m| m.page == "jukebox")
+    }
+
     /// Escape/Enter while the race results are up: true when taken.
     pub fn results_key(&mut self, code: &str) -> (bool, Option<Action>) {
         if self.menu.is_some() {
@@ -796,12 +879,24 @@ impl Overlay {
     ) {
         let view = self.view;
         let start = self.list.items.len();
-        let Some(state) = self.with_menu(bindings.as_deref_mut(), |m, ctx, _, _| {
+        let Some(mut state) = self.with_menu(bindings.as_deref_mut(), |m, ctx, _, _| {
             m.refresh(ctx);
             m.state(ctx)
         }) else {
             return;
         };
+        if state.page == "jukebox" {
+            // The original art loads on the first visit (jukebox.js loadArt).
+            self.jukebox_art_wanted = true;
+            state.jukebox_art = self.jukebox_art.clone();
+            // jb-turn: 20 steps every 1.6 s while a song plays.
+            if state.music.as_ref().is_some_and(|m| m.playing && m.enabled) {
+                state.frame = (web_time::Instant::now()
+                    .duration_since(self.created)
+                    .as_millis()
+                    / 80) as usize;
+            }
+        }
         self.glyphs.prepare(
             &mut self.renderer,
             device,
@@ -809,6 +904,16 @@ impl Overlay {
             state.pad.as_ref(),
             view.scale,
         );
+        // An unchanged menu reuses its layout (the Jukebox redraws often).
+        if let Some((v, s, list, hits, max)) = &self.menu_cache
+            && *v == view
+            && *s == state
+        {
+            self.list.items.extend_from_slice(&list.items);
+            self.menu_hits.clone_from(hits);
+            self.menu_scroll_max = *max;
+            return;
+        }
         let mut hits = Vec::new();
         layout::render(
             &pause::element(&view, &state, &self.glyphs),
@@ -820,13 +925,56 @@ impl Overlay {
         );
         let rect = |id| hits.iter().find(|(_, i)| *i == id).map(|(r, _)| *r);
         if let (Some(panel), Some(content)) = (rect(pause::PANEL), rect(pause::CONTENT)) {
-            let padding = if view.width <= 580. || view.height <= 450. {
+            // The Jukebox scrolls only its track list (no panel padding).
+            let padding = if state.page == "jukebox" {
+                0.
+            } else if view.width <= 580. || view.height <= 450. {
                 20.
             } else {
                 30.
             };
             self.menu_scroll_max = (content.h - (panel.h - 2. * padding)).max(0.);
         }
+        // jukebox.js: open with the playing song centred in the list.
+        let centre = state.page == "jukebox" && !self.jukebox_centred;
+        self.jukebox_centred = state.page == "jukebox";
+        if centre
+            && let (Some(panel), Some(index)) = (
+                rect(pause::PANEL),
+                state
+                    .music
+                    .as_ref()
+                    .and_then(|m| m.playing_index)
+                    .and_then(|i| {
+                        state
+                            .rows
+                            .choices
+                            .iter()
+                            .position(|c| *c == format!("song:{i}"))
+                    }),
+            )
+            && let Some(row) = rect(pause::ROW + index as u32)
+            && let Some(menu) = &mut self.menu
+        {
+            let before = menu.scroll;
+            menu.scroll = (menu.scroll + row.y - panel.y - (panel.h - row.h) / 2.)
+                .clamp(0., self.menu_scroll_max);
+            if menu.scroll != before {
+                self.list.items.truncate(start);
+                self.menu_cache = None;
+                self.prepare_menu(device, queue, bindings);
+                return;
+            }
+        }
+        self.menu_cache = Some((
+            view,
+            state,
+            DisplayList {
+                items: self.list.items[start..].to_vec(),
+            },
+            hits.clone(),
+            self.menu_scroll_max,
+        ));
         self.menu_hits = hits;
         if std::mem::take(&mut self.menu_reveal) {
             let hits = std::mem::take(&mut self.menu_hits);
@@ -861,6 +1009,11 @@ impl Overlay {
                 "choices": m.rows.choices,
                 "scroll": m.scroll,
                 "notice": m.notice,
+                "music": self.music.as_ref().map(|v| serde_json::json!({
+                    "playing": v.playing_index, "enabled": v.enabled, "paused": v.paused,
+                    "position": v.position, "duration": v.duration, "volume": v.volume,
+                    "songs": v.songs.len(), "art": self.jukebox_art.is_some(),
+                })),
                 "hits": self.menu_hits.iter().filter(|(_, id)| *id >= pause::ROW).map(|(r, id)| serde_json::json!({
                     "action": m.rows.choices.get((*id - pause::ROW) as usize),
                     "x": r.x, "y": r.y, "width": r.w, "height": r.h,

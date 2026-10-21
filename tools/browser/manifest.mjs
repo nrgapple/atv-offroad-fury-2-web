@@ -39,6 +39,7 @@ export const TESTS = {
   'test_engine_pause.mjs': { group: 'content' },
   'test_engine_alpha.mjs': { group: 'content' },
   'test_engine_settings.mjs': { group: 'content' },
+  'test_engine_jukebox.mjs': { group: 'content' },
   'test_engine_ride_link.mjs': { group: 'content' },
   'test_engine_freeride.mjs': {
     group: 'relay',
@@ -54,6 +55,10 @@ export const TESTS = {
     reason: 'needs the multiplayer relay at the same origin (Host Game, room WebSocket); run with --url'
   },
   'test_engine_multiplayer_presence.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Host Game, room WebSocket); run with --url'
+  },
+  'test_engine_multiplayer_tags.mjs': {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (Host Game, room WebSocket); run with --url'
   },

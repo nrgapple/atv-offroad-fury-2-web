@@ -42,6 +42,16 @@ impl Catalog {
             .next_song(&mut self.random)?
             .map(|i| &self.library.songs[i]))
     }
+
+    /// The next shuffle pick's index (op 41 without a selection).
+    pub fn next_index(&mut self) -> Result<Option<usize>> {
+        self.shuffle.next_song(&mut self.random)
+    }
+
+    /// A chosen song (op 41 `select`): the shuffle continues after it.
+    pub fn select(&mut self, index: usize) -> Result<()> {
+        self.shuffle.select(index)
+    }
 }
 
 /// Content path of a catalog song.
@@ -56,6 +66,20 @@ pub struct VagMusic {
     offset: usize,
     resampler: Resampler,
     pub title: String,
+}
+
+impl VagMusic {
+    /// Seconds decoded so far and the song's length.
+    pub fn decoded_seconds(&self) -> (f32, f32) {
+        let info = &self.stream.info;
+        let per = |bytes: usize| {
+            (bytes / 16 * 28) as f32 / info.channels.max(1) as f32 / info.sample_rate.max(1) as f32
+        };
+        (
+            per(self.offset),
+            info.frames_max as f32 / info.sample_rate.max(1) as f32,
+        )
+    }
 }
 
 /// Bytes decoded per read (the browser fallback's 64 KiB).
