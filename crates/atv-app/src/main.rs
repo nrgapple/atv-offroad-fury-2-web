@@ -9,8 +9,8 @@ use atv_content::{Store, pack};
 use std::path::PathBuf;
 
 const USAGE: &str = "usage: fury [--content DIR | --pack FILE] [--venue ID] [--free] \
-[--camera x,y,z,yaw,pitch,focal] [--script IN.json] [--trace OUT.json] [--capture OUT.png WxH] \
-[--verify-content] [--version]";
+[--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high] \
+[--script IN.json] [--trace OUT.json] [--capture OUT.png WxH] [--verify-content] [--version]";
 
 fn fail(message: &str) -> ! {
     eprintln!("fury: {message}");
@@ -53,6 +53,9 @@ fn main() {
     let mut capture = None;
     let mut verify = false;
     let mut camera = None;
+    let mut weather = None;
+    let mut steps = None;
+    let mut graphics = atv_render::Graphics::default();
     let mut ride = true;
     let mut script = None;
     let mut trace = None;
@@ -76,6 +79,20 @@ fn main() {
                         .expect("--camera needs x,y,z,yaw,pitch,focal"),
                 )
             }
+            "--weather" => {
+                weather = Some(
+                    atv_app::parse_switch(&args.next().unwrap_or_default())
+                        .expect("--weather needs on or off"),
+                )
+            }
+            "--steps" => {
+                steps = Some(
+                    args.next()
+                        .and_then(|v| v.parse().ok())
+                        .expect("--steps needs a count"),
+                )
+            }
+            "--graphics" => graphics = atv_app::graphics_preset(&args.next().unwrap_or_default()),
             "--capture" => {
                 let path = args.next().expect("--capture needs a PNG path");
                 let size = args.next().unwrap_or_else(|| "1280x720".into());
@@ -111,6 +128,9 @@ fn main() {
         store,
         venue,
         camera,
+        weather,
+        steps,
+        graphics,
         capture,
         ride,
         script,
