@@ -80,7 +80,8 @@ for (const engine of ['chromium', 'webkit']) {
       await frames(page, 10);
       assert.equal((await state(page)).step, s.step, 'pause freezes simulation');
       await pointer('up', 1, primary);
-      const resume = center((await state(page)).toolbar.hits.find(h => h.id === 1));
+      // The pause menu replaces the toolbar while paused; its Resume row resumes.
+      const resume = center((await state(page)).toolbar.menu.hits.find(h => h.action === 'resume'));
       await pointer('down', 2, resume);
       await pointer('up', 2, resume);
       await wait(page, () => !JSON.parse(document.querySelector('#ui-state').textContent).paused);

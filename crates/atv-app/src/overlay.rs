@@ -11,6 +11,11 @@ use atv_ui::{
         toolbar,
     },
     layout,
+    menu::{
+        self as pause,
+        controller::{Context, Event as MenuEvent, PauseMenu},
+        prefs::Preferences,
+    },
     settings::Settings,
     taffy,
     touch::{Controls, Feedback, TouchControls},
@@ -69,6 +74,12 @@ pub struct Overlay {
     /// unchanged (the browser HUD's unchanged-state redraw avoidance).
     toolbar_cache: Option<ToolbarCache>,
     help_cache: Option<(Viewport, DisplayList)>,
+    pub prefs: Preferences,
+    /// The pause menu while the ride is paused.
+    pub menu: Option<PauseMenu>,
+    menu_hits: Vec<(Rect, u32)>,
+    menu_scroll_max: f32,
+    menu_reveal: bool,
     /// CPU time of the last `prepare`, milliseconds.
     pub prepare_ms: f64,
     /// Parity test hook: a flat colour painted under the UI.
@@ -90,6 +101,7 @@ impl Overlay {
         let mut touch = TouchControls::new(&settings, view.coarse);
         touch.set_viewport(view.width, view.height);
         let minimap = Minimap::new(MinimapSettings::load(&settings));
+        let prefs = Preferences::load(&settings, view.touch_first);
         Self {
             fonts: Fonts::new(),
             renderer: Renderer::new(device, format),
@@ -109,6 +121,11 @@ impl Overlay {
             ride_started: false,
             toolbar_cache: None,
             help_cache: None,
+            prefs,
+            menu: None,
+            menu_hits: Vec::new(),
+            menu_scroll_max: 0.,
+            menu_reveal: false,
             prepare_ms: 0.,
             backdrop: None,
         }
@@ -146,6 +163,69 @@ impl Overlay {
             meter.images.insert(name.clone(), id);
         }
         self.meter = Some(meter);
+    }
+
+    /// Opens the pause menu at Pause when the ride pauses; closes it on resume.
+    pub fn sync_menu(&mut self, paused: bool) {
+        match (paused, self.menu.is_some()) {
+            (true, false) => {
+                self.menu = Some(PauseMenu::new());
+                self.press = None;
+                self.touch.clear();
+            }
+            (false, true) => {
+                self.menu = None;
+                self.menu_hits.clear();
+            }
+            _ => {}
+        }
+    }
+
+    /// Runs a menu input with the settings it may change.
+    fn with_menu<T>(
+        &mut self,
+        f: impl FnOnce(&mut PauseMenu, &mut Context, &[(Rect, u32)], f32) -> T,
+    ) -> Option<T> {
+        let menu = self.menu.as_mut()?;
+        let mut ctx = Context {
+            settings: &mut self.settings,
+            prefs: &mut self.prefs,
+            minimap: &mut self.minimap.settings,
+            touch: &mut self.touch,
+            view: self.view,
+        };
+        Some(f(menu, &mut ctx, &self.menu_hits, self.menu_scroll_max))
+    }
+
+    pub fn menu_key(&mut self, code: &str) -> Option<MenuEvent> {
+        self.menu_reveal = true;
+        self.with_menu(|m, ctx, _, _| m.key(code, ctx)).flatten()
+    }
+
+    pub fn menu_pad(&mut self, buttons: [f32; 17], axes: [f32; 4]) -> Option<MenuEvent> {
+        self.menu_reveal = true;
+        self.with_menu(|m, ctx, _, _| m.pad(buttons, axes, ctx))
+            .flatten()
+    }
+
+    pub fn menu_press(&mut self, pointer: u64, x: f32, y: f32) {
+        self.with_menu(|m, ctx, hits, _| m.press(hits, pointer, x, y, ctx));
+    }
+
+    pub fn menu_drag(&mut self, pointer: u64, x: f32, y: f32) {
+        self.with_menu(|m, ctx, hits, max| {
+            m.hover(hits, x, y);
+            m.drag(pointer, x, y, max, ctx)
+        });
+    }
+
+    pub fn menu_release(&mut self, pointer: u64, x: f32, y: f32) -> Option<MenuEvent> {
+        self.with_menu(|m, ctx, hits, _| m.release(hits, pointer, x, y, ctx))
+            .flatten()
+    }
+
+    pub fn menu_wheel(&mut self, dy: f32) {
+        self.with_menu(|m, _, _, max| m.wheel(dy, max));
     }
 
     /// H toggles the keyboard card while riding (keyboard-help.js).
@@ -282,6 +362,12 @@ impl Overlay {
             );
         }
         let view = self.view;
+        if self.menu.is_some() {
+            self.prepare_menu();
+            self.upload(device, queue, width, height);
+            self.prepare_ms = started.elapsed().as_secs_f64() * 1000.;
+            return;
+        }
         let touch_driving = self.touch.driving(active) || view.touch_first;
         // The GPS map builds in ~2 ms slices like buildSlice, then uploads once.
         if let Some(hud) = &hud
@@ -430,6 +516,11 @@ impl Overlay {
                 self.list.items.extend_from_slice(&list.items);
             }
         }
+        self.upload(device, queue, width, height);
+        self.prepare_ms = started.elapsed().as_secs_f64() * 1000.;
+    }
+
+    fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, width: u32, height: u32) {
         let upload_size = (width, height, self.view.scale);
         if self.list != self.uploaded || self.upload_size != upload_size {
             self.renderer.prepare(
@@ -446,7 +537,53 @@ impl Overlay {
         } else {
             self.renderer.rasterized = 0;
         }
-        self.prepare_ms = started.elapsed().as_secs_f64() * 1000.;
+    }
+
+    /// The pause layer: the dim backdrop and the panel (the HUD, map, toolbar
+    /// and touch controls hide behind menus, as `body.menu-open` does).
+    fn prepare_menu(&mut self) {
+        let view = self.view;
+        let start = self.list.items.len();
+        let Some(state) = self.with_menu(|m, ctx, _, _| {
+            m.refresh(ctx);
+            m.state(ctx)
+        }) else {
+            return;
+        };
+        let mut hits = Vec::new();
+        layout::render(
+            &pause::element(&view, &state),
+            &mut self.fonts,
+            view.width,
+            view.height,
+            &mut self.list,
+            &mut hits,
+        );
+        let rect = |id| hits.iter().find(|(_, i)| *i == id).map(|(r, _)| *r);
+        if let (Some(panel), Some(content)) = (rect(pause::PANEL), rect(pause::CONTENT)) {
+            let padding = if view.width <= 580. || view.height <= 450. {
+                20.
+            } else {
+                30.
+            };
+            self.menu_scroll_max = (content.h - (panel.h - 2. * padding)).max(0.);
+        }
+        self.menu_hits = hits;
+        if std::mem::take(&mut self.menu_reveal) {
+            let hits = std::mem::take(&mut self.menu_hits);
+            if let Some(menu) = &mut self.menu {
+                let before = menu.scroll;
+                menu.reveal(&hits);
+                menu.scroll = menu.scroll.min(self.menu_scroll_max);
+                if menu.scroll != before {
+                    self.menu_hits = hits;
+                    self.list.items.truncate(start);
+                    self.prepare_menu();
+                    return;
+                }
+            }
+            self.menu_hits = hits;
+        }
     }
 
     pub fn diagnostics(&self) -> serde_json::Value {
@@ -459,6 +596,16 @@ impl Overlay {
             "scale": self.view.scale,
             "rasterized": self.renderer.rasterized,
             "prepareMs": self.prepare_ms,
+            "menu": self.menu.as_ref().map(|m| serde_json::json!({
+                "page": m.page,
+                "selection": m.selection,
+                "choices": m.rows.choices,
+                "scroll": m.scroll,
+                "hits": self.menu_hits.iter().filter(|(_, id)| *id >= pause::ROW).map(|(r, id)| serde_json::json!({
+                    "action": m.rows.choices.get((*id - pause::ROW) as usize),
+                    "x": r.x, "y": r.y, "width": r.w, "height": r.h,
+                })).collect::<Vec<_>>(),
+            })),
             "hud": {
                 "helpOpen": self.help_open,
                 "meter": self.meter.is_some() && !self.minimap.settings.enabled,
