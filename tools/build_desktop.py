@@ -37,19 +37,21 @@ WINDOWS_TRIPLE = 'x86_64-pc-windows-gnu'
 BUNDLE_ID = 'com.furyremastered.desktop'
 MACOS_MINIMUM = '11.0'
 # Debian 11 keeps the Linux builds loadable on glibc 2.31 (Ubuntu 20.04+, Debian 11+).
-BUILDER_IMAGE = 'fury-desktop-builder:bullseye-1'
+BUILDER_IMAGE = 'fury-desktop-builder:bullseye-2'
+# libudev-dev for both Linux architectures: gilrs (controllers) links libudev on Linux.
 BUILDER_DOCKERFILE = '''FROM rust:1-bullseye
-RUN apt-get update && apt-get install -y --no-install-recommends \\
+RUN dpkg --add-architecture amd64 && dpkg --add-architecture arm64 && apt-get update && \\
+    apt-get install -y --no-install-recommends pkg-config \\
       gcc-x86-64-linux-gnu libc6-dev-amd64-cross gcc-aarch64-linux-gnu libc6-dev-arm64-cross \\
-      gcc-mingw-w64-x86-64 && rm -rf /var/lib/apt/lists/*
+      gcc-mingw-w64-x86-64 libudev-dev:amd64 libudev-dev:arm64 && rm -rf /var/lib/apt/lists/*
 RUN rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-gnu
 '''
 # Debian 12 userland with a software Vulkan driver (lavapipe) and a virtual X server.
-SMOKE_IMAGE = 'fury-desktop-smoke:bookworm-1'
+SMOKE_IMAGE = 'fury-desktop-smoke:bookworm-2'
 SMOKE_DOCKERFILE = '''FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \\
       xvfb xauth mesa-vulkan-drivers libvulkan1 libgl1 libegl1 libx11-6 libx11-xcb1 libxcb1 \\
-      libxkbcommon0 libxkbcommon-x11-0 libxcursor1 libxi6 libxrandr2 libwayland-client0 ca-certificates \\
+      libxkbcommon0 libxkbcommon-x11-0 libxcursor1 libxi6 libxrandr2 libwayland-client0 libudev1 ca-certificates \\
     && rm -rf /var/lib/apt/lists/*
 '''
 
@@ -225,12 +227,17 @@ CONTAINER_SCRIPT = r'''set -e
 mkdir -p /src && tar -xf - -C /src && cd /src
 export CARGO_TARGET_DIR=/target CARGO_TERM_COLOR=never
 case "$TRIPLE" in
-  x86_64-unknown-linux-gnu) [ "$(uname -m)" = x86_64 ] && L=gcc || L=x86_64-linux-gnu-gcc ;;
-  aarch64-unknown-linux-gnu) [ "$(uname -m)" = aarch64 ] && L=gcc || L=aarch64-linux-gnu-gcc ;;
+  x86_64-unknown-linux-gnu) [ "$(uname -m)" = x86_64 ] && L=gcc || L=x86_64-linux-gnu-gcc
+    LIBDIR=/usr/lib/x86_64-linux-gnu ;;
+  aarch64-unknown-linux-gnu) [ "$(uname -m)" = aarch64 ] && L=gcc || L=aarch64-linux-gnu-gcc
+    LIBDIR=/usr/lib/aarch64-linux-gnu ;;
   x86_64-pc-windows-gnu) L=x86_64-w64-mingw32-gcc ;;
 esac
 U=$(echo "$TRIPLE" | tr 'a-z-' 'A-Z_')
 export "CARGO_TARGET_${U}_LINKER=$L" "CC_$(echo "$TRIPLE" | tr - _)=$L"
+if [ -n "$LIBDIR" ]; then  # the target's libudev (multiarch) for cross builds
+  export PKG_CONFIG_ALLOW_CROSS=1 "PKG_CONFIG_PATH=$LIBDIR/pkgconfig" "CARGO_TARGET_${U}_RUSTFLAGS=-L $LIBDIR"
+fi
 cargo build --release --locked -p atv-app --bin fury --target "$TRIPLE" -j 2 >&2
 cd "/target/$TRIPLE/release" && tar -cf - "$BINARY"
 '''

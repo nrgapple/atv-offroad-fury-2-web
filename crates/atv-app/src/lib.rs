@@ -1,5 +1,9 @@
 //! One game application for every build. The same event loop, loader and
 //! renderer run natively (Metal/DX12/Vulkan) and in browsers (WebGL2).
+mod gamepad;
+pub mod replay;
+mod riding;
+
 use atv_content::{Content, Store};
 use atv_game::venue::{self, Venue};
 use atv_render::{Camera, Gpu, SceneRenderer, View, camera::default_focal_length};
@@ -21,6 +25,10 @@ pub struct Options {
     /// Native parity capture: render once at this size, write PNG and exit.
     #[cfg(not(target_arch = "wasm32"))]
     pub capture: Option<(std::path::PathBuf, u32, u32)>,
+    /// Ride the player's quad (default); false keeps the free camera.
+    pub ride: bool,
+    /// Steps replayed at load, then the ride holds (parity captures).
+    pub script: Option<replay::Script>,
 }
 
 struct Ready {
@@ -29,6 +37,9 @@ struct Ready {
     scene: SceneRenderer,
     camera: Camera,
     focal_length: f32,
+    /// A fixed `--camera` view overrides the chase camera.
+    fixed: bool,
+    riding: Option<riding::Riding>,
 }
 
 enum Message {
@@ -47,6 +58,9 @@ struct App {
     cursor: Option<(f64, f64)>,
     last: Instant,
     meter: Meter,
+    gamepad: gamepad::Gamepads,
+    drag: f32,
+    started: Instant,
 }
 
 #[derive(Default)]
@@ -63,6 +77,8 @@ async fn prepare(
     store: Store,
     environment: String,
     fixed: Option<[f32; 6]>,
+    ride: bool,
+    script: Option<replay::Script>,
 ) -> Result<Ready, String> {
     let size = window.inner_size();
     let mut descriptor = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(display));
@@ -105,13 +121,31 @@ async fn prepare(
         focal_length = focal;
     }
     // The browser centres the fine terrain patch on the rider at the start.
-    let scene = SceneRenderer::new(&gpu, &venue, Some([start[0], start[2]]));
+    let mut scene = SceneRenderer::new(&gpu, &venue, Some([start[0], start[2]]));
+    let riding = if ride {
+        // Default Garage selection: quad 1, male rider.
+        let ride = atv_game::ride::load(&content, &venue, 1, 0, status).await?;
+        scene.set_ride(&gpu, &venue, &ride.quad, &ride.rider)?;
+        let mut riding = riding::Riding::new(ride, &venue);
+        if let Some(script) = &script {
+            script.run(&mut riding)?;
+            // Hold the replayed state for screenshots.
+            riding.paused = true;
+            riding.held = true;
+            publish_trace(&replay::record(&riding.ride, riding.ride.steps()).to_string());
+        }
+        Some(riding)
+    } else {
+        None
+    };
     Ok(Ready {
         gpu,
         venue,
         scene,
         camera,
         focal_length,
+        fixed: fixed.is_some(),
+        riding,
     })
 }
 
@@ -134,6 +168,10 @@ impl App {
         let dt = (now - self.last).as_secs_f32().min(0.1);
         self.last = now;
         let Some(ready) = &mut self.ready else { return };
+        if ready.riding.is_some() {
+            self.ride_frame(dt);
+            return;
+        }
         let held = |k| self.keys.contains(&k);
         let axis = |a, b| (held(a) as i32 - held(b) as i32) as f32;
         let speed = if held(KeyCode::ShiftLeft) || held(KeyCode::ShiftRight) {
@@ -165,13 +203,81 @@ impl App {
             Err(error) => status(&error),
         }
         self.meter.cpu += started.elapsed().as_secs_f64() * 1000.;
+        self.meter_frame(now, "");
+    }
+
+    /// One rendered frame of the ride: input, fixed steps, chase view.
+    fn ride_frame(&mut self, dt: f32) {
+        let now = Instant::now();
+        let Some(ready) = &mut self.ready else { return };
+        let Some(riding) = &mut ready.riding else {
+            return;
+        };
+        let started = Instant::now();
+        let pad = self.gamepad.sample();
+        let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
+        let keys = |code: &str| names.contains(code);
+        let sample = riding::Sample {
+            keys: &keys,
+            pad: pad.as_ref(),
+            now: (now - self.started).as_secs_f64(),
+            drag: std::mem::take(&mut self.drag),
+        };
+        // render(): dt = min(.05, frame time).
+        let dt = dt.min(0.05);
+        if let Err(error) = riding.frame(&sample, dt) {
+            status(&format!("Simulation stopped: {error}"));
+            ready.riding = None;
+            return;
+        }
+        match riding.present(
+            &ready.gpu,
+            &mut ready.scene,
+            &ready.venue,
+            ready.gpu.aspect(),
+            dt,
+        ) {
+            Ok((camera, focal)) if !ready.fixed => {
+                ready.camera = camera;
+                ready.focal_length = focal;
+            }
+            Ok(_) => {}
+            Err(error) => status(&error),
+        }
+        match ready.scene.render(
+            &ready.gpu,
+            &View {
+                camera: ready.camera,
+                focal_length: ready.focal_length,
+            },
+        ) {
+            Ok(stats) => self.meter.triangles = stats.terrain_triangles + stats.vehicle_triangles,
+            Err(error) => status(&error),
+        }
+        self.meter.cpu += started.elapsed().as_secs_f64() * 1000.;
+        let ride = &riding.ride;
+        let frame = ride.frame();
+        let extra = format!(
+            " · {:.0} MPH{}",
+            frame.speed_magnitude * 3600. / 5280.,
+            if riding.paused {
+                " · paused (Esc)"
+            } else {
+                ""
+            }
+        );
+        self.meter_frame(now, &extra);
+    }
+
+    fn meter_frame(&mut self, now: Instant, extra: &str) {
+        let Some(ready) = &self.ready else { return };
         self.meter.frames += 1;
         let since = *self.meter.since.get_or_insert(now);
         let elapsed = (now - since).as_secs_f64();
         if elapsed >= 1. {
             let info = &ready.gpu.adapter_info;
             status(&format!(
-                "{} · {:.0} fps · {:.1} ms frame · {:.2} ms CPU · {} tris · {:?} {}",
+                "{} · {:.0} fps · {:.1} ms frame · {:.2} ms CPU · {} tris · {:?} {}{extra}",
                 ready.venue.environment.to_uppercase(),
                 self.meter.frames as f64 / elapsed,
                 elapsed * 1000. / self.meter.frames as f64,
@@ -184,6 +290,16 @@ impl App {
                 triangles: self.meter.triangles,
                 ..Default::default()
             };
+        }
+    }
+}
+
+impl App {
+    fn key_pressed(&mut self, code: KeyCode) {
+        let now = (Instant::now() - self.started).as_secs_f64();
+        let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
+        if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
+            riding.key_pressed(&format!("{code:?}"), now, &|c: &str| names.contains(c));
         }
     }
 }
@@ -209,6 +325,8 @@ impl ApplicationHandler<Message> for App {
             options.store,
             options.venue,
             options.camera,
+            options.ride,
+            options.script,
         );
         let proxy = self.proxy.clone();
         let send = move |result: Result<Ready, String>| {
@@ -223,6 +341,16 @@ impl ApplicationHandler<Message> for App {
         {
             let mut result = pollster::block_on(future);
             if let (Ok(ready), Some((path, width, height))) = (&mut result, options.capture) {
+                if let Some(riding) = &mut ready.riding {
+                    let aspect = width as f32 / height as f32;
+                    let (camera, focal) = riding
+                        .present(&ready.gpu, &mut ready.scene, &ready.venue, aspect, 0.)
+                        .expect("present ride");
+                    if !ready.fixed {
+                        ready.camera = camera;
+                        ready.focal_length = focal;
+                    }
+                }
                 capture(ready, &path, width, height);
                 event_loop.exit();
                 return;
@@ -266,12 +394,23 @@ impl ApplicationHandler<Message> for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     match event.state {
-                        ElementState::Pressed => self.keys.insert(code),
-                        ElementState::Released => self.keys.remove(&code),
+                        ElementState::Pressed => {
+                            if !event.repeat && self.keys.insert(code) {
+                                self.key_pressed(code);
+                            }
+                        }
+                        ElementState::Released => {
+                            self.keys.remove(&code);
+                        }
                     };
                 }
             }
-            WindowEvent::Focused(false) => self.keys.clear(),
+            WindowEvent::Focused(false) => {
+                self.keys.clear();
+                if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
+                    riding.clear_input();
+                }
+            }
             WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Left,
@@ -280,7 +419,13 @@ impl ApplicationHandler<Message> for App {
                 self.dragging = state == ElementState::Pressed;
             }
             WindowEvent::CursorMoved { position, .. } => {
-                if let (true, Some((x, y)), Some(ready)) =
+                if let (true, Some((x, _)), Some(Some(_))) = (
+                    self.dragging,
+                    self.cursor,
+                    self.ready.as_ref().map(|r| r.riding.as_ref()),
+                ) {
+                    self.drag += (position.x - x) as f32;
+                } else if let (true, Some((x, y)), Some(ready)) =
                     (self.dragging, self.cursor, &mut self.ready)
                 {
                     ready.camera.yaw -= ((position.x - x) * 0.005) as f32;
@@ -335,6 +480,22 @@ pub fn parse_camera(text: &str) -> Option<[f32; 6]> {
     values.try_into().ok()
 }
 
+/// The replayed state, for the browser parity tool (`#trace`).
+fn publish_trace(text: &str) {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(document) = web_sys::window().and_then(|w| w.document())
+        && let Some(body) = document.body()
+        && let Ok(element) = document.create_element("pre")
+    {
+        element.set_id("trace");
+        element.set_attribute("hidden", "").ok();
+        element.set_text_content(Some(text));
+        body.append_child(&element).ok();
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = text;
+}
+
 fn status(text: &str) {
     #[cfg(target_arch = "wasm32")]
     {
@@ -365,6 +526,9 @@ pub fn run(options: Options) {
         cursor: None,
         last: Instant::now(),
         meter: Meter::default(),
+        gamepad: gamepad::Gamepads::new(),
+        drag: 0.,
+        started: Instant::now(),
     };
     #[cfg(target_arch = "wasm32")]
     {
@@ -399,5 +563,16 @@ pub fn start() {
         store: Store::Http("/content/".into()),
         venue,
         camera: param("camera").and_then(|text| parse_camera(&text)),
+        ride: param("free").is_none(),
+        script: param("script")
+            .and_then(|text| js_sys_decode(&text))
+            .and_then(|text| replay::Script::parse(&text).ok()),
     });
+}
+
+#[cfg(target_arch = "wasm32")]
+fn js_sys_decode(text: &str) -> Option<String> {
+    js_sys::decode_uri_component(text)
+        .ok()
+        .and_then(|s| s.as_string())
 }
