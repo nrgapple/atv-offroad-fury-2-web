@@ -1204,12 +1204,89 @@ Observed (host-only, local relay):
   Its marker was in the top 14% of the screen, so it is an edge tag pointing up
   toward the rider, as the browser draws it.
 
+### Slice 8: online pause rows
+
+- The Rust pause menu sends the browser's `lobby_*` request fields to
+  `ui_menu`, so a room ride gets its online rows: Players, Copy invite link and
+  Leave Game. A shared Free Ride room has no invite row.
+- **Players** lists the rider and anyone still connecting (`.pause-player`: "You",
+  "Connecting"). It offers "Spawn beside <name>" for each fresh rider, which runs
+  the arrival spawn search (`Net::spawn_beside`, atv-web op 86's checks and
+  messages) and resumes. Errors show as the menu notice.
+- **Copy invite link** copies the room's play.html invite: the clipboard on the
+  web, the menu notice on desktop.
+- **Leave Game** forgets the kept slot key, closes the socket and returns to the
+  engine's main menu (a direct room link reloads engine.html).
+- Observed (`tools/test_engine_multiplayer_pause.mjs`, local relay, host-only):
+  - The pause rows were resume, reset, players, settings, copyride, devlog, leave.
+  - The copied invite carried the room code.
+  - Spawn beside the JavaScript host moved the Rust guest from 145 ft to 15.1 ft
+    away.
+  - Leave Game removed the guest from the host's roster.
+  - Inspected: `private/reports/engine-multiplayer/pause-pause.png` and
+    `pause-players.png`.
+
+### Slice 9: the Multiplayer menu (Host Game, Join Game)
+
+- The Rust main menu lists **Multiplayer**. Its page offers Host Game and Join
+  Game (`ui_menu` pages `multiplayer`, `create-lobby`, `join-lobby`), laid out like
+  the main menu with the ride stage on the panel.
+- The forms' text fields follow menu-screens.js `buildForm`: Rider name, plus the
+  optional 8-letter/number lobby code when hosting or the lobby code when joining.
+  - In the browser a real `<input>` sits over each drawn field
+    (`atv-app/src/text_inputs.rs`), so phones open their soft keyboard and desktop
+    browsers keep native editing and IME. Enter or Escape hands the keyboard back.
+  - On desktop the fields take typed text with a caret: Tab, a click or Up from the
+    first row focuses one; Backspace deletes.
+  - Codes are upper-cased letters and digits; names are at most 24 bytes with no
+    control characters. The name is remembered in `atv-player-selection`.
+- Host Game → Select Track → Ride creates the room (with the custom code) on that
+  course and rides. Join Game checks the 8-character code and opens the room; an
+  ended room opens again on the current course. Garage opens the garage.
+- A motorcycle choice rides ATV01 in rooms. The browser instead refuses with
+  "Choose an ATV for multiplayer"; this difference is recorded.
+- Observed (`tools/test_engine_multiplayer_menu.mjs`, local relay, host-only):
+  - A Rust browser hosted room RM634747 from the menus, with the name and a
+    lower-case custom code typed into the inputs.
+  - A JavaScript player joined it by code.
+  - A second Rust browser joined from Join Game and drew both riders (3 players).
+  - `test_engine_front.mjs` and `test_engine_freeride.mjs` pass with the new main
+    menu row; Free Ride now leaves through Leave Game.
+  - Inspected: `private/reports/engine-multiplayer/menu-host-form.png` and
+    `menu-join-form.png`.
+
+### Slice 10: Change ATV and Rider, Select Track
+
+- From the pause menu of a room ride started from the engine's frontend, **Change
+  ATV and Rider** and the host's **Select Track** open the frontend's garage or
+  course picker over a *held* room. The ride ends, but the room's `Net` stays live
+  in the app: socket, reconnects and pings run on the 1 s presence timer.
+  Done/Back or Ride returns to the room.
+  - A new look sends `Profile` (atv-web op 110: the next pose is a full snapshot).
+    The ride reloads in place at the rider's position (op 112's pose) and reports
+    Ready.
+  - The host's Ride sends `SetLobby` with the new course. Everyone, the host
+    included, reloads there from the start line.
+  - A guest returning after the host moved the room rides the room's current
+    course.
+- A direct room link (`engine.html?room=`, `fury --room`) has no frontend, so both
+  rows stay hidden there.
+- Difference: the browser keeps riding behind its garage. The Rust ride stops while
+  the garage is open, so for those seconds others see this rider go stale and
+  return after the reload.
+- Observed (`tools/test_engine_multiplayer_room_front.mjs`, local relay,
+  host-only):
+  - A Rust browser hosted room JKSRF5Y8 from its menus with a JavaScript guest.
+  - Change ATV and Rider → next ATV → Done reloaded in place (moved 0.01 ft), and
+    the guest saw slot 0's model become ATV 2.
+  - Select Track → next course → Ride moved the room to env02. The Rust host reloaded
+    there and drew the guest again.
+
 Gaps, in planned slice order:
 
-1. No Multiplayer menu in `atv-ui`: no Host/Join forms (text entry), room code entry,
-   Players page and its spawn-beside action, invite copy, Select Track for a Rust
-   host, Change ATV and Rider, or Leave Game wording. Private rooms start from the
-   command line or URL only.
+1. The joining "Free Ride Lobby" page and Copy invite link from the frontend are
+   not drawn; rides start at once. The ride does not keep running behind the
+   garage, as noted in slice 10.
 2. Train on a motorcycle ride, the Realistic train-riding setting, and an arrival's
    spawn velocity on a moving car (the browser adds the car's point velocity).
 3. Twenty-rider rooms are untested in the Rust engine; the JavaScript game's

@@ -246,7 +246,12 @@ impl Front {
     pub fn wants(&self) -> Vec<Want> {
         let page = self.state.page.as_str();
         let mut wants = Vec::new();
-        if self.menu.is_none() && matches!(page, "main" | "single" | "garage") {
+        if self.menu.is_none()
+            && matches!(
+                page,
+                "main" | "single" | "garage" | "multiplayer" | "create-lobby" | "join-lobby"
+            )
+        {
             let quad = self.state.quad_id;
             if !self.art.vehicles.iter().any(|(q, ..)| *q == quad) {
                 wants.push(Want::Vehicle(quad));
@@ -283,6 +288,7 @@ impl Front {
             bindings: Some(&mut self.bindings),
             pad_name: self.pad_name.clone(),
             view: self.view,
+            lobby: None,
             music: None,
         };
         Some(f(menu, &mut ctx, &self.menu_hits, self.menu_scroll_max))
@@ -549,7 +555,10 @@ impl Front {
         let px = ((logo_css * view.scale).round() as u32).clamp(64, 2048);
         let logo_key = format!("logo:{px}");
         let mut logo = None;
-        if matches!(page.as_str(), "title" | "main" | "single") {
+        if matches!(
+            page.as_str(),
+            "title" | "main" | "single" | "multiplayer" | "create-lobby" | "join-lobby"
+        ) {
             let drawn = self.image(device, queue, &logo_key, |_| Some(logo::raster(px)));
             let shadow_alpha = if page == "title" { 0.6 } else { 0.4 };
             let shadow_key = format!("logo-shadow:{px}:{shadow_alpha}");
@@ -845,10 +854,27 @@ impl Front {
         renderer.draw(encoder, target);
     }
 
+    /// The Host/Join fields' boxes from the latest layout (CSS pixels).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub fn field_rects(&self) -> Vec<Rect> {
+        let mut rects: Vec<(u32, Rect)> = self
+            .hits
+            .iter()
+            .filter(|(_, id)| (atv_ui::front::FIELD..atv_ui::front::FIELD + 4).contains(id))
+            .map(|(r, id)| (*id, *r))
+            .collect();
+        rects.sort_by_key(|(id, _)| *id);
+        rects.into_iter().map(|(_, r)| r).collect()
+    }
+
     /// Builds the previews the page shows and poses the menu rider.
     fn update_previews(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, now: f64) {
         let page = self.state.page.clone();
-        let shown = self.menu.is_none() && matches!(page.as_str(), "main" | "single" | "garage");
+        let shown = self.menu.is_none()
+            && matches!(
+                page.as_str(),
+                "main" | "single" | "garage" | "multiplayer" | "create-lobby" | "join-lobby"
+            );
         let quad = self.state.quad_id;
         let texture = |textures: &HashMap<String, front::assets::ModelTexture>| {
             let textures = textures.clone();

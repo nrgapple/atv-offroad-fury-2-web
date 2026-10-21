@@ -8,6 +8,9 @@ mod overlay;
 pub mod replay;
 mod riding;
 mod sound;
+#[cfg(target_arch = "wasm32")]
+mod text_inputs;
+mod wake;
 use atv_core::math::Det;
 pub use multiplayer::RoomStart;
 use replay::RunScript;
@@ -138,6 +141,12 @@ enum Message {
     PeerModel(Box<PeerModel>),
     /// The Arlington Free Ride rider count for the main menu.
     FreeRideRiders(Option<u32>),
+    /// A Host/Join form field's text from the browser's input.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    FrontText(&'static str, String),
+    /// A form field took (or gave back) the keyboard.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    FrontFocus(Option<usize>),
     /// The browser's 1 s presence timer (a hidden tab runs no frames).
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     PresenceTick,
@@ -183,6 +192,8 @@ struct Defaults {
 }
 
 struct App {
+    /// Screen Wake Lock while riding (web/wake-lock.js).
+    wake_lock: wake::ScreenWake,
     /// The Display → Graphics choice the running ride applied.
     graphics_pref: Option<String>,
     proxy: EventLoopProxy<Message>,
@@ -227,6 +238,14 @@ struct App {
     requested: HashSet<String>,
     /// When the Free Ride rider count was last requested.
     riders_polled: Option<Instant>,
+    /// A room kept live while the frontend's garage or course picker is open
+    /// over it (Change ATV and Rider, Select Track).
+    held_room: Option<multiplayer::Net>,
+    /// The held room the next frontend ride resumes.
+    pending_room: Option<multiplayer::Net>,
+    /// The Host/Join forms' browser inputs.
+    #[cfg(target_arch = "wasm32")]
+    text_inputs: text_inputs::TextInputs,
     /// Desktop: the rider count request in flight.
     #[cfg(not(target_arch = "wasm32"))]
     riders_pending: Option<std::sync::mpsc::Receiver<Option<u32>>>,
@@ -522,7 +541,7 @@ fn settle_room(ready: &mut Ready) {
     let started = Instant::now();
     let mut seen: Option<Instant> = None;
     while started.elapsed().as_secs_f32() < wait && net.closed.is_none() {
-        let tick = net.tick(&riding.ride, false);
+        let tick = net.tick(Some(&riding.ride), false);
         for key in tick.loads {
             net.model_loaded(pollster::block_on(multiplayer::load_model(
                 net.content(),
@@ -566,6 +585,10 @@ fn ground(venue: &Venue, x: f32, z: f32) -> f32 {
 
 impl App {
     fn step(&mut self) {
+        // game.js screenWake.set(!menuOpen): a ride on screen, no menu.
+        let riding = self.ready.as_ref().is_some_and(|r| r.riding.is_some())
+            && self.overlay.as_ref().is_none_or(|o| o.menu.is_none());
+        self.wake_lock.set(riding, self.visible);
         let now = Instant::now();
         let dt = (now - self.last).as_secs_f32().min(0.1);
         self.last = now;
@@ -744,7 +767,7 @@ impl App {
             // Only actual suspension (hidden page, suspended app) sends the
             // paused presence pose; the online pause menu and blur keep
             // neutral-input riding (Riding::online).
-            let tick = net.tick(&riding.ride, suspended);
+            let tick = net.tick(Some(&riding.ride), suspended);
             if let Some((origin, yaw)) = tick.place
                 && let Err(error) = riding.place_beside(origin, yaw)
             {
@@ -756,6 +779,9 @@ impl App {
                 status(&format!("Train placement: {error}"));
             }
             riding.peers = net.contact_bodies(&riding.ride);
+            if let Some(overlay) = &mut self.overlay {
+                overlay.lobby = net.menu_lobby();
+            }
             riding.server_clock = net.server_clock();
             let eye = ready.camera.eye();
             net.present(
@@ -866,6 +892,7 @@ impl App {
             let mut state = replay::record(&riding.ride, riding.ride.steps());
             state["camera"]["preset"] = riding.ride.camera().0.preset.into();
             state["paused"] = riding.paused.into();
+            state["wakeLock"] = self.wake_lock.held().into();
             state["active"] = active.into();
             let applied = riding.ride.applied();
             state["controls"] = serde_json::json!({
@@ -1227,6 +1254,78 @@ impl App {
                 }
             }
             Event::CopyRide => self.copy_ride_link(),
+            Event::Spawn(peer) => {
+                let Some(ready) = &mut self.ready else { return };
+                let (Some(net), Some(riding)) = (&mut ready.net, &mut ready.riding) else {
+                    return;
+                };
+                match net
+                    .spawn_beside(peer, &riding.ride)
+                    .and_then(|(origin, yaw)| riding.place_beside(origin, yaw))
+                {
+                    Ok(()) => self.menu_event(Event::Resume),
+                    Err(error) => {
+                        if let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut()) {
+                            menu.notice = Some(error);
+                        }
+                    }
+                }
+            }
+            Event::ChangeRide | Event::SelectTrack => {
+                let garage = event == Event::ChangeRide;
+                let Some(ready) = &mut self.ready else { return };
+                let (Some(mut net), Some(riding)) = (ready.net.take(), &ready.riding) else {
+                    return;
+                };
+                // Change ATV and Rider reloads in place (atv-web op 112's pose).
+                if garage {
+                    let m = riding.ride.rider_world();
+                    net.resume_at = Some((riding.ride.frame().origin, m[8].atan2_d(m[10])));
+                }
+                let environment = net.environment.clone();
+                self.held_room = Some(net);
+                if let Some(front) = &self.front {
+                    let mut f = front.borrow_mut();
+                    f.state.room = Some(if garage { "garage" } else { "tracks" });
+                    f.state.hosting = false;
+                    if let Some(index) = f.state.tracks.iter().position(|t| t.id == environment) {
+                        f.state.track = index;
+                    }
+                }
+                if !self.quit_to(Some(if garage { "garage" } else { "tracks" })) {
+                    // No frontend to show: keep riding in the room.
+                    if let (Some(ready), Some(net)) = (&mut self.ready, self.held_room.take()) {
+                        ready.net = Some(net);
+                    }
+                }
+            }
+            Event::LeaveGame => {
+                if let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) {
+                    net.leave();
+                }
+                // Back to the main menu (shared Free Ride rooms return there
+                // in the browser too; the Multiplayer page is not ported).
+                if self.quit_to_menu() {
+                    return;
+                }
+                #[cfg(target_arch = "wasm32")]
+                if let Some(window) = web_sys::window() {
+                    window.location().set_href("engine.html").ok();
+                }
+                if let Some(ready) = &mut self.ready {
+                    ready.net = None;
+                    if let Some(riding) = &mut ready.riding {
+                        riding.online = false;
+                        riding.peers.clear();
+                        riding.server_clock = None;
+                    }
+                }
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.lobby = None;
+                }
+                status("Left the multiplayer room.");
+                self.menu_event(Event::Resume);
+            }
             Event::Jukebox(action) => {
                 if let Some(sound) = &mut riding.sound {
                     sound.jukebox(action);
@@ -1355,16 +1454,25 @@ impl App {
             .unwrap_or_default();
         #[cfg(not(target_arch = "wasm32"))]
         let page = "https://furyremastered.com/engine.html".to_string();
-        let url = atv_game::launch::ride_url(
-            &page,
-            &atv_game::launch::RideLink {
-                map: &ready.venue.environment,
-                quad: selection.quad,
-                rider: selection.rider,
-                player: &player,
-                race,
-            },
-        );
+        // In a room the row is Copy invite link (buildRideUrl's invite).
+        let invite = ready.net.as_ref().map(|net| net.invite());
+        let copied_text = if invite.is_some() {
+            "Invite link copied."
+        } else {
+            "Ride link copied."
+        };
+        let url = invite.unwrap_or_else(|| {
+            atv_game::launch::ride_url(
+                &page,
+                &atv_game::launch::RideLink {
+                    map: &ready.venue.environment,
+                    quad: selection.quad,
+                    rider: selection.rider,
+                    player: &player,
+                    race,
+                },
+            )
+        });
         let Some(menu) = &mut overlay.menu else {
             return;
         };
@@ -1379,7 +1487,7 @@ impl App {
                     wasm_bindgen_futures::spawn_local(async move {
                         let copied = wasm_bindgen_futures::JsFuture::from(promise).await.is_ok();
                         let _ = proxy.send_event(Message::Notice(if copied {
-                            "Ride link copied.".into()
+                            copied_text.into()
                         } else {
                             url
                         }));
@@ -1390,6 +1498,7 @@ impl App {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
+            let _ = copied_text;
             menu.notice = Some(url);
         }
         self.wake();
@@ -1604,6 +1713,7 @@ impl App {
     /// The first key, click or touch starts audio (browser autoplay rules).
     fn gesture(&mut self) {
         self.sound_unlocked = true;
+        self.wake_lock.gesture();
         if let Some(sound) = self
             .ready
             .as_mut()
@@ -2080,6 +2190,24 @@ impl ApplicationHandler<Message> for App {
                 }
             }
             Message::PresenceTick => self.presence_tick(),
+            Message::FrontText(action, text) => {
+                if let Some(front) = &self.front {
+                    front.borrow_mut().state.set_field(action, &text);
+                }
+                self.wake();
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
+            Message::FrontFocus(index) => {
+                if let Some(front) = &self.front {
+                    front.borrow_mut().state.focus_field(index);
+                }
+                self.wake();
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
             Message::RemoteEngine(quad, engine) => match *engine {
                 Ok(engine) => {
                     if let Some(sound) = self
@@ -2197,6 +2325,19 @@ impl ApplicationHandler<Message> for App {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                // Desktop typing into a focused Host/Join field (the browser
+                // build types into its own <input>).
+                if event.state == ElementState::Pressed
+                    && let Some(text) = &event.text
+                    && !text.chars().any(char::is_control)
+                    && let Some(front) = self.front_input()
+                    && front.borrow_mut().state.type_text(text)
+                {
+                    if let Some(window) = &self.window {
+                        window.request_redraw();
+                    }
+                    return;
+                }
                 if let PhysicalKey::Code(code) = event.physical_key {
                     match event.state {
                         ElementState::Pressed => {
@@ -2571,6 +2712,88 @@ impl App {
                     Some(room),
                 );
             }
+            Event::RoomRide {
+                quad,
+                rider,
+                environment,
+            } => {
+                let Some(mut net) = self.held_room.take() else {
+                    // The room ended meanwhile: back to the main menu.
+                    if let Some(front) = &self.front {
+                        front.borrow_mut().resume("main");
+                    }
+                    self.wake();
+                    return;
+                };
+                let same = net
+                    .session
+                    .profile()
+                    .is_some_and(|p| p.quad == quad && p.rider == rider);
+                if !same && let Err(error) = net.change_profile(quad, rider) {
+                    status(&format!("Change ATV and Rider: {error}"));
+                }
+                // The host's Ride moves everyone; riders follow from the start.
+                let environment = match environment {
+                    Some(environment) if net.session.is_host() => {
+                        if let Err(error) = net.set_map(&environment) {
+                            status(&error);
+                        }
+                        net.resume_at = None;
+                        environment
+                    }
+                    _ => net
+                        .session
+                        .environment()
+                        .map_or_else(|| net.environment.clone(), String::from),
+                };
+                if environment != net.environment {
+                    net.resume_at = None;
+                }
+                self.pending_room = Some(net);
+                self.start_ride(environment, quad, rider, None, None);
+            }
+            Event::Host {
+                environment,
+                code,
+                quad,
+                rider,
+                name,
+            } => {
+                let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
+                    return;
+                };
+                let room = RoomStart {
+                    relay,
+                    code,
+                    host: true,
+                    freeride: false,
+                    name,
+                    drop_after: None,
+                    train_place: None,
+                };
+                self.start_ride(environment, quad, rider, None, Some(room));
+            }
+            Event::Join {
+                code,
+                environment,
+                quad,
+                rider,
+                name,
+            } => {
+                let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
+                    return;
+                };
+                let room = RoomStart {
+                    relay,
+                    code: Some(code),
+                    host: false,
+                    freeride: false,
+                    name,
+                    drop_after: None,
+                    train_place: None,
+                };
+                self.start_ride(environment, quad, rider, None, Some(room));
+            }
             Event::DevLog =>
             {
                 #[cfg(target_arch = "wasm32")]
@@ -2604,6 +2827,8 @@ impl App {
         let Some(gpu) = self.gpu.take() else {
             return;
         };
+        #[cfg(target_arch = "wasm32")]
+        self.text_inputs.sync(&[], &[], &self.proxy);
         let (graphics, weather, sound, default_crash) = self
             .defaults
             .as_ref()
@@ -2679,22 +2904,35 @@ impl App {
             sound,
             appearance: world.appearance,
         };
+        let held = self.pending_room.take();
         let future = async move {
             // A room ride claims its slot first; the room decides the course.
-            let (net, environment) = match room {
-                Some(room) => {
-                    let profile = atv_game::multiplayer::Profile::new(
-                        &room.name,
-                        quad,
-                        rider,
-                        ride.appearance,
-                    );
-                    let (net, environment) =
-                        multiplayer::Net::join(&room, profile, &environment, content.clone(), ride)
-                            .await?;
+            // Returning from the garage/course picker resumes the held room.
+            let (net, environment) = match (held, room) {
+                (Some(mut net), _) => {
+                    net.loaded(&environment);
                     (Some(net), environment)
                 }
-                None => (None, environment),
+                (None, room) => match room {
+                    Some(room) => {
+                        let profile = atv_game::multiplayer::Profile::new(
+                            &room.name,
+                            quad,
+                            rider,
+                            ride.appearance,
+                        );
+                        let (net, environment) = multiplayer::Net::join(
+                            &room,
+                            profile,
+                            &environment,
+                            content.clone(),
+                            ride,
+                        )
+                        .await?;
+                        (Some(net), environment)
+                    }
+                    None => (None, environment),
+                },
             };
             let mut ready = prepare(gpu, content, environment, None, world, progress).await?;
             if net.is_some()
@@ -2713,10 +2951,11 @@ impl App {
 
     /// A room ride whose window is hidden or suspended runs no frames.
     fn presence_due(&self) -> bool {
-        (!self.visible || self.suspended)
-            && self.ready.as_ref().is_some_and(|r| {
-                r.riding.is_some() && r.net.as_ref().is_some_and(|n| n.closed.is_none())
-            })
+        self.held_room.is_some()
+            || (!self.visible || self.suspended)
+                && self.ready.as_ref().is_some_and(|r| {
+                    r.riding.is_some() && r.net.as_ref().is_some_and(|n| n.closed.is_none())
+                })
     }
 
     /// Hidden or suspended: keep the room live without frames. The socket is
@@ -2724,6 +2963,15 @@ impl App {
     /// 0.2 Hz cadence (web/multiplayer.js timers keep running in a
     /// background tab; actual suspension sends paused presence).
     fn presence_tick(&mut self) {
+        if let Some(net) = &mut self.held_room {
+            // The frontend over a held room: socket, reconnects and pings.
+            net.tick(None, true);
+            if let Some(closed) = &net.closed {
+                status(&format!("Multiplayer ended: {closed}"));
+                self.held_room = None;
+            }
+            return;
+        }
         if !self.presence_due() {
             return;
         }
@@ -2731,7 +2979,7 @@ impl App {
         let (Some(net), Some(riding)) = (&mut ready.net, &mut ready.riding) else {
             return;
         };
-        let tick = net.tick(&riding.ride, true);
+        let tick = net.tick(Some(&riding.ride), true);
         let remote = riding
             .sound
             .as_ref()
@@ -2821,6 +3069,12 @@ impl App {
         f.pad_name = self.gamepad.name();
         let event = f.pad(pad.as_ref());
         paint_front(gpu, &mut f);
+        #[cfg(target_arch = "wasm32")]
+        {
+            let (fields, rects) = (f.state.fields(), f.field_rects());
+            let fields = if f.menu.is_none() { fields } else { Vec::new() };
+            self.text_inputs.sync(&fields, &rects, &self.proxy);
+        }
         if self.ui_diagnostics {
             publish_ui_state(&serde_json::json!({ "front": f.diagnostics() }).to_string());
         }
@@ -3356,6 +3610,7 @@ pub fn run(options: Options) {
         .build()
         .expect("event loop");
     let app = App {
+        wake_lock: Default::default(),
         graphics_pref: None,
         proxy: event_loop.create_proxy(),
         display: event_loop.owned_display_handle(),
@@ -3393,6 +3648,10 @@ pub fn run(options: Options) {
         defaults: None,
         requested: HashSet::new(),
         riders_polled: None,
+        held_room: None,
+        pending_room: None,
+        #[cfg(target_arch = "wasm32")]
+        text_inputs: Default::default(),
         #[cfg(not(target_arch = "wasm32"))]
         riders_pending: None,
     };

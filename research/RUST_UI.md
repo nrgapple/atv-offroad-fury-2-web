@@ -556,3 +556,18 @@ row stays hidden there), dragging feedback before release, Media Session release
 (play.html keeps the soundtrack out of system media controls; the Rust web build
 never registers it).
 
+## Screen wake lock (2026-10-21)
+
+`atv-app::wake` ports web/wake-lock.js for the web build: the Screen Wake Lock is
+requested while a ride is on screen and released when a menu opens (game.js
+`screenWake.set(!menuOpen)`); a hidden page loses it and the next visible frame or
+pointer/key gesture requests it again (browsers that want a user activation, and
+iOS Home Screen apps from iOS 18.4). The API is called through `js_sys::Reflect`
+because web-sys gates it behind `web_sys_unstable_apis`. Desktop builds do nothing:
+winit has no screensaver inhibitor and the cross-platform crates add per-OS
+backends (D-Bus on Linux) for little gain on machines a player is actively using;
+a controller-only desktop session can still dim. Test:
+`tools/test_engine_wake_lock.mjs` (a recording `navigator.wakeLock` stand-in:
+request while riding, release in Pause, request on resume). Host Chromium only;
+real-device lock behaviour is not tested.
+

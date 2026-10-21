@@ -204,6 +204,19 @@ impl Session {
         encode(&Packet::Ready { map })
     }
 
+    /// Change ATV and Rider in place: a Profile packet for the room; the next
+    /// pose is an independent full snapshot.
+    pub fn change_profile(&mut self, quad: u16, rider: u16) -> Result<Vec<u8>> {
+        let profile = self.profile.as_mut().ok_or("no multiplayer profile")?;
+        profile.quad = if (1..=26).contains(&quad) { quad } else { 1 };
+        profile.rider = rider.min(1);
+        let participant = profile.participant();
+        self.force_full = true;
+        self.baseline = None;
+        self.pending = None;
+        encode(&Packet::Profile(participant))
+    }
+
     /// The room's current course, once the host has started it.
     pub fn environment(&self) -> Option<&'static str> {
         self.lobby
@@ -550,6 +563,16 @@ impl Session {
             None => (0, (u64::from(s.peer) ^ order).wrapping_mul(0x9e37_79b9)),
         });
         riding
+    }
+
+    /// One rider's current (unbuffered) pose, if fresh.
+    pub fn current(&self, peer: u8, now_ms: u64, cars: Cars) -> Option<Snapshot> {
+        let mut pose = self.buffers.get(&peer)?.sample_current(now_ms)?;
+        if pose.stale {
+            return None;
+        }
+        rebase(&mut pose.snapshot, cars);
+        Some(pose.snapshot)
     }
 
     /// Every other rider's current position (spawn clearance).
