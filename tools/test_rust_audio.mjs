@@ -57,7 +57,8 @@ for (const engine of ['chromium', 'webkit']) {
     await page.evaluate(() => document.querySelector('canvas').blur());
     await page.waitForTimeout(100);
     releaseContent();
-    await page.waitForFunction(() => /\d+ fps/.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
+    // An unfocused ride draws its first frame and then sleeps (no fps meter).
+    await page.waitForFunction(() => document.querySelector('#ui-state'), null, { timeout: 120000 });
     assert.equal(await page.evaluate(() => document.documentElement.dataset.engineAudio), undefined,
       'ride renders while sound-bank network reads are blocked');
     const beforeSound = await page.locator('#ui-state').textContent().then(JSON.parse);

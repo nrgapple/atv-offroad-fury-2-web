@@ -300,9 +300,55 @@ uses sample duration signatures and timing, not byte-identical output. Reports a
 captures remain under ignored `private/reports/engine-parity/audio-recovery/`.
 
 Remaining acceptance work includes physical mobile audio latency/stalls, actual
-Windows/Linux output devices, inactive render sleep, and broader runtime feature
-coverage. The JavaScript game remains available until the shared engine passes
+Windows/Linux output devices and broader runtime feature coverage.
+
+## Inactive render sleep (2026-10-21)
+
+As `render()` in `web/game.js` does, a single-player ride schedules no further frame
+while the window is unfocused, hidden or suspended, or while paused; the frame that
+applies the change draws the paused overlay and then the event loop waits.
+Lifecycle and input events (keys, pointer, touch, resize) wake it for one frame,
+which applies the event and decides again; resuming restarts the frame clock as the
+browser's `lastTime = 0` does. While paused in focus a 50 ms timer polls controllers
+(a pressed button wakes the ride) and keeps the soundtrack fed, since the pause menu
+keeps music playing. Parity holds and autodrive benchmarks keep rendering. No
+multiplayer clock runs in the Rust engine yet; a shared ride must keep its clocks
+live when it arrives, as the browser does.
+
+`tools/test_engine_sleep.mjs` (host Chromium, 960x540, two-second windows): before,
+paused/blurred/hidden kept 152-161 animation frames and 191-204 ms of main-thread
+task time; after, zero frames and 6-11 ms, against 159 frames and 161-189 ms while
+riding (120 steps). The JavaScript game's own measurement (PERFORMANCE.md) is 120 to
+zero frames for pause and blur. Host results, not phone or battery measurements;
+the desktop build uses the same event-loop path (winit `ControlFlow::Wait`/
+`WaitUntil`) but was not measured. The JavaScript game remains available until the shared engine passes
 those relevant subsystem gates.
+
+## CPU per frame against the JavaScript game (2026-10-21)
+
+`tools/compare_engine.mjs ride` now also replays the ride script in real time and
+measures CPU: the JavaScript game's main thread (Chrome `TaskDuration`) plus its
+simulation worker (each operation's Wasm time from `worker.js`), the Rust engine in
+the browser (one thread, `?autodrive=`) and the native build (`fury --autodrive
+--bench`, vsync wait excluded). Headless frames are not vsync-capped, so builds are
+compared per second of riding, expressed per 60 Hz frame. GPU-process time is
+excluded everywhere.
+
+ENV01, the 600-step default script, Original preset, sound on, Apple M4 host
+(`private/reports/engine-parity/ride-cpu/`):
+
+| Build | Frames (10 s) | Main thread | Worker | Per 60 Hz frame |
+| --- | --- | --- | --- | --- |
+| JavaScript game | 2304 | 0.34 ms/frame | 0.12 ms/frame | 1.78 ms |
+| Rust, browser | 1450 | 0.70 ms/frame | - | 1.87 ms |
+| Rust, native (vsync) | 598 | 1.54 ms/frame | - | 1.54 ms |
+
+The Rust engine's own split (browser / native per frame): simulation and sound
+0.14 / 0.24 ms, rendering 0.90 / 1.12 ms, mixer 0.01 / 0.03 ms. The Rust engine draws
+the same world as the JavaScript game but its CPU cost is about equal in the browser,
+not lower: rendering through wgpu's GL backend dominates. Moving the simulation onto
+the main thread removed the worker round trip, not CPU. These are host numbers;
+the user's iPhone shows the Rust ride at 2.49 ms CPU per frame (61 fps).
 
 ## Vehicle presentation: wheel effects and lingering dust (2026-10-21)
 
@@ -349,6 +395,7 @@ measured comparison). None is replaced yet; parity above is with the JavaScript 
 | `atv-render/scenery.rs` | reverse-looping crowd ATMs keep frame 0 | native playback not recovered | No |
 | `atv-game/intro.rs` | swoop end pose behind the scene start | the player's follow camera (race port) | No |
 | `atv-render/terrain.rs` | detail blend averaged by mipmaps ("projected-coverage pass selection pending") | 00168490 pass selection | No |
+
 
 ## Commands
 
