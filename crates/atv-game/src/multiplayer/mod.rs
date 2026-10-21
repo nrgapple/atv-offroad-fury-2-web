@@ -552,6 +552,16 @@ impl Session {
         riding
     }
 
+    /// One rider's current (unbuffered) pose, if fresh.
+    pub fn current(&self, peer: u8, now_ms: u64, cars: Cars) -> Option<Snapshot> {
+        let mut pose = self.buffers.get(&peer)?.sample_current(now_ms)?;
+        if pose.stale {
+            return None;
+        }
+        rebase(&mut pose.snapshot, cars);
+        Some(pose.snapshot)
+    }
+
     /// Every other rider's current position (spawn clearance).
     pub fn positions(&self, now_ms: u64, cars: Cars) -> Vec<[f32; 3]> {
         self.buffers

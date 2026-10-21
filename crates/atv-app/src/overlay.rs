@@ -72,6 +72,8 @@ type ResultsCache = (Viewport, Results, String, DisplayList, Vec<(Rect, u32)>);
 type ToolbarCache = (Viewport, toolbar::State, DisplayList, Vec<(Rect, u32)>);
 
 pub struct Overlay {
+    /// The multiplayer room for the pause menu's online rows.
+    pub lobby: Option<atv_ui::menu::controller::Lobby>,
     /// Name tags drawn on the latest frame (tests).
     pub tags: usize,
     pub fonts: Fonts,
@@ -172,6 +174,7 @@ impl Overlay {
             results_cache: None,
             help_open: false,
             tags: 0,
+            lobby: None,
             help_until: None,
             ride_started: false,
             toolbar_cache: None,
@@ -264,6 +267,7 @@ impl Overlay {
             bindings,
             pad_name: self.pad_name.clone(),
             view: self.view,
+            lobby: self.lobby.as_ref(),
             music: self.music.as_ref(),
         };
         Some(f(menu, &mut ctx, &self.menu_hits, self.menu_scroll_max))

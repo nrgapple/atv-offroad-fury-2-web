@@ -756,6 +756,9 @@ impl App {
                 status(&format!("Train placement: {error}"));
             }
             riding.peers = net.contact_bodies(&riding.ride);
+            if let Some(overlay) = &mut self.overlay {
+                overlay.lobby = net.menu_lobby();
+            }
             riding.server_clock = net.server_clock();
             let eye = ready.camera.eye();
             net.present(
@@ -1223,6 +1226,50 @@ impl App {
                 }
             }
             Event::CopyRide => self.copy_ride_link(),
+            Event::Spawn(peer) => {
+                let Some(ready) = &mut self.ready else { return };
+                let (Some(net), Some(riding)) = (&mut ready.net, &mut ready.riding) else {
+                    return;
+                };
+                match net
+                    .spawn_beside(peer, &riding.ride)
+                    .and_then(|(origin, yaw)| riding.place_beside(origin, yaw))
+                {
+                    Ok(()) => self.menu_event(Event::Resume),
+                    Err(error) => {
+                        if let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut()) {
+                            menu.notice = Some(error);
+                        }
+                    }
+                }
+            }
+            Event::LeaveGame => {
+                if let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) {
+                    net.leave();
+                }
+                // Back to the main menu (shared Free Ride rooms return there
+                // in the browser too; the Multiplayer page is not ported).
+                if self.quit_to_menu() {
+                    return;
+                }
+                #[cfg(target_arch = "wasm32")]
+                if let Some(window) = web_sys::window() {
+                    window.location().set_href("engine.html").ok();
+                }
+                if let Some(ready) = &mut self.ready {
+                    ready.net = None;
+                    if let Some(riding) = &mut ready.riding {
+                        riding.online = false;
+                        riding.peers.clear();
+                        riding.server_clock = None;
+                    }
+                }
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.lobby = None;
+                }
+                status("Left the multiplayer room.");
+                self.menu_event(Event::Resume);
+            }
             Event::Jukebox(action) => {
                 if let Some(sound) = &mut riding.sound {
                     sound.jukebox(action);
@@ -1351,16 +1398,25 @@ impl App {
             .unwrap_or_default();
         #[cfg(not(target_arch = "wasm32"))]
         let page = "https://furyremastered.com/engine.html".to_string();
-        let url = atv_game::launch::ride_url(
-            &page,
-            &atv_game::launch::RideLink {
-                map: &ready.venue.environment,
-                quad: selection.quad,
-                rider: selection.rider,
-                player: &player,
-                race,
-            },
-        );
+        // In a room the row is Copy invite link (buildRideUrl's invite).
+        let invite = ready.net.as_ref().map(|net| net.invite());
+        let copied_text = if invite.is_some() {
+            "Invite link copied."
+        } else {
+            "Ride link copied."
+        };
+        let url = invite.unwrap_or_else(|| {
+            atv_game::launch::ride_url(
+                &page,
+                &atv_game::launch::RideLink {
+                    map: &ready.venue.environment,
+                    quad: selection.quad,
+                    rider: selection.rider,
+                    player: &player,
+                    race,
+                },
+            )
+        });
         let Some(menu) = &mut overlay.menu else {
             return;
         };
@@ -1375,7 +1431,7 @@ impl App {
                     wasm_bindgen_futures::spawn_local(async move {
                         let copied = wasm_bindgen_futures::JsFuture::from(promise).await.is_ok();
                         let _ = proxy.send_event(Message::Notice(if copied {
-                            "Ride link copied.".into()
+                            copied_text.into()
                         } else {
                             url
                         }));
@@ -1386,6 +1442,7 @@ impl App {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
+            let _ = copied_text;
             menu.notice = Some(url);
         }
         self.wake();
