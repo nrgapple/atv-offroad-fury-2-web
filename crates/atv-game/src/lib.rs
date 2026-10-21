@@ -5,6 +5,7 @@
 pub mod ambient;
 pub mod archive;
 pub mod audio;
+pub mod crash;
 pub mod intro;
 pub mod launch;
 pub mod lingering_dust;
