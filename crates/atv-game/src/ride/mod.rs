@@ -10,6 +10,7 @@
 mod bike;
 pub mod bindings;
 pub mod cpu;
+pub mod gear;
 mod load;
 pub mod present;
 pub mod race;
@@ -178,6 +179,7 @@ pub struct Ride {
     stunt_landed: bool,
     stunt_result: Option<bool>,
     selection: Selection,
+    appearance: gear::Appearance,
     pub quad: Model,
     pub rider: Model,
 }
@@ -269,6 +271,7 @@ impl Ride {
             stunt_landed: false,
             stunt_result: None,
             selection,
+            appearance: gear::Appearance::default(),
             quad,
             rider,
         };
@@ -351,6 +354,41 @@ impl Ride {
             Mount::Bike(bike) => Some(bike),
             Mount::Quad { .. } => None,
         }
+    }
+
+    /// Dresses the ATV rider in the Garage gear and paints the quad
+    /// (`rideAppearance` in game.js); motorcycles keep their original look.
+    /// Call before handing the models to the renderer.
+    pub async fn dress(
+        &mut self,
+        content: &atv_content::Content,
+        appearance: gear::Appearance,
+    ) -> Result<()> {
+        if self.is_motorcycle() || !appearance.valid() {
+            return Ok(());
+        }
+        self.appearance = appearance;
+        if appearance.gear.iter().all(|g| *g == 0) {
+            return Ok(());
+        }
+        let Some(catalog) = gear::catalog(content).await? else {
+            return Ok(());
+        };
+        let bytes = content.file("/RIDER/RIDER_MT.RES").await?;
+        let materials = atv_core::resource::Resource::parse(&bytes)?;
+        self.rider.textures =
+            gear::rider_textures(&self.rider.mesh, &appearance, &catalog, &materials)?;
+        Ok(())
+    }
+
+    /// The appearance the ride was dressed in.
+    pub fn appearance(&self) -> gear::Appearance {
+        self.appearance
+    }
+
+    /// The quad paint (`playerPaint`: mode and hue), original on a bike.
+    pub fn paint(&self) -> [f32; 2] {
+        gear::PAINT_PALETTE[usize::from(self.appearance.paint)]
     }
 
     /// The Garage choice this ride loaded.

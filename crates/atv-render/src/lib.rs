@@ -885,6 +885,13 @@ impl SceneRenderer {
         }
     }
 
+    /// The player's quad paint (`playerPaint`; CPU quads keep theirs).
+    pub fn set_ride_paint(&mut self, paint: [f32; 2]) {
+        if let Some(vehicle) = &mut self.vehicle {
+            vehicle.set_paint(paint);
+        }
+    }
+
     /// Mud on the player's vehicle and rider (the motorcycle's amount; the
     /// ATV dirt reveal when `reveal`).
     pub fn set_ride_mud(&mut self, amount: f32, reveal: bool) {
