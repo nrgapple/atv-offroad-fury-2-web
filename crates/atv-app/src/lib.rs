@@ -2,7 +2,7 @@
 //! renderer run natively (Metal/DX12/Vulkan) and in browsers (WebGL2).
 use atv_content::{Content, Store};
 use atv_game::venue::{self, Venue};
-use atv_render::{Camera, Gpu, SceneRenderer, View, camera::default_focal_length};
+use atv_render::{Camera, Gpu, Graphics, SceneRenderer, View, camera::default_focal_length};
 use std::{collections::HashSet, sync::Arc};
 use web_time::Instant;
 use winit::{
@@ -18,6 +18,11 @@ pub struct Options {
     pub venue: String,
     /// Fixed `x,y,z,yaw,pitch,focal` view, e.g. copied from the browser build.
     pub camera: Option<[f32; 6]>,
+    /// Forced Weather outcome (parity captures); random per load otherwise.
+    pub weather: Option<bool>,
+    /// Scenery clock steps to run before the first frame (parity captures).
+    pub steps: u64,
+    pub graphics: Graphics,
     /// Native parity capture: render once at this size, write PNG and exit.
     #[cfg(not(target_arch = "wasm32"))]
     pub capture: Option<(std::path::PathBuf, u32, u32)>,
@@ -55,6 +60,7 @@ struct Meter {
     cpu: f64,
     since: Option<Instant>,
     triangles: u32,
+    draws: u32,
 }
 
 async fn prepare(
@@ -63,7 +69,9 @@ async fn prepare(
     store: Store,
     environment: String,
     fixed: Option<[f32; 6]>,
+    world: (Option<bool>, u64, Graphics),
 ) -> Result<Ready, String> {
+    let (weather, steps, graphics) = world;
     let size = window.inner_size();
     let mut descriptor = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(display));
     // Browsers get WebGL2 so the port runs on every phone the site supports.
@@ -79,7 +87,25 @@ async fn prepare(
     let gpu = Gpu::new(&instance, surface, size.width, size.height).await?;
     status(&format!("Reading original {}…", environment.to_uppercase()));
     let content = Content::open(store).await?;
-    let venue = venue::load(&content, &environment, false).await?;
+    let weather = match weather {
+        Some(active) => venue::WeatherChoice::Active(active),
+        // Per-load sample, like the browser's Math.random() * 2^31.
+        None => venue::WeatherChoice::Random(
+            web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
+                .map_or(0, |d| d.subsec_nanos() ^ d.as_secs() as u32),
+        ),
+    };
+    let venue = venue::load_with(
+        &content,
+        &environment,
+        false,
+        venue::LoadOptions {
+            weather,
+            sky_smooth: graphics.sky_smooth,
+        },
+    )
+    .await?;
     let start = venue.scene.start_position;
     let direction = venue.scene.start_direction;
     let yaw = direction[0].atan2(direction[2]);
@@ -105,7 +131,9 @@ async fn prepare(
         focal_length = focal;
     }
     // The browser centres the fine terrain patch on the rider at the start.
-    let scene = SceneRenderer::new(&gpu, &venue, Some([start[0], start[2]]));
+    let mut scene =
+        SceneRenderer::with_graphics(&gpu, &venue, Some([start[0], start[2]]), graphics);
+    scene.advance_steps(steps);
     Ok(Ready {
         gpu,
         venue,
@@ -154,6 +182,7 @@ impl App {
         c.z += (axes.forward[2] * forward - axes.right[2] * strafe) * speed;
         c.y = c.y.max(ground(&ready.venue, c.x, c.z) + 1.5);
         let started = Instant::now();
+        ready.scene.advance(dt);
         match ready.scene.render(
             &ready.gpu,
             &View {
@@ -161,7 +190,10 @@ impl App {
                 focal_length: ready.focal_length,
             },
         ) {
-            Ok(stats) => self.meter.triangles = stats.terrain_triangles,
+            Ok(stats) => {
+                self.meter.triangles = stats.triangles();
+                self.meter.draws = stats.draws();
+            }
             Err(error) => status(&error),
         }
         self.meter.cpu += started.elapsed().as_secs_f64() * 1000.;
@@ -171,17 +203,19 @@ impl App {
         if elapsed >= 1. {
             let info = &ready.gpu.adapter_info;
             status(&format!(
-                "{} · {:.0} fps · {:.1} ms frame · {:.2} ms CPU · {} tris · {:?} {}",
+                "{} · {:.0} fps · {:.1} ms frame · {:.2} ms CPU · {} draws · {} tris · {:?} {}",
                 ready.venue.environment.to_uppercase(),
                 self.meter.frames as f64 / elapsed,
                 elapsed * 1000. / self.meter.frames as f64,
                 self.meter.cpu / self.meter.frames as f64,
+                self.meter.draws,
                 self.meter.triangles,
                 info.backend,
                 info.name
             ));
             self.meter = Meter {
                 triangles: self.meter.triangles,
+                draws: self.meter.draws,
                 ..Default::default()
             };
         }
@@ -209,6 +243,7 @@ impl ApplicationHandler<Message> for App {
             options.store,
             options.venue,
             options.camera,
+            (options.weather, options.steps, options.graphics),
         );
         let proxy = self.proxy.clone();
         let send = move |result: Result<Ready, String>| {
@@ -335,6 +370,30 @@ pub fn parse_camera(text: &str) -> Option<[f32; 6]> {
     values.try_into().ok()
 }
 
+/// `on`/`off` (also 1/0, true/false).
+pub fn parse_switch(text: &str) -> Option<bool> {
+    match text {
+        "on" | "1" | "true" => Some(true),
+        "off" | "0" | "false" => Some(false),
+        _ => None,
+    }
+}
+
+/// Display -> Graphics preset features (presetFeatures in web/graphics.js).
+pub fn graphics_preset(name: &str) -> Graphics {
+    match name {
+        "high" => Graphics {
+            sky_smooth: true,
+            anisotropy: 16,
+        },
+        "enhanced" => Graphics {
+            sky_smooth: true,
+            anisotropy: 4,
+        },
+        _ => Graphics::default(),
+    }
+}
+
 fn status(text: &str) {
     #[cfg(target_arch = "wasm32")]
     {
@@ -399,5 +458,8 @@ pub fn start() {
         store: Store::Http("/content/".into()),
         venue,
         camera: param("camera").and_then(|text| parse_camera(&text)),
+        weather: param("weather").and_then(|v| parse_switch(&v)),
+        steps: param("steps").and_then(|v| v.parse().ok()).unwrap_or(0),
+        graphics: param("graphics").map_or_else(Graphics::default, |v| graphics_preset(&v)),
     });
 }

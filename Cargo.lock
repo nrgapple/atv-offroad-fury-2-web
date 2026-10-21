@@ -191,6 +191,7 @@ dependencies = [
 name = "atv-render"
 version = "0.1.0"
 dependencies = [
+ "atv-core",
  "atv-game",
  "bytemuck",
  "wgpu",

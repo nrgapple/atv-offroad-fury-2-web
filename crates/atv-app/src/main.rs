@@ -10,6 +10,9 @@ fn main() {
     let mut venue = "env01".to_string();
     let mut capture = None;
     let mut camera = None;
+    let mut weather = None;
+    let mut steps = 0;
+    let mut graphics = atv_render::Graphics::default();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--content" => content = args.next().map(PathBuf::from),
@@ -20,6 +23,19 @@ fn main() {
                         .expect("--camera needs x,y,z,yaw,pitch,focal"),
                 )
             }
+            "--weather" => {
+                weather = Some(
+                    atv_app::parse_switch(&args.next().unwrap_or_default())
+                        .expect("--weather needs on or off"),
+                )
+            }
+            "--steps" => {
+                steps = args
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .expect("--steps needs a count")
+            }
+            "--graphics" => graphics = atv_app::graphics_preset(&args.next().unwrap_or_default()),
             "--capture" => {
                 let path = args.next().expect("--capture needs a PNG path");
                 let size = args.next().unwrap_or_else(|| "1280x720".into());
@@ -27,7 +43,7 @@ fn main() {
                 capture = Some((PathBuf::from(path), w.parse().unwrap(), h.parse().unwrap()));
             }
             other => panic!(
-                "unknown argument {other}; use --content DIR --venue ID [--camera x,y,z,yaw,pitch,focal] [--capture OUT.png WxH]"
+                "unknown argument {other}; use --content DIR --venue ID [--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high] [--capture OUT.png WxH]"
             ),
         }
     }
@@ -39,6 +55,9 @@ fn main() {
         store: Store::Directory(content),
         venue,
         camera,
+        weather,
+        steps,
+        graphics,
         capture,
     });
 }

@@ -1,6 +1,13 @@
 //! Loads one venue's terrain presentation from its original course archive.
 //! Mirrors terrainFromContent/uploadTerrainTextures in web/game.js.
-use crate::{Result, launch::course_resource};
+use crate::{
+    Result,
+    launch::course_resource,
+    materials::{last_component, member_named},
+    scenery::Scenery,
+    sky::Sky,
+    vegetation::Vegetation,
+};
 use atv_content::Content;
 use atv_core::{ipu, resource::Resource, scene::Scene, terrain, texture};
 
@@ -44,19 +51,44 @@ pub struct Venue {
     pub environment: String,
     pub scene: Scene,
     pub terrain: Terrain,
+    pub sky: Option<Sky>,
+    pub scenery: Scenery,
+    pub vegetation: Option<Vegetation>,
+    /// Source Weather selection for this load (00208cc0).
+    pub weather: Option<atv_core::weather::Selection>,
 }
 
-fn member_named(resource: &Resource, name: &str) -> Option<usize> {
-    resource.members.iter().position(|member| {
-        member
-            .name
-            .rsplit(['/', '\\'])
-            .next()
-            .is_some_and(|last| last.eq_ignore_ascii_case(name))
-    })
+/// Presentation choices made at load time.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LoadOptions {
+    /// Weather RNG sample (0..2^31), or a forced outcome for parity captures.
+    pub weather: WeatherChoice,
+    /// Decode the Enhanced/High smoothed sky tiles as well.
+    pub sky_smooth: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum WeatherChoice {
+    Random(u32),
+    Active(bool),
+}
+
+impl Default for WeatherChoice {
+    fn default() -> Self {
+        Self::Random(0)
+    }
 }
 
 pub async fn load(content: &Content, environment: &str, racing: bool) -> Result<Venue> {
+    load_with(content, environment, racing, LoadOptions::default()).await
+}
+
+pub async fn load_with(
+    content: &Content,
+    environment: &str,
+    racing: bool,
+    options: LoadOptions,
+) -> Result<Venue> {
     let course = course_resource(environment, racing)?;
     let bytes = content.file(&course.archive).await?;
     let archive = Resource::parse(&bytes)?;
@@ -70,10 +102,44 @@ pub async fn load(content: &Content, environment: &str, racing: bool) -> Result<
     let mode = member_named(&archive, &format!("{}.toy", course.mode_stem))
         .map(|i| archive.extract(i))
         .transpose()?;
-    let scene = atv_core::scene::parse_with_start(&scene_text, mode.as_deref())?;
+    let mut scene = atv_core::scene::parse_with_start(&scene_text, mode.as_deref())?;
+    // 00208cc0 reads [Weather] from the common/mode TOYs; an inactive
+    // weather removes its model from the scene.
+    let toy = match member_named(&archive, &format!("{environment}.toy")) {
+        Some(index) => Some(archive.extract(index)?),
+        None => match &course.placements {
+            Some(path) => {
+                let bytes = content.file(path).await?;
+                let placements = Resource::parse(&bytes)?;
+                member_named(&placements, &format!("{environment}.toy"))
+                    .map(|index| placements.extract(index))
+                    .transpose()?
+            }
+            None => None,
+        },
+    };
+    let weather = match &toy {
+        Some(common) => {
+            let definition =
+                atv_core::weather::Definition::parse(common, mode.as_deref().unwrap_or(&[]))?;
+            let random = match options.weather {
+                WeatherChoice::Random(sample) => sample & 0x7fff_ffff,
+                WeatherChoice::Active(true) => 0,
+                WeatherChoice::Active(false) => 0x7fff_ffff,
+            };
+            Some(atv_core::weather::select(definition, random, 1)?)
+        }
+        None => None,
+    };
+    if let Some(removed) = weather.as_ref().and_then(|w| w.removed_model.as_deref()) {
+        scene
+            .models
+            .retain(|model| !model.name.eq_ignore_ascii_case(removed));
+    }
     let tr2 = extract(&format!("{environment}.tr2"), "terrain")?;
     let decoded = terrain::decode_tr2(&tr2)?;
     let heights = decoded.heightfield()?;
+    let ground = decoded.render_heights()?;
     let (width, depth) = (
         decoded.width_cells as usize + 1,
         decoded.depth_cells as usize + 1,
@@ -141,8 +207,23 @@ pub async fn load(content: &Content, environment: &str, racing: bool) -> Result<
         &format!("{environment}_d.pst"),
         "ground detail texture",
     )?)?;
+    let sky_index = archive
+        .members
+        .iter()
+        .position(|m| last_component(&m.name).eq_ignore_ascii_case(&scene.cube_file))
+        .ok_or("Original scene sky is missing.")?;
+    let sky = Some(crate::sky::load(
+        &archive.extract(sky_index)?,
+        options.sky_smooth,
+    )?);
+    let scenery = crate::scenery::load(&archive, &scene)?;
+    let vegetation = crate::vegetation::load(&archive, environment, &scene, &ground)?;
     Ok(Venue {
         environment: environment.to_string(),
+        sky,
+        scenery,
+        vegetation,
+        weather,
         scene,
         terrain: Terrain {
             width,

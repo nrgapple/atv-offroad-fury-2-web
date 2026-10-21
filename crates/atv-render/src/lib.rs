@@ -1,7 +1,13 @@
 //! wgpu renderer shared by every build: Metal on macOS, DX12/Vulkan on
 //! Windows, Vulkan on Linux and WebGL2 in browsers.
 pub mod camera;
+mod cull;
+mod scenery;
+mod sky;
 mod terrain;
+mod texture;
+mod vegetation;
+mod world;
 
 use atv_game::venue::Venue;
 pub use camera::Camera;
@@ -142,27 +148,128 @@ pub struct View {
 pub struct FrameStats {
     pub terrain_draws: u32,
     pub terrain_triangles: u32,
+    pub sky_tiles: u32,
+    pub scenery_draws: u32,
+    pub scenery_triangles: u32,
+    pub scenery_culled: u32,
+    pub vegetation_draws: u32,
+    pub vegetation_triangles: u32,
+    pub vegetation_visible: u32,
+}
+
+impl FrameStats {
+    pub fn draws(&self) -> u32 {
+        self.terrain_draws + self.sky_tiles + self.scenery_draws + self.vegetation_draws
+    }
+    pub fn triangles(&self) -> u32 {
+        self.terrain_triangles
+            + self.sky_tiles * 2
+            + self.scenery_triangles
+            + self.vegetation_triangles
+    }
+}
+
+/// Presentation options of the Display -> Graphics presets (web/graphics.js).
+/// Original keeps both off; Enhanced/High smooth the sky and filter
+/// scenery textures anisotropically (4x/16x).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Graphics {
+    pub sky_smooth: bool,
+    pub anisotropy: u16,
 }
 
 pub struct SceneRenderer {
     terrain: terrain::TerrainPass,
+    world: world::World,
+    sky: Option<sky::SkyPass>,
+    scenery: scenery::SceneryPass,
+    vegetation: Option<vegetation::VegetationPass>,
     fog_color: [f32; 3],
     far: f32,
+    /// Depth range: fog end plus the largest object, so an admitted stadium
+    /// stand is not sliced open into the sky (matrix() in web/game.js).
+    depth_far: f32,
+    clock: f32,
 }
 
 impl SceneRenderer {
     pub fn new(gpu: &Gpu, venue: &Venue, fine_center: Option<[f32; 2]>) -> Self {
+        Self::with_graphics(gpu, venue, fine_center, Graphics::default())
+    }
+
+    pub fn with_graphics(
+        gpu: &Gpu,
+        venue: &Venue,
+        fine_center: Option<[f32; 2]>,
+        graphics: Graphics,
+    ) -> Self {
         let fog = venue.scene.fog.as_ref();
         let fog_color = venue.scene.fog_color.map(|c| c / 255.);
         let far = fog.map_or(
             venue.terrain.size_x().max(venue.terrain.size_z()) * 5.,
             |f| f.end,
         );
+        let terrain = terrain::TerrainPass::new(gpu, venue, fine_center, gpu.samples);
+        let mut world = world::World::new(gpu, venue);
+        world.globals.sky[3] = graphics.sky_smooth as u8 as f32;
+        let sky = venue
+            .sky
+            .as_ref()
+            .map(|sky| sky::SkyPass::new(gpu, &world, sky, graphics.sky_smooth));
+        let scenery = scenery::SceneryPass::new(gpu, &world, &venue.scenery, graphics.anisotropy);
+        let vegetation = venue
+            .vegetation
+            .as_ref()
+            .map(|v| vegetation::VegetationPass::new(gpu, &world, v, graphics.anisotropy));
+        let depth_far = far + scenery.reach.max(terrain.reach()) + 1.;
         Self {
-            terrain: terrain::TerrainPass::new(gpu, venue, fine_center, gpu.samples),
+            terrain,
+            world,
+            sky,
+            scenery,
+            vegetation,
             fog_color,
             far,
+            depth_far,
+            clock: 0.,
         }
+    }
+
+    /// Advances world animation (scenery UV scroll and ATM clocks) by
+    /// `seconds`, in whole 60 Hz simulation steps like the browser.
+    pub fn advance(&mut self, seconds: f32) {
+        self.clock = (self.clock + seconds.clamp(0., 0.1)).min(4. / 60.);
+        while self.clock >= 1. / 60. {
+            self.clock -= 1. / 60.;
+            self.scenery.step();
+        }
+    }
+
+    /// Advances world animation by exact simulation steps (parity captures).
+    pub fn advance_steps(&mut self, steps: u64) {
+        for _ in 0..steps {
+            self.scenery.step();
+        }
+    }
+
+    /// Preset change: swap the sky between the original and smoothed decode
+    /// (refreshSkyTextures). The venue must have loaded the smoothed tiles.
+    pub fn set_sky_smooth(&mut self, gpu: &Gpu, venue: &Venue, smooth: bool) {
+        if let (Some(pass), Some(sky)) = (&mut self.sky, &venue.sky) {
+            pass.set_smooth(gpu, sky, smooth);
+            self.world.globals.sky[3] = pass.smooth() as u8 as f32;
+        }
+    }
+
+    /// Scenery clock steps taken so far.
+    pub fn world_steps(&self) -> u64 {
+        self.scenery.steps()
+    }
+
+    /// Lit stadium camera-flash pool indices (0020f2c0).
+    pub fn set_lit_flashes(&mut self, flashes: &[usize]) {
+        self.scenery.lit_flashes.clear();
+        self.scenery.lit_flashes.extend_from_slice(flashes);
     }
 
     pub fn render(&mut self, gpu: &Gpu, view: &View) -> Result<FrameStats, String> {
@@ -202,12 +309,31 @@ impl SceneRenderer {
         depth: &wgpu::TextureView,
     ) -> (wgpu::CommandEncoder, FrameStats) {
         // 0012b360 applies the active fog end to the far clipping plane.
+        // Whole objects are culled there; depth extends by the largest object.
         let view_projection =
             view.camera
-                .view_projection(aspect, view.focal_length, 1., self.far + 1.);
-        let stats = self
-            .terrain
-            .prepare(gpu, &view_projection, view.camera.eye());
+                .view_projection(aspect, view.focal_length, 1., self.depth_far);
+        let cull = cull::planes(&view.camera.view_projection(
+            aspect,
+            view.focal_length,
+            1.,
+            self.far,
+        ));
+        let eye = view.camera.eye();
+        let mut stats = self.terrain.prepare(gpu, &view_projection, &cull, eye);
+        self.world
+            .prepare(gpu, &view_projection, eye, view.camera.yaw);
+        stats.sky_tiles = self.sky.as_ref().map_or(0, |s| s.tiles());
+        let scenery = self.scenery.prepare(gpu, &cull);
+        stats.scenery_draws = scenery.draws;
+        stats.scenery_triangles = scenery.triangles;
+        stats.scenery_culled = scenery.culled;
+        if let Some(vegetation) = &mut self.vegetation {
+            let v = vegetation.prepare(gpu, eye, view.camera.yaw);
+            stats.vegetation_draws = v.draws;
+            stats.vegetation_triangles = v.triangles;
+            stats.vegetation_visible = v.visible;
+        }
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         {
             let [r, g, b] = self.fog_color.map(f64::from);
@@ -236,7 +362,14 @@ impl SceneRenderer {
                 }),
                 ..Default::default()
             });
+            if let Some(sky) = &self.sky {
+                sky.draw(&mut pass, &self.world);
+            }
             self.terrain.draw(&mut pass);
+            self.scenery.draw(&mut pass, &self.world);
+            if let Some(vegetation) = &self.vegetation {
+                vegetation.draw(&mut pass, &self.world);
+            }
         }
         (encoder, stats)
     }
