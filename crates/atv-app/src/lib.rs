@@ -259,6 +259,9 @@ async fn prepare(
             if let Some(effects) = &mut riding.effects {
                 scene.accept_wheel_effects(&gpu, effects);
             }
+            for origin in riding.step_rest.iter().flatten() {
+                scene.observe_rest(*origin);
+            }
             publish_trace(&replay::record(&riding.ride, riding.ride.steps()).to_string());
         }
         if let (Some((mode, music)), None) = (sound, &script) {
@@ -402,7 +405,10 @@ impl App {
         // World clocks (scenery animation, water, train) follow the
         // simulation's fixed steps, as the browser's op 50 batch does.
         if !ready.hold {
-            for &(position, target) in &riding.step_cameras {
+            for (step, &(position, target)) in riding.step_cameras.iter().enumerate() {
+                if let Some(Some(origin)) = riding.step_rest.get(step) {
+                    ready.scene.observe_rest(*origin);
+                }
                 ready.scene.set_weather_view(position, target);
                 ready.scene.advance_steps(1);
             }
@@ -1161,12 +1167,16 @@ pub fn graphics_preset(name: &str) -> Graphics {
             anisotropy: 16,
             fresnel: true,
             dust: 96,
+            contact_shadows: true,
+            shadow_map: 2048,
         },
         "enhanced" => Graphics {
             sky_smooth: true,
             anisotropy: 4,
             fresnel: true,
             dust: 24,
+            contact_shadows: true,
+            shadow_map: 0,
         },
         _ => Graphics::default(),
     }

@@ -13,8 +13,13 @@ struct Globals {
   eco_direction: vec4<f32>,
   eco_rotation: vec4<f32>,
   sky: vec4<f32>,
+  shadow_matrix: mat4x4<f32>,
+  // receive, texel size
+  shadow: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> g: Globals;
+@group(0) @binding(1) var vehicle_shadow_map: texture_depth_2d;
+@group(0) @binding(2) var vehicle_shadow_sampler: sampler_comparison;
 @group(1) @binding(0) var tile: texture_2d<f32>;
 // Static scene models: web/game.js's scene shader for sceneDraws (useTexture,
 // useVertexColor, sceneryBlend, alphaFailPass, sceneryReflectionPlane,
@@ -43,6 +48,7 @@ struct Varyings {
   @location(2) color: vec4<f32>,
   // Coverage and clip W, carried so the ratio interpolates screen-linearly.
   @location(3) fog: vec2<f32>,
+  @location(4) world: vec3<f32>,
 };
 
 fn native_fog_coverage(distance: f32) -> f32 {
@@ -53,6 +59,7 @@ fn native_fog_coverage(distance: f32) -> f32 {
 fn finish(world: vec4<f32>, normal: vec3<f32>, uv: vec2<f32>, color: vec4<f32>) -> Varyings {
   var out: Varyings;
   out.clip = g.view_projection * world;
+  out.world = world.xyz;
   out.uv = uv;
   out.normal = (d.model * vec4<f32>(normal, 0.0)).xyz;
   out.color = color * 255.0;
@@ -103,7 +110,26 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
   }
   let n = normalize(in.normal);
   let sunlight = max(dot(n, normalize(g.sun_direction.xyz)), 0.0);
-  let lit = select(base * (g.ambient.xyz + g.sun_color.xyz * sunlight), base, d.flags.x > 0.5);
+  let lit = select(base * (g.ambient.xyz + g.sun_color.xyz * sunlight), base, d.flags.x > 0.5)
+    * vehicle_shadow(in.world);
   let coverage = select(1.0, clamp(in.fog.x / in.fog.y, 0.0, 1.0), in.fog.y != 0.0);
   return vec4<f32>(mix(g.fog_color.rgb, lit, coverage), source_alpha);
+}
+
+// High preset vehicle shadow map (shadowReceiverGlsl in web/shadow-map.js):
+// 1 outside the light box, four bilinear compare taps, soft box edges.
+fn vehicle_shadow(p: vec3<f32>) -> f32 {
+  // Off (every preset but High): no taps, as the browser's shadowReceive.
+  if (g.shadow.x < 0.5) { return 1.0; }
+  let c = g.shadow_matrix * vec4<f32>(p, 1.0);
+  let s = c.xyz / c.w;
+  let edge = min(min(s.x, s.y), min(1.0 - s.x, 1.0 - s.y));
+  let texel = g.shadow.y;
+  var lit = 0.0;
+  for (var i = 0; i < 4; i++) {
+    let o = vec2<f32>(select(-1.0, 1.0, i == 1 || i == 3), select(-1.0, 1.0, i >= 2)) * texel;
+    lit += textureSampleCompareLevel(vehicle_shadow_map, vehicle_shadow_sampler, s.xy + o, s.z - 0.0015);
+  }
+  let factor = mix(1.0, mix(0.55, 1.0, lit * 0.25), smoothstep(0.0, 0.08, edge));
+  return select(factor, 1.0, edge <= 0.0 || s.z >= 1.0);
 }

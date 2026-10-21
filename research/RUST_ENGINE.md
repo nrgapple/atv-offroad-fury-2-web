@@ -379,6 +379,30 @@ contact shadows and tire tracks are not ported yet. Host cost with the effects l
 WebKit 1.21-2.18 ms, 60 Hz held in all four; these are host viewport results, not
 phones. `compare_engine.mjs ride` gained `--graphics` and reports the JS effect counts.
 
+## Vehicle shadows: contact blobs and the High shadow map (2026-10-21)
+
+Replaces `web/vehicle-shadows.js` (ContactShadows, drawContactShadows) and
+`web/shadow-map.js` (VehicleShadowMap, lightMatrices, shadowReceiverGlsl). Both are
+authored: the original renders no vehicle shadows, so they stay off under Original.
+
+- `atv-render/shadows.rs`: Enhanced/High contact shadows (7x7 ground-draped blob per
+  caster, ZERO / ONE_MINUS_SRC_ALPHA, LEQUAL, offset -1/-2) for the quad and the
+  detached rider's torso, with the browser's resting lift (smoothed origin height over
+  the visible ground on each Riding step with every wheel down, fed by
+  `Riding::step_rest`); High 2048² vehicle-only sun shadow map rendered from the
+  vehicle pass's bone uniforms (depth only, offset 2/4, texel-snapped light box).
+- Terrain and scenery receive it (`vehicle_shadow` in `terrain.wgsl`/`scenery.wgsl`,
+  four compare taps, soft box edge); the train, plants and water do not, as in
+  game.js. Below High the shader returns before any tap.
+- The shadow texture is 1x1 and never sampled without High; WebGL samples it through a
+  comparison sampler (LEQUAL), like the browser's `sampler2DShadow`.
+
+Parity (ENV03 scripted ride, Rust browser / native vs JS): High 0.46 / 0.33 (was 0.87 /
+0.74; vehicle box 0.33 / 0.37, was 3.8), Enhanced 0.45 / 0.32; the remainder is tire
+tracks (next port). Original static ENV01 unchanged at 0.04. Host CPU per frame, held
+ride state: Chromium 0.58-0.66 ms, WebKit 1.13-1.51 ms (Enhanced/High, landscape and
+portrait viewports), 60 Hz held in WebKit; host results, not phones.
+
 ## Browser stand-ins in the ported presentation
 
 Labelled for follow-up replacement with recovered behaviour (separate PRs, each with a
