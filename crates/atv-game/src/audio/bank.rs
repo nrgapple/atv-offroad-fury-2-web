@@ -10,7 +10,40 @@ use atv_core::{
     quad_sounds::{self as qs, VenueAud},
     sound_effects, world_sounds,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+};
+
+/// Match QuadSounds' bounded decoded-vocal cache; a gender bank has about 50 clips.
+pub const MAX_DECODED_VOCALS: usize = 24;
+
+#[derive(Default)]
+struct VocalCache {
+    encoded: HashMap<String, Vec<u8>>,
+    /// Least recently used first. Playing voices retain their own Arc on eviction.
+    decoded: VecDeque<(String, Arc<Pcm>)>,
+}
+
+impl VocalCache {
+    fn get(&mut self, key: &str, rate: u32) -> Result<Option<Arc<Pcm>>> {
+        if let Some(index) = self.decoded.iter().position(|(name, _)| name == key) {
+            let entry = self.decoded.remove(index).unwrap();
+            let pcm = entry.1.clone();
+            self.decoded.push_back(entry);
+            return Ok(Some(pcm));
+        }
+        let Some(bytes) = self.encoded.get(key) else {
+            return Ok(None);
+        };
+        let pcm = Arc::new(Pcm::from_vag(&decode_vag(bytes)?, rate));
+        self.decoded.push_back((key.to_string(), pcm.clone()));
+        if self.decoded.len() > MAX_DECODED_VOCALS {
+            self.decoded.pop_front();
+        }
+        Ok(Some(pcm))
+    }
+}
 
 /// The bank's member key for an authored sample name.
 pub fn normal(name: &str) -> String {
@@ -24,6 +57,8 @@ pub fn normal(name: &str) -> String {
 
 pub struct Bank {
     pub samples: HashMap<String, Arc<Pcm>>,
+    vocal_cache: VocalCache,
+    rate: u32,
     /// Original sample rates (drive-on pitch is relative to them).
     pub rates: HashMap<String, u32>,
     pub engine: EngineAudioConfig,
@@ -42,6 +77,21 @@ impl Bank {
     pub fn get(&self, name: &str) -> Option<&Arc<Pcm>> {
         self.samples.get(&normal(name))
     }
+
+    /// Decode a selected rider vocal on first use, retaining only the last 24 clips.
+    /// Missing optional vocals stay silent, just like an older browser package.
+    pub fn vocal(&mut self, name: &str) -> Result<Option<Arc<Pcm>>> {
+        let key = normal(name);
+        // A clip also used by a non-vocal bank need not be decoded twice.
+        if let Some(pcm) = self.samples.get(&key) {
+            return Ok(Some(pcm.clone()));
+        }
+        self.vocal_cache.get(&key, self.rate)
+    }
+
+    pub fn decoded_vocals(&self) -> usize {
+        self.vocal_cache.decoded.len()
+    }
 }
 
 fn find(archive: &Archive, key: &str) -> Option<usize> {
@@ -52,8 +102,8 @@ fn find(archive: &Archive, key: &str) -> Option<usize> {
     })
 }
 
-/// Reads and decodes every sample the ride can play at `rate`. Missing
-/// optional samples (older packages) leave those voices silent.
+/// Decodes the engine and world samples at `rate`, keeping rider vocals encoded
+/// until selected. Missing optional samples (older packages) stay silent.
 pub async fn load(
     content: &Content,
     course_archive: &str,
@@ -109,7 +159,6 @@ pub async fn load(
             .iter()
             .flat_map(|c| c.quad_to_quad.iter().chain(&c.wreck).cloned()),
     );
-    names.extend(vocals.iter().flatten().flatten().cloned());
     names.extend(drive.iter().map(|d| d.sample.clone()));
     names.extend(ambient.iter().map(|a| a.sample.clone()));
     names.extend(soultree.iter().map(|s| s.sample.clone()));
@@ -133,6 +182,16 @@ pub async fn load(
         samples.insert(key, Arc::new(Pcm::from_vag(&audio, rate)));
         decode_ms += started.elapsed().as_secs_f64() * 1000.;
     }
+    let mut vocal_cache = VocalCache::default();
+    for name in vocals.iter().flatten().flatten() {
+        let key = normal(name);
+        if samples.contains_key(&key) || vocal_cache.encoded.contains_key(&key) {
+            continue;
+        }
+        if let Some(index) = find(&sounds, &key) {
+            vocal_cache.encoded.insert(key, sounds.member(index).await?);
+        }
+    }
     let crowd_venue = ambient
         .iter()
         .map(|a| &a.sample)
@@ -143,6 +202,8 @@ pub async fn load(
     soultree.retain(|s| samples.contains_key(&normal(&s.sample)));
     Ok(Bank {
         samples,
+        vocal_cache,
+        rate,
         rates,
         engine,
         effects,
@@ -154,4 +215,75 @@ pub async fn load(
         crowd_venue,
         decode_ms,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample() -> Vec<u8> {
+        let mut bytes = vec![0; 48 + 16];
+        bytes[..4].copy_from_slice(b"VAGp");
+        bytes[12..16].copy_from_slice(&16u32.to_be_bytes());
+        bytes[16..20].copy_from_slice(&48000u32.to_be_bytes());
+        bytes[48] = 12;
+        bytes[49] = 1;
+        bytes[50..].fill(0x21);
+        bytes
+    }
+
+    #[test]
+    fn vocals_stay_encoded_until_selected_and_reuse_decoded_pcm() {
+        let bytes = sample();
+        let expected = Pcm::from_vag(&decode_vag(&bytes).unwrap(), 48000);
+        let mut cache = VocalCache::default();
+        cache.encoded.insert("voice".into(), bytes);
+        assert!(cache.decoded.is_empty());
+        assert!(cache.get("missing", 48000).unwrap().is_none());
+        let first = cache.get("voice", 48000).unwrap().unwrap();
+        assert_eq!(first.data, expected.data);
+        let second = cache.get("voice", 48000).unwrap().unwrap();
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "cache hit must not decode again"
+        );
+        assert_eq!(cache.decoded.len(), 1);
+    }
+
+    #[test]
+    fn vocal_cache_evicts_least_recently_used_without_invalidating_playback() {
+        let mut cache = VocalCache::default();
+        for index in 0..=MAX_DECODED_VOCALS {
+            cache.encoded.insert(index.to_string(), sample());
+        }
+        let mut voices = Vec::new();
+        for index in 0..MAX_DECODED_VOCALS {
+            voices.push(cache.get(&index.to_string(), 48000).unwrap().unwrap());
+        }
+        let refreshed = cache.get("0", 48000).unwrap().unwrap();
+        assert!(Arc::ptr_eq(&refreshed, &voices[0]));
+        cache.get(&MAX_DECODED_VOCALS.to_string(), 48000).unwrap();
+        assert_eq!(cache.decoded.len(), MAX_DECODED_VOCALS);
+        assert!(!cache.decoded.iter().any(|(name, _)| name == "1"));
+        assert_eq!(
+            Arc::strong_count(&voices[1]),
+            1,
+            "only the playing voice remains"
+        );
+        assert!(voices[1].data.iter().any(|sample| *sample != 0.));
+        let reloaded = cache.get("1", 48000).unwrap().unwrap();
+        assert_eq!(cache.decoded.len(), MAX_DECODED_VOCALS);
+        assert!(!Arc::ptr_eq(&reloaded, &voices[1]));
+        assert_eq!(reloaded.data, voices[1].data);
+    }
+
+    #[test]
+    fn invalid_optional_vocal_does_not_enter_the_decoded_cache() {
+        let mut cache = VocalCache::default();
+        cache.encoded.insert("bad".into(), vec![0; 4]);
+        assert!(cache.get("bad", 48000).is_err());
+        assert!(cache.decoded.is_empty());
+        cache.encoded.insert("good".into(), sample());
+        assert!(cache.get("good", 48000).unwrap().is_some());
+    }
 }

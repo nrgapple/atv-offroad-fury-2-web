@@ -6,7 +6,7 @@
 //! per rendered frame like the browser's per-batch update.
 use super::{
     bank::{Bank, normal},
-    mixer::{Bus, EchoPreset, Looping, Mixer, VoiceId},
+    mixer::{Bus, EchoPreset, Looping, Mixer, Pcm, VoiceId},
 };
 use crate::{Result, ride::sound::AudioStep};
 use atv_core::{
@@ -16,7 +16,7 @@ use atv_core::{
     spatial_audio::{self, CameraPose, Command, Listener, Source},
     world_sounds::{World, WorldCommand},
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 /// Settings → Audio → Sound. Original is the recovered baseline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -218,11 +218,23 @@ impl RideAudio {
         label: &'static str,
     ) -> Option<VoiceId> {
         let pcm = self.bank.get(sample)?.clone();
+        Some(self.start_pcm(mixer, &pcm, sample, looping, gains, label))
+    }
+
+    fn start_pcm(
+        &mut self,
+        mixer: &mut Mixer,
+        pcm: &Arc<Pcm>,
+        sample: &str,
+        looping: Looping,
+        gains: [f32; 2],
+        label: &'static str,
+    ) -> VoiceId {
         self.stats.history.push(normal(sample));
         if self.stats.history.len() > 16 {
             self.stats.history.remove(0);
         }
-        Some(mixer.play(&pcm, looping, gains, 1., Bus::Sfx, false, label))
+        mixer.play(pcm, looping, gains, 1., Bus::Sfx, false, label)
     }
 
     /// One fixed step's sound inputs (QuadSounds.capture, captureEffects).
@@ -418,11 +430,18 @@ impl RideAudio {
             {
                 mixer.stop(id);
             }
-            if self.bank.get(&cue.sample).is_some() {
+            if let Some(pcm) = self.bank.vocal(&cue.sample)? {
                 if let Some(id) = self.vocal_voice.take() {
                     mixer.stop(id);
                 }
-                self.vocal_voice = self.start(mixer, &cue.sample, Looping::Once, [0., 0.], "vocal");
+                self.vocal_voice = Some(self.start_pcm(
+                    mixer,
+                    &pcm,
+                    &cue.sample,
+                    Looping::Once,
+                    [0., 0.],
+                    "vocal",
+                ));
                 self.stats.vocals += 1;
             }
         }
