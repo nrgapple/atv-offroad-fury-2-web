@@ -355,6 +355,8 @@ pub struct SceneRenderer {
     rest_lift: Option<f32>,
     /// Quad world, rider world and, when detached, the rider's torso world.
     ride_pose: Option<([f32; 16], Option<[f32; 16]>)>,
+    /// The drop gate matrix last posed.
+    gate: Option<[f32; 16]>,
     /// Authored speed-rush screen pass, and the travel state it reads.
     speed_rush: Option<speed_rush::SpeedRushPass>,
     rush_motion: ([f32; 3], [f32; 3]),
@@ -498,6 +500,7 @@ impl SceneRenderer {
             coarse_pointer: false,
             blood: None,
             ride_pose: None,
+            gate: None,
         };
         // startSimulation's first follow-camera request (op 46, dt 1/60)
         // already advances the pre-race shots once.
@@ -662,6 +665,37 @@ impl SceneRenderer {
     pub fn flash_burst(&mut self, target: f32) {
         if let Some(flashes) = &mut self.scenery.flashes {
             flashes.burst(target);
+        }
+    }
+
+    /// One race step's world presentation, applied before that step's world
+    /// clocks advance (atv-web steps the ambient emitters and flashes after
+    /// the race): flash bursts, firework emitter commands, the drop gate.
+    pub fn race_step(&mut self, gpu: &Gpu, events: &atv_game::ride::race::StepEvents) {
+        use atv_game::ride::race::FlashBurst;
+        if let Some(flashes) = &mut self.scenery.flashes {
+            let config = flashes.config();
+            for burst in &events.flashes {
+                flashes.burst(match burst {
+                    FlashBurst::PlayerWin => config.player_win,
+                    FlashBurst::AiFinish => config.ai_finish,
+                    FlashBurst::PlayerStunt => config.player_stunt,
+                });
+            }
+        }
+        if !events.fireworks.is_empty()
+            && let Some((_, shared)) = &self.ambient
+        {
+            let mut ambient = shared.borrow_mut();
+            for &(emitter, instance, fire) in &events.fireworks {
+                ambient.effects.set_mode_emitter(emitter, instance, fire);
+            }
+        }
+        if let Some(gate) = &events.gate
+            && self.gate != Some(*gate)
+        {
+            self.gate = Some(*gate);
+            self.scenery.pose_gate(gpu, gate);
         }
     }
 

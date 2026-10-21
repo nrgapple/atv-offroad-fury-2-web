@@ -129,6 +129,10 @@ pub fn record(ride: &Ride, step: u64) -> Value {
 pub struct Trace {
     pub records: Vec<Value>,
     pub autopilot: Vec<Value>,
+    /// Race presentation per step (not fingerprinted): lamps, crowd cues,
+    /// gate, firework commands, lamp sounds, music and the stadium flashes
+    /// lit after the step (atv-web's op 50 `race` and `flashes`).
+    pub events: Vec<Value>,
 }
 
 /// Loads the venue and ride headlessly and replays `script`. With
@@ -161,9 +165,41 @@ pub async fn trace(
     }
     let mut records = vec![record(&ride, 0)];
     let mut recorded: Vec<Value> = Vec::new();
+    let mut events = Vec::new();
+    // The stadium flash clock as the renderer runs it (op 115's seed).
+    let mut flashes = venue
+        .scenery
+        .flashes
+        .map(|(config, pool)| atv_core::race_crowd::Flashes::new(config, pool, 97211 + 8 * 47));
     for (index, controls) in script.steps().enumerate() {
         ride.step(controls, 0.)?;
         records.push(record(&ride, index as u64 + 1));
+        if ride.race().is_some() {
+            let step = ride.take_race_events();
+            let lit = flashes.as_mut().map(|f| {
+                let config = f.config();
+                for burst in &step.flashes {
+                    f.burst(match burst {
+                        super::race::FlashBurst::PlayerWin => config.player_win,
+                        super::race::FlashBurst::AiFinish => config.ai_finish,
+                        super::race::FlashBurst::PlayerStunt => config.player_stunt,
+                    });
+                }
+                f.step(1. / 60.).to_vec()
+            });
+            let frame = ride.race().and_then(|r| r.frame.as_ref());
+            events.push(json!({
+                "step": index + 1,
+                "lights": frame.and_then(|f| f.lights),
+                "crowd": step.crowd,
+                "gate": step.gate,
+                "fireworks": step.fireworks,
+                "sounds": step.sounds,
+                "music": step.music.map(|m| format!("{m:?}")),
+                "bursts": step.flashes.iter().map(|b| format!("{b:?}")).collect::<Vec<_>>(),
+                "flashes": lit,
+            }));
+        }
         // The imposed controls as a pad-style script step (f32 values
         // print exactly and read back exactly).
         let input = ride.race().and_then(|r| r.imposed).unwrap_or_default();
@@ -178,6 +214,7 @@ pub async fn trace(
     Ok(Trace {
         records,
         autopilot: recorded,
+        events,
     })
 }
 

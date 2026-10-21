@@ -173,6 +173,10 @@ pub struct Ride {
     placement: u32,
     sound: Option<sound::AudioStep>,
     race: Option<race::RaceState>,
+    /// Stunt chains landed/ended since the race last read them (atv-web's
+    /// `stunt_landed`/`stunt_result`, for flash bursts and crowd cues).
+    stunt_landed: bool,
+    stunt_result: Option<bool>,
     selection: Selection,
     pub quad: Model,
     pub rider: Model,
@@ -262,6 +266,8 @@ impl Ride {
             placement: 0,
             sound: None,
             race: None,
+            stunt_landed: false,
+            stunt_result: None,
             selection,
             quad,
             rider,
@@ -799,7 +805,11 @@ impl Ride {
                     success,
                     display_count,
                     ..
-                } => hud.finish_event(success, display_count),
+                } => {
+                    self.stunt_landed |= success;
+                    self.stunt_result = Some(success);
+                    hud.finish_event(success, display_count)
+                }
                 _ => {}
             }
         }

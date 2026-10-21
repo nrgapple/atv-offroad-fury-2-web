@@ -315,6 +315,8 @@ pub struct Mixer {
     pub meter: Meter,
     /// Streamed soundtrack frames at the output rate (the music bus).
     music: std::collections::VecDeque<[f32; 2]>,
+    /// Gain on the streamed soundtrack only (a race's hold fade).
+    pub stream_gain: f32,
     pub music_underruns: u32,
     /// Seconds spent in `render`, for CPU reports.
     pub render_seconds: f64,
@@ -338,6 +340,7 @@ impl Mixer {
             music_scratch: Vec::new(),
             meter: Meter::default(),
             music: Default::default(),
+            stream_gain: 1.,
             music_underruns: 0,
             render_seconds: 0.,
             log: None,
@@ -567,8 +570,8 @@ impl Mixer {
             for frame in music.iter_mut() {
                 match self.music.pop_front() {
                     Some(sample) => {
-                        frame[0] += sample[0];
-                        frame[1] += sample[1];
+                        frame[0] += sample[0] * self.stream_gain;
+                        frame[1] += sample[1] * self.stream_gain;
                     }
                     None => {
                         self.music_underruns += 1;
