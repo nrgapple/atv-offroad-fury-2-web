@@ -247,6 +247,11 @@ async fn prepare(
         // startSimulation's first frame (op 23) primes the wheel effects.
         if let Some(mut effects) = atv_game::wheel_effects::load(&content, &venue, 1).await? {
             effects.set_lingering_dust(usize::from(graphics.dust), &venue);
+            effects.set_tire_tracks(
+                usize::from(graphics.tire_tracks.0),
+                f32::from(graphics.tire_tracks.1),
+                &venue,
+            );
             effects.reset(&riding.ride)?;
             scene.set_wheel_effects(&gpu, &effects);
             riding.effects = Some(effects);
@@ -1169,6 +1174,7 @@ pub fn graphics_preset(name: &str) -> Graphics {
             dust: 96,
             contact_shadows: true,
             shadow_map: 2048,
+            tire_tracks: (3600, 75),
         },
         "enhanced" => Graphics {
             sky_smooth: true,
@@ -1177,6 +1183,7 @@ pub fn graphics_preset(name: &str) -> Graphics {
             dust: 24,
             contact_shadows: true,
             shadow_map: 0,
+            tire_tracks: (600, 15),
         },
         _ => Graphics::default(),
     }

@@ -10,6 +10,7 @@ mod sky;
 mod snow;
 mod terrain;
 mod texture;
+mod tire_tracks;
 mod train;
 mod vegetation;
 mod vehicle;
@@ -219,6 +220,9 @@ pub struct Graphics {
     pub contact_shadows: bool,
     /// Vehicle-only sun shadow map size (High 2048; 0 off).
     pub shadow_map: u16,
+    /// Tire track ring segments and their life in seconds (Enhanced 600/15,
+    /// High 3600/75; 0 off).
+    pub tire_tracks: (u16, u16),
 }
 
 pub struct SceneRenderer {
@@ -257,6 +261,8 @@ pub struct SceneRenderer {
     clock: f32,
     /// The ride's wheel dust, chunks, spray and wet births.
     wheel_effects: Option<wheel_effects::WheelEffectsPass>,
+    /// Enhanced/High tire tracks.
+    tire_tracks: Option<tire_tracks::TireTracksPass>,
     /// Enhanced/High lingering dust puffs.
     lingering_dust: Option<lingering_dust::LingeringDustPass>,
     graphics: Graphics,
@@ -296,6 +302,7 @@ impl SceneRenderer {
             fine_center,
             gpu.samples,
             (&world.shadow_view, &world.shadow_sampler),
+            graphics.anisotropy,
         );
         world.globals.sky[3] = graphics.sky_smooth as u8 as f32;
         let sky = venue
@@ -375,6 +382,7 @@ impl SceneRenderer {
             vehicle: None,
             wheel_effects: None,
             lingering_dust: None,
+            tire_tracks: None,
             graphics,
             ground: {
                 let t = &venue.terrain;
@@ -583,6 +591,27 @@ impl SceneRenderer {
         if let Some(pass) = &mut self.wheel_effects {
             pass.accept(effects);
         }
+        let now = effects.frame().time;
+        match &mut effects.tracks {
+            Some((tracks, ..)) => {
+                if self
+                    .tire_tracks
+                    .as_ref()
+                    .is_none_or(|p| p.capacity() != tracks.capacity)
+                {
+                    self.tire_tracks = Some(tire_tracks::TireTracksPass::new(
+                        gpu,
+                        &self.world,
+                        tracks.capacity,
+                    ));
+                    tracks.dirty = Some((0, tracks.capacity));
+                }
+                if let Some(pass) = &mut self.tire_tracks {
+                    pass.accept(gpu, tracks, now);
+                }
+            }
+            None => self.tire_tracks = None,
+        }
         match &effects.dust {
             Some(dust) => {
                 let capacity = dust.emitter.capacity;
@@ -789,6 +818,11 @@ impl SceneRenderer {
         if let Some(pass) = &mut self.wheel_effects {
             (stats.wheel_draws, stats.wheel_triangles) = pass.prepare(gpu, &view.camera);
         }
+        if let Some(pass) = &mut self.tire_tracks {
+            let (draws, triangles) = pass.prepare(gpu);
+            stats.wheel_draws += draws;
+            stats.wheel_triangles += triangles;
+        }
         if let Some(pass) = &mut self.lingering_dust {
             let fog_end = if self.world.globals.fog[2] > 0.5 {
                 self.far
@@ -880,6 +914,9 @@ impl SceneRenderer {
             }
             if let Some(contact) = &self.contact_shadows {
                 contact.draw(&mut pass, &self.world);
+            }
+            if let Some(tracks) = &self.tire_tracks {
+                tracks.draw(&mut pass, &self.world);
             }
             if let Some(vegetation) = &self.vegetation {
                 vegetation.draw(&mut pass, &self.world);

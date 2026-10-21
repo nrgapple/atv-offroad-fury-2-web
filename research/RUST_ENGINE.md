@@ -403,6 +403,26 @@ tracks (next port). Original static ENV01 unchanged at 0.04. Host CPU per frame,
 ride state: Chromium 0.58-0.66 ms, WebKit 1.13-1.51 ms (Enhanced/High, landscape and
 portrait viewports), 60 Hz held in WebKit; host results, not phones.
 
+## Tire tracks and terrain anisotropy (2026-10-21)
+
+Replaces `web/tire-tracks.js` (TrackBuilder, TireTrackRenderer); authored, Enhanced
+600 segments / 15 s, High 3,600 / 75 s, off under Original.
+
+- `atv-game/tire_tracks.rs`: the TOY terrain-zone flags (`parseDirtZones`), track
+  strength and wheel marks, and the segment ring stepped after each ride step from the
+  op 75 snapshot plus the vehicle's slip (`Ride::wheel_effect_state`, additive); reset
+  with the ride.
+- `atv-render/tire_tracks.rs` + `.wgsl`: dirty-range uploads only, one modulate-2x draw
+  (DST_COLOR, SRC_COLOR; LEQUAL, offset -1/-2) between contact shadows and plants.
+- The browser applies its anisotropic filter to the terrain atlas and detail map too;
+  the terrain samplers now take `Graphics::anisotropy` (Enhanced 4, High 16). This was
+  the remaining Enhanced/High difference on terrain-dominated frames.
+
+Parity (ENV03 scripted ride, Rust browser / native vs JS, /255): High 0.16 / 0.04 (was
+0.46 / 0.33), Enhanced 0.17 / 0.04; vehicle box 0.28-0.43. Host CPU per frame, High,
+held ride state: Chromium 0.79-1.20 ms, WebKit 1.36-2.31 ms, 60 Hz held in WebKit (host
+viewports, not phones).
+
 ## Browser stand-ins in the ported presentation
 
 Labelled for follow-up replacement with recovered behaviour (separate PRs, each with a

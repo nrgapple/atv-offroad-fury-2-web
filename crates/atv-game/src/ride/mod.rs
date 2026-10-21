@@ -609,6 +609,11 @@ impl Ride {
     }
 
     /// Quad linkage and rider skeleton for the latest frame (simulation_frame).
+    /// The vehicle's wheel presentation state (radii, slip, surfaces).
+    pub fn wheel_effect_state(&self) -> atv_core::vehicle::WheelEffectState {
+        self.vehicle.wheel_effect_state()
+    }
+
     /// Wheel radii (presentation effects place dust at the contact patch).
     pub fn wheel_radii(&self) -> [f32; 4] {
         self.vehicle.wheel_effect_state().radii
