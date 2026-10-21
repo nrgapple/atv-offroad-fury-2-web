@@ -552,9 +552,54 @@ Measured at the NAT01 sea view `2614.86,200,3019.69,4.3,-0.3,1.455078`, Original
   0.03.
 - CPU is unchanged: one draw, and the grid is rebuilt only on resize. Host status
   0.70 -> 0.67 ms, frame 12.1 -> 12.5 ms at vsync.
-- GPU time is not measured. The cost is the larger vertex count above, with one
-  integer height fetch per vertex. Portrait phones go from 8,000 to 24,500 vertices.
-  Physical-phone timing is still to do.
+- GPU time, measured below on the desktop host. Portrait phones go from 8,000 to
+  24,500 vertices; physical-phone timing is still to do.
+
+### Scene-pass GPU time with the native rows (2026-10-21)
+
+`fury --capture OUT WxH --gpu-frames N` now times the scene render pass with wgpu
+timestamp queries (native only; WebGL2 has none): 30 untimed warm-up frames, then N
+offscreen frames submitted back to back, and prints the median. Each row below is the
+median of five such runs (240 frames each), alternating a build of current main with a
+temporary build that re-applies the browser's 12,000/8,000-vertex cap (not shipped).
+Views: the NAT01 sea view above (free camera), and the ride start of every wet venue.
+
+Host: Apple M4, macOS, native Metal. **These are desktop host numbers, not phone
+results.** No phone has been timed.
+
+| View | Size | Preset | Native rows (ms) | Browser cap (ms) | Difference |
+| --- | --- | --- | ---: | ---: | ---: |
+| NAT01 sea | 1280x720 | Original | 2.07 | 1.14 | +0.93 (+81%) |
+| NAT01 sea | 1280x720 | High | 3.18 | 2.26 | +0.93 (+41%) |
+| NAT01 sea | 390x844 | Original | 0.88 | 0.55 | +0.33 (+60%) |
+| NAT01 sea | 390x844 | High | 0.99 | 0.66 | +0.34 (+52%) |
+| NAT01 start | 1280x720 | Original | 1.34 | 0.94 | +0.40 |
+| NAT01 start | 390x844 | Original | 0.57 | 0.45 | +0.12 |
+| ENV04/05/07/08, FREE04 starts | 1280x720 | Original | 0.94-1.04 | 0.66-0.80 | +0.25 to +0.27 |
+| ENV04/05/07/08, FREE04 starts | 1280x720 | High | 1.16-1.43 | 0.92-1.21 | +0.22 to +0.25 |
+| ENV04/05/07/08, FREE04 starts | 390x844 | Original | 0.44-0.53 | 0.32-0.43 | +0.10 to +0.12 |
+| ENV04/05/07/08, FREE04 starts | 390x844 | High | 0.47-0.66 | 0.39-0.58 | +0.04 to +0.08 |
+
+Observed:
+- On this host the native rows cost about 0.25 ms of GPU time per frame at 1280x720
+  wherever the water draws, and about 0.1 ms in portrait. The cost is close to
+  constant across venues, so it is mostly per-vertex work: the grid is built for the
+  viewport, not the visible water.
+- The sea view, where water fills most of the frame, costs most: +0.93 ms at 1280x720
+  (scene pass 1.14 -> 2.07 ms) and +0.33 ms in portrait (0.55 -> 0.88 ms). Distant rows
+  there are thinner than a pixel, so the extra triangles add rasterizer and partial
+  fragment-quad work as well as vertex work. This is an interpretation; no per-stage
+  counters were read.
+- Within a run the timing is stable (run medians agree to about 0.01 ms). An
+  occasional whole run is 2-3x slower in every frame (GPU clock ramp-up); the
+  five-run median discards it.
+
+Not established: phone GPU time. Phone GPUs are slower than the M4, so the absolute
+cost will be larger there; whether the sea view still fits the frame budget on the
+weakest supported phones needs a device measurement before deciding between native
+rows and a phone-only cap. If one is needed it must be an explicit option, because
+the native rows are the recovered behaviour. Raw rows and the script are in ignored
+`private/reports/water-gpu-timing/`.
 
 ## Browser stand-ins in the ported presentation
 
@@ -859,6 +904,8 @@ FURY_BIN=target/release/fury FURY_CONTENT=private/reports/hosted-content \
 FURY_BIN=target/release/fury FURY_CONTENT=private/reports/hosted-content ATV_TEST_URL=... \
   node tools/compare_engine.mjs ride env01 [script.json]   # private/reports/engine-parity/ride/
   #   ride options: --graphics original|enhanced|high --crash original|crazy|gorn --region x0,y0,x1,y1
+cargo run --release -p atv-app --bin fury -- --content DIR --venue nat01 --free \
+  --camera x,y,z,yaw,pitch,focal --capture out.png 1280x720 --gpu-frames 240   # median scene-pass GPU ms (native)
 cargo run --release -p atv-app --bin fury -- --content DIR --venue env01 --mute \
   --autodrive drive.json --bench out.json --profile   # per-pass CPU (browser: ?autodrive=...&profile=1)
 cargo run --release -p atv-app --bin fury -- --content DIR --script s.json --trace out.json
