@@ -315,6 +315,8 @@ pub struct Sound {
     hold_fade: Option<(web_time::Instant, f32)>,
     /// CPU spent on sound decisions per rendered frame (ms), for the meter.
     pub cpu: f64,
+    /// Other riders' engines and impacts in a multiplayer room.
+    pub remote: atv_game::audio::remote::RemoteAudio,
     /// Mixer render time per rendered frame (ms), averaged over a second.
     pub mix: f64,
     mix_mark: (f64, u32, web_time::Instant),
@@ -394,6 +396,7 @@ impl Sound {
             held: false,
             hold_fade: None,
             cpu: 0.,
+            remote: Default::default(),
             mix: 0.,
             mix_mark: (0., 0, web_time::Instant::now()),
         })
@@ -464,6 +467,46 @@ impl Sound {
             *seconds = mixer.render_seconds;
             *frames = 0;
             *since = web_time::Instant::now();
+        }
+    }
+
+    /// Other riders' engines and body impacts this frame; returns the
+    /// remote quads whose engine banks should load.
+    pub fn remote_frame(&mut self, riders: &[atv_game::audio::remote::Rider]) -> Vec<u16> {
+        let wanted = self.remote.wanted(riders);
+        let Some(listener) = self.ride.listener() else {
+            return wanted;
+        };
+        let audible = self.output.started.get() && self.focused;
+        if let Ok(mut mixer) = self.output.mixer.lock() {
+            let bank = &self.ride.bank;
+            let impact = |name: &str| bank.get(name).cloned();
+            if let Err(error) = self.remote.frame(
+                &mut mixer,
+                bank.effects.as_ref(),
+                &impact,
+                &listener,
+                riders,
+                audible,
+            ) {
+                eprintln!("remote sound: {error}");
+            }
+        }
+        wanted
+    }
+
+    /// Loads a remote quad's engine bank at this output's rate.
+    pub fn load_remote_engine(
+        &self,
+        quad: u16,
+    ) -> impl std::future::Future<Output = Result<atv_game::audio::remote::Engine, String>> + 'static
+    {
+        let content = self.content.clone();
+        let rate = self.ride.bank.rate();
+        async move {
+            let (config, samples) =
+                atv_game::audio::bank::load_remote_engine(&content, u32::from(quad), rate).await?;
+            Ok(atv_game::audio::remote::Engine { config, samples })
         }
     }
 
@@ -738,6 +781,7 @@ impl Drop for Sound {
     fn drop(&mut self) {
         if let Ok(mut mixer) = self.output.mixer.lock() {
             self.ride.race.stop(&mut mixer);
+            self.remote.stop_all(&mut mixer);
             mixer.stream_gain = 1.;
         }
         #[cfg(target_arch = "wasm32")]

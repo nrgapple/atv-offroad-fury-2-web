@@ -133,6 +133,8 @@ enum Message {
     PeerModel(Box<PeerModel>),
     /// The Arlington Free Ride rider count for the main menu.
     FreeRideRiders(Option<u32>),
+    /// Another rider's engine bank finished loading.
+    RemoteEngine(u16, Box<Result<atv_game::audio::remote::Engine, String>>),
 }
 
 type PeerModel = Result<
@@ -724,6 +726,7 @@ impl App {
             motion.linear_velocity,
         );
         let mut loads = Vec::new();
+        let mut engine_loads = Vec::new();
         let mut course = None;
         if let Some(net) = &mut ready.net {
             let was_open = net.closed.is_none();
@@ -754,10 +757,24 @@ impl App {
             if was_open && let Some(closed) = &net.closed {
                 status(&format!("Multiplayer ended: {closed}"));
             }
+            if let Some(sound) = &mut riding.sound {
+                for quad in sound.remote_frame(&net.riders) {
+                    engine_loads.push((quad, sound.load_remote_engine(quad)));
+                }
+            }
             let content = net.content();
             loads.extend(tick.loads.into_iter().map(|key| (content.clone(), key)));
             course = tick.course;
-            publish_multiplayer(net, riding.contacts, &riding.ride);
+            let remote = riding
+                .sound
+                .as_ref()
+                .map(|s| (s.remote.voices(), s.remote.starts, s.remote.impact_starts));
+            publish_multiplayer(net, riding.contacts, &riding.ride, remote);
+        }
+        for (quad, future) in engine_loads {
+            self.spawn(future, move |engine| {
+                Message::RemoteEngine(quad, Box::new(engine))
+            });
         }
         for (content, key) in loads {
             self.spawn(multiplayer::load_model(content, key), |model| {
@@ -1824,6 +1841,19 @@ impl ApplicationHandler<Message> for App {
                     window.request_redraw();
                 }
             }
+            Message::RemoteEngine(quad, engine) => match *engine {
+                Ok(engine) => {
+                    if let Some(sound) = self
+                        .ready
+                        .as_mut()
+                        .and_then(|r| r.riding.as_mut())
+                        .and_then(|r| r.sound.as_mut())
+                    {
+                        sound.remote.add_engine(quad, engine);
+                    }
+                }
+                Err(error) => status(&format!("Remote engine sound unavailable: {error}")),
+            },
             Message::PeerModel(model) => {
                 if let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) {
                     net.model_loaded(*model);
@@ -2832,7 +2862,12 @@ fn default_relay() -> String {
 }
 
 /// Multiplayer status for tests (`window.furyMultiplayer`, JSON).
-fn publish_multiplayer(net: &multiplayer::Net, contacts: u64, ride: &atv_game::ride::Ride) {
+fn publish_multiplayer(
+    net: &multiplayer::Net,
+    contacts: u64,
+    ride: &atv_game::ride::Ride,
+    remote_sound: Option<(usize, u64, u64)>,
+) {
     #[cfg(target_arch = "wasm32")]
     if let Some(window) = web_sys::window() {
         let mut report = net.report();
@@ -2855,6 +2890,9 @@ fn publish_multiplayer(net: &multiplayer::Net, contacts: u64, ride: &atv_game::r
             })
             .collect();
         report["trainCars"] = cars.into();
+        report["remoteSound"] = serde_json::json!(remote_sound.map(|(voices, starts, impacts)| {
+            serde_json::json!({"voices": voices, "starts": starts, "impacts": impacts})
+        }));
         let _ = js_sys::Reflect::set(
             &window,
             &"furyMultiplayer".into(),
@@ -2862,7 +2900,7 @@ fn publish_multiplayer(net: &multiplayer::Net, contacts: u64, ride: &atv_game::r
         );
     }
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = (net, contacts, ride);
+    let _ = (net, contacts, ride, remote_sound);
 }
 
 impl App {

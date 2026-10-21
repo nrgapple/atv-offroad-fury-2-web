@@ -1121,6 +1121,39 @@ Observed:
   JavaScript guest on the flatbed) and `train-rust-rider.png` (the Rust rider after
   sliding off).
 
+### Slice 5: other riders' engines and body impacts
+
+Ported (`atv-game/src/audio/remote.rs`, atv-web op 83 `presentation` with
+web/audio.js `remoteFrame`):
+
+- The nearest six riders keep an engine voice; distant, stale, departed or
+  re-vehicled riders lose it.
+- Each voice runs its own original engine sound state machine
+  (`EngineAudioState`, seeded per slot) on the replicated throttle, speed and
+  riding state. It plays that quad's original samples, loaded once per quad from
+  `vehicle.aud` and `AUDIO.RES` (`bank::load_remote_engine`).
+- Idle loops use the VAG loop markers, as the player's idle does. The browser loops
+  the whole Web Audio buffer, so a looped remote idle can differ at its loop point.
+- A new crash serial plays an original body impact (`rider.aud`) at the detached
+  rider's position.
+- Every voice is placed for the follow camera's listener by the recovered spatial
+  arithmetic: distance attenuation of 15 to 300 ft for engines, `rider.aud` distances
+  for impacts, then stereo pan and Doppler pitch.
+- Voices stop while the output is suspended or unfocused, and when the ride ends.
+
+Observed (`tools/test_engine_multiplayer_audio.mjs`, run once on the local relay;
+host-only, headless Chromium with autoplay allowed):
+
+- A Rust browser guest (quad 12) in a JavaScript host's room played the host's
+  engine as 1 remote voice. The JavaScript host played the Rust rider's engine as 1
+  voice, with its playhead advancing.
+- Holding the host's throttle for 180 steps raised the guest's remote engine sample
+  starts from 1 to 7.
+- Unit test: a new crash serial plays exactly one spatial impact, and a silent
+  output starts none.
+- Native desktop output uses the same code; it was not exercised by this gate. The
+  remote mix was not compared sample-for-sample with the browser's Web Audio output.
+
 Gaps, in planned slice order:
 
 1. No Multiplayer menu in `atv-ui`: no Host/Join forms (text entry), room code entry,
@@ -1133,9 +1166,7 @@ Gaps, in planned slice order:
 3. Desktop keeps the slot key in memory only; it is lost when the app restarts.
 4. Train on a motorcycle ride, the Realistic train-riding setting, and an arrival's
    spawn velocity on a moving car (the browser adds the car's point velocity).
-5. Remote engine voices and impact sounds are not played: the nearest-six voice
-   selection and spatial audio of op 83 are not ported.
-6. Twenty-rider rooms are untested in the Rust engine; the JavaScript game's
+5. Twenty-rider rooms are untested in the Rust engine; the JavaScript game's
    receive batching, name-tag limits and model cache bounds have no Rust measurement
    yet.
 

@@ -5,4 +5,5 @@ pub mod bank;
 pub mod mixer;
 pub mod music;
 pub mod race;
+pub mod remote;
 pub mod ride;

@@ -60,6 +60,8 @@ pub struct Net {
     pub drawn: usize,
     /// Each presented rider's slot, ATV position and staleness (tests).
     presented: Vec<(u8, [f32; 3], bool, Option<u8>)>,
+    /// This frame's remote riders for their engine and impact sounds.
+    pub riders: Vec<atv_game::audio::remote::Rider>,
     /// The course this client has loaded (the room may move on).
     pub environment: String,
     /// Ride choices to reload with when the room changes course.
@@ -256,6 +258,7 @@ impl Net {
             closed: None,
             drawn: 0,
             presented: Vec::new(),
+            riders: Vec::new(),
             environment: String::new(),
             ride,
             meet: None,
@@ -586,6 +589,7 @@ impl Net {
         }
         let mut poses: Vec<(u8, Pose)> = Vec::new();
         self.presented.clear();
+        self.riders.clear();
         let cars = |car| ride.train_car(car);
         for (peer, sampled) in self.session.present(now, Some(own), &cars) {
             self.presented.push((
@@ -594,6 +598,20 @@ impl Net {
                 sampled.stale,
                 sampled.snapshot.platform.as_ref().map(|p| p.car),
             ));
+            let s = &sampled.snapshot;
+            self.riders.push(atv_game::audio::remote::Rider {
+                peer,
+                quad: s.atv_model,
+                position: s.atv.position,
+                velocity: s.velocity,
+                rider_position: s.rider.position,
+                rider_velocity: s.rider_velocity,
+                throttle: s.throttle,
+                speed: s.speed,
+                riding: s.rider_state == atv_game::multiplayer::RiderState::Riding,
+                crash_serial: s.crash_serial,
+                stale: sampled.stale,
+            });
             // The roster lists the rider's look; the session only admits
             // snapshots whose models match it.
             let Some(&(_, key)) = roster.iter().find(|(id, _)| *id == peer) else {
