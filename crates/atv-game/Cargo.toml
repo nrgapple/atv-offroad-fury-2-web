@@ -1,0 +1,9 @@
+[package]
+name = "atv-game"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+atv-core = { path = "../atv-core" }
+atv-content = { path = "../atv-content" }

@@ -1,0 +1,4 @@
+html, body { margin: 0; height: 100%; background: #0b0d10; overflow: hidden; }
+canvas { display: block; width: 100vw; height: 100vh; touch-action: none; outline: none; }
+#status { position: fixed; left: 8px; bottom: 8px; font: 12px ui-monospace, monospace; color: #e8edf2;
+  background: rgba(0, 0, 0, .55); padding: 4px 8px; border-radius: 4px; pointer-events: none; }
