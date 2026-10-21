@@ -845,6 +845,7 @@ impl Overlay {
                 "selection": m.selection,
                 "choices": m.rows.choices,
                 "scroll": m.scroll,
+                "notice": m.notice,
                 "hits": self.menu_hits.iter().filter(|(_, id)| *id >= pause::ROW).map(|(r, id)| serde_json::json!({
                     "action": m.rows.choices.get((*id - pause::ROW) as usize),
                     "x": r.x, "y": r.y, "width": r.w, "height": r.h,

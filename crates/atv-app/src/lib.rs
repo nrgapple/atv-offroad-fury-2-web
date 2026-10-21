@@ -118,6 +118,9 @@ struct PendingSound {
 enum Message {
     Ready(Box<Ready>),
     SoundReady(Box<sound::Sound>),
+    /// A line for the open menu's notice (e.g. the copied ride link).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    Notice(String),
     SoundFailed(String),
     Failed(String),
     /// The frontend's GPU, content and venue list are ready.
@@ -1143,6 +1146,7 @@ impl App {
                         .set_fullscreen(on.then_some(winit::window::Fullscreen::Borderless(None)));
                 }
             }
+            Event::CopyRide => self.copy_ride_link(),
             Event::Changed => {
                 if let Some(overlay) = &mut self.overlay {
                     overlay.set_help_keys(&riding.bindings);
@@ -1168,6 +1172,77 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Pause → Copy ride link (frontend.js `rideUrl` + launch.js
+    /// `copyRideUrl`): this page with the ride's setup; the clipboard, or
+    /// the link itself on the notice line when the copy is refused.
+    fn copy_ride_link(&mut self) {
+        let (Some(ready), Some(overlay)) = (&self.ready, &mut self.overlay) else {
+            return;
+        };
+        let Some(riding) = &ready.riding else {
+            return;
+        };
+        let selection = riding.ride.selection();
+        let player = overlay
+            .settings
+            .get(atv_ui::front::controller::SELECTION_KEY)
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| v["playerName"].as_str().map(String::from))
+            .filter(|p| !p.trim().is_empty())
+            .unwrap_or_else(|| "Rider".into());
+        let race = riding.ride.race().map(|r| {
+            let s = r.settings();
+            (s.laps, s.cpu, s.difficulty, s.aggressive, s.all_out)
+        });
+        #[cfg(target_arch = "wasm32")]
+        let page = web_sys::window()
+            .and_then(|w| {
+                let l = w.location();
+                Some(format!("{}{}", l.origin().ok()?, l.pathname().ok()?))
+            })
+            .unwrap_or_default();
+        #[cfg(not(target_arch = "wasm32"))]
+        let page = "https://furyremastered.com/engine.html".to_string();
+        let url = atv_game::launch::ride_url(
+            &page,
+            &atv_game::launch::RideLink {
+                map: &ready.venue.environment,
+                quad: selection.quad,
+                rider: selection.rider,
+                player: &player,
+                race,
+            },
+        );
+        let Some(menu) = &mut overlay.menu else {
+            return;
+        };
+        #[cfg(target_arch = "wasm32")]
+        {
+            let clipboard = web_sys::window().map(|w| w.navigator().clipboard());
+            match clipboard {
+                Some(clipboard) => {
+                    menu.notice = Some(url.clone());
+                    let promise = clipboard.write_text(&url);
+                    let proxy = self.proxy.clone();
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let copied = wasm_bindgen_futures::JsFuture::from(promise).await.is_ok();
+                        let _ = proxy.send_event(Message::Notice(if copied {
+                            "Ride link copied.".into()
+                        } else {
+                            url
+                        }));
+                    });
+                }
+                None => menu.notice = Some(url),
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            menu.notice = Some(url);
+        }
+        self.wake();
     }
 
     fn act(&mut self, action: overlay::Action) {
@@ -1668,6 +1743,12 @@ impl ApplicationHandler<Message> for App {
                 self.wake();
             }
             Message::SoundFailed(error) => status(&format!("Sound unavailable: {error}")),
+            Message::Notice(text) => {
+                if let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut()) {
+                    menu.notice = Some(text);
+                }
+                self.wake();
+            }
             Message::Ready(ready) => {
                 if let Some(front) = &self.front {
                     front.borrow_mut().release_gpu();

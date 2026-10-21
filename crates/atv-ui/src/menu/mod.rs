@@ -122,6 +122,8 @@ pub struct State {
     /// Opened from the frontend's main menu: the panel fills the screen over
     /// the frontend backdrop (`#frontend[data-context=menu]`).
     pub from_menu: bool,
+    /// `#menu-notice`: a bottom-centre line (copy ride link results).
+    pub notice: Option<String>,
 }
 
 const FOOTER: [&str; 9] = [
@@ -674,7 +676,8 @@ pub fn element(view: &Viewport, state: &State) -> El {
             },
             ..Default::default()
         })
-        .child(panel);
+        .child(panel)
+        .children(notice(view, state));
     }
     let panel = El::new(Style {
         size: Size {
@@ -731,6 +734,53 @@ pub fn element(view: &Viewport, state: &State) -> El {
         &[(0., Color::hex("#0000004d")), (1., Color::hex("#000000b3"))],
     )))
     .child(stage)
+    .children(notice(view, state))
+}
+
+/// `#menu-notice` (game.css + hud.css): a fit-content line centred above the
+/// bottom safe area, gold left rule.
+fn notice(view: &Viewport, state: &State) -> Option<El> {
+    let text = state.notice.as_ref().filter(|t| !t.is_empty())?;
+    let side = |s: f32| s.max(16.);
+    Some(
+        El::new(Style {
+            position: Position::Absolute,
+            inset: taffy::Rect {
+                left: LengthPercentageAuto::length(side(view.safe[3])),
+                right: LengthPercentageAuto::length(side(view.safe[1])),
+                bottom: LengthPercentageAuto::length(side(view.safe[2])),
+                top: LengthPercentageAuto::auto(),
+            },
+            display: Display::Flex,
+            justify_content: JustifyContent::CENTER,
+            ..Default::default()
+        })
+        .child(
+            El::new(Style {
+                padding: sides(10., 18., 10., 18.),
+                border: sides(0., 0., 0., 3.),
+                min_size: Size {
+                    width: length(0.),
+                    height: auto(),
+                },
+                ..Default::default()
+            })
+            .paint(Paint {
+                radii: [0., 5., 5., 0.],
+                fill: Some(Color::hex("#0c0c0cdb").into()),
+                border: [0., 0., 0., 3.],
+                border_color: crate::hud::tokens::HUD_GOLD,
+                shadows: vec![BoxShadow::outer(0., 4., 0., Color::hex("#0009"))],
+                ..Default::default()
+            })
+            .content(Content::Text {
+                text: text.clone(),
+                style: TextStyle::new(display(15., 600, false), Color::hex("#eee")),
+                line_height: 20.25,
+                wrap: true,
+            }),
+        ),
+    )
 }
 
 fn label_el(text: &str, style: &TextStyle, size: f32) -> El {

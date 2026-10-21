@@ -24,6 +24,8 @@ pub enum Event {
     Changed,
     /// Display → Fullscreen.
     Fullscreen,
+    /// Pause → Copy ride link (web).
+    CopyRide,
 }
 
 /// The settings a pause action may change.
@@ -40,7 +42,7 @@ pub struct Context<'a> {
 }
 
 /// Rows the Rust engine cannot perform yet are left out of its menu.
-const UNSUPPORTED: [&str; 3] = ["jukebox", "copyride", "alpha"];
+const UNSUPPORTED: [&str; 2] = ["jukebox", "alpha"];
 
 /// A binding being captured (frontend.js `beginCapture`).
 struct Capture {
@@ -72,6 +74,8 @@ pub struct PauseMenu {
     pub from_menu: bool,
     /// The ride can return to the engine's own frontend (Quit to Main Menu).
     pub frontend: bool,
+    /// The menu notice line (`#menu-notice`), e.g. "Ride link copied.".
+    pub notice: Option<String>,
 }
 
 struct Pressed {
@@ -113,6 +117,7 @@ impl PauseMenu {
             capture: None,
             from_menu: false,
             frontend: false,
+            notice: None,
         }
     }
 
@@ -136,6 +141,7 @@ impl PauseMenu {
             one_handed: ctx.touch.one_handed(),
             capture: self.capture.as_ref().map(|c| c.label.clone()),
             from_menu: self.from_menu,
+            notice: self.notice.clone(),
             page_count: (self.page == "bindings").then(|| {
                 format!(
                     "Page {} of {}",
@@ -230,8 +236,9 @@ impl PauseMenu {
         if let Ok(mut rows) = rows {
             rows.choices.retain(|c| !UNSUPPORTED.contains(&c.as_str()));
             if !cfg!(target_arch = "wasm32") {
-                // Desktop has no dev log page to open.
-                rows.choices.retain(|c| c != "devlog");
+                // Desktop has no dev log page to open, and no web page to
+                // link a ride to.
+                rows.choices.retain(|c| c != "devlog" && c != "copyride");
             }
             if !cfg!(target_arch = "wasm32") && !self.frontend {
                 rows.choices.retain(|c| c != "main");
@@ -250,6 +257,7 @@ impl PauseMenu {
 
     fn show(&mut self, page: &str) {
         self.capture = None;
+        self.notice = None;
         self.page = page.into();
         self.selection = 0;
         self.scroll = 0.;
@@ -292,6 +300,7 @@ impl PauseMenu {
             "back" | "pause" => return self.back(),
             "devlog" => return Some(Event::Leave("devlog.html")),
             "fullscreen" => return Some(Event::Fullscreen),
+            "copyride" => return Some(Event::CopyRide),
             "main" => return Some(Event::Leave("play.html")),
             "settings" | "extras" | "hud-settings" | "minimap-config" | "race-overlays"
             | "controls" | "music" => {
