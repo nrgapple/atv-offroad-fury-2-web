@@ -664,10 +664,21 @@ clutch, stunts, a wreck and reverse): all 13 engine samples in the same order wi
 1-6 steps, the clutch and both impacts matched, 100 ms levels within 0.70 dB mean
 (0.21 dB median) of the JavaScript game.
 
-Not connected yet (labelled for follow-up PRs): the
-`MotorcyclePresentation` 60 Hz interpolation (`web/motorcycle-presentation.js`, used in
-every preset), and races on a motorcycle (a clear "not ported" error; atv-web races
-the CPU roster on comparable quads).
+Races (follow-up): a motorcycle player races the original CPU roster on its quads
+(MX vs. ATV fields; the roster group is the comparable stock quad per class,
+`motorcycle::roster_quad`). The CPUs fork the ATV2 rider rig, which a bike ride loads
+for them (`loadAtvRider` with the player's rider, quad 1 selection). The race reads the
+bike's rigid-body summary, drives it with the path driver after the finish (no
+preload, no ATV scene query), sets its checkpoint 2.5ft above the racing line (the
+authored course drop), resolves rider contact through the bike's own peer proxy, and
+reports the bike's frame after the race step (contact can move it). No grid grounding
+and no deep-water clock, as in atv-web. Parity (`compare_engine.mjs race env01 ... 1 3
+12345 29` with `RACE_AUTOPILOT=9000`): JavaScript, Rust browser and native match bit
+for bit for the player and all three CPUs over 9,000 steps (intro 1-435, countdown
+436-675, GO at 676, the bike finishing fourth at step 8,428).
+
+Not connected yet (labelled for follow-up PRs): the `MotorcyclePresentation` 60 Hz
+interpolation (`web/motorcycle-presentation.js`, used in every preset).
 
 ## Commands
 

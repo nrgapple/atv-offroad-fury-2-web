@@ -125,6 +125,15 @@ struct QuadRig {
     wreck: wreck_animation::Animator,
 }
 
+/// The ATV2 rider rig race CPUs fork when the player rides a motorcycle:
+/// MX vs. ATV fields keep the CPUs on their quads with the ATV rider
+/// (`loadAtvRider` for race CPUs in web/game.js).
+pub struct CpuRider {
+    pub(super) animator: rider_pose::Animator,
+    pub(super) wreck: wreck_animation::Animator,
+    pub(super) mesh: Mesh,
+}
+
 /// The player's vehicle: an ATV with its rig, or a motorcycle, whose
 /// original model carries its own rider, wreck and tuning (atv-web keeps the
 /// two-wheel path separate from the four-wheel solver).
@@ -135,23 +144,6 @@ enum Mount {
     },
     Bike(Box<Motorcycle>),
 }
-
-impl Mount {
-    /// The player's ATV; races require one so far.
-    fn quad(&self) -> Result<(&QuadRig, &Vehicle)> {
-        match self {
-            Mount::Quad { rig, vehicle } => Ok((rig, vehicle)),
-            Mount::Bike(_) => Err(BIKE_RACES.into()),
-        }
-    }
-    fn quad_mut(&mut self) -> Result<(&mut QuadRig, &mut Vehicle)> {
-        match self {
-            Mount::Quad { rig, vehicle } => Ok((rig, vehicle)),
-            Mount::Bike(_) => Err(BIKE_RACES.into()),
-        }
-    }
-}
-const BIKE_RACES: &str = "motorcycle races are not ported to the Rust engine yet";
 
 /// What [`Ride::start`] places: the quad rig, or a motorcycle model.
 enum Seed {
@@ -418,6 +410,11 @@ impl Ride {
         if self.is_motorcycle() {
             self.step_bike(controls)?;
             self.step_race()?;
+            // atv-web reads the bike's frame after the race step, which can
+            // move it (rider contact).
+            if let Mount::Bike(bike) = &self.mount {
+                self.frame = bike::summary(bike.frame());
+            }
             self.step_camera(orbit)?;
             self.steps += 1;
             self.sound = Some(self.capture_bike_sound(controls));

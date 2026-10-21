@@ -94,7 +94,7 @@ async function scriptedGame(browser, venue, steps, viewport, errors, { measure =
   }, { steps, measure, graphics, crash, race });
   const session = measure ? await page.context().newCDPSession(page) : null;
   if (session) await session.send('Performance.enable');
-  await page.goto(url(race ? `/play.html?activity=race&map=${venue}&laps=${race.laps}&cpu=${race.cpu}&play=1` : `/play.html?drive=1&environment=${venue}&quad=${quad}`));
+  await page.goto(url(race ? `/play.html?activity=race&map=${venue}&laps=${race.laps}&cpu=${race.cpu}&quad=${quad}&play=1` : `/play.html?drive=1&environment=${venue}&quad=${quad}`));
   await waitForGame(page);
   let start;
   if (session) {
@@ -304,13 +304,15 @@ async function rideMode() {
 
 // Race parity: one scripted player through the JavaScript race and the
 // native race replay; compares phases, player and CPU positions per step.
-//   node tools/compare_engine.mjs race [venue] [script.json] [out-dir] [laps] [cpu] [seed]
+//   node tools/compare_engine.mjs race [venue] [script.json] [out-dir] [laps] [cpu] [seed] [quad]
 async function raceMode() {
   const venue = process.argv[3] ?? 'env01';
   const script = process.argv[4] ? JSON.parse(await readFile(process.argv[4], 'utf8'))
     : [{ frames: 1800, input: { keyboard_drive: { held: true, axis: 1 } } }];
   const out = path.resolve(process.argv[5] ?? 'private/reports/engine-parity/race');
   const race = { laps: Number(process.argv[6] ?? 1), cpu: Number(process.argv[7] ?? 3), seed: Number(process.argv[8] ?? 12345) };
+  // The Garage selection (27-46: a motorcycle against the CPU quads).
+  const quad = Number(process.argv[9] ?? 1);
   await mkdir(out, { recursive: true });
   const scriptFile = path.join(out, 'script.json');
   await writeFile(scriptFile, JSON.stringify(script));
@@ -326,7 +328,7 @@ async function raceMode() {
       const recorder = await newPage(browser, { viewport: { width: 640, height: 360 } }, errors);
       const frames = Number(process.env.RACE_AUTOPILOT);
       await recorder.addInitScript(script => localStorage.setItem('furyScript', script), JSON.stringify([{ frames, input: {} }]));
-      await recorder.goto(url(`/engine.html?venue=${venue}&race=1&laps=${race.laps}&cpu=${race.cpu}&seed=${race.seed}&weather=off&traceAll=1&autopilot=1&script=storage`));
+      await recorder.goto(url(`/engine.html?venue=${venue}&race=1&laps=${race.laps}&cpu=${race.cpu}&seed=${race.seed}&quad=${quad}&weather=off&traceAll=1&autopilot=1&script=storage`));
       await recorder.waitForFunction(() => document.querySelector('#trace'), null, { timeout: 300000 });
       const recorded = JSON.parse(await recorder.locator('#trace').textContent());
       script.length = 0;
@@ -340,21 +342,21 @@ async function raceMode() {
       await writeFile(scriptFile, JSON.stringify(script));
       steps.splice(0, steps.length, ...script.flatMap(({ frames, input }) => Array.from({ length: frames }, () => input)));
     }
-    const page = await scriptedGame(browser, venue, steps, { width: 1280, height: 720 }, errors, { race });
+    const page = await scriptedGame(browser, venue, steps, { width: 1280, height: 720 }, errors, { race, quad });
     const js = await page.evaluate(() => window.rideTrace.frames);
     await page.locator('#game').screenshot({ path: path.join(out, `${venue}-race-javascript.png`) });
     await writeFile(path.join(out, 'javascript-trace.json'), JSON.stringify(js));
     assertNoErrors(errors);
     const traceFile = path.join(out, 'rust-native-trace.json');
     const content = process.env.FURY_CONTENT ? ['--content', process.env.FURY_CONTENT] : [];
-    execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--race', '--laps', String(race.laps), '--cpu', String(race.cpu),
+    execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--quad', String(quad), '--race', '--laps', String(race.laps), '--cpu', String(race.cpu),
       '--seed', String(race.seed), '--script', scriptFile, '--trace', traceFile], { stdio: 'inherit' });
     const rust = JSON.parse(await readFile(traceFile, 'utf8'));
     // The Rust engine in the browser, every step (?traceAll=1).
     const web = await newPage(browser, { viewport: { width: 640, height: 360 } }, errors);
     // Long scripts exceed URL limits: hand them over through localStorage.
     await web.addInitScript(script => localStorage.setItem('furyScript', script), JSON.stringify(script));
-    await web.goto(url(`/engine.html?venue=${venue}&race=1&laps=${race.laps}&cpu=${race.cpu}&seed=${race.seed}&weather=off&traceAll=1&script=storage`));
+    await web.goto(url(`/engine.html?venue=${venue}&race=1&laps=${race.laps}&cpu=${race.cpu}&seed=${race.seed}&quad=${quad}&weather=off&traceAll=1&script=storage`));
     await web.waitForFunction(() => document.querySelector('#trace') || /error|fail/i.test(document.querySelector('#status')?.textContent), null, { timeout: 300000 });
     const webTrace = [{ step: 0 }, ...JSON.parse(await web.locator('#trace').textContent())];
     assertNoErrors(errors);

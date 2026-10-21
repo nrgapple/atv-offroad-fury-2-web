@@ -1,6 +1,6 @@
 //! Race CPU riders (crates/atv-web/src/cpu.rs): each rides its own original
 //! quad with the recovered driver, rider animation and wreck recovery.
-use super::{QuadRig, Simulation, update_wheelie, vehicle_world};
+use super::{Simulation, update_wheelie, vehicle_world};
 use crate::Result;
 use atv_core::{
     collision::{CollisionRayTree, decode_ray_tree},
@@ -86,7 +86,7 @@ impl CpuRacer {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         sim: &Simulation,
-        rig: &QuadRig,
+        (animator, wreck): (&rider_pose::Animator, &wreck_animation::Animator),
         nodes: &[Node],
         model: &CpuModel,
         mut origin: [f32; 3],
@@ -116,8 +116,8 @@ impl CpuRacer {
         if let Some(scene) = vehicle.scene_collision_mut() {
             scene.set_mud_obstacles(sim.mud_obstacles.clone())?;
         }
-        let rider = rig.animator.fork_racer(nodes)?;
-        let mut wreck = rig.wreck.fork_racer(nodes, 97211 + index as u64 * 47)?;
+        let rider = animator.fork_racer(nodes)?;
+        let mut wreck = wreck.fork_racer(nodes, 97211 + index as u64 * 47)?;
         wreck.set_static_obstacles(sim.obstacles.clone());
         Ok(Self {
             vehicle,
