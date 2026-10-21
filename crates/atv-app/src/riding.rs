@@ -236,6 +236,11 @@ impl Riding {
         }
     }
 
+    /// The speed-rush amount after this frame's update (screen pass).
+    pub fn rush_amount(&self) -> f32 {
+        self.rush.amount()
+    }
+
     /// The scene camera for this frame and the pose upload.
     pub fn present(
         &mut self,
@@ -247,8 +252,12 @@ impl Riding {
     ) -> Result<(Camera, f32), String> {
         let frame = self.ride.frame();
         let riding = frame.wreck.phase == ride::Phase::Riding;
-        self.rush
-            .update(frame.speed_magnitude, riding && !self.paused, dt);
+        self.rush.update(
+            frame.speed_magnitude,
+            // A held replay is not a pause: the browser keeps rendering it.
+            riding && (!self.paused || self.held),
+            dt,
+        );
         let View {
             position,
             yaw,
