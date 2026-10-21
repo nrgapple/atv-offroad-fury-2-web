@@ -44,6 +44,16 @@ impl Script {
         }
         Ok(())
     }
+
+    /// `run`, recording every step (the browser build's full parity trace).
+    pub fn run_recording(&self, riding: &mut Riding) -> Result<Vec<Value>, String> {
+        let mut records = Vec::new();
+        for controls in self.steps() {
+            riding.run(controls, 1)?;
+            records.push(record(&riding.ride, riding.ride.steps()));
+        }
+        Ok(records)
+    }
 }
 
 fn controls(input: &Value) -> Controls {
@@ -106,6 +116,13 @@ pub fn record(ride: &Ride, step: u64) -> Value {
         "reset_count": frame.reset_count,
         "camera": {"position": camera.position, "target": camera.target, "fov": camera.fov,
             "mode": format!("{mode:?}")},
+        "imposed": ride.race().and_then(|r| r.imposed).map(|i| json!([i.throttle, i.brake, i.steer, i.lean])),
+        "race": ride.race().and_then(|r| r.frame.as_ref()).map(|f| json!({
+            "phase": f.phase, "elapsed": f.elapsed, "lap": f.lap, "position": f.position,
+            "countdown": f.countdown, "contacts": f.contacts, "off_track": f.off_track,
+            "opponents": f.opponents.iter().map(|o| json!({"origin": o.origin, "distance": o.distance, "finished": o.finished})).collect::<Vec<_>>(),
+            "standings": f.standings.iter().map(|s| json!({"name": s.name, "time": s.time, "position": s.position})).collect::<Vec<_>>(),
+        })),
     })
 }
 
@@ -115,19 +132,49 @@ pub fn record(ride: &Ride, step: u64) -> Value {
 pub fn trace(
     content: &std::path::Path,
     venue: &str,
+    race: Option<atv_game::ride::race::Settings>,
     script: &Script,
     out: &std::path::Path,
+    autopilot: Option<&std::path::Path>,
 ) -> Result<(), String> {
     pollster::block_on(async {
         use atv_content::{Content, Store};
         let content = Content::open(Store::Directory(content.to_path_buf())).await?;
-        let venue = atv_game::venue::load(&content, venue, false).await?;
-        let mut ride = atv_game::ride::load(&content, &venue, 1, 0, |_| {}).await?;
+        let options = atv_game::venue::LoadOptions {
+            // Race traces hold weather off (the browser draws it per load).
+            weather: atv_game::venue::WeatherChoice::Active(false),
+            ..Default::default()
+        };
+        let venue = atv_game::venue::load_with(&content, venue, race.is_some(), options).await?;
+        let mut ride = atv_game::ride::load_with(&content, &venue, 1, 0, race, |_| {}).await?;
+        if autopilot.is_some()
+            && let Some(state) = ride.race_mut()
+        {
+            state.autopilot_always = true;
+        }
         let mut records = vec![record(&ride, 0)];
+        let mut recorded: Vec<Value> = Vec::new();
         let started = std::time::Instant::now();
         for (index, controls) in script.steps().enumerate() {
             ride.step(controls, 0.)?;
             records.push(record(&ride, index as u64 + 1));
+            // The imposed controls as a pad-style script step (f32 values
+            // print exactly and read back exactly).
+            let input = ride.race().and_then(|r| r.imposed).unwrap_or_default();
+            let step = json!({"throttle": input.throttle, "brake": input.brake, "steer": input.steer, "lean": input.lean});
+            match recorded.last_mut() {
+                Some(last) if last["input"] == step => {
+                    last["frames"] = json!(last["frames"].as_u64().unwrap_or(0) + 1)
+                }
+                _ => recorded.push(json!({"frames": 1, "input": step})),
+            }
+        }
+        if let Some(path) = autopilot {
+            std::fs::write(
+                path,
+                serde_json::to_vec(&recorded).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
         }
         let elapsed = started.elapsed().as_secs_f64();
         eprintln!(

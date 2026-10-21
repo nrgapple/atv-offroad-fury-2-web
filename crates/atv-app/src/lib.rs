@@ -41,9 +41,9 @@ pub struct Options {
     pub capture_ui: bool,
     /// Ride the player's quad (default); false keeps the free camera.
     pub ride: bool,
-    /// Load the venue's National/Supercross race course resources (static
-    /// world only for now: race weather, gate and grid are not ridden).
-    pub race: bool,
+    /// Race on the venue's National/Supercross course (with `ride`; a free
+    /// camera views the race-course world and its pre-race shots).
+    pub race: Option<atv_game::ride::race::Settings>,
     /// Steps replayed at load, then the ride holds (parity captures).
     pub script: Option<replay::Script>,
     /// Test hook: paint this flat colour under the UI instead of the scene's
@@ -146,7 +146,7 @@ struct Meter {
 
 /// Load-time choices for the venue presentation and the ride.
 struct World {
-    race: bool,
+    race: Option<atv_game::ride::race::Settings>,
     weather: Option<bool>,
     steps: Option<u64>,
     graphics: Graphics,
@@ -200,11 +200,10 @@ async fn prepare(
                 .map_or(0, |d| d.subsec_nanos() ^ d.as_secs() as u32),
         ),
     };
-    let ride = ride && !race;
     let venue = venue::load_with(
         &content,
         &environment,
-        race,
+        race.is_some(),
         venue::LoadOptions {
             weather,
             sky_smooth: graphics.sky_smooth,
@@ -252,9 +251,20 @@ async fn prepare(
     let mut pending_sound = None;
     let riding = if ride {
         // Default Garage selection: quad 1, male rider.
-        let ride = atv_game::ride::load(&content, &venue, 1, 0, status).await?;
+        let ride = atv_game::ride::load_with(&content, &venue, 1, 0, race, status).await?;
+        let mut ride = ride;
         scene.set_ride(&gpu, &venue, &ride.quad, &ride.rider)?;
+        if let Some(race) = ride.race_mut() {
+            scene.set_race_cpus(&gpu, &venue, &std::mem::take(&mut race.draw))?;
+        }
         let mut riding = riding::Riding::new(ride, &venue);
+        // `?autopilot=1` (parity tooling): the race path driver rides the
+        // player before the finish too; traces record its controls.
+        if url_flag("autopilot=1")
+            && let Some(state) = riding.ride.race_mut()
+        {
+            state.autopilot_always = true;
+        }
         // startSimulation's first frame (op 23) primes the wheel effects.
         if let Some(mut effects) = atv_game::wheel_effects::load(&content, &venue, 1).await? {
             effects.set_lingering_dust(usize::from(graphics.dust), &venue);
@@ -273,7 +283,14 @@ async fn prepare(
             riding.crashes = Some(crashes);
         }
         if let Some(script) = &script {
-            script.run(&mut riding)?;
+            // `?traceAll=1`: every step, for browser-vs-native parity.
+            if trace_all() {
+                let records = script.run_recording(&mut riding)?;
+                publish_trace(&serde_json::Value::from(records).to_string());
+            } else {
+                script.run(&mut riding)?;
+                publish_trace(&replay::record(&riding.ride, riding.ride.steps()).to_string());
+            }
             // Hold the replayed state for screenshots.
             riding.paused = true;
             riding.held = true;
@@ -283,7 +300,6 @@ async fn prepare(
             for origin in riding.step_rest.iter().flatten() {
                 scene.observe_rest(*origin);
             }
-            publish_trace(&replay::record(&riding.ride, riding.ride.steps()).to_string());
         }
         if let (Some((mode, music)), None) = (sound, &script) {
             pending_sound = Some(PendingSound {
@@ -407,13 +423,11 @@ impl App {
         let active = !riding.paused && !riding.held && focused;
         let pad = self.gamepad.sample();
         if let Some(overlay) = &mut self.overlay {
+            overlay.pad_name = self.gamepad.name();
             overlay.sync_menu(riding.paused && !riding.held);
             riding.menu_open = overlay.menu.is_some();
             if riding.menu_open
-                && let Some(event) = overlay.menu_pad(
-                    pad.as_ref().map_or([0.; 17], |p| p.buttons),
-                    pad.as_ref().map_or([0.; 4], |p| p.axes),
-                )
+                && let Some(event) = overlay.menu_pad(pad.as_ref(), Some(&mut riding.bindings))
             {
                 self.menu_event(event);
                 return;
@@ -530,6 +544,7 @@ impl App {
                     rider_world: ride.rider_world(),
                     terrain: &ready.venue.terrain,
                 }),
+                Some(&mut riding.bindings),
             );
         }
         self.meter.ui += ui_started.elapsed().as_secs_f64() * 1000.;
@@ -620,8 +635,38 @@ impl App {
             Some(_) => " · press a key for sound".into(),
             None => String::new(),
         };
+        let race = ride
+            .race()
+            .and_then(|r| r.frame.as_ref())
+            .map_or(String::new(), |f| match f.phase {
+                "intro" => " · race intro (any key skips)".into(),
+                "countdown" => format!(" · {}", f.countdown),
+                "finished" => format!(
+                    " · finished {}/{} · {}",
+                    f.position,
+                    f.field,
+                    f.standings
+                        .iter()
+                        .map(|s| format!(
+                            "{}. {} {}",
+                            s.position,
+                            s.name,
+                            s.time.map_or("--".into(), |t| format!("{t:.2}"))
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                _ => format!(
+                    " · LAP {}/{} · PLACE {}/{}{}",
+                    f.lap,
+                    f.laps,
+                    f.position,
+                    f.field,
+                    if f.wrong_way { " · WRONG WAY" } else { "" }
+                ),
+            });
         let extra = format!(
-            " · {:.0} MPH{sound}{}",
+            " · {:.0} MPH{race}{sound}{}",
             frame.speed_magnitude * 3600. / 5280.,
             if riding.paused {
                 " · paused (Esc)"
@@ -792,6 +837,9 @@ impl App {
                 }
             }
             Event::Changed => {
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.set_help_keys(&riding.bindings);
+                }
                 // Audio → Sound applies to the running mixer at once.
                 let enhanced = self
                     .overlay
@@ -856,11 +904,16 @@ impl App {
         };
         let id = touch.id;
         if overlay.menu.is_some() {
+            let bindings = self
+                .ready
+                .as_mut()
+                .and_then(|r| r.riding.as_mut())
+                .map(|r| &mut r.bindings);
             match touch.phase {
-                TouchPhase::Started => overlay.menu_press(id, x, y),
-                TouchPhase::Moved => overlay.menu_drag(id, x, y),
+                TouchPhase::Started => overlay.menu_press(id, x, y, bindings),
+                TouchPhase::Moved => overlay.menu_drag(id, x, y, bindings),
                 TouchPhase::Ended => {
-                    if let Some(event) = overlay.menu_release(id, x, y) {
+                    if let Some(event) = overlay.menu_release(id, x, y, bindings) {
                         self.menu_event(event);
                     }
                 }
@@ -913,12 +966,35 @@ impl App {
         }
     }
 
+    /// Key releases: a binding capture saves when all keys are up; the
+    /// bindings track held edge keys (bindings.js `observeKeys`).
+    fn key_released(&mut self, code: KeyCode) {
+        let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
+        let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) else {
+            return;
+        };
+        if let Some(overlay) = self.overlay.as_mut().filter(|o| o.menu.is_some()) {
+            if let Some(event) =
+                overlay.menu_key_up(&format!("{code:?}"), Some(&mut riding.bindings))
+            {
+                self.menu_event(event);
+            }
+            return;
+        }
+        riding.key_released(&|c: &str| names.contains(c));
+    }
+
     fn key_pressed(&mut self, code: KeyCode) {
+        let bindings = self
+            .ready
+            .as_mut()
+            .and_then(|r| r.riding.as_mut())
+            .map(|r| &mut r.bindings);
         if let Some(event) = self
             .overlay
             .as_mut()
             .filter(|o| o.menu.is_some())
-            .map(|o| o.menu_key(&format!("{code:?}")))
+            .map(|o| o.menu_key(&format!("{code:?}"), bindings))
         {
             if let Some(event) = event {
                 self.menu_event(event);
@@ -929,7 +1005,11 @@ impl App {
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
         if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
             riding.key_pressed(&format!("{code:?}"), now, &|c: &str| names.contains(c));
-            let riding = !riding.paused && !riding.held;
+            // Any key skips the pre-race camera (00212d40).
+            riding.ride.skip_intro();
+            // H stays a gameplay key when the player bound it (usesKey).
+            let free = !riding.bindings.uses_key("KeyH");
+            let riding = !riding.paused && !riding.held && free;
             if let Some(overlay) = &mut self.overlay {
                 overlay.key(&format!("{code:?}"), riding);
             }
@@ -1104,6 +1184,15 @@ impl ApplicationHandler<Message> for App {
                         if let Some(assets) = ready.hud_assets.take() {
                             overlay.set_meter(&ready.gpu.device, &ready.gpu.queue, assets);
                         }
+                        // Saved bindings and controller tuning (play.html's keys).
+                        if let Some(riding) = &mut ready.riding
+                            && !riding.held
+                            && riding.autodrive.is_none()
+                        {
+                            riding.bindings =
+                                atv_ui::menu::controller::load_bindings(&mut overlay.settings);
+                            overlay.set_help_keys(&riding.bindings);
+                        }
                         self.overlay = Some(overlay);
                     }
                     window.request_redraw();
@@ -1169,6 +1258,7 @@ impl ApplicationHandler<Message> for App {
                         }
                         ElementState::Released => {
                             self.keys.remove(&code);
+                            self.key_released(code);
                         }
                     };
                 }
@@ -1189,9 +1279,15 @@ impl ApplicationHandler<Message> for App {
                 let (x, y) = self.css(self.cursor.unwrap_or_default());
                 if let Some(overlay) = self.overlay.as_mut().filter(|o| o.menu.is_some()) {
                     self.dragging = false;
+                    let bindings = self
+                        .ready
+                        .as_mut()
+                        .and_then(|r| r.riding.as_mut())
+                        .map(|r| &mut r.bindings);
                     if state == ElementState::Pressed {
-                        overlay.menu_press(overlay::MOUSE, x, y);
-                    } else if let Some(event) = overlay.menu_release(overlay::MOUSE, x, y) {
+                        overlay.menu_press(overlay::MOUSE, x, y, bindings);
+                    } else if let Some(event) = overlay.menu_release(overlay::MOUSE, x, y, bindings)
+                    {
                         self.menu_event(event);
                     }
                     return;
@@ -1233,7 +1329,12 @@ impl ApplicationHandler<Message> for App {
                 let (x, y) = self.css((position.x, position.y));
                 if let Some(overlay) = &mut self.overlay {
                     if overlay.menu.is_some() {
-                        overlay.menu_drag(overlay::MOUSE, x, y);
+                        let bindings = self
+                            .ready
+                            .as_mut()
+                            .and_then(|r| r.riding.as_mut())
+                            .map(|r| &mut r.bindings);
+                        overlay.menu_drag(overlay::MOUSE, x, y, bindings);
                     } else {
                         overlay.hover(x, y);
                     }
@@ -1306,6 +1407,7 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
                     rider_world: ride.rider_world(),
                     terrain: &ready.venue.terrain,
                 }),
+                None,
             );
         }
         overlay
@@ -1374,6 +1476,25 @@ pub fn graphics_preset(name: &str) -> Graphics {
             tire_tracks: (600, 15),
         },
         _ => Graphics::default(),
+    }
+}
+
+fn trace_all() -> bool {
+    url_flag("traceAll=1")
+}
+
+/// A `name=value` pair in the page URL (always false on desktop).
+fn url_flag(pair: &str) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.location().search().ok())
+            .is_some_and(|q| q.trim_start_matches('?').split('&').any(|p| p == pair))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = pair;
+        false
     }
 }
 
@@ -1510,9 +1631,31 @@ pub fn start() {
         autodrive: param("autodrive")
             .and_then(|text| js_sys_decode(&text))
             .and_then(|text| replay::Script::parse(&text).ok()),
-        race: param("race").is_some_and(|v| v == "1"),
+        race: param("race").is_some_and(|v| v == "1").then(|| {
+            let number = |key: &str| param(key).and_then(|v| v.parse::<u64>().ok());
+            let defaults = atv_game::ride::race::Settings::default();
+            atv_game::ride::race::Settings {
+                laps: number("laps").map_or(defaults.laps, |v| v as u32),
+                cpu: number("cpu").map_or(defaults.cpu, |v| v as usize),
+                difficulty: number("difficulty").map_or(defaults.difficulty, |v| v as u32),
+                seed: number("seed").unwrap_or(defaults.seed),
+                ..defaults
+            }
+        }),
+        // `script=storage` reads a long parity script from localStorage
+        // `furyScript` (URLs are bounded).
         script: param("script")
-            .and_then(|text| js_sys_decode(&text))
+            .and_then(|text| {
+                if text == "storage" {
+                    web_sys::window()?
+                        .local_storage()
+                        .ok()??
+                        .get_item("furyScript")
+                        .ok()?
+                } else {
+                    js_sys_decode(&text)
+                }
+            })
             .and_then(|text| replay::Script::parse(&text).ok()),
     });
 }

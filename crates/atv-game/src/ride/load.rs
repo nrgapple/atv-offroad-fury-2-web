@@ -96,10 +96,23 @@ pub async fn load(
     venue: &Venue,
     quad: u16,
     rider: u16,
+    progress: impl FnMut(&str),
+) -> Result<Ride> {
+    load_with(content, venue, quad, rider, None, progress).await
+}
+
+/// A Freeride, or with `race` a race on the venue's `*_NAT.RES` course
+/// (the venue must have been loaded for racing).
+pub async fn load_with(
+    content: &Content,
+    venue: &Venue,
+    quad: u16,
+    rider: u16,
+    race: Option<super::race::Settings>,
     mut progress: impl FnMut(&str),
 ) -> Result<Ride> {
     let environment = venue.environment.as_str();
-    let course = course_resource(environment, false)?;
+    let course = course_resource(environment, race.is_some())?;
     let models = player_models::selection(quad, rider)?;
     if models.motorcycle {
         return Err("motorcycles are not ported to the Rust engine yet".into());
@@ -266,11 +279,33 @@ pub async fn load(
     // 00319c10 -> 003007b0 supplies 70 MPH and the original ft/s conversion.
     let follow = camera::FollowCamera::new(presets, 70. * f32::from_bits(0x3fbbbb84))?;
 
-    // Op 140: scene starts keep their authored height (single player, no slot).
-    let direction = scene.start_direction;
-    let yaw = js(direction[0]).atan2(js(direction[2]));
-    let position = scene.start_position.map(js);
-    let origin = atv_core::spawn::start_origin(&terrain, position, yaw, false, None)?;
+    let race = match race {
+        Some(settings) => {
+            progress("Reading original race…");
+            Some((
+                race_setup(content, &archive, venue, &toy, quad, rider, settings).await?,
+                settings,
+            ))
+        }
+        None => None,
+    };
+    // Op 140: scene starts keep their authored height (single player, no
+    // slot); a race places the grid behind the original TDF start gate, 2.5ft
+    // above the contact plane.
+    let (position, yaw) = match &race {
+        Some((setup, _)) => {
+            let (position, yaw) = setup.course.start();
+            (position.map(js), js(yaw))
+        }
+        None => {
+            let direction = scene.start_direction;
+            (
+                scene.start_position.map(js),
+                js(direction[0]).atan2(js(direction[2])),
+            )
+        }
+    };
+    let origin = atv_core::spawn::start_origin(&terrain, position, yaw, race.is_some(), None)?;
     let start = (origin.map(|v| v as f32), yaw as f32);
 
     let quad_pose = Rc::new(QuadPose::new(&quad_mesh)?);
@@ -304,5 +339,131 @@ pub async fn load(
             mesh: rider_mesh,
             textures: rider_textures,
         },
+        race,
     )
+}
+
+/// The race course, intro shots, trackside cameras and the CPU roster with
+/// each CPU's own quad (terrainFromContent's race branch and op 106).
+async fn race_setup(
+    content: &Content,
+    archive: &Resource<'_>,
+    venue: &Venue,
+    common_toy: &[u8],
+    quad: u16,
+    rider: u16,
+    settings: super::race::Settings,
+) -> Result<super::race::Setup> {
+    let environment = venue.environment.as_str();
+    let course = atv_core::race::Course::parse(&member(
+        archive,
+        &format!("{environment}nate.tdf"),
+        "National course",
+    )?)?;
+    // After the finish a director cuts between these trackside cameras.
+    let tv = basename_index(archive, &format!("{environment}nat.tv"))
+        .map(|index| {
+            let bytes = archive.extract(index)?;
+            atv_core::race_director::parse_tv(
+                std::str::from_utf8(&bytes).map_err(|_| "TV cameras must be text")?,
+            )
+        })
+        .transpose()?;
+    let mode = basename_index(archive, &format!("{environment}nat.toy"))
+        .map(|index| archive.extract(index))
+        .transpose()?
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+    // Original roster (00210d20/0021f680): CPU quads from the course or the
+    // player's ATV group, and AI riders with their names and outfits.
+    let riders = member(archive, "airiders.pb", "CPU roster")?;
+    let roster = match basename_index(archive, "atvgroups.pb") {
+        Some(index) => {
+            let champ = mode
+                .as_deref()
+                .and_then(|text| {
+                    text.lines().find_map(|line| {
+                        let (key, value) = line.split_once('=')?;
+                        key.trim()
+                            .eq_ignore_ascii_case("ChampQuadGroup")
+                            .then(|| {
+                                let value = value.trim_start();
+                                let end = value
+                                    .char_indices()
+                                    .find(|(i, c)| !(c.is_ascii_digit() || (*i == 0 && *c == '-')))
+                                    .map_or(value.len(), |(i, _)| i);
+                                value[..end].parse::<i64>().ok()
+                            })
+                            .flatten()
+                    })
+                })
+                .unwrap_or(-1);
+            atv_core::race_roster::select(
+                &archive.extract(index)?,
+                &riders,
+                atv_core::motorcycle::roster_quad(u32::from(quad)),
+                rider == 1,
+                champ,
+                4,
+                settings.seed,
+            )?
+        }
+        None => Vec::new(),
+    };
+    if roster.len() < settings.cpu {
+        return Err("original CPU roster is incomplete".into());
+    }
+    let mut models = Vec::with_capacity(roster.len());
+    let mut draw = Vec::with_capacity(roster.len());
+    let rider_materials = content.file("/RIDER/RIDER_MT.RES").await?;
+    let rider_materials = Resource::parse(&rider_materials)?;
+    for entry in &roster {
+        let selection = player_models::selection(entry.quad as u16, rider)?;
+        let bytes = content.file(&selection.quad).await?;
+        let quad_archive = Resource::parse(&bytes)?;
+        let part = |name: &str| member(&quad_archive, name, "CPU quad resource");
+        let mesh_bytes = part(&selection.quad_mesh)?;
+        models.push(super::cpu::CpuModel::new(
+            &part(&selection.physics)?,
+            &mesh_bytes,
+            &part(&selection.chassis)?,
+            &part(&selection.actor)?,
+        )?);
+        // Drawn with the quad's own textures and the player's rider rig
+        // in the roster outfit (remoteAssets + outfitTextures in game.js).
+        let quad_mesh = mesh::decode_psg(&mesh_bytes)?;
+        let material_bytes = content.file(&selection.quad_materials).await?;
+        let quad_textures = textures::load(&quad_mesh, &Resource::parse(&material_bytes)?)?;
+        let rider_bytes = content.file(&selection.rider).await?;
+        let rider_mesh = mesh::decode_psg(&member_suffix(
+            &Resource::parse(&rider_bytes)?,
+            &format!("/{}", selection.rider_mesh),
+        )?)?;
+        let rider_textures = textures::outfit(&rider_mesh, &entry.outfit, &rider_materials)?;
+        draw.push((
+            Model {
+                mesh: quad_mesh,
+                textures: quad_textures,
+            },
+            Model {
+                mesh: rider_mesh,
+                textures: rider_textures,
+            },
+        ));
+    }
+    // Grid RiderSpacing from the race mode TOY or, for Supercross, the scene TOY.
+    let spacing_sources = mode
+        .into_iter()
+        .chain(std::iter::once(
+            String::from_utf8_lossy(common_toy).into_owned(),
+        ))
+        .collect();
+    Ok(super::race::Setup {
+        course,
+        shots: venue.intro_shots.clone(),
+        tv,
+        roster,
+        models,
+        draw,
+        spacing_sources,
+    })
 }

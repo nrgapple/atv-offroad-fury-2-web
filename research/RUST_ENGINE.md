@@ -472,7 +472,7 @@ libm and wasm math differ in the last bit, and the chaotic ragdoll amplifies tha
 (the shared-math change will make native match). Host CPU per frame at the held
 crash, Original vs Gorn: Chromium 1.02/0.86 ms (landscape), 0.62/0.63 (portrait);
 WebKit 2.39/1.56, 1.87/1.92, all at 60 Hz (noise; the blood is one draw). Wasm
-4.90 MB, 1.28 MB brotli.
+5.21 MB with current main (4.90 MB, 1.28 MB brotli on the branch before merging).
 
 ## Browser stand-ins in the ported presentation
 
@@ -490,6 +490,13 @@ measured comparison). None is replaced yet; parity above is with the JavaScript 
 | `atv-render/scenery.rs` | reverse-looping crowd ATMs keep frame 0 | native playback not recovered | No |
 | `atv-game/intro.rs` | swoop end pose behind the scene start | the player's follow camera (race port) | No |
 | `atv-render/terrain.rs` | detail blend averaged by mipmaps ("projected-coverage pass selection pending") | 00168490 pass selection | No |
+| `atv-game/src/ride/mod.rs`, `atv-app/src/riding.rs` | browser frame batching: dt capped at 50 ms, accumulator at 0.1 s, at most four steps per frame, one control sample per batch | the original runs one simulation step per 60 Hz frame with per-frame input | No |
+| `atv-game/src/ride/bindings.rs` | keyboard brake-then-reverse and touch drive adapters (`atv_core::browser_input`) | authored for keyboards/touch; the pad path is original | Keep (authored input) |
+| `atv-game/src/audio/ride.rs` | engine sample selection once per rendered batch with the batch's summed dt (GameAudio.update) | the original emitter update runs every frame | No |
+| `atv-game/src/audio/mixer.rs` | windowed-sinc resampling at load and linear-interpolated pitch (Web Audio semantics), 0.65 master and 0.45 music gains | SPU2 voice pitch/ADSR, mixer and reverb not recovered | No |
+| `atv-game/src/ride/race.rs` | CPU recovery after 5 s off the track polygon or 4 s below 3 ft/s; the player handed to the path driver after the finish; equal-mass rider contact proxy | RaceStatus +0xf0 consumer, finish takeover routine and quad-to-quad response not identified | No |
+| `atv-game/src/ride/race.rs` | Restart Race keeps the loaded roster | the original reloads the event (new roster draw) | No |
+| desktop `f32` math (`atv-core` via std) | system libm for sin/cos/atan2/…; the browser build uses Rust's libm, so native races drift from the JavaScript/browser result | one deterministic implementation on every target (PS2 VU/libm equivalence is a separate question) | No |
 | `atv-render/blood.rs`, `atv-game/crash.rs` | Crazy/Gorn crash breakup, ragdoll and blood | authored browser feature with no original counterpart (the original crash is the wreck animation, kept under Original) | Keep (option) |
 
 ## UI stand-ins to move toward original rendering
@@ -507,6 +514,50 @@ with original-game evidence:
 - Menu/pause screens in the JS game are HD re-layouts of original documents
   (`ui_menu.rs`); their Rust port will list each approximation as it lands.
 
+## Race checkpoint (2026-10-21)
+
+Single-player races ride in the Rust engine (`--race [--laps N] [--cpu 0|3|4]
+[--difficulty 1|2] [--seed N]`, `/engine.html?race=1&laps=..&cpu=..`). Ported from
+`terrainFromContent`'s race branch, `startSimulation` and atv-web operations 95, 96,
+105, 106, 113, 114 and the race paths of the op 50 batch (`race_controls`,
+`step_race`, `follow_camera`), calling atv-core directly (`atv-game/src/ride/race.rs`,
+`ride/cpu.rs`):
+
+- Loading: the `*_NAT.RES` course (`<venue>nate.tdf`), pre-race shots, trackside TV
+  cameras, the original CPU roster (`atvgroups.pb`, `airiders.pb`, mode-TOY
+  `ChampQuadGroup`, seeded like the browser's per-load draw), each CPU's own quad
+  (physics, mesh, chassis and actor rays) and, for drawing, its quad textures and the
+  rig in the roster outfit; grid `RiderSpacing` from the mode or scene TOY.
+- Per step, in the browser's order: race-imposed controls (brake through intro and
+  countdown, the path driver after the finish, Off Track/stuck returns), the player's
+  op 24, race progress, every CPU's driver/physics/rider/wreck step with checkpoints
+  and recovery, pairwise rider contacts, race frame and race HUD clocks; then the
+  camera: after-finish director, follow/wreck camera, pre-race shots that start the
+  countdown. Shots and TV views use the cinematic presentation; any key skips the
+  intro; Reset returns to the track point while racing and restarts before GO.
+- Drawing: each CPU quad and outfitted rider through its own vehicle pass, skipped
+  beyond 864 ft as the browser does. The status line shows countdown, lap, place and
+  the results.
+
+Parity (`tools/compare_engine.mjs race`, ENV01, 1 lap, 3 CPUs, roster seed 12345,
+weather held off; one scripted player through the JavaScript game's own batches, the
+Rust browser build's per-step trace and `fury --trace`): the Rust browser build
+matches the JavaScript game bit for bit (binary32) at every step for the player and
+all three CPUs — 1,800 steps of straight gas, and 9,000 steps where the script is the
+race path driver's own recorded controls (`RACE_AUTOPILOT=9000`, recorded in the Rust
+browser build): intro 1-435, countdown 436-675, GO at 676, the player finishing first
+at step 7,213 in 108.96 s, then the after-finish autopilot and director. The native
+build follows the same phases but drifts from step 240 (1.5e-5 ft, growing to
+hundreds of feet over a full lap): desktop `f32` transcendental functions come from
+the system libm, the browser's from Rust's own libm. The same cause explains the
+small native drift in the Freeride comparisons above.
+
+Not connected yet: the race overlays (place, lap, times, results menu) beyond the
+status line, race music and start-lamp sounds, stadium crowd cues and flash bursts,
+Supercross fireworks, the National drop gate, Restart Race/Quit menus and the CPU
+grid's rest pose before the first step. Restart reuses the loaded roster; the browser
+reloads the event and draws a new one.
+
 ## Commands
 
 ```sh
@@ -523,7 +574,9 @@ FURY_BIN=target/release/fury FURY_CONTENT=private/reports/hosted-content ATV_TES
   #   ride options: --graphics original|enhanced|high --crash original|crazy|gorn --region x0,y0,x1,y1
 cargo run --release -p atv-app --bin fury -- --content DIR --script s.json --trace out.json
 cargo run --release -p atv-app --bin fury -- --free ...   # terrain free camera, no ride
-cargo run --release -p atv-app --bin fury -- --race --venue env01 ...   # race course world (Snow), free camera
+cargo run --release -p atv-app --bin fury -- --race --venue env01 ...   # race (with --free: race course world, free camera)
+FURY_BIN=... FURY_CONTENT=... ATV_TEST_URL=... [RACE_AUTOPILOT=9000] \
+  node tools/compare_engine.mjs race env01 [script.json] [out] [laps] [cpu] [seed]
 ```
 
 Cross-building from macOS: Colima only shares the home directory, so the source is

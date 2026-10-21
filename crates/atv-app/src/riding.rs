@@ -13,7 +13,7 @@ use atv_render::{Camera, Gpu, SceneRenderer};
 
 pub struct Riding {
     pub ride: Ride,
-    bindings: Bindings,
+    pub bindings: Bindings,
     /// Follow-camera orbit offset (Z/X keys, right stick, mouse drag).
     pub orbit: f32,
     accumulator: f32,
@@ -89,6 +89,10 @@ impl Riding {
             effects: None,
             crashes: None,
         }
+    }
+
+    pub fn key_released(&mut self, keys: &dyn Fn(&str) -> bool) {
+        self.bindings.key_released(keys);
     }
 
     pub fn key_pressed(&mut self, code: &str, now: f64, keys: &dyn Fn(&str) -> bool) {
@@ -185,8 +189,11 @@ impl Riding {
         }
         // updateCamera -> followCamera: orbit follows render time.
         let orbit_axis =
-            ride::bindings::value(ride::bindings::Action::CameraRight, input.keys, input.pad)
-                - ride::bindings::value(ride::bindings::Action::CameraLeft, input.keys, input.pad);
+            self.bindings
+                .value(ride::bindings::Action::CameraRight, input.keys, input.pad)
+                - self
+                    .bindings
+                    .value(ride::bindings::Action::CameraLeft, input.keys, input.pad);
         self.orbit -= orbit_axis * dt * 1.7;
         self.orbit -= input.drag * 0.004;
         self.accumulator = (self.accumulator + dt).min(0.1);
@@ -280,7 +287,12 @@ impl Riding {
             yaw,
             pitch,
             focal_length,
-        } = chase(self.ride.camera().0, aspect);
+        } = match self.ride.camera() {
+            (frame, ride::CameraMode::Intro | ride::CameraMode::Tv) => {
+                atv_game::ride::view::cinematic(frame, aspect)
+            }
+            (frame, _) => chase(frame, aspect),
+        };
         // buildTerrainMesh again once the rider leaves 48 cells of the patch.
         let at = cells(venue, frame.origin);
         if (at[0] - self.center[0]).abs() > 48. || (at[1] - self.center[1]).abs() > 48. {
@@ -315,6 +327,7 @@ impl Riding {
                 .map(|c| &c.blood),
         );
         scene.pose_ride(gpu, &pose);
+        scene.pose_race_cpus(gpu, &self.ride.cpu_poses(), position);
         Ok((
             Camera {
                 x: position[0],

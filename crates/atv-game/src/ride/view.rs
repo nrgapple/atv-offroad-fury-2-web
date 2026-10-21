@@ -37,6 +37,22 @@ pub fn chase(frame: &CameraFrame, aspect: f32) -> View {
     }
 }
 
+/// Authored camera shots (the pre-race camera and the after-finish
+/// trackside cameras) keep their pose; only the portrait focal adaptation of
+/// the chase view applies (cinematicPresentation in render-support.js).
+pub fn cinematic(frame: &CameraFrame, aspect: f32) -> View {
+    let portrait = ((1. - f64::from(aspect)) / 0.5).clamp(0., 1.);
+    let view: [f64; 3] = std::array::from_fn(|i| f64::from(frame.target[i] - frame.position[i]));
+    let focal_length = (4. / 3.) / (f64::from(frame.fov) * std::f64::consts::PI / 360.).tan()
+        * (1. - 0.12 * portrait);
+    View {
+        position: frame.position,
+        yaw: view[0].atan2(view[2]) as f32,
+        pitch: view[1].atan2(view[0].hypot(view[2])) as f32,
+        focal_length: focal_length as f32,
+    }
+}
+
 /// Authored speed presentation's FOV kick (web/speed-rush.js, Normal):
 /// above 40 MPH the view widens by up to about six degrees.
 #[derive(Clone, Copy, Debug, Default)]
