@@ -137,11 +137,24 @@ for (const engine of ['chromium', 'webkit']) {
       return s.active && s.musicActive && !s.musicPaused && s.steps > steps + 5;
     }, hidden.steps);
     const visibleFocused = await state();
+    // Controlled persisted page transitions cover winit Suspended/Resumed.
+    // Visibility events are ignored by winit while suspended; pageshow must
+    // refresh visibility without overriding an independently blurred canvas.
+    await visibility('hidden');
+    await page.waitForFunction(() => !JSON.parse(document.documentElement.dataset.engineAudio).musicActive);
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+    await visibility('visible');
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+    await page.waitForFunction(steps => {
+      const s = JSON.parse(document.documentElement.dataset.engineAudio);
+      return s.active && s.musicActive && s.steps > steps + 5;
+    }, visibleFocused.steps);
+    const pageRestored = await state();
     await page.evaluate(() => { delete document.visibilityState; });
     assertNoErrors(errors);
     await mkdir('private/reports/engine-parity/audio-recovery', { recursive: true });
     await page.screenshot({ path: `private/reports/engine-parity/audio-recovery/${engine}.png` });
-    evidence.push({ engine, beforeSound, loadedAway, driving, paused, menu, blurred, away, resumed, hidden, hiddenLater, visibleBlurred, visibleFocused, visibilityFixture: 'controlled document.visibilityState' });
+    evidence.push({ engine, beforeSound, loadedAway, driving, paused, menu, blurred, away, resumed, hidden, hiddenLater, visibleBlurred, visibleFocused, pageRestored, visibilityFixture: 'controlled document.visibilityState' });
     console.log(`PASS: ${engine} Rust engine sound, loading/focus recovery and controlled visibility lifecycle`);
   } finally {
     await browser.close();

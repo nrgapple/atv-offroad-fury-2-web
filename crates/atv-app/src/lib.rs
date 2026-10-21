@@ -695,6 +695,12 @@ impl App {
 impl ApplicationHandler<Message> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         self.suspended = false;
+        // Winit suppresses visibility events while a page is in the back/forward
+        // cache. Refresh that independent cause when its pageshow resumes us.
+        #[cfg(target_arch = "wasm32")]
+        if let Some(document) = web_sys::window().and_then(|w| w.document()) {
+            self.visible = document.visibility_state() == web_sys::VisibilityState::Visible;
+        }
         self.sync_activity();
         let Some(options) = self.options.take() else {
             return;
