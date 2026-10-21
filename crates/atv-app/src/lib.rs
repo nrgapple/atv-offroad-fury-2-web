@@ -8,6 +8,8 @@ mod overlay;
 pub mod replay;
 mod riding;
 mod sound;
+#[cfg(target_arch = "wasm32")]
+mod text_inputs;
 use atv_core::math::Det;
 pub use multiplayer::RoomStart;
 use replay::RunScript;
@@ -138,6 +140,12 @@ enum Message {
     PeerModel(Box<PeerModel>),
     /// The Arlington Free Ride rider count for the main menu.
     FreeRideRiders(Option<u32>),
+    /// A Host/Join form field's text from the browser's input.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    FrontText(&'static str, String),
+    /// A form field took (or gave back) the keyboard.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    FrontFocus(Option<usize>),
     /// The browser's 1 s presence timer (a hidden tab runs no frames).
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     PresenceTick,
@@ -227,6 +235,9 @@ struct App {
     requested: HashSet<String>,
     /// When the Free Ride rider count was last requested.
     riders_polled: Option<Instant>,
+    /// The Host/Join forms' browser inputs.
+    #[cfg(target_arch = "wasm32")]
+    text_inputs: text_inputs::TextInputs,
     /// Desktop: the rider count request in flight.
     #[cfg(not(target_arch = "wasm32"))]
     riders_pending: Option<std::sync::mpsc::Receiver<Option<u32>>>,
@@ -2129,6 +2140,24 @@ impl ApplicationHandler<Message> for App {
                 }
             }
             Message::PresenceTick => self.presence_tick(),
+            Message::FrontText(action, text) => {
+                if let Some(front) = &self.front {
+                    front.borrow_mut().state.set_field(action, &text);
+                }
+                self.wake();
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
+            Message::FrontFocus(index) => {
+                if let Some(front) = &self.front {
+                    front.borrow_mut().state.focus_field(index);
+                }
+                self.wake();
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
             Message::RemoteEngine(quad, engine) => match *engine {
                 Ok(engine) => {
                     if let Some(sound) = self
@@ -2246,6 +2275,19 @@ impl ApplicationHandler<Message> for App {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                // Desktop typing into a focused Host/Join field (the browser
+                // build types into its own <input>).
+                if event.state == ElementState::Pressed
+                    && let Some(text) = &event.text
+                    && !text.chars().any(char::is_control)
+                    && let Some(front) = self.front_input()
+                    && front.borrow_mut().state.type_text(text)
+                {
+                    if let Some(window) = &self.window {
+                        window.request_redraw();
+                    }
+                    return;
+                }
                 if let PhysicalKey::Code(code) = event.physical_key {
                     match event.state {
                         ElementState::Pressed => {
@@ -2620,6 +2662,48 @@ impl App {
                     Some(room),
                 );
             }
+            Event::Host {
+                environment,
+                code,
+                quad,
+                rider,
+                name,
+            } => {
+                let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
+                    return;
+                };
+                let room = RoomStart {
+                    relay,
+                    code,
+                    host: true,
+                    freeride: false,
+                    name,
+                    drop_after: None,
+                    train_place: None,
+                };
+                self.start_ride(environment, quad, rider, None, Some(room));
+            }
+            Event::Join {
+                code,
+                environment,
+                quad,
+                rider,
+                name,
+            } => {
+                let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
+                    return;
+                };
+                let room = RoomStart {
+                    relay,
+                    code: Some(code),
+                    host: false,
+                    freeride: false,
+                    name,
+                    drop_after: None,
+                    train_place: None,
+                };
+                self.start_ride(environment, quad, rider, None, Some(room));
+            }
             Event::DevLog =>
             {
                 #[cfg(target_arch = "wasm32")]
@@ -2653,6 +2737,8 @@ impl App {
         let Some(gpu) = self.gpu.take() else {
             return;
         };
+        #[cfg(target_arch = "wasm32")]
+        self.text_inputs.sync(&[], &[], &self.proxy);
         let (graphics, weather, sound, default_crash) = self
             .defaults
             .as_ref()
@@ -2870,6 +2956,12 @@ impl App {
         f.pad_name = self.gamepad.name();
         let event = f.pad(pad.as_ref());
         paint_front(gpu, &mut f);
+        #[cfg(target_arch = "wasm32")]
+        {
+            let (fields, rects) = (f.state.fields(), f.field_rects());
+            let fields = if f.menu.is_none() { fields } else { Vec::new() };
+            self.text_inputs.sync(&fields, &rects, &self.proxy);
+        }
         if self.ui_diagnostics {
             publish_ui_state(&serde_json::json!({ "front": f.diagnostics() }).to_string());
         }
@@ -3442,6 +3534,8 @@ pub fn run(options: Options) {
         defaults: None,
         requested: HashSet::new(),
         riders_polled: None,
+        #[cfg(target_arch = "wasm32")]
+        text_inputs: Default::default(),
         #[cfg(not(target_arch = "wasm32"))]
         riders_pending: None,
     };

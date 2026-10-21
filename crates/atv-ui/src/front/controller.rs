@@ -3,8 +3,8 @@
 //! in menu-screens.js). Rows and labels come from atv_core::ui_menu with the
 //! same request fields the browser sends.
 use super::{
-    BACK, COURSE, DONE, GROUPS, Img, LIST, NEXT, PREV, QUAD_NEXT, QUAD_PREV, RIDE, RIDER, ROW,
-    Screen, Stats, TAB, VEHICLE, assets::Track, course_group,
+    BACK, COURSE, DONE, FIELD, GROUPS, Img, LIST, NEXT, PREV, QUAD_NEXT, QUAD_PREV, RIDE, RIDER,
+    ROW, Screen, Stats, TAB, VEHICLE, assets::Track, course_group,
 };
 use crate::{hud::Viewport, paint::Rect, settings::Settings};
 use serde_json::{Value, json};
@@ -27,6 +27,38 @@ pub enum Event {
     /// Arlington Free Ride: join a shared room at once (no setup) with the
     /// remembered rider name and the garage ATV (motorcycles ride ATV01).
     FreeRide { quad: u16, rider: u16, name: String },
+    /// Host Game → Select Track → Ride: create a room on this course with an
+    /// optional custom code and start riding at once.
+    Host {
+        environment: String,
+        code: Option<String>,
+        quad: u16,
+        rider: u16,
+        name: String,
+    },
+    /// Join Game: open the room by its code (an ended room opens again on
+    /// `environment`, the current course, as an invite reopens on its map).
+    Join {
+        code: String,
+        environment: String,
+        quad: u16,
+        rider: u16,
+        name: String,
+    },
+}
+
+/// A text field on the Host/Join forms (`ui_menu::TextInput`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Field {
+    pub action: &'static str,
+    pub label: &'static str,
+    pub value: String,
+    pub max_length: usize,
+}
+
+/// Rider names: at most 24 bytes, no control characters (frontend.js).
+fn valid_name(name: &str) -> bool {
+    !name.trim().is_empty() && name.len() <= 24 && !name.chars().any(char::is_control)
 }
 
 /// localStorage key shared with the browser game.
@@ -35,7 +67,7 @@ pub const SELECTION_KEY: &str = "atv-player-selection";
 pub const VEHICLES: u16 = 46;
 
 /// Rows the Rust engine cannot perform yet are left out of its menus.
-const UNSUPPORTED: [&str; 4] = ["multiplayer", "jukebox", "race", "gear"];
+const UNSUPPORTED: [&str; 3] = ["jukebox", "race", "gear"];
 
 /// Loader phases (frontend.js `loadingStage`) and their bar positions.
 pub fn loading_stage(text: &str) -> (&'static str, f32) {
@@ -115,6 +147,16 @@ pub struct Frontend {
     saved: Value,
     /// Riders in Arlington Free Ride (the main menu's live count).
     pub freeride_riders: Option<u32>,
+    /// The Host/Join forms (frontend.js playerName, createCode, roomCode).
+    pub player_name: String,
+    pub create_code: String,
+    pub room_code: String,
+    /// The focused form field, by index in [`Frontend::fields`].
+    pub focus: Option<usize>,
+    /// The course select picks the room's course (Host Game → Select Track).
+    pub hosting: bool,
+    /// A form error (`#menu-notice` / the thrown message in frontend.js).
+    pub notice: Option<String>,
 }
 
 impl Frontend {
@@ -152,7 +194,18 @@ impl Frontend {
             web,
             saved,
             freeride_riders: None,
+            player_name: String::new(),
+            create_code: String::new(),
+            room_code: String::new(),
+            focus: None,
+            hosting: false,
+            notice: None,
         };
+        front.player_name = front.saved["playerName"]
+            .as_str()
+            .filter(|n| valid_name(n))
+            .unwrap_or("Rider")
+            .to_string();
         front.refresh(&Viewport {
             width: 1280.,
             height: 720.,
@@ -167,6 +220,9 @@ impl Frontend {
         let mut value = self.saved.clone();
         value["quadId"] = self.quad_id.into();
         value["riderId"] = self.rider_id.into();
+        if valid_name(&self.player_name) {
+            value["playerName"] = self.player_name.clone().into();
+        }
         if let Some(track) = self.tracks.get(self.track) {
             value["freestyleEnvironment"] = track.id.clone().into();
         }
@@ -226,6 +282,78 @@ impl Frontend {
             .map(|a| (a.clone(), label(a)))
             .collect();
         self.selection = self.selection.min(self.choices.len().saturating_sub(1));
+    }
+
+    /// The page's text fields (ui_menu `create-lobby` / `join-lobby`).
+    pub fn fields(&self) -> Vec<Field> {
+        let name = Field {
+            action: "player-name",
+            label: "Rider name",
+            value: self.player_name.clone(),
+            max_length: 24,
+        };
+        match self.page.as_str() {
+            "create-lobby" => vec![
+                name,
+                Field {
+                    action: "create-code",
+                    label: "Lobby code (8 letters/numbers, optional)",
+                    value: self.create_code.clone(),
+                    max_length: 8,
+                },
+            ],
+            "join-lobby" => vec![
+                name,
+                Field {
+                    action: "room-code",
+                    label: "Lobby code",
+                    value: self.room_code.clone(),
+                    max_length: 8,
+                },
+            ],
+            _ => Vec::new(),
+        }
+    }
+
+    /// Replaces a field's text (the browser's `input` event; the web build's
+    /// DOM input and desktop typing both land here). Codes are upper case
+    /// letters and digits; names keep at most 24 bytes without controls.
+    pub fn set_field(&mut self, action: &str, text: &str) {
+        let code = |t: &str| {
+            t.chars()
+                .filter(char::is_ascii_alphanumeric)
+                .map(|c| c.to_ascii_uppercase())
+                .take(8)
+                .collect::<String>()
+        };
+        match action {
+            "player-name" => {
+                let mut name: String = text.chars().filter(|c| !c.is_control()).collect();
+                while name.len() > 24 {
+                    name.pop();
+                }
+                self.player_name = name;
+            }
+            "create-code" => self.create_code = code(text),
+            "room-code" => self.room_code = code(text),
+            _ => return,
+        }
+        self.notice = None;
+    }
+
+    /// Typed text for the focused field (desktop keyboards).
+    pub fn type_text(&mut self, text: &str) -> bool {
+        let Some(field) = self.focus.and_then(|i| self.fields().get(i).cloned()) else {
+            return false;
+        };
+        let value = format!("{}{}", field.value, text);
+        self.set_field(field.action, &value);
+        true
+    }
+
+    /// Focus a field (a click on it), or none.
+    pub fn focus_field(&mut self, index: Option<usize>) {
+        self.focus = index.filter(|&i| i < self.fields().len());
     }
 
     pub fn choices(&self) -> &[(String, String)] {
@@ -315,9 +443,28 @@ impl Frontend {
         self.reveal = true;
     }
 
+    /// The remembered rider name, or `Rider`.
+    fn room_name(&self) -> String {
+        if valid_name(&self.player_name) {
+            self.player_name.trim().to_string()
+        } else {
+            "Rider".into()
+        }
+    }
+
     fn ride(&mut self, settings: &mut Settings) -> Option<Event> {
         let track = self.tracks.get(self.track)?.clone();
         self.save(settings);
+        if self.hosting {
+            // Rooms ride ATVs: a motorcycle choice rides ATV01.
+            return Some(Event::Host {
+                environment: track.id,
+                code: Some(self.create_code.clone()).filter(|c| !c.is_empty()),
+                quad: if self.quad_id >= 27 { 1 } else { self.quad_id },
+                rider: self.rider_id,
+                name: self.room_name(),
+            });
+        }
         Some(Event::Ride {
             environment: track.id,
             quad: self.quad_id,
@@ -355,11 +502,18 @@ impl Frontend {
         let to = match self.page.as_str() {
             "main" => "title".to_string(),
             "single" => "main".into(),
+            "tracks" if self.hosting => "create-lobby".into(),
             "tracks" => "single".into(),
             "garage" => self.garage_return.clone(),
+            "multiplayer" => "main".into(),
+            "create-lobby" | "join-lobby" => "multiplayer".into(),
             _ => return,
         };
         let from = self.page.clone();
+        if from == "tracks" {
+            self.hosting = false;
+        }
+        self.focus = None;
         self.show(&to, view);
         // Back lands on the row that opened the page just left.
         if let Some(index) = self.choices.iter().position(|(a, _)| *a == from) {
@@ -369,7 +523,42 @@ impl Frontend {
 
     fn run(&mut self, action: &str, view: &Viewport, settings: &mut Settings) -> Option<Event> {
         match action {
-            "main" | "single" | "tracks" => self.show(action, view),
+            "main" | "single" | "tracks" | "multiplayer" => self.show(action, view),
+            "create-lobby" | "join-lobby" => {
+                self.notice = None;
+                self.focus = None;
+                self.show(action, view);
+            }
+            "hosttrack" => {
+                // Host Game → Select Track; its Ride creates the room.
+                if !self.create_code.is_empty() && self.create_code.len() != 8 {
+                    self.notice = Some(
+                        "Choose exactly 8 letters or numbers, or leave the code blank.".into(),
+                    );
+                    return None;
+                }
+                self.save(settings);
+                self.hosting = true;
+                self.focus = None;
+                self.show("tracks", view);
+            }
+            "join" => {
+                if self.room_code.len() != 8 {
+                    self.notice = Some("Enter the 8-letter or number lobby code.".into());
+                    return None;
+                }
+                self.save(settings);
+                return Some(Event::Join {
+                    code: self.room_code.clone(),
+                    environment: self
+                        .tracks
+                        .get(self.track)
+                        .map_or("env01".into(), |t| t.id.clone()),
+                    quad: if self.quad_id >= 27 { 1 } else { self.quad_id },
+                    rider: self.rider_id,
+                    name: self.room_name(),
+                });
+            }
             "garage" => {
                 self.garage_return = self.page.clone();
                 self.show("garage", view);
@@ -412,6 +601,40 @@ impl Frontend {
         if self.page == "loading" {
             return None;
         }
+        // A focused field owns editing keys; Tab and the arrows move on.
+        if let Some(index) = self.focus {
+            let fields = self.fields();
+            match code {
+                "Backspace" => {
+                    if let Some(field) = fields.get(index) {
+                        let mut value = field.value.clone();
+                        value.pop();
+                        self.set_field(field.action, &value);
+                    }
+                    return None;
+                }
+                "Escape" => {
+                    self.focus = None;
+                    return None;
+                }
+                "Tab" | "ArrowDown" | "Enter" | "NumpadEnter" => {
+                    self.focus = (index + 1 < fields.len()).then_some(index + 1);
+                    if self.focus.is_none() {
+                        self.selection = 0;
+                    }
+                    return None;
+                }
+                "ArrowUp" => {
+                    self.focus = Some(index.saturating_sub(1));
+                    return None;
+                }
+                _ => return None,
+            }
+        }
+        if code == "Tab" && !self.fields().is_empty() {
+            self.focus = Some(0);
+            return None;
+        }
         let action = match code {
             "ArrowUp" => "up",
             "ArrowDown" => "down",
@@ -448,6 +671,10 @@ impl Frontend {
                     view,
                     settings,
                 );
+            }
+            (_, "up") if self.selection == 0 && !self.fields().is_empty() => {
+                // Up from the first row returns to the last field.
+                self.focus = Some(self.fields().len() - 1);
             }
             (_, "up" | "down") => {
                 // The garage's vehicle row is one stop for both arrows.
@@ -607,6 +834,11 @@ impl Frontend {
     }
 
     fn click(&mut self, id: u32, view: &Viewport, settings: &mut Settings) -> Option<Event> {
+        if (FIELD..FIELD + 4).contains(&id) {
+            self.focus_field(Some((id - FIELD) as usize));
+            return None;
+        }
+        self.focus = None;
         match id {
             BACK | DONE => self.back(view),
             RIDE => return self.ride(settings),
@@ -718,6 +950,15 @@ impl Frontend {
             selection: self.selection,
             hovered: self.hovered,
             freeride_riders: self.freeride_riders,
+            fields: {
+                let fields = self.fields();
+                fields
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, f)| (f.label.to_string(), f.value, self.focus == Some(i)))
+                    .collect()
+            },
+            notice: self.notice.clone(),
             backdrop,
             backdrop_track,
             logo: logo.map(|l| l.0),
@@ -792,6 +1033,57 @@ mod tests {
     }
 
     #[test]
+    fn host_and_join_forms_take_text_and_validate_codes() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.key("Enter", &view, &mut settings);
+        let at = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "multiplayer")
+            .unwrap();
+        front.selection = at;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "multiplayer");
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "create-lobby");
+        assert_eq!(front.fields().len(), 2);
+        // Tab focuses the name; typing edits it, Backspace deletes.
+        front.key("Tab", &view, &mut settings);
+        front.set_field("player-name", "");
+        assert!(front.type_text("Ann"));
+        front.key("Backspace", &view, &mut settings);
+        assert_eq!(front.player_name, "An");
+        front.key("Tab", &view, &mut settings);
+        assert!(front.type_text("ab12-cd34xyz"));
+        assert_eq!(front.create_code, "AB12CD34");
+        front.key("Tab", &view, &mut settings);
+        assert_eq!(front.focus, None);
+        // Select Track, then Ride creates the room on that course.
+        front.key("Enter", &view, &mut settings);
+        assert_eq!((front.page.as_str(), front.hosting), ("tracks", true));
+        let event = front.key("Enter", &view, &mut settings);
+        assert!(matches!(event, Some(Event::Host { ref code, ref name, .. })
+            if code.as_deref() == Some("AB12CD34") && name == "An"));
+        // The name is remembered with the garage choice.
+        let saved: Value = serde_json::from_str(&settings.get(SELECTION_KEY).unwrap()).unwrap();
+        assert_eq!(saved["playerName"], "An");
+        // Join needs the full code.
+        front.key("Escape", &view, &mut settings);
+        front.key("Escape", &view, &mut settings);
+        front.show("join-lobby", &view);
+        front.set_field("room-code", "abc");
+        assert_eq!(front.key("Enter", &view, &mut settings), None);
+        assert!(front.notice.is_some());
+        front.set_field("room-code", "abcd1234");
+        assert!(matches!(
+            front.key("Enter", &view, &mut settings),
+            Some(Event::Join { ref code, .. }) if code == "ABCD1234"
+        ));
+    }
+
+    #[test]
     fn free_ride_needs_no_setup_and_rides_an_atv() {
         let view = view(1280., 720.);
         let mut settings = Settings::memory();
@@ -801,7 +1093,8 @@ mod tests {
         );
         let mut front = Frontend::new(tracks(), &settings, true);
         front.key("Enter", &view, &mut settings);
-        assert_eq!(front.choices()[1].0, "freeride");
+        assert_eq!(front.choices()[2].0, "freeride");
+        front.key("ArrowDown", &view, &mut settings);
         front.key("ArrowDown", &view, &mut settings);
         assert_eq!(
             front.key("Enter", &view, &mut settings),
