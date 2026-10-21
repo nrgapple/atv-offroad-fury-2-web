@@ -3,7 +3,7 @@
 //   1. The Rust main menu lists Arlington Free Ride with its live rider count.
 //   2. Choosing it claims a shared-room slot and rides Arlington (env08).
 //   3. A JavaScript player taps Arlington Free Ride; both see each other.
-//   4. Quit to Main Menu leaves the room; the JavaScript player sees it go.
+//   4. Pause → Leave Game leaves the room; the JavaScript player sees it go.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_freeride.mjs
 // ATV_MP_SCREENSHOT=out.png saves the menu and both rides.
 import assert from 'node:assert/strict';
@@ -44,10 +44,11 @@ try {
   );
   let f = (await read(rust)).front;
   report.menu = { choices: f.choices, riders: f.freerideRiders };
-  assert.equal(f.choices[1], 'freeride');
+  assert.equal(f.choices[2], 'freeride');
   if (shots) await rust.screenshot({ path: shots.replace('.png', '-menu.png') });
 
   // 2. Choose Arlington Free Ride.
+  await key(rust, 'ArrowDown');
   await key(rust, 'ArrowDown');
   await key(rust, 'Enter');
   await wait(rust, () => JSON.parse(window.furyMultiplayer ?? 'null')?.environment === 'env08', null, 180000);
@@ -83,14 +84,14 @@ try {
     await js.screenshot({ path: shots.replace('.png', '-js.png') });
   }
 
-  // 4. Quit to Main Menu leaves the room.
+  // 4. Leave Game leaves the room.
   const rustPeer = e.peer;
   await rust.bringToFront();
   await rust.mouse.click(640, 400);
   await key(rust, 'Escape');
   await wait(rust, () => JSON.parse(document.querySelector('#ui-state').textContent).toolbar?.menu?.page === 'pause');
-  const quit = (await read(rust)).toolbar.menu.hits.find(h => h.action === 'main');
-  assert.ok(quit, 'Quit to Main Menu');
+  const quit = (await read(rust)).toolbar.menu.hits.find(h => h.action === 'leave');
+  assert.ok(quit, 'Leave Game');
   await rust.mouse.click(centre(quit).x, centre(quit).y);
   await onPage(rust, 'main');
   await js.waitForFunction(

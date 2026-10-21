@@ -33,6 +33,8 @@ pub const QUAD_PREV: u32 = 2405;
 pub const QUAD_NEXT: u32 = 2406;
 pub const RIDER: u32 = 2407;
 pub const DONE: u32 = 2408;
+/// Host/Join form fields, by index.
+pub const FIELD: u32 = 2420;
 /// 3D preview slots (their rects size the render targets).
 pub const MODEL_QUAD: u32 = 2409;
 pub const MODEL_RIDER: u32 = 2410;
@@ -162,6 +164,19 @@ pub struct Screen {
     /// Rendered 3D previews of the vehicle and the garage rider.
     pub quad_model: Option<Img>,
     pub rider_model: Option<Img>,
+    /// Host/Join form fields: (label, value, focused).
+    pub fields: Vec<(String, String, bool)>,
+    /// A form error under the rows (`#menu-notice`).
+    pub notice: Option<String>,
+}
+
+/// Pages laid out like the main menu: rows on the left, the ride stage
+/// (logo, vehicle and its plate) on the panel.
+fn stage_page(page: &str) -> bool {
+    matches!(
+        page,
+        "main" | "single" | "multiplayer" | "create-lobby" | "join-lobby"
+    )
 }
 
 fn display(size: f32, weight: u16, italic: bool) -> Font {
@@ -340,7 +355,7 @@ pub fn element(view: &Viewport, s: &Screen) -> El {
     if m.portrait {
         style.grid_template_columns = vec![minmax(length(0.), fr(1.))];
         let stage = match page {
-            "main" | "single" => {
+            page if stage_page(page) => {
                 if h <= 640. {
                     0.4
                 } else {
@@ -515,6 +530,9 @@ fn page_title(page: &str) -> &'static str {
     match page {
         "main" => "Main Menu",
         "single" => "Single Player",
+        "multiplayer" => "Multiplayer",
+        "create-lobby" => "Create Lobby",
+        "join-lobby" => "Join Lobby",
         "garage" => "Select ATV & Rider",
         "tracks" => "Select Track",
         "race" => "Single Race",
@@ -666,7 +684,7 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
         );
     }
     match s.page.as_str() {
-        "main" | "single" => {
+        page if stage_page(page) => {
             if let Some(logo) = panel_logo(m, s) {
                 panel = panel.child(logo);
             }
@@ -1036,7 +1054,25 @@ fn left(m: &Metrics, s: &Screen) -> El {
     }
     let mut left = El::new(style);
     match s.page.as_str() {
-        "main" | "single" => {
+        "create-lobby" | "join-lobby" => {
+            left = left.child(form(m, s));
+            let mut rows = El::new(column(2.));
+            rows.style.flex_shrink = 0.;
+            for (index, (action, label)) in s.choices.iter().enumerate() {
+                if action != "back" {
+                    rows = rows.child(menu_row(m, s, index, action, label));
+                }
+            }
+            left = left.child(rows);
+            if let Some(notice) = &s.notice {
+                left = left.child(text(
+                    notice.clone(),
+                    TextStyle::new(display(15., 700, false), Color::hex("#ffd166")),
+                    20.,
+                ));
+            }
+        }
+        "main" | "single" | "multiplayer" => {
             let mut rows = El::new(column(2.));
             rows.style.flex_shrink = 0.;
             rows.style.padding = sides(0., if m.portrait { 0. } else { 8. }, 0., 0.);
@@ -1207,6 +1243,62 @@ fn freeride_badges(m: &Metrics, el: El, selected: bool, riders: Option<u32>) -> 
         );
     }
     el
+}
+
+/// `.ms-fields`: the Host/Join text fields (label over a dark input box).
+/// The web build lays a real input over each box for mobile keyboards; the
+/// canvas draws the value and, on desktop, the caret of the focused field.
+fn form(m: &Metrics, s: &Screen) -> El {
+    let mut fields = El::new(column(12.));
+    fields.style.flex_shrink = 0.;
+    fields.style.padding = sides(0., if m.portrait { 0. } else { 12. }, 0., 0.);
+    for (index, (label, value, focused)) in s.fields.iter().enumerate() {
+        let mut field = El::new(column(6.));
+        field = field.child(text(
+            label.clone(),
+            TextStyle::new(display(15., 700, false), Color::hex("#eeeeee")).spacing(0.6),
+            18.,
+        ));
+        let mut input = El::new(Style {
+            display: Display::Flex,
+            align_items: AlignItems::CENTER,
+            min_size: Size {
+                width: auto(),
+                height: length(48.),
+            },
+            padding: sides(4., 20., 4., 20.),
+            ..Default::default()
+        })
+        .id(FIELD + index as u32)
+        .paint(
+            Paint::fill(Color::hex("#0000008c"))
+                .radius(8.)
+                .shadow(BoxShadow {
+                    spread: 1.,
+                    ..BoxShadow::inset(
+                        0.,
+                        0.,
+                        0.,
+                        Color::hex(if *focused { "#e8c832" } else { "#ffffff26" }),
+                    )
+                }),
+        );
+        // The browser's own input draws the text over this box.
+        let shown = if cfg!(target_arch = "wasm32") {
+            String::new()
+        } else if *focused {
+            format!("{value}|")
+        } else {
+            value.clone()
+        };
+        input = input.child(text(
+            shown,
+            TextStyle::new(display(19., 700, false), Color::hex("#f4f4f4")).spacing(1.14),
+            23.,
+        ));
+        fields = fields.child(field.child(input));
+    }
+    fields
 }
 
 fn tabs(m: &Metrics, s: &Screen) -> El {

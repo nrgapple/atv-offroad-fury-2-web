@@ -1225,12 +1225,41 @@ Observed (host-only, local relay):
   - Inspected: `private/reports/engine-multiplayer/pause-pause.png` and
     `pause-players.png`.
 
+### Slice 9: the Multiplayer menu (Host Game, Join Game)
+
+- The Rust main menu lists **Multiplayer**. Its page offers Host Game and Join
+  Game (`ui_menu` pages `multiplayer`, `create-lobby`, `join-lobby`), laid out like
+  the main menu with the ride stage on the panel.
+- The forms' text fields follow menu-screens.js `buildForm`: Rider name, plus the
+  optional 8-letter/number lobby code when hosting or the lobby code when joining.
+  - In the browser a real `<input>` sits over each drawn field
+    (`atv-app/src/text_inputs.rs`), so phones open their soft keyboard and desktop
+    browsers keep native editing and IME. Enter or Escape hands the keyboard back.
+  - On desktop the fields take typed text with a caret: Tab, a click or Up from the
+    first row focuses one; Backspace deletes.
+  - Codes are upper-cased letters and digits; names are at most 24 bytes with no
+    control characters. The name is remembered in `atv-player-selection`.
+- Host Game → Select Track → Ride creates the room (with the custom code) on that
+  course and rides. Join Game checks the 8-character code and opens the room; an
+  ended room opens again on the current course. Garage opens the garage.
+- A motorcycle choice rides ATV01 in rooms. The browser instead refuses with
+  "Choose an ATV for multiplayer"; this difference is recorded.
+- Observed (`tools/test_engine_multiplayer_menu.mjs`, local relay, host-only):
+  - A Rust browser hosted room RM634747 from the menus, with the name and a
+    lower-case custom code typed into the inputs.
+  - A JavaScript player joined it by code.
+  - A second Rust browser joined from Join Game and drew both riders (3 players).
+  - `test_engine_front.mjs` and `test_engine_freeride.mjs` pass with the new main
+    menu row; Free Ride now leaves through Leave Game.
+  - Inspected: `private/reports/engine-multiplayer/menu-host-form.png` and
+    `menu-join-form.png`.
+
 Gaps, in planned slice order:
 
-1. No Multiplayer menu in `atv-ui`: no Host/Join forms (text entry) or room code
-   entry, so private rooms start from the command line or URL only. Change ATV and
-   Rider and the host's Select Track need the frontend over a live room ride; both
-   rows are hidden for now.
+1. Change ATV and Rider and the host's Select Track need the frontend over a live
+   room ride; both pause rows are hidden for now. The joining "Free Ride Lobby"
+   page and Copy invite link from the frontend are not drawn (rides start at
+   once).
 2. Train on a motorcycle ride, the Realistic train-riding setting, and an arrival's
    spawn velocity on a moving car (the browser adds the car's point velocity).
 3. Twenty-rider rooms are untested in the Rust engine; the JavaScript game's

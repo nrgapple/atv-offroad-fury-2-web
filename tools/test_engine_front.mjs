@@ -27,14 +27,14 @@ try {
   await key(page, 'Enter'); await onPage(page, 'main');
   f = await front(page);
   assert.ok(f.choices.includes('single') && f.choices.includes('settings'), f.choices.join());
-  assert.ok(!f.choices.includes('multiplayer') && !f.choices.includes('jukebox'), 'unported rows are hidden');
+  assert.ok(f.choices.includes('multiplayer'), 'Multiplayer is listed');
   assert.ok(f.choices.includes('freeride'), 'Arlington Free Ride is listed');
   // Settings opens over the frontend and Back closes it.
-  await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'Enter');
+  await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'Enter');
   await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.menu?.page === 'settings');
   await key(page, 'Escape');
   await wait(page, () => !JSON.parse(document.querySelector('#ui-state').textContent).front.menu);
-  await key(page, 'ArrowUp'); await key(page, 'ArrowUp'); await key(page, 'Enter'); await onPage(page, 'single');
+  await key(page, 'ArrowUp'); await key(page, 'ArrowUp'); await key(page, 'ArrowUp'); await key(page, 'Enter'); await onPage(page, 'single');
   assert.deepEqual((await front(page)).choices, ['tracks', 'garage']);
   // Garage: Right steps the ATV, the rider switch toggles; both persist.
   await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'garage');
