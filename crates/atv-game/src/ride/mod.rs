@@ -369,6 +369,37 @@ impl Ride {
         }
     }
 
+    /// The ATV's scene collision (props and moving objects), when loaded.
+    pub fn scene_collision(&self) -> Option<&atv_core::scene_collision::SceneCollision> {
+        match &self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.scene_collision(),
+            Mount::Bike(_) => None,
+        }
+    }
+
+    /// Places the player at `origin` facing `yaw` (a multiplayer arrival
+    /// beside another rider; ops 23/47 as Reset does).
+    pub fn place_beside(&mut self, origin: [f32; 3], yaw: f32) -> Result<()> {
+        self.place_at((origin, yaw))
+    }
+
+    /// One owner-local contact against another rider's yawed box
+    /// (`atv_core::peer_contact`, authored); true when they touched.
+    pub fn peer_contact(
+        &mut self,
+        origin: [f32; 3],
+        velocity: [f32; 3],
+        orientation: [f32; 4],
+        tie: f32,
+    ) -> bool {
+        match &mut self.mount {
+            Mount::Quad { vehicle, .. } => {
+                vehicle.peer_contact(origin, velocity, orientation, STEP, tie)
+            }
+            Mount::Bike(bike) => bike.peer_contact(origin, velocity, orientation, STEP, tie),
+        }
+    }
+
     /// The player's motorcycle, when riding one.
     pub fn motorcycle(&self) -> Option<&Motorcycle> {
         match &self.mount {
