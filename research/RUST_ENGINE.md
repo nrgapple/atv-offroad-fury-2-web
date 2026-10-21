@@ -1077,6 +1077,112 @@ headless Chromium/Metal; host-only):
   `private/reports/engine-multiplayer/slice3-menu.png`, `slice3-rust.png`,
   `slice3-js.png`.
 
+### Slice 4: Arlington's train in physics and the shared train clock
+
+Single-player Rust had the ENV08 train for presentation only. The renderer stepped
+it with no collision heights, and riders passed through the cars.
+
+Ported:
+
+- `atv-game/src/train.rs` loads each `use_collision` car's original COL mesh
+  (atv-web op 67 bindings).
+- An ATV ride on ENV08 installs the cars as moving scene obstacles (op 69). It then
+  steps the shared train runtime before every vehicle step with the scene's
+  collision heights, republishing each car's collision body (`step_train_scene`).
+  The renderer stops stepping a train the ride drives (`Train::driven`). Motorcycles
+  keep the presentation-only train; the bike scene does not install it yet.
+- In a room, every step's train phase follows the relay clock: the browser's
+  `synchronize_train`, with gentle phase correction and a primed 16-step resync
+  that carries a rider standing on a car along.
+- Snapshots send the car the rider stands on (`platform`) and the train time.
+  Received riders on a car are drawn, contact-tested, met and spawn-checked relative
+  to this client's car (`rebase`).
+- "Train riding: Original" behaviour, as the JavaScript default:
+  `set_realistic_train(false)`. The Realistic setting is not read by the Rust
+  engine yet.
+
+Observed:
+
+- `node tools/compare_engine.mjs ride env08`: single-player ride parity passed. The
+  native frame difference against the JavaScript game is 0.03 (landscape) and 0.07
+  (portrait) of 255. The Rust-web capture includes the HUD and keyboard card, so
+  its whole-frame number (6.3/16.6) is UI, not scene.
+- `tools/test_engine_multiplayer_train.mjs`, run once on the local relay (host-only,
+  headless Chromium/Metal): a Rust browser host on env08 and a JavaScript guest.
+  - Train phases agreed within 0.20 s over 10 paired samples. That bound includes
+    the skew between sampling two pages.
+  - The JavaScript guest placed on flatbed car 3 was drawn by the Rust host within
+    1.75 ft of its own deck-relative position (20 samples).
+  - A Rust rider placed on the flatbed (`?trainPlace=S` test hook) was seen by the
+    JavaScript guest within 3.25 ft (20 samples).
+  - Under Original train riding, both clients' riders later slide off the moving car,
+    as the original does.
+- Inspected screenshots: `private/reports/engine-multiplayer/train-js.png` (the
+  JavaScript guest on the flatbed) and `train-rust-rider.png` (the Rust rider after
+  sliding off).
+
+### Slice 5: other riders' engines and body impacts
+
+Ported (`atv-game/src/audio/remote.rs`, atv-web op 83 `presentation` with
+web/audio.js `remoteFrame`):
+
+- The nearest six riders keep an engine voice; distant, stale, departed or
+  re-vehicled riders lose it.
+- Each voice runs its own original engine sound state machine
+  (`EngineAudioState`, seeded per slot) on the replicated throttle, speed and
+  riding state. It plays that quad's original samples, loaded once per quad from
+  `vehicle.aud` and `AUDIO.RES` (`bank::load_remote_engine`).
+- Idle loops use the VAG loop markers, as the player's idle does. The browser loops
+  the whole Web Audio buffer, so a looped remote idle can differ at its loop point.
+- A new crash serial plays an original body impact (`rider.aud`) at the detached
+  rider's position.
+- Every voice is placed for the follow camera's listener by the recovered spatial
+  arithmetic: distance attenuation of 15 to 300 ft for engines, `rider.aud` distances
+  for impacts, then stereo pan and Doppler pitch.
+- Voices stop while the output is suspended or unfocused, and when the ride ends.
+
+Observed (`tools/test_engine_multiplayer_audio.mjs`, run once on the local relay;
+host-only, headless Chromium with autoplay allowed):
+
+- A Rust browser guest (quad 12) in a JavaScript host's room played the host's
+  engine as 1 remote voice. The JavaScript host played the Rust rider's engine as 1
+  voice, with its playhead advancing.
+- Holding the host's throttle for 180 steps raised the guest's remote engine sample
+  starts from 1 to 7.
+- Unit test: a new crash serial plays exactly one spatial impact, and a silent
+  output starts none.
+- Native desktop output uses the same code; it was not exercised by this gate. The
+  remote mix was not compared sample-for-sample with the browser's Web Audio output.
+
+### Slice 6: presence while hidden and a kept desktop slot key
+
+- A hidden or suspended room ride draws no frames: a hidden tab runs no animation
+  frames, and a desktop window may get no redraws. A 1 s timer keeps the room live
+  without them. The browser uses `setInterval`, which background tabs throttle but
+  keep running, as web/multiplayer.js relies on. Desktop uses a `WaitUntil` wake-up.
+  Each wake drains the socket, keeps pinging, loads arriving riders' models and
+  sends the paused presence pose at its 0.2 Hz cadence.
+- Only actual suspension sends paused presence; a blurred but visible window keeps
+  neutral-input riding (slice 2). The train freezes while hidden, as in the browser.
+- Desktop keeps the slot key `{code, key}` under `atv-mp-session` in the settings
+  file (`FURY_SETTINGS` overrides its path). Restarting `fury --room CODE` within the
+  relay's 30 s hold reclaims the same slot. The browser keeps it in
+  sessionStorage (slice 2). An expired key just joins as a new rider.
+
+Observed (host-only, local relay):
+
+- `tools/test_engine_multiplayer_presence.mjs` hid the Rust browser guest for 12 s:
+  `visibilityState` hidden and animation frames held, with a JavaScript host
+  watching. The host saw the Rust rider fresh in all 12 one-second samples, and the
+  guest sent 4 presence messages while hidden. Shown again, it resumed with the host
+  drawn.
+- Desktop: `fury --host --room RK617363` saved its key. A restarted
+  `fury --room RK617363` with the same settings file reclaimed slot 0 as host. A
+  control run with an empty settings file joined as slot 1.
+- Not established: a run without the timer, as a negative control. The gate emulates
+  a hidden tab in headless Chromium; real background-tab throttling and mobile
+  page freezing were not measured.
+
 Gaps, in planned slice order:
 
 1. No Multiplayer menu in `atv-ui`: no Host/Join forms (text entry), room code entry,
@@ -1084,14 +1190,9 @@ Gaps, in planned slice order:
    host, Change ATV and Rider, or Leave Game wording. Private rooms start from the
    command line or URL only. No name tags, minimap peer markers or compass colours
    either.
-2. A hidden browser tab runs no frames, so the Rust engine sends no 0.2 Hz presence
-   while hidden. The JavaScript game keeps timers running there.
-3. Desktop keeps the slot key in memory only; it is lost when the app restarts.
-4. The shared train clock and moving-platform rebasing are not ported. Snapshots send
-   no platform and no train time, which matters on Arlington, the Free Ride course.
-5. Remote engine voices and impact sounds are not played: the nearest-six voice
-   selection and spatial audio of op 83 are not ported.
-6. Twenty-rider rooms are untested in the Rust engine; the JavaScript game's
+2. Train on a motorcycle ride, the Realistic train-riding setting, and an arrival's
+   spawn velocity on a moving car (the browser adds the car's point velocity).
+3. Twenty-rider rooms are untested in the Rust engine; the JavaScript game's
    receive batching, name-tag limits and model cache bounds have no Rust measurement
    yet.
 

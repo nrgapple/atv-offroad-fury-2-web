@@ -138,6 +138,11 @@ enum Message {
     PeerModel(Box<PeerModel>),
     /// The Arlington Free Ride rider count for the main menu.
     FreeRideRiders(Option<u32>),
+    /// The browser's 1 s presence timer (a hidden tab runs no frames).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    PresenceTick,
+    /// Another rider's engine bank finished loading.
+    RemoteEngine(u16, Box<Result<atv_game::audio::remote::Engine, String>>),
 }
 
 type PeerModel = Result<
@@ -532,7 +537,7 @@ fn settle_room(ready: &mut Ready) {
             &ready.gpu,
             &mut ready.scene,
             &ready.venue,
-            riding.ride.frame().origin,
+            &riding.ride,
             eye,
         );
         if net.drawn as f32 >= peers {
@@ -732,6 +737,7 @@ impl App {
             motion.linear_velocity,
         );
         let mut loads = Vec::new();
+        let mut engine_loads = Vec::new();
         let mut course = None;
         if let Some(net) = &mut ready.net {
             let was_open = net.closed.is_none();
@@ -744,22 +750,42 @@ impl App {
             {
                 status(&format!("Unable to join beside that rider: {error}"));
             }
-            riding.peers = net.contact_bodies();
+            if tick.train_place
+                && let Err(error) = riding.place_on_train("flatbeda")
+            {
+                status(&format!("Train placement: {error}"));
+            }
+            riding.peers = net.contact_bodies(&riding.ride);
+            riding.server_clock = net.server_clock();
             let eye = ready.camera.eye();
             net.present(
                 &ready.gpu,
                 &mut ready.scene,
                 &ready.venue,
-                riding.ride.frame().origin,
+                &riding.ride,
                 eye,
             );
             if was_open && let Some(closed) = &net.closed {
                 status(&format!("Multiplayer ended: {closed}"));
             }
+            if let Some(sound) = &mut riding.sound {
+                for quad in sound.remote_frame(&net.riders) {
+                    engine_loads.push((quad, sound.load_remote_engine(quad)));
+                }
+            }
             let content = net.content();
             loads.extend(tick.loads.into_iter().map(|key| (content.clone(), key)));
             course = tick.course;
-            publish_multiplayer(net, riding.contacts, riding.ride.frame().origin);
+            let remote = riding
+                .sound
+                .as_ref()
+                .map(|s| (s.remote.voices(), s.remote.starts, s.remote.impact_starts));
+            publish_multiplayer(net, riding.contacts, &riding.ride, remote);
+        }
+        for (quad, future) in engine_loads {
+            self.spawn(future, move |engine| {
+                Message::RemoteEngine(quad, Box::new(engine))
+            });
         }
         for (content, key) in loads {
             self.spawn(multiplayer::load_model(content, key), |model| {
@@ -2035,6 +2061,20 @@ impl ApplicationHandler<Message> for App {
                     window.request_redraw();
                 }
             }
+            Message::PresenceTick => self.presence_tick(),
+            Message::RemoteEngine(quad, engine) => match *engine {
+                Ok(engine) => {
+                    if let Some(sound) = self
+                        .ready
+                        .as_mut()
+                        .and_then(|r| r.riding.as_mut())
+                        .and_then(|r| r.sound.as_mut())
+                    {
+                        sound.remote.add_engine(quad, engine);
+                    }
+                }
+                Err(error) => status(&format!("Remote engine sound unavailable: {error}")),
+            },
             Message::PeerModel(model) => {
                 if let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) {
                     net.model_loaded(*model);
@@ -2262,8 +2302,12 @@ impl ApplicationHandler<Message> for App {
     }
 
     fn new_events(&mut self, _: &ActiveEventLoop, cause: StartCause) {
-        if self.asleep && matches!(cause, StartCause::ResumeTimeReached { .. }) {
-            self.paused_tick();
+        if matches!(cause, StartCause::ResumeTimeReached { .. }) {
+            if self.asleep {
+                self.paused_tick();
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            self.presence_tick();
         }
     }
 
@@ -2285,6 +2329,15 @@ impl ApplicationHandler<Message> for App {
             }
         }
         self.poll_riders();
+        // A hidden or suspended room ride draws no frames: a 1 s timer keeps
+        // its presence (the browser's throttled background timers).
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.presence_due() {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + std::time::Duration::from_secs(1),
+            ));
+            return;
+        }
         // The main menu refreshes its Free Ride count every 15 s.
         if self.ready.is_none()
             && self
@@ -2490,6 +2543,7 @@ impl App {
                     freeride: true,
                     name,
                     drop_after: None,
+                    train_place: None,
                 };
                 self.start_ride(
                     atv_game::multiplayer::FREERIDE_ENVIRONMENT.into(),
@@ -2637,6 +2691,44 @@ impl App {
             Ok(ready) => Message::Ready(Box::new(ready)),
             Err(error) => Message::Failed(error),
         });
+    }
+
+    /// A room ride whose window is hidden or suspended runs no frames.
+    fn presence_due(&self) -> bool {
+        (!self.visible || self.suspended)
+            && self.ready.as_ref().is_some_and(|r| {
+                r.riding.is_some() && r.net.as_ref().is_some_and(|n| n.closed.is_none())
+            })
+    }
+
+    /// Hidden or suspended: keep the room live without frames. The socket is
+    /// drained, pings continue and a paused presence pose goes out at its
+    /// 0.2 Hz cadence (web/multiplayer.js timers keep running in a
+    /// background tab; actual suspension sends paused presence).
+    fn presence_tick(&mut self) {
+        if !self.presence_due() {
+            return;
+        }
+        let Some(ready) = &mut self.ready else { return };
+        let (Some(net), Some(riding)) = (&mut ready.net, &mut ready.riding) else {
+            return;
+        };
+        let tick = net.tick(&riding.ride, true);
+        let remote = riding
+            .sound
+            .as_ref()
+            .map(|s| (s.remote.voices(), s.remote.starts, s.remote.impact_starts));
+        publish_multiplayer(net, riding.contacts, &riding.ride, remote);
+        let content = net.content();
+        let course = tick.course;
+        for key in tick.loads {
+            self.spawn(multiplayer::load_model(content.clone(), key), |model| {
+                Message::PeerModel(Box::new(model))
+            });
+        }
+        if let Some(environment) = course {
+            self.reload_room(environment);
+        }
     }
 
     /// The main menu's Free Ride count, at most every 15 s while it shows
@@ -3117,12 +3209,37 @@ fn default_relay() -> String {
 }
 
 /// Multiplayer status for tests (`window.furyMultiplayer`, JSON).
-fn publish_multiplayer(net: &multiplayer::Net, contacts: u64, origin: [f32; 3]) {
+fn publish_multiplayer(
+    net: &multiplayer::Net,
+    contacts: u64,
+    ride: &atv_game::ride::Ride,
+    remote_sound: Option<(usize, u64, u64)>,
+) {
     #[cfg(target_arch = "wasm32")]
     if let Some(window) = web_sys::window() {
         let mut report = net.report();
         report["contacts"] = contacts.into();
-        report["origin"] = serde_json::json!(origin);
+        report["origin"] = serde_json::json!(ride.frame().origin);
+        report["trainTime"] = serde_json::json!(ride.train_time());
+        report["ownPlatform"] = serde_json::json!(
+            ride.train_platform()
+                .map(|(car, matrix)| serde_json::json!({"car": car, "matrix": matrix}))
+        );
+        // This client's matrices of the cars other riders stand on.
+        let cars: serde_json::Map<String, serde_json::Value> = report["remote"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| r["platform"].as_u64())
+            .filter_map(|car| {
+                let m = ride.train_car(car as usize)?;
+                Some((car.to_string(), serde_json::json!(m)))
+            })
+            .collect();
+        report["trainCars"] = cars.into();
+        report["remoteSound"] = serde_json::json!(remote_sound.map(|(voices, starts, impacts)| {
+            serde_json::json!({"voices": voices, "starts": starts, "impacts": impacts})
+        }));
         let _ = js_sys::Reflect::set(
             &window,
             &"furyMultiplayer".into(),
@@ -3130,7 +3247,7 @@ fn publish_multiplayer(net: &multiplayer::Net, contacts: u64, origin: [f32; 3]) 
         );
     }
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = (net, contacts, origin);
+    let _ = (net, contacts, ride, remote_sound);
 }
 
 impl App {
@@ -3260,7 +3377,21 @@ pub fn run(options: Options) {
     };
     #[cfg(target_arch = "wasm32")]
     {
+        use wasm_bindgen::JsCast;
         use winit::platform::web::EventLoopExtWebSys;
+        // Background tabs throttle timers to about once a second but keep
+        // them running; the room's presence rides on this one.
+        let proxy = app.proxy.clone();
+        let tick = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
+            let _ = proxy.send_event(Message::PresenceTick);
+        });
+        if let Some(window) = web_sys::window() {
+            let _ = window.set_interval_with_callback_and_timeout_and_arguments_0(
+                tick.as_ref().unchecked_ref(),
+                1000,
+            );
+        }
+        tick.forget();
         event_loop.spawn_app(app);
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -3373,6 +3504,7 @@ pub fn start() {
                     .and_then(|v| js_sys_decode(&v))
                     .unwrap_or_else(|| "Rider".into()),
                 drop_after: param("dropAfter").and_then(|v| v.parse().ok()),
+                train_place: param("trainPlace").and_then(|v| v.parse().ok()),
                 freeride: false,
             }
         }),

@@ -10,11 +10,12 @@
 //! JavaScript game's socket glue. The wire format, codec, deltas and
 //! smoothing are atv-net's, shared with the JavaScript game and the relay.
 pub mod remote;
+pub use atv_net::RiderState;
 pub mod spawn;
 
 use crate::Result;
 use crate::ride::Ride;
-use atv_net::{Lobby, Packet, Participant, PoseBuffer, RiderState, SampledPose, Snapshot};
+use atv_net::{Lobby, Packet, Participant, PoseBuffer, SampledPose, Snapshot};
 use std::collections::BTreeMap;
 
 /// The wire protocol version (atv-net), shared with the JavaScript game.
@@ -402,11 +403,14 @@ impl Session {
             throttle: if paused { 0. } else { ride.applied().throttle },
             speed: if paused { 0. } else { frame.speed_magnitude },
             crash_serial: self.crash_serial,
-            // Trains and moving platforms are not in the Rust engine's
-            // multiplayer yet (see RUST_ENGINE.md, Multiplayer).
-            train_time: None,
+            train_time: ride.train_time(),
             train_running: !paused,
-            platform: None,
+            platform: ride.train_platform().and_then(|(car, m)| {
+                Some(Box::new(atv_net::Platform {
+                    car: u8::try_from(car).ok()?,
+                    transform: atv_net::Transform::from_column_major(m).ok()?,
+                }))
+            }),
         };
         let nearest = self
             .buffers
@@ -505,7 +509,7 @@ impl Session {
 
     /// Other riders' current (unbuffered) bodies for contacts, unless ghosted
     /// (atv-web `collide`).
-    pub fn contact_bodies(&self, now_ms: u64) -> Vec<PeerBody> {
+    pub fn contact_bodies(&self, now_ms: u64, cars: Cars) -> Vec<PeerBody> {
         let Some(own) = self.peer else {
             return Vec::new();
         };
@@ -515,7 +519,8 @@ impl Session {
         self.buffers
             .iter()
             .filter_map(|(&peer, buffer)| {
-                let pose = buffer.sample_current(now_ms).filter(|p| !p.stale)?;
+                let mut pose = buffer.sample_current(now_ms).filter(|p| !p.stale)?;
+                rebase(&mut pose.snapshot, cars);
                 Some(PeerBody {
                     position: pose.snapshot.atv.position,
                     velocity: pose.snapshot.velocity,
@@ -528,13 +533,16 @@ impl Session {
 
     /// Riders to meet on arrival: fresh and Riding, the host first in a
     /// private room (shared rooms spread arrivals; `order` shuffles them).
-    pub fn meet_candidates(&self, now_ms: u64, order: u64) -> Vec<Snapshot> {
+    pub fn meet_candidates(&self, now_ms: u64, order: u64, cars: Cars) -> Vec<Snapshot> {
         let host = self.lobby.as_ref().filter(|l| !l.public).map(|l| l.host);
         let mut riding: Vec<Snapshot> = self
             .buffers
             .values()
             .filter_map(|b| b.sample_current(now_ms).filter(|p| !p.stale))
-            .map(|p| p.snapshot)
+            .map(|mut p| {
+                rebase(&mut p.snapshot, cars);
+                p.snapshot
+            })
             .filter(|s| s.rider_state == RiderState::Riding)
             .collect();
         riding.sort_by_key(|s| match host {
@@ -545,27 +553,77 @@ impl Session {
     }
 
     /// Every other rider's current position (spawn clearance).
-    pub fn positions(&self, now_ms: u64) -> Vec<[f32; 3]> {
+    pub fn positions(&self, now_ms: u64, cars: Cars) -> Vec<[f32; 3]> {
         self.buffers
             .values()
             .filter_map(|b| b.sample_current(now_ms).filter(|p| !p.stale))
-            .map(|p| p.snapshot.atv.position)
+            .map(|mut p| {
+                rebase(&mut p.snapshot, cars);
+                p.snapshot.atv.position
+            })
             .collect()
     }
 
     /// Each remote rider's presented pose (PoseBuffer jitter buffer, Hermite
     /// arcs and decaying corrections). Riders near `own` are presented
     /// closer to their current estimate so contacts line up.
-    pub fn present(&mut self, now_ms: u64, own: Option<[f32; 3]>) -> Vec<(u8, SampledPose)> {
+    pub fn present(
+        &mut self,
+        now_ms: u64,
+        own: Option<[f32; 3]>,
+        cars: Cars,
+    ) -> Vec<(u8, SampledPose)> {
         self.buffers
             .iter_mut()
             .filter_map(|(&id, buffer)| {
                 let near = own
                     .zip(buffer.latest().map(|(s, _)| s.atv.position))
                     .map_or(0., |(a, b)| ((40. - distance(a, b)) / 30.).clamp(0., 1.));
-                buffer.present(now_ms, near).map(|pose| (id, pose))
+                buffer.present(now_ms, near).map(|mut pose| {
+                    rebase(&mut pose.snapshot, cars);
+                    (id, pose)
+                })
             })
             .collect()
+    }
+}
+
+/// This client's train car matrices, to place riders standing on a car.
+pub type Cars<'a> = &'a dyn Fn(usize) -> Option<[f32; 16]>;
+
+/// No train here (tests, other venues).
+pub fn no_cars(_: usize) -> Option<[f32; 16]> {
+    None
+}
+
+fn multiply(a: [f32; 16], b: [f32; 16]) -> [f32; 16] {
+    std::array::from_fn(|i| (0..4).map(|k| a[k * 4 + i % 4] * b[i / 4 * 4 + k]).sum())
+}
+
+/// A rider standing on a train car is drawn relative to this client's car
+/// (atv-web multiplayer_world.rs `rebase`); a detached rider keeps its world
+/// pose.
+pub fn rebase(snapshot: &mut Snapshot, cars: Cars) {
+    let Some(platform) = &snapshot.platform else {
+        return;
+    };
+    let Some(current) = cars(usize::from(platform.car)) else {
+        return;
+    };
+    let sender = platform.transform.to_column_major();
+    let relative = |m: [f32; 16]| {
+        atv_net::Transform::from_column_major(multiply(
+            current,
+            atv_core::obstacle::relative_transform(&m, &sender),
+        ))
+    };
+    if let Ok(atv) = relative(snapshot.atv.to_column_major()) {
+        snapshot.atv = atv;
+    }
+    if snapshot.rider_state != RiderState::Wreck
+        && let Ok(rider) = relative(snapshot.rider.to_column_major())
+    {
+        snapshot.rider = rider;
     }
 }
 
@@ -677,7 +735,7 @@ mod tests {
         };
         let bytes = atv_net::encode(&Packet::Snapshot(Box::new(pose.clone()))).unwrap();
         s.receive(&bytes, 10).unwrap();
-        assert_eq!(s.present(100, None).len(), 1);
+        assert_eq!(s.present(100, None, &no_cars).len(), 1);
         // A model the roster does not list is ignored.
         pose.atv_model = 6;
         pose.sequence = 2;
@@ -685,11 +743,11 @@ mod tests {
         welcome(&mut other, 1, lobby(&[(0, 5), (1, 1)], true));
         let bytes = atv_net::encode(&Packet::Snapshot(Box::new(pose))).unwrap();
         other.receive(&bytes, 10).unwrap();
-        assert!(other.present(100, None).is_empty());
+        assert!(other.present(100, None, &no_cars).is_empty());
         // Leave drops the rider's history.
         let leave = atv_net::encode(&Packet::Leave { peer: 0 }).unwrap();
         s.receive(&leave, 20).unwrap();
-        assert!(s.present(100, None).is_empty());
+        assert!(s.present(100, None, &no_cars).is_empty());
     }
 
     #[test]
@@ -703,6 +761,35 @@ mod tests {
         s.receive(&pong, 1040).unwrap();
         assert_eq!(s.rtt_ms, Some(40));
         assert_eq!(s.server_now(1040), Some(50_020.));
+    }
+
+    #[test]
+    fn riders_on_a_car_are_drawn_relative_to_this_clients_car() {
+        let at = |x: f32| {
+            let mut m = [0.; 16];
+            m[0] = 1.;
+            m[5] = 1.;
+            m[10] = 1.;
+            m[15] = 1.;
+            m[12] = x;
+            m
+        };
+        let mut s = Snapshot {
+            atv: atv_net::Transform::from_column_major(at(105.)).unwrap(),
+            rider: atv_net::Transform::from_column_major(at(105.)).unwrap(),
+            platform: Some(Box::new(atv_net::Platform {
+                car: 3,
+                transform: atv_net::Transform::from_column_major(at(100.)).unwrap(),
+            })),
+            ..Default::default()
+        };
+        // The sender's car is 2 ft behind this client's: the rider moves along.
+        rebase(&mut s, &|car| (car == 3).then(|| at(102.)));
+        assert!((s.atv.position[0] - 107.).abs() < 1e-4);
+        assert!((s.rider.position[0] - 107.).abs() < 1e-4);
+        // Another car (or no train) leaves the pose alone.
+        rebase(&mut s, &no_cars);
+        assert!((s.atv.position[0] - 107.).abs() < 1e-4);
     }
 
     #[test]

@@ -49,6 +49,18 @@ export const TESTS = {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (Host Game, room WebSocket); run with --url'
   },
+  'test_engine_multiplayer_audio.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Host Game, room WebSocket); run with --url'
+  },
+  'test_engine_multiplayer_presence.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Host Game, room WebSocket); run with --url'
+  },
+  'test_engine_multiplayer_train.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (room WebSocket, ENV08 train); run with --url'
+  },
   'test_engine_multiplayer.mjs': {
     group: 'relay',
     reason:
