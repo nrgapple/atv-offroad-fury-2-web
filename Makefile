@@ -8,7 +8,7 @@ PORT ?= 4173
 # Extra runner flags, e.g. BROWSER_ARGS='--only test_race.mjs --verbose'. See research/BROWSER_TESTS.md.
 BROWSER_ARGS ?=
 
-.PHONY: verify verify-full inventory import check web relay serve audit code-map native-analyze browser-check browser-smoke browser-tests browser-native
+.PHONY: desktop verify verify-full inventory import check web relay serve audit code-map native-analyze browser-check browser-smoke browser-tests browser-native
 
 verify:
 	python3 tools/verify_setup.py
@@ -35,6 +35,13 @@ check:
 	python3 -m unittest discover -s tools -p 'test_devlog.py'
 	python3 -m unittest discover -s tools -p 'test_ci_changes.py'
 	python3 -m unittest discover -s tools -p 'test_release_workflow.py'
+	python3 -m unittest discover -s tools -p 'test_desktop_release.py'
+
+# Standalone desktop apps with the game content packed in. Local only (never CI);
+# see research/DESKTOP_RELEASES.md. Pass DESKTOP_ARGS='--platforms macos-universal --smoke'.
+DESKTOP_ARGS ?=
+desktop:
+	python3 tools/build_desktop.py $(DESKTOP_ARGS)
 
 web:
 	python3 tools/build_web.py

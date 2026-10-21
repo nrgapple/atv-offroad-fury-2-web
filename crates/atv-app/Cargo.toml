@@ -11,6 +11,10 @@ crate-type = ["cdylib", "rlib"]
 name = "fury"
 path = "src/main.rs"
 
+[features]
+# Desktop release builds: embed the content pack named by FURY_PACK.
+embedded-content = ["atv-content/embedded"]
+
 [dependencies]
 atv-content = { path = "../atv-content" }
 atv-game = { path = "../atv-game" }

@@ -1,0 +1,31 @@
+Fury Remastered @VERSION@ (@COMMIT@) - @PLATFORM@
+==================================================
+
+An unofficial, fan-made desktop port of ATV Offroad Fury 2 (USA v2.00), written
+in Rust. It is not affiliated with, authorized or endorsed by the game's
+publishers or developers. The original game's resources that this port needs to
+run are packed into this download; you do not need the disc, an emulator or
+anything else installed. The packed resources remain the property of their
+owners. The software is provided as is, without warranty.
+
+This is an early build of the Rust engine's desktop app: you can ride the default
+quad and rider around ENV01 Freeride. Sky, scenery, audio, menus, HUD and the other
+modes are not in the desktop app yet; the web version at https://furyremastered.com/
+plays the whole port in a browser.
+
+How to run
+----------
+@RUN@
+
+Controls: drive with W/A/S/D or the arrow keys or a gamepad (the same defaults as
+the web version); R or Backspace resets, C changes the camera, Z/X orbit, Esc or P
+pauses. With --free you get a free camera instead (W/A/S/D move, Q/E down/up, hold
+Shift to go faster, drag with the mouse to look around).
+
+Command line (optional): --venue ID, --free, --camera x,y,z,yaw,pitch,focal,
+--capture out.png 1280x720 (render one frame to a PNG and exit), --verify-content
+(check the packed content and exit), --version.
+--content DIR or --pack FILE use an external content source instead of the
+packed one.
+@NOTES@
+Project: https://github.com/nrgapple/atv-offroad-fury-2-web

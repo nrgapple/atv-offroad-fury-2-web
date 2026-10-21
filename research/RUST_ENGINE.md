@@ -100,8 +100,8 @@ Observed:
   Windows x86_64 (GNU) cross-build in Docker from macOS; they have not been launched.
 
 Limitations: phone frame rate, Windows/Linux runtime and Firefox are unverified. Desktop
-builds read a package directory (`--content` or `FURY_CONTENT`); embedding the package
-into the executables is a later packaging step that never runs in CI.
+builds read a package directory (`--content` or `FURY_CONTENT`) or, in release archives, a
+packed content file (see Desktop packaging below).
 
 ## First ride checkpoint (2026-10-20)
 
@@ -260,12 +260,12 @@ cargo run --release -p atv-app --bin fury -- --race --venue env01 ...   # race c
 
 Cross-building from macOS: Colima only shares the home directory, so the source is
 piped into a `rust:1-bookworm` container with `gcc-x86-64-linux-gnu` and
-`gcc-mingw-w64-x86-64` (see the desktop packaging plan below).
+`gcc-mingw-w64-x86-64` (see Desktop packaging below).
 
-## Desktop packaging plan
+## Desktop packaging
 
-Desktop releases contain game content, so they are built on the owner's Mac, never in
-GitHub Actions: a universal macOS app natively, Linux and Windows in Docker, with the
-content package embedded. GitHub Actions only compiles and tests the content-free code.
-Publishing archives that contain game content (for example GitHub Releases) needs the
-owner's explicit confirmation first.
+Standalone desktop builds embed the runtime content and are built on the owner's Mac,
+never in GitHub Actions; GitHub Actions only compiles and tests the content-free code.
+`fury` reads content from a package directory, a single content pack, a pack appended to the
+executable or, on macOS, `Contents/Resources/content.pack`. The build, pack format, verification, GitHub
+Release publication and signing caveats are in [DESKTOP_RELEASES.md](DESKTOP_RELEASES.md).
