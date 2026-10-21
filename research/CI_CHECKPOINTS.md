@@ -111,7 +111,8 @@ Primary public HTTPS is https://furyremastered.com/; the Workers address remains
 supported. GitHub's production environment and deployment history remain visible.
 CI verifies authored application hashes and committed dev-log text. Runtime
 resources and inspected PNGs remain in the separate allowlisted private-to-R2
-package, never GitHub source or CI. Never publish WIP, ISO/BIOS/raw executable,
+package, never GitHub source or CI. Zipped desktop builds that embed those resources
+may be GitHub Release assets, built and uploaded locally, never by CI. Never publish WIP, ISO/BIOS/raw executable,
 unrelated disc content, reverse-engineering output or reference repositories.
 
 ## Historical checkpoint
