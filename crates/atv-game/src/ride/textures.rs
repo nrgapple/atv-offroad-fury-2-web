@@ -10,6 +10,9 @@ pub struct MaterialTexture {
     pub image: Option<Image>,
     /// Original pass fog flag (`pass.fog ?? true`).
     pub fog: bool,
+    /// The MX MudAnimator map or the ATV2 PixelAnimation dirt pass texture
+    /// (`image.mud` in baseTextures), blended by the mud amount.
+    pub mud: Option<Image>,
 }
 
 pub(crate) fn basename_index(resource: &Resource, name: &str) -> Option<usize> {
@@ -142,7 +145,11 @@ fn material_texture(material: &str, archive: &Resource) -> Result<Option<Materia
         return Ok(None);
     };
     if described.unsupported_reflection {
-        return Ok(Some(MaterialTexture { image: None, fog }));
+        return Ok(Some(MaterialTexture {
+            image: None,
+            fog,
+            mud: None,
+        }));
     }
     let animated = described
         .pass
@@ -179,5 +186,22 @@ fn material_texture(material: &str, archive: &Resource) -> Result<Option<Materia
         height: texture.info.height,
         rgba: texture.rgba,
     });
-    Ok(Some(MaterialTexture { image, fog }))
+    // MX MudAnimator maps (the second), or the ATV2 PixelAnimation dirt pass.
+    let mud_name = if described.mud_maps.len() > 1 {
+        Some(described.mud_maps[1].clone())
+    } else {
+        described.dirt_map.clone()
+    };
+    let mud = match mud_name.and_then(|name| basename_index(archive, &format!("{name}.pst"))) {
+        Some(index) => {
+            let decoded = texture::decode_pst(&archive.extract(index)?)?;
+            Some(Image {
+                width: decoded.info.width,
+                height: decoded.info.height,
+                rgba: decoded.rgba,
+            })
+        }
+        None => None,
+    };
+    Ok(Some(MaterialTexture { image, fog, mud }))
 }

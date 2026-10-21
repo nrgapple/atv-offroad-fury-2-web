@@ -180,6 +180,7 @@ pub struct Ride {
     placement: u32,
     sound: Option<sound::AudioStep>,
     race: Option<race::RaceState>,
+    selection: Selection,
     pub quad: Model,
     pub rider: Model,
 }
@@ -225,8 +226,10 @@ pub fn quaternion_world(origin: [f32; 3], orientation: [f32; 4]) -> [f32; 16] {
 }
 
 impl Ride {
+    #[allow(clippy::too_many_arguments)]
     fn start(
         sim: Simulation,
+        selection: Selection,
         start: ([f32; 3], f32),
         seed: Seed,
         quad: Model,
@@ -266,6 +269,7 @@ impl Ride {
             placement: 0,
             sound: None,
             race: None,
+            selection,
             quad,
             rider,
         };
@@ -329,6 +333,32 @@ impl Ride {
     /// The player rides a motorcycle (atv-web's `vehicle_kind`).
     pub fn is_motorcycle(&self) -> bool {
         matches!(self.mount, Mount::Bike(_))
+    }
+
+    /// The player's motorcycle, when riding one.
+    pub fn motorcycle(&self) -> Option<&Motorcycle> {
+        match &self.mount {
+            Mount::Bike(bike) => Some(bike),
+            Mount::Quad { .. } => None,
+        }
+    }
+
+    /// The Garage choice this ride loaded.
+    pub fn selection(&self) -> Selection {
+        self.selection
+    }
+
+    /// The physics terrain (contact planes).
+    pub fn terrain(&self) -> &terrain::Terrain {
+        &self.sim.terrain
+    }
+
+    /// The motorcycle's mud on the bike and rider, 0-1 (the larger of its
+    /// two wheels' amounts; `motorcycleMudAmount` in game.js). ATVs: 0.
+    pub fn mud_amount(&self) -> f32 {
+        self.motorcycle().map_or(0., |bike| {
+            bike.frame().mud_amount.into_iter().fold(0., f32::max)
+        })
     }
 
     /// Reset ATV: back to the scene start with the follow camera reset (ops

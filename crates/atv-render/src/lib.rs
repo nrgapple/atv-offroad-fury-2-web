@@ -773,6 +773,14 @@ impl SceneRenderer {
         }
     }
 
+    /// Mud on the player's vehicle and rider (the motorcycle's amount; the
+    /// ATV dirt reveal when `reveal`).
+    pub fn set_ride_mud(&mut self, amount: f32, reveal: bool) {
+        if let Some(vehicle) = &mut self.vehicle {
+            vehicle.set_mud(amount, reveal);
+        }
+    }
+
     /// The latest simulation pose of the quad linkage and rider skeleton.
     pub fn pose_ride(&mut self, gpu: &Gpu, pose: &atv_game::ride::Pose) {
         if let Some(vehicle) = &self.vehicle {

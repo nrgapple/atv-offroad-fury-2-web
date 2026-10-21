@@ -278,12 +278,14 @@ async fn prepare(
         {
             state.autopilot_always = true;
         }
-        // startSimulation's first frame (op 23) primes the wheel effects
-        // (ATVs; motorcycle particles are their own).
-        if !riding.ride.is_motorcycle()
-            && let Some(mut effects) =
-                atv_game::wheel_effects::load(&content, &venue, selection.quad).await?
-        {
+        // startSimulation's first frame (op 23) primes the wheel effects; a
+        // motorcycle draws its own MX particles (loadMotorcycleEffects).
+        let effects = if riding.ride.is_motorcycle() {
+            Some(atv_game::wheel_effects::load_motorcycle(&content, &riding.ride).await?)
+        } else {
+            atv_game::wheel_effects::load(&content, &venue, selection.quad).await?
+        };
+        if let Some(mut effects) = effects {
             effects.set_lingering_dust(usize::from(graphics.dust), &venue);
             effects.set_tire_tracks(
                 usize::from(graphics.tire_tracks.0),
