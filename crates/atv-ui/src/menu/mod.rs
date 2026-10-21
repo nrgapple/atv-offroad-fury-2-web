@@ -262,7 +262,14 @@ pub fn element(view: &Viewport, state: &State) -> El {
             padding: sides(0., 22., 0., 22.),
             flex_grow: if footer { 1. } else { 0. },
             flex_shrink: 1.,
-            flex_basis: if footer { length(140.) } else { auto() },
+            // ≤580px: footer buttons take whole rows (game.css).
+            flex_basis: if footer && narrow && !PAGER.contains(&action) {
+                percent(1.)
+            } else if footer {
+                length(140.)
+            } else {
+                auto()
+            },
             ..Default::default()
         })
         .paint(paint)
@@ -295,7 +302,7 @@ pub fn element(view: &Viewport, state: &State) -> El {
         } else if action.starts_with("bind:") || action.starts_with("song:") {
             // List rows: the value is a detail line under the label.
             let detail = TextStyle::new(
-                display(12., 400, false),
+                display(12., 700, false),
                 if selected {
                     Color::hex("#3a2e00")
                 } else {
@@ -310,7 +317,6 @@ pub fn element(view: &Viewport, state: &State) -> El {
                         width: px(0.),
                         height: px(4.),
                     },
-                    padding: sides(6., 0., 6., 0.),
                     min_size: Size {
                         width: LengthPercentageAuto::length(0.),
                         height: LengthPercentageAuto::auto(),
@@ -336,12 +342,23 @@ pub fn element(view: &Viewport, state: &State) -> El {
             } else {
                 Color::hex("#f1d84e")
             };
-            el = el.child(El::new(Style::default()).content(Content::Text {
-                text: value,
-                style: TextStyle::new(display(15., 700, false), value_color).spacing(0.45),
-                line_height: 18.,
-                wrap: false,
-            }));
+            // ≤580px: `.pause-value { max-width: 50% }` wraps long values.
+            el = el.child(
+                El::new(Style {
+                    flex_shrink: 0.,
+                    max_size: Size {
+                        width: if narrow { percent(0.5) } else { auto() },
+                        height: auto(),
+                    },
+                    ..Default::default()
+                })
+                .content(Content::Text {
+                    text: value,
+                    style: TextStyle::new(display(15., 700, false), value_color).spacing(0.45),
+                    line_height: 18.,
+                    wrap: narrow,
+                }),
+            );
         }
         el
     };

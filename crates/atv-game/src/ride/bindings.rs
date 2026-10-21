@@ -520,6 +520,7 @@ fn amount(binding: &Binding, keys: &dyn Fn(&str) -> bool, pad: Option<&Pad>, zon
 }
 
 /// Stateful reader: edge actions, preload release and cancellation.
+#[derive(Default)]
 pub struct Bindings {
     pub profile: Profile,
     /// Edited controller bindings kept while a preset is chosen.
@@ -537,24 +538,6 @@ pub struct Bindings {
     press_count: u64,
 }
 
-impl Default for Bindings {
-    fn default() -> Self {
-        Self {
-            profile: Profile::default(),
-            custom_controller: None,
-            tuning: Tuning::default(),
-            generation: 0,
-            previous: Vec::new(),
-            blocked: Vec::new(),
-            preload_held: false,
-            controller: None,
-            keyboard_held: Vec::new(),
-            queued: Vec::new(),
-            pressed: Default::default(),
-            press_count: 0,
-        }
-    }
-}
 
 /// One read: driving controls, edge actions and the camera orbit axis.
 #[derive(Clone, Debug, Default)]
