@@ -3,7 +3,12 @@
 //! Every build reads the same hosted package format: `manifest.json` lists the
 //! authorized `.RES`/`.VAG`/`.LSI` files as SHA-256 addressed chunks. The web
 //! build fetches chunks over HTTP; desktop builds read a local package
-//! directory. No content is compiled into this crate or stored in Git.
+//! directory or a single content pack (see [`pack`]). Release builds may
+//! embed a pack through the opt-in `embedded` feature; no content is
+//! compiled into this crate by default or stored in Git.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod pack;
+
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -117,6 +122,9 @@ pub enum Store {
     /// A hosted package laid out as `<dir>/manifest.json` and `<dir>/<sha256>.bin`.
     #[cfg(not(target_arch = "wasm32"))]
     Directory(std::path::PathBuf),
+    /// The same package flattened into one pack file or embedded blob.
+    #[cfg(not(target_arch = "wasm32"))]
+    Pack(pack::Pack),
     /// The same layout served over HTTP, e.g. `/content/`.
     #[cfg(target_arch = "wasm32")]
     Http(String),
@@ -128,6 +136,8 @@ impl Store {
             #[cfg(not(target_arch = "wasm32"))]
             Store::Directory(dir) => std::fs::read(dir.join(name))
                 .map_err(|e| format!("{}: {e}", dir.join(name).display())),
+            #[cfg(not(target_arch = "wasm32"))]
+            Store::Pack(pack) => pack.read(name),
             #[cfg(target_arch = "wasm32")]
             Store::Http(base) => web::fetch(&format!("{base}{name}")).await,
         }
