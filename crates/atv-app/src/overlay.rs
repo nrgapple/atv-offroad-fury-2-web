@@ -474,6 +474,7 @@ impl Overlay {
     }
 
     /// Finishes any pending GPS map build at once (parity captures).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn finish_course(&mut self, terrain: &atv_game::venue::Terrain) {
         while self.minimap.building() {
             self.minimap.build_slice(terrain, f64::INFINITY);
