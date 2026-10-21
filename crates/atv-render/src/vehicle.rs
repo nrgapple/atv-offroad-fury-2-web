@@ -35,10 +35,14 @@ struct Bones {
     nodes: [[f32; 16]; BONES],
 }
 
+/// A material group's range of the vehicle's shared buffers (one vertex and
+/// one index buffer per vehicle, indices rebased: no per-group attribute
+/// setup on the GL backend; the same draws in the same order).
 struct Chunk {
-    vertices: wgpu::Buffer,
-    indices: wgpu::Buffer,
+    first: u32,
     count: u32,
+    /// First vertex of the group in the shared buffer (severed index rebase).
+    base: u32,
     rider: bool,
     material: wgpu::BindGroup,
     /// Rider groups: CPU indices and vertex nodes for Gorn severing.
@@ -49,6 +53,8 @@ struct Chunk {
 
 pub struct VehiclePass {
     pipeline: wgpu::RenderPipeline,
+    vertices: wgpu::Buffer,
+    indices: wgpu::Buffer,
     globals: wgpu::Buffer,
     globals_value: Globals,
     globals_group: wgpu::BindGroup,
@@ -230,6 +236,7 @@ impl VehiclePass {
         };
         let fallback = upload(gpu, &white).create_view(&Default::default());
         let mut chunks = Vec::new();
+        let (mut all_vertices, mut all_indices) = (Vec::<f32>::new(), Vec::<u32>::new());
         let mut triangles = 0;
         for (model, rider) in [(quad, false), (rider, true)] {
             if model.mesh.nodes.len() > BONES {
@@ -294,7 +301,8 @@ impl VehiclePass {
                         },
                     ],
                 });
-                let mut vertices = Vec::with_capacity(group.vertices.len() * FLOATS_PER_VERTEX);
+                let base = (all_vertices.len() / FLOATS_PER_VERTEX) as u32;
+                let vertices = &mut all_vertices;
                 for vertex in &group.vertices {
                     let node = model
                         .mesh
@@ -312,17 +320,9 @@ impl VehiclePass {
                 }
                 triangles += group.indices.len() as u32 / 3;
                 chunks.push(Chunk {
-                    vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("vehicle vertices"),
-                        contents: bytemuck::cast_slice(&vertices),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    }),
-                    indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("vehicle indices"),
-                        contents: bytemuck::cast_slice(&group.indices),
-                        usage: wgpu::BufferUsages::INDEX,
-                    }),
+                    first: all_indices.len() as u32,
                     count: group.indices.len() as u32,
+                    base,
                     rider,
                     material,
                     source: rider.then(|| {
@@ -333,7 +333,12 @@ impl VehiclePass {
                     }),
                     cut: None,
                 });
+                all_indices.extend(group.indices.iter().map(|i| i + base));
             }
+        }
+        if all_vertices.is_empty() {
+            all_vertices.resize(FLOATS_PER_VERTEX, 0.);
+            all_indices.push(0);
         }
         let shader = device.create_shader_module(wgpu::include_wgsl!("vehicle.wgsl"));
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -420,6 +425,16 @@ impl VehiclePass {
             .unwrap_or(0);
         Ok(Self {
             pipeline,
+            vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("vehicle vertices"),
+                contents: bytemuck::cast_slice(&all_vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            }),
+            indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("vehicle indices"),
+                contents: bytemuck::cast_slice(&all_indices),
+                usage: wgpu::BufferUsages::INDEX,
+            }),
             globals,
             globals_value,
             globals_group,
@@ -511,7 +526,7 @@ impl VehiclePass {
                     component(t[0]) == component(t[1]) && component(t[0]) == component(t[2])
                 })
                 .flatten()
-                .copied()
+                .map(|i| i + chunk.base)
                 .collect();
             let buffer = gpu
                 .device
@@ -531,41 +546,48 @@ impl VehiclePass {
     /// Depth-only casting into the High shadow map: bones at group 1, the
     /// caller's light uniforms at group 0.
     pub(crate) fn draw_casters(&self, pass: &mut wgpu::RenderPass<'_>) {
-        for chunk in &self.chunks {
-            let bones = if chunk.rider {
-                &self.rider.1
-            } else {
-                &self.quad.1
-            };
-            pass.set_bind_group(1, bones, &[]);
-            pass.set_vertex_buffer(0, chunk.vertices.slice(..));
-            let (indices, count) = chunk
-                .cut
-                .as_ref()
-                .map_or((&chunk.indices, chunk.count), |(b, c)| (b, *c));
-            pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..count, 0, 0..1);
-        }
+        self.draw_chunks(pass, false);
     }
 
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.globals_group, &[]);
+        self.draw_chunks(pass, true);
+    }
+
+    /// The groups in order from the shared buffers; bones rebind only when
+    /// the group switches between quad and rider.
+    fn draw_chunks(&self, pass: &mut wgpu::RenderPass<'_>, materials: bool) {
+        pass.set_vertex_buffer(0, self.vertices.slice(..));
+        let mut main_bound = false;
+        let mut bound_rider = None;
         for chunk in &self.chunks {
-            let bones = if chunk.rider {
-                &self.rider.1
-            } else {
-                &self.quad.1
-            };
-            pass.set_bind_group(1, bones, &[]);
-            pass.set_bind_group(2, &chunk.material, &[]);
-            pass.set_vertex_buffer(0, chunk.vertices.slice(..));
-            let (indices, count) = chunk
-                .cut
-                .as_ref()
-                .map_or((&chunk.indices, chunk.count), |(b, c)| (b, *c));
-            pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..count, 0, 0..1);
+            if bound_rider != Some(chunk.rider) {
+                let bones = if chunk.rider {
+                    &self.rider.1
+                } else {
+                    &self.quad.1
+                };
+                pass.set_bind_group(1, bones, &[]);
+                bound_rider = Some(chunk.rider);
+            }
+            if materials {
+                pass.set_bind_group(2, &chunk.material, &[]);
+            }
+            match &chunk.cut {
+                Some((cut, count)) => {
+                    pass.set_index_buffer(cut.slice(..), wgpu::IndexFormat::Uint32);
+                    main_bound = false;
+                    pass.draw_indexed(0..*count, 0, 0..1);
+                }
+                None => {
+                    if !main_bound {
+                        pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
+                        main_bound = true;
+                    }
+                    pass.draw_indexed(chunk.first..chunk.first + chunk.count, 0, 0..1);
+                }
+            }
         }
     }
 }

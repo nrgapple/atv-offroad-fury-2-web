@@ -58,6 +58,8 @@ pub struct Options {
     pub sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
     /// A script driving the live loop in real time (CPU baselines).
     pub autodrive: Option<replay::Script>,
+    /// Autodrive reports also carry per-pass render CPU (`--profile`, `?profile=1`).
+    pub profile: bool,
     /// Native: write the autodrive CPU report here and exit when it ends.
     #[cfg(not(target_arch = "wasm32"))]
     pub bench: Option<std::path::PathBuf>,
@@ -191,6 +193,8 @@ struct Bench {
     render: f64,
     audio: f64,
     reported: bool,
+    /// Add the renderer's per-pass CPU means to the report.
+    profile: bool,
 }
 
 #[derive(Default)]
@@ -686,6 +690,9 @@ impl App {
             let render = render_started.elapsed().as_secs_f64() * 1000. - acquire;
             let audio = riding.sound.as_ref().map_or(0., |s| s.mix);
             let bench = &mut self.bench;
+            if bench.frames == 0 && bench.profile {
+                ready.scene.set_profiling(true);
+            }
             bench.frames += 1;
             bench.cpu += cpu;
             bench.sim += riding.sim_ms;
@@ -695,8 +702,29 @@ impl App {
             self.bench.reported = true;
             let b = &self.bench;
             let n = f64::from(b.frames.max(1));
+            let passes = if b.profile {
+                let entries: Vec<String> = ready
+                    .scene
+                    .profile_report()
+                    .iter()
+                    .map(|(name, ms)| format!(r#""{name}":{ms:.4}"#))
+                    .collect();
+                let draws: Vec<String> = ready
+                    .scene
+                    .profile_counts()
+                    .iter()
+                    .map(|(name, n)| format!(r#""{name}":{n:.1}"#))
+                    .collect();
+                format!(
+                    r#","passes":{{{}}},"draws":{{{}}}"#,
+                    entries.join(","),
+                    draws.join(",")
+                )
+            } else {
+                String::new()
+            };
             let report = format!(
-                r#"{{"frames":{},"cpu_ms_per_frame":{:.4},"cpu_ms_per_60hz_step":{:.4},"sim_and_sound_ms":{:.4},"render_ms":{:.4},"mixer_ms":{:.4},"steps":{}}}"#,
+                r#"{{"frames":{},"cpu_ms_per_frame":{:.4},"cpu_ms_per_60hz_step":{:.4},"sim_and_sound_ms":{:.4},"render_ms":{:.4},"mixer_ms":{:.4},"steps":{}{passes}}}"#,
                 b.frames,
                 b.cpu / n,
                 b.cpu / riding.ride.steps().max(1) as f64,
@@ -2243,6 +2271,7 @@ pub fn run(options: Options) {
         .map(|(_, music)| sound::Activation::new(music));
     #[cfg(not(target_arch = "wasm32"))]
     let bench_out = options.bench.clone();
+    let profile = options.profile;
     let event_loop = EventLoop::<Message>::with_user_event()
         .build()
         .expect("event loop");
@@ -2271,7 +2300,10 @@ pub fn run(options: Options) {
         ui_diagnostics: ui_diagnostics_enabled(),
         sound_unlocked: false,
         activation,
-        bench: Bench::default(),
+        bench: Bench {
+            profile,
+            ..Default::default()
+        },
         #[cfg(not(target_arch = "wasm32"))]
         bench_out,
         front: None,
@@ -2356,6 +2388,7 @@ pub fn start() {
             },
             param("music").as_deref() != Some("off"),
         )),
+        profile: param("profile").is_some_and(|v| v == "1"),
         autodrive: param("autodrive")
             .and_then(|text| js_sys_decode(&text))
             .and_then(|text| replay::Script::parse(&text).ok()),

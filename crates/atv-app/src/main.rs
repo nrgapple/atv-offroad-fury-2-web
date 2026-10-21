@@ -13,7 +13,7 @@ const USAGE: &str = "usage: fury [--content DIR | --pack FILE] [--front PAGE] [-
 [--crash original|crazy|gorn] \
 [--script IN.json] [--trace OUT.json] [--capture OUT.png WxH [--ui]] [--verify-content] [--version] \
 [--mute] [--no-music] [--sound original|enhanced] [--audio OUT.wav] \
-[--autodrive IN.json [--bench OUT.json]]";
+[--autodrive IN.json [--bench OUT.json [--profile]]]";
 
 fn fail(message: &str) -> ! {
     eprintln!("fury: {message}");
@@ -75,6 +75,7 @@ fn main() {
     let mut no_audio = false;
     let mut autodrive = None;
     let mut bench = None;
+    let mut profile = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--content" => content = args.next().map(PathBuf::from),
@@ -177,6 +178,7 @@ fn main() {
                         .expect("read autodrive script");
                 autodrive = Some(atv_app::replay::Script::parse(&text).expect("parse autodrive"));
             }
+            "--profile" => profile = true,
             "--bench" => bench = Some(PathBuf::from(args.next().expect("--bench needs a path"))),
             "--mute" => no_audio = true,
             "--record-autopilot" => {
@@ -251,6 +253,7 @@ fn main() {
         sound: (!no_audio).then_some((sound, music)),
         autodrive,
         bench,
+        profile,
         front,
     });
 }

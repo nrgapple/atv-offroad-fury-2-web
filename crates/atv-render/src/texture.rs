@@ -95,6 +95,49 @@ pub fn write(gpu: &Gpu, texture: &wgpu::Texture, width: u32, height: u32, rgba: 
     }
 }
 
+/// Writes every level of one layer of an array texture (box-filtered mips as [`write`]).
+pub fn write_layer(
+    gpu: &Gpu,
+    texture: &wgpu::Texture,
+    layer: u32,
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) {
+    let levels = texture.mip_level_count();
+    let (mut w, mut h) = (width, height);
+    let mut pixels = std::borrow::Cow::Borrowed(rgba);
+    for level in 0..levels {
+        gpu.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: level,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: layer,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            &pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 4),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        if level + 1 < levels {
+            let (next, nw, nh) = downsample(&pixels, w, h);
+            (pixels, w, h) = (std::borrow::Cow::Owned(next), nw, nh);
+        }
+    }
+}
+
 pub fn downsample(pixels: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
     let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
     let mut out = vec![0u8; (nw * nh * 4) as usize];

@@ -474,6 +474,64 @@ crash, Original vs Gorn: Chromium 1.02/0.86 ms (landscape), 0.62/0.63 (portrait)
 WebKit 2.39/1.56, 1.87/1.92, all at 60 Hz (noise; the blood is one draw). Wasm
 5.21 MB with current main (4.90 MB, 1.28 MB brotli on the branch before merging).
 
+## Render CPU pass (2026-10-21)
+
+Behaviour-equivalent only: every change below leaves the output pixel-identical (native
+Metal and Chromium/WebKit WebGL2 captures of seven venues in Original and High, and the
+Gorn crash, against the previous build; the only differing pixels are the few
+run-to-run unstable ones around the held vehicle, which differ between two runs of the
+same build too).
+
+- Profiling: `--profile` (native, with `--autodrive ... --bench`) or `?profile=1`
+  (browser autodrive) adds per-pass CPU means (`passes`) and draws per pass (`draws`)
+  to the bench report (`atv-render/profile.rs`; marks are no-ops otherwise). On WebGL2
+  almost all render CPU is `submit`: wgpu's GL backend replays the frame as GL calls
+  there. Each vertex-buffer change and each pipeline change re-specifies every vertex
+  attribute (bindBuffer, enable, pointer, divisor), so the GL call count is the
+  measure that matters.
+- Sky: the 64 CubeFile tiles (128x128 in all 40 venues) are layers of one texture
+  array, drawn as one draw instead of 64 texture rebinds and draws.
+- Terrain, scenery and vehicles: each pass keeps its geometry in merged vertex/index
+  buffers (indices rebased; scenery has a plain and a reflection-mapped set), so draws
+  no longer rebind vertex buffers. Draws and their order are unchanged. Merging
+  adjacent terrain tiles into one draw was tried and dropped: it changes a few hundred
+  far pixels on Metal.
+- Scenery: position+U and normal+V share two vec4 attributes (3 attributes instead of
+  4). The material and the instance uniforms are one record per draw and pass (one
+  dynamic offset instead of two). The records of UV-animated draws lead the buffer, so
+  one write refreshes them.
+- Vehicles: bones rebind only when a group switches between quad and rider.
+- Vegetation selection (`atv_core::vegetation_render`, shared with the JS game):
+  the 1,500-plant heap stores each depth beside its index (no random placement reads
+  per comparison; the same heap and stable order), and the group-offset vector is
+  reused instead of allocated each frame.
+
+WebGL calls per frame (Chromium, ride autodrive): ENV01 4,452 -> 2,906, NAT05
+4,023 -> 2,203. Host CPU, previous -> new build, alternating runs, median of 7
+(browser) or 5 (native), 600-step autodrive at 1280x720. The host was shared with other
+work, so single runs vary by up to 30%.
+
+| | render ms/frame | CPU ms/frame |
+| --- | --- | --- |
+| Chromium ENV01 | 0.89 -> 0.71 | 1.26 -> 1.07 |
+| Chromium NAT05 | 0.68 -> 0.57 | 1.03 -> 0.91 |
+| WebKit ENV01 | 1.41 -> 1.17 | 1.80 -> 1.47 |
+| WebKit NAT05 | 1.55 -> 1.30 | 2.03 -> 1.76 |
+| native ENV01 | 0.99 -> 0.67 | noisy |
+| native NAT05 | 1.11 -> 0.84 | noisy |
+
+Against the JavaScript game in the same `compare_engine.mjs ride` CPU baseline
+(Chromium, per 60 Hz step): ENV01 JS 1.96 ms vs Rust web 1.73 ms; NAT05 JS 1.93 vs
+1.55. The ride parity of that run is unchanged from the previous build (ENV01 frame
+4.13/255 in both builds: the paused toolbar and a near plant's history-dependent
+orientation; NAT05 0.22).
+
+Remaining GL cost is mostly pipeline changes in scene order: the scenery alpha-failure
+pass alternates two pipelines per cutout chunk. Removing those changes would mean
+reordering draws, which could change blending or depth ties, or patching wgpu's GL
+backend to skip the attribute re-specification for identical layouts. Neither is done
+here.
+
 ## Browser stand-ins in the ported presentation
 
 Labelled for follow-up replacement with recovered behaviour (separate PRs, each with a
@@ -694,6 +752,8 @@ FURY_BIN=target/release/fury FURY_CONTENT=private/reports/hosted-content \
 FURY_BIN=target/release/fury FURY_CONTENT=private/reports/hosted-content ATV_TEST_URL=... \
   node tools/compare_engine.mjs ride env01 [script.json]   # private/reports/engine-parity/ride/
   #   ride options: --graphics original|enhanced|high --crash original|crazy|gorn --region x0,y0,x1,y1
+cargo run --release -p atv-app --bin fury -- --content DIR --venue env01 --mute \
+  --autodrive drive.json --bench out.json --profile   # per-pass CPU (browser: ?autodrive=...&profile=1)
 cargo run --release -p atv-app --bin fury -- --content DIR --script s.json --trace out.json
 cargo run --release -p atv-app --bin fury -- --free ...   # terrain free camera, no ride
 cargo run --release -p atv-app --bin fury -- --quad 29 ...   # a motorcycle (27-46); ride parity: compare_engine.mjs ride ... --quad 29
