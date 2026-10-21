@@ -62,6 +62,9 @@ pub struct Venue {
     pub ambient: Option<std::rc::Rc<std::cell::RefCell<crate::ambient::Ambient>>>,
     /// A race's National drop gate (drawn as the last scene model).
     pub drop_gate: Option<atv_core::race_gate::DropGate>,
+    /// The dense render-grid ground (renderCore.terrainHeight): cameras and
+    /// presentation follow the visible terrain; gameplay uses contact().
+    pub visible: std::rc::Rc<atv_core::terrain::Heightfield>,
     /// Pre-race camera shots of a race-course load (empty in free ride).
     pub intro_shots: Vec<Vec<atv_core::race_intro::ShotFrame>>,
     /// Active Snow weather (ring emitters around the camera).
@@ -294,6 +297,7 @@ pub async fn load_with(
             .map(|toy| crate::lingering_dust::dust_zones(&String::from_utf8_lossy(toy)))
             .unwrap_or_default(),
         drop_gate,
+        visible: std::rc::Rc::new(ground),
         terrain_zones: toy
             .as_deref()
             .map(|toy| crate::tire_tracks::terrain_zones(&String::from_utf8_lossy(toy)))
