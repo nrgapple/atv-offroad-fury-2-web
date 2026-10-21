@@ -37,12 +37,16 @@ pub struct WaterPass {
 }
 
 /// 00190aa0 scales strip groups by viewport width and dense rows by height;
-/// each native strip adds 19 samples. Bounded below Uint16 capacity.
-pub fn grid_size(width: u32, height: u32, budget: u32) -> (u32, u32) {
+/// each native strip adds 19 samples. The browser caps the grid at 12,000
+/// (landscape) or 8,000 (portrait) vertices for its 16-bit indices
+/// (projectedGridSize in web/water.js); the Rust build draws with 32-bit
+/// indices and keeps the native dense-row count (fidelity follow-up; the
+/// 8..1024 row bounds are the browser's).
+pub fn grid_size(width: u32, height: u32) -> (u32, u32) {
     let strips = ((3. * width as f64 / 640. + 0.5).floor() as u32).clamp(1, 8);
     let columns = strips * 19 + 1;
-    let requested = ((334. * height as f64 / 448. + 0.5).floor() as u32).clamp(8, 1024);
-    (columns, requested.min(budget / columns - 1))
+    let rows = ((334. * height as f64 / 448. + 0.5).floor() as u32).clamp(8, 1024);
+    (columns, rows)
 }
 
 fn grid(gpu: &Gpu, columns: u32, rows: u32) -> (wgpu::Buffer, wgpu::Buffer, u32) {
@@ -489,7 +493,7 @@ impl WaterPass {
         size: (u32, u32),
         far: f32,
     ) {
-        let (columns, rows) = grid_size(size.0, size.1, if size.1 > size.0 { 8000 } else { 12000 });
+        let (columns, rows) = grid_size(size.0, size.1);
         if self.grid.as_ref().is_none_or(|g| g.3 != (columns, rows)) {
             let (vertices, indices, count) = grid(gpu, columns, rows);
             self.grid = Some((vertices, indices, count, (columns, rows)));
@@ -531,9 +535,11 @@ impl WaterPass {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn grid_follows_viewport_like_the_browser() {
-        // projectedGridSize(1280, 720, 12000) in web/water.js.
-        assert_eq!(super::grid_size(1280, 720, 12000), (115, 103));
-        assert_eq!(super::grid_size(390, 844, 8000), (39, 204));
+    fn grid_keeps_the_native_dense_rows() {
+        // 00190aa0: 6 strip groups (115 columns) and 537 dense rows at
+        // 1280x720 (the browser caps rows at 103); 39 x 629 at 390x844 (204).
+        assert_eq!(super::grid_size(1280, 720), (115, 537));
+        assert_eq!(super::grid_size(390, 844), (39, 629));
+        assert_eq!(super::grid_size(640, 448), (58, 334));
     }
 }
