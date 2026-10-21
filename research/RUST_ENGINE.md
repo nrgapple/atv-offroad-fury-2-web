@@ -897,9 +897,10 @@ under 3e-4 ft (binary32 against the browser's binary64 at ENV01 coordinates):
 The browser build passes the same check at a simulated 120 Hz display
 (`tools/test_engine_interpolation.mjs`: virtual-clock requestAnimationFrame and
 performance.now, `?presentTrace=1`): Enhanced quad and Original bike interpolate on
-alternate frames, Original quad snaps. Not ported: Alpha slow motion (`hype.timeScale`)
-and the Enhanced wheel re-projection (`atvPresentation.quadPose`); the quad draws its
-simulation linkage.
+alternate frames, Original quad snaps. Alpha slow motion (`hype.timeScale`) stretches
+each segment by its scale (RUST_UI.md "Alpha experiments"). Not ported: the Enhanced
+wheel re-projection (`atvPresentation.quadPose`); the quad draws its simulation
+linkage.
 
 ## Rider gear and quad paint (2026-10-21)
 
