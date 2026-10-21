@@ -105,15 +105,81 @@ flips, gear and paint, motorcycles, races, multiplayer and trains are not ported
 Controller input has not been tried with physical pads. Linux builds need
 `libudev-dev` for gilrs.
 
+## Static world checkpoint: sky, scenery, vegetation (2026-10-20)
+
+Ported under the Original preset, from the `game.js` scene shader and loaders:
+
+- Sky (`atv-game/sky.rs`, `atv-render/sky.rs` + `sky.wgsl`): SCN `CubeFile` layout
+  (`atv_core::sky`, 00124010), IPUM tiles, UVs .03125-.96875 (00125960), drawn first,
+  unfogged, xyww with depth testing off. The Enhanced/High smooth sky (deblocked tiles
+  and Catmull-Rom bicubic) is behind `Graphics::sky_smooth` (`--graphics enhanced`).
+- Static scene models (`atv-game/materials.rs`, `scenery.rs`; `atv-render/scenery.rs` +
+  `scenery.wgsl`): SCN placements of root-relative PSGs (`decode_psg_for_scene`), every
+  ordered PSM pass (`scenery_material::describe`) with its PST/ATM/TGA texture, prelit
+  vertex colour, provisional prop lighting for lit models, per-pass fog, blend/additive,
+  depth write, LEQUAL for later passes, GEQUAL cutouts with the FB_ONLY alpha-failure
+  pass, UV scroll and ATM clocks (60 Hz steps, as the simulation batch), local-plane
+  reflection maps and hidden stadium camera flashes. Weather selection (00208cc0) removes
+  the inactive weather model. Draw order is scene order, culled per object at the fog
+  end; the depth range extends by the largest object as `matrix()` does.
+- Vegetation (`atv-game/vegetation.rs`; `atv-render/vegetation.rs` + `vegetation.wgsl`):
+  ESB species meshes and the EcoSystemCode2D atlas; `atv_core::vegetation_render`
+  selects and orders instances (distant billboards, depth-disabled transition, near
+  material queues) with the per-instance alpha reference and the biased-float vertex
+  lighting. Like the browser, the frame serial stays 0, so 0012a1c0's stale-visibility
+  reset only applies to a plant's first selection.
+
+Parity (`tools/compare_engine.mjs`, Original preset, JavaScript actors hidden and clocks
+held via the test-only `window.atvParityView`; mean absolute difference of 255,
+JavaScript vs Rust browser, start camera unless noted): ENV01 0.04 (sky view 0.06, high
+forest view 0.16), SX01 0.05, NAT01 0.39 (the water surface, not yet ported; 0.01-0.19
+elsewhere), ENV08 0.03 (no train yet), ENV03 0.04, FREE01 0.03. Rust browser vs native:
+0.00-0.01. Residuals are triangle edges and, in the forest view, near plant
+orientations captured on entry (camera history differs).
+
+Cost (Chromium ANGLE/Metal, Apple M4, 1280x720, uncapped): CPU 0.50-0.90 ms per frame
+at 100-282 draws (terrain only: 0.5 ms, about 11 draws); 76-85 fps. Stadium SX01 is the
+heaviest at 282 draws. Each scenery draw rebinds static uniform slots by dynamic offset
+(no per-draw uniform uploads); vegetation is one instanced draw per material queue.
+`atv_app_bg.wasm` is 4.92 MB raw, 0.93 MB brotli (+0.06 MB). Phones are not measured yet.
+
+Water and train (second checkpoint):
+
+- Water (`atv-game/water.rs`, `atv-render/water.rs` + `water.wgsl`): the WTT live
+  height field (`water_animation::LiveField`, advanced and render-prepared once per 60 Hz
+  step), height/derivative atlases and environment map from `water_render`, drawn as the
+  viewport-sized projected grid of `water.js` (00190aa0 strip/row counts), with the
+  Enhanced/High Fresnel behind `Graphics::fresnel`. Parity: NAT01 start 0.06 (was 0.39),
+  NAT01 overview 0.15, ENV05 0.04, ENV07 0.12, FREE04 0.13, ENV04 0.02 (native).
+- ENV08 train (`atv-game/train.rs`, `atv-render/train.rs` + `train.wgsl`): the
+  `atv_core::train` runtime (route/MOT, 0011c840) stepped at 60 Hz, cars posed by their
+  bind nodes and the locomotive wheels by the Rust wheel matrices. Two views beside the
+  train: 2.19 and 1.04, all of it the locomotive smoke (an ambient effect, not yet ported).
+- The GL backend creates a cube map for any texture whose layer count is a multiple of
+  six, which WebGL then rejects for 2D-array views: ENV04's 102 terrain layers rendered
+  garbage in the browser. Such arrays now get one unused layer (`texture::array_layers`).
+- The live water field and train runtime are `Rc<RefCell<..>>` on `Venue`, so the
+  physics step can share them. Until the ride loop steps them, `SceneRenderer::advance`
+  does, and the train is stepped without collision heights (`step`, not
+  `step_with_scene`). `atv_app_bg.wasm`: 5.06 MB raw, 0.96 MB brotli.
+
+Limitations: weather drawing and ambient effects are not ported; the browser draws
+vehicles between vegetation and water, so the ride pass must slot in before water;
+camera flashes stay hidden until the stadium crowd simulation drives them; reverse-
+looping crowd ATMs keep their first frame (as in the browser); anisotropy is applied at
+load only.
+
 ## Commands
 
 ```sh
 python3 tools/build_engine.py          # browser build into web/dist (part of make web)
 cargo run --release -p atv-app --bin fury -- --content private/reports/hosted-content --venue env01
 cargo run --release -p atv-app --bin fury -- --content DIR --venue env01 \
-  --camera x,y,z,yaw,pitch,focal --capture out.png 1280x720
-FURY_BIN=target/release/fury ATV_TEST_URL=http://127.0.0.1:4173 \
-  node tools/compare_engine.mjs env01   # writes private/reports/engine-parity/*.png
+  --camera x,y,z,yaw,pitch,focal [--weather on|off] [--steps N] [--graphics original] \
+  --capture out.png 1280x720
+FURY_BIN=target/release/fury FURY_CONTENT=private/reports/hosted-content \
+  ATV_TEST_URL=http://127.0.0.1:4173 node tools/compare_engine.mjs env01 \
+  [out-dir] [--view x,y,z,yaw,pitch,focal]...   # PNGs, heatmaps and a JSON report
 FURY_BIN=target/release/fury FURY_CONTENT=private/reports/hosted-content ATV_TEST_URL=... \
   node tools/compare_engine.mjs ride env01 [script.json]   # private/reports/engine-parity/ride/
 cargo run --release -p atv-app --bin fury -- --content DIR --script s.json --trace out.json
