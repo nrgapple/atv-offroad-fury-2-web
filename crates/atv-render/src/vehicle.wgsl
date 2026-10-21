@@ -10,6 +10,8 @@ struct Globals {
   sun_color: vec4<f32>,
   sun_direction: vec4<f32>,
   surface: vec4<f32>,
+  // amount, reveal
+  mud: vec4<f32>,
 };
 struct Bones {
   world: mat4x4<f32>,
@@ -17,10 +19,11 @@ struct Bones {
 };
 @group(0) @binding(0) var<uniform> g: Globals;
 @group(1) @binding(0) var<uniform> bones: Bones;
-// textured, fog
+// textured, fog, has mud map
 @group(2) @binding(0) var<uniform> material: vec4<f32>;
 @group(2) @binding(1) var base_texture: texture_2d<f32>;
 @group(2) @binding(2) var base_sampler: sampler;
+@group(2) @binding(3) var mud_texture: texture_2d<f32>;
 
 struct Varyings {
   @builtin(position) clip: vec4<f32>,
@@ -55,7 +58,17 @@ fn vs(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>,
 fn fs(in: Varyings) -> @location(0) vec4<f32> {
   let n = normalize(in.normal);
   let sampled = textureSample(base_texture, base_sampler, in.uv).rgb;
-  let base = select(g.surface.rgb, sampled, material.x > 0.5);
+  let mud = textureSample(mud_texture, base_sampler, in.uv);
+  var base = select(g.surface.rgb, sampled, material.x > 0.5);
+  // game.js motorcycleMudAmount: MX mud blends linearly by alpha; the ATV2
+  // dirt pass reveals heavier-alpha texels first.
+  let amount = g.mud.x;
+  if (material.x > 0.5 && material.z > 0.5 && amount > 0.0) {
+    let strength = clamp(mud.a * (255.0 / 128.0), 0.0, 1.0);
+    let weight = select(clamp(mud.a * (255.0 / 128.0) * amount, 0.0, 1.0),
+      strength * smoothstep(1.0 - amount, 1.12 - amount, mud.a), g.mud.y > 0.5);
+    base = mix(base, mud.rgb, weight);
+  }
   let sunlight = max(dot(n, normalize(g.sun_direction.xyz)), 0.0);
   let lit = base * (g.ambient.rgb + g.sun_color.rgb * sunlight);
   let coverage = select(1.0, clamp(in.fog.x / in.fog.y, 0.0, 1.0), in.fog.y != 0.0);

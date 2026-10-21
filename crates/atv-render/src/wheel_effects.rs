@@ -101,7 +101,6 @@ impl WheelEffectsPass {
                 mapped_at_creation: false,
             })
         };
-        let config = effects.effects.config();
         Self {
             pipeline,
             corners: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -134,7 +133,7 @@ impl WheelEffectsPass {
             uploaded: None,
             pending: false,
             time: 0.,
-            light: config.light_color.map(|v| v / 128.),
+            light: effects.light_color.map(|v| v / 128.),
             size: [effects.atlas.width as f32, effects.atlas.height as f32],
         }
     }
@@ -167,7 +166,7 @@ impl WheelEffectsPass {
         let key = (frame.time, frame.placement_epoch);
         if self.uploaded != Some(key) {
             self.uploaded = Some(key);
-            let frames = &effects.effects.config().atlas.frames;
+            let frames = &effects.frames;
             let [w, h] = self.size;
             self.scratch.clear();
             for p in frame.particles.iter().take(SPRITES) {

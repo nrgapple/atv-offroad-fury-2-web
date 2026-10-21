@@ -632,12 +632,22 @@ origin, orientation and camera.
 | 27 Fast50 | ride with wreck | 930 | Riding |
 | 31 Suzuki RM250 | clutch, lean, stunt modifiers, brake, reverse | 860 | wreck and recovery, Riding |
 
+Presentation (follow-up): the bike's MX tire dust, chunks, spray, exhaust and wreck
+dust (`atv_core::motorcycle_effects`, stepped after each motorcycle step and reset on a
+placement or recovery, as atv-web's batch does) draw through the wheel-effects pass with
+the bike archive's FS01particles atlas (`loadMotorcycleEffects`; no tire tracks or
+lingering dust, like the browser). Vehicle materials load their mud map (`image.mud`:
+the MX MudAnimator's second map, else the ATV2 PixelAnimation dirt pass), and the
+vehicle shader blends it by the bike's larger wheel mud amount (`motorcycleMudAmount`,
+linear by mud alpha; the ATV reveal branch is wired but its dirt buildup is not
+ported, so quads stay clean as in Original). Held ENV01 frame of bike 29 after 600
+steps, mean absolute difference in the vehicle box against the JavaScript game: 6.19
+before, 0.13 Rust browser / 0.15 native after (quad 1 unchanged at 0.59 / 0.63).
+
 Not connected yet (labelled for follow-up PRs): motorcycle engine and impact sounds
 (atv-web op 101, `web/audio.js` motorcycle branch; the bike is silent), the
 `MotorcyclePresentation` 60 Hz interpolation (`web/motorcycle-presentation.js`, used in
-every preset), the bike's wheel particles (`motorcycle_effects`) and the mud overlay on
-the bike and rider (`motorcycleMudAmount`; the held JavaScript frame shows the dirt the
-Rust frame lacks), and races on a motorcycle (a clear "not ported" error; atv-web races
+every preset), and races on a motorcycle (a clear "not ported" error; atv-web races
 the CPU roster on comparable quads).
 
 ## Commands

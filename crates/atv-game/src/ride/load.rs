@@ -268,7 +268,15 @@ pub async fn load_with(
         water,
         camera: follow,
     };
-    Ride::start(simulation, start, seed, vehicle_model, rider_model, race)
+    Ride::start(
+        simulation,
+        super::Selection { quad, rider },
+        start,
+        seed,
+        vehicle_model,
+        rider_model,
+        race,
+    )
 }
 
 /// The ATV, its rider rig and motions (ops 20-22, 44, 48, 51-53).
