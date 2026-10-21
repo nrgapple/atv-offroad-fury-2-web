@@ -39,6 +39,8 @@ pub struct Riding {
     /// Each of those steps' follow camera (position, target), for the world
     /// effects that track the simulation camera (Snow).
     pub step_cameras: Vec<([f32; 3], [f32; 3])>,
+    /// Wheel dust, chunks, spray and wet births, stepped after each ride step.
+    pub effects: Option<atv_game::wheel_effects::WheelEffects>,
 }
 
 /// What a frame sampled from the keyboard/controller.
@@ -75,6 +77,7 @@ impl Riding {
             autodrive_done: false,
             sim_ms: 0.,
             step_cameras: Vec::new(),
+            effects: None,
         }
     }
 
@@ -174,6 +177,9 @@ impl Riding {
         if read.reset {
             self.clear_input();
             self.ride.reset()?;
+            if let Some(effects) = &mut self.effects {
+                effects.reset(&self.ride)?;
+            }
             self.orbit = 0.;
             return Ok(());
         }
@@ -191,6 +197,9 @@ impl Riding {
     pub fn run(&mut self, controls: &Controls, count: u32) -> Result<(), String> {
         for _ in 0..count {
             self.ride.step(controls, self.orbit)?;
+            if let Some(effects) = &mut self.effects {
+                effects.step(&self.ride)?;
+            }
             if let Some(sound) = &mut self.sound {
                 sound.step(self.ride.sound());
             }

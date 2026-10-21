@@ -7,6 +7,7 @@ pub mod archive;
 pub mod audio;
 pub mod intro;
 pub mod launch;
+pub mod lingering_dust;
 pub mod materials;
 pub mod ride;
 pub mod scenery;
@@ -17,5 +18,6 @@ pub mod train;
 pub mod vegetation;
 pub mod venue;
 pub mod water;
+pub mod wheel_effects;
 
 pub type Result<T> = std::result::Result<T, String>;

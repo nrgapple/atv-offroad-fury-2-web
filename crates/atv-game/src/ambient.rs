@@ -44,7 +44,7 @@ fn text(archive: &Resource, index: usize) -> Result<String> {
     Ok(String::from_utf8_lossy(&archive.extract(index)?).into_owned())
 }
 
-fn image(archive: &Resource, name: &str) -> Result<Image> {
+pub(crate) fn image(archive: &Resource, name: &str) -> Result<Image> {
     let index = named(archive, name)
         .ok_or_else(|| format!("Original ambient resource is missing: {name}"))?;
     let decoded = texture::decode_pst(&archive.extract(index)?)?;
@@ -57,7 +57,7 @@ fn image(archive: &Resource, name: &str) -> Result<Image> {
 
 /// The scene's GPU particle texture: TextureMap_1 of particle_gpu.psm or
 /// envNNparticles_gpu.psm.
-fn gpu_atlas(archive: &Resource) -> Result<Image> {
+pub(crate) fn gpu_atlas(archive: &Resource) -> Result<Image> {
     let material = archive
         .members
         .iter()

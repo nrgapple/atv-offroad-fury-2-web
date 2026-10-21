@@ -600,6 +600,62 @@ impl Ride {
     }
 
     /// Quad linkage and rider skeleton for the latest frame (simulation_frame).
+    /// Wheel radii (presentation effects place dust at the contact patch).
+    pub fn wheel_radii(&self) -> [f32; 4] {
+        self.vehicle.wheel_effect_state().radii
+    }
+
+    /// Wheel-effect snapshot of the latest step, as atv-web's simulation_frame
+    /// assembles it for op 75: the vehicle's wheel state, posed wheel centres,
+    /// contact-plane and water heights. `time`, `dt` and `tick` are left at
+    /// zero for the effects clock to fill. Presentation only.
+    pub fn wheel_effect_input(&self) -> Result<atv_core::wheel_effects::Input> {
+        let frame = &self.frame;
+        let state = self.vehicle.wheel_effect_state();
+        let matrices = match self.vehicle.linkage_matrices() {
+            Some(matrices) => matrices.to_vec(),
+            None => self.sim.quad_pose.sample(
+                frame.visual_steering_angle,
+                frame.wheel_angles,
+                frame.wheel_compression,
+            )?,
+        };
+        let world = vehicle_world(frame);
+        let centers = self
+            .sim
+            .quad_pose
+            .wheel_positions(&matrices)?
+            .map(|point| atv_core::obstacle::transform_point(&world, point));
+        let mut terrain_heights = [None; 4];
+        let mut water_heights = [None; 4];
+        for (i, point) in centers.iter().enumerate() {
+            let hit = self.sim.terrain.contact(point[0], point[2])?;
+            terrain_heights[i] = Some(hit.map_or(point[1], |hit| hit.height));
+            water_heights[i] = Some(match &self.sim.water {
+                Some(water) => water.height(*point, false)?,
+                None => -256.,
+            });
+        }
+        Ok(atv_core::wheel_effects::Input {
+            time: 0.,
+            dt: 0.,
+            tick: 0,
+            centers,
+            surfaces: state.surfaces,
+            terrain_heights,
+            water_heights,
+            mud: state.mud,
+            wheel_tangential_speeds: state.wheel_tangential_speeds,
+            grounded: frame.grounded,
+            throttle: state.throttle,
+            steering_angle: frame.steering_angle,
+            linear_velocity: frame.linear_velocity,
+            reset_count: frame.reset_count,
+            placement_epoch: u64::from(self.placement),
+            mud_heights: state.mud_heights.map(Some),
+        })
+    }
+
     pub fn pose(&self) -> Result<Pose> {
         let frame = &self.frame;
         let quad_nodes = match self.vehicle.linkage_matrices() {
