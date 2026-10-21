@@ -538,7 +538,6 @@ pub struct Bindings {
     press_count: u64,
 }
 
-
 /// One read: driving controls, edge actions and the camera orbit axis.
 #[derive(Clone, Debug, Default)]
 pub struct Read {
