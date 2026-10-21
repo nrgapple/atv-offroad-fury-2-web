@@ -433,7 +433,7 @@ async fn prepare(
         None
     };
     let hud_assets = if riding.is_some() {
-        match atv_ui::hud::assets::load(&content, &environment).await {
+        match atv_ui::hud::assets::load(&content, &environment, race.is_some()).await {
             Ok(assets) => Some(assets),
             Err(error) => {
                 status(&format!("HUD resources unavailable: {error}"));
@@ -664,13 +664,18 @@ impl App {
                 gpu.config.width,
                 gpu.config.height,
                 ms,
-                active,
-                !riding.paused,
-                riding.paused,
+                // A held parity replay keeps its HUD, as the browser renders it.
+                active || (riding.held && focused),
+                !riding.paused || riding.held,
+                riding.paused && !riding.held,
                 Some(overlay::HudInput {
                     hud: ride.hud(),
                     rider_world: ride.rider_world(),
                     terrain: &ready.venue.terrain,
+                    race: ride
+                        .race()
+                        .and_then(|r| r.frame.as_ref())
+                        .map(|f| (f, ride.committed_points(), frame.origin)),
                 }),
                 Some(&mut riding.bindings),
             );
@@ -2211,6 +2216,10 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
                     hud: ride.hud(),
                     rider_world: ride.rider_world(),
                     terrain: &ready.venue.terrain,
+                    race: ride
+                        .race()
+                        .and_then(|r| r.frame.as_ref())
+                        .map(|f| (f, ride.committed_points(), ride.frame().origin)),
                 }),
                 None,
             );

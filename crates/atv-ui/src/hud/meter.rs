@@ -19,10 +19,10 @@ pub struct Meter {
     pub images: HashMap<String, ImageId>,
 }
 
-struct Logical {
+pub(super) struct Logical {
     /// CSS pixels per logical unit.
-    unit: f32,
-    logical_width: f32,
+    pub unit: f32,
+    pub logical_width: f32,
 }
 
 impl Meter {
@@ -34,7 +34,7 @@ impl Meter {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn text(
+    pub(super) fn text(
         &self,
         fonts: &mut Fonts,
         list: &mut DisplayList,
@@ -99,7 +99,7 @@ impl Meter {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn icon(
+    pub(super) fn icon(
         &self,
         list: &mut DisplayList,
         f: &Logical,
@@ -168,17 +168,40 @@ impl Meter {
         width: f32,
         height: f32,
     ) {
+        self.paint_speed(fonts, list, hud, speed_visible, width, height);
+        self.paint_stunt(fonts, list, hud, width, height);
+    }
+
+    /// hud.js's frame: the 640x448 logical frame scaled by height (wide
+    /// screens extend horizontally), compact portrait below 560 px.
+    fn frame(width: f32, height: f32) -> (Logical, f32, bool) {
         let compact = width < 560.;
         let unit = if compact {
             (width / 400.).min(height / 448.)
         } else {
             height / 448.
         };
-        let f = Logical {
-            unit,
-            logical_width: width / unit,
-        };
-        let logical_height = height / unit;
+        (
+            Logical {
+                unit,
+                logical_width: width / unit,
+            },
+            height / unit,
+            compact,
+        )
+    }
+
+    /// The speed and preload meter.
+    pub fn paint_speed(
+        &self,
+        fonts: &mut Fonts,
+        list: &mut DisplayList,
+        hud: &Frame,
+        speed_visible: bool,
+        width: f32,
+        height: f32,
+    ) {
+        let (f, logical_height, compact) = Self::frame(width, height);
         if speed_visible {
             let at = if compact {
                 [f.logical_width - 24., 72.]
@@ -217,6 +240,18 @@ impl Meter {
                 );
             }
         }
+    }
+
+    /// The stunt name and points.
+    pub fn paint_stunt(
+        &self,
+        fonts: &mut Fonts,
+        list: &mut DisplayList,
+        hud: &Frame,
+        width: f32,
+        height: f32,
+    ) {
+        let (f, logical_height, compact) = Self::frame(width, height);
         if hud.stunt_visible {
             let stunt = &self.assets.stunt;
             let at = [

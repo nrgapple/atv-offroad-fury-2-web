@@ -391,6 +391,15 @@ impl Ride {
         gear::PAINT_PALETTE[usize::from(self.appearance.paint)]
     }
 
+    /// The player's committed stunt points (the race SCORE overlay; the
+    /// motorcycle's frame carries none, as in atv-web).
+    pub fn committed_points(&self) -> f32 {
+        match &self.mount {
+            Mount::Quad { rig, .. } => rig.animator.score_frame().committed_points,
+            Mount::Bike(_) => 0.,
+        }
+    }
+
     /// The Garage choice this ride loaded.
     pub fn selection(&self) -> Selection {
         self.selection

@@ -9,6 +9,7 @@ use atv_ui::{
         help,
         meter::Meter,
         minimap::{Instrument, MapPose, Minimap, MinimapSettings},
+        race::{OverlaySettings, RaceView},
         toolbar,
     },
     layout,
@@ -37,6 +38,9 @@ pub struct HudInput<'a> {
     pub hud: atv_core::hud::Frame,
     pub rider_world: [f32; 16],
     pub terrain: &'a atv_game::venue::Terrain,
+    /// A race's latest frame, the committed stunt points and the drawn
+    /// player origin (the race overlays and 321 lamps).
+    pub race: Option<(&'a atv_core::race::Frame, f32, [f32; 3])>,
 }
 
 /// A press on a toolbar button or the minimap (utility pointers in touch.js).
@@ -67,6 +71,11 @@ pub struct Overlay {
     press: Option<Press>,
     pub minimap: Minimap,
     meter: Option<Meter>,
+    /// Pause → Race Overlays choices (reloaded when the menu closes).
+    race_overlays: OverlaySettings,
+    /// The race load's fade from black (race.js `.race-fade`, 00210980):
+    /// when the pre-race camera started.
+    race_fade: Option<f64>,
     /// Keyboard controls card: open, and its first-ride close time.
     help_open: bool,
     help_until: Option<f64>,
@@ -109,6 +118,7 @@ impl Overlay {
         touch.set_viewport(view.width, view.height);
         let minimap = Minimap::new(MinimapSettings::load(&settings));
         let prefs = Preferences::load(&settings, view.touch_first);
+        let race_overlays = OverlaySettings::load(&settings);
         Self {
             fonts: Fonts::new(),
             renderer: Renderer::new(device, format),
@@ -123,6 +133,8 @@ impl Overlay {
             press: None,
             minimap,
             meter: None,
+            race_overlays,
+            race_fade: None,
             help_open: false,
             help_until: None,
             ride_started: false,
@@ -188,6 +200,7 @@ impl Overlay {
             (false, true) => {
                 self.menu = None;
                 self.menu_hits.clear();
+                self.race_overlays = OverlaySettings::load(&self.settings);
             }
             _ => {}
         }
@@ -464,8 +477,11 @@ impl Overlay {
             let size = atv_ui::hud::minimap::MAP_RESOLUTION as u32;
             self.minimap.image = Some(self.renderer.add_image(device, queue, size, size, &pixels));
         }
-        // Visible while riding (game.js hides HUD and map behind menus/blur).
-        let shown = hud.as_ref().filter(|_| active);
+        // Visible while riding (game.js hides HUD and map behind menus/blur);
+        // a race hides the HUD through its pre-race shots.
+        let race = hud.as_ref().and_then(|h| h.race);
+        let intro = race.is_some_and(|(frame, ..)| frame.phase == "intro");
+        let shown = hud.as_ref().filter(|_| active && !intro);
         let instrument = shown.map(|h| Instrument {
             speed: h.hud.speed_text.clone(),
             units: h.hud.units.into(),
@@ -473,9 +489,12 @@ impl Overlay {
             preload_fill: h.hud.preload_fill,
             preload_blue_alpha: h.hud.preload_blue_alpha as f32,
         });
+        // Races hide the GPS map (minimap.draw's !raceSettings).
         self.minimap.update(
             now,
-            shown.map(|h| MapPose::from_matrix(&h.rider_world)),
+            shown
+                .filter(|_| race.is_none())
+                .map(|h| MapPose::from_matrix(&h.rider_world)),
             instrument,
         );
         // First keyboard ride: open the card for 15 s (keyboard-help.js).
@@ -494,16 +513,22 @@ impl Overlay {
         self.touch
             .paint(active, now, &mut self.fonts, &mut self.list);
         if let (Some(meter), Some(h)) = (&self.meter, shown) {
-            meter.paint(
+            let speed = match race {
+                Some(_) => self.race_overlays.shown("speed"),
+                None => !self.minimap.settings.enabled,
+            };
+            meter.paint_speed(
                 &mut self.fonts,
                 &mut self.list,
                 &h.hud,
-                !self.minimap.settings.enabled,
+                speed,
                 view.width,
                 view.height,
             );
         }
-        let map_visible = self.minimap.visible() && !paused;
+        // The race overlays sit below the toolbar: drawn once it is laid out.
+        let hud_at = self.list.items.len();
+        let map_visible = self.minimap.visible() && !paused && race.is_none();
         let keys_visible = !touch_driving;
         // A large top-right map can meet the labelled toolbar: icon-only buttons.
         let labels: f32 = ["PAUSE", "CAMERA", "KEYS"]
@@ -570,6 +595,45 @@ impl Overlay {
             self.list.items.extend_from_slice(&list.items);
             self.hits.extend_from_slice(hits);
         }
+        if let (Some(meter), Some(h)) = (&self.meter, shown) {
+            let mut items = DisplayList::default();
+            if let Some((frame, score, origin)) = race {
+                // toolbarBottom(): the toolbar's bottom edge.
+                let top_inset = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
+                    hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
+                });
+                meter.paint_race(
+                    &mut self.fonts,
+                    &mut items,
+                    &RaceView {
+                        frame,
+                        score,
+                        origin,
+                        top_inset,
+                        settings: &self.race_overlays,
+                    },
+                    view.width,
+                    view.height,
+                );
+                if let Some(lights) = frame.lights {
+                    meter.paint_lamps(&mut items, lights, view.width, view.height);
+                }
+            }
+            if race.is_none() || self.race_overlays.shown("info") {
+                meter.paint_stunt(&mut self.fonts, &mut items, &h.hud, view.width, view.height);
+            }
+            self.list.items.splice(hud_at..hud_at, items.items);
+        }
+        // Race load fades in from black over 500 ms as the pre-race camera
+        // starts, over everything (#race-overlay is the topmost layer).
+        if intro && self.race_fade.is_none() && active {
+            self.race_fade = Some(now);
+        }
+        let fade = self
+            .race_fade
+            .filter(|_| active)
+            .map(|start| ((now - start) / 500.) as f32)
+            .filter(|t| *t < 1.);
         if map_visible {
             self.minimap.paint(&view, &mut self.fonts, &mut self.list);
             self.hits.push((map, MINIMAP));
@@ -597,6 +661,12 @@ impl Overlay {
             if let Some((_, list)) = &self.help_cache {
                 self.list.items.extend_from_slice(&list.items);
             }
+        }
+        if let Some(t) = fade {
+            self.list.rect(
+                Rect::new(0., 0., view.width, view.height),
+                atv_ui::Color::rgb(0, 0, 0).fade(1. - t.max(0.)),
+            );
         }
         self.upload(device, queue, width, height);
         self.prepare_ms = started.elapsed().as_secs_f64() * 1000.;
