@@ -802,6 +802,49 @@ alternate frames, Original quad snaps. Not ported: Alpha slow motion (`hype.time
 and the Enhanced wheel re-projection (`atvPresentation.quadPose`); the quad draws its
 simulation linkage.
 
+## Rider gear and quad paint (2026-10-21)
+
+The Garage appearance (rider gear and quad paint) now dresses the Rust ride
+(`atv_game::ride::gear`, `Ride::dress`), ported from game.js `rideAppearance` /
+`gearTextures` and render-support.js `PAINT_PALETTE` / `paintable` / `paintGlsl`:
+
+- Gear: the original Profile Store catalog (`/UI/RESOURCE/RIDEINFO.RES`
+  `uiRider.txt`, `atv_core::rider_gear`, op 107) maps each of the seven slots
+  (helmet, gloves, boots, shirt, sleeves, pants, goggles) to the first candidate
+  material `RIDER_MT.RES` holds; shirts pass their base so the rider mesh's slot
+  suffix applies, as for the CPU roster outfits. Packages without the catalog keep
+  the original look.
+- Paint: the vehicle shader recolours the quad's `s<n>m<n>` body materials only
+  (never the rider, never CPU quads, which keep their own pass) with the same
+  HSV maths as the GLSL (`vehicle.wgsl` `apply_paint`): hue modes keep each
+  texel's shading, White lifts and Black darkens saturated texels; grey, black and
+  metal parts stay original. Paint applies before the mud blend, as in the browser.
+- Motorcycles keep their original livery and MX rider (`rideAppearance` is null for
+  them). The appearance comes from the saved `atv-player-selection` value the
+  JavaScript Garage writes (`normalizedAppearance`: seven indices 0-64 and a paint
+  index, else the original look); the Rust frontend keeps that field when it saves.
+  Captures and tests: `fury --gear H,G,B,S,SL,P,GO --paint N`, `engine.html?gear=1.2.1.3.3.2.1&paint=4`,
+  `compare_engine.mjs ride ... --appearance 1.2.1.3.3.2.1:4`.
+
+Parity (`compare_engine.mjs ride env01`, default 600-step script, held frame; mean
+absolute RGB difference in the vehicle box against the JavaScript game, Rust
+browser / native; whole frame in brackets, which includes the toolbar and
+foreground plant differences that predate this change):
+
+| Appearance | 1280x720 | 390x844 |
+| --- | --- | --- |
+| Original (no appearance) | 0.59 / 0.63 (4.13 / 4.00) | 1.12 / 1.19 (7.64 / 7.32) |
+| Gear 1.2.1.3.3.2.1, Green paint (4) | 0.61 / 0.66 (4.13 / 4.00) | 1.14 / 1.22 (7.64 / 7.32) |
+| White paint (9) | 0.62 / 0.68 | 1.16 / 1.25 |
+| Black paint (10) | 0.58 / 0.62 | 1.12 / 1.18 |
+
+The dressed differences stay within 0.03 of the undressed baseline: the gear,
+jersey and paint match the browser (images inspected,
+`private/reports/engine-parity/gear-paint/`). Not ported yet: the Garage's Rider
+gear page and its gear/paint previews in the Rust frontend (the field is only
+carried through), and multiplayer peers' appearance (the Rust engine has no
+multiplayer yet).
+
 ## Commands
 
 ```sh
@@ -821,6 +864,7 @@ cargo run --release -p atv-app --bin fury -- --content DIR --venue env01 --mute 
 cargo run --release -p atv-app --bin fury -- --content DIR --script s.json --trace out.json
 cargo run --release -p atv-app --bin fury -- --free ...   # terrain free camera, no ride
 cargo run --release -p atv-app --bin fury -- --quad 29 ...   # a motorcycle (27-46); ride parity: compare_engine.mjs ride ... --quad 29
+cargo run --release -p atv-app --bin fury -- --gear 1,2,1,3,3,2,1 --paint 4 ...   # Garage gear/paint; parity: compare_engine.mjs ride ... --appearance 1.2.1.3.3.2.1:4
 cargo run --release -p atv-app --bin fury -- --race --venue env01 ...   # race (with --free: race course world, free camera)
 FURY_BIN=... FURY_CONTENT=... ATV_TEST_URL=... [RACE_AUTOPILOT=9000] \
   node tools/compare_engine.mjs race env01 [script.json] [out] [laps] [cpu] [seed]

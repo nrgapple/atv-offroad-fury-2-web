@@ -8,7 +8,7 @@ use atv_app::{Options, run};
 use atv_content::{Store, pack};
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: fury [--content DIR | --pack FILE] [--front PAGE] [--venue ID] [--quad 1-46] [--rider 0|1] [--free] [--race [--laps N] [--cpu 0|3|4] [--difficulty 1|2] [--seed N]] \
+const USAGE: &str = "usage: fury [--content DIR | --pack FILE] [--front PAGE] [--venue ID] [--quad 1-46] [--rider 0|1] [--gear H,G,B,S,SL,P,GO] [--paint 0-10] [--free] [--race [--laps N] [--cpu 0|3|4] [--difficulty 1|2] [--seed N]] \
 [--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high] \
 [--crash original|crazy|gorn] \
 [--script IN.json] [--trace OUT.json] [--present-trace OUT.json [--present-hz 144]] [--capture OUT.png WxH [--ui]] [--verify-content] [--version] \
@@ -65,6 +65,7 @@ fn main() {
     let mut crash = atv_game::crash::CrashMode::Original;
     let mut ride = true;
     let mut selection = atv_game::ride::Selection::default();
+    let mut appearance = atv_game::ride::gear::Appearance::default();
     let mut race: Option<atv_game::ride::race::Settings> = None;
     let mut script = None;
     let mut trace = None;
@@ -129,6 +130,21 @@ fn main() {
                 capture = Some((PathBuf::from(path), w.parse().unwrap(), h.parse().unwrap()));
             }
             "--free" => ride = false,
+            "--gear" | "--paint" => {
+                let value = args
+                    .next()
+                    .unwrap_or_else(|| fail(&format!("{arg} needs a value")));
+                let mut saved = serde_json::json!({"appearance": {"gear": appearance.gear, "paint": appearance.paint}});
+                saved["appearance"][&arg[2..]] = if arg == "--gear" {
+                    value
+                        .split(',')
+                        .filter_map(|g| g.parse::<u64>().ok())
+                        .collect()
+                } else {
+                    value.parse::<u64>().unwrap_or(99).into()
+                };
+                appearance = atv_game::ride::gear::saved_appearance(&saved);
+            }
             "--quad" | "--rider" => {
                 let value: u16 = args
                     .next()
@@ -276,6 +292,7 @@ fn main() {
         capture_ui,
         ride,
         selection,
+        appearance,
         race,
         script,
         ui_backdrop: None,

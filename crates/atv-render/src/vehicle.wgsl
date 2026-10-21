@@ -12,6 +12,8 @@ struct Globals {
   surface: vec4<f32>,
   // amount, reveal
   mud: vec4<f32>,
+  // quad paint mode, hue (render-support.js PAINT_PALETTE)
+  paint: vec4<f32>,
 };
 struct Bones {
   world: mat4x4<f32>,
@@ -19,7 +21,7 @@ struct Bones {
 };
 @group(0) @binding(0) var<uniform> g: Globals;
 @group(1) @binding(0) var<uniform> bones: Bones;
-// textured, fog, has mud map
+// textured, fog, has mud map, paintable quad body
 @group(2) @binding(0) var<uniform> material: vec4<f32>;
 @group(2) @binding(1) var base_texture: texture_2d<f32>;
 @group(2) @binding(2) var base_sampler: sampler;
@@ -32,6 +34,34 @@ struct Varyings {
   // Coverage and clip W, so the ratio interpolates screen-linearly (web/fog.js).
   @location(2) fog: vec2<f32>,
 };
+
+// render-support.js paintGlsl: saturated body-atlas pixels take the hue
+// (keeping their shading), lift to white or darken to black.
+fn paint_rgb2hsv(c: vec3<f32>) -> vec3<f32> {
+  let k = vec4<f32>(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+  let p = mix(vec4<f32>(c.b, c.g, k.w, k.z), vec4<f32>(c.g, c.b, k.x, k.y), step(c.b, c.g));
+  let q = mix(vec4<f32>(p.x, p.y, p.w, c.r), vec4<f32>(c.r, p.y, p.z, p.x), step(p.x, c.r));
+  let d = q.x - min(q.w, q.y);
+  return vec3<f32>(abs(q.z + (q.w - q.y) / (6.0 * d + 1e-6)), d / (q.x + 1e-6), q.x);
+}
+fn paint_hsv2rgb(c: vec3<f32>) -> vec3<f32> {
+  let p = abs(fract(vec3<f32>(c.x) + vec3<f32>(1.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
+  return c.z * mix(vec3<f32>(1.0), clamp(p - 1.0, vec3<f32>(0.0), vec3<f32>(1.0)), c.y);
+}
+fn apply_paint(base: vec3<f32>, paint: vec2<f32>) -> vec3<f32> {
+  if (paint.x < 0.5) {
+    return base;
+  }
+  let h = paint_rgb2hsv(base);
+  let w = smoothstep(0.22, 0.42, h.y) * smoothstep(0.05, 0.16, h.z);
+  var painted = vec3<f32>(h.z * 0.2);
+  if (paint.x < 1.5) {
+    painted = paint_hsv2rgb(vec3<f32>(paint.y, max(h.y, 0.55), h.z));
+  } else if (paint.x < 2.5) {
+    painted = vec3<f32>(min(1.0, h.z * 1.1 + 0.18));
+  }
+  return mix(base, painted, w);
+}
 
 fn native_fog_coverage(distance: f32) -> f32 {
   let encoded = clamp(g.fog.x + g.fog.y * distance, 524288.0, 524543.0);
@@ -60,6 +90,9 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
   let sampled = textureSample(base_texture, base_sampler, in.uv).rgb;
   let mud = textureSample(mud_texture, base_sampler, in.uv);
   var base = select(g.surface.rgb, sampled, material.x > 0.5);
+  if (material.x > 0.5 && material.w > 0.5) {
+    base = apply_paint(base, g.paint.xy);
+  }
   // game.js motorcycleMudAmount: MX mud blends linearly by alpha; the ATV2
   // dirt pass reveals heavier-alpha texels first.
   let amount = g.mud.x;
