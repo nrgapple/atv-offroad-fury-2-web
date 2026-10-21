@@ -39,7 +39,7 @@ const PORTRAIT = { width: 390, height: 844 };
 // Rewrites the game's own op 50 batches so each step carries the script's
 // input; once the script is exhausted the next batch is never sent, holding
 // the final state on screen.
-async function scriptedGame(browser, venue, steps, viewport, errors, { measure = false, graphics = 'original', crash = 'original', race = null } = {}) {
+async function scriptedGame(browser, venue, steps, viewport, errors, { measure = false, graphics = 'original', crash = 'original', race = null, quad = 1 } = {}) {
   const page = await newPage(browser, { viewport }, errors);
   await page.addInitScript(({ steps, measure, graphics, crash, race }) => {
     // CPU baseline: animation frames and worker operation time (worker.js
@@ -94,7 +94,7 @@ async function scriptedGame(browser, venue, steps, viewport, errors, { measure =
   }, { steps, measure, graphics, crash, race });
   const session = measure ? await page.context().newCDPSession(page) : null;
   if (session) await session.send('Performance.enable');
-  await page.goto(url(race ? `/play.html?activity=race&map=${venue}&laps=${race.laps}&cpu=${race.cpu}&play=1` : `/play.html?drive=1&environment=${venue}`));
+  await page.goto(url(race ? `/play.html?activity=race&map=${venue}&laps=${race.laps}&cpu=${race.cpu}&play=1` : `/play.html?drive=1&environment=${venue}&quad=${quad}`));
   await waitForGame(page);
   let start;
   if (session) {
@@ -130,12 +130,12 @@ function cost(a, b) {
 // The same script in real time: the JavaScript game (main thread plus its
 // simulation worker), the Rust engine in the browser (one thread) and the
 // native build. GPU process time is excluded everywhere.
-async function cpuBaseline(venue, script, steps, scriptFile) {
+async function cpuBaseline(venue, script, steps, scriptFile, quad = 1) {
   const browser = await launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
   const viewport = { width: 1280, height: 720 };
   try {
     const errors = [];
-    const page = await scriptedGame(browser, venue, steps, viewport, errors, { measure: true });
+    const page = await scriptedGame(browser, venue, steps, viewport, errors, { measure: true, quad });
     const javascript = page.cpu;
     await page.close();
     const rust = await newPage(browser, { viewport }, []);
@@ -146,7 +146,7 @@ async function cpuBaseline(venue, script, steps, scriptFile) {
     });
     const session = await rust.context().newCDPSession(rust);
     await session.send('Performance.enable');
-    await rust.goto(url(`/engine.html?venue=${venue}&autodrive=${encodeURIComponent(JSON.stringify(script))}`));
+    await rust.goto(url(`/engine.html?venue=${venue}&quad=${quad}&autodrive=${encodeURIComponent(JSON.stringify(script))}`));
     await rust.waitForFunction(() => /fps/.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
     await rust.mouse.click(viewport.width / 2, viewport.height / 2);
     const start = await sample(rust, session);
@@ -157,7 +157,7 @@ async function cpuBaseline(venue, script, steps, scriptFile) {
     if (process.env.FURY_BIN) {
       const bench = scriptFile.replace(/\.json$/, '-bench.json');
       const content = process.env.FURY_CONTENT ? ['--content', process.env.FURY_CONTENT] : [];
-      execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--autodrive', scriptFile, '--bench', bench], { stdio: 'inherit' });
+      execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--quad', String(quad), '--autodrive', scriptFile, '--bench', bench], { stdio: 'inherit' });
       native = JSON.parse(await readFile(bench, 'utf8'));
     }
     assertNoErrors(errors);
@@ -203,7 +203,7 @@ function compareTraces(js, rust) {
 }
 
 async function rideMode() {
-  // ride [venue] [script.json] [out-dir] [--graphics original|enhanced|high] [--crash original|crazy|gorn] [--region x0,y0,x1,y1]
+  // ride [venue] [script.json] [out-dir] [--graphics original|enhanced|high] [--crash original|crazy|gorn] [--region x0,y0,x1,y1] [--quad 1-46]
   const args = process.argv.slice(3), at = args.indexOf('--graphics');
   const graphics = at >= 0 ? args.splice(at, 2)[1] : 'original';
   const crashAt = args.indexOf('--crash');
@@ -211,6 +211,9 @@ async function rideMode() {
   // --region x0,y0,x1,y1: an extra landscape box (fractions), e.g. around crash blood.
   const regionAt = args.indexOf('--region');
   const region = regionAt >= 0 ? args.splice(regionAt, 2)[1].split(',').map(Number) : null;
+  // --quad: the Garage selection (27-46 are the motorcycles).
+  const quadAt = args.indexOf('--quad');
+  const quad = quadAt >= 0 ? Number(args.splice(quadAt, 2)[1]) : 1;
   const venue = args[0] || 'env01';
   const script = args[1] ? JSON.parse(await readFile(args[1], 'utf8')) : DEFAULT_SCRIPT;
   const out = path.resolve(args[2] ?? 'private/reports/engine-parity/ride');
@@ -221,12 +224,12 @@ async function rideMode() {
   const normalized = input => input?.keyboard_drive ? { ...input, keyboard_drive: { generation: 0, ...input.keyboard_drive } } : input ?? {};
   const steps = script.flatMap(({ frames, input }) => Array.from({ length: frames }, () => normalized(input)));
   const browser = await launch();
-  const report = { venue, graphics, crash, steps: steps.length };
+  const report = { venue, quad, graphics, crash, steps: steps.length };
   try {
     // Screen boxes around the held quad and rider of the default script.
     for (const [name, viewport, crop] of [['landscape', { width: 1280, height: 720 }, [0.43, 0.37, 0.59, 0.69]], ['portrait', PORTRAIT, [0.33, 0.49, 0.7, 0.7]]]) {
       const errors = [];
-      const page = await scriptedGame(browser, venue, steps, viewport, errors, { graphics, crash });
+      const page = await scriptedGame(browser, venue, steps, viewport, errors, { graphics, crash, quad });
       const jsFile = path.join(out, `${venue}-${name}-javascript.png`);
       report[`javascriptGraphics-${name}`] = await page.evaluate(() => atvTerrainStatus.graphics?.setting);
       report[`javascriptSpeedRush-${name}`] = await page.evaluate(() => atvTerrainStatus.speedRush);
@@ -245,7 +248,7 @@ async function rideMode() {
 
       const rustErrors = [];
       const rust = await newPage(browser, { viewport }, rustErrors);
-      await rust.goto(url(`/engine.html?venue=${venue}&graphics=${graphics}&crash=${crash}&script=${encodeURIComponent(JSON.stringify(script))}`));
+      await rust.goto(url(`/engine.html?venue=${venue}&quad=${quad}&graphics=${graphics}&crash=${crash}&script=${encodeURIComponent(JSON.stringify(script))}`));
       await rust.waitForFunction(() => document.querySelector('#trace') && /fps/.test(document.querySelector('#status').textContent)
         || /fail|error|stopped/i.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
       await rust.waitForTimeout(1000);
@@ -262,21 +265,35 @@ async function rideMode() {
       if (process.env.FURY_BIN) {
         const nativeFile = path.join(out, `${venue}-${name}-rust-native.png`);
         const content = process.env.FURY_CONTENT ? ['--content', process.env.FURY_CONTENT] : [];
-        execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--graphics', graphics, '--crash', crash, '--script', scriptFile, '--capture', nativeFile, `${viewport.width}x${viewport.height}`], { stdio: 'inherit' });
+        execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--quad', String(quad), '--graphics', graphics, '--crash', crash, '--script', scriptFile, '--capture', nativeFile, `${viewport.width}x${viewport.height}`], { stdio: 'inherit' });
         report[`difference-${name}-native`] = await difference(browser, jsFile, nativeFile, crop, box);
       }
+    }
+    // Every step of the Rust browser build (`traceAll`, script from storage).
+    const js = JSON.parse(await readFile(path.join(out, 'javascript-trace.json'), 'utf8'));
+    {
+      const rustErrors = [];
+      const rust = await newPage(browser, { viewport: { width: 640, height: 360 } }, rustErrors);
+      await rust.addInitScript(text => localStorage.setItem('furyScript', text), JSON.stringify(script));
+      await rust.goto(url(`/engine.html?venue=${venue}&quad=${quad}&weather=off&traceAll=1&script=storage`));
+      await rust.waitForFunction(() => document.querySelector('#trace') || /fail|error|stopped/i.test(document.querySelector('#status').textContent), null, { timeout: 180000 });
+      const webTrace = JSON.parse(await rust.locator('#trace').textContent());
+      await writeFile(path.join(out, 'rust-web-trace.json'), JSON.stringify(webTrace));
+      // traceAll records start at step 1; compareTraces expects step 0 first.
+      report.web = compareTraces(js, webTrace[0]?.step === 0 ? webTrace : [null, ...webTrace]);
+      assertNoErrors(rustErrors);
+      await rust.close();
     }
     if (process.env.FURY_BIN) {
       const traceFile = path.join(out, 'rust-native-trace.json');
       const content = process.env.FURY_CONTENT ? ['--content', process.env.FURY_CONTENT] : [];
-      execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--script', scriptFile, '--trace', traceFile], { stdio: 'inherit' });
-      const js = JSON.parse(await readFile(path.join(out, 'javascript-trace.json'), 'utf8'));
+      execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--quad', String(quad), '--script', scriptFile, '--trace', traceFile], { stdio: 'inherit' });
       const native = JSON.parse(await readFile(traceFile, 'utf8'));
       report.native = compareTraces(js, native);
       const final = native.at(-1), web = report.rustWebFinal;
       report.webVersusNative = { origin: Math.hypot(...web.origin.map((v, i) => v - final.origin[i])), step: [web.step, final.step] };
     }
-    report.cpu = await cpuBaseline(venue, script, steps, scriptFile);
+    report.cpu = await cpuBaseline(venue, script, steps, scriptFile, quad);
     await writeFile(path.join(out, 'report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
     console.log(`PASS: wrote ${venue} ride parity to ${out}`);

@@ -38,6 +38,7 @@ impl RunScript for Script {
 pub fn trace(
     content: &std::path::Path,
     venue: &str,
+    selection: atv_game::ride::Selection,
     race: Option<atv_game::ride::race::Settings>,
     script: &Script,
     out: &std::path::Path,
@@ -47,9 +48,15 @@ pub fn trace(
         use atv_content::{Content, Store};
         let content = Content::open(Store::Directory(content.to_path_buf())).await?;
         let started = std::time::Instant::now();
-        let trace =
-            atv_game::ride::script::trace(&content, venue, race, script, autopilot.is_some())
-                .await?;
+        let trace = atv_game::ride::script::trace(
+            &content,
+            venue,
+            selection,
+            race,
+            script,
+            autopilot.is_some(),
+        )
+        .await?;
         let steps = trace.records.len().saturating_sub(1).max(1);
         let elapsed = started.elapsed().as_secs_f64();
         eprintln!(

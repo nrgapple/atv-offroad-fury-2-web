@@ -28,8 +28,8 @@ pub enum Event {
 
 /// localStorage key shared with the browser game.
 pub const SELECTION_KEY: &str = "atv-player-selection";
-/// The Rust engine rides ATVs; motorcycles are not ported yet.
-pub const VEHICLES: u16 = 26;
+/// ATVs 1-26 and motorcycles 27-46 (Freeride).
+pub const VEHICLES: u16 = 46;
 
 /// Rows the Rust engine cannot perform yet are left out of its menus.
 const UNSUPPORTED: [&str; 5] = ["multiplayer", "freeride", "jukebox", "race", "gear"];
@@ -100,8 +100,8 @@ pub struct Frontend {
     pressed: Option<Pressed>,
     pad: u32,
     garage_return: String,
-    /// The vehicle names (ATVs 1-26) from ui_menu's catalog.
-    pub catalog: Vec<(u16, String)>,
+    /// The garage vehicles from ui_menu's catalog.
+    pub catalog: Vec<super::Vehicle>,
     choices: Vec<(String, String)>,
     /// Scroll the current card into view after the next layout.
     reveal: bool,
@@ -196,8 +196,13 @@ impl Frontend {
             self.catalog = frame
                 .catalog
                 .iter()
-                .filter(|c| c.group == "ATV" && c.id <= VEHICLES)
-                .map(|c| (c.id, c.label.clone()))
+                .filter(|c| c.id <= VEHICLES)
+                .map(|c| super::Vehicle {
+                    id: c.id,
+                    label: c.label.clone(),
+                    motorcycle: c.group == "Motorcycle",
+                    class: c.class.clone(),
+                })
                 .collect();
         }
         let label = |action: &str| {
@@ -371,7 +376,8 @@ impl Frontend {
                 self.save(settings);
                 self.refresh(view);
             }
-            "riderchange" => {
+            // Motorcycles carry the MX rider.
+            "riderchange" if self.quad_id < 27 => {
                 self.rider_id = 1 - self.rider_id;
                 self.save(settings);
                 self.refresh(view);
@@ -626,7 +632,7 @@ impl Frontend {
             }
             _ if (VEHICLE..VEHICLE + 100).contains(&id) => {
                 let quad = (id - VEHICLE) as u16;
-                if self.catalog.iter().any(|(q, _)| *q == quad) {
+                if self.catalog.iter().any(|v| v.id == quad) {
                     self.quad_id = quad;
                     self.save(settings);
                     self.refresh(view);
@@ -715,8 +721,8 @@ impl Frontend {
             vehicle_label: self
                 .catalog
                 .iter()
-                .find(|(q, _)| *q == self.quad_id)
-                .map_or(format!("Vehicle {}", self.quad_id), |(_, l)| l.clone()),
+                .find(|v| v.id == self.quad_id)
+                .map_or(format!("Vehicle {}", self.quad_id), |v| v.label.clone()),
             rider: self.rider_id,
             catalog: if self.page == "garage" {
                 self.catalog.clone()
@@ -805,7 +811,7 @@ mod tests {
         let mut settings = Settings::memory();
         settings.set(
             SELECTION_KEY,
-            r#"{"quadId":26,"riderId":1,"playerName":"Sam"}"#,
+            r#"{"quadId":46,"riderId":1,"playerName":"Sam"}"#,
         );
         let mut front = Frontend::new(tracks(), &settings, false);
         assert!(front.choices().iter().all(|(a, _)| a != "devlog"));
@@ -829,6 +835,17 @@ mod tests {
             (Some(1), Some(0))
         );
         assert_eq!(saved["playerName"], "Sam");
+        // Motorcycles keep the MX rider: the switch does nothing.
+        front.key("ArrowLeft", &view, &mut settings);
+        assert_eq!(front.quad_id, 46);
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.rider_id, 0);
+        assert!(
+            front
+                .catalog
+                .iter()
+                .any(|v| v.motorcycle && !v.class.is_empty())
+        );
         front.key("Escape", &view, &mut settings);
         assert_eq!(front.page, "single");
         assert_eq!(front.choices()[front.selection].0, "garage");

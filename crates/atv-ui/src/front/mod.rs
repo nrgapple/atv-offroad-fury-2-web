@@ -80,6 +80,16 @@ pub fn group_label(id: &str) -> &'static str {
         .map_or("", |(_, l)| l)
 }
 
+/// One garage vehicle (ui_menu's catalog): ATVs 1-26, motorcycles 27-46.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Vehicle {
+    pub id: u16,
+    pub label: String,
+    pub motorcycle: bool,
+    /// Motorcycle class, e.g. "250cc Pro".
+    pub class: String,
+}
+
 /// The garage's ATV stats panel (uiQuad.txt meters and the top speed).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stats {
@@ -115,7 +125,7 @@ pub struct Screen {
     /// Garage.
     pub vehicle_label: String,
     pub rider: u16,
-    pub catalog: Vec<(u16, String)>,
+    pub catalog: Vec<Vehicle>,
     pub quad_id: u16,
     pub stats: Option<Stats>,
     /// Loader.
@@ -1293,7 +1303,11 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
         },
         ..Default::default()
     })
-    .child(text("ATV", kind_style, font * 0.62 * 1.1))
+    .child(text(
+        if s.quad_id >= 27 { "BIKE" } else { "ATV" },
+        kind_style,
+        font * 0.62 * 1.1,
+    ))
     .child(text(s.vehicle_label.clone(), name_style, font * 0.92 * 1.1));
     vehicle_row = vehicle_row
         .child(cycle(true, QUAD_PREV, vehicle_selected))
@@ -1340,8 +1354,10 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
         }))
         .radius(5.),
     );
+    // Motorcycles carry the MX rider: the switch dims and shows no choice.
+    let mx = s.quad_id >= 27;
     for (value, name) in [(0u16, "Male"), (1, "Female")] {
-        let on = s.rider == value;
+        let on = s.rider == value && !mx;
         let (fill, color) = match (on, rider_selected) {
             (true, true) => (Some(Fill::Solid(Color::hex("#1b1500"))), "#f6e061"),
             (true, false) => (Some(gold_pill()), "#0d0b00"),
@@ -1369,9 +1385,16 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
             }),
         );
     }
+    if mx {
+        switch = switch.opacity(0.4);
+    }
     rider_row = rider_row
         .child(bullet_slot(rider_selected))
-        .child(text("Rider", label_style, font * 1.1))
+        .child(text(
+            if mx { "MX rider" } else { "Rider" },
+            label_style,
+            font * 1.1,
+        ))
         .child(switch.id(RIDER));
     rows = rows.child(rider_row);
     left = left.child(rows);
@@ -1389,43 +1412,52 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
     let mut list = El::new(list_style).id(LIST).scroll(s.list_scroll);
     list.paint.border = [1., 0., 0., 0.];
     list.paint.border_color = Color::hex("#ffffff26");
-    let mut group = El::new(column(2.)).child(
-        El::new(Style {
-            padding: sides(4., 14., 4., 14.),
-            flex_shrink: 0.,
-            ..Default::default()
-        })
-        .content(Content::Text {
-            text: "ATVS".into(),
-            style: TextStyle::new(display(13., 700, false), Color::hex("#f1d84e"))
-                .spacing(13. * 0.16)
-                .shadow(0., 1., 2., Color::BLACK),
-            line_height: 15.6,
-            wrap: false,
-        }),
-    );
-    group.style.flex_shrink = 0.;
     let item_size = clamp(16., m.w * 0.016, 19.);
-    for (id, label) in &s.catalog {
-        let selected = *id == s.quad_id;
-        let hovered = s.hovered == Some(VEHICLE + u32::from(*id)) && !selected;
-        let mut paint = Paint::default().radius(5.);
-        if selected {
-            paint.fill = Some(Color::hex("#0000006b").into());
-            paint = paint.shadow(BoxShadow::inset(4., 0., 0., Color::hex("#f1d84e")));
-        } else if hovered {
-            paint.fill = Some(Color::hex("#ffffff14").into());
+    for (motorcycles, heading) in [(false, "ATVS"), (true, "MOTORCYCLES")] {
+        let vehicles: Vec<&Vehicle> = s
+            .catalog
+            .iter()
+            .filter(|v| v.motorcycle == motorcycles)
+            .collect();
+        if vehicles.is_empty() {
+            continue;
         }
-        let mut item = row(12.);
-        item.min_size.height = length(if m.short { 44. } else { 46. });
-        item.padding = sides(0., 14., 0., 14.);
-        item.flex_shrink = 0.;
-        group = group.child(
-            El::new(item)
+        let mut group = El::new(column(2.)).child(
+            El::new(Style {
+                padding: sides(4., 14., 4., 14.),
+                flex_shrink: 0.,
+                ..Default::default()
+            })
+            .content(Content::Text {
+                text: heading.into(),
+                style: TextStyle::new(display(13., 700, false), Color::hex("#f1d84e"))
+                    .spacing(13. * 0.16)
+                    .shadow(0., 1., 2., Color::BLACK),
+                line_height: 15.6,
+                wrap: false,
+            }),
+        );
+        group.style.flex_shrink = 0.;
+        for vehicle in vehicles {
+            let id = vehicle.id;
+            let selected = id == s.quad_id;
+            let hovered = s.hovered == Some(VEHICLE + u32::from(id)) && !selected;
+            let mut paint = Paint::default().radius(5.);
+            if selected {
+                paint.fill = Some(Color::hex("#0000006b").into());
+                paint = paint.shadow(BoxShadow::inset(4., 0., 0., Color::hex("#f1d84e")));
+            } else if hovered {
+                paint.fill = Some(Color::hex("#ffffff14").into());
+            }
+            let mut item = row(12.);
+            item.min_size.height = length(if m.short { 44. } else { 46. });
+            item.padding = sides(0., 14., 0., 14.);
+            item.flex_shrink = 0.;
+            let mut el = El::new(item)
                 .paint(paint)
-                .id(VEHICLE + u32::from(*id))
+                .id(VEHICLE + u32::from(id))
                 .child(text(
-                    label.as_str(),
+                    vehicle.label.as_str(),
                     TextStyle::new(
                         display(item_size, 700, false),
                         Color::hex(if selected { "#f6e061" } else { "#e2e2e2" }),
@@ -1433,10 +1465,33 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
                     .spacing(item_size * 0.02)
                     .shadow(1., 2., 0., Color::hex("#000b")),
                     item_size * 1.1,
-                )),
-        );
+                ));
+            if !vehicle.class.is_empty() {
+                // `.ms-vehicle small`: the class at the right.
+                el = el.child(
+                    El::new(Style {
+                        margin: taffy::Rect {
+                            left: LengthPercentageAuto::auto(),
+                            right: LengthPercentageAuto::length(0.),
+                            top: LengthPercentageAuto::length(0.),
+                            bottom: LengthPercentageAuto::length(0.),
+                        },
+                        flex_shrink: 0.,
+                        ..Default::default()
+                    })
+                    .content(Content::Text {
+                        text: vehicle.class.clone(),
+                        style: TextStyle::new(display(12., 700, false), Color::hex("#e3c74a"))
+                            .spacing(0.96),
+                        line_height: 12.,
+                        wrap: false,
+                    }),
+                );
+            }
+            group = group.child(el);
+        }
+        list = list.child(group);
     }
-    list = list.child(group);
     left = left.child(list);
     // Done (the garage's Back), under the list.
     let done_size = if m.short { 18. } else { 22. };

@@ -84,19 +84,32 @@ pub fn controls(input: &Value) -> Controls {
             .get("input_generation")
             .and_then(Value::as_u64)
             .unwrap_or(0),
+        clutch: input
+            .get("clutch")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     }
 }
 
 pub fn record(ride: &Ride, step: u64) -> Value {
     let frame = ride.frame();
+    // A motorcycle records its own two wheels (front, rear), as atv-web does.
+    fn wheels<T: Into<Value> + Copy>(bike: bool, v: [T; 4]) -> Value {
+        if bike {
+            json!([v[0].into(), v[2].into()])
+        } else {
+            Value::Array(v.map(Into::into).to_vec())
+        }
+    }
+    let bike = ride.is_motorcycle();
     let (camera, mode) = ride.camera();
     json!({
         "step": step,
         "origin": frame.origin,
         "orientation": frame.orientation,
         "speed": frame.speed,
-        "wheel_compression": frame.wheel_compression,
-        "grounded": frame.grounded,
+        "wheel_compression": wheels(bike, frame.wheel_compression),
+        "grounded": wheels(bike, frame.grounded),
         "phase": format!("{:?}", frame.wreck.phase),
         "reset_count": frame.reset_count,
         "camera": {"position": camera.position, "target": camera.target, "fov": camera.fov,
@@ -123,6 +136,7 @@ pub struct Trace {
 pub async fn trace(
     content: &Content,
     venue: &str,
+    selection: super::Selection,
     race: Option<super::race::Settings>,
     script: &Script,
     autopilot: bool,
@@ -133,7 +147,15 @@ pub async fn trace(
         ..Default::default()
     };
     let venue = crate::venue::load_with(content, venue, race.is_some(), options).await?;
-    let mut ride = super::load_with(content, &venue, 1, 0, race, |_| {}).await?;
+    let mut ride = super::load_with(
+        content,
+        &venue,
+        selection.quad,
+        selection.rider,
+        race,
+        |_| {},
+    )
+    .await?;
     if autopilot && let Some(state) = ride.race_mut() {
         state.autopilot_always = true;
     }

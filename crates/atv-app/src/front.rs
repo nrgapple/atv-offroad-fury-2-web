@@ -512,7 +512,8 @@ impl Front {
         }
         // Garage stats: uiQuad.txt meters, maker logo and top speed.
         let mut stats = None;
-        if page == "garage" {
+        // Motorcycles have no uiQuad.txt stats.
+        if page == "garage" && self.state.quad_id < 27 {
             let quad = self.state.quad_id;
             let info = self
                 .art

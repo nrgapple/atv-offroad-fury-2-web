@@ -262,8 +262,9 @@ option now open the engine's own frontend (`atv_ui::front`, app glue in
   venues from `tracks.dat` via `unlockedCourses`, event tabs with counts, photo
   list with the original TP photo halves joined and trimmed, framed hero with
   arrows and Ride, the course photo as greyed, red-multiplied backdrop), Select
-  ATV & Rider (vehicle row with arrows, Male/Female switch, the ATV list, Done,
-  uiQuad.txt meters, maker logo and authored top speed) and the course loader
+  ATV & Rider (vehicle row with arrows, Male/Female switch, the ATV and
+  motorcycle lists with classes, Done, uiQuad.txt meters, maker logo and
+  authored top speed; motorcycles carry the MX rider and ride in Freeride) and the course loader
   (LOADICON action shots crossfading every 2.5 s, Track pill, an original etips
   riding tip and the gold bar advancing with the real load stages).
   Settings from the main menu opens the shared pause-menu pages full screen
@@ -284,8 +285,8 @@ option now open the engine's own frontend (`atv_ui::front`, app glue in
   tests mirroring launch.test.mjs): ride links (`map`/`environment`,
   `quad`/`vehicle`/`atv`, `rider`, `player`, `play`/`drive`, race `laps`, `cpu`,
   `difficulty`, `cheats` validation) start their ride through the loader and
-  become the saved selection; setup-only links open Select Track; `?menu=`
-  shortcuts open their menu; invalid, multiplayer and motorcycle links open the
+  become the saved selection (ATVs and motorcycles); setup-only links open Select Track; `?menu=`
+  shortcuts open their menu; invalid, multiplayer and motorcycle-race links open the
   main menu with the reason on the status line. `?venue=` still rides at once
   (engine tests and parity tools); `?front=PAGE` / `fury --front PAGE` open a
   page directly, and `fury --front PAGE --capture OUT.png WxH` captures it.
@@ -306,8 +307,8 @@ content, Chromium, DPR 1; images in private/reports/rust-ui/front/side-*.png):
 The main, single and garage differences are the missing 3D quad and rider
 previews (their left columns are 1.8-5.3 / 1.0-8.4, the latter from the hidden
 rows). Hidden because the Rust engine cannot run them yet: Multiplayer, Arlington
-Free Ride, Jukebox, Race setup, Rider gear and Alpha; motorcycles are left out
-of the garage. Not yet drawn: the 3D model previews, the Free Ride rider count,
+Free Ride, Jukebox, Race setup, Rider gear and Alpha. Race links on a motorcycle
+open the main menu with the reason, as motorcycle races are not ported. Not yet drawn: the 3D model previews, the Free Ride rider count,
 backdrop-filter blur on the photo arrows, the menu notice line and the training
 venue's photo (a devlog image in the browser). The loader shows one frame per
 load stage (the ride load owns the GPU meanwhile), so the shot crossfade only
@@ -317,7 +318,7 @@ CPU (host Chromium, prepare = artwork + layout + upload; the page sleeps when
 idle): title 0.2 ms/frame while Press Start pulses; garage 0.9 ms per input;
 Select Track 4.3-6.5 ms when the course changes (the new course's blurred
 backdrop and graded hero are filtered on the CPU, then kept for the last six
-courses), 0.3 ms otherwise. Wasm grows from 5.21 to 5.50 MB (current main).
+courses), 0.3 ms otherwise. Wasm grows from 5.21 to 5.50 MB (against main at 9f23629).
 Tests: `tools/test_engine_front.mjs` (title → main → Settings → Single → garage
 persistence → tabs and card click → loader → ride → Quit to Main Menu, and a ride
 link on a phone viewport); atv-ui controller, layout, logo and pixel unit tests;

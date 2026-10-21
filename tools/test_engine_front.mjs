@@ -67,12 +67,13 @@ try {
   assertNoErrors(errors, 'frontend');
   await page.close();
 
-  // A ride link starts its ride with the link's ATV and rider (launch.js).
+  // A ride link starts its ride with the link's vehicle (a motorcycle here).
   const link = await newPage(browser, { viewport: { width: 390, height: 844 } }, []);
-  await link.goto(url('/engine.html?map=env03&quad=4&rider=female&uiDiagnostics=1'));
+  await link.goto(url('/engine.html?map=env03&quad=29&uiDiagnostics=1'));
   await wait(link, () => (document.querySelector('#status')?.textContent ?? '').startsWith('ENV03'), null, 180000);
   const linked = JSON.parse(await link.evaluate(() => localStorage.getItem('atv-player-selection')));
   assert.equal(linked.freestyleEnvironment, 'env03');
+  assert.equal(linked.quadId, 29);
   await link.close();
   console.log('Rust frontend: navigation, garage persistence, course select, ride and quit, ride links');
 } finally {

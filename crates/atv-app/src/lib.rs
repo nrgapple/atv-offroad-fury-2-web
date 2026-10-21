@@ -44,6 +44,8 @@ pub struct Options {
     pub capture_ui: bool,
     /// Ride the player's quad (default); false keeps the free camera.
     pub ride: bool,
+    /// The Garage choice: ATV or motorcycle and rider.
+    pub selection: atv_game::ride::Selection,
     /// Race on the venue's National/Supercross course (with `ride`; a free
     /// camera views the race-course world and its pre-race shots).
     pub race: Option<atv_game::ride::race::Settings>,
@@ -59,9 +61,6 @@ pub struct Options {
     /// Native: write the autodrive CPU report here and exit when it ends.
     #[cfg(not(target_arch = "wasm32"))]
     pub bench: Option<std::path::PathBuf>,
-    /// Garage selection for a direct ride (quad 1-26, rider 0 male / 1 female).
-    pub quad: u16,
-    pub rider: u16,
     /// Open the engine's frontend (title and menus) instead of riding at
     /// once; the frontend then reads this launch link (launch.js contract).
     pub front: Option<FrontStart>,
@@ -201,6 +200,7 @@ struct Meter {
 
 /// Load-time choices for the venue presentation and the ride.
 struct World {
+    selection: atv_game::ride::Selection,
     race: Option<atv_game::ride::race::Settings>,
     weather: Option<bool>,
     steps: Option<u64>,
@@ -210,8 +210,6 @@ struct World {
     script: Option<replay::Script>,
     sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
     autodrive: Option<replay::Script>,
-    quad: u16,
-    rider: u16,
 }
 
 /// A loading progress line (status bar, and the frontend's loader).
@@ -243,6 +241,7 @@ async fn prepare(
     mut progress: Progress,
 ) -> Result<Ready, String> {
     let World {
+        selection,
         race,
         weather,
         steps,
@@ -252,8 +251,6 @@ async fn prepare(
         script,
         sound,
         autodrive,
-        quad,
-        rider,
     } = world;
     progress(
         &gpu,
@@ -319,9 +316,14 @@ async fn prepare(
     );
     let mut pending_sound = None;
     let riding = if ride {
-        let ride = atv_game::ride::load_with(&content, &venue, quad, rider, race, |text| {
-            progress(&gpu, text)
-        })
+        let ride = atv_game::ride::load_with(
+            &content,
+            &venue,
+            selection.quad,
+            selection.rider,
+            race,
+            |text| progress(&gpu, text),
+        )
         .await?;
         let mut ride = ride;
         scene.set_ride(&gpu, &venue, &ride.quad, &ride.rider)?;
@@ -336,8 +338,12 @@ async fn prepare(
         {
             state.autopilot_always = true;
         }
-        // startSimulation's first frame (op 23) primes the wheel effects.
-        if let Some(mut effects) = atv_game::wheel_effects::load(&content, &venue, 1).await? {
+        // startSimulation's first frame (op 23) primes the wheel effects
+        // (ATVs; motorcycle particles are their own).
+        if !riding.ride.is_motorcycle()
+            && let Some(mut effects) =
+                atv_game::wheel_effects::load(&content, &venue, selection.quad).await?
+        {
             effects.set_lingering_dust(usize::from(graphics.dust), &venue);
             effects.set_tire_tracks(
                 usize::from(graphics.tire_tracks.0),
@@ -1212,6 +1218,7 @@ impl ApplicationHandler<Message> for App {
         let store = options.store;
         let (environment, fixed) = (options.venue, options.camera);
         let world = World {
+            selection: options.selection,
             race: options.race,
             weather: options.weather,
             steps: options.steps,
@@ -1221,8 +1228,6 @@ impl ApplicationHandler<Message> for App {
             script: options.script,
             sound: options.sound,
             autodrive: options.autodrive,
-            quad: options.quad,
-            rider: options.rider,
         };
         let future = async move {
             let gpu = open_gpu(window, display).await?;
@@ -1712,8 +1717,8 @@ impl App {
         if setup.mode == "multiplayer" {
             errors.push("Multiplayer is not available in the Rust engine yet.".into());
         }
-        if setup.quad_id > atv_ui::front::controller::VEHICLES {
-            errors.push("Motorcycles are not ported to the Rust engine yet.".into());
+        if setup.activity == "race" && setup.quad_id >= 27 {
+            errors.push("Races on a motorcycle are not ported to the Rust engine yet.".into());
         }
         if !errors.is_empty() {
             f.state.show("main", &view);
@@ -1838,8 +1843,7 @@ impl App {
             script: None,
             sound,
             autodrive: None,
-            quad,
-            rider,
+            selection: atv_game::ride::Selection { quad, rider },
         };
         let future = prepare(gpu, content, environment, None, world, progress);
         self.spawn(future, |result| match result {
@@ -1880,8 +1884,10 @@ impl App {
             publish_ui_state(&serde_json::json!({ "front": f.diagnostics() }).to_string());
         }
         // The garage shows the authored top speed of the current ATV.
-        let wanted = (f.state.page == "garage" && !f.art.top_speed.contains_key(&f.state.quad_id))
-            .then_some(f.state.quad_id);
+        let wanted = (f.state.page == "garage"
+            && f.state.quad_id < 27
+            && !f.art.top_speed.contains_key(&f.state.quad_id))
+        .then_some(f.state.quad_id);
         drop(f);
         if let (Some(quad), Some(content)) = (wanted, self.content.clone())
             && self.requested.insert(format!("speed:{quad}"))
@@ -2238,10 +2244,7 @@ pub fn start() {
         .clone()
         .filter(|id| atv_game::launch::environments().contains(id))
         .unwrap_or_else(|| "env01".into());
-    let number = |key: &str| param(key).and_then(|v| v.parse::<u16>().ok());
     run(Options {
-        quad: number("quad").filter(|q| (1..=26).contains(q)).unwrap_or(1),
-        rider: number("rider").filter(|r| *r <= 1).unwrap_or(0),
         front: direct.is_none().then(|| FrontStart {
             search: search.clone(),
             page: param("front"),
@@ -2264,6 +2267,14 @@ pub fn start() {
             .and_then(|v| atv_game::crash::CrashMode::parse(&v))
             .unwrap_or_default(),
         ride: param("free").is_none(),
+        selection: {
+            let number = |key: &str| param(key).and_then(|v| v.parse::<u16>().ok());
+            let defaults = atv_game::ride::Selection::default();
+            atv_game::ride::Selection {
+                quad: number("quad").unwrap_or(defaults.quad),
+                rider: number("rider").unwrap_or(defaults.rider),
+            }
+        },
         ui_backdrop: param("uibackdrop").and_then(|hex| {
             let v = u32::from_str_radix(&hex, 16).ok()?;
             (hex.len() == 6).then_some([(v >> 16) as u8, (v >> 8) as u8, v as u8])
