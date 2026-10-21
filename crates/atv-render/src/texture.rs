@@ -2,6 +2,18 @@
 //! generateMipmap produces, and the browser's sampler states.
 use crate::Gpu;
 
+/// Layer count for a texture the GL backend must create as TEXTURE_2D_ARRAY:
+/// it infers a cube (array) from a multiple of six layers, which WebGL then
+/// rejects for 2D-array views (ENV04 has 102 terrain layers). One unused
+/// layer avoids the guess. Single-layer textures stay 2D.
+pub fn array_layers(layers: u32) -> u32 {
+    if layers > 1 && layers.is_multiple_of(6) {
+        layers + 1
+    } else {
+        layers
+    }
+}
+
 pub fn mip_levels(width: u32, height: u32) -> u32 {
     32 - width.max(height).leading_zeros()
 }
@@ -94,4 +106,15 @@ pub fn sampler(gpu: &Gpu, repeat: bool, anisotropy: u16) -> wgpu::Sampler {
         anisotropy_clamp: anisotropy.max(1),
         ..Default::default()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn array_layers_never_look_like_cube_maps() {
+        assert_eq!(super::array_layers(1), 1);
+        assert_eq!(super::array_layers(6), 7);
+        assert_eq!(super::array_layers(102), 103);
+        assert_eq!(super::array_layers(34), 34);
+    }
 }

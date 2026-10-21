@@ -93,7 +93,28 @@ heaviest at 282 draws. Each scenery draw rebinds static uniform slots by dynamic
 (no per-draw uniform uploads); vegetation is one instanced draw per material queue.
 `atv_app_bg.wasm` is 4.92 MB raw, 0.93 MB brotli (+0.06 MB). Phones are not measured yet.
 
-Limitations: water, the ENV08 train, weather drawing and ambient effects are not ported;
+Water and train (second checkpoint):
+
+- Water (`atv-game/water.rs`, `atv-render/water.rs` + `water.wgsl`): the WTT live
+  height field (`water_animation::LiveField`, advanced and render-prepared once per 60 Hz
+  step), height/derivative atlases and environment map from `water_render`, drawn as the
+  viewport-sized projected grid of `water.js` (00190aa0 strip/row counts), with the
+  Enhanced/High Fresnel behind `Graphics::fresnel`. Parity: NAT01 start 0.06 (was 0.39),
+  NAT01 overview 0.15, ENV05 0.04, ENV07 0.12, FREE04 0.13, ENV04 0.02 (native).
+- ENV08 train (`atv-game/train.rs`, `atv-render/train.rs` + `train.wgsl`): the
+  `atv_core::train` runtime (route/MOT, 0011c840) stepped at 60 Hz, cars posed by their
+  bind nodes and the locomotive wheels by the Rust wheel matrices. Two views beside the
+  train: 2.19 and 1.04, all of it the locomotive smoke (an ambient effect, not yet ported).
+- The GL backend creates a cube map for any texture whose layer count is a multiple of
+  six, which WebGL then rejects for 2D-array views: ENV04's 102 terrain layers rendered
+  garbage in the browser. Such arrays now get one unused layer (`texture::array_layers`).
+- The live water field and train runtime are `Rc<RefCell<..>>` on `Venue`, so the
+  physics step can share them. Until the ride loop steps them, `SceneRenderer::advance`
+  does, and the train is stepped without collision heights (`step`, not
+  `step_with_scene`). `atv_app_bg.wasm`: 5.06 MB raw, 0.96 MB brotli.
+
+Limitations: weather drawing and ambient effects are not ported; the browser draws
+vehicles between vegetation and water, so the ride pass must slot in before water;
 camera flashes stay hidden until the stadium crowd simulation drives them; reverse-
 looping crowd ATMs keep their first frame (as in the browser); anisotropy is applied at
 load only.

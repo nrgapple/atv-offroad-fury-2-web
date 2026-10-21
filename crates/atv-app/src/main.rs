@@ -11,7 +11,7 @@ fn main() {
     let mut capture = None;
     let mut camera = None;
     let mut weather = None;
-    let mut steps = 0;
+    let mut steps = None;
     let mut graphics = atv_render::Graphics::default();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -30,10 +30,11 @@ fn main() {
                 )
             }
             "--steps" => {
-                steps = args
-                    .next()
-                    .and_then(|v| v.parse().ok())
-                    .expect("--steps needs a count")
+                steps = Some(
+                    args.next()
+                        .and_then(|v| v.parse().ok())
+                        .expect("--steps needs a count"),
+                )
             }
             "--graphics" => graphics = atv_app::graphics_preset(&args.next().unwrap_or_default()),
             "--capture" => {

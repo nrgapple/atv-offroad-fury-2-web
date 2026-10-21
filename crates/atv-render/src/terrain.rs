@@ -324,7 +324,7 @@ fn upload_layers(gpu: &Gpu, images: &[Image]) -> wgpu::Texture {
         size: wgpu::Extent3d {
             width,
             height,
-            depth_or_array_layers: images.len() as u32,
+            depth_or_array_layers: crate::texture::array_layers(images.len() as u32),
         },
         mip_level_count: levels,
         sample_count: 1,

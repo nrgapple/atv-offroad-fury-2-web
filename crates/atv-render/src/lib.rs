@@ -6,7 +6,9 @@ mod scenery;
 mod sky;
 mod terrain;
 mod texture;
+mod train;
 mod vegetation;
+mod water;
 mod world;
 
 use atv_game::venue::Venue;
@@ -155,17 +157,26 @@ pub struct FrameStats {
     pub vegetation_draws: u32,
     pub vegetation_triangles: u32,
     pub vegetation_visible: u32,
+    pub water_draws: u32,
+    pub train_draws: u32,
+    pub train_triangles: u32,
 }
 
 impl FrameStats {
     pub fn draws(&self) -> u32 {
-        self.terrain_draws + self.sky_tiles + self.scenery_draws + self.vegetation_draws
+        self.terrain_draws
+            + self.sky_tiles
+            + self.scenery_draws
+            + self.vegetation_draws
+            + self.water_draws
+            + self.train_draws
     }
     pub fn triangles(&self) -> u32 {
         self.terrain_triangles
             + self.sky_tiles * 2
             + self.scenery_triangles
             + self.vegetation_triangles
+            + self.train_triangles
     }
 }
 
@@ -176,6 +187,8 @@ impl FrameStats {
 pub struct Graphics {
     pub sky_smooth: bool,
     pub anisotropy: u16,
+    /// Authored Schlick Fresnel on the water surface.
+    pub fresnel: bool,
 }
 
 pub struct SceneRenderer {
@@ -184,6 +197,14 @@ pub struct SceneRenderer {
     sky: Option<sky::SkyPass>,
     scenery: scenery::SceneryPass,
     vegetation: Option<vegetation::VegetationPass>,
+    train: Option<(
+        train::TrainPass,
+        std::rc::Rc<std::cell::RefCell<atv_game::train::Train>>,
+    )>,
+    water: Option<(
+        water::WaterPass,
+        std::rc::Rc<std::cell::RefCell<atv_game::water::Water>>,
+    )>,
     fog_color: [f32; 3],
     far: f32,
     /// Depth range: fog end plus the largest object, so an admitted stadium
@@ -221,6 +242,25 @@ impl SceneRenderer {
             .vegetation
             .as_ref()
             .map(|v| vegetation::VegetationPass::new(gpu, &world, v, graphics.anisotropy));
+        let water = venue.water.as_ref().and_then(|shared| {
+            match water::WaterPass::new(gpu, &world, &shared.borrow(), graphics.fresnel) {
+                Ok(pass) => Some((pass, shared.clone())),
+                Err(error) => {
+                    // The browser reports and skips an unsupported surface.
+                    eprintln!("water: {error}");
+                    None
+                }
+            }
+        });
+        let train = venue.train.as_ref().and_then(|shared| {
+            match train::TrainPass::new(gpu, &world, &shared.borrow()) {
+                Ok(pass) => Some((pass, shared.clone())),
+                Err(error) => {
+                    eprintln!("train: {error}");
+                    None
+                }
+            }
+        });
         let depth_far = far + scenery.reach.max(terrain.reach()) + 1.;
         Self {
             terrain,
@@ -228,6 +268,8 @@ impl SceneRenderer {
             sky,
             scenery,
             vegetation,
+            train,
+            water,
             fog_color,
             far,
             depth_far,
@@ -241,14 +283,39 @@ impl SceneRenderer {
         self.clock = (self.clock + seconds.clamp(0., 0.1)).min(4. / 60.);
         while self.clock >= 1. / 60. {
             self.clock -= 1. / 60.;
-            self.scenery.step();
+            self.step_world();
+        }
+    }
+
+    /// One simulation step of the world clocks: scenery animation and the
+    /// live water field (which physics will share).
+    fn step_world(&mut self) {
+        self.scenery.step();
+        if let Some((_, shared)) = &self.train {
+            // Presentation-only clock; physics installs the train collision
+            // heights (step_with_scene) once the ride shares this runtime.
+            if shared
+                .borrow_mut()
+                .runtime
+                .step(1. / 60., |_| Ok(None))
+                .is_err()
+            {
+                self.train = None;
+            }
+        }
+        if let Some((pass, shared)) = &mut self.water {
+            let mut water = shared.borrow_mut();
+            if water.step().and_then(|_| pass.accept(&water)).is_err() {
+                drop(water);
+                self.water = None;
+            }
         }
     }
 
     /// Advances world animation by exact simulation steps (parity captures).
     pub fn advance_steps(&mut self, steps: u64) {
         for _ in 0..steps {
-            self.scenery.step();
+            self.step_world();
         }
     }
 
@@ -289,7 +356,7 @@ impl SceneRenderer {
         let (encoder, stats) = self.encode(
             gpu,
             view,
-            gpu.aspect(),
+            (gpu.config.width, gpu.config.height),
             &target,
             gpu.msaa.as_ref(),
             &gpu.depth,
@@ -303,11 +370,12 @@ impl SceneRenderer {
         &mut self,
         gpu: &Gpu,
         view: &View,
-        aspect: f32,
+        size: (u32, u32),
         target: &wgpu::TextureView,
         msaa: Option<&wgpu::TextureView>,
         depth: &wgpu::TextureView,
     ) -> (wgpu::CommandEncoder, FrameStats) {
+        let aspect = size.0 as f32 / size.1 as f32;
         // 0012b360 applies the active fog end to the far clipping plane.
         // Whole objects are culled there; depth extends by the largest object.
         let view_projection =
@@ -328,11 +396,25 @@ impl SceneRenderer {
         stats.scenery_draws = scenery.draws;
         stats.scenery_triangles = scenery.triangles;
         stats.scenery_culled = scenery.culled;
+        if let Some((pass, shared)) = &mut self.train {
+            (stats.train_draws, stats.train_triangles) = pass.prepare(gpu, &shared.borrow());
+        }
         if let Some(vegetation) = &mut self.vegetation {
             let v = vegetation.prepare(gpu, eye, view.camera.yaw);
             stats.vegetation_draws = v.draws;
             stats.vegetation_triangles = v.triangles;
             stats.vegetation_visible = v.visible;
+        }
+        if let Some((water, _)) = &mut self.water {
+            water.prepare(
+                gpu,
+                &view_projection,
+                &view.camera,
+                view.focal_length,
+                size,
+                self.far,
+            );
+            stats.water_draws = 1;
         }
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         {
@@ -367,8 +449,15 @@ impl SceneRenderer {
             }
             self.terrain.draw(&mut pass);
             self.scenery.draw(&mut pass, &self.world);
+            if let Some((train, _)) = &self.train {
+                train.draw(&mut pass, &self.world);
+            }
             if let Some(vegetation) = &self.vegetation {
                 vegetation.draw(&mut pass, &self.world);
+            }
+            // The browser draws vehicles here, then water.
+            if let Some((water, _)) = &self.water {
+                water.draw(&mut pass);
             }
         }
         (encoder, stats)
@@ -405,14 +494,8 @@ impl SceneRenderer {
             view_formats: &[],
         });
         let target = texture.create_view(&Default::default());
-        let (mut encoder, _) = self.encode(
-            gpu,
-            view,
-            width as f32 / height as f32,
-            &target,
-            msaa.as_ref(),
-            &depth,
-        );
+        let (mut encoder, _) =
+            self.encode(gpu, view, (width, height), &target, msaa.as_ref(), &depth);
         let row = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {

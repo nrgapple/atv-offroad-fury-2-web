@@ -54,6 +54,10 @@ pub struct Venue {
     pub sky: Option<Sky>,
     pub scenery: Scenery,
     pub vegetation: Option<Vegetation>,
+    /// Shared live field: the renderer and physics read the same surface.
+    pub water: Option<std::rc::Rc<std::cell::RefCell<crate::water::Water>>>,
+    /// ENV08's train, shared like the water field (physics collides with it).
+    pub train: Option<std::rc::Rc<std::cell::RefCell<crate::train::Train>>>,
     /// Source Weather selection for this load (00208cc0).
     pub weather: Option<atv_core::weather::Selection>,
 }
@@ -99,9 +103,8 @@ pub async fn load_with(
         )
     };
     let scene_text = extract(&format!("{}.scn", course.scene_stem), "start position")?;
-    let mode = member_named(&archive, &format!("{}.toy", course.mode_stem))
-        .map(|i| archive.extract(i))
-        .transpose()?;
+    let mode_index = member_named(&archive, &format!("{}.toy", course.mode_stem));
+    let mode = mode_index.map(|i| archive.extract(i)).transpose()?;
     let mut scene = atv_core::scene::parse_with_start(&scene_text, mode.as_deref())?;
     // 00208cc0 reads [Weather] from the common/mode TOYs; an inactive
     // weather removes its model from the scene.
@@ -218,11 +221,21 @@ pub async fn load_with(
     )?);
     let scenery = crate::scenery::load(&archive, &scene)?;
     let vegetation = crate::vegetation::load(&archive, environment, &scene, &ground)?;
+    let water = crate::water::load(&archive, &scene)?
+        .map(|water| std::rc::Rc::new(std::cell::RefCell::new(water)));
+    let train = if environment == "env08" {
+        crate::train::load(&archive, mode_index)?
+            .map(|train| std::rc::Rc::new(std::cell::RefCell::new(train)))
+    } else {
+        None
+    };
     Ok(Venue {
         environment: environment.to_string(),
         sky,
         scenery,
         vegetation,
+        water,
+        train,
         weather,
         scene,
         terrain: Terrain {

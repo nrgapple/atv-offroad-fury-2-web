@@ -20,8 +20,9 @@ pub struct Options {
     pub camera: Option<[f32; 6]>,
     /// Forced Weather outcome (parity captures); random per load otherwise.
     pub weather: Option<bool>,
-    /// Scenery clock steps to run before the first frame (parity captures).
-    pub steps: u64,
+    /// World clock steps to run before the first frame, then hold the clocks
+    /// (parity captures against a paused JavaScript frame).
+    pub steps: Option<u64>,
     pub graphics: Graphics,
     /// Native parity capture: render once at this size, write PNG and exit.
     #[cfg(not(target_arch = "wasm32"))]
@@ -34,6 +35,8 @@ struct Ready {
     scene: SceneRenderer,
     camera: Camera,
     focal_length: f32,
+    /// World clocks held at the requested steps (parity captures).
+    hold: bool,
 }
 
 enum Message {
@@ -69,7 +72,7 @@ async fn prepare(
     store: Store,
     environment: String,
     fixed: Option<[f32; 6]>,
-    world: (Option<bool>, u64, Graphics),
+    world: (Option<bool>, Option<u64>, Graphics),
 ) -> Result<Ready, String> {
     let (weather, steps, graphics) = world;
     let size = window.inner_size();
@@ -133,13 +136,16 @@ async fn prepare(
     // The browser centres the fine terrain patch on the rider at the start.
     let mut scene =
         SceneRenderer::with_graphics(&gpu, &venue, Some([start[0], start[2]]), graphics);
-    scene.advance_steps(steps);
+    if let Some(steps) = steps {
+        scene.advance_steps(steps);
+    }
     Ok(Ready {
         gpu,
         venue,
         scene,
         camera,
         focal_length,
+        hold: steps.is_some(),
     })
 }
 
@@ -182,7 +188,9 @@ impl App {
         c.z += (axes.forward[2] * forward - axes.right[2] * strafe) * speed;
         c.y = c.y.max(ground(&ready.venue, c.x, c.z) + 1.5);
         let started = Instant::now();
-        ready.scene.advance(dt);
+        if !ready.hold {
+            ready.scene.advance(dt);
+        }
         match ready.scene.render(
             &ready.gpu,
             &View {
@@ -385,10 +393,12 @@ pub fn graphics_preset(name: &str) -> Graphics {
         "high" => Graphics {
             sky_smooth: true,
             anisotropy: 16,
+            fresnel: true,
         },
         "enhanced" => Graphics {
             sky_smooth: true,
             anisotropy: 4,
+            fresnel: true,
         },
         _ => Graphics::default(),
     }
@@ -459,7 +469,7 @@ pub fn start() {
         venue,
         camera: param("camera").and_then(|text| parse_camera(&text)),
         weather: param("weather").and_then(|v| parse_switch(&v)),
-        steps: param("steps").and_then(|v| v.parse().ok()).unwrap_or(0),
+        steps: param("steps").and_then(|v| v.parse().ok()),
         graphics: param("graphics").map_or_else(Graphics::default, |v| graphics_preset(&v)),
     });
 }

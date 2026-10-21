@@ -7,7 +7,9 @@ pub mod materials;
 pub mod scenery;
 pub mod sky;
 pub mod terrain_mesh;
+pub mod train;
 pub mod vegetation;
 pub mod venue;
+pub mod water;
 
 pub type Result<T> = std::result::Result<T, String>;
