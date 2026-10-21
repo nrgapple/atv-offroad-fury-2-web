@@ -1,0 +1,17 @@
+{
+  "id": "rust-preview-recovers-shared-audio-and-touch-controls-8764632d952c4bfca9db269e2fffbe50",
+  "timestamp": "2026-10-21T04:15:02.371095+00:00",
+  "recorded_at": "2026-10-21T04:18:50.889439+00:00",
+  "kind": "build",
+  "title": "Rust preview recovers shared audio and touch controls",
+  "summary": "The Rust engine preview now combines recovered ATV and soundtrack audio with the riding controls and airborne trick wheel. A ride can render before the sound bank finishes loading, and early browser gestures activate the shared audio output. The main /play.html game remains on the JavaScript implementation while the Rust preview continues to be checked.",
+  "details": [
+    "The shared Rust audio path includes the recovered quad engine and impact decisions, surface and world sounds, rider vocals, and soundtrack. Browser output is primed from a click or completed touch before deferred bank loading; selected rider vocals decode on demand through a 24-clip PCM cache. In the measured ENV01 male bank this avoided 12,966,624 bytes of startup vocal PCM decoding; first-cue decode was 0.735 ms median and 3.989 ms maximum on the host Mac.",
+    "The Original-mode 600-step ENV01 comparison matched 12/12 engine sample-length signatures, 10/10 drive voices and 3/3 chassis voices. Median and p90 audio-level differences were 0.209 dB and 1.048 dB; command timing differed by 1\u20137 simulation steps. The comparison uses duration signatures and timing, not byte-identical audio or PS2 SPU output.",
+    "Host Chromium and WebKit checks cover a ride starting while the sound bank is blocked, early click and completed-touch activation, a rejected music-play recovery, soundtrack continuation while paused, focus/visibility suspension and resume, portrait/landscape touch driving, and the airborne trick wheel. Controlled page visibility and BFCache fixtures are not physical backgrounding tests.",
+    "The integrated 600-step ride comparison found maximum JavaScript/native position, rotation and camera differences of 0.00024414 ft, 0.000020876 and 0.00048852 ft; browser/native final position differed by 0.000015259 ft. On the Apple M4 host replay, normalized CPU per 60 Hz step measured 2.727 ms for JavaScript and 2.366 ms for the Rust browser engine. These are host comparisons, not phone performance results."
+  ],
+  "limitation": "The JavaScript reference and Rust browser/native comparisons measure agreement between authored implementations, not exact original PS2 behavior. Audio sample output is not proven bit-exact; Enhanced mode retains a drive voice endpoint/timing difference. No physical iOS/Android audio, latency, sustained performance, or mobile background behavior has been tested. The Rust preview still lacks full menus and HUD and does not replace /play.html.",
+  "image": "/devlog-images/rust-preview-recovers-shared-audio-and-touch-controls-8764632d952c4bfca9db269e2fffbe50.png",
+  "caption": "One-handed ride in the Rust preview, with audio status and the held steering/lean control, captured in a host Chromium portrait viewport."
+}
