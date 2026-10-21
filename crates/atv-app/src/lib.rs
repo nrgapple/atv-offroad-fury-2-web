@@ -616,6 +616,13 @@ impl App {
                 self.menu_event(event);
                 return;
             }
+            if !riding.menu_open
+                && let Some(action) =
+                    overlay.results_pad(&pad.as_ref().map_or([0.; 17], |p| p.buttons))
+            {
+                self.act(action);
+                return;
+            }
         }
         let Some(ready) = &mut self.ready else { return };
         let Some(riding) = &mut ready.riding else {
@@ -1148,6 +1155,55 @@ impl App {
                 }
             }
             overlay::Action::Camera => riding.cycle_requested = true,
+            overlay::Action::RaceRetry => self.restart_race(),
+            overlay::Action::RaceQuit => {
+                self.quit_to(Some("single"));
+            }
+        }
+    }
+
+    /// Race over → Restart: race.js reloads the whole event (a new roster
+    /// draw, no pre-race camera). With the engine's frontend the event
+    /// reloads through the course loader; a direct ride restarts in place
+    /// with the loaded roster.
+    fn restart_race(&mut self) {
+        let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) else {
+            return;
+        };
+        let Some(settings) = riding.ride.race().map(|r| r.settings()) else {
+            return;
+        };
+        let selection = riding.ride.selection();
+        let environment = self
+            .ready
+            .as_ref()
+            .map(|r| r.venue.environment.clone())
+            .unwrap_or_default();
+        if self.front.is_some() && self.quit_to(None) {
+            self.start_ride(
+                environment,
+                selection.quad,
+                selection.rider,
+                Some(atv_game::ride::race::Settings {
+                    seed: fresh_seed(),
+                    intro: false,
+                    ..settings
+                }),
+            );
+            return;
+        }
+        let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) else {
+            return;
+        };
+        if let Err(error) = riding.ride.restart_race() {
+            if let Some(overlay) = &mut self.overlay {
+                overlay.results.error = Some(error);
+            }
+            return;
+        }
+        riding.clear_input();
+        if let Some(overlay) = &mut self.overlay {
+            overlay.results = Default::default();
         }
     }
 
@@ -1285,6 +1341,19 @@ impl App {
             if let Some(event) = event {
                 self.menu_event(event);
             }
+            return;
+        }
+        // Race over: Escape and Enter drive the results menu (race.js).
+        if let Some((true, action)) = self
+            .overlay
+            .as_mut()
+            .filter(|_| self.ready.as_ref().is_some_and(|r| r.riding.is_some()))
+            .map(|o| o.results_key(&format!("{code:?}")))
+        {
+            if let Some(action) = action {
+                self.act(action);
+            }
+            self.wake();
             return;
         }
         let now = (Instant::now() - self.started).as_secs_f64();
@@ -2003,6 +2072,8 @@ impl App {
                 laps: setup.race.laps,
                 cpu: setup.race.cpu as usize,
                 difficulty: setup.race.difficulty,
+                // A new roster draw per load, as the browser draws one.
+                seed: fresh_seed(),
                 ..defaults
             }
         });
@@ -2120,6 +2191,12 @@ impl App {
 
     /// Pause → Quit to Main Menu: the ride ends and the frontend returns.
     fn quit_to_menu(&mut self) -> bool {
+        self.quit_to(Some("main"))
+    }
+
+    /// Ends the ride and hands the GPU back to the frontend, showing `page`
+    /// (None: the caller loads another ride at once).
+    fn quit_to(&mut self, page: Option<&str>) -> bool {
         let Some(front) = self.front.clone() else {
             return false;
         };
@@ -2129,7 +2206,9 @@ impl App {
         let Ready { gpu, .. } = ready;
         self.overlay = None;
         self.gpu = Some(gpu);
-        front.borrow_mut().resume("main");
+        if let Some(page) = page {
+            front.borrow_mut().resume(page);
+        }
         self.last = Instant::now();
         self.wake();
         true
@@ -2714,4 +2793,12 @@ fn publish_ui_state(text: &str) {
     }
     #[cfg(not(target_arch = "wasm32"))]
     let _ = text;
+}
+
+/// A per-load roster draw seed (the browser's Math.random() * 2^31).
+fn fresh_seed() -> u64 {
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .map_or(1, |d| u64::from(d.subsec_nanos()) ^ d.as_secs())
+        & 0x7fff_ffff
 }

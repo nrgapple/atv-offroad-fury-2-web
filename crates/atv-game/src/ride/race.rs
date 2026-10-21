@@ -44,6 +44,8 @@ pub struct Settings {
     pub all_out: bool,
     /// Roster draw seed (the browser's per-load Math.random() * 2^31).
     pub seed: u64,
+    /// Play the pre-race camera (Restart Race reloads without it).
+    pub intro: bool,
 }
 
 impl Default for Settings {
@@ -55,6 +57,7 @@ impl Default for Settings {
             aggressive: false,
             all_out: false,
             seed: 1,
+            intro: true,
         }
     }
 }
@@ -180,6 +183,11 @@ pub struct RaceState {
 }
 
 impl RaceState {
+    /// The race setup this race loaded with.
+    pub fn settings(&self) -> Settings {
+        self.settings
+    }
+
     /// Samples the race plays besides the ride's bank: the lamps, gate and
     /// IntOut stingers, and the stadium crowd's reactions.
     pub fn samples(&self) -> Vec<String> {
@@ -195,7 +203,14 @@ impl RaceState {
     /// The music event of the current phase, for sound that becomes ready
     /// after the race began (the browser queues it on the loading bank).
     pub fn music_now(&self) -> Option<MusicEvent> {
-        let frame = self.frame.as_ref()?;
+        // Before the first step the race holds on the grid.
+        let Some(frame) = self.frame.as_ref() else {
+            return Some(if self.intro.is_some() {
+                MusicEvent::Intro
+            } else {
+                MusicEvent::Restart
+            });
+        };
         match frame.phase {
             "intro" => Some(MusicEvent::Intro),
             "countdown" => Some(MusicEvent::Restart),

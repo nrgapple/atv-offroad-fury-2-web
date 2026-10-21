@@ -583,6 +583,7 @@ impl Sound {
     /// The held song ends; release picks the next one.
     fn stop_song(&mut self) {
         self.hold_fade = None;
+        self.title = None;
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.song = None;
@@ -652,6 +653,9 @@ impl Sound {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn native_music(&mut self) {
+        if self.held {
+            return;
+        }
         let Some(catalog) = &mut self.catalog else {
             return;
         };
@@ -687,7 +691,8 @@ impl Sound {
     /// pick starts when a song ends.
     #[cfg(target_arch = "wasm32")]
     fn web_music(&mut self, gesture: bool) {
-        if !self.focused || !self.music_enabled || !self.output.started.get() {
+        // A race holds the soundtrack until GO.
+        if self.held || !self.focused || !self.music_enabled || !self.output.started.get() {
             return;
         }
         let Some(catalog) = &mut self.catalog else {

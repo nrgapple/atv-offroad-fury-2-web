@@ -622,7 +622,7 @@ measured comparison). Parity above is with the JavaScript build.
 | `atv-game/src/audio/ride.rs` | engine sample selection once per rendered batch with the batch's summed dt (GameAudio.update) | the original emitter update runs every frame | No |
 | `atv-game/src/audio/mixer.rs` | windowed-sinc resampling at load and linear-interpolated pitch (Web Audio semantics), 0.65 master and 0.45 music gains | SPU2 voice pitch/ADSR, mixer and reverb not recovered | No |
 | `atv-game/src/ride/race.rs` | CPU recovery after 5 s off the track polygon or 4 s below 3 ft/s; the player handed to the path driver after the finish; equal-mass rider contact proxy | RaceStatus +0xf0 consumer, finish takeover routine and quad-to-quad response not identified | No |
-| `atv-game/src/ride/race.rs` | Restart Race keeps the loaded roster | the original reloads the event (new roster draw) | No |
+| `atv-game/src/ride/race.rs` | Restart Race keeps the loaded roster | the original reloads the event (new roster draw) | Yes, through the frontend (direct parity rides keep the in-place restart) |
 | desktop `f32` math (`atv-core` via std) | system libm for sin/cos/atan2/…; the browser build uses Rust's libm, so native races drift from the JavaScript/browser result | one deterministic implementation on every target (PS2 VU/libm equivalence is a separate question) | Yes: `atv_core::math` (Deterministic simulation maths) |
 | `atv-render/blood.rs`, `atv-game/crash.rs` | Crazy/Gorn crash breakup, ragdoll and blood | authored browser feature with no original counterpart (the original crash is the wreck animation, kept under Original) | Keep (option) |
 
@@ -688,9 +688,10 @@ the system libm, the browser's from Rust's own libm (fixed: Deterministic simula
 maths below). The same cause explains the
 small native drift in the Freeride comparisons above.
 
-Not connected yet: the results menu and Restart Race/Quit menus (the race overlays:
-RUST_UI.md "Race overlays checkpoint"). Restart reuses the loaded roster; the browser
-reloads the event and draws a new one. Crowd, flashes, fireworks, the drop gate, lamp
+Race overlays, the results panel and its menus: RUST_UI.md "Race overlays checkpoint"
+and "Race results checkpoint". Restart Race reloads the event with a new roster draw
+and no pre-race camera when the engine's frontend is present (race links); a direct
+`?venue=…&race=1` / `fury --race` ride restarts in place with the loaded roster. Crowd, flashes, fireworks, the drop gate, lamp
 sounds, race music and the grid rest pose: see Race presentation below.
 
 ## Race presentation: stadium, gate, lamps and music (2026-10-21)
