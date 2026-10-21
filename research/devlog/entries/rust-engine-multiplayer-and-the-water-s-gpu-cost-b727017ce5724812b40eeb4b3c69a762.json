@@ -1,0 +1,19 @@
+{
+  "id": "rust-engine-multiplayer-and-the-water-s-gpu-cost-b727017ce5724812b40eeb4b3c69a762",
+  "timestamp": "2026-10-21T22:09:03.735289+00:00",
+  "recorded_at": "2026-10-21T22:11:55.087286+00:00",
+  "kind": "build",
+  "title": "Rust engine: multiplayer, and the water's GPU cost",
+  "summary": "The Rust engine can now join and host rooms with the JavaScript game on the same wire format, and the original water rows from the previous checkpoint have a measured GPU cost on desktop Metal. Rust riders can host or join from the main menu, drive Arlington Free Ride with other riders, see and hear them, and use the pause-menu player rows. A twenty-rider room measured 79 fps median on one Mac against a local relay. Two follow-ups (Change ATV and Rider, and the twenty-rider measurement) were still in open pull requests when this entry was written and are not claimed as shipped.",
+  "details": [
+    "Water cost (#221, merged): fury --gpu-frames N times the scene GPU pass on desktop Metal. The original water rows (#219) against the old browser cap, median of 5 runs of 240 frames on an Apple M4: the NAT01 sea view went from 1.14 to 2.07 ms at 1280x720 (+0.93 ms) and from 0.55 to 0.88 ms at 390x844 (+0.33 ms). Other wet venue starts cost roughly +0.25 ms at 1280x720 and +0.1 ms at phone size. These are desktop numbers only; a phone measurement is still needed.",
+    "Rooms shared with the JavaScript game (merged): #224 relay client and remote riders (a desktop host, a JavaScript guest and a Rust browser guest each drew both of the others); #227 drop-in riding (arrival 9.98 ft from the host, the slot kept across a socket drop and a reload, and following the host from ENV01 to ENV02); #229 Arlington Free Ride from the main menu.",
+    "Arlington and sound (merged): #232 train collision, the shared train clock and riding on a train car (clock phases within 0.20 s); #233 other riders' engine and crash sounds; #234 presence while the tab is hidden (12 of 12 samples kept) and the desktop slot key kept across restarts.",
+    "Menus and tags (merged): #236 name tags and minimap dots; #238 pause menu Players, Copy invite and Leave Game; #241 Multiplayer menu with Host Game and Join Game, using real text inputs so phones get a keyboard.",
+    "Still in open pull requests, not shipped: #242 Change ATV and Rider and Select Track for a Rust host; #243 the twenty-rider room measurement. The measurement, run from the #243 branch: one Rust browser plus 19 simulated riders on a local relay, all 19 others drawn, median 79 fps, 13.4 ms frames, 6.9 ms main-thread CPU, about 52.5 KB/s received. It hit one 192 ms hitch while engine sounds decoded, and a later two-second stretch at 28 fps that is not yet explained.",
+    "The screenshot is the Rust browser in that twenty-rider Free Ride room at Arlington with name tags on riders and minimap markers. It was taken inside the unexplained 28 fps window (HUD reads 28 fps, 36.1 ms), so the HUD figure is not the median above. All runs: one Mac, Apple M4, mostly headless Chromium, local relay."
+  ],
+  "limitation": "Local relay and one machine only: no phone and no Internet results. Motorcycles ride the ATV01 model in rooms for now (the JavaScript game refuses them); Change ATV pauses the Rust ride; there is no Free Ride Lobby page yet; no train on motorcycle rides; the Realistic train setting is missing. The 28 fps stretch and the 192 ms sound-decode hitch are open. Water GPU costs are desktop Metal figures; a phone measurement is still needed.",
+  "image": "/devlog-images/rust-engine-multiplayer-and-the-water-s-gpu-cost-b727017ce5724812b40eeb4b3c69a762.png",
+  "caption": "Twenty-rider Free Ride room at Arlington in the Rust engine: 19 other riders with name tags and minimap markers (captured during a slow 28 fps stretch; the room's measured median is 79 fps)."
+}
