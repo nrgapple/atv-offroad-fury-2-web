@@ -1,11 +1,13 @@
-//! Single-player Freeride on an ATV: the original vehicle physics, rider
-//! animation, wreck recovery and follow camera stepped at the fixed 60 Hz.
+//! Single-player rides on an ATV or a motorcycle: the original vehicle
+//! physics, rider animation, wreck recovery and follow camera stepped at the
+//! fixed 60 Hz.
 //!
 //! This is the Rust engine's port of the browser path (web/game.js
 //! startSimulation/pumpSimulation and atv-web's simulation operations 23, 24,
-//! 46, 47 and the op 50 batch). It calls atv-core directly in the same order;
-//! races, motorcycles, multiplayer, trains and the optional crash/flip
-//! presentation layers are not part of it yet.
+//! 46, 47 and the op 50 batch; motorcycles: crates/atv-web/src/motorcycles.rs).
+//! It calls atv-core directly in the same order; multiplayer, trains and the
+//! optional flip presentation layers are not part of it yet.
+mod bike;
 pub mod bindings;
 pub mod cpu;
 mod load;
@@ -24,6 +26,7 @@ use atv_core::{
     dynamics,
     materials::TerrainMaterial,
     mesh::Mesh,
+    motorcycle::Motorcycle,
     obstacle::StaticObstacle,
     physics_data::PhysicsData,
     quad_pose::QuadPose,
@@ -42,6 +45,21 @@ pub const STEP: f32 = 1. / 60.;
 pub struct Model {
     pub mesh: Mesh,
     pub textures: HashMap<String, textures::MaterialTexture>,
+}
+
+/// The Garage choice the ride loads: an ATV (1-26) or a motorcycle (27-46,
+/// `atv_core::player_models`), and the rider (0 male, 1 female).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Selection {
+    pub quad: u16,
+    pub rider: u16,
+}
+
+impl Default for Selection {
+    /// The browser's default Garage selection: quad 1, male rider.
+    fn default() -> Self {
+        Self { quad: 1, rider: 0 }
+    }
 }
 
 /// Player controls for one batch, as web/bindings.js `read` resolves them
@@ -66,6 +84,8 @@ pub struct Controls {
     pub stunt_y: f32,
     /// Cancellation generation; a change cancels a pending preload gesture.
     pub generation: u64,
+    /// Motorcycle clutch held (web/bindings.js `clutch`; ATVs ignore it).
+    pub clutch: bool,
 }
 
 /// Camera mode of the latest camera step.
@@ -79,30 +99,69 @@ pub enum CameraMode {
     Tv,
 }
 
-/// Loaded original state the simulation reuses on every reset.
+/// Loaded original venue state the simulation reuses on every reset.
 struct Simulation {
     terrain: terrain::Terrain,
-    physics: PhysicsData,
     materials: [TerrainMaterial; 8],
     water: Option<LiveField>,
-    quad_pose: Rc<QuadPose>,
-    chassis_points: Vec<[f32; 3]>,
-    wreck_rays: Rc<CollisionRayTree>,
-    obstacle_rays: Rc<CollisionRayTree>,
     obstacles: Vec<StaticObstacle>,
     mud_obstacles: Vec<bool>,
     scene_partition: Option<atv_core::scene_partition::Config>,
     ecosystem: Option<atv_core::ecosystem::Ecosystem>,
     boundary: Option<atv_core::boundary_launch::Config>,
     extended_boundary: bool,
+    camera: FollowCamera,
+}
+
+/// The ATV's original rig (ops 20-22, 44, 48, 51-53): physics, linkage,
+/// collision rays, the rider animator and the wreck rig.
+struct QuadRig {
+    physics: PhysicsData,
+    quad_pose: Rc<QuadPose>,
+    chassis_points: Vec<[f32; 3]>,
+    wreck_rays: Rc<CollisionRayTree>,
+    obstacle_rays: Rc<CollisionRayTree>,
     animator: rider_pose::Animator,
     wreck: wreck_animation::Animator,
-    camera: FollowCamera,
+}
+
+/// The player's vehicle: an ATV with its rig, or a motorcycle, whose
+/// original model carries its own rider, wreck and tuning (atv-web keeps the
+/// two-wheel path separate from the four-wheel solver).
+enum Mount {
+    Quad {
+        rig: Box<QuadRig>,
+        vehicle: Box<Vehicle>,
+    },
+    Bike(Box<Motorcycle>),
+}
+
+impl Mount {
+    /// The player's ATV; races require one so far.
+    fn quad(&self) -> Result<(&QuadRig, &Vehicle)> {
+        match self {
+            Mount::Quad { rig, vehicle } => Ok((rig, vehicle)),
+            Mount::Bike(_) => Err(BIKE_RACES.into()),
+        }
+    }
+    fn quad_mut(&mut self) -> Result<(&mut QuadRig, &mut Vehicle)> {
+        match self {
+            Mount::Quad { rig, vehicle } => Ok((rig, vehicle)),
+            Mount::Bike(_) => Err(BIKE_RACES.into()),
+        }
+    }
+}
+const BIKE_RACES: &str = "motorcycle races are not ported to the Rust engine yet";
+
+/// What [`Ride::start`] places: the quad rig, or a motorcycle model.
+enum Seed {
+    Quad(Box<QuadRig>),
+    Bike(Box<atv_core::motorcycle::Model>),
 }
 
 pub struct Ride {
     sim: Simulation,
-    vehicle: Vehicle,
+    mount: Mount,
     browser_drive: BrowserDrive,
     input_generation: Option<u64>,
     rider_mode: Option<rider_pose::Mode>,
@@ -169,16 +228,22 @@ impl Ride {
     fn start(
         sim: Simulation,
         start: ([f32; 3], f32),
+        seed: Seed,
         quad: Model,
         rider: Model,
         race: Option<(race::Setup, race::Settings)>,
     ) -> Result<Self> {
         let mut sim = sim;
-        let vehicle = Self::place(&mut sim, &quad.mesh, start)?;
-        let frame = vehicle.frame();
+        let mount = match seed {
+            Seed::Quad(mut rig) => {
+                let vehicle = Box::new(Self::place(&sim, &mut rig, &quad.mesh, start)?);
+                Mount::Quad { rig, vehicle }
+            }
+            Seed::Bike(model) => Mount::Bike(Box::new(bike::start(&mut sim, *model, start)?)),
+        };
         let mut ride = Self {
             sim,
-            vehicle,
+            mount,
             browser_drive: BrowserDrive::default(),
             input_generation: None,
             rider_mode: None,
@@ -187,7 +252,7 @@ impl Ride {
             hud: atv_core::hud::State::default(),
             flip_points: (0., 0.),
             start,
-            frame,
+            frame: bike::placeholder_frame(),
             camera_frame: CameraFrame {
                 position: [0.; 3],
                 target: [0.; 3],
@@ -215,20 +280,25 @@ impl Ride {
     }
 
     /// Op 23: a new vehicle at `start` with every original collision source.
-    fn place(sim: &mut Simulation, mesh: &Mesh, (origin, yaw): ([f32; 3], f32)) -> Result<Vehicle> {
-        let mut vehicle = Vehicle::new(mesh, &sim.physics, origin, yaw)?;
-        vehicle.enable_wrecks(&sim.physics)?;
+    fn place(
+        sim: &Simulation,
+        rig: &mut QuadRig,
+        mesh: &Mesh,
+        (origin, yaw): ([f32; 3], f32),
+    ) -> Result<Vehicle> {
+        let mut vehicle = Vehicle::new(mesh, &rig.physics, origin, yaw)?;
+        vehicle.enable_wrecks(&rig.physics)?;
         if let Some(config) = sim.boundary {
             vehicle.set_boundary(config, sim.extended_boundary)?;
         }
-        vehicle.set_linkage(sim.quad_pose.clone());
-        sim.wreck.reset();
-        sim.wreck.set_boundary_flight(false);
-        sim.wreck.set_static_obstacles(sim.obstacles.clone());
+        vehicle.set_linkage(rig.quad_pose.clone());
+        rig.wreck.reset();
+        rig.wreck.set_boundary_flight(false);
+        rig.wreck.set_static_obstacles(sim.obstacles.clone());
         vehicle.set_materials(sim.materials);
-        vehicle.set_chassis_points(&sim.chassis_points)?;
-        vehicle.set_wreck_rays(sim.wreck_rays.clone())?;
-        vehicle.set_obstacles(sim.obstacle_rays.clone(), sim.obstacles.clone())?;
+        vehicle.set_chassis_points(&rig.chassis_points)?;
+        vehicle.set_wreck_rays(rig.wreck_rays.clone())?;
+        vehicle.set_obstacles(rig.obstacle_rays.clone(), sim.obstacles.clone())?;
         if let Some(config) = sim.scene_partition {
             vehicle.set_scene_partition(config, sim.ecosystem.as_ref(), &sim.terrain)?;
         }
@@ -239,16 +309,26 @@ impl Ride {
     }
 
     fn after_placement(&mut self) -> Result<()> {
-        self.sim.animator.reset(&self.rider.mesh.nodes)?;
-        self.sim.animator.reset_score_session();
+        match &mut self.mount {
+            Mount::Quad { rig, vehicle } => {
+                rig.animator.reset(&self.rider.mesh.nodes)?;
+                rig.animator.reset_score_session();
+                self.frame = vehicle.frame();
+            }
+            Mount::Bike(bike) => self.frame = bike::summary(bike.frame()),
+        }
         self.hud.reset();
         self.flip_points = (0., 0.);
         self.rider_mode = None;
         self.browser_drive.reset();
         self.input_generation = None;
         self.wreck_camera = None;
-        self.frame = self.vehicle.frame();
         Ok(())
+    }
+
+    /// The player rides a motorcycle (atv-web's `vehicle_kind`).
+    pub fn is_motorcycle(&self) -> bool {
+        matches!(self.mount, Mount::Bike(_))
     }
 
     /// Reset ATV: back to the scene start with the follow camera reset (ops
@@ -284,9 +364,14 @@ impl Ride {
     fn place_at(&mut self, start: ([f32; 3], f32)) -> Result<()> {
         self.placement = self.placement.wrapping_add(1);
         self.sound = None;
-        self.vehicle = Self::place(&mut self.sim, &self.quad.mesh, start)?;
-        if self.race.is_some() {
-            race::place_racer(&mut self.vehicle, &self.sim.terrain)?;
+        match &mut self.mount {
+            Mount::Quad { rig, vehicle } => {
+                **vehicle = Self::place(&self.sim, rig, &self.quad.mesh, start)?;
+                if self.race.is_some() {
+                    race::place_racer(vehicle, &self.sim.terrain)?;
+                }
+            }
+            Mount::Bike(bike) => bike::place(&self.sim, bike, Some(start))?,
         }
         self.after_placement()?;
         self.sim.camera.reset();
@@ -300,6 +385,15 @@ impl Ride {
 
     /// One fixed step: vehicle and rider (op 24), then the camera (op 46).
     pub fn step(&mut self, controls: &Controls, orbit: f32) -> Result<()> {
+        if self.is_motorcycle() {
+            self.step_bike(controls)?;
+            self.step_race()?;
+            self.step_camera(orbit)?;
+            self.steps += 1;
+            // Motorcycle engine sounds (atv-web op 101) are not ported yet.
+            self.sound = None;
+            return Ok(());
+        }
         // During the countdown and after the finish the race supplies the
         // player's controls; tricks and touch/keyboard intents are dropped.
         match self.race_controls()? {
@@ -324,20 +418,22 @@ impl Ride {
 
     /// The step's sound inputs (simulation_frame's audio fields).
     fn capture_sound(&mut self) -> Result<sound::AudioStep> {
+        let Mount::Quad { rig, vehicle } = &mut self.mount else {
+            return Err("motorcycle sound is not ported yet".into());
+        };
         let frame = &self.frame;
-        let events = self.vehicle.take_audio_events();
-        let surfaces = self.vehicle.wheel_effect_state().surfaces;
-        let matrices = match self.vehicle.linkage_matrices() {
+        let events = vehicle.take_audio_events();
+        let surfaces = vehicle.wheel_effect_state().surfaces;
+        let matrices = match vehicle.linkage_matrices() {
             Some(matrices) => matrices.to_vec(),
-            None => self.sim.quad_pose.sample(
+            None => rig.quad_pose.sample(
                 frame.visual_steering_angle,
                 frame.wheel_angles,
                 frame.wheel_compression,
             )?,
         };
         let world = vehicle_world(frame);
-        let centers = self
-            .sim
+        let centers = rig
             .quad_pose
             .wheel_positions(&matrices)?
             .map(|point| atv_core::obstacle::transform_point(&world, point));
@@ -347,7 +443,7 @@ impl Ride {
             .contact(frame.origin[0], frame.origin[2])?
             .map(|hit| hit.height);
         let water = self.sim.water.as_ref().map(|_| frame.water_height);
-        let rider = self.sim.wreck.frame();
+        let rider = rig.wreck.frame();
         Ok(sound::AudioStep {
             quad: sound::quad_frame(events, frame, surfaces, ground, water, &centers),
             rider_position: self.rider_audio_position,
@@ -384,7 +480,10 @@ impl Ride {
             reverse: controls.reverse,
             lean_flick_rate: None,
         };
-        let current = self.vehicle.frame();
+        let Mount::Quad { rig, vehicle } = &mut self.mount else {
+            return Err("not an ATV".into());
+        };
+        let current = vehicle.frame();
         let input = self.browser_drive.resolve(
             input,
             controls.keyboard_drive,
@@ -393,9 +492,8 @@ impl Ride {
             current.speed,
         )?;
         let sim = &mut self.sim;
-        let safe = sim.animator.stunt_landing_safe();
-        let forced_landing = sim.animator.landing_frame().is_some();
-        let vehicle = &mut self.vehicle;
+        let safe = rig.animator.stunt_landing_safe();
+        let forced_landing = rig.animator.landing_frame().is_some();
         if !race_input && self.input_generation != Some(controls.generation) {
             vehicle.cancel_preload_gesture();
             self.input_generation = Some(controls.generation);
@@ -422,7 +520,7 @@ impl Ride {
         {
             vehicle.reset_now()?;
         }
-        let wreck = &mut sim.wreck;
+        let wreck = &mut rig.wreck;
         let frame = vehicle.step_with_scene(&sim.terrain, input, dt, sim.water.as_ref(), || {
             wreck.boundary_random_words()
         })?;
@@ -430,9 +528,9 @@ impl Ride {
         // Deep water can invoke 001e35d0 before physics independently of
         // advance_wreck. Reset attached presentation/camera state too.
         if frame.reset_count != current.reset_count {
-            sim.wreck.reset();
-            sim.wreck.set_boundary_flight(false);
-            sim.animator.reset(nodes)?;
+            rig.wreck.reset();
+            rig.wreck.set_boundary_flight(false);
+            rig.animator.reset(nodes)?;
             sim.camera.reset();
             self.wreck_camera = None;
             self.rider_mode = None;
@@ -441,7 +539,7 @@ impl Ride {
         // 001e7600 publishes actor+290 before rider physics only while
         // Riding/Attached; detached audio retains the last actor point.
         if frame.wreck.phase == Phase::Riding
-            || sim
+            || rig
                 .wreck
                 .frame()
                 .is_none_or(|rider| rider.phase == wreck_animation::Phase::Attached)
@@ -460,19 +558,19 @@ impl Ride {
         if frame.wreck.phase != Phase::Riding {
             // Never carry takeoff throttle/direction through recovery.
             self.browser_drive.reset();
-            if !sim.wreck.active() {
-                sim.wreck.set_boundary_flight(frame.boundary_launch.active);
-                sim.wreck.begin(
+            if !rig.wreck.active() {
+                rig.wreck.set_boundary_flight(frame.boundary_launch.active);
+                rig.wreck.begin(
                     frame.wreck.kind.ok_or("missing wreck kind")?,
-                    sim.animator.channels(),
+                    rig.animator.channels(),
                     vehicle_world(&frame),
                     nodes,
                 )?;
-                sim.animator.abort_wreck_scores()?;
-                sim.animator.reset(nodes)?;
+                rig.animator.abort_wreck_scores()?;
+                rig.animator.reset(nodes)?;
             }
-            update_wheelie(&mut sim.animator, &frame, dt)?;
-            sim.wreck.step_with_scene(
+            update_wheelie(&mut rig.animator, &frame, dt)?;
+            rig.wreck.step_with_scene(
                 dt,
                 wreck_animation::VehicleMotion {
                     world: vehicle_world(&frame),
@@ -486,11 +584,11 @@ impl Ride {
                 vehicle.scene_collision_mut(),
                 frame.skip_vegetation_query,
             )?;
-            let grounded = sim.wreck.frame().is_some_and(|f| f.grounded);
+            let grounded = rig.wreck.frame().is_some_and(|f| f.grounded);
             if vehicle.advance_wreck(dt, grounded)? {
-                sim.wreck.reset();
-                sim.wreck.set_boundary_flight(false);
-                sim.animator.reset(nodes)?;
+                rig.wreck.reset();
+                rig.wreck.set_boundary_flight(false);
+                rig.animator.reset(nodes)?;
                 sim.camera.reset();
                 self.wreck_camera = None;
                 self.rider_mode = None;
@@ -502,7 +600,7 @@ impl Ride {
             self.frame = frame;
             return self.update_hud(dt);
         }
-        update_wheelie(&mut sim.animator, &frame, dt)?;
+        update_wheelie(&mut rig.animator, &frame, dt)?;
         let pose_input = vehicle.rider_pose_input();
         let stunt = stunt::Input {
             modifiers: controls.stunt_modifiers,
@@ -514,9 +612,9 @@ impl Ride {
             disabled: false,
         };
         if let Some(landing) = frame.landing_action {
-            sim.animator.request_landing(landing)?;
+            rig.animator.request_landing(landing)?;
         }
-        self.rider_mode = Some(sim.animator.step_controls(nodes, pose_input, stunt, dt)?);
+        self.rider_mode = Some(rig.animator.step_controls(nodes, pose_input, stunt, dt)?);
         if let Some(water) = &mut sim.water {
             water.prepare_surface()?;
         }
@@ -528,7 +626,7 @@ impl Ride {
     /// Op 46: the race director's trackside view after the finish, else the
     /// follow/wreck camera, which the pre-race shots override before GO.
     fn step_camera(&mut self, orbit: f32) -> Result<()> {
-        let vehicle = self.vehicle.frame();
+        let vehicle = self.live_frame();
         let (rider, forward) = (vehicle.origin, dynamics::basis(vehicle.orientation)[2]);
         let tv = self.race_director(rider)?;
         self.chase_camera(orbit)?;
@@ -549,9 +647,30 @@ impl Ride {
         Ok(())
     }
 
+    /// The vehicle's current state (after race contact), as the camera and
+    /// race read it.
+    fn live_frame(&self) -> VehicleFrame {
+        match &self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.frame(),
+            Mount::Bike(bike) => bike::summary(bike.frame()),
+        }
+    }
+
+    /// The detached rider's origin and velocity while wrecking (the ATV's
+    /// wreck rig; the motorcycle's rider leaves the bike off Riding).
+    fn wrecked_rider(&self) -> Option<([f32; 3], [f32; 3])> {
+        match &self.mount {
+            Mount::Quad { rig, .. } => rig.wreck.frame().map(|r| (r.origin, r.linear_velocity)),
+            Mount::Bike(bike) => (bike.frame().wreck.phase != Phase::Riding).then(|| {
+                let w = bike.rider_world();
+                ([w[12], w[13], w[14]], bike.rider_velocity())
+            }),
+        }
+    }
+
     fn chase_camera(&mut self, orbit: f32) -> Result<()> {
         let dt = STEP;
-        let vehicle = self.vehicle.frame();
+        let vehicle = self.live_frame();
         // The follow camera flattens body forward, which reverses as a
         // backflip passes vertical. Hold the takeoff heading.
         let flipping = vehicle.flip.is_some_and(|f| f.active.is_some());
@@ -569,17 +688,22 @@ impl Ride {
                 .contact(point[0], point[2])?
                 .map_or(point[1], |contact| contact.height))
         };
-        if let Some(rider) = self.sim.wreck.frame() {
+        if let Some((rider_origin, rider_velocity)) = self.wrecked_rider() {
             let actors = [
                 WreckActor {
                     origin: vehicle.origin,
                     velocity,
                 },
                 WreckActor {
-                    origin: rider.origin,
-                    velocity: rider.linear_velocity,
+                    origin: rider_origin,
+                    velocity: rider_velocity,
                 },
             ];
+            // atv-web passes the ATV's scene query; the bike's has none.
+            let scene = match &self.mount {
+                Mount::Quad { vehicle, .. } => vehicle.scene_collision(),
+                Mount::Bike(_) => None,
+            };
             if self.wreck_camera.is_none() {
                 let mut camera = self.sim.camera.wreck_camera(actors)?;
                 camera.set_static_obstacles(self.sim.obstacles.clone());
@@ -589,7 +713,7 @@ impl Ride {
                 .wreck_camera
                 .as_mut()
                 .ok_or("wreck camera missing")?
-                .step_with_scene(actors, basis[2], dt, height, self.vehicle.scene_collision())?;
+                .step_with_scene(actors, basis[2], dt, height, scene)?;
             self.camera_mode = CameraMode::Wreck;
             return Ok(());
         }
@@ -620,7 +744,10 @@ impl Ride {
 
     fn update_hud(&mut self, dt: f32) -> Result<()> {
         let frame = &self.frame;
-        let animator = &mut self.sim.animator;
+        let Mount::Quad { rig, .. } = &mut self.mount else {
+            return Err("not an ATV".into());
+        };
+        let animator = &mut rig.animator;
         let hud = &mut self.hud;
         for event in animator.take_score_notifications() {
             match event {
@@ -698,16 +825,23 @@ impl Ride {
     /// The rider's world matrix: the wreck root while wrecking, else the
     /// vehicle's (mapPose in web/minimap.js reads this for the GPS marker).
     pub fn rider_world(&self) -> [f32; 16] {
-        match self.sim.wreck.frame() {
-            Some(wreck) => wreck.world_matrix,
-            None => quaternion_world(self.frame.origin, self.frame.orientation),
+        match &self.mount {
+            Mount::Quad { rig, .. } => match rig.wreck.frame() {
+                Some(wreck) => wreck.world_matrix,
+                None => quaternion_world(self.frame.origin, self.frame.orientation),
+            },
+            Mount::Bike(bike) if bike.frame().wreck.phase != Phase::Riding => bike.rider_world(),
+            Mount::Bike(_) => quaternion_world(self.frame.origin, self.frame.orientation),
         }
     }
 
-    /// Quad linkage and rider skeleton for the latest frame (simulation_frame).
-    /// The vehicle's wheel presentation state (radii, slip, surfaces).
-    pub fn wheel_effect_state(&self) -> atv_core::vehicle::WheelEffectState {
-        self.vehicle.wheel_effect_state()
+    /// The ATV's wheel presentation state (radii, slip, surfaces); None on a
+    /// motorcycle, whose wheel particles are its own (motorcycle_effects).
+    pub fn wheel_effect_state(&self) -> Option<atv_core::vehicle::WheelEffectState> {
+        match &self.mount {
+            Mount::Quad { vehicle, .. } => Some(vehicle.wheel_effect_state()),
+            Mount::Bike(_) => None,
+        }
     }
 
     /// Crazy/Gorn crash presentation for the latest step (atv-web's
@@ -724,29 +858,46 @@ impl Ride {
         }
         let frame = &self.frame;
         let pose = self.pose()?;
-        let wreck = self.sim.wreck.frame();
-        let rider_world = wreck
-            .as_ref()
-            .map_or(vehicle_world(frame), |w| w.world_matrix);
-        let detached = wreck
-            .as_ref()
-            .is_some_and(|w| w.phase != wreck_animation::Phase::Attached);
-        effects.set_rider_velocity(
-            wreck
-                .as_ref()
-                .map_or(frame.linear_velocity, |w| w.linear_velocity),
-        );
+        let wrecked = frame.wreck.phase != Phase::Riding;
+        // The motorcycle passes its rider as detached for the whole wreck,
+        // its body world and no contact point (atv-web motorcycles.rs).
+        let (rider_world, detached, rider_velocity, world, impact) = match &self.mount {
+            Mount::Quad { rig, .. } => {
+                let wreck = rig.wreck.frame();
+                (
+                    wreck
+                        .as_ref()
+                        .map_or(vehicle_world(frame), |w| w.world_matrix),
+                    wreck
+                        .as_ref()
+                        .is_some_and(|w| w.phase != wreck_animation::Phase::Attached),
+                    wreck
+                        .as_ref()
+                        .map_or(frame.linear_velocity, |w| w.linear_velocity),
+                    vehicle_world(frame),
+                    (frame.crash_impact_speed > 0.).then_some(frame.crash_impact_point),
+                )
+            }
+            Mount::Bike(bike) => (
+                bike.rider_world(),
+                wrecked,
+                bike.rider_velocity(),
+                bike.world(),
+                None,
+            ),
+        };
+        effects.set_rider_velocity(rider_velocity);
         let terrain = &self.sim.terrain;
         Ok(effects.update(
             tick,
             frame.reset_count,
             dt,
-            frame.wreck.phase != Phase::Riding,
+            wrecked,
             detached,
             frame.linear_velocity,
             frame.crash_impact_speed,
-            (frame.crash_impact_speed > 0.).then_some(frame.crash_impact_point),
-            vehicle_world(frame),
+            impact,
+            world,
             &pose.quad_nodes,
             &self.quad.mesh.nodes,
             rider_world,
@@ -764,27 +915,30 @@ impl Ride {
 
     /// Wheel radii (presentation effects place dust at the contact patch).
     pub fn wheel_radii(&self) -> [f32; 4] {
-        self.vehicle.wheel_effect_state().radii
+        self.wheel_effect_state()
+            .map_or([0.; 4], |state| state.radii)
     }
 
     /// Wheel-effect snapshot of the latest step, as atv-web's simulation_frame
     /// assembles it for op 75: the vehicle's wheel state, posed wheel centres,
     /// contact-plane and water heights. `time`, `dt` and `tick` are left at
-    /// zero for the effects clock to fill. Presentation only.
+    /// zero for the effects clock to fill. Presentation only; ATVs only.
     pub fn wheel_effect_input(&self) -> Result<atv_core::wheel_effects::Input> {
+        let Mount::Quad { rig, vehicle } = &self.mount else {
+            return Err("motorcycles have their own wheel effects".into());
+        };
         let frame = &self.frame;
-        let state = self.vehicle.wheel_effect_state();
-        let matrices = match self.vehicle.linkage_matrices() {
+        let state = vehicle.wheel_effect_state();
+        let matrices = match vehicle.linkage_matrices() {
             Some(matrices) => matrices.to_vec(),
-            None => self.sim.quad_pose.sample(
+            None => rig.quad_pose.sample(
                 frame.visual_steering_angle,
                 frame.wheel_angles,
                 frame.wheel_compression,
             )?,
         };
         let world = vehicle_world(frame);
-        let centers = self
-            .sim
+        let centers = rig
             .quad_pose
             .wheel_positions(&matrices)?
             .map(|point| atv_core::obstacle::transform_point(&world, point));
@@ -818,31 +972,40 @@ impl Ride {
         })
     }
 
+    /// Vehicle linkage and rider skeleton for the latest frame
+    /// (simulation_frame's quad_node_matrices and rider_node_matrices).
     pub fn pose(&self) -> Result<Pose> {
         let frame = &self.frame;
-        let quad_nodes = match self.vehicle.linkage_matrices() {
-            Some(matrices) => matrices.to_vec(),
-            None => self.sim.quad_pose.sample(
-                frame.visual_steering_angle,
-                frame.wheel_angles,
-                frame.wheel_compression,
-            )?,
-        };
         let quad_world = quaternion_world(frame.origin, frame.orientation);
         let nodes = &self.rider.mesh.nodes;
-        let (rider_world, rider_nodes) = match self.sim.wreck.frame() {
-            Some(wreck) => (
-                wreck.world_matrix,
-                self.sim.wreck.pose(nodes)?.world_matrices,
-            ),
-            None => (quad_world, self.sim.animator.pose(nodes)?.world_matrices),
-        };
-        Ok(Pose {
-            quad_world,
-            quad_nodes,
-            rider_world,
-            rider_nodes,
-        })
+        match &self.mount {
+            Mount::Quad { rig, vehicle } => {
+                let quad_nodes = match vehicle.linkage_matrices() {
+                    Some(matrices) => matrices.to_vec(),
+                    None => rig.quad_pose.sample(
+                        frame.visual_steering_angle,
+                        frame.wheel_angles,
+                        frame.wheel_compression,
+                    )?,
+                };
+                let (rider_world, rider_nodes) = match rig.wreck.frame() {
+                    Some(wreck) => (wreck.world_matrix, rig.wreck.pose(nodes)?.world_matrices),
+                    None => (quad_world, rig.animator.pose(nodes)?.world_matrices),
+                };
+                Ok(Pose {
+                    quad_world,
+                    quad_nodes,
+                    rider_world,
+                    rider_nodes,
+                })
+            }
+            Mount::Bike(bike) => Ok(Pose {
+                quad_world,
+                quad_nodes: bike.matrices(),
+                rider_world: self.rider_world(),
+                rider_nodes: bike.rider_matrices()?,
+            }),
+        }
     }
 }
 

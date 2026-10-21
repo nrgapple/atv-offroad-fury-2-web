@@ -4,23 +4,23 @@
 //! builds for any target, e.g. Linux in Docker or Windows under Wine:
 //!
 //!   cargo run --release -p atv-game --example determinism -- CONTENT_DIR \
-//!     env01 SCRIPT.json [--race 1 3 12345] [--out TRACE.json]
+//!     env01 SCRIPT.json [--quad 29] [--race 1 3 12345] [--out TRACE.json]
 use atv_content::{Content, Store};
 use atv_game::ride::{
+    Selection,
     race::Settings,
     script::{Script, fingerprint, trace},
 };
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let usage =
-        "determinism CONTENT_DIR VENUE SCRIPT.json [--race LAPS CPU SEED] [--out TRACE.json]";
+    let usage = "determinism CONTENT_DIR VENUE SCRIPT.json [--quad N] [--race LAPS CPU SEED] [--out TRACE.json]";
     let content = args.next().expect(usage);
     let venue = args.next().expect(usage);
     let script =
         Script::parse(&std::fs::read_to_string(args.next().expect(usage)).expect("read script"))
             .expect("parse script");
-    let (mut race, mut out) = (None, None);
+    let (mut race, mut out, mut selection) = (None, None, Selection::default());
     while let Some(arg) = args.next() {
         let mut number = || {
             args.next()
@@ -37,13 +37,14 @@ fn main() {
                 })
             }
             "--out" => out = args.next(),
+            "--quad" => selection.quad = number() as u16,
             _ => panic!("{usage}"),
         }
     }
     let started = std::time::Instant::now();
     let traced = block_on(async {
         let content = Content::open(Store::Directory(content.into())).await?;
-        trace(&content, &venue, race, &script, false).await
+        trace(&content, &venue, selection, race, &script, false).await
     })
     .expect("trace");
     let steps = traced.records.len() - 1;

@@ -234,7 +234,7 @@ impl WheelEffects {
         // acceptFrame steps tire tracks, then lingering dust, every frame.
         if let Some((tracks, zones, ground)) = &mut self.tracks {
             let frame = ride.frame();
-            let state = ride.wheel_effect_state();
+            let state = ride.wheel_effect_state().ok_or("tire tracks need an ATV")?;
             tracks.step(
                 &input,
                 &crate::tire_tracks::Contact {

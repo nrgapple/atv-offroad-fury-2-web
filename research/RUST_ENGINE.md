@@ -606,6 +606,40 @@ run follows a different trajectory), wreck script 0.615 against 0.610. The brows
 runs the same algorithm as before (simulation and sound 0.126 ms/frame against 0.14
 in the CPU-per-frame baseline).
 
+## Motorcycles: Freeride (2026-10-21)
+
+The Garage's motorcycles (selections 27-46, `/MX/BIKE{50,125,250,500}.RES`) ride in
+the Rust engine (`fury --quad 29`, `/engine.html?quad=29`; `--rider`/`rider=` pick the
+rider). Ported from atv-web's two-wheel integration (`crates/atv-web/src/motorcycles.rs`:
+op 100/102 load, op 23 placement with its 30 settling steps, the op 50 motorcycle batch
+and the follow/wreck camera actor). `atv_game::ride` now holds the player's vehicle as
+`Mount::Quad` (vehicle plus the ATV rider rig) or `Mount::Bike` (`atv_core::motorcycle`,
+whose model carries its own rider animation, stunts, clutch and wreck); the venue,
+camera, HUD, race and script plumbing are shared. The bike reports a `VehicleFrame`
+summary (two wheels as front, front, rear, rear) to the shared consumers; traces record
+its own two wheels. Drawing uses the material-remapped bike mesh and the MX rider from
+the bike archive, as op 102 returns them. `atv_game::ride::Selection` carries the Garage
+choice (`quad`, `rider`).
+
+Parity (`tools/compare_engine.mjs ride ... --quad N`, ENV01; JavaScript game, Rust
+browser build per step with `traceAll`, `fury --trace`): bit for bit at every step for
+origin, orientation and camera.
+
+| Bike | Script | Steps | Ends |
+| --- | --- | --- | --- |
+| 29 Suzuki RM125 | default ride | 600 | Riding |
+| 33 RM500 XGX | ride with wreck | 930 | Falling (wreck camera) |
+| 27 Fast50 | ride with wreck | 930 | Riding |
+| 31 Suzuki RM250 | clutch, lean, stunt modifiers, brake, reverse | 860 | wreck and recovery, Riding |
+
+Not connected yet (labelled for follow-up PRs): motorcycle engine and impact sounds
+(atv-web op 101, `web/audio.js` motorcycle branch; the bike is silent), the
+`MotorcyclePresentation` 60 Hz interpolation (`web/motorcycle-presentation.js`, used in
+every preset), the bike's wheel particles (`motorcycle_effects`) and the mud overlay on
+the bike and rider (`motorcycleMudAmount`; the held JavaScript frame shows the dirt the
+Rust frame lacks), and races on a motorcycle (a clear "not ported" error; atv-web races
+the CPU roster on comparable quads).
+
 ## Commands
 
 ```sh
@@ -622,6 +656,7 @@ FURY_BIN=target/release/fury FURY_CONTENT=private/reports/hosted-content ATV_TES
   #   ride options: --graphics original|enhanced|high --crash original|crazy|gorn --region x0,y0,x1,y1
 cargo run --release -p atv-app --bin fury -- --content DIR --script s.json --trace out.json
 cargo run --release -p atv-app --bin fury -- --free ...   # terrain free camera, no ride
+cargo run --release -p atv-app --bin fury -- --quad 29 ...   # a motorcycle (27-46); ride parity: compare_engine.mjs ride ... --quad 29
 cargo run --release -p atv-app --bin fury -- --race --venue env01 ...   # race (with --free: race course world, free camera)
 FURY_BIN=... FURY_CONTENT=... ATV_TEST_URL=... [RACE_AUTOPILOT=9000] \
   node tools/compare_engine.mjs race env01 [script.json] [out] [laps] [cpu] [seed]

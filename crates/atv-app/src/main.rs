@@ -8,7 +8,7 @@ use atv_app::{Options, run};
 use atv_content::{Store, pack};
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: fury [--content DIR | --pack FILE] [--venue ID] [--free] [--race [--laps N] [--cpu 0|3|4] [--difficulty 1|2] [--seed N]] \
+const USAGE: &str = "usage: fury [--content DIR | --pack FILE] [--venue ID] [--quad 1-46] [--rider 0|1] [--free] [--race [--laps N] [--cpu 0|3|4] [--difficulty 1|2] [--seed N]] \
 [--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high] \
 [--crash original|crazy|gorn] \
 [--script IN.json] [--trace OUT.json] [--capture OUT.png WxH [--ui]] [--verify-content] [--version] \
@@ -62,6 +62,7 @@ fn main() {
     let mut graphics = atv_render::Graphics::default();
     let mut crash = atv_game::crash::CrashMode::Original;
     let mut ride = true;
+    let mut selection = atv_game::ride::Selection::default();
     let mut race: Option<atv_game::ride::race::Settings> = None;
     let mut script = None;
     let mut trace = None;
@@ -120,6 +121,17 @@ fn main() {
                 capture = Some((PathBuf::from(path), w.parse().unwrap(), h.parse().unwrap()));
             }
             "--free" => ride = false,
+            "--quad" | "--rider" => {
+                let value: u16 = args
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or_else(|| fail(&format!("{arg} needs a number")));
+                if arg == "--quad" {
+                    selection.quad = value;
+                } else {
+                    selection.rider = value;
+                }
+            }
             "--race" => race = Some(race.unwrap_or_default()),
             "--laps" | "--cpu" | "--difficulty" | "--seed" => {
                 let value: u64 = args
@@ -190,6 +202,7 @@ fn main() {
         atv_app::replay::trace(
             &content,
             &venue,
+            selection,
             race,
             &script,
             &out,
@@ -213,6 +226,7 @@ fn main() {
         capture,
         capture_ui,
         ride,
+        selection,
         race,
         script,
         ui_backdrop: None,

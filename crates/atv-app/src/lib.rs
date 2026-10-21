@@ -43,6 +43,8 @@ pub struct Options {
     pub capture_ui: bool,
     /// Ride the player's quad (default); false keeps the free camera.
     pub ride: bool,
+    /// The Garage choice: ATV or motorcycle and rider.
+    pub selection: atv_game::ride::Selection,
     /// Race on the venue's National/Supercross course (with `ride`; a free
     /// camera views the race-course world and its pre-race shots).
     pub race: Option<atv_game::ride::race::Settings>,
@@ -148,6 +150,7 @@ struct Meter {
 
 /// Load-time choices for the venue presentation and the ride.
 struct World {
+    selection: atv_game::ride::Selection,
     race: Option<atv_game::ride::race::Settings>,
     weather: Option<bool>,
     steps: Option<u64>,
@@ -168,6 +171,7 @@ async fn prepare(
     world: World,
 ) -> Result<Ready, String> {
     let World {
+        selection,
         race,
         weather,
         steps,
@@ -252,8 +256,15 @@ async fn prepare(
     );
     let mut pending_sound = None;
     let riding = if ride {
-        // Default Garage selection: quad 1, male rider.
-        let ride = atv_game::ride::load_with(&content, &venue, 1, 0, race, status).await?;
+        let ride = atv_game::ride::load_with(
+            &content,
+            &venue,
+            selection.quad,
+            selection.rider,
+            race,
+            status,
+        )
+        .await?;
         let mut ride = ride;
         scene.set_ride(&gpu, &venue, &ride.quad, &ride.rider)?;
         if let Some(race) = ride.race_mut() {
@@ -267,8 +278,12 @@ async fn prepare(
         {
             state.autopilot_always = true;
         }
-        // startSimulation's first frame (op 23) primes the wheel effects.
-        if let Some(mut effects) = atv_game::wheel_effects::load(&content, &venue, 1).await? {
+        // startSimulation's first frame (op 23) primes the wheel effects
+        // (ATVs; motorcycle particles are their own).
+        if !riding.ride.is_motorcycle()
+            && let Some(mut effects) =
+                atv_game::wheel_effects::load(&content, &venue, selection.quad).await?
+        {
             effects.set_lingering_dust(usize::from(graphics.dust), &venue);
             effects.set_tire_tracks(
                 usize::from(graphics.tire_tracks.0),
@@ -1079,6 +1094,7 @@ impl ApplicationHandler<Message> for App {
             options.venue,
             options.camera,
             World {
+                selection: options.selection,
                 race: options.race,
                 weather: options.weather,
                 steps: options.steps,
@@ -1618,6 +1634,14 @@ pub fn start() {
             .and_then(|v| atv_game::crash::CrashMode::parse(&v))
             .unwrap_or_default(),
         ride: param("free").is_none(),
+        selection: {
+            let number = |key: &str| param(key).and_then(|v| v.parse::<u16>().ok());
+            let defaults = atv_game::ride::Selection::default();
+            atv_game::ride::Selection {
+                quad: number("quad").unwrap_or(defaults.quad),
+                rider: number("rider").unwrap_or(defaults.rider),
+            }
+        },
         ui_backdrop: param("uibackdrop").and_then(|hex| {
             let v = u32::from_str_radix(&hex, 16).ok()?;
             (hex.len() == 6).then_some([(v >> 16) as u8, (v >> 8) as u8, v as u8])

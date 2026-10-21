@@ -3,7 +3,7 @@
 use crate::{Result, slice, u16le, u32le};
 use serde::Serialize;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Node {
     pub name: String,
     pub parent: i32,
@@ -13,7 +13,7 @@ pub struct Node {
     /// The final radius is not a wheel's rolling radius.
     pub bounds: [f32; 7],
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Vertex {
     pub position: [f32; 3],
     pub local_position: [f32; 3],
@@ -25,19 +25,19 @@ pub struct Vertex {
     pub color: Option<[u8; 4]>,
     pub node: u16,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Group {
     pub material: u32,
     pub flags: u32,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Lod {
     pub threshold: f32,
     pub groups: Vec<Group>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Mesh {
     pub nodes: Vec<Node>,
     pub materials: Vec<String>,
