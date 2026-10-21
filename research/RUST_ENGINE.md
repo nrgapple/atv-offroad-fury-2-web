@@ -513,6 +513,14 @@ with original-game evidence:
   (`drawRace` in hud.js), which is not ported yet.
 - Menu/pause screens in the JS game are HD re-layouts of original documents
   (`ui_menu.rs`); their Rust port will list each approximation as it lands.
+- Frontend (Rust port of menu-screens.js): the title wordmark is the authored
+  Fury Remastered vector logo, not original art; the HD pages re-lay the
+  original PAGE01 backdrop, TP course photos, LOADICON shots, etips and
+  uiQuad.txt data in the browser's CSS layout instead of the original page
+  documents; the CSS filters (`blur`, `grayscale`, `saturate`, `contrast`) on
+  backdrops and photos are applied on the CPU at load and approximate the
+  browser's filter pipeline; Back, the event tabs and the vehicle list are
+  browser additions to the original pages.
 
 ## Race checkpoint (2026-10-21)
 

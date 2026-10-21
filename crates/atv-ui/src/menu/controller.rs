@@ -68,6 +68,10 @@ pub struct PauseMenu {
     binding_page: usize,
     binding_row: usize,
     capture: Option<Capture>,
+    /// Opened from the frontend's main menu: Settings is the root page.
+    pub from_menu: bool,
+    /// The ride can return to the engine's own frontend (Quit to Main Menu).
+    pub frontend: bool,
 }
 
 struct Pressed {
@@ -107,6 +111,17 @@ impl PauseMenu {
             binding_page: 0,
             binding_row: 0,
             capture: None,
+            from_menu: false,
+            frontend: false,
+        }
+    }
+
+    /// Settings opened from the frontend's main menu.
+    pub fn settings() -> Self {
+        Self {
+            page: "settings".into(),
+            from_menu: true,
+            ..Self::new()
         }
     }
 
@@ -120,6 +135,7 @@ impl PauseMenu {
             scroll: self.scroll,
             one_handed: ctx.touch.one_handed(),
             capture: self.capture.as_ref().map(|c| c.label.clone()),
+            from_menu: self.from_menu,
             page_count: (self.page == "bindings").then(|| {
                 format!(
                     "Page {} of {}",
@@ -214,8 +230,11 @@ impl PauseMenu {
         if let Ok(mut rows) = rows {
             rows.choices.retain(|c| !UNSUPPORTED.contains(&c.as_str()));
             if !cfg!(target_arch = "wasm32") {
-                // Desktop has no dev log page or browser main menu to open.
-                rows.choices.retain(|c| c != "devlog" && c != "main");
+                // Desktop has no dev log page to open.
+                rows.choices.retain(|c| c != "devlog");
+            }
+            if !cfg!(target_arch = "wasm32") && !self.frontend {
+                rows.choices.retain(|c| c != "main");
             }
             self.selection = self.selection.min(rows.choices.len().saturating_sub(1));
             self.rows = rows;
@@ -239,7 +258,7 @@ impl PauseMenu {
     }
 
     fn back(&mut self) -> Option<Event> {
-        if self.page == "pause" {
+        if self.page == "pause" || (self.from_menu && self.page == "settings") {
             return Some(Event::Resume);
         }
         let to = if self.page == "bindings" && !self.keyboard {
