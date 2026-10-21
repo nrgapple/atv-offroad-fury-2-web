@@ -20,6 +20,8 @@ for (const engine of ['chromium', 'webkit']) {
       const page = await newPage(browser, { viewport, deviceScaleFactor: 3, hasTouch: true, isMobile: true }, errors);
       await page.goto(url('/engine.html?venue=env01&uiDiagnostics=1'));
       await page.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
+      // The toolbar turns icon-only once the GPS map meets it; read targets after.
+      await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).toolbar?.hud?.minimap.visible);
       let s = await state(page);
       assert.equal(s.paused, false);
       const hits = Object.fromEntries(s.toolbar.hits.map(h => [h.id, h]));

@@ -13,6 +13,19 @@ use swash::{
     zeno::{self, Angle, Format, Transform, Vector},
 };
 
+/// Fira Sans Condensed (SIL OFL 1.1, crates/atv-ui/fonts/OFL.txt): the desktop
+/// display face wherever the stylesheet's first choice, Avenir Next Condensed,
+/// is not installed (Windows, Linux). Measured as the closest freely licensed
+/// match in width and shape (research/RUST_UI.md).
+pub const BUNDLED_FAMILY: &str = "Fira Sans Condensed";
+const BUNDLED: [&[u8]; 5] = [
+    include_bytes!("../../fonts/FiraSansCondensed-Regular.ttf"),
+    include_bytes!("../../fonts/FiraSansCondensed-SemiBold.ttf"),
+    include_bytes!("../../fonts/FiraSansCondensed-Bold.ttf"),
+    include_bytes!("../../fonts/FiraSansCondensed-ExtraBold.ttf"),
+    include_bytes!("../../fonts/FiraSansCondensed-ExtraBoldItalic.ttf"),
+];
+
 pub struct Backend {
     system: Option<FontSystem>,
     scale: ScaleContext,
@@ -43,48 +56,60 @@ impl Backend {
         self.system.get_or_insert_with(|| {
             let mut db = fontdb::Database::new();
             db.load_system_fonts();
+            for data in BUNDLED {
+                db.load_font_source(fontdb::Source::Binary(std::sync::Arc::new(data)));
+            }
+            mark_italics(&mut db);
             FontSystem::new_with_locale_and_db("en-US".into(), db)
         })
     }
 
-    /// The first installed family of a CSS list (None: generic sans-serif).
+    /// The stylesheet's first family when installed, else the bundled face, so
+    /// every desktop draws one consistent condensed display type.
     fn family(&mut self, list: &'static str) -> Option<String> {
         if let Some(found) = self.families.get(list) {
             return found.clone();
         }
-        let db = self.system().db();
-        let found = list
+        let first = list
             .split(',')
             .map(|name| name.trim().trim_matches(['\'', '"']))
-            .take_while(|name| !name.eq_ignore_ascii_case("sans-serif"))
-            .find_map(|name| {
-                db.faces().find_map(|face| {
-                    face.families
-                        .iter()
-                        .find(|(family, _)| family.eq_ignore_ascii_case(name))
-                        .map(|(family, _)| family.clone())
-                })
-            });
+            .next()
+            .unwrap_or_default();
+        let db = self.system().db();
+        let installed = |name: &str| {
+            db.faces().find_map(|face| {
+                face.families
+                    .iter()
+                    .find(|(family, _)| family.eq_ignore_ascii_case(name))
+                    .map(|(family, _)| family.clone())
+            })
+        };
+        // FURY_BUNDLED_FONT=1 previews the Windows/Linux face on any desktop.
+        let bundled_only = std::env::var_os("FURY_BUNDLED_FONT").is_some();
+        let found = (!bundled_only)
+            .then(|| installed(first))
+            .flatten()
+            .or_else(|| installed(BUNDLED_FAMILY));
         self.families.insert(list, found.clone());
         found
     }
 
     fn layout(&mut self, text: &str, font: &Font, letter_spacing: f32) -> (Vec<Placed>, f32) {
         let family = self.family(font.family);
-        let system = self.system();
-        let mut buffer = Buffer::new(system, Metrics::new(font.size, font.size * 1.25));
+        let mut buffer = Buffer::new(self.system(), Metrics::new(font.size, font.size * 1.25));
         buffer.set_size(None, None);
+        // cosmic-text only takes faces of the exact weight; select the face by
+        // CSS font matching (nearest weight, closest stretch) like browsers do.
+        let (weight, stretch, style) = self.matched(font, family.as_deref());
+        let system = self.system();
         let mut attrs = Attrs::new()
             .family(match &family {
                 Some(name) => Family::Name(name),
                 None => Family::SansSerif,
             })
-            .weight(Weight(font.weight))
-            .style(if font.italic {
-                Style::Italic
-            } else {
-                Style::Normal
-            });
+            .weight(weight)
+            .stretch(stretch)
+            .style(style);
         if letter_spacing != 0. {
             attrs.letter_spacing_opt = Some(LetterSpacing(letter_spacing / font.size));
         }
@@ -107,6 +132,37 @@ impl Backend {
             }
         }
         (placed, width)
+    }
+
+    /// Weight, stretch and style of the face CSS matching selects.
+    fn matched(
+        &mut self,
+        font: &Font,
+        family: Option<&str>,
+    ) -> (Weight, cosmic_text::Stretch, Style) {
+        let wanted = (
+            Weight(font.weight),
+            cosmic_text::Stretch::Normal,
+            if font.italic {
+                Style::Italic
+            } else {
+                Style::Normal
+            },
+        );
+        let families = [match family {
+            Some(name) => fontdb::Family::Name(name),
+            None => fontdb::Family::SansSerif,
+        }];
+        let db = self.system().db();
+        let query = fontdb::Query {
+            families: &families,
+            weight: wanted.0,
+            stretch: wanted.1,
+            style: wanted.2,
+        };
+        db.query(&query)
+            .and_then(|id| db.face(id))
+            .map_or(wanted, |face| (face.weight, face.stretch, face.style))
     }
 
     /// The primary face's ascent/descent, as CSS line boxes use.
@@ -139,6 +195,37 @@ impl Backend {
         (m.ascent * unit, m.descent * unit)
     }
 
+    /// Actual ink bounds of `text` from its rasterized coverage.
+    pub fn ink(&mut self, text: &str, font: &Font) -> [f32; 4] {
+        let style = TextStyle::new(*font, crate::color::Color::WHITE);
+        let b = self.text(text, &style, 4., [0., 0.]);
+        let (mut x0, mut x1, mut y0, mut y1) = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
+        for y in 0..b.height as i32 {
+            for x in 0..b.width as i32 {
+                if b.rgba[((y * b.width as i32 + x) * 4 + 3) as usize] > 8 {
+                    x0 = x0.min(x);
+                    x1 = x1.max(x + 1);
+                    y0 = y0.min(y);
+                    y1 = y1.max(y + 1);
+                }
+            }
+        }
+        if x0 > x1 {
+            return [0.; 4];
+        }
+        [
+            -(b.left + x0) as f32 / 4.,
+            (b.left + x1) as f32 / 4.,
+            -(b.top + y0) as f32 / 4.,
+            (b.top + y1) as f32 / 4.,
+        ]
+    }
+
+    /// Canvas `textBaseline = 'top'` to alphabetic baseline: the face ascent.
+    pub fn top_offset(&mut self, font: &Font) -> f32 {
+        self.vertical(font).0
+    }
+
     pub fn measure(&mut self, text: &str, font: &Font, letter_spacing: f32) -> LineMetrics {
         let (_, width) = self.layout(text, font, letter_spacing);
         let (ascent, descent) = self.vertical(font);
@@ -146,6 +233,7 @@ impl Backend {
             width,
             ascent,
             descent,
+            ..Default::default()
         }
     }
 
@@ -260,6 +348,21 @@ impl Backend {
         }
         over(&mut out, &fill_layer, shape.fill);
         layers.bitmap(&out)
+    }
+}
+
+/// Some faces (macOS Avenir Next Condensed Heavy Italic) declare a normal
+/// style in their tables; browsers still treat them as italic by name.
+fn mark_italics(db: &mut fontdb::Database) {
+    let fix: Vec<fontdb::FaceInfo> = db
+        .faces()
+        .filter(|f| f.style == fontdb::Style::Normal && f.post_script_name.contains("Italic"))
+        .cloned()
+        .collect();
+    for mut face in fix {
+        db.remove_face(face.id);
+        face.style = fontdb::Style::Italic;
+        db.push_face_info(face);
     }
 }
 
@@ -478,6 +581,142 @@ fn over(out: &mut [[f32; 4]], coverage: &[f32], color: Color) {
         let k = 1. - c[3] * a;
         for i in 0..4 {
             d[i] = c[i] * a + d[i] * k;
+        }
+    }
+}
+
+#[cfg(test)]
+mod bundled {
+    use super::*;
+    #[test]
+    fn missing_first_choice_uses_the_bundled_face() {
+        let mut backend = Backend::new();
+        assert_eq!(
+            backend
+                .family("'No Such Display Face', Arial, sans-serif")
+                .as_deref(),
+            Some(BUNDLED_FAMILY)
+        );
+        let font = Font {
+            family: "'No Such Display Face'",
+            size: 14.,
+            weight: 800,
+            italic: true,
+        };
+        let (placed, width) = backend.layout("PAUSE", &font, 0.);
+        let face = backend.system().db().face(placed[0].font).unwrap();
+        assert_eq!(face.post_script_name, "FiraSansCondensed-ExtraBoldItalic");
+        assert!(width > 20. && width < 60., "{width}");
+    }
+}
+
+#[cfg(test)]
+mod font_choice {
+    use super::*;
+    use crate::color::Color;
+
+    /// Ink coverage of one line, cropped to its ink box.
+    fn ink(backend: &mut Backend, text: &str, font: Font) -> (usize, usize, Vec<f32>) {
+        let b = backend.text(text, &TextStyle::new(font, Color::WHITE), 4., [0., 0.]);
+        let alpha: Vec<f32> = b.rgba.chunks(4).map(|p| p[3] as f32 / 255.).collect();
+        let (w, h) = (b.width as usize, b.height as usize);
+        let (mut x0, mut x1, mut y0, mut y1) = (w, 0, h, 0);
+        for y in 0..h {
+            for x in 0..w {
+                if alpha[y * w + x] > 0.05 {
+                    (x0, x1, y0, y1) = (x0.min(x), x1.max(x + 1), y0.min(y), y1.max(y + 1));
+                }
+            }
+        }
+        let (cw, ch) = (x1.saturating_sub(x0), y1.saturating_sub(y0));
+        let crop = (0..ch)
+            .flat_map(|y| (0..cw).map(move |x| (x, y)))
+            .map(|(x, y)| alpha[(y + y0) * w + x + x0])
+            .collect();
+        (cw, ch, crop)
+    }
+
+    /// `FONT_DIR=… cargo test -p atv-ui font_choice -- --ignored --nocapture`:
+    /// width/height ratios and shape difference of each candidate against the
+    /// installed Avenir Next Condensed (macOS) for the UI's styles.
+    #[test]
+    #[ignore]
+    fn compare_candidates() {
+        let dir = std::env::var("FONT_DIR").expect("FONT_DIR");
+        let mut backend = Backend::new();
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "ttf") {
+                backend.system().db_mut().load_font_file(&path).unwrap();
+            }
+        }
+        let samples: [(&str, f32, u16, bool); 6] = [
+            ("PAUSE CAMERA KEYS", 14., 800, true),
+            ("Keyboard controls", 20., 800, true),
+            ("HOLD ANYWHERE TO RIDE", 16., 800, true),
+            ("00 Mph", 27., 800, true),
+            ("Brake · hold to reverse", 14., 600, false),
+            ("DRIVE RIDER TRICKS", 12., 800, false),
+        ];
+        let reference = "'Avenir Next Condensed'";
+        for family in [
+            "'Barlow Condensed'",
+            "'Roboto Condensed'",
+            "'Fira Sans Condensed'",
+            "'Asap Condensed'",
+            "'Encode Sans Condensed'",
+            "'Arial Narrow'",
+        ] {
+            let mut report = Vec::new();
+            for (text, size, weight, italic) in samples {
+                let f = |family: &'static str| Font {
+                    family,
+                    size,
+                    weight,
+                    italic,
+                };
+                let (rw, rh, r) = ink(&mut backend, text, f(reference));
+                let (cw, ch, c) = ink(&mut backend, text, f(family));
+                // Shape difference after scaling the candidate to the reference box.
+                let mut diff = 0.;
+                for y in 0..rh {
+                    for x in 0..rw {
+                        let (sx, sy) = (x * cw / rw.max(1), y * ch / rh.max(1));
+                        diff += (r[y * rw + x] - c.get(sy * cw + sx).copied().unwrap_or(0.)).abs();
+                    }
+                }
+                report.push(format!(
+                    "{text:?}: width {:.3} height {:.3} shape {:.3}",
+                    cw as f32 / rw as f32,
+                    ch as f32 / rh as f32,
+                    diff / (rw * rh) as f32
+                ));
+            }
+            let resolved = backend.family(family);
+            let faces = |backend: &mut Backend, family: &'static str, weight, italic| {
+                let (placed, _) = backend.layout(
+                    "PAUSE",
+                    &Font {
+                        family,
+                        size: 14.,
+                        weight,
+                        italic,
+                    },
+                    0.,
+                );
+                let db = backend.system().db();
+                placed
+                    .first()
+                    .and_then(|g| db.face(g.font))
+                    .map(|f| f.post_script_name.clone())
+            };
+            println!(
+                "{family} -> {resolved:?} faces {:?} {:?} ref {:?}\n  {}",
+                faces(&mut backend, family, 800, true),
+                faces(&mut backend, family, 600, false),
+                faces(&mut backend, reference, 800, true),
+                report.join("\n  ")
+            );
         }
     }
 }

@@ -33,6 +33,10 @@ pub struct Options {
     /// Native parity capture: render once at this size, write PNG and exit.
     #[cfg(not(target_arch = "wasm32"))]
     pub capture: Option<(std::path::PathBuf, u32, u32)>,
+    /// Draw the ride UI (toolbar, HUD, minimap, keyboard card) into captures,
+    /// with default in-memory settings.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub capture_ui: bool,
     /// Ride the player's quad (default); false keeps the free camera.
     pub ride: bool,
     /// Load the venue's National/Supercross race course resources (static
@@ -64,6 +68,8 @@ struct Ready {
     fixed: bool,
     riding: Option<riding::Riding>,
     pending_sound: Option<PendingSound>,
+    /// Original speed meter and stunt text resources (web/hud.js `init`).
+    hud_assets: Option<atv_ui::hud::assets::OverlayAssets>,
 }
 
 struct PendingSound {
@@ -275,6 +281,17 @@ async fn prepare(
     } else {
         None
     };
+    let hud_assets = if riding.is_some() {
+        match atv_ui::hud::assets::load(&content, &environment).await {
+            Ok(assets) => Some(assets),
+            Err(error) => {
+                status(&format!("HUD resources unavailable: {error}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
     Ok(Ready {
         gpu,
         venue,
@@ -285,6 +302,7 @@ async fn prepare(
         fixed: fixed.is_some(),
         riding,
         pending_sound,
+        hud_assets,
     })
 }
 
@@ -449,6 +467,11 @@ impl App {
                 active,
                 !riding.paused,
                 riding.paused,
+                Some(overlay::HudInput {
+                    hud: ride.hud(),
+                    rider_world: ride.rider_world(),
+                    terrain: &ready.venue.terrain,
+                }),
             );
         }
         self.meter.ui += ui_started.elapsed().as_secs_f64() * 1000.;
@@ -759,6 +782,10 @@ impl App {
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
         if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
             riding.key_pressed(&format!("{code:?}"), now, &|c: &str| names.contains(c));
+            let riding = !riding.paused && !riding.held;
+            if let Some(overlay) = &mut self.overlay {
+                overlay.key(&format!("{code:?}"), riding);
+            }
         }
     }
 
@@ -856,7 +883,7 @@ impl ApplicationHandler<Message> for App {
                         ready.focal_length = focal;
                     }
                 }
-                capture(ready, &path, width, height);
+                capture(ready, &path, width, height, options.capture_ui);
                 event_loop.exit();
                 return;
             }
@@ -910,6 +937,10 @@ impl ApplicationHandler<Message> for App {
                             overlay::viewport(size.width, size.height, window.scale_factor()),
                         );
                         overlay.backdrop = self.ui_backdrop;
+                        overlay.set_course(&ready.venue);
+                        if let Some(assets) = ready.hud_assets.take() {
+                            overlay.set_meter(&ready.gpu.device, &ready.gpu.queue, assets);
+                        }
                         self.overlay = Some(overlay);
                     }
                     window.request_redraw();
@@ -1053,14 +1084,51 @@ impl ApplicationHandler<Message> for App {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32) {
+fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, ui: bool) {
     let view = View {
         camera: ready.camera,
         focal_length: ready.focal_length,
     };
+    let mut overlay = ready.riding.as_ref().filter(|_| ui).map(|riding| {
+        let gpu = &ready.gpu;
+        let mut overlay = overlay::Overlay::with_settings(
+            &gpu.device,
+            gpu.config.format,
+            overlay::viewport(width, height, 1.),
+            atv_ui::settings::Settings::memory(),
+        );
+        overlay.set_course(&ready.venue);
+        overlay.finish_course(&ready.venue.terrain);
+        if let Some(assets) = ready.hud_assets.take() {
+            overlay.set_meter(&gpu.device, &gpu.queue, assets);
+        }
+        let ride = &riding.ride;
+        for _ in 0..2 {
+            overlay.prepare(
+                &gpu.device,
+                &gpu.queue,
+                width,
+                height,
+                0.,
+                true,
+                true,
+                false,
+                Some(overlay::HudInput {
+                    hud: ride.hud(),
+                    rider_world: ride.rider_world(),
+                    terrain: &ready.venue.terrain,
+                }),
+            );
+        }
+        overlay
+    });
     let rgba = ready
         .scene
-        .capture(&ready.gpu, &view, width, height)
+        .capture_with(&ready.gpu, &view, width, height, &mut |encoder, target| {
+            if let Some(overlay) = &mut overlay {
+                overlay.draw(encoder, target);
+            }
+        })
         .expect("capture frame");
     image_png(path, width, height, &rgba);
     status(&format!("wrote {}", path.display()));

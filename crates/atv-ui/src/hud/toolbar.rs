@@ -9,8 +9,10 @@ use crate::{
 use taffy::prelude::*;
 
 pub const PAUSE_ICON: &str = "M5 3h4v14H5zM12 3h4v14h-4z";
+/// play.html's camera path with each implicit arc repeat spelled out (`a`), which
+/// zeno's parser needs; browsers draw both forms identically.
 pub const CAMERA_ICON: &str =
-    "M6 3h8l2 3h2v11H2V6h2zm4 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm0 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4z";
+    "M6 3h8l2 3h2v11H2V6h2zm4 4a4 4 0 1 0 0 8a4 4 0 0 0 0-8zm0 2a2 2 0 1 1 0 4a2 2 0 0 1 0-4z";
 pub const KEYS_ICON: &str = "M2 5h16v10H2zm2 2v2h2V7zm3 0v2h2V7zm3 0v2h2V7zm3 0v2h3V7zM4 10v2h2v-2zm3 0v2h6v-2zm7 0v2h2v-2z";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,6 +30,7 @@ impl Button {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct State {
     pub paused: bool,
     pub hovered: Option<Button>,

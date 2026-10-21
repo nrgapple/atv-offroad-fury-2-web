@@ -599,6 +599,15 @@ impl Ride {
             .map(|c| c.height)
     }
 
+    /// The rider's world matrix: the wreck root while wrecking, else the
+    /// vehicle's (mapPose in web/minimap.js reads this for the GPS marker).
+    pub fn rider_world(&self) -> [f32; 16] {
+        match self.sim.wreck.frame() {
+            Some(wreck) => wreck.world_matrix,
+            None => quaternion_world(self.frame.origin, self.frame.orientation),
+        }
+    }
+
     /// Quad linkage and rider skeleton for the latest frame (simulation_frame).
     /// The vehicle's wheel presentation state (radii, slip, surfaces).
     pub fn wheel_effect_state(&self) -> atv_core::vehicle::WheelEffectState {

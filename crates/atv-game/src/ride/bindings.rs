@@ -54,6 +54,41 @@ fn keyboard(action: Action) -> &'static [Atom] {
     }
 }
 
+/// Default keyboard codes of an action, in binding order (keyboard help).
+pub fn keyboard_codes(action: Action) -> Vec<&'static str> {
+    keyboard(action)
+        .iter()
+        .filter_map(|atom| match atom {
+            Key(code) => Some(*code),
+            _ => None,
+        })
+        .collect()
+}
+
+/// web/bindings.js action ids.
+pub fn action_named(id: &str) -> Option<Action> {
+    use Action::*;
+    Some(match id {
+        "throttle" => Throttle,
+        "brake" => Brake,
+        "steerLeft" => SteerLeft,
+        "steerRight" => SteerRight,
+        "leanForward" => LeanForward,
+        "leanBack" => LeanBack,
+        "reverse" => Reverse,
+        "stuntCircle" => StuntCircle,
+        "stuntTriangle" => StuntTriangle,
+        "stuntL1" => StuntL1,
+        "preloadHold" => PreloadHold,
+        "camera" => Camera,
+        "cameraLeft" => CameraLeft,
+        "cameraRight" => CameraRight,
+        "reset" => Reset,
+        "pause" => Pause,
+        _ => return None,
+    })
+}
+
 /// Controller rows; a slice with more than one atom in `chords` is a chord.
 fn controller(action: Action) -> (&'static [Atom], &'static [&'static [Atom]]) {
     use Action::*;
