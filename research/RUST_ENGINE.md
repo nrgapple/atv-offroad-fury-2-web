@@ -423,6 +423,29 @@ Parity (ENV03 scripted ride, Rust browser / native vs JS, /255): High 0.16 / 0.0
 held ride state: Chromium 0.79-1.20 ms, WebKit 1.36-2.31 ms, 60 Hz held in WebKit (host
 viewports, not phones).
 
+## Speed-rush screen pass (2026-10-21)
+
+Replaces the screen pass of `web/speed-rush.js` (the ride already had its FOV kick and
+amount, `atv_game::ride::view::SpeedRush`). Authored, Normal intensity; settings for
+Off/Low/High are not ported yet.
+
+- `atv-render/speed_rush.rs` + `.wgsl`: while the amount is above 0.001 the scene
+  resolves into its own texture and a full-screen pass streaks it toward the travel
+  focus (jittered taps, 8, or 5 on `(pointer: coarse)`, two fewer under 45 fps), adds
+  the wind lines and vignette and resolves to the frame. The depth buffer is now
+  Depth24PlusStencil8: the vehicle pass writes stencil 1 so the player's quad and rider
+  stay crisp, as the browser's rushMask does. Below the threshold nothing changes (no
+  copy, no pass), as in the browser.
+- `Riding::rush_amount` (additive) feeds `SceneRenderer::set_speed_rush`; a held replay
+  keeps rendering the rush like the browser (only a user pause stops it), and native
+  captures settle one second of presentation first.
+
+Parity (NAT03, 660-step throttle to 54 MPH, JS amount 0.255, Original): Rust browser
+0.54 (landscape) / 0.80 (portrait), was 3.86 / 4.61 without the pass and FOV kick;
+native 1.77 (its wind-line clock and focus smoothing run on fewer frames). Slow FREE01
+rides are unchanged (0.05 native). Host CPU per frame with the rush active: Chromium
+0.70-0.80 ms, WebKit 1.67-2.43 ms, WebKit at 60 Hz (host viewports, not phones).
+
 ## Browser stand-ins in the ported presentation
 
 Labelled for follow-up replacement with recovered behaviour (separate PRs, each with a

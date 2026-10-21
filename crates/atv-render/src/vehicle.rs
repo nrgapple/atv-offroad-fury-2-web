@@ -328,7 +328,22 @@ impl VehiclePass {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: Some(true),
                 depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: Default::default(),
+                // Stencil ref 1 marks the player's own quad and rider so the
+                // speed-rush pass leaves them crisp (game.js rushMask).
+                stencil: {
+                    let face = wgpu::StencilFaceState {
+                        compare: wgpu::CompareFunction::Always,
+                        fail_op: wgpu::StencilOperation::Keep,
+                        depth_fail_op: wgpu::StencilOperation::Keep,
+                        pass_op: wgpu::StencilOperation::Replace,
+                    };
+                    wgpu::StencilState {
+                        front: face,
+                        back: face,
+                        read_mask: 0xff,
+                        write_mask: 0xff,
+                    }
+                },
                 bias: Default::default(),
             }),
             multisample: wgpu::MultisampleState {

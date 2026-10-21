@@ -237,6 +237,13 @@ async fn prepare(
         scene.set_weather_camera(camera);
         scene.advance_steps(steps);
     }
+    // speedRushTaps: phones and tablets ((pointer: coarse)) get fewer taps.
+    #[cfg(target_arch = "wasm32")]
+    scene.set_coarse_pointer(
+        web_sys::window()
+            .and_then(|w| w.match_media("(pointer: coarse)").ok().flatten())
+            .is_some_and(|m| m.matches()),
+    );
     let mut pending_sound = None;
     let riding = if ride {
         // Default Garage selection: quad 1, male rider.
@@ -484,6 +491,15 @@ impl App {
             Ok(_) => {}
             Err(error) => status(&error),
         }
+        // The speed-rush screen pass shares the FOV kick's amount.
+        let motion = riding.ride.frame();
+        ready.scene.set_speed_rush(
+            &ready.gpu,
+            riding.rush_amount(),
+            dt,
+            motion.origin,
+            motion.linear_velocity,
+        );
         let active = !riding.paused && !riding.held && focused;
         let ui_started = Instant::now();
         if let Some(overlay) = &mut self.overlay {
@@ -1045,6 +1061,21 @@ impl ApplicationHandler<Message> for App {
             if let (Ok(ready), Some((path, width, height))) = (&mut result, options.capture) {
                 if let Some(riding) = &mut ready.riding {
                     let aspect = width as f32 / height as f32;
+                    // About a second of held presentation, as the browser
+                    // renders before its capture: the speed rush settles.
+                    for _ in 0..60 {
+                        riding
+                            .present(&ready.gpu, &mut ready.scene, &ready.venue, aspect, 1. / 60.)
+                            .expect("present ride");
+                        let motion = riding.ride.frame();
+                        ready.scene.set_speed_rush(
+                            &ready.gpu,
+                            riding.rush_amount(),
+                            1. / 60.,
+                            motion.origin,
+                            motion.linear_velocity,
+                        );
+                    }
                     let (camera, focal) = riding
                         .present(&ready.gpu, &mut ready.scene, &ready.venue, aspect, 0.)
                         .expect("present ride");
