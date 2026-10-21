@@ -63,7 +63,7 @@ async function scriptedGame(browser, venue, steps, viewport, errors, { measure =
     const trace = window.rideTrace = { frames: [], cursor: 0, held: false, lifts: [] };
     // Enhanced/High wheel re-projection: the lift drawn after each delivered step.
     if (graphics !== 'original') {
-      const lift = () => { const g = window.atvTerrainStatus?.graphics, step = trace.frames.length; if (g && step && !trace.held && trace.lifts.at(-1)?.[0] !== step) trace.lifts.push([step, g.wheelLift]); requestAnimationFrame(lift); };
+      const lift = () => { const g = window.atvTerrainStatus?.graphics, step = trace.frames.length; if (g && step && !trace.held && trace.lifts.at(-1)?.[0] !== step) trace.lifts.push([step, g.wheelLift, g.dirtLevel]); requestAnimationFrame(lift); };
       requestAnimationFrame(lift);
     }
     const post = Worker.prototype.postMessage, pending = new Set();
@@ -228,6 +228,18 @@ function compareLifts(lifts, rust) {
   return { samples: lifts.length, matched, javascriptLifted: lifted, rustLiftedSteps: rustLifted, worstUnmatched: worst };
 }
 
+// Enhanced/High ATV dirt: the JavaScript `dirtLevel` samples against the Rust
+// trace's per-step `dirtLevel` (same staleness allowance as the lifts).
+function compareDirt(samples, rust) {
+  const at = new Map(rust.map(r => [r.step, r.dirtLevel ?? 0]));
+  let matched = 0, worst = 0;
+  for (const [step, , level] of samples) {
+    const error = Math.min(...[step, step - 1].filter(s => at.has(s)).map(s => Math.abs(at.get(s) - level)));
+    if (error < 1e-6) matched++; else worst = Math.max(worst, error);
+  }
+  return { samples: samples.length, matched, worstUnmatched: worst, javascriptFinal: samples.at(-1)?.[2], rustFinal: rust.at(-1)?.dirtLevel };
+}
+
 async function rideMode() {
   // ride [venue] [script.json] [out-dir] [--graphics original|enhanced|high] [--crash original|crazy|gorn] [--region x0,y0,x1,y1] [--quad 1-46]
   const args = process.argv.slice(3), at = args.indexOf('--graphics');
@@ -316,6 +328,7 @@ async function rideMode() {
       // traceAll records start at step 1; compareTraces expects step 0 first.
       report.web = compareTraces(js, webTrace[0]?.step === 0 ? webTrace : [null, ...webTrace]);
       if (lifts.length) report.wheelLift = compareLifts(lifts, webTrace);
+      if (lifts.length) report.dirt = compareDirt(lifts, webTrace);
       assertNoErrors(rustErrors);
       await rust.close();
     }

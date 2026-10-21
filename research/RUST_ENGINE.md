@@ -828,8 +828,8 @@ the bike archive's FS01particles atlas (`loadMotorcycleEffects`; no tire tracks 
 lingering dust, like the browser). Vehicle materials load their mud map (`image.mud`:
 the MX MudAnimator's second map, else the ATV2 PixelAnimation dirt pass), and the
 vehicle shader blends it by the bike's larger wheel mud amount (`motorcycleMudAmount`,
-linear by mud alpha; the ATV reveal branch is wired but its dirt buildup is not
-ported, so quads stay clean as in Original). Held ENV01 frame of bike 29 after 600
+linear by mud alpha; the ATV reveal branch draws the quad's dirt buildup, see
+"ATV dirt buildup" below). Held ENV01 frame of bike 29 after 600
 steps, mean absolute difference in the vehicle box against the JavaScript game: 6.19
 before, 0.13 Rust browser / 0.15 native after (quad 1 unchanged at 0.59 / 0.63).
 
@@ -1389,3 +1389,25 @@ never in GitHub Actions; GitHub Actions only compiles and tests the content-free
 `fury` reads content from a package directory, a single content pack, a pack appended to the
 executable or, on macOS, `Contents/Resources/content.pack`. The build, pack format, verification, GitHub
 Release publication and signing caveats are in [DESKTOP_RELEASES.md](DESKTOP_RELEASES.md).
+
+## ATV dirt buildup (2026-10-21)
+
+`atv-game/dirt.rs` ports graphics.js `DirtBuildup`: one 0-255 level for the quad and
+rider, stepped once per accepted simulation frame (and on the Reset frame) from the
+latest wheel centres, radii, water heights, grounded wheels, surfaces, MUD contacts and
+`speed_magnitude`. The venue's `[TerrainZoneN]` DirtAnimChangeTime/Amount rule soils the
+quad above 10 mph in the zone under most grounded wheels; MUD scenery soils at 0.1 s per
+level; wheels in water wash 63.75 levels per second per four submerged wheels; a player
+Reset or a new ride cleans it and wreck recovery keeps it. Enhanced and High
+(`Graphics::dirt`, applied on change) draw it through the vehicle shader's ATV reveal
+(`mudReveal`), as game.js does; Original stays clean. Unlike the browser, Original does
+not step the level (it skips the per-step wheel samples), so switching to Enhanced
+mid-ride starts clean. `set_heavy`/`splat` carry Alpha Heavy mud's zones and landing
+splats for the Alpha port.
+
+Evidence (host Chromium, `compare_engine.mjs ride VENUE SCRIPT OUT --graphics enhanced`,
+JavaScript `dirtLevel` sampled per frame against the Rust trace's per-step level): ENV05,
+960 steps of throttle with 0.3 steer: 859/859 samples equal, final level 12 both,
+vehicle box 0.42 (1280x720) / 0.54 (390x844); ENV01 default script: 473/475 (two
+stale samples), final 6 both. The unit test checks zone soiling, the speed gate, MUD,
+water washing and Heavy mud against values from web/graphics.js.

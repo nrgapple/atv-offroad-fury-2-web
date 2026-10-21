@@ -1275,6 +1275,23 @@ impl Ride {
         ))
     }
 
+    /// What the ATV dirt rule reads from the latest step; None on a motorcycle.
+    pub fn dirt_sample(&self) -> Result<Option<crate::dirt::Sample>> {
+        if self.is_motorcycle() {
+            return Ok(None);
+        }
+        let input = self.wheel_effect_input()?;
+        Ok(Some(crate::dirt::Sample {
+            centers: input.centers,
+            radii: self.wheel_radii(),
+            water_heights: input.water_heights.map(|h| h.unwrap_or(-256.)),
+            grounded: input.grounded,
+            surfaces: input.surfaces,
+            mud: input.mud,
+            speed: self.frame.speed_magnitude,
+        }))
+    }
+
     /// Wheel radii (presentation effects place dust at the contact patch).
     pub fn wheel_radii(&self) -> [f32; 4] {
         self.wheel_effect_state()
