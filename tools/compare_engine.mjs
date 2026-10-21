@@ -219,6 +219,7 @@ async function rideMode() {
       const page = await scriptedGame(browser, venue, steps, viewport, errors, { graphics });
       const jsFile = path.join(out, `${venue}-${name}-javascript.png`);
       report[`javascriptGraphics-${name}`] = await page.evaluate(() => atvTerrainStatus.graphics?.setting);
+      report[`javascriptSpeedRush-${name}`] = await page.evaluate(() => atvTerrainStatus.speedRush);
       report[`javascriptEffects-${name}`] = await page.evaluate(() => ({ wheel: atvTerrainStatus.wheelEffects && { particles: atvTerrainStatus.wheelEffects.particles, draws: atvTerrainStatus.wheelEffects.draws, wetLive: atvTerrainStatus.wheelEffects.wetLive }, lingeringDust: atvTerrainStatus.lingeringDust }));
       // The canvas only: toolbar, HUD and minimap are DOM overlays.
       await page.evaluate(() => { document.body.style.visibility = 'hidden'; document.querySelector('#game').style.visibility = 'visible'; });

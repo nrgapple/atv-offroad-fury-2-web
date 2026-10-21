@@ -8,6 +8,7 @@ mod scenery;
 mod shadows;
 mod sky;
 mod snow;
+mod speed_rush;
 mod terrain;
 mod texture;
 mod tire_tracks;
@@ -21,7 +22,8 @@ mod world;
 use atv_game::venue::Venue;
 pub use camera::Camera;
 
-const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
+/// Depth plus the stencil the speed-rush pass masks the player's vehicle with.
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
 
 pub struct Gpu {
     pub surface: wgpu::Surface<'static>,
@@ -274,6 +276,10 @@ pub struct SceneRenderer {
     rest_lift: Option<f32>,
     /// Quad world, rider world and, when detached, the rider's torso world.
     ride_pose: Option<([f32; 16], Option<[f32; 16]>)>,
+    /// Authored speed-rush screen pass, and the travel state it reads.
+    speed_rush: Option<speed_rush::SpeedRushPass>,
+    rush_motion: ([f32; 3], [f32; 3]),
+    coarse_pointer: bool,
     /// The player's quad and rider, once a ride is loaded.
     vehicle: Option<vehicle::VehiclePass>,
     /// Race CPU riders (drawn after the player) and which are near enough.
@@ -404,6 +410,9 @@ impl SceneRenderer {
             contact_shadows: None,
             shadow_map: None,
             rest_lift: None,
+            speed_rush: None,
+            rush_motion: ([0.; 3], [0.; 3]),
+            coarse_pointer: false,
             ride_pose: None,
         };
         // startSimulation's first follow-camera request (op 46, dt 1/60)
@@ -708,6 +717,37 @@ impl SceneRenderer {
         self.ground.height(f64::from(x), f64::from(z)) as f32
     }
 
+    /// This frame's speed-rush amount (the ride's FOV kick shares it), the
+    /// render step and the player's origin and velocity.
+    pub fn set_speed_rush(
+        &mut self,
+        gpu: &Gpu,
+        amount: f32,
+        dt: f32,
+        origin: [f32; 3],
+        velocity: [f32; 3],
+    ) {
+        if amount <= 0. && self.speed_rush.is_none() {
+            return;
+        }
+        let coarse = self.coarse_pointer;
+        let pass = self.speed_rush.get_or_insert_with(|| {
+            let mut pass = speed_rush::SpeedRushPass::new(gpu, gpu.samples);
+            pass.set_coarse(coarse);
+            pass
+        });
+        pass.update(amount, dt);
+        self.rush_motion = (origin, velocity);
+    }
+
+    /// Phones and tablets get fewer blur taps (speedRushTaps).
+    pub fn set_coarse_pointer(&mut self, coarse: bool) {
+        self.coarse_pointer = coarse;
+        if let Some(pass) = &mut self.speed_rush {
+            pass.set_coarse(coarse);
+        }
+    }
+
     /// The latest simulation pose of the quad linkage and rider skeleton.
     pub fn pose_ride(&mut self, gpu: &Gpu, pose: &atv_game::ride::Pose) {
         if let Some(vehicle) = &self.vehicle {
@@ -913,6 +953,19 @@ impl SceneRenderer {
             _ => 0,
         };
         stats.shadow_draws = u32::from(contact > 0) + u32::from(light.is_some());
+        let rush_scene = match &mut self.speed_rush {
+            Some(rush) if rush.active() => {
+                let (origin, velocity) = self.rush_motion;
+                rush.prepare(
+                    gpu,
+                    size,
+                    speed_rush::focus(&view_projection, eye, velocity),
+                    speed_rush::bounds(&view_projection, origin),
+                );
+                Some(rush.scene_target(gpu, size))
+            }
+            _ => None,
+        };
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         if let (Some(map), Some(vehicle), Some((clip, _))) =
             (&self.shadow_map, &self.vehicle, &light)
@@ -921,9 +974,11 @@ impl SceneRenderer {
         }
         {
             let [r, g, b] = self.fog_color.map(f64::from);
+            // With speed rush the scene resolves into its own texture first.
+            let scene_target = rush_scene.as_ref().unwrap_or(target);
             let (view, resolve_target) = match msaa {
-                Some(msaa) => (msaa, Some(target)),
-                None => (target, None),
+                Some(msaa) => (msaa, Some(scene_target)),
+                None => (scene_target, None),
             };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("scene"),
@@ -942,7 +997,14 @@ impl SceneRenderer {
                         load: wgpu::LoadOp::Clear(1.),
                         store: wgpu::StoreOp::Discard,
                     }),
-                    stencil_ops: None,
+                    stencil_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0),
+                        store: if rush_scene.is_some() {
+                            wgpu::StoreOp::Store
+                        } else {
+                            wgpu::StoreOp::Discard
+                        },
+                    }),
                 }),
                 ..Default::default()
             });
@@ -965,6 +1027,7 @@ impl SceneRenderer {
             }
             // The browser draws vehicles here, then water.
             if let Some(vehicle) = &self.vehicle {
+                pass.set_stencil_reference(1);
                 vehicle.draw(&mut pass);
             }
             for (cpu, _) in self.cpus.iter().filter(|(_, visible)| *visible) {
@@ -985,6 +1048,10 @@ impl SceneRenderer {
             if let Some(dust) = &self.lingering_dust {
                 dust.draw(&mut pass, &self.world);
             }
+        }
+        if let (Some(rush), Some(_)) = (&self.speed_rush, &rush_scene) {
+            rush.draw(&mut encoder, target, msaa, depth);
+            stats.shadow_draws += 1;
         }
         (encoder, stats)
     }
