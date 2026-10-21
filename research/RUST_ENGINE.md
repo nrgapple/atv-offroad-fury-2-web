@@ -240,6 +240,53 @@ anisotropy is applied at load only; the train is stepped without collision heigh
 gates, grids and race-event flash bursts belong to the race port. The vehicle pass draws
 between vegetation and water, as `game.js` does.
 
+## Shared audio recovery checkpoint (2026-10-21)
+
+The Rust ride now owns the `web/audio.js`, `quad-sounds.js` and `music.js` sound
+path: original sample loading/ADPCM decoding, engine and impact decisions, chassis,
+rider vocals, surface drive sounds, placed world sounds, a stereo software mixer
+and soundtrack selection. Decisions use the recovered `atv-core` routines used by
+operations 33, 77 and 173. CPAL supplies CoreAudio/WASAPI/ALSA output on desktop and
+Web Audio output in browsers. Desktop soundtrack playback streams decoded VAG
+blocks; the browser retains the hosted AAC media stream to avoid downloading and
+decoding whole tracks. Original sound is the default; authored Enhanced echo stays
+an explicit option.
+
+Continuation fixes preserve existing browser behavior and resource savings:
+
+- The first ride frame no longer waits for the sound bank. Browser loading runs
+  asynchronously afterward and remembers an earlier activation gesture. Native
+  bank loading still runs synchronously after that first frame.
+- Encoded rider vocals decode only when selected, with a 24-entry PCM cache. In the
+  measured ENV01 male bank this avoids 12,966,624 bytes of vocal PCM at startup;
+  selecting all 51 cues leaves 8,558,608 bytes in the cache. First-decode median was
+  0.735 ms, maximum 3.989 ms on the host Mac. This is not a physical-phone result;
+  cue decoding remains synchronous while holding the mixer lock.
+- Mixer scratch buffers are reused across callbacks. Soundtrack maintenance runs
+  while the simulation is paused; focus loss freezes simulation and audio. A
+  rejected/interrupted browser media play request can recover on subsequent
+  activation or a bounded retry without skipping the selected song.
+
+Verification: the content-backed `tools/test_rust_audio.mjs` passes Chromium and
+WebKit on the host. It blocks the bank network reads while requiring a rendered
+ride, rejects the first media play request, then checks engine voices, soundtrack
+advance while paused, focus suspension and neutral recovery. Mixer tests cover
+pause/focus behavior and streaming resampler continuity; vocal-cache tests cover
+lazy decoding, capacity and eviction.
+
+The Original ENV01 600-step JavaScript/native audio comparison matches all 12
+engine sample choices, all 10 drive and three chassis voices; median level
+difference is 0.21 dB and p90 1.05 dB. Command timing still differs by 1–7 simulation
+steps because the JavaScript reference schedules per delivered batch. Native mixer
+cost is 0.0065 ms per 60 Hz frame in this host replay. These measurements compare
+the authored implementations; they do not establish original PS2 SPU equivalence.
+Reports and captures remain under ignored `private/reports/engine-parity/audio-recovery/`.
+
+Remaining acceptance work includes physical mobile audio latency/stalls, actual
+Windows/Linux output devices, inactive render sleep, and broader runtime feature
+coverage. The JavaScript game remains available until the shared engine passes
+those relevant subsystem gates.
+
 ## Commands
 
 ```sh

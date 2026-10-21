@@ -119,7 +119,8 @@ impl Output {
 
     /// Called from a key or pointer press (Web Audio autoplay policy).
     pub fn start(&mut self) {
-        if !self.started && self.stream.play().is_ok() {
+        // A later gesture must also resume a context suspended by the browser.
+        if self.stream.play().is_ok() {
             self.started = true;
         }
     }
@@ -129,6 +130,28 @@ impl Output {
 struct WebMusic {
     element: web_sys::HtmlAudioElement,
     playing: bool,
+    pending: Rc<std::cell::Cell<bool>>,
+    retry: web_time::Instant,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl WebMusic {
+    fn resume(&mut self, gesture: bool) {
+        if self.pending.get() || (!gesture && self.retry.elapsed().as_millis() < 250) {
+            return;
+        }
+        self.retry = web_time::Instant::now();
+        if let Ok(promise) = self.element.play() {
+            self.pending.set(true);
+            let pending = self.pending.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                // Autoplay denial/blur can interrupt a pending play. Keep the
+                // selected song and retry, rather than leaving it stuck silent.
+                let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+                pending.set(false);
+            });
+        }
+    }
 }
 
 /// The ride's sound: decisions, output and soundtrack.
@@ -138,10 +161,13 @@ pub struct Sound {
     content: Rc<Content>,
     catalog: Option<Catalog>,
     music_enabled: bool,
+    focused: bool,
     #[cfg(not(target_arch = "wasm32"))]
     song: Option<atv_game::audio::music::VagMusic>,
     #[cfg(target_arch = "wasm32")]
     web: Option<WebMusic>,
+    #[cfg(target_arch = "wasm32")]
+    diagnostics: bool,
     pub title: Option<String>,
     /// CPU spent on sound decisions per rendered frame (ms), for the meter.
     pub cpu: f64,
@@ -158,16 +184,15 @@ pub struct Settings {
 impl Sound {
     pub async fn load(
         content: Rc<Content>,
-        venue: &Venue,
-        ride_state: &atv_game::ride::Ride,
+        environment: &str,
         settings: Settings,
     ) -> Result<Self, String> {
         let output = Output::open()?;
-        let course = atv_game::launch::course_resource(&venue.environment, false)?;
+        let course = atv_game::launch::course_resource(environment, false)?;
         let bank = bank::load(
             &content,
             &course.archive,
-            &venue.environment,
+            environment,
             1,
             false,
             output.rate,
@@ -178,13 +203,7 @@ impl Sound {
             bank.samples.len(),
             bank.decode_ms
         );
-        let mut ride = RideAudio::new(bank, settings.mode);
-        let origin = ride_state.frame().origin;
-        ride.configure_echo(
-            venue.scene.crowd_present,
-            |x, z| ride_state.ground(x, z),
-            origin,
-        )?;
+        let ride = RideAudio::new(bank, settings.mode);
         ride.apply_mode(&mut *output.mixer.lock().map_err(|_| "mixer lock")?);
         let seed = (web_time::SystemTime::now()
             .duration_since(web_time::UNIX_EPOCH)
@@ -203,10 +222,19 @@ impl Sound {
             content,
             catalog,
             music_enabled: settings.music,
+            focused: true,
             #[cfg(not(target_arch = "wasm32"))]
             song: None,
             #[cfg(target_arch = "wasm32")]
             web: None,
+            #[cfg(target_arch = "wasm32")]
+            diagnostics: web_sys::window()
+                .and_then(|w| w.location().search().ok())
+                .is_some_and(|q| {
+                    q.trim_start_matches('?')
+                        .split('&')
+                        .any(|p| p == "audioDiagnostics=1")
+                }),
             title: None,
             cpu: 0.,
             mix: 0.,
@@ -217,18 +245,31 @@ impl Sound {
     pub fn start(&mut self) {
         self.output.start();
         #[cfg(target_arch = "wasm32")]
-        self.web_music();
+        self.web_music(true);
     }
 
-    pub fn set_active(&mut self, active: bool) {
+    pub fn configure(&mut self, venue: &Venue, ride: &atv_game::ride::Ride) -> Result<(), String> {
+        self.ride.configure_echo(
+            venue.scene.crowd_present,
+            |x, z| ride.ground(x, z),
+            ride.frame().origin,
+        )?;
+        self.ride
+            .apply_mode(&mut *self.output.mixer.lock().map_err(|_| "mixer lock")?);
+        Ok(())
+    }
+
+    pub fn set_lifecycle(&mut self, focused: bool, paused: bool) {
+        self.focused = focused;
         if let Ok(mut mixer) = self.output.mixer.lock() {
-            mixer.active = active;
+            mixer.active = focused && !paused;
+            mixer.music_active = focused;
         }
         #[cfg(target_arch = "wasm32")]
         if let Some(web) = &mut self.web {
-            if active && web.playing {
-                let _ = web.element.play();
-            } else if !active {
+            if focused && web.playing {
+                web.resume(true);
+            } else if !focused {
                 let _ = web.element.pause();
             }
         }
@@ -250,12 +291,6 @@ impl Sound {
         {
             eprintln!("sound: {error}");
         }
-        if self.output.started && self.music_enabled {
-            #[cfg(not(target_arch = "wasm32"))]
-            self.native_music();
-            #[cfg(target_arch = "wasm32")]
-            self.web_music();
-        }
         self.cpu = started.elapsed().as_secs_f64() * 1000.;
         let (seconds, frames, since) = &mut self.mix_mark;
         *frames += 1;
@@ -266,6 +301,42 @@ impl Sound {
             *seconds = mixer.render_seconds;
             *frames = 0;
             *since = web_time::Instant::now();
+        }
+    }
+
+    /// Keep the soundtrack fed independently of paused simulation steps.
+    pub fn maintain(&mut self) {
+        if self.focused && self.output.started && self.music_enabled {
+            #[cfg(not(target_arch = "wasm32"))]
+            self.native_music();
+            #[cfg(target_arch = "wasm32")]
+            self.web_music(false);
+        }
+    }
+
+    /// Opt-in browser test evidence; normal gameplay serializes no audio state.
+    pub fn report(&self, steps: u64) {
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = steps;
+        #[cfg(target_arch = "wasm32")]
+        if self.diagnostics
+            && let Ok(mixer) = self.output.mixer.lock()
+        {
+            let state = serde_json::json!({
+                "steps": steps, "started": self.output.started,
+                "active": mixer.active, "musicActive": mixer.music_active,
+                "clock": mixer.seconds(), "voices": mixer.voices(),
+                "engineCommands": self.ride.stats.engine_commands,
+                "musicTitle": self.title,
+                "musicTime": self.web.as_ref().map(|w| w.element.current_time()),
+                "musicPaused": self.web.as_ref().map(|w| w.element.paused()),
+            });
+            if let Some(root) = web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|d| d.document_element())
+            {
+                let _ = root.set_attribute("data-engine-audio", &state.to_string());
+            }
         }
     }
 
@@ -305,8 +376,8 @@ impl Sound {
     /// web/music.js): volume 0.45 under the 0.65 master; the next shuffle
     /// pick starts when a song ends.
     #[cfg(target_arch = "wasm32")]
-    fn web_music(&mut self) {
-        if !self.music_enabled || !self.output.started {
+    fn web_music(&mut self, gesture: bool) {
+        if !self.focused || !self.music_enabled || !self.output.started {
             return;
         }
         let Some(catalog) = &mut self.catalog else {
@@ -323,10 +394,15 @@ impl Sound {
             self.web = Some(WebMusic {
                 element,
                 playing: false,
+                pending: Rc::new(std::cell::Cell::new(false)),
+                retry: web_time::Instant::now(),
             });
         }
         let web = self.web.as_mut().unwrap();
         if web.playing && !web.element.ended() {
+            if web.element.paused() {
+                web.resume(gesture);
+            }
             return;
         }
         let Ok(Some(song)) = catalog.next_song() else {
@@ -345,7 +421,7 @@ impl Sound {
         };
         self.title = Some(format!("{} – {}", song.title, song.artist));
         web.element.set_src(&url);
-        let _ = web.element.play();
+        web.resume(true);
         web.playing = true;
     }
 }

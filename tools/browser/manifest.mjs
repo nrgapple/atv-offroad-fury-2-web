@@ -35,6 +35,7 @@ export const TESTS = {
       'Fails on unmodified origin/main too: expects Pause to suspend the AudioContext; pause now keeps the soundtrack running (PR #40)'
   },
   'test_engine_preview.mjs': { group: 'content-free' },
+  'test_rust_audio.mjs': { group: 'content' },
   'test_boundary_launch.mjs': { defaults: ['pins crash mode crazy'], group: 'content' },
   'test_browser.mjs': { group: 'content-free' },
   'test_camera_gorn.mjs': {

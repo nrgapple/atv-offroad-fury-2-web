@@ -84,6 +84,10 @@ impl Riding {
     pub fn frame(&mut self, input: &Sample, dt: f32) -> Result<(), String> {
         let started = web_time::Instant::now();
         let result = self.frame_inner(input, dt);
+        if let Some(sound) = &mut self.sound {
+            sound.maintain();
+            sound.report(self.ride.steps());
+        }
         self.sim_ms = started.elapsed().as_secs_f64() * 1000.;
         result
     }
@@ -91,6 +95,9 @@ impl Riding {
     fn frame_inner(&mut self, input: &Sample, dt: f32) -> Result<(), String> {
         self.steps_last_frame = 0;
         self.step_cameras.clear();
+        if !self.focused {
+            return Ok(());
+        }
         if let Some((controls, cursor)) = &mut self.autodrive {
             // The browser's accumulator, with the script supplying each step.
             self.accumulator = (self.accumulator + dt).min(0.1);
@@ -189,10 +196,9 @@ impl Riding {
         self.sync_sound();
     }
 
-    fn sync_sound(&mut self) {
-        let active = self.focused && !self.paused;
+    pub(crate) fn sync_sound(&mut self) {
         if let Some(sound) = &mut self.sound {
-            sound.set_active(active);
+            sound.set_lifecycle(self.focused, self.paused);
         }
     }
 

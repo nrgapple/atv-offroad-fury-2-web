@@ -306,7 +306,11 @@ pub struct Mixer {
     pub sfx_volume: f32,
     pub music_volume: f32,
     pub active: bool,
+    /// Music stays active in the pause menu, but stops on focus loss.
+    pub music_active: bool,
     echo: Option<Echo>,
+    sfx_scratch: Vec<[f32; 2]>,
+    music_scratch: Vec<[f32; 2]>,
     pub meter: Meter,
     /// Streamed soundtrack frames at the output rate (the music bus).
     music: std::collections::VecDeque<[f32; 2]>,
@@ -327,7 +331,10 @@ impl Mixer {
             sfx_volume: 1.,
             music_volume: MUSIC_VOLUME,
             active: true,
+            music_active: true,
             echo: None,
+            sfx_scratch: Vec::new(),
+            music_scratch: Vec::new(),
             meter: Meter::default(),
             music: Default::default(),
             music_underruns: 0,
@@ -488,9 +495,17 @@ impl Mixer {
     }
 
     fn mix(&mut self, out: &mut [f32]) {
+        if !self.active && !self.music_active {
+            out.fill(0.);
+            return;
+        }
         let frames = out.len() / 2;
-        let mut sfx = vec![[0f32; 2]; frames];
-        let mut music = vec![[0f32; 2]; frames];
+        let mut sfx = std::mem::take(&mut self.sfx_scratch);
+        let mut music = std::mem::take(&mut self.music_scratch);
+        sfx.resize(frames, [0.; 2]);
+        music.resize(frames, [0.; 2]);
+        sfx.fill([0.; 2]);
+        music.fill([0.; 2]);
         for slot in self.voices.iter_mut() {
             let Some(voice) = slot.as_mut() else {
                 continue;
@@ -547,7 +562,7 @@ impl Mixer {
                 *slot = None;
             }
         }
-        if self.active && !self.music.is_empty() {
+        if self.music_active && !self.music.is_empty() {
             for frame in music.iter_mut() {
                 match self.music.pop_front() {
                     Some(sample) => {
@@ -566,7 +581,9 @@ impl Mixer {
             let bus = [sfx[i][0] * sfx_gain, sfx[i][1] * sfx_gain];
             let echo = self.echo.as_mut().map_or([0.; 2], |e| e.process(bus));
             for c in 0..2 {
-                let value = MASTER * (bus[c] + echo[c]) + MASTER * self.music_volume * music[i][c];
+                let effects = if self.active { bus[c] + echo[c] } else { 0. };
+                let soundtrack = if self.music_active { music[i][c] } else { 0. };
+                let value = MASTER * (effects + self.music_volume * soundtrack);
                 out[c] = value;
                 self.meter.sum_squares[c] += f64::from(value * value);
                 self.meter.peak = self.meter.peak.max(value.abs());
@@ -574,6 +591,8 @@ impl Mixer {
         }
         self.meter.frames += frames as u64;
         self.clock += frames as u64;
+        self.sfx_scratch = sfx;
+        self.music_scratch = music;
     }
 
     /// Label, length (frames), playback rate and gains of every live voice.
@@ -628,6 +647,61 @@ mod tests {
         assert!((mixer.elapsed(looped).unwrap() - 256. / 48000.).abs() < 1e-6);
         assert!(out[2 * 200 + 1].abs() < 1e-6, "right silent after one-shot");
         assert!(out[2 * 205].abs() > 0.);
+    }
+
+    #[test]
+    fn pause_keeps_music_and_focus_loss_freezes_playback() {
+        let mut mixer = Mixer::new(48000);
+        let voice = mixer.play(
+            &tone(100),
+            Looping::Whole,
+            [1.; 2],
+            1.,
+            Bus::Sfx,
+            false,
+            "test",
+        );
+        mixer.push_music(&[0.25; 32]);
+        mixer.active = false;
+        let mut out = [0.; 16];
+        mixer.render(&mut out);
+        assert!(
+            out.iter()
+                .all(|v| (*v - MASTER * MUSIC_VOLUME * 0.25).abs() < 1e-6)
+        );
+        let queued = mixer.music_queued();
+        let elapsed = mixer.elapsed(voice);
+        let clock = mixer.seconds();
+        mixer.music_active = false;
+        mixer.render(&mut out);
+        assert_eq!(out, [0.; 16]);
+        assert_eq!(mixer.music_queued(), queued);
+        assert_eq!(mixer.elapsed(voice), elapsed);
+        assert_eq!(mixer.seconds(), clock);
+        mixer.active = true;
+        mixer.music_active = true;
+        mixer.render(&mut out);
+        assert!(out.iter().any(|v| *v > MASTER * MUSIC_VOLUME * 0.25));
+        assert!(mixer.seconds() > clock);
+    }
+
+    #[test]
+    fn streaming_resampling_matches_one_read_across_chunk_boundaries() {
+        let input: Vec<f32> = (0..2000).map(|i| (i as f32 * 0.17).sin()).collect();
+        let mut complete = Resampler::new(22050, 48000, 2);
+        let expected = complete.process(&input, true);
+        let mut streaming = Resampler::new(22050, 48000, 2);
+        let mut actual = Vec::new();
+        for (i, chunk) in input.chunks(74).enumerate() {
+            actual.extend(streaming.process(chunk, (i + 1) * 74 >= input.len()));
+        }
+        assert_eq!(actual.len(), expected.len());
+        assert!(
+            actual
+                .iter()
+                .zip(expected)
+                .all(|(a, b)| (*a - b).abs() < 1e-5)
+        );
     }
 
     #[test]

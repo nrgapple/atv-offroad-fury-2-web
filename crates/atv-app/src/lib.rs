@@ -59,10 +59,19 @@ struct Ready {
     /// A fixed `--camera` view overrides the chase camera.
     fixed: bool,
     riding: Option<riding::Riding>,
+    pending_sound: Option<PendingSound>,
+}
+
+struct PendingSound {
+    content: std::rc::Rc<Content>,
+    environment: String,
+    settings: sound::Settings,
 }
 
 enum Message {
     Ready(Box<Ready>),
+    SoundReady(Box<sound::Sound>),
+    SoundFailed(String),
     Failed(String),
 }
 
@@ -80,6 +89,7 @@ struct App {
     gamepad: gamepad::Gamepads,
     drag: f32,
     started: Instant,
+    sound_unlocked: bool,
     bench: Bench,
     #[cfg(not(target_arch = "wasm32"))]
     bench_out: Option<std::path::PathBuf>,
@@ -201,6 +211,7 @@ async fn prepare(
         scene.set_weather_camera(camera);
         scene.advance_steps(steps);
     }
+    let mut pending_sound = None;
     let riding = if ride {
         // Default Garage selection: quad 1, male rider.
         let ride = atv_game::ride::load(&content, &venue, 1, 0, status).await?;
@@ -214,19 +225,11 @@ async fn prepare(
             publish_trace(&replay::record(&riding.ride, riding.ride.steps()).to_string());
         }
         if let (Some((mode, music)), None) = (sound, &script) {
-            status("Reading original sounds…");
-            match sound::Sound::load(
-                content.clone(),
-                &venue,
-                &riding.ride,
-                sound::Settings { mode, music },
-            )
-            .await
-            {
-                Ok(sound) => riding.sound = Some(sound),
-                // A missing device or bank leaves the ride silent, not stopped.
-                Err(error) => status(&format!("Sound unavailable: {error}")),
-            }
+            pending_sound = Some(PendingSound {
+                content: content.clone(),
+                environment: environment.clone(),
+                settings: sound::Settings { mode, music },
+            });
         }
         riding.autodrive = autodrive.map(|script| (script.controls(), 0));
         Some(riding)
@@ -242,6 +245,7 @@ async fn prepare(
         hold: steps.is_some(),
         fixed: fixed.is_some(),
         riding,
+        pending_sound,
     })
 }
 
@@ -469,6 +473,7 @@ impl App {
 impl App {
     /// The first key, click or touch starts audio (browser autoplay rules).
     fn gesture(&mut self) {
+        self.sound_unlocked = true;
         if let Some(sound) = self
             .ready
             .as_mut()
@@ -485,6 +490,27 @@ impl App {
         if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
             riding.key_pressed(&format!("{code:?}"), now, &|c: &str| names.contains(c));
         }
+    }
+
+    /// Start sound loading after the first presented frame. Network/decode
+    /// readiness must not gate the ride, as in the optimized browser host.
+    fn load_sound(&mut self) {
+        let Some(pending) = self.ready.as_mut().and_then(|r| r.pending_sound.take()) else {
+            return;
+        };
+        let proxy = self.proxy.clone();
+        let future = async move {
+            let result =
+                sound::Sound::load(pending.content, &pending.environment, pending.settings).await;
+            let _ = proxy.send_event(match result {
+                Ok(sound) => Message::SoundReady(Box::new(sound)),
+                Err(error) => Message::SoundFailed(error),
+            });
+        };
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(future);
+        #[cfg(not(target_arch = "wasm32"))]
+        pollster::block_on(future);
     }
 }
 
@@ -553,6 +579,22 @@ impl ApplicationHandler<Message> for App {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, message: Message) {
         match message {
+            Message::SoundReady(mut sound) => {
+                if let Some(ready) = &mut self.ready
+                    && let Some(riding) = &mut ready.riding
+                {
+                    if let Err(error) = sound.configure(&ready.venue, &riding.ride) {
+                        status(&format!("Sound unavailable: {error}"));
+                        return;
+                    }
+                    if self.sound_unlocked {
+                        sound.start();
+                    }
+                    riding.sound = Some(*sound);
+                    riding.sync_sound();
+                }
+            }
+            Message::SoundFailed(error) => status(&format!("Sound unavailable: {error}")),
             Message::Ready(ready) => {
                 self.ready = Some(*ready);
                 // Desktop has no autoplay rule: sound starts with the ride.
@@ -642,6 +684,7 @@ impl ApplicationHandler<Message> for App {
             }
             WindowEvent::RedrawRequested => {
                 self.step();
+                self.load_sound();
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
@@ -763,6 +806,7 @@ pub fn run(options: Options) {
         gamepad: gamepad::Gamepads::new(),
         drag: 0.,
         started: Instant::now(),
+        sound_unlocked: false,
         bench: Bench::default(),
         #[cfg(not(target_arch = "wasm32"))]
         bench_out,
