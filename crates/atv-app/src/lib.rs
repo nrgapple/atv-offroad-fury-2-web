@@ -33,6 +33,9 @@ pub struct Options {
     pub capture: Option<(std::path::PathBuf, u32, u32)>,
     /// Ride the player's quad (default); false keeps the free camera.
     pub ride: bool,
+    /// Load the venue's National/Supercross race course resources (static
+    /// world only for now: race weather, gate and grid are not ridden).
+    pub race: bool,
     /// Steps replayed at load, then the ride holds (parity captures).
     pub script: Option<replay::Script>,
 }
@@ -82,6 +85,7 @@ struct Meter {
 
 /// Load-time choices for the venue presentation and the ride.
 struct World {
+    race: bool,
     weather: Option<bool>,
     steps: Option<u64>,
     graphics: Graphics,
@@ -98,6 +102,7 @@ async fn prepare(
     world: World,
 ) -> Result<Ready, String> {
     let World {
+        race,
         weather,
         steps,
         graphics,
@@ -128,10 +133,11 @@ async fn prepare(
                 .map_or(0, |d| d.subsec_nanos() ^ d.as_secs() as u32),
         ),
     };
+    let ride = ride && !race;
     let venue = venue::load_with(
         &content,
         &environment,
-        false,
+        race,
         venue::LoadOptions {
             weather,
             sky_smooth: graphics.sky_smooth,
@@ -166,6 +172,7 @@ async fn prepare(
     let mut scene =
         SceneRenderer::with_graphics(&gpu, &venue, Some([start[0], start[2]]), graphics);
     if let Some(steps) = steps {
+        scene.set_weather_camera(camera);
         scene.advance_steps(steps);
     }
     let riding = if ride {
@@ -391,6 +398,7 @@ impl ApplicationHandler<Message> for App {
             options.venue,
             options.camera,
             World {
+                race: options.race,
                 weather: options.weather,
                 steps: options.steps,
                 graphics: options.graphics,
@@ -663,6 +671,7 @@ pub fn start() {
         steps: param("steps").and_then(|v| v.parse().ok()),
         graphics: param("graphics").map_or_else(Graphics::default, |v| graphics_preset(&v)),
         ride: param("free").is_none(),
+        race: param("race").is_some_and(|v| v == "1"),
         script: param("script")
             .and_then(|text| js_sys_decode(&text))
             .and_then(|text| replay::Script::parse(&text).ok()),

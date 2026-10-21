@@ -75,6 +75,8 @@ pub struct SceneryPass {
     visible: Vec<usize>,
     /// Lit stadium camera flashes (pool indices).
     pub lit_flashes: Vec<usize>,
+    /// The stadium flash clock (0020ee10), seeded as the browser's op 115.
+    pub flashes: Option<atv_core::race_crowd::Flashes>,
     /// Farthest world-bounds diagonal, for the depth range.
     pub reach: f32,
 }
@@ -278,6 +280,9 @@ impl SceneryPass {
             animated,
             visible: Vec::new(),
             lit_flashes: Vec::new(),
+            flashes: scenery.flashes.map(|(config, pool)| {
+                atv_core::race_crowd::Flashes::new(config, pool, 97211 + 8 * 47)
+            }),
             reach,
         }
     }
@@ -285,6 +290,11 @@ impl SceneryPass {
     /// Advances the scenery clocks by one 60 Hz simulation step.
     pub fn step(&mut self) {
         self.clocks.step();
+        if let Some(flashes) = &mut self.flashes {
+            let lit = flashes.step(1. / 60.);
+            self.lit_flashes.clear();
+            self.lit_flashes.extend(lit.iter().map(|&i| usize::from(i)));
+        }
     }
 
     pub fn steps(&self) -> u64 {

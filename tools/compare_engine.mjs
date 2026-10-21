@@ -4,7 +4,7 @@
 // absolute difference per screen region.
 //
 //   node tools/compare_engine.mjs [venue] [out-dir] [--view x,y,z,yaw,pitch,focal]...
-//        [--graphics original|enhanced|high] [--actors]
+//        [--graphics original|enhanced|high] [--actors] [--race]
 //   node tools/compare_engine.mjs ride [venue] [script.json] [out-dir]
 // Static mode: without --view the JavaScript start camera is used. The
 // JavaScript game runs with the requested preset (Original by default), its
@@ -191,12 +191,13 @@ if (process.argv[2] === 'ride') {
 }
 
 const positional = [], views = [];
-let graphics = 'original', actors = false;
+let graphics = 'original', actors = false, race = false;
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
   if (arg === '--view') views.push(process.argv[++i]);
   else if (arg === '--graphics') graphics = process.argv[++i];
   else if (arg === '--actors') actors = true;
+  else if (arg === '--race') race = true;
   else positional.push(arg);
 }
 const venue = positional[0] ?? 'env01';
@@ -221,7 +222,8 @@ try {
     localStorage.setItem('atv-graphics', preset);
     window.atvParityView = { world };
   }, [graphics, !actors]);
-  await page.goto(url(`/play.html?drive=1&environment=${venue}`));
+  // --race: the National/Supercross course without CPU riders (race weather, Snow).
+  await page.goto(url(race ? `/play.html?play=1&map=${venue}&activity=race&cpu=0` : `/play.html?drive=1&environment=${venue}`));
   await waitForGame(page);
   // Let the start camera settle, then hold the scene clocks.
   await page.waitForTimeout(2500);
@@ -241,7 +243,7 @@ try {
     console.log(`view ${index}: ${view}`);
     const rustErrors = [];
     const rust = await newPage(browser, { viewport }, rustErrors);
-    await rust.goto(url(`/engine.html?venue=${venue}&camera=${view}&weather=${state.weather ? 'on' : 'off'}&steps=${state.steps}&graphics=${graphics}${actors ? '' : '&free=1'}`));
+    await rust.goto(url(`/engine.html?venue=${venue}&camera=${view}&weather=${state.weather ? 'on' : 'off'}&steps=${state.steps}&graphics=${graphics}${actors ? '' : '&free=1'}${race ? '&race=1' : ''}`));
     await rust.waitForFunction(() => /fps/.test(document.querySelector('#status').textContent) || /fail|error/i.test(document.querySelector('#status').textContent), null, { timeout: 180000 });
     await rust.waitForTimeout(2500);
     const status = await rust.locator('#status').textContent();
@@ -255,6 +257,7 @@ try {
       const args = ['--venue', venue, '--camera', view, '--weather', state.weather ? 'on' : 'off', '--steps', String(state.steps), '--graphics', graphics, '--capture', `${stem}-rust-native.png`, `${viewport.width}x${viewport.height}`];
       if (process.env.FURY_CONTENT) args.unshift('--content', process.env.FURY_CONTENT);
       if (!actors) args.unshift('--free');
+      if (race) args.unshift('--race');
       execFileSync(process.env.FURY_BIN, args, { stdio: 'inherit' });
     }
     entry.diff = await compare(browser, stem, Boolean(process.env.FURY_BIN));
