@@ -3,7 +3,7 @@
 //! follow-camera presets. Mirrors terrainFromContent/startSimulation in
 //! web/game.js and the matching atv-web operations (2/3, 11, 20-22, 26-27,
 //! 44-45, 48-49, 51-53, 64-65, 89, 140, 145).
-use super::{Model, Ride, Simulation, textures};
+use super::{Model, QuadRig, Ride, Seed, Simulation, textures};
 use crate::{Result, launch::course_resource, venue::Venue};
 use atv_content::Content;
 use atv_core::math::Det;
@@ -115,32 +115,32 @@ pub async fn load_with(
     let environment = venue.environment.as_str();
     let course = course_resource(environment, race.is_some())?;
     let models = player_models::selection(quad, rider)?;
-    if models.motorcycle {
-        return Err("motorcycles are not ported to the Rust engine yet".into());
-    }
-    progress("Reading original ATV…");
     let course_bytes = content.file(&course.archive).await?;
     let archive = Resource::parse(&course_bytes)?;
-    let quad_bytes = content.file(&models.quad).await?;
-    let quad_archive = Resource::parse(&quad_bytes)?;
-    let mesh_bytes = member(&quad_archive, &models.quad_mesh, "ATV mesh")?;
-    let quad_mesh = mesh::decode_psg(&mesh_bytes)?;
-    let physics = PhysicsData::parse(&member(&quad_archive, &models.physics, "ATV physics")?)?;
-    let chassis = collision::decode_ray_tree(&member(
-        &quad_archive,
-        &models.chassis,
-        "chassis collision",
-    )?)?;
-    let actor = collision::decode_ray_tree(&member(
-        &quad_archive,
-        &models.actor,
-        "actor collision rays",
-    )?)?;
-    if actor.transform != IDENTITY {
-        return Err("unsupported actor collision header transform".into());
-    }
-    let material_bytes = content.file(&models.quad_materials).await?;
-    let quad_textures = textures::load(&quad_mesh, &Resource::parse(&material_bytes)?)?;
+    let (seed, vehicle_model, rider_model) = if models.motorcycle {
+        if race.is_some() {
+            return Err(super::BIKE_RACES.into());
+        }
+        progress("Reading original motorcycle…");
+        // Op 100: the MX archive holds the bike, its rider, motions and
+        // textures (atv_core::motorcycle::Model).
+        let bytes = content.file(&models.quad).await?;
+        let model = atv_core::motorcycle::Model::load(&bytes, quad)?;
+        let archive = Resource::parse(&bytes)?;
+        // Drawn as atv-web op 102 returns them: the material-remapped bike
+        // mesh and the MX rider, textured from the same archive.
+        let vehicle = Model {
+            textures: textures::load(&model.mesh, &archive)?,
+            mesh: model.mesh.clone(),
+        };
+        let rider = Model {
+            textures: textures::load(&model.rider, &archive)?,
+            mesh: model.rider.clone(),
+        };
+        (Seed::Bike(Box::new(model)), vehicle, rider)
+    } else {
+        load_quad(content, &models, &mut progress).await?
+    };
 
     // Terrain materials: the course's <venue>.toy, else the Endless archive's.
     let toy = match basename_index(&archive, &format!("{environment}.toy")) {
@@ -158,59 +158,6 @@ pub async fn load_with(
             )?
         }
     };
-
-    progress("Reading original rider…");
-    let rider_bytes = content.file(&models.rider).await?;
-    let rider_archive = Resource::parse(&rider_bytes)?;
-    let rider_mesh = mesh::decode_psg(&member_suffix(
-        &rider_archive,
-        &format!("/{}", models.rider_mesh),
-    )?)?;
-    let catalog = MotionCatalog::parse(&member_suffix(
-        &rider_archive,
-        &format!("/{}", models.rider_catalog),
-    )?)?;
-    let selected = riding_motions(&catalog)?;
-    let motion_bytes = content.file("/ANIMSRDR.RES").await?;
-    let motion_archive = Resource::parse(&motion_bytes)?;
-    let mut motions = Vec::with_capacity(selected.len());
-    for definition in &selected {
-        let file = definition
-            .path
-            .rsplit('/')
-            .next()
-            .unwrap_or(&definition.path);
-        motions.push(rider_pose::Motion {
-            animation: animation::decode_mot(&member_suffix(
-                &motion_archive,
-                &format!("/{file}"),
-            )?)?,
-            sampling: animation::Sampling {
-                translation_interpolation: definition.interpolate_position,
-                rotation_interpolation: definition.interpolate_rotation,
-            },
-        });
-    }
-    let rider_material_bytes = content.file("/RIDER/RIDER_MT.RES").await?;
-    let rider_textures = textures::load(&rider_mesh, &Resource::parse(&rider_material_bytes)?)?;
-
-    // Op 53: normal, stunt (14..62), wreck (62..76) and landing (76..78) clips.
-    if motions.len() != 78 {
-        return Err("load all normal, stunt, wreck and landing motions first".into());
-    }
-    let landings = motions.split_off(76);
-    let wrecks = motions.split_off(62);
-    let stunts = motions.split_off(14);
-    let wreck = wreck_animation::Animator::new(
-        wrecks,
-        selected[62..76].iter().map(|m| m.looping).collect(),
-        &rider_mesh.nodes,
-    )?;
-    let mut animator = rider_pose::Animator::new(motions, &rider_mesh.nodes)?;
-    animator.set_landing_motions(landings)?;
-    // 002de690 identifies mode 11 as Freeride/Freestyle.
-    animator.set_scoring_mode(Some(stunt_score::FREESTYLE_MODE))?;
-    animator.set_stunts(stunts, selected[14..62].iter().map(|m| m.looping).collect())?;
 
     progress("Reading original scene collisions…");
     let terrain =
@@ -309,13 +256,9 @@ pub async fn load_with(
     let origin = atv_core::spawn::start_origin(&terrain, position, yaw, race.is_some(), None)?;
     let start = (origin.map(|v| v as f32), yaw as f32);
 
-    let quad_pose = Rc::new(QuadPose::new(&quad_mesh)?);
     let simulation = Simulation {
         materials: materials::terrain_materials(&toy)?,
         terrain,
-        chassis_points: chassis.chassis_points()?,
-        wreck_rays: Rc::new(chassis),
-        obstacle_rays: Rc::new(actor),
         obstacles,
         mud_obstacles,
         scene_partition: scene.collision_partition,
@@ -323,15 +266,101 @@ pub async fn load_with(
         boundary: scene.boundary_launch,
         extended_boundary: scene.crowd_present || environment.eq_ignore_ascii_case("training"),
         water,
-        physics,
-        quad_pose,
-        animator,
-        wreck,
         camera: follow,
     };
-    Ride::start(
-        simulation,
-        start,
+    Ride::start(simulation, start, seed, vehicle_model, rider_model, race)
+}
+
+/// The ATV, its rider rig and motions (ops 20-22, 44, 48, 51-53).
+async fn load_quad(
+    content: &Content,
+    models: &player_models::Models,
+    progress: &mut impl FnMut(&str),
+) -> Result<(Seed, Model, Model)> {
+    progress("Reading original ATV…");
+    let quad_bytes = content.file(&models.quad).await?;
+    let quad_archive = Resource::parse(&quad_bytes)?;
+    let mesh_bytes = member(&quad_archive, &models.quad_mesh, "ATV mesh")?;
+    let quad_mesh = mesh::decode_psg(&mesh_bytes)?;
+    let physics = PhysicsData::parse(&member(&quad_archive, &models.physics, "ATV physics")?)?;
+    let chassis = collision::decode_ray_tree(&member(
+        &quad_archive,
+        &models.chassis,
+        "chassis collision",
+    )?)?;
+    let actor = collision::decode_ray_tree(&member(
+        &quad_archive,
+        &models.actor,
+        "actor collision rays",
+    )?)?;
+    if actor.transform != IDENTITY {
+        return Err("unsupported actor collision header transform".into());
+    }
+    let material_bytes = content.file(&models.quad_materials).await?;
+    let quad_textures = textures::load(&quad_mesh, &Resource::parse(&material_bytes)?)?;
+    progress("Reading original rider…");
+    let rider_bytes = content.file(&models.rider).await?;
+    let rider_archive = Resource::parse(&rider_bytes)?;
+    let rider_mesh = mesh::decode_psg(&member_suffix(
+        &rider_archive,
+        &format!("/{}", models.rider_mesh),
+    )?)?;
+    let catalog = MotionCatalog::parse(&member_suffix(
+        &rider_archive,
+        &format!("/{}", models.rider_catalog),
+    )?)?;
+    let selected = riding_motions(&catalog)?;
+    let motion_bytes = content.file("/ANIMSRDR.RES").await?;
+    let motion_archive = Resource::parse(&motion_bytes)?;
+    let mut motions = Vec::with_capacity(selected.len());
+    for definition in &selected {
+        let file = definition
+            .path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&definition.path);
+        motions.push(rider_pose::Motion {
+            animation: animation::decode_mot(&member_suffix(
+                &motion_archive,
+                &format!("/{file}"),
+            )?)?,
+            sampling: animation::Sampling {
+                translation_interpolation: definition.interpolate_position,
+                rotation_interpolation: definition.interpolate_rotation,
+            },
+        });
+    }
+    let rider_material_bytes = content.file("/RIDER/RIDER_MT.RES").await?;
+    let rider_textures = textures::load(&rider_mesh, &Resource::parse(&rider_material_bytes)?)?;
+
+    // Op 53: normal, stunt (14..62), wreck (62..76) and landing (76..78) clips.
+    if motions.len() != 78 {
+        return Err("load all normal, stunt, wreck and landing motions first".into());
+    }
+    let landings = motions.split_off(76);
+    let wrecks = motions.split_off(62);
+    let stunts = motions.split_off(14);
+    let wreck = wreck_animation::Animator::new(
+        wrecks,
+        selected[62..76].iter().map(|m| m.looping).collect(),
+        &rider_mesh.nodes,
+    )?;
+    let mut animator = rider_pose::Animator::new(motions, &rider_mesh.nodes)?;
+    animator.set_landing_motions(landings)?;
+    // 002de690 identifies mode 11 as Freeride/Freestyle.
+    animator.set_scoring_mode(Some(stunt_score::FREESTYLE_MODE))?;
+    animator.set_stunts(stunts, selected[14..62].iter().map(|m| m.looping).collect())?;
+    let rig = QuadRig {
+        physics,
+        quad_pose: Rc::new(QuadPose::new(&quad_mesh)?),
+        chassis_points: chassis.chassis_points()?,
+        wreck_rays: Rc::new(chassis),
+        obstacle_rays: Rc::new(actor),
+        animator,
+        wreck,
+    };
+    Ok((
+        Seed::Quad(Box::new(rig)),
         Model {
             mesh: quad_mesh,
             textures: quad_textures,
@@ -340,8 +369,7 @@ pub async fn load_with(
             mesh: rider_mesh,
             textures: rider_textures,
         },
-        race,
-    )
+    ))
 }
 
 /// The race course, intro shots, trackside cameras and the CPU roster with

@@ -146,13 +146,16 @@ impl Ride {
             ..Options::difficulty(settings.difficulty)
         };
         let nodes = &self.rider.mesh.nodes;
+        let (rig, _) = self.mount.quad()?;
         let cpus = race
             .opponents()
             .iter()
             .enumerate()
             .map(|(index, cpu)| {
                 let model = setup.models.get(index).ok_or("CPU quad missing")?;
-                CpuRacer::new(&self.sim, nodes, model, cpu.origin, cpu.yaw, index, options)
+                CpuRacer::new(
+                    &self.sim, rig, nodes, model, cpu.origin, cpu.yaw, index, options,
+                )
             })
             .collect::<Result<Vec<_>>>()?;
         for (index, cpu) in cpus.iter().enumerate() {
@@ -169,8 +172,9 @@ impl Ride {
             intro_camera = Some(Intro::new(setup.shots.clone()));
             race.begin_intro();
         }
-        super::race::place_racer(&mut self.vehicle, &self.sim.terrain)?;
-        self.frame = self.vehicle.frame();
+        let (_, vehicle) = self.mount.quad_mut()?;
+        super::race::place_racer(vehicle, &self.sim.terrain)?;
+        self.frame = vehicle.frame();
         self.race = Some(RaceState {
             race,
             cpus,
@@ -246,8 +250,9 @@ impl Ride {
                 race.running() && race.off_track_time(None) > race_hud::RESET_SECONDS;
             return Ok(None);
         }
-        let mut pose: DriverPose = (&self.vehicle.frame()).into();
-        pose.preload_rates = self.vehicle.preload_rates();
+        let (_, vehicle) = self.mount.quad()?;
+        let mut pose: DriverPose = (&vehicle.frame()).into();
+        pose.preload_rates = vehicle.preload_rates();
         let contact = self.sim.terrain.contact(pose.origin[0], pose.origin[2])?;
         let peers: Vec<_> = state
             .cpus
@@ -286,7 +291,7 @@ impl Ride {
             STEP,
             Context {
                 peers: &peers,
-                scene: self.vehicle.scene_collision(),
+                scene: vehicle.scene_collision(),
                 clearance: contact.as_ref().map_or(0., |c| pose.origin[1] - c.height),
                 terrain_normal: contact.as_ref().map_or([0., 1., 0.], |c| c.normal),
                 station: Some(race.station(None)),
@@ -300,7 +305,8 @@ impl Ride {
         let Some(state) = &mut self.race else {
             return Ok(());
         };
-        let player = self.vehicle.frame();
+        let (_, vehicle) = self.mount.quad_mut()?;
+        let player = vehicle.frame();
         let race = &mut state.race;
         race.step(player.origin, STEP);
         let terrain = &self.sim.terrain;
@@ -318,8 +324,7 @@ impl Ride {
                 }
             })
             .collect();
-        let dynamic = self
-            .vehicle
+        let dynamic = vehicle
             .scene_collision()
             .map_or_else(Vec::new, |s| s.dynamic().to_vec());
         let world = World {
@@ -338,8 +343,7 @@ impl Ride {
                 .map_or(point[1], |c| c.height);
             Ok(([point[0], height, point[2]], heading))
         };
-        self.vehicle
-            .set_race_checkpoint(Some(on_line(race.checkpoint(None))?));
+        vehicle.set_race_checkpoint(Some(on_line(race.checkpoint(None))?));
         // RaceStatus +0x150: the human's track direction (aggression branch).
         let player_track = race.course.tangent(race.station(None).segment);
         for (index, cpu) in state.cpus.iter_mut().enumerate() {
@@ -401,7 +405,7 @@ impl Ride {
                 for (own, other, tie) in [(a, b, 1.), (b, a, -1.)] {
                     let (origin, velocity, orientation) = bodies[other];
                     let vehicle = if own == 0 {
-                        &mut self.vehicle
+                        &mut *vehicle
                     } else {
                         &mut state.cpus[own - 1].vehicle
                     };
@@ -414,7 +418,7 @@ impl Ride {
         }
         let mut frame = race.frame(yaw(player.orientation));
         let _ = race.take_finishes();
-        let too_deep = Some(self.vehicle.frame().water_failure)
+        let too_deep = Some(vehicle.frame().water_failure)
             .filter(|w| w.submerged)
             .map(|w| w.remaining);
         frame.hud = Some(state.hud.step(
@@ -439,6 +443,12 @@ impl Ride {
     /// The after-finish director (001f3bb0): three seconds after race over,
     /// cut between the trackside cameras following the player.
     pub(super) fn race_director(&mut self, rider: [f32; 3]) -> Result<Option<race_director::Pose>> {
+        // Only the after-finish director reads the player's speed.
+        let player_speed = if self.race.as_ref().is_some_and(|r| r.race.player_finished()) {
+            self.live_frame().speed_magnitude
+        } else {
+            0.
+        };
         let Some(state) = &mut self.race else {
             return Ok(None);
         };
@@ -455,7 +465,7 @@ impl Ride {
         }
         let racers: Vec<_> = std::iter::once(race_director::Racer {
             origin: rider,
-            speed: self.vehicle.frame().speed_magnitude,
+            speed: player_speed,
         })
         .chain(state.cpus.iter().map(|cpu| {
             let f = cpu.vehicle.frame();

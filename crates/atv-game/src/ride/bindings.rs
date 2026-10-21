@@ -910,6 +910,7 @@ impl Bindings {
             stunt_x,
             stunt_y,
             generation: self.generation,
+            clutch: v(Action::Clutch) > 0.5,
         };
         let orbit = v(Action::CameraRight) - v(Action::CameraLeft);
         let edge_actions = [Action::Camera, Action::Reset, Action::Pause];
