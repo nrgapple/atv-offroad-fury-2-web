@@ -324,6 +324,78 @@ the desktop build uses the same event-loop path (winit `ControlFlow::Wait`/
 `WaitUntil`) but was not measured. The JavaScript game remains available until the shared engine passes
 those relevant subsystem gates.
 
+## CPU per frame against the JavaScript game (2026-10-21)
+
+`tools/compare_engine.mjs ride` now also replays the ride script in real time and
+measures CPU: the JavaScript game's main thread (Chrome `TaskDuration`) plus its
+simulation worker (each operation's Wasm time from `worker.js`), the Rust engine in
+the browser (one thread, `?autodrive=`) and the native build (`fury --autodrive
+--bench`, vsync wait excluded). Headless frames are not vsync-capped, so builds are
+compared per second of riding, expressed per 60 Hz frame. GPU-process time is
+excluded everywhere.
+
+ENV01, the 600-step default script, Original preset, sound on, Apple M4 host
+(`private/reports/engine-parity/ride-cpu/`):
+
+| Build | Frames (10 s) | Main thread | Worker | Per 60 Hz frame |
+| --- | --- | --- | --- | --- |
+| JavaScript game | 2304 | 0.34 ms/frame | 0.12 ms/frame | 1.78 ms |
+| Rust, browser | 1450 | 0.70 ms/frame | - | 1.87 ms |
+| Rust, native (vsync) | 598 | 1.54 ms/frame | - | 1.54 ms |
+
+The Rust engine's own split (browser / native per frame): simulation and sound
+0.14 / 0.24 ms, rendering 0.90 / 1.12 ms, mixer 0.01 / 0.03 ms. The Rust engine draws
+the same world as the JavaScript game but its CPU cost is about equal in the browser,
+not lower: rendering through wgpu's GL backend dominates. Moving the simulation onto
+the main thread removed the worker round trip, not CPU. These are host numbers;
+the user's iPhone shows the Rust ride at 2.49 ms CPU per frame (61 fps).
+
+## Vehicle presentation: wheel effects and lingering dust (2026-10-21)
+
+Replaces `web/wheel-effects.js` (WheelEffectsRenderer) and `web/lingering-dust.js`
+for quads. Evidence: `atv_core::wheel_effects` (001d7620 selection, 001451a0 packets,
+PRT/EMT emitters, `WHEEL_EFFECTS.md`), already the browser's simulation.
+
+- `atv-game/wheel_effects.rs` loads Particles.prt, the quad's QuadDust/QuadDirtChunk/
+  QuadDirtSpray EMTs and both atlases (op 74 path, light = ambient + sun/2) and steps
+  `Effects` once after every ride step with atv-web's clock (summed step time, tick,
+  zero-dt frame on a Reset placement and at load). The ride exposes the op 75 snapshot
+  through two additive accessors (`Ride::wheel_effect_input`, `Ride::wheel_radii`).
+- `atv-render/wheel_effects.rs` + `.wgsl`: sprites re-packed only when a new frame
+  arrives (the browser's `pending` upload), wet births in a 10,800-slot ring with
+  only new slots uploaded; every step's wet births are kept until the renderer takes
+  them, as the browser accepts each frame of a batch.
+- Lingering dust (Enhanced 24, High 96; `Graphics::dust`) is authored, not original:
+  `atv-game/lingering_dust.rs` (TOY GenerateDust zones, terrain-layer tint) and
+  `atv-render/lingering_dust.rs`, uploaded only when a puff is emitted.
+
+Parity (`compare_engine.mjs ride`, scripted throttle, Rust browser / native vs JS,
+mean abs /255): FREE01 Original frame 0.21 / 0.05, vehicle box 0.26 / 0.30; ENV03
+Original 0.16 / 0.03 (box 0.21 / 0.25); ENV01 default script vehicle box 0.59 (was
+1.29 without effects). Same held step: JS 62 wheel particles and 6 live dust puffs,
+Rust 62 and 6. ENV03 High differs by 0.74-1.35 (box 3.2-3.8): the High shadow map,
+contact shadows and tire tracks are not ported yet. Host cost with the effects live
+(ENV03, held dust state, Apple M4): Chromium 0.58-0.70 ms CPU Original, 0.74-1.22 High;
+WebKit 1.21-2.18 ms, 60 Hz held in all four; these are host viewport results, not
+phones. `compare_engine.mjs ride` gained `--graphics` and reports the JS effect counts.
+
+## Browser stand-ins in the ported presentation
+
+Labelled for follow-up replacement with recovered behaviour (separate PRs, each with a
+measured comparison). None is replaced yet; parity above is with the JavaScript build.
+
+| Where | Stand-in | Original / evidence | Replaced |
+| --- | --- | --- | --- |
+| `atv_core::vegetation_render` (used by `atv-render/vegetation.rs`) | 64² cell scan, behind/range test, 1,500-plant nearest-depth heap and sort | 0012a1c0: spatial-callback candidates, frustum tests for near plants only, 600 depth buckets (u16 depth), submission far-to-near of buckets whose cumulative count is under 1,500 (`private/reports/map-fidelity/billboard-recovery/0012a1c0.c`) | No |
+| `atv-render/vegetation.rs` | frame serial held at 0 (the browser passes `frame`, which stays 0) | 0012a1c0 increments its serial every call; a plant unseen for more than 3 frames restarts its fade | No |
+| `atv-render/scenery.rs` | lit models: ambient + sun·N·L ("provisional prop lighting") | `use_lighting`/`dynamic_lighting` VU programs not recovered | No |
+| `atv-render/scenery.rs`, `cull.rs` | per-object fog-end culling with depth range extended by the largest object | 0012b360 far clip at fog end; native object culling not recovered (behaviour-equivalent optimisation, keep) | Keep |
+| `atv-render/water.rs` | projected grid capped at 12,000/8,000 vertices for 16-bit indices; portable reflection; no froth | 00190aa0 strip/row counts without the cap; VU reflection and froth pending | No |
+| `atv-render/ambient.rs`, `snow.rs`, `wheel_effects.rs` | bounded GPU rings (4,800 / 10,800 slots), two blend-family draws | native render queue order and pool sizes not recovered | No |
+| `atv-render/scenery.rs` | reverse-looping crowd ATMs keep frame 0 | native playback not recovered | No |
+| `atv-game/intro.rs` | swoop end pose behind the scene start | the player's follow camera (race port) | No |
+| `atv-render/terrain.rs` | detail blend averaged by mipmaps ("projected-coverage pass selection pending") | 00168490 pass selection | No |
+
 ## UI stand-ins to move toward original rendering
 
 The Rust UI first matches the current JavaScript look (`RUST_UI.md`). These are

@@ -3,6 +3,7 @@
 mod ambient;
 pub mod camera;
 mod cull;
+mod lingering_dust;
 mod scenery;
 mod sky;
 mod snow;
@@ -12,6 +13,7 @@ mod train;
 mod vegetation;
 mod vehicle;
 mod water;
+mod wheel_effects;
 mod world;
 
 use atv_game::venue::Venue;
@@ -167,6 +169,8 @@ pub struct FrameStats {
     pub ambient_triangles: u32,
     pub snow_draws: u32,
     pub snow_triangles: u32,
+    pub wheel_draws: u32,
+    pub wheel_triangles: u32,
     pub vehicle_triangles: u32,
     /// Time spent waiting for the swapchain image (vsync), not CPU work.
     pub acquire_ms: f64,
@@ -182,6 +186,7 @@ impl FrameStats {
             + self.train_draws
             + self.ambient_draws
             + self.snow_draws
+            + self.wheel_draws
     }
     pub fn triangles(&self) -> u32 {
         self.terrain_triangles
@@ -191,6 +196,7 @@ impl FrameStats {
             + self.train_triangles
             + self.ambient_triangles
             + self.snow_triangles
+            + self.wheel_triangles
             + self.vehicle_triangles
     }
 }
@@ -204,6 +210,8 @@ pub struct Graphics {
     pub anisotropy: u16,
     /// Authored Schlick Fresnel on the water surface.
     pub fresnel: bool,
+    /// Lingering dust puff pool (Enhanced 24, High 96; 0 off).
+    pub dust: u16,
 }
 
 pub struct SceneRenderer {
@@ -240,6 +248,10 @@ pub struct SceneRenderer {
     /// stand is not sliced open into the sky (matrix() in web/game.js).
     depth_far: f32,
     clock: f32,
+    /// The ride's wheel dust, chunks, spray and wet births.
+    wheel_effects: Option<wheel_effects::WheelEffectsPass>,
+    /// Enhanced/High lingering dust puffs.
+    lingering_dust: Option<lingering_dust::LingeringDustPass>,
     /// The player's quad and rider, once a ride is loaded.
     vehicle: Option<vehicle::VehiclePass>,
 }
@@ -339,6 +351,8 @@ impl SceneRenderer {
             depth_far,
             clock: 0.,
             vehicle: None,
+            wheel_effects: None,
+            lingering_dust: None,
         };
         // startSimulation's first follow-camera request (op 46, dt 1/60)
         // already advances the pre-race shots once.
@@ -506,6 +520,50 @@ impl SceneRenderer {
         }
     }
 
+    /// Installs the ride's wheel effects (WheelEffectsRenderer).
+    pub fn set_wheel_effects(
+        &mut self,
+        gpu: &Gpu,
+        effects: &atv_game::wheel_effects::WheelEffects,
+    ) {
+        self.wheel_effects = Some(wheel_effects::WheelEffectsPass::new(
+            gpu,
+            &self.world,
+            effects,
+        ));
+    }
+
+    /// The latest wheel-effect frame and every wet birth since the last call.
+    pub fn accept_wheel_effects(
+        &mut self,
+        gpu: &Gpu,
+        effects: &mut atv_game::wheel_effects::WheelEffects,
+    ) {
+        if let Some(pass) = &mut self.wheel_effects {
+            pass.accept(effects);
+        }
+        match &effects.dust {
+            Some(dust) => {
+                let capacity = dust.emitter.capacity;
+                if self
+                    .lingering_dust
+                    .as_ref()
+                    .is_none_or(|p| p.capacity() != capacity)
+                {
+                    self.lingering_dust = Some(lingering_dust::LingeringDustPass::new(
+                        gpu,
+                        &self.world,
+                        capacity,
+                    ));
+                }
+                if let Some(pass) = &mut self.lingering_dust {
+                    pass.accept(gpu, &dust.emitter, effects.frame().time);
+                }
+            }
+            None => self.lingering_dust = None,
+        }
+    }
+
     /// Uploads the ride's quad and rider models.
     pub fn set_ride(
         &mut self,
@@ -636,6 +694,19 @@ impl SceneRenderer {
         if let Some((pass, _)) = &mut self.snow {
             (stats.snow_draws, stats.snow_triangles) = pass.prepare(gpu, &view.camera);
         }
+        if let Some(pass) = &mut self.wheel_effects {
+            (stats.wheel_draws, stats.wheel_triangles) = pass.prepare(gpu, &view.camera);
+        }
+        if let Some(pass) = &mut self.lingering_dust {
+            let fog_end = if self.world.globals.fog[2] > 0.5 {
+                self.far
+            } else {
+                768.
+            };
+            let (draws, triangles) = pass.prepare(gpu, &view.camera, fog_end);
+            stats.wheel_draws += draws;
+            stats.wheel_triangles += triangles;
+        }
         if let Some(vehicle) = &mut self.vehicle {
             vehicle.prepare(gpu, &view_projection, view.camera.eye());
             stats.vehicle_triangles = vehicle.triangles;
@@ -691,6 +762,12 @@ impl SceneRenderer {
             }
             if let Some((snow, _)) = &self.snow {
                 snow.draw(&mut pass, &self.world);
+            }
+            if let Some(effects) = &self.wheel_effects {
+                effects.draw(&mut pass, &self.world);
+            }
+            if let Some(dust) = &self.lingering_dust {
+                dust.draw(&mut pass, &self.world);
             }
         }
         (encoder, stats)
