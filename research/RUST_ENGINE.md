@@ -531,6 +531,30 @@ pass alternates two pipelines per cutout chunk. Removing those changes would mea
 reordering draws, which could change blending or depth ties, or patching wgpu's GL
 backend to skip the attribute re-specification for identical layouts. Neither is done
 here.
+## Fidelity follow-up: water grid rows (2026-10-21)
+
+Replaces a browser stand-in, so the output now intentionally differs from the
+JavaScript build. 00190aa0 scales the water node's strip groups with viewport
+width/640 (19 samples each, plus one) and its dense rows with height/448 (334 at
+448). The browser kept that basis but capped the grid at 12,000 vertices in
+landscape and 8,000 in portrait for its Uint16 indices (projectedGridSize in
+web/water.js; research/WATER.md, "Water visual stability checkpoint"). The Rust
+build draws with 32-bit indices, so `grid_size` drops the cap. At 640x448 it gives the
+native 58 x 334. At 1280x720 it is 115 columns x 537 rows (was 103), about 61,900
+vertices and 123,000 triangles (was 11,960 / 23,500). At 390x844 it is 39 x 629 (was
+204). The 8..1024 row bounds are still the browser's.
+
+Measured at the NAT01 sea view `2614.86,200,3019.69,4.3,-0.3,1.455078`, Original:
+- Rust before vs after: 0.11/255 over the frame, all in the water band.
+- vs JS: 0.06 -> 0.15. Distant water is now sampled at native density, so the JS
+  build's sparse far rows no longer match.
+- Start views barely change: NAT01 0.06 -> 0.08, ENV05 0.04, ENV07 0.02, FREE04
+  0.03.
+- CPU is unchanged: one draw, and the grid is rebuilt only on resize. Host status
+  0.70 -> 0.67 ms, frame 12.1 -> 12.5 ms at vsync.
+- GPU time is not measured. The cost is the larger vertex count above, with one
+  integer height fetch per vertex. Portrait phones go from 8,000 to 24,500 vertices.
+  Physical-phone timing is still to do.
 
 ## Browser stand-ins in the ported presentation
 
@@ -543,7 +567,7 @@ measured comparison). Parity above is with the JavaScript build.
 | `atv-render/vegetation.rs` | frame serial held at 0 (the browser passes `frame`, which stays 0) | 0012a1c0 increments its serial every call; a plant unseen for more than 3 frames restarts its fade | No |
 | `atv-render/scenery.rs` | lit models: ambient + sun·N·L ("provisional prop lighting") | `use_lighting`/`dynamic_lighting` VU programs not recovered | No |
 | `atv-render/scenery.rs`, `cull.rs` | per-object fog-end culling with depth range extended by the largest object | 0012b360 far clip at fog end; native object culling not recovered (behaviour-equivalent optimisation, keep) | Keep |
-| `atv-render/water.rs` | projected grid capped at 12,000/8,000 vertices for 16-bit indices; portable reflection; no froth | 00190aa0 strip/row counts without the cap; VU reflection and froth pending | No |
+| `atv-render/water.rs` | projected grid capped at 12,000/8,000 vertices for 16-bit indices; portable reflection; no froth | 00190aa0 strip/row counts without the cap; VU reflection and froth pending | Grid cap: yes (see "Water grid rows"); reflection/froth: no |
 | `atv-render/ambient.rs`, `snow.rs`, `wheel_effects.rs` | bounded GPU rings (4,800 / 10,800 slots), two blend-family draws | native render queue order and pool sizes not recovered | No |
 | `atv-render/scenery.rs` | reverse-looping crowd ATMs keep frame 0 | native playback not recovered | No |
 | `atv-game/intro.rs` | swoop end pose behind the scene start | the player's follow camera (race port) | No |
