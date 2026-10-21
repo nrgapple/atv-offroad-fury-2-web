@@ -53,6 +53,14 @@ jobs:
       - name: Install Rust toolchain
         if: steps.prepare.outputs.build == 'true'
         run: rustup toolchain install stable --profile minimal --component rustfmt,clippy --target wasm32-unknown-unknown
+      # The shared Rust engine (crates/atv-app) needs JS bindings matching Cargo.lock.
+      - name: Install pinned wasm-bindgen
+        if: steps.prepare.outputs.build == 'true'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/wasm-bindgen.tgz" https://github.com/wasm-bindgen/wasm-bindgen/releases/download/0.2.129/wasm-bindgen-0.2.129-x86_64-unknown-linux-musl.tar.gz
+          echo "82d12bb940e2d4e72e0d5605387fc1b8ca179044e012b620f0ce4e7440e8320e  $RUNNER_TEMP/wasm-bindgen.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/wasm-bindgen.tgz" -C "$RUNNER_TEMP"
+          install -m 755 "$RUNNER_TEMP/wasm-bindgen-0.2.129-x86_64-unknown-linux-musl/wasm-bindgen" "$HOME/.cargo/bin/wasm-bindgen"
       - name: Identify Rust application cache
         if: steps.prepare.outputs.build == 'true'
         id: rust-key

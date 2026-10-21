@@ -38,6 +38,7 @@ check:
 
 web:
 	python3 tools/build_web.py
+	python3 tools/build_engine.py
 
 relay:
 	cd crates/atv-relay && PATH="$(dir $(CARGO)):$(PATH)" $(HOME)/.cargo/bin/worker-build --release

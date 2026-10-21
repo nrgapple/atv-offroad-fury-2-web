@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from package_release import EXPECTED_FILES, ROOT, STATIC_FILES, validate_release, versioned_source
+from package_release import EXPECTED_FILES, GENERATED_FILES, ROOT, STATIC_FILES, validate_release, versioned_source
 from fetch_site_release import eligible_run
 
 COMMIT = 'a' * 40
@@ -26,7 +26,7 @@ def fixture(root):
 
 class ReleaseTests(unittest.TestCase):
     def test_release_versions_styles_modules_worker_and_wasm_together(self):
-        for name in STATIC_FILES:
+        for name in STATIC_FILES - GENERATED_FILES:
             if not name.endswith(('.html', '.js', '.css')):
                 continue
             source = versioned_source((ROOT / 'web' / name).read_text(), COMMIT)
@@ -50,7 +50,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_authored_module_dependencies_are_packaged(self):
         # A valid hash list alone cannot catch an omitted imported module.
-        for name in STATIC_FILES:
+        for name in STATIC_FILES - GENERATED_FILES:
             if not name.endswith(".js"):
                 continue
             source = (ROOT / "web" / name).read_text()

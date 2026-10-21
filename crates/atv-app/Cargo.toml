@@ -1,0 +1,30 @@
+[package]
+name = "atv-app"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "fury"
+path = "src/main.rs"
+
+[dependencies]
+atv-content = { path = "../atv-content" }
+atv-game = { path = "../atv-game" }
+atv-render = { path = "../atv-render" }
+wgpu = { version = "30", default-features = false, features = ["std", "wgsl", "metal", "dx12", "vulkan", "gles", "webgl"] }
+web-time = "1"
+winit = "0.30.13"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+png = "0.18"
+pollster = "0.4"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlCanvasElement", "Location", "console"] }

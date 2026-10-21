@@ -1615,6 +1615,8 @@ function matrix() {
   const f = (cameraFrame ? diagnostics.cameraPresentation.focalLength : 1 / Math.tan(Math.PI / 6)) * speedRush.focalScale;
   const aspect = canvas.width / canvas.height, depthFar = far + boundsReach(sceneDraws, boundsReach(chunks)) + 1;
   diagnostics.depthFar = depthFar;
+  // Read-only view for Rust-engine parity captures (tools/compare_engine.mjs).
+  diagnostics.renderCamera = { x: camera.x, y: camera.y, z: camera.z, yaw: camera.yaw, pitch: camera.pitch, focalLength: f };
   return { viewProjection: sceneViewProjection(camera, aspect, f, near, depthFar), cull: sceneViewProjection(camera, aspect, f, near, far) };
 }
 function deadzone(value) { return Number.isFinite(value) && Math.abs(value) > .15 ? Math.sign(value) * (Math.abs(value) - .15) / .85 : 0; }
