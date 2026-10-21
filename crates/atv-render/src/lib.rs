@@ -8,6 +8,7 @@ pub mod camera;
 mod cull;
 mod lingering_dust;
 pub mod preview;
+mod profile;
 mod scenery;
 mod shadows;
 mod sky;
@@ -361,6 +362,7 @@ pub struct SceneRenderer {
     vehicle: Option<vehicle::VehiclePass>,
     /// Race CPU riders (drawn after the player) and which are near enough.
     cpus: Vec<(vehicle::VehiclePass, bool)>,
+    profiler: profile::Profiler,
 }
 
 impl SceneRenderer {
@@ -466,6 +468,7 @@ impl SceneRenderer {
             clock: 0.,
             vehicle: None,
             cpus: Vec::new(),
+            profiler: profile::Profiler::default(),
             wheel_effects: None,
             lingering_dust: None,
             tire_tracks: None,
@@ -874,6 +877,21 @@ impl SceneRenderer {
         self.terrain.recenter(gpu, venue, center);
     }
 
+    /// Per-pass CPU timing (bench runs); resets the accumulated report.
+    pub fn set_profiling(&mut self, enabled: bool) {
+        self.profiler.set_enabled(enabled);
+    }
+
+    /// Mean CPU milliseconds per frame for each pass since profiling began.
+    pub fn profile_report(&self) -> Vec<(&'static str, f64)> {
+        self.profiler.report()
+    }
+
+    /// Mean draws per frame of each pass while profiling.
+    pub fn profile_counts(&self) -> Vec<(&'static str, f64)> {
+        self.profiler.counts()
+    }
+
     pub fn render(&mut self, gpu: &Gpu, view: &View) -> Result<FrameStats, String> {
         self.render_with(gpu, view, &mut |_, _| {})
     }
@@ -900,6 +918,7 @@ impl SceneRenderer {
             other => return Err(format!("surface: {other:?}")),
         };
         let acquire_ms = acquire.elapsed().as_secs_f64() * 1000.;
+        self.profiler.start();
         let target = frame.texture.create_view(&Default::default());
         let (mut encoder, mut stats) = self.encode(
             gpu,
@@ -909,9 +928,16 @@ impl SceneRenderer {
             gpu.msaa.as_ref(),
             &gpu.depth,
         );
+        self.profiler.mark("encode.speed_rush");
         overlay(&mut encoder, &target);
-        gpu.queue.submit([encoder.finish()]);
+        self.profiler.mark("encode.overlay");
+        let commands = encoder.finish();
+        self.profiler.mark("finish");
+        gpu.queue.submit([commands]);
+        self.profiler.mark("submit");
         gpu.queue.present(frame);
+        self.profiler.mark("present");
+        self.profiler.end_frame();
         stats.acquire_ms = acquire_ms;
         Ok(stats)
     }
@@ -960,23 +986,29 @@ impl SceneRenderer {
             }
             None => self.world.globals.shadow = [0.; 4],
         }
+        self.profiler.mark("prepare.setup");
         let mut stats = self.terrain.prepare(gpu, &view_projection, &cull, eye);
+        self.profiler.mark("prepare.terrain");
         self.world
             .prepare(gpu, &view_projection, eye, view.camera.yaw);
+        self.profiler.mark("prepare.world");
         stats.sky_tiles = self.sky.as_ref().map_or(0, |s| s.tiles());
         let scenery = self.scenery.prepare(gpu, &cull);
         stats.scenery_draws = scenery.draws;
         stats.scenery_triangles = scenery.triangles;
         stats.scenery_culled = scenery.culled;
+        self.profiler.mark("prepare.scenery");
         if let Some((pass, shared)) = &mut self.train {
             (stats.train_draws, stats.train_triangles) = pass.prepare(gpu, &shared.borrow());
         }
+        self.profiler.mark("prepare.train");
         if let Some(vegetation) = &mut self.vegetation {
             let v = vegetation.prepare(gpu, eye, view.camera.yaw);
             stats.vegetation_draws = v.draws;
             stats.vegetation_triangles = v.triangles;
             stats.vegetation_visible = v.visible;
         }
+        self.profiler.mark("prepare.vegetation");
         if let Some((water, _)) = &mut self.water {
             water.prepare(
                 gpu,
@@ -988,10 +1020,12 @@ impl SceneRenderer {
             );
             stats.water_draws = 1;
         }
+        self.profiler.mark("prepare.water");
         if let Some((pass, shared)) = &mut self.ambient {
             (stats.ambient_draws, stats.ambient_triangles) =
                 pass.prepare(gpu, &shared.borrow(), &view.camera, self.far);
         }
+        self.profiler.mark("prepare.ambient");
         self.weather_camera = view.camera;
         if let Some((pass, _)) = &mut self.snow {
             (stats.snow_draws, stats.snow_triangles) = pass.prepare(gpu, &view.camera);
@@ -1018,6 +1052,7 @@ impl SceneRenderer {
             stats.wheel_draws += blood.draws();
             stats.wheel_triangles += blood.triangles();
         }
+        self.profiler.mark("prepare.effects");
         if let Some(vehicle) = &mut self.vehicle {
             vehicle.prepare(gpu, &view_projection, view.camera.eye());
             stats.vehicle_triangles = vehicle.triangles;
@@ -1028,6 +1063,7 @@ impl SceneRenderer {
                 stats.vehicle_triangles += cpu.triangles;
             }
         }
+        self.profiler.mark("prepare.vehicles");
         let contact = match (&mut self.contact_shadows, &self.vehicle, &self.ride_pose) {
             (Some(contact), Some(vehicle), Some((quad, torso))) => {
                 let ground = |x: f32, z: f32| self.ground.height(f64::from(x), f64::from(z)) as f32;
@@ -1075,12 +1111,28 @@ impl SceneRenderer {
             }
             _ => None,
         };
+        self.profiler.mark("prepare.shadows_rush");
+        for (name, n) in [
+            ("terrain", stats.terrain_draws),
+            ("sky", stats.sky_tiles),
+            ("scenery", stats.scenery_draws),
+            ("vegetation", stats.vegetation_draws),
+            ("water", stats.water_draws),
+            ("train", stats.train_draws),
+            ("ambient", stats.ambient_draws),
+            ("snow", stats.snow_draws),
+            ("wheel", stats.wheel_draws),
+            ("shadow", stats.shadow_draws),
+        ] {
+            self.profiler.count(name, n);
+        }
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         if let (Some(map), Some(vehicle), Some((clip, _))) =
             (&self.shadow_map, &self.vehicle, &light)
         {
             map.render(gpu, &mut encoder, &self.world, vehicle, clip);
         }
+        self.profiler.mark("encode.shadow_map");
         {
             let [r, g, b] = self.fog_color.map(f64::from);
             // With speed rush the scene resolves into its own texture first.
@@ -1117,11 +1169,15 @@ impl SceneRenderer {
                 }),
                 ..Default::default()
             });
+            self.profiler.mark("encode.begin");
             if let Some(sky) = &self.sky {
                 sky.draw(&mut pass, &self.world);
             }
+            self.profiler.mark("encode.sky");
             self.terrain.draw(&mut pass);
+            self.profiler.mark("encode.terrain");
             self.scenery.draw(&mut pass, &self.world);
+            self.profiler.mark("encode.scenery");
             if let Some((train, _)) = &self.train {
                 train.draw(&mut pass, &self.world);
             }
@@ -1131,9 +1187,11 @@ impl SceneRenderer {
             if let Some(tracks) = &self.tire_tracks {
                 tracks.draw(&mut pass, &self.world);
             }
+            self.profiler.mark("encode.train_shadows_tracks");
             if let Some(vegetation) = &self.vegetation {
                 vegetation.draw(&mut pass, &self.world);
             }
+            self.profiler.mark("encode.vegetation");
             // The browser draws vehicles here, then water.
             if let Some(vehicle) = &self.vehicle {
                 pass.set_stencil_reference(1);
@@ -1142,9 +1200,11 @@ impl SceneRenderer {
             for (cpu, _) in self.cpus.iter().filter(|(_, visible)| *visible) {
                 cpu.draw(&mut pass);
             }
+            self.profiler.mark("encode.vehicles");
             if let Some((water, _)) = &self.water {
                 water.draw(&mut pass);
             }
+            self.profiler.mark("encode.water");
             if let Some((ambient, _)) = &self.ambient {
                 ambient.draw(&mut pass, &self.world);
             }
@@ -1160,7 +1220,9 @@ impl SceneRenderer {
             if let Some(dust) = &self.lingering_dust {
                 dust.draw(&mut pass, &self.world);
             }
+            self.profiler.mark("encode.effects");
         }
+        self.profiler.mark("encode.end_pass");
         if let (Some(rush), Some(_)) = (&self.speed_rush, &rush_scene) {
             rush.draw(&mut encoder, target, msaa, depth);
             stats.shadow_draws += 1;

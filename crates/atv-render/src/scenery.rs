@@ -24,6 +24,14 @@ struct DrawUniform {
     flags: [f32; 4],
 }
 
+/// A draw's material followed by its instance (scenery.wgsl `Record`).
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct Record {
+    m: MaterialUniform,
+    d: DrawUniform,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct Key {
     blend: Blend,
@@ -32,14 +40,22 @@ struct Key {
     reflect: bool,
 }
 
-struct Chunk {
+/// Every chunk's geometry lives in one of two merged sets (plain, and
+/// reflection-mapped with its second vertex stream), indices rebased, so
+/// consecutive draws of different models no longer rebind vertex buffers:
+/// the GL backend re-specifies attributes only on pipeline changes.
+struct Geometry {
     vertices: wgpu::Buffer,
     reflection: Option<wgpu::Buffer>,
     indices: wgpu::Buffer,
+}
+
+struct Chunk {
+    /// 0 plain, 1 reflection-mapped ([`SceneryPass::sets`]).
+    set: usize,
+    first: u32,
     count: u32,
     key: Key,
-    /// Material slot; the alpha-failure variant follows at `material + 1`.
-    material: u32,
     alpha_fail: bool,
     /// Bind groups per ATM frame (one for still textures; fallback when untextured).
     textures: Vec<usize>,
@@ -48,6 +64,8 @@ struct Chunk {
 
 struct Draw {
     chunk: usize,
+    /// Record slot (material + instance); the alpha-failure pass follows.
+    record: u32,
     flash: Option<usize>,
     min: [f32; 3],
     max: [f32; 3],
@@ -62,13 +80,18 @@ pub struct Stats {
 
 pub struct SceneryPass {
     pipelines: HashMap<Key, wgpu::RenderPipeline>,
+    sets: Vec<Geometry>,
     chunks: Vec<Chunk>,
     draws: Vec<Draw>,
     groups: Vec<wgpu::BindGroup>,
-    materials: wgpu::Buffer,
-    draw_group: wgpu::BindGroup,
-    material_slot: u64,
-    draw_slot: u64,
+    /// Per-draw records ([`Record`]): one dynamic offset per draw. Draws of
+    /// UV-animated chunks come first so one write refreshes them all.
+    records: wgpu::Buffer,
+    record_group: wgpu::BindGroup,
+    record_slot: u64,
+    /// CPU copy of the animated draws' records (the buffer's leading block).
+    animated_records: Vec<u8>,
+    animated_draws: Vec<usize>,
     clocks: Clocks,
     /// Chunks whose UV offset animates (rewritten each frame).
     animated: Vec<usize>,
@@ -92,12 +115,12 @@ impl SceneryPass {
         let mut groups = vec![world.texture_group(gpu, &fallback, &sampler)];
         let mut uploaded: HashMap<*const atv_game::materials::MaterialImage, Vec<usize>> =
             HashMap::new();
-        let material_slot = world.slot(std::mem::size_of::<MaterialUniform>());
-        let draw_slot = world.slot(std::mem::size_of::<DrawUniform>());
+        let record_slot = world.slot(std::mem::size_of::<Record>());
         let mut chunks = Vec::with_capacity(scenery.chunks.len());
-        let mut material_bytes = Vec::new();
         let clocks = Clocks::new(scenery);
         let mut animated = Vec::new();
+        // Plain and reflection-mapped sets: vertex bytes, indices, reflection floats.
+        let mut merged: [(Vec<u8>, Vec<u32>, Vec<f32>); 2] = Default::default();
         for (index, source) in scenery.chunks.iter().enumerate() {
             let pass = source.pass();
             let state = pass.pass.as_ref();
@@ -151,79 +174,81 @@ impl SceneryPass {
                 uv_offset: [0.; 4],
             };
             let alpha_fail = pass.scene_alpha_failure == 1. && pass.scene_alpha_cutoff > 0.;
-            let material = (material_bytes.len() as u64 / material_slot) as u32;
-            let mut push = |uniform: &MaterialUniform| {
-                let at = material_bytes.len();
-                material_bytes.extend_from_slice(bytemuck::bytes_of(uniform));
-                material_bytes.resize(at + material_slot as usize, 0);
-            };
-            push(&uniform);
-            if alpha_fail {
-                let mut fail = uniform;
-                fail.flags[3] = 1.;
-                push(&fail);
-            }
             if clocks.animated(index) {
                 animated.push(index);
             }
-            let mut bytes = Vec::with_capacity(source.colors.len() * STRIDE as usize);
+            let set = usize::from(reflection_plane != 0);
+            let (bytes, indices, reflection) = &mut merged[set];
+            let base = (bytes.len() as u64 / STRIDE) as u32;
+            let first = indices.len() as u32;
             for (i, color) in source.colors.iter().enumerate() {
-                bytes.extend_from_slice(bytemuck::cast_slice(&source.vertices[i * 8..i * 8 + 8]));
+                // Position, U, normal, V: the original values in two vec4s.
+                let v = &source.vertices[i * 8..i * 8 + 8];
+                let packed = [v[0], v[1], v[2], v[6], v[3], v[4], v[5], v[7]];
+                bytes.extend_from_slice(bytemuck::cast_slice(&packed));
                 bytes.extend_from_slice(color);
             }
-            let reflection = (reflection_plane != 0).then(|| {
-                let mut data = Vec::with_capacity(source.colors.len() * 18);
+            indices.extend(source.indices.iter().map(|i| i + base));
+            if set == 1 {
                 for v in source.reflection.as_chunks::<7>().0 {
-                    data.extend_from_slice(&v[..6]);
+                    reflection.extend_from_slice(&v[..6]);
                     let node = &source.nodes[(v[6] as usize).min(source.nodes.len() - 1)];
                     for column in 0..4 {
-                        data.extend_from_slice(&node[column * 4..column * 4 + 3]);
+                        reflection.extend_from_slice(&node[column * 4..column * 4 + 3]);
                     }
                 }
-                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("scenery reflection"),
-                    contents: bytemuck::cast_slice(&data),
-                    usage: wgpu::BufferUsages::VERTEX,
-                })
-            });
+                // One reflection record per vertex keeps both streams aligned.
+                reflection.resize(bytes.len() / STRIDE as usize * 18, 0.);
+            }
             chunks.push(Chunk {
-                vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("scenery vertices"),
-                    contents: &bytes,
-                    usage: wgpu::BufferUsages::VERTEX,
-                }),
-                reflection,
-                indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("scenery indices"),
-                    contents: bytemuck::cast_slice(&source.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                }),
+                set,
+                first,
                 count: source.indices.len() as u32,
                 key,
-                material,
                 alpha_fail,
                 textures,
                 uniform,
             });
         }
-        if material_bytes.is_empty() {
-            material_bytes.resize(material_slot as usize, 0);
-        }
-        let materials = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("scenery materials"),
-            contents: &material_bytes,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let mut draw_bytes = Vec::with_capacity(scenery.draws.len().max(1) * draw_slot as usize);
+        let sets = merged
+            .into_iter()
+            .enumerate()
+            .map(|(set, (mut bytes, mut indices, reflection))| {
+                // Buffers may not be empty; an unused set keeps one dummy record.
+                if bytes.is_empty() {
+                    bytes.resize(STRIDE as usize, 0);
+                    indices.push(0);
+                }
+                let buffer = |label, contents: &[u8], usage| {
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some(label),
+                        contents,
+                        usage,
+                    })
+                };
+                let reflection = (set == 1).then(|| {
+                    let mut reflection = reflection;
+                    reflection.resize(bytes.len() / STRIDE as usize * 18, 0.);
+                    buffer(
+                        "scenery reflection",
+                        bytemuck::cast_slice(&reflection),
+                        wgpu::BufferUsages::VERTEX,
+                    )
+                });
+                Geometry {
+                    vertices: buffer("scenery vertices", &bytes, wgpu::BufferUsages::VERTEX),
+                    reflection,
+                    indices: buffer(
+                        "scenery indices",
+                        bytemuck::cast_slice(&indices),
+                        wgpu::BufferUsages::INDEX,
+                    ),
+                }
+            })
+            .collect();
         let mut draws = Vec::with_capacity(scenery.draws.len());
         let mut reach = 0f32;
         for draw in &scenery.draws {
-            let at = draw_bytes.len();
-            draw_bytes.extend_from_slice(bytemuck::bytes_of(&DrawUniform {
-                model: draw.matrix,
-                flags: [draw.unlit as u8 as f32, 0., 0., 0.],
-            }));
-            draw_bytes.resize(at + draw_slot as usize, 0);
             let d: [f32; 3] = std::array::from_fn(|a| draw.max[a] - draw.min[a]);
             let diagonal = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
             if diagonal.is_finite() {
@@ -231,26 +256,69 @@ impl SceneryPass {
             }
             draws.push(Draw {
                 chunk: draw.chunk,
+                record: 0,
                 flash: draw.flash,
                 min: draw.min,
                 max: draw.max,
             });
         }
-        if draw_bytes.is_empty() {
-            draw_bytes.resize(draw_slot as usize, 0);
+        // Records: animated chunks' draws first, then the rest, in draw order.
+        let animated_chunk: Vec<bool> = (0..chunks.len()).map(|c| animated.contains(&c)).collect();
+        let is_animated = |i: usize| animated_chunk[draws[i].chunk];
+        let animated_draws: Vec<usize> = (0..draws.len()).filter(|&i| is_animated(i)).collect();
+        let order: Vec<usize> = animated_draws
+            .iter()
+            .copied()
+            .chain((0..draws.len()).filter(|&i| !is_animated(i)))
+            .collect();
+        let mut record_bytes = Vec::new();
+        let mut animated_bytes = 0;
+        for index in order {
+            let draw = &mut draws[index];
+            let chunk = &chunks[draw.chunk];
+            draw.record = (record_bytes.len() as u64 / record_slot) as u32;
+            let source = &scenery.draws[index];
+            let instance = DrawUniform {
+                model: source.matrix,
+                flags: [source.unlit as u8 as f32, 0., 0., 0.],
+            };
+            let mut push = |m: MaterialUniform| {
+                let at = record_bytes.len();
+                record_bytes.extend_from_slice(bytemuck::bytes_of(&Record { m, d: instance }));
+                record_bytes.resize(at + record_slot as usize, 0);
+            };
+            push(chunk.uniform);
+            if chunk.alpha_fail {
+                let mut fail = chunk.uniform;
+                fail.flags[3] = 1.;
+                push(fail);
+            }
+            if animated_chunk[draw.chunk] {
+                animated_bytes = record_bytes.len();
+            }
         }
-        let instances = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("scenery draws"),
-            contents: &draw_bytes,
-            usage: wgpu::BufferUsages::UNIFORM,
+        if record_bytes.is_empty() {
+            record_bytes.resize(record_slot as usize, 0);
+        }
+        let animated_records = record_bytes[..animated_bytes].to_vec();
+        let records = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("scenery records"),
+            contents: &record_bytes,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        let draw_group = world.draw_group(
-            gpu,
-            &materials,
-            std::mem::size_of::<MaterialUniform>(),
-            &instances,
-            std::mem::size_of::<DrawUniform>(),
-        );
+        let record_layout = world.record_layout(gpu);
+        let record_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("scenery records"),
+            layout: &record_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &records,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(std::mem::size_of::<Record>() as u64),
+                }),
+            }],
+        });
         let shader = device.create_shader_module(wgpu::include_wgsl!("scenery.wgsl"));
         let mut pipelines = HashMap::new();
         for chunk in &chunks {
@@ -264,18 +332,20 @@ impl SceneryPass {
             for key in keys {
                 pipelines
                     .entry(key)
-                    .or_insert_with(|| pipeline(gpu, world, &shader, key));
+                    .or_insert_with(|| pipeline(gpu, world, &shader, key, &record_layout));
             }
         }
         Self {
             pipelines,
+            sets,
             chunks,
             draws,
             groups,
-            materials,
-            draw_group,
-            material_slot,
-            draw_slot,
+            records,
+            record_group,
+            record_slot,
+            animated_records,
+            animated_draws,
             clocks,
             animated,
             visible: Vec::new(),
@@ -303,22 +373,22 @@ impl SceneryPass {
 
     pub fn prepare(&mut self, gpu: &Gpu, cull_planes: &[[f32; 4]]) -> Stats {
         for &index in &self.animated {
-            let chunk = &mut self.chunks[index];
             let [u, v] = self.clocks.uv_offset(index);
-            chunk.uniform.uv_offset = [u, v, 0., 0.];
-            let mut slots = vec![chunk.uniform];
-            if chunk.alpha_fail {
-                let mut fail = chunk.uniform;
-                fail.flags[3] = 1.;
-                slots.push(fail);
+            self.chunks[index].uniform.uv_offset = [u, v, 0., 0.];
+        }
+        if !self.animated_records.is_empty() {
+            let offset = std::mem::offset_of!(MaterialUniform, uv_offset);
+            for &index in &self.animated_draws {
+                let draw = &self.draws[index];
+                let chunk = &self.chunks[draw.chunk];
+                let uv = bytemuck::bytes_of(&chunk.uniform.uv_offset);
+                for pass in 0..1 + usize::from(chunk.alpha_fail) {
+                    let at = (draw.record as usize + pass) * self.record_slot as usize + offset;
+                    self.animated_records[at..at + uv.len()].copy_from_slice(uv);
+                }
             }
-            for (i, uniform) in slots.iter().enumerate() {
-                gpu.queue.write_buffer(
-                    &self.materials,
-                    (u64::from(chunk.material) + i as u64) * self.material_slot,
-                    bytemuck::bytes_of(uniform),
-                );
-            }
+            gpu.queue
+                .write_buffer(&self.records, 0, &self.animated_records);
         }
         self.visible.clear();
         let mut stats = Stats::default();
@@ -342,7 +412,7 @@ impl SceneryPass {
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, world: &World) {
         pass.set_bind_group(0, &world.globals_group, &[]);
         let mut current: Option<Key> = None;
-        let mut bound_chunk = usize::MAX;
+        let mut bound_set = usize::MAX;
         let mut bound_texture = usize::MAX;
         for &index in &self.visible {
             let draw = &self.draws[index];
@@ -353,15 +423,15 @@ impl SceneryPass {
                 pass.set_bind_group(1, &self.groups[texture], &[]);
                 bound_texture = texture;
             }
-            if bound_chunk != draw.chunk {
-                pass.set_vertex_buffer(0, chunk.vertices.slice(..));
-                if let Some(reflection) = &chunk.reflection {
+            if bound_set != chunk.set {
+                let set = &self.sets[chunk.set];
+                pass.set_vertex_buffer(0, set.vertices.slice(..));
+                if let Some(reflection) = &set.reflection {
                     pass.set_vertex_buffer(1, reflection.slice(..));
                 }
-                pass.set_index_buffer(chunk.indices.slice(..), wgpu::IndexFormat::Uint32);
-                bound_chunk = draw.chunk;
+                pass.set_index_buffer(set.indices.slice(..), wgpu::IndexFormat::Uint32);
+                bound_set = chunk.set;
             }
-            let instance = (index as u64 * self.draw_slot) as u32;
             for fail in [false, true] {
                 if fail && !chunk.alpha_fail {
                     break;
@@ -376,10 +446,9 @@ impl SceneryPass {
                     pass.set_pipeline(&self.pipelines[&key]);
                     current = Some(key);
                 }
-                let material =
-                    ((u64::from(chunk.material) + fail as u64) * self.material_slot) as u32;
-                pass.set_bind_group(2, &self.draw_group, &[material, instance]);
-                pass.draw_indexed(0..chunk.count, 0, 0..1);
+                let record = (u64::from(draw.record + fail as u32) * self.record_slot) as u32;
+                pass.set_bind_group(2, &self.record_group, &[record]);
+                pass.draw_indexed(chunk.first..chunk.first + chunk.count, 0, 0..1);
             }
         }
     }
@@ -390,11 +459,12 @@ fn pipeline(
     world: &World,
     shader: &wgpu::ShaderModule,
     key: Key,
+    records: &wgpu::BindGroupLayout,
 ) -> wgpu::RenderPipeline {
     let main = wgpu::VertexBufferLayout {
         array_stride: STRIDE,
         step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Unorm8x4],
+        attributes: &wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 3 => Unorm8x4],
     };
     let reflection = wgpu::VertexBufferLayout {
         array_stride: REFLECTION_STRIDE,
@@ -402,7 +472,7 @@ fn pipeline(
         attributes: &wgpu::vertex_attr_array![4 => Float32x3, 5 => Float32x3, 6 => Float32x3, 7 => Float32x3, 8 => Float32x3, 9 => Float32x3],
     };
     let buffers = [Some(main), Some(reflection)];
-    world.pipeline(
+    world.pipeline_layouts(
         gpu,
         PipelineDesc {
             label: "scenery",
@@ -419,5 +489,7 @@ fn pipeline(
             },
             per_draw: true,
         },
+        &world.texture_layout,
+        records,
     )
 }

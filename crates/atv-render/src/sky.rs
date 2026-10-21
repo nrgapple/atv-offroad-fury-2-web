@@ -6,18 +6,35 @@ use crate::{
 use atv_game::sky::Sky;
 use wgpu::util::DeviceExt;
 
-struct Tile {
-    texture: wgpu::Texture,
-    group: wgpu::BindGroup,
-    size: u32,
-}
-
+/// Every tile is one layer of a texture array (all shipped skies use one
+/// tile size), so the whole sky is one draw instead of one per tile: the
+/// same texels, filtering and order, without 64 texture rebinds per frame.
 pub struct SkyPass {
     pipeline: wgpu::RenderPipeline,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
-    tiles: Vec<Tile>,
+    texture: wgpu::Texture,
+    group: wgpu::BindGroup,
+    size: u32,
+    tiles: u32,
     smooth: bool,
+}
+
+fn write_layers(gpu: &Gpu, texture: &wgpu::Texture, sky: &Sky, smooth: bool) {
+    for (layer, tile) in sky.tiles.iter().enumerate() {
+        let pixels = match (&tile.smooth, smooth) {
+            (Some(smooth), true) => smooth,
+            _ => &tile.image.rgba,
+        };
+        texture::write_layer(
+            gpu,
+            texture,
+            layer as u32,
+            tile.image.width,
+            tile.image.height,
+            pixels,
+        );
+    }
 }
 
 impl SkyPass {
@@ -41,26 +58,70 @@ impl SkyPass {
         }
         let device = &gpu.device;
         let sampler = texture::sampler(gpu, false, 1);
-        let tiles = sky
+        let size = sky.tiles.first().map_or(1, |t| t.image.width);
+        if sky
             .tiles
             .iter()
-            .map(|tile| {
-                let pixels = match (&tile.smooth, smooth) {
-                    (Some(smooth), true) => smooth,
-                    _ => &tile.image.rgba,
-                };
-                let texture =
-                    texture::upload(gpu, tile.image.width, tile.image.height, pixels, "sky tile");
-                let group = world.texture_group(gpu, &texture, &sampler);
-                Tile {
-                    texture,
-                    group,
-                    size: tile.image.width,
-                }
-            })
-            .collect();
+            .any(|t| t.image.width != size || t.image.height != size)
+        {
+            eprintln!("sky: tiles of different sizes are not supported; drawing the first size");
+        }
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("sky tiles"),
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: texture::array_layers(sky.tiles.len().max(2) as u32),
+            },
+            mip_level_count: texture::mip_levels(size, size),
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        write_layers(gpu, &texture, sky, smooth);
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("sky tiles"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sky tiles"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
         let shader = device.create_shader_module(wgpu::include_wgsl!("sky.wgsl"));
-        let pipeline = world.pipeline(
+        let pipeline = world.pipeline_with(
             gpu,
             PipelineDesc {
                 label: "sky",
@@ -77,6 +138,7 @@ impl SkyPass {
                 depth_compare: wgpu::CompareFunction::Always,
                 per_draw: false,
             },
+            &layout,
         );
         Self {
             pipeline,
@@ -90,7 +152,10 @@ impl SkyPass {
                 contents: bytemuck::cast_slice(&indices),
                 usage: wgpu::BufferUsages::INDEX,
             }),
-            tiles,
+            texture,
+            group,
+            size,
+            tiles: sky.tiles.len() as u32,
             smooth: smooth && sky.tiles.iter().all(|t| t.smooth.is_some()),
         }
     }
@@ -101,13 +166,8 @@ impl SkyPass {
             return;
         }
         self.smooth = smooth && sky.tiles.iter().all(|t| t.smooth.is_some());
-        for (tile, source) in self.tiles.iter().zip(&sky.tiles) {
-            let pixels = match (&source.smooth, smooth) {
-                (Some(smooth), true) => smooth,
-                _ => &source.image.rgba,
-            };
-            texture::write(gpu, &tile.texture, tile.size, tile.size, pixels);
-        }
+        write_layers(gpu, &self.texture, sky, smooth);
+        let _ = self.size;
     }
 
     pub fn smooth(&self) -> bool {
@@ -115,7 +175,7 @@ impl SkyPass {
     }
 
     pub fn tiles(&self) -> u32 {
-        self.tiles.len() as u32
+        self.tiles
     }
 
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, world: &World) {
@@ -123,10 +183,7 @@ impl SkyPass {
         pass.set_bind_group(0, &world.globals_group, &[]);
         pass.set_vertex_buffer(0, self.vertices.slice(..));
         pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
-        for (index, tile) in self.tiles.iter().enumerate() {
-            pass.set_bind_group(1, &tile.group, &[]);
-            let first = index as u32 * 6;
-            pass.draw_indexed(first..first + 6, 0, 0..1);
-        }
+        pass.set_bind_group(1, &self.group, &[]);
+        pass.draw_indexed(0..self.tiles * 6, 0, 0..1);
     }
 }
