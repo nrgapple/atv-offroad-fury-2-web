@@ -240,11 +240,21 @@ async fn prepare(
         let ride = atv_game::ride::load(&content, &venue, 1, 0, status).await?;
         scene.set_ride(&gpu, &venue, &ride.quad, &ride.rider)?;
         let mut riding = riding::Riding::new(ride, &venue);
+        // startSimulation's first frame (op 23) primes the wheel effects.
+        if let Some(mut effects) = atv_game::wheel_effects::load(&content, &venue, 1).await? {
+            effects.set_lingering_dust(usize::from(graphics.dust), &venue);
+            effects.reset(&riding.ride)?;
+            scene.set_wheel_effects(&gpu, &effects);
+            riding.effects = Some(effects);
+        }
         if let Some(script) = &script {
             script.run(&mut riding)?;
             // Hold the replayed state for screenshots.
             riding.paused = true;
             riding.held = true;
+            if let Some(effects) = &mut riding.effects {
+                scene.accept_wheel_effects(&gpu, effects);
+            }
             publish_trace(&replay::record(&riding.ride, riding.ride.steps()).to_string());
         }
         if let (Some((mode, music)), None) = (sound, &script) {
@@ -392,6 +402,9 @@ impl App {
                 ready.scene.set_weather_view(position, target);
                 ready.scene.advance_steps(1);
             }
+        }
+        if let Some(effects) = &mut riding.effects {
+            ready.scene.accept_wheel_effects(&ready.gpu, effects);
         }
         match riding.present(
             &ready.gpu,
@@ -1106,11 +1119,13 @@ pub fn graphics_preset(name: &str) -> Graphics {
             sky_smooth: true,
             anisotropy: 16,
             fresnel: true,
+            dust: 96,
         },
         "enhanced" => Graphics {
             sky_smooth: true,
             anisotropy: 4,
             fresnel: true,
+            dust: 24,
         },
         _ => Graphics::default(),
     }

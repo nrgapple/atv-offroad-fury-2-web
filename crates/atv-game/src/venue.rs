@@ -64,6 +64,8 @@ pub struct Venue {
     pub intro_shots: Vec<Vec<atv_core::race_intro::ShotFrame>>,
     /// Active Snow weather (ring emitters around the camera).
     pub snow: Option<std::rc::Rc<std::cell::RefCell<crate::snow::Weather>>>,
+    /// `[TerrainZoneN] GenerateDust` flags of the venue TOY (lingering dust).
+    pub dust_zones: [bool; 8],
     /// Source Weather selection for this load (00208cc0).
     pub weather: Option<atv_core::weather::Selection>,
 }
@@ -264,6 +266,10 @@ pub async fn load_with(
         train,
         ambient,
         snow,
+        dust_zones: toy
+            .as_deref()
+            .map(|toy| crate::lingering_dust::dust_zones(&String::from_utf8_lossy(toy)))
+            .unwrap_or_default(),
         intro_shots: if racing {
             crate::intro::shots(&archive, environment)?
         } else {
