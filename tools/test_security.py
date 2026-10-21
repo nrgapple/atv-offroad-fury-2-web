@@ -1,5 +1,9 @@
 import unittest
+from pathlib import Path
+import tempfile
 from check_secrets import candidates
+from require_worktree import blocked_bash, blocked_edit
+from test_fixtures import git
 import verify_repository as repository
 
 
@@ -52,6 +56,90 @@ class RepositoryHygiene(unittest.TestCase):
             repository.check_content('web/app.mjs', b'a\0b')
         with self.assertRaisesRegex(ValueError, 'credential'):
             repository.check_content('web/app.mjs', b'-----BEGIN ' + b'PRIVATE KEY-----')
+
+
+class SharedMainGuard(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        git(self.root, 'init', '-b', 'main')
+        git(self.root, 'config', 'user.name', 'Guard tests')
+        git(self.root, 'config', 'user.email', 'guard@example.test')
+        (self.root / 'README.md').write_text('base\n')
+        git(self.root, 'add', 'README.md')
+        git(self.root, 'commit', '-m', 'base')
+        self.base = git(self.root, 'rev-parse', 'HEAD')
+        git(self.root, 'update-ref', 'refs/remotes/origin/main', self.base)
+
+    def blocked(self, command='git merge --ff-only origin/main'):
+        return blocked_bash(command, str(self.root))
+
+    def test_clean_main_can_fast_forward_and_match_remote(self):
+        git(self.root, 'switch', '-c', 'remote-change')
+        (self.root / 'README.md').write_text('remote update\n')
+        git(self.root, 'commit', '-am', 'remote update')
+        remote = git(self.root, 'rev-parse', 'HEAD')
+        git(self.root, 'update-ref', 'refs/remotes/origin/main', remote)
+        git(self.root, 'switch', 'main')
+        self.assertIsNone(self.blocked())
+        self.assertIsNone(self.blocked(f'git -C "{self.root}" merge --ff-only origin/main'))
+        git(self.root, 'merge', '--ff-only', 'origin/main')
+        self.assertEqual(git(self.root, 'rev-parse', 'HEAD'), remote)
+        self.assertIsNone(self.blocked())
+
+    def test_dirty_staged_and_untracked_files_prevent_sync(self):
+        (self.root / 'README.md').write_text('local work\n')
+        self.assertIsNotNone(self.blocked())
+        git(self.root, 'add', 'README.md')
+        self.assertIsNotNone(self.blocked())
+        git(self.root, 'reset', '--hard', 'HEAD')
+        (self.root / 'untracked.md').write_text('unfinished work\n')
+        self.assertIsNotNone(self.blocked())
+
+    def test_shadowing_remote_name_prevents_sync(self):
+        git(self.root, 'switch', '-c', 'origin/main')
+        git(self.root, 'commit', '--allow-empty', '-m', 'shadow remote name')
+        git(self.root, 'switch', 'main')
+        self.assertIsNotNone(self.blocked())
+
+    def test_local_commits_and_wrong_branch_prevent_sync(self):
+        git(self.root, 'commit', '--allow-empty', '-m', 'local work')
+        self.assertIsNotNone(self.blocked())
+        git(self.root, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+        git(self.root, 'switch', '-c', 'feature')
+        self.assertIsNotNone(self.blocked())
+        git(self.root, 'switch', '--detach')
+        self.assertIsNotNone(self.blocked())
+
+    def test_unfinished_operations_prevent_sync(self):
+        for state in ('MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD',
+                      'rebase-merge', 'rebase-apply', 'sequencer', 'index.lock'):
+            with self.subTest(state=state):
+                path = self.root / '.git' / state
+                path.write_text(self.base + '\n')
+                try:
+                    self.assertIsNotNone(self.blocked())
+                finally:
+                    path.unlink()
+
+    def test_other_shared_writes_remain_blocked(self):
+        for command in ('git merge origin/main', 'git merge --ff-only feature',
+                        'git merge --ff-only origin/main --autostash',
+                        'git -c core.hooksPath=/dev/null merge --ff-only origin/main',
+                        'git reset --hard origin/main', 'git switch feature',
+                        'git commit -am change', 'git push origin main',
+                        'git merge --ff-only origin/main && git commit -am change'):
+            with self.subTest(command=command):
+                self.assertIsNotNone(self.blocked(command))
+        self.assertIsNotNone(blocked_edit(self.root / 'README.md'))
+        self.assertIsNone(blocked_edit(self.root / 'private' / 'report.md'))
+
+    def test_linked_task_worktree_remains_writable(self):
+        task = self.root / 'task'
+        git(self.root, 'worktree', 'add', '-b', 'task', str(task))
+        self.assertIsNone(blocked_bash('git merge origin/main', str(task)))
+        self.assertIsNone(blocked_edit(task / 'README.md'))
 
 
 if __name__ == '__main__':
