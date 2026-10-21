@@ -200,6 +200,7 @@ pub fn cylinder_collision(input: &CylinderMesh) -> Result<CollisionMesh> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::math::Det;
     fn authored_cylinder() -> CylinderMesh {
         //Authored unit-radius, height-two fixture supplied to00119ec0. These
         //host trigonometric inputs test tree building independently of ESB's
@@ -207,9 +208,9 @@ mod tests {
         let vertices = std::array::from_fn(|i| {
             let angle = (i % 16) as f64 * std::f64::consts::PI / 8.;
             [
-                angle.cos() as f32,
+                angle.cos_d() as f32,
                 if i < 16 { 2. } else { 0. },
-                angle.sin() as f32,
+                angle.sin_d() as f32,
             ]
         });
         let triangles = std::array::from_fn(|i| {

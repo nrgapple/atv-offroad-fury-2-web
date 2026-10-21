@@ -1,6 +1,7 @@
 //! Original two-link hand solver, SCUS_972.11 002b7070/002b7a60.
 //! Normal riding/stunt/landing selectors clear their hand-IK gate. Targets are
 //! explicitly optional; constructing this solver never enables hand contacts.
+use crate::math::Det;
 use crate::{Result, animation::Pose, mesh::Node};
 type Vec3 = [f32; 3];
 type Matrix = [f32; 16];
@@ -132,7 +133,7 @@ impl Arm {
         let a_direction = unit(projected_a)?;
         let b_direction = unit(projected_b)?.map(|v| -v);
         let cosine = dot(a_direction, b_direction).clamp(-1., 1.);
-        let angle = cosine.acos();
+        let angle = cosine.acos_d();
         let angle_offset = if dot(cross(a_direction, b.map(|v| -v)), bend_axis) > 0. {
             -angle
         } else {
@@ -175,11 +176,11 @@ impl Arm {
         let cosine = (self.inverse_projected_lengths
             * (distance * distance - self.projected_length_sum))
             .clamp(-1., 1.);
-        let angle = cosine.acos() + self.angle_offset;
+        let angle = cosine.acos_d() + self.angle_offset;
         pose.local_matrices[self.elbow] = rotation(
             unit(self.bend_axis)?,
-            angle.cos(),
-            angle.sin(),
+            angle.cos_d(),
+            angle.sin_d(),
             self.elbow_translation,
         );
         compose(nodes, pose)?;

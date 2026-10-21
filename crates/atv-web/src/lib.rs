@@ -1,5 +1,6 @@
 //! Small single-threaded Wasm ABI. Buffers are Rust-owned, initialized, and bounded.
 //! JS copies into input_ptr only after input_resize and copies output before another call.
+use atv_core::math::Det;
 use atv_core::{
     Result, animation, audio, elf,
     engine_audio::{EngineAudioConfig, EngineAudioState, OriginalRandom, sample_index},
@@ -577,7 +578,10 @@ fn update_wheelie(
             dt,
             atv_core::stunt_score::WheelieInput {
                 grounded: frame.grounded,
-                pitch: atv_core::rider_control::body_angles(frame.orientation, f32::atan2)[0],
+                pitch: atv_core::rider_control::body_angles(
+                    frame.orientation,
+                    atv_core::math::atan2f,
+                )[0],
                 //0020f370 initializes manager+13c to zero. The current active
                 //Freestyle route retains that gate; end transitions are separate.
                 context_allows: true,
@@ -1833,7 +1837,7 @@ fn place_racer(vehicle: &mut Vehicle, terrain: Option<&terrain::Terrain>) -> Res
     let terrain = terrain.ok_or("load original terrain first")?;
     let f = vehicle.frame();
     let [w, x, y, z] = f.orientation;
-    let yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
+    let yaw = (2. * (w * y + x * z)).atan2_d(1. - 2. * (y * y + x * x));
     let ground = terrain
         .contact(f.origin[0], f.origin[2])?
         .ok_or("race start outside terrain")?
@@ -1944,7 +1948,7 @@ fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
             .collect();
         race.step(player.origin, 1. / 60.);
         let [w, x, y, z] = player.orientation;
-        let yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
+        let yaw = (2. * (w * y + x * z)).atan2_d(1. - 2. * (y * y + x * x));
         let terrain = sim.terrain.as_ref().ok_or("missing terrain")?;
         // Every racer keeps its physics through the countdown (held on the
         // brakes) and after the finish, when the CPUs drive on.
@@ -2030,7 +2034,7 @@ fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
                     &world,
                 )?;
                 let [w, x, y, z] = frame.orientation;
-                let cpu_yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
+                let cpu_yaw = (2. * (w * y + x * z)).atan2_d(1. - 2. * (y * y + x * x));
                 // Settling on the grid earns no race distance.
                 if repositioned || hold {
                     race.reposition_cpu(index, frame.origin, cpu_yaw, Some(physical));
@@ -2047,7 +2051,7 @@ fn step_race(sim: &mut Simulation) -> Result<Option<atv_core::race::Frame>> {
                         cpu.respawn(nodes)?;
                         let reset = cpu.vehicle.frame();
                         let [w, x, y, z] = reset.orientation;
-                        let reset_yaw = (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x));
+                        let reset_yaw = (2. * (w * y + x * z)).atan2_d(1. - 2. * (y * y + x * x));
                         race.reposition_cpu(index, reset.origin, reset_yaw, Some(physical));
                     }
                 }
@@ -2372,7 +2376,7 @@ fn dispatch(input: &[u8], op: u32, index: usize) -> Result<Vec<u8>> {
             let m = vehicle_world(&frame);
             let mut origin = frame.origin;
             origin[1] += 1.;
-            serde_json::to_vec(&serde_json::json!({"origin": origin, "yaw": m[8].atan2(m[10])}))
+            serde_json::to_vec(&serde_json::json!({"origin": origin, "yaw": m[8].atan2_d(m[10])}))
                 .map_err(|e| e.to_string())
         });
     }

@@ -1,5 +1,6 @@
 //! MOT v2/v3 animation streams, reconstructed from the exact build's loader.
 //! Controller timing and game-side blending remain separate from file decoding.
+use crate::math::Det;
 use crate::{Result, slice, u16le, u32le};
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -262,18 +263,18 @@ impl RotationKey {
             // SLUS_211.04 table initializer 003b2924 uses 0x3c490fdb
             // (pi/256), and 0x3c010204 (1/127) for signed axis bytes.
             let half = bytes[0] as f32 * f32::from_bits(0x3c490fdb);
-            let scale = half.sin() / 127.;
+            let scale = half.sin_d() / 127.;
             return [
-                half.cos(),
+                half.cos_d(),
                 bytes[1] as i8 as f32 * scale,
                 bytes[2] as i8 as f32 * scale,
                 bytes[3] as i8 as f32 * scale,
             ];
         }
         let half_angle = self.packed_angle as f32 * f32::from_bits(0x3a490fdb);
-        let scale = half_angle.sin() * f32::from_bits(0x38000100);
+        let scale = half_angle.sin_d() * f32::from_bits(0x38000100);
         [
-            half_angle.cos(),
+            half_angle.cos_d(),
             self.packed_axis[0] as f32 * scale,
             self.packed_axis[1] as f32 * scale,
             self.packed_axis[2] as f32 * scale,
@@ -296,7 +297,7 @@ pub(crate) fn blend_rotation(a: [f32; 4], b: [f32; 4], weight: f32) -> [f32; 4] 
     // Exact-build 0x002f8650 uses this sine polynomial and |dot| < 1 guard.
     let mut q = a;
     if cosine.abs() < 1. {
-        let theta = cosine.abs().acos();
+        let theta = cosine.abs().acos_d();
         let left = sine_polynomial(theta - weight * theta);
         let right = sine_polynomial(weight * theta) * if cosine < 0. { -1. } else { 1. };
         let reciprocal = 1. / sine_polynomial(theta);
@@ -545,11 +546,11 @@ mod tests {
         assert!((q[0] * q[0] + q[2] * q[2] - 1.).abs() < 1e-6);
         assert_eq!(
             q[0].to_bits(),
-            (std::f32::consts::FRAC_PI_4).cos().to_bits()
+            (std::f32::consts::FRAC_PI_4).cos_d().to_bits()
         );
         assert_eq!(
             q[2].to_bits(),
-            (std::f32::consts::FRAC_PI_4).sin().to_bits()
+            (std::f32::consts::FRAC_PI_4).sin_d().to_bits()
         );
         let mut v6 = data.clone();
         v6[..4].copy_from_slice(&(-6i32).to_le_bytes());
@@ -582,8 +583,8 @@ mod tests {
         assert!(matrix[0].abs() < 0.000001);
         assert!((matrix[2] + 1.).abs() < 0.000001);
         let half = interpolate_rotation([1., 0., 0., 0.], q.map(|v| -v), 0.5);
-        assert!((half[0].abs() - (std::f32::consts::PI / 8.).cos()).abs() < 0.00001);
-        assert!((half[2].abs() - (std::f32::consts::PI / 8.).sin()).abs() < 0.00001);
+        assert!((half[0].abs() - (std::f32::consts::PI / 8.).cos_d()).abs() < 0.00001);
+        assert!((half[2].abs() - (std::f32::consts::PI / 8.).sin_d()).abs() < 0.00001);
     }
     #[test]
     fn named_pose_hierarchy_hermite_step_and_terminal_extrapolation() {

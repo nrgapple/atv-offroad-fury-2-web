@@ -10,6 +10,7 @@
 //! start (matching the scene DefaultStartPosition and the Supercross start-gate
 //! firework trigger) and tag 16 on the lap circuit (matching the
 //! RaceOrderMatters finish trigger), so they are used as start and finish gates.
+use crate::math::Det;
 use crate::{Result, slice, u32le};
 use serde::Serialize;
 
@@ -636,7 +637,7 @@ impl Course {
     pub fn heading_at(&self, s: Station) -> f32 {
         let a = self.points[s.segment];
         let b = self.points[self.next(s.segment)];
-        (b[0] - a[0]).atan2(b[2] - a[2])
+        (b[0] - a[0]).atan2_d(b[2] - a[2])
     }
     /// Station `distance` feet further along the racing line.
     pub fn advance(&self, mut s: Station, mut distance: f32) -> Station {
@@ -874,10 +875,10 @@ impl Course {
                         a[1] + t * (b[1] - a[1]),
                         g.center[2] - g.forward[2] * GRID_SETBACK,
                     ],
-                    g.forward[0].atan2(g.forward[2]),
+                    g.forward[0].atan2_d(g.forward[2]),
                 )
             }
-            None => (a, (b[0] - a[0]).atan2(b[2] - a[2])),
+            None => (a, (b[0] - a[0]).atan2_d(b[2] - a[2])),
         }
     }
 }
@@ -1137,9 +1138,9 @@ impl Race {
             .map(|(i, name)| Opponent {
                 name,
                 origin: [
-                    start[0] + yaw.cos() * [-2., -1., 1., 2.][i] * spacing,
+                    start[0] + yaw.cos_d() * [-2., -1., 1., 2.][i] * spacing,
                     start[1],
-                    start[2] - yaw.sin() * [-2., -1., 1., 2.][i] * spacing,
+                    start[2] - yaw.sin_d() * [-2., -1., 1., 2.][i] * spacing,
                 ],
                 yaw,
                 distance: 0.,
@@ -1449,7 +1450,7 @@ impl Race {
             wrong_way: self.countdown == 0.
                 && self.player.finish.is_none()
                 && self.player.off_track < 0.5
-                && (heading - yaw).cos() < -0.4,
+                && (heading - yaw).cos_d() < -0.4,
             off_track: self.player.off_track > 0.5,
             off_track_time: self.player.off_track,
             track_point: self.course.point_at(station),

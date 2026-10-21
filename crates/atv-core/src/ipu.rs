@@ -1,5 +1,6 @@
 //! Bounded single-image IPUM decoding for observed flags-zero MPEG-2 intra data.
 //! Host floating IDCT is not a claim of bit-identical PS2 IPU arithmetic.
+use crate::math::Det;
 use crate::{Result, slice, u16le, u32le};
 use serde::Serialize;
 #[path = "ipu_tables.rs"]
@@ -187,7 +188,7 @@ pub fn decode_ipum(data: &[u8]) -> Result<Image> {
     }
     let basis: [[f64; 8]; 8] = std::array::from_fn(|x| {
         std::array::from_fn(|u| {
-            (((2 * x + 1) * u) as f64 * std::f64::consts::PI / 16.).cos()
+            (((2 * x + 1) * u) as f64 * std::f64::consts::PI / 16.).cos_d()
                 * if u == 0 {
                     std::f64::consts::FRAC_1_SQRT_2
                 } else {
@@ -354,7 +355,7 @@ fn denoise(
     let spatial_scale = 2. * (radius as f32 * 0.75).powi(2);
     let spatial: Vec<f32> = (-radius..=radius)
         .flat_map(|dy| (-radius..=radius).map(move |dx| (dx, dy)))
-        .map(|(dx, dy)| (-((dx * dx + dy * dy) as f32) / spatial_scale).exp())
+        .map(|(dx, dy)| (-((dx * dx + dy * dy) as f32) / spatial_scale).exp_d())
         .collect();
     // Range weights per absolute difference, rebuilt only when the quantizer changes.
     let mut range = [0f32; 256];
@@ -366,7 +367,7 @@ fn denoise(
             if q != range_quantizer {
                 let scale = 2. * (DENOISE_RANGE * f32::from(q)).powi(2);
                 for (difference, weight) in range.iter_mut().enumerate() {
-                    *weight = (-((difference * difference) as f32) / scale).exp();
+                    *weight = (-((difference * difference) as f32) / scale).exp_d();
                 }
                 range_quantizer = q;
             }

@@ -7,6 +7,7 @@
 //! National drop gate are presentation that is not connected yet.
 use super::{Ride, STEP, cpu::CpuModel, cpu::CpuRacer, cpu::World};
 use crate::Result;
+use atv_core::math::Det;
 use atv_core::{
     camera::CameraFrame,
     cpu_avoidance::Peer,
@@ -95,7 +96,7 @@ pub struct RaceState {
 /// Body yaw from an orientation quaternion, as the browser computes it.
 fn yaw(orientation: [f32; 4]) -> f32 {
     let [w, x, y, z] = orientation;
-    (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x))
+    (2. * (w * y + x * z)).atan2_d(1. - 2. * (y * y + x * x))
 }
 
 /// 001dd440 ground placement for the player's race grid and race resets;

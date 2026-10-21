@@ -3,6 +3,7 @@
 //! and the optional aggression branch (the EATDIRT "Aggressive AI" cheat, AI
 //! flag 0x4000000) are recovered; scene eligibility/order remains a separate
 //! integration gate.
+use crate::math::Det;
 use crate::{Result, collision::CollisionRay, scene_collision::SceneCollision, wheel::Vec3};
 
 #[derive(Clone, Copy)]
@@ -221,7 +222,7 @@ pub fn direction(
         // origin raised one foot. Rust trig is an integration approximation.
         let directions: [Vec3; 8] = std::array::from_fn(|i| {
             let angle = (((i as f32 - 4.) + 0.5) * std::f32::consts::FRAC_PI_4) / 8.;
-            let (sin, cos) = angle.sin_cos();
+            let (sin, cos) = angle.sin_cos_d();
             normalized([
                 forward[2] * sin + forward[0] * cos,
                 forward[1],

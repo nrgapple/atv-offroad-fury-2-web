@@ -2,6 +2,7 @@
 //! This is an incomplete reconstruction, not the complete original vehicle:
 //! moving surfaces, complete scene query ordering/category rules, remaining
 //! gameplay gates, original math tables and whole-game replay remain outstanding.
+use crate::math::Det;
 use crate::{
     Result,
     contact::{self, ContactConfig, ContactCorrections, StaticContact},
@@ -333,7 +334,7 @@ impl Vehicle {
         let body_config = BodyConfig::new(mass, inertia, center)?;
         let body = BodyState::new(
             origin,
-            [(yaw * 0.5).cos(), 0., (yaw * 0.5).sin(), 0.],
+            [(yaw * 0.5).cos_d(), 0., (yaw * 0.5).sin_d(), 0.],
             &body_config,
         )?;
         let suspension_config = SuspensionConfig::new(
@@ -720,13 +721,13 @@ impl Vehicle {
         let ground = terrain
             .contact(origin[0], origin[2])?
             .ok_or("placement lies outside the terrain")?;
-        let forward = [yaw.sin(), 0., yaw.cos()];
+        let forward = [yaw.sin_d(), 0., yaw.cos_d()];
         let right = wheel::cross(ground.normal, forward);
         let length = dot(right, right).sqrt();
         let right = if length > 1e-4 {
             scale(right, 1. / length)
         } else {
-            [yaw.cos(), 0., -yaw.sin()]
+            [yaw.cos_d(), 0., -yaw.sin_d()]
         };
         let up = wheel::cross(forward, right);
         let orientation = quaternion_from_basis([right, up, forward]);
@@ -763,7 +764,7 @@ impl Vehicle {
         self.skip_vegetation_query = false;
         self.body = BodyState::new(
             reset_origin,
-            [(reset_yaw * 0.5).cos(), 0., (reset_yaw * 0.5).sin(), 0.],
+            [(reset_yaw * 0.5).cos_d(), 0., (reset_yaw * 0.5).sin_d(), 0.],
             &self.body_config,
         )?;
         // Race checkpoints are placed on the ground before the next physics
@@ -1454,7 +1455,7 @@ impl Vehicle {
         };
         //00146850 updates these at the outer update cadence. Host atan2 remains
         // a provisional backend until the original lookup table is loaded.
-        let angles = rider_control::body_angles(self.body.orientation, f32::atan2);
+        let angles = rider_control::body_angles(self.body.orientation, crate::math::atan2f);
         //00193b40 samples chassis terrain planes at the outer-frame cadence;
         //00194930 reprojects the moving vertices against those planes each substep.
         let mut chassis_planes = Vec::with_capacity(self.chassis_points.len());
@@ -1562,8 +1563,8 @@ impl Vehicle {
                     front_contact: front_grounded,
                     front_point_velocity: front_velocity,
                     rear_point_velocity: rear_velocity,
-                    steering_sine: steering.sin(),
-                    steering_cosine: steering.cos(),
+                    steering_sine: steering.sin_d(),
+                    steering_cosine: steering.cos_d(),
                     tire_friction: self.tire_friction,
                     steering_reduction: self.steering_reduction,
                     material_grip: m.grip,
@@ -1718,7 +1719,7 @@ impl Vehicle {
                         body_forward: b[2],
                         point_velocity,
                         stiffness_scale: 1.0,
-                        tilt_angle: dot(normal, b[1]).clamp(-1., 1.).acos(),
+                        tilt_angle: dot(normal, b[1]).clamp(-1., 1.).acos_d(),
                     },
                 )?;
                 if output.grounded {
@@ -1957,7 +1958,7 @@ impl Vehicle {
         if self.wreck.phase == crate::wreck::Phase::Riding
             && let Some(config) = &self.wreck_physics
         {
-            let angles = rider_control::body_angles(self.body.orientation, f32::atan2);
+            let angles = rider_control::body_angles(self.body.orientation, crate::math::atan2f);
             let local_impact = inverse_transform(self.body.basis(), impact);
             let landing_candidate = config.landing.evaluate(local_impact, 1.0);
             let rider_contact = crate::wreck::rider_height_allowed(
@@ -2024,7 +2025,7 @@ impl Vehicle {
             )?;
             if allowed {
                 let forward = self.body.basis()[2];
-                let yaw = forward[0].atan2(forward[2]);
+                let yaw = forward[0].atan2_d(forward[2]);
                 let support = if self.wreck_physics.is_some() {
                     if let Some(scene) = &mut self.scene_collision {
                         //001ea050 queries the same cache at radius twenty,
@@ -2126,7 +2127,7 @@ mod tests {
         let frame = vehicle.frame();
         assert!(frame.origin[1].abs() < 1e-5);
         let forward = crate::dynamics::basis(frame.orientation)[2];
-        assert!((forward[0] - 0.7f32.sin()).abs() < 1e-5 && forward[1].abs() < 1e-6);
+        assert!((forward[0] - 0.7f32.sin_d()).abs() < 1e-5 && forward[1].abs() < 1e-6);
         // A start above the ground is kept (max of origin and ground).
         let (origin, _) = vehicle.ground_pose(&terrain, [500., 3., 500.], 0.).unwrap();
         assert_eq!(origin[1], 3.);
@@ -3154,6 +3155,72 @@ mod tests {
         };
         (v, t)
     }
+    /// Content-free determinism check: a scripted ride (throttle, steering,
+    /// lean, braking, reversing, a drop from height and a wreck) over bumpy
+    /// synthetic terrain, fingerprinted bit for bit. Every target (browser
+    /// Wasm, macOS, Linux, Windows; x86_64 and aarch64) must produce the same
+    /// value; see `crate::math`.
+    #[test]
+    fn synthetic_ride_is_the_same_on_every_target() {
+        let (mut vehicle, mut terrain) = fixture();
+        for (i, h) in terrain.tiles[0].heights.iter_mut().enumerate() {
+            let (x, z) = (i % 17, i / 17);
+            *h = ((x * 37 + z * 91) % 3 + (x * z) % 2) as u16;
+        }
+        for leaf in &mut terrain.leaves {
+            leaf.maximum_height = 4.;
+        }
+        let mut hash = 0xcbf29ce484222325u64;
+        let mut mix = |bits: u32| {
+            hash ^= u64::from(bits);
+            hash = hash.wrapping_mul(0x100000001b3);
+        };
+        let wave = |step: u32, period: u32| {
+            let t = (step % period) as f32 / period as f32;
+            (if t < 0.5 { t } else { 1. - t }) * 4. - 1.
+        };
+        for step in 0..2400u32 {
+            if step == 0 || step == 1500 {
+                let [x, _, z] = vehicle.body.center;
+                let ground = terrain.clamped_height(x, z).unwrap().unwrap_or(0.);
+                let (lift, orientation) = if step == 0 {
+                    (1.5, [1., 0., 0., 0.])
+                } else {
+                    (12., [0.31622776, 0.9486833, 0., 0.])
+                };
+                vehicle.body =
+                    BodyState::new([x, ground + lift, z], orientation, &vehicle.body_config)
+                        .unwrap();
+            }
+            let input = VehicleInput {
+                throttle: if step % 600 < 420 { 1. } else { 0. },
+                brake: if step % 600 >= 480 { 1. } else { 0. },
+                steer: wave(step, 170),
+                lean: wave(step, 113) * 0.8,
+                reverse: (1200..1320).contains(&step),
+                ..VehicleInput::default()
+            };
+            let frame = vehicle.step(&terrain, input, 1. / 60.).unwrap();
+            for v in frame
+                .origin
+                .iter()
+                .chain(&frame.orientation)
+                .chain(&frame.linear_velocity)
+                .chain(&frame.local_angular_velocity)
+                .chain(&frame.wheel_compression)
+                .chain(&frame.wheel_angles)
+                .chain([&frame.speed, &frame.rpm, &frame.steering_angle])
+            {
+                mix(v.to_bits());
+            }
+            mix(frame.wreck.phase as u32);
+        }
+        assert_eq!(
+            hash, SYNTHETIC_RIDE,
+            "simulation differs on this target: {hash:#018x}"
+        );
+    }
+    const SYNTHETIC_RIDE: u64 = 0x31f0ddaf796f7d93;
     #[test]
     fn shifted_cog_retains_first_substep_velocity_center_without_moving_model_queries() {
         let (mut vehicle, terrain) = fixture();
@@ -3205,9 +3272,9 @@ mod tests {
                         attributes: [u32::from_le_bytes([(-57_i8) as u8, 114, 0, 0]); 289],
                     });
                 }
-                let angle = 0.5_f32.atan();
-                vehicle.body.orientation = [(angle / 2.).cos(), 0., 0., (angle / 2.).sin()];
-                [-angle.sin(), angle.cos(), 0.]
+                let angle = 0.5_f32.atan_d();
+                vehicle.body.orientation = [(angle / 2.).cos_d(), 0., 0., (angle / 2.).sin_d()];
+                [-angle.sin_d(), angle.cos_d(), 0.]
             } else {
                 [0., 1., 0.]
             };
@@ -3555,8 +3622,8 @@ mod tests {
                     });
                 }
             }
-            let angle = if sloped { 0.125_f32.atan() } else { 0. };
-            let orientation = [(angle / 2.).cos(), 0., 0., (angle / 2.).sin()];
+            let angle = if sloped { 0.125_f32.atan_d() } else { 0. };
+            let orientation = [(angle / 2.).cos_d(), 0., 0., (angle / 2.).sin_d()];
             let ground = terrain.contact(500., 500.).unwrap().unwrap().height;
             for vehicle in [&mut legacy, &mut combined] {
                 enable_test_wrecks(vehicle);

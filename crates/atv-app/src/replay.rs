@@ -3,42 +3,18 @@
 //! (tools/compare_engine.mjs ride). Script: `[{"frames": N, "input": {...}}]`
 //! with the browser's op 24 input fields.
 use crate::riding::Riding;
-use atv_game::ride::{Controls, Ride, bindings::TouchIntent};
-use serde_json::{Value, json};
+use serde_json::Value;
 
-pub struct Script(Vec<(u32, Controls)>);
+pub use atv_game::ride::script::{Script, record};
 
-fn number(value: &Value, key: &str) -> f32 {
-    value.get(key).and_then(Value::as_f64).unwrap_or(0.) as f32
+/// Script replay through the app's ride loop (one step per call).
+pub trait RunScript {
+    fn run(&self, riding: &mut Riding) -> Result<(), String>;
+    fn run_recording(&self, riding: &mut Riding) -> Result<Vec<Value>, String>;
 }
 
-impl Script {
-    pub fn parse(text: &str) -> Result<Self, String> {
-        let value: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
-        let segments = value.as_array().ok_or("script must be an array")?;
-        let mut out = Vec::new();
-        for segment in segments {
-            let frames = segment
-                .get("frames")
-                .and_then(Value::as_u64)
-                .ok_or("segment needs frames")? as u32;
-            let input = segment.get("input").cloned().unwrap_or(json!({}));
-            out.push((frames, controls(&input)));
-        }
-        Ok(Self(out))
-    }
-
-    pub fn controls(&self) -> Vec<Controls> {
-        self.steps().copied().collect()
-    }
-
-    pub fn steps(&self) -> impl Iterator<Item = &Controls> {
-        self.0
-            .iter()
-            .flat_map(|(n, c)| std::iter::repeat_n(c, *n as usize))
-    }
-
-    pub fn run(&self, riding: &mut Riding) -> Result<(), String> {
+impl RunScript for Script {
+    fn run(&self, riding: &mut Riding) -> Result<(), String> {
         for controls in self.steps() {
             riding.run(controls, 1)?;
         }
@@ -46,7 +22,7 @@ impl Script {
     }
 
     /// `run`, recording every step (the browser build's full parity trace).
-    pub fn run_recording(&self, riding: &mut Riding) -> Result<Vec<Value>, String> {
+    fn run_recording(&self, riding: &mut Riding) -> Result<Vec<Value>, String> {
         let mut records = Vec::new();
         for controls in self.steps() {
             riding.run(controls, 1)?;
@@ -54,76 +30,6 @@ impl Script {
         }
         Ok(records)
     }
-}
-
-fn controls(input: &Value) -> Controls {
-    let optional = |key: &str| input.get(key).and_then(Value::as_f64).map(|v| v as f32);
-    Controls {
-        throttle: number(input, "throttle"),
-        brake: number(input, "brake"),
-        steer: number(input, "steer"),
-        lean: number(input, "lean"),
-        reverse: input
-            .get("reverse")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        reverse_chord_brake: optional("reverse_chord_brake"),
-        preload_axis: optional("preload_axis"),
-        keyboard_drive: input.get("keyboard_drive").map(|k| TouchIntent {
-            generation: k.get("generation").and_then(Value::as_u64).unwrap_or(0),
-            held: k.get("held").and_then(Value::as_bool).unwrap_or(false),
-            axis: number(k, "axis"),
-            grounded_only: false,
-            forward_only: false,
-            reverse_held: false,
-        }),
-        // The JavaScript game's op 50 `touch_drive` (web/touch.js sample).
-        touch_drive: input.get("touch_drive").map(|k| {
-            let flag = |name: &str| k.get(name).and_then(Value::as_bool).unwrap_or(false);
-            TouchIntent {
-                generation: k.get("generation").and_then(Value::as_u64).unwrap_or(0),
-                held: flag("held"),
-                axis: number(k, "axis"),
-                grounded_only: flag("grounded_only"),
-                forward_only: flag("forward_only"),
-                reverse_held: flag("reverse_held"),
-            }
-        }),
-        stunt_modifiers: input
-            .get("stunt_modifiers")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as u8,
-        stunt_x: number(input, "stunt_x"),
-        stunt_y: number(input, "stunt_y"),
-        generation: input
-            .get("input_generation")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-    }
-}
-
-pub fn record(ride: &Ride, step: u64) -> Value {
-    let frame = ride.frame();
-    let (camera, mode) = ride.camera();
-    json!({
-        "step": step,
-        "origin": frame.origin,
-        "orientation": frame.orientation,
-        "speed": frame.speed,
-        "wheel_compression": frame.wheel_compression,
-        "grounded": frame.grounded,
-        "phase": format!("{:?}", frame.wreck.phase),
-        "reset_count": frame.reset_count,
-        "camera": {"position": camera.position, "target": camera.target, "fov": camera.fov,
-            "mode": format!("{mode:?}")},
-        "imposed": ride.race().and_then(|r| r.imposed).map(|i| json!([i.throttle, i.brake, i.steer, i.lean])),
-        "race": ride.race().and_then(|r| r.frame.as_ref()).map(|f| json!({
-            "phase": f.phase, "elapsed": f.elapsed, "lap": f.lap, "position": f.position,
-            "countdown": f.countdown, "contacts": f.contacts, "off_track": f.off_track,
-            "opponents": f.opponents.iter().map(|o| json!({"origin": o.origin, "distance": o.distance, "finished": o.finished})).collect::<Vec<_>>(),
-            "standings": f.standings.iter().map(|s| json!({"name": s.name, "time": s.time, "position": s.position})).collect::<Vec<_>>(),
-        })),
-    })
 }
 
 /// Loads the venue and ride without a window, replays `script` and writes
@@ -140,52 +46,28 @@ pub fn trace(
     pollster::block_on(async {
         use atv_content::{Content, Store};
         let content = Content::open(Store::Directory(content.to_path_buf())).await?;
-        let options = atv_game::venue::LoadOptions {
-            // Race traces hold weather off (the browser draws it per load).
-            weather: atv_game::venue::WeatherChoice::Active(false),
-            ..Default::default()
-        };
-        let venue = atv_game::venue::load_with(&content, venue, race.is_some(), options).await?;
-        let mut ride = atv_game::ride::load_with(&content, &venue, 1, 0, race, |_| {}).await?;
-        if autopilot.is_some()
-            && let Some(state) = ride.race_mut()
-        {
-            state.autopilot_always = true;
-        }
-        let mut records = vec![record(&ride, 0)];
-        let mut recorded: Vec<Value> = Vec::new();
         let started = std::time::Instant::now();
-        for (index, controls) in script.steps().enumerate() {
-            ride.step(controls, 0.)?;
-            records.push(record(&ride, index as u64 + 1));
-            // The imposed controls as a pad-style script step (f32 values
-            // print exactly and read back exactly).
-            let input = ride.race().and_then(|r| r.imposed).unwrap_or_default();
-            let step = json!({"throttle": input.throttle, "brake": input.brake, "steer": input.steer, "lean": input.lean});
-            match recorded.last_mut() {
-                Some(last) if last["input"] == step => {
-                    last["frames"] = json!(last["frames"].as_u64().unwrap_or(0) + 1)
-                }
-                _ => recorded.push(json!({"frames": 1, "input": step})),
-            }
-        }
+        let trace =
+            atv_game::ride::script::trace(&content, venue, race, script, autopilot.is_some())
+                .await?;
+        let steps = trace.records.len().saturating_sub(1).max(1);
+        let elapsed = started.elapsed().as_secs_f64();
+        eprintln!(
+            "replayed {steps} steps in {:.1} ms ({:.3} ms/step incl. load), fingerprint {:016x}",
+            elapsed * 1000.,
+            elapsed * 1000. / steps as f64,
+            atv_game::ride::script::fingerprint(&trace.records)
+        );
         if let Some(path) = autopilot {
             std::fs::write(
                 path,
-                serde_json::to_vec(&recorded).map_err(|e| e.to_string())?,
+                serde_json::to_vec(&trace.autopilot).map_err(|e| e.to_string())?,
             )
             .map_err(|e| e.to_string())?;
         }
-        let elapsed = started.elapsed().as_secs_f64();
-        eprintln!(
-            "replayed {} steps in {:.1} ms ({:.3} ms/step)",
-            records.len() - 1,
-            elapsed * 1000.,
-            elapsed * 1000. / (records.len() - 1).max(1) as f64
-        );
         std::fs::write(
             out,
-            serde_json::to_vec(&records).map_err(|e| e.to_string())?,
+            serde_json::to_vec(&trace.records).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())
     })
@@ -241,7 +123,7 @@ pub fn render_audio(
                     .snapshot()
                     .into_iter()
                     .map(|(label, frames, rate, gains)| {
-                        json!([label, frames as f64 / RATE as f64, rate, gains])
+                        serde_json::json!([label, frames as f64 / RATE as f64, rate, gains])
                     })
                     .collect::<Vec<_>>(),
             );
@@ -293,10 +175,10 @@ pub fn render_audio(
             .unwrap_or_default()
             .into_iter()
             .map(|(at, label, frames, rate)| {
-                json!({"time": at as f64 / RATE as f64, "label": label, "seconds": frames as f64 / RATE as f64, "rate": rate})
+                serde_json::json!({"time": at as f64 / RATE as f64, "label": label, "seconds": frames as f64 / RATE as f64, "rate": rate})
             })
             .collect();
-        let sidecar = json!({
+        let sidecar = serde_json::json!({
             "rate": RATE, "window": 0.05, "levels": levels, "voices": log, "live": live,
             "stats": format!("{:?}", audio.stats),
             "bank_ms": load_ms, "logic_ms_per_frame": logic * 1000. / steps, "mix_ms_per_frame": mix * 1000. / steps,
