@@ -1154,6 +1154,35 @@ host-only, headless Chromium with autoplay allowed):
 - Native desktop output uses the same code; it was not exercised by this gate. The
   remote mix was not compared sample-for-sample with the browser's Web Audio output.
 
+### Slice 6: presence while hidden and a kept desktop slot key
+
+- A hidden or suspended room ride draws no frames: a hidden tab runs no animation
+  frames, and a desktop window may get no redraws. A 1 s timer keeps the room live
+  without them. The browser uses `setInterval`, which background tabs throttle but
+  keep running, as web/multiplayer.js relies on. Desktop uses a `WaitUntil` wake-up.
+  Each wake drains the socket, keeps pinging, loads arriving riders' models and
+  sends the paused presence pose at its 0.2 Hz cadence.
+- Only actual suspension sends paused presence; a blurred but visible window keeps
+  neutral-input riding (slice 2). The train freezes while hidden, as in the browser.
+- Desktop keeps the slot key `{code, key}` under `atv-mp-session` in the settings
+  file (`FURY_SETTINGS` overrides its path). Restarting `fury --room CODE` within the
+  relay's 30 s hold reclaims the same slot. The browser keeps it in
+  sessionStorage (slice 2). An expired key just joins as a new rider.
+
+Observed (host-only, local relay):
+
+- `tools/test_engine_multiplayer_presence.mjs` hid the Rust browser guest for 12 s:
+  `visibilityState` hidden and animation frames held, with a JavaScript host
+  watching. The host saw the Rust rider fresh in all 12 one-second samples, and the
+  guest sent 4 presence messages while hidden. Shown again, it resumed with the host
+  drawn.
+- Desktop: `fury --host --room RK617363` saved its key. A restarted
+  `fury --room RK617363` with the same settings file reclaimed slot 0 as host. A
+  control run with an empty settings file joined as slot 1.
+- Not established: a run without the timer, as a negative control. The gate emulates
+  a hidden tab in headless Chromium; real background-tab throttling and mobile
+  page freezing were not measured.
+
 Gaps, in planned slice order:
 
 1. No Multiplayer menu in `atv-ui`: no Host/Join forms (text entry), room code entry,
@@ -1161,12 +1190,9 @@ Gaps, in planned slice order:
    host, Change ATV and Rider, or Leave Game wording. Private rooms start from the
    command line or URL only. No name tags, minimap peer markers or compass colours
    either.
-2. A hidden browser tab runs no frames, so the Rust engine sends no 0.2 Hz presence
-   while hidden. The JavaScript game keeps timers running there.
-3. Desktop keeps the slot key in memory only; it is lost when the app restarts.
-4. Train on a motorcycle ride, the Realistic train-riding setting, and an arrival's
+2. Train on a motorcycle ride, the Realistic train-riding setting, and an arrival's
    spawn velocity on a moving car (the browser adds the car's point velocity).
-5. Twenty-rider rooms are untested in the Rust engine; the JavaScript game's
+3. Twenty-rider rooms are untested in the Rust engine; the JavaScript game's
    receive batching, name-tag limits and model cache bounds have no Rust measurement
    yet.
 

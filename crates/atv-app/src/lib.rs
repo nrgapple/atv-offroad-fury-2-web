@@ -133,6 +133,9 @@ enum Message {
     PeerModel(Box<PeerModel>),
     /// The Arlington Free Ride rider count for the main menu.
     FreeRideRiders(Option<u32>),
+    /// The browser's 1 s presence timer (a hidden tab runs no frames).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    PresenceTick,
     /// Another rider's engine bank finished loading.
     RemoteEngine(u16, Box<Result<atv_game::audio::remote::Engine, String>>),
 }
@@ -1841,6 +1844,7 @@ impl ApplicationHandler<Message> for App {
                     window.request_redraw();
                 }
             }
+            Message::PresenceTick => self.presence_tick(),
             Message::RemoteEngine(quad, engine) => match *engine {
                 Ok(engine) => {
                     if let Some(sound) = self
@@ -2081,8 +2085,12 @@ impl ApplicationHandler<Message> for App {
     }
 
     fn new_events(&mut self, _: &ActiveEventLoop, cause: StartCause) {
-        if self.asleep && matches!(cause, StartCause::ResumeTimeReached { .. }) {
-            self.paused_tick();
+        if matches!(cause, StartCause::ResumeTimeReached { .. }) {
+            if self.asleep {
+                self.paused_tick();
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            self.presence_tick();
         }
     }
 
@@ -2104,6 +2112,15 @@ impl ApplicationHandler<Message> for App {
             }
         }
         self.poll_riders();
+        // A hidden or suspended room ride draws no frames: a 1 s timer keeps
+        // its presence (the browser's throttled background timers).
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.presence_due() {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + std::time::Duration::from_secs(1),
+            ));
+            return;
+        }
         // The main menu refreshes its Free Ride count every 15 s.
         if self.ready.is_none()
             && self
@@ -2450,6 +2467,44 @@ impl App {
             Ok(ready) => Message::Ready(Box::new(ready)),
             Err(error) => Message::Failed(error),
         });
+    }
+
+    /// A room ride whose window is hidden or suspended runs no frames.
+    fn presence_due(&self) -> bool {
+        (!self.visible || self.suspended)
+            && self.ready.as_ref().is_some_and(|r| {
+                r.riding.is_some() && r.net.as_ref().is_some_and(|n| n.closed.is_none())
+            })
+    }
+
+    /// Hidden or suspended: keep the room live without frames. The socket is
+    /// drained, pings continue and a paused presence pose goes out at its
+    /// 0.2 Hz cadence (web/multiplayer.js timers keep running in a
+    /// background tab; actual suspension sends paused presence).
+    fn presence_tick(&mut self) {
+        if !self.presence_due() {
+            return;
+        }
+        let Some(ready) = &mut self.ready else { return };
+        let (Some(net), Some(riding)) = (&mut ready.net, &mut ready.riding) else {
+            return;
+        };
+        let tick = net.tick(&riding.ride, true);
+        let remote = riding
+            .sound
+            .as_ref()
+            .map(|s| (s.remote.voices(), s.remote.starts, s.remote.impact_starts));
+        publish_multiplayer(net, riding.contacts, &riding.ride, remote);
+        let content = net.content();
+        let course = tick.course;
+        for key in tick.loads {
+            self.spawn(multiplayer::load_model(content.clone(), key), |model| {
+                Message::PeerModel(Box::new(model))
+            });
+        }
+        if let Some(environment) = course {
+            self.reload_room(environment);
+        }
     }
 
     /// The main menu's Free Ride count, at most every 15 s while it shows
@@ -3029,7 +3084,21 @@ pub fn run(options: Options) {
     };
     #[cfg(target_arch = "wasm32")]
     {
+        use wasm_bindgen::JsCast;
         use winit::platform::web::EventLoopExtWebSys;
+        // Background tabs throttle timers to about once a second but keep
+        // them running; the room's presence rides on this one.
+        let proxy = app.proxy.clone();
+        let tick = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
+            let _ = proxy.send_event(Message::PresenceTick);
+        });
+        if let Some(window) = web_sys::window() {
+            let _ = window.set_interval_with_callback_and_timeout_and_arguments_0(
+                tick.as_ref().unchecked_ref(),
+                1000,
+            );
+        }
+        tick.forget();
         event_loop.spawn_app(app);
     }
     #[cfg(not(target_arch = "wasm32"))]

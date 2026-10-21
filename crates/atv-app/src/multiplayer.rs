@@ -189,41 +189,43 @@ async fn claim(start: &RoomStart) -> Result<(String, Option<String>), String> {
     Ok((code, room["hostToken"].as_str().map(String::from)))
 }
 
-/// The browser tab's slot key for `code` (sessionStorage `atv-mp-session`,
-/// shared with web/multiplayer.js); desktop keeps keys in memory only.
-fn saved_key(code: &str) -> Option<String> {
+/// The kept slot key record `{code, key}`: this browser tab's
+/// sessionStorage `atv-mp-session` (shared with web/multiplayer.js), or the
+/// desktop settings file, so a reload or restart reclaims the rider's slot
+/// within the relay's 30-second hold.
+fn kept_session() -> Option<String> {
     #[cfg(target_arch = "wasm32")]
     {
-        let text = web_sys::window()?
+        web_sys::window()?
             .session_storage()
             .ok()??
             .get_item("atv-mp-session")
-            .ok()??;
-        let saved: serde_json::Value = serde_json::from_str(&text).ok()?;
-        let key = saved["key"].as_str()?;
-        (saved["code"].as_str() == Some(code)
-            && key.len() == 32
-            && key.bytes().all(|b| b.is_ascii_hexdigit()))
-        .then(|| key.to_string())
+            .ok()?
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let _ = code;
-        None
+        atv_ui::settings::Settings::load().get("atv-mp-session")
     }
 }
 
-/// Keeps this tab's slot key (never in links).
+fn saved_key(code: &str) -> Option<String> {
+    let saved: serde_json::Value = serde_json::from_str(&kept_session()?).ok()?;
+    let key = saved["key"].as_str()?;
+    (saved["code"].as_str() == Some(code)
+        && key.len() == 32
+        && key.bytes().all(|b| b.is_ascii_hexdigit()))
+    .then(|| key.to_string())
+}
+
+/// Keeps this rider's slot key (never in links).
 fn save_key(code: &str, key: &str) {
+    let record = serde_json::json!({ "code": code, "key": key }).to_string();
     #[cfg(target_arch = "wasm32")]
     if let Some(storage) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
-        let _ = storage.set_item(
-            "atv-mp-session",
-            &serde_json::json!({ "code": code, "key": key }).to_string(),
-        );
+        let _ = storage.set_item("atv-mp-session", &record);
     }
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = (code, key);
+    atv_ui::settings::Settings::load().set("atv-mp-session", &record);
 }
 
 impl Net {
