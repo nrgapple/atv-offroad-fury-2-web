@@ -1077,6 +1077,50 @@ headless Chromium/Metal; host-only):
   `private/reports/engine-multiplayer/slice3-menu.png`, `slice3-rust.png`,
   `slice3-js.png`.
 
+### Slice 4: Arlington's train in physics and the shared train clock
+
+Single-player Rust had the ENV08 train for presentation only. The renderer stepped
+it with no collision heights, and riders passed through the cars.
+
+Ported:
+
+- `atv-game/src/train.rs` loads each `use_collision` car's original COL mesh
+  (atv-web op 67 bindings).
+- An ATV ride on ENV08 installs the cars as moving scene obstacles (op 69). It then
+  steps the shared train runtime before every vehicle step with the scene's
+  collision heights, republishing each car's collision body (`step_train_scene`).
+  The renderer stops stepping a train the ride drives (`Train::driven`). Motorcycles
+  keep the presentation-only train; the bike scene does not install it yet.
+- In a room, every step's train phase follows the relay clock: the browser's
+  `synchronize_train`, with gentle phase correction and a primed 16-step resync
+  that carries a rider standing on a car along.
+- Snapshots send the car the rider stands on (`platform`) and the train time.
+  Received riders on a car are drawn, contact-tested, met and spawn-checked relative
+  to this client's car (`rebase`).
+- "Train riding: Original" behaviour, as the JavaScript default:
+  `set_realistic_train(false)`. The Realistic setting is not read by the Rust
+  engine yet.
+
+Observed:
+
+- `node tools/compare_engine.mjs ride env08`: single-player ride parity passed. The
+  native frame difference against the JavaScript game is 0.03 (landscape) and 0.07
+  (portrait) of 255. The Rust-web capture includes the HUD and keyboard card, so
+  its whole-frame number (6.3/16.6) is UI, not scene.
+- `tools/test_engine_multiplayer_train.mjs`, run once on the local relay (host-only,
+  headless Chromium/Metal): a Rust browser host on env08 and a JavaScript guest.
+  - Train phases agreed within 0.20 s over 10 paired samples. That bound includes
+    the skew between sampling two pages.
+  - The JavaScript guest placed on flatbed car 3 was drawn by the Rust host within
+    1.75 ft of its own deck-relative position (20 samples).
+  - A Rust rider placed on the flatbed (`?trainPlace=S` test hook) was seen by the
+    JavaScript guest within 3.25 ft (20 samples).
+  - Under Original train riding, both clients' riders later slide off the moving car,
+    as the original does.
+- Inspected screenshots: `private/reports/engine-multiplayer/train-js.png` (the
+  JavaScript guest on the flatbed) and `train-rust-rider.png` (the Rust rider after
+  sliding off).
+
 Gaps, in planned slice order:
 
 1. No Multiplayer menu in `atv-ui`: no Host/Join forms (text entry), room code entry,
@@ -1087,8 +1131,8 @@ Gaps, in planned slice order:
 2. A hidden browser tab runs no frames, so the Rust engine sends no 0.2 Hz presence
    while hidden. The JavaScript game keeps timers running there.
 3. Desktop keeps the slot key in memory only; it is lost when the app restarts.
-4. The shared train clock and moving-platform rebasing are not ported. Snapshots send
-   no platform and no train time, which matters on Arlington, the Free Ride course.
+4. Train on a motorcycle ride, the Realistic train-riding setting, and an arrival's
+   spawn velocity on a moving car (the browser adds the car's point velocity).
 5. Remote engine voices and impact sounds are not played: the nearest-six voice
    selection and spatial audio of op 83 are not ported.
 6. Twenty-rider rooms are untested in the Rust engine; the JavaScript game's
