@@ -36,6 +36,8 @@ pub struct Gpu {
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
     pub adapter_info: wgpu::AdapterInfo,
+    /// GPU timestamp queries are available (native Metal/DX12/Vulkan).
+    pub timestamps: bool,
     samples: u32,
     depth: wgpu::TextureView,
     msaa: Option<wgpu::TextureView>,
@@ -128,9 +130,17 @@ impl Gpu {
             })
             .await
             .map_err(|e| format!("no graphics adapter: {e}"))?;
+        // Timestamp queries only time native GPU passes (profiling); WebGL2 has none.
+        let timestamps = !cfg!(target_arch = "wasm32")
+            && adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("fury"),
+                required_features: if timestamps {
+                    wgpu::Features::TIMESTAMP_QUERY
+                } else {
+                    wgpu::Features::empty()
+                },
                 required_limits: wgpu::Limits::downlevel_webgl2_defaults()
                     .using_resolution(adapter.limits()),
                 ..Default::default()
@@ -174,6 +184,7 @@ impl Gpu {
             queue,
             config,
             adapter_info: adapter.get_info(),
+            timestamps,
             samples,
             depth,
             msaa,
@@ -366,6 +377,8 @@ pub struct SceneRenderer {
     /// Race CPU riders (drawn after the player) and which are near enough.
     cpus: Vec<(vehicle::VehiclePass, bool)>,
     profiler: profile::Profiler,
+    /// Scene-pass GPU timestamps, while [`SceneRenderer::gpu_scene_ms`] runs.
+    gpu_timer: Option<profile::GpuTimer>,
 }
 
 impl SceneRenderer {
@@ -472,6 +485,7 @@ impl SceneRenderer {
             vehicle: None,
             cpus: Vec::new(),
             profiler: profile::Profiler::default(),
+            gpu_timer: None,
             wheel_effects: None,
             lingering_dust: None,
             tire_tracks: None,
@@ -1146,6 +1160,7 @@ impl SceneRenderer {
             };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("scene"),
+                timestamp_writes: self.gpu_timer.as_ref().and_then(|t| t.writes()),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
                     depth_slice: None,
@@ -1244,6 +1259,62 @@ impl SceneRenderer {
         height: u32,
     ) -> Result<Vec<u8>, String> {
         self.capture_with(gpu, view, width, height, &mut |_, _| {})
+    }
+
+    /// Median scene-pass GPU time (timestamp queries) over `frames` offscreen
+    /// renders of this view, or None without timestamp support. Profiling
+    /// only: 30 untimed warm-up frames, then all frames submitted back to back
+    /// and read once at the end.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn gpu_scene_ms(
+        &mut self,
+        gpu: &Gpu,
+        view: &View,
+        width: u32,
+        height: u32,
+        frames: u32,
+    ) -> Option<f64> {
+        if !gpu.timestamps || frames == 0 {
+            return None;
+        }
+        let config = wgpu::SurfaceConfiguration {
+            width,
+            height,
+            ..gpu.config.clone()
+        };
+        let (depth, msaa) = targets(&gpu.device, &config, gpu.samples);
+        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("gpu timing"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let target = texture.create_view(&Default::default());
+        // Untimed warm-up frames first (pipeline compilation, GPU clocks).
+        self.gpu_timer = Some(profile::GpuTimer::new(gpu, frames));
+        for frame in 0..frames + 30 {
+            if let Some(timer) = &mut self.gpu_timer {
+                timer.frame = frame.checked_sub(30);
+            }
+            let (encoder, _) =
+                self.encode(gpu, view, (width, height), &target, msaa.as_ref(), &depth);
+            gpu.queue.submit([encoder.finish()]);
+        }
+        let mut samples = self
+            .gpu_timer
+            .take()
+            .map(|t| t.read_ms(gpu))
+            .unwrap_or_default();
+        samples.sort_by(f64::total_cmp);
+        samples.get(samples.len() / 2).copied()
     }
 
     /// `capture` with an overlay pass drawn over the scene.

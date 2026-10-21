@@ -42,6 +42,10 @@ pub struct Options {
     /// with default in-memory settings.
     #[cfg(not(target_arch = "wasm32"))]
     pub capture_ui: bool,
+    /// Before the capture, time the scene pass on the GPU over this many
+    /// offscreen frames (timestamp queries) and print the median.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub gpu_frames: Option<u32>,
     /// Ride the player's quad (default); false keeps the free camera.
     pub ride: bool,
     /// The Garage choice: ATV or motorcycle and rider.
@@ -1331,6 +1335,21 @@ impl ApplicationHandler<Message> for App {
                     if !ready.fixed {
                         ready.camera = camera;
                         ready.focal_length = focal;
+                    }
+                }
+                if let Some(frames) = options.gpu_frames {
+                    let view = View {
+                        camera: ready.camera,
+                        focal_length: ready.focal_length,
+                    };
+                    match ready
+                        .scene
+                        .gpu_scene_ms(&ready.gpu, &view, width, height, frames)
+                    {
+                        Some(ms) => println!(
+                            "gpu scene pass {ms:.3} ms (median of {frames} frames, {width}x{height})"
+                        ),
+                        None => println!("gpu timing unavailable (no timestamp queries)"),
                     }
                 }
                 capture(ready, &path, width, height, options.capture_ui);
