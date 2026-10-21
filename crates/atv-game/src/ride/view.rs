@@ -467,9 +467,10 @@ mod tests {
     fn assisted_chase_and_tight_crash_follow_the_browser() {
         let height = |x: f32, z: f32| 0.3 * z + 0.02 * x;
         let mut sightline = UphillSightline::default();
+        let half = 0.25f64.sin_cos_d();
         let actor = SightlineActor {
             origin: [100., 30., 100.],
-            orientation: [0.25f32.cos(), 0., 0.25f32.sin(), 0.],
+            orientation: [half.1 as f32, 0., half.0 as f32, 0.],
             speed: 20.,
             grounded: [true; 4],
             riding: true,
