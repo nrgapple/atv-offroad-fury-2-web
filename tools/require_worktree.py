@@ -4,7 +4,8 @@
 The shared checkout is the repository's main worktree (its `.git` is a
 directory) and stays on `main` for coordination; see AGENTS.md "Chat worktrees
 and branches". This hook refuses file edits there and git commands that commit,
-switch branches or rewrite its tree. Ignored shared storage (private/, work/,
+switch branches or rewrite its tree, except a verified clean fast-forward of
+main to origin/main. Ignored shared storage (private/, work/,
 target/) stays writable, and linked worktrees (whose `.git` is a file) are
 unaffected. Unresolvable paths are allowed rather than guessed.
 """
@@ -12,6 +13,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -75,6 +77,37 @@ def git_subcommand(tokens):
     return (tokens[index] if index < len(tokens) else None), directory
 
 
+def shared_main_sync(tokens, root):
+    """Allow only the documented fast-forward, with Git's own state checks."""
+    args = tokens[1:]
+    if args[:1] == ['-C']:
+        args = args[2:]
+    if args != ['merge', '--ff-only', 'origin/main']:
+        return False
+
+    def git(*arguments):
+        return subprocess.run(['git', '-C', str(root), *arguments], check=True,
+                              capture_output=True, text=True, timeout=5).stdout.strip()
+
+    try:
+        if git('symbolic-ref', '--short', 'HEAD') != 'main':
+            return False
+        if git('status', '--porcelain=v1', '--untracked-files=all'):
+            return False
+        if git('rev-parse', '--verify', 'origin/main^{commit}') != git(
+                'rev-parse', '--verify', 'refs/remotes/origin/main^{commit}'):
+            return False
+        for state in ('MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD',
+                      'rebase-merge', 'rebase-apply', 'sequencer', 'index.lock'):
+            path = Path(git('rev-parse', '--git-path', state))
+            if (path if path.is_absolute() else root / path).exists():
+                return False
+        git('merge-base', '--is-ancestor', 'HEAD', 'refs/remotes/origin/main')
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
+
+
 def blocked_bash(command, cwd):
     variables = dict(os.environ)
     expand = lambda value: os.path.expanduser(re.sub(r'\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?',
@@ -99,6 +132,8 @@ def blocked_bash(command, cwd):
         target = os.path.join(cwd, expand(directory)) if directory else cwd
         root, shared = checkout(target)
         if shared:
+            if shared_main_sync(tokens, root):
+                continue
             return f'Refusing `git {subcommand}` in the shared checkout {root}. {ADVICE}'
     return None
 
