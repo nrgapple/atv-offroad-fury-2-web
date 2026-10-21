@@ -4,6 +4,7 @@
 //! module owns the responsive panel, selection and pointer handling.
 pub mod controller;
 pub mod glyphs;
+pub mod jukebox;
 pub mod prefs;
 
 use crate::{
@@ -131,6 +132,11 @@ pub struct State {
     /// Players page: riders who cannot be spawned beside (label, "You" or
     /// "Connecting"), listed above the spawn rows (`.pause-player`).
     pub roster: Vec<(String, String)>,
+    /// The Jukebox page: the player's view, the original art (set by the
+    /// host) and the disc animation frame.
+    pub music: Option<jukebox::MusicView>,
+    pub jukebox_art: Option<jukebox::Art>,
+    pub frame: usize,
 }
 
 const FOOTER: [&str; 9] = [
@@ -157,6 +163,12 @@ fn display(size: f32, weight: u16, italic: bool) -> Font {
 
 /// The full-viewport layer: dim backdrop and the centred panel.
 pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> El {
+    if state.page == "jukebox"
+        && let Some(music) = &state.music
+    {
+        return jukebox::element(view, state, music, state.jukebox_art.as_ref(), state.frame)
+            .children(notice(view, state));
+    }
     let (w, h) = (view.width, view.height);
     let narrow = w <= 580.;
     let short = h <= 450. && !narrow;
@@ -443,77 +455,7 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
             line_height: 18.,
             wrap: false,
         }));
-        // .atv-range: an 8px track with a gold fill and a 22px gold thumb.
-        let track = El::new(Style {
-            position: Position::Absolute,
-            inset: taffy::Rect {
-                left: LengthPercentageAuto::length(0.),
-                right: LengthPercentageAuto::length(0.),
-                top: LengthPercentageAuto::length(18.),
-                bottom: LengthPercentageAuto::auto(),
-            },
-            size: Size {
-                width: auto(),
-                height: length(8.),
-            },
-            ..Default::default()
-        })
-        .paint(Paint {
-            radii: [4.; 4],
-            fill: Some(Fill::Linear(Gradient::new(
-                90.,
-                &[
-                    (0., Color::hex("#e5d360")),
-                    (fill, Color::hex("#e5d360")),
-                    (fill, Color::hex("#080808")),
-                    (1., Color::hex("#080808")),
-                ],
-            ))),
-            border: [1.; 4],
-            border_color: Color::hex("#b9b9b98c"),
-            shadows: vec![BoxShadow::inset(0., 1., 2., Color::BLACK)],
-            skew_x: 0.,
-            radii_y: [0.; 4],
-        });
-        let thumb = El::new(Style {
-            position: Position::Absolute,
-            inset: taffy::Rect {
-                left: LengthPercentageAuto::percent(fill),
-                top: LengthPercentageAuto::length(11.),
-                right: LengthPercentageAuto::auto(),
-                bottom: LengthPercentageAuto::auto(),
-            },
-            margin: margins(0., 0., 0., -22. * fill),
-            size: Size {
-                width: length(22.),
-                height: length(22.),
-            },
-            ..Default::default()
-        })
-        .paint(Paint {
-            radii: [11.; 4],
-            fill: Some(Fill::Linear(Gradient::new(
-                180.,
-                &[(0., Color::hex("#fffaa1")), (1., Color::hex("#a99900"))],
-            ))),
-            border: [1.; 4],
-            border_color: Color::hex("#e5d360"),
-            shadows: vec![BoxShadow::outer(0., 2., 5., Color::hex("#0008"))],
-            skew_x: 0.,
-            radii_y: [0.; 4],
-        });
-        // position: relative — the containing block of the track and thumb.
-        let input = El::new(Style {
-            position: Position::Relative,
-            size: Size {
-                width: auto(),
-                height: length(44.),
-            },
-            ..Default::default()
-        })
-        .id(ROW + index as u32)
-        .child(track)
-        .child(thumb);
+        let input = range(fill).id(ROW + index as u32);
         let mut el = El::new(Style {
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
@@ -1152,4 +1094,78 @@ fn summary_panel(
         panel = panel.child(group);
     }
     panel
+}
+
+/// `.atv-range`: an 8px track with a gold fill and a 22px gold thumb in a
+/// 44px-high box (`fill` 0-1).
+pub(crate) fn range(fill: f32) -> El {
+    let track = El::new(Style {
+        position: Position::Absolute,
+        inset: taffy::Rect {
+            left: LengthPercentageAuto::length(0.),
+            right: LengthPercentageAuto::length(0.),
+            top: LengthPercentageAuto::length(18.),
+            bottom: LengthPercentageAuto::auto(),
+        },
+        size: Size {
+            width: auto(),
+            height: length(8.),
+        },
+        ..Default::default()
+    })
+    .paint(Paint {
+        radii: [4.; 4],
+        fill: Some(Fill::Linear(Gradient::new(
+            90.,
+            &[
+                (0., Color::hex("#e5d360")),
+                (fill, Color::hex("#e5d360")),
+                (fill, Color::hex("#080808")),
+                (1., Color::hex("#080808")),
+            ],
+        ))),
+        border: [1.; 4],
+        border_color: Color::hex("#b9b9b98c"),
+        shadows: vec![BoxShadow::inset(0., 1., 2., Color::BLACK)],
+        skew_x: 0.,
+        radii_y: [0.; 4],
+    });
+    let thumb = El::new(Style {
+        position: Position::Absolute,
+        inset: taffy::Rect {
+            left: LengthPercentageAuto::percent(fill),
+            top: LengthPercentageAuto::length(11.),
+            right: LengthPercentageAuto::auto(),
+            bottom: LengthPercentageAuto::auto(),
+        },
+        margin: margins(0., 0., 0., -22. * fill),
+        size: Size {
+            width: length(22.),
+            height: length(22.),
+        },
+        ..Default::default()
+    })
+    .paint(Paint {
+        radii: [11.; 4],
+        fill: Some(Fill::Linear(Gradient::new(
+            180.,
+            &[(0., Color::hex("#fffaa1")), (1., Color::hex("#a99900"))],
+        ))),
+        border: [1.; 4],
+        border_color: Color::hex("#e5d360"),
+        shadows: vec![BoxShadow::outer(0., 2., 5., Color::hex("#0008"))],
+        skew_x: 0.,
+        radii_y: [0.; 4],
+    });
+    // position: relative — the containing block of the track and thumb.
+    El::new(Style {
+        position: Position::Relative,
+        size: Size {
+            width: auto(),
+            height: length(44.),
+        },
+        ..Default::default()
+    })
+    .child(track)
+    .child(thumb)
 }

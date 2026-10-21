@@ -121,6 +121,8 @@ struct PendingSound {
 enum Message {
     Ready(Box<Ready>),
     SoundReady(Box<sound::Sound>),
+    /// The original Jukebox art decoded.
+    JukeboxArt(Box<atv_game::jukebox::JukeboxArt>),
     /// A line for the open menu's notice (e.g. the copied ride link).
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     Notice(String),
@@ -804,6 +806,12 @@ impl App {
         };
         let active = !riding.paused && !riding.held && focused;
         let ui_started = Instant::now();
+        self.update_jukebox();
+        self.save_soundtrack();
+        let Some(ready) = &mut self.ready else { return };
+        let Some(riding) = &mut ready.riding else {
+            return;
+        };
         if let Some(overlay) = &mut self.overlay {
             if riding.input_cleared {
                 overlay.clear_input();
@@ -1099,7 +1107,9 @@ impl App {
         if ready.net.as_ref().is_some_and(|n| n.closed.is_none()) {
             return true;
         }
-        self.effective_focused() && ready.riding.as_ref().is_none_or(|r| !r.paused)
+        // The Jukebox animates its disc, progress and spectrum while open.
+        let jukebox = self.overlay.as_ref().is_some_and(|o| o.jukebox_open());
+        self.effective_focused() && (jukebox || ready.riding.as_ref().is_none_or(|r| !r.paused))
     }
 
     /// Schedule one frame: it applies the event, then `awake` decides.
@@ -1178,6 +1188,10 @@ impl App {
         };
         match event {
             Event::Resume | Event::Reset => {
+                // Leaving the menu ends a Jukebox pause (stopJukebox).
+                if let Some(sound) = &mut riding.sound {
+                    sound.jukebox(atv_ui::menu::jukebox::JukeboxAction::Leave);
+                }
                 if event == Event::Reset
                     && let Err(error) = riding.reset()
                 {
@@ -1256,6 +1270,13 @@ impl App {
                 status("Left the multiplayer room.");
                 self.menu_event(Event::Resume);
             }
+            Event::Jukebox(action) => {
+                if let Some(sound) = &mut riding.sound {
+                    sound.jukebox(action);
+                }
+                self.save_soundtrack();
+                self.wake();
+            }
             Event::Changed => {
                 if let Some(overlay) = &mut self.overlay {
                     overlay.set_help_keys(&riding.bindings);
@@ -1287,66 +1308,62 @@ impl App {
         }
     }
 
-    /// The saved choices game.js applies while riding (graphicsSettings,
-    /// crashSettings, audio and soundtrack onChange): Speed rush, crashes,
-    /// Unleashed flips, realistic train, effect and music volume, music on or
-    /// off, and a changed Display → Graphics preset. Parity replays and
-    /// autodrive benchmarks keep the defaults they were recorded with.
-    fn apply_preferences(&mut self) {
-        let (Some(overlay), Some(ready)) = (&self.overlay, &mut self.ready) else {
+    /// music.js `save`: the soundtrack record keeps the play history.
+    fn save_soundtrack(&mut self) {
+        let (Some(ready), Some(overlay)) = (&mut self.ready, &mut self.overlay) else {
             return;
         };
-        let Some(riding) = &mut ready.riding else {
+        let Some(sound) = ready.riding.as_mut().and_then(|r| r.sound.as_mut()) else {
             return;
         };
-        if riding.held || riding.autodrive.is_some() {
+        if !std::mem::take(&mut sound.player.dirty) {
             return;
         }
-        let prefs = &overlay.prefs;
-        riding.set_speed_rush(&prefs.speed_rush);
-        riding.ride.options = atv_game::ride::RideOptions {
-            flips: prefs.flips,
-            realistic_train: prefs.realistic_train,
+        let mut record = overlay
+            .settings
+            .get("atv-soundtrack-v1")
+            .and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok())
+            .filter(serde_json::Value::is_object)
+            .unwrap_or_else(|| serde_json::json!({"v": 3, "enabled": true, "volume": 0.45}));
+        record["v"] = 3.into();
+        record["history"] = sound.player.history.clone().into();
+        record["historyIndex"] = sound.player.history_index.into();
+        overlay
+            .settings
+            .set("atv-soundtrack-v1", &record.to_string());
+    }
+
+    /// The open menu's music view, and the Jukebox art on its first visit.
+    fn update_jukebox(&mut self) {
+        let (Some(ready), Some(overlay)) = (&self.ready, &mut self.overlay) else {
+            return;
         };
-        let mode = atv_game::crash::CrashMode::parse(&prefs.crash_mode).unwrap_or_default();
-        if riding
-            .crashes
+        if overlay.menu.is_none() {
+            return;
+        }
+        overlay.music = ready
+            .riding
             .as_ref()
-            .map_or(atv_game::crash::CrashMode::Original, |c| c.mode)
-            != mode
-        {
-            riding.crashes = if mode == atv_game::crash::CrashMode::Original {
-                None
-            } else {
-                let mut crashes = atv_game::crash::Crashes::new(mode);
-                match crashes.reset(&riding.ride) {
-                    Ok(()) => Some(crashes),
-                    Err(error) => {
-                        status(&format!("Crashes unavailable: {error}"));
-                        None
-                    }
-                }
-            };
-        }
-        if let Some(sound) = &mut riding.sound {
-            sound.set_volumes(prefs.sfx_volume, prefs.music_volume, prefs.music_enabled);
-        }
-        // A preset changed in the menu applies at once where it can.
-        if self.graphics_pref.as_deref() != Some(prefs.graphics.as_str()) {
-            self.graphics_pref = Some(prefs.graphics.clone());
-            let graphics = graphics_preset(prefs.graphics_resolved());
-            riding.interpolation = graphics.interpolation;
-            if let Some(effects) = &mut riding.effects
-                && !riding.ride.is_motorcycle()
+            .and_then(|r| r.sound.as_ref())
+            .map(|s| s.music_view());
+        if overlay.jukebox_art_wanted && overlay.jukebox_art.is_none() {
+            overlay.jukebox_art_wanted = false;
+            if let Some(content) = ready
+                .riding
+                .as_ref()
+                .and_then(|r| r.sound.as_ref())
+                .map(|s| s.content())
+                && self.requested.insert("jukebox-art".into())
             {
-                effects.set_lingering_dust(usize::from(graphics.dust), &ready.venue);
-                effects.set_tire_tracks(
-                    usize::from(graphics.tire_tracks.0),
-                    f32::from(graphics.tire_tracks.1),
-                    &ready.venue,
+                self.spawn(
+                    async move { atv_game::jukebox::load(&content).await },
+                    |result| match result {
+                        Ok(Some(art)) => Message::JukeboxArt(Box::new(art)),
+                        Ok(None) => Message::Notice(String::new()),
+                        Err(error) => Message::SoundFailed(format!("Jukebox art: {error}")),
+                    },
                 );
             }
-            ready.scene.set_graphics(&ready.gpu, &ready.venue, graphics);
         }
     }
 
@@ -1429,6 +1446,69 @@ impl App {
             menu.notice = Some(url);
         }
         self.wake();
+    }
+
+    /// The saved choices game.js applies while riding (graphicsSettings,
+    /// crashSettings, audio and soundtrack onChange): Speed rush, crashes,
+    /// Unleashed flips, realistic train, effect and music volume, music on or
+    /// off, and a changed Display → Graphics preset. Parity replays and
+    /// autodrive benchmarks keep the defaults they were recorded with.
+    fn apply_preferences(&mut self) {
+        let (Some(overlay), Some(ready)) = (&self.overlay, &mut self.ready) else {
+            return;
+        };
+        let Some(riding) = &mut ready.riding else {
+            return;
+        };
+        if riding.held || riding.autodrive.is_some() {
+            return;
+        }
+        let prefs = &overlay.prefs;
+        riding.set_speed_rush(&prefs.speed_rush);
+        riding.ride.options = atv_game::ride::RideOptions {
+            flips: prefs.flips,
+            realistic_train: prefs.realistic_train,
+        };
+        let mode = atv_game::crash::CrashMode::parse(&prefs.crash_mode).unwrap_or_default();
+        if riding
+            .crashes
+            .as_ref()
+            .map_or(atv_game::crash::CrashMode::Original, |c| c.mode)
+            != mode
+        {
+            riding.crashes = if mode == atv_game::crash::CrashMode::Original {
+                None
+            } else {
+                let mut crashes = atv_game::crash::Crashes::new(mode);
+                match crashes.reset(&riding.ride) {
+                    Ok(()) => Some(crashes),
+                    Err(error) => {
+                        status(&format!("Crashes unavailable: {error}"));
+                        None
+                    }
+                }
+            };
+        }
+        if let Some(sound) = &mut riding.sound {
+            sound.set_volumes(prefs.sfx_volume, prefs.music_volume, prefs.music_enabled);
+        }
+        // A preset changed in the menu applies at once where it can.
+        if self.graphics_pref.as_deref() != Some(prefs.graphics.as_str()) {
+            self.graphics_pref = Some(prefs.graphics.clone());
+            let graphics = graphics_preset(prefs.graphics_resolved());
+            riding.interpolation = graphics.interpolation;
+            if let Some(effects) = &mut riding.effects
+                && !riding.ride.is_motorcycle()
+            {
+                effects.set_lingering_dust(usize::from(graphics.dust), &ready.venue);
+                effects.set_tire_tracks(
+                    usize::from(graphics.tire_tracks.0),
+                    f32::from(graphics.tire_tracks.1),
+                    &ready.venue,
+                );
+            }
+            ready.scene.set_graphics(&ready.gpu, &ready.venue, graphics);
+        }
     }
 
     fn act(&mut self, action: overlay::Action) {
@@ -1911,6 +1991,24 @@ impl ApplicationHandler<Message> for App {
                         status(&format!("Sound unavailable: {error}"));
                         return;
                     }
+                    // The saved soundtrack history (music.js v3 record).
+                    if let Some(record) = self
+                        .overlay
+                        .as_ref()
+                        .and_then(|o| o.settings.get("atv-soundtrack-v1"))
+                        .and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok())
+                    {
+                        let history = record["history"]
+                            .as_array()
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let index = record["historyIndex"].as_i64().unwrap_or(-1) as i32;
+                        sound.restore_history(history, index);
+                    }
                     // Settings → Audio volumes and the music switch.
                     if let Some(prefs) = self.overlay.as_ref().map(|o| &o.prefs)
                         && !riding.held
@@ -1941,6 +2039,12 @@ impl ApplicationHandler<Message> for App {
                 self.wake();
             }
             Message::SoundFailed(error) => status(&format!("Sound unavailable: {error}")),
+            Message::JukeboxArt(art) => {
+                if let (Some(overlay), Some(ready)) = (&mut self.overlay, &self.ready) {
+                    overlay.set_jukebox_art(&ready.gpu.device, &ready.gpu.queue, *art);
+                }
+                self.wake();
+            }
             Message::Notice(text) => {
                 if let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut()) {
                     menu.notice = Some(text);

@@ -284,6 +284,7 @@ impl Front {
             pad_name: self.pad_name.clone(),
             view: self.view,
             lobby: None,
+            music: None,
         };
         Some(f(menu, &mut ctx, &self.menu_hits, self.menu_scroll_max))
     }
