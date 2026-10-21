@@ -2,11 +2,14 @@
 //! renderer run natively (Metal/DX12/Vulkan) and in browsers (WebGL2).
 mod front;
 mod gamepad;
+mod multiplayer;
+mod net;
 mod overlay;
 pub mod replay;
 mod riding;
 mod sound;
 use atv_core::math::Det;
+pub use multiplayer::RoomStart;
 use replay::RunScript;
 
 use atv_content::{Content, Store};
@@ -68,6 +71,8 @@ pub struct Options {
     /// Open the engine's frontend (title and menus) instead of riding at
     /// once; the frontend then reads this launch link (launch.js contract).
     pub front: Option<FrontStart>,
+    /// Ride in a multiplayer room (host or join) on the relay.
+    pub room: Option<RoomStart>,
 }
 
 /// How the frontend opens.
@@ -93,6 +98,8 @@ struct Ready {
     pending_sound: Option<PendingSound>,
     /// Original speed meter and stunt text resources (web/hud.js `init`).
     hud_assets: Option<atv_ui::hud::assets::OverlayAssets>,
+    /// The multiplayer room this ride is in.
+    net: Option<multiplayer::Net>,
 }
 
 struct PendingSound {
@@ -112,7 +119,14 @@ enum Message {
     FrontArt(Box<ArtPiece>),
     /// A new GPU after a failed load from the frontend.
     FrontGpu(Box<Gpu>),
+    /// A remote rider's model finished loading.
+    PeerModel(Box<PeerModel>),
 }
+
+type PeerModel = Result<
+    atv_game::multiplayer::remote::RemoteModel,
+    (atv_game::multiplayer::remote::Key, String),
+>;
 
 struct Booted {
     gpu: Gpu,
@@ -441,7 +455,54 @@ async fn prepare(
         riding,
         pending_sound,
         hud_assets,
+        net: None,
     })
+}
+
+/// Native room captures: run the room (poses, remote models) until
+/// `FURY_ROOM_PEERS` other riders (default 1) are drawn, then two more
+/// seconds of presentation; at most `FURY_ROOM_WAIT` seconds (default 20).
+#[cfg(not(target_arch = "wasm32"))]
+fn settle_room(ready: &mut Ready) {
+    let (Some(net), Some(riding)) = (&mut ready.net, &mut ready.riding) else {
+        return;
+    };
+    let setting = |name: &str, default: f32| {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    };
+    let (wait, peers) = (
+        setting("FURY_ROOM_WAIT", 20.),
+        setting("FURY_ROOM_PEERS", 1.),
+    );
+    let started = Instant::now();
+    let mut seen: Option<Instant> = None;
+    while started.elapsed().as_secs_f32() < wait && net.closed.is_none() {
+        for key in net.tick(&riding.ride, false) {
+            net.model_loaded(pollster::block_on(multiplayer::load_model(
+                net.content(),
+                key,
+            )));
+        }
+        let eye = ready.camera.eye();
+        net.present(
+            &ready.gpu,
+            &mut ready.scene,
+            &ready.venue,
+            riding.ride.frame().origin,
+            eye,
+        );
+        if net.drawn as f32 >= peers {
+            let since = *seen.get_or_insert_with(Instant::now);
+            if since.elapsed().as_secs_f32() > 2. {
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(16));
+    }
+    println!("multiplayer {}", net.report());
 }
 
 /// Bilinear presentation height, for keeping the free camera above ground.
@@ -616,6 +677,35 @@ impl App {
             motion.origin,
             motion.linear_velocity,
         );
+        let mut loads = Vec::new();
+        if let Some(net) = &mut ready.net {
+            let was_open = net.closed.is_none();
+            // An unfocused or paused rider reports a paused pose (neutral).
+            let wanted = net.tick(&riding.ride, riding.paused || !focused);
+            let eye = ready.camera.eye();
+            net.present(
+                &ready.gpu,
+                &mut ready.scene,
+                &ready.venue,
+                motion.origin,
+                eye,
+            );
+            if was_open && let Some(closed) = &net.closed {
+                status(&format!("Multiplayer ended: {closed}"));
+            }
+            let content = net.content();
+            loads.extend(wanted.into_iter().map(|key| (content.clone(), key)));
+            publish_multiplayer(net);
+        }
+        for (content, key) in loads {
+            self.spawn(multiplayer::load_model(content, key), |model| {
+                Message::PeerModel(Box::new(model))
+            });
+        }
+        let Some(ready) = &mut self.ready else { return };
+        let Some(riding) = &mut ready.riding else {
+            return;
+        };
         let active = !riding.paused && !riding.held && focused;
         let ui_started = Instant::now();
         if let Some(overlay) = &mut self.overlay {
@@ -857,8 +947,7 @@ impl App {
     /// unfocused, hidden or suspended, or while paused (the menu is open);
     /// lifecycle and input events wake it. Simulation already stops in those
     /// states, so nothing but redundant redraws is skipped. Parity holds and
-    /// autodrive benchmarks keep rendering. (No multiplayer clock runs in the
-    /// Rust engine yet; a shared ride must keep its clocks live when it does.)
+    /// autodrive benchmarks keep rendering. A multiplayer ride stays awake.
     fn awake(&self) -> bool {
         let Some(ready) = &self.ready else {
             // The frontend draws on input, and continuously only while its
@@ -873,6 +962,11 @@ impl App {
         if let Some(riding) = &ready.riding
             && (riding.held || riding.autodrive.is_some())
         {
+            return true;
+        }
+        // A room keeps its socket, poses and remote riders live: inactive
+        // render sleep must not sleep multiplayer.
+        if ready.net.as_ref().is_some_and(|n| n.closed.is_none()) {
             return true;
         }
         self.effective_focused() && ready.riding.as_ref().is_none_or(|r| !r.paused)
@@ -1276,8 +1370,23 @@ impl ApplicationHandler<Message> for App {
         let display = self.display.clone();
         let store = options.store;
         let (environment, fixed) = (options.venue, options.camera);
+        let room = options.room.clone();
+        // Rooms ride ATVs: a motorcycle choice falls back to ATV01.
+        let profile = room.as_ref().map(|room| {
+            atv_game::multiplayer::Profile::new(
+                &room.name,
+                options.selection.quad,
+                options.selection.rider,
+                options.appearance,
+            )
+        });
         let world = World {
-            selection: options.selection,
+            selection: profile
+                .as_ref()
+                .map_or(options.selection, |p| atv_game::ride::Selection {
+                    quad: p.quad,
+                    rider: p.rider,
+                }),
             appearance: options.appearance,
             race: options.race,
             weather: options.weather,
@@ -1292,7 +1401,19 @@ impl ApplicationHandler<Message> for App {
         let future = async move {
             let gpu = open_gpu(window, display).await?;
             let content = Rc::new(Content::open(store).await?);
-            prepare(
+            // A room decides the course: the host starts it on the venue, a
+            // guest rides whatever the room is riding.
+            let (net, environment) = match (room, profile) {
+                (Some(room), Some(profile)) => {
+                    status("Joining the multiplayer room…");
+                    let (net, environment) =
+                        multiplayer::Net::join(&room, profile, &environment, content.clone())
+                            .await?;
+                    (Some(net), environment)
+                }
+                _ => (None, environment),
+            };
+            let mut ready = prepare(
                 gpu,
                 content,
                 environment,
@@ -1300,7 +1421,17 @@ impl ApplicationHandler<Message> for App {
                 world,
                 Box::new(|_, text| status(text)),
             )
-            .await
+            .await?;
+            if let Some(net) = &net {
+                status(&format!(
+                    "Multiplayer room {} ({} riding). Invite: {}",
+                    net.code(),
+                    net.session.lobby.as_ref().map_or(1, |l| l.players.len()),
+                    net.invite()
+                ));
+            }
+            ready.net = net;
+            Ok::<_, String>(ready)
         };
         let proxy = self.proxy.clone();
         let send = move |result: Result<Ready, String>| {
@@ -1315,6 +1446,8 @@ impl ApplicationHandler<Message> for App {
         {
             let mut result = pollster::block_on(future);
             if let (Ok(ready), Some((path, width, height))) = (&mut result, options.capture) {
+                // A room capture first exchanges poses until other riders show.
+                settle_room(ready);
                 if let Some(riding) = &mut ready.riding {
                     let aspect = width as f32 / height as f32;
                     // About a second of held presentation, as the browser
@@ -1432,6 +1565,11 @@ impl ApplicationHandler<Message> for App {
                 }
                 if !cfg!(target_arch = "wasm32") {
                     event_loop.exit();
+                }
+            }
+            Message::PeerModel(model) => {
+                if let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) {
+                    net.model_loaded(*model);
                 }
             }
             Message::FrontReady(booted) => self.front_ready(*booted),
@@ -2280,6 +2418,20 @@ fn publish_trace(text: &str) {
     let _ = text;
 }
 
+/// Multiplayer status for tests (`window.furyMultiplayer`, JSON).
+fn publish_multiplayer(net: &multiplayer::Net) {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(window) = web_sys::window() {
+        let _ = js_sys::Reflect::set(
+            &window,
+            &"furyMultiplayer".into(),
+            &net.report().to_string().into(),
+        );
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = net;
+}
+
 pub(crate) fn status(text: &str) {
     #[cfg(target_arch = "wasm32")]
     {
@@ -2371,7 +2523,11 @@ pub fn start() {
     };
     // `?venue=` rides at once (engine tests and parity tools); otherwise the
     // frontend opens and reads the page's ride link.
-    let direct = param("venue");
+    // A room link (`?room=` / `?host=1`) rides at once too.
+    let direct = param("venue").or_else(|| {
+        (param("room").is_some() || param("host").is_some_and(|v| v == "1"))
+            .then(|| "env01".to_string())
+    });
     let venue = direct
         .clone()
         .filter(|id| atv_game::launch::environments().contains(id))
@@ -2437,6 +2593,20 @@ pub fn start() {
                 difficulty: number("difficulty").map_or(defaults.difficulty, |v| v as u32),
                 seed: number("seed").unwrap_or(defaults.seed),
                 ..defaults
+            }
+        }),
+        // `?host=1` hosts a room (`room=` an optional custom code) and
+        // `?room=CODE` joins one, on this page's relay.
+        room: (param("host").is_some_and(|v| v == "1") || param("room").is_some()).then(|| {
+            RoomStart {
+                relay: web_sys::window()
+                    .and_then(|w| w.location().origin().ok())
+                    .unwrap_or_default(),
+                code: param("room"),
+                host: param("host").is_some_and(|v| v == "1"),
+                name: param("name")
+                    .and_then(|v| js_sys_decode(&v))
+                    .unwrap_or_else(|| "Rider".into()),
             }
         }),
         // `script=storage` reads a long parity script from localStorage

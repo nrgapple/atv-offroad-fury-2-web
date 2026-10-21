@@ -20,7 +20,7 @@ const IDENTITY: [f32; 16] = [
     1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
 ];
 
-fn member<'a>(resource: &Resource<'a>, name: &str, what: &str) -> Result<Vec<u8>> {
+pub(crate) fn member<'a>(resource: &Resource<'a>, name: &str, what: &str) -> Result<Vec<u8>> {
     resource.extract(
         basename_index(resource, name)
             .ok_or_else(|| format!("original {what} is missing ({name})"))?,
@@ -28,7 +28,7 @@ fn member<'a>(resource: &Resource<'a>, name: &str, what: &str) -> Result<Vec<u8>
 }
 
 /// Member whose path ends with `suffix` (the rider loader's matching rule).
-fn member_suffix<'a>(resource: &Resource<'a>, suffix: &str) -> Result<Vec<u8>> {
+pub(crate) fn member_suffix<'a>(resource: &Resource<'a>, suffix: &str) -> Result<Vec<u8>> {
     let suffix = suffix.to_ascii_lowercase();
     let index = resource
         .members
@@ -58,7 +58,9 @@ fn js(value: f32) -> f64 {
 }
 
 /// Normal, stunt/hold, wreck and landing clips in the order op 51 selects them.
-fn riding_motions(catalog: &MotionCatalog) -> Result<Vec<atv_core::motion_catalog::Motion>> {
+pub(crate) fn riding_motions(
+    catalog: &MotionCatalog,
+) -> Result<Vec<atv_core::motion_catalog::Motion>> {
     let prefix = if catalog.motions.iter().any(|m| m.name.starts_with("F_")) {
         "F"
     } else {

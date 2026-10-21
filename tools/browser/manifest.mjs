@@ -38,6 +38,11 @@ export const TESTS = {
   'test_engine_hud.mjs': { group: 'content' },
   'test_engine_pause.mjs': { group: 'content' },
   'test_engine_front.mjs': { group: 'content' },
+  'test_engine_multiplayer.mjs': {
+    group: 'relay',
+    reason:
+      'needs the multiplayer relay at the same origin plus a native fury build (FURY_BIN) for the Rust host; run with --url'
+  },
   'test_engine_preview.mjs': { group: 'content-free' },
   'test_engine_race.mjs': { group: 'content' },
   'test_engine_sleep.mjs': { group: 'content' },

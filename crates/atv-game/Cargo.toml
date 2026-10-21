@@ -7,6 +7,7 @@ publish.workspace = true
 [dependencies]
 atv-core = { path = "../atv-core" }
 atv-content = { path = "../atv-content" }
+atv-net = { path = "../atv-net" }
 miniz_oxide.workspace = true
 serde_json.workspace = true
 web-time = "1"

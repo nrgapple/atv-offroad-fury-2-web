@@ -306,6 +306,9 @@ pub struct Graphics {
     pub tire_tracks: (u16, u16),
 }
 
+/// A multiplayer rider's look: quad, rider and appearance bytes.
+pub type PeerLook = atv_game::multiplayer::remote::Key;
+
 pub struct SceneRenderer {
     terrain: terrain::TerrainPass,
     world: world::World,
@@ -365,6 +368,9 @@ pub struct SceneRenderer {
     vehicle: Option<vehicle::VehiclePass>,
     /// Race CPU riders (drawn after the player) and which are near enough.
     cpus: Vec<(vehicle::VehiclePass, bool)>,
+    /// Multiplayer riders by slot: their (quad, rider) model, pass and
+    /// whether this frame presents them.
+    peers: std::collections::BTreeMap<u8, (PeerLook, vehicle::VehiclePass, bool)>,
     profiler: profile::Profiler,
 }
 
@@ -471,6 +477,7 @@ impl SceneRenderer {
             clock: 0.,
             vehicle: None,
             cpus: Vec::new(),
+            peers: Default::default(),
             profiler: profile::Profiler::default(),
             wheel_effects: None,
             lingering_dust: None,
@@ -782,6 +789,56 @@ impl SceneRenderer {
         }
     }
 
+    /// Uploads a multiplayer rider's quad and rider, painted (one pass per slot, like
+    /// the JavaScript game's per-rider remote model cache).
+    pub fn set_peer(
+        &mut self,
+        gpu: &Gpu,
+        venue: &Venue,
+        peer: u8,
+        key: PeerLook,
+        (quad, rider): (&atv_game::ride::Model, &atv_game::ride::Model),
+        paint: [f32; 2],
+    ) -> Result<(), String> {
+        let mut pass = vehicle::VehiclePass::new(gpu, venue, quad, rider, gpu.samples)?;
+        pass.set_paint(paint);
+        self.peers.insert(peer, (key, pass, false));
+        Ok(())
+    }
+
+    /// The model a multiplayer slot is drawn with.
+    pub fn peer_model(&self, peer: u8) -> Option<PeerLook> {
+        self.peers.get(&peer).map(|(key, ..)| *key)
+    }
+
+    /// Drops riders that left or changed model.
+    pub fn retain_peers(&mut self, mut keep: impl FnMut(u8, PeerLook) -> bool) {
+        self.peers.retain(|peer, (key, ..)| keep(*peer, *key));
+    }
+
+    /// Poses the presented multiplayer riders; others are hidden. Riders over
+    /// 864 ft from the eye are skipped like race CPUs. Returns those drawn.
+    pub fn pose_peers(
+        &mut self,
+        gpu: &Gpu,
+        poses: &[(u8, atv_game::ride::Pose)],
+        eye: [f32; 3],
+    ) -> usize {
+        let mut drawn = 0;
+        for (peer, (_, pass, visible)) in &mut self.peers {
+            let pose = poses.iter().find(|(id, _)| id == peer).map(|(_, p)| p);
+            *visible = pose.is_some_and(|pose| {
+                let [x, z] = [pose.quad_world[12], pose.quad_world[14]];
+                (x - eye[0]).hypot(z - eye[2]) <= 864.
+            });
+            if *visible && let Some(pose) = pose {
+                pass.pose(gpu, pose);
+                drawn += 1;
+            }
+        }
+        drawn
+    }
+
     /// One simulation step's body origin while Riding with every wheel down,
     /// for the contact shadows' resting lift (acceptFrame in game.js).
     pub fn observe_rest(&mut self, origin: [f32; 3]) {
@@ -1067,8 +1124,13 @@ impl SceneRenderer {
             vehicle.prepare(gpu, &view_projection, view.camera.eye());
             stats.vehicle_triangles = vehicle.triangles;
         }
-        for (cpu, visible) in &mut self.cpus {
-            if *visible {
+        for (cpu, visible) in self
+            .cpus
+            .iter_mut()
+            .map(|(p, v)| (p, *v))
+            .chain(self.peers.values_mut().map(|(_, p, v)| (p, *v)))
+        {
+            if visible {
                 cpu.prepare(gpu, &view_projection, view.camera.eye());
                 stats.vehicle_triangles += cpu.triangles;
             }
@@ -1209,6 +1271,9 @@ impl SceneRenderer {
             }
             for (cpu, _) in self.cpus.iter().filter(|(_, visible)| *visible) {
                 cpu.draw(&mut pass);
+            }
+            for (_, peer, _) in self.peers.values().filter(|(.., visible)| *visible) {
+                peer.draw(&mut pass);
             }
             self.profiler.mark("encode.vehicles");
             if let Some((water, _)) = &self.water {
