@@ -8,6 +8,7 @@ mod overlay;
 pub mod replay;
 mod riding;
 mod sound;
+mod wake;
 use atv_core::math::Det;
 pub use multiplayer::RoomStart;
 use replay::RunScript;
@@ -183,6 +184,8 @@ struct Defaults {
 }
 
 struct App {
+    /// Screen Wake Lock while riding (web/wake-lock.js).
+    wake_lock: wake::ScreenWake,
     /// The Display → Graphics choice the running ride applied.
     graphics_pref: Option<String>,
     proxy: EventLoopProxy<Message>,
@@ -566,6 +569,10 @@ fn ground(venue: &Venue, x: f32, z: f32) -> f32 {
 
 impl App {
     fn step(&mut self) {
+        // game.js screenWake.set(!menuOpen): a ride on screen, no menu.
+        let riding = self.ready.as_ref().is_some_and(|r| r.riding.is_some())
+            && self.overlay.as_ref().is_none_or(|o| o.menu.is_none());
+        self.wake_lock.set(riding, self.visible);
         let now = Instant::now();
         let dt = (now - self.last).as_secs_f32().min(0.1);
         self.last = now;
@@ -866,6 +873,7 @@ impl App {
             let mut state = replay::record(&riding.ride, riding.ride.steps());
             state["camera"]["preset"] = riding.ride.camera().0.preset.into();
             state["paused"] = riding.paused.into();
+            state["wakeLock"] = self.wake_lock.held().into();
             state["active"] = active.into();
             let applied = riding.ride.applied();
             state["controls"] = serde_json::json!({
@@ -1596,6 +1604,7 @@ impl App {
     /// The first key, click or touch starts audio (browser autoplay rules).
     fn gesture(&mut self) {
         self.sound_unlocked = true;
+        self.wake_lock.gesture();
         if let Some(sound) = self
             .ready
             .as_mut()
@@ -3348,6 +3357,7 @@ pub fn run(options: Options) {
         .build()
         .expect("event loop");
     let app = App {
+        wake_lock: Default::default(),
         graphics_pref: None,
         proxy: event_loop.create_proxy(),
         display: event_loop.owned_display_handle(),
