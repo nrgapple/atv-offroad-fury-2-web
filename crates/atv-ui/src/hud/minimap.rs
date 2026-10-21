@@ -326,6 +326,9 @@ pub struct Minimap {
     updated: f64,
     pub build_ms: f64,
     pub updates: u64,
+    /// Other riders (slot, world position), sampled with the instrument.
+    pub peers: Vec<(u8, [f32; 3])>,
+    peers_shown: Vec<(u8, [f32; 3])>,
 }
 
 impl Minimap {
@@ -340,6 +343,8 @@ impl Minimap {
             updated: f64::NEG_INFINITY,
             build_ms: 0.,
             updates: 0,
+            peers: Vec::new(),
+            peers_shown: Vec::new(),
         }
     }
 
@@ -433,6 +438,7 @@ impl Minimap {
         if self.shown.is_none() || now - self.updated >= MAP_INTERVAL {
             self.updated = now;
             self.shown = Some((pose, instrument));
+            self.peers_shown.clone_from(&self.peers);
             self.updates += 1;
         }
     }
@@ -486,6 +492,25 @@ impl Minimap {
                 rotation: if heading_up { -pose.heading } else { 0. },
                 pivot: [cx, cy],
             });
+        }
+        // Other riders: slot-coloured dots with an ink ring, clamped to 40%
+        // of the map (minimap.js `mapPeerMarker`).
+        for (slot, position) in &self.peers_shown {
+            let (dx, dy, _) = super::peers::map_marker(
+                *position,
+                pose.origin,
+                heading_up.then_some(pose.heading),
+                range,
+                size,
+            );
+            list.push(Item::Box(crate::paint::BoxPaint {
+                rect: Rect::new(cx + dx - 4.25, cy + dy - 4.25, 8.5, 8.5),
+                radii: [4.25; 4],
+                fill: Some(super::peers::color(*slot).into()),
+                border: [1.5; 4],
+                border_color: tokens::INK,
+                ..Default::default()
+            }));
         }
         // Heading marker: pale gold arrow with an ink outline.
         list.push(Item::Shape {
