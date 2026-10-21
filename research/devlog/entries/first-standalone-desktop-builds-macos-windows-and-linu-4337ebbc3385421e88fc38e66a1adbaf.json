@@ -1,0 +1,17 @@
+{
+  "id": "first-standalone-desktop-builds-macos-windows-and-linu-4337ebbc3385421e88fc38e66a1adbaf",
+  "timestamp": "2026-10-21T04:56:27.999327+00:00",
+  "recorded_at": "2026-10-21T05:04:34.675623+00:00",
+  "kind": "build",
+  "title": "First standalone desktop builds: macOS, Windows and Linux",
+  "summary": "The shared Rust engine now ships as standalone desktop apps with the authorized runtime resources packed in: no browser, no WebAssembly, native Metal, DX12 or Vulkan rendering. The first prerelease (desktop-v0.1.0-ba5b5ea, main commit ba5b5ea) is on GitHub Releases for macOS (universal), Windows x86_64 and Linux x86_64 and aarch64. It is Freeride on the original venues with their full worlds, the original quad and rider, and audio. There are no menus, HUD, races, progression or multiplayer yet; the venue is chosen with --venue.",
+  "details": [
+    "Release: https://github.com/nrgapple/atv-offroad-fury-2-web/releases/tag/desktop-v0.1.0-ba5b5ea (marked prerelease). Assets: macOS universal .app zip (419 MB), Linux x86_64 and aarch64 tar.gz (417 MB each), Windows x86_64 zip (416 MB), and SHA256SUMS.txt. The archives were built and uploaded from the owner's machine, not from CI.",
+    "Packaging checks: before publishing, the content pack (219 files, 454 MB) was rebuilt, and every archive passed a member allowlist and a full re-hash. The archives contain no ISO, BIOS, boot executable or private files.",
+    "Run checks: the macOS app (Apple silicon, Metal) was launched from the unzipped app and rendered ENV01 and SX05 with scenery; capture took 1.0 to 1.2 s warm and about 5.3 s on first launch. Linux aarch64 launched in Docker with software Vulkan (Mesa lavapipe) under Xvfb and rendered the ride frame, and Linux x86_64 did the same under emulation. Windows was built and structurally checked but never run.",
+    "Builds are unsigned: the macOS app is ad-hoc signed but not notarized, and the Windows build is unsigned, so Gatekeeper and SmartScreen warnings are expected."
+  ],
+  "limitation": "Prerelease only. The Windows build has never been run and needs a real Windows machine. The macOS Intel slice, Linux on a real GPU, and audio on Linux and Windows devices are untested. Linux checks used software Vulkan, and the x86_64 one ran under emulation. No menus, HUD, races, progression or multiplayer exist yet. The macOS and Linux apps are not signed or notarized.",
+  "image": "/devlog-images/first-standalone-desktop-builds-macos-windows-and-linu-4337ebbc3385421e88fc38e66a1adbaf.png",
+  "caption": "Standalone macOS app (Apple silicon, Metal) launched from the unzipped build, captured through the app's own --capture path: the original quad and rider on a snowy venue with scenery. The Linux software-Vulkan capture rendered the same kind of ride frame."
+}
