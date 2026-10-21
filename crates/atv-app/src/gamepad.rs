@@ -37,6 +37,12 @@ impl Gamepads {
         }
     }
 
+    /// Name of the controller in use (Controller Settings: "Auto (name)").
+    pub fn name(&self) -> Option<String> {
+        let gilrs = self.gilrs.as_ref()?;
+        Some(gilrs.connected_gamepad(self.active?)?.name().to_string())
+    }
+
     pub fn sample(&mut self) -> Option<Pad> {
         let gilrs = self.gilrs.as_mut()?;
         while let Some(event) = gilrs.next_event() {

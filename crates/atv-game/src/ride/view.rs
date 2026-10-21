@@ -82,6 +82,11 @@ impl SpeedRush {
         self.amount += (desired - self.amount) * (1. - (-step / 0.25).exp_d());
     }
 
+    /// The smoothed amount (0..0.75 at Normal) the screen pass shares.
+    pub fn amount(&self) -> f32 {
+        self.amount as f32
+    }
+
     pub fn focal_scale(&self) -> f32 {
         (1. - 0.09 * self.amount.clamp(0., 1.)) as f32
     }

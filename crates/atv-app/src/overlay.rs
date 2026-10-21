@@ -75,6 +75,10 @@ pub struct Overlay {
     /// unchanged (the browser HUD's unchanged-state redraw avoidance).
     toolbar_cache: Option<ToolbarCache>,
     help_cache: Option<(Viewport, DisplayList)>,
+    /// Keyboard card rows: action id -> key labels (chords joined with +).
+    help_keys: Vec<(String, Vec<String>)>,
+    /// Name of the controller in use (Controller Settings row).
+    pub pad_name: Option<String>,
     pub prefs: Preferences,
     /// The pause menu while the ride is paused.
     pub menu: Option<PauseMenu>,
@@ -122,6 +126,8 @@ impl Overlay {
             ride_started: false,
             toolbar_cache: None,
             help_cache: None,
+            help_keys: Vec::new(),
+            pad_name: None,
             prefs,
             menu: None,
             menu_hits: Vec::new(),
@@ -185,6 +191,7 @@ impl Overlay {
     /// Runs a menu input with the settings it may change.
     fn with_menu<T>(
         &mut self,
+        bindings: Option<&mut atv_game::ride::bindings::Bindings>,
         f: impl FnOnce(&mut PauseMenu, &mut Context, &[(Rect, u32)], f32) -> T,
     ) -> Option<T> {
         let menu = self.menu.as_mut()?;
@@ -193,40 +200,111 @@ impl Overlay {
             prefs: &mut self.prefs,
             minimap: &mut self.minimap.settings,
             touch: &mut self.touch,
+            bindings,
+            pad_name: self.pad_name.clone(),
             view: self.view,
         };
         Some(f(menu, &mut ctx, &self.menu_hits, self.menu_scroll_max))
     }
 
-    pub fn menu_key(&mut self, code: &str) -> Option<MenuEvent> {
+    pub fn menu_key(
+        &mut self,
+        code: &str,
+        bindings: Option<&mut atv_game::ride::bindings::Bindings>,
+    ) -> Option<MenuEvent> {
         self.menu_reveal = true;
-        self.with_menu(|m, ctx, _, _| m.key(code, ctx)).flatten()
-    }
-
-    pub fn menu_pad(&mut self, buttons: [f32; 17], axes: [f32; 4]) -> Option<MenuEvent> {
-        self.menu_reveal = true;
-        self.with_menu(|m, ctx, _, _| m.pad(buttons, axes, ctx))
+        self.with_menu(bindings, |m, ctx, _, _| m.key(code, ctx))
             .flatten()
     }
 
-    pub fn menu_press(&mut self, pointer: u64, x: f32, y: f32) {
-        self.with_menu(|m, ctx, hits, _| m.press(hits, pointer, x, y, ctx));
+    pub fn menu_key_up(
+        &mut self,
+        code: &str,
+        bindings: Option<&mut atv_game::ride::bindings::Bindings>,
+    ) -> Option<MenuEvent> {
+        self.with_menu(bindings, |m, ctx, _, _| m.key_up(code, ctx))
+            .flatten()
     }
 
-    pub fn menu_drag(&mut self, pointer: u64, x: f32, y: f32) {
-        self.with_menu(|m, ctx, hits, max| {
+    pub fn menu_pad(
+        &mut self,
+        pad: Option<&atv_game::ride::bindings::Pad>,
+        bindings: Option<&mut atv_game::ride::bindings::Bindings>,
+    ) -> Option<MenuEvent> {
+        self.menu_reveal = true;
+        let buttons = pad.map_or([0.; 17], |p| p.buttons);
+        let axes = pad.map_or([0.; 4], |p| p.axes);
+        self.with_menu(bindings, |m, ctx, _, _| {
+            m.pad(buttons, axes, pad.is_some(), ctx)
+        })
+        .flatten()
+    }
+
+    pub fn menu_press(
+        &mut self,
+        pointer: u64,
+        x: f32,
+        y: f32,
+        bindings: Option<&mut atv_game::ride::bindings::Bindings>,
+    ) {
+        self.with_menu(bindings, |m, ctx, hits, _| {
+            m.press(hits, pointer, x, y, ctx)
+        });
+    }
+
+    pub fn menu_drag(
+        &mut self,
+        pointer: u64,
+        x: f32,
+        y: f32,
+        bindings: Option<&mut atv_game::ride::bindings::Bindings>,
+    ) {
+        self.with_menu(bindings, |m, ctx, hits, max| {
             m.hover(hits, x, y);
             m.drag(pointer, x, y, max, ctx)
         });
     }
 
-    pub fn menu_release(&mut self, pointer: u64, x: f32, y: f32) -> Option<MenuEvent> {
-        self.with_menu(|m, ctx, hits, _| m.release(hits, pointer, x, y, ctx))
-            .flatten()
+    pub fn menu_release(
+        &mut self,
+        pointer: u64,
+        x: f32,
+        y: f32,
+        bindings: Option<&mut atv_game::ride::bindings::Bindings>,
+    ) -> Option<MenuEvent> {
+        self.with_menu(bindings, |m, ctx, hits, _| {
+            m.release(hits, pointer, x, y, ctx)
+        })
+        .flatten()
     }
 
     pub fn menu_wheel(&mut self, dy: f32) {
-        self.with_menu(|m, _, _, max| m.wheel(dy, max));
+        self.with_menu(None, |m, _, _, max| m.wheel(dy, max));
+    }
+
+    /// The keyboard card follows the live (possibly remapped) bindings.
+    pub fn set_help_keys(&mut self, bindings: &atv_game::ride::bindings::Bindings) {
+        let keys: Vec<(String, Vec<String>)> = atv_game::ride::bindings::ACTIONS
+            .iter()
+            .map(|(action, id, _)| {
+                let labels = bindings
+                    .keyboard_codes(*action)
+                    .iter()
+                    .map(|chord| {
+                        chord
+                            .iter()
+                            .map(|c| help::key_name(c))
+                            .collect::<Vec<_>>()
+                            .join("+")
+                    })
+                    .collect();
+                (id.to_string(), labels)
+            })
+            .collect();
+        if keys != self.help_keys {
+            self.help_keys = keys;
+            self.help_cache = None;
+        }
     }
 
     /// H toggles the keyboard card while riding (keyboard-help.js).
@@ -352,6 +430,7 @@ impl Overlay {
         camera_enabled: bool,
         paused: bool,
         hud: Option<HudInput>,
+        bindings: Option<&mut atv_game::ride::bindings::Bindings>,
     ) {
         let started = web_time::Instant::now();
         self.list.clear();
@@ -364,7 +443,7 @@ impl Overlay {
         }
         let view = self.view;
         if self.menu.is_some() {
-            self.prepare_menu();
+            self.prepare_menu(bindings);
             self.upload(device, queue, width, height);
             self.prepare_ms = started.elapsed().as_secs_f64() * 1000.;
             return;
@@ -491,14 +570,11 @@ impl Overlay {
             self.hits.push((map, MINIMAP));
         }
         if self.help_open && active && !touch_driving {
+            let rows = &self.help_keys;
             let key_names = |id: &str| -> Vec<String> {
-                atv_game::ride::bindings::action_named(id)
-                    .map(|action| {
-                        atv_game::ride::bindings::keyboard_codes(action)
-                            .into_iter()
-                            .map(help::key_name)
-                            .collect()
-                    })
+                rows.iter()
+                    .find(|(i, _)| i == id)
+                    .map(|(_, keys)| keys.clone())
                     .unwrap_or_default()
             };
             if !self.help_cache.as_ref().is_some_and(|(v, _)| *v == view) {
@@ -542,10 +618,10 @@ impl Overlay {
 
     /// The pause layer: the dim backdrop and the panel (the HUD, map, toolbar
     /// and touch controls hide behind menus, as `body.menu-open` does).
-    fn prepare_menu(&mut self) {
+    fn prepare_menu(&mut self, mut bindings: Option<&mut atv_game::ride::bindings::Bindings>) {
         let view = self.view;
         let start = self.list.items.len();
-        let Some(state) = self.with_menu(|m, ctx, _, _| {
+        let Some(state) = self.with_menu(bindings.as_deref_mut(), |m, ctx, _, _| {
             m.refresh(ctx);
             m.state(ctx)
         }) else {
@@ -579,7 +655,7 @@ impl Overlay {
                 if menu.scroll != before {
                     self.menu_hits = hits;
                     self.list.items.truncate(start);
-                    self.prepare_menu();
+                    self.prepare_menu(bindings);
                     return;
                 }
             }

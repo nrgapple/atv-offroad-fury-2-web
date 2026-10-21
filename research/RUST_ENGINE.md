@@ -423,6 +423,57 @@ Parity (ENV03 scripted ride, Rust browser / native vs JS, /255): High 0.16 / 0.0
 held ride state: Chromium 0.79-1.20 ms, WebKit 1.36-2.31 ms, 60 Hz held in WebKit (host
 viewports, not phones).
 
+## Speed-rush screen pass (2026-10-21)
+
+Replaces the screen pass of `web/speed-rush.js` (the ride already had its FOV kick and
+amount, `atv_game::ride::view::SpeedRush`). Authored, Normal intensity; settings for
+Off/Low/High are not ported yet.
+
+- `atv-render/speed_rush.rs` + `.wgsl`: while the amount is above 0.001 the scene
+  resolves into its own texture and a full-screen pass streaks it toward the travel
+  focus (jittered taps, 8, or 5 on `(pointer: coarse)`, two fewer under 45 fps), adds
+  the wind lines and vignette and resolves to the frame. The depth buffer is now
+  Depth24PlusStencil8: the vehicle pass writes stencil 1 so the player's quad and rider
+  stay crisp, as the browser's rushMask does. Below the threshold nothing changes (no
+  copy, no pass), as in the browser.
+- `Riding::rush_amount` (additive) feeds `SceneRenderer::set_speed_rush`; a held replay
+  keeps rendering the rush like the browser (only a user pause stops it), and native
+  captures settle one second of presentation first.
+
+Parity (NAT03, 660-step throttle to 54 MPH, JS amount 0.255, Original): Rust browser
+0.54 (landscape) / 0.80 (portrait), was 3.86 / 4.61 without the pass and FOV kick;
+native 1.77 (its wind-line clock and focus smoothing run on fewer frames). Slow FREE01
+rides are unchanged (0.05 native). Host CPU per frame with the rush active: Chromium
+0.70-0.80 ms, WebKit 1.67-2.43 ms, WebKit at 60 Hz (host viewports, not phones).
+
+## Crazy/Gorn crashes and Gorn blood (2026-10-21)
+
+Ride Effects -> Crashes (authored, off under Original): `--crash original|crazy|gorn`
+natively, `?crash=` or the JavaScript build's saved `atv-crash-mode` in the browser.
+
+- `atv-game/crash.rs` steps `atv_core::crash_effects` after every ride step with the
+  effects clock (tick, 1/60 s; a Reset re-reads with dt 0), through the additive
+  `Ride::step_crash_effects` accessor (the inputs of atv-web's `simulation_frame`
+  `funny_crash`). The frame's ragdoll and broken-part matrices replace the presented
+  pose, as game.js does.
+- `atv-render/vehicle.rs` `set_severed` ports `severedIndices`: rider triangles that
+  span a severed joint are dropped from cut index buffers, rebuilt only when the
+  severed set changes.
+- `atv-render/blood.rs` + `.wgsl` port `BloodRenderer`/`packBlood`: splats, stump
+  caps and droplet streaks, up to 216 instances in one draw (alpha blend, no depth
+  write, depth bias -2/-2), drawn after snow and before the wheel effects.
+
+Parity (ENV03, steer -0.5 throttle, held at step 733 with one severed limb, 42 blood
+items and 2 stumps; JS crash camera set to Original, as the Rust engine has no tight
+crash camera yet): Rust browser blood box 0.10 (Original) / 0.31 (High), frame
+1.85 / 1.98, driven by the Rust paused toolbar and plant sway; the wreck at step 412
+matches at 1.46. Native diverges once the ragdoll flies for about a second: Apple
+libm and wasm math differ in the last bit, and the chaotic ragdoll amplifies that
+(the shared-math change will make native match). Host CPU per frame at the held
+crash, Original vs Gorn: Chromium 1.02/0.86 ms (landscape), 0.62/0.63 (portrait);
+WebKit 2.39/1.56, 1.87/1.92, all at 60 Hz (noise; the blood is one draw). Wasm
+5.21 MB with current main (4.90 MB, 1.28 MB brotli on the branch before merging).
+
 ## Browser stand-ins in the ported presentation
 
 Labelled for follow-up replacement with recovered behaviour (separate PRs, each with a
@@ -446,6 +497,7 @@ measured comparison). Parity above is with the JavaScript build.
 | `atv-game/src/ride/race.rs` | CPU recovery after 5 s off the track polygon or 4 s below 3 ft/s; the player handed to the path driver after the finish; equal-mass rider contact proxy | RaceStatus +0xf0 consumer, finish takeover routine and quad-to-quad response not identified | No |
 | `atv-game/src/ride/race.rs` | Restart Race keeps the loaded roster | the original reloads the event (new roster draw) | No |
 | desktop `f32` math (`atv-core` via std) | system libm for sin/cos/atan2/…; the browser build uses Rust's libm, so native races drift from the JavaScript/browser result | one deterministic implementation on every target (PS2 VU/libm equivalence is a separate question) | Yes: `atv_core::math` (Deterministic simulation maths) |
+| `atv-render/blood.rs`, `atv-game/crash.rs` | Crazy/Gorn crash breakup, ragdoll and blood | authored browser feature with no original counterpart (the original crash is the wreck animation, kept under Original) | Keep (option) |
 
 ## UI stand-ins to move toward original rendering
 
@@ -560,13 +612,14 @@ in the CPU-per-frame baseline).
 python3 tools/build_engine.py          # browser build into web/dist (part of make web)
 cargo run --release -p atv-app --bin fury -- --content private/reports/hosted-content --venue env01
 cargo run --release -p atv-app --bin fury -- --content DIR --venue env01 \
-  --camera x,y,z,yaw,pitch,focal [--weather on|off] [--steps N] [--graphics original] \
+  --camera x,y,z,yaw,pitch,focal [--weather on|off] [--steps N] [--graphics original] [--crash gorn] \
   --capture out.png 1280x720
 FURY_BIN=target/release/fury FURY_CONTENT=private/reports/hosted-content \
   ATV_TEST_URL=http://127.0.0.1:4173 node tools/compare_engine.mjs env01 \
   [out-dir] [--view x,y,z,yaw,pitch,focal]...   # PNGs, heatmaps and a JSON report
 FURY_BIN=target/release/fury FURY_CONTENT=private/reports/hosted-content ATV_TEST_URL=... \
   node tools/compare_engine.mjs ride env01 [script.json]   # private/reports/engine-parity/ride/
+  #   ride options: --graphics original|enhanced|high --crash original|crazy|gorn --region x0,y0,x1,y1
 cargo run --release -p atv-app --bin fury -- --content DIR --script s.json --trace out.json
 cargo run --release -p atv-app --bin fury -- --free ...   # terrain free camera, no ride
 cargo run --release -p atv-app --bin fury -- --race --venue env01 ...   # race (with --free: race course world, free camera)

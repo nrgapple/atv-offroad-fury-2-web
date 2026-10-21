@@ -55,8 +55,28 @@ try {
   await click(page, 'controls'); await onPage(page, 'controls');
   await key(page, 'ArrowRight');
   assert.equal(await page.evaluate(() => localStorage.getItem('atv-mobile-steering-sensitivity')), '90');
-  // Extras rows share play.html's keys.
+  // Keyboard bindings: capture a new Gas key, saved in play.html's profile.
+  await click(page, 'keyboard'); await onPage(page, 'bindings');
+  m = await menu(page);
+  assert.ok(m.choices.includes('bind:throttle') && m.choices.includes('bindnext'));
+  await click(page, 'bind:throttle');
+  assert.deepEqual((await menu(page)).choices, ['bindcancel'], 'capture shows Cancel only');
+  await key(page, 'KeyY');
+  await wait(page, () => JSON.parse(localStorage.getItem('atv2-gameplay-bindings-v1') ?? 'null')?.keyboard?.throttle?.[0]?.key === 'KeyY');
+  await click(page, 'bindreset');
+  await wait(page, () => JSON.parse(localStorage.getItem('atv2-gameplay-bindings-v1')).keyboard.throttle[0].key === 'KeyW');
+  await key(page, 'Escape'); await onPage(page, 'controls');
+  // Controller settings: preset and tuning save under the browser's keys.
+  await click(page, 'controller'); await onPage(page, 'controller-settings');
+  await click(page, 'padpreset');
+  await wait(page, () => JSON.stringify(JSON.parse(localStorage.getItem('atv2-gameplay-bindings-v1')).controller.reset) === JSON.stringify([{chord: [{button: 4}, {button: 5}]}]) && JSON.parse(localStorage.getItem('atv2-gameplay-bindings-v1')).controller.camera[0].button === 8);
+  m = await menu(page);
+  const steering = m.hits.find(h => h.action === 'pad-steering');
+  await page.mouse.click(steering.x + steering.width - 2, steering.y + 22); await nextFrames(page, 3);
+  assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem('atv2-controller-v1'))).steering, 150);
+  await key(page, 'Escape'); await onPage(page, 'controls');
   await key(page, 'Escape'); await onPage(page, 'settings');
+  // Extras rows share play.html's keys.
   await click(page, 'extras'); await onPage(page, 'extras');
   await click(page, 'flips');
   assert.equal(await page.evaluate(() => localStorage.getItem('atv-flips')), 'unleashed');
@@ -65,6 +85,11 @@ try {
   await key(page, 'Escape');
   await wait(page, () => !JSON.parse(document.querySelector('#ui-state').textContent).paused);
   assert.equal(await menu(page), null);
+  // A Pause tap shorter than a frame still pauses (queued key edges).
+  await page.keyboard.press('Escape');
+  await onPage(page, 'pause');
+  await key(page, 'Escape');
+  await wait(page, () => !JSON.parse(document.querySelector('#ui-state').textContent).paused);
   assertNoErrors(errors);
   await page.close();
 

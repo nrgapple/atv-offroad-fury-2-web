@@ -115,6 +115,10 @@ pub struct State {
     pub pressed: Option<usize>,
     pub scroll: f32,
     pub one_handed: bool,
+    /// The row being captured (bindings page).
+    pub capture: Option<String>,
+    /// Pager text, e.g. "Page 1 of 5".
+    pub page_count: Option<String>,
 }
 
 const FOOTER: [&str; 9] = [
@@ -258,7 +262,14 @@ pub fn element(view: &Viewport, state: &State) -> El {
             padding: sides(0., 22., 0., 22.),
             flex_grow: if footer { 1. } else { 0. },
             flex_shrink: 1.,
-            flex_basis: if footer { length(140.) } else { auto() },
+            // ≤580px: footer buttons take whole rows (game.css).
+            flex_basis: if footer && narrow && !PAGER.contains(&action) {
+                percent(1.)
+            } else if footer {
+                length(140.)
+            } else {
+                auto()
+            },
             ..Default::default()
         })
         .paint(paint)
@@ -288,6 +299,40 @@ pub fn element(view: &Viewport, state: &State) -> El {
             } else {
                 el.child(text).child(icon)
             };
+        } else if action.starts_with("bind:") || action.starts_with("song:") {
+            // List rows: the value is a detail line under the label.
+            let detail = TextStyle::new(
+                display(12., 700, false),
+                if selected {
+                    Color::hex("#3a2e00")
+                } else {
+                    Color::hex("#c4c4c4")
+                },
+            );
+            el = el.child(
+                El::new(Style {
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Column,
+                    gap: Size {
+                        width: px(0.),
+                        height: px(4.),
+                    },
+                    min_size: Size {
+                        width: LengthPercentageAuto::length(0.),
+                        height: LengthPercentageAuto::auto(),
+                    },
+                    flex_shrink: 1.,
+                    ..Default::default()
+                })
+                .child(label_el(&text, &style, size))
+                .child(El::new(Style::default()).content(Content::Text {
+                    text: value.clone(),
+                    style: detail,
+                    line_height: 18.,
+                    wrap: true,
+                })),
+            );
+            return el;
         } else {
             el = el.child(label_el(&text, &style, size));
         }
@@ -297,12 +342,23 @@ pub fn element(view: &Viewport, state: &State) -> El {
             } else {
                 Color::hex("#f1d84e")
             };
-            el = el.child(El::new(Style::default()).content(Content::Text {
-                text: value,
-                style: TextStyle::new(display(15., 700, false), value_color).spacing(0.45),
-                line_height: 18.,
-                wrap: false,
-            }));
+            // ≤580px: `.pause-value { max-width: 50% }` wraps long values.
+            el = el.child(
+                El::new(Style {
+                    flex_shrink: 0.,
+                    max_size: Size {
+                        width: if narrow { percent(0.5) } else { auto() },
+                        height: auto(),
+                    },
+                    ..Default::default()
+                })
+                .content(Content::Text {
+                    text: value,
+                    style: TextStyle::new(display(15., 700, false), value_color).spacing(0.45),
+                    line_height: 18.,
+                    wrap: narrow,
+                }),
+            );
         }
         el
     };
@@ -493,6 +549,32 @@ pub fn element(view: &Viewport, state: &State) -> El {
                 settings = settings.child(button(i, action, false, big));
             }
         }
+        if let Some(label) = &state.capture {
+            // .pause-capture: the action being bound and how to bind it.
+            let mut capture = column(8.)
+                .paint(Paint {
+                    radii: [10.; 4],
+                    fill: Some(Color::hex("#e3c86708").into()),
+                    border: [1.; 4],
+                    border_color: Color::hex("#e3c86760"),
+                    ..Default::default()
+                })
+                .child(El::new(Style::default()).content(Content::Text {
+                    text: label.clone(),
+                    style: TextStyle::new(display(20., 600, false), Color::hex("#f4f5f7")),
+                    line_height: 29.,
+                    wrap: true,
+                }))
+                .child(El::new(Style::default()).content(Content::Text {
+                    text: "Press a key, controller button or move an axis. Hold several together for a combination. Release to save; Escape cancels.".into(),
+                    style: TextStyle::new(display(14., 400, false), Color::hex("#c4c4c4")),
+                    line_height: 23.1,
+                    wrap: true,
+                }));
+            capture.style.padding = sides(20., 20., 20., 20.);
+            capture.style.border = sides(1., 1., 1., 1.);
+            body = body.child(capture);
+        }
         body = body.child(settings);
         if state.page == "controls" {
             let mut tips_el = column(6.);
@@ -511,6 +593,20 @@ pub fn element(view: &Viewport, state: &State) -> El {
             body = body.child(tips_el);
         }
         if !pager.children.is_empty() {
+            if let Some(count) = &state.page_count {
+                let text = El::new(Style {
+                    flex_shrink: 0.,
+                    padding: sides(0., 6., 0., 6.),
+                    ..Default::default()
+                })
+                .content(Content::Text {
+                    text: count.clone(),
+                    style: TextStyle::new(display(14., 600, false), Color::hex("#e8e8e8")),
+                    line_height: 14.,
+                    wrap: false,
+                });
+                pager.children.insert(1.min(pager.children.len()), text);
+            }
             body = body.child(pager);
         }
         if !footer.children.is_empty() {

@@ -13,7 +13,7 @@ use atv_render::{Camera, Gpu, SceneRenderer};
 
 pub struct Riding {
     pub ride: Ride,
-    bindings: Bindings,
+    pub bindings: Bindings,
     /// Follow-camera orbit offset (Z/X keys, right stick, mouse drag).
     pub orbit: f32,
     accumulator: f32,
@@ -46,6 +46,8 @@ pub struct Riding {
     pub step_rest: Vec<Option<[f32; 3]>>,
     /// Wheel dust, chunks, spray and wet births, stepped after each ride step.
     pub effects: Option<atv_game::wheel_effects::WheelEffects>,
+    /// Optional Crazy/Gorn crashes (off under Original).
+    pub crashes: Option<atv_game::crash::Crashes>,
 }
 
 /// What a frame sampled from the keyboard/controller.
@@ -85,7 +87,12 @@ impl Riding {
             step_cameras: Vec::new(),
             step_rest: Vec::new(),
             effects: None,
+            crashes: None,
         }
+    }
+
+    pub fn key_released(&mut self, keys: &dyn Fn(&str) -> bool) {
+        self.bindings.key_released(keys);
     }
 
     pub fn key_pressed(&mut self, code: &str, now: f64, keys: &dyn Fn(&str) -> bool) {
@@ -182,8 +189,11 @@ impl Riding {
         }
         // updateCamera -> followCamera: orbit follows render time.
         let orbit_axis =
-            ride::bindings::value(ride::bindings::Action::CameraRight, input.keys, input.pad)
-                - ride::bindings::value(ride::bindings::Action::CameraLeft, input.keys, input.pad);
+            self.bindings
+                .value(ride::bindings::Action::CameraRight, input.keys, input.pad)
+                - self
+                    .bindings
+                    .value(ride::bindings::Action::CameraLeft, input.keys, input.pad);
         self.orbit -= orbit_axis * dt * 1.7;
         self.orbit -= input.drag * 0.004;
         self.accumulator = (self.accumulator + dt).min(0.1);
@@ -221,6 +231,9 @@ impl Riding {
             if let Some(effects) = &mut self.effects {
                 effects.step(&self.ride)?;
             }
+            if let Some(crashes) = &mut self.crashes {
+                crashes.step(&self.ride)?;
+            }
             if let Some(sound) = &mut self.sound {
                 sound.step(self.ride.sound());
             }
@@ -247,6 +260,11 @@ impl Riding {
         }
     }
 
+    /// The speed-rush amount after this frame's update (screen pass).
+    pub fn rush_amount(&self) -> f32 {
+        self.rush.amount()
+    }
+
     /// The scene camera for this frame and the pose upload.
     pub fn present(
         &mut self,
@@ -258,8 +276,12 @@ impl Riding {
     ) -> Result<(Camera, f32), String> {
         let frame = self.ride.frame();
         let riding = frame.wreck.phase == ride::Phase::Riding;
-        self.rush
-            .update(frame.speed_magnitude, riding && !self.paused, dt);
+        self.rush.update(
+            frame.speed_magnitude,
+            // A held replay is not a pause: the browser keeps rendering it.
+            riding && (!self.paused || self.held),
+            dt,
+        );
         let View {
             position,
             yaw,
@@ -277,7 +299,34 @@ impl Riding {
             self.center = at;
             scene.recenter_terrain(gpu, venue, [frame.origin[0], frame.origin[2]]);
         }
-        scene.pose_ride(gpu, &self.ride.pose()?);
+        let mut pose = self.ride.pose()?;
+        // Crazy/Gorn: the ragdoll and broken parts replace the drawn pose
+        // (drawnQuadPose and acceptFrame in game.js); the rider's ragdoll
+        // matrices are world space.
+        if let Some(crash) = self.crashes.as_ref().and_then(|c| c.frame()) {
+            if crash.quad_node_matrices.len() == pose.quad_nodes.len() {
+                pose.quad_nodes.clone_from(&crash.quad_node_matrices);
+            }
+            if !crash.rider_node_matrices.is_empty() {
+                pose.rider_nodes.clone_from(&crash.rider_node_matrices);
+                pose.rider_world = [
+                    1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+                ];
+            }
+        }
+        let crash = self.crashes.as_ref().and_then(|c| c.frame());
+        scene.set_crash(
+            gpu,
+            crash.map_or(&[][..], |c| &c.severed_nodes[..]),
+            crash
+                .filter(|_| {
+                    self.crashes
+                        .as_ref()
+                        .is_some_and(|c| c.mode == atv_game::crash::CrashMode::Gorn)
+                })
+                .map(|c| &c.blood),
+        );
+        scene.pose_ride(gpu, &pose);
         scene.pose_race_cpus(gpu, &self.ride.cpu_poses(), position);
         Ok((
             Camera {

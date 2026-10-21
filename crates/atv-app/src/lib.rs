@@ -32,6 +32,8 @@ pub struct Options {
     /// (parity captures against a paused JavaScript frame).
     pub steps: Option<u64>,
     pub graphics: Graphics,
+    /// Ride Effects -> Crashes (Original by default; Crazy/Gorn are authored).
+    pub crash: atv_game::crash::CrashMode,
     /// Native parity capture: render once at this size, write PNG and exit.
     #[cfg(not(target_arch = "wasm32"))]
     pub capture: Option<(std::path::PathBuf, u32, u32)>,
@@ -150,6 +152,7 @@ struct World {
     weather: Option<bool>,
     steps: Option<u64>,
     graphics: Graphics,
+    crash: atv_game::crash::CrashMode,
     ride: bool,
     script: Option<replay::Script>,
     sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
@@ -169,6 +172,7 @@ async fn prepare(
         weather,
         steps,
         graphics,
+        crash,
         ride,
         script,
         sound,
@@ -239,6 +243,13 @@ async fn prepare(
         scene.set_weather_camera(camera);
         scene.advance_steps(steps);
     }
+    // speedRushTaps: phones and tablets ((pointer: coarse)) get fewer taps.
+    #[cfg(target_arch = "wasm32")]
+    scene.set_coarse_pointer(
+        web_sys::window()
+            .and_then(|w| w.match_media("(pointer: coarse)").ok().flatten())
+            .is_some_and(|m| m.matches()),
+    );
     let mut pending_sound = None;
     let riding = if ride {
         // Default Garage selection: quad 1, male rider.
@@ -267,6 +278,11 @@ async fn prepare(
             effects.reset(&riding.ride)?;
             scene.set_wheel_effects(&gpu, &effects);
             riding.effects = Some(effects);
+        }
+        if crash != atv_game::crash::CrashMode::Original {
+            let mut crashes = atv_game::crash::Crashes::new(crash);
+            crashes.reset(&riding.ride)?;
+            riding.crashes = Some(crashes);
         }
         if let Some(script) = &script {
             // `?traceAll=1`: every step, for browser-vs-native parity.
@@ -409,13 +425,11 @@ impl App {
         let active = !riding.paused && !riding.held && focused;
         let pad = self.gamepad.sample();
         if let Some(overlay) = &mut self.overlay {
+            overlay.pad_name = self.gamepad.name();
             overlay.sync_menu(riding.paused && !riding.held);
             riding.menu_open = overlay.menu.is_some();
             if riding.menu_open
-                && let Some(event) = overlay.menu_pad(
-                    pad.as_ref().map_or([0.; 17], |p| p.buttons),
-                    pad.as_ref().map_or([0.; 4], |p| p.axes),
-                )
+                && let Some(event) = overlay.menu_pad(pad.as_ref(), Some(&mut riding.bindings))
             {
                 self.menu_event(event);
                 return;
@@ -486,6 +500,15 @@ impl App {
             Ok(_) => {}
             Err(error) => status(&error),
         }
+        // The speed-rush screen pass shares the FOV kick's amount.
+        let motion = riding.ride.frame();
+        ready.scene.set_speed_rush(
+            &ready.gpu,
+            riding.rush_amount(),
+            dt,
+            motion.origin,
+            motion.linear_velocity,
+        );
         let active = !riding.paused && !riding.held && focused;
         let ui_started = Instant::now();
         if let Some(overlay) = &mut self.overlay {
@@ -523,6 +546,7 @@ impl App {
                     rider_world: ride.rider_world(),
                     terrain: &ready.venue.terrain,
                 }),
+                Some(&mut riding.bindings),
             );
         }
         self.meter.ui += ui_started.elapsed().as_secs_f64() * 1000.;
@@ -815,6 +839,9 @@ impl App {
                 }
             }
             Event::Changed => {
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.set_help_keys(&riding.bindings);
+                }
                 // Audio → Sound applies to the running mixer at once.
                 let enhanced = self
                     .overlay
@@ -879,11 +906,16 @@ impl App {
         };
         let id = touch.id;
         if overlay.menu.is_some() {
+            let bindings = self
+                .ready
+                .as_mut()
+                .and_then(|r| r.riding.as_mut())
+                .map(|r| &mut r.bindings);
             match touch.phase {
-                TouchPhase::Started => overlay.menu_press(id, x, y),
-                TouchPhase::Moved => overlay.menu_drag(id, x, y),
+                TouchPhase::Started => overlay.menu_press(id, x, y, bindings),
+                TouchPhase::Moved => overlay.menu_drag(id, x, y, bindings),
                 TouchPhase::Ended => {
-                    if let Some(event) = overlay.menu_release(id, x, y) {
+                    if let Some(event) = overlay.menu_release(id, x, y, bindings) {
                         self.menu_event(event);
                     }
                 }
@@ -936,12 +968,35 @@ impl App {
         }
     }
 
+    /// Key releases: a binding capture saves when all keys are up; the
+    /// bindings track held edge keys (bindings.js `observeKeys`).
+    fn key_released(&mut self, code: KeyCode) {
+        let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
+        let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) else {
+            return;
+        };
+        if let Some(overlay) = self.overlay.as_mut().filter(|o| o.menu.is_some()) {
+            if let Some(event) =
+                overlay.menu_key_up(&format!("{code:?}"), Some(&mut riding.bindings))
+            {
+                self.menu_event(event);
+            }
+            return;
+        }
+        riding.key_released(&|c: &str| names.contains(c));
+    }
+
     fn key_pressed(&mut self, code: KeyCode) {
+        let bindings = self
+            .ready
+            .as_mut()
+            .and_then(|r| r.riding.as_mut())
+            .map(|r| &mut r.bindings);
         if let Some(event) = self
             .overlay
             .as_mut()
             .filter(|o| o.menu.is_some())
-            .map(|o| o.menu_key(&format!("{code:?}")))
+            .map(|o| o.menu_key(&format!("{code:?}"), bindings))
         {
             if let Some(event) = event {
                 self.menu_event(event);
@@ -954,7 +1009,9 @@ impl App {
             riding.key_pressed(&format!("{code:?}"), now, &|c: &str| names.contains(c));
             // Any key skips the pre-race camera (00212d40).
             riding.ride.skip_intro();
-            let riding = !riding.paused && !riding.held;
+            // H stays a gameplay key when the player bound it (usesKey).
+            let free = !riding.bindings.uses_key("KeyH");
+            let riding = !riding.paused && !riding.held && free;
             if let Some(overlay) = &mut self.overlay {
                 overlay.key(&format!("{code:?}"), riding);
             }
@@ -1026,6 +1083,7 @@ impl ApplicationHandler<Message> for App {
                 weather: options.weather,
                 steps: options.steps,
                 graphics: options.graphics,
+                crash: options.crash,
                 ride: options.ride,
                 script: options.script,
                 sound: options.sound,
@@ -1047,6 +1105,21 @@ impl ApplicationHandler<Message> for App {
             if let (Ok(ready), Some((path, width, height))) = (&mut result, options.capture) {
                 if let Some(riding) = &mut ready.riding {
                     let aspect = width as f32 / height as f32;
+                    // About a second of held presentation, as the browser
+                    // renders before its capture: the speed rush settles.
+                    for _ in 0..60 {
+                        riding
+                            .present(&ready.gpu, &mut ready.scene, &ready.venue, aspect, 1. / 60.)
+                            .expect("present ride");
+                        let motion = riding.ride.frame();
+                        ready.scene.set_speed_rush(
+                            &ready.gpu,
+                            riding.rush_amount(),
+                            1. / 60.,
+                            motion.origin,
+                            motion.linear_velocity,
+                        );
+                    }
                     let (camera, focal) = riding
                         .present(&ready.gpu, &mut ready.scene, &ready.venue, aspect, 0.)
                         .expect("present ride");
@@ -1113,6 +1186,15 @@ impl ApplicationHandler<Message> for App {
                         if let Some(assets) = ready.hud_assets.take() {
                             overlay.set_meter(&ready.gpu.device, &ready.gpu.queue, assets);
                         }
+                        // Saved bindings and controller tuning (play.html's keys).
+                        if let Some(riding) = &mut ready.riding
+                            && !riding.held
+                            && riding.autodrive.is_none()
+                        {
+                            riding.bindings =
+                                atv_ui::menu::controller::load_bindings(&mut overlay.settings);
+                            overlay.set_help_keys(&riding.bindings);
+                        }
                         self.overlay = Some(overlay);
                     }
                     window.request_redraw();
@@ -1178,6 +1260,7 @@ impl ApplicationHandler<Message> for App {
                         }
                         ElementState::Released => {
                             self.keys.remove(&code);
+                            self.key_released(code);
                         }
                     };
                 }
@@ -1198,9 +1281,15 @@ impl ApplicationHandler<Message> for App {
                 let (x, y) = self.css(self.cursor.unwrap_or_default());
                 if let Some(overlay) = self.overlay.as_mut().filter(|o| o.menu.is_some()) {
                     self.dragging = false;
+                    let bindings = self
+                        .ready
+                        .as_mut()
+                        .and_then(|r| r.riding.as_mut())
+                        .map(|r| &mut r.bindings);
                     if state == ElementState::Pressed {
-                        overlay.menu_press(overlay::MOUSE, x, y);
-                    } else if let Some(event) = overlay.menu_release(overlay::MOUSE, x, y) {
+                        overlay.menu_press(overlay::MOUSE, x, y, bindings);
+                    } else if let Some(event) = overlay.menu_release(overlay::MOUSE, x, y, bindings)
+                    {
                         self.menu_event(event);
                     }
                     return;
@@ -1242,7 +1331,12 @@ impl ApplicationHandler<Message> for App {
                 let (x, y) = self.css((position.x, position.y));
                 if let Some(overlay) = &mut self.overlay {
                     if overlay.menu.is_some() {
-                        overlay.menu_drag(overlay::MOUSE, x, y);
+                        let bindings = self
+                            .ready
+                            .as_mut()
+                            .and_then(|r| r.riding.as_mut())
+                            .map(|r| &mut r.bindings);
+                        overlay.menu_drag(overlay::MOUSE, x, y, bindings);
                     } else {
                         overlay.hover(x, y);
                     }
@@ -1315,6 +1409,7 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
                     rider_world: ride.rider_world(),
                     terrain: &ready.venue.terrain,
                 }),
+                None,
             );
         }
         overlay
@@ -1511,6 +1606,17 @@ pub fn start() {
         weather: param("weather").and_then(|v| parse_switch(&v)),
         steps: param("steps").and_then(|v| v.parse().ok()),
         graphics: param("graphics").map_or_else(Graphics::default, |v| graphics_preset(&v)),
+        // ?crash= for captures, else the JavaScript build's saved setting.
+        crash: param("crash")
+            .or_else(|| {
+                web_sys::window()?
+                    .local_storage()
+                    .ok()??
+                    .get_item("atv-crash-mode")
+                    .ok()?
+            })
+            .and_then(|v| atv_game::crash::CrashMode::parse(&v))
+            .unwrap_or_default(),
         ride: param("free").is_none(),
         ui_backdrop: param("uibackdrop").and_then(|hex| {
             let v = u32::from_str_radix(&hex, 16).ok()?;
