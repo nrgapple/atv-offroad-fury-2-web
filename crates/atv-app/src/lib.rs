@@ -611,7 +611,9 @@ impl App {
     /// then the riding gestures.
     fn touch(&mut self, touch: winit::event::Touch) {
         use winit::event::TouchPhase;
-        if touch.phase == TouchPhase::Started {
+        // Mobile browsers may grant activation only on a completed touch.
+        // Retry there too; cancellation is never an activating gesture.
+        if matches!(touch.phase, TouchPhase::Started | TouchPhase::Ended) {
             self.gesture();
         }
         let (x, y) = self.css((touch.location.x, touch.location.y));

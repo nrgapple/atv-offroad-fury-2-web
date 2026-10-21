@@ -27,6 +27,11 @@ for (const engine of ['chromium', 'webkit']) {
       await route.continue();
     });
     await page.addInitScript(() => {
+      const contexts = new Set();
+      const Context = window.AudioContext || window.webkitAudioContext;
+      const resume = Context.prototype.resume;
+      Context.prototype.resume = function (...args) { contexts.add(this); return resume.apply(this, args); };
+      window.__audioContexts = contexts;
       const play = HTMLMediaElement.prototype.play;
       let first = true;
       HTMLMediaElement.prototype.play = function (...args) {
@@ -92,7 +97,11 @@ for (const engine of ['chromium', 'webkit']) {
     assert.ok(away.musicPaused, 'blur pauses soundtrack');
     assert.ok(Math.abs(away.musicTime - blurred.musicTime) < 0.05, 'hidden song time freezes');
     assert.ok(Math.abs(away.clock - blurred.clock) < 0.05, 'hidden mixer clock freezes');
+    await page.evaluate(() => Promise.all([...window.__audioContexts].map(context => context.suspend())));
+    assert.ok(await page.evaluate(() => [...window.__audioContexts].every(context => context.state === 'suspended')),
+      'fixture suspends the previously activated audio context while blurred');
     await page.evaluate(() => document.querySelector('canvas').focus());
+    await page.waitForFunction(() => [...window.__audioContexts].every(context => context.state === 'running'));
     await page.waitForFunction(() => JSON.parse(document.documentElement.dataset.engineAudio).musicActive);
     await press('Escape');
     await page.waitForFunction(steps => {
