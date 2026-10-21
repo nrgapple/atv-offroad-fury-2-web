@@ -297,6 +297,37 @@ mod tests {
     }
 
     #[test]
+    fn range_reads_cross_pack_chunks_and_check_their_integrity() {
+        let content = block_on(Content::open(Store::Pack(
+            Pack::from_static(fixture()).unwrap(),
+        )))
+        .unwrap();
+        let path = "/MINI/TWO.VAG";
+        assert_eq!(content.size(path).unwrap(), 15);
+        assert_eq!(block_on(content.read(path, 5, 5)).unwrap(), b"-a|ch");
+        assert_eq!(block_on(content.read(path, 15, 0)).unwrap(), b"");
+        assert!(block_on(content.read(path, 14, 2)).is_err());
+        assert!(block_on(content.read(path, usize::MAX, 2)).is_err());
+
+        // Even a one-byte request verifies its entire backing chunk.
+        let record = content.manifest.record(path).unwrap();
+        let digest = record.chunks()[0].sha256.clone();
+        let mut bad = fixture().to_vec();
+        let pack = Pack::from_static(fixture()).unwrap();
+        let (_, offset, length) = pack
+            .index
+            .iter()
+            .find(|(sha, _, _)| hex(sha) == digest)
+            .unwrap();
+        bad[(offset + length - 1) as usize] ^= 1;
+        let corrupted = block_on(Content::open(Store::Pack(
+            Pack::from_static(Box::leak(bad.into_boxed_slice())).unwrap(),
+        )))
+        .unwrap();
+        assert!(block_on(corrupted.read(path, 0, 1)).is_err());
+    }
+
+    #[test]
     fn file_backed_pack_matches_static() {
         let dir = std::env::temp_dir().join(format!("fury-pack-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
