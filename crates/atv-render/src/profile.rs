@@ -72,3 +72,29 @@ impl Profiler {
         self.counts.iter().map(|(name, c)| (*name, c / n)).collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Profiler;
+
+    #[test]
+    fn charges_marks_only_while_enabled() {
+        let mut p = Profiler::default();
+        p.start();
+        p.mark("a");
+        p.count("draws", 3);
+        p.end_frame();
+        assert!(p.report().is_empty() && p.counts().is_empty());
+        p.set_enabled(true);
+        for _ in 0..2 {
+            p.start();
+            p.mark("a");
+            p.mark("b");
+            p.count("draws", 3);
+            p.end_frame();
+        }
+        let names: Vec<_> = p.report().iter().map(|(n, _)| *n).collect();
+        assert_eq!(names, ["a", "b"]);
+        assert_eq!(p.counts(), [("draws", 3.)]);
+    }
+}
