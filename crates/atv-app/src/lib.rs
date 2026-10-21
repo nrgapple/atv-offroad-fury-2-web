@@ -13,8 +13,8 @@ use std::{collections::HashSet, sync::Arc};
 use web_time::Instant;
 use winit::{
     application::ApplicationHandler,
-    event::{ElementState, MouseButton, WindowEvent},
-    event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy, OwnedDisplayHandle},
+    event::{ElementState, MouseButton, StartCause, WindowEvent},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy, OwnedDisplayHandle},
     keyboard::{KeyCode, PhysicalKey},
     window::{Window, WindowId},
 };
@@ -99,6 +99,10 @@ struct App {
     focused: bool,
     visible: bool,
     suspended: bool,
+    /// No frame is scheduled: the single-player ride is inactive (see `awake`).
+    asleep: bool,
+    /// Controller buttons held at the last paused-state poll.
+    pad_buttons: u32,
     /// The left mouse press belongs to the UI, not the camera drag.
     mouse_ui: bool,
     ui_backdrop: Option<[u8; 3]>,
@@ -558,6 +562,62 @@ impl App {
         ((x / scale) as f32, (y / scale) as f32)
     }
 
+    /// Whether frames keep being scheduled. Like render() in web/game.js, a
+    /// single-player ride schedules no further frame while the window is
+    /// unfocused, hidden or suspended, or while paused (the menu is open);
+    /// lifecycle and input events wake it. Simulation already stops in those
+    /// states, so nothing but redundant redraws is skipped. Parity holds and
+    /// autodrive benchmarks keep rendering. (No multiplayer clock runs in the
+    /// Rust engine yet; a shared ride must keep its clocks live when it does.)
+    fn awake(&self) -> bool {
+        let Some(ready) = &self.ready else {
+            return true;
+        };
+        if let Some(riding) = &ready.riding
+            && (riding.held || riding.autodrive.is_some())
+        {
+            return true;
+        }
+        self.effective_focused() && ready.riding.as_ref().is_none_or(|r| !r.paused)
+    }
+
+    /// Schedule one frame: it applies the event, then `awake` decides.
+    fn wake(&mut self) {
+        if self.asleep {
+            self.asleep = false;
+            // The browser restarts its frame clock on resume (lastTime = 0).
+            self.last = Instant::now();
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+        }
+    }
+
+    /// While asleep and paused in focus: poll controllers so a button can
+    /// resume, and keep the soundtrack fed (the pause menu keeps music).
+    fn paused_tick(&mut self) {
+        let pad = self.gamepad.sample();
+        let buttons = pad.as_ref().map_or(0, |pad| {
+            pad.buttons
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| **v > 0.5)
+                .fold(0u32, |bits, (i, _)| bits | 1 << i)
+        });
+        let pressed = buttons & !self.pad_buttons != 0;
+        self.pad_buttons = buttons;
+        if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
+            let steps = riding.ride.steps();
+            if let Some(sound) = &mut riding.sound {
+                sound.maintain();
+                sound.report(steps);
+            }
+        }
+        if pressed {
+            self.wake();
+        }
+    }
+
     fn effective_focused(&self) -> bool {
         self.focused && self.visible && !self.suspended
     }
@@ -573,6 +633,7 @@ impl App {
             riding.set_focused(focused);
         }
         self.last = Instant::now();
+        self.wake();
     }
 
     fn blur(&mut self) {
@@ -802,6 +863,8 @@ impl ApplicationHandler<Message> for App {
                         riding.sound.as_mut().unwrap().start();
                     }
                 }
+                // One frame publishes the new sound state even while asleep.
+                self.wake();
             }
             Message::SoundFailed(error) => status(&format!("Sound unavailable: {error}")),
             Message::Ready(ready) => {
@@ -838,6 +901,18 @@ impl ApplicationHandler<Message> for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        // Input and resizes reach a sleeping ride through one frame.
+        if matches!(
+            event,
+            WindowEvent::Resized(_)
+                | WindowEvent::KeyboardInput { .. }
+                | WindowEvent::MouseInput { .. }
+                | WindowEvent::CursorMoved { .. }
+                | WindowEvent::Touch(_)
+                | WindowEvent::ScaleFactorChanged { .. }
+        ) {
+            self.wake();
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -924,12 +999,32 @@ impl ApplicationHandler<Message> for App {
             WindowEvent::RedrawRequested => {
                 self.step();
                 self.load_sound();
-                if let Some(window) = &self.window {
-                    window.request_redraw();
+                if self.awake() {
+                    if let Some(window) = &self.window {
+                        window.request_redraw();
+                    }
+                } else {
+                    self.asleep = true;
+                    self.pad_buttons = u32::MAX;
                 }
             }
             _ => {}
         }
+    }
+
+    fn new_events(&mut self, _: &ActiveEventLoop, cause: StartCause) {
+        if self.asleep && matches!(cause, StartCause::ResumeTimeReached { .. }) {
+            self.paused_tick();
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Asleep in focus (paused): a 50 ms tick; away: wait for events.
+        event_loop.set_control_flow(if self.asleep && self.effective_focused() {
+            ControlFlow::WaitUntil(Instant::now() + std::time::Duration::from_millis(50))
+        } else {
+            ControlFlow::Wait
+        });
     }
 }
 
@@ -1053,6 +1148,8 @@ pub fn run(options: Options) {
         focused: true,
         visible: true,
         suspended: false,
+        asleep: false,
+        pad_buttons: 0,
         mouse_ui: false,
         ui_backdrop: None,
         ui_diagnostics: ui_diagnostics_enabled(),
@@ -1101,7 +1198,7 @@ pub fn start() {
         ride: param("free").is_none(),
         ui_backdrop: param("uibackdrop").and_then(|hex| {
             let v = u32::from_str_radix(&hex, 16).ok()?;
-            (hex.len() == 6).then(|| [(v >> 16) as u8, (v >> 8) as u8, v as u8])
+            (hex.len() == 6).then_some([(v >> 16) as u8, (v >> 8) as u8, v as u8])
         }),
         sound: Some((
             if param("sound").as_deref() == Some("enhanced") {
