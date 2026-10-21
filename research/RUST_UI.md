@@ -206,7 +206,7 @@ Back with its glyph, controls tips, overflow scrolling) is laid out with taffy.
   `atv-speed-rush`, `atv-crash-*`, `atv-flips`, `atv-train-riding`,
   `atv.diagnostics.v1`, `atv-audio-v1`, `atv-soundtrack-v1` updated in place,
   `atv-race-*`), so the two games share them.
-- Not yet in the Rust menu: Jukebox and the Alpha experiments (Copy ride link:
+- Not yet in the Rust menu: the Alpha experiments (Copy ride link and Jukebox:
   see below)
   (rows hidden); Graphics, Speed rush, crash,
   flip, train and stats choices persist but the Rust ride does not apply them
@@ -485,4 +485,47 @@ Controller bindings; mean absolute RGB against play.html; `work/pad_pages.mjs`,
 images `private/reports/rust-ui/pad-glyphs/`): 1280x720 binding rows 1.93, summary
 panel 1.12, whole panel 1.37; 390x844 whole frame 2.63. Glyph shapes match by
 inspection (`glyph-rows-side.png`); the glyph labels sit within about a pixel.
+
+## Jukebox (2026-10-21)
+
+Pause → Jukebox ports web/jukebox.js and its music.js hooks for rides:
+
+- Player (`atv-app::sound::Player`, MusicStream): song choice (the shuffle continues
+  after it, op 41 `select`), the transient Jukebox Pause (Music on/off stays a
+  setting; the mixer holds the decoded queue, the web build pauses its stream),
+  Next/Previous through the play history (`playingHistoryIndex`, the next shuffle
+  pick at the end), seeking the hosted stream (the desktop VAG decoder is not
+  seekable, as the browser's decoder fallback is not), and the saved
+  `atv-soundtrack-v1` v3 record (`history`, `historyIndex`, at most 64, restored at
+  load; a fresh session avoids repeating the saved last track). Leaving the
+  Jukebox or the menu ends its pause (`stopJukebox`). Race holds still win.
+- Page (`atv-ui::menu::jukebox`, jukebox.css): Back, title and source (Streaming /
+  Original decoder); the original PAGE14 art (`bk_jukebox.pst` backdrop with its
+  vignette, the 20-frame `cd64.atm` disc turning in 80 ms steps while a song plays,
+  face-on when stopped; loaded on the first visit); genre, title, artist; seek with
+  elapsed and length; Previous / gold Play-Pause / Next; the volume range; the 21
+  original songs with number, title, artist, genre and the playing row's bars. The
+  track list is the only scrolling region and opens with the playing song centred.
+  Phones (≤560px or portrait) get the compact card, short landscape the smaller
+  art. Keyboard/controller order and labels come from `atv_core::ui_menu`;
+  Left/Right seek 10 s and step the volume 5%; pointer drags set seek and volume
+  (applied on release, as `onchange`).
+- The Jukebox redraws while open (disc, progress); an unchanged menu now reuses its
+  layout, so it lays out at most when the disc frame or quarter-second position
+  changes (about 12 Hz).
+
+Measured (host Chromium, ENV01 paused, song 3 chosen, list at the top; mean absolute
+RGB against play.html, `work/jukebox_pages.mjs`, images
+`private/reports/rust-ui/jukebox/`): 1280x720 header 7.55, list 8.79, title block
+12.04, controls 10.42, art 10.68 (the browser's spectrum bars and disc frame
+timing), panel 7.90; 390x844 player 5.40, list 11.27, frame 8.53. Test:
+`tools/test_engine_jukebox.mjs` (21 songs, choice, Pause/Play, Next/Previous history,
+volume and the saved record, pause cleared on leaving).
+
+Not ported: the spectrum bars (the web stream plays through a media element outside
+the Rust audio graph, and desktop has no analyser yet; the bars area stays empty),
+the main-menu Jukebox (the Rust frontend has no soundtrack player outside rides; the
+row stays hidden there), dragging feedback before release, Media Session release
+(play.html keeps the soundtrack out of system media controls; the Rust web build
+never registers it).
 

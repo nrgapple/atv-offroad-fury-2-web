@@ -317,6 +317,8 @@ pub struct Mixer {
     music: std::collections::VecDeque<[f32; 2]>,
     /// Gain on the streamed soundtrack only (a race's hold fade).
     pub stream_gain: f32,
+    /// The Jukebox paused the soundtrack: its queue waits where it is.
+    pub stream_paused: bool,
     pub music_underruns: u32,
     /// Seconds spent in `render`, for CPU reports.
     pub render_seconds: f64,
@@ -341,6 +343,7 @@ impl Mixer {
             meter: Meter::default(),
             music: Default::default(),
             stream_gain: 1.,
+            stream_paused: false,
             music_underruns: 0,
             render_seconds: 0.,
             log: None,
@@ -566,7 +569,7 @@ impl Mixer {
                 *slot = None;
             }
         }
-        if self.music_active && !self.music.is_empty() {
+        if self.music_active && !self.stream_paused && !self.music.is_empty() {
             for frame in music.iter_mut() {
                 match self.music.pop_front() {
                     Some(sample) => {

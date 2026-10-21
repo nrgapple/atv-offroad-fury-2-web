@@ -118,6 +118,14 @@ impl Preferences {
         settings.set("atv-soundtrack-v1", &record.to_string());
     }
 
+    /// The Jukebox volume range (0-1, steps of 5%) and its Play/song choices
+    /// that switch the soundtrack on (MusicStream setVolume/setEnabled).
+    pub fn set_music(&mut self, volume: f32, enabled: bool, settings: &mut Settings) {
+        self.music_volume = ((volume.clamp(0., 1.) * 20.).round() / 20.).clamp(0., 1.);
+        self.music_enabled = enabled;
+        self.save_music(settings);
+    }
+
     /// Applies one settings-row action; returns false if it is not a
     /// preference (frontend.js `run` branches for these rows).
     pub fn apply(
