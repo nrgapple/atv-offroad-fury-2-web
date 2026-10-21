@@ -69,7 +69,7 @@ pub struct Context<'a> {
 }
 
 /// Rows the Rust engine cannot perform yet are left out of its menu.
-const UNSUPPORTED: [&str; 1] = ["alpha"];
+const UNSUPPORTED: [&str; 0] = [];
 
 /// A binding being captured (frontend.js `beginCapture`).
 struct Capture {
@@ -234,6 +234,13 @@ impl PauseMenu {
             "diagnostics_mode": p.diagnostics,
             "sound_mode": p.sound_mode,
             "sfx_volume": (p.sfx_volume * 100.).round() as usize,
+            "alpha_rows": if self.page == "alpha" {
+                super::prefs::ALPHA_FEATURES.iter().map(|(id, label)| json!({
+                    "id": id, "label": label, "value": if p.alpha(id) { "On" } else { "Off" },
+                })).collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            },
             "music_enabled": p.music_enabled && !(self.page == "jukebox" && ctx.music.is_some_and(|m| m.paused)),
             "music_volume": (p.music_volume * 100.).round() as usize,
             "music_rows": if self.page == "jukebox" {
@@ -449,8 +456,8 @@ impl PauseMenu {
                 return Some(Event::Jukebox(super::jukebox::JukeboxAction::Select(index)));
             }
             "main" => return Some(Event::Leave("play.html")),
-            "settings" | "extras" | "hud-settings" | "minimap-config" | "race-overlays"
-            | "controls" | "music" => {
+            "settings" | "extras" | "alpha" | "hud-settings" | "minimap-config"
+            | "race-overlays" | "controls" | "music" => {
                 self.show(action);
                 return None;
             }

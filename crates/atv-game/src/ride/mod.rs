@@ -11,6 +11,7 @@ mod bike;
 pub mod bindings;
 pub mod cpu;
 pub mod gear;
+pub mod hype;
 pub(crate) mod load;
 pub mod present;
 pub mod race;
@@ -89,6 +90,9 @@ pub struct Controls {
     pub generation: u64,
     /// Motorcycle clutch held (web/bindings.js `clutch`; ATVs ignore it).
     pub clutch: bool,
+    /// Alpha Arcade flips: the keyboard/controller steering that spins the
+    /// quad in the air (game.js `input.arcade_spin`).
+    pub arcade_spin: Option<f32>,
 }
 
 /// Camera mode of the latest camera step.
@@ -250,6 +254,9 @@ fn vehicle_platform(vehicle: &Vehicle, train: &crate::train::Train) -> Option<(u
 pub struct RideOptions {
     pub flips: bool,
     pub realistic_train: bool,
+    /// Alpha Arcade flips (authored analog air rotation; replaces the
+    /// Unleashed gestures while on).
+    pub arcade_flips: bool,
 }
 
 /// World pose of the player's quad and rider for drawing.
@@ -850,9 +857,10 @@ impl Ride {
         }
         vehicle.set_stunt_landing_safe(safe);
         vehicle.set_realistic_train(self.options.realistic_train);
-        vehicle.set_flips(self.options.flips)?;
-        vehicle.set_arcade_flips(false)?;
-        vehicle.set_arcade_spin(None)?;
+        let arcade = self.options.arcade_flips;
+        vehicle.set_flips(self.options.flips && !arcade)?;
+        vehicle.set_arcade_flips(arcade)?;
+        vehicle.set_arcade_spin(controls.arcade_spin.filter(|_| arcade))?;
         if controls.stunt_modifiers > 7 {
             return Err("invalid stunt modifiers".into());
         }

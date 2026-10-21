@@ -919,6 +919,10 @@ impl App {
                 "crashMode": riding.crashes.as_ref().map(|c| c.mode.name()),
                 "flips": riding.ride.options.flips,
                 "realisticTrain": riding.ride.options.realistic_train,
+                "arcadeFlips": riding.ride.options.arcade_flips,
+                "alphaSlowmo": riding.alpha_slowmo,
+                "alphaBigAirCamera": riding.alpha_big_air_camera,
+                "timeScale": riding.hype.time_scale,
                 "interpolation": riding.interpolation,
                 "skySmooth": graphics.sky_smooth, "fresnel": graphics.fresnel,
                 "contactShadows": graphics.contact_shadows, "anisotropy": graphics.anisotropy,
@@ -1523,7 +1527,11 @@ impl App {
         riding.ride.options = atv_game::ride::RideOptions {
             flips: prefs.flips,
             realistic_train: prefs.realistic_train,
+            arcade_flips: prefs.alpha("arcade-flips"),
         };
+        // Settings → Alpha presentation (web/hype.js).
+        riding.alpha_slowmo = prefs.alpha("air-slowmo");
+        riding.alpha_big_air_camera = prefs.alpha("big-air-camera");
         let mode = atv_game::crash::CrashMode::parse(&prefs.crash_mode).unwrap_or_default();
         if riding
             .crashes

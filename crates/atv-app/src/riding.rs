@@ -63,6 +63,11 @@ pub struct Riding {
     /// Parity tooling: every delivered state and sampled presentation, in
     /// the browser's frame shape (tools/compare_presentation.mjs).
     pub present_log: Option<Vec<serde_json::Value>>,
+    /// Settings → Alpha presentation (web/hype.js): slow motion and the
+    /// big-air camera read it.
+    pub hype: atv_game::ride::hype::HypeDirector,
+    pub alpha_slowmo: bool,
+    pub alpha_big_air_camera: bool,
     /// Enhanced/High: draw sunk wheels on the visible ground
     /// (graphics.js `wheelReprojection`).
     pub wheel_reprojection: bool,
@@ -91,6 +96,22 @@ pub struct Sample<'a> {
     pub now: f64,
     /// Mouse drag this frame, in pixels.
     pub drag: f32,
+}
+
+/// What the hype director reads from the ride's latest step.
+fn hype_frame(ride: &Ride) -> (atv_game::ride::hype::HypeFrame, Option<f32>) {
+    let f = ride.frame();
+    (
+        atv_game::ride::hype::HypeFrame {
+            origin: f.origin,
+            linear_velocity: f.linear_velocity,
+            speed: f.speed_magnitude,
+            reset_count: f.reset_count,
+            riding: f.wreck.phase == ride::Phase::Riding,
+            grounded: f.grounded.iter().any(|g| *g),
+        },
+        ride.ground(f.origin[0], f.origin[2]),
+    )
 }
 
 /// Samples touch controls once per batch (game.js `drivingInput`).
@@ -128,6 +149,9 @@ impl Riding {
             clock: 0.,
             presented: (false, 1.),
             present_log: None,
+            hype: Default::default(),
+            alpha_slowmo: false,
+            alpha_big_air_camera: false,
             wheel_reprojection: false,
             ground: venue.visible.clone(),
             wheel_lift: std::cell::Cell::new(0.),
@@ -150,6 +174,7 @@ impl Riding {
     pub fn reset(&mut self) -> Result<(), String> {
         self.clear_input();
         self.ride.reset()?;
+        self.hype.reset();
         if let Some(effects) = &mut self.effects {
             effects.reset(&self.ride)?;
         }
@@ -251,6 +276,8 @@ impl Riding {
                 };
                 *cursor += 1;
                 self.ride.step(&control, self.orbit)?;
+                let (frame, ground) = hype_frame(&self.ride);
+                self.hype.step(frame, ground);
                 let frame = self.ride.frame();
                 self.step_rest.push(
                     (frame.wreck.phase == ride::Phase::Riding && frame.grounded.iter().all(|g| *g))
@@ -300,7 +327,11 @@ impl Riding {
                     .value(ride::bindings::Action::CameraLeft, input.keys, input.pad);
         self.orbit -= orbit_axis * dt * 1.7;
         self.orbit -= input.drag * 0.004;
-        self.accumulator = (self.accumulator + dt).min(0.1);
+        // Alpha slow motion stretches real time between fixed steps
+        // (Freestyle only: races and shared rides keep real time).
+        self.hype
+            .update(dt, self.alpha_slowmo && self.ride.race().is_none());
+        self.accumulator = (self.accumulator + dt * self.hype.time_scale).min(0.1);
         let count = ((self.accumulator * 60.).floor() as u32).min(4);
         if count < 1 {
             return Ok(());
@@ -346,7 +377,8 @@ impl Riding {
                 self.clock,
                 ticks,
                 continuous,
-                self.interpolation,
+                self.interpolation || self.hype.time_scale < 1.,
+                self.hype.time_scale,
             ),
             None => self.presentation.reset(),
         }
@@ -448,7 +480,7 @@ impl Riding {
     /// Frames draw through the presenters: every motorcycle, and ATVs with
     /// the preset's interpolation.
     fn presents(&self) -> bool {
-        self.interpolation || self.ride.is_motorcycle()
+        self.interpolation || self.ride.is_motorcycle() || self.alpha_slowmo
     }
 
     /// Settings → Speed rush intensity (`speedRushAmount`'s peak).
@@ -508,6 +540,10 @@ impl Riding {
         } = match (&camera.0, camera.1) {
             (frame, ride::CameraMode::Intro | ride::CameraMode::Tv) => {
                 atv_game::ride::view::cinematic(frame, aspect)
+            }
+            (frame, _) if self.alpha_big_air_camera => {
+                let ride = &self.ride;
+                chase(&self.hype.camera(frame, |x, z| ride.ground(x, z)), aspect)
             }
             (frame, _) => chase(frame, aspect),
         };

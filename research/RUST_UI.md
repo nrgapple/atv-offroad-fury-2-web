@@ -442,7 +442,7 @@ the Rust ride, which until now only persisted them:
 
 | Setting (key) | play.html | Rust engine now |
 | --- | --- | --- |
-| Display → Graphics (`atv-graphics`, Auto = `detectGraphicsTier`) | preset at load; on change: interpolation, anisotropy, contact shadows, dust/tire pools, shadow map, smoothed sky, Fresnel, wheel re-projection, dirt | saved preset for rides from the frontend (Auto ports `detectGraphicsTier`; URL/CLI `graphics=` wins; direct `?venue=` parity rides keep Original); on change: interpolation, smoothed sky (when decoded at load), Fresnel, contact shadows, dust and tire-track pools. wheel re-projection follows the preset (Enhanced/High). Anisotropy and shadow-map size apply from the next load; ATV dirt is not ported |
+| Display → Graphics (`atv-graphics`, Auto = `detectGraphicsTier`) | preset at load; on change: interpolation, anisotropy, contact shadows, dust/tire pools, shadow map, smoothed sky, Fresnel, wheel re-projection, dirt | saved preset for rides from the frontend (Auto ports `detectGraphicsTier`; URL/CLI `graphics=` wins; direct `?venue=` parity rides keep Original); on change: interpolation, smoothed sky (when decoded at load), Fresnel, contact shadows, dust and tire-track pools. Wheel re-projection follows the preset (Enhanced/High). Anisotropy and shadow-map size apply from the next load; ATV dirt is not ported |
 | Speed rush (`atv-speed-rush`) | FOV kick and screen pass intensity Off/Low/Normal/High; Off by default with reduced motion | applied at load and on change, same peaks and reduced-motion default |
 | Crashes (`atv-crash-mode`) | Original/Crazy/Gorn switch mid-ride | applied at load and on change (crash layer created or dropped) |
 | Flips (`atv-flips`) | `input.flips` each batch | `RideOptions::flips` each step |
@@ -486,6 +486,33 @@ images `private/reports/rust-ui/pad-glyphs/`): 1280x720 binding rows 1.93, summa
 panel 1.12, whole panel 1.37; 390x844 whole frame 2.63. Glyph shapes match by
 inspection (`glyph-rows-side.png`); the glyph labels sit within about a pixel.
 
+## Alpha experiments (2026-10-21)
+
+Settings → Alpha (web/alpha.js) lists the seven authored experiments, Off by
+default, toggled from the menu (Enter or Left/Right) and saved under `atv-alpha`,
+shared with play.html. The Rust ride runs three of them:
+
+- Air slow-mo and the big-air camera: `atv_game::ride::hype::HypeDirector` ports
+  web/hype.js (big-air detection from clearance, rise and air time; one apex slow
+  motion per jump at 0.3x with its ease in/hold/ease out, ended by touchdown or a
+  wreck; the landing dip spring; the chase pull-in, flattening and FOV widening).
+  It steps once per simulation step and updates once per rendered frame; slow motion
+  scales the step accumulator (Freestyle only, as in the browser) and stretches the
+  presenters' segments, so even Original ATVs interpolate while it runs. Clearance
+  reads the physics terrain under the rider; the browser reads its rendered terrain
+  height (the same heights after `render_heights`, sampled bilinearly rather than by
+  the triangle the physics uses).
+- Arcade flips: `RideOptions::arcade_flips` switches the recovered vehicle's arcade
+  flip mode and feeds the keyboard/controller steering as `arcade_spin`, replacing the
+  Unleashed gestures (game.js `drivingInput`). Touch spin axes are not passed yet.
+
+Not run yet (rows listed, saved, no effect in the Rust ride): Speed & air muffle (the
+music lowpass and wind loop), Air dark blur (screen pass), Landing burst (dust/clod
+particles and the thump) and Heavy mud (needs the ATV dirt buildup, which the Rust
+engine has not ported). Evidence: `atv-game` unit test (a launched 40 ft/s jump fires
+one apex, one slow motion reaching 0.3x and a landing over 30 ft/s);
+`tools/test_engine_alpha.mjs` (rows, saved toggles, applied ride flags); the presenter
+and interpolation tests are unchanged at scale 1. Host only.
 ## Jukebox (2026-10-21)
 
 Pause → Jukebox ports web/jukebox.js and its music.js hooks for rides:
