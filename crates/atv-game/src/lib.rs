@@ -10,6 +10,7 @@ pub mod intro;
 pub mod launch;
 pub mod lingering_dust;
 pub mod materials;
+pub mod multiplayer;
 pub mod ride;
 pub mod scenery;
 pub mod sky;

@@ -12,6 +12,7 @@ const USAGE: &str = "usage: fury [--content DIR | --pack FILE] [--front PAGE] [-
 [--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high] \
 [--crash original|crazy|gorn] \
 [--script IN.json] [--trace OUT.json] [--present-trace OUT.json [--present-hz 144]] [--capture OUT.png WxH [--ui] [--gpu-frames N]] [--verify-content] [--version] \
+[--host [--room CODE] | --room CODE] [--relay URL] [--name NAME] \
 [--mute] [--no-music] [--sound original|enhanced] [--audio OUT.wav] \
 [--autodrive IN.json [--bench OUT.json [--profile]]]";
 
@@ -57,6 +58,10 @@ fn main() {
     let mut front_page: Option<String> = None;
     let mut capture = None;
     let mut capture_ui = false;
+    let mut room_code: Option<String> = None;
+    let mut host = false;
+    let mut relay = "https://furyremastered.com".to_string();
+    let mut name = "Rider".to_string();
     let mut gpu_frames = None;
     let mut verify = false;
     let mut camera = None;
@@ -124,6 +129,10 @@ fn main() {
                     .expect("--crash needs original, crazy or gorn")
             }
             "--ui" => capture_ui = true,
+            "--host" => host = true,
+            "--room" => room_code = Some(args.next().expect("--room needs a code")),
+            "--relay" => relay = args.next().expect("--relay needs a URL"),
+            "--name" => name = args.next().expect("--name needs a name"),
             "--gpu-frames" => {
                 gpu_frames = Some(
                     args.next()
@@ -276,8 +285,16 @@ fn main() {
     if verify {
         return verify_content(store);
     }
+    // `--host` / `--room` ride in a multiplayer room (a direct ride).
+    let room = (host || room_code.is_some()).then_some(atv_app::RoomStart {
+        relay,
+        code: room_code,
+        host,
+        name,
+    });
     // Without a direct-ride or tooling option the game opens at its title.
-    let direct = venue_given
+    let direct = room.is_some()
+        || venue_given
         || camera.is_some()
         || script.is_some()
         || autodrive.is_some()
@@ -310,6 +327,7 @@ fn main() {
         bench,
         profile,
         front,
+        room,
     });
 }
 

@@ -311,9 +311,9 @@ Lifecycle and input events (keys, pointer, touch, resize) wake it for one frame,
 which applies the event and decides again; resuming restarts the frame clock as the
 browser's `lastTime = 0` does. While paused in focus a 50 ms timer polls controllers
 (a pressed button wakes the ride) and keeps the soundtrack fed, since the pause menu
-keeps music playing. Parity holds and autodrive benchmarks keep rendering. No
-multiplayer clock runs in the Rust engine yet; a shared ride must keep its clocks
-live when it arrives, as the browser does.
+keeps music playing. Parity holds and autodrive benchmarks keep rendering. A
+multiplayer room keeps the ride awake so its socket and poses stay live (see
+Multiplayer).
 
 `tools/test_engine_sleep.mjs` (host Chromium, 960x540, two-second windows): before,
 paused/blurred/hidden kept 152-161 animation frames and 191-204 ms of main-thread
@@ -941,8 +941,87 @@ The dressed differences stay within 0.03 of the undressed baseline: the gear,
 jersey and paint match the browser (images inspected,
 `private/reports/engine-parity/gear-paint/`). Not ported yet: the Garage's Rider
 gear page and its gear/paint previews in the Rust frontend (the field is only
-carried through), and multiplayer peers' appearance (the Rust engine has no
-multiplayer yet).
+carried through). Multiplayer peers' gear and paint arrived with Multiplayer
+slice 1.
+
+## Multiplayer (2026-10-21)
+
+Multiplayer is the largest piece the Rust engine needs before play.html can switch
+to it. It is delivered in vertical slices; each one stays compatible with the
+JavaScript game on the same relay (protocol v6, `atv-net`).
+
+### Slice 1: relay client and remote riders
+
+Ported:
+
+- `atv-game/src/multiplayer/mod.rs`, `Session`: the protocol half of atv-web's
+  networking adapter (crates/atv-web/src/multiplayer.rs ops 80-85, 109-111 and 118),
+  with no I/O. It covers Join, Welcome (slot, code, rejoin key) and Lobby, Ready, and
+  the host's SetLobby. Pings keep the socket warm and set the relay clock offset.
+  Pose sending ports op 81 unchanged: the same adaptive cadence (20/10/5/1/0.2 Hz),
+  compact full snapshots and changed-block deltas, and send receipts that advance
+  the baseline. Receiving admits only snapshots from rostered riders whose models
+  match. `PoseBuffer` smoothing is atv-net's, shared with the JavaScript game.
+- `atv-game/src/multiplayer/remote.rs`: each remote rider's original quad, rider
+  mesh, 78 motions and textures, posed locally from the replicated recipe (port of
+  multiplayer_animation.rs). Wreck clips run on the receiver's clock. The rider wears
+  the room's gear and the quad carries its paint (`ride::gear`, PR #220).
+- `atv-app/src/net.rs`, the transport. The browser uses a web-sys `WebSocket` and
+  `fetch`. Desktop uses tungstenite and ureq (rustls) on a socket thread, which sends
+  `Origin` set to the relay's own origin. That header satisfies the relay's
+  browser-origin check; it is not authentication.
+- `atv-app/src/multiplayer.rs`, `Net`. Hosting POSTs `/multiplayer/rooms` and joins
+  with the slot key; joining POSTs `{code, open:true}` first, as invite links do. A
+  guest rides the room's course; the host starts the room on `--venue`. Every frame
+  `Net` sends at the 50 ms tick, uploads remote models as they load (one
+  `VehiclePass` per slot in `SceneRenderer`, beside the race CPUs) and draws the
+  presented riders. Riders over 864 ft from the eye are skipped, as for CPUs. A room
+  keeps the app awake, so inactive render sleep never stops its socket or poses.
+- Entry points: `fury --host [--room CODE] | --room CODE [--relay URL] [--name NAME]`
+  (relay default `https://furyremastered.com`), and `engine.html?host=1` or
+  `?room=CODE[&name=]` on the page's own origin. Motorcycles fall back to ATV01, as
+  in the JavaScript game.
+
+Observed (`tools/test_engine_multiplayer.mjs`, run once on a local `wrangler dev`
+relay with original content, one Mac, headless Chromium/Metal; host-only):
+
+- Native `fury --host` created room FV246A4P on env01. A JavaScript guest (quad 14,
+  female) and a Rust browser guest (`engine.html`, WebGL2) joined by room link.
+- Each of the three clients drew both other riders: native `drawn` 2, engine
+  `drawn` 2, and the JavaScript game listed 2 fresh remote riders.
+- The JavaScript guest drove 240 steps. The Rust browser guest saw that rider move
+  134.7 ft.
+- The Rust browser guest sent 13 messages (10 full, 3 delta, 117-byte deltas) in
+  1,688 bytes and suppressed 65 sends. RTT was 23 ms.
+- Inspected screenshots are in ignored `private/reports/engine-multiplayer/`
+  (`slice1-native.png`, `slice1-engine.png`, `slice1-js.png`). The native capture
+  shows the JavaScript rider's Honda quad 14 and female rider beside the host. The
+  Rust guest overlaps the host at the start (see gaps).
+- The native capture holds its ride unstepped while it waits. Its spawn velocity
+  therefore reads as moving, and it sent 296 no-change 26-byte deltas at the near
+  cadence. A live ride steps normally. The native RTT of 256 ms includes blocking
+  model loads in that capture loop.
+
+Gaps, in planned slice order:
+
+1. Arrivals start at the course start. The JavaScript game's meet-beside-a-rider
+   spawn (atv-web `world::spawn`) and the 2.5 s contact ghosting are not ported.
+2. No room UI in `atv-ui`: no Multiplayer menu, Host/Join forms, room code entry,
+   Players page, invite copy or Leave. Rides start from the command line or URL
+   only. No name tags, minimap peer markers or compass colours either.
+3. A closed socket ends the room for this client (status line). There is no
+   reconnect with the slot key, no session-storage key recovery and no reload when
+   the host changes the course. Host handoff works only on the relay side.
+4. No Arlington Free Ride: the shared `FREERD` rooms, the rider count and the
+   20-rider limits are not in the menus.
+5. The shared train clock, moving-platform rebasing and owner-local peer contacts
+   (`atv_core::peer_contact`) are not ported. Snapshots send no platform and no
+   train time.
+6. Remote engine voices and impact sounds are not played: the nearest-six voice
+   selection and spatial audio of op 83 are not ported.
+7. Pause and focus: a paused or unfocused Rust rider sends a paused (zero-velocity)
+   pose, but it does not keep neutral-input simulation running as the JavaScript
+   game does.
 
 ## Commands
 
@@ -964,6 +1043,9 @@ cargo run --release -p atv-app --bin fury -- --content DIR --venue env01 --mute 
   --autodrive drive.json --bench out.json --profile   # per-pass CPU (browser: ?autodrive=...&profile=1)
 cargo run --release -p atv-app --bin fury -- --content DIR --script s.json --trace out.json
 cargo run --release -p atv-app --bin fury -- --free ...   # terrain free camera, no ride
+cargo run --release -p atv-app --bin fury -- --content DIR --venue env01 --host [--room CODE] \
+  [--relay http://127.0.0.1:4187] [--name NAME]          # host a room; --room CODE alone joins
+FURY_BIN=... FURY_CONTENT=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer.mjs
 cargo run --release -p atv-app --bin fury -- --quad 29 ...   # a motorcycle (27-46); ride parity: compare_engine.mjs ride ... --quad 29
 cargo run --release -p atv-app --bin fury -- --gear 1,2,1,3,3,2,1 --paint 4 ...   # Garage gear/paint; parity: compare_engine.mjs ride ... --appearance 1.2.1.3.3.2.1:4
 cargo run --release -p atv-app --bin fury -- --race --venue env01 ...   # race (with --free: race course world, free camera)
