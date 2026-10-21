@@ -60,7 +60,9 @@ JavaScript path must not be retired before those comparisons pass.
   pointer/coalescing fixture pass at 390×844 and 844×390, with DPR3 requested:
   axes, 44px utility hit targets, held-finger Camera/Pause, drag-away guards,
   paused simulation, neutral Resume, keyboard Reset/Pause, cancellation and
-  resize. The test reads an opt-in `?uiDiagnostics=1` hook; normal play does not
+  resize. Portrait natural-hop captures also exercise the airborne trick wheel
+  while the primary finger remains held, including WebKit at actual backing DPR3.
+  The test reads an opt-in `?uiDiagnostics=1` hook; normal play does not
   serialize UI/game state each frame.
 - Native app compilation and focused UI/app Clippy pass. The same gesture crate
   builds for native and WebAssembly; native touch hardware is not tested.

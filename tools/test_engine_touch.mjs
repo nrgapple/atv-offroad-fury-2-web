@@ -115,6 +115,30 @@ for (const engine of ['chromium', 'webkit']) {
       await pointer('move', 1, { x: primary.x + 35, y: primary.y + 35 });
       await page.screenshot({ path: capture });
       report.push({ engine, viewport, state: await state(page), capture });
+      if (viewport.width === 390) {
+        // A natural Caribou hop exercises the wheel at each browser's real
+        // backing ratio, without bypassing the recovered stunt entry gates.
+        await pointer('up', 1, primary);
+        await page.keyboard.down('KeyR');
+        await frames(page, 4);
+        await page.keyboard.up('KeyR');
+        const start = (await state(page)).step;
+        await pointer('down', 1, primary);
+        await page.waitForFunction(start => {
+          const s = JSON.parse(document.querySelector('#ui-state').textContent);
+          return s.step > start + 130 && s.grounded.every(g => !g);
+        }, start, { timeout: 20000 });
+        const wheel = { x: 195, y: 300 };
+        await pointer('down', 2, wheel);
+        await pointer('move', 2, { x: wheel.x, y: wheel.y - 65 });
+        const preview = await state(page);
+        assert.ok(preview.toolbar.touchOwned && preview.toolbar.secondaryOwned, 'airborne wheel preserves both fingers');
+        const wheelCapture = path.resolve('private/reports/devlog-images', `rust-touch-wheel-${engine}.png`);
+        await page.screenshot({ path: wheelCapture });
+        report.push({ engine, viewport, state: preview, capture: wheelCapture });
+        await pointer('up', 2, { x: wheel.x, y: wheel.y - 65 });
+        assert.equal((await state(page)).toolbar.secondaryOwned, false, 'wheel release drops only secondary');
+      }
       assertNoErrors(errors);
       await page.close();
     }
