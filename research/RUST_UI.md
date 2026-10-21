@@ -346,3 +346,43 @@ frame while the rider animates (layout and pose; the draw is on the GPU);
 switching vehicle costs 2-6 ms when the new model uploads. Not ported: rider
 gear and quad paint previews (`gearPreview`, `applyPaint`). Wasm is 5.70 MB on
 current main. `test_engine_front.mjs` waits for both garage previews.
+
+## Race overlays checkpoint (2026-10-21)
+
+`atv-ui::hud::race` ports web/hud.js `drawRace` and the 321 LIGHTS lamps; the UI
+pass draws them in races from the race frame (`atv_core::race`, `race_hud`):
+
+- Assets (`hud::assets::load(.., racing)`): the race archive registers after the
+  browser's archives; OverlaySet1 objects 1, 2, 3, 4, 7, 11, 14 and 41 from
+  Overlays.pb, the `Single-Sign-*` sections, their CEL fonts and icons, the radar
+  map and bounds from `<venue>nat.toy [Radar]`, `radaricon_racer` (plus a red copy,
+  hud.js `tinted`) and the `321ron/roff/gon/goff` lamps.
+- Layout as hud.js: the 640x448 frame scaled by `min(h/448, w/480)`, left items keep
+  their x, right items their distance from the right edge, centred items stay centred
+  (30 units left on phones); top items sit below the toolbar's bottom edge
+  (`toolbarBottom`), and phones move the right column below the compact meter. LAP
+  TIME, LAP, SCORE (committed stunt points), the PLACE name tree with its sliding
+  slots and pulsing rank or the place number, BEST/TOTAL/LEAD faded by the lap
+  history (LEAD green ahead, red behind), the lap history, info text and signs with
+  Off Track / Too Deep digits, and the north-up radar with CPU dots and the player's
+  red dot. Pause → Race Overlays choices (`atv-race-overlays-off`,
+  `atv-race-position`) apply when the menu closes.
+- Races hide the GPS map; the speed meter follows the overlays' Speed group; stunt
+  text follows the Info group; the HUD hides during the pre-race shots; the lamps
+  draw while the race frame carries them. The race load fades in from black over
+  500 ms (race.js `.race-fade`). A held parity replay keeps its HUD and the Pause
+  toolbar, as the browser renders it.
+
+Measured (NAT01 race, seed 12345, 720 scripted steps, held frame; mean absolute RGB
+against play.html in the Rust browser build, host Chromium, images under
+`private/reports/engine-parity/race-presentation/`): 1280x720 PLACE tree 3.91, top
+row 2.13, timing column 6.51 (the scene behind it differs; the text matches by
+inspection), radar 2.43, lamps 0.41, meter 0.76, whole frame 2.03 (the same frame
+without the overlays: 7.13); 390x844 top items 1.19, lamps 1.26, whole 2.70. Native
+captures (`fury --capture .. --ui`) place the display face a few pixels lower than
+Chrome's canvas text (the desktop font's metrics), as for the Freeride HUD.
+
+Not yet: the countdown digits shown when a course lacks the lamp art (every race
+archive carries it), the results panel and its Continue / Hide Menu / Restart / Quit
+Event menus.
+

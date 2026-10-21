@@ -72,7 +72,40 @@ pub struct OverlayAssets {
     pub stunt: Section,
     pub fonts: HashMap<String, CelFont>,
     pub images: HashMap<String, HudImage>,
+    /// Race start 321 LIGHTS art (`321ron`, `321roff`, `321gon`, `321goff`):
+    /// race and Freeride course archives carry it; Training does not.
+    pub lamps: bool,
+    /// OverlaySet1 single-player race overlays (races only).
+    pub race: Option<RaceAssets>,
 }
+
+/// web/hud.js `initRace`: the race layouts, sign icons, the radar map from
+/// the race TOY and the radar racer icon.
+pub struct RaceAssets {
+    /// `OverlayObject-N` for N in [`RACE_OBJECTS`].
+    pub layout: HashMap<u32, Section>,
+    /// `Single-Sign-N` by sign id.
+    pub signs: HashMap<u8, Section>,
+    /// Radar map image name and its world bounds (left, top, right, bottom).
+    pub radar: (String, [f32; 4]),
+}
+
+/// The race overlay objects hud.js draws.
+pub const RACE_OBJECTS: [u32; 8] = [1, 2, 3, 4, 7, 11, 14, 41];
+/// Sign ids and their sections (hud.js `SIGNS`).
+pub const SIGNS: [(u8, &str); 7] = [
+    (1, "Single-Sign-1"),
+    (2, "Single-Sign-2"),
+    (3, "Single-Sign-3"),
+    (12, "Single-Sign-12"),
+    (13, "Single-Sign-13"),
+    (14, "Single-Sign-14"),
+    (15, "Single-Sign-15"),
+];
+pub const LAMPS: [&str; 4] = ["321ron", "321roff", "321gon", "321goff"];
+/// The radar racer icon; the player's copy is tinted red (`tinted`).
+pub const RACER: &str = "radaricon_racer";
+pub const RACER_PLAYER: &str = "radaricon_racer#255,0,0";
 
 /// The section's original bytes (hud.js/frontend.js `document(name, section)`):
 /// Overlays.pb has a stray authoring note outside the sections.
@@ -105,8 +138,8 @@ pub fn section(bytes: &[u8], name: &str) -> Option<Section> {
 }
 
 /// Archives in the order the browser registers member names; the first
-/// archive holding a name wins.
-fn archives(environment: &str) -> Vec<String> {
+/// archive holding a name wins. A race adds its course archive last.
+fn archives(environment: &str, racing: bool) -> Vec<String> {
     let mut list = vec![
         "/STARTAPP.RES".to_string(),
         "/UI/RESOURCE/PAGEA/PAGE01.RES".to_string(),
@@ -116,29 +149,65 @@ fn archives(environment: &str) -> Vec<String> {
         list.push(course.archive);
     }
     list.push("/OVERLAYS.RES".to_string());
+    if racing && let Ok(course) = atv_game::launch::course_resource(environment, true) {
+        list.push(course.archive);
+    }
     list
 }
 
-pub async fn load(content: &Content, environment: &str) -> Result<OverlayAssets, String> {
-    let mut opened = Vec::new();
-    for path in archives(environment) {
-        if content.manifest.record(&path).is_some() {
-            opened.push(Archive::open(content, &path).await?);
-        }
-    }
-    let find = |name: &str| -> Option<(usize, usize)> {
-        opened
+struct Opened<'c> {
+    archives: Vec<Archive<'c>>,
+}
+
+impl Opened<'_> {
+    fn find(&self, name: &str) -> Option<(usize, usize)> {
+        self.archives
             .iter()
             .enumerate()
             .find_map(|(a, archive)| archive.named(name).map(|m| (a, m)))
-    };
-    let (a, m) = find("Overlays.pb").ok_or("original Overlays.pb is missing")?;
-    let overlays = opened[a].member(m).await?;
-    let speed = section(&overlays, "OverlayObject-5").ok_or("OverlayObject-5 missing")?;
-    let stunt = section(&overlays, "OverlayObject-12").ok_or("OverlayObject-12 missing")?;
-    let mut fonts = HashMap::new();
-    let mut images = HashMap::new();
-    for layout in [&speed, &stunt] {
+    }
+
+    async fn member(&self, name: &str) -> Result<Option<Vec<u8>>, String> {
+        match self.find(name) {
+            Some((a, m)) => self.archives[a].member(m).await.map(Some),
+            None => Ok(None),
+        }
+    }
+
+    async fn image(
+        &self,
+        images: &mut HashMap<String, HudImage>,
+        name: &str,
+    ) -> Result<bool, String> {
+        let stem = name
+            .trim_end_matches(".tga")
+            .trim_end_matches(".pst")
+            .to_string();
+        if images.contains_key(&stem) {
+            return Ok(true);
+        }
+        let Some(bytes) = self.member(&format!("{stem}.pst")).await? else {
+            return Ok(false);
+        };
+        let decoded = texture::decode_pst(&bytes)?;
+        images.insert(
+            stem,
+            HudImage {
+                width: decoded.info.width,
+                height: decoded.info.height,
+                rgba: decoded.rgba,
+            },
+        );
+        Ok(true)
+    }
+
+    /// The layout's CEL fonts and icon textures.
+    async fn section_assets(
+        &self,
+        layout: &Section,
+        fonts: &mut HashMap<String, CelFont>,
+        images: &mut HashMap<String, HudImage>,
+    ) -> Result<(), String> {
         for i in 1..=layout.number("numtext").unwrap_or(0.) as usize {
             let name = layout
                 .text(&format!("text{i}font"))
@@ -147,10 +216,10 @@ pub async fn load(content: &Content, environment: &str) -> Result<OverlayAssets,
             if fonts.contains_key(&name) {
                 continue;
             }
-            let Some((a, m)) = find(&format!("{name}.cel")) else {
+            let Some(bytes) = self.member(&format!("{name}.cel")).await? else {
                 continue;
             };
-            let cel = ui::Font::decode(&opened[a].member(m).await?)?;
+            let cel = ui::Font::decode(&bytes)?;
             let mut font = CelFont::default();
             for g in &cel.glyphs {
                 if let Some(metrics) = g.metrics {
@@ -162,35 +231,130 @@ pub async fn load(content: &Content, environment: &str) -> Result<OverlayAssets,
             fonts.insert(name, font);
         }
         for i in 1..=layout.number("numicons").unwrap_or(0.) as usize {
-            let Some(name) = layout.text(&format!("icon{i}texture")) else {
-                continue;
-            };
-            let stem = name
-                .trim_end_matches(".tga")
-                .trim_end_matches(".pst")
-                .to_string();
-            if images.contains_key(&stem) {
-                continue;
+            if let Some(name) = layout.text(&format!("icon{i}texture")) {
+                self.image(images, &name).await?;
             }
-            let Some((a, m)) = find(&format!("{stem}.pst")) else {
-                continue;
-            };
-            let decoded = texture::decode_pst(&opened[a].member(m).await?)?;
-            images.insert(
-                stem,
-                HudImage {
-                    width: decoded.info.width,
-                    height: decoded.info.height,
-                    rgba: decoded.rgba,
-                },
-            );
+        }
+        Ok(())
+    }
+}
+
+pub async fn load(
+    content: &Content,
+    environment: &str,
+    racing: bool,
+) -> Result<OverlayAssets, String> {
+    let mut opened = Opened {
+        archives: Vec::new(),
+    };
+    for path in archives(environment, racing) {
+        if content.manifest.record(&path).is_some() {
+            opened.archives.push(Archive::open(content, &path).await?);
         }
     }
+    let overlays = opened
+        .member("Overlays.pb")
+        .await?
+        .ok_or("original Overlays.pb is missing")?;
+    let speed = section(&overlays, "OverlayObject-5").ok_or("OverlayObject-5 missing")?;
+    let stunt = section(&overlays, "OverlayObject-12").ok_or("OverlayObject-12 missing")?;
+    let mut fonts = HashMap::new();
+    let mut images = HashMap::new();
+    for layout in [&speed, &stunt] {
+        opened
+            .section_assets(layout, &mut fonts, &mut images)
+            .await?;
+    }
+    let mut lamps = true;
+    for name in LAMPS {
+        lamps &= opened.image(&mut images, name).await?;
+    }
+    let race = if racing {
+        match race_assets(&opened, &overlays, environment, &mut fonts, &mut images).await {
+            Ok(race) => Some(race),
+            Err(error) => {
+                // The browser keeps riding without the race overlays.
+                eprintln!("race overlays: {error}");
+                None
+            }
+        }
+    } else {
+        None
+    };
     Ok(OverlayAssets {
         speed,
         stunt,
         fonts,
         images,
+        lamps,
+        race,
+    })
+}
+
+async fn race_assets(
+    opened: &Opened<'_>,
+    overlays: &[u8],
+    environment: &str,
+    fonts: &mut HashMap<String, CelFont>,
+    images: &mut HashMap<String, HudImage>,
+) -> Result<RaceAssets, String> {
+    let mut layout = HashMap::new();
+    for n in RACE_OBJECTS {
+        let name = format!("OverlayObject-{n}");
+        let found = section(overlays, &name).ok_or(format!("{name} missing"))?;
+        opened.section_assets(&found, fonts, images).await?;
+        layout.insert(n, found);
+    }
+    let mut signs = HashMap::new();
+    for (id, name) in SIGNS {
+        let found = section(overlays, name).ok_or(format!("{name} missing"))?;
+        opened.section_assets(&found, fonts, images).await?;
+        signs.insert(id, found);
+    }
+    let toy = opened
+        .member(&format!("{environment}nat.toy"))
+        .await?
+        .ok_or("race TOY missing")?;
+    let radar = section(&toy, "Radar").ok_or("Radar missing")?;
+    let texture = radar.text("texture").ok_or("Radar texture missing")?;
+    let stem = texture
+        .trim_end_matches(".tga")
+        .trim_end_matches(".pst")
+        .to_string();
+    if !opened.image(images, &stem).await? {
+        return Err(format!("radar map {stem} missing"));
+    }
+    if !opened.image(images, RACER).await? {
+        return Err("radar racer icon missing".into());
+    }
+    // hud.js `tinted`: multiply by the colour, keep the icon's alpha.
+    let racer = &images[RACER];
+    let mut rgba = racer.rgba.clone();
+    for px in rgba.as_chunks_mut::<4>().0 {
+        px[1] = 0;
+        px[2] = 0;
+    }
+    images.insert(
+        RACER_PLAYER.into(),
+        HudImage {
+            width: racer.width,
+            height: racer.height,
+            rgba,
+        },
+    );
+    let bound = |key: &str| radar.number(key).ok_or(format!("Radar {key} missing"));
+    Ok(RaceAssets {
+        layout,
+        signs,
+        radar: (
+            stem,
+            [
+                bound("left")?,
+                bound("top")?,
+                bound("right")?,
+                bound("bottom")?,
+            ],
+        ),
     })
 }
 
@@ -214,7 +378,7 @@ mod tests {
         let dir = std::env::var("FURY_CONTENT").expect("FURY_CONTENT");
         let content =
             pollster::block_on(Content::open(atv_content::Store::Directory(dir.into()))).unwrap();
-        let assets = pollster::block_on(load(&content, "env01")).unwrap();
+        let assets = pollster::block_on(load(&content, "env01", true)).unwrap();
         let mut keys: Vec<_> = assets.speed.fields.iter().collect();
         keys.sort();
         println!("speed {keys:#?}");

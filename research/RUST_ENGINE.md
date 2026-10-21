@@ -637,7 +637,7 @@ with original-game evidence:
   `tradegothic_*` glyph atlases (hud.js choice for HD sharpness).
 - The GPS minimap, keyboard card, toolbar and touch compass are authored
   browser additions. The original radar belongs to the race overlay set
-  (`drawRace` in hud.js), which is not ported yet.
+  (`drawRace` in hud.js; ported, RUST_UI.md "Race overlays checkpoint").
 - Menu/pause screens in the JS game are HD re-layouts of original documents
   (`ui_menu.rs`); their Rust port will list each approximation as it lands.
 - Frontend (Rust port of menu-screens.js): the title wordmark is the authored
@@ -688,8 +688,8 @@ the system libm, the browser's from Rust's own libm (fixed: Deterministic simula
 maths below). The same cause explains the
 small native drift in the Freeride comparisons above.
 
-Not connected yet: the race overlays (place, lap, times, results menu) beyond the
-status line and Restart Race/Quit menus. Restart reuses the loaded roster; the browser
+Not connected yet: the results menu and Restart Race/Quit menus (the race overlays:
+RUST_UI.md "Race overlays checkpoint"). Restart reuses the loaded roster; the browser
 reloads the event and draws a new one. Crowd, flashes, fireworks, the drop gate, lamp
 sounds, race music and the grid rest pose: see Race presentation below.
 
