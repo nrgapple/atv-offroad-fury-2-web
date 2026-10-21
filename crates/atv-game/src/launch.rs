@@ -191,6 +191,74 @@ fn slug(text: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
+/// What a shared ride link starts (launch.js `buildRideUrl`'s setup).
+pub struct RideLink<'a> {
+    pub map: &'a str,
+    pub quad: u16,
+    pub rider: u16,
+    pub player: &'a str,
+    /// A race: laps, CPU riders, difficulty (2 Expert), EATDIRT, BRINGIT.
+    pub race: Option<(u32, usize, u32, bool, bool)>,
+}
+
+/// launch.js `buildRideUrl`: `page` (e.g. `https://host/engine.html`) with
+/// the single-player setup's query, in the browser's key order.
+pub fn ride_url(page: &str, link: &RideLink) -> String {
+    let mut pairs: Vec<(&str, String)> = vec![
+        ("mode", "single".into()),
+        (
+            "activity",
+            if link.race.is_some() {
+                "race"
+            } else {
+                "freestyle"
+            }
+            .into(),
+        ),
+        ("map", link.map.into()),
+        ("quad", link.quad.to_string()),
+        ("rider", link.rider.to_string()),
+    ];
+    if !link.player.is_empty() {
+        pairs.push(("player", link.player.into()));
+    }
+    if let Some((laps, cpu, difficulty, aggressive, all_out)) = link.race {
+        pairs.push(("laps", laps.to_string()));
+        pairs.push(("cpu", cpu.to_string()));
+        if difficulty == 2 {
+            pairs.push(("difficulty", "expert".into()));
+        }
+        let cheats: Vec<&str> = [(aggressive, "eatdirt"), (all_out, "bringit")]
+            .iter()
+            .filter(|(on, _)| *on)
+            .map(|(_, name)| *name)
+            .collect();
+        if !cheats.is_empty() {
+            pairs.push(("cheats", cheats.join(",")));
+        }
+    }
+    pairs.push(("play", "1".into()));
+    let encode = |v: &str| {
+        // URLSearchParams form encoding.
+        let mut out = String::new();
+        for b in v.bytes() {
+            match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'*' | b'-' | b'.' | b'_' => {
+                    out.push(b as char)
+                }
+                b' ' => out.push('+'),
+                _ => out.push_str(&format!("%{b:02X}")),
+            }
+        }
+        out
+    };
+    let query: Vec<String> = pairs
+        .iter()
+        .map(|(k, v)| format!("{k}={}", encode(v)))
+        .collect();
+    format!("{page}?{}", query.join("&"))
+}
+
 /// launch.js `parseLaunch`: `tracks` are (id, display name) for map names.
 pub fn parse_launch(search: &str, tracks: &[(String, String)]) -> Launch {
     const ALIASES: [(&str, &[&str]); 13] = [
@@ -460,6 +528,38 @@ pub fn menu_shortcut(search: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ride_urls_match_build_ride_url() {
+        let freestyle = ride_url(
+            "https://furyremastered.com/engine.html",
+            &RideLink {
+                map: "env03",
+                quad: 4,
+                rider: 1,
+                player: "Ada L",
+                race: None,
+            },
+        );
+        assert_eq!(
+            freestyle,
+            "https://furyremastered.com/engine.html?mode=single&activity=freestyle&map=env03&quad=4&rider=1&player=Ada+L&play=1"
+        );
+        let race = ride_url(
+            "/engine.html",
+            &RideLink {
+                map: "nat01",
+                quad: 1,
+                rider: 0,
+                player: "Rider",
+                race: Some((2, 4, 2, true, false)),
+            },
+        );
+        assert!(race.ends_with("activity=race&map=nat01&quad=1&rider=0&player=Rider&laps=2&cpu=4&difficulty=expert&cheats=eatdirt&play=1"));
+        let parsed = parse_launch(&race[race.find('?').unwrap()..], &[]);
+        assert!(parsed.errors.is_empty(), "{:?}", parsed.errors);
+        assert_eq!(parsed.race.difficulty, 2);
+    }
 
     #[test]
     fn matches_browser_course_paths() {
