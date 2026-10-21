@@ -1,6 +1,9 @@
 //! wgpu renderer shared by every build: Metal on macOS, DX12/Vulkan on
 //! Windows, Vulkan on Linux and WebGL2 in browsers.
+// Presentation only: not part of the deterministic simulation (clippy.toml).
+#![allow(clippy::disallowed_methods)]
 mod ambient;
+mod blood;
 pub mod camera;
 mod cull;
 mod lingering_dust;
@@ -281,6 +284,8 @@ pub struct SceneRenderer {
     speed_rush: Option<speed_rush::SpeedRushPass>,
     rush_motion: ([f32; 3], [f32; 3]),
     coarse_pointer: bool,
+    /// Gorn blood, created on the first frame with blood.
+    blood: Option<blood::BloodPass>,
     /// The player's quad and rider, once a ride is loaded.
     vehicle: Option<vehicle::VehiclePass>,
     /// Race CPU riders (drawn after the player) and which are near enough.
@@ -416,6 +421,7 @@ impl SceneRenderer {
             speed_rush: None,
             rush_motion: ([0.; 3], [0.; 3]),
             coarse_pointer: false,
+            blood: None,
             ride_pose: None,
         };
         // startSimulation's first follow-camera request (op 46, dt 1/60)
@@ -751,6 +757,25 @@ impl SceneRenderer {
         }
     }
 
+    /// Crazy/Gorn crash presentation: severed rider nodes and, under Gorn,
+    /// this frame's blood.
+    pub fn set_crash(
+        &mut self,
+        gpu: &Gpu,
+        severed: &[usize],
+        blood: Option<&atv_core::gore::BloodFrame>,
+    ) {
+        if let Some(vehicle) = &mut self.vehicle {
+            vehicle.set_severed(gpu, severed);
+        }
+        let blood = blood.filter(|b| b.count() > 0 || !b.stumps.is_empty());
+        if blood.is_some() || self.blood.is_some() {
+            self.blood
+                .get_or_insert_with(|| blood::BloodPass::new(gpu, &self.world))
+                .accept(gpu, blood);
+        }
+    }
+
     /// The latest simulation pose of the quad linkage and rider skeleton.
     pub fn pose_ride(&mut self, gpu: &Gpu, pose: &atv_game::ride::Pose) {
         if let Some(vehicle) = &self.vehicle {
@@ -943,6 +968,10 @@ impl SceneRenderer {
             stats.wheel_draws += draws;
             stats.wheel_triangles += triangles;
         }
+        if let Some(blood) = &self.blood {
+            stats.wheel_draws += blood.draws();
+            stats.wheel_triangles += blood.triangles();
+        }
         self.profiler.mark("prepare.effects");
         if let Some(vehicle) = &mut self.vehicle {
             vehicle.prepare(gpu, &view_projection, view.camera.eye());
@@ -1101,6 +1130,9 @@ impl SceneRenderer {
             }
             if let Some((snow, _)) = &self.snow {
                 snow.draw(&mut pass, &self.world);
+            }
+            if let Some(blood) = &self.blood {
+                blood.draw(&mut pass, &self.world);
             }
             if let Some(effects) = &self.wheel_effects {
                 effects.draw(&mut pass, &self.world);

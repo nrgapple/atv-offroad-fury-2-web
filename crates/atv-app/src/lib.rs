@@ -5,6 +5,8 @@ mod overlay;
 pub mod replay;
 mod riding;
 mod sound;
+use atv_core::math::Det;
+use replay::RunScript;
 
 use atv_content::{Content, Store};
 use atv_game::venue::{self, Venue};
@@ -30,6 +32,8 @@ pub struct Options {
     /// (parity captures against a paused JavaScript frame).
     pub steps: Option<u64>,
     pub graphics: Graphics,
+    /// Ride Effects -> Crashes (Original by default; Crazy/Gorn are authored).
+    pub crash: atv_game::crash::CrashMode,
     /// Native parity capture: render once at this size, write PNG and exit.
     #[cfg(not(target_arch = "wasm32"))]
     pub capture: Option<(std::path::PathBuf, u32, u32)>,
@@ -39,6 +43,8 @@ pub struct Options {
     pub capture_ui: bool,
     /// Ride the player's quad (default); false keeps the free camera.
     pub ride: bool,
+    /// The Garage choice: ATV or motorcycle and rider.
+    pub selection: atv_game::ride::Selection,
     /// Race on the venue's National/Supercross course (with `ride`; a free
     /// camera views the race-course world and its pre-race shots).
     pub race: Option<atv_game::ride::race::Settings>,
@@ -148,10 +154,12 @@ struct Meter {
 
 /// Load-time choices for the venue presentation and the ride.
 struct World {
+    selection: atv_game::ride::Selection,
     race: Option<atv_game::ride::race::Settings>,
     weather: Option<bool>,
     steps: Option<u64>,
     graphics: Graphics,
+    crash: atv_game::crash::CrashMode,
     ride: bool,
     script: Option<replay::Script>,
     sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
@@ -167,10 +175,12 @@ async fn prepare(
     world: World,
 ) -> Result<Ready, String> {
     let World {
+        selection,
         race,
         weather,
         steps,
         graphics,
+        crash,
         ride,
         script,
         sound,
@@ -212,7 +222,7 @@ async fn prepare(
     .await?;
     let start = venue.scene.start_position;
     let direction = venue.scene.start_direction;
-    let yaw = direction[0].atan2(direction[2]);
+    let yaw = direction[0].atan2_d(direction[2]);
     let mut camera = Camera {
         x: start[0],
         y: start[1],
@@ -220,8 +230,8 @@ async fn prepare(
         yaw,
         pitch: -0.25,
     };
-    camera.x -= yaw.sin() * 14.;
-    camera.z -= yaw.cos() * 14.;
+    camera.x -= yaw.sin_d() * 14.;
+    camera.z -= yaw.cos_d() * 14.;
     camera.y = ground(&venue, camera.x, camera.z).max(start[1]) + 6.;
     let mut focal_length = default_focal_length();
     if let Some([x, y, z, yaw, pitch, focal]) = fixed {
@@ -250,8 +260,15 @@ async fn prepare(
     );
     let mut pending_sound = None;
     let riding = if ride {
-        // Default Garage selection: quad 1, male rider.
-        let ride = atv_game::ride::load_with(&content, &venue, 1, 0, race, status).await?;
+        let ride = atv_game::ride::load_with(
+            &content,
+            &venue,
+            selection.quad,
+            selection.rider,
+            race,
+            status,
+        )
+        .await?;
         let mut ride = ride;
         scene.set_ride(&gpu, &venue, &ride.quad, &ride.rider)?;
         if let Some(race) = ride.race_mut() {
@@ -265,8 +282,12 @@ async fn prepare(
         {
             state.autopilot_always = true;
         }
-        // startSimulation's first frame (op 23) primes the wheel effects.
-        if let Some(mut effects) = atv_game::wheel_effects::load(&content, &venue, 1).await? {
+        // startSimulation's first frame (op 23) primes the wheel effects
+        // (ATVs; motorcycle particles are their own).
+        if !riding.ride.is_motorcycle()
+            && let Some(mut effects) =
+                atv_game::wheel_effects::load(&content, &venue, selection.quad).await?
+        {
             effects.set_lingering_dust(usize::from(graphics.dust), &venue);
             effects.set_tire_tracks(
                 usize::from(graphics.tire_tracks.0),
@@ -276,6 +297,11 @@ async fn prepare(
             effects.reset(&riding.ride)?;
             scene.set_wheel_effects(&gpu, &effects);
             riding.effects = Some(effects);
+        }
+        if crash != atv_game::crash::CrashMode::Original {
+            let mut crashes = atv_game::crash::Crashes::new(crash);
+            crashes.reset(&riding.ride)?;
+            riding.crashes = Some(crashes);
         }
         if let Some(script) = &script {
             // `?traceAll=1`: every step, for browser-vs-native parity.
@@ -1096,10 +1122,12 @@ impl ApplicationHandler<Message> for App {
             options.venue,
             options.camera,
             World {
+                selection: options.selection,
                 race: options.race,
                 weather: options.weather,
                 steps: options.steps,
                 graphics: options.graphics,
+                crash: options.crash,
                 ride: options.ride,
                 script: options.script,
                 sound: options.sound,
@@ -1626,7 +1654,26 @@ pub fn start() {
         weather: param("weather").and_then(|v| parse_switch(&v)),
         steps: param("steps").and_then(|v| v.parse().ok()),
         graphics: param("graphics").map_or_else(Graphics::default, |v| graphics_preset(&v)),
+        // ?crash= for captures, else the JavaScript build's saved setting.
+        crash: param("crash")
+            .or_else(|| {
+                web_sys::window()?
+                    .local_storage()
+                    .ok()??
+                    .get_item("atv-crash-mode")
+                    .ok()?
+            })
+            .and_then(|v| atv_game::crash::CrashMode::parse(&v))
+            .unwrap_or_default(),
         ride: param("free").is_none(),
+        selection: {
+            let number = |key: &str| param(key).and_then(|v| v.parse::<u16>().ok());
+            let defaults = atv_game::ride::Selection::default();
+            atv_game::ride::Selection {
+                quad: number("quad").unwrap_or(defaults.quad),
+                rider: number("rider").unwrap_or(defaults.rider),
+            }
+        },
         ui_backdrop: param("uibackdrop").and_then(|hex| {
             let v = u32::from_str_radix(&hex, 16).ok()?;
             (hex.len() == 6).then_some([(v >> 16) as u8, (v >> 8) as u8, v as u8])

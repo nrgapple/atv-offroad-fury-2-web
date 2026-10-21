@@ -5,6 +5,7 @@
 //! the browser's saved-profile format (`atv2-gameplay-bindings-v1`).
 use super::Controls;
 pub use atv_core::browser_input::TouchIntent;
+use atv_core::math::Det;
 use serde_json::{Value, json};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -466,7 +467,7 @@ impl Tuning {
             _ => 100.,
         };
         if value > 0. && value < 1. && sensitivity != 100. {
-            value.powf(100. / sensitivity)
+            value.powf_d(100. / sensitivity)
         } else {
             value
         }
@@ -909,6 +910,7 @@ impl Bindings {
             stunt_x,
             stunt_y,
             generation: self.generation,
+            clutch: v(Action::Clutch) > 0.5,
         };
         let orbit = v(Action::CameraRight) - v(Action::CameraLeft);
         let edge_actions = [Action::Camera, Action::Reset, Action::Pause];

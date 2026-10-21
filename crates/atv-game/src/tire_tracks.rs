@@ -3,6 +3,7 @@
 //! frame. Where they appear follows the original terrain-zone flags
 //! (GenerateTireTrack zones rut; zones that dirty the quad press faintly);
 //! what a wheel leaves follows its physics contact. Authored; presentation only.
+use atv_core::math::Det;
 use atv_core::wheel_effects::Input;
 
 /// x, y, z, across, along, birth time, rut, scuff, wet.
@@ -220,7 +221,7 @@ impl TrackBuilder {
             last.peak_scuff = last.peak_scuff.max(scuff);
             self.wheels[i] = Some(last);
             let (dx, dz) = (x - last.x, z - last.z);
-            let d = dx.hypot(dz);
+            let d = dx.hypot_d(dz);
             if d > 4. {
                 self.wheels[i] = Some(fresh(0.));
                 continue;

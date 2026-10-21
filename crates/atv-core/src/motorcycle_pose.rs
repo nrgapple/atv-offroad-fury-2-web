@@ -6,6 +6,7 @@
 //! as clip-preserving limb IK plus one spring-damped pelvis offset using the
 //! source per-part spring/damping and PelvisBox (authored reduction).
 use super::*;
+use crate::math::Det;
 
 /// Bike state the rider system reads each frame.
 #[derive(Clone, Copy, Default)]
@@ -110,9 +111,9 @@ impl Controls {
     }
 }
 pub(super) fn axis_rotation(axis: V, angle: f32) -> M {
-    let sine = (angle * 0.5).sin();
+    let sine = (angle * 0.5).sin_d();
     let b = dynamics::basis([
-        (angle * 0.5).cos(),
+        (angle * 0.5).cos_d(),
         axis[0] * sine,
         axis[1] * sine,
         axis[2] * sine,
@@ -176,7 +177,7 @@ fn rotate_world(pose: &mut animation::Pose, nodes: &[mesh::Node], node: usize, f
     if sine < 1e-7 {
         return;
     }
-    let angle = sine.atan2(dot(a, b));
+    let angle = sine.atan2_d(dot(a, b));
     let r = axis_rotation(scale(axis, 1. / sine), angle);
     let world = pose.world_matrices[node];
     let mut next = mul(&r, &world);

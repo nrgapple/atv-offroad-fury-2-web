@@ -14,6 +14,7 @@
 //! - detached rider clamped to the terrain with 0.85 horizontal friction.
 //!
 //! See `research/MOTORCYCLES.md`.
+use crate::math::Det;
 use crate::{
     Result, animation, dynamics,
     mesh::{self, Mesh},
@@ -40,8 +41,8 @@ fn mul(a: &M, b: &M) -> M {
 }
 fn rotation(axis: usize, angle: f32) -> M {
     let q = {
-        let mut q = [(angle * 0.5).cos(), 0., 0., 0.];
-        q[axis + 1] = (angle * 0.5).sin();
+        let mut q = [(angle * 0.5).cos_d(), 0., 0., 0.];
+        q[axis + 1] = (angle * 0.5).sin_d();
         q
     };
     let b = dynamics::basis(q);
@@ -513,7 +514,7 @@ impl Motorcycle {
         config.angular_max = [8.; 3];
         let body = dynamics::BodyState::new(
             origin,
-            [(yaw / 2.).cos(), 0., (yaw / 2.).sin(), 0.],
+            [(yaw / 2.).cos_d(), 0., (yaw / 2.).sin_d(), 0.],
             &config,
         )?;
         let params = drive::Params::parse(&model.tuning)?;
@@ -578,9 +579,9 @@ impl Motorcycle {
         self.body = dynamics::BodyState::new(
             self.start,
             [
-                (self.start_yaw / 2.).cos(),
+                (self.start_yaw / 2.).cos_d(),
                 0.,
-                (self.start_yaw / 2.).sin(),
+                (self.start_yaw / 2.).sin_d(),
                 0.,
             ],
             &self.body_config,
@@ -722,7 +723,7 @@ impl Motorcycle {
         self.reset()?;
         self.body = dynamics::BodyState::new(
             add(origin, [0., 0.4, 0.]),
-            [(yaw / 2.).cos(), 0., (yaw / 2.).sin(), 0.],
+            [(yaw / 2.).cos_d(), 0., (yaw / 2.).sin_d(), 0.],
             &self.body_config,
         )?;
         self.refresh();
@@ -872,7 +873,7 @@ impl Motorcycle {
             if self.rider_body.is_none() {
                 let mut world = self.world();
                 let b = self.body.basis();
-                let yaw = b[2][0].atan2(b[2][2]);
+                let yaw = b[2][0].atan2_d(b[2][2]);
                 let r = rotation(1, yaw);
                 world[..12].copy_from_slice(&r[..12]);
                 self.rider_body = Some((world, add(self.body.linear_velocity, [0., 8., 0.])));
@@ -1011,7 +1012,7 @@ impl Motorcycle {
         {
             let b = self.body.basis();
             self.safe_origin = self.body.origin(&self.body_config);
-            self.safe_yaw = b[2][0].atan2(b[2][2]);
+            self.safe_yaw = b[2][0].atan2_d(b[2][2]);
         }
         // Source mud: front-section MudTime/MudAmount per surface.
         let speed = self.forward_speed().abs();

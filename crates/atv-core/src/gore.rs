@@ -1,6 +1,7 @@
 //! Optional Gorn blood presentation driven by the ragdoll. Bounded pools of
 //! droplets, ground splats and stump caps; deterministic local noise only. It
 //! never touches gameplay RNG, contacts or state. Units are feet/seconds.
+use crate::math::Det;
 use crate::ragdoll::{Kind, Ragdoll, V};
 use serde::Serialize;
 const GRAVITY: f32 = 32.174;
@@ -313,8 +314,8 @@ impl Gore {
         emitters.retain_mut(|e| {
             e.age += dt;
             let pressure = match e.flow {
-                Flow::Arterial => (-e.age / 2.6).exp(),
-                Flow::Dribble => 0.45 * (-e.age / 0.8).exp(),
+                Flow::Arterial => (-e.age / 2.6).exp_d(),
+                Flow::Dribble => 0.45 * (-e.age / 0.8).exp_d(),
             };
             let p = ragdoll.point(e.body, e.local);
             let outward = ragdoll.direction(e.body, e.outward);

@@ -39,6 +39,10 @@ struct Chunk {
     count: u32,
     rider: bool,
     material: wgpu::BindGroup,
+    /// Rider groups: CPU indices and vertex nodes for Gorn severing.
+    source: Option<(Vec<u32>, Vec<u16>)>,
+    /// Indices without the triangles bridging a severed joint.
+    cut: Option<(wgpu::Buffer, u32)>,
 }
 
 pub struct VehiclePass {
@@ -56,6 +60,9 @@ pub struct VehiclePass {
     pub(crate) footprint: [f32; 2],
     /// Rider node carrying the torso (pelvisNode in game.js).
     pub(crate) pelvis: usize,
+    /// Rider node parents, and the severed set the cut indices were built for.
+    rider_parents: Vec<i32>,
+    severed: Vec<usize>,
 }
 
 /// The browser's inverseDirection: bind-space normal into node space.
@@ -292,6 +299,13 @@ impl VehiclePass {
                     count: group.indices.len() as u32,
                     rider,
                     material,
+                    source: rider.then(|| {
+                        (
+                            group.indices.clone(),
+                            group.vertices.iter().map(|v| v.node).collect(),
+                        )
+                    }),
+                    cut: None,
                 });
             }
         }
@@ -388,6 +402,8 @@ impl VehiclePass {
             chunks,
             triangles,
             footprint: [max[2] - min[2], max[0] - min[0]],
+            rider_parents: nodes.iter().map(|n| n.parent).collect(),
+            severed: Vec::new(),
             pelvis,
             bones_layout,
         })
@@ -417,6 +433,69 @@ impl VehiclePass {
             .write_buffer(&self.globals, 0, bytemuck::bytes_of(&self.globals_value));
     }
 
+    /// Gorn: drop rider triangles that bridge a severed joint
+    /// (severedIndices in render-support.js), rebuilt only when the set changes.
+    pub(crate) fn set_severed(&mut self, gpu: &Gpu, severed: &[usize]) {
+        if self.severed == severed {
+            return;
+        }
+        self.severed = severed.to_vec();
+        let parents = &self.rider_parents;
+        // Each node's component: the nearest severed ancestor (+1), else 0.
+        let components: Vec<usize> = (0..parents.len())
+            .map(|start| {
+                let mut i = start;
+                for _ in 0..parents.len() {
+                    if severed.contains(&i) {
+                        return i + 1;
+                    }
+                    match usize::try_from(parents[i]) {
+                        Ok(parent) if parent < parents.len() => i = parent,
+                        _ => return 0,
+                    }
+                }
+                0
+            })
+            .collect();
+        for chunk in &mut self.chunks {
+            let Some((indices, nodes)) = &chunk.source else {
+                continue;
+            };
+            if severed.is_empty() {
+                chunk.cut = None;
+                continue;
+            }
+            let component = |v: u32| {
+                components
+                    .get(usize::from(nodes[v as usize]))
+                    .copied()
+                    .unwrap_or(0)
+            };
+            let kept: Vec<u32> = indices
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .filter(|t| {
+                    component(t[0]) == component(t[1]) && component(t[0]) == component(t[2])
+                })
+                .flatten()
+                .copied()
+                .collect();
+            let buffer = gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("severed rider indices"),
+                    contents: bytemuck::cast_slice(if kept.is_empty() {
+                        &[0u32; 3][..]
+                    } else {
+                        &kept
+                    }),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
+            chunk.cut = Some((buffer, kept.len() as u32));
+        }
+    }
+
     /// Depth-only casting into the High shadow map: bones at group 1, the
     /// caller's light uniforms at group 0.
     pub(crate) fn draw_casters(&self, pass: &mut wgpu::RenderPass<'_>) {
@@ -428,8 +507,12 @@ impl VehiclePass {
             };
             pass.set_bind_group(1, bones, &[]);
             pass.set_vertex_buffer(0, chunk.vertices.slice(..));
-            pass.set_index_buffer(chunk.indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..chunk.count, 0, 0..1);
+            let (indices, count) = chunk
+                .cut
+                .as_ref()
+                .map_or((&chunk.indices, chunk.count), |(b, c)| (b, *c));
+            pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..count, 0, 0..1);
         }
     }
 
@@ -445,8 +528,12 @@ impl VehiclePass {
             pass.set_bind_group(1, bones, &[]);
             pass.set_bind_group(2, &chunk.material, &[]);
             pass.set_vertex_buffer(0, chunk.vertices.slice(..));
-            pass.set_index_buffer(chunk.indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..chunk.count, 0, 0..1);
+            let (indices, count) = chunk
+                .cut
+                .as_ref()
+                .map_or((&chunk.indices, chunk.count), |(b, c)| (b, *c));
+            pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..count, 0, 0..1);
         }
     }
 }

@@ -1,5 +1,6 @@
 //! Original body-attached train sounds and stereo command arithmetic.
 //! Web Audio transports original PCM; it does not reproduce SPU2 resampling.
+use crate::math::Det;
 use crate::{Result, physics_data::PhysicsData, wheel::Vec3};
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
@@ -296,7 +297,7 @@ fn heading(vector: Vec3) -> f32 {
         let mut values = (0..30000)
             .map(|i| {
                 let x = ((i as f32) * step - 1.).min(1.);
-                f64::from(x).acos() as f32
+                f64::from(x).acos_d() as f32
             })
             .collect::<Vec<_>>();
         values.push(values[29999]);

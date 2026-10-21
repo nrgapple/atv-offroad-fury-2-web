@@ -12,6 +12,7 @@
 //! browser input adapter and the omitted body-collision hull mean this is
 //! component recovery, not native whole-step parity.
 use super::*;
+use crate::math::Det;
 use crate::motorcycle_tire::{SideState, Tire};
 
 const MPH: f32 = 1.46666;
@@ -403,12 +404,12 @@ impl Motorcycle {
         dynamics::inverse_transform(self.body.basis(), self.body.linear_velocity)[2]
     }
     fn pitch(&self) -> f32 {
-        self.body.basis()[2][1].clamp(-1., 1.).asin()
+        self.body.basis()[2][1].clamp(-1., 1.).asin_d()
     }
     /// Original roll: positive when the body +x side is low.
     fn roll(&self) -> f32 {
         let b = self.body.basis();
-        -b[0][1].atan2(b[1][1])
+        -b[0][1].atan2_d(b[1][1])
     }
     fn set_cofg(&mut self, cofg: V) {
         let origin = self.body.origin(&self.body_config);
@@ -495,7 +496,7 @@ impl Motorcycle {
             && input.lean < 0.
         {
             // Angle below horizontal, folded to [0, 90°].
-            let u = (-input.lean / magnitude).clamp(0., 1.).asin();
+            let u = (-input.lean / magnitude).clamp(0., 1.).asin_d();
             let peak = p
                 .donut_angle
                 .clamp(1e-3, std::f32::consts::FRAC_PI_2 - 1e-3);
@@ -699,7 +700,7 @@ impl Motorcycle {
             d.stoppie = false;
             return;
         }
-        let pitch = self.body.basis()[2][1].clamp(-1., 1.).asin();
+        let pitch = self.body.basis()[2][1].clamp(-1., 1.).asin_d();
         let rate = self.body.local_angular_velocity[0];
         if d.stoppie && (rear || d.brake == 0. || d.lean > -0.1 || speed <= 7.) {
             d.stoppie = false;
@@ -946,7 +947,7 @@ impl Motorcycle {
             }
         } else {
             // Auto-level: unroll toward upright, unyaw heading toward travel.
-            let roll = -basis[0][1].atan2(basis[1][1]);
+            let roll = -basis[0][1].atan2_d(basis[1][1]);
             torque[2] += p.unroll_torque * (p.unroll_gain * roll - omega[2]);
             torque[1] += p.unyaw_torque * (p.unyaw_gain * d.crab - omega[1]);
             if omega[0].abs() > 0.1 {
@@ -1132,8 +1133,8 @@ impl Motorcycle {
                 let n = state.normal;
                 let heading = if i == 0 && !self.drive.pitch_control {
                     add(
-                        scale(basis[2], self.drive.delta.cos()),
-                        scale(basis[0], self.drive.delta.sin()),
+                        scale(basis[2], self.drive.delta.cos_d()),
+                        scale(basis[0], self.drive.delta.sin_d()),
                     )
                 } else {
                     basis[2]
@@ -1307,7 +1308,7 @@ impl Motorcycle {
         let speed = dot(v, v).sqrt();
         d.crab = if speed > 10. && !d.backflip.active && !d.spin.active {
             let c = crate::wheel::cross(unit(fh), unit(vh));
-            let s = dot(c, c).sqrt().clamp(0., 1.).asin();
+            let s = dot(c, c).sqrt().clamp(0., 1.).asin_d();
             if c[1] >= 0. { s } else { -s }
         } else {
             0.
