@@ -897,9 +897,30 @@ under 3e-4 ft (binary32 against the browser's binary64 at ENV01 coordinates):
 The browser build passes the same check at a simulated 120 Hz display
 (`tools/test_engine_interpolation.mjs`: virtual-clock requestAnimationFrame and
 performance.now, `?presentTrace=1`): Enhanced quad and Original bike interpolate on
-alternate frames, Original quad snaps. Not ported: Alpha slow motion (`hype.timeScale`)
-and the Enhanced wheel re-projection (`atvPresentation.quadPose`); the quad draws its
-simulation linkage.
+alternate frames, Original quad snaps. Not ported: Alpha slow motion (`hype.timeScale`).
+
+### Enhanced wheel re-projection (2026-10-21)
+
+Enhanced and High redraw wheels that sink into the visible terrain after integration
+(graphics.js `wheelReprojection`, game.js `reprojectWheels`,
+`atvPresentation.quadPose`). `Ride::reprojected_quad` reads the posed wheel centres
+(simulation_frame's `wheel_effects.centers`), the wheel radii and the dense render grid
+(`Venue::visible`, renderCore.terrainHeight); a wheel deeper than 0.01 ft gains
+compression `min(depth / up, MAX_WHEEL_LIFT 0.5)` and the linkage is resampled, but only
+when the drawn linkage equals the rig's own sample within 1e-3, the quad is Riding and
+no Crazy/Gorn crash pose is drawn. Every delivered state is reprojected before
+interpolation; without interpolation the latest state is. Simulation is unchanged
+(presentation only); Original keeps the simulated linkage.
+
+Evidence (host browser, ENV01 default ride script, `tools/compare_engine.mjs ride
+env01 "" <out> --graphics enhanced`): trajectories identical over 600 steps; the
+JavaScript game's sampled `wheelLift` matched the Rust trace's per-step lift within
+1e-3 for 548 of 559 frames (the rest are samples more than one step stale, worst
+0.017 ft), 191 JavaScript samples and 207 Rust steps lifted; held-frame vehicle box
+mean absolute RGB difference 0.57 (1280x720) and 1.17 (390x844).
+`tools/test_engine_wheel_reprojection.mjs` autodrives Enhanced (463-579 of 901 sampled frames
+lifted, max 0.5 ft) and Original (none). Phone performance is not measured; the work
+is four terrain samples and at most one extra linkage sample per delivered state.
 
 ## Rider gear and quad paint (2026-10-21)
 
