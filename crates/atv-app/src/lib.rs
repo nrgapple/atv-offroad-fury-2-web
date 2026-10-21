@@ -36,6 +36,9 @@ pub struct Options {
     /// (parity captures against a paused JavaScript frame).
     pub steps: Option<u64>,
     pub graphics: Graphics,
+    /// `graphics` came from the command line or URL; otherwise rides from
+    /// the frontend use the saved Display → Graphics preset.
+    pub graphics_set: bool,
     /// Ride Effects -> Crashes (Original by default; Crazy/Gorn are authored).
     pub crash: atv_game::crash::CrashMode,
     /// Native parity capture: render once at this size, write PNG and exit.
@@ -168,6 +171,7 @@ enum ArtPiece {
 /// Load-time choices kept for rides started from the frontend.
 struct Defaults {
     graphics: Graphics,
+    graphics_set: bool,
     weather: Option<bool>,
     crash: atv_game::crash::CrashMode,
     sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
@@ -177,6 +181,8 @@ struct Defaults {
 }
 
 struct App {
+    /// The Display → Graphics choice the running ride applied.
+    graphics_pref: Option<String>,
     proxy: EventLoopProxy<Message>,
     display: OwnedDisplayHandle,
     options: Option<Options>,
@@ -863,6 +869,26 @@ impl App {
             if let Some(overlay) = &self.overlay {
                 state["toolbar"] = overlay.diagnostics();
             }
+            // The saved settings the ride applies (tools/test_engine_settings.mjs).
+            let graphics = ready.scene.graphics();
+            let mixer = riding.sound.as_ref().and_then(|s| {
+                s.output
+                    .mixer
+                    .lock()
+                    .ok()
+                    .map(|m| (m.sfx_volume, m.music_volume))
+            });
+            state["settings"] = serde_json::json!({
+                "speedRushPeak": riding.speed_rush_peak(),
+                "crashMode": riding.crashes.as_ref().map(|c| c.mode.name()),
+                "flips": riding.ride.options.flips,
+                "realisticTrain": riding.ride.options.realistic_train,
+                "interpolation": riding.interpolation,
+                "skySmooth": graphics.sky_smooth, "fresnel": graphics.fresnel,
+                "contactShadows": graphics.contact_shadows, "anisotropy": graphics.anisotropy,
+                "dust": graphics.dust, "tireTracks": graphics.tire_tracks.0,
+                "sfx": mixer.map(|m| m.0), "music": mixer.map(|m| m.1),
+            });
             publish_ui_state(&state.to_string());
         }
         let overlay = &self.overlay;
@@ -1187,6 +1213,10 @@ impl App {
                 if let Some(overlay) = &mut self.overlay {
                     overlay.set_help_keys(&riding.bindings);
                 }
+                self.apply_preferences();
+                let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) else {
+                    return;
+                };
                 // Audio → Sound applies to the running mixer at once.
                 let enhanced = self
                     .overlay
@@ -1207,6 +1237,69 @@ impl App {
                     }
                 }
             }
+        }
+    }
+
+    /// The saved choices game.js applies while riding (graphicsSettings,
+    /// crashSettings, audio and soundtrack onChange): Speed rush, crashes,
+    /// Unleashed flips, realistic train, effect and music volume, music on or
+    /// off, and a changed Display → Graphics preset. Parity replays and
+    /// autodrive benchmarks keep the defaults they were recorded with.
+    fn apply_preferences(&mut self) {
+        let (Some(overlay), Some(ready)) = (&self.overlay, &mut self.ready) else {
+            return;
+        };
+        let Some(riding) = &mut ready.riding else {
+            return;
+        };
+        if riding.held || riding.autodrive.is_some() {
+            return;
+        }
+        let prefs = &overlay.prefs;
+        riding.set_speed_rush(&prefs.speed_rush);
+        riding.ride.options = atv_game::ride::RideOptions {
+            flips: prefs.flips,
+            realistic_train: prefs.realistic_train,
+        };
+        let mode = atv_game::crash::CrashMode::parse(&prefs.crash_mode).unwrap_or_default();
+        if riding
+            .crashes
+            .as_ref()
+            .map_or(atv_game::crash::CrashMode::Original, |c| c.mode)
+            != mode
+        {
+            riding.crashes = if mode == atv_game::crash::CrashMode::Original {
+                None
+            } else {
+                let mut crashes = atv_game::crash::Crashes::new(mode);
+                match crashes.reset(&riding.ride) {
+                    Ok(()) => Some(crashes),
+                    Err(error) => {
+                        status(&format!("Crashes unavailable: {error}"));
+                        None
+                    }
+                }
+            };
+        }
+        if let Some(sound) = &mut riding.sound {
+            sound.set_volumes(prefs.sfx_volume, prefs.music_volume, prefs.music_enabled);
+        }
+        // A preset changed in the menu applies at once where it can.
+        if self.graphics_pref.as_deref() != Some(prefs.graphics.as_str()) {
+            self.graphics_pref = Some(prefs.graphics.clone());
+            let graphics = graphics_preset(prefs.graphics_resolved());
+            riding.interpolation = graphics.interpolation;
+            if let Some(effects) = &mut riding.effects
+                && !riding.ride.is_motorcycle()
+            {
+                effects.set_lingering_dust(usize::from(graphics.dust), &ready.venue);
+                effects.set_tire_tracks(
+                    usize::from(graphics.tire_tracks.0),
+                    f32::from(graphics.tire_tracks.1),
+                    &ready.venue,
+                );
+            }
+            ready.scene.set_graphics(&ready.gpu, &ready.venue, graphics);
         }
     }
 
@@ -1572,6 +1665,7 @@ impl ApplicationHandler<Message> for App {
             self.defaults = Some(Defaults {
                 relay: options.relay.clone().unwrap_or_else(default_relay),
                 graphics: options.graphics,
+                graphics_set: options.graphics_set,
                 weather: options.weather,
                 crash: options.crash,
                 sound: options.sound,
@@ -1760,6 +1854,17 @@ impl ApplicationHandler<Message> for App {
                         status(&format!("Sound unavailable: {error}"));
                         return;
                     }
+                    // Settings → Audio volumes and the music switch.
+                    if let Some(prefs) = self.overlay.as_ref().map(|o| &o.prefs)
+                        && !riding.held
+                        && riding.autodrive.is_none()
+                    {
+                        sound.set_volumes(
+                            prefs.sfx_volume,
+                            prefs.music_volume,
+                            prefs.music_enabled,
+                        );
+                    }
                     // A race already under way holds the soundtrack now.
                     if let Some(music) = riding.ride.race().and_then(|r| r.music_now()) {
                         sound.race(&atv_game::ride::race::StepEvents {
@@ -1821,10 +1926,18 @@ impl ApplicationHandler<Message> for App {
                                 atv_ui::menu::controller::load_bindings(&mut overlay.settings);
                             overlay.set_help_keys(&riding.bindings);
                         }
+                        overlay.prefs.graphics_detected = detect_graphics_tier().into();
+                        // RideEffectsSettings: Speed rush defaults to Off with
+                        // reduced motion.
+                        if overlay.settings.get("atv-speed-rush").is_none() && reduced_motion() {
+                            overlay.prefs.speed_rush = "off".into();
+                        }
+                        self.graphics_pref = Some(overlay.prefs.graphics.clone());
                         self.overlay = Some(overlay);
                     }
                     window.request_redraw();
                 }
+                self.apply_preferences();
             }
             Message::Failed(error) => {
                 status(&error);
@@ -2385,6 +2498,13 @@ impl App {
             .map_or((Graphics::default(), None, None, Default::default()), |d| {
                 (d.graphics, d.weather, d.sound, d.crash)
             });
+        // Display → Graphics as saved (Auto: graphics.js detectGraphicsTier).
+        let graphics = if self.defaults.as_ref().is_some_and(|d| d.graphics_set) {
+            graphics
+        } else {
+            let saved = front.borrow().settings.get("atv-graphics");
+            graphics_preset(&resolve_graphics(saved.as_deref()))
+        };
         // Crash mode follows the saved setting (Settings may have changed it).
         let crash = front
             .borrow()
@@ -2850,6 +2970,74 @@ pub fn parse_switch(text: &str) -> Option<bool> {
     }
 }
 
+/// `(prefers-reduced-motion: reduce)` (always false on desktop).
+fn reduced_motion() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| {
+                w.match_media("(prefers-reduced-motion: reduce)")
+                    .ok()
+                    .flatten()
+            })
+            .is_some_and(|m| m.matches())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        false
+    }
+}
+
+/// A saved `atv-graphics` value resolved to a preset; Auto picks the
+/// detected tier.
+pub fn resolve_graphics(saved: Option<&str>) -> String {
+    match saved {
+        Some(p @ ("original" | "enhanced" | "high")) => p.into(),
+        _ => detect_graphics_tier().into(),
+    }
+}
+
+/// graphics.js `detectGraphicsTier`: phones, tablets, touch-primary and
+/// low-power devices get Enhanced, others High (desktop builds: High).
+pub fn detect_graphics_tier() -> &'static str {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let Some(window) = web_sys::window() else {
+            return "high";
+        };
+        let nav = window.navigator();
+        let ua = nav.user_agent().unwrap_or_default();
+        let media = |q: &str| {
+            window
+                .match_media(q)
+                .ok()
+                .flatten()
+                .is_some_and(|m| m.matches())
+        };
+        let mobile_ua = [
+            "Android", "iPhone", "iPad", "iPod", "Mobile", "Silk", "Kindle",
+        ]
+        .iter()
+        .any(|m| ua.to_ascii_lowercase().contains(&m.to_ascii_lowercase()));
+        let touch_mac = ua.contains("Macintosh") && nav.max_touch_points() > 1;
+        let touch_primary = media("(pointer: coarse)") && !media("(any-pointer: fine)");
+        let cores = nav.hardware_concurrency();
+        let memory = js_sys::Reflect::get(&nav, &"deviceMemory".into())
+            .ok()
+            .and_then(|v| v.as_f64());
+        let low_power = (cores > 0. && cores <= 4.) || memory.is_some_and(|m| m > 0. && m <= 4.);
+        if mobile_ua || touch_mac || touch_primary || low_power {
+            "enhanced"
+        } else {
+            "high"
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        "high"
+    }
+}
+
 /// Display -> Graphics preset features (presetFeatures in web/graphics.js).
 pub fn graphics_preset(name: &str) -> Graphics {
     match name {
@@ -3056,6 +3244,7 @@ pub fn run(options: Options) {
         .build()
         .expect("event loop");
     let app = App {
+        graphics_pref: None,
         proxy: event_loop.create_proxy(),
         display: event_loop.owned_display_handle(),
         options: Some(options),
@@ -3157,6 +3346,7 @@ pub fn start() {
         weather: param("weather").and_then(|v| parse_switch(&v)),
         steps: param("steps").and_then(|v| v.parse().ok()),
         graphics: param("graphics").map_or_else(Graphics::default, |v| graphics_preset(&v)),
+        graphics_set: param("graphics").is_some(),
         // ?crash= for captures, else the JavaScript build's saved setting.
         crash: param("crash")
             .or_else(|| {

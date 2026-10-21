@@ -140,6 +140,11 @@ fn write_layer(
 }
 
 impl WaterPass {
+    /// Display → Graphics: the authored Schlick Fresnel on or off.
+    pub fn set_fresnel(&mut self, fresnel: bool) {
+        self.uniforms.fog[3] = fresnel as u8 as f32;
+    }
+
     pub fn new(gpu: &Gpu, world: &World, water: &Water, fresnel: bool) -> Result<Self, String> {
         let device = &gpu.device;
         let height = &water.height;

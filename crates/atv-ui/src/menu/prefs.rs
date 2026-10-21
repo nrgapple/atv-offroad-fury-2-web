@@ -79,7 +79,7 @@ impl Preferences {
             music_enabled: music["enabled"].as_bool().unwrap_or(true),
             music_volume: music["volume"]
                 .as_f64()
-                .map_or(0.7, |v| v.clamp(0., 1.) as f32),
+                .map_or(0.45, |v| v.clamp(0., 1.) as f32),
             overlays_off: json("atv-race-overlays-off")
                 .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok())
                 .unwrap_or_default()

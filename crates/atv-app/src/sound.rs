@@ -313,6 +313,8 @@ pub struct Sound {
     /// optional fade: (started, seconds).
     held: bool,
     hold_fade: Option<(web_time::Instant, f32)>,
+    /// The soundtrack volume (Settings → Audio → Music volume).
+    music_volume: f32,
     /// CPU spent on sound decisions per rendered frame (ms), for the meter.
     pub cpu: f64,
     /// Other riders' engines and impacts in a multiplayer room.
@@ -395,6 +397,7 @@ impl Sound {
             title: None,
             held: false,
             hold_fade: None,
+            music_volume: atv_game::audio::mixer::MUSIC_VOLUME,
             cpu: 0.,
             remote: Default::default(),
             mix: 0.,
@@ -467,6 +470,26 @@ impl Sound {
             *seconds = mixer.render_seconds;
             *frames = 0;
             *since = web_time::Instant::now();
+        }
+    }
+
+    /// Settings → Audio: effect volume, soundtrack volume and on/off
+    /// (GameAudio.setVolume, MusicStream.setVolume/setEnabled).
+    pub fn set_volumes(&mut self, sfx: f32, music: f32, enabled: bool) {
+        if let Ok(mut mixer) = self.output.mixer.lock() {
+            mixer.sfx_volume = sfx.clamp(0., 1.);
+            mixer.music_volume = music.clamp(0., 1.);
+        }
+        self.music_volume = music.clamp(0., 1.);
+        if enabled != self.music_enabled {
+            self.music_enabled = enabled;
+            if !enabled {
+                self.stop_song();
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        if !self.held {
+            self.set_song_gain(1.);
         }
     }
 
@@ -618,7 +641,7 @@ impl Sound {
         #[cfg(target_arch = "wasm32")]
         if let Some(web) = &self.web {
             web.borrow().element.set_volume(f64::from(
-                gain * atv_game::audio::mixer::MUSIC_VOLUME * atv_game::audio::mixer::MASTER,
+                gain * self.music_volume * atv_game::audio::mixer::MASTER,
             ));
         }
     }

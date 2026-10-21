@@ -68,6 +68,7 @@ fn main() {
     let mut weather = None;
     let mut steps = None;
     let mut graphics = atv_render::Graphics::default();
+    let mut graphics_set = false;
     let mut crash = atv_game::crash::CrashMode::Original;
     let mut ride = true;
     let mut selection = atv_game::ride::Selection::default();
@@ -121,7 +122,10 @@ fn main() {
                         .expect("--steps needs a count"),
                 )
             }
-            "--graphics" => graphics = atv_app::graphics_preset(&args.next().unwrap_or_default()),
+            "--graphics" => {
+                graphics = atv_app::graphics_preset(&args.next().unwrap_or_default());
+                graphics_set = true;
+            }
             "--crash" => {
                 crash = args
                     .next()
@@ -316,6 +320,7 @@ fn main() {
         weather,
         steps,
         graphics,
+        graphics_set,
         crash,
         capture,
         capture_ui,
