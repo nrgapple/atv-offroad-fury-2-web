@@ -2480,6 +2480,21 @@ impl App {
         self.gpu = Some(gpu);
         self.content = Some(content.clone());
         // Course photos, loader tips and ATV stats load behind the title.
+        // Training ships no TP photo pair: play.html shows the approved
+        // capture of the venue from the site's dev log images.
+        #[cfg(target_arch = "wasm32")]
+        if tracks.iter().any(|t| t.id == "training") {
+            self.spawn(
+                web_image("/devlog-images/training-map-preview.png"),
+                |image| {
+                    Message::FrontArt(Box::new(ArtPiece::Photos(
+                        image
+                            .map(|i| vec![("training".to_string(), i)])
+                            .unwrap_or_default(),
+                    )))
+                },
+            );
+        }
         let c = content.clone();
         self.spawn(
             async move { atv_ui::front::assets::photos(&c, &tracks).await },
@@ -3641,4 +3656,44 @@ fn fresh_seed() -> u64 {
         .duration_since(web_time::UNIX_EPOCH)
         .map_or(1, |d| u64::from(d.subsec_nanos()) ^ d.as_secs())
         & 0x7fff_ffff
+}
+
+/// A same-origin image decoded by the browser into RGBA (None when it is
+/// missing, e.g. a package without the dev log images).
+#[cfg(target_arch = "wasm32")]
+async fn web_image(url: &str) -> Option<atv_ui::front::pixels::Rgba> {
+    use wasm_bindgen::JsCast;
+    let document = web_sys::window()?.document()?;
+    let image = web_sys::HtmlImageElement::new().ok()?;
+    image.set_src(url);
+    wasm_bindgen_futures::JsFuture::from(image.decode())
+        .await
+        .ok()?;
+    let (width, height) = (image.natural_width(), image.natural_height());
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let canvas = document
+        .create_element("canvas")
+        .ok()?
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .ok()?;
+    canvas.set_width(width);
+    canvas.set_height(height);
+    let context = canvas
+        .get_context("2d")
+        .ok()??
+        .dyn_into::<web_sys::CanvasRenderingContext2d>()
+        .ok()?;
+    context
+        .draw_image_with_html_image_element(&image, 0., 0.)
+        .ok()?;
+    let data = context
+        .get_image_data(0., 0., f64::from(width), f64::from(height))
+        .ok()?;
+    Some(atv_ui::front::pixels::Rgba::new(
+        width,
+        height,
+        data.data().0,
+    ))
 }

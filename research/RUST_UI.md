@@ -529,3 +529,16 @@ row stays hidden there), dragging feedback before release, Media Session release
 (play.html keeps the soundtrack out of system media controls; the Rust web build
 never registers it).
 
+## Training course photo (2026-10-21)
+
+Training ships no TP photo pair; play.html shows the approved capture of the venue
+from the site's dev log images (frontend.js `trainingMapPreview`,
+`/devlog-images/training-map-preview.png`). The Rust web build loads the same image
+once at boot (decoded by the browser into RGBA) and uses it wherever a course photo
+appears: the Select Track card and hero, the greyed backdrop and the course loader
+(Training has no action shots). Measured against play.html (Select Track on
+Training, host Chromium, mean absolute RGB): 1280x720 hero 0.71, card 2.04, frame
+1.19; 390x844 frame 2.64 (images `private/reports/rust-ui/training/`). Desktop
+builds keep the photo-less card: the image is a site asset, not part of the game
+content package. Arlington Free Ride is the multiplayer frontend's.
+
