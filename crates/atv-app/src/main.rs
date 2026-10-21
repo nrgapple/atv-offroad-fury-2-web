@@ -285,11 +285,13 @@ fn main() {
     if verify {
         return verify_content(store);
     }
+    let menu_relay = relay.clone();
     // `--host` / `--room` ride in a multiplayer room (a direct ride).
     let room = (host || room_code.is_some()).then_some(atv_app::RoomStart {
         relay,
         code: room_code,
         host,
+        freeride: false,
         name,
         drop_after: None,
     });
@@ -329,6 +331,7 @@ fn main() {
         profile,
         front,
         room,
+        relay: Some(menu_relay),
     });
 }
 

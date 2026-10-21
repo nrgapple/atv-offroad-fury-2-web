@@ -975,6 +975,7 @@ impl Front {
             "page": self.state.page,
             "selection": self.state.selection,
             "choices": self.state.choices().iter().map(|(a, _)| a).collect::<Vec<_>>(),
+            "freerideRiders": self.state.freeride_riders,
             "track": self.state.tracks.get(self.state.track).map(|t| t.id.clone()),
             "filter": self.state.filter,
             "quad": self.state.quad_id,

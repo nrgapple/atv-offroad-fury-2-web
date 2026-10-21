@@ -1044,21 +1044,56 @@ one Mac, headless Chromium/Metal; host-only):
   135.0 ft. Arrivals now stand beside the native host instead of on it
   (`slice2-three-native.png`).
 
+### Slice 3: Arlington Free Ride from the main menu
+
+Ported:
+
+- The Rust main menu lists **Arlington Free Ride** (`atv_core::ui_menu` row; the
+  frontend no longer filters it). It shows the browser's NEW tag and the live
+  "N riding" count from `GET /multiplayer/freeride/riders`. The count is polled every
+  15 s while the main menu shows: a fetch on the web, a short-lived thread on desktop.
+  The tag's glow and the count's pulse animations are not drawn.
+- Choosing it needs no setup (frontend.js `freeride`). The remembered rider name
+  rides, and the default `Rider` becomes `Rider NNNN`. A motorcycle choice rides
+  ATV01. The loader opens on Arlington at once while `POST /multiplayer/freeride`
+  reserves a slot in the first shared room with space. The ride then joins that
+  `FREERDnn` room with the returned key and meets a rider already there.
+- Pause -> Quit to Main Menu leaves the room. Dropping the ride closes the socket on
+  the web too.
+- Desktop menus use `--relay` (default `https://furyremastered.com`); the web uses
+  the page origin.
+
+Observed (`tools/test_engine_freeride.mjs`, run once on the local relay, one Mac,
+headless Chromium/Metal; host-only):
+
+- The Rust main menu choices were single, freeride, settings and devlog, with
+  "0 riding".
+- Free Ride joined FREERD01 on env08 as slot 0. A JavaScript player tapped Arlington
+  Free Ride, joined the same room as slot 1 and met the Rust rider. The Rust client
+  drew 1 remote rider; the JavaScript game recorded 13 remote draws.
+- Quit to Main Menu returned to the main page, and the Rust rider left the
+  JavaScript player's roster.
+- `tools/test_engine_front.mjs` passes with the new row. Inspected screenshots:
+  `private/reports/engine-multiplayer/slice3-menu.png`, `slice3-rust.png`,
+  `slice3-js.png`.
+
 Gaps, in planned slice order:
 
-1. No room UI in `atv-ui`: no Multiplayer menu, Host/Join forms, room code entry,
-   Players page (and its spawn-beside action), invite copy, Select Track for a Rust
-   host, Change ATV and Rider, or Leave. Rides start from the command line or URL
-   only. No name tags, minimap peer markers or compass colours either.
-2. No Arlington Free Ride: the shared `FREERD` rooms, the rider count and the
-   20-rider limits are not in the menus.
-3. Desktop keeps the slot key in memory only; it is lost when the app restarts.
-4. A hidden browser tab runs no frames, so the Rust engine sends no 0.2 Hz presence
+1. No Multiplayer menu in `atv-ui`: no Host/Join forms (text entry), room code entry,
+   Players page and its spawn-beside action, invite copy, Select Track for a Rust
+   host, Change ATV and Rider, or Leave Game wording. Private rooms start from the
+   command line or URL only. No name tags, minimap peer markers or compass colours
+   either.
+2. A hidden browser tab runs no frames, so the Rust engine sends no 0.2 Hz presence
    while hidden. The JavaScript game keeps timers running there.
-5. The shared train clock and moving-platform rebasing are not ported. Snapshots send
-   no platform and no train time.
-6. Remote engine voices and impact sounds are not played: the nearest-six voice
+3. Desktop keeps the slot key in memory only; it is lost when the app restarts.
+4. The shared train clock and moving-platform rebasing are not ported. Snapshots send
+   no platform and no train time, which matters on Arlington, the Free Ride course.
+5. Remote engine voices and impact sounds are not played: the nearest-six voice
    selection and spatial audio of op 83 are not ported.
+6. Twenty-rider rooms are untested in the Rust engine; the JavaScript game's
+   receive batching, name-tag limits and model cache bounds have no Rust measurement
+   yet.
 
 ## Commands
 
@@ -1084,6 +1119,7 @@ cargo run --release -p atv-app --bin fury -- --content DIR --venue env01 --host 
   [--relay http://127.0.0.1:4187] [--name NAME]          # host a room; --room CODE alone joins
 FURY_BIN=... FURY_CONTENT=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer.mjs
 ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_dropin.mjs   # arrival, reconnect, course change
+ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_freeride.mjs   # Arlington Free Ride from the Rust menu
 cargo run --release -p atv-app --bin fury -- --quad 29 ...   # a motorcycle (27-46); ride parity: compare_engine.mjs ride ... --quad 29
 cargo run --release -p atv-app --bin fury -- --gear 1,2,1,3,3,2,1 --paint 4 ...   # Garage gear/paint; parity: compare_engine.mjs ride ... --appearance 1.2.1.3.3.2.1:4
 cargo run --release -p atv-app --bin fury -- --race --venue env01 ...   # race (with --free: race course world, free camera)

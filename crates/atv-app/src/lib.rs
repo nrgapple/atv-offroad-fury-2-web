@@ -77,6 +77,9 @@ pub struct Options {
     pub front: Option<FrontStart>,
     /// Ride in a multiplayer room (host or join) on the relay.
     pub room: Option<RoomStart>,
+    /// The multiplayer relay origin for menu rides (Arlington Free Ride);
+    /// None: the page origin on the web, furyremastered.com on desktop.
+    pub relay: Option<String>,
 }
 
 /// How the frontend opens.
@@ -125,6 +128,8 @@ enum Message {
     FrontGpu(Box<Gpu>),
     /// A remote rider's model finished loading.
     PeerModel(Box<PeerModel>),
+    /// The Arlington Free Ride rider count for the main menu.
+    FreeRideRiders(Option<u32>),
 }
 
 type PeerModel = Result<
@@ -159,6 +164,8 @@ struct Defaults {
     crash: atv_game::crash::CrashMode,
     sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
     start: FrontStart,
+    /// The multiplayer relay origin.
+    relay: String,
 }
 
 struct App {
@@ -202,6 +209,11 @@ struct App {
     defaults: Option<Defaults>,
     /// Frontend loads already started (top speeds, loader shots).
     requested: HashSet<String>,
+    /// When the Free Ride rider count was last requested.
+    riders_polled: Option<Instant>,
+    /// Desktop: the rider count request in flight.
+    #[cfg(not(target_arch = "wasm32"))]
+    riders_pending: Option<std::sync::mpsc::Receiver<Option<u32>>>,
 }
 
 /// Per-frame CPU while an autodrive script plays (vsync wait excluded).
@@ -1208,6 +1220,7 @@ impl App {
                     intro: false,
                     ..settings
                 }),
+                None,
             );
             return;
         }
@@ -1446,6 +1459,7 @@ impl ApplicationHandler<Message> for App {
         self.window = Some(window.clone());
         if let Some(start) = options.front.clone() {
             self.defaults = Some(Defaults {
+                relay: options.relay.clone().unwrap_or_else(default_relay),
                 graphics: options.graphics,
                 weather: options.weather,
                 crash: options.crash,
@@ -1713,6 +1727,16 @@ impl ApplicationHandler<Message> for App {
                     event_loop.exit();
                 }
             }
+            Message::FreeRideRiders(riders) => {
+                if let Some(front) = &self.front {
+                    let mut f = front.borrow_mut();
+                    f.state.freeride_riders = riders;
+                }
+                self.wake();
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
             Message::PeerModel(model) => {
                 if let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) {
                     net.model_loaded(*model);
@@ -1946,6 +1970,36 @@ impl ApplicationHandler<Message> for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(receive) = &self.riders_pending {
+            match receive.try_recv() {
+                Ok(riders) => {
+                    self.riders_pending = None;
+                    self.user_event(event_loop, Message::FreeRideRiders(riders));
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(
+                        Instant::now() + std::time::Duration::from_millis(250),
+                    ));
+                    return;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.riders_pending = None,
+            }
+        }
+        self.poll_riders();
+        // The main menu refreshes its Free Ride count every 15 s.
+        if self.ready.is_none()
+            && self
+                .front
+                .as_ref()
+                .is_some_and(|f| f.borrow().state.page == "main")
+            && let Some(polled) = self.riders_polled
+        {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                polled + std::time::Duration::from_secs(15),
+            ));
+            return;
+        }
         // Asleep in focus (paused): a 50 ms tick; away: wait for events.
         event_loop.set_control_flow(if self.asleep && self.effective_focused() {
             ControlFlow::WaitUntil(Instant::now() + std::time::Duration::from_millis(50))
@@ -2109,7 +2163,7 @@ impl App {
             }
         });
         drop(f);
-        self.start_ride(setup.map, setup.quad_id, setup.rider_id, settings);
+        self.start_ride(setup.map, setup.quad_id, setup.rider_id, settings, None);
     }
 
     fn front_event(&mut self, event: atv_ui::front::controller::Event) {
@@ -2119,7 +2173,34 @@ impl App {
                 environment,
                 quad,
                 rider,
-            } => self.start_ride(environment, quad, rider, None),
+            } => self.start_ride(environment, quad, rider, None, None),
+            Event::FreeRide { quad, rider, name } => {
+                let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
+                    return;
+                };
+                // Many riders keep the default name: number it so strangers
+                // can tell them apart (frontend.js).
+                let name = if name == "Rider" {
+                    format!("Rider {}", 1000 + fresh_seed() % 9000)
+                } else {
+                    name
+                };
+                let room = RoomStart {
+                    relay,
+                    code: None,
+                    host: false,
+                    freeride: true,
+                    name,
+                    drop_after: None,
+                };
+                self.start_ride(
+                    atv_game::multiplayer::FREERIDE_ENVIRONMENT.into(),
+                    quad,
+                    rider,
+                    None,
+                    Some(room),
+                );
+            }
             Event::DevLog =>
             {
                 #[cfg(target_arch = "wasm32")]
@@ -2145,6 +2226,7 @@ impl App {
         quad: u16,
         rider: u16,
         race: Option<atv_game::ride::race::Settings>,
+        room: Option<RoomStart>,
     ) {
         let (Some(front), Some(content)) = (self.front.clone(), self.content.clone()) else {
             return;
@@ -2213,11 +2295,79 @@ impl App {
                 .map(|saved| atv_game::ride::gear::saved_appearance(&saved))
                 .unwrap_or_default(),
         };
-        let future = prepare(gpu, content, environment, None, world, progress);
+        let ride = multiplayer::RoomRide {
+            graphics,
+            weather,
+            crash,
+            sound,
+            appearance: world.appearance,
+        };
+        let future = async move {
+            // A room ride claims its slot first; the room decides the course.
+            let (net, environment) = match room {
+                Some(room) => {
+                    let profile = atv_game::multiplayer::Profile::new(
+                        &room.name,
+                        quad,
+                        rider,
+                        ride.appearance,
+                    );
+                    let (net, environment) =
+                        multiplayer::Net::join(&room, profile, &environment, content.clone(), ride)
+                            .await?;
+                    (Some(net), environment)
+                }
+                None => (None, environment),
+            };
+            let mut ready = prepare(gpu, content, environment, None, world, progress).await?;
+            if net.is_some()
+                && let Some(riding) = &mut ready.riding
+            {
+                riding.online = true;
+            }
+            ready.net = net;
+            Ok::<_, String>(ready)
+        };
         self.spawn(future, |result| match result {
             Ok(ready) => Message::Ready(Box::new(ready)),
             Err(error) => Message::Failed(error),
         });
+    }
+
+    /// The main menu's Free Ride count, at most every 15 s while it shows
+    /// (watchFreerideRiders in frontend.js).
+    fn poll_riders(&mut self) {
+        let Some(front) = &self.front else {
+            return;
+        };
+        if self.ready.is_some() || front.borrow().state.page != "main" {
+            return;
+        }
+        if self
+            .riders_polled
+            .is_some_and(|t| t.elapsed().as_secs_f32() < 15.)
+        {
+            return;
+        }
+        let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
+            return;
+        };
+        self.riders_polled = Some(Instant::now());
+        #[cfg(target_arch = "wasm32")]
+        self.spawn(
+            async move { net::riders(&relay).await },
+            Message::FreeRideRiders,
+        );
+        // Desktop: a short-lived thread (the event-loop proxy is not Send),
+        // collected by `about_to_wait`.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let (send, receive) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = send.send(net::riders_blocking(&relay));
+            });
+            self.riders_pending = Some(receive);
+        }
     }
 
     /// Pause → Quit to Main Menu: the ride ends and the frontend returns.
@@ -2578,6 +2728,21 @@ fn publish_trace(text: &str) {
     let _ = text;
 }
 
+/// The relay for menu rides: this page's origin on the web, the production
+/// site on desktop.
+fn default_relay() -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.location().origin().ok())
+            .unwrap_or_default()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        "https://furyremastered.com".into()
+    }
+}
+
 /// Multiplayer status for tests (`window.furyMultiplayer`, JSON).
 fn publish_multiplayer(net: &multiplayer::Net, contacts: u64, origin: [f32; 3]) {
     #[cfg(target_arch = "wasm32")]
@@ -2715,6 +2880,9 @@ pub fn run(options: Options) {
         content: None,
         defaults: None,
         requested: HashSet::new(),
+        riders_polled: None,
+        #[cfg(not(target_arch = "wasm32"))]
+        riders_pending: None,
     };
     #[cfg(target_arch = "wasm32")]
     {
@@ -2816,6 +2984,7 @@ pub fn start() {
                 ..defaults
             }
         }),
+        relay: None,
         // `?host=1` hosts a room (`room=` an optional custom code) and
         // `?room=CODE` joins one, on this page's relay.
         room: (param("host").is_some_and(|v| v == "1") || param("room").is_some()).then(|| {
@@ -2829,6 +2998,7 @@ pub fn start() {
                     .and_then(|v| js_sys_decode(&v))
                     .unwrap_or_else(|| "Rider".into()),
                 drop_after: param("dropAfter").and_then(|v| v.parse().ok()),
+                freeride: false,
             }
         }),
         // `script=storage` reads a long parity script from localStorage
