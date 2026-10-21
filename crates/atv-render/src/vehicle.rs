@@ -50,6 +50,12 @@ pub struct VehiclePass {
     rider: (wgpu::Buffer, wgpu::BindGroup),
     chunks: Vec<Chunk>,
     pub triangles: u32,
+    /// Shadow casting (High shadow map) reuses the bone uniforms.
+    pub(crate) bones_layout: wgpu::BindGroupLayout,
+    /// Quad bind-pose length and width (setVehicle: bounds Z and X).
+    pub(crate) footprint: [f32; 2],
+    /// Rider node carrying the torso (pelvisNode in game.js).
+    pub(crate) pelvis: usize,
 }
 
 /// The browser's inverseDirection: bind-space normal into node space.
@@ -338,6 +344,25 @@ impl VehiclePass {
             multiview_mask: None,
             cache: None,
         });
+        let (mut min, mut max) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+        for group in quad.mesh.lods.first().map_or(&[][..], |l| &l.groups[..]) {
+            for vertex in &group.vertices {
+                for axis in 0..3 {
+                    min[axis] = min[axis].min(vertex.position[axis]);
+                    max[axis] = max[axis].max(vertex.position[axis]);
+                }
+            }
+        }
+        let nodes = &rider.mesh.nodes;
+        let pelvis = [&["pelvis"][..], &["hip"], &["torso", "spine"]]
+            .iter()
+            .find_map(|patterns| {
+                nodes.iter().position(|n| {
+                    let name = n.name.to_ascii_lowercase();
+                    patterns.iter().any(|p| name.contains(p))
+                })
+            })
+            .unwrap_or(0);
         Ok(Self {
             pipeline,
             globals,
@@ -347,6 +372,9 @@ impl VehiclePass {
             rider: bones("rider bones"),
             chunks,
             triangles,
+            footprint: [max[2] - min[2], max[0] - min[0]],
+            pelvis,
+            bones_layout,
         })
     }
 
@@ -372,6 +400,22 @@ impl VehiclePass {
         self.globals_value.eye = [eye[0], eye[1], eye[2], 1.];
         gpu.queue
             .write_buffer(&self.globals, 0, bytemuck::bytes_of(&self.globals_value));
+    }
+
+    /// Depth-only casting into the High shadow map: bones at group 1, the
+    /// caller's light uniforms at group 0.
+    pub(crate) fn draw_casters(&self, pass: &mut wgpu::RenderPass<'_>) {
+        for chunk in &self.chunks {
+            let bones = if chunk.rider {
+                &self.rider.1
+            } else {
+                &self.quad.1
+            };
+            pass.set_bind_group(1, bones, &[]);
+            pass.set_vertex_buffer(0, chunk.vertices.slice(..));
+            pass.set_index_buffer(chunk.indices.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..chunk.count, 0, 0..1);
+        }
     }
 
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {

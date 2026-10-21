@@ -3,7 +3,9 @@
 mod ambient;
 pub mod camera;
 mod cull;
+mod lingering_dust;
 mod scenery;
+mod shadows;
 mod sky;
 mod snow;
 mod terrain;
@@ -12,6 +14,7 @@ mod train;
 mod vegetation;
 mod vehicle;
 mod water;
+mod wheel_effects;
 mod world;
 
 use atv_game::venue::Venue;
@@ -167,6 +170,9 @@ pub struct FrameStats {
     pub ambient_triangles: u32,
     pub snow_draws: u32,
     pub snow_triangles: u32,
+    pub wheel_draws: u32,
+    pub wheel_triangles: u32,
+    pub shadow_draws: u32,
     pub vehicle_triangles: u32,
     /// Time spent waiting for the swapchain image (vsync), not CPU work.
     pub acquire_ms: f64,
@@ -182,6 +188,8 @@ impl FrameStats {
             + self.train_draws
             + self.ambient_draws
             + self.snow_draws
+            + self.wheel_draws
+            + self.shadow_draws
     }
     pub fn triangles(&self) -> u32 {
         self.terrain_triangles
@@ -191,6 +199,7 @@ impl FrameStats {
             + self.train_triangles
             + self.ambient_triangles
             + self.snow_triangles
+            + self.wheel_triangles
             + self.vehicle_triangles
     }
 }
@@ -204,6 +213,12 @@ pub struct Graphics {
     pub anisotropy: u16,
     /// Authored Schlick Fresnel on the water surface.
     pub fresnel: bool,
+    /// Lingering dust puff pool (Enhanced 24, High 96; 0 off).
+    pub dust: u16,
+    /// Soft contact shadows under vehicles (Enhanced/High).
+    pub contact_shadows: bool,
+    /// Vehicle-only sun shadow map size (High 2048; 0 off).
+    pub shadow_map: u16,
 }
 
 pub struct SceneRenderer {
@@ -240,6 +255,19 @@ pub struct SceneRenderer {
     /// stand is not sliced open into the sky (matrix() in web/game.js).
     depth_far: f32,
     clock: f32,
+    /// The ride's wheel dust, chunks, spray and wet births.
+    wheel_effects: Option<wheel_effects::WheelEffectsPass>,
+    /// Enhanced/High lingering dust puffs.
+    lingering_dust: Option<lingering_dust::LingeringDustPass>,
+    graphics: Graphics,
+    /// Visible terrain heights (renderCore.terrainHeight) for contact shadows.
+    ground: atv_core::terrain::Heightfield,
+    contact_shadows: Option<shadows::ContactShadows>,
+    shadow_map: Option<shadows::ShadowMap>,
+    /// Smoothed resting body height above the visible ground (restLift).
+    rest_lift: Option<f32>,
+    /// Quad world, rider world and, when detached, the rider's torso world.
+    ride_pose: Option<([f32; 16], Option<[f32; 16]>)>,
     /// The player's quad and rider, once a ride is loaded.
     vehicle: Option<vehicle::VehiclePass>,
     /// Race CPU riders (drawn after the player) and which are near enough.
@@ -263,8 +291,14 @@ impl SceneRenderer {
             venue.terrain.size_x().max(venue.terrain.size_z()) * 5.,
             |f| f.end,
         );
-        let terrain = terrain::TerrainPass::new(gpu, venue, fine_center, gpu.samples);
-        let mut world = world::World::new(gpu, venue);
+        let mut world = world::World::new(gpu, venue, u32::from(graphics.shadow_map));
+        let terrain = terrain::TerrainPass::new(
+            gpu,
+            venue,
+            fine_center,
+            gpu.samples,
+            (&world.shadow_view, &world.shadow_sampler),
+        );
         world.globals.sky[3] = graphics.sky_smooth as u8 as f32;
         let sky = venue
             .sky
@@ -342,6 +376,27 @@ impl SceneRenderer {
             clock: 0.,
             vehicle: None,
             cpus: Vec::new(),
+            wheel_effects: None,
+            lingering_dust: None,
+            graphics,
+            ground: {
+                let t = &venue.terrain;
+                atv_core::terrain::Heightfield {
+                    width: t.width,
+                    depth: t.depth,
+                    // The page received the shortest decimal of the binary32.
+                    spacing: t
+                        .spacing
+                        .to_string()
+                        .parse()
+                        .unwrap_or(f64::from(t.spacing)),
+                    heights: t.heights.clone(),
+                }
+            },
+            contact_shadows: None,
+            shadow_map: None,
+            rest_lift: None,
+            ride_pose: None,
         };
         // startSimulation's first follow-camera request (op 46, dt 1/60)
         // already advances the pre-race shots once.
@@ -509,6 +564,50 @@ impl SceneRenderer {
         }
     }
 
+    /// Installs the ride's wheel effects (WheelEffectsRenderer).
+    pub fn set_wheel_effects(
+        &mut self,
+        gpu: &Gpu,
+        effects: &atv_game::wheel_effects::WheelEffects,
+    ) {
+        self.wheel_effects = Some(wheel_effects::WheelEffectsPass::new(
+            gpu,
+            &self.world,
+            effects,
+        ));
+    }
+
+    /// The latest wheel-effect frame and every wet birth since the last call.
+    pub fn accept_wheel_effects(
+        &mut self,
+        gpu: &Gpu,
+        effects: &mut atv_game::wheel_effects::WheelEffects,
+    ) {
+        if let Some(pass) = &mut self.wheel_effects {
+            pass.accept(effects);
+        }
+        match &effects.dust {
+            Some(dust) => {
+                let capacity = dust.emitter.capacity;
+                if self
+                    .lingering_dust
+                    .as_ref()
+                    .is_none_or(|p| p.capacity() != capacity)
+                {
+                    self.lingering_dust = Some(lingering_dust::LingeringDustPass::new(
+                        gpu,
+                        &self.world,
+                        capacity,
+                    ));
+                }
+                if let Some(pass) = &mut self.lingering_dust {
+                    pass.accept(gpu, &dust.emitter, effects.frame().time);
+                }
+            }
+            None => self.lingering_dust = None,
+        }
+    }
+
     /// Uploads the ride's quad and rider models.
     pub fn set_ride(
         &mut self,
@@ -517,13 +616,14 @@ impl SceneRenderer {
         quad: &atv_game::ride::Model,
         rider: &atv_game::ride::Model,
     ) -> Result<(), String> {
-        self.vehicle = Some(vehicle::VehiclePass::new(
-            gpu,
-            venue,
-            quad,
-            rider,
-            gpu.samples,
-        )?);
+        let vehicle = vehicle::VehiclePass::new(gpu, venue, quad, rider, gpu.samples)?;
+        if self.graphics.shadow_map > 0 {
+            self.shadow_map = Some(shadows::ShadowMap::new(gpu, &self.world, &vehicle));
+        }
+        if self.graphics.contact_shadows {
+            self.contact_shadows = Some(shadows::ContactShadows::new(gpu, &self.world));
+        }
+        self.vehicle = Some(vehicle);
         Ok(())
     }
 
@@ -560,9 +660,37 @@ impl SceneRenderer {
         }
     }
 
+    /// One simulation step's body origin while Riding with every wheel down,
+    /// for the contact shadows' resting lift (acceptFrame in game.js).
+    pub fn observe_rest(&mut self, origin: [f32; 3]) {
+        if self.contact_shadows.is_none() {
+            return;
+        }
+        let rest = origin[1] - self.visible_ground(origin[0], origin[2]);
+        if rest.is_finite() {
+            self.rest_lift = Some(match self.rest_lift {
+                Some(previous) => previous + (rest - previous) * 0.1,
+                None => rest,
+            });
+        }
+    }
+
+    fn visible_ground(&self, x: f32, z: f32) -> f32 {
+        self.ground.height(f64::from(x), f64::from(z)) as f32
+    }
+
     /// The latest simulation pose of the quad linkage and rider skeleton.
-    pub fn pose_ride(&self, gpu: &Gpu, pose: &atv_game::ride::Pose) {
+    pub fn pose_ride(&mut self, gpu: &Gpu, pose: &atv_game::ride::Pose) {
         if let Some(vehicle) = &self.vehicle {
+            // Detached (wreck rig): the torso node under its rider world.
+            let torso = (pose.rider_world != pose.quad_world).then(|| {
+                pose.rider_nodes
+                    .get(vehicle.pelvis)
+                    .map_or(pose.rider_world, |node| {
+                        camera::multiply(&pose.rider_world, node)
+                    })
+            });
+            self.ride_pose = Some((pose.quad_world, torso));
             vehicle.pose(gpu, pose);
         }
     }
@@ -636,6 +764,28 @@ impl SceneRenderer {
             self.far,
         ));
         let eye = view.camera.eye();
+        // High: the vehicle-only sun shadow map around the ride, received by
+        // terrain and scenery (renderVehicleShadows).
+        let light = match (&self.shadow_map, &self.vehicle, &self.ride_pose) {
+            (Some(map), Some(_), Some((quad, _))) => {
+                let sun = self.world.globals.sun_direction;
+                Some(shadows::light_matrices(
+                    [quad[12], quad[13], quad[14]],
+                    [sun[0], sun[1], sun[2]],
+                    map.size(),
+                ))
+            }
+            _ => None,
+        };
+        let texel = 1. / self.world.shadow_size as f32;
+        self.terrain.set_shadow(light.as_ref().map(|l| &l.1), texel);
+        match &light {
+            Some((_, texture)) => {
+                self.world.globals.shadow_matrix = *texture;
+                self.world.globals.shadow = [1., texel, 0., 0.];
+            }
+            None => self.world.globals.shadow = [0.; 4],
+        }
         let mut stats = self.terrain.prepare(gpu, &view_projection, &cull, eye);
         self.world
             .prepare(gpu, &view_projection, eye, view.camera.yaw);
@@ -672,6 +822,19 @@ impl SceneRenderer {
         if let Some((pass, _)) = &mut self.snow {
             (stats.snow_draws, stats.snow_triangles) = pass.prepare(gpu, &view.camera);
         }
+        if let Some(pass) = &mut self.wheel_effects {
+            (stats.wheel_draws, stats.wheel_triangles) = pass.prepare(gpu, &view.camera);
+        }
+        if let Some(pass) = &mut self.lingering_dust {
+            let fog_end = if self.world.globals.fog[2] > 0.5 {
+                self.far
+            } else {
+                768.
+            };
+            let (draws, triangles) = pass.prepare(gpu, &view.camera, fog_end);
+            stats.wheel_draws += draws;
+            stats.wheel_triangles += triangles;
+        }
         if let Some(vehicle) = &mut self.vehicle {
             vehicle.prepare(gpu, &view_projection, view.camera.eye());
             stats.vehicle_triangles = vehicle.triangles;
@@ -682,7 +845,46 @@ impl SceneRenderer {
                 stats.vehicle_triangles += cpu.triangles;
             }
         }
+        let contact = match (&mut self.contact_shadows, &self.vehicle, &self.ride_pose) {
+            (Some(contact), Some(vehicle), Some((quad, torso))) => {
+                let ground = |x: f32, z: f32| self.ground.height(f64::from(x), f64::from(z)) as f32;
+                let rest = self.rest_lift.unwrap_or(1.5);
+                let distance = |m: &[f32; 16]| {
+                    ((m[12] - eye[0]).powi(2) + (m[13] - eye[1]).powi(2) + (m[14] - eye[2]).powi(2))
+                        .sqrt()
+                };
+                let lift = |m: &[f32; 16], rest: f32| m[13] - ground(m[12], m[14]) - rest;
+                let [length, width] = vehicle.footprint;
+                let strength = if light.is_some() { 0.35 } else { 0.6 };
+                let mut footprints = vec![shadows::footprint(
+                    quad,
+                    length,
+                    width,
+                    lift(quad, rest),
+                    distance(quad),
+                    strength,
+                )];
+                if let Some(torso) = torso {
+                    footprints.push(shadows::footprint(
+                        torso,
+                        3.,
+                        2.2,
+                        lift(torso, 0.9),
+                        distance(torso),
+                        0.45,
+                    ));
+                }
+                contact.prepare(gpu, &footprints, ground)
+            }
+            _ => 0,
+        };
+        stats.shadow_draws = u32::from(contact > 0) + u32::from(light.is_some());
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        if let (Some(map), Some(vehicle), Some((clip, _))) =
+            (&self.shadow_map, &self.vehicle, &light)
+        {
+            map.render(gpu, &mut encoder, &self.world, vehicle, clip);
+        }
         {
             let [r, g, b] = self.fog_color.map(f64::from);
             let (view, resolve_target) = match msaa {
@@ -718,6 +920,9 @@ impl SceneRenderer {
             if let Some((train, _)) = &self.train {
                 train.draw(&mut pass, &self.world);
             }
+            if let Some(contact) = &self.contact_shadows {
+                contact.draw(&mut pass, &self.world);
+            }
             if let Some(vegetation) = &self.vegetation {
                 vegetation.draw(&mut pass, &self.world);
             }
@@ -736,6 +941,12 @@ impl SceneRenderer {
             }
             if let Some((snow, _)) = &self.snow {
                 snow.draw(&mut pass, &self.world);
+            }
+            if let Some(effects) = &self.wheel_effects {
+                effects.draw(&mut pass, &self.world);
+            }
+            if let Some(dust) = &self.lingering_dust {
+                dust.draw(&mut pass, &self.world);
             }
         }
         (encoder, stats)

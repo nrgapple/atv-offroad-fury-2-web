@@ -148,6 +148,7 @@ name = "atv-app"
 version = "0.1.0"
 dependencies = [
  "atv-content",
+ "atv-core",
  "atv-game",
  "atv-render",
  "atv-ui",
@@ -240,15 +241,19 @@ dependencies = [
 name = "atv-ui"
 version = "0.1.0"
 dependencies = [
+ "atv-content",
+ "atv-core",
  "atv-game",
  "bytemuck",
  "cosmic-text",
  "js-sys",
+ "pollster",
  "serde_json",
  "swash",
  "taffy",
  "wasm-bindgen",
  "web-sys",
+ "web-time",
  "wgpu",
 ]
 

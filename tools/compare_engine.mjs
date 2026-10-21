@@ -38,17 +38,18 @@ const PORTRAIT = { width: 390, height: 844 };
 // Rewrites the game's own op 50 batches so each step carries the script's
 // input; once the script is exhausted the next batch is never sent, holding
 // the final state on screen.
-async function scriptedGame(browser, venue, steps, viewport, errors, { measure = false, race = null } = {}) {
+async function scriptedGame(browser, venue, steps, viewport, errors, { measure = false, graphics = 'original', race = null } = {}) {
   const page = await newPage(browser, { viewport }, errors);
-  await page.addInitScript(({ steps, measure, race }) => {
+  await page.addInitScript(({ steps, measure, graphics, race }) => {
     // CPU baseline: animation frames and worker operation time (worker.js
     // reports each operation's Wasm time).
     const cpu = window.rideCpu = { frames: 0, workerMs: 0 };
     const raf = window.requestAnimationFrame.bind(window);
     window.requestAnimationFrame = callback => raf(time => { cpu.frames++; callback(time); });
     if (measure) localStorage.setItem('atv-audio-v1', JSON.stringify({ sfx: 1, mode: 'original', silent: 'play' }));
-    // The Original graphics preset, without the first-ride keyboard panel.
-    localStorage.setItem('atv-graphics', 'original');
+    // The requested graphics preset (Original by default), without the
+    // first-ride keyboard panel.
+    localStorage.setItem('atv-graphics', graphics);
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
     const trace = window.rideTrace = { frames: [], cursor: 0, held: false };
     const post = Worker.prototype.postMessage, pending = new Set();
@@ -85,7 +86,7 @@ async function scriptedGame(browser, venue, steps, viewport, errors, { measure =
       trace.cursor += count; pending.add(message.id);
       return post.call(this, { ...message, bytes: new TextEncoder().encode(JSON.stringify(request)) }, ...rest);
     };
-  }, { steps, measure, race });
+  }, { steps, measure, graphics, race });
   const session = measure ? await page.context().newCDPSession(page) : null;
   if (session) await session.send('Performance.enable');
   await page.goto(url(race ? `/play.html?activity=race&map=${venue}&laps=${race.laps}&cpu=${race.cpu}&play=1` : `/play.html?drive=1&environment=${venue}`));
@@ -197,9 +198,12 @@ function compareTraces(js, rust) {
 }
 
 async function rideMode() {
-  const venue = process.argv[3] ?? 'env01';
-  const script = process.argv[4] ? JSON.parse(await readFile(process.argv[4], 'utf8')) : DEFAULT_SCRIPT;
-  const out = path.resolve(process.argv[5] ?? 'private/reports/engine-parity/ride');
+  // ride [venue] [script.json] [out-dir] [--graphics original|enhanced|high]
+  const args = process.argv.slice(3), at = args.indexOf('--graphics');
+  const graphics = at >= 0 ? args.splice(at, 2)[1] : 'original';
+  const venue = args[0] || 'env01';
+  const script = args[1] ? JSON.parse(await readFile(args[1], 'utf8')) : DEFAULT_SCRIPT;
+  const out = path.resolve(args[2] ?? 'private/reports/engine-parity/ride');
   await mkdir(out, { recursive: true });
   const scriptFile = path.join(out, 'script.json');
   await writeFile(scriptFile, JSON.stringify(script));
@@ -207,14 +211,15 @@ async function rideMode() {
   const normalized = input => input?.keyboard_drive ? { ...input, keyboard_drive: { generation: 0, ...input.keyboard_drive } } : input ?? {};
   const steps = script.flatMap(({ frames, input }) => Array.from({ length: frames }, () => normalized(input)));
   const browser = await launch();
-  const report = { venue, steps: steps.length };
+  const report = { venue, graphics, steps: steps.length };
   try {
     // Screen boxes around the held quad and rider of the default script.
     for (const [name, viewport, crop] of [['landscape', { width: 1280, height: 720 }, [0.43, 0.37, 0.59, 0.69]], ['portrait', PORTRAIT, [0.33, 0.49, 0.7, 0.7]]]) {
       const errors = [];
-      const page = await scriptedGame(browser, venue, steps, viewport, errors);
+      const page = await scriptedGame(browser, venue, steps, viewport, errors, { graphics });
       const jsFile = path.join(out, `${venue}-${name}-javascript.png`);
       report[`javascriptGraphics-${name}`] = await page.evaluate(() => atvTerrainStatus.graphics?.setting);
+      report[`javascriptEffects-${name}`] = await page.evaluate(() => ({ wheel: atvTerrainStatus.wheelEffects && { particles: atvTerrainStatus.wheelEffects.particles, draws: atvTerrainStatus.wheelEffects.draws, wetLive: atvTerrainStatus.wheelEffects.wetLive }, lingeringDust: atvTerrainStatus.lingeringDust }));
       // The canvas only: toolbar, HUD and minimap are DOM overlays.
       await page.evaluate(() => { document.body.style.visibility = 'hidden'; document.querySelector('#game').style.visibility = 'visible'; });
       await page.locator('#game').screenshot({ path: jsFile });
@@ -229,7 +234,7 @@ async function rideMode() {
 
       const rustErrors = [];
       const rust = await newPage(browser, { viewport }, rustErrors);
-      await rust.goto(url(`/engine.html?venue=${venue}&script=${encodeURIComponent(JSON.stringify(script))}`));
+      await rust.goto(url(`/engine.html?venue=${venue}&graphics=${graphics}&script=${encodeURIComponent(JSON.stringify(script))}`));
       await rust.waitForFunction(() => document.querySelector('#trace') && /fps/.test(document.querySelector('#status').textContent)
         || /fail|error|stopped/i.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
       await rust.waitForTimeout(1000);
@@ -245,7 +250,7 @@ async function rideMode() {
       if (process.env.FURY_BIN) {
         const nativeFile = path.join(out, `${venue}-${name}-rust-native.png`);
         const content = process.env.FURY_CONTENT ? ['--content', process.env.FURY_CONTENT] : [];
-        execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--script', scriptFile, '--capture', nativeFile, `${viewport.width}x${viewport.height}`], { stdio: 'inherit' });
+        execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--graphics', graphics, '--script', scriptFile, '--capture', nativeFile, `${viewport.width}x${viewport.height}`], { stdio: 'inherit' });
         report[`difference-${name}-native`] = await difference(browser, jsFile, nativeFile, crop);
       }
     }

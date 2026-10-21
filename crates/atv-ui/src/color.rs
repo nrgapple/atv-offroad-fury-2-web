@@ -180,6 +180,12 @@ impl Fill {
     }
 }
 
+impl From<Gradient> for Fill {
+    fn from(gradient: Gradient) -> Self {
+        Fill::Linear(gradient)
+    }
+}
+
 impl From<Color> for Fill {
     fn from(color: Color) -> Self {
         Fill::Solid(color)

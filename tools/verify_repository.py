@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Validate tracked-file hygiene without requiring the private disc or references."""
 from pathlib import Path
+import hashlib
 import re
 import subprocess
 
@@ -18,7 +19,16 @@ ASSET_SUFFIXES = {
     '.vub', '.vue', '.wtt', '.tv', '.juk', '.bn', '.dat', '.col', '.psg',
 }
 # Authored files that legitimately use a blocked suffix. Keep this list explicit.
-ASSET_SUFFIX_EXCEPTIONS = frozenset()
+ASSET_SUFFIX_EXCEPTIONS = frozenset({'crates/atv-ui/fonts/OFL.txt'})
+# Unmodified SIL OFL fonts bundled for desktop UI text (research/RUST_UI.md),
+# pinned by SHA-256 so no other binary can be added under these names.
+BUNDLED_FONTS = {
+    'crates/atv-ui/fonts/FiraSansCondensed-Regular.ttf': 'c67609f14fc9d328442bfffcc31988b0f76e5575cf460fcc1f3dd8e4912fe257',
+    'crates/atv-ui/fonts/FiraSansCondensed-SemiBold.ttf': '5a9586bc549d557c415a6a3dc88658b1453d1df661edf811954ebd55776c01cd',
+    'crates/atv-ui/fonts/FiraSansCondensed-Bold.ttf': 'b9371052e58ec5b709153dd0fffc60b5205b4d3435cf957c2522705b31b0dbcc',
+    'crates/atv-ui/fonts/FiraSansCondensed-ExtraBold.ttf': 'd1e5181a65e04970ef17b83fa518277658217081a032c7f60b7ac0f101347cf2',
+    'crates/atv-ui/fonts/FiraSansCondensed-ExtraBoldItalic.ttf': '071e6c37e90a3ba2fb53ede9f88fd77d024770503665697187013397002b0c66',
+}
 # Authored files allowed to embed a large base64 payload.
 BASE64_ALLOWLIST = frozenset({'web/fury-app-icons.json'})
 BASE64_LIMIT = 64 * 1024
@@ -48,6 +58,10 @@ def check_path(name, mode):
 
 
 def check_content(name, data):
+    if name in BUNDLED_FONTS:
+        if hashlib.sha256(data).hexdigest() != BUNDLED_FONTS[name]:
+            raise ValueError(f'bundled font does not match its pinned hash: {name}')
+        return
     if len(data) > 2_000_000 or b'\0' in data:
         raise ValueError(f'large or binary file is tracked: {name}')
     if CREDENTIAL.search(data):

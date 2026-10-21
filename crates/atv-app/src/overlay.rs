@@ -2,7 +2,14 @@
 //! engine's UI pass (crates/atv-ui).
 use atv_ui::{
     DisplayList, Fonts, Rect, Renderer,
-    hud::{Viewport, toolbar},
+    hud::{
+        Viewport,
+        assets::OverlayAssets,
+        help,
+        meter::Meter,
+        minimap::{Instrument, MapPose, Minimap, MinimapSettings},
+        toolbar,
+    },
     layout,
     settings::Settings,
     taffy,
@@ -16,16 +23,29 @@ pub enum Action {
     Camera,
 }
 
-/// A press on a toolbar button (utility pointers in touch.js).
+/// Hit target of the minimap (tap toggles north-up / heading-up).
+const MINIMAP: u32 = 10;
+
+/// What the HUD shows this frame.
+pub struct HudInput<'a> {
+    pub hud: atv_core::hud::Frame,
+    pub rider_world: [f32; 16],
+    pub terrain: &'a atv_game::venue::Terrain,
+}
+
+/// A press on a toolbar button or the minimap (utility pointers in touch.js).
 struct Press {
     pointer: u64,
-    button: toolbar::Button,
+    button: u32,
     x: f32,
     y: f32,
     moved: bool,
 }
 
 pub const MOUSE: u64 = u64::MAX;
+
+/// A laid-out toolbar: its inputs, paint and hit targets.
+type ToolbarCache = (Viewport, toolbar::State, DisplayList, Vec<(Rect, u32)>);
 
 pub struct Overlay {
     pub fonts: Fonts,
@@ -37,8 +57,18 @@ pub struct Overlay {
     uploaded: DisplayList,
     upload_size: (u32, u32, f32),
     hits: Vec<(Rect, u32)>,
-    hovered: Option<toolbar::Button>,
+    hovered: Option<u32>,
     press: Option<Press>,
+    pub minimap: Minimap,
+    meter: Option<Meter>,
+    /// Keyboard controls card: open, and its first-ride close time.
+    help_open: bool,
+    help_until: Option<f64>,
+    ride_started: bool,
+    /// Laid-out toolbar and keyboard card, reused while their inputs are
+    /// unchanged (the browser HUD's unchanged-state redraw avoidance).
+    toolbar_cache: Option<ToolbarCache>,
+    help_cache: Option<(Viewport, DisplayList)>,
     /// CPU time of the last `prepare`, milliseconds.
     pub prepare_ms: f64,
     /// Parity test hook: a flat colour painted under the UI.
@@ -47,9 +77,19 @@ pub struct Overlay {
 
 impl Overlay {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, view: Viewport) -> Self {
-        let settings = Settings::load();
+        Self::with_settings(device, format, view, Settings::load())
+    }
+
+    /// An overlay with the given saved settings (in-memory for captures).
+    pub fn with_settings(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        view: Viewport,
+        settings: Settings,
+    ) -> Self {
         let mut touch = TouchControls::new(&settings, view.coarse);
         touch.set_viewport(view.width, view.height);
+        let minimap = Minimap::new(MinimapSettings::load(&settings));
         Self {
             fonts: Fonts::new(),
             renderer: Renderer::new(device, format),
@@ -62,6 +102,13 @@ impl Overlay {
             hits: Vec::new(),
             hovered: None,
             press: None,
+            minimap,
+            meter: None,
+            help_open: false,
+            help_until: None,
+            ride_started: false,
+            toolbar_cache: None,
+            help_cache: None,
             prepare_ms: 0.,
             backdrop: None,
         }
@@ -76,12 +123,44 @@ impl Overlay {
         self.touch.set_viewport(view.width, view.height);
     }
 
-    fn hit(&self, x: f32, y: f32) -> Option<toolbar::Button> {
+    fn hit(&self, x: f32, y: f32) -> Option<u32> {
         self.hits
             .iter()
             .rev()
             .find(|(r, _)| r.contains(x, y))
-            .and_then(|(_, id)| toolbar::Button::from_id(*id))
+            .map(|(_, id)| *id)
+    }
+
+    /// Starts the GPS map build for a course (minimap.js `setTerrain`).
+    pub fn set_course(&mut self, venue: &atv_game::venue::Venue) {
+        self.minimap.set_terrain(&venue.terrain, &venue.scenery);
+    }
+
+    /// Uploads the original speed meter and stunt text resources.
+    pub fn set_meter(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, assets: OverlayAssets) {
+        let mut meter = Meter::new(assets);
+        for (name, image) in &meter.assets.images {
+            let id = self
+                .renderer
+                .add_image(device, queue, image.width, image.height, &image.rgba);
+            meter.images.insert(name.clone(), id);
+        }
+        self.meter = Some(meter);
+    }
+
+    /// H toggles the keyboard card while riding (keyboard-help.js).
+    pub fn key(&mut self, code: &str, riding: bool) {
+        if code == "KeyH" && riding && !self.view.touch_first {
+            self.toggle_help();
+        }
+    }
+
+    fn toggle_help(&mut self) {
+        self.help_until = None;
+        self.help_open = !self.help_open;
+        if self.help_open {
+            self.settings.set(help::SEEN_KEY, "1");
+        }
     }
 
     /// A pointer pressed at CSS `x`, `y`; true when the UI takes it.
@@ -141,10 +220,23 @@ impl Overlay {
         let nearby = (x - p.x).hypot(y - p.y) <= 16.;
         let hit = self.hit(x, y);
         Some(
-            (!cancelled && !p.moved && nearby && hit == Some(p.button)).then_some(match p.button {
-                toolbar::Button::Pause => Action::Pause,
-                _ => Action::Camera,
-            }),
+            if cancelled || p.moved || !nearby || hit != Some(p.button) {
+                None
+            } else if p.button == MINIMAP {
+                self.minimap.settings.heading_up = !self.minimap.settings.heading_up;
+                self.minimap.settings.save(&mut self.settings);
+                None
+            } else {
+                match toolbar::Button::from_id(p.button) {
+                    Some(toolbar::Button::Pause) => Some(Action::Pause),
+                    Some(toolbar::Button::Camera) => Some(Action::Camera),
+                    Some(toolbar::Button::Keys) => {
+                        self.toggle_help();
+                        None
+                    }
+                    None => None,
+                }
+            },
         )
     }
 
@@ -178,6 +270,7 @@ impl Overlay {
         active: bool,
         camera_enabled: bool,
         paused: bool,
+        hud: Option<HudInput>,
     ) {
         let started = web_time::Instant::now();
         self.list.clear();
@@ -188,34 +281,155 @@ impl Overlay {
                 atv_ui::Color::rgb(r, g, b),
             );
         }
+        let view = self.view;
+        let touch_driving = self.touch.driving(active) || view.touch_first;
+        // The GPS map builds in ~2 ms slices like buildSlice, then uploads once.
+        if let Some(hud) = &hud
+            && self.minimap.building()
+        {
+            self.minimap.build_slice(hud.terrain, 2.);
+        }
+        if let Some(pixels) = self.minimap.pending.take() {
+            let size = atv_ui::hud::minimap::MAP_RESOLUTION as u32;
+            self.minimap.image = Some(self.renderer.add_image(device, queue, size, size, &pixels));
+        }
+        // Visible while riding (game.js hides HUD and map behind menus/blur).
+        let shown = hud.as_ref().filter(|_| active);
+        let instrument = shown.map(|h| Instrument {
+            speed: h.hud.speed_text.clone(),
+            units: h.hud.units.into(),
+            preload_visible: h.hud.preload_visible,
+            preload_fill: h.hud.preload_fill,
+            preload_blue_alpha: h.hud.preload_blue_alpha as f32,
+        });
+        self.minimap.update(
+            now,
+            shown.map(|h| MapPose::from_matrix(&h.rider_world)),
+            instrument,
+        );
+        // First keyboard ride: open the card for 15 s (keyboard-help.js).
+        if active && !self.ride_started {
+            self.ride_started = true;
+            if !touch_driving && self.settings.get(help::SEEN_KEY).as_deref() != Some("1") {
+                self.help_open = true;
+                self.help_until = Some(now + help::FIRST_RIDE_SECONDS * 1000.);
+                self.settings.set(help::SEEN_KEY, "1");
+            }
+        }
+        if self.help_until.is_some_and(|until| now >= until) {
+            self.help_open = false;
+            self.help_until = None;
+        }
         self.touch
             .paint(active, now, &mut self.fonts, &mut self.list);
+        if let (Some(meter), Some(h)) = (&self.meter, shown) {
+            meter.paint(
+                &mut self.fonts,
+                &mut self.list,
+                &h.hud,
+                !self.minimap.settings.enabled,
+                view.width,
+                view.height,
+            );
+        }
+        let map_visible = self.minimap.visible() && !paused;
+        let keys_visible = !touch_driving;
+        // A large top-right map can meet the labelled toolbar: icon-only buttons.
+        let labels: f32 = ["PAUSE", "CAMERA", "KEYS"]
+            .iter()
+            .take(if keys_visible { 3 } else { 2 })
+            .map(|label| {
+                let style = toolbar::label_style(atv_ui::Color::WHITE);
+                12. + 20.
+                    + 8.
+                    + self
+                        .fonts
+                        .measure(label, &style.font, style.letter_spacing)
+                        .width
+                    + 12.
+            })
+            .sum();
+        let count = if keys_visible { 3. } else { 2. };
+        let bar_right = view.safe[3].max(14.) + labels + 8. * (count - 1.);
+        let bar_top = view.safe[0].max(14.);
+        let map = self.minimap.rect(&view);
+        let compact = map_visible
+            && !self.minimap.settings.bottom_left
+            && bar_right + 8. > map.x
+            && bar_top < map.bottom();
         let state = toolbar::State {
             paused,
-            hovered: self.hovered,
-            pressed: self.press.as_ref().map(|p| p.button),
+            hovered: self.hovered.and_then(toolbar::Button::from_id),
+            pressed: self
+                .press
+                .as_ref()
+                .and_then(|p| toolbar::Button::from_id(p.button)),
             camera_enabled,
-            keys_enabled: false,
-            // The keyboard card arrives with the HUD checkpoint.
-            keys_visible: false,
-            compact: false,
+            keys_enabled: active,
+            keys_visible,
+            compact,
         };
-        let root = layout::El::new(taffy::Style {
-            size: taffy::Size {
-                width: taffy::Dimension::length(self.view.width),
-                height: taffy::Dimension::length(self.view.height),
-            },
-            ..Default::default()
-        })
-        .child(toolbar::element(&self.view, &state));
-        layout::render(
-            &root,
-            &mut self.fonts,
-            self.view.width,
-            self.view.height,
-            &mut self.list,
-            &mut self.hits,
-        );
+        let full = |child: layout::El| {
+            layout::El::new(taffy::Style {
+                size: taffy::Size {
+                    width: taffy::Dimension::length(view.width),
+                    height: taffy::Dimension::length(view.height),
+                },
+                ..Default::default()
+            })
+            .child(child)
+        };
+        if !self
+            .toolbar_cache
+            .as_ref()
+            .is_some_and(|(v, s, ..)| *v == view && *s == state)
+        {
+            let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+            layout::render(
+                &full(toolbar::element(&view, &state)),
+                &mut self.fonts,
+                view.width,
+                view.height,
+                &mut list,
+                &mut hits,
+            );
+            self.toolbar_cache = Some((view, state, list, hits));
+        }
+        if let Some((_, _, list, hits)) = &self.toolbar_cache {
+            self.list.items.extend_from_slice(&list.items);
+            self.hits.extend_from_slice(hits);
+        }
+        if map_visible {
+            self.minimap.paint(&view, &mut self.fonts, &mut self.list);
+            self.hits.push((map, MINIMAP));
+        }
+        if self.help_open && active && !touch_driving {
+            let key_names = |id: &str| -> Vec<String> {
+                atv_game::ride::bindings::action_named(id)
+                    .map(|action| {
+                        atv_game::ride::bindings::keyboard_codes(action)
+                            .into_iter()
+                            .map(help::key_name)
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            if !self.help_cache.as_ref().is_some_and(|(v, _)| *v == view) {
+                let mut list = DisplayList::default();
+                layout::render(
+                    &full(help::element(&view, &key_names)),
+                    &mut self.fonts,
+                    view.width,
+                    view.height,
+                    &mut list,
+                    &mut Vec::new(),
+                );
+                self.help_cache = Some((view, list));
+            }
+            if let Some((_, list)) = &self.help_cache {
+                self.list.items.extend_from_slice(&list.items);
+            }
+        }
         let upload_size = (width, height, self.view.scale);
         if self.list != self.uploaded || self.upload_size != upload_size {
             self.renderer.prepare(
@@ -245,7 +459,26 @@ impl Overlay {
             "scale": self.view.scale,
             "rasterized": self.renderer.rasterized,
             "prepareMs": self.prepare_ms,
+            "hud": {
+                "helpOpen": self.help_open,
+                "meter": self.meter.is_some() && !self.minimap.settings.enabled,
+                "compact": self.toolbar_cache.as_ref().is_some_and(|(_, s, ..)| s.compact),
+                "minimap": {
+                    "visible": self.minimap.visible(),
+                    "headingUp": self.minimap.settings.heading_up,
+                    "buildMs": self.minimap.build_ms,
+                    "updates": self.minimap.updates,
+                },
+            },
         })
+    }
+
+    /// Finishes any pending GPS map build at once (parity captures).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn finish_course(&mut self, terrain: &atv_game::venue::Terrain) {
+        while self.minimap.building() {
+            self.minimap.build_slice(terrain, f64::INFINITY);
+        }
     }
 
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {

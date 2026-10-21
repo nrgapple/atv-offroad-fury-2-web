@@ -17,6 +17,7 @@ embedded-content = ["atv-content/embedded"]
 
 [dependencies]
 atv-content = { path = "../atv-content" }
+atv-core = { path = "../atv-core" }
 atv-game = { path = "../atv-game" }
 atv-render = { path = "../atv-render" }
 atv-ui = { path = "../atv-ui" }

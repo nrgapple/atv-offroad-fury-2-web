@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 const USAGE: &str = "usage: fury [--content DIR | --pack FILE] [--venue ID] [--free] [--race [--laps N] [--cpu 0|3|4] [--difficulty 1|2] [--seed N]] \
 [--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high] \
-[--script IN.json] [--trace OUT.json] [--capture OUT.png WxH] [--verify-content] [--version] \
+[--script IN.json] [--trace OUT.json] [--capture OUT.png WxH [--ui]] [--verify-content] [--version] \
 [--mute] [--no-music] [--sound original|enhanced] [--audio OUT.wav] \
 [--autodrive IN.json [--bench OUT.json]]";
 
@@ -53,6 +53,7 @@ fn main() {
     let mut pack_file = std::env::var_os("FURY_PACK").map(PathBuf::from);
     let mut venue = "env01".to_string();
     let mut capture = None;
+    let mut capture_ui = false;
     let mut verify = false;
     let mut camera = None;
     let mut weather = None;
@@ -103,6 +104,7 @@ fn main() {
                 )
             }
             "--graphics" => graphics = atv_app::graphics_preset(&args.next().unwrap_or_default()),
+            "--ui" => capture_ui = true,
             "--capture" => {
                 let path = args.next().expect("--capture needs a PNG path");
                 let size = args.next().unwrap_or_else(|| "1280x720".into());
@@ -200,6 +202,7 @@ fn main() {
         steps,
         graphics,
         capture,
+        capture_ui,
         ride,
         race,
         script,
