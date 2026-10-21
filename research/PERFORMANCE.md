@@ -625,3 +625,14 @@ results; the portrait size is a viewport, not a device. The vertex count triples
 portrait (8,000 to 24,500), so a phone measurement is needed before the native rows
 reach play.html; any phone cap would be an explicit option. Details and the full
 table are in RUST_ENGINE.md.
+
+## Rust engine: full Free Ride room (host, 2026-10-21)
+
+`tools/test_engine_freeride_full.mjs`: one Rust browser and 19 synthetic riders at
+20 Hz in FREERD01 on a local relay (one Mac, headless Chromium/Metal, 1280x720).
+In 12 one-second samples it drew all 19 riders, at a median of 79 fps, 13.4 ms
+frames and 6.9 ms main-thread CPU. It received about 52.5 KB/s.
+
+Hitches: a 192 ms frame while six remote engine banks decoded on the main thread,
+and two 36 ms seconds of unknown cause. These are host numbers, not phone results;
+details are in RUST_ENGINE.md (Multiplayer).
