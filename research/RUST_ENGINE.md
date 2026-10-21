@@ -324,6 +324,32 @@ the desktop build uses the same event-loop path (winit `ControlFlow::Wait`/
 `WaitUntil`) but was not measured. The JavaScript game remains available until the shared engine passes
 those relevant subsystem gates.
 
+## CPU per frame against the JavaScript game (2026-10-21)
+
+`tools/compare_engine.mjs ride` now also replays the ride script in real time and
+measures CPU: the JavaScript game's main thread (Chrome `TaskDuration`) plus its
+simulation worker (each operation's Wasm time from `worker.js`), the Rust engine in
+the browser (one thread, `?autodrive=`) and the native build (`fury --autodrive
+--bench`, vsync wait excluded). Headless frames are not vsync-capped, so builds are
+compared per second of riding, expressed per 60 Hz frame. GPU-process time is
+excluded everywhere.
+
+ENV01, the 600-step default script, Original preset, sound on, Apple M4 host
+(`private/reports/engine-parity/ride-cpu/`):
+
+| Build | Frames (10 s) | Main thread | Worker | Per 60 Hz frame |
+| --- | --- | --- | --- | --- |
+| JavaScript game | 2304 | 0.34 ms/frame | 0.12 ms/frame | 1.78 ms |
+| Rust, browser | 1450 | 0.70 ms/frame | - | 1.87 ms |
+| Rust, native (vsync) | 598 | 1.54 ms/frame | - | 1.54 ms |
+
+The Rust engine's own split (browser / native per frame): simulation and sound
+0.14 / 0.24 ms, rendering 0.90 / 1.12 ms, mixer 0.01 / 0.03 ms. The Rust engine draws
+the same world as the JavaScript game but its CPU cost is about equal in the browser,
+not lower: rendering through wgpu's GL backend dominates. Moving the simulation onto
+the main thread removed the worker round trip, not CPU. These are host numbers;
+the user's iPhone shows the Rust ride at 2.49 ms CPU per frame (61 fps).
+
 ## Commands
 
 ```sh
