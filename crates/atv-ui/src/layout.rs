@@ -166,7 +166,7 @@ fn text_lines(
         .map(|l| fonts.measure(l, &style.font, style.letter_spacing).width)
         .fold(0., f32::max);
     let m = fonts.measure("", &style.font, style.letter_spacing);
-    let baseline = (line_height - (m.ascent + m.descent)) / 2. + m.ascent;
+    let baseline = css_baseline(line_height, m.ascent, m.descent);
     (lines, widest, baseline)
 }
 
@@ -186,8 +186,8 @@ fn inline_layout(
 ) -> (Vec<RunBox>, f32, f32, f32) {
     let half = |font: &Font, line_height: f32, fonts: &mut Fonts| {
         let m = fonts.measure("", font, 0.);
-        let leading = (line_height - (m.ascent + m.descent)) / 2.;
-        (m.ascent + leading, m.descent + leading)
+        let above = css_baseline(line_height, m.ascent, m.descent);
+        (above, line_height - above)
     };
     let (mut above, mut below) = half(&strut.0, strut.1, fonts);
     let mut x = 0.;
@@ -222,7 +222,8 @@ fn inline_layout(
                 ..
             } => {
                 let w = fonts.measure(text, &style.font, style.letter_spacing).width;
-                let width = (w + padding[1] + padding[3]).max(*min_width + padding[1] + padding[3]);
+                // box-sizing: border-box (game.css `*`): min-width includes padding.
+                let width = (w + padding[1] + padding[3]).max(*min_width);
                 let (a, b) = half(&style.font, *line_height, fonts);
                 // inline-block baseline: its line's baseline.
                 let (ca, cb) = (a + padding[0], b + padding[2]);
@@ -266,6 +267,8 @@ pub fn render(
     hits: &mut Vec<(Rect, u32)>,
 ) {
     let mut tree: TaffyTree<usize> = TaffyTree::new();
+    // Fractional boxes like browser layout; rounding would wrap measured text.
+    tree.disable_rounding();
     let mut contents: Vec<&Content> = Vec::new();
     let node = build(&mut tree, root, &mut contents);
     tree.compute_layout_with_measure(
@@ -454,4 +457,11 @@ fn length(value: LengthPercentage) -> f32 {
     } else {
         0.
     }
+}
+
+/// Baseline offset in a CSS line box: Blink lays text out with the font's
+/// ascent and descent rounded to whole pixels and floors the half-leading.
+pub fn css_baseline(line_height: f32, ascent: f32, descent: f32) -> f32 {
+    let (ascent, descent) = (ascent.round(), descent.round());
+    ((line_height - (ascent + descent)) / 2.).floor() + ascent
 }

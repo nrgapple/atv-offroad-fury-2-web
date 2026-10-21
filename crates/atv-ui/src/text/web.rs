@@ -58,7 +58,36 @@ impl Backend {
             width: m.width() as f32,
             ascent: m.font_bounding_box_ascent() as f32,
             descent: m.font_bounding_box_descent() as f32,
+            ..Default::default()
         }
+    }
+
+    /// Actual ink bounds of `text`: left, right, ascent, descent.
+    pub fn ink(&mut self, text: &str, font: &Font) -> [f32; 4] {
+        self.set_font(font, 0.);
+        let Ok(m) = self.context.measure_text(text) else {
+            return [0.; 4];
+        };
+        [
+            m.actual_bounding_box_left() as f32,
+            m.actual_bounding_box_right() as f32,
+            m.actual_bounding_box_ascent() as f32,
+            m.actual_bounding_box_descent() as f32,
+        ]
+    }
+
+    /// Distance from canvas `textBaseline = 'top'` down to the alphabetic baseline.
+    pub fn top_offset(&mut self, font: &Font) -> f32 {
+        self.set_font(font, 0.);
+        let ascent = |c: &CanvasRenderingContext2d| {
+            c.measure_text("H")
+                .map_or(0., |m| m.actual_bounding_box_ascent() as f32)
+        };
+        let alphabetic = ascent(&self.context);
+        self.context.set_text_baseline("top");
+        let top = ascent(&self.context);
+        self.context.set_text_baseline("alphabetic");
+        alphabetic - top
     }
 
     fn resize(&self, width: u32, height: u32) {

@@ -1,4 +1,6 @@
-# Shared Rust touch and toolbar checkpoint
+# Shared Rust UI (atv-ui)
+
+## Touch and toolbar checkpoint
 
 The `atv-ui` crate is the shared browser/desktop interface foundation. This
 checkpoint ports the existing authored mobile controls and Pause/Camera toolbar;
@@ -93,3 +95,56 @@ Menus, minimap, complete HUD, remapping screens, keyboard help, accessibility
 semantics for canvas controls, optional flips/arcade integration, original-game
 UI comparisons and desktop font/raster parity remain open. This checkpoint does
 not switch `/play.html` away from the existing game.
+
+## In-ride HUD checkpoint (2026-10-21)
+
+Ports `web/hud.js` (Freeride path), `web/minimap.js`, `web/keyboard-help.js` and
+the Keys toolbar button into `atv-ui::hud`, drawn by the same UI pass:
+
+- Original meter and stunt text (`hud::meter`, `hud::assets`): `OverlayObject-5`
+  and `OverlayObject-12` are read from `Overlays.pb` in the browser's archive
+  order (STARTAPP, PAGE01, STARTEVT, course archive, OVERLAYS); CEL glyph metrics
+  size and place the text and the PST preload art is drawn as hud.js does
+  (640x448 logical frame scaled by height, compact phone layout below 560 px,
+  orange preload stretched from its bottom edge). Values and clocks come from
+  `atv_core::hud` (`Ride::hud`). Shown when the minimap is off, as in the browser.
+- GPS minimap (`hud::minimap`): the 1024x1024 shaded terrain raster (`rasterRow`)
+  plus static scenery triangles (`sceneryTriangles`, from `Venue::scenery`),
+  built in ~2 ms slices then uploaded once; marker, north lettering, speed footer
+  and preload bar at the 50 ms instrument rate; tap toggles north-up/heading-up.
+  Settings use the browser's `atv-minimap-*` keys.
+- Keyboard card (`hud::help`): taffy block/grid/flex with inline `<kbd>` chips,
+  opened for 15 s on the first keyboard ride (`atv2-keyboard-help-seen-v1`),
+  toggled by H or Keys, hidden on touch-first devices and while touch-driving.
+- Toolbar: Keys button, and the icon-only layout when the top-right map meets
+  the labelled toolbar (the reason the JS portrait toolbar shows icons only).
+
+Layout follows Blink line boxes: fractional (unrounded) taffy boxes, font
+ascent/descent rounded to whole pixels with the half-leading floored, and
+`box-sizing: border-box` chip minimums. Redraw avoidance: the toolbar and card
+layouts are cached on their inputs, the minimap repaints at 20 Hz, and an
+unchanged display list skips the GPU upload (as hud.js skips unchanged keys).
+
+Measured (host Chromium/ANGLE Metal, Apple M4, ENV01 start, DPR 1 unless noted;
+JavaScript play.html vs Rust engine.html, flat backdrop, RGB mean absolute
+difference of 255 per region, `work/` capture scripts, private images under
+`private/reports/rust-ui/hud/`):
+
+| Case | Toolbar | Minimap | Keyboard card | Meter | Whole |
+| --- | --- | --- | --- | --- | --- |
+| 1280x720 | 0.47 | 0.95 | 0.74 | 0.46 | 0.18 |
+| 390x844 | 0.10 | 0.95 | 1.40 | 0.18 | 0.87 |
+| 390x844 touch, DPR 3 | 0.82 | 3.12 | – | – | 1.00 |
+
+The DPR 3 map difference is expected: the browser draws the map canvas at most
+at 1.5x and upscales it, the engine draws at device resolution. UI CPU per frame
+on the host stays 0.05-0.2 ms with the card and map shown (0.44 ms before the
+layout caches). The map base builds in 27 ms of slices in the Rust browser build
+vs 58.8 ms (29 slices) in play.html. Not measured on physical phones.
+
+Known gaps: the keyboard card's `backdrop-filter: blur(12px)` is drawn as its
+86%-opaque fill without the blur; remapped bindings, race overlays (`drawRace`,
+321 lights, signs, radar), multiplayer peers on the map and the Pause→HUD
+settings screens are later checkpoints. `tools/test_engine_hud.mjs` covers the
+targets, compact rule, card first-ride/H/Keys, map orientation persistence and
+the meter fallback.

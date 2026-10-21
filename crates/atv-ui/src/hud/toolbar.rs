@@ -28,6 +28,7 @@ impl Button {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct State {
     pub paused: bool,
     pub hovered: Option<Button>,

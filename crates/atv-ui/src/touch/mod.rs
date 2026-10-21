@@ -618,7 +618,7 @@ impl TouchControls {
                 .shadow(0., 1., 2., Color::BLACK)
                 .shadow(0., 0., 2., Color::BLACK);
             let ascent = fonts.measure("", &style.font, 0.);
-            let base = (9. - (ascent.ascent + ascent.descent)) / 2. + ascent.ascent;
+            let base = crate::layout::css_baseline(9., ascent.ascent, ascent.descent);
             let fwd = fonts.measure("FWD", &style.font, 0.).width;
             let back = fonts.measure("BACK", &style.font, 0.).width;
             let r = fonts.measure("R", &style.font, 0.).width;
@@ -727,7 +727,7 @@ impl TouchControls {
         };
         let m = fonts.measure(&cue, &style.font, style.letter_spacing);
         let line = size * 1.2;
-        let baseline = 1. + (line - (m.ascent + m.descent)) / 2. + m.ascent;
+        let baseline = 1. + crate::layout::css_baseline(line, m.ascent, m.descent);
         let x = rect.x + left * k + (144. - m.width) / 2.;
         list.text(cue, &style, x, rect.y + top * k + baseline);
     }
@@ -953,7 +953,7 @@ fn centered(
         vec![text.to_string()]
     };
     let m = fonts.measure("", &style.font, 0.);
-    let baseline = (line_height - (m.ascent + m.descent)) / 2. + m.ascent;
+    let baseline = crate::layout::css_baseline(line_height, m.ascent, m.descent);
     for (i, line) in lines.iter().enumerate() {
         let w = fonts.measure(line, &style.font, style.letter_spacing).width;
         list.text(
