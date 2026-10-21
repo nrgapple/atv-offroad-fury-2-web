@@ -39,6 +39,30 @@ pub fn upload(gpu: &Gpu, width: u32, height: u32, rgba: &[u8], label: &str) -> w
     texture
 }
 
+/// Uploads one RGBA8 image without mips (LINEAR, as particle atlases are).
+pub fn upload_flat(gpu: &Gpu, width: u32, height: u32, rgba: &[u8], label: &str) -> wgpu::Texture {
+    use wgpu::util::DeviceExt;
+    gpu.device.create_texture_with_data(
+        &gpu.queue,
+        &wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+        wgpu::util::TextureDataOrder::LayerMajor,
+        rgba,
+    )
+}
+
 /// Rewrites every level of a texture made by [`upload`] from new pixels.
 pub fn write(gpu: &Gpu, texture: &wgpu::Texture, width: u32, height: u32, rgba: &[u8]) {
     let levels = texture.mip_level_count();

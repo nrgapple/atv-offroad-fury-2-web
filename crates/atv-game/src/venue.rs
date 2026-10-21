@@ -58,6 +58,8 @@ pub struct Venue {
     pub water: Option<std::rc::Rc<std::cell::RefCell<crate::water::Water>>>,
     /// ENV08's train, shared like the water field (physics collides with it).
     pub train: Option<std::rc::Rc<std::cell::RefCell<crate::train::Train>>>,
+    /// Placed TOY particle effects (smoke, fountains, fog), stepped at 60 Hz.
+    pub ambient: Option<std::rc::Rc<std::cell::RefCell<crate::ambient::Ambient>>>,
     /// Source Weather selection for this load (00208cc0).
     pub weather: Option<atv_core::weather::Selection>,
 }
@@ -108,17 +110,20 @@ pub async fn load_with(
     let mut scene = atv_core::scene::parse_with_start(&scene_text, mode.as_deref())?;
     // 00208cc0 reads [Weather] from the common/mode TOYs; an inactive
     // weather removes its model from the scene.
-    let toy = match member_named(&archive, &format!("{environment}.toy")) {
-        Some(index) => Some(archive.extract(index)?),
+    // The browser compares this index with the ambient mode TOY's course
+    // index even when it came from the placements archive; keep that.
+    let (toy, toy_index) = match member_named(&archive, &format!("{environment}.toy")) {
+        Some(index) => (Some(archive.extract(index)?), Some(index)),
         None => match &course.placements {
             Some(path) => {
                 let bytes = content.file(path).await?;
                 let placements = Resource::parse(&bytes)?;
-                member_named(&placements, &format!("{environment}.toy"))
-                    .map(|index| placements.extract(index))
-                    .transpose()?
+                match member_named(&placements, &format!("{environment}.toy")) {
+                    Some(index) => (Some(placements.extract(index)?), Some(index)),
+                    None => (None, None),
+                }
             }
-            None => None,
+            None => (None, None),
         },
     };
     let weather = match &toy {
@@ -223,6 +228,21 @@ pub async fn load_with(
     let vegetation = crate::vegetation::load(&archive, environment, &scene, &ground)?;
     let water = crate::water::load(&archive, &scene)?
         .map(|water| std::rc::Rc::new(std::cell::RefCell::new(water)));
+    let ambient = crate::ambient::load(
+        &archive,
+        environment,
+        &scene_text,
+        toy.as_deref(),
+        toy_index,
+        mode.as_deref(),
+        mode_index,
+    )
+    .unwrap_or_else(|error| {
+        // The browser skips effects it cannot configure.
+        eprintln!("ambient effects: {error}");
+        None
+    })
+    .map(|ambient| std::rc::Rc::new(std::cell::RefCell::new(ambient)));
     let train = if environment == "env08" {
         crate::train::load(&archive, mode_index)?
             .map(|train| std::rc::Rc::new(std::cell::RefCell::new(train)))
@@ -236,6 +256,7 @@ pub async fn load_with(
         vegetation,
         water,
         train,
+        ambient,
         weather,
         scene,
         terrain: Terrain {

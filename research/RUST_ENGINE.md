@@ -163,7 +163,18 @@ Water and train (second checkpoint):
   does, and the train is stepped without collision heights (`step`, not
   `step_with_scene`). `atv_app_bg.wasm`: 5.06 MB raw, 0.96 MB brotli.
 
-Limitations: weather drawing and ambient effects are not ported; the browser draws
+Ambient effects (third checkpoint; `atv-game/ambient.rs`, `atv-render/ambient.rs` +
+`ambient.wgsl`): the placed TOY emitters simulated by `atv_core::ambient_effects`
+(14 free-ride venues), stepped at 60 Hz after the train publishes its car poses (the
+locomotive's Smoke.slt). CPU sprites are culled and sorted back to front each frame and
+drawn as alpha and additive instanced families with the 001451a0 near fade; ENV05's
+fountain births fill a 4,800-slot GPU ring aged in WGSL. Parity: ENV08 beside the
+locomotive 0.06 (was 2.19), ENV05 fountain 0.13, ENV02 campfire 0.03, FREE06 grill smoke
+0.03. A second ENV08 view differs by 0.74 in near plants whose orientation the browser
+captured during the previous view (camera history).
+
+Limitations: snow drawing (`weather.js`; only ENV01 races select snow) is not ported;
+the browser draws
 vehicles between vegetation and water, so the ride pass must slot in before water;
 camera flashes stay hidden until the stadium crowd simulation drives them; reverse-
 looping crowd ATMs keep their first frame (as in the browser); anisotropy is applied at
