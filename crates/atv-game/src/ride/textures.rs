@@ -41,6 +41,91 @@ pub fn load(mesh: &Mesh, archive: &Resource) -> Result<HashMap<String, MaterialT
     Ok(textures)
 }
 
+/// Textures for material names outside a mesh (race CPU outfits).
+pub fn load_named(
+    names: &[String],
+    archive: &Resource,
+) -> Result<HashMap<String, MaterialTexture>> {
+    let mut textures = HashMap::new();
+    for name in names {
+        if !textures.contains_key(name)
+            && let Some(texture) = material_texture(name, archive)?
+        {
+            textures.insert(name.clone(), texture);
+        }
+    }
+    Ok(textures)
+}
+
+/// Outfit slot of a rider material (outfitSlot in web/game.js).
+fn outfit_slot(material: &str) -> Option<&'static str> {
+    let lower = material.to_ascii_lowercase();
+    [
+        "helmet", "glove", "goggle", "pant", "shirt", "sleeve", "boot",
+    ]
+    .into_iter()
+    .find(|slot| lower.contains(slot))
+}
+
+/// A race CPU's rider textures: the rig's own, with each outfit slot's
+/// material replaced by the roster outfit (outfitTextures in web/game.js).
+pub fn outfit(
+    rider: &Mesh,
+    outfit: &atv_core::race_roster::Outfit,
+    archive: &Resource,
+) -> Result<HashMap<String, MaterialTexture>> {
+    let mut textures = load(rider, archive)?;
+    let mut replacements = Vec::new();
+    for material in &rider.materials {
+        let Some(slot) = outfit_slot(material) else {
+            continue;
+        };
+        let name = match slot {
+            "helmet" => &outfit.helmet,
+            "glove" => &outfit.glove,
+            "goggle" => &outfit.goggle,
+            "pant" => &outfit.pant,
+            "shirt" => &outfit.shirt,
+            "sleeve" => &outfit.sleeve,
+            _ => &outfit.boot,
+        };
+        if name.is_empty() {
+            continue;
+        }
+        let name = if slot == "shirt" {
+            let digits: String = material
+                .chars()
+                .rev()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            format!("{name}{}", if digits.is_empty() { "001" } else { &digits })
+        } else {
+            name.clone()
+        };
+        replacements.push((material.clone(), name));
+    }
+    let names: Vec<String> = replacements.iter().map(|(_, n)| n.clone()).collect();
+    // Older content packages carry only the player outfit.
+    let Ok(mut decoded) = load_named(&names, archive) else {
+        return Ok(textures);
+    };
+    for (material, name) in replacements {
+        if let Some(texture) = decoded.remove(&name).filter(|t| t.image.is_some()) {
+            textures.insert(material, texture);
+        } else if let Some(texture) = load_named(std::slice::from_ref(&name), archive)
+            .ok()
+            .and_then(|mut m| m.remove(&name))
+            .filter(|t| t.image.is_some())
+        {
+            textures.insert(material, texture);
+        }
+    }
+    Ok(textures)
+}
+
 fn material_texture(material: &str, archive: &Resource) -> Result<Option<MaterialTexture>> {
     let psm = basename_index(archive, &format!("{material}.psm"));
     let text = match psm {

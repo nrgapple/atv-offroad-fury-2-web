@@ -272,7 +272,12 @@ impl Riding {
             yaw,
             pitch,
             focal_length,
-        } = chase(self.ride.camera().0, aspect);
+        } = match self.ride.camera() {
+            (frame, ride::CameraMode::Intro | ride::CameraMode::Tv) => {
+                atv_game::ride::view::cinematic(frame, aspect)
+            }
+            (frame, _) => chase(frame, aspect),
+        };
         // buildTerrainMesh again once the rider leaves 48 cells of the patch.
         let at = cells(venue, frame.origin);
         if (at[0] - self.center[0]).abs() > 48. || (at[1] - self.center[1]).abs() > 48. {
@@ -280,6 +285,7 @@ impl Riding {
             scene.recenter_terrain(gpu, venue, [frame.origin[0], frame.origin[2]]);
         }
         scene.pose_ride(gpu, &self.ride.pose()?);
+        scene.pose_race_cpus(gpu, &self.ride.cpu_poses(), position);
         Ok((
             Camera {
                 x: position[0],

@@ -10,6 +10,7 @@ mod sky;
 mod snow;
 mod terrain;
 mod texture;
+mod tire_tracks;
 mod train;
 mod vegetation;
 mod vehicle;
@@ -219,6 +220,9 @@ pub struct Graphics {
     pub contact_shadows: bool,
     /// Vehicle-only sun shadow map size (High 2048; 0 off).
     pub shadow_map: u16,
+    /// Tire track ring segments and their life in seconds (Enhanced 600/15,
+    /// High 3600/75; 0 off).
+    pub tire_tracks: (u16, u16),
 }
 
 pub struct SceneRenderer {
@@ -257,6 +261,8 @@ pub struct SceneRenderer {
     clock: f32,
     /// The ride's wheel dust, chunks, spray and wet births.
     wheel_effects: Option<wheel_effects::WheelEffectsPass>,
+    /// Enhanced/High tire tracks.
+    tire_tracks: Option<tire_tracks::TireTracksPass>,
     /// Enhanced/High lingering dust puffs.
     lingering_dust: Option<lingering_dust::LingeringDustPass>,
     graphics: Graphics,
@@ -270,6 +276,8 @@ pub struct SceneRenderer {
     ride_pose: Option<([f32; 16], Option<[f32; 16]>)>,
     /// The player's quad and rider, once a ride is loaded.
     vehicle: Option<vehicle::VehiclePass>,
+    /// Race CPU riders (drawn after the player) and which are near enough.
+    cpus: Vec<(vehicle::VehiclePass, bool)>,
 }
 
 impl SceneRenderer {
@@ -296,6 +304,7 @@ impl SceneRenderer {
             fine_center,
             gpu.samples,
             (&world.shadow_view, &world.shadow_sampler),
+            graphics.anisotropy,
         );
         world.globals.sky[3] = graphics.sky_smooth as u8 as f32;
         let sky = venue
@@ -373,8 +382,10 @@ impl SceneRenderer {
             depth_far,
             clock: 0.,
             vehicle: None,
+            cpus: Vec::new(),
             wheel_effects: None,
             lingering_dust: None,
+            tire_tracks: None,
             graphics,
             ground: {
                 let t = &venue.terrain;
@@ -583,6 +594,27 @@ impl SceneRenderer {
         if let Some(pass) = &mut self.wheel_effects {
             pass.accept(effects);
         }
+        let now = effects.frame().time;
+        match &mut effects.tracks {
+            Some((tracks, ..)) => {
+                if self
+                    .tire_tracks
+                    .as_ref()
+                    .is_none_or(|p| p.capacity() != tracks.capacity)
+                {
+                    self.tire_tracks = Some(tire_tracks::TireTracksPass::new(
+                        gpu,
+                        &self.world,
+                        tracks.capacity,
+                    ));
+                    tracks.dirty = Some((0, tracks.capacity));
+                }
+                if let Some(pass) = &mut self.tire_tracks {
+                    pass.accept(gpu, tracks, now);
+                }
+            }
+            None => self.tire_tracks = None,
+        }
         match &effects.dust {
             Some(dust) => {
                 let capacity = dust.emitter.capacity;
@@ -622,6 +654,39 @@ impl SceneRenderer {
         }
         self.vehicle = Some(vehicle);
         Ok(())
+    }
+
+    /// Uploads the race CPU riders' quads and outfitted riders.
+    pub fn set_race_cpus(
+        &mut self,
+        gpu: &Gpu,
+        venue: &Venue,
+        models: &[(atv_game::ride::Model, atv_game::ride::Model)],
+    ) -> Result<(), String> {
+        self.cpus = models
+            .iter()
+            .map(|(quad, rider)| {
+                vehicle::VehiclePass::new(gpu, venue, quad, rider, gpu.samples).map(|v| (v, false))
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(())
+    }
+
+    /// CPU poses by slot; the browser skips riders over 864ft from the eye.
+    pub fn pose_race_cpus(&mut self, gpu: &Gpu, poses: &[atv_game::ride::Pose], eye: [f32; 3]) {
+        for (index, (pass, visible)) in self.cpus.iter_mut().enumerate() {
+            *visible = poses.get(index).is_some_and(|pose| {
+                let [x, _, z] = [
+                    pose.quad_world[12],
+                    pose.quad_world[13],
+                    pose.quad_world[14],
+                ];
+                (x - eye[0]).hypot(z - eye[2]) <= 864.
+            });
+            if *visible {
+                pass.pose(gpu, &poses[index]);
+            }
+        }
     }
 
     /// One simulation step's body origin while Riding with every wheel down,
@@ -789,6 +854,11 @@ impl SceneRenderer {
         if let Some(pass) = &mut self.wheel_effects {
             (stats.wheel_draws, stats.wheel_triangles) = pass.prepare(gpu, &view.camera);
         }
+        if let Some(pass) = &mut self.tire_tracks {
+            let (draws, triangles) = pass.prepare(gpu);
+            stats.wheel_draws += draws;
+            stats.wheel_triangles += triangles;
+        }
         if let Some(pass) = &mut self.lingering_dust {
             let fog_end = if self.world.globals.fog[2] > 0.5 {
                 self.far
@@ -802,6 +872,12 @@ impl SceneRenderer {
         if let Some(vehicle) = &mut self.vehicle {
             vehicle.prepare(gpu, &view_projection, view.camera.eye());
             stats.vehicle_triangles = vehicle.triangles;
+        }
+        for (cpu, visible) in &mut self.cpus {
+            if *visible {
+                cpu.prepare(gpu, &view_projection, view.camera.eye());
+                stats.vehicle_triangles += cpu.triangles;
+            }
         }
         let contact = match (&mut self.contact_shadows, &self.vehicle, &self.ride_pose) {
             (Some(contact), Some(vehicle), Some((quad, torso))) => {
@@ -881,12 +957,18 @@ impl SceneRenderer {
             if let Some(contact) = &self.contact_shadows {
                 contact.draw(&mut pass, &self.world);
             }
+            if let Some(tracks) = &self.tire_tracks {
+                tracks.draw(&mut pass, &self.world);
+            }
             if let Some(vegetation) = &self.vegetation {
                 vegetation.draw(&mut pass, &self.world);
             }
             // The browser draws vehicles here, then water.
             if let Some(vehicle) = &self.vehicle {
                 vehicle.draw(&mut pass);
+            }
+            for (cpu, _) in self.cpus.iter().filter(|(_, visible)| *visible) {
+                cpu.draw(&mut pass);
             }
             if let Some((water, _)) = &self.water {
                 water.draw(&mut pass);
