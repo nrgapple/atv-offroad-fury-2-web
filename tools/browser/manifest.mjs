@@ -94,6 +94,7 @@ export const TESTS = {
   'test_engine_motorcycle.mjs': { group: 'content' },
   'test_engine_interpolation.mjs': { group: 'content' },
   'test_engine_wheel_reprojection.mjs': { group: 'content' },
+  'test_engine_cameras.mjs': { group: 'content' },
   'test_rust_audio.mjs': { group: 'content' },
   'test_rust_audio_activation.mjs': { group: 'content' },
   'test_boundary_launch.mjs': { defaults: ['pins crash mode crazy'], group: 'content' },

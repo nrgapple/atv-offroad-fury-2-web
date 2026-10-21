@@ -6,7 +6,7 @@ use atv_game::{
     ride::{
         self, Controls, Ride,
         bindings::{Bindings, Pad},
-        view::{SpeedRush, View, chase},
+        view::{SpeedRush, View},
     },
     venue::Venue,
 };
@@ -80,6 +80,17 @@ pub struct Riding {
     /// (Enhanced/High) or Alpha Heavy mud.
     pub dirt: atv_game::dirt::DirtBuildup,
     pub dirt_enabled: bool,
+    /// Settings → Chase camera: Assisted (UphillSightline).
+    pub chase_assist: bool,
+    sightline: atv_game::ride::view::UphillSightline,
+    /// Settings → Crash camera: Tight (the default) frames Crazy/Gorn crashes
+    /// with crashPresentation; Original keeps the recovered wreck camera.
+    pub crash_camera_tight: bool,
+    /// LOD-0 node boxes of the quad and rider, built at the first tight shot.
+    crash_bounds: Option<(
+        Vec<atv_game::ride::view::NodeBox>,
+        Vec<atv_game::ride::view::NodeBox>,
+    )>,
     /// In a multiplayer room: pause and blur keep neutral-input simulation
     /// running so other riders see this one (web/game.js online pause).
     pub online: bool,
@@ -161,6 +172,10 @@ impl Riding {
             wheel_lift: std::cell::Cell::new(0.),
             dirt: atv_game::dirt::DirtBuildup::new(venue.terrain_zones),
             dirt_enabled: false,
+            chase_assist: false,
+            sightline: Default::default(),
+            crash_camera_tight: true,
+            crash_bounds: None,
             online: false,
             peers: Vec::new(),
             contacts: 0,
@@ -534,6 +549,7 @@ impl Riding {
                 (*frame, mode)
             }
         };
+        let subjects = self.crash_subjects()?;
         let frame = self.ride.frame();
         let riding = frame.wreck.phase == ride::Phase::Riding;
         self.rush.update(
@@ -542,21 +558,47 @@ impl Riding {
             riding && (!self.paused || self.held),
             dt,
         );
-        let View {
-            position,
-            yaw,
-            pitch,
-            focal_length,
-        } = match (&camera.0, camera.1) {
+        // updateCamera: the uphill sightline follows the presented actor.
+        let ground = self.ground.clone();
+        let height = move |x: f32, z: f32| ground.height(f64::from(x), f64::from(z)) as f32;
+        let actor = atv_game::ride::view::SightlineActor {
+            origin: shown.map_or(frame.origin, |s| s.origin),
+            orientation: shown.map_or(frame.orientation, |s| s.orientation),
+            speed: frame.speed,
+            grounded: frame.grounded,
+            riding,
+            reset_count: shown.map_or(frame.reset_count, |s| s.reset_count),
+        };
+        self.sightline.update(
+            self.chase_assist.then_some(&actor),
+            camera.1 == ride::CameraMode::Follow,
+            camera.0.preset,
+            dt,
+            &height,
+        );
+        let assist = self.chase_assist.then_some((&self.sightline, actor.origin));
+        let view = match (&camera.0, camera.1) {
             (frame, ride::CameraMode::Intro | ride::CameraMode::Tv) => {
                 atv_game::ride::view::cinematic(frame, aspect)
             }
             (frame, _) if self.alpha_big_air_camera => {
                 let ride = &self.ride;
-                chase(&self.hype.camera(frame, |x, z| ride.ground(x, z)), aspect)
+                let shot = self.hype.camera(frame, |x, z| ride.ground(x, z));
+                atv_game::ride::view::chase_assisted(&shot, aspect, assist, &height)
             }
-            (frame, _) => chase(frame, aspect),
+            (frame, _) => atv_game::ride::view::chase_assisted(frame, aspect, assist, &height),
         };
+        // presentCameraFrame: the tight Crazy/Gorn crash shot.
+        let view = match subjects {
+            Some(subjects) => atv_game::ride::view::crash(view, aspect, &subjects, &height),
+            None => view,
+        };
+        let View {
+            position,
+            yaw,
+            pitch,
+            focal_length,
+        } = view;
         // buildTerrainMesh again once the rider leaves 48 cells of the patch.
         let at = cells(venue, frame.origin);
         if (at[0] - self.center[0]).abs() > 48. || (at[1] - self.center[1]).abs() > 48. {
@@ -674,6 +716,48 @@ impl Riding {
             self.dirt.step(&sample, atv_game::dirt::STEP);
         }
         Ok(())
+    }
+
+    /// crashSubjects for the latest Crazy/Gorn crash frame (Crash camera:
+    /// Tight), from the latest simulated pose as acceptFrame computes it.
+    fn crash_subjects(&mut self) -> Result<Option<atv_game::ride::view::CrashSubjects>, String> {
+        let Some(crash) = self
+            .crashes
+            .as_ref()
+            .and_then(|c| c.frame())
+            .filter(|_| self.crash_camera_tight)
+        else {
+            return Ok(None);
+        };
+        let ride = &self.ride;
+        let (quad_bounds, rider_bounds) = self.crash_bounds.get_or_insert_with(|| {
+            (
+                atv_game::ride::view::mesh_node_bounds(&ride.quad.mesh),
+                atv_game::ride::view::mesh_node_bounds(&ride.rider.mesh),
+            )
+        });
+        let pose = ride.pose()?;
+        Ok(Some(atv_game::ride::view::crash_subjects(
+            &atv_game::ride::view::CrashPose {
+                quad: (&ride.quad.mesh, quad_bounds),
+                rider: (&ride.rider.mesh, rider_bounds),
+                quad_nodes: if crash.quad_node_matrices.len() == pose.quad_nodes.len() {
+                    &crash.quad_node_matrices
+                } else {
+                    &pose.quad_nodes
+                },
+                ragdoll: &crash.rider_node_matrices,
+                rider_nodes: &pose.rider_nodes,
+                rider_world: pose.rider_world,
+                actor_world: pose.quad_world,
+                origin: ride.frame().origin,
+            },
+        )))
+    }
+
+    /// The Assisted chase orbit (radians; `requestedHillOrbit`).
+    pub fn hill_orbit(&self) -> f64 {
+        self.sightline.lift
     }
 
     /// The visible terrain height (renderCore.terrainHeight).
