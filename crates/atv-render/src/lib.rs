@@ -5,6 +5,7 @@ pub mod camera;
 mod cull;
 mod scenery;
 mod sky;
+mod snow;
 mod terrain;
 mod texture;
 mod train;
@@ -164,6 +165,8 @@ pub struct FrameStats {
     pub train_triangles: u32,
     pub ambient_draws: u32,
     pub ambient_triangles: u32,
+    pub snow_draws: u32,
+    pub snow_triangles: u32,
     pub vehicle_triangles: u32,
 }
 
@@ -176,6 +179,7 @@ impl FrameStats {
             + self.water_draws
             + self.train_draws
             + self.ambient_draws
+            + self.snow_draws
     }
     pub fn triangles(&self) -> u32 {
         self.terrain_triangles
@@ -184,6 +188,7 @@ impl FrameStats {
             + self.vegetation_triangles
             + self.train_triangles
             + self.ambient_triangles
+            + self.snow_triangles
             + self.vehicle_triangles
     }
 }
@@ -213,6 +218,12 @@ pub struct SceneRenderer {
         ambient::AmbientPass,
         std::rc::Rc<std::cell::RefCell<atv_game::ambient::Ambient>>,
     )>,
+    snow: Option<(
+        snow::SnowPass,
+        std::rc::Rc<std::cell::RefCell<atv_game::snow::Weather>>,
+    )>,
+    /// The latest rendered camera: the Snow rings follow it.
+    weather_camera: Camera,
     water: Option<(
         water::WaterPass,
         std::rc::Rc<std::cell::RefCell<atv_game::water::Water>>,
@@ -281,6 +292,12 @@ impl SceneRenderer {
                 shared.clone(),
             )
         });
+        let snow = venue.snow.as_ref().map(|shared| {
+            (
+                snow::SnowPass::new(gpu, &world, &shared.borrow()),
+                shared.clone(),
+            )
+        });
         let depth_far = far + scenery.reach.max(terrain.reach()) + 1.;
         Self {
             terrain,
@@ -290,6 +307,8 @@ impl SceneRenderer {
             vegetation,
             train,
             ambient,
+            snow,
+            weather_camera: Camera::default(),
             water,
             fog_color,
             far,
@@ -347,6 +366,15 @@ impl SceneRenderer {
                 self.ambient = None;
             }
         }
+        if let Some((pass, shared)) = &mut self.snow {
+            // The browser steps Snow around its simulation (follow) camera;
+            // here the latest rendered view stands in for it.
+            let mut weather = shared.borrow_mut();
+            if pass.step(&mut weather, &self.weather_camera).is_err() {
+                drop(weather);
+                self.snow = None;
+            }
+        }
         if let Some((pass, shared)) = &mut self.water {
             let mut water = shared.borrow_mut();
             if water.step().and_then(|_| pass.accept(&water)).is_err() {
@@ -354,6 +382,11 @@ impl SceneRenderer {
                 self.water = None;
             }
         }
+    }
+
+    /// The camera the weather rings follow until the next rendered frame.
+    pub fn set_weather_camera(&mut self, camera: Camera) {
+        self.weather_camera = camera;
     }
 
     /// Advances world animation by exact simulation steps (parity captures).
@@ -377,10 +410,12 @@ impl SceneRenderer {
         self.scenery.steps()
     }
 
-    /// Lit stadium camera-flash pool indices (0020f2c0).
-    pub fn set_lit_flashes(&mut self, flashes: &[usize]) {
-        self.scenery.lit_flashes.clear();
-        self.scenery.lit_flashes.extend_from_slice(flashes);
+    /// A stadium crowd flash burst towards `target` (player win/stunt, CPU
+    /// finish; 0020ee10). The constant rate runs on its own clock.
+    pub fn flash_burst(&mut self, target: f32) {
+        if let Some(flashes) = &mut self.scenery.flashes {
+            flashes.burst(target);
+        }
     }
 
     /// Uploads the ride's quad and rider models.
@@ -494,6 +529,10 @@ impl SceneRenderer {
             (stats.ambient_draws, stats.ambient_triangles) =
                 pass.prepare(gpu, &shared.borrow(), &view.camera, self.far);
         }
+        self.weather_camera = view.camera;
+        if let Some((pass, _)) = &mut self.snow {
+            (stats.snow_draws, stats.snow_triangles) = pass.prepare(gpu, &view.camera);
+        }
         if let Some(vehicle) = &mut self.vehicle {
             vehicle.prepare(gpu, &view_projection, view.camera.eye());
             stats.vehicle_triangles = vehicle.triangles;
@@ -546,6 +585,9 @@ impl SceneRenderer {
             }
             if let Some((ambient, _)) = &self.ambient {
                 ambient.draw(&mut pass, &self.world);
+            }
+            if let Some((snow, _)) = &self.snow {
+                snow.draw(&mut pass, &self.world);
             }
         }
         (encoder, stats)
