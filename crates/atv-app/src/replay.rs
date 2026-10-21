@@ -88,6 +88,7 @@ pub fn trace(
 pub fn render_audio(
     content: &std::path::Path,
     venue: &str,
+    selection: atv_game::ride::Selection,
     script: &Script,
     out: &std::path::Path,
     mode: atv_game::audio::ride::SoundMode,
@@ -99,10 +100,19 @@ pub fn render_audio(
         let content = Content::open(Store::Directory(content.to_path_buf())).await?;
         let environment = venue;
         let venue = atv_game::venue::load(&content, environment, false).await?;
-        let mut ride = atv_game::ride::load(&content, &venue, 1, 0, |_| {}).await?;
+        let mut ride =
+            atv_game::ride::load(&content, &venue, selection.quad, selection.rider, |_| {}).await?;
         let course = atv_game::launch::course_resource(environment, false)?;
         let started = std::time::Instant::now();
-        let bank = bank::load(&content, &course.archive, environment, 1, false, RATE).await?;
+        let bank = bank::load(
+            &content,
+            &course.archive,
+            environment,
+            u32::from(selection.quad),
+            selection.rider == 1,
+            RATE,
+        )
+        .await?;
         let load_ms = started.elapsed().as_secs_f64() * 1000.;
         let mut audio = RideAudio::new(bank, mode);
         let mut mixer = Mixer::new(RATE);

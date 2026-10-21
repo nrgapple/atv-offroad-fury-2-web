@@ -644,8 +644,19 @@ ported, so quads stay clean as in Original). Held ENV01 frame of bike 29 after 6
 steps, mean absolute difference in the vehicle box against the JavaScript game: 6.19
 before, 0.13 Rust browser / 0.15 native after (quad 1 unchanged at 0.59 / 0.63).
 
-Not connected yet (labelled for follow-up PRs): motorcycle engine and impact sounds
-(atv-web op 101, `web/audio.js` motorcycle branch; the bike is silent), the
+Sound (follow-up): a motorcycle loads its own bank (GameAudio.loadBank for ids 27+):
+the MX archive's `vehicle_<size>A.aud` engine table (op 101, `parse_mx`) and samples,
+with venue samples the bike archive lacks from AUDIO.RES, and no rider effects, vocals,
+chassis or drive-on sounds. The shared engine model plays it; the bike adds its wreck
+impact (first Wreck sample on a contact of 18.8 ft/s or more, once per step) and the
+Clutch sample on each clutch press. The engine bank and rider vocals now follow the
+Garage selection for ATVs too (they were fixed to quad 1, male). Offline comparison
+(`tools/compare_audio.mjs env01 stunts.json out original 31`, bike 31, 860 steps with
+clutch, stunts, a wreck and reverse): all 13 engine samples in the same order within
+1-6 steps, the clutch and both impacts matched, 100 ms levels within 0.70 dB mean
+(0.21 dB median) of the JavaScript game.
+
+Not connected yet (labelled for follow-up PRs): the
 `MotorcyclePresentation` 60 Hz interpolation (`web/motorcycle-presentation.js`, used in
 every preset), and races on a motorcycle (a clear "not ported" error; atv-web races
 the CPU roster on comparable quads).

@@ -319,6 +319,8 @@ pub struct Sound {
 pub struct Settings {
     pub mode: SoundMode,
     pub music: bool,
+    /// The ridden vehicle and rider: engine bank, rider vocals.
+    pub selection: atv_game::ride::Selection,
 }
 
 impl Sound {
@@ -334,8 +336,8 @@ impl Sound {
             &content,
             &course.archive,
             environment,
-            1,
-            false,
+            u32::from(settings.selection.quad),
+            settings.selection.rider == 1,
             output.rate,
         )
         .await?;

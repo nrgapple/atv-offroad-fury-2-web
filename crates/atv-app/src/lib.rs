@@ -324,7 +324,11 @@ async fn prepare(
             pending_sound = Some(PendingSound {
                 content: content.clone(),
                 environment: environment.clone(),
-                settings: sound::Settings { mode, music },
+                settings: sound::Settings {
+                    mode,
+                    music,
+                    selection,
+                },
             });
         }
         riding.autodrive = autodrive.map(|script| (script.controls(), 0));

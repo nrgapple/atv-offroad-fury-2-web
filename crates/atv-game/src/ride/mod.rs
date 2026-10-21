@@ -420,8 +420,7 @@ impl Ride {
             self.step_race()?;
             self.step_camera(orbit)?;
             self.steps += 1;
-            // Motorcycle engine sounds (atv-web op 101) are not ported yet.
-            self.sound = None;
+            self.sound = Some(self.capture_bike_sound(controls));
             return Ok(());
         }
         // During the countdown and after the finish the race supplies the
@@ -488,6 +487,7 @@ impl Ride {
                 target: self.camera_frame.target,
             },
             placement: self.placement,
+            bike: None,
         })
     }
 
