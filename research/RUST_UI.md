@@ -346,3 +346,76 @@ frame while the rider animates (layout and pose; the draw is on the GPU);
 switching vehicle costs 2-6 ms when the new model uploads. Not ported: rider
 gear and quad paint previews (`gearPreview`, `applyPaint`). Wasm is 5.70 MB on
 current main. `test_engine_front.mjs` waits for both garage previews.
+
+## Race overlays checkpoint (2026-10-21)
+
+`atv-ui::hud::race` ports web/hud.js `drawRace` and the 321 LIGHTS lamps; the UI
+pass draws them in races from the race frame (`atv_core::race`, `race_hud`):
+
+- Assets (`hud::assets::load(.., racing)`): the race archive registers after the
+  browser's archives; OverlaySet1 objects 1, 2, 3, 4, 7, 11, 14 and 41 from
+  Overlays.pb, the `Single-Sign-*` sections, their CEL fonts and icons, the radar
+  map and bounds from `<venue>nat.toy [Radar]`, `radaricon_racer` (plus a red copy,
+  hud.js `tinted`) and the `321ron/roff/gon/goff` lamps.
+- Layout as hud.js: the 640x448 frame scaled by `min(h/448, w/480)`, left items keep
+  their x, right items their distance from the right edge, centred items stay centred
+  (30 units left on phones); top items sit below the toolbar's bottom edge
+  (`toolbarBottom`), and phones move the right column below the compact meter. LAP
+  TIME, LAP, SCORE (committed stunt points), the PLACE name tree with its sliding
+  slots and pulsing rank or the place number, BEST/TOTAL/LEAD faded by the lap
+  history (LEAD green ahead, red behind), the lap history, info text and signs with
+  Off Track / Too Deep digits, and the north-up radar with CPU dots and the player's
+  red dot. Pause → Race Overlays choices (`atv-race-overlays-off`,
+  `atv-race-position`) apply when the menu closes.
+- Races hide the GPS map; the speed meter follows the overlays' Speed group; stunt
+  text follows the Info group; the HUD hides during the pre-race shots; the lamps
+  draw while the race frame carries them. The race load fades in from black over
+  500 ms (race.js `.race-fade`). A held parity replay keeps its HUD and the Pause
+  toolbar, as the browser renders it.
+
+Measured (NAT01 race, seed 12345, 720 scripted steps, held frame; mean absolute RGB
+against play.html in the Rust browser build, host Chromium, images under
+`private/reports/engine-parity/race-presentation/`): 1280x720 PLACE tree 3.91, top
+row 2.13, timing column 6.51 (the scene behind it differs; the text matches by
+inspection), radar 2.43, lamps 0.41, meter 0.76, whole frame 2.03 (the same frame
+without the overlays: 7.13); 390x844 top items 1.19, lamps 1.26, whole 2.70. Native
+captures (`fury --capture .. --ui`) place the display face a few pixels lower than
+Chrome's canvas text (the desktop font's metrics), as for the Freeride HUD.
+
+Not yet: the countdown digits shown when a course lacks the lamp art (every race
+archive carries it).
+
+## Race results checkpoint (2026-10-21)
+
+`atv-ui::hud::results` ports race.js `RaceOverlay`'s race-over half (game.css +
+hud.css `.race-results`, `.race-show`): on the first finished frame the panel shows
+Race Results, the summary (`Place N of M · total · Best`, race.js `raceTime`) and the
+standings table fixed at that moment (the player's row in HUD gold; CSS auto table
+layout approximated by sharing the width by each column's max-content width), over
+the riders who drive on. The original race-over menu: Continue opens Restart / Quit
+Event, Hide Menu swaps the panel for Show Results. Escape (back, hide, show) and Enter
+(the menu's first button) are taken from the ride while the results are up, the
+controller's A/B/X act on a fresh press as race.js polls them, pointers and touches
+click the buttons. The panel is centred with `translate(-50%, -50%)` after one layout.
+
+- Restart: with the engine's frontend (race links), the ride ends and the event
+  reloads through the course loader with a new roster seed and no pre-race camera
+  (race.js → `$('reset').onclick({restart:true})` → `loadGame`); race links now draw a
+  new roster per load too (the frontend path used a fixed seed). A direct ride
+  restarts in place. The new load holds the soundtrack through the countdown (the
+  hold now also applies when the bank becomes ready before the first race step, and
+  no song starts while held).
+- Quit Event returns to Single Player (`frontend.show('single')`); it is hidden without
+  the engine's frontend.
+
+Measured (NAT01, 9,000-step autopilot race finishing first, held frame; mean absolute
+RGB against play.html, Rust browser build): heading 1.17, whole panel 4.12, table
+6.47, buttons 6.38 — the remaining difference is the panel's `backdrop-filter:
+blur(12px)`, drawn as its 86%-opaque fill without the blur (inspected,
+`private/reports/engine-parity/race-presentation/shots/results-side.png`). A live
+link race (`engine.html?activity=race&map=nat01&laps=1&cpu=3&play=1&autopilot=1`)
+finished, Continue → Restart reloaded the event with a new roster (inspected
+screenshots `restart-*.png`), the soundtrack stayed paused through the countdown and
+started at GO (`?audioDiagnostics=1`). Host Chromium only; names longer than the
+column are not ellipsised; Tab focus movement between the buttons is not ported.
+

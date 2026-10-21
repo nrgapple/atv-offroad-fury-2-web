@@ -352,7 +352,9 @@ async function raceMode() {
       await writeFile(scriptFile, JSON.stringify(script));
       steps.splice(0, steps.length, ...script.flatMap(({ frames, input }) => Array.from({ length: frames }, () => input)));
     }
-    const page = await scriptedGame(browser, venue, steps, { width: 1280, height: 720 }, errors, { race, quad });
+    // RACE_VIEWPORT=390x844: the JavaScript capture's viewport (race HUD layouts).
+    const [width, height] = (process.env.RACE_VIEWPORT ?? '1280x720').split('x').map(Number);
+    const page = await scriptedGame(browser, venue, steps, { width, height }, errors, { race, quad });
     const js = await page.evaluate(() => window.rideTrace.frames);
     await page.locator('#game').screenshot({ path: path.join(out, `${venue}-race-javascript.png`) });
     await writeFile(path.join(out, 'javascript-trace.json'), JSON.stringify(js));

@@ -278,7 +278,7 @@ impl Ride {
         ride.after_placement()?;
         // A race takes the grid before the first camera step (op 96).
         if let Some((setup, settings)) = race {
-            ride.begin_race(setup, settings, true)?;
+            ride.begin_race(setup, settings, settings.intro)?;
         }
         // startSimulation: op 45 builds the camera, then op 46 steps it once.
         ride.step_camera(0.)?;
@@ -441,6 +441,15 @@ impl Ride {
     /// The quad paint (`playerPaint`: mode and hue), original on a bike.
     pub fn paint(&self) -> [f32; 2] {
         gear::PAINT_PALETTE[usize::from(self.appearance.paint)]
+    }
+
+    /// The player's committed stunt points (the race SCORE overlay; the
+    /// motorcycle's frame carries none, as in atv-web).
+    pub fn committed_points(&self) -> f32 {
+        match &self.mount {
+            Mount::Quad { rig, .. } => rig.animator.score_frame().committed_points,
+            Mount::Bike(_) => 0.,
+        }
     }
 
     /// The Garage choice this ride loaded.

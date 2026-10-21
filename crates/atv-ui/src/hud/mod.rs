@@ -3,6 +3,8 @@ pub mod assets;
 pub mod help;
 pub mod meter;
 pub mod minimap;
+pub mod race;
+pub mod results;
 pub mod toolbar;
 
 /// The viewport in CSS pixels and the device traits media queries test.
