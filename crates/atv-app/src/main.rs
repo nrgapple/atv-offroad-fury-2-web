@@ -11,7 +11,7 @@ use std::path::PathBuf;
 const USAGE: &str = "usage: fury [--content DIR | --pack FILE] [--front PAGE] [--venue ID] [--quad 1-46] [--rider 0|1] [--free] [--race [--laps N] [--cpu 0|3|4] [--difficulty 1|2] [--seed N]] \
 [--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high] \
 [--crash original|crazy|gorn] \
-[--script IN.json] [--trace OUT.json] [--capture OUT.png WxH [--ui]] [--verify-content] [--version] \
+[--script IN.json] [--trace OUT.json] [--present-trace OUT.json [--present-hz 144]] [--capture OUT.png WxH [--ui]] [--verify-content] [--version] \
 [--mute] [--no-music] [--sound original|enhanced] [--audio OUT.wav] \
 [--autodrive IN.json [--bench OUT.json [--profile]]]";
 
@@ -68,6 +68,7 @@ fn main() {
     let mut race: Option<atv_game::ride::race::Settings> = None;
     let mut script = None;
     let mut trace = None;
+    let (mut present_trace, mut present_hz) = (None, 144.);
     let mut autopilot_script = None;
     let mut audio = None;
     let mut sound = atv_game::audio::ride::SoundMode::Original;
@@ -187,6 +188,17 @@ fn main() {
                 ))
             }
             "--trace" => trace = Some(PathBuf::from(args.next().expect("--trace needs a path"))),
+            "--present-trace" => {
+                present_trace = Some(PathBuf::from(
+                    args.next().expect("--present-trace needs a path"),
+                ))
+            }
+            "--present-hz" => {
+                present_hz = args
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .expect("--present-hz needs a rate")
+            }
             other => fail(&format!("unknown argument {other}\n{USAGE}")),
         }
     }
@@ -201,6 +213,23 @@ fn main() {
         let script = script.unwrap_or_else(|| atv_app::replay::Script::parse("[]").unwrap());
         atv_app::replay::render_audio(&content, &venue, selection, &script, &out, sound)
             .expect("render audio");
+        return;
+    }
+    if let Some(out) = present_trace {
+        // Headless presentation timeline at --present-hz (interpolation parity).
+        let content = content.unwrap_or_else(|| PathBuf::from("content"));
+        let script = script.unwrap_or_else(|| atv_app::replay::Script::parse("[]").unwrap());
+        atv_app::replay::present_trace(
+            &content,
+            &venue,
+            selection,
+            race,
+            graphics.interpolation,
+            &script,
+            present_hz,
+            &out,
+        )
+        .expect("presentation trace");
         return;
     }
     if let Some(out) = trace {

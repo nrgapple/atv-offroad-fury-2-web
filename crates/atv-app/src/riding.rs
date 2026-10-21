@@ -1,6 +1,7 @@
 //! The ride loop shared by desktop and browser builds: input sampling, the
 //! browser's fixed-step batching (pumpSimulation in web/game.js) and the chase
 //! presentation of the recovered camera.
+use atv_game::ride::present::{Presentation, Presented, Snapshot};
 use atv_game::{
     ride::{
         self, Controls, Ride,
@@ -48,6 +49,17 @@ pub struct Riding {
     pub effects: Option<atv_game::wheel_effects::WheelEffects>,
     /// Optional Crazy/Gorn crashes (off under Original).
     pub crashes: Option<atv_game::crash::Crashes>,
+    /// Enhanced/High ATV interpolation (motorcycles always interpolate).
+    pub interpolation: bool,
+    presentation: Presentation,
+    /// The latest delivered state, and the presentation clock (ms).
+    delivered: Option<Snapshot>,
+    clock: f64,
+    /// Whether the latest frame drew an interpolated state, and its alpha.
+    pub presented: (bool, f32),
+    /// Parity tooling: every delivered state and sampled presentation, in
+    /// the browser's frame shape (tools/compare_presentation.mjs).
+    pub present_log: Option<Vec<serde_json::Value>>,
 }
 
 /// What a frame sampled from the keyboard/controller.
@@ -88,6 +100,12 @@ impl Riding {
             step_rest: Vec::new(),
             effects: None,
             crashes: None,
+            interpolation: false,
+            presentation: Presentation::default(),
+            delivered: None,
+            clock: 0.,
+            presented: (false, 1.),
+            present_log: None,
         }
     }
 
@@ -107,6 +125,15 @@ impl Riding {
             effects.reset(&self.ride)?;
         }
         self.orbit = 0.;
+        // The reset frame (op 23) is the next segment's start.
+        self.delivered = None;
+        if self.presents() {
+            let current = deliver(&self.ride, &self.crashes)?;
+            if let Some(log) = &mut self.present_log {
+                log.push(serde_json::json!({"deliver": current.browser_frame()}));
+            }
+            self.delivered = Some(current);
+        }
         Ok(())
     }
 
@@ -117,11 +144,13 @@ impl Riding {
         self.bindings.cancel();
         self.accumulator = 0.;
         self.rush.reset();
+        self.presentation.reset();
     }
 
     /// Advances one rendered frame of `dt` seconds (already capped at 50 ms).
     pub fn frame(&mut self, input: &Sample, touch: TouchSampler, dt: f32) -> Result<(), String> {
         let started = web_time::Instant::now();
+        self.clock += f64::from(dt) * 1000.;
         let result = self.frame_inner(input, touch, dt);
         if let Some(sound) = &mut self.sound {
             sound.maintain();
@@ -170,6 +199,9 @@ impl Riding {
             {
                 sound.frame(self.ride.sound());
             }
+            if count > 0 {
+                self.accept_batch(count, self.focused && !self.menu_open)?;
+            }
             return Ok(());
         }
         if self.held {
@@ -217,11 +249,75 @@ impl Riding {
         for _ in 0..count {
             self.accumulator -= 1. / 60.;
         }
-        if read.camera || std::mem::take(&mut self.cycle_requested) {
+        let cycle = read.camera || std::mem::take(&mut self.cycle_requested);
+        if cycle {
             self.orbit = 0.;
             self.ride.cycle_camera();
         }
-        self.run(&read.controls, count)
+        self.run(&read.controls, count)?;
+        // A camera cycle snaps.
+        self.accept_batch(count, self.focused && !self.menu_open && !cycle)
+    }
+
+    /// pumpSimulation: each delivered batch of `ticks` steps starts a
+    /// presentation segment from the previously delivered state.
+    fn accept_batch(&mut self, ticks: u32, continuous: bool) -> Result<(), String> {
+        if !self.presents() {
+            return Ok(());
+        }
+        let previous = self.delivered.take();
+        let current = deliver(&self.ride, &self.crashes)?;
+        match &previous {
+            Some(previous) => self.presentation.accept(
+                previous,
+                &current,
+                self.clock,
+                ticks,
+                continuous,
+                self.interpolation,
+            ),
+            None => self.presentation.reset(),
+        }
+        if let Some(log) = &mut self.present_log {
+            log.push(
+                serde_json::json!({"accept": {"now": self.clock, "ticks": ticks,
+                "continuous": continuous, "frame": current.browser_frame()}}),
+            );
+        }
+        self.delivered = Some(current);
+        Ok(())
+    }
+
+    /// The state to draw this frame: the motorcycle presenter, else (with
+    /// the preset's interpolation) the ATV presenter, between delivered
+    /// 60 Hz states; None draws the ride's latest state directly.
+    pub fn sample_presentation(&mut self) -> Result<Option<Presented>, String> {
+        if !self.presents() {
+            self.presented = (false, 1.);
+            return Ok(None);
+        }
+        if self.delivered.is_none() {
+            let current = deliver(&self.ride, &self.crashes)?;
+            if let Some(log) = &mut self.present_log {
+                log.push(serde_json::json!({"deliver": current.browser_frame()}));
+            }
+            self.delivered = Some(current);
+        }
+        let active = self.focused && !self.menu_open;
+        let delivered = self.delivered.as_ref().unwrap();
+        let presented = self.presentation.sample(delivered, self.clock, active);
+        self.presented = (presented.interpolated, presented.alpha);
+        if let Some(log) = &mut self.present_log {
+            let s = &presented.snapshot;
+            log.push(serde_json::json!({"sample": {"now": self.clock, "active": active,
+                "interpolated": presented.interpolated, "alpha": presented.alpha,
+                "origin": s.origin, "orientation": s.orientation,
+                "camera": [s.camera.position, s.camera.target],
+                "quad": s.quad_nodes.first(), "rider": s.rider_nodes.first(),
+                "rider_world": s.rider_world,
+                "cpu": s.opponents.as_ref().and_then(|o| o.first()).map(|o| (o.origin, o.physical.as_ref().map(|p| p.orientation)))}}));
+        }
+        Ok(Some(presented))
     }
 
     /// `count` fixed steps with one control sample (an op 50 batch).
@@ -260,6 +356,12 @@ impl Riding {
         }
     }
 
+    /// Frames draw through the presenters: every motorcycle, and ATVs with
+    /// the preset's interpolation.
+    fn presents(&self) -> bool {
+        self.interpolation || self.ride.is_motorcycle()
+    }
+
     /// The speed-rush amount after this frame's update (screen pass).
     pub fn rush_amount(&self) -> f32 {
         self.rush.amount()
@@ -274,6 +376,21 @@ impl Riding {
         aspect: f32,
         dt: f32,
     ) -> Result<(Camera, f32), String> {
+        // render(): the motorcycle presenter, else (Enhanced/High) the ATV
+        // presenter, between the delivered 60 Hz states; Original ATVs draw
+        // the latest state.
+        let presented = self.sample_presentation()?;
+        let shown = presented
+            .as_ref()
+            .filter(|p| p.interpolated)
+            .map(|p| &p.snapshot);
+        let camera = match shown {
+            Some(shown) => (shown.camera, shown.camera_mode),
+            None => {
+                let (frame, mode) = self.ride.camera();
+                (*frame, mode)
+            }
+        };
         let frame = self.ride.frame();
         let riding = frame.wreck.phase == ride::Phase::Riding;
         self.rush.update(
@@ -287,7 +404,7 @@ impl Riding {
             yaw,
             pitch,
             focal_length,
-        } = match self.ride.camera() {
+        } = match (&camera.0, camera.1) {
             (frame, ride::CameraMode::Intro | ride::CameraMode::Tv) => {
                 atv_game::ride::view::cinematic(frame, aspect)
             }
@@ -299,16 +416,28 @@ impl Riding {
             self.center = at;
             scene.recenter_terrain(gpu, venue, [frame.origin[0], frame.origin[2]]);
         }
-        let mut pose = self.ride.pose()?;
+        let (mut pose, cpu_poses) = match shown {
+            Some(shown) => (shown.pose(), shown.cpu_poses()),
+            None => (self.ride.pose()?, self.ride.cpu_poses()),
+        };
         // Crazy/Gorn: the ragdoll and broken parts replace the drawn pose
         // (drawnQuadPose and acceptFrame in game.js); the rider's ragdoll
-        // matrices are world space.
-        if let Some(crash) = self.crashes.as_ref().and_then(|c| c.frame()) {
-            if crash.quad_node_matrices.len() == pose.quad_nodes.len() {
-                pose.quad_nodes.clone_from(&crash.quad_node_matrices);
+        // matrices are world space. An interpolated ATV draws the blended
+        // crash pose.
+        let crash_pose = match (
+            shown.and_then(|s| s.crash.as_ref()),
+            self.crashes.as_ref().and_then(|c| c.frame()),
+        ) {
+            (Some((quad, rider)), Some(_)) => Some((quad, rider)),
+            (_, Some(frame)) => Some((&frame.quad_node_matrices, &frame.rider_node_matrices)),
+            _ => None,
+        };
+        if let Some((quad, rider)) = crash_pose {
+            if quad.len() == pose.quad_nodes.len() {
+                pose.quad_nodes.clone_from(quad);
             }
-            if !crash.rider_node_matrices.is_empty() {
-                pose.rider_nodes.clone_from(&crash.rider_node_matrices);
+            if !rider.is_empty() {
+                pose.rider_nodes.clone_from(rider);
                 pose.rider_world = [
                     1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
                 ];
@@ -328,7 +457,7 @@ impl Riding {
         );
         scene.set_ride_mud(self.ride.mud_amount(), !self.ride.is_motorcycle());
         scene.pose_ride(gpu, &pose);
-        scene.pose_race_cpus(gpu, &self.ride.cpu_poses(), position);
+        scene.pose_race_cpus(gpu, &cpu_poses, position);
         Ok((
             Camera {
                 x: position[0],
@@ -340,6 +469,11 @@ impl Riding {
             focal_length * self.rush.focal_scale(),
         ))
     }
+}
+
+/// The state just delivered, as the presentation reads it.
+fn deliver(ride: &Ride, crashes: &Option<atv_game::crash::Crashes>) -> Result<Snapshot, String> {
+    Snapshot::capture(ride, crashes.as_ref().and_then(|c| c.frame()))
 }
 
 fn cells(venue: &Venue, origin: [f32; 3]) -> [f32; 2] {

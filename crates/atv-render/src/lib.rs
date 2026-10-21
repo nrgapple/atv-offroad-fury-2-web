@@ -288,6 +288,9 @@ impl FrameStats {
 /// scenery textures anisotropically (4x/16x).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Graphics {
+    /// Enhanced/High: draw ATVs between 60 Hz states (graphics.js
+    /// `interpolation`; motorcycles interpolate in every preset).
+    pub interpolation: bool,
     pub sky_smooth: bool,
     pub anisotropy: u16,
     /// Authored Schlick Fresnel on the water surface.

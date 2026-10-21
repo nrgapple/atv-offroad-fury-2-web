@@ -735,8 +735,48 @@ and no deep-water clock, as in atv-web. Parity (`compare_engine.mjs race env01 .
 for bit for the player and all three CPUs over 9,000 steps (intro 1-435, countdown
 436-675, GO at 676, the bike finishing fourth at step 8,428).
 
-Not connected yet (labelled for follow-up PRs): the `MotorcyclePresentation` 60 Hz
-interpolation (`web/motorcycle-presentation.js`, used in every preset).
+Interpolation between 60 Hz states (`MotorcyclePresentation`, every preset): see Frame
+interpolation.
+
+## Frame interpolation (2026-10-21)
+
+Ports web/motorcycle-presentation.js into `atv_game::ride::present`:
+`MotorcyclePresentation` in every preset and `AtvPresentation` under Enhanced/High
+(graphics.js `interpolation`; Original ATVs snap to each state). Presentation only:
+inputs, physics and traces are untouched. `Riding` delivers a snapshot after each
+batch (pumpSimulation's `accept`, with the batch's tick count, the previous state and a
+camera cycle or menu breaking continuity) and samples it on every rendered frame at the
+frame clock (`render`'s `sample`). The bike blends origin, orientation, both rigs' node
+matrices and the camera while Riding without a stunt, over its tick difference (up to 4);
+the ATV blends the quad, attached or detached rider, Crazy/Gorn pose, race CPUs and the
+chase camera over 1-4 ticks, snapping on a reset, a 30ft jump or a camera preset/mode
+change. `blendMatrix` decomposes rotation, per-axis scale and translation as the
+browser does (unit test against Node values). Batches are accepted on the frame that runs
+them, so the first sample of a segment draws the previous state; the browser's worker
+round trip delays its acceptance by a millisecond or two instead.
+
+Evidence: `tools/compare_presentation.mjs` plays a script through the native frame loop
+at a fixed render rate (`fury --present-trace OUT --present-hz N`) and replays the logged
+delivered states and timings through the JavaScript presenters
+(`tools/presentation_replay.mjs`). Every frame's interpolated flag agrees, and presented
+origin, orientation, camera, first quad/rider node, detached rider and first CPU agree to
+under 3e-4 ft (binary32 against the browser's binary64 at ENV01 coordinates):
+
+| Ride | Preset | Display | Frames interpolated |
+| --- | --- | --- | --- |
+| quad 1, wreck script | Enhanced | 144 Hz | 2,221 / 2,235 (alpha 0, 0.42, 0.83) |
+| quad 1, 9,000-step race with 3 CPUs | High | 144 Hz | 21,577 / 21,603 |
+| bike 29, wreck script | Original | 120 Hz | 1,860 / 1,862 (alpha 0, 0.5) |
+| bike 33, wreck script | High | 144 Hz | 1,586 / 2,235 (wreck frames snap) |
+| bike 31, ride | Enhanced | 120 Hz | 1,200 / 1,202 |
+| quad 1, ride | Original | 144 Hz | 0 (snaps) |
+
+The browser build passes the same check at a simulated 120 Hz display
+(`tools/test_engine_interpolation.mjs`: virtual-clock requestAnimationFrame and
+performance.now, `?presentTrace=1`): Enhanced quad and Original bike interpolate on
+alternate frames, Original quad snaps. Not ported: Alpha slow motion (`hype.timeScale`)
+and the Enhanced wheel re-projection (`atvPresentation.quadPose`); the quad draws its
+simulation linkage.
 
 ## Commands
 
