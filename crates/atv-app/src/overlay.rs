@@ -101,6 +101,8 @@ pub struct Overlay {
     /// Name of the controller in use (Controller Settings row).
     pub pad_name: Option<String>,
     pub prefs: Preferences,
+    /// Controller glyph rasters for the bindings pages.
+    glyphs: atv_ui::menu::glyphs::GlyphImages,
     /// The pause menu while the ride is paused.
     pub menu: Option<PauseMenu>,
     menu_hits: Vec<(Rect, u32)>,
@@ -157,6 +159,7 @@ impl Overlay {
             help_keys: Vec::new(),
             pad_name: None,
             prefs,
+            glyphs: Default::default(),
             menu: None,
             menu_hits: Vec::new(),
             menu_scroll_max: 0.,
@@ -482,7 +485,7 @@ impl Overlay {
         }
         let view = self.view;
         if self.menu.is_some() {
-            self.prepare_menu(bindings);
+            self.prepare_menu(device, queue, bindings);
             self.upload(device, queue, width, height);
             self.prepare_ms = started.elapsed().as_secs_f64() * 1000.;
             return;
@@ -785,7 +788,12 @@ impl Overlay {
 
     /// The pause layer: the dim backdrop and the panel (the HUD, map, toolbar
     /// and touch controls hide behind menus, as `body.menu-open` does).
-    fn prepare_menu(&mut self, mut bindings: Option<&mut atv_game::ride::bindings::Bindings>) {
+    fn prepare_menu(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mut bindings: Option<&mut atv_game::ride::bindings::Bindings>,
+    ) {
         let view = self.view;
         let start = self.list.items.len();
         let Some(state) = self.with_menu(bindings.as_deref_mut(), |m, ctx, _, _| {
@@ -794,9 +802,16 @@ impl Overlay {
         }) else {
             return;
         };
+        self.glyphs.prepare(
+            &mut self.renderer,
+            device,
+            queue,
+            state.pad.as_ref(),
+            view.scale,
+        );
         let mut hits = Vec::new();
         layout::render(
-            &pause::element(&view, &state),
+            &pause::element(&view, &state, &self.glyphs),
             &mut self.fonts,
             view.width,
             view.height,
@@ -822,7 +837,7 @@ impl Overlay {
                 if menu.scroll != before {
                     self.menu_hits = hits;
                     self.list.items.truncate(start);
-                    self.prepare_menu(bindings);
+                    self.prepare_menu(device, queue, bindings);
                     return;
                 }
             }

@@ -240,8 +240,8 @@ pager, Clear, Defaults; capture by key or chord, released to save, Escape
 cancels) and Controller settings (controller in use, preset cycling, tuning
 sliders, Controller bindings captured from buttons/axes as frontend.js
 `pollCapture` does, Defaults). The keyboard card follows the live bindings and H
-stays a gameplay key if bound. Controller rows use the standard-layout names of
-pad-glyphs.js as text; the glyph icons are not drawn yet, and pinning a specific
+stays a gameplay key if bound. Controller rows draw the
+pad-glyphs.js button glyphs (see Controller glyphs below), and pinning a specific
 controller (`padselect`) is Auto-only in the Rust engine.
 
 Flat-backdrop comparison (mean absolute RGB, whole viewport): Keyboard bindings
@@ -433,4 +433,26 @@ menu notice line (`#menu-notice`, now drawn by the pause panel), or shown there 
 full when the browser refuses the clipboard. Desktop builds have no web page to link
 a ride to and leave the row out, as they leave out Dev log. Test:
 `tools/test_engine_ride_link.mjs` (clipboard text and query fields; host Chromium).
+## Controller glyphs (2026-10-21)
+
+`atv-ui::menu::glyphs` ports web/pad-glyphs.js: each controller input describes
+as the original Controller Settings page's buttons (face buttons, L1/R1 shoulders,
+L2/R2 triggers, START/SELECT, L3/R3 and stick directions, D-pad arms, Home, raw
+`B4`/`A2-` inputs for non-standard indices), drawn from the same 32x32 vector
+elements (the wordmark rasterizer: Canvas 2D in browsers, zeno natively, now with
+round caps and joins) once per device scale, with their labels as UI text in the
+browser's `system-ui` face. The Controller bindings page (titled Controller, as in
+the browser) shows each row's alternatives as glyph chords (`+`, `/`, Unbound) and
+the original-style summary panel (ATV, Stunt and Camera sections; matched pairs
+collapse to one stick or D-pad glyph, `pairEntries`), placed beside the panel on
+wide frontend menu screens as menu-screens.css does. The engine reads every pad in
+the standard layout, so glyphs always use standard names; play.html falls back to
+raw names for a pad reporting a non-standard mapping. As in the browser, the
+keyboard card and HUD carry no controller glyphs.
+
+Measured (host Chromium, ENV01 paused, Pause → Settings → Controls → Controller →
+Controller bindings; mean absolute RGB against play.html; `work/pad_pages.mjs`,
+images `private/reports/rust-ui/pad-glyphs/`): 1280x720 binding rows 1.93, summary
+panel 1.12, whole panel 1.37; 390x844 whole frame 2.63. Glyph shapes match by
+inspection (`glyph-rows-side.png`); the glyph labels sit within about a pixel.
 

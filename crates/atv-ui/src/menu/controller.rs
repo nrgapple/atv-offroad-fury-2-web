@@ -142,6 +142,11 @@ impl PauseMenu {
             capture: self.capture.as_ref().map(|c| c.label.clone()),
             from_menu: self.from_menu,
             notice: self.notice.clone(),
+            // Controller bindings show glyphs (standard-mapping pads).
+            pad: (self.page == "bindings" && !self.keyboard)
+                .then_some(ctx.bindings.as_deref())
+                .flatten()
+                .map(|b| super::glyphs::PadGlyphs::new(b, true)),
             page_count: (self.page == "bindings").then(|| {
                 format!(
                     "Page {} of {}",
