@@ -250,3 +250,75 @@ shifting the rows below by a line). Tests: `test_engine_pause.mjs` captures a ne
 Gas key, restores Defaults, cycles the controller preset, sets a tuning slider
 and checks a sub-frame Pause tap; atv-game unit tests cover saved-profile
 round trips, presets/custom, migration, tuning curves and queued taps.
+
+## Frontend checkpoint (2026-10-21)
+
+`/engine.html` without `?venue=` and the desktop `fury` without a direct-ride
+option now open the engine's own frontend (`atv_ui::front`, app glue in
+`crates/atv-app/src/front.rs`), drawn by the UI pass without a 3D scene:
+
+- Pages from web/menu-screens.js/css: Title (authored wordmark, Press Start
+  pulse, Dev log on the web), Main Menu, Single Player, Select Track (all 40
+  venues from `tracks.dat` via `unlockedCourses`, event tabs with counts, photo
+  list with the original TP photo halves joined and trimmed, framed hero with
+  arrows and Ride, the course photo as greyed, red-multiplied backdrop), Select
+  ATV & Rider (vehicle row with arrows, Male/Female switch, the ATV list, Done,
+  uiQuad.txt meters, maker logo and authored top speed) and the course loader
+  (LOADICON action shots crossfading every 2.5 s, Track pill, an original etips
+  riding tip and the gold bar advancing with the real load stages).
+  Settings from the main menu opens the shared pause-menu pages full screen
+  over the frontend backdrop (`#frontend[data-context=menu]`).
+- Layout follows the CSS grid and media rules (portrait stage above the rows,
+  short landscape), with two renderer additions: `skewX` boxes for the silver
+  stage panel and elliptical corner radii (`border-radius: 75% / 56px`) for the
+  portrait stage. Chrome's grid sizing of the hero caption (Ride spanning empty
+  rows) and CSS block behaviour (header strips spanning their container,
+  collapsed heading margins, `letter-spacing: normal` on `<button>`) are matched.
+- Input: keyboard (arrows, Enter/Space, Escape/Backspace, PageUp/PageDown/Q/E for
+  tabs), standard controllers (D-pad/stick, A/Start, B/Y, LB/RB), mouse hover
+  selection, clicks and taps, touch drag and wheel scrolling of the lists.
+- `atv-player-selection` (quadId, riderId, freestyleEnvironment) is read and
+  written with the browser game's other fields kept, so both games share the
+  garage. The ride loads the chosen ATV and rider.
+- launch.js contract (`atv_game::launch::parse_launch`, `menu_shortcut`, unit
+  tests mirroring launch.test.mjs): ride links (`map`/`environment`,
+  `quad`/`vehicle`/`atv`, `rider`, `player`, `play`/`drive`, race `laps`, `cpu`,
+  `difficulty`, `cheats` validation) start their ride through the loader and
+  become the saved selection; setup-only links open Select Track; `?menu=`
+  shortcuts open their menu; invalid, multiplayer and motorcycle links open the
+  main menu with the reason on the status line. `?venue=` still rides at once
+  (engine tests and parity tools); `?front=PAGE` / `fury --front PAGE` open a
+  page directly, and `fury --front PAGE --capture OUT.png WxH` captures it.
+- Pause → Quit to Main Menu returns to the frontend (also on desktop); the ride's
+  GPU device moves between the frontend and the ride, and the frontend releases
+  its textures while riding.
+
+Parity, mean absolute RGB over the whole viewport against play.html (same
+content, Chromium, DPR 1; images in private/reports/rust-ui/front/side-*.png):
+
+| Page | 1280x720 | 390x844 |
+| --- | --- | --- |
+| Title | 1.45 | 1.76 |
+| Select Track | 1.18 | 1.98 |
+| Settings (from main) | 1.89 | 3.09 |
+| Main / Single / Garage | 9.7 / 8.5 / 12.4 | 12.6 / 10.7 / 13.7 |
+
+The main, single and garage differences are the missing 3D quad and rider
+previews (their left columns are 1.8-5.3 / 1.0-8.4, the latter from the hidden
+rows). Hidden because the Rust engine cannot run them yet: Multiplayer, Arlington
+Free Ride, Jukebox, Race setup, Rider gear and Alpha; motorcycles are left out
+of the garage. Not yet drawn: the 3D model previews, the Free Ride rider count,
+backdrop-filter blur on the photo arrows, the menu notice line and the training
+venue's photo (a devlog image in the browser). The loader shows one frame per
+load stage (the ride load owns the GPU meanwhile), so the shot crossfade only
+advances between stages.
+
+CPU (host Chromium, prepare = artwork + layout + upload; the page sleeps when
+idle): title 0.2 ms/frame while Press Start pulses; garage 0.9 ms per input;
+Select Track 4.3-6.5 ms when the course changes (the new course's blurred
+backdrop and graded hero are filtered on the CPU, then kept for the last six
+courses), 0.3 ms otherwise. Wasm grows from 5.11 to 5.40 MB.
+Tests: `tools/test_engine_front.mjs` (title → main → Settings → Single → garage
+persistence → tabs and card click → loader → ride → Quit to Main Menu, and a ride
+link on a phone viewport); atv-ui controller, layout, logo and pixel unit tests;
+atv-game launch contract tests.

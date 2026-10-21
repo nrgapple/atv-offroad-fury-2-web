@@ -8,7 +8,7 @@ use atv_app::{Options, run};
 use atv_content::{Store, pack};
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: fury [--content DIR | --pack FILE] [--venue ID] [--free] [--race [--laps N] [--cpu 0|3|4] [--difficulty 1|2] [--seed N]] \
+const USAGE: &str = "usage: fury [--content DIR | --pack FILE] [--front PAGE] [--venue ID [--quad N] [--rider 0|1]] [--free] [--race [--laps N] [--cpu 0|3|4] [--difficulty 1|2] [--seed N]] \
 [--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high] \
 [--script IN.json] [--trace OUT.json] [--capture OUT.png WxH [--ui]] [--verify-content] [--version] \
 [--mute] [--no-music] [--sound original|enhanced] [--audio OUT.wav] \
@@ -52,6 +52,10 @@ fn main() {
     let mut content = std::env::var_os("FURY_CONTENT").map(PathBuf::from);
     let mut pack_file = std::env::var_os("FURY_PACK").map(PathBuf::from);
     let mut venue = "env01".to_string();
+    let mut venue_given = false;
+    let mut front_page: Option<String> = None;
+    let mut quad = 1u16;
+    let mut rider = 0u16;
     let mut capture = None;
     let mut capture_ui = false;
     let mut verify = false;
@@ -83,7 +87,25 @@ fn main() {
                 println!("{USAGE}");
                 return;
             }
-            "--venue" => venue = args.next().expect("--venue needs an id"),
+            "--venue" => {
+                venue = args.next().expect("--venue needs an id");
+                venue_given = true;
+            }
+            "--front" => front_page = Some(args.next().expect("--front needs a page")),
+            "--quad" => {
+                quad = args
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .filter(|q| (1..=26).contains(q))
+                    .unwrap_or_else(|| fail("--quad needs an ATV number 1-26"))
+            }
+            "--rider" => {
+                rider = match args.next().as_deref() {
+                    Some("0" | "male") => 0,
+                    Some("1" | "female") => 1,
+                    _ => fail("--rider needs 0 (male) or 1 (female)"),
+                }
+            }
             "--camera" => {
                 camera = Some(
                     atv_app::parse_camera(&args.next().unwrap_or_default())
@@ -194,6 +216,18 @@ fn main() {
     if verify {
         return verify_content(store);
     }
+    // Without a direct-ride or tooling option the game opens at its title.
+    let direct = venue_given
+        || camera.is_some()
+        || script.is_some()
+        || autodrive.is_some()
+        || race.is_some()
+        || !ride
+        || steps.is_some();
+    let front = (front_page.is_some() || !direct).then(|| atv_app::FrontStart {
+        search: String::new(),
+        page: front_page,
+    });
     run(Options {
         store,
         venue,
@@ -210,6 +244,9 @@ fn main() {
         sound: (!no_audio).then_some((sound, music)),
         autodrive,
         bench,
+        quad,
+        rider,
+        front,
     });
 }
 

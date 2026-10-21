@@ -88,6 +88,8 @@ pub struct Overlay {
     pub prepare_ms: f64,
     /// Parity test hook: a flat colour painted under the UI.
     pub backdrop: Option<[u8; 3]>,
+    /// The engine's frontend can take the player back (Quit to Main Menu).
+    pub frontend: bool,
 }
 
 impl Overlay {
@@ -134,6 +136,7 @@ impl Overlay {
             menu_reveal: false,
             prepare_ms: 0.,
             backdrop: None,
+            frontend: false,
         }
     }
 
@@ -175,7 +178,9 @@ impl Overlay {
     pub fn sync_menu(&mut self, paused: bool) {
         match (paused, self.menu.is_some()) {
             (true, false) => {
-                self.menu = Some(PauseMenu::new());
+                let mut menu = PauseMenu::new();
+                menu.frontend = self.frontend;
+                self.menu = Some(menu);
                 self.press = None;
                 self.touch.clear();
             }

@@ -23,6 +23,8 @@ struct Instance {
     cut_radii: [f32; 4],
     clip: [f32; 4],
     extra: [f32; 4],
+    /// Vertical corner radii for elliptical corners (0: circular).
+    radii_y: [f32; 4],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -185,7 +187,8 @@ impl Renderer {
         let attributes = wgpu::vertex_attr_array![
             0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4,
             4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4,
-            8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4
+            8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4,
+            12 => Float32x4
         ];
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("ui"),
@@ -598,6 +601,10 @@ impl Renderer {
         alpha: f32,
         base: Instance,
     ) {
+        let base = Instance {
+            radii_y: paint.radii_y.map(|v| v * s),
+            ..base
+        };
         let r = paint.rect;
         let shape = [r.x * s, r.y * s, r.w * s, r.h * s];
         let radii = paint.radii.map(|v| v * s);
@@ -625,7 +632,12 @@ impl Renderer {
                     radii: shadow_radii,
                     color: fade(shadow.color.premultiplied()),
                     params: [1., sigma, paint.rotation, 0.],
-                    extra: [base.extra[0], paint.pivot[0] * s, paint.pivot[1] * s, 0.],
+                    extra: [
+                        base.extra[0],
+                        paint.pivot[0] * s,
+                        paint.pivot[1] * s,
+                        paint.skew_x,
+                    ],
                     cut: shape,
                     cut_radii: radii,
                     ..base
@@ -634,7 +646,12 @@ impl Renderer {
         }
         let base = Instance {
             params: [0., 0., paint.rotation, 0.],
-            extra: [base.extra[0], paint.pivot[0] * s, paint.pivot[1] * s, 0.],
+            extra: [
+                base.extra[0],
+                paint.pivot[0] * s,
+                paint.pivot[1] * s,
+                paint.skew_x,
+            ],
             ..base
         };
         let mut instance = Instance {

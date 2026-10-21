@@ -3,6 +3,7 @@
 //! browser controls (web/design-system.css, hud.css, touch.css). Original HUD
 //! artwork and menus are later migration checkpoints.
 pub mod color;
+pub mod front;
 pub mod hud;
 pub mod layout;
 pub mod menu;
