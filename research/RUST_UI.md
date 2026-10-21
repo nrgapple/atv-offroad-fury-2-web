@@ -433,6 +433,36 @@ menu notice line (`#menu-notice`, now drawn by the pause panel), or shown there 
 full when the browser refuses the clipboard. Desktop builds have no web page to link
 a ride to and leave the row out, as they leave out Dev log. Test:
 `tools/test_engine_ride_link.mjs` (clipboard text and query fields; host Chromium).
+## Saved settings applied during a ride (2026-10-21)
+
+Audit of the choices play.html reads while riding (game.js `graphicsSettings`,
+`crashSettings`, `vibrationSettings`, `alphaSettings` and the audio/soundtrack
+settings, graphics.js, render-support.js `RideEffectsSettings`, frontend.js) against
+the Rust ride, which until now only persisted them:
+
+| Setting (key) | play.html | Rust engine now |
+| --- | --- | --- |
+| Display → Graphics (`atv-graphics`, Auto = `detectGraphicsTier`) | preset at load; on change: interpolation, anisotropy, contact shadows, dust/tire pools, shadow map, smoothed sky, Fresnel, wheel re-projection, dirt | saved preset for rides from the frontend (Auto ports `detectGraphicsTier`; URL/CLI `graphics=` wins; direct `?venue=` parity rides keep Original); on change: interpolation, smoothed sky (when decoded at load), Fresnel, contact shadows, dust and tire-track pools. Anisotropy and shadow-map size apply from the next load; wheel re-projection and ATV dirt are not ported |
+| Speed rush (`atv-speed-rush`) | FOV kick and screen pass intensity Off/Low/Normal/High; Off by default with reduced motion | applied at load and on change, same peaks and reduced-motion default |
+| Crashes (`atv-crash-mode`) | Original/Crazy/Gorn switch mid-ride | applied at load and on change (crash layer created or dropped) |
+| Flips (`atv-flips`) | `input.flips` each batch | `RideOptions::flips` each step |
+| Train riding (`atv-train-riding`) | `input.realistic_train` each batch | `RideOptions::realistic_train` each step |
+| Audio → Effects volume, Sound mode (`atv-audio-v1`) | live | live (mode was already live) |
+| Audio → Music on/off and volume (`atv-soundtrack-v1`) | live | live; default volume fixed to the browser's 0.45 (was 0.7 in the Rust menu) |
+| Minimap, Race overlays, touch steering/one-handed, bindings | live | already live |
+| Crash camera (`atv-crash-camera`, authored Tight by default) | crash framing | not ported: the Rust ride always uses the original crash camera |
+| Chase camera (`atv-chase-camera`, uphill assist) | assisted sightline | not ported |
+| Vibration (`atv-vibration`) | gamepad/touch rumble | not ported (no rumble output in the Rust engine yet) |
+| Diagnostics (`atv.diagnostics.v1`) | performance/debug overlay | not ported (the status line carries frame and CPU numbers) |
+| Silent switch (`silent`, iOS) | mute on the ringer switch | persisted only |
+| Alpha experiments (`atv-alpha-*`) | see the Alpha registry | separate checkpoint |
+
+Parity replays (`script=`, held states) and `--autodrive` benchmarks keep the
+defaults they were recorded with. Evidence: `tools/test_engine_settings.mjs` (saved
+Speed rush High, Gorn, Unleashed flips, realistic train, effects 0.5 and music 0.3
+applied at load; Speed rush Off, Graphics Enhanced and Crashes Original applied from
+the pause menu; a ride link with `atv-graphics=high` loads High: interpolation,
+16x anisotropy, 96 dust, 3,600 tire segments, contact shadows). Host Chromium.
 ## Controller glyphs (2026-10-21)
 
 `atv-ui::menu::glyphs` ports web/pad-glyphs.js: each controller input describes

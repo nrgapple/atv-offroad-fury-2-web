@@ -667,6 +667,33 @@ impl SceneRenderer {
         }
     }
 
+    /// A Display → Graphics change during a ride (graphicsSettings.onChange):
+    /// interpolation is the host's, the dust and tire-track pools follow the
+    /// wheel effects; this applies the smoothed sky (when the venue decoded
+    /// it), water Fresnel and contact shadows at once. Anisotropy and the
+    /// shadow-map size are built into the passes and apply from the next load.
+    pub fn set_graphics(&mut self, gpu: &Gpu, venue: &Venue, graphics: Graphics) {
+        self.set_sky_smooth(gpu, venue, graphics.sky_smooth);
+        if let Some((pass, _)) = &mut self.water {
+            pass.set_fresnel(graphics.fresnel);
+        }
+        if graphics.contact_shadows && self.contact_shadows.is_none() && self.vehicle.is_some() {
+            self.contact_shadows = Some(shadows::ContactShadows::new(gpu, &self.world));
+        } else if !graphics.contact_shadows {
+            self.contact_shadows = None;
+        }
+        self.graphics = Graphics {
+            anisotropy: self.graphics.anisotropy,
+            shadow_map: self.graphics.shadow_map,
+            ..graphics
+        };
+    }
+
+    /// The presentation options in effect.
+    pub fn graphics(&self) -> Graphics {
+        self.graphics
+    }
+
     /// Preset change: swap the sky between the original and smoothed decode
     /// (refreshSkyTextures). The venue must have loaded the smoothed tiles.
     pub fn set_sky_smooth(&mut self, gpu: &Gpu, venue: &Venue, smooth: bool) {

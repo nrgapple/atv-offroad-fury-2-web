@@ -178,10 +178,21 @@ pub struct Ride {
     /// `stunt_landed`/`stunt_result`, for flash bursts and crowd cues).
     stunt_landed: bool,
     stunt_result: Option<bool>,
+    /// Settings → Extras choices the simulation reads each step (game.js
+    /// `input.flips`, `input.realistic_train`).
+    pub options: RideOptions,
     selection: Selection,
     appearance: gear::Appearance,
     pub quad: Model,
     pub rider: Model,
+}
+
+/// Optional simulation choices (Settings → Extras): the Unleashed flip
+/// gestures and realistic train riding. Off is the original game.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RideOptions {
+    pub flips: bool,
+    pub realistic_train: bool,
 }
 
 /// World pose of the player's quad and rider for drawing.
@@ -270,6 +281,7 @@ impl Ride {
             race: None,
             stunt_landed: false,
             stunt_result: None,
+            options: RideOptions::default(),
             selection,
             appearance: gear::Appearance::default(),
             quad,
@@ -643,8 +655,8 @@ impl Ride {
             self.input_generation = Some(controls.generation);
         }
         vehicle.set_stunt_landing_safe(safe);
-        vehicle.set_realistic_train(false);
-        vehicle.set_flips(false)?;
+        vehicle.set_realistic_train(self.options.realistic_train);
+        vehicle.set_flips(self.options.flips)?;
         vehicle.set_arcade_flips(false)?;
         vehicle.set_arcade_spin(None)?;
         if controls.stunt_modifiers > 7 {
