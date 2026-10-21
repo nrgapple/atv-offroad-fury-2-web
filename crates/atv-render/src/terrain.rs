@@ -14,6 +14,8 @@ struct Globals {
     fog_color: [f32; 4],
     fog: [f32; 4],
     detail_scale: [f32; 4],
+    shadow_matrix: [f32; 16],
+    shadow: [f32; 4],
 }
 
 struct Chunk {
@@ -34,7 +36,14 @@ pub struct TerrainPass {
 }
 
 impl TerrainPass {
-    pub fn new(gpu: &Gpu, venue: &Venue, fine_center: Option<[f32; 2]>, samples: u32) -> Self {
+    /// `shadow` is the High vehicle shadow map and its comparison sampler.
+    pub fn new(
+        gpu: &Gpu,
+        venue: &Venue,
+        fine_center: Option<[f32; 2]>,
+        samples: u32,
+        shadow: (&wgpu::TextureView, &wgpu::Sampler),
+    ) -> Self {
         let device = &gpu.device;
         let terrain = &venue.terrain;
         let colors = upload_layers(gpu, &terrain.layers);
@@ -94,6 +103,8 @@ impl TerrainPass {
                 0.,
                 0.,
             ],
+            shadow_matrix: [0.; 16],
+            shadow: [0.; 4],
         };
         let uniforms = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("terrain globals"),
@@ -151,6 +162,17 @@ impl TerrainPass {
                     5,
                     wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 ),
+                entry(
+                    6,
+                    texture(
+                        wgpu::TextureSampleType::Depth,
+                        wgpu::TextureViewDimension::D2,
+                    ),
+                ),
+                entry(
+                    7,
+                    wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                ),
             ],
         });
         let array_view = colors.create_view(&wgpu::TextureViewDescriptor {
@@ -189,6 +211,14 @@ impl TerrainPass {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::Sampler(&repeat),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(shadow.0),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::Sampler(shadow.1),
                 },
             ],
         });
@@ -250,6 +280,17 @@ impl TerrainPass {
     /// Moves the fine patch (buildTerrainMesh after the rider leaves it).
     pub fn recenter(&mut self, gpu: &Gpu, venue: &Venue, center: [f32; 2]) {
         self.chunks = chunks(gpu, &venue.terrain, Some(center));
+    }
+
+    /// The High vehicle shadow map this frame (shadowReceive), or none.
+    pub fn set_shadow(&mut self, matrix: Option<&[f32; 16]>, texel: f32) {
+        match matrix {
+            Some(matrix) => {
+                self.globals.shadow_matrix = *matrix;
+                self.globals.shadow = [1., texel, 0., 0.];
+            }
+            None => self.globals.shadow = [0.; 4],
+        }
     }
 
     /// Longest chunk bounds diagonal (boundsReach in render-support.js).
