@@ -118,9 +118,6 @@ pub async fn load_with(
     let course_bytes = content.file(&course.archive).await?;
     let archive = Resource::parse(&course_bytes)?;
     let (seed, vehicle_model, rider_model) = if models.motorcycle {
-        if race.is_some() {
-            return Err(super::BIKE_RACES.into());
-        }
         progress("Reading original motorcycle…");
         // Op 100: the MX archive holds the bike, its rider, motions and
         // textures (atv_core::motorcycle::Model).
@@ -230,10 +227,21 @@ pub async fn load_with(
     let race = match race {
         Some(settings) => {
             progress("Reading original race…");
-            Some((
-                race_setup(content, &archive, venue, &toy, quad, rider, settings).await?,
-                settings,
-            ))
+            let mut setup =
+                race_setup(content, &archive, venue, &toy, quad, rider, settings).await?;
+            // MX vs. ATV fields: a motorcycle player's CPUs keep their quads
+            // and the ATV rider (game.js loads it for them).
+            if models.motorcycle {
+                let atv = player_models::selection(1, rider)?;
+                let (mesh, _, animator, wreck) =
+                    load_atv_rider(content, &atv, &mut progress).await?;
+                setup.cpu_rider = Some(Box::new(super::CpuRider {
+                    animator,
+                    wreck,
+                    mesh,
+                }));
+            }
+            Some((setup, settings))
         }
         None => None,
     };
@@ -306,6 +314,42 @@ async fn load_quad(
     }
     let material_bytes = content.file(&models.quad_materials).await?;
     let quad_textures = textures::load(&quad_mesh, &Resource::parse(&material_bytes)?)?;
+    let (rider_mesh, rider_textures, animator, wreck) =
+        load_atv_rider(content, models, progress).await?;
+    let rig = QuadRig {
+        physics,
+        quad_pose: Rc::new(QuadPose::new(&quad_mesh)?),
+        chassis_points: chassis.chassis_points()?,
+        wreck_rays: Rc::new(chassis),
+        obstacle_rays: Rc::new(actor),
+        animator,
+        wreck,
+    };
+    Ok((
+        Seed::Quad(Box::new(rig)),
+        Model {
+            mesh: quad_mesh,
+            textures: quad_textures,
+        },
+        Model {
+            mesh: rider_mesh,
+            textures: rider_textures,
+        },
+    ))
+}
+
+/// The ATV2 rider rig and motions (op 27 and ops 51-53, `loadAtvRider`): the
+/// player's on an ATV, or race CPUs' beside a motorcycle player.
+async fn load_atv_rider(
+    content: &Content,
+    models: &player_models::Models,
+    progress: &mut impl FnMut(&str),
+) -> Result<(
+    mesh::Mesh,
+    std::collections::HashMap<String, textures::MaterialTexture>,
+    rider_pose::Animator,
+    wreck_animation::Animator,
+)> {
     progress("Reading original rider…");
     let rider_bytes = content.file(&models.rider).await?;
     let rider_archive = Resource::parse(&rider_bytes)?;
@@ -358,26 +402,7 @@ async fn load_quad(
     // 002de690 identifies mode 11 as Freeride/Freestyle.
     animator.set_scoring_mode(Some(stunt_score::FREESTYLE_MODE))?;
     animator.set_stunts(stunts, selected[14..62].iter().map(|m| m.looping).collect())?;
-    let rig = QuadRig {
-        physics,
-        quad_pose: Rc::new(QuadPose::new(&quad_mesh)?),
-        chassis_points: chassis.chassis_points()?,
-        wreck_rays: Rc::new(chassis),
-        obstacle_rays: Rc::new(actor),
-        animator,
-        wreck,
-    };
-    Ok((
-        Seed::Quad(Box::new(rig)),
-        Model {
-            mesh: quad_mesh,
-            textures: quad_textures,
-        },
-        Model {
-            mesh: rider_mesh,
-            textures: rider_textures,
-        },
-    ))
+    Ok((rider_mesh, rider_textures, animator, wreck))
 }
 
 /// The race course, intro shots, trackside cameras and the CPU roster with
@@ -502,5 +527,6 @@ async fn race_setup(
         models,
         draw,
         spacing_sources,
+        cpu_rider: None,
     })
 }
