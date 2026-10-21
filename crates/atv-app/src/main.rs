@@ -197,7 +197,7 @@ fn main() {
         let content = content.unwrap_or_else(|| PathBuf::from("content"));
         // Offline mix of a scripted ride: no window or audio device.
         let script = script.unwrap_or_else(|| atv_app::replay::Script::parse("[]").unwrap());
-        atv_app::replay::render_audio(&content, &venue, &script, &out, sound)
+        atv_app::replay::render_audio(&content, &venue, selection, &script, &out, sound)
             .expect("render audio");
         return;
     }

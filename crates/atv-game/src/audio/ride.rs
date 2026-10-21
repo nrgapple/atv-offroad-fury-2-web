@@ -69,6 +69,9 @@ pub struct RideAudio {
     world_dt: f32,
     placement: Option<u32>,
     echo: Option<EchoPreset>,
+    /// Motorcycle cues: the last impact's step and the clutch as last heard.
+    bike_impact_tick: Option<u64>,
+    clutch_down: bool,
     /// Counters for diagnostics and parity reports.
     pub stats: Stats,
 }
@@ -147,6 +150,8 @@ impl RideAudio {
             world_dt: 0.,
             placement: None,
             echo: None,
+            bike_impact_tick: None,
+            clutch_down: false,
             stats: Stats::default(),
         }
     }
@@ -254,6 +259,12 @@ impl RideAudio {
         let listener = spatial_audio::camera_listener(&camera, &previous, dt)?;
         self.elapsed += dt;
         self.world_dt += dt;
+        // A motorcycle has no rider effects, vocals, chassis or drive-on
+        // sounds (web/audio.js skips QuadSounds and loadEffects for it).
+        if step.bike.is_some() {
+            self.last = Some((listener, step.rider_position, step.quad.wheels));
+            return Ok(());
+        }
         self.body_impact(mixer, step, &listener)?;
         self.quad_step(mixer, step, &listener)?;
         Ok(())
@@ -547,8 +558,30 @@ impl RideAudio {
             });
             apply(mixer, self.drive_voices[side], level);
         }
+        if let Some(bike) = &step.bike {
+            self.bike_frame(mixer, bike);
+        }
         self.world_frame(mixer, &listener)?;
         self.engine_frame(mixer, step)
+    }
+
+    /// GameAudio.update's motorcycle branch: one wreck impact per step and
+    /// the clutch sample on each press, unpositioned on the effects bus.
+    fn bike_frame(&mut self, mixer: &mut Mixer, bike: &crate::ride::sound::BikeSound) {
+        if let Some(sample) = &bike.impact_sample
+            && self.bike_impact_tick != Some(bike.tick)
+        {
+            self.bike_impact_tick = Some(bike.tick);
+            self.start(mixer, sample, Looping::Once, [1., 1.], "impact");
+            self.stats.impacts += 1;
+        }
+        if bike.clutch && !self.clutch_down {
+            // samples[9]: the MX Clutch bank (EngineSound::Reset).
+            if let Some(sample) = self.bank.engine.samples[9].first().cloned() {
+                self.start(mixer, &sample, Looping::Once, [1., 1.], "clutch");
+            }
+        }
+        self.clutch_down = bike.clutch;
     }
 
     fn world_frame(&mut self, mixer: &mut Mixer, listener: &Listener) -> Result<()> {

@@ -8,21 +8,26 @@ run are packed into this download; you do not need the disc, an emulator or
 anything else installed. The packed resources remain the property of their
 owners. The software is provided as is, without warranty.
 
-This is an early build of the Rust engine's desktop app: you can ride the default
-quad and rider around ENV01 Freeride. Sky, scenery, audio, menus, HUD and the other
-modes are not in the desktop app yet; the web version at https://furyremastered.com/
-plays the whole port in a browser.
+This is an early build of the Rust engine's desktop app. It opens on the title
+screen: pick any of the 40 original venues, an ATV or motorcycle and a rider, then
+ride Freeride, or race the original CPU riders on ATVs. The venues' worlds, the
+recovered riding physics, audio, the HUD and minimap, the pause menu and settings
+(including key and controller remapping) are in. Not yet: multiplayer, progression,
+motorcycle races and some race extras (music, start lamps, fireworks). The web
+version at https://furyremastered.com/ plays the port in a browser.
 
 How to run
 ----------
 @RUN@
 
 Controls: drive with W/A/S/D or the arrow keys or a gamepad (the same defaults as
-the web version); R or Backspace resets, C changes the camera, Z/X orbit, Esc or P
-pauses. With --free you get a free camera instead (W/A/S/D move, Q/E down/up, hold
+the web version, remappable in Pause > Settings > Controls); R or Backspace resets,
+C changes the camera, Z/X orbit, H shows the keyboard card, Esc or P pauses. With --free you get a free camera instead (W/A/S/D move, Q/E down/up, hold
 Shift to go faster, drag with the mouse to look around).
 
-Command line (optional): --venue ID, --free, --camera x,y,z,yaw,pitch,focal,
+Command line (optional): --venue ID (skip the menus), --quad 1-46, --rider 0|1,
+--race [--laps N --cpu 0|3|4 --difficulty 1|2], --graphics original|enhanced|high,
+--crash original|crazy|gorn, --free, --camera x,y,z,yaw,pitch,focal,
 --capture out.png 1280x720 (render one frame to a PNG and exit), --verify-content
 (check the packed content and exit), --version.
 --content DIR or --pack FILE use an external content source instead of the
