@@ -1,0 +1,23 @@
+{
+  "id": "rust-engine-settings-controller-icons-jukebox-wheel-re-8bcf3ec7122844a497af0e6842275236",
+  "timestamp": "2026-10-21T21:12:50.571447+00:00",
+  "recorded_at": "2026-10-21T22:42:04.129032+00:00",
+  "kind": "build",
+  "title": "Rust engine: settings, controller icons, jukebox, wheel re-projection and more",
+  "summary": "The Rust engine gained a batch of player-facing features that the JavaScript game already had: saved settings that apply mid-ride, controller button icons with a Controller summary panel, Pause -> Copy ride link, a Pause -> Jukebox with the original art and soundtrack player, Screen Wake Lock while riding, a Training course photo, and Enhanced/High wheel re-projection that draws a wheel on top of visible terrain it would otherwise sink into. Settings -> Alpha (slow motion, big-air camera, arcade flips) is in review as PR #237 and is not shipped yet.",
+  "details": [
+    "Measured on host Chromium on a Mac only; there are no phone measurements. Colour differences are mean absolute difference out of 255 against the JavaScript game at play.html.",
+    "#228 saved settings now apply mid-ride: graphics, speed rush, crashes, flips, train and audio. test_engine_settings passes. Anisotropy and shadow-map size still apply from the next load only.",
+    "#230 controller button icons and the Controller summary panel: glyph rows 1.93, summary 1.12, whole panel 1.37; 390-wide frame 2.63.",
+    "#231 Pause -> Copy ride link, with a notice line confirming the copy.",
+    "#235 Pause -> Jukebox with the original art and the soundtrack player: 1280-wide panel 7.90, 390-wide frame 8.53. The spectrum bars are not ported, which accounts for much of that difference.",
+    "#237 Settings -> Alpha (slow motion, big-air camera, arcade flips) is still open and under review, so it is not counted as shipped. The muffle, air blur, landing burst and heavy mud effects are not ported in it.",
+    "#239 Screen Wake Lock while riding, in the web build only; it is omitted on desktop.",
+    "#240 Training course photo: hero 0.71, card 2.04, frame 1.19; 390-wide frame 2.64.",
+    "#245 Enhanced/High wheel re-projection: a wheel sinking into visible terrain is drawn on top of it, capped at 0.5 ft. This is drawing only; the simulation is unchanged, and Original keeps the simulated pose. ENV01, 600 steps: trajectories identical; 548 of 559 lift samples match within 1e-3 ft (the other 11 are late samples, worst 0.017 ft); vehicle-area colour difference 0.57 at 1280x720 and 1.17 at 390x844.",
+    "The race determinism fingerprint is unchanged (53fda056a945608e)."
+  ],
+  "limitation": "Still missing in the Rust engine: ATV dirt, the tight crash camera, chase assist, rumble, the diagnostics overlay and the main-menu jukebox. Anisotropy and shadow-map size apply from the next load only. The Alpha options are not live until #237 merges. All figures are host Chromium on a Mac; nothing was measured on a phone.",
+  "image": "/devlog-images/rust-engine-settings-controller-icons-jukebox-wheel-re-8bcf3ec7122844a497af0e6842275236.png",
+  "caption": "Rust engine Pause -> Jukebox at 1280x720: original disc art, track list, transport and volume controls (host Chromium; spectrum bars not yet ported)."
+}
