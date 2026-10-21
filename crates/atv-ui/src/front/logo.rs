@@ -102,6 +102,8 @@ pub struct Op {
     pub transform: [f32; 6],
     pub fill: Option<Paint>,
     pub stroke: Option<(Paint, f32)>,
+    /// Round stroke caps and joins (otherwise butt caps, miter joins).
+    pub round: bool,
 }
 
 /// Translate an absolute M/H/V/L/Z path along x.
@@ -190,6 +192,7 @@ pub fn ops() -> Vec<Op> {
         ],
         fill,
         stroke,
+        round: false,
     };
     let solid = |c: &str| Paint::Solid(hex(c));
     vec![
@@ -210,24 +213,28 @@ pub fn ops() -> Vec<Op> {
             transform: [1., 0., 0., 1., 0., 0.],
             fill: Some(solid("#0b0d12")),
             stroke: Some((solid("#626971"), 2.)),
+            round: false,
         },
         Op {
             path: "M89 239H846L841 246H87Z".into(),
             transform: [1., 0., 0., 1., 0., 0.],
             fill: Some(gold([239., 246.])),
             stroke: None,
+            round: false,
         },
         Op {
             path: group(&REMASTERED),
             transform: [1.22, 0., skew * 0.72, 0.72, 209., 254.],
             fill: Some(gold([0., 40.])),
             stroke: None,
+            round: false,
         },
         Op {
             path: "M95 260H164L160 268H93ZM747 270H812L810 278H745Z".into(),
             transform: [1., 0., 0., 1., 0., 0.],
             fill: Some(solid("#d85820")),
             stroke: None,
+            round: false,
         },
     ]
 }
@@ -238,6 +245,11 @@ pub fn raster(width: u32) -> Rgba {
     let height = (width as f32 * SIZE[1] / SIZE[0]).round().max(1.) as u32;
     let scale = width as f32 / SIZE[0];
     imp::raster(&ops(), width, height, scale)
+}
+
+/// Rasterizes painted elements (`scale` pixels per path unit).
+pub fn raster_ops(ops: &[Op], width: u32, height: u32, scale: f32) -> Rgba {
+    imp::raster(ops, width, height, scale)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -288,7 +300,11 @@ mod imp {
             if let Some((stroke, line)) = &op.stroke {
                 let mut coverage = vec![0u8; (width * height) as usize];
                 let mut style = Stroke::new(*line);
-                style.join(zeno::Join::Miter).miter_limit(3.);
+                if op.round {
+                    style.join(zeno::Join::Round).cap(zeno::Cap::Round);
+                } else {
+                    style.join(zeno::Join::Miter).miter_limit(3.);
+                }
                 Mask::new(op.path.as_str())
                     .size(width, height)
                     .style(style)
@@ -385,8 +401,14 @@ mod imp {
             if let Some((paint, line)) = &op.stroke {
                 stroke(&c, paint);
                 c.set_line_width(f64::from(*line));
-                c.set_line_join("miter");
-                c.set_miter_limit(3.);
+                if op.round {
+                    c.set_line_join("round");
+                    c.set_line_cap("round");
+                } else {
+                    c.set_line_join("miter");
+                    c.set_line_cap("butt");
+                    c.set_miter_limit(3.);
+                }
                 c.stroke_with_path(&path);
             }
         }
