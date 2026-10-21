@@ -3,6 +3,7 @@
 //! the rows, labels, values and choice order exactly as for the browser; this
 //! module owns the responsive panel, selection and pointer handling.
 pub mod controller;
+pub mod glyphs;
 pub mod prefs;
 
 use crate::{
@@ -122,6 +123,8 @@ pub struct State {
     /// Opened from the frontend's main menu: the panel fills the screen over
     /// the frontend backdrop (`#frontend[data-context=menu]`).
     pub from_menu: bool,
+    /// Controller bindings: glyph rows and the summary panel (pad-glyphs.js).
+    pub pad: Option<glyphs::PadGlyphs>,
 }
 
 const FOOTER: [&str; 9] = [
@@ -147,7 +150,7 @@ fn display(size: f32, weight: u16, italic: bool) -> Font {
 }
 
 /// The full-viewport layer: dim backdrop and the centred panel.
-pub fn element(view: &Viewport, state: &State) -> El {
+pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> El {
     let (w, h) = (view.width, view.height);
     let narrow = w <= 580.;
     let short = h <= 450. && !narrow;
@@ -216,7 +219,12 @@ pub fn element(view: &Viewport, state: &State) -> El {
         },
     )))
     .content(Content::Text {
-        text: title(&state.page).into(),
+        // Controller bindings are titled "Controller" (bindingDevice).
+        text: if state.page == "bindings" && state.pad.is_some() {
+            "Controller".into()
+        } else {
+            title(&state.page).into()
+        },
         style: TextStyle::new(display(title_size, 800, true), Color::hex("#f6f6f6"))
             .spacing(title_size * 0.015)
             .shadow(2., 3., 0., Color::hex("#000a")),
@@ -334,6 +342,15 @@ pub fn element(view: &Viewport, state: &State) -> El {
                     Color::hex("#c4c4c4")
                 },
             );
+            let glyph_row = state
+                .pad
+                .as_ref()
+                .and_then(|p| p.row(action))
+                .map(|chords| {
+                    let mut row = binding_glyphs(chords, images, selected, 28.);
+                    row.style.margin = margins(4., 0., 0., 0.);
+                    row
+                });
             el = el.child(
                 El::new(Style {
                     display: Display::Flex,
@@ -350,11 +367,13 @@ pub fn element(view: &Viewport, state: &State) -> El {
                     ..Default::default()
                 })
                 .child(label_el(&text, &style, size))
-                .child(El::new(Style::default()).content(Content::Text {
-                    text: value.clone(),
-                    style: detail,
-                    line_height: 18.,
-                    wrap: true,
+                .child(glyph_row.unwrap_or_else(|| {
+                    El::new(Style::default()).content(Content::Text {
+                        text: value.clone(),
+                        style: detail,
+                        line_height: 18.,
+                        wrap: true,
+                    })
                 })),
             );
             return el;
@@ -647,6 +666,43 @@ pub fn element(view: &Viewport, state: &State) -> El {
         body.style.max_size.width = length(620.);
     }
     let mut content = column(0.).id(CONTENT).child(header).child(body);
+    if let Some(pad) = state.pad.as_ref().filter(|_| state.capture.is_none()) {
+        // Wide menu screens put the panel in the empty right side.
+        let side = state.from_menu && w >= 1100. && h >= 560.;
+        let summary = summary_panel(pad, images, w, side);
+        if side {
+            let left = 620. + 2. * gutter;
+            let mut slot = El::new(Style {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                position: Position::Absolute,
+                inset: taffy::Rect {
+                    left: LengthPercentageAuto::length(left),
+                    right: LengthPercentageAuto::length(gutter),
+                    top: LengthPercentageAuto::length((h * 0.14).clamp(96., 128.)),
+                    bottom: LengthPercentageAuto::auto(),
+                },
+                max_size: Size {
+                    width: length(560.),
+                    height: auto(),
+                },
+                ..Default::default()
+            });
+            slot = slot.child(summary);
+            content = content.child(slot);
+        } else {
+            let mut slot = El::new(Style {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                margin: margins(22., 0., 0., 0.),
+                ..Default::default()
+            });
+            if state.from_menu {
+                slot.style.max_size.width = length(620.);
+            }
+            content = content.child(slot.child(summary));
+        }
+    }
     if state.from_menu {
         content.style.size.width = percent(1.);
         let panel = El::new(Style {
@@ -762,4 +818,249 @@ pub fn gold_pill() -> Fill {
             (1., Color::hex("#a88604")),
         ],
     ))
+}
+
+/// One glyph: the shape image with its drop shadow and any label on top.
+fn glyph_el(g: &glyphs::Glyph, images: &glyphs::GlyphImages, size: f32) -> El {
+    let k = size / 32.;
+    let mut el = El::new(Style {
+        position: Position::Relative,
+        flex_shrink: 0.,
+        size: Size {
+            width: length(size),
+            height: length(size),
+        },
+        ..Default::default()
+    });
+    if let Some(image) = images.get(g) {
+        el = el.content(Content::Image {
+            image,
+            size: [size, size],
+            fit: crate::layout::Fit::Fill,
+            shadow: Some(crate::text::Shadow {
+                dx: 0.,
+                dy: 2.,
+                blur: 0.,
+                color: Color::hex("#000b"),
+            }),
+        });
+    }
+    if let Some(label) = glyphs::label(g) {
+        let fs = label.size * k;
+        let mut style = TextStyle::new(
+            Font {
+                family: "system-ui, sans-serif",
+                size: fs,
+                weight: 800,
+                italic: false,
+            },
+            label.fill,
+        );
+        if let Some((color, width)) = label.stroke {
+            style = style.stroke(width * k * 2., color, crate::text::Join::Round);
+        }
+        el = el.child(
+            El::new(Style {
+                position: Position::Absolute,
+                inset: taffy::Rect {
+                    left: LengthPercentageAuto::length(0.),
+                    right: LengthPercentageAuto::length(0.),
+                    // SVG baseline to the top of a one-line box.
+                    top: LengthPercentageAuto::length(label.baseline * k - fs * 0.72),
+                    bottom: LengthPercentageAuto::auto(),
+                },
+                display: Display::Flex,
+                justify_content: JustifyContent::CENTER,
+                ..Default::default()
+            })
+            .child(El::new(Style::default()).content(Content::Text {
+                text: label.text,
+                style,
+                line_height: fs,
+                wrap: false,
+            })),
+        );
+    }
+    el
+}
+
+fn chord_el(
+    chord: &[glyphs::Glyph],
+    images: &glyphs::GlyphImages,
+    selected: bool,
+    size: f32,
+) -> El {
+    let mut el = El::new(Style {
+        display: Display::Flex,
+        align_items: AlignItems::CENTER,
+        gap: Size {
+            width: px(3.),
+            height: px(3.),
+        },
+        ..Default::default()
+    });
+    for (i, g) in chord.iter().enumerate() {
+        if i > 0 {
+            let mut style = TextStyle::new(
+                display(17., 800, false),
+                if selected {
+                    Color::hex("#24466f")
+                } else {
+                    Color::hex("#7ba3d8")
+                },
+            );
+            if !selected {
+                style = style.shadow(1., 1., 0., Color::hex("#000c"));
+            }
+            el = el.child(El::new(Style::default()).content(Content::Text {
+                text: "+".into(),
+                style,
+                line_height: 17.,
+                wrap: false,
+            }));
+        }
+        el = el.child(glyph_el(g, images, size));
+    }
+    el
+}
+
+/// `.pad-binding`: alternatives joined by "/", or "Unbound".
+fn binding_glyphs(
+    chords: &[Vec<glyphs::Glyph>],
+    images: &glyphs::GlyphImages,
+    selected: bool,
+    size: f32,
+) -> El {
+    let mut el = El::new(Style {
+        display: Display::Flex,
+        flex_wrap: FlexWrap::Wrap,
+        align_items: AlignItems::CENTER,
+        gap: Size {
+            width: px(6.),
+            height: px(4.),
+        },
+        ..Default::default()
+    });
+    if chords.is_empty() {
+        return el.child(El::new(Style::default()).content(Content::Text {
+            text: "Unbound".into(),
+            style: TextStyle::new(display(13., 700, false), Color::hex("#c4c4c4")),
+            line_height: 15.6,
+            wrap: false,
+        }));
+    }
+    for (i, chord) in chords.iter().enumerate() {
+        if i > 0 {
+            el = el.child(El::new(Style::default()).content(Content::Text {
+                text: "/".into(),
+                style: TextStyle::new(
+                    display(15., 700, false),
+                    if selected {
+                        Color::hex("#5a4a00")
+                    } else {
+                        Color::hex("#9a9a9a")
+                    },
+                ),
+                line_height: 15.,
+                wrap: false,
+            }));
+        }
+        el = el.child(chord_el(chord, images, selected, size));
+    }
+    el
+}
+
+/// `.pad-summary`: the original Controller Settings layout panel.
+fn summary_panel(
+    pad: &glyphs::PadGlyphs,
+    images: &glyphs::GlyphImages,
+    w: f32,
+    one_column: bool,
+) -> El {
+    let title_size = (w * 0.016).clamp(16., 19.);
+    let row_size = (w * 0.015).clamp(15., 18.);
+    let mut panel = El::new(Style {
+        display: Display::Grid,
+        grid_template_columns: if one_column {
+            vec![fr(1.)]
+        } else {
+            vec![repeat(
+                taffy::RepetitionCount::AutoFit,
+                vec![minmax(length(220.), fr(1.))],
+            )]
+        },
+        gap: Size {
+            width: px(26.),
+            height: px(6.),
+        },
+        padding: sides(18., 22., 18., 22.),
+        border: sides(2., 2., 2., 2.),
+        ..Default::default()
+    })
+    .paint(Paint {
+        radii: [14.; 4],
+        fill: Some(Color::hex("#3f3f3fa8").into()),
+        border: [2.; 4],
+        border_color: Color::hex("#000"),
+        shadows: vec![BoxShadow::outer(0., 4., 0., Color::hex("#0007"))],
+        ..Default::default()
+    });
+    for (title, lines) in &pad.summary {
+        let mut group = El::new(Style {
+            display: Display::Grid,
+            gap: Size {
+                width: px(4.),
+                height: px(4.),
+            },
+            align_content: AlignContent::START,
+            ..Default::default()
+        })
+        .child(
+            El::new(Style {
+                margin: margins(4., 0., 2., 0.),
+                ..Default::default()
+            })
+            .content(Content::Text {
+                text: title.clone(),
+                style: TextStyle::new(display(title_size, 700, false), Color::hex("#6b9dcf"))
+                    .spacing(title_size * 0.03)
+                    .shadow(1., 2., 0., Color::hex("#000c")),
+                line_height: title_size * 1.2,
+                wrap: false,
+            }),
+        );
+        for (label, chords) in lines {
+            let mut glyph_row = binding_glyphs(chords, images, false, 30.);
+            glyph_row.style.flex_wrap = FlexWrap::NoWrap;
+            group = group.child(
+                El::new(Style {
+                    display: Display::Grid,
+                    grid_template_columns: vec![length(112.), minmax(length(0.), fr(1.))],
+                    align_items: AlignItems::CENTER,
+                    gap: Size {
+                        width: px(12.),
+                        height: px(12.),
+                    },
+                    min_size: Size {
+                        width: auto(),
+                        height: length(32.),
+                    },
+                    ..Default::default()
+                })
+                .child(glyph_row)
+                .child(
+                    El::new(Style::default()).content(Content::Text {
+                        text: label.clone(),
+                        style: TextStyle::new(display(row_size, 700, false), Color::hex("#c8c8c8"))
+                            .spacing(row_size * 0.02)
+                            .shadow(1., 2., 0., Color::hex("#000c")),
+                        line_height: row_size * 1.2,
+                        wrap: true,
+                    }),
+                ),
+            );
+        }
+        panel = panel.child(group);
+    }
+    panel
 }
