@@ -406,6 +406,11 @@ impl Sound {
 
     pub fn set_lifecycle(&mut self, focused: bool, paused: bool) {
         self.focused = focused;
+        // Backgrounding may suspend the browser audio context independently
+        // of our mixer. Restore an already activated output when returning.
+        if focused && self.output.started.get() {
+            self.output.start();
+        }
         if let Ok(mut mixer) = self.output.mixer.lock() {
             mixer.active = focused && !paused;
             mixer.music_active = focused;
