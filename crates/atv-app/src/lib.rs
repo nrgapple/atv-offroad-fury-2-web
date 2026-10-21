@@ -35,9 +35,9 @@ pub struct Options {
     pub capture: Option<(std::path::PathBuf, u32, u32)>,
     /// Ride the player's quad (default); false keeps the free camera.
     pub ride: bool,
-    /// Load the venue's National/Supercross race course resources (static
-    /// world only for now: race weather, gate and grid are not ridden).
-    pub race: bool,
+    /// Race on the venue's National/Supercross course (with `ride`; a free
+    /// camera views the race-course world and its pre-race shots).
+    pub race: Option<atv_game::ride::race::Settings>,
     /// Steps replayed at load, then the ride holds (parity captures).
     pub script: Option<replay::Script>,
     /// Test hook: paint this flat colour under the UI instead of the scene's
@@ -138,7 +138,7 @@ struct Meter {
 
 /// Load-time choices for the venue presentation and the ride.
 struct World {
-    race: bool,
+    race: Option<atv_game::ride::race::Settings>,
     weather: Option<bool>,
     steps: Option<u64>,
     graphics: Graphics,
@@ -190,11 +190,10 @@ async fn prepare(
                 .map_or(0, |d| d.subsec_nanos() ^ d.as_secs() as u32),
         ),
     };
-    let ride = ride && !race;
     let venue = venue::load_with(
         &content,
         &environment,
-        race,
+        race.is_some(),
         venue::LoadOptions {
             weather,
             sky_smooth: graphics.sky_smooth,
@@ -235,15 +234,32 @@ async fn prepare(
     let mut pending_sound = None;
     let riding = if ride {
         // Default Garage selection: quad 1, male rider.
-        let ride = atv_game::ride::load(&content, &venue, 1, 0, status).await?;
+        let ride = atv_game::ride::load_with(&content, &venue, 1, 0, race, status).await?;
+        let mut ride = ride;
         scene.set_ride(&gpu, &venue, &ride.quad, &ride.rider)?;
+        if let Some(race) = ride.race_mut() {
+            scene.set_race_cpus(&gpu, &venue, &std::mem::take(&mut race.draw))?;
+        }
         let mut riding = riding::Riding::new(ride, &venue);
+        // `?autopilot=1` (parity tooling): the race path driver rides the
+        // player before the finish too; traces record its controls.
+        if url_flag("autopilot=1")
+            && let Some(state) = riding.ride.race_mut()
+        {
+            state.autopilot_always = true;
+        }
         if let Some(script) = &script {
-            script.run(&mut riding)?;
+            // `?traceAll=1`: every step, for browser-vs-native parity.
+            if trace_all() {
+                let records = script.run_recording(&mut riding)?;
+                publish_trace(&serde_json::Value::from(records).to_string());
+            } else {
+                script.run(&mut riding)?;
+                publish_trace(&replay::record(&riding.ride, riding.ride.steps()).to_string());
+            }
             // Hold the replayed state for screenshots.
             riding.paused = true;
             riding.held = true;
-            publish_trace(&replay::record(&riding.ride, riding.ride.steps()).to_string());
         }
         if let (Some((mode, music)), None) = (sound, &script) {
             pending_sound = Some(PendingSound {
@@ -515,8 +531,38 @@ impl App {
             Some(_) => " · press a key for sound".into(),
             None => String::new(),
         };
+        let race = ride
+            .race()
+            .and_then(|r| r.frame.as_ref())
+            .map_or(String::new(), |f| match f.phase {
+                "intro" => " · race intro (any key skips)".into(),
+                "countdown" => format!(" · {}", f.countdown),
+                "finished" => format!(
+                    " · finished {}/{} · {}",
+                    f.position,
+                    f.field,
+                    f.standings
+                        .iter()
+                        .map(|s| format!(
+                            "{}. {} {}",
+                            s.position,
+                            s.name,
+                            s.time.map_or("--".into(), |t| format!("{t:.2}"))
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                _ => format!(
+                    " · LAP {}/{} · PLACE {}/{}{}",
+                    f.lap,
+                    f.laps,
+                    f.position,
+                    f.field,
+                    if f.wrong_way { " · WRONG WAY" } else { "" }
+                ),
+            });
         let extra = format!(
-            " · {:.0} MPH{sound}{}",
+            " · {:.0} MPH{race}{sound}{}",
             frame.speed_magnitude * 3600. / 5280.,
             if riding.paused {
                 " · paused (Esc)"
@@ -735,6 +781,8 @@ impl App {
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
         if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
             riding.key_pressed(&format!("{code:?}"), now, &|c: &str| names.contains(c));
+            // Any key skips the pre-race camera (00212d40).
+            riding.ride.skip_intro();
         }
     }
 
@@ -1089,6 +1137,25 @@ pub fn graphics_preset(name: &str) -> Graphics {
     }
 }
 
+fn trace_all() -> bool {
+    url_flag("traceAll=1")
+}
+
+/// A `name=value` pair in the page URL (always false on desktop).
+fn url_flag(pair: &str) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.location().search().ok())
+            .is_some_and(|q| q.trim_start_matches('?').split('&').any(|p| p == pair))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = pair;
+        false
+    }
+}
+
 /// The replayed state, for the browser parity tool (`#trace`).
 fn publish_trace(text: &str) {
     #[cfg(target_arch = "wasm32")]
@@ -1211,9 +1278,31 @@ pub fn start() {
         autodrive: param("autodrive")
             .and_then(|text| js_sys_decode(&text))
             .and_then(|text| replay::Script::parse(&text).ok()),
-        race: param("race").is_some_and(|v| v == "1"),
+        race: param("race").is_some_and(|v| v == "1").then(|| {
+            let number = |key: &str| param(key).and_then(|v| v.parse::<u64>().ok());
+            let defaults = atv_game::ride::race::Settings::default();
+            atv_game::ride::race::Settings {
+                laps: number("laps").map_or(defaults.laps, |v| v as u32),
+                cpu: number("cpu").map_or(defaults.cpu, |v| v as usize),
+                difficulty: number("difficulty").map_or(defaults.difficulty, |v| v as u32),
+                seed: number("seed").unwrap_or(defaults.seed),
+                ..defaults
+            }
+        }),
+        // `script=storage` reads a long parity script from localStorage
+        // `furyScript` (URLs are bounded).
         script: param("script")
-            .and_then(|text| js_sys_decode(&text))
+            .and_then(|text| {
+                if text == "storage" {
+                    web_sys::window()?
+                        .local_storage()
+                        .ok()??
+                        .get_item("furyScript")
+                        .ok()?
+                } else {
+                    js_sys_decode(&text)
+                }
+            })
             .and_then(|text| replay::Script::parse(&text).ok()),
     });
 }

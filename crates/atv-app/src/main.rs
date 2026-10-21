@@ -8,7 +8,7 @@ use atv_app::{Options, run};
 use atv_content::{Store, pack};
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: fury [--content DIR | --pack FILE] [--venue ID] [--free] [--race] \
+const USAGE: &str = "usage: fury [--content DIR | --pack FILE] [--venue ID] [--free] [--race [--laps N] [--cpu 0|3|4] [--difficulty 1|2] [--seed N]] \
 [--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high] \
 [--script IN.json] [--trace OUT.json] [--capture OUT.png WxH] [--verify-content] [--version] \
 [--mute] [--no-music] [--sound original|enhanced] [--audio OUT.wav] \
@@ -59,9 +59,10 @@ fn main() {
     let mut steps = None;
     let mut graphics = atv_render::Graphics::default();
     let mut ride = true;
-    let mut race = false;
+    let mut race: Option<atv_game::ride::race::Settings> = None;
     let mut script = None;
     let mut trace = None;
+    let mut autopilot_script = None;
     let mut audio = None;
     let mut sound = atv_game::audio::ride::SoundMode::Original;
     let mut music = true;
@@ -109,7 +110,20 @@ fn main() {
                 capture = Some((PathBuf::from(path), w.parse().unwrap(), h.parse().unwrap()));
             }
             "--free" => ride = false,
-            "--race" => race = true,
+            "--race" => race = Some(race.unwrap_or_default()),
+            "--laps" | "--cpu" | "--difficulty" | "--seed" => {
+                let value: u64 = args
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or_else(|| fail(&format!("{arg} needs a number")));
+                let settings = race.get_or_insert_with(Default::default);
+                match arg.as_str() {
+                    "--laps" => settings.laps = value as u32,
+                    "--cpu" => settings.cpu = value as usize,
+                    "--difficulty" => settings.difficulty = value as u32,
+                    _ => settings.seed = value,
+                }
+            }
             "--script" => {
                 let path = args.next().expect("--script needs a JSON file");
                 let text = std::fs::read_to_string(&path).expect("read script");
@@ -137,6 +151,11 @@ fn main() {
             }
             "--bench" => bench = Some(PathBuf::from(args.next().expect("--bench needs a path"))),
             "--mute" => no_audio = true,
+            "--record-autopilot" => {
+                autopilot_script = Some(PathBuf::from(
+                    args.next().expect("--record-autopilot needs a path"),
+                ))
+            }
             "--trace" => trace = Some(PathBuf::from(args.next().expect("--trace needs a path"))),
             other => fail(&format!("unknown argument {other}\n{USAGE}")),
         }
@@ -158,7 +177,15 @@ fn main() {
         // Headless replay for parity traces: no window or GPU, package directory only.
         let content = content.unwrap_or_else(|| PathBuf::from("content"));
         let script = script.unwrap_or_else(|| atv_app::replay::Script::parse("[]").unwrap());
-        atv_app::replay::trace(&content, &venue, &script, &out).expect("replay trace");
+        atv_app::replay::trace(
+            &content,
+            &venue,
+            race,
+            &script,
+            &out,
+            autopilot_script.as_deref(),
+        )
+        .expect("replay trace");
         return;
     }
     let store = choose_store(content, pack_file).unwrap_or_else(|e| fail(&e));

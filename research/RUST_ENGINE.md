@@ -324,6 +324,50 @@ the desktop build uses the same event-loop path (winit `ControlFlow::Wait`/
 `WaitUntil`) but was not measured. The JavaScript game remains available until the shared engine passes
 those relevant subsystem gates.
 
+## Race checkpoint (2026-10-21)
+
+Single-player races ride in the Rust engine (`--race [--laps N] [--cpu 0|3|4]
+[--difficulty 1|2] [--seed N]`, `/engine.html?race=1&laps=..&cpu=..`). Ported from
+`terrainFromContent`'s race branch, `startSimulation` and atv-web operations 95, 96,
+105, 106, 113, 114 and the race paths of the op 50 batch (`race_controls`,
+`step_race`, `follow_camera`), calling atv-core directly (`atv-game/src/ride/race.rs`,
+`ride/cpu.rs`):
+
+- Loading: the `*_NAT.RES` course (`<venue>nate.tdf`), pre-race shots, trackside TV
+  cameras, the original CPU roster (`atvgroups.pb`, `airiders.pb`, mode-TOY
+  `ChampQuadGroup`, seeded like the browser's per-load draw), each CPU's own quad
+  (physics, mesh, chassis and actor rays) and, for drawing, its quad textures and the
+  rig in the roster outfit; grid `RiderSpacing` from the mode or scene TOY.
+- Per step, in the browser's order: race-imposed controls (brake through intro and
+  countdown, the path driver after the finish, Off Track/stuck returns), the player's
+  op 24, race progress, every CPU's driver/physics/rider/wreck step with checkpoints
+  and recovery, pairwise rider contacts, race frame and race HUD clocks; then the
+  camera: after-finish director, follow/wreck camera, pre-race shots that start the
+  countdown. Shots and TV views use the cinematic presentation; any key skips the
+  intro; Reset returns to the track point while racing and restarts before GO.
+- Drawing: each CPU quad and outfitted rider through its own vehicle pass, skipped
+  beyond 864 ft as the browser does. The status line shows countdown, lap, place and
+  the results.
+
+Parity (`tools/compare_engine.mjs race`, ENV01, 1 lap, 3 CPUs, roster seed 12345,
+weather held off; one scripted player through the JavaScript game's own batches, the
+Rust browser build's per-step trace and `fury --trace`): the Rust browser build
+matches the JavaScript game bit for bit (binary32) at every step for the player and
+all three CPUs — 1,800 steps of straight gas, and 9,000 steps where the script is the
+race path driver's own recorded controls (`RACE_AUTOPILOT=9000`, recorded in the Rust
+browser build): intro 1-435, countdown 436-675, GO at 676, the player finishing first
+at step 7,213 in 108.96 s, then the after-finish autopilot and director. The native
+build follows the same phases but drifts from step 240 (1.5e-5 ft, growing to
+hundreds of feet over a full lap): desktop `f32` transcendental functions come from
+the system libm, the browser's from Rust's own libm. The same cause explains the
+small native drift in the Freeride comparisons above.
+
+Not connected yet: the race overlays (place, lap, times, results menu) beyond the
+status line, race music and start-lamp sounds, stadium crowd cues and flash bursts,
+Supercross fireworks, the National drop gate, Restart Race/Quit menus and the CPU
+grid's rest pose before the first step. Restart reuses the loaded roster; the browser
+reloads the event and draws a new one.
+
 ## Commands
 
 ```sh
@@ -339,7 +383,9 @@ FURY_BIN=target/release/fury FURY_CONTENT=private/reports/hosted-content ATV_TES
   node tools/compare_engine.mjs ride env01 [script.json]   # private/reports/engine-parity/ride/
 cargo run --release -p atv-app --bin fury -- --content DIR --script s.json --trace out.json
 cargo run --release -p atv-app --bin fury -- --free ...   # terrain free camera, no ride
-cargo run --release -p atv-app --bin fury -- --race --venue env01 ...   # race course world (Snow), free camera
+cargo run --release -p atv-app --bin fury -- --race --venue env01 ...   # race (with --free: race course world, free camera)
+FURY_BIN=... FURY_CONTENT=... ATV_TEST_URL=... [RACE_AUTOPILOT=9000] \
+  node tools/compare_engine.mjs race env01 [script.json] [out] [laps] [cpu] [seed]
 ```
 
 Cross-building from macOS: Colima only shares the home directory, so the source is

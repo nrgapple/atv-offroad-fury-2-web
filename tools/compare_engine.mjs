@@ -38,9 +38,9 @@ const PORTRAIT = { width: 390, height: 844 };
 // Rewrites the game's own op 50 batches so each step carries the script's
 // input; once the script is exhausted the next batch is never sent, holding
 // the final state on screen.
-async function scriptedGame(browser, venue, steps, viewport, errors, { measure = false } = {}) {
+async function scriptedGame(browser, venue, steps, viewport, errors, { measure = false, race = null } = {}) {
   const page = await newPage(browser, { viewport }, errors);
-  await page.addInitScript(({ steps, measure }) => {
+  await page.addInitScript(({ steps, measure, race }) => {
     // CPU baseline: animation frames and worker operation time (worker.js
     // reports each operation's Wasm time).
     const cpu = window.rideCpu = { frames: 0, workerMs: 0 };
@@ -53,15 +53,24 @@ async function scriptedGame(browser, venue, steps, viewport, errors, { measure =
     const trace = window.rideTrace = { frames: [], cursor: 0, held: false };
     const post = Worker.prototype.postMessage, pending = new Set();
     Worker.prototype.postMessage = function (message, ...rest) {
+      // Race parity: a fixed roster seed and no weather (both drawn per load).
+      if (race && [105, 120].includes(message?.op) && message.bytes) {
+        const request = JSON.parse(new TextDecoder().decode(message.bytes));
+        if (message.op === 105) request.seed = race.seed; else request.random = 0x7fffffff;
+        return post.call(this, { ...message, bytes: new TextEncoder().encode(JSON.stringify(request)) }, ...rest);
+      }
       if (message?.op !== 50 || !message.bytes) return post.call(this, message, ...rest);
       if (!this.rideListener) {
         this.rideListener = true;
         this.addEventListener('message', ({ data }) => { if (Number.isFinite(data.operationMs)) cpu.workerMs += data.operationMs; });
         this.addEventListener('message', ({ data }) => {
           if (!pending.delete(data.id) || data.error || !data.bytes) return;
-          for (const { frame, camera } of JSON.parse(new TextDecoder().decode(data.bytes))) {
+          for (const { frame, camera, race: state } of JSON.parse(new TextDecoder().decode(data.bytes))) {
             trace.frames.push({ step: trace.frames.length + 1, origin: frame.origin, orientation: frame.orientation, speed: frame.speed,
-              wheel_compression: frame.wheel_compression, grounded: frame.grounded, phase: frame.wreck.phase, reset_count: frame.reset_count, camera });
+              wheel_compression: frame.wheel_compression, grounded: frame.grounded, phase: frame.wreck.phase, reset_count: frame.reset_count, camera,
+              race: state && { phase: state.phase, elapsed: state.elapsed, lap: state.lap, position: state.position, countdown: state.countdown,
+                contacts: state.contacts, off_track: state.off_track, opponents: state.opponents.map(o => ({ origin: o.origin, distance: o.distance, finished: o.finished })),
+                standings: state.standings.map(s => ({ name: s.name, time: s.time, position: s.position })) } });
           }
         });
       }
@@ -76,10 +85,10 @@ async function scriptedGame(browser, venue, steps, viewport, errors, { measure =
       trace.cursor += count; pending.add(message.id);
       return post.call(this, { ...message, bytes: new TextEncoder().encode(JSON.stringify(request)) }, ...rest);
     };
-  }, { steps, measure });
+  }, { steps, measure, race });
   const session = measure ? await page.context().newCDPSession(page) : null;
   if (session) await session.send('Performance.enable');
-  await page.goto(url(`/play.html?drive=1&environment=${venue}`));
+  await page.goto(url(race ? `/play.html?activity=race&map=${venue}&laps=${race.laps}&cpu=${race.cpu}&play=1` : `/play.html?drive=1&environment=${venue}`));
   await waitForGame(page);
   let start;
   if (session) {
@@ -88,7 +97,7 @@ async function scriptedGame(browser, venue, steps, viewport, errors, { measure =
     await page.waitForFunction(() => window.rideTrace.cursor > 0, null, { timeout: 60000 });
     start = await sample(page, session);
   }
-  await page.waitForFunction(() => window.rideTrace.held || /stopped/.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
+  await page.waitForFunction(() => window.rideTrace.held || /stopped/.test(document.querySelector("#status").textContent), null, { timeout: 120000 + steps.length / 60 * 1500 });
   const stopped = await page.locator('#status').textContent();
   if (!await page.evaluate(() => window.rideTrace.held)) throw new Error(`JavaScript game: ${stopped}`);
   if (session) page.cpu = cost(start, await sample(page, session));
@@ -259,6 +268,95 @@ async function rideMode() {
   }
 }
 
+// Race parity: one scripted player through the JavaScript race and the
+// native race replay; compares phases, player and CPU positions per step.
+//   node tools/compare_engine.mjs race [venue] [script.json] [out-dir] [laps] [cpu] [seed]
+async function raceMode() {
+  const venue = process.argv[3] ?? 'env01';
+  const script = process.argv[4] ? JSON.parse(await readFile(process.argv[4], 'utf8'))
+    : [{ frames: 1800, input: { keyboard_drive: { held: true, axis: 1 } } }];
+  const out = path.resolve(process.argv[5] ?? 'private/reports/engine-parity/race');
+  const race = { laps: Number(process.argv[6] ?? 1), cpu: Number(process.argv[7] ?? 3), seed: Number(process.argv[8] ?? 12345) };
+  await mkdir(out, { recursive: true });
+  const scriptFile = path.join(out, 'script.json');
+  await writeFile(scriptFile, JSON.stringify(script));
+  const normalized = input => input?.keyboard_drive ? { ...input, keyboard_drive: { generation: 0, ...input.keyboard_drive } } : input ?? {};
+  const steps = script.flatMap(({ frames, input }) => Array.from({ length: frames }, () => normalized(input)));
+  const browser = await launch();
+  const errors = [];
+  try {
+    if (process.env.RACE_AUTOPILOT) {
+      // Record the race path driver riding the player in the Rust browser
+      // build (whose physics matches the JavaScript game's Wasm exactly),
+      // and use its controls as the script: a player who finishes.
+      const recorder = await newPage(browser, { viewport: { width: 640, height: 360 } }, errors);
+      const frames = Number(process.env.RACE_AUTOPILOT);
+      await recorder.addInitScript(script => localStorage.setItem('furyScript', script), JSON.stringify([{ frames, input: {} }]));
+      await recorder.goto(url(`/engine.html?venue=${venue}&race=1&laps=${race.laps}&cpu=${race.cpu}&seed=${race.seed}&weather=off&traceAll=1&autopilot=1&script=storage`));
+      await recorder.waitForFunction(() => document.querySelector('#trace'), null, { timeout: 300000 });
+      const recorded = JSON.parse(await recorder.locator('#trace').textContent());
+      script.length = 0;
+      for (const record of recorded) {
+        const [throttle, brake, steer, lean] = record.imposed ?? [0, 0, 0, 0];
+        const input = { throttle, brake, steer, lean };
+        const last = script.at(-1);
+        if (last && JSON.stringify(last.input) === JSON.stringify(input)) last.frames++; else script.push({ frames: 1, input });
+      }
+      await recorder.close();
+      await writeFile(scriptFile, JSON.stringify(script));
+      steps.splice(0, steps.length, ...script.flatMap(({ frames, input }) => Array.from({ length: frames }, () => input)));
+    }
+    const page = await scriptedGame(browser, venue, steps, { width: 1280, height: 720 }, errors, { race });
+    const js = await page.evaluate(() => window.rideTrace.frames);
+    await page.locator('#game').screenshot({ path: path.join(out, `${venue}-race-javascript.png`) });
+    await writeFile(path.join(out, 'javascript-trace.json'), JSON.stringify(js));
+    assertNoErrors(errors);
+    const traceFile = path.join(out, 'rust-native-trace.json');
+    const content = process.env.FURY_CONTENT ? ['--content', process.env.FURY_CONTENT] : [];
+    execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--race', '--laps', String(race.laps), '--cpu', String(race.cpu),
+      '--seed', String(race.seed), '--script', scriptFile, '--trace', traceFile], { stdio: 'inherit' });
+    const rust = JSON.parse(await readFile(traceFile, 'utf8'));
+    // The Rust engine in the browser, every step (?traceAll=1).
+    const web = await newPage(browser, { viewport: { width: 640, height: 360 } }, errors);
+    // Long scripts exceed URL limits: hand them over through localStorage.
+    await web.addInitScript(script => localStorage.setItem('furyScript', script), JSON.stringify(script));
+    await web.goto(url(`/engine.html?venue=${venue}&race=1&laps=${race.laps}&cpu=${race.cpu}&seed=${race.seed}&weather=off&traceAll=1&script=storage`));
+    await web.waitForFunction(() => document.querySelector('#trace') || /error|fail/i.test(document.querySelector('#status')?.textContent), null, { timeout: 300000 });
+    const webTrace = [{ step: 0 }, ...JSON.parse(await web.locator('#trace').textContent())];
+    assertNoErrors(errors);
+    // Traces print binary32 values at different precision: compare as binary32.
+    const distance = (a, b) => Math.hypot(...a.map((v, i) => Math.fround(v) - Math.fround(b[i])));
+    const phases = trace => { const list = []; for (const f of trace) { const p = f.race?.phase ?? null; if (list.at(-1)?.[0] !== p) list.push([p, f.step]); } return list; };
+    const versus = other => {
+      let first = null, worstPlayer = 0, worstCpu = 0;
+      const count = Math.min(js.length, other.length - 1);
+      for (let i = 0; i < count; i++) {
+        const a = js[i], b = other[i + 1];
+        const player = distance(a.origin, b.origin);
+        const cpu = Math.max(0, ...(a.race?.opponents ?? []).map((o, k) => distance(o.origin, b.race.opponents[k].origin)));
+        worstPlayer = Math.max(worstPlayer, player); worstCpu = Math.max(worstCpu, cpu);
+        if (first === null && (player > 0 || cpu > 0)) first = { step: a.step, player, cpu };
+      }
+      return { steps: count, firstDifference: first, worstPlayerFt: worstPlayer, worstCpuFt: worstCpu };
+    };
+    const count = Math.min(js.length, rust.length - 1);
+    const last = (trace, i) => trace[i].race;
+    const report = { venue, race, steps: count, web: versus(webTrace), native: versus(rust),
+      phases: { javascript: phases(js), rustWeb: phases(webTrace.slice(1)), rustNative: phases(rust.slice(1)) },
+      final: { javascript: last(js, count - 1), rust: last(rust, count) } };
+    await writeFile(path.join(out, 'report.json'), JSON.stringify(report, null, 2));
+    console.log(JSON.stringify({ ...report, final: { javascript: report.final.javascript?.standings, rust: report.final.rust?.standings } }, null, 2));
+    console.log(`PASS: wrote ${venue} race parity to ${out}`);
+  } finally {
+    await browser.close();
+  }
+}
+
+if (process.argv[2] === 'race') {
+  await raceMode();
+  process.exit(0);
+}
+
 if (process.argv[2] === 'ride') {
   await rideMode();
   process.exit(0);
@@ -317,7 +415,7 @@ try {
     console.log(`view ${index}: ${view}`);
     const rustErrors = [];
     const rust = await newPage(browser, { viewport }, rustErrors);
-    await rust.goto(url(`/engine.html?venue=${venue}&camera=${view}&weather=${state.weather ? 'on' : 'off'}&steps=${state.steps}&graphics=${graphics}${actors ? '' : '&free=1'}${race ? '&race=1' : ''}`));
+    await rust.goto(url(`/engine.html?venue=${venue}&camera=${view}&weather=${state.weather ? 'on' : 'off'}&steps=${state.steps}&graphics=${graphics}${actors ? '' : '&free=1'}${race ? '&race=1&cpu=0' : ''}`));
     await rust.waitForFunction(() => /fps/.test(document.querySelector('#status').textContent) || /fail|error/i.test(document.querySelector('#status').textContent), null, { timeout: 180000 });
     await rust.waitForTimeout(2500);
     const status = await rust.locator('#status').textContent();
@@ -331,7 +429,7 @@ try {
       const args = ['--venue', venue, '--camera', view, '--weather', state.weather ? 'on' : 'off', '--steps', String(state.steps), '--graphics', graphics, '--capture', `${stem}-rust-native.png`, `${viewport.width}x${viewport.height}`];
       if (process.env.FURY_CONTENT) args.unshift('--content', process.env.FURY_CONTENT);
       if (!actors) args.unshift('--free');
-      if (race) args.unshift('--race');
+      if (race) args.unshift('--race', '--cpu', '0');
       execFileSync(process.env.FURY_BIN, args, { stdio: 'inherit' });
     }
     entry.diff = await compare(browser, stem, Boolean(process.env.FURY_BIN));
