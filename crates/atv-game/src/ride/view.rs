@@ -54,11 +54,32 @@ pub fn cinematic(frame: &CameraFrame, aspect: f32) -> View {
     }
 }
 
-/// Authored speed presentation's FOV kick (web/speed-rush.js, Normal):
-/// above 40 MPH the view widens by up to about six degrees.
-#[derive(Clone, Copy, Debug, Default)]
+/// Authored speed presentation's FOV kick (web/speed-rush.js): above 40 MPH
+/// the view widens by up to about six degrees at Normal.
+#[derive(Clone, Copy, Debug)]
 pub struct SpeedRush {
     amount: f64,
+    /// Settings → Speed rush peak: Off 0, Low 0.45, Normal 0.75, High 1.
+    pub peak: f64,
+}
+
+impl Default for SpeedRush {
+    fn default() -> Self {
+        Self {
+            amount: 0.,
+            peak: 0.75,
+        }
+    }
+}
+
+/// `speedRushAmount`'s intensity scale for a saved `atv-speed-rush` value.
+pub fn speed_rush_peak(intensity: &str) -> f64 {
+    match intensity {
+        "low" => 0.45,
+        "normal" => 0.75,
+        "high" => 1.,
+        _ => 0.,
+    }
 }
 
 impl SpeedRush {
@@ -70,7 +91,7 @@ impl SpeedRush {
     pub fn update(&mut self, speed: f32, active: bool, dt: f32) {
         let t = ((f64::from(speed).abs() * 3600. / 5280. - 40.) / 35.).clamp(0., 1.);
         let desired = if active && speed.is_finite() {
-            t * t * (3. - 2. * t) * 0.75
+            t * t * (3. - 2. * t) * self.peak
         } else {
             0.
         };
@@ -82,7 +103,7 @@ impl SpeedRush {
         self.amount += (desired - self.amount) * (1. - (-step / 0.25).exp_d());
     }
 
-    /// The smoothed amount (0..0.75 at Normal) the screen pass shares.
+    /// The smoothed amount (0..peak) the screen pass shares.
     pub fn amount(&self) -> f32 {
         self.amount as f32
     }
