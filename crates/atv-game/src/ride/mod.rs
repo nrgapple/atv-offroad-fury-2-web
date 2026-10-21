@@ -5,13 +5,13 @@
 //! This is the Rust engine's port of the browser path (web/game.js
 //! startSimulation/pumpSimulation and atv-web's simulation operations 23, 24,
 //! 46, 47 and the op 50 batch; motorcycles: crates/atv-web/src/motorcycles.rs).
-//! It calls atv-core directly in the same order; multiplayer, trains and the
-//! optional flip presentation layers are not part of it yet.
+//! It calls atv-core directly in the same order; trains and the optional flip
+//! presentation layers are not part of it yet (rooms: `crate::multiplayer`).
 mod bike;
 pub mod bindings;
 pub mod cpu;
 pub mod gear;
-mod load;
+pub(crate) mod load;
 pub mod present;
 pub mod race;
 pub mod script;
@@ -345,6 +345,27 @@ impl Ride {
             Mount::Bike(bike) => {
                 (bike.frame().wreck.phase != Phase::Riding).then(|| bike.rider_world())
             }
+        }
+    }
+
+    /// The ATV rider's animation recipe (what a multiplayer snapshot sends
+    /// so receivers sample the same clips); None on a motorcycle.
+    pub fn rider_recipe(&self) -> Option<rider_pose::Recipe> {
+        match &self.mount {
+            Mount::Quad { rig, .. } => Some(rig.animator.recipe()),
+            Mount::Bike(_) => None,
+        }
+    }
+
+    /// The detached ATV rider's world matrix and velocity while the wreck
+    /// rig runs (multiplayer snapshots replicate the root, not the clip).
+    pub fn rider_wreck(&self) -> Option<([f32; 16], [f32; 3])> {
+        match &self.mount {
+            Mount::Quad { rig, .. } => rig
+                .wreck
+                .frame()
+                .map(|w| (w.world_matrix, w.linear_velocity)),
+            Mount::Bike(_) => None,
         }
     }
 
