@@ -37,13 +37,16 @@ WINDOWS_TRIPLE = 'x86_64-pc-windows-gnu'
 BUNDLE_ID = 'com.furyremastered.desktop'
 MACOS_MINIMUM = '11.0'
 # Debian 11 keeps the Linux builds loadable on glibc 2.31 (Ubuntu 20.04+, Debian 11+).
-BUILDER_IMAGE = 'fury-desktop-builder:bullseye-2'
+BUILDER_IMAGE = 'fury-desktop-builder:bullseye-3'
 # libudev-dev for both Linux architectures: gilrs (controllers) links libudev on Linux.
 BUILDER_DOCKERFILE = '''FROM rust:1-bullseye
-RUN dpkg --add-architecture amd64 && dpkg --add-architecture arm64 && apt-get update && \\
-    apt-get install -y --no-install-recommends pkg-config \\
-      gcc-x86-64-linux-gnu libc6-dev-amd64-cross gcc-aarch64-linux-gnu libc6-dev-arm64-cross \\
-      gcc-mingw-w64-x86-64 libudev-dev:amd64 libudev-dev:arm64 && rm -rf /var/lib/apt/lists/*
+RUN set -e; native=$(dpkg --print-architecture); \\
+    if [ "$native" = arm64 ]; then foreign=amd64; cross="gcc-x86-64-linux-gnu:$native libc6-dev-amd64-cross"; \\
+    else foreign=arm64; cross="gcc-aarch64-linux-gnu:$native libc6-dev-arm64-cross"; fi; \\
+    dpkg --add-architecture $foreign; apt-get update; \\
+    apt-get install -y --no-install-recommends pkg-config $cross gcc-mingw-w64-x86-64 \\
+      libudev-dev:$native libudev-dev:$foreign; \\
+    rm -rf /var/lib/apt/lists/*
 RUN rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-gnu
 '''
 # Debian 12 userland with a software Vulkan driver (lavapipe) and a virtual X server.

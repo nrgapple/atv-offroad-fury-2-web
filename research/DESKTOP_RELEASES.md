@@ -8,8 +8,9 @@ owner's machine, never in CI, because they contain the extracted runtime resourc
 be published outside the R2 content package). The ISO, BIOS, raw boot executable
 (`SCUS_972.11`), unrelated disc content and reverse-engineering output never enter an archive.
 
-Status: the desktop app renders the ENV01 terrain with a free camera (see `RUST_ENGINE.md`),
-so releases are marked prerelease until the port is further along.
+Status: the desktop app lets you ride the default quad around ENV01 Freeride (see
+`RUST_ENGINE.md` for what is and is not ported yet), so releases are marked prerelease until
+the port is further along.
 
 ## What is in an archive
 
@@ -95,9 +96,10 @@ requires a clean tree (the commit is the version) and uses `git archive HEAD` fo
 - macOS builds natively for both architectures (`MACOSX_DEPLOYMENT_TARGET=11.0`), runs
   `lipo`, assembles the bundle (icon from the authored `web/fury-app-icons.json` 512 px art via
   `iconutil`), signs ad hoc and zips with `ditto` (bundle structure and symlinks preserved).
-- Linux and Windows run in the local image `fury-desktop-builder:bullseye-1` (built from
-  `rust:1-bullseye` plus `gcc-x86-64-linux-gnu`, `gcc-aarch64-linux-gnu`, `gcc-mingw-w64-x86-64`
-  and the three Rust targets). Colima only shares `$HOME` and the repo is on the SSD, so the
+- Linux and Windows run in the local image `fury-desktop-builder:bullseye-3` (built from
+  `rust:1-bullseye` plus `gcc-x86-64-linux-gnu`, `gcc-aarch64-linux-gnu`, `gcc-mingw-w64-x86-64`,
+  `libudev-dev` for both Linux architectures (gilrs reads controllers through libudev) and the
+  three Rust targets). Colima only shares `$HOME` and the repo is on the SSD, so the
   source is piped into the container as a tar on stdin, each target uses its own named Docker
   volume for `target/` (`fury-desktop-target-<triple>`; the older `fury-desktop-target` volume
   from earlier experiments can be removed), `$HOME/.cargo/registry` is mounted so crates are not
@@ -114,7 +116,7 @@ Cargo target directories: native builds use `$CARGO_TARGET_DIR` or
 
 ### Verification done on 2026-10-20 (Apple M4, macOS)
 
-Measured numbers are in the packaging checkpoint report. `--capture OUT.png 1280x720` renders
+`--capture OUT.png 1280x720` renders
 the ENV01 start view and exits; it was used on every platform that can run here.
 
 | Platform | Result |
@@ -171,12 +173,13 @@ Try `python3 tools/desktop_release_watcher.py --dry-run` first. The job needs th
   anyway. Unsigned executables with embedded data can also draw antivirus false positives.
   The exe is a console-subsystem program, so a console window appears (useful while the app
   prints its diagnostics); it has no embedded icon yet.
-- **Linux:** needs a Vulkan driver and an X11 or Wayland session; glibc 2.31 or newer.
+- **Linux:** needs a Vulkan driver, an X11 or Wayland session, `libudev.so.1` (present on desktop
+  distributions; gilrs links it dynamically) and glibc 2.31 or newer.
 
 ## Known gaps
 
 - Archives are about 415 MB each (about 1.7 GB per release). GitHub allows 2 GiB per asset.
-- No audio, riding, menus or HUD in the desktop app yet; it is the terrain/free-camera view.
+- The desktop app inherits the engine's gaps: no audio, HUD, menus, sky or scenery yet.
 - Windows and Linux x86_64 runtime coverage is limited to what Docker can emulate here
   (see the checkpoint report); Windows GPU backends (DX12/Vulkan) are untested on real hardware.
 - No Windows icon resource, no Developer ID or Authenticode signing, no notarization.
