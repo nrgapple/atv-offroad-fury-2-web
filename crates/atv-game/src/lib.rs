@@ -14,6 +14,7 @@ pub mod scenery;
 pub mod sky;
 pub mod snow;
 pub mod terrain_mesh;
+pub mod tire_tracks;
 pub mod train;
 pub mod vegetation;
 pub mod venue;

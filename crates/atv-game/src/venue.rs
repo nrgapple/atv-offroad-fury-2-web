@@ -66,6 +66,8 @@ pub struct Venue {
     pub snow: Option<std::rc::Rc<std::cell::RefCell<crate::snow::Weather>>>,
     /// `[TerrainZoneN] GenerateDust` flags of the venue TOY (lingering dust).
     pub dust_zones: [bool; 8],
+    /// The venue TOY's terrain-zone presentation flags (tire tracks).
+    pub terrain_zones: [crate::tire_tracks::TerrainZone; 8],
     /// Source Weather selection for this load (00208cc0).
     pub weather: Option<atv_core::weather::Selection>,
 }
@@ -269,6 +271,10 @@ pub async fn load_with(
         dust_zones: toy
             .as_deref()
             .map(|toy| crate::lingering_dust::dust_zones(&String::from_utf8_lossy(toy)))
+            .unwrap_or_default(),
+        terrain_zones: toy
+            .as_deref()
+            .map(|toy| crate::tire_tracks::terrain_zones(&String::from_utf8_lossy(toy)))
             .unwrap_or_default(),
         intro_shots: if racing {
             crate::intro::shots(&archive, environment)?

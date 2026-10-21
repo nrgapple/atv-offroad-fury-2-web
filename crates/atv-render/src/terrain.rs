@@ -43,6 +43,7 @@ impl TerrainPass {
         fine_center: Option<[f32; 2]>,
         samples: u32,
         shadow: (&wgpu::TextureView, &wgpu::Sampler),
+        anisotropy: u16,
     ) -> Self {
         let device = &gpu.device;
         let terrain = &venue.terrain;
@@ -72,6 +73,8 @@ impl TerrainPass {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            // Enhanced/High: the browser's anisotropic() on the terrain atlas.
+            anisotropy_clamp: anisotropy.max(1),
             ..Default::default()
         });
         let repeat = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -81,6 +84,7 @@ impl TerrainPass {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: anisotropy.max(1),
             ..Default::default()
         });
         let fog = venue.scene.fog.as_ref();

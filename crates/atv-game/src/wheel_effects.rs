@@ -30,6 +30,12 @@ pub struct WheelEffects {
     wet_pending: Vec<atv_core::wheel_effects::WetBirth>,
     /// Enhanced/High lingering dust and what it reads from the venue.
     pub dust: Option<LingeringDust>,
+    /// Enhanced/High tire tracks and the venue's terrain zones.
+    pub tracks: Option<(
+        crate::tire_tracks::TrackBuilder,
+        [crate::tire_tracks::TerrainZone; 8],
+        atv_core::terrain::Heightfield,
+    )>,
 }
 
 pub struct LingeringDust {
@@ -126,10 +132,35 @@ pub async fn load(content: &Content, venue: &Venue, quad: u16) -> Result<Option<
         frame: Frame::default(),
         wet_pending: Vec::new(),
         dust: None,
+        tracks: None,
     }))
 }
 
 impl WheelEffects {
+    /// Turns on tire tracks: `capacity` segments living `life` seconds
+    /// (Enhanced 600/15, High 3600/75); 0 turns them off.
+    pub fn set_tire_tracks(&mut self, capacity: usize, life: f32, venue: &Venue) {
+        if capacity == 0 {
+            self.tracks = None;
+            return;
+        }
+        let t = &venue.terrain;
+        self.tracks = Some((
+            crate::tire_tracks::TrackBuilder::new(capacity, life),
+            venue.terrain_zones,
+            atv_core::terrain::Heightfield {
+                width: t.width,
+                depth: t.depth,
+                spacing: t
+                    .spacing
+                    .to_string()
+                    .parse()
+                    .unwrap_or(f64::from(t.spacing)),
+                heights: t.heights.clone(),
+            },
+        ));
+    }
+
     /// Turns on lingering dust with `capacity` puffs (Enhanced 24, High 96);
     /// 0 turns it off.
     pub fn set_lingering_dust(&mut self, capacity: usize, venue: &Venue) {
@@ -183,6 +214,9 @@ impl WheelEffects {
         if let Some(dust) = &mut self.dust {
             dust.emitter.reset();
         }
+        if let Some((tracks, ..)) = &mut self.tracks {
+            tracks.reset();
+        }
         self.run(ride, 0.)
     }
 
@@ -197,7 +231,22 @@ impl WheelEffects {
             .clone();
         self.wet_pending
             .extend(self.frame.wet_births.iter().cloned());
-        // acceptFrame steps lingering dust on every simulation frame.
+        // acceptFrame steps tire tracks, then lingering dust, every frame.
+        if let Some((tracks, zones, ground)) = &mut self.tracks {
+            let frame = ride.frame();
+            let state = ride.wheel_effect_state();
+            tracks.step(
+                &input,
+                &crate::tire_tracks::Contact {
+                    radii: state.radii,
+                    slip: state.slip,
+                    speed: frame.speed_magnitude,
+                    riding: frame.wreck.phase == atv_core::wreck::Phase::Riding,
+                    zones,
+                },
+                |x, z| ground.height(f64::from(x), f64::from(z)) as f32,
+            );
+        }
         if let Some(dust) = &mut self.dust {
             let frame = ride.frame();
             let riding = frame.wreck.phase == atv_core::wreck::Phase::Riding;
