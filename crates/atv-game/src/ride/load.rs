@@ -1,0 +1,308 @@
+//! Reads everything a Freeride needs from the original archives: the player's
+//! quad and rider, their motions and textures, scene collision, water and the
+//! follow-camera presets. Mirrors terrainFromContent/startSimulation in
+//! web/game.js and the matching atv-web operations (2/3, 11, 20-22, 26-27,
+//! 44-45, 48-49, 51-53, 64-65, 89, 140, 145).
+use super::{Model, Ride, Simulation, textures};
+use crate::{Result, launch::course_resource, venue::Venue};
+use atv_content::Content;
+use atv_core::{
+    animation, camera, collision, ecosystem, materials, mesh, motion_catalog::MotionCatalog,
+    obstacle::StaticObstacle, physics_data::PhysicsData, player_models, quad_pose::QuadPose,
+    resource::Resource, rider_pose, stunt, stunt_score, terrain, water_animation, wreck_animation,
+};
+use std::rc::Rc;
+use textures::basename_index;
+
+const IDENTITY_COL: [f32; 12] = [1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0.];
+const IDENTITY: [f32; 16] = [
+    1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+];
+
+fn member<'a>(resource: &Resource<'a>, name: &str, what: &str) -> Result<Vec<u8>> {
+    resource.extract(
+        basename_index(resource, name)
+            .ok_or_else(|| format!("original {what} is missing ({name})"))?,
+    )
+}
+
+/// Member whose path ends with `suffix` (the rider loader's matching rule).
+fn member_suffix<'a>(resource: &Resource<'a>, suffix: &str) -> Result<Vec<u8>> {
+    let suffix = suffix.to_ascii_lowercase();
+    let index = resource
+        .members
+        .iter()
+        .position(|m| {
+            m.name
+                .replace('\\', "/")
+                .to_ascii_lowercase()
+                .ends_with(&suffix)
+        })
+        .ok_or_else(|| format!("original rider file is missing: {suffix}"))?;
+    resource.extract(index)
+}
+
+/// Member by full lower-case path such as `geometry/name.col`.
+fn member_path(resource: &Resource, path: &str) -> Option<usize> {
+    resource
+        .members
+        .iter()
+        .position(|m| m.name.replace('\\', "/").eq_ignore_ascii_case(path))
+}
+
+/// A float as the browser sees it after Rust's JSON output (shortest decimal
+/// that round-trips binary32, read back as binary64).
+fn js(value: f32) -> f64 {
+    value.to_string().parse().unwrap_or(f64::from(value))
+}
+
+/// Normal, stunt/hold, wreck and landing clips in the order op 51 selects them.
+fn riding_motions(catalog: &MotionCatalog) -> Result<Vec<atv_core::motion_catalog::Motion>> {
+    let prefix = if catalog.motions.iter().any(|m| m.name.starts_with("F_")) {
+        "F"
+    } else {
+        "M"
+    };
+    let find = |name: String, what: &str| {
+        catalog
+            .motions
+            .iter()
+            .find(|m| m.name.eq_ignore_ascii_case(&name))
+            .cloned()
+            .ok_or_else(|| format!("missing {what} motion {name}"))
+    };
+    let mut selected = Vec::new();
+    for clip in rider_pose::Clip::ALL {
+        selected.push(find(format!("{prefix}_{}", clip.suffix()), "rider")?);
+    }
+    for kind in ["Stunt", "Hold"] {
+        for suffix in stunt::SUFFIXES {
+            selected.push(find(format!("{prefix}_{kind}{suffix}"), "rider")?);
+        }
+    }
+    for suffix in wreck_animation::SUFFIXES {
+        selected.push(find(format!("{prefix}_{suffix}"), "wreck")?);
+    }
+    for suffix in rider_pose::Landing::SUFFIXES {
+        selected.push(find(format!("{prefix}_{suffix}"), "landing")?);
+    }
+    Ok(selected)
+}
+
+/// Loads the ride for `quad` (1-26) and `rider` (0 male, 1 female) on a
+/// venue already read by [`crate::venue::load`].
+pub async fn load(
+    content: &Content,
+    venue: &Venue,
+    quad: u16,
+    rider: u16,
+    mut progress: impl FnMut(&str),
+) -> Result<Ride> {
+    let environment = venue.environment.as_str();
+    let course = course_resource(environment, false)?;
+    let models = player_models::selection(quad, rider)?;
+    if models.motorcycle {
+        return Err("motorcycles are not ported to the Rust engine yet".into());
+    }
+    progress("Reading original ATV…");
+    let course_bytes = content.file(&course.archive).await?;
+    let archive = Resource::parse(&course_bytes)?;
+    let quad_bytes = content.file(&models.quad).await?;
+    let quad_archive = Resource::parse(&quad_bytes)?;
+    let mesh_bytes = member(&quad_archive, &models.quad_mesh, "ATV mesh")?;
+    let quad_mesh = mesh::decode_psg(&mesh_bytes)?;
+    let physics = PhysicsData::parse(&member(&quad_archive, &models.physics, "ATV physics")?)?;
+    let chassis = collision::decode_ray_tree(&member(
+        &quad_archive,
+        &models.chassis,
+        "chassis collision",
+    )?)?;
+    let actor = collision::decode_ray_tree(&member(
+        &quad_archive,
+        &models.actor,
+        "actor collision rays",
+    )?)?;
+    if actor.transform != IDENTITY {
+        return Err("unsupported actor collision header transform".into());
+    }
+    let material_bytes = content.file(&models.quad_materials).await?;
+    let quad_textures = textures::load(&quad_mesh, &Resource::parse(&material_bytes)?)?;
+
+    // Terrain materials: the course's <venue>.toy, else the Endless archive's.
+    let toy = match basename_index(&archive, &format!("{environment}.toy")) {
+        Some(index) => archive.extract(index)?,
+        None => {
+            let path = course
+                .placements
+                .as_deref()
+                .ok_or("original terrain materials are missing")?;
+            let bytes = content.file(path).await?;
+            member(
+                &Resource::parse(&bytes)?,
+                &format!("{environment}.toy"),
+                "terrain materials",
+            )?
+        }
+    };
+
+    progress("Reading original rider…");
+    let rider_bytes = content.file(&models.rider).await?;
+    let rider_archive = Resource::parse(&rider_bytes)?;
+    let rider_mesh = mesh::decode_psg(&member_suffix(
+        &rider_archive,
+        &format!("/{}", models.rider_mesh),
+    )?)?;
+    let catalog = MotionCatalog::parse(&member_suffix(
+        &rider_archive,
+        &format!("/{}", models.rider_catalog),
+    )?)?;
+    let selected = riding_motions(&catalog)?;
+    let motion_bytes = content.file("/ANIMSRDR.RES").await?;
+    let motion_archive = Resource::parse(&motion_bytes)?;
+    let mut motions = Vec::with_capacity(selected.len());
+    for definition in &selected {
+        let file = definition
+            .path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&definition.path);
+        motions.push(rider_pose::Motion {
+            animation: animation::decode_mot(&member_suffix(
+                &motion_archive,
+                &format!("/{file}"),
+            )?)?,
+            sampling: animation::Sampling {
+                translation_interpolation: definition.interpolate_position,
+                rotation_interpolation: definition.interpolate_rotation,
+            },
+        });
+    }
+    let rider_material_bytes = content.file("/RIDER/RIDER_MT.RES").await?;
+    let rider_textures = textures::load(&rider_mesh, &Resource::parse(&rider_material_bytes)?)?;
+
+    // Op 53: normal, stunt (14..62), wreck (62..76) and landing (76..78) clips.
+    if motions.len() != 78 {
+        return Err("load all normal, stunt, wreck and landing motions first".into());
+    }
+    let landings = motions.split_off(76);
+    let wrecks = motions.split_off(62);
+    let stunts = motions.split_off(14);
+    let wreck = wreck_animation::Animator::new(
+        wrecks,
+        selected[62..76].iter().map(|m| m.looping).collect(),
+        &rider_mesh.nodes,
+    )?;
+    let mut animator = rider_pose::Animator::new(motions, &rider_mesh.nodes)?;
+    animator.set_landing_motions(landings)?;
+    // 002de690 identifies mode 11 as Freeride/Freestyle.
+    animator.set_scoring_mode(Some(stunt_score::FREESTYLE_MODE))?;
+    animator.set_stunts(stunts, selected[14..62].iter().map(|m| m.looping).collect())?;
+
+    progress("Reading original scene collisions…");
+    let terrain =
+        terrain::decode_tr2(&member(&archive, &format!("{environment}.tr2"), "terrain")?)?;
+    let scene = &venue.scene;
+    let water = match &scene.water_file {
+        None => None,
+        Some(file) => {
+            let index =
+                basename_index(&archive, file).ok_or("original water definition is missing")?;
+            let name = &archive.members[index].name;
+            let (directory, _) = name
+                .rsplit_once('/')
+                .ok_or("water resource has no directory")?;
+            let definition = water_animation::Definition::parse(&archive.extract(index)?)?;
+            Some(water_animation::LiveField::new(
+                definition,
+                &format!("{directory}/Sigs"),
+                |path| {
+                    archive.extract(
+                        archive
+                            .members
+                            .iter()
+                            .position(|m| m.name.eq_ignore_ascii_case(path))
+                            .ok_or_else(|| format!("missing water height resource {path}"))?,
+                    )
+                },
+            )?)
+        }
+    };
+    let ecosystem = basename_index(&archive, &format!("{environment}.esb"))
+        .map(|index| archive.extract(index).and_then(|b| ecosystem::decode(&b)))
+        .transpose()?;
+    // 00206e90 ignores missing COL files; authored non-solid overlays have none.
+    let mut meshes: Vec<(String, Rc<collision::CollisionMesh>)> = Vec::new();
+    let mut obstacles = Vec::new();
+    let mut mud_obstacles = Vec::new();
+    let mud_prefix = format!("{}mud", environment.to_ascii_lowercase());
+    for placement in &scene.collision_models {
+        let name = placement.name.to_ascii_lowercase();
+        let Some(index) = member_path(&archive, &format!("geometry/{name}.col")) else {
+            continue;
+        };
+        let mesh = match meshes.iter().find(|(n, _)| *n == name) {
+            Some((_, mesh)) => mesh.clone(),
+            None => {
+                let mesh = collision::decode_col(&archive.extract(index)?)?;
+                if mesh.transform != IDENTITY_COL {
+                    return Err("unsupported static collision header transform".into());
+                }
+                let mesh = Rc::new(mesh);
+                meshes.push((name.clone(), mesh.clone()));
+                mesh
+            }
+        };
+        let stem = name.rsplit(['/', '\\']).next().unwrap_or(&name);
+        mud_obstacles.push(stem.starts_with(&mud_prefix));
+        obstacles.push(StaticObstacle {
+            mesh,
+            world_matrix: placement.world_matrix,
+        });
+    }
+    let presets = camera::presets(
+        &member(&archive, "followcampresets.pb", "camera presets")?,
+        0,
+    )?;
+    // 00319c10 -> 003007b0 supplies 70 MPH and the original ft/s conversion.
+    let follow = camera::FollowCamera::new(presets, 70. * f32::from_bits(0x3fbbbb84))?;
+
+    // Op 140: scene starts keep their authored height (single player, no slot).
+    let direction = scene.start_direction;
+    let yaw = js(direction[0]).atan2(js(direction[2]));
+    let position = scene.start_position.map(js);
+    let origin = atv_core::spawn::start_origin(&terrain, position, yaw, false, None)?;
+    let start = (origin.map(|v| v as f32), yaw as f32);
+
+    let quad_pose = Rc::new(QuadPose::new(&quad_mesh)?);
+    let simulation = Simulation {
+        materials: materials::terrain_materials(&toy)?,
+        terrain,
+        chassis_points: chassis.chassis_points()?,
+        wreck_rays: Rc::new(chassis),
+        obstacle_rays: Rc::new(actor),
+        obstacles,
+        mud_obstacles,
+        scene_partition: scene.collision_partition,
+        ecosystem,
+        boundary: scene.boundary_launch,
+        extended_boundary: scene.crowd_present || environment.eq_ignore_ascii_case("training"),
+        water,
+        physics,
+        quad_pose,
+        animator,
+        wreck,
+        camera: follow,
+    };
+    Ride::start(
+        simulation,
+        start,
+        Model {
+            mesh: quad_mesh,
+            textures: quad_textures,
+        },
+        Model {
+            mesh: rider_mesh,
+            textures: rider_textures,
+        },
+    )
+}

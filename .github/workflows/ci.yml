@@ -53,6 +53,10 @@ jobs:
       - name: Install Rust toolchain
         if: steps.prepare.outputs.build == 'true'
         run: rustup toolchain install stable --profile minimal --component rustfmt,clippy --target wasm32-unknown-unknown
+      # gilrs (desktop controllers in crates/atv-app) reads Linux devices through libudev.
+      - name: Install controller headers
+        if: steps.prepare.outputs.build == 'true'
+        run: dpkg -s libudev-dev >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libudev-dev)
       # The shared Rust engine (crates/atv-app) needs JS bindings matching Cargo.lock.
       - name: Install pinned wasm-bindgen
         if: steps.prepare.outputs.build == 'true'
