@@ -160,4 +160,4 @@ See [research/BROWSER_TESTS.md](research/BROWSER_TESTS.md) for the groups, nativ
 
 </details>
 
-GitHub holds authored code and shareable notes. Required recovered runtime resources and approved screenshots live separately in Cloudflare R2. The disc image, BIOS, raw executable, reverse-engineering outputs, and reference checkouts stay private and outside GitHub/CI. GitHub Actions checks the authored build and deploys it to the public Cloudflare app; content uploads follow their own validation path.
+GitHub holds authored code and shareable notes. Required recovered runtime resources and approved screenshots live separately in Cloudflare R2. Standalone desktop releases, zipped with those resources embedded, are published as GitHub Release assets from the owner's machine; the resources themselves are never committed. The disc image, BIOS, raw executable, reverse-engineering outputs, and reference checkouts stay private and outside GitHub/CI. GitHub Actions checks the authored build and deploys it to the public Cloudflare app; content uploads follow their own validation path.
