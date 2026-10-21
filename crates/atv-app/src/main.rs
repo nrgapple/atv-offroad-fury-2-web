@@ -13,6 +13,9 @@ fn main() {
     let mut weather = None;
     let mut steps = None;
     let mut graphics = atv_render::Graphics::default();
+    let mut ride = true;
+    let mut script = None;
+    let mut trace = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--content" => content = args.next().map(PathBuf::from),
@@ -43,8 +46,16 @@ fn main() {
                 let (w, h) = size.split_once('x').expect("capture size is WIDTHxHEIGHT");
                 capture = Some((PathBuf::from(path), w.parse().unwrap(), h.parse().unwrap()));
             }
+            "--free" => ride = false,
+            "--script" => {
+                let path = args.next().expect("--script needs a JSON file");
+                let text = std::fs::read_to_string(&path).expect("read script");
+                // Accept the browser tool's script file unchanged.
+                script = Some(atv_app::replay::Script::parse(&text).expect("parse script"));
+            }
+            "--trace" => trace = Some(PathBuf::from(args.next().expect("--trace needs a path"))),
             other => panic!(
-                "unknown argument {other}; use --content DIR --venue ID [--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high] [--capture OUT.png WxH]"
+                "unknown argument {other}; use --content DIR --venue ID [--free] [--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high] [--script IN.json] [--trace OUT.json] [--capture OUT.png WxH]"
             ),
         }
     }
@@ -52,6 +63,12 @@ fn main() {
         panic!("unknown venue {venue}");
     }
     let content = content.unwrap_or_else(|| PathBuf::from("content"));
+    if let Some(out) = trace {
+        // Headless replay for parity traces: no window or GPU.
+        let script = script.unwrap_or_else(|| atv_app::replay::Script::parse("[]").unwrap());
+        atv_app::replay::trace(&content, &venue, &script, &out).expect("replay trace");
+        return;
+    }
     run(Options {
         store: Store::Directory(content),
         venue,
@@ -60,5 +77,7 @@ fn main() {
         steps,
         graphics,
         capture,
+        ride,
+        script,
     });
 }

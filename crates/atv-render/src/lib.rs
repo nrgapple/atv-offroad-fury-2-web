@@ -8,6 +8,7 @@ mod terrain;
 mod texture;
 mod train;
 mod vegetation;
+mod vehicle;
 mod water;
 mod world;
 
@@ -160,6 +161,7 @@ pub struct FrameStats {
     pub water_draws: u32,
     pub train_draws: u32,
     pub train_triangles: u32,
+    pub vehicle_triangles: u32,
 }
 
 impl FrameStats {
@@ -177,6 +179,7 @@ impl FrameStats {
             + self.scenery_triangles
             + self.vegetation_triangles
             + self.train_triangles
+            + self.vehicle_triangles
     }
 }
 
@@ -211,6 +214,8 @@ pub struct SceneRenderer {
     /// stand is not sliced open into the sky (matrix() in web/game.js).
     depth_far: f32,
     clock: f32,
+    /// The player's quad and rider, once a ride is loaded.
+    vehicle: Option<vehicle::VehiclePass>,
 }
 
 impl SceneRenderer {
@@ -274,6 +279,7 @@ impl SceneRenderer {
             far,
             depth_far,
             clock: 0.,
+            vehicle: None,
         }
     }
 
@@ -337,6 +343,36 @@ impl SceneRenderer {
     pub fn set_lit_flashes(&mut self, flashes: &[usize]) {
         self.scenery.lit_flashes.clear();
         self.scenery.lit_flashes.extend_from_slice(flashes);
+    }
+
+    /// Uploads the ride's quad and rider models.
+    pub fn set_ride(
+        &mut self,
+        gpu: &Gpu,
+        venue: &Venue,
+        quad: &atv_game::ride::Model,
+        rider: &atv_game::ride::Model,
+    ) -> Result<(), String> {
+        self.vehicle = Some(vehicle::VehiclePass::new(
+            gpu,
+            venue,
+            quad,
+            rider,
+            gpu.samples,
+        )?);
+        Ok(())
+    }
+
+    /// The latest simulation pose of the quad linkage and rider skeleton.
+    pub fn pose_ride(&self, gpu: &Gpu, pose: &atv_game::ride::Pose) {
+        if let Some(vehicle) = &self.vehicle {
+            vehicle.pose(gpu, pose);
+        }
+    }
+
+    /// Rebuilds the fine terrain patch around a new rider position.
+    pub fn recenter_terrain(&mut self, gpu: &Gpu, venue: &Venue, center: [f32; 2]) {
+        self.terrain.recenter(gpu, venue, center);
     }
 
     pub fn render(&mut self, gpu: &Gpu, view: &View) -> Result<FrameStats, String> {
@@ -416,6 +452,10 @@ impl SceneRenderer {
             );
             stats.water_draws = 1;
         }
+        if let Some(vehicle) = &mut self.vehicle {
+            vehicle.prepare(gpu, &view_projection, view.camera.eye());
+            stats.vehicle_triangles = vehicle.triangles;
+        }
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         {
             let [r, g, b] = self.fog_color.map(f64::from);
@@ -456,6 +496,9 @@ impl SceneRenderer {
                 vegetation.draw(&mut pass, &self.world);
             }
             // The browser draws vehicles here, then water.
+            if let Some(vehicle) = &self.vehicle {
+                vehicle.draw(&mut pass);
+            }
             if let Some((water, _)) = &self.water {
                 water.draw(&mut pass);
             }

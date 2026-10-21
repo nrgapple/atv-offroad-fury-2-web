@@ -4,6 +4,7 @@
 //! JavaScript; that logic moves here so every build runs the same code.
 pub mod launch;
 pub mod materials;
+pub mod ride;
 pub mod scenery;
 pub mod sky;
 pub mod terrain_mesh;
