@@ -7,7 +7,9 @@
 //! races, motorcycles, multiplayer, trains and the optional crash/flip
 //! presentation layers are not part of it yet.
 pub mod bindings;
+pub mod cpu;
 mod load;
+pub mod race;
 pub mod sound;
 pub mod textures;
 pub mod view;
@@ -29,7 +31,7 @@ use atv_core::{
     water_animation::LiveField,
     wreck_animation,
 };
-pub use load::load;
+pub use load::{load, load_with};
 use std::{collections::HashMap, rc::Rc};
 
 /// Fixed simulation step (the browser's 1/60 s batches).
@@ -70,6 +72,10 @@ pub struct Controls {
 pub enum CameraMode {
     Follow,
     Wreck,
+    /// A race's pre-race shots (authored per course; no chase adaptation).
+    Intro,
+    /// The after-finish trackside director.
+    Tv,
 }
 
 /// Loaded original state the simulation reuses on every reset.
@@ -113,6 +119,7 @@ pub struct Ride {
     rider_audio_position: [f32; 3],
     placement: u32,
     sound: Option<sound::AudioStep>,
+    race: Option<race::RaceState>,
     pub quad: Model,
     pub rider: Model,
 }
@@ -158,7 +165,13 @@ pub fn quaternion_world(origin: [f32; 3], orientation: [f32; 4]) -> [f32; 16] {
 }
 
 impl Ride {
-    fn start(sim: Simulation, start: ([f32; 3], f32), quad: Model, rider: Model) -> Result<Self> {
+    fn start(
+        sim: Simulation,
+        start: ([f32; 3], f32),
+        quad: Model,
+        rider: Model,
+        race: Option<(race::Setup, race::Settings)>,
+    ) -> Result<Self> {
         let mut sim = sim;
         let vehicle = Self::place(&mut sim, &quad.mesh, start)?;
         let frame = vehicle.frame();
@@ -186,10 +199,15 @@ impl Ride {
             rider_audio_position: [0.; 3],
             placement: 0,
             sound: None,
+            race: None,
             quad,
             rider,
         };
         ride.after_placement()?;
+        // A race takes the grid before the first camera step (op 96).
+        if let Some((setup, settings)) = race {
+            ride.begin_race(setup, settings, true)?;
+        }
         // startSimulation: op 45 builds the camera, then op 46 steps it once.
         ride.step_camera(0.)?;
         Ok(ride)
@@ -235,9 +253,40 @@ impl Ride {
     /// Reset ATV: back to the scene start with the follow camera reset (ops
     /// 23, 47 and one op 46 step).
     pub fn reset(&mut self) -> Result<()> {
+        // During a race, Reset returns to the last on-track point facing the
+        // race direction; after the finish it does nothing, and before GO the
+        // event restarts (straight to the countdown).
+        if let Some(state) = &self.race {
+            let racing = state.race.running() && !state.race.player_finished();
+            if state.race.player_finished() {
+                return Ok(());
+            }
+            let Some(frame) = state.frame.as_ref().filter(|_| racing) else {
+                return self.restart_race();
+            };
+            let origin = atv_core::spawn::start_origin(
+                &self.sim.terrain,
+                frame.track_point.map(f64::from),
+                f64::from(frame.track_heading),
+                true,
+                None,
+            )?;
+            return self.place_at((
+                [origin[0] as f32, origin[1] as f32, origin[2] as f32],
+                frame.track_heading,
+            ));
+        }
+        self.place_at(self.start)
+    }
+
+    /// Ops 23, 47 and one op 46 step at `start` (a race places on the ground).
+    fn place_at(&mut self, start: ([f32; 3], f32)) -> Result<()> {
         self.placement = self.placement.wrapping_add(1);
         self.sound = None;
-        self.vehicle = Self::place(&mut self.sim, &self.quad.mesh, self.start)?;
+        self.vehicle = Self::place(&mut self.sim, &self.quad.mesh, start)?;
+        if self.race.is_some() {
+            race::place_racer(&mut self.vehicle, &self.sim.terrain)?;
+        }
         self.after_placement()?;
         self.sim.camera.reset();
         self.step_camera(0.)
@@ -250,7 +299,22 @@ impl Ride {
 
     /// One fixed step: vehicle and rider (op 24), then the camera (op 46).
     pub fn step(&mut self, controls: &Controls, orbit: f32) -> Result<()> {
-        self.step_vehicle(controls)?;
+        // During the countdown and after the finish the race supplies the
+        // player's controls; tricks and touch/keyboard intents are dropped.
+        match self.race_controls()? {
+            Some(input) => self.step_vehicle(
+                &Controls {
+                    throttle: input.throttle,
+                    brake: input.brake,
+                    steer: input.steer,
+                    lean: input.lean,
+                    ..Default::default()
+                },
+                true,
+            )?,
+            None => self.step_vehicle(controls, false)?,
+        }
+        self.step_race()?;
         self.step_camera(orbit)?;
         self.steps += 1;
         self.sound = Some(self.capture_sound()?);
@@ -305,7 +369,9 @@ impl Ride {
         self.sound.as_ref()
     }
 
-    fn step_vehicle(&mut self, controls: &Controls) -> Result<()> {
+    /// Op 24. `race_input` marks controls the race imposed: they carry no
+    /// input generation, so a pending preload gesture is not cancelled.
+    fn step_vehicle(&mut self, controls: &Controls, race_input: bool) -> Result<()> {
         let dt = STEP;
         let input = VehicleInput {
             throttle: controls.throttle,
@@ -329,7 +395,7 @@ impl Ride {
         let safe = sim.animator.stunt_landing_safe();
         let forced_landing = sim.animator.landing_frame().is_some();
         let vehicle = &mut self.vehicle;
-        if self.input_generation != Some(controls.generation) {
+        if !race_input && self.input_generation != Some(controls.generation) {
             vehicle.cancel_preload_gesture();
             self.input_generation = Some(controls.generation);
         }
@@ -349,6 +415,11 @@ impl Ride {
         vehicle.set_forced_landing(forced_landing);
         if let Some(water) = &mut sim.water {
             water.advance(dt)?;
+        }
+        if let Some(race) = &mut self.race
+            && std::mem::take(&mut race.autopilot_reset)
+        {
+            vehicle.reset_now()?;
         }
         let wreck = &mut sim.wreck;
         let frame = vehicle.step_with_scene(&sim.terrain, input, dt, sim.water.as_ref(), || {
@@ -453,7 +524,31 @@ impl Ride {
     }
 
     /// Op 46: the follow camera, or the wreck camera while the rider is off.
+    /// Op 46: the race director's trackside view after the finish, else the
+    /// follow/wreck camera, which the pre-race shots override before GO.
     fn step_camera(&mut self, orbit: f32) -> Result<()> {
+        let vehicle = self.vehicle.frame();
+        let (rider, forward) = (vehicle.origin, dynamics::basis(vehicle.orientation)[2]);
+        let tv = self.race_director(rider)?;
+        self.chase_camera(orbit)?;
+        if let Some(pose) = tv {
+            self.camera_frame.position = pose.position;
+            self.camera_frame.target = pose.target;
+            self.camera_frame.fov = pose.fov;
+            self.camera_mode = CameraMode::Tv;
+            return Ok(());
+        }
+        let follow = self.camera_frame;
+        if let Some(pose) = self.race_intro(&follow, rider, forward)? {
+            self.camera_frame.position = pose.position;
+            self.camera_frame.target = pose.target;
+            self.camera_frame.fov = pose.fov;
+            self.camera_mode = CameraMode::Intro;
+        }
+        Ok(())
+    }
+
+    fn chase_camera(&mut self, orbit: f32) -> Result<()> {
         let dt = STEP;
         let vehicle = self.vehicle.frame();
         // The follow camera flattens body forward, which reverses as a

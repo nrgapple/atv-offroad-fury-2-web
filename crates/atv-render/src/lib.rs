@@ -276,6 +276,8 @@ pub struct SceneRenderer {
     ride_pose: Option<([f32; 16], Option<[f32; 16]>)>,
     /// The player's quad and rider, once a ride is loaded.
     vehicle: Option<vehicle::VehiclePass>,
+    /// Race CPU riders (drawn after the player) and which are near enough.
+    cpus: Vec<(vehicle::VehiclePass, bool)>,
 }
 
 impl SceneRenderer {
@@ -380,6 +382,7 @@ impl SceneRenderer {
             depth_far,
             clock: 0.,
             vehicle: None,
+            cpus: Vec::new(),
             wheel_effects: None,
             lingering_dust: None,
             tire_tracks: None,
@@ -653,6 +656,39 @@ impl SceneRenderer {
         Ok(())
     }
 
+    /// Uploads the race CPU riders' quads and outfitted riders.
+    pub fn set_race_cpus(
+        &mut self,
+        gpu: &Gpu,
+        venue: &Venue,
+        models: &[(atv_game::ride::Model, atv_game::ride::Model)],
+    ) -> Result<(), String> {
+        self.cpus = models
+            .iter()
+            .map(|(quad, rider)| {
+                vehicle::VehiclePass::new(gpu, venue, quad, rider, gpu.samples).map(|v| (v, false))
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(())
+    }
+
+    /// CPU poses by slot; the browser skips riders over 864ft from the eye.
+    pub fn pose_race_cpus(&mut self, gpu: &Gpu, poses: &[atv_game::ride::Pose], eye: [f32; 3]) {
+        for (index, (pass, visible)) in self.cpus.iter_mut().enumerate() {
+            *visible = poses.get(index).is_some_and(|pose| {
+                let [x, _, z] = [
+                    pose.quad_world[12],
+                    pose.quad_world[13],
+                    pose.quad_world[14],
+                ];
+                (x - eye[0]).hypot(z - eye[2]) <= 864.
+            });
+            if *visible {
+                pass.pose(gpu, &poses[index]);
+            }
+        }
+    }
+
     /// One simulation step's body origin while Riding with every wheel down,
     /// for the contact shadows' resting lift (acceptFrame in game.js).
     pub fn observe_rest(&mut self, origin: [f32; 3]) {
@@ -837,6 +873,12 @@ impl SceneRenderer {
             vehicle.prepare(gpu, &view_projection, view.camera.eye());
             stats.vehicle_triangles = vehicle.triangles;
         }
+        for (cpu, visible) in &mut self.cpus {
+            if *visible {
+                cpu.prepare(gpu, &view_projection, view.camera.eye());
+                stats.vehicle_triangles += cpu.triangles;
+            }
+        }
         let contact = match (&mut self.contact_shadows, &self.vehicle, &self.ride_pose) {
             (Some(contact), Some(vehicle), Some((quad, torso))) => {
                 let ground = |x: f32, z: f32| self.ground.height(f64::from(x), f64::from(z)) as f32;
@@ -924,6 +966,9 @@ impl SceneRenderer {
             // The browser draws vehicles here, then water.
             if let Some(vehicle) = &self.vehicle {
                 vehicle.draw(&mut pass);
+            }
+            for (cpu, _) in self.cpus.iter().filter(|(_, visible)| *visible) {
+                cpu.draw(&mut pass);
             }
             if let Some((water, _)) = &self.water {
                 water.draw(&mut pass);
