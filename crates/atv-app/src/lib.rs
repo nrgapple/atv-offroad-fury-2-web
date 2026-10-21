@@ -337,6 +337,7 @@ async fn prepare(
             scene.set_race_cpus(&gpu, &venue, &std::mem::take(&mut race.draw))?;
         }
         let mut riding = riding::Riding::new(ride, &venue);
+        riding.interpolation = graphics.interpolation;
         // `?autopilot=1` (parity tooling): the race path driver rides the
         // player before the finish too; traces record its controls.
         if url_flag("autopilot=1")
@@ -398,6 +399,11 @@ async fn prepare(
             });
         }
         riding.autodrive = autodrive.map(|script| (script.controls(), 0));
+        // `?presentTrace=1` (tools/test_engine_interpolation.mjs): log the
+        // delivered states and sampled presentation of the autodrive run.
+        if url_flag("presentTrace=1") {
+            riding.present_log = Some(Vec::new());
+        }
         Some(riding)
     } else {
         None
@@ -693,6 +699,13 @@ impl App {
             bench.audio += audio;
         } else if riding.autodrive_done && !self.bench.reported {
             self.bench.reported = true;
+            if let Some(log) = riding.present_log.take() {
+                publish_trace(
+                    &serde_json::json!({"interpolation": riding.interpolation, "events": log})
+                        .to_string(),
+                );
+                return;
+            }
             let b = &self.bench;
             let n = f64::from(b.frames.max(1));
             let report = format!(
@@ -2165,6 +2178,7 @@ pub fn parse_switch(text: &str) -> Option<bool> {
 pub fn graphics_preset(name: &str) -> Graphics {
     match name {
         "high" => Graphics {
+            interpolation: true,
             sky_smooth: true,
             anisotropy: 16,
             fresnel: true,
@@ -2174,6 +2188,7 @@ pub fn graphics_preset(name: &str) -> Graphics {
             tire_tracks: (3600, 75),
         },
         "enhanced" => Graphics {
+            interpolation: true,
             sky_smooth: true,
             anisotropy: 4,
             fresnel: true,

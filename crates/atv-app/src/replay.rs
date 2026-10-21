@@ -80,6 +80,70 @@ pub fn trace(
     })
 }
 
+/// Loads the ride without a window, plays `script` through the live frame
+/// loop at `hz` rendered frames per second (the browser's batching) and
+/// writes every delivered state and sampled presentation (`present_log`),
+/// for comparison with web/motorcycle-presentation.js.
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
+pub fn present_trace(
+    content: &std::path::Path,
+    venue: &str,
+    selection: atv_game::ride::Selection,
+    race: Option<atv_game::ride::race::Settings>,
+    interpolation: bool,
+    script: &Script,
+    hz: f64,
+    out: &std::path::Path,
+) -> Result<(), String> {
+    pollster::block_on(async {
+        use atv_content::{Content, Store};
+        let content = Content::open(Store::Directory(content.to_path_buf())).await?;
+        let options = atv_game::venue::LoadOptions {
+            weather: atv_game::venue::WeatherChoice::Active(false),
+            ..Default::default()
+        };
+        let venue = atv_game::venue::load_with(&content, venue, race.is_some(), options).await?;
+        let ride = atv_game::ride::load_with(
+            &content,
+            &venue,
+            selection.quad,
+            selection.rider,
+            race,
+            |_| {},
+        )
+        .await?;
+        let mut riding = crate::riding::Riding::new(ride, &venue);
+        riding.interpolation = interpolation;
+        riding.present_log = Some(Vec::new());
+        riding.autodrive = Some((script.controls(), 0));
+        let keys = |_: &str| false;
+        let sample = crate::riding::Sample {
+            keys: &keys,
+            pad: None,
+            now: 0.,
+            drag: 0.,
+        };
+        let dt = (1. / hz) as f32;
+        let mut frames = 0;
+        while !riding.autodrive_done {
+            riding.frame(&sample, &mut || None, dt)?;
+            riding.sample_presentation()?;
+            frames += 1;
+        }
+        let log = riding.present_log.take().unwrap_or_default();
+        eprintln!("presented {frames} frames at {hz} Hz, {} events", log.len());
+        std::fs::write(
+            out,
+            serde_json::to_vec(
+                &serde_json::json!({"hz": hz, "interpolation": interpolation, "events": log}),
+            )
+            .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())
+    })
+}
+
 /// Loads the ride and its sounds without a window or device, replays
 /// `script` at one step per 60 Hz frame and writes the mixed output as a
 /// 48 kHz stereo WAV, with a JSON sidecar of 50 ms RMS levels and voice

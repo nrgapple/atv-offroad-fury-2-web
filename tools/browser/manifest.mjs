@@ -42,6 +42,7 @@ export const TESTS = {
   'test_engine_race.mjs': { group: 'content' },
   'test_engine_sleep.mjs': { group: 'content' },
   'test_engine_motorcycle.mjs': { group: 'content' },
+  'test_engine_interpolation.mjs': { group: 'content' },
   'test_rust_audio.mjs': { group: 'content' },
   'test_rust_audio_activation.mjs': { group: 'content' },
   'test_boundary_launch.mjs': { defaults: ['pins crash mode crazy'], group: 'content' },

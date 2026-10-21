@@ -11,6 +11,7 @@ mod bike;
 pub mod bindings;
 pub mod cpu;
 mod load;
+pub mod present;
 pub mod race;
 pub mod script;
 pub mod sound;
@@ -325,6 +326,17 @@ impl Ride {
     /// The player rides a motorcycle (atv-web's `vehicle_kind`).
     pub fn is_motorcycle(&self) -> bool {
         matches!(self.mount, Mount::Bike(_))
+    }
+
+    /// `rider_world_matrix`: the detached rider's world while wrecking (the
+    /// ATV's wreck rig; the motorcycle's rider off Riding).
+    pub fn detached_rider_world(&self) -> Option<[f32; 16]> {
+        match &self.mount {
+            Mount::Quad { rig, .. } => rig.wreck.frame().map(|w| w.world_matrix),
+            Mount::Bike(bike) => {
+                (bike.frame().wreck.phase != Phase::Riding).then(|| bike.rider_world())
+            }
+        }
     }
 
     /// The player's motorcycle, when riding one.
