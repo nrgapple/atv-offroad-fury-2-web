@@ -70,6 +70,9 @@ pub struct Riding {
     pub peers: Vec<atv_game::multiplayer::PeerBody>,
     /// Steps on which a rider contact touched.
     pub contacts: u64,
+    /// The room's relay clock: local origin and offset (ms). Each step's
+    /// shared train phase follows it (multiplayer_world.rs).
+    pub server_clock: Option<(web_time::Instant, f64)>,
 }
 
 /// What a frame sampled from the keyboard/controller.
@@ -120,6 +123,7 @@ impl Riding {
             online: false,
             peers: Vec::new(),
             contacts: 0,
+            server_clock: None,
         }
     }
 
@@ -159,6 +163,17 @@ impl Riding {
             effects.reset(&self.ride)?;
         }
         self.orbit = 0.;
+        self.delivered = None;
+        Ok(())
+    }
+
+    /// Test hook: stand on the train car whose model contains `model`.
+    pub fn place_on_train(&mut self, model: &str) -> Result<(), String> {
+        self.clear_input();
+        self.ride.place_on_train(model)?;
+        if let Some(effects) = &mut self.effects {
+            effects.reset(&self.ride)?;
+        }
         self.delivered = None;
         Ok(())
     }
@@ -368,7 +383,13 @@ impl Riding {
 
     /// `count` fixed steps with one control sample (an op 50 batch).
     pub fn run(&mut self, controls: &Controls, count: u32) -> Result<(), String> {
-        for _ in 0..count {
+        let server = self
+            .server_clock
+            .map(|(origin, offset)| origin.elapsed().as_secs_f64() * 1000. + offset);
+        for step in 0..count {
+            // Each step's relay time, oldest first (op 50's step_now).
+            self.ride.train_server_ms =
+                server.map(|now| now - f64::from(count - 1 - step) * 1000. / 60.);
             for peer in &self.peers {
                 if self
                     .ride

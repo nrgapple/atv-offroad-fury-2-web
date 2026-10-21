@@ -121,6 +121,9 @@ struct PendingSound {
 enum Message {
     Ready(Box<Ready>),
     SoundReady(Box<sound::Sound>),
+    /// A line for the open menu's notice (e.g. the copied ride link).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    Notice(String),
     SoundFailed(String),
     Failed(String),
     /// The frontend's GPU, content and venue list are ready.
@@ -133,6 +136,8 @@ enum Message {
     PeerModel(Box<PeerModel>),
     /// The Arlington Free Ride rider count for the main menu.
     FreeRideRiders(Option<u32>),
+    /// Another rider's engine bank finished loading.
+    RemoteEngine(u16, Box<Result<atv_game::audio::remote::Engine, String>>),
 }
 
 type PeerModel = Result<
@@ -527,7 +532,7 @@ fn settle_room(ready: &mut Ready) {
             &ready.gpu,
             &mut ready.scene,
             &ready.venue,
-            riding.ride.frame().origin,
+            &riding.ride,
             eye,
         );
         if net.drawn as f32 >= peers {
@@ -727,6 +732,7 @@ impl App {
             motion.linear_velocity,
         );
         let mut loads = Vec::new();
+        let mut engine_loads = Vec::new();
         let mut course = None;
         if let Some(net) = &mut ready.net {
             let was_open = net.closed.is_none();
@@ -739,22 +745,42 @@ impl App {
             {
                 status(&format!("Unable to join beside that rider: {error}"));
             }
-            riding.peers = net.contact_bodies();
+            if tick.train_place
+                && let Err(error) = riding.place_on_train("flatbeda")
+            {
+                status(&format!("Train placement: {error}"));
+            }
+            riding.peers = net.contact_bodies(&riding.ride);
+            riding.server_clock = net.server_clock();
             let eye = ready.camera.eye();
             net.present(
                 &ready.gpu,
                 &mut ready.scene,
                 &ready.venue,
-                riding.ride.frame().origin,
+                &riding.ride,
                 eye,
             );
             if was_open && let Some(closed) = &net.closed {
                 status(&format!("Multiplayer ended: {closed}"));
             }
+            if let Some(sound) = &mut riding.sound {
+                for quad in sound.remote_frame(&net.riders) {
+                    engine_loads.push((quad, sound.load_remote_engine(quad)));
+                }
+            }
             let content = net.content();
             loads.extend(tick.loads.into_iter().map(|key| (content.clone(), key)));
             course = tick.course;
-            publish_multiplayer(net, riding.contacts, riding.ride.frame().origin);
+            let remote = riding
+                .sound
+                .as_ref()
+                .map(|s| (s.remote.voices(), s.remote.starts, s.remote.impact_starts));
+            publish_multiplayer(net, riding.contacts, &riding.ride, remote);
+        }
+        for (quad, future) in engine_loads {
+            self.spawn(future, move |engine| {
+                Message::RemoteEngine(quad, Box::new(engine))
+            });
         }
         for (content, key) in loads {
             self.spawn(multiplayer::load_model(content, key), |model| {
@@ -1169,6 +1195,7 @@ impl App {
                         .set_fullscreen(on.then_some(winit::window::Fullscreen::Borderless(None)));
                 }
             }
+            Event::CopyRide => self.copy_ride_link(),
             Event::Changed => {
                 if let Some(overlay) = &mut self.overlay {
                     overlay.set_help_keys(&riding.bindings);
@@ -1261,6 +1288,77 @@ impl App {
             }
             ready.scene.set_graphics(&ready.gpu, &ready.venue, graphics);
         }
+    }
+
+    /// Pause → Copy ride link (frontend.js `rideUrl` + launch.js
+    /// `copyRideUrl`): this page with the ride's setup; the clipboard, or
+    /// the link itself on the notice line when the copy is refused.
+    fn copy_ride_link(&mut self) {
+        let (Some(ready), Some(overlay)) = (&self.ready, &mut self.overlay) else {
+            return;
+        };
+        let Some(riding) = &ready.riding else {
+            return;
+        };
+        let selection = riding.ride.selection();
+        let player = overlay
+            .settings
+            .get(atv_ui::front::controller::SELECTION_KEY)
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| v["playerName"].as_str().map(String::from))
+            .filter(|p| !p.trim().is_empty())
+            .unwrap_or_else(|| "Rider".into());
+        let race = riding.ride.race().map(|r| {
+            let s = r.settings();
+            (s.laps, s.cpu, s.difficulty, s.aggressive, s.all_out)
+        });
+        #[cfg(target_arch = "wasm32")]
+        let page = web_sys::window()
+            .and_then(|w| {
+                let l = w.location();
+                Some(format!("{}{}", l.origin().ok()?, l.pathname().ok()?))
+            })
+            .unwrap_or_default();
+        #[cfg(not(target_arch = "wasm32"))]
+        let page = "https://furyremastered.com/engine.html".to_string();
+        let url = atv_game::launch::ride_url(
+            &page,
+            &atv_game::launch::RideLink {
+                map: &ready.venue.environment,
+                quad: selection.quad,
+                rider: selection.rider,
+                player: &player,
+                race,
+            },
+        );
+        let Some(menu) = &mut overlay.menu else {
+            return;
+        };
+        #[cfg(target_arch = "wasm32")]
+        {
+            let clipboard = web_sys::window().map(|w| w.navigator().clipboard());
+            match clipboard {
+                Some(clipboard) => {
+                    menu.notice = Some(url.clone());
+                    let promise = clipboard.write_text(&url);
+                    let proxy = self.proxy.clone();
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let copied = wasm_bindgen_futures::JsFuture::from(promise).await.is_ok();
+                        let _ = proxy.send_event(Message::Notice(if copied {
+                            "Ride link copied.".into()
+                        } else {
+                            url
+                        }));
+                    });
+                }
+                None => menu.notice = Some(url),
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            menu.notice = Some(url);
+        }
+        self.wake();
     }
 
     fn act(&mut self, action: overlay::Action) {
@@ -1773,6 +1871,12 @@ impl ApplicationHandler<Message> for App {
                 self.wake();
             }
             Message::SoundFailed(error) => status(&format!("Sound unavailable: {error}")),
+            Message::Notice(text) => {
+                if let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut()) {
+                    menu.notice = Some(text);
+                }
+                self.wake();
+            }
             Message::Ready(ready) => {
                 if let Some(front) = &self.front {
                     front.borrow_mut().release_gpu();
@@ -1850,6 +1954,19 @@ impl ApplicationHandler<Message> for App {
                     window.request_redraw();
                 }
             }
+            Message::RemoteEngine(quad, engine) => match *engine {
+                Ok(engine) => {
+                    if let Some(sound) = self
+                        .ready
+                        .as_mut()
+                        .and_then(|r| r.riding.as_mut())
+                        .and_then(|r| r.sound.as_mut())
+                    {
+                        sound.remote.add_engine(quad, engine);
+                    }
+                }
+                Err(error) => status(&format!("Remote engine sound unavailable: {error}")),
+            },
             Message::PeerModel(model) => {
                 if let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) {
                     net.model_loaded(*model);
@@ -2305,6 +2422,7 @@ impl App {
                     freeride: true,
                     name,
                     drop_after: None,
+                    train_place: None,
                 };
                 self.start_ride(
                     atv_game::multiplayer::FREERIDE_ENVIRONMENT.into(),
@@ -2932,12 +3050,37 @@ fn default_relay() -> String {
 }
 
 /// Multiplayer status for tests (`window.furyMultiplayer`, JSON).
-fn publish_multiplayer(net: &multiplayer::Net, contacts: u64, origin: [f32; 3]) {
+fn publish_multiplayer(
+    net: &multiplayer::Net,
+    contacts: u64,
+    ride: &atv_game::ride::Ride,
+    remote_sound: Option<(usize, u64, u64)>,
+) {
     #[cfg(target_arch = "wasm32")]
     if let Some(window) = web_sys::window() {
         let mut report = net.report();
         report["contacts"] = contacts.into();
-        report["origin"] = serde_json::json!(origin);
+        report["origin"] = serde_json::json!(ride.frame().origin);
+        report["trainTime"] = serde_json::json!(ride.train_time());
+        report["ownPlatform"] = serde_json::json!(
+            ride.train_platform()
+                .map(|(car, matrix)| serde_json::json!({"car": car, "matrix": matrix}))
+        );
+        // This client's matrices of the cars other riders stand on.
+        let cars: serde_json::Map<String, serde_json::Value> = report["remote"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| r["platform"].as_u64())
+            .filter_map(|car| {
+                let m = ride.train_car(car as usize)?;
+                Some((car.to_string(), serde_json::json!(m)))
+            })
+            .collect();
+        report["trainCars"] = cars.into();
+        report["remoteSound"] = serde_json::json!(remote_sound.map(|(voices, starts, impacts)| {
+            serde_json::json!({"voices": voices, "starts": starts, "impacts": impacts})
+        }));
         let _ = js_sys::Reflect::set(
             &window,
             &"furyMultiplayer".into(),
@@ -2945,7 +3088,7 @@ fn publish_multiplayer(net: &multiplayer::Net, contacts: u64, origin: [f32; 3]) 
         );
     }
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = (net, contacts, origin);
+    let _ = (net, contacts, ride, remote_sound);
 }
 
 impl App {
@@ -3188,6 +3331,7 @@ pub fn start() {
                     .and_then(|v| js_sys_decode(&v))
                     .unwrap_or_else(|| "Rider".into()),
                 drop_after: param("dropAfter").and_then(|v| v.parse().ok()),
+                train_place: param("trainPlace").and_then(|v| v.parse().ok()),
                 freeride: false,
             }
         }),

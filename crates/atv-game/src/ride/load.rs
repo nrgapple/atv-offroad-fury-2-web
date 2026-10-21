@@ -277,6 +277,12 @@ pub async fn load_with(
         extended_boundary: scene.crowd_present || environment.eq_ignore_ascii_case("training"),
         water,
         camera: follow,
+        // Freeride only: race venues load no train.
+        train: if race.is_some() {
+            None
+        } else {
+            venue.train.clone()
+        },
     };
     Ride::start(
         simulation,

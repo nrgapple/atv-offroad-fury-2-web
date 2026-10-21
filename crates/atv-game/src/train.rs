@@ -25,6 +25,50 @@ pub struct Model {
 pub struct Train {
     pub runtime: Runtime,
     pub models: Vec<Model>,
+    /// Cars with `use_collision` and their original COL meshes (atv-web op 67
+    /// `TrainCollisionBinding`), installed as moving scene obstacles.
+    pub collision: Vec<(usize, Rc<atv_core::collision::CollisionMesh>)>,
+    /// A ride steps the clock with its physics (collision heights and moving
+    /// obstacles); the renderer then only reads it.
+    pub driven: bool,
+}
+
+/// The cars' collision meshes (`geometry/<car>.col`, op 67).
+fn collision(
+    archive: &Resource,
+    runtime: &Runtime,
+) -> Result<Vec<(usize, Rc<atv_core::collision::CollisionMesh>)>> {
+    let mut meshes: Vec<(String, Rc<atv_core::collision::CollisionMesh>)> = Vec::new();
+    let mut bindings = Vec::new();
+    for (car, definition) in runtime.frame()?.cars.into_iter().enumerate() {
+        if !definition.use_collision {
+            continue;
+        }
+        let stem = definition
+            .model
+            .replace('\\', "/")
+            .to_ascii_lowercase()
+            .strip_suffix(".slt")
+            .ok_or("unsupported train collision model suffix")?
+            .to_string();
+        let path = format!("geometry/{stem}.col");
+        let mesh = match meshes.iter().find(|(p, _)| *p == path) {
+            Some((_, mesh)) => mesh.clone(),
+            None => {
+                let member = member_at(archive, &path)
+                    .ok_or_else(|| format!("original train collision resource missing: {path}"))?;
+                let mesh = atv_core::collision::decode_col(&archive.extract(member)?)?;
+                if mesh.transform != [1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0.] {
+                    return Err("unsupported train COL local transform".into());
+                }
+                let mesh = Rc::new(mesh);
+                meshes.push((path, mesh.clone()));
+                mesh
+            }
+        };
+        bindings.push((car, mesh));
+    }
+    Ok(bindings)
 }
 
 pub const WHEELS: &str = "anim/loco_wheels.psg";
@@ -115,5 +159,11 @@ pub fn load(archive: &Resource, mode_index: Option<usize>) -> Result<Option<Trai
             bind: mesh.nodes.iter().map(|n| n.world_matrix).collect(),
         });
     }
-    Ok(Some(Train { runtime, models }))
+    let collision = collision(archive, &runtime)?;
+    Ok(Some(Train {
+        runtime,
+        models,
+        collision,
+        driven: false,
+    }))
 }

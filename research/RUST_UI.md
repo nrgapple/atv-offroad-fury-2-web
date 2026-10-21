@@ -206,7 +206,8 @@ Back with its glyph, controls tips, overflow scrolling) is laid out with taffy.
   `atv-speed-rush`, `atv-crash-*`, `atv-flips`, `atv-train-riding`,
   `atv.diagnostics.v1`, `atv-audio-v1`, `atv-soundtrack-v1` updated in place,
   `atv-race-*`), so the two games share them.
-- Not yet in the Rust menu: Jukebox, Copy ride link and the Alpha experiments
+- Not yet in the Rust menu: Jukebox and the Alpha experiments (Copy ride link:
+  see below)
   (rows hidden); Graphics, Speed rush, crash,
   flip, train and stats choices persist but the Rust ride does not apply them
   yet; music volume/toggle persist without driving the Rust soundtrack. Desktop
@@ -449,6 +450,19 @@ Speed rush High, Gorn, Unleashed flips, realistic train, effects 0.5 and music 0
 applied at load; Speed rush Off, Graphics Enhanced and Crashes Original applied from
 the pause menu; a ride link with `atv-graphics=high` loads High: interpolation,
 16x anisotropy, 96 dust, 3,600 tire segments, contact shadows). Host Chromium.
+## Copy ride link (2026-10-21)
+
+Pause → Copy ride link (frontend.js `rideUrl`, launch.js `buildRideUrl` and
+`copyRideUrl`) builds the single-player link of the running ride
+(`atv_game::launch::ride_url`: mode, activity, map, quad, rider, the saved player
+name, and for races laps, CPU riders, Expert and the EATDIRT/BRINGIT cheats, in the
+browser's key order and form encoding; the result parses back through
+`parse_launch`). The link opens the page the engine runs on (`engine.html` while the
+Rust engine sits beside play.html), is written to the clipboard and confirmed on the
+menu notice line (`#menu-notice`, now drawn by the pause panel), or shown there in
+full when the browser refuses the clipboard. Desktop builds have no web page to link
+a ride to and leave the row out, as they leave out Dev log. Test:
+`tools/test_engine_ride_link.mjs` (clipboard text and query fields; host Chromium).
 ## Controller glyphs (2026-10-21)
 
 `atv-ui::menu::glyphs` ports web/pad-glyphs.js: each controller input describes

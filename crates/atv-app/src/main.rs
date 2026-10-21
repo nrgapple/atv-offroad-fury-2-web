@@ -298,6 +298,7 @@ fn main() {
         freeride: false,
         name,
         drop_after: None,
+        train_place: None,
     });
     // Without a direct-ride or tooling option the game opens at its title.
     let direct = room.is_some()
