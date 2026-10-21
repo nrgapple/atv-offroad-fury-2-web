@@ -290,7 +290,7 @@ impl Ride {
         ride.after_placement()?;
         // A race takes the grid before the first camera step (op 96).
         if let Some((setup, settings)) = race {
-            ride.begin_race(setup, settings, true)?;
+            ride.begin_race(setup, settings, settings.intro)?;
         }
         // startSimulation: op 45 builds the camera, then op 46 steps it once.
         ride.step_camera(0.)?;
@@ -378,6 +378,37 @@ impl Ride {
                 .frame()
                 .map(|w| (w.world_matrix, w.linear_velocity)),
             Mount::Bike(_) => None,
+        }
+    }
+
+    /// The ATV's scene collision (props and moving objects), when loaded.
+    pub fn scene_collision(&self) -> Option<&atv_core::scene_collision::SceneCollision> {
+        match &self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.scene_collision(),
+            Mount::Bike(_) => None,
+        }
+    }
+
+    /// Places the player at `origin` facing `yaw` (a multiplayer arrival
+    /// beside another rider; ops 23/47 as Reset does).
+    pub fn place_beside(&mut self, origin: [f32; 3], yaw: f32) -> Result<()> {
+        self.place_at((origin, yaw))
+    }
+
+    /// One owner-local contact against another rider's yawed box
+    /// (`atv_core::peer_contact`, authored); true when they touched.
+    pub fn peer_contact(
+        &mut self,
+        origin: [f32; 3],
+        velocity: [f32; 3],
+        orientation: [f32; 4],
+        tie: f32,
+    ) -> bool {
+        match &mut self.mount {
+            Mount::Quad { vehicle, .. } => {
+                vehicle.peer_contact(origin, velocity, orientation, STEP, tie)
+            }
+            Mount::Bike(bike) => bike.peer_contact(origin, velocity, orientation, STEP, tie),
         }
     }
 

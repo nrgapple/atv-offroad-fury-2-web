@@ -1,0 +1,19 @@
+{
+  "id": "rust-engine-rider-gear-and-paint-and-race-presentation-7eb67e142f5e45f5b6f52b737a18b327",
+  "timestamp": "2026-10-21T15:41:00-04:00",
+  "recorded_at": "2026-10-21T20:06:25.687819+00:00",
+  "kind": "build",
+  "title": "Rust engine: rider gear and paint, and race presentation",
+  "summary": "The Rust engine now dresses the garage rider and quad in the original gear catalog and paint, and presents a race the way the JavaScript game does: crowd, stadium flashes, fireworks, the National drop gate, start-lamp sounds and music, the original place tree, radar, lap and timing meter, 321 start lamps and the race-load fade. A results panel with Continue, Hide Menu, Restart and Quit Event menus is in review (PR #225, not yet merged).",
+  "details": [
+    "Garage gear and paint (PR #220, merged): the Rust engine builds rider gear from the original uiRider.txt catalog with RIDER_MT.RES materials and paints the quad with a WGSL shader that matches the JavaScript paintGlsl line for line. CPU quads, riders and motorcycles are not painted yet. Vehicle-box mean absolute difference against the JavaScript game, out of 255, Rust in Chromium / Rust native Metal: default 0.59 / 0.63 at 1280x720 and 1.12 / 1.19 at 390x844; gear 1.2.1.3.3.2.1 with green paint 0.61 / 0.66 and 1.14 / 1.22; white 0.62 / 0.68 and 1.16 / 1.25; black 0.58 / 0.62 and 1.12 / 1.18.",
+    "Race presentation (PR #222, merged): race crowd, stadium flashes, Supercross fireworks, the National drop gate, start-lamp sounds, race music and the CPU grid rest pose. In 9,000-step autopilot races with seed 12345, SX01 start lamps, all 8 crowd events and lit flashes match the JavaScript game on every step; the NAT01 gate matrix is exact and gate.vag plays at GO (step 676). JavaScript, Rust in the browser and Rust native trajectories are identical and the race fingerprint is unchanged (53fda056a945608e).",
+    "Race overlays (PR #223, merged): the original place tree, radar and lap/timing meter, the 321 start lamps and the race-load fade. NAT01 at step 720 against the JavaScript game, mean absolute difference out of 255 at 1280x720: whole frame 2.03 (7.13 before), place tree 3.91, radar 2.43, lamps 0.41, meter 0.76. At 390x844 the top items differ by 1.19 and the whole frame by 2.70.",
+    "Results and menus (PR #225, open at the time of this entry): a results panel and the Continue / Hide Menu / Restart / Quit Event menus. Restart reloads the event with a new roster like the browser; race links now draw a new roster on each load (previously seed 1); music no longer starts during the countdown after a restart. Panel heading differs by 1.17 and the whole panel by 4.12 against the JavaScript game. These figures describe the branch and do not count as shipped until the PR merges.",
+    "Evidence images are kept locally under private/reports/engine-parity/gear-paint/ and private/reports/engine-parity/race-presentation/ (nat01-720, sx01-300, shots). All figures were measured on a macOS host in Chromium and native Metal."
+  ],
+  "limitation": "Host-only: nothing here was measured on a phone. Race sounds were checked by sample-per-step, not by recording the mix. Fireworks were checked only against the ported controller. The results panel has no backdrop blur, long result names are not ellipsized, and desktop HUD text sits a few pixels lower than in Chrome because of font metrics. CPU quads, riders and motorcycles are not painted. PR #225 was unmerged when this entry was written.",
+  "image": "/devlog-images/rust-engine-rider-gear-and-paint-and-race-presentation-7eb67e142f5e45f5b6f52b737a18b327.png",
+  "caption": "Rust engine in Chromium, NAT01 step 720 at 1280x720 (paused, debug strip at the bottom): original place tree, lap and timing meter, radar, and 321 start lamps over the starting grid with gear-dressed riders. Host capture, not a phone.",
+  "working_on": "Rust engine: race results, Continue/Hide/Restart/Quit Event menus (PR #225)"
+}

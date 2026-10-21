@@ -39,6 +39,10 @@ export const TESTS = {
   'test_engine_pause.mjs': { group: 'content' },
   'test_engine_settings.mjs': { group: 'content' },
   'test_engine_front.mjs': { group: 'content' },
+  'test_engine_multiplayer_dropin.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Host Game, room WebSocket); run with --url'
+  },
   'test_engine_multiplayer.mjs': {
     group: 'relay',
     reason:

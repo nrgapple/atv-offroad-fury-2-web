@@ -56,6 +56,7 @@ mod native {
     enum Out {
         Send(Vec<u8>),
         Close,
+        Drop,
     }
 
     /// A socket served by its own thread (reads with a short timeout so
@@ -116,6 +117,7 @@ mod native {
                                     let _ = socket.write(Message::Binary(bytes.into()));
                                     wrote = true;
                                 }
+                                Out::Drop => return,
                                 Out::Close => {
                                     let _ = socket.close(None);
                                     let _ = socket.flush();
@@ -187,6 +189,11 @@ mod native {
 
         pub fn close(&self) {
             let _ = self.out.send(Out::Close);
+        }
+
+        /// Test hook: the socket thread ends without a close handshake.
+        pub fn drop_connection(&self) {
+            let _ = self.out.send(Out::Drop);
         }
     }
 
@@ -312,6 +319,11 @@ mod web {
 
         pub fn close(&self) {
             let _ = self.socket.close_with_code_and_reason(1000, "Left lobby");
+        }
+
+        /// An unclean-looking close (test hook): the relay holds the slot.
+        pub fn drop_connection(&self) {
+            let _ = self.socket.close_with_code_and_reason(4000, "Test drop");
         }
     }
 

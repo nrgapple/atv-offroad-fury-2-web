@@ -63,6 +63,13 @@ pub struct Riding {
     /// Parity tooling: every delivered state and sampled presentation, in
     /// the browser's frame shape (tools/compare_presentation.mjs).
     pub present_log: Option<Vec<serde_json::Value>>,
+    /// In a multiplayer room: pause and blur keep neutral-input simulation
+    /// running so other riders see this one (web/game.js online pause).
+    pub online: bool,
+    /// Other riders' bodies for owner-local contacts on each step.
+    pub peers: Vec<atv_game::multiplayer::PeerBody>,
+    /// Steps on which a rider contact touched.
+    pub contacts: u64,
 }
 
 /// What a frame sampled from the keyboard/controller.
@@ -110,6 +117,9 @@ impl Riding {
             clock: 0.,
             presented: (false, 1.),
             present_log: None,
+            online: false,
+            peers: Vec::new(),
+            contacts: 0,
         }
     }
 
@@ -138,6 +148,18 @@ impl Riding {
             }
             self.delivered = Some(current);
         }
+        Ok(())
+    }
+
+    /// A multiplayer arrival beside another rider (spawn), as Reset places.
+    pub fn place_beside(&mut self, origin: [f32; 3], yaw: f32) -> Result<(), String> {
+        self.clear_input();
+        self.ride.place_beside(origin, yaw)?;
+        if let Some(effects) = &mut self.effects {
+            effects.reset(&self.ride)?;
+        }
+        self.orbit = 0.;
+        self.delivered = None;
         Ok(())
     }
 
@@ -170,6 +192,22 @@ impl Riding {
         self.step_cameras.clear();
         self.step_rest.clear();
         self.step_race.clear();
+        // Online, a paused or unfocused rider keeps riding with neutral input:
+        // the room still sees it and its world clocks keep running.
+        if self.online
+            && !self.held
+            && self.autodrive.is_none()
+            && (!self.focused || (self.paused && self.menu_open))
+        {
+            self.accumulator = (self.accumulator + dt).min(0.1);
+            let count = ((self.accumulator * 60.).floor() as u32).min(4);
+            if count > 0 {
+                self.accumulator -= count as f32 / 60.;
+                self.run(&Controls::default(), count)?;
+                self.accept_batch(count, false)?;
+            }
+            return Ok(());
+        }
         if !self.focused {
             return Ok(());
         }
@@ -331,6 +369,14 @@ impl Riding {
     /// `count` fixed steps with one control sample (an op 50 batch).
     pub fn run(&mut self, controls: &Controls, count: u32) -> Result<(), String> {
         for _ in 0..count {
+            for peer in &self.peers {
+                if self
+                    .ride
+                    .peer_contact(peer.position, peer.velocity, peer.orientation, peer.tie)
+                {
+                    self.contacts += 1;
+                }
+            }
             self.ride.step(controls, self.orbit)?;
             if let Some(effects) = &mut self.effects {
                 effects.step(&self.ride)?;

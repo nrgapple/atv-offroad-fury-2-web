@@ -295,6 +295,7 @@ fn main() {
         code: room_code,
         host,
         name,
+        drop_after: None,
     });
     // Without a direct-ride or tooling option the game opens at its title.
     let direct = room.is_some()

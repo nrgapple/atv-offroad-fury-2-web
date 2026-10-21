@@ -10,6 +10,7 @@
 //! JavaScript game's socket glue. The wire format, codec, deltas and
 //! smoothing are atv-net's, shared with the JavaScript game and the relay.
 pub mod remote;
+pub mod spawn;
 
 use crate::Result;
 use crate::ride::Ride;
@@ -110,6 +111,8 @@ pub struct Session {
     /// Relay wall clock minus local monotonic clock, from the best ping.
     clock_offset_ms: Option<f64>,
     clock_rtt_ms: u32,
+    /// Peer contacts stay off until this local time after an arrival.
+    ghost_until: u64,
 }
 
 fn encode(packet: &Packet) -> Result<Vec<u8>> {
@@ -143,6 +146,15 @@ impl Session {
 
     pub fn profile(&self) -> Option<&Profile> {
         self.profile.as_ref()
+    }
+
+    /// A fresh session for a new socket (reconnect), keeping the profile
+    /// (atv-web op 84 then op 80).
+    pub fn restart(&mut self) {
+        *self = Session {
+            profile: self.profile.take(),
+            ..Default::default()
+        };
     }
 
     /// The first packet on a new socket.
@@ -478,6 +490,61 @@ impl Session {
         Ok(())
     }
 
+    /// Contacts stay off for 2.5 s after any arrival so riders separate.
+    pub fn ghost(&mut self, now_ms: u64) {
+        self.ghost_until = now_ms + 2500;
+    }
+
+    /// Other riders' current (unbuffered) bodies for contacts, unless ghosted
+    /// (atv-web `collide`).
+    pub fn contact_bodies(&self, now_ms: u64) -> Vec<PeerBody> {
+        let Some(own) = self.peer else {
+            return Vec::new();
+        };
+        if now_ms < self.ghost_until {
+            return Vec::new();
+        }
+        self.buffers
+            .iter()
+            .filter_map(|(&peer, buffer)| {
+                let pose = buffer.sample_current(now_ms).filter(|p| !p.stale)?;
+                Some(PeerBody {
+                    position: pose.snapshot.atv.position,
+                    velocity: pose.snapshot.velocity,
+                    orientation: pose.snapshot.atv.rotation,
+                    tie: if own < peer { -1. } else { 1. },
+                })
+            })
+            .collect()
+    }
+
+    /// Riders to meet on arrival: fresh and Riding, the host first in a
+    /// private room (shared rooms spread arrivals; `order` shuffles them).
+    pub fn meet_candidates(&self, now_ms: u64, order: u64) -> Vec<Snapshot> {
+        let host = self.lobby.as_ref().filter(|l| !l.public).map(|l| l.host);
+        let mut riding: Vec<Snapshot> = self
+            .buffers
+            .values()
+            .filter_map(|b| b.sample_current(now_ms).filter(|p| !p.stale))
+            .map(|p| p.snapshot)
+            .filter(|s| s.rider_state == RiderState::Riding)
+            .collect();
+        riding.sort_by_key(|s| match host {
+            Some(host) => (u64::from(s.peer != host), u64::from(s.peer)),
+            None => (0, (u64::from(s.peer) ^ order).wrapping_mul(0x9e37_79b9)),
+        });
+        riding
+    }
+
+    /// Every other rider's current position (spawn clearance).
+    pub fn positions(&self, now_ms: u64) -> Vec<[f32; 3]> {
+        self.buffers
+            .values()
+            .filter_map(|b| b.sample_current(now_ms).filter(|p| !p.stale))
+            .map(|p| p.snapshot.atv.position)
+            .collect()
+    }
+
     /// Each remote rider's presented pose (PoseBuffer jitter buffer, Hermite
     /// arcs and decaying corrections). Riders near `own` are presented
     /// closer to their current estimate so contacts line up.
@@ -492,6 +559,16 @@ impl Session {
             })
             .collect()
     }
+}
+
+/// Another rider's body for owner-local contacts on one step.
+#[derive(Clone, Copy, Debug)]
+pub struct PeerBody {
+    pub position: [f32; 3],
+    pub velocity: [f32; 3],
+    pub orientation: [f32; 4],
+    /// -1 when this rider's slot is lower, else 1 (equal-mass tie break).
+    pub tie: f32,
 }
 
 /// The relay's stable map id for a venue.

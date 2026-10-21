@@ -622,7 +622,7 @@ measured comparison). Parity above is with the JavaScript build.
 | `atv-game/src/audio/ride.rs` | engine sample selection once per rendered batch with the batch's summed dt (GameAudio.update) | the original emitter update runs every frame | No |
 | `atv-game/src/audio/mixer.rs` | windowed-sinc resampling at load and linear-interpolated pitch (Web Audio semantics), 0.65 master and 0.45 music gains | SPU2 voice pitch/ADSR, mixer and reverb not recovered | No |
 | `atv-game/src/ride/race.rs` | CPU recovery after 5 s off the track polygon or 4 s below 3 ft/s; the player handed to the path driver after the finish; equal-mass rider contact proxy | RaceStatus +0xf0 consumer, finish takeover routine and quad-to-quad response not identified | No |
-| `atv-game/src/ride/race.rs` | Restart Race keeps the loaded roster | the original reloads the event (new roster draw) | No |
+| `atv-game/src/ride/race.rs` | Restart Race keeps the loaded roster | the original reloads the event (new roster draw) | Yes, through the frontend (direct parity rides keep the in-place restart) |
 | desktop `f32` math (`atv-core` via std) | system libm for sin/cos/atan2/…; the browser build uses Rust's libm, so native races drift from the JavaScript/browser result | one deterministic implementation on every target (PS2 VU/libm equivalence is a separate question) | Yes: `atv_core::math` (Deterministic simulation maths) |
 | `atv-render/blood.rs`, `atv-game/crash.rs` | Crazy/Gorn crash breakup, ragdoll and blood | authored browser feature with no original counterpart (the original crash is the wreck animation, kept under Original) | Keep (option) |
 
@@ -688,9 +688,10 @@ the system libm, the browser's from Rust's own libm (fixed: Deterministic simula
 maths below). The same cause explains the
 small native drift in the Freeride comparisons above.
 
-Not connected yet: the results menu and Restart Race/Quit menus (the race overlays:
-RUST_UI.md "Race overlays checkpoint"). Restart reuses the loaded roster; the browser
-reloads the event and draws a new one. Crowd, flashes, fireworks, the drop gate, lamp
+Race overlays, the results panel and its menus: RUST_UI.md "Race overlays checkpoint"
+and "Race results checkpoint". Restart Race reloads the event with a new roster draw
+and no pre-race camera when the engine's frontend is present (race links); a direct
+`?venue=…&race=1` / `fury --race` ride restarts in place with the loaded roster. Crowd, flashes, fireworks, the drop gate, lamp
 sounds, race music and the grid rest pose: see Race presentation below.
 
 ## Race presentation: stadium, gate, lamps and music (2026-10-21)
@@ -1001,26 +1002,63 @@ relay with original content, one Mac, headless Chromium/Metal; host-only):
   cadence. A live ride steps normally. The native RTT of 256 ms includes blocking
   model loads in that capture loop.
 
+### Slice 2: drop-in riding
+
+Ported:
+
+- Arrivals meet a rider (`atv-game/src/multiplayer/spawn.rs`, port of atv-web
+  `world::spawn`). A client that joins a room where others already ride tries for 3 s
+  (12 tries, 250 ms apart) to appear beside a fresh, Riding rider: the host first in a
+  private room, a shuffled rider in a shared one. The six candidate spots, ground and
+  prop surfaces, rider spacing and prop clearance are the browser's. A course change
+  starts everyone at the start line, as `ride()` in web/multiplayer.js does.
+- Owner-local rider contacts (`atv_core::peer_contact`, authored yawed boxes) against
+  each other rider's current pose before every step, off for 2.5 s after any arrival.
+- Reconnect: a retryable close (1001/1005/1006/1011-1013, or 1000 "Connection timed
+  out") retries the slot key for 25 s with backoff (500 ms doubling, at most 3 s). It
+  opens a fresh session and keeps the ride. The browser keeps the latest slot key in
+  sessionStorage `atv-mp-session`, the same entry web/multiplayer.js uses, so a
+  reloaded `engine.html` reclaims its slot. `?dropAfter=S` is a test hook: it drops
+  the socket once with close code 4000.
+- Following the room: when the host moves the room, the client reloads the ride on
+  the new course and keeps the room, its socket, models and choices (`RoomRide`).
+- Online pause and blur: with the pause menu open or the window unfocused, the ride
+  keeps running on neutral input, so others still see this rider and its world clocks
+  advance (web/game.js online pause). Only actual suspension (hidden page, suspended
+  app) sends the paused presence pose.
+
+Observed (`tools/test_engine_multiplayer_dropin.mjs`, run once on the local relay,
+one Mac, headless Chromium/Metal; host-only):
+
+- A JavaScript host rode env01 from the menus (room XMVSFJWK). The Rust browser guest
+  (quad 7) arrived beside it: `met` was the host, 10.08 ft from the target, 9.98 ft
+  from the host's origin.
+- The guest's socket dropped after 25 s and it reconnected once, back in slot 1, with
+  the host drawn again. Reloading the page then reclaimed slot 1 again.
+- The host moved the room from Pause -> Select Track to env02. The Rust guest reloaded
+  there and drew the host again, 4.08 ft away at the shared start.
+- Inspected screenshots: `private/reports/engine-multiplayer/slice2-arrival-engine.png`,
+  `slice2-arrival-js.png`, `slice2-moved-engine.png`.
+- The slice 1 three-client gate passed again (room XNYAK4ZK). Native and engine each
+  drew 2 riders, the JavaScript client listed 2, and the JavaScript rider moved
+  135.0 ft. Arrivals now stand beside the native host instead of on it
+  (`slice2-three-native.png`).
+
 Gaps, in planned slice order:
 
-1. Arrivals start at the course start. The JavaScript game's meet-beside-a-rider
-   spawn (atv-web `world::spawn`) and the 2.5 s contact ghosting are not ported.
-2. No room UI in `atv-ui`: no Multiplayer menu, Host/Join forms, room code entry,
-   Players page, invite copy or Leave. Rides start from the command line or URL
+1. No room UI in `atv-ui`: no Multiplayer menu, Host/Join forms, room code entry,
+   Players page (and its spawn-beside action), invite copy, Select Track for a Rust
+   host, Change ATV and Rider, or Leave. Rides start from the command line or URL
    only. No name tags, minimap peer markers or compass colours either.
-3. A closed socket ends the room for this client (status line). There is no
-   reconnect with the slot key, no session-storage key recovery and no reload when
-   the host changes the course. Host handoff works only on the relay side.
-4. No Arlington Free Ride: the shared `FREERD` rooms, the rider count and the
+2. No Arlington Free Ride: the shared `FREERD` rooms, the rider count and the
    20-rider limits are not in the menus.
-5. The shared train clock, moving-platform rebasing and owner-local peer contacts
-   (`atv_core::peer_contact`) are not ported. Snapshots send no platform and no
-   train time.
+3. Desktop keeps the slot key in memory only; it is lost when the app restarts.
+4. A hidden browser tab runs no frames, so the Rust engine sends no 0.2 Hz presence
+   while hidden. The JavaScript game keeps timers running there.
+5. The shared train clock and moving-platform rebasing are not ported. Snapshots send
+   no platform and no train time.
 6. Remote engine voices and impact sounds are not played: the nearest-six voice
    selection and spatial audio of op 83 are not ported.
-7. Pause and focus: a paused or unfocused Rust rider sends a paused (zero-velocity)
-   pose, but it does not keep neutral-input simulation running as the JavaScript
-   game does.
 
 ## Commands
 
@@ -1045,6 +1083,7 @@ cargo run --release -p atv-app --bin fury -- --free ...   # terrain free camera,
 cargo run --release -p atv-app --bin fury -- --content DIR --venue env01 --host [--room CODE] \
   [--relay http://127.0.0.1:4187] [--name NAME]          # host a room; --room CODE alone joins
 FURY_BIN=... FURY_CONTENT=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer.mjs
+ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_dropin.mjs   # arrival, reconnect, course change
 cargo run --release -p atv-app --bin fury -- --quad 29 ...   # a motorcycle (27-46); ride parity: compare_engine.mjs ride ... --quad 29
 cargo run --release -p atv-app --bin fury -- --gear 1,2,1,3,3,2,1 --paint 4 ...   # Garage gear/paint; parity: compare_engine.mjs ride ... --appearance 1.2.1.3.3.2.1:4
 cargo run --release -p atv-app --bin fury -- --race --venue env01 ...   # race (with --free: race course world, free camera)
