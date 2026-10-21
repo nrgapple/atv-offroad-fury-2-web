@@ -113,9 +113,15 @@ impl SnowPass {
     }
 
     /// One 60 Hz step around the camera: new births enter the ring.
-    pub fn step(&mut self, weather: &mut Weather, camera: &Camera) -> Result<(), String> {
-        let axes = camera.axes();
-        let frame = weather.snow.step(camera.eye(), axes.forward)?;
+    /// `position`/`forward` are this step's simulation camera (the browser
+    /// passes the follow or intro camera, target minus position).
+    pub fn step(
+        &mut self,
+        weather: &mut Weather,
+        position: [f32; 3],
+        forward: [f32; 3],
+    ) -> Result<(), String> {
+        let frame = weather.snow.step(position, forward)?;
         self.time = frame.time;
         for birth in frame.births {
             if birth.id <= self.sequence || birth.life <= 0. {

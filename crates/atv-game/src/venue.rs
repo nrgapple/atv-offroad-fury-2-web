@@ -60,6 +60,8 @@ pub struct Venue {
     pub train: Option<std::rc::Rc<std::cell::RefCell<crate::train::Train>>>,
     /// Placed TOY particle effects (smoke, fountains, fog), stepped at 60 Hz.
     pub ambient: Option<std::rc::Rc<std::cell::RefCell<crate::ambient::Ambient>>>,
+    /// Pre-race camera shots of a race-course load (empty in free ride).
+    pub intro_shots: Vec<Vec<atv_core::race_intro::ShotFrame>>,
     /// Active Snow weather (ring emitters around the camera).
     pub snow: Option<std::rc::Rc<std::cell::RefCell<crate::snow::Weather>>>,
     /// Source Weather selection for this load (00208cc0).
@@ -262,6 +264,11 @@ pub async fn load_with(
         train,
         ambient,
         snow,
+        intro_shots: if racing {
+            crate::intro::shots(&archive, environment)?
+        } else {
+            Vec::new()
+        },
         weather,
         scene,
         terrain: Terrain {

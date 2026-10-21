@@ -249,6 +249,13 @@ impl App {
         if !ready.hold {
             ready.scene.advance(dt);
         }
+        // A race-course load plays its pre-race shots unless a view is fixed.
+        if !ready.fixed
+            && let Some((camera, focal)) = ready.scene.intro_view(ready.gpu.aspect())
+        {
+            ready.camera = camera;
+            ready.focal_length = focal;
+        }
         match ready.scene.render(
             &ready.gpu,
             &View {
@@ -293,9 +300,10 @@ impl App {
         // World clocks (scenery animation, water, train) follow the
         // simulation's fixed steps, as the browser's op 50 batch does.
         if !ready.hold {
-            ready
-                .scene
-                .advance_steps(u64::from(riding.steps_last_frame));
+            for &(position, target) in &riding.step_cameras {
+                ready.scene.set_weather_view(position, target);
+                ready.scene.advance_steps(1);
+            }
         }
         match riding.present(
             &ready.gpu,
