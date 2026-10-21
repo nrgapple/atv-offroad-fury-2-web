@@ -7,6 +7,7 @@ mod blood;
 pub mod camera;
 mod cull;
 mod lingering_dust;
+pub mod preview;
 mod scenery;
 mod shadows;
 mod sky;

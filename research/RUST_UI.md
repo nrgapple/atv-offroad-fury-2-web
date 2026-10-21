@@ -304,11 +304,10 @@ content, Chromium, DPR 1; images in private/reports/rust-ui/front/side-*.png):
 | Settings (from main) | 1.89 | 3.09 |
 | Main / Single / Garage | 9.7 / 8.5 / 12.4 | 12.6 / 10.7 / 13.7 |
 
-The main, single and garage differences are the missing 3D quad and rider
-previews (their left columns are 1.8-5.3 / 1.0-8.4, the latter from the hidden
-rows). Hidden because the Rust engine cannot run them yet: Multiplayer, Arlington
+The main, single and garage differences were the missing 3D previews, added in
+the next checkpoint. Hidden because the Rust engine cannot run them yet: Multiplayer, Arlington
 Free Ride, Jukebox, Race setup, Rider gear and Alpha. Race links on a motorcycle
-open the main menu with the reason, as motorcycle races are not ported. Not yet drawn: the 3D model previews, the Free Ride rider count,
+open the main menu with the reason, as motorcycle races are not ported. Not yet drawn: the Free Ride rider count,
 backdrop-filter blur on the photo arrows, the menu notice line and the training
 venue's photo (a devlog image in the browser). The loader shows one frame per
 load stage (the ride load owns the GPU meanwhile), so the shot crossfade only
@@ -323,3 +322,27 @@ Tests: `tools/test_engine_front.mjs` (title → main → Settings → Single →
 persistence → tabs and card click → loader → ride → Quit to Main Menu, and a ride
 link on a phone viewport); atv-ui controller, layout, logo and pixel unit tests;
 atv-game launch contract tests.
+
+## Menu model previews (2026-10-21)
+
+Main Menu, Single Player and Select ATV & Rider draw the 3D previews of
+frontend.js `ModelView` (`atv_render::preview::ModelPreview`): the vehicle mesh
+in its bind pose (a motorcycle in its resting pose), and in the garage the
+original frontend rider (PAGE07 `mrider_ui`/`frider_ui` with its opaque UI
+textures, playing the breathing and idle clips at the browser's ~30 Hz) or, for
+a motorcycle, the MX rider with its selection clips turned the other way. Each
+preview uses the browser shader's fit (height against horizontal turn radius,
+0.25 rad pitch), studio lighting and grade, renders with 4x MSAA into a UI
+image sized to its slot times min(DPR, 2), and draws with the canvas
+`drop-shadow(0 10px 6px #0004)` (a new image drop-shadow item in the UI
+renderer). Dragging a preview turns it. The two most recent vehicles stay
+loaded, as `selectionAssets` keeps two.
+
+Parity, mean absolute RGB against play.html (1280x720 / 390x844): Main 2.81 /
+4.80 (panel 1.72 / stage 3.10), Single 1.56 / 2.96, Garage 6.11 / 9.34; the
+garage rider's idle pose depends on when each capture is taken, and the Rider
+gear button is still hidden. CPU (host Chromium): the garage costs 0.9 ms per
+frame while the rider animates (layout and pose; the draw is on the GPU);
+switching vehicle costs 2-6 ms when the new model uploads. Not ported: rider
+gear and quad paint previews (`gearPreview`, `applyPaint`). Wasm is 5.70 MB on
+current main. `test_engine_front.mjs` waits for both garage previews.

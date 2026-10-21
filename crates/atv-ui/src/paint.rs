@@ -120,6 +120,17 @@ pub enum Item {
         rotation: f32,
         pivot: [f32; 2],
     },
+    /// CSS `filter: drop-shadow()` of an image: its alpha, offset, blurred
+    /// (`blur` is the CSS radius) and tinted.
+    ImageShadow {
+        image: ImageId,
+        src: Rect,
+        dst: Rect,
+        dx: f32,
+        dy: f32,
+        blur: f32,
+        color: crate::color::Color,
+    },
     /// Clip following items to a rounded rectangle until `PopClip`.
     PushClip {
         rect: Rect,

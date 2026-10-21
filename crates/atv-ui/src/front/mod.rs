@@ -33,6 +33,9 @@ pub const QUAD_PREV: u32 = 2405;
 pub const QUAD_NEXT: u32 = 2406;
 pub const RIDER: u32 = 2407;
 pub const DONE: u32 = 2408;
+/// 3D preview slots (their rects size the render targets).
+pub const MODEL_QUAD: u32 = 2409;
+pub const MODEL_RIDER: u32 = 2410;
 
 /// A registered image and its texel size.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -48,6 +51,22 @@ impl Img {
             image: self.id,
             size: [self.width, self.height],
             fit,
+            shadow: None,
+        }
+    }
+
+    /// `.ms-model .model-view canvas { filter: drop-shadow(0 10px 6px #0004) }`.
+    fn model(self) -> Content {
+        Content::Image {
+            image: self.id,
+            size: [self.width, self.height],
+            fit: Fit::Fill,
+            shadow: Some(crate::text::Shadow {
+                dx: 0.,
+                dy: 10.,
+                blur: 6.,
+                color: Color::hex("#0004"),
+            }),
         }
     }
 }
@@ -138,6 +157,9 @@ pub struct Screen {
     pub shot_fade: f32,
     /// Press Start pulse brightness (1-1.18).
     pub pulse: f32,
+    /// Rendered 3D previews of the vehicle and the garage rider.
+    pub quad_model: Option<Img>,
+    pub rider_model: Option<Img>,
 }
 
 fn display(size: f32, weight: u16, italic: bool) -> Font {
@@ -646,27 +668,51 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             if let Some(logo) = panel_logo(m, s) {
                 panel = panel.child(logo);
             }
-            panel = panel
-                .child(El::new(Style {
-                    flex_grow: 1.,
-                    min_size: Size {
-                        width: auto(),
-                        height: length(if m.portrait { 0. } else { 72. }),
-                    },
-                    ..Default::default()
-                }))
-                .child(plate(m, s));
+            // `.ms-model`: flex 1, min-height 72px.
+            let mut slot = El::new(Style {
+                flex_grow: 1.,
+                flex_basis: length(0.),
+                min_size: Size {
+                    width: auto(),
+                    height: length(72.),
+                },
+                ..Default::default()
+            })
+            .id(MODEL_QUAD);
+            if let Some(image) = s.quad_model {
+                slot = slot.content(image.model());
+            }
+            panel = panel.child(slot).child(plate(m, s));
         }
         "tracks" => panel = panel.child(hero(m, s)),
         "garage" => {
-            panel = panel.child(plate(m, s)).child(El::new(Style {
+            // `.ms-models`: the rider just behind the ATV's rear wheel.
+            let model = |image: Option<Img>, id: u32, style: Style| {
+                let el = El::new(style).id(id);
+                match image {
+                    Some(image) => el.content(image.model()),
+                    None => el,
+                }
+            };
+            let mut quad = absolute(Some(0.), Some(0.), Some(0.), Some(0.));
+            quad.inset.top = LengthPercentageAuto::percent(0.14);
+            quad.inset.right = LengthPercentageAuto::percent(0.3);
+            let mut rider = absolute(Some(0.), Some(0.), None, None);
+            rider.inset.bottom = LengthPercentageAuto::percent(0.02);
+            rider.size.width = percent(0.36);
+            let models = El::new(Style {
+                position: Position::Relative,
                 flex_grow: 1.,
+                flex_basis: length(0.),
                 min_size: Size {
                     width: auto(),
                     height: length(0.),
                 },
                 ..Default::default()
-            }));
+            })
+            .child(model(s.quad_model, MODEL_QUAD, quad))
+            .child(model(s.rider_model, MODEL_RIDER, rider));
+            panel = panel.child(plate(m, s)).child(models);
             if let Some(stats) = &s.stats
                 && !(m.portrait && m.h <= 640.)
             {

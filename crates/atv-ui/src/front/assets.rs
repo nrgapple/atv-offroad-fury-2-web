@@ -288,6 +288,171 @@ pub async fn top_speed(content: &Content, quad: u16) -> Result<f32, String> {
     Ok(atv_core::vehicle_stats::from_physics(&physics)?.top_speed)
 }
 
+/// A material texture of a preview model. `cutout` discards low alpha.
+#[derive(Clone)]
+pub struct ModelTexture {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    pub cutout: bool,
+}
+
+/// A mesh for the menu model previews, its textures by material name and
+/// node world matrices (None: the bind pose).
+pub struct PreviewModel {
+    pub mesh: atv_core::mesh::Mesh,
+    pub textures: HashMap<String, ModelTexture>,
+    pub pose: Option<Vec<[f32; 16]>>,
+}
+
+fn ride_textures(
+    textures: HashMap<String, atv_game::ride::textures::MaterialTexture>,
+) -> HashMap<String, ModelTexture> {
+    textures
+        .into_iter()
+        .filter_map(|(name, t)| {
+            let image = t.image?;
+            Some((
+                name,
+                ModelTexture {
+                    width: image.width,
+                    height: image.height,
+                    rgba: image.rgba,
+                    cutout: true,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// The garage vehicle and, for a motorcycle, its MX rider with the original
+/// selection clips (selectionAssets and the MX menuRiderAssets).
+pub async fn vehicle_models(
+    content: &Content,
+    quad: u16,
+) -> Result<(PreviewModel, Option<MenuRider>), String> {
+    use atv_core::resource::Resource;
+    let models = atv_core::player_models::selection(quad, 0)?;
+    let bytes = content.file(&models.quad).await?;
+    if models.motorcycle {
+        let model = atv_core::motorcycle::Model::load(&bytes, quad)?;
+        let archive = Resource::parse(&bytes)?;
+        let vehicle = PreviewModel {
+            textures: ride_textures(atv_game::ride::textures::load(&model.mesh, &archive)?),
+            mesh: model.mesh.clone(),
+            pose: Some(model.pose(0., [0., 0.], [0., 0.]).to_vec()),
+        };
+        let textures = ride_textures(atv_game::ride::textures::load(&model.rider, &archive)?);
+        // atv-web `motorcycles::menu`: breathing between each selection idle.
+        let mut clips = Vec::new();
+        for idle in 0..=3 {
+            let breathe = "ui_rider_select_breathing";
+            clips.push((
+                format!("{breathe}.mot"),
+                model
+                    .motions
+                    .get(breathe)
+                    .ok_or("missing MX menu breathing")?
+                    .clone(),
+            ));
+            if idle > 0 {
+                let name = format!("ui_rider_select_idle{idle}");
+                clips.push((
+                    format!("{name}.mot"),
+                    model
+                        .motions
+                        .get(&name)
+                        .ok_or("missing MX menu idle")?
+                        .clone(),
+                ));
+            }
+        }
+        let rider = atv_core::menu_preview::Rider::from_clips(model.rider.clone(), clips)?;
+        // MX selection clips face the opposite way to the ATV menu rig.
+        let yaw = -(std::f32::consts::PI - 0.6);
+        return Ok((
+            vehicle,
+            Some(MenuRider {
+                rider,
+                textures,
+                yaw,
+            }),
+        ));
+    }
+    let archive = Resource::parse(&bytes)?;
+    let index = archive
+        .members
+        .iter()
+        .position(|m| {
+            m.name
+                .rsplit('/')
+                .next()
+                .is_some_and(|n| n.eq_ignore_ascii_case(&models.quad_mesh))
+        })
+        .ok_or("ATV mesh is missing")?;
+    let mesh = atv_core::mesh::decode_psg(&archive.extract(index)?)?;
+    let materials = content.file(&models.quad_materials).await?;
+    let textures = ride_textures(atv_game::ride::textures::load(
+        &mesh,
+        &Resource::parse(&materials)?,
+    )?);
+    Ok((
+        PreviewModel {
+            mesh,
+            textures,
+            pose: None,
+        },
+        None,
+    ))
+}
+
+/// The original frontend rider (PAGE07: mesh, breathing/idle clips and its
+/// opaque UI textures) for an ATV garage (menuRiderAssets).
+pub struct MenuRider {
+    pub rider: atv_core::menu_preview::Rider,
+    pub textures: HashMap<String, ModelTexture>,
+    /// Preview turn (the shader's yaw).
+    pub yaw: f32,
+}
+
+pub async fn menu_rider(content: &Content, female: bool) -> Result<MenuRider, String> {
+    use atv_core::resource::Resource;
+    let bytes = content.file("/UI/RESOURCE/PAGEA/PAGE07.RES").await?;
+    let rider = atv_core::menu_preview::Rider::from_resource(&bytes, female)?;
+    let archive = Resource::parse(&bytes)?;
+    let mut textures = HashMap::new();
+    for (index, member) in archive.members.iter().enumerate() {
+        let name = member
+            .name
+            .rsplit('/')
+            .next()
+            .unwrap_or(&member.name)
+            .to_lowercase();
+        let Some(stem) = name.strip_suffix(".pst") else {
+            continue;
+        };
+        if let Ok(image) = pst(&archive.extract(index)?) {
+            textures.insert(
+                stem.to_string(),
+                ModelTexture {
+                    width: image.width,
+                    height: image.height,
+                    rgba: image.data,
+                    cutout: false,
+                },
+            );
+        }
+    }
+    if let Some(shirt) = textures.get("atv2_shirt_ui").cloned() {
+        textures.insert("atv2_shirt_ui_export".into(), shirt);
+    }
+    Ok(MenuRider {
+        rider,
+        textures,
+        yaw: 0.6,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

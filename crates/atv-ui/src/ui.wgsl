@@ -200,7 +200,22 @@ fn fs(v: Varyings) -> @location(0) vec4<f32> {
         out = v.color * element * (1. - hole);
     } else {
         let uv = mix(v.uv.xy, v.uv.zw, v.local.zw);
-        out = textureSampleLevel(image, image_sampler, uv, 0.) * v.color.a;
+        if (v.params.w > .5) {
+            // drop-shadow: a 5x5 Gaussian of the image alpha, tinted.
+            var a = 0.;
+            var total = 0.;
+            for (var i = -2; i <= 2; i++) {
+                for (var j = -2; j <= 2; j++) {
+                    let w = exp(-f32(i * i + j * j) / 2.);
+                    let o = vec2(f32(i), f32(j)) * v.cut.xy;
+                    a += textureSampleLevel(image, image_sampler, uv + o, 0.).a * w;
+                    total += w;
+                }
+            }
+            out = v.color * (a / total);
+        } else {
+            out = textureSampleLevel(image, image_sampler, uv, 0.) * v.color.a;
+        }
     }
     return out * clip;
 }

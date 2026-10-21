@@ -122,6 +122,12 @@ enum ArtPiece {
     Quads(atv_ui::front::assets::QuadCatalog),
     TopSpeed(u16, f32),
     Shots(String, Vec<atv_ui::front::pixels::Rgba>),
+    Vehicle(
+        u16,
+        atv_ui::front::assets::PreviewModel,
+        Option<atv_ui::front::assets::MenuRider>,
+    ),
+    MenuRider(u16, atv_ui::front::assets::MenuRider),
 }
 
 /// Load-time choices kept for rides started from the frontend.
@@ -1390,6 +1396,19 @@ impl ApplicationHandler<Message> for App {
                         ArtPiece::Shots(environment, shots) => {
                             front.art.shots = Some((environment, shots))
                         }
+                        ArtPiece::Vehicle(quad, model, rider) => {
+                            front.add_vehicle(quad, model, rider);
+                            let kept: Vec<u16> =
+                                front.art.vehicles.iter().map(|(q, ..)| *q).collect();
+                            self.requested.retain(|k| {
+                                k.strip_prefix("vehicle:")
+                                    .and_then(|q| q.parse::<u16>().ok())
+                                    .is_none_or(|q| kept.contains(&q) || q == quad)
+                            });
+                        }
+                        ArtPiece::MenuRider(rider, model) => {
+                            front.art.menu_riders.insert(rider, model);
+                        }
                     }
                 }
                 self.wake();
@@ -1885,6 +1904,7 @@ impl App {
         if self.ui_diagnostics {
             publish_ui_state(&serde_json::json!({ "front": f.diagnostics() }).to_string());
         }
+        let wants = f.wants();
         // The garage shows the authored top speed of the current ATV.
         let wanted = (f.state.page == "garage"
             && f.state.quad_id < 27
@@ -1901,6 +1921,39 @@ impl App {
                     Err(error) => Message::SoundFailed(format!("ATV figures: {error}")),
                 },
             );
+        }
+        // Preview models load once each (the vehicle is re-read when
+        // revisited after two others, as selectionAssets evicts it).
+        for want in wants {
+            let Some(content) = self.content.clone() else {
+                break;
+            };
+            match want {
+                front::Want::Vehicle(quad) => {
+                    if self.requested.insert(format!("vehicle:{quad}")) {
+                        self.spawn(
+                            async move { atv_ui::front::assets::vehicle_models(&content, quad).await },
+                            move |result| match result {
+                                Ok((model, rider)) => {
+                                    Message::FrontArt(Box::new(ArtPiece::Vehicle(quad, model, rider)))
+                                }
+                                Err(error) => Message::SoundFailed(format!("Model preview: {error}")),
+                            },
+                        );
+                    }
+                }
+                front::Want::MenuRider(rider) => {
+                    if self.requested.insert(format!("menu-rider:{rider}")) {
+                        self.spawn(
+                            async move { atv_ui::front::assets::menu_rider(&content, rider == 1).await },
+                            move |result| match result {
+                                Ok(model) => Message::FrontArt(Box::new(ArtPiece::MenuRider(rider, model))),
+                                Err(error) => Message::SoundFailed(format!("Rider preview: {error}")),
+                            },
+                        );
+                    }
+                }
+            }
         }
         self.meter.cpu += started.elapsed().as_secs_f64() * 1000.;
         if let Some(event) = event {
@@ -1984,6 +2037,16 @@ fn capture_front(booted: Booted, page: &str, path: &std::path::Path, width: u32,
         }
         if let Ok(speed) = atv_ui::front::assets::top_speed(&content, 1).await {
             front.art.top_speed.insert(1, speed);
+        }
+        match atv_ui::front::assets::vehicle_models(&content, 1).await {
+            Ok((model, rider)) => front.add_vehicle(1, model, rider),
+            Err(error) => status(&format!("Model preview: {error}")),
+        }
+        match atv_ui::front::assets::menu_rider(&content, false).await {
+            Ok(rider) => {
+                front.art.menu_riders.insert(0, rider);
+            }
+            Err(error) => status(&format!("Rider preview: {error}")),
         }
     });
     if page == "loading" {

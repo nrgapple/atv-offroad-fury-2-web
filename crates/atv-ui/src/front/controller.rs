@@ -741,6 +741,8 @@ impl Frontend {
             previous_shot: shot.1,
             shot_fade: 1.,
             pulse,
+            quad_model: None,
+            rider_model: None,
         }
     }
 }

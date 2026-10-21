@@ -345,6 +345,45 @@ impl Renderer {
         id
     }
 
+    /// An image other passes render into (premultiplied RGBA8, e.g. the
+    /// frontend's 3D model previews).
+    pub fn add_target(&mut self, device: &wgpu::Device, width: u32, height: u32) -> ImageId {
+        let id = ImageId(self.next_image);
+        self.next_image += 1;
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("ui render target"),
+            size: wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let bind = Self::bind(device, &self.layout, &self.sampler, &texture);
+        self.images.insert(
+            id,
+            Texture {
+                texture,
+                bind,
+                width: width.max(1),
+                height: height.max(1),
+            },
+        );
+        id
+    }
+
+    /// The render view of an `add_target` image.
+    pub fn target_view(&self, id: ImageId) -> Option<wgpu::TextureView> {
+        self.images
+            .get(&id)
+            .map(|t| t.texture.create_view(&Default::default()))
+    }
+
     /// Replaces an image's pixels (same size).
     pub fn update_image(&self, queue: &wgpu::Queue, id: ImageId, rgba: &[u8]) {
         let Some(t) = self.images.get(&id) else {
@@ -550,6 +589,48 @@ impl Renderer {
                             },
                         );
                     }
+                }
+                Item::ImageShadow {
+                    image,
+                    src,
+                    dst,
+                    dx,
+                    dy,
+                    blur,
+                    color,
+                } => {
+                    let Some((iw, ih)) = self.image_size(*image) else {
+                        continue;
+                    };
+                    let (iw, ih) = (iw as f32, ih as f32);
+                    // The quad grows by three sigma; uv extends past the image
+                    // (clamped transparent edges) in proportion.
+                    let sigma = blur / 2.;
+                    let grow = 3. * sigma + 1.;
+                    let (du, dv) = (src.w / iw / dst.w.max(1e-3), src.h / ih / dst.h.max(1e-3));
+                    let rect = crate::Rect::new(
+                        dst.x + dx - grow,
+                        dst.y + dy - grow,
+                        dst.w + 2. * grow,
+                        dst.h + 2. * grow,
+                    );
+                    self.push(
+                        Source::Image(*image),
+                        Instance {
+                            rect: [rect.x * s, rect.y * s, rect.w * s, rect.h * s],
+                            color: color.premultiplied().map(|v| v * alpha),
+                            uv: [
+                                src.x / iw - grow * du,
+                                src.y / ih - grow * dv,
+                                src.right() / iw + grow * du,
+                                src.bottom() / ih + grow * dv,
+                            ],
+                            params: [3., 0., 0., 1.],
+                            cut: [sigma * du, sigma * dv, 0., 0.],
+                            extra: [clip_radius, 0., 0., 0.],
+                            ..base
+                        },
+                    );
                 }
                 Item::Image {
                     image,
