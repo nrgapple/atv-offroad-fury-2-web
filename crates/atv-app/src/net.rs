@@ -227,6 +227,26 @@ mod native {
     pub async fn sleep(ms: u32) {
         std::thread::sleep(Duration::from_millis(u64::from(ms)));
     }
+
+    /// The Free Ride rider count (blocking; call off the UI thread).
+    pub fn riders_blocking(relay: &str) -> Option<u32> {
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(10)))
+            .build()
+            .into();
+        let url = format!(
+            "{}/multiplayer/freeride/riders",
+            relay.trim_end_matches('/')
+        );
+        let text = agent
+            .get(&url)
+            .call()
+            .ok()?
+            .body_mut()
+            .read_to_string()
+            .ok()?;
+        super::riders_from(&text)
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -329,6 +349,8 @@ mod web {
 
     impl Drop for Socket {
         fn drop(&mut self) {
+            // Leaving the ride (or replacing the socket) ends this connection.
+            let _ = self.socket.close_with_code_and_reason(1000, "Left lobby");
             self.socket.set_onopen(None);
             self.socket.set_onmessage(None);
             self.socket.set_onclose(None);
@@ -358,6 +380,27 @@ mod web {
         Ok((response.status(), text))
     }
 
+    /// The Free Ride rider count (a same-origin GET, as the menu polls it).
+    pub async fn riders(relay: &str) -> Option<u32> {
+        let url = format!(
+            "{}/multiplayer/freeride/riders",
+            relay.trim_end_matches('/')
+        );
+        let window = web_sys::window()?;
+        let response = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(&url))
+            .await
+            .ok()?;
+        let response: web_sys::Response = response.dyn_into().ok()?;
+        if !response.ok() {
+            return None;
+        }
+        let text = wasm_bindgen_futures::JsFuture::from(response.text().ok()?)
+            .await
+            .ok()?
+            .as_string()?;
+        super::riders_from(&text)
+    }
+
     pub async fn sleep(ms: u32) {
         let promise = js_sys::Promise::new(&mut |resolve, _| {
             if let Some(window) = web_sys::window() {
@@ -370,12 +413,25 @@ mod web {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::{Socket, post, sleep};
+pub use native::{Socket, post, riders_blocking, sleep};
 #[cfg(target_arch = "wasm32")]
-pub use web::{Socket, post, sleep};
+pub use web::{Socket, post, riders, sleep};
+
+/// `{"riders": N}` from `/multiplayer/freeride/riders`.
+fn riders_from(text: &str) -> Option<u32> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    value["riders"].as_u64().and_then(|n| u32::try_from(n).ok())
+}
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rider_counts_parse_like_the_menu() {
+        assert_eq!(super::riders_from(r#"{"riders":7}"#), Some(7));
+        assert_eq!(super::riders_from(r#"{"riders":-1}"#), None);
+        assert_eq!(super::riders_from("nope"), None);
+    }
+
     #[test]
     fn room_urls_follow_the_relay_scheme() {
         assert_eq!(

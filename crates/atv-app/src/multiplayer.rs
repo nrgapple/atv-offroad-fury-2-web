@@ -23,6 +23,8 @@ pub struct RoomStart {
     /// The room code: required to join; optional custom code to host.
     pub code: Option<String>,
     pub host: bool,
+    /// Arlington Free Ride: the relay reserves a slot in a shared room.
+    pub freeride: bool,
     pub name: String,
     /// Test hook (`?dropAfter=S`): close the socket once after S seconds of
     /// riding, exercising the slot-key reconnect.
@@ -107,6 +109,34 @@ fn now_ms(clock: Instant) -> u64 {
 /// returns its code and, when this rider becomes its creator, the slot key.
 async fn claim(start: &RoomStart) -> Result<(String, Option<String>), String> {
     let origin = net::origin(&start.relay);
+    if start.freeride {
+        // POST /multiplayer/freeride reserves a slot in the first shared
+        // room with space (web/multiplayer.js `freeride`).
+        let url = format!("{}/multiplayer/freeride", start.relay.trim_end_matches('/'));
+        let (status, text) = net::post(&url, &origin, "").await?;
+        match status {
+            200 => {}
+            429 => {
+                return Err(
+                    "Too many attempts or multiplayer is at capacity. Try again shortly.".into(),
+                );
+            }
+            503 => {
+                return Err(
+                    "Arlington Free Ride is full or unavailable. Try again shortly.".into(),
+                );
+            }
+            status => return Err(format!("Unable to join Free Ride ({status}).")),
+        }
+        let room: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        let code = room["code"].as_str().unwrap_or_default().to_string();
+        let key = room["key"].as_str().unwrap_or_default().to_string();
+        let shared = atv_game::multiplayer::is_shared_room(&code);
+        if !shared || key.len() != 32 || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("Unable to join Free Ride.".into());
+        }
+        return Ok((code, Some(key)));
+    }
     let url = format!("{}/multiplayer/rooms", start.relay.trim_end_matches('/'));
     let code = start
         .code
