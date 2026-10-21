@@ -104,6 +104,9 @@ pub struct El {
     pub id: Option<u32>,
     /// CSS `opacity` (applied to the element's own paint and descendants).
     pub opacity: f32,
+    /// `overflow: auto` scroll position: children move up by this much and
+    /// are clipped to the padding box (radius = the box's first radius).
+    pub scroll: Option<f32>,
 }
 
 impl El {
@@ -132,6 +135,10 @@ impl El {
     }
     pub fn id(mut self, id: u32) -> Self {
         self.id = Some(id);
+        self
+    }
+    pub fn scroll(mut self, offset: f32) -> Self {
+        self.scroll = Some(offset);
         self
     }
     pub fn opacity(mut self, opacity: f32) -> Self {
@@ -420,9 +427,18 @@ fn paint(
         }),
         Content::None => {}
     }
-    for (i, child) in el.children.iter().enumerate() {
-        let id = tree.child_at_index(node, i).unwrap();
-        paint(tree, id, child, rect.x, rect.y, fonts, list, hits);
+    if let Some(offset) = el.scroll {
+        list.clip(rect, el.paint.radii[0]);
+        for (i, child) in el.children.iter().enumerate() {
+            let id = tree.child_at_index(node, i).unwrap();
+            paint(tree, id, child, rect.x, rect.y - offset, fonts, list, hits);
+        }
+        list.unclip();
+    } else {
+        for (i, child) in el.children.iter().enumerate() {
+            let id = tree.child_at_index(node, i).unwrap();
+            paint(tree, id, child, rect.x, rect.y, fonts, list, hits);
+        }
     }
     if grouped {
         list.unopacity();
@@ -464,4 +480,61 @@ fn length(value: LengthPercentage) -> f32 {
 pub fn css_baseline(line_height: f32, ascent: f32, descent: f32) -> f32 {
     let (ascent, descent) = (ascent.round(), descent.round());
     ((line_height - (ascent + descent)) / 2.).floor() + ascent
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn absolute_children_use_the_positioned_parent() {
+        let track = El::new(Style {
+            position: Position::Absolute,
+            inset: taffy::Rect {
+                left: LengthPercentageAuto::length(0.),
+                right: LengthPercentageAuto::length(0.),
+                top: LengthPercentageAuto::length(18.),
+                bottom: LengthPercentageAuto::auto(),
+            },
+            size: Size {
+                width: Dimension::auto(),
+                height: Dimension::length(8.),
+            },
+            ..Default::default()
+        })
+        .id(2);
+        // taffy follows CSS: absolute boxes use the nearest positioned ancestor.
+        let input = El::new(Style {
+            position: Position::Relative,
+            size: Size {
+                width: Dimension::auto(),
+                height: Dimension::length(44.),
+            },
+            ..Default::default()
+        })
+        .id(1)
+        .child(track);
+        let root = El::new(Style {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            padding: sides(10., 22., 10., 22.),
+            size: Size {
+                width: Dimension::length(640.),
+                height: Dimension::auto(),
+            },
+            ..Default::default()
+        })
+        .child(input);
+        let mut hits = Vec::new();
+        render(
+            &root,
+            &mut Fonts::new(),
+            1280.,
+            720.,
+            &mut DisplayList::default(),
+            &mut hits,
+        );
+        let get = |id| hits.iter().find(|(_, i)| *i == id).unwrap().0;
+        assert_eq!(get(1).w, 596.);
+        assert_eq!(get(2).w, 596., "{:?}", get(2));
+    }
 }

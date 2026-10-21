@@ -390,6 +390,23 @@ impl App {
         let ms = (now - self.started).as_secs_f64() * 1000.;
         let active = !riding.paused && !riding.held && focused;
         let pad = self.gamepad.sample();
+        if let Some(overlay) = &mut self.overlay {
+            overlay.sync_menu(riding.paused && !riding.held);
+            riding.menu_open = overlay.menu.is_some();
+            if riding.menu_open
+                && let Some(event) = overlay.menu_pad(
+                    pad.as_ref().map_or([0.; 17], |p| p.buttons),
+                    pad.as_ref().map_or([0.; 4], |p| p.axes),
+                )
+            {
+                self.menu_event(event);
+                return;
+            }
+        }
+        let Some(ready) = &mut self.ready else { return };
+        let Some(riding) = &mut ready.riding else {
+            return;
+        };
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
         let keys = |code: &str| names.contains(code);
         let sample = riding::Sample {
@@ -406,6 +423,22 @@ impl App {
             status(&format!("Simulation stopped: {error}"));
             ready.riding = None;
             return;
+        }
+        // A Pause binding this frame opens the menu in this same frame (the
+        // ride then sleeps until input).
+        if let Some(overlay) = &mut self.overlay {
+            overlay.sync_menu(riding.paused && !riding.held);
+            riding.menu_open = overlay.menu.is_some();
+            // Audio → Sound shows the mode the ride is actually playing.
+            if let Some(sound) = &riding.sound {
+                let playing = match sound.ride.mode {
+                    atv_game::audio::ride::SoundMode::Enhanced => "enhanced",
+                    _ => "original",
+                };
+                if overlay.prefs.sound_mode != playing {
+                    overlay.prefs.sound_mode = playing.into();
+                }
+            }
         }
         // World clocks (scenery animation, water, train) follow the
         // simulation's fixed steps, as the browser's op 50 batch does.
@@ -696,6 +729,67 @@ impl App {
         }
     }
 
+    /// Applies a pause-menu outcome to the ride.
+    fn menu_event(&mut self, event: atv_ui::menu::controller::Event) {
+        use atv_ui::menu::controller::Event;
+        let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) else {
+            return;
+        };
+        match event {
+            Event::Resume | Event::Reset => {
+                if event == Event::Reset
+                    && let Err(error) = riding.reset()
+                {
+                    status(&format!("Reset failed: {error}"));
+                }
+                riding.paused = false;
+                riding.menu_open = false;
+                riding.clear_input();
+                riding.sync_sound();
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.sync_menu(false);
+                    overlay.clear_input();
+                }
+            }
+            Event::Leave(page) => {
+                #[cfg(target_arch = "wasm32")]
+                if let Some(window) = web_sys::window() {
+                    window.location().set_href(page).ok();
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                let _ = page;
+            }
+            Event::Fullscreen => {
+                if let Some(window) = &self.window {
+                    let on = window.fullscreen().is_none();
+                    window
+                        .set_fullscreen(on.then_some(winit::window::Fullscreen::Borderless(None)));
+                }
+            }
+            Event::Changed => {
+                // Audio → Sound applies to the running mixer at once.
+                let enhanced = self
+                    .overlay
+                    .as_ref()
+                    .is_some_and(|o| o.prefs.sound_mode == "enhanced");
+                if let Some(sound) = &mut riding.sound {
+                    use atv_game::audio::ride::SoundMode;
+                    let mode = if enhanced {
+                        SoundMode::Enhanced
+                    } else {
+                        SoundMode::Original
+                    };
+                    if sound.ride.mode != mode {
+                        sound.ride.mode = mode;
+                        if let Ok(mut mixer) = sound.output.mixer.lock() {
+                            sound.ride.apply_mode(&mut mixer);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn act(&mut self, action: overlay::Action) {
         let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) else {
             return;
@@ -736,6 +830,23 @@ impl App {
             return;
         };
         let id = touch.id;
+        if overlay.menu.is_some() {
+            match touch.phase {
+                TouchPhase::Started => overlay.menu_press(id, x, y),
+                TouchPhase::Moved => overlay.menu_drag(id, x, y),
+                TouchPhase::Ended => {
+                    if let Some(event) = overlay.menu_release(id, x, y) {
+                        self.menu_event(event);
+                    }
+                }
+                TouchPhase::Cancelled => {
+                    if let Some(menu) = &mut overlay.menu {
+                        menu.cancel_pointer();
+                    }
+                }
+            }
+            return;
+        }
         match touch.phase {
             TouchPhase::Started => {
                 if !overlay.press(id, x, y) {
@@ -778,6 +889,17 @@ impl App {
     }
 
     fn key_pressed(&mut self, code: KeyCode) {
+        if let Some(event) = self
+            .overlay
+            .as_mut()
+            .filter(|o| o.menu.is_some())
+            .map(|o| o.menu_key(&format!("{code:?}")))
+        {
+            if let Some(event) = event {
+                self.menu_event(event);
+            }
+            return;
+        }
         let now = (Instant::now() - self.started).as_secs_f64();
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
         if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
@@ -963,6 +1085,7 @@ impl ApplicationHandler<Message> for App {
                 | WindowEvent::KeyboardInput { .. }
                 | WindowEvent::MouseInput { .. }
                 | WindowEvent::CursorMoved { .. }
+                | WindowEvent::MouseWheel { .. }
                 | WindowEvent::Touch(_)
                 | WindowEvent::ScaleFactorChanged { .. }
         ) {
@@ -983,6 +1106,17 @@ impl ApplicationHandler<Message> for App {
                 }
             }
             WindowEvent::Touch(touch) => self.touch(touch),
+            WindowEvent::MouseWheel { delta, .. } => {
+                if let Some(overlay) = &mut self.overlay {
+                    let dy = match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_, y) => -y * 40.,
+                        winit::event::MouseScrollDelta::PixelDelta(p) => {
+                            -(p.y / self.window.as_ref().map_or(1., |w| w.scale_factor())) as f32
+                        }
+                    };
+                    overlay.menu_wheel(dy);
+                }
+            }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     match event.state {
@@ -1012,6 +1146,15 @@ impl ApplicationHandler<Message> for App {
                 ..
             } => {
                 let (x, y) = self.css(self.cursor.unwrap_or_default());
+                if let Some(overlay) = self.overlay.as_mut().filter(|o| o.menu.is_some()) {
+                    self.dragging = false;
+                    if state == ElementState::Pressed {
+                        overlay.menu_press(overlay::MOUSE, x, y);
+                    } else if let Some(event) = overlay.menu_release(overlay::MOUSE, x, y) {
+                        self.menu_event(event);
+                    }
+                    return;
+                }
                 if state == ElementState::Pressed {
                     self.gesture();
                     self.mouse_ui = self
@@ -1048,7 +1191,11 @@ impl ApplicationHandler<Message> for App {
                 self.cursor = Some((position.x, position.y));
                 let (x, y) = self.css((position.x, position.y));
                 if let Some(overlay) = &mut self.overlay {
-                    overlay.hover(x, y);
+                    if overlay.menu.is_some() {
+                        overlay.menu_drag(overlay::MOUSE, x, y);
+                    } else {
+                        overlay.hover(x, y);
+                    }
                 }
             }
             WindowEvent::RedrawRequested => {

@@ -119,7 +119,12 @@ fn gradient(p: vec2<f32>, v: Varyings) -> vec4<f32> {
         // radial-gradient(circle at …): farthest-corner radius.
         let c = b.xy + b.zw * v.cut.yz;
         let far = max(abs(c - b.xy), abs(b.xy + b.zw - c));
-        t = clamp(length(p - c) / max(length(far), 1e-3), 0., 1.);
+        if (v.cut.w > .5) {
+            // Ellipse through the farthest corner: farthest-side radii x sqrt 2.
+            t = clamp(length((p - c) / max(far * 1.41421356, vec2(1e-3))), 0., 1.);
+        } else {
+            t = clamp(length(p - c) / max(length(far), 1e-3), 0., 1.);
+        }
     } else {
         let a = v.cut.x;
         let dir = vec2(sin(a), -cos(a));
