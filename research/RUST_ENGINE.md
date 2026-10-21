@@ -571,6 +571,14 @@ with original-game evidence:
   (`drawRace` in hud.js), which is not ported yet.
 - Menu/pause screens in the JS game are HD re-layouts of original documents
   (`ui_menu.rs`); their Rust port will list each approximation as it lands.
+- Frontend (Rust port of menu-screens.js): the title wordmark is the authored
+  Fury Remastered vector logo, not original art; the HD pages re-lay the
+  original PAGE01 backdrop, TP course photos, LOADICON shots, etips and
+  uiQuad.txt data in the browser's CSS layout instead of the original page
+  documents; the CSS filters (`blur`, `grayscale`, `saturate`, `contrast`) on
+  backdrops and photos are applied on the CPU at load and approximate the
+  browser's filter pipeline; Back, the event tabs and the vehicle list are
+  browser additions to the original pages.
 
 ## Race checkpoint (2026-10-21)
 
@@ -690,13 +698,45 @@ origin, orientation and camera.
 | 27 Fast50 | ride with wreck | 930 | Riding |
 | 31 Suzuki RM250 | clutch, lean, stunt modifiers, brake, reverse | 860 | wreck and recovery, Riding |
 
-Not connected yet (labelled for follow-up PRs): motorcycle engine and impact sounds
-(atv-web op 101, `web/audio.js` motorcycle branch; the bike is silent), the
-`MotorcyclePresentation` 60 Hz interpolation (`web/motorcycle-presentation.js`, used in
-every preset), the bike's wheel particles (`motorcycle_effects`) and the mud overlay on
-the bike and rider (`motorcycleMudAmount`; the held JavaScript frame shows the dirt the
-Rust frame lacks), and races on a motorcycle (a clear "not ported" error; atv-web races
-the CPU roster on comparable quads).
+Presentation (follow-up): the bike's MX tire dust, chunks, spray, exhaust and wreck
+dust (`atv_core::motorcycle_effects`, stepped after each motorcycle step and reset on a
+placement or recovery, as atv-web's batch does) draw through the wheel-effects pass with
+the bike archive's FS01particles atlas (`loadMotorcycleEffects`; no tire tracks or
+lingering dust, like the browser). Vehicle materials load their mud map (`image.mud`:
+the MX MudAnimator's second map, else the ATV2 PixelAnimation dirt pass), and the
+vehicle shader blends it by the bike's larger wheel mud amount (`motorcycleMudAmount`,
+linear by mud alpha; the ATV reveal branch is wired but its dirt buildup is not
+ported, so quads stay clean as in Original). Held ENV01 frame of bike 29 after 600
+steps, mean absolute difference in the vehicle box against the JavaScript game: 6.19
+before, 0.13 Rust browser / 0.15 native after (quad 1 unchanged at 0.59 / 0.63).
+
+Sound (follow-up): a motorcycle loads its own bank (GameAudio.loadBank for ids 27+):
+the MX archive's `vehicle_<size>A.aud` engine table (op 101, `parse_mx`) and samples,
+with venue samples the bike archive lacks from AUDIO.RES, and no rider effects, vocals,
+chassis or drive-on sounds. The shared engine model plays it; the bike adds its wreck
+impact (first Wreck sample on a contact of 18.8 ft/s or more, once per step) and the
+Clutch sample on each clutch press. The engine bank and rider vocals now follow the
+Garage selection for ATVs too (they were fixed to quad 1, male). Offline comparison
+(`tools/compare_audio.mjs env01 stunts.json out original 31`, bike 31, 860 steps with
+clutch, stunts, a wreck and reverse): all 13 engine samples in the same order within
+1-6 steps, the clutch and both impacts matched, 100 ms levels within 0.70 dB mean
+(0.21 dB median) of the JavaScript game.
+
+Races (follow-up): a motorcycle player races the original CPU roster on its quads
+(MX vs. ATV fields; the roster group is the comparable stock quad per class,
+`motorcycle::roster_quad`). The CPUs fork the ATV2 rider rig, which a bike ride loads
+for them (`loadAtvRider` with the player's rider, quad 1 selection). The race reads the
+bike's rigid-body summary, drives it with the path driver after the finish (no
+preload, no ATV scene query), sets its checkpoint 2.5ft above the racing line (the
+authored course drop), resolves rider contact through the bike's own peer proxy, and
+reports the bike's frame after the race step (contact can move it). No grid grounding
+and no deep-water clock, as in atv-web. Parity (`compare_engine.mjs race env01 ... 1 3
+12345 29` with `RACE_AUTOPILOT=9000`): JavaScript, Rust browser and native match bit
+for bit for the player and all three CPUs over 9,000 steps (intro 1-435, countdown
+436-675, GO at 676, the bike finishing fourth at step 8,428).
+
+Not connected yet (labelled for follow-up PRs): the `MotorcyclePresentation` 60 Hz
+interpolation (`web/motorcycle-presentation.js`, used in every preset).
 
 ## Commands
 

@@ -5,12 +5,13 @@
 //! (`race_controls`, `step_race`, `follow_camera`), calling atv-core directly.
 //! Stadium crowd cues, camera-flash bursts, Supercross fireworks and the
 //! National drop gate are presentation that is not connected yet.
-use super::{Ride, STEP, cpu::CpuModel, cpu::CpuRacer, cpu::World};
+use super::{Mount, Ride, STEP, cpu::CpuModel, cpu::CpuRacer, cpu::World};
 use crate::Result;
 use atv_core::math::Det;
 use atv_core::{
     camera::CameraFrame,
     cpu_avoidance::Peer,
+    motorcycle::Motorcycle,
     race::{Course, Frame, Race},
     race_ai::{Context, Driver, DriverPose, Options},
     race_director::{self, Cameras, Director},
@@ -64,6 +65,8 @@ pub struct Setup {
     /// Each CPU's quad and outfitted rider for drawing.
     pub draw: Vec<(super::Model, super::Model)>,
     pub spacing_sources: Vec<String>,
+    /// A motorcycle player's CPUs ride with the ATV rider rig.
+    pub cpu_rider: Option<Box<super::CpuRider>>,
 }
 
 pub struct RaceState {
@@ -91,6 +94,55 @@ pub struct RaceState {
     settings: Settings,
     spacing_sources: Vec<String>,
     course: Course,
+    cpu_rider: Option<Box<super::CpuRider>>,
+}
+
+/// The rider rig and skeleton CPU racers fork and pose: the player's own on
+/// an ATV, else the loaded ATV rider.
+type CpuRig<'a> = (
+    (
+        &'a atv_core::rider_pose::Animator,
+        &'a atv_core::wreck_animation::Animator,
+    ),
+    &'a [atv_core::mesh::Node],
+);
+fn cpu_rig<'a>(
+    mount: &'a Mount,
+    rider: &'a super::Model,
+    cpu_rider: Option<&'a super::CpuRider>,
+) -> Result<CpuRig<'a>> {
+    match (mount, cpu_rider) {
+        (Mount::Quad { rig, .. }, _) => Ok(((&rig.animator, &rig.wreck), &rider.mesh.nodes)),
+        (Mount::Bike(_), Some(cpu)) => Ok(((&cpu.animator, &cpu.wreck), &cpu.mesh.nodes)),
+        (Mount::Bike(_), None) => Err("CPU rider rig missing".into()),
+    }
+}
+
+/// The racing player as the race reads and pushes it.
+enum Player<'a> {
+    Quad(&'a mut Vehicle),
+    Bike(&'a mut Motorcycle),
+}
+
+impl Player<'_> {
+    fn frame(&self) -> atv_core::vehicle::VehicleFrame {
+        match self {
+            Player::Quad(vehicle) => vehicle.frame(),
+            Player::Bike(bike) => super::bike::summary(bike.frame()),
+        }
+    }
+    fn peer_contact(
+        &mut self,
+        origin: [f32; 3],
+        velocity: [f32; 3],
+        orientation: [f32; 4],
+        tie: f32,
+    ) -> bool {
+        match self {
+            Player::Quad(vehicle) => vehicle.peer_contact(origin, velocity, orientation, STEP, tie),
+            Player::Bike(bike) => bike.peer_contact(origin, velocity, orientation, STEP, tie),
+        }
+    }
 }
 
 /// Body yaw from an orientation quaternion, as the browser computes it.
@@ -145,8 +197,7 @@ impl Ride {
             all_out: settings.all_out,
             ..Options::difficulty(settings.difficulty)
         };
-        let nodes = &self.rider.mesh.nodes;
-        let (rig, _) = self.mount.quad()?;
+        let (rig, nodes) = cpu_rig(&self.mount, &self.rider, setup.cpu_rider.as_deref())?;
         let cpus = race
             .opponents()
             .iter()
@@ -172,9 +223,11 @@ impl Ride {
             intro_camera = Some(Intro::new(setup.shots.clone()));
             race.begin_intro();
         }
-        let (_, vehicle) = self.mount.quad_mut()?;
-        super::race::place_racer(vehicle, &self.sim.terrain)?;
-        self.frame = vehicle.frame();
+        // 001dd440 grounds an ATV on the grid; the bike keeps its op 23 drop.
+        if let Mount::Quad { vehicle, .. } = &mut self.mount {
+            super::race::place_racer(vehicle, &self.sim.terrain)?;
+            self.frame = vehicle.frame();
+        }
         self.race = Some(RaceState {
             race,
             cpus,
@@ -195,6 +248,7 @@ impl Ride {
             settings,
             spacing_sources: setup.spacing_sources,
             course: setup.course,
+            cpu_rider: setup.cpu_rider,
         });
         Ok(())
     }
@@ -214,6 +268,7 @@ impl Ride {
             models: state.models,
             draw: state.draw,
             spacing_sources: state.spacing_sources,
+            cpu_rider: state.cpu_rider,
         };
         self.begin_race(setup, state.settings, false)?;
         self.step_camera(0.)
@@ -250,9 +305,31 @@ impl Ride {
                 race.running() && race.off_track_time(None) > race_hud::RESET_SECONDS;
             return Ok(None);
         }
-        let (_, vehicle) = self.mount.quad()?;
-        let mut pose: DriverPose = (&vehicle.frame()).into();
-        pose.preload_rates = vehicle.preload_rates();
+        let (pose, scene) = match &self.mount {
+            Mount::Quad { vehicle, .. } => {
+                let mut pose: DriverPose = (&vehicle.frame()).into();
+                pose.preload_rates = vehicle.preload_rates();
+                (pose, vehicle.scene_collision())
+            }
+            // atv-web drives a finished motorcycle without preload and
+            // without the ATV's scene query.
+            Mount::Bike(bike) => {
+                let f = bike.frame();
+                (
+                    DriverPose {
+                        origin: f.origin,
+                        orientation: f.orientation,
+                        speed_magnitude: f.speed_magnitude,
+                        grounded: f.grounded.iter().any(|g| *g),
+                        riding: f.wreck.phase == Phase::Riding,
+                        preload_available: false,
+                        preload_armed: false,
+                        preload_rates: [0.; 2],
+                    },
+                    None,
+                )
+            }
+        };
         let contact = self.sim.terrain.contact(pose.origin[0], pose.origin[2])?;
         let peers: Vec<_> = state
             .cpus
@@ -291,7 +368,7 @@ impl Ride {
             STEP,
             Context {
                 peers: &peers,
-                scene: vehicle.scene_collision(),
+                scene,
                 clearance: contact.as_ref().map_or(0., |c| pose.origin[1] - c.height),
                 terrain_normal: contact.as_ref().map_or([0., 1., 0.], |c| c.normal),
                 station: Some(race.station(None)),
@@ -305,13 +382,20 @@ impl Ride {
         let Some(state) = &mut self.race else {
             return Ok(());
         };
-        let (_, vehicle) = self.mount.quad_mut()?;
+        // The CPUs' rider skeleton: the player's on an ATV, else the ATV rider.
+        let nodes: &[atv_core::mesh::Node] = match state.cpu_rider.as_deref() {
+            Some(cpu) => &cpu.mesh.nodes,
+            None => &self.rider.mesh.nodes,
+        };
+        let mut vehicle = match &mut self.mount {
+            Mount::Quad { vehicle, .. } => Player::Quad(vehicle),
+            Mount::Bike(bike) => Player::Bike(bike),
+        };
         let player = vehicle.frame();
         let race = &mut state.race;
         race.step(player.origin, STEP);
         let terrain = &self.sim.terrain;
         let hold = race.holding();
-        let nodes = &self.rider.mesh.nodes;
         let snapshots: Vec<_> = state
             .cpus
             .iter()
@@ -324,9 +408,12 @@ impl Ride {
                 }
             })
             .collect();
-        let dynamic = vehicle
-            .scene_collision()
-            .map_or_else(Vec::new, |s| s.dynamic().to_vec());
+        let dynamic = match &vehicle {
+            Player::Quad(v) => v
+                .scene_collision()
+                .map_or_else(Vec::new, |s| s.dynamic().to_vec()),
+            Player::Bike(_) => Vec::new(),
+        };
         let world = World {
             terrain,
             nodes,
@@ -343,7 +430,19 @@ impl Ride {
                 .map_or(point[1], |c| c.height);
             Ok(([point[0], height, point[2]], heading))
         };
-        vehicle.set_race_checkpoint(Some(on_line(race.checkpoint(None))?));
+        let (point, heading) = on_line(race.checkpoint(None))?;
+        match &mut vehicle {
+            Player::Quad(v) => v.set_race_checkpoint(Some((point, heading))),
+            // The motorcycle reset keeps the authored 2.5ft course drop.
+            Player::Bike(bike) => bike.set_race_checkpoint(Some((
+                [
+                    point[0],
+                    point[1] + atv_core::spawn::COURSE_CLEARANCE as f32,
+                    point[2],
+                ],
+                heading,
+            ))),
+        }
         // RaceStatus +0x150: the human's track direction (aggression branch).
         let player_track = race.course.tangent(race.station(None).segment);
         for (index, cpu) in state.cpus.iter_mut().enumerate() {
@@ -404,12 +503,17 @@ impl Ride {
             for b in a + 1..bodies.len() {
                 for (own, other, tie) in [(a, b, 1.), (b, a, -1.)] {
                     let (origin, velocity, orientation) = bodies[other];
-                    let vehicle = if own == 0 {
-                        &mut *vehicle
+                    let contact = if own == 0 {
+                        vehicle.peer_contact(origin, velocity, orientation, tie)
                     } else {
-                        &mut state.cpus[own - 1].vehicle
+                        state.cpus[own - 1].vehicle.peer_contact(
+                            origin,
+                            velocity,
+                            orientation,
+                            STEP,
+                            tie,
+                        )
                     };
-                    let contact = vehicle.peer_contact(origin, velocity, orientation, STEP, tie);
                     if contact && tie > 0. {
                         race.contacts += 1;
                     }
@@ -418,9 +522,13 @@ impl Ride {
         }
         let mut frame = race.frame(yaw(player.orientation));
         let _ = race.take_finishes();
-        let too_deep = Some(vehicle.frame().water_failure)
-            .filter(|w| w.submerged)
-            .map(|w| w.remaining);
+        // The ATV's deep-water clock (the bike has none).
+        let too_deep = match &vehicle {
+            Player::Quad(v) => Some(v.frame().water_failure),
+            Player::Bike(_) => None,
+        }
+        .filter(|w| w.submerged)
+        .map(|w| w.remaining);
         frame.hud = Some(state.hud.step(
             STEP,
             &race_hud::Input {

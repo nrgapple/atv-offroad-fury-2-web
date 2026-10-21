@@ -1,6 +1,9 @@
 //! Original wheel dust, dirt chunks, spray and wet births (WheelEffectsRenderer
 //! in web/wheel-effects.js, fed by atv-web's op 74/75): atv_core::wheel_effects
 //! simulates the PRT/EMT emitters each 60 Hz step from the ride's wheel state.
+//! A motorcycle's wheel, exhaust and wreck particles come from its own MX
+//! emitters (atv_core::motorcycle_effects, stepped in atv-web's motorcycle
+//! batch) and draw through the same renderer.
 use crate::{
     Result,
     ambient::{gpu_atlas, image},
@@ -12,11 +15,26 @@ use atv_content::Content;
 use atv_core::{
     player_models,
     resource::Resource,
-    wheel_effects::{Config, Effects, Frame},
+    wheel_effects::{AtlasFrame, Config, Effects, Frame},
 };
 
+/// The emitters behind the drawn particles.
+pub enum Source {
+    /// The ATV's op 74/75 wheel effects.
+    Quad(Box<Effects>),
+    /// The motorcycle's MX emitters; `epoch` is the bike's reset count the
+    /// particles belong to (a recovery restarts them).
+    Bike {
+        effects: atv_core::motorcycle_effects::Effects,
+        epoch: u32,
+    },
+}
+
 pub struct WheelEffects {
-    pub effects: Effects,
+    pub source: Source,
+    /// Atlas frame rectangles and the wet tint the renderer reads.
+    pub frames: Vec<AtlasFrame>,
+    pub light_color: [f32; 3],
     /// Particles.prt atlas (dust, chunks, spray).
     pub atlas: Image,
     /// Wet-particle GPU atlas (particle_gpu TextureMap_1, 128x64 or 128x256).
@@ -124,7 +142,9 @@ pub async fn load(content: &Content, venue: &Venue, quad: u16) -> Result<Option<
         return Err("Unsupported original wet particle atlas.".into());
     }
     Ok(Some(WheelEffects {
-        effects: Effects::new(config),
+        frames: config.atlas.frames.clone(),
+        light_color: config.light_color,
+        source: Source::Quad(Box::new(Effects::new(config))),
         atlas,
         wet_atlas,
         time: 0.,
@@ -136,11 +156,53 @@ pub async fn load(content: &Content, venue: &Venue, quad: u16) -> Result<Option<
     }))
 }
 
+/// loadMotorcycleEffects: the riding motorcycle's particle atlas from its MX
+/// archive (FS01particles.prt's TextureMap); its wet particles share it.
+pub async fn load_motorcycle(content: &Content, ride: &Ride) -> Result<WheelEffects> {
+    let bike = ride.motorcycle().ok_or("not a motorcycle")?;
+    let config = &bike.model.effects_config;
+    let models = player_models::selection(ride.selection().quad, 0)?;
+    let bytes = content.file(&models.quad).await?;
+    let archive = Resource::parse(&bytes)?;
+    let stem = config.atlas.texture.to_ascii_lowercase();
+    let stem = stem.strip_suffix(".tga").unwrap_or(&stem);
+    let atlas = image(&archive, &format!("{stem}.pst"))?;
+    if config
+        .atlas
+        .frames
+        .iter()
+        .any(|f| f.rect[2] > atlas.width as f32 || f.rect[3] > atlas.height as f32)
+    {
+        return Err("Motorcycle particle rectangle exceeds atlas.".into());
+    }
+    Ok(WheelEffects {
+        source: Source::Bike {
+            effects: Default::default(),
+            epoch: bike.frame().reset_count,
+        },
+        frames: config.atlas.frames.clone(),
+        light_color: config.light_color,
+        wet_atlas: Image {
+            width: atlas.width,
+            height: atlas.height,
+            rgba: atlas.rgba.clone(),
+        },
+        atlas,
+        time: 0.,
+        tick: 0,
+        frame: Frame::default(),
+        wet_pending: Vec::new(),
+        dust: None,
+        tracks: None,
+    })
+}
+
 impl WheelEffects {
     /// Turns on tire tracks: `capacity` segments living `life` seconds
     /// (Enhanced 600/15, High 3600/75); 0 turns them off.
     pub fn set_tire_tracks(&mut self, capacity: usize, life: f32, venue: &Venue) {
-        if capacity == 0 {
+        // The browser leaves motorcycles without tire tracks.
+        if capacity == 0 || matches!(self.source, Source::Bike { .. }) {
             self.tracks = None;
             return;
         }
@@ -164,7 +226,8 @@ impl WheelEffects {
     /// Turns on lingering dust with `capacity` puffs (Enhanced 24, High 96);
     /// 0 turns it off.
     pub fn set_lingering_dust(&mut self, capacity: usize, venue: &Venue) {
-        if capacity == 0 {
+        // The browser leaves motorcycles without lingering dust.
+        if capacity == 0 || matches!(self.source, Source::Bike { .. }) {
             self.dust = None;
             return;
         }
@@ -221,12 +284,35 @@ impl WheelEffects {
     }
 
     fn run(&mut self, ride: &Ride, dt: f32) -> Result<()> {
+        let effects = match &mut self.source {
+            Source::Quad(effects) => effects,
+            Source::Bike { effects, epoch } => {
+                let bike = ride.motorcycle().ok_or("not a motorcycle")?;
+                let f = bike.frame();
+                // A placement or recovery restarts the particles; atv-web
+                // then steps them once per motorcycle step.
+                if dt == 0. || *epoch != f.reset_count {
+                    *effects = Default::default();
+                    *epoch = f.reset_count;
+                }
+                if dt > 0. {
+                    effects.step(
+                        &bike.model.effects_config,
+                        f,
+                        &bike.world(),
+                        dt,
+                        ride.terrain(),
+                    )?;
+                }
+                self.frame = effects.frame(bike.time, f.reset_count);
+                return Ok(());
+            }
+        };
         let mut input = ride.wheel_effect_input()?;
         input.time = self.time;
         input.dt = dt;
         input.tick = self.tick;
-        self.frame = self
-            .effects
+        self.frame = effects
             .step_with_terrain(&input, |point| Ok(ride.ground(point[0], point[2])))?
             .clone();
         self.wet_pending

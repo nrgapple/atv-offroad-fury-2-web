@@ -73,6 +73,9 @@ pub struct BoxPaint {
     pub rect: Rect,
     /// Top-left, top-right, bottom-right, bottom-left.
     pub radii: [f32; 4],
+    /// Vertical radii of elliptical corners (`border-radius: a / b`); 0 keeps
+    /// the corner circular.
+    pub radii_y: [f32; 4],
     pub fill: Option<Fill>,
     /// Top, right, bottom, left widths.
     pub border: [f32; 4],
@@ -83,6 +86,8 @@ pub struct BoxPaint {
     /// Clockwise rotation (radians) about `pivot` (CSS pixels).
     pub rotation: f32,
     pub pivot: [f32; 2],
+    /// CSS `skewX`: tan(angle); x shifts by (y - pivot.y) * skew.
+    pub skew_x: f32,
 }
 
 /// Registered image (its own GPU texture), e.g. original HUD artwork.
@@ -114,6 +119,17 @@ pub enum Item {
         dst: Rect,
         rotation: f32,
         pivot: [f32; 2],
+    },
+    /// CSS `filter: drop-shadow()` of an image: its alpha, offset, blurred
+    /// (`blur` is the CSS radius) and tinted.
+    ImageShadow {
+        image: ImageId,
+        src: Rect,
+        dst: Rect,
+        dx: f32,
+        dy: f32,
+        blur: f32,
+        color: crate::color::Color,
     },
     /// Clip following items to a rounded rectangle until `PopClip`.
     PushClip {

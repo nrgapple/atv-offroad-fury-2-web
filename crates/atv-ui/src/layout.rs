@@ -5,7 +5,7 @@
 //! and inline-block chips (e.g. `<kbd>`) on one baseline.
 use crate::{
     color::{Color, Fill},
-    paint::{BoxPaint, BoxShadow, DisplayList, Rect},
+    paint::{BoxPaint, BoxShadow, DisplayList, ImageId, Rect},
     text::{Font, Fonts, Shape, TextStyle},
 };
 use taffy::prelude::*;
@@ -14,10 +14,14 @@ use taffy::prelude::*;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Paint {
     pub radii: [f32; 4],
+    /// Elliptical corners' vertical radii (0: circular).
+    pub radii_y: [f32; 4],
     pub fill: Option<Fill>,
     pub border: [f32; 4],
     pub border_color: Color,
     pub shadows: Vec<BoxShadow>,
+    /// CSS `transform: skewX()` about the box's top-left corner: tan(angle).
+    pub skew_x: f32,
 }
 
 impl Paint {
@@ -42,13 +46,25 @@ impl Paint {
         BoxPaint {
             rect,
             radii: self.radii,
+            radii_y: self.radii_y,
             fill: self.fill.clone(),
             border: self.border,
             border_color: self.border_color,
             shadows: self.shadows.clone(),
+            skew_x: self.skew_x,
+            pivot: [rect.x, rect.y],
             ..Default::default()
         }
     }
+}
+
+/// CSS `object-fit` for image content.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Fit {
+    #[default]
+    Cover,
+    Contain,
+    Fill,
 }
 
 /// One run of an inline row.
@@ -92,6 +108,14 @@ pub enum Content {
     },
     /// A vector icon drawn at the content box origin (CSS `width/height`).
     Shape(Shape),
+    /// A registered image of `size` texels filling the content box.
+    Image {
+        image: ImageId,
+        size: [f32; 2],
+        fit: Fit,
+        /// CSS `filter: drop-shadow(dx dy blur color)`.
+        shadow: Option<crate::text::Shadow>,
+    },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -425,6 +449,55 @@ fn paint(
             y: content.y,
             rotation: 0.,
         }),
+        Content::Image {
+            image,
+            size,
+            fit,
+            shadow,
+        } => {
+            let [iw, ih] = *size;
+            if iw > 0. && ih > 0. && content.w > 0. && content.h > 0. {
+                let (src, dst) = match fit {
+                    Fit::Fill => (Rect::new(0., 0., iw, ih), content),
+                    Fit::Cover => {
+                        let s = (content.w / iw).max(content.h / ih);
+                        let (sw, sh) = (content.w / s, content.h / s);
+                        (Rect::new((iw - sw) / 2., (ih - sh) / 2., sw, sh), content)
+                    }
+                    Fit::Contain => {
+                        let s = (content.w / iw).min(content.h / ih);
+                        let (dw, dh) = (iw * s, ih * s);
+                        (
+                            Rect::new(0., 0., iw, ih),
+                            Rect::new(
+                                content.x + (content.w - dw) / 2.,
+                                content.y + (content.h - dh) / 2.,
+                                dw,
+                                dh,
+                            ),
+                        )
+                    }
+                };
+                if let Some(sh) = shadow {
+                    list.push(crate::paint::Item::ImageShadow {
+                        image: *image,
+                        src,
+                        dst,
+                        dx: sh.dx,
+                        dy: sh.dy,
+                        blur: sh.blur,
+                        color: sh.color,
+                    });
+                }
+                list.push(crate::paint::Item::Image {
+                    image: *image,
+                    src,
+                    dst,
+                    rotation: 0.,
+                    pivot: [0., 0.],
+                });
+            }
+        }
         Content::None => {}
     }
     if let Some(offset) = el.scroll {

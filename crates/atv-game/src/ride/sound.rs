@@ -84,4 +84,18 @@ pub struct AudioStep {
     pub camera: CameraPose,
     /// Increments on every reset; the audio layer resets its voices.
     pub placement: u32,
+    /// A motorcycle's own cues (web/audio.js motorcycle branch); None on an ATV.
+    pub bike: Option<BikeSound>,
+}
+
+/// The motorcycle frame fields web/audio.js reads besides the engine inputs.
+#[derive(Debug, Clone, Default)]
+pub struct BikeSound {
+    /// `motorcycle_tick`: one impact per step at most.
+    pub tick: u64,
+    /// `impact_sample`: the bank's first wreck sample on a contact of 18.8
+    /// ft/s or more this step.
+    pub impact_sample: Option<String>,
+    /// The clutch as the step applied it (the clutch sample plays on press).
+    pub clutch: bool,
 }

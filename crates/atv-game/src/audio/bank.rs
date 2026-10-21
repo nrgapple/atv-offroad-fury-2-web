@@ -112,6 +112,9 @@ pub async fn load(
     female: bool,
     rate: u32,
 ) -> Result<Bank> {
+    if quad >= 27 {
+        return load_motorcycle(content, course_archive, environment, quad, rate).await;
+    }
     let table = Archive::open(content, "/AUDIOTBL.RES").await?;
     let vehicle_index = table
         .members
@@ -210,6 +213,118 @@ pub async fn load(
         vocals,
         chassis,
         drive,
+        ambient,
+        soultree,
+        crowd_venue,
+        decode_ms,
+    })
+}
+
+/// The venue's world sound sources (`loadVenue`): ambient emitters and
+/// soultrees, plus the terrain drive-on table the ATV uses.
+async fn venue_sounds(
+    content: &Content,
+    course_archive: &str,
+    environment: &str,
+) -> Result<(
+    Vec<qs::DriveOnSound>,
+    Vec<world_sounds::Ambient>,
+    Vec<world_sounds::Soultree>,
+)> {
+    let course = Archive::open(content, course_archive).await?;
+    match course.named(&format!("{environment}.aud")) {
+        Some(index) => {
+            let aud = VenueAud::parse(&course.member(index).await?)?;
+            let (ambient, soultree) = world_sounds::parse(&aud)?;
+            Ok((aud.terrain_drive_on()?, ambient, soultree))
+        }
+        None => Ok(Default::default()),
+    }
+}
+
+/// A motorcycle's bank (GameAudio.loadBank for quad ids 27+): the MX
+/// archive's `vehicle_<size>A.aud` engine table (op 101) and its samples;
+/// samples the bike archive lacks (the venue's) come from AUDIO.RES. No
+/// rider effects, vocals, chassis or drive-on sounds.
+async fn load_motorcycle(
+    content: &Content,
+    course_archive: &str,
+    environment: &str,
+    quad: u32,
+    rate: u32,
+) -> Result<Bank> {
+    let id = u16::try_from(quad).map_err(|_| "invalid motorcycle id")?;
+    let (size, _) = atv_core::motorcycle::class(id)?;
+    let selection = atv_core::player_models::selection(id, 0)?;
+    let table = Archive::open(content, &selection.quad).await?;
+    let name = format!("vehicle_{size}a.aud");
+    let index = table
+        .members
+        .iter()
+        .position(|m| {
+            m.name
+                .replace('\\', "/")
+                .rsplit('/')
+                .next()
+                .is_some_and(|last| last.eq_ignore_ascii_case(&name))
+        })
+        .ok_or("original vehicle audio table is missing")?;
+    let engine = EngineAudioConfig::parse_mx(&table.member(index).await?)?;
+    let (_, mut ambient, mut soultree) = venue_sounds(content, course_archive, environment).await?;
+    let names: Vec<String> = engine
+        .samples
+        .iter()
+        .flatten()
+        .chain(&engine.impact_samples)
+        .cloned()
+        .chain(ambient.iter().map(|a| a.sample.clone()))
+        .chain(soultree.iter().map(|s| s.sample.clone()))
+        .collect();
+    let mut scene = None;
+    let mut samples = HashMap::new();
+    let mut rates = HashMap::new();
+    let mut decode_ms = 0.;
+    for name in names {
+        let key = normal(&name);
+        if samples.contains_key(&key) {
+            continue;
+        }
+        let vag = match find(&table, &key) {
+            Some(index) => table.member(index).await?,
+            None => {
+                if scene.is_none() {
+                    scene = Some(Archive::open(content, "/AUDIO/AUDIO.RES").await?);
+                }
+                let bank = scene.as_ref().unwrap();
+                let Some(index) = find(bank, &key) else {
+                    continue;
+                };
+                bank.member(index).await?
+            }
+        };
+        let started = web_time::Instant::now();
+        let audio = decode_vag(&vag)?;
+        rates.insert(key.clone(), audio.info.sample_rate);
+        samples.insert(key, Arc::new(Pcm::from_vag(&audio, rate)));
+        decode_ms += started.elapsed().as_secs_f64() * 1000.;
+    }
+    let crowd_venue = ambient
+        .iter()
+        .map(|a| &a.sample)
+        .chain(soultree.iter().map(|s| &s.sample))
+        .any(|s| s.starts_with("crowd/"));
+    ambient.retain(|a| samples.contains_key(&normal(&a.sample)));
+    soultree.retain(|s| samples.contains_key(&normal(&s.sample)));
+    Ok(Bank {
+        samples,
+        vocal_cache: VocalCache::default(),
+        rate,
+        rates,
+        engine,
+        effects: None,
+        vocals: None,
+        chassis: None,
+        drive: Vec::new(),
         ambient,
         soultree,
         crowd_venue,

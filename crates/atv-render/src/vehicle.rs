@@ -24,6 +24,8 @@ struct Globals {
     sun_color: [f32; 4],
     sun_direction: [f32; 4],
     surface: [f32; 4],
+    // mud amount (0-1), authored ATV2 reveal (1) or MX linear blend (0)
+    mud: [f32; 4],
 }
 
 #[repr(C)]
@@ -156,6 +158,16 @@ impl VehiclePass {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let fog = venue.scene.fog.as_ref();
@@ -176,6 +188,7 @@ impl VehiclePass {
             sun_direction: [sun_direction[0], sun_direction[1], sun_direction[2], 0.],
             // Untextured vehicle groups keep the scenery pass's surface colour.
             surface: [0.68, 0.70, 0.73, 1.],
+            mud: [0.; 4],
         };
         let globals = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("vehicle globals"),
@@ -230,6 +243,7 @@ impl VehiclePass {
                 return Err("vehicle node count exceeds supported GPU pose capacity".into());
             }
             let mut views = std::collections::HashMap::new();
+            let mut mud_views = std::collections::HashMap::new();
             for group in &model.mesh.lods.first().ok_or("mesh has no LOD")?.groups {
                 let name = model
                     .mesh
@@ -244,10 +258,16 @@ impl VehiclePass {
                         .or_insert_with(|| upload(gpu, image).create_view(&Default::default()))
                         .clone()
                 });
+                let mud = texture.and_then(|t| t.mud.as_ref()).map(|image| {
+                    mud_views
+                        .entry(name.clone())
+                        .or_insert_with(|| upload(gpu, image).create_view(&Default::default()))
+                        .clone()
+                });
                 let flags = [
                     view.is_some() as u8 as f32,
                     texture.is_none_or(|t| t.fog) as u8 as f32,
-                    0.,
+                    mud.is_some() as u8 as f32,
                     0.,
                 ];
                 let flags = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -272,6 +292,12 @@ impl VehiclePass {
                         wgpu::BindGroupEntry {
                             binding: 2,
                             resource: wgpu::BindingResource::Sampler(&sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::TextureView(
+                                mud.as_ref().unwrap_or(&fallback),
+                            ),
                         },
                     ],
                 });
@@ -439,6 +465,12 @@ impl VehiclePass {
             gpu.queue
                 .write_buffer(buffer, 0, bytemuck::bytes_of(&bones));
         }
+    }
+
+    /// The mud blended over materials with a mud map: the motorcycle's
+    /// amount (linear, `mudReveal` off) or the ATV2 dirt reveal.
+    pub fn set_mud(&mut self, amount: f32, reveal: bool) {
+        self.globals_value.mud = [amount.clamp(0., 1.), reveal as u8 as f32, 0., 0.];
     }
 
     pub fn prepare(&mut self, gpu: &Gpu, view_projection: &[f32; 16], eye: [f32; 3]) {

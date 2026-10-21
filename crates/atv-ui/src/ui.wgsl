@@ -25,12 +25,15 @@ struct Instance {
     @location(10) clip: vec4<f32>,
     // clip radius, rotation pivot x/y
     @location(11) extra: vec4<f32>,
+    // vertical radii of elliptical corners (0: circular)
+    @location(12) radii_y: vec4<f32>,
 };
 
 struct Varyings {
     @builtin(position) position: vec4<f32>,
-    @location(0) local: vec2<f32>,
-    @location(1) corner: vec2<f32>,
+    // local position (xy) and quad corner (zw)
+    @location(0) local: vec4<f32>,
+    @location(1) @interpolate(flat) radii_y: vec4<f32>,
     @location(2) @interpolate(flat) shape: vec4<f32>,
     @location(3) @interpolate(flat) radii: vec4<f32>,
     @location(4) @interpolate(flat) color: vec4<f32>,
@@ -54,6 +57,10 @@ fn vs(@builtin(vertex_index) index: u32, i: Instance) -> Varyings {
     let corner = corners[index];
     let local = i.rect.xy + corner * i.rect.zw;
     var screen = local;
+    if (i.params.x < 2.5 && i.extra.w != 0.) {
+        // skewX about the pivot (boxes only; images use extra.w = 0).
+        screen.x += (local.y - i.extra.z) * i.extra.w;
+    }
     if (i.params.z != 0.) {
         let pivot = i.extra.yz;
         let c = cos(i.params.z);
@@ -64,8 +71,7 @@ fn vs(@builtin(vertex_index) index: u32, i: Instance) -> Varyings {
     var out: Varyings;
     let ndc = screen / globals.viewport.xy * 2. - 1.;
     out.position = vec4(ndc.x, -ndc.y, 0., 1.);
-    out.local = local;
-    out.corner = corner;
+    out.local = vec4(local, corner);
     out.screen = screen;
     out.shape = i.shape;
     out.radii = i.radii;
@@ -78,17 +84,32 @@ fn vs(@builtin(vertex_index) index: u32, i: Instance) -> Varyings {
     out.cut_radii = i.cut_radii;
     out.clip = i.clip;
     out.extra = i.extra;
+    out.radii_y = i.radii_y;
     return out;
 }
 
-// Signed distance to a rounded box (radii tl, tr, br, bl).
-fn rounded(p: vec2<f32>, b: vec4<f32>, r: vec4<f32>) -> f32 {
+// Signed distance to a rounded box (radii tl, tr, br, bl; `ry` gives
+// elliptical corners their vertical radii, 0 for circular).
+fn rounded(p: vec2<f32>, b: vec4<f32>, r: vec4<f32>, ry: vec4<f32>) -> f32 {
     let half = b.zw * .5;
     let q0 = p - (b.xy + half);
     var radius = r.x;
-    if (q0.x > 0. && q0.y < 0.) { radius = r.y; }
-    if (q0.x > 0. && q0.y > 0.) { radius = r.z; }
-    if (q0.x < 0. && q0.y > 0.) { radius = r.w; }
+    var vertical = ry.x;
+    if (q0.x > 0. && q0.y < 0.) { radius = r.y; vertical = ry.y; }
+    if (q0.x > 0. && q0.y > 0.) { radius = r.z; vertical = ry.z; }
+    if (q0.x < 0. && q0.y > 0.) { radius = r.w; vertical = ry.w; }
+    if (vertical > 0. && radius > 0. && abs(vertical - radius) > .01) {
+        let e = vec2(min(radius, b.z), min(vertical, b.w));
+        let q = abs(q0) - half + e;
+        if (q.x > 0. && q.y > 0.) {
+            // Ellipse distance estimate f / |grad f| (exact on the curve).
+            let k0 = length(q / e);
+            let k1 = length(q / (e * e));
+            return k0 * (k0 - 1.) / max(k1, 1e-6);
+        }
+        let edge = abs(q0) - half;
+        return max(edge.x, edge.y);
+    }
     radius = min(radius, min(half.x, half.y));
     let q = abs(q0) - half + radius;
     return min(max(q.x, q.y), 0.) + length(max(q, vec2(0.))) - radius;
@@ -137,12 +158,12 @@ fn gradient(p: vec2<f32>, v: Varyings) -> vec4<f32> {
 
 @fragment
 fn fs(v: Varyings) -> @location(0) vec4<f32> {
-    let p = v.local;
+    let p = v.local.xy;
     // Clip in screen space: a rounded rectangle or plain rectangle.
     var clip = 1.;
     let c = v.clip;
     if (v.extra.x > 0.) {
-        clip = coverage(rounded(v.screen, vec4(c.xy, c.zw - c.xy), vec4(v.extra.x)));
+        clip = coverage(rounded(v.screen, vec4(c.xy, c.zw - c.xy), vec4(v.extra.x), vec4(0.)));
     } else {
         let e = min(min(v.screen.x - c.x, c.z - v.screen.x), min(v.screen.y - c.y, c.w - v.screen.y));
         clip = clamp(e + .5, 0., 1.);
@@ -151,7 +172,7 @@ fn fs(v: Varyings) -> @location(0) vec4<f32> {
     let kind = v.params.x;
     var out = vec4(0.);
     if (kind < .5) {
-        let d = rounded(p, v.shape, v.radii);
+        let d = rounded(p, v.shape, v.radii, v.radii_y);
         let outer = coverage(d);
         var fill = v.color;
         if (v.params.w > .5) { fill = gradient(p, v) * v.color.a; }
@@ -160,7 +181,8 @@ fn fs(v: Varyings) -> @location(0) vec4<f32> {
         let inner_radii = max(v.radii - vec4(max(w.x, w.w), max(w.x, w.y), max(w.z, w.y), max(w.z, w.w)), vec4(0.));
         var ring = 0.;
         if (dot(w, vec4(1.)) > 0.) {
-            ring = max(outer - coverage(rounded(p, inner_box, inner_radii)), 0.);
+            let inner_y = max(v.radii_y - vec4(max(w.x, w.w), max(w.x, w.y), max(w.z, w.y), max(w.z, w.w)), vec4(0.));
+            ring = max(outer - coverage(rounded(p, inner_box, inner_radii, inner_y)), 0.);
         }
         if (v.params.y > .5) {
             out = fill * ring;
@@ -169,16 +191,31 @@ fn fs(v: Varyings) -> @location(0) vec4<f32> {
             out = border + fill * outer * (1. - v.border_color.a * ring);
         }
     } else if (kind < 1.5) {
-        let shadow = blurred(rounded(p, v.shape, v.radii), v.params.y);
-        let cut = coverage(rounded(p, v.cut, v.cut_radii));
+        let shadow = blurred(rounded(p, v.shape, v.radii, v.radii_y), v.params.y);
+        let cut = coverage(rounded(p, v.cut, v.cut_radii, v.radii_y));
         out = v.color * shadow * (1. - cut);
     } else if (kind < 2.5) {
-        let element = coverage(rounded(p, v.shape, v.radii));
-        let hole = blurred(rounded(p, v.cut, v.cut_radii), v.params.y);
+        let element = coverage(rounded(p, v.shape, v.radii, v.radii_y));
+        let hole = blurred(rounded(p, v.cut, v.cut_radii, v.radii_y), v.params.y);
         out = v.color * element * (1. - hole);
     } else {
-        let uv = mix(v.uv.xy, v.uv.zw, v.corner);
-        out = textureSampleLevel(image, image_sampler, uv, 0.) * v.color.a;
+        let uv = mix(v.uv.xy, v.uv.zw, v.local.zw);
+        if (v.params.w > .5) {
+            // drop-shadow: a 5x5 Gaussian of the image alpha, tinted.
+            var a = 0.;
+            var total = 0.;
+            for (var i = -2; i <= 2; i++) {
+                for (var j = -2; j <= 2; j++) {
+                    let w = exp(-f32(i * i + j * j) / 2.);
+                    let o = vec2(f32(i), f32(j)) * v.cut.xy;
+                    a += textureSampleLevel(image, image_sampler, uv + o, 0.).a * w;
+                    total += w;
+                }
+            }
+            out = v.color * (a / total);
+        } else {
+            out = textureSampleLevel(image, image_sampler, uv, 0.) * v.color.a;
+        }
     }
     return out * clip;
 }

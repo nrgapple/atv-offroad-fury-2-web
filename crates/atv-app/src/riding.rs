@@ -326,6 +326,7 @@ impl Riding {
                 })
                 .map(|c| &c.blood),
         );
+        scene.set_ride_mud(self.ride.mud_amount(), !self.ride.is_motorcycle());
         scene.pose_ride(gpu, &pose);
         scene.pose_race_cpus(gpu, &self.ride.cpu_poses(), position);
         Ok((

@@ -125,6 +125,15 @@ struct QuadRig {
     wreck: wreck_animation::Animator,
 }
 
+/// The ATV2 rider rig race CPUs fork when the player rides a motorcycle:
+/// MX vs. ATV fields keep the CPUs on their quads with the ATV rider
+/// (`loadAtvRider` for race CPUs in web/game.js).
+pub struct CpuRider {
+    pub(super) animator: rider_pose::Animator,
+    pub(super) wreck: wreck_animation::Animator,
+    pub(super) mesh: Mesh,
+}
+
 /// The player's vehicle: an ATV with its rig, or a motorcycle, whose
 /// original model carries its own rider, wreck and tuning (atv-web keeps the
 /// two-wheel path separate from the four-wheel solver).
@@ -135,23 +144,6 @@ enum Mount {
     },
     Bike(Box<Motorcycle>),
 }
-
-impl Mount {
-    /// The player's ATV; races require one so far.
-    fn quad(&self) -> Result<(&QuadRig, &Vehicle)> {
-        match self {
-            Mount::Quad { rig, vehicle } => Ok((rig, vehicle)),
-            Mount::Bike(_) => Err(BIKE_RACES.into()),
-        }
-    }
-    fn quad_mut(&mut self) -> Result<(&mut QuadRig, &mut Vehicle)> {
-        match self {
-            Mount::Quad { rig, vehicle } => Ok((rig, vehicle)),
-            Mount::Bike(_) => Err(BIKE_RACES.into()),
-        }
-    }
-}
-const BIKE_RACES: &str = "motorcycle races are not ported to the Rust engine yet";
 
 /// What [`Ride::start`] places: the quad rig, or a motorcycle model.
 enum Seed {
@@ -180,6 +172,7 @@ pub struct Ride {
     placement: u32,
     sound: Option<sound::AudioStep>,
     race: Option<race::RaceState>,
+    selection: Selection,
     pub quad: Model,
     pub rider: Model,
 }
@@ -225,8 +218,10 @@ pub fn quaternion_world(origin: [f32; 3], orientation: [f32; 4]) -> [f32; 16] {
 }
 
 impl Ride {
+    #[allow(clippy::too_many_arguments)]
     fn start(
         sim: Simulation,
+        selection: Selection,
         start: ([f32; 3], f32),
         seed: Seed,
         quad: Model,
@@ -266,6 +261,7 @@ impl Ride {
             placement: 0,
             sound: None,
             race: None,
+            selection,
             quad,
             rider,
         };
@@ -331,6 +327,32 @@ impl Ride {
         matches!(self.mount, Mount::Bike(_))
     }
 
+    /// The player's motorcycle, when riding one.
+    pub fn motorcycle(&self) -> Option<&Motorcycle> {
+        match &self.mount {
+            Mount::Bike(bike) => Some(bike),
+            Mount::Quad { .. } => None,
+        }
+    }
+
+    /// The Garage choice this ride loaded.
+    pub fn selection(&self) -> Selection {
+        self.selection
+    }
+
+    /// The physics terrain (contact planes).
+    pub fn terrain(&self) -> &terrain::Terrain {
+        &self.sim.terrain
+    }
+
+    /// The motorcycle's mud on the bike and rider, 0-1 (the larger of its
+    /// two wheels' amounts; `motorcycleMudAmount` in game.js). ATVs: 0.
+    pub fn mud_amount(&self) -> f32 {
+        self.motorcycle().map_or(0., |bike| {
+            bike.frame().mud_amount.into_iter().fold(0., f32::max)
+        })
+    }
+
     /// Reset ATV: back to the scene start with the follow camera reset (ops
     /// 23, 47 and one op 46 step).
     pub fn reset(&mut self) -> Result<()> {
@@ -388,10 +410,14 @@ impl Ride {
         if self.is_motorcycle() {
             self.step_bike(controls)?;
             self.step_race()?;
+            // atv-web reads the bike's frame after the race step, which can
+            // move it (rider contact).
+            if let Mount::Bike(bike) = &self.mount {
+                self.frame = bike::summary(bike.frame());
+            }
             self.step_camera(orbit)?;
             self.steps += 1;
-            // Motorcycle engine sounds (atv-web op 101) are not ported yet.
-            self.sound = None;
+            self.sound = Some(self.capture_bike_sound(controls));
             return Ok(());
         }
         // During the countdown and after the finish the race supplies the
@@ -458,6 +484,7 @@ impl Ride {
                 target: self.camera_frame.target,
             },
             placement: self.placement,
+            bike: None,
         })
     }
 
