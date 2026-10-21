@@ -383,6 +383,39 @@ captures (`fury --capture .. --ui`) place the display face a few pixels lower th
 Chrome's canvas text (the desktop font's metrics), as for the Freeride HUD.
 
 Not yet: the countdown digits shown when a course lacks the lamp art (every race
-archive carries it), the results panel and its Continue / Hide Menu / Restart / Quit
-Event menus.
+archive carries it).
+
+## Race results checkpoint (2026-10-21)
+
+`atv-ui::hud::results` ports race.js `RaceOverlay`'s race-over half (game.css +
+hud.css `.race-results`, `.race-show`): on the first finished frame the panel shows
+Race Results, the summary (`Place N of M · total · Best`, race.js `raceTime`) and the
+standings table fixed at that moment (the player's row in HUD gold; CSS auto table
+layout approximated by sharing the width by each column's max-content width), over
+the riders who drive on. The original race-over menu: Continue opens Restart / Quit
+Event, Hide Menu swaps the panel for Show Results. Escape (back, hide, show) and Enter
+(the menu's first button) are taken from the ride while the results are up, the
+controller's A/B/X act on a fresh press as race.js polls them, pointers and touches
+click the buttons. The panel is centred with `translate(-50%, -50%)` after one layout.
+
+- Restart: with the engine's frontend (race links), the ride ends and the event
+  reloads through the course loader with a new roster seed and no pre-race camera
+  (race.js → `$('reset').onclick({restart:true})` → `loadGame`); race links now draw a
+  new roster per load too (the frontend path used a fixed seed). A direct ride
+  restarts in place. The new load holds the soundtrack through the countdown (the
+  hold now also applies when the bank becomes ready before the first race step, and
+  no song starts while held).
+- Quit Event returns to Single Player (`frontend.show('single')`); it is hidden without
+  the engine's frontend.
+
+Measured (NAT01, 9,000-step autopilot race finishing first, held frame; mean absolute
+RGB against play.html, Rust browser build): heading 1.17, whole panel 4.12, table
+6.47, buttons 6.38 — the remaining difference is the panel's `backdrop-filter:
+blur(12px)`, drawn as its 86%-opaque fill without the blur (inspected,
+`private/reports/engine-parity/race-presentation/shots/results-side.png`). A live
+link race (`engine.html?activity=race&map=nat01&laps=1&cpu=3&play=1&autopilot=1`)
+finished, Continue → Restart reloaded the event with a new roster (inspected
+screenshots `restart-*.png`), the soundtrack stayed paused through the countdown and
+started at GO (`?audioDiagnostics=1`). Host Chromium only; names longer than the
+column are not ellipsised; Tab focus movement between the buttons is not ported.
 

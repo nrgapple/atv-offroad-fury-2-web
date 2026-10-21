@@ -278,7 +278,7 @@ impl Ride {
         ride.after_placement()?;
         // A race takes the grid before the first camera step (op 96).
         if let Some((setup, settings)) = race {
-            ride.begin_race(setup, settings, true)?;
+            ride.begin_race(setup, settings, settings.intro)?;
         }
         // startSimulation: op 45 builds the camera, then op 46 steps it once.
         ride.step_camera(0.)?;
