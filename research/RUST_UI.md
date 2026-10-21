@@ -18,8 +18,10 @@ The existing one-handed default, saved 50–150% steering response (85% default)
 second-finger reverse/trick wheel, and explicit two-thumb mode are preserved.
 Pause clears riding ownership; Resume requires a fresh press. Camera accepts a
 utility finger while a driving finger remains held. Cancel, drag-away, focus
-loss, keyboard pause/reset and viewport resize discard ownership without a
-synthetic preload release. Toolbar targets remain at least 44 CSS pixels and
+loss, document hiding, application suspension, keyboard pause/reset and viewport
+resize discard ownership without a synthetic preload release. Independent focus
+and visibility state survives loading; becoming visible cannot override a canvas
+blur. Cached-page resume refreshes visibility before allowing simulation/audio. Toolbar targets remain at least 44 CSS pixels and
 respect safe-area insets. The temporary Rust pause control says Resume while
 paused; full pause-menu migration is a later checkpoint.
 
@@ -64,11 +66,28 @@ JavaScript path must not be retired before those comparisons pass.
   while the primary finger remains held, including WebKit at actual backing DPR3.
   The test reads an opt-in `?uiDiagnostics=1` hook; normal play does not
   serialize UI/game state each frame.
-- Native app compilation and focused UI/app Clippy pass. The same gesture crate
-  builds for native and WebAssembly; native touch hardware is not tested.
-- Inspected browser screenshots are private evidence until the combined current
-  engine checkpoint is captured and released. These are host checks, not
-  physical iOS/Android, touch-screen desktop, or original-hardware results.
+- Native optimized app/WebAssembly builds and focused UI/app Clippy pass. The same
+  gesture crate builds for both; native touch hardware is not tested.
+- The integrated ENV01 600-step comparison was inspected numerically: maximum
+  JavaScript/native vector differences are 0.00024414 position, 0.000020876
+  quaternion and 0.00048852 camera, with no step crossing the comparison's
+  0.001 position / 0.0001 quaternion thresholds. Browser/native final position
+  distance is 0.000015259 at step 600. Vehicle-crop RGB mean differences remain
+  1.29/255 landscape and 1.94/255 portrait; full-frame differences also include
+  the canvas toolbar and foreground plant orientation from camera history.
+  This is authored-port agreement, not original-hardware parity.
+- One Apple M4 host replay measured normalized main+worker CPU per 60 Hz step:
+  JavaScript 2.727 ms, Rust browser 2.366 ms; native engine timing was 2.890 ms.
+  The browser runs were uncapped and these are distinct timing measurements,
+  not a sustained phone benchmark or proof of mobile memory equivalence.
+- The combined audio/current-scene integration passes both browser lifecycle
+  gates: pre-ready blur, late sound installation, pause soundtrack, context
+  resume, and a sole early click/completed touch. Visibility and persisted page
+  transitions are controlled DOM fixtures, not physical mobile backgrounding.
+- Inspected combined-engine captures show the current venue/scenery, quad/rider,
+  held control, toolbar and airborne wheel. Captures stay in private storage for
+  the release owner. These are host checks, not physical iOS/Android,
+  touch-screen desktop, or original-hardware results.
 
 Menus, minimap, complete HUD, remapping screens, keyboard help, accessibility
 semantics for canvas controls, optional flips/arcade integration, original-game

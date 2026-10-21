@@ -255,34 +255,46 @@ an explicit option.
 Continuation fixes preserve existing browser behavior and resource savings:
 
 - The first ride frame no longer waits for the sound bank. Browser loading runs
-  asynchronously afterward and remembers an earlier activation gesture. Native
-  bank loading still runs synchronously after that first frame.
+  asynchronously afterward. An earlier actual click/key/touch gesture opens and
+  resumes the same output and silently primes the same media element that the
+  eventual sound bank uses. Completed touches retry activation for mobile policies
+  that reject touch-start playback; cancellation does not. Native bank loading
+  still runs synchronously after that first frame.
 - Encoded rider vocals decode only when selected, with a 24-entry PCM cache. In the
   measured ENV01 male bank this avoids 12,966,624 bytes of vocal PCM at startup;
   selecting all 51 cues leaves 8,558,608 bytes in the cache. First-decode median was
   0.735 ms, maximum 3.989 ms on the host Mac. This is not a physical-phone result;
   cue decoding remains synchronous while holding the mixer lock.
 - Mixer scratch buffers are reused across callbacks. Soundtrack maintenance runs
-  while the simulation is paused; focus loss freezes simulation and audio. A
-  rejected/interrupted browser media play request can recover on subsequent
-  activation or a bounded retry without skipping the selected song.
+  while the simulation is paused. Independent focus, visibility and suspension
+  state freezes simulation and audio while away, including content/bank completion
+  after focus loss. Returning to focus resumes an already activated output; it
+  never activates untouched audio. A rejected/interrupted browser media play
+  request can recover on subsequent activation or a bounded retry without
+  skipping the selected song.
 
 Verification: the content-backed `tools/test_rust_audio.mjs` passes Chromium and
-WebKit on the host. It blocks the bank network reads while requiring a rendered
-ride, rejects the first media play request, then checks engine voices, soundtrack
-advance while paused, focus suspension and neutral recovery. Mixer tests cover
+WebKit on the host. It delays content until after actual canvas focus/blur, blocks
+bank reads while requiring a rendered ride, and checks inactive late sound
+installation, engine voices, soundtrack advance while paused and neutral recovery.
+Controlled DOM visibility and persisted pagehide/pageshow fixtures cover the winit
+occlusion and back/forward-cache paths; a deliberately suspended AudioContext
+checks previously activated output recovery. These fixtures are not physical
+mobile backgrounding measurements. `tools/test_rust_audio_activation.mjs` separately
+checks a sole early click or completed touch with blocked bank reads, strict
+per-element activation and a rejected first song play. Mixer tests cover
 pause/focus behavior and streaming resampler continuity; vocal-cache tests cover
 lazy decoding, capacity and eviction.
 
 The Original ENV01 600-step JavaScript/native audio comparison matches all 12
 engine sample-length signatures, all 10 drive and three chassis voices; median level
-difference is 0.21 dB and p90 1.05 dB. Command timing still differs by 1–7 simulation
+difference is 0.209 dB and p90 1.048 dB. Command timing still differs by 1–7 simulation
 steps because the JavaScript reference schedules per delivered batch. Native mixer
 cost is 0.0065 ms per 60 Hz frame in this host replay. These measurements compare
 the authored implementations; they do not establish original PS2 SPU equivalence.
 Enhanced was measured separately: 12/12 engine signatures, 3/3 chassis and 9/10
-drive matches within the 2.5-step voice-start tolerance, median 0.17 dB and p90
-0.93 dB. The final Rust drive restart at step 599 has no corresponding JavaScript
+drive matches within the 2.5-step voice-start tolerance, median 0.169 dB and p90
+0.935 dB. The final Rust drive restart at step 599 has no corresponding JavaScript
 start in that capture; it remains an explicit timing/endpoint difference. Matching
 uses sample duration signatures and timing, not byte-identical output. Reports and
 captures remain under ignored `private/reports/engine-parity/audio-recovery/`.

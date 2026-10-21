@@ -112,6 +112,7 @@ for (const engine of ['chromium', 'webkit']) {
       throw error;
     });
     const resumed = await state();
+    assert.ok(resumed.clock > away.clock, 'focus recovery advances the previously suspended mixer');
     await page.evaluate(() => document.querySelector('canvas').blur());
     await page.waitForFunction(() => !JSON.parse(document.documentElement.dataset.engineAudio).musicActive);
     const unfocused = await state();
