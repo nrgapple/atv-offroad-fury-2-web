@@ -300,8 +300,28 @@ uses sample duration signatures and timing, not byte-identical output. Reports a
 captures remain under ignored `private/reports/engine-parity/audio-recovery/`.
 
 Remaining acceptance work includes physical mobile audio latency/stalls, actual
-Windows/Linux output devices, inactive render sleep, and broader runtime feature
-coverage. The JavaScript game remains available until the shared engine passes
+Windows/Linux output devices and broader runtime feature coverage.
+
+## Inactive render sleep (2026-10-21)
+
+As `render()` in `web/game.js` does, a single-player ride schedules no further frame
+while the window is unfocused, hidden or suspended, or while paused; the frame that
+applies the change draws the paused overlay and then the event loop waits.
+Lifecycle and input events (keys, pointer, touch, resize) wake it for one frame,
+which applies the event and decides again; resuming restarts the frame clock as the
+browser's `lastTime = 0` does. While paused in focus a 50 ms timer polls controllers
+(a pressed button wakes the ride) and keeps the soundtrack fed, since the pause menu
+keeps music playing. Parity holds and autodrive benchmarks keep rendering. No
+multiplayer clock runs in the Rust engine yet; a shared ride must keep its clocks
+live when it arrives, as the browser does.
+
+`tools/test_engine_sleep.mjs` (host Chromium, 960x540, two-second windows): before,
+paused/blurred/hidden kept 152-161 animation frames and 191-204 ms of main-thread
+task time; after, zero frames and 6-11 ms, against 159 frames and 161-189 ms while
+riding (120 steps). The JavaScript game's own measurement (PERFORMANCE.md) is 120 to
+zero frames for pause and blur. Host results, not phone or battery measurements;
+the desktop build uses the same event-loop path (winit `ControlFlow::Wait`/
+`WaitUntil`) but was not measured. The JavaScript game remains available until the shared engine passes
 those relevant subsystem gates.
 
 ## Commands
