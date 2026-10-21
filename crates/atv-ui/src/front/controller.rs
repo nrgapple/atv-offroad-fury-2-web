@@ -36,6 +36,13 @@ pub enum Event {
         rider: u16,
         name: String,
     },
+    /// Back from the garage or course picker opened over a held room ride:
+    /// ride again with this look (a new course for the host's Ride).
+    RoomRide {
+        quad: u16,
+        rider: u16,
+        environment: Option<String>,
+    },
     /// Join Game: open the room by its code (an ended room opens again on
     /// `environment`, the current course, as an invite reopens on its map).
     Join {
@@ -157,6 +164,9 @@ pub struct Frontend {
     pub hosting: bool,
     /// A form error (`#menu-notice` / the thrown message in frontend.js).
     pub notice: Option<String>,
+    /// The garage ("garage") or course picker ("tracks") is open over a
+    /// held room ride; leaving it rides again.
+    pub room: Option<&'static str>,
 }
 
 impl Frontend {
@@ -200,6 +210,7 @@ impl Frontend {
             focus: None,
             hosting: false,
             notice: None,
+            room: None,
         };
         front.player_name = front.saved["playerName"]
             .as_str()
@@ -455,6 +466,11 @@ impl Frontend {
     fn ride(&mut self, settings: &mut Settings) -> Option<Event> {
         let track = self.tracks.get(self.track)?.clone();
         self.save(settings);
+        if self.room == Some("tracks") {
+            // The host's Select Track over a room: move everyone there.
+            self.room = None;
+            return Some(self.room_ride(Some(track.id)));
+        }
         if self.hosting {
             // Rooms ride ATVs: a motorcycle choice rides ATV01.
             return Some(Event::Host {
@@ -498,7 +514,14 @@ impl Frontend {
         }
     }
 
-    fn back(&mut self, view: &Viewport) {
+    fn back(&mut self, view: &Viewport) -> Option<Event> {
+        // Over a held room: Done/Back returns to the ride.
+        if self.room == Some(self.page.as_str())
+            && matches!(self.page.as_str(), "garage" | "tracks")
+        {
+            self.room = None;
+            return Some(self.room_ride(None));
+        }
         let to = match self.page.as_str() {
             "main" => "title".to_string(),
             "single" => "main".into(),
@@ -507,7 +530,7 @@ impl Frontend {
             "garage" => self.garage_return.clone(),
             "multiplayer" => "main".into(),
             "create-lobby" | "join-lobby" => "multiplayer".into(),
-            _ => return,
+            _ => return None,
         };
         let from = self.page.clone();
         if from == "tracks" {
@@ -518,6 +541,15 @@ impl Frontend {
         // Back lands on the row that opened the page just left.
         if let Some(index) = self.choices.iter().position(|(a, _)| *a == from) {
             self.selection = index;
+        }
+        None
+    }
+
+    fn room_ride(&self, environment: Option<String>) -> Event {
+        Event::RoomRide {
+            quad: if self.quad_id >= 27 { 1 } else { self.quad_id },
+            rider: self.rider_id,
+            environment,
         }
     }
 
@@ -563,7 +595,7 @@ impl Frontend {
                 self.garage_return = self.page.clone();
                 self.show("garage", view);
             }
-            "back" => self.back(view),
+            "back" => return self.back(view),
             "devlog" => return Some(Event::DevLog),
             "freeride" => {
                 // frontend.js: no setup; motorcycles fall back to ATV01.
@@ -696,7 +728,7 @@ impl Frontend {
                     + if action == "up" { -1 } else { 1 };
                 self.selection = order[at.rem_euclid(order.len() as i32) as usize];
             }
-            (_, "back") => self.back(view),
+            (_, "back") => return self.back(view),
             (_, "accept") => {
                 let action = self.current()?.to_string();
                 return self.run(&action, view, settings);
@@ -840,7 +872,7 @@ impl Frontend {
         }
         self.focus = None;
         match id {
-            BACK | DONE => self.back(view),
+            BACK | DONE => return self.back(view),
             RIDE => return self.ride(settings),
             PREV | NEXT => {
                 self.step_track(if id == PREV { -1 } else { 1 });

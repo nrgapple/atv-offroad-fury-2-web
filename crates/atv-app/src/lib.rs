@@ -238,6 +238,11 @@ struct App {
     requested: HashSet<String>,
     /// When the Free Ride rider count was last requested.
     riders_polled: Option<Instant>,
+    /// A room kept live while the frontend's garage or course picker is open
+    /// over it (Change ATV and Rider, Select Track).
+    held_room: Option<multiplayer::Net>,
+    /// The held room the next frontend ride resumes.
+    pending_room: Option<multiplayer::Net>,
     /// The Host/Join forms' browser inputs.
     #[cfg(target_arch = "wasm32")]
     text_inputs: text_inputs::TextInputs,
@@ -536,7 +541,7 @@ fn settle_room(ready: &mut Ready) {
     let started = Instant::now();
     let mut seen: Option<Instant> = None;
     while started.elapsed().as_secs_f32() < wait && net.closed.is_none() {
-        let tick = net.tick(&riding.ride, false);
+        let tick = net.tick(Some(&riding.ride), false);
         for key in tick.loads {
             net.model_loaded(pollster::block_on(multiplayer::load_model(
                 net.content(),
@@ -762,7 +767,7 @@ impl App {
             // Only actual suspension (hidden page, suspended app) sends the
             // paused presence pose; the online pause menu and blur keep
             // neutral-input riding (Riding::online).
-            let tick = net.tick(&riding.ride, suspended);
+            let tick = net.tick(Some(&riding.ride), suspended);
             if let Some((origin, yaw)) = tick.place
                 && let Err(error) = riding.place_beside(origin, yaw)
             {
@@ -1259,6 +1264,34 @@ impl App {
                         if let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut()) {
                             menu.notice = Some(error);
                         }
+                    }
+                }
+            }
+            Event::ChangeRide | Event::SelectTrack => {
+                let garage = event == Event::ChangeRide;
+                let Some(ready) = &mut self.ready else { return };
+                let (Some(mut net), Some(riding)) = (ready.net.take(), &ready.riding) else {
+                    return;
+                };
+                // Change ATV and Rider reloads in place (atv-web op 112's pose).
+                if garage {
+                    let m = riding.ride.rider_world();
+                    net.resume_at = Some((riding.ride.frame().origin, m[8].atan2_d(m[10])));
+                }
+                let environment = net.environment.clone();
+                self.held_room = Some(net);
+                if let Some(front) = &self.front {
+                    let mut f = front.borrow_mut();
+                    f.state.room = Some(if garage { "garage" } else { "tracks" });
+                    f.state.hosting = false;
+                    if let Some(index) = f.state.tracks.iter().position(|t| t.id == environment) {
+                        f.state.track = index;
+                    }
+                }
+                if !self.quit_to(Some(if garage { "garage" } else { "tracks" })) {
+                    // No frontend to show: keep riding in the room.
+                    if let (Some(ready), Some(net)) = (&mut self.ready, self.held_room.take()) {
+                        ready.net = Some(net);
                     }
                 }
             }
@@ -2671,6 +2704,46 @@ impl App {
                     Some(room),
                 );
             }
+            Event::RoomRide {
+                quad,
+                rider,
+                environment,
+            } => {
+                let Some(mut net) = self.held_room.take() else {
+                    // The room ended meanwhile: back to the main menu.
+                    if let Some(front) = &self.front {
+                        front.borrow_mut().resume("main");
+                    }
+                    self.wake();
+                    return;
+                };
+                let same = net
+                    .session
+                    .profile()
+                    .is_some_and(|p| p.quad == quad && p.rider == rider);
+                if !same && let Err(error) = net.change_profile(quad, rider) {
+                    status(&format!("Change ATV and Rider: {error}"));
+                }
+                // The host's Ride moves everyone; riders follow from the start.
+                let environment = match environment {
+                    Some(environment) if net.session.is_host() => {
+                        if let Err(error) = net.set_map(&environment) {
+                            status(&error);
+                        }
+                        net.resume_at = None;
+                        environment
+                    }
+                    _ => net
+                        .session
+                        .environment()
+                        .map_or_else(|| net.environment.clone(), String::from),
+                };
+                if environment != net.environment {
+                    net.resume_at = None;
+                }
+                self.pending_room = Some(net);
+                self.start_ride(environment, quad, rider, None, None);
+            }
             Event::Host {
                 environment,
                 code,
@@ -2823,22 +2896,35 @@ impl App {
             sound,
             appearance: world.appearance,
         };
+        let held = self.pending_room.take();
         let future = async move {
             // A room ride claims its slot first; the room decides the course.
-            let (net, environment) = match room {
-                Some(room) => {
-                    let profile = atv_game::multiplayer::Profile::new(
-                        &room.name,
-                        quad,
-                        rider,
-                        ride.appearance,
-                    );
-                    let (net, environment) =
-                        multiplayer::Net::join(&room, profile, &environment, content.clone(), ride)
-                            .await?;
+            // Returning from the garage/course picker resumes the held room.
+            let (net, environment) = match (held, room) {
+                (Some(mut net), _) => {
+                    net.loaded(&environment);
                     (Some(net), environment)
                 }
-                None => (None, environment),
+                (None, room) => match room {
+                    Some(room) => {
+                        let profile = atv_game::multiplayer::Profile::new(
+                            &room.name,
+                            quad,
+                            rider,
+                            ride.appearance,
+                        );
+                        let (net, environment) = multiplayer::Net::join(
+                            &room,
+                            profile,
+                            &environment,
+                            content.clone(),
+                            ride,
+                        )
+                        .await?;
+                        (Some(net), environment)
+                    }
+                    None => (None, environment),
+                },
             };
             let mut ready = prepare(gpu, content, environment, None, world, progress).await?;
             if net.is_some()
@@ -2857,10 +2943,11 @@ impl App {
 
     /// A room ride whose window is hidden or suspended runs no frames.
     fn presence_due(&self) -> bool {
-        (!self.visible || self.suspended)
-            && self.ready.as_ref().is_some_and(|r| {
-                r.riding.is_some() && r.net.as_ref().is_some_and(|n| n.closed.is_none())
-            })
+        self.held_room.is_some()
+            || (!self.visible || self.suspended)
+                && self.ready.as_ref().is_some_and(|r| {
+                    r.riding.is_some() && r.net.as_ref().is_some_and(|n| n.closed.is_none())
+                })
     }
 
     /// Hidden or suspended: keep the room live without frames. The socket is
@@ -2868,6 +2955,15 @@ impl App {
     /// 0.2 Hz cadence (web/multiplayer.js timers keep running in a
     /// background tab; actual suspension sends paused presence).
     fn presence_tick(&mut self) {
+        if let Some(net) = &mut self.held_room {
+            // The frontend over a held room: socket, reconnects and pings.
+            net.tick(None, true);
+            if let Some(closed) = &net.closed {
+                status(&format!("Multiplayer ended: {closed}"));
+                self.held_room = None;
+            }
+            return;
+        }
         if !self.presence_due() {
             return;
         }
@@ -2875,7 +2971,7 @@ impl App {
         let (Some(net), Some(riding)) = (&mut ready.net, &mut ready.riding) else {
             return;
         };
-        let tick = net.tick(&riding.ride, true);
+        let tick = net.tick(Some(&riding.ride), true);
         let remote = riding
             .sound
             .as_ref()
@@ -3544,6 +3640,8 @@ pub fn run(options: Options) {
         defaults: None,
         requested: HashSet::new(),
         riders_polled: None,
+        held_room: None,
+        pending_room: None,
         #[cfg(target_arch = "wasm32")]
         text_inputs: Default::default(),
         #[cfg(not(target_arch = "wasm32"))]

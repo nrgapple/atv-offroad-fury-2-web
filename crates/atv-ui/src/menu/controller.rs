@@ -32,6 +32,10 @@ pub enum Event {
     Spawn(u8),
     /// Leave Game: leave the multiplayer room.
     LeaveGame,
+    /// Change ATV and Rider: the garage over the held room.
+    ChangeRide,
+    /// The host's Select Track: the course picker over the held room.
+    SelectTrack,
 }
 
 /// The multiplayer room as the pause menu shows it (the browser's
@@ -318,10 +322,12 @@ impl PauseMenu {
                 rows.choices
                     .retain(|c| c != "devlog" && (online || c != "copyride"));
             }
-            // Not ported yet: Change ATV and Rider, Select Track (both open the
-            // frontend over a live room ride).
-            rows.choices
-                .retain(|c| c != "changeride" && c != "hosttrack");
+            // Change ATV and Rider and Select Track open the engine's own
+            // frontend; a direct room link has none.
+            if !self.frontend {
+                rows.choices
+                    .retain(|c| c != "changeride" && c != "hosttrack");
+            }
             if !cfg!(target_arch = "wasm32") && !self.frontend {
                 rows.choices.retain(|c| c != "main");
             }
@@ -389,6 +395,8 @@ impl PauseMenu {
             "fullscreen" => return Some(Event::Fullscreen),
             "copyride" => return Some(Event::CopyRide),
             "leave" => return Some(Event::LeaveGame),
+            "changeride" => return Some(Event::ChangeRide),
+            "hosttrack" => return Some(Event::SelectTrack),
             "players" => {
                 self.show("players");
                 return None;
