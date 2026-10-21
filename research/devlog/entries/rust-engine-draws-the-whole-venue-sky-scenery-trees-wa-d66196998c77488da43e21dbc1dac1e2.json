@@ -1,0 +1,17 @@
+{
+  "id": "rust-engine-draws-the-whole-venue-sky-scenery-trees-wa-d66196998c77488da43e21dbc1dac1e2",
+  "timestamp": "2026-10-21T01:16:50.915987+00:00",
+  "recorded_at": "2026-10-21T01:35:37.512963+00:00",
+  "kind": "build",
+  "title": "Rust engine draws the whole venue: sky, scenery, trees, water, train and smoke",
+  "summary": "The shared Rust engine, one codebase for the web and the macOS, Windows and Linux builds, now draws everything the JavaScript game draws for the venue itself under the Original preset. That covers the sky cube, scene models with every material pass (vertex colour, lighting, per-pass fog, blending, alpha cutouts with a second pass, UV scroll, animated textures, reflection maps), vegetation billboards and near meshes, the animated water surface, the ENV08 train, ambient smoke, fire and fog sprites, and the ENV05 fountains. All 40 venues load. This is live on the preview page https://furyremastered.com/engine.html (PRs #183 and #186, deployment.json reports 0e26ef4); play.html is still the main JavaScript game.",
+  "details": [
+    "Fixed a bug where venues with a multiple of six terrain texture layers (ENV04) rendered garbage in the browser.",
+    "Parity from the same camera with world clocks held, JavaScript game against the Rust browser build, mean absolute difference per frame 0.03 to 0.16 of 255 across ENV01 (start, sky, forest), SX01 stadium, ENV03, ENV05, ENV07, ENV08, FREE01, FREE04 and NAT01 water. ENV08 beside the train measures 0.06, down from 2.19 before smoke was ported. Rust browser against Rust native measures 0.00 to 0.04.",
+    "Performance on an Apple M4: Chromium 0.6 to 0.9 ms CPU per frame while riding; WebKit 1.2 to 2.1 ms and holds 60 fps at every tested venue (NAT05 heaviest at 433 draws). The wasm is 1.14 MB brotli including the ride.",
+    "PR #187 (snow and stadium camera flashes) was still in CI when this was recorded, so it is pending and not part of this checkpoint."
+  ],
+  "limitation": "No audio, HUD, menus or touch controls yet. Wheel dust, tire tracks and shadows are not ported. Snow follows the rendered view rather than the follow camera. Race gates and events are not ported. Phones have not been re-measured with scenery. engine.html is a preview, not the main game.",
+  "image": "/devlog-images/rust-engine-draws-the-whole-venue-sky-scenery-trees-wa-d66196998c77488da43e21dbc1dac1e2.png",
+  "caption": "ENV01 ride in the native macOS Rust build, Original preset: snow terrain, trees, the hut and the rider all drawn by the Rust engine."
+}
