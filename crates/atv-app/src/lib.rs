@@ -50,6 +50,8 @@ pub struct Options {
     pub ride: bool,
     /// The Garage choice: ATV or motorcycle and rider.
     pub selection: atv_game::ride::Selection,
+    /// The Garage rider gear and quad paint (ATVs).
+    pub appearance: atv_game::ride::gear::Appearance,
     /// Race on the venue's National/Supercross course (with `ride`; a free
     /// camera views the race-course world and its pre-race shots).
     pub race: Option<atv_game::ride::race::Settings>,
@@ -215,6 +217,7 @@ struct Meter {
 /// Load-time choices for the venue presentation and the ride.
 struct World {
     selection: atv_game::ride::Selection,
+    appearance: atv_game::ride::gear::Appearance,
     race: Option<atv_game::ride::race::Settings>,
     weather: Option<bool>,
     steps: Option<u64>,
@@ -256,6 +259,7 @@ async fn prepare(
 ) -> Result<Ready, String> {
     let World {
         selection,
+        appearance,
         race,
         weather,
         steps,
@@ -340,7 +344,9 @@ async fn prepare(
         )
         .await?;
         let mut ride = ride;
+        ride.dress(&content, appearance).await?;
         scene.set_ride(&gpu, &venue, &ride.quad, &ride.rider)?;
+        scene.set_ride_paint(ride.paint());
         if let Some(race) = ride.race_mut() {
             scene.set_race_cpus(&gpu, &venue, &std::mem::take(&mut race.draw))?;
         }
@@ -1276,6 +1282,7 @@ impl ApplicationHandler<Message> for App {
         let (environment, fixed) = (options.venue, options.camera);
         let world = World {
             selection: options.selection,
+            appearance: options.appearance,
             race: options.race,
             weather: options.weather,
             steps: options.steps,
@@ -1929,6 +1936,15 @@ impl App {
             sound,
             autodrive: None,
             selection: atv_game::ride::Selection { quad, rider },
+            // The saved Garage appearance dresses the ride (game.js
+            // rideAppearance = frontend.appearance).
+            appearance: front
+                .borrow()
+                .settings
+                .get(atv_ui::front::controller::SELECTION_KEY)
+                .and_then(|text| serde_json::from_str(&text).ok())
+                .map(|saved| atv_game::ride::gear::saved_appearance(&saved))
+                .unwrap_or_default(),
         };
         let future = prepare(gpu, content, environment, None, world, progress);
         self.spawn(future, |result| match result {
@@ -2402,6 +2418,11 @@ pub fn start() {
             .and_then(|v| atv_game::crash::CrashMode::parse(&v))
             .unwrap_or_default(),
         ride: param("free").is_none(),
+        // `gear=1.0.2.0.0.0.0&paint=3` (captures and tests).
+        appearance: atv_game::ride::gear::saved_appearance(&serde_json::json!({"appearance": {
+            "gear": param("gear").map(|v| v.split('.').filter_map(|g| g.parse::<u64>().ok()).collect::<Vec<_>>()),
+            "paint": param("paint").and_then(|v| v.parse::<u64>().ok()),
+        }})),
         selection: {
             let number = |key: &str| param(key).and_then(|v| v.parse::<u16>().ok());
             let defaults = atv_game::ride::Selection::default();

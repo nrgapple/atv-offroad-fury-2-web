@@ -26,6 +26,8 @@ struct Globals {
     surface: [f32; 4],
     // mud amount (0-1), authored ATV2 reveal (1) or MX linear blend (0)
     mud: [f32; 4],
+    // quad paint mode and hue
+    paint: [f32; 4],
 }
 
 #[repr(C)]
@@ -189,6 +191,7 @@ impl VehiclePass {
             // Untextured vehicle groups keep the scenery pass's surface colour.
             surface: [0.68, 0.70, 0.73, 1.],
             mud: [0.; 4],
+            paint: [0.; 4],
         };
         let globals = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("vehicle globals"),
@@ -268,7 +271,8 @@ impl VehiclePass {
                     view.is_some() as u8 as f32,
                     texture.is_none_or(|t| t.fog) as u8 as f32,
                     mud.is_some() as u8 as f32,
-                    0.,
+                    // The paint recolours quad body materials, never the rider.
+                    (!rider && atv_game::ride::gear::paintable(name)) as u8 as f32,
                 ];
                 let flags = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("vehicle material flags"),
@@ -471,6 +475,11 @@ impl VehiclePass {
     /// amount (linear, `mudReveal` off) or the ATV2 dirt reveal.
     pub fn set_mud(&mut self, amount: f32, reveal: bool) {
         self.globals_value.mud = [amount.clamp(0., 1.), reveal as u8 as f32, 0., 0.];
+    }
+
+    /// The player's quad paint (mode, hue; `[0, 0]` keeps the livery).
+    pub fn set_paint(&mut self, paint: [f32; 2]) {
+        self.globals_value.paint = [paint[0], paint[1], 0., 0.];
     }
 
     pub fn prepare(&mut self, gpu: &Gpu, view_projection: &[f32; 16], eye: [f32; 3]) {

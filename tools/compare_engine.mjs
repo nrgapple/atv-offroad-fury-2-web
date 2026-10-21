@@ -39,9 +39,11 @@ const PORTRAIT = { width: 390, height: 844 };
 // Rewrites the game's own op 50 batches so each step carries the script's
 // input; once the script is exhausted the next batch is never sent, holding
 // the final state on screen.
-async function scriptedGame(browser, venue, steps, viewport, errors, { measure = false, graphics = 'original', crash = 'original', race = null, quad = 1 } = {}) {
+async function scriptedGame(browser, venue, steps, viewport, errors, { measure = false, graphics = 'original', crash = 'original', race = null, quad = 1, appearance = null } = {}) {
   const page = await newPage(browser, { viewport }, errors);
-  await page.addInitScript(({ steps, measure, graphics, crash, race }) => {
+  await page.addInitScript(({ steps, measure, graphics, crash, race, appearance }) => {
+    // The Garage appearance (rider gear and quad paint) the ride is dressed in.
+    if (appearance) localStorage.setItem('atv-player-selection', JSON.stringify({ appearance }));
     // CPU baseline: animation frames and worker operation time (worker.js
     // reports each operation's Wasm time).
     const cpu = window.rideCpu = { frames: 0, workerMs: 0 };
@@ -91,7 +93,7 @@ async function scriptedGame(browser, venue, steps, viewport, errors, { measure =
       trace.cursor += count; pending.add(message.id);
       return post.call(this, { ...message, bytes: new TextEncoder().encode(JSON.stringify(request)) }, ...rest);
     };
-  }, { steps, measure, graphics, crash, race });
+  }, { steps, measure, graphics, crash, race, appearance });
   const session = measure ? await page.context().newCDPSession(page) : null;
   if (session) await session.send('Performance.enable');
   await page.goto(url(race ? `/play.html?activity=race&map=${venue}&laps=${race.laps}&cpu=${race.cpu}&quad=${quad}&play=1` : `/play.html?drive=1&environment=${venue}&quad=${quad}`));
@@ -214,6 +216,12 @@ async function rideMode() {
   // --quad: the Garage selection (27-46 are the motorcycles).
   const quadAt = args.indexOf('--quad');
   const quad = quadAt >= 0 ? Number(args.splice(quadAt, 2)[1]) : 1;
+  // --appearance 1.2.0.3.3.0.1:4: Garage gear indices and quad paint.
+  const appearanceAt = args.indexOf('--appearance');
+  const [gearText, paintText] = appearanceAt >= 0 ? args.splice(appearanceAt, 2)[1].split(':') : [];
+  const appearance = gearText ? { gear: gearText.split('.').map(Number), paint: Number(paintText ?? 0) } : null;
+  const dressWeb = appearance ? `&gear=${appearance.gear.join('.')}&paint=${appearance.paint}` : '';
+  const dressNative = appearance ? ['--gear', appearance.gear.join(','), '--paint', String(appearance.paint)] : [];
   const venue = args[0] || 'env01';
   const script = args[1] ? JSON.parse(await readFile(args[1], 'utf8')) : DEFAULT_SCRIPT;
   const out = path.resolve(args[2] ?? 'private/reports/engine-parity/ride');
@@ -224,12 +232,12 @@ async function rideMode() {
   const normalized = input => input?.keyboard_drive ? { ...input, keyboard_drive: { generation: 0, ...input.keyboard_drive } } : input ?? {};
   const steps = script.flatMap(({ frames, input }) => Array.from({ length: frames }, () => normalized(input)));
   const browser = await launch();
-  const report = { venue, quad, graphics, crash, steps: steps.length };
+  const report = { venue, quad, appearance, graphics, crash, steps: steps.length };
   try {
     // Screen boxes around the held quad and rider of the default script.
     for (const [name, viewport, crop] of [['landscape', { width: 1280, height: 720 }, [0.43, 0.37, 0.59, 0.69]], ['portrait', PORTRAIT, [0.33, 0.49, 0.7, 0.7]]]) {
       const errors = [];
-      const page = await scriptedGame(browser, venue, steps, viewport, errors, { graphics, crash, quad });
+      const page = await scriptedGame(browser, venue, steps, viewport, errors, { graphics, crash, quad, appearance });
       const jsFile = path.join(out, `${venue}-${name}-javascript.png`);
       report[`javascriptGraphics-${name}`] = await page.evaluate(() => atvTerrainStatus.graphics?.setting);
       report[`javascriptSpeedRush-${name}`] = await page.evaluate(() => atvTerrainStatus.speedRush);
@@ -248,7 +256,7 @@ async function rideMode() {
 
       const rustErrors = [];
       const rust = await newPage(browser, { viewport }, rustErrors);
-      await rust.goto(url(`/engine.html?venue=${venue}&quad=${quad}&graphics=${graphics}&crash=${crash}&script=${encodeURIComponent(JSON.stringify(script))}`));
+      await rust.goto(url(`/engine.html?venue=${venue}&quad=${quad}${dressWeb}&graphics=${graphics}&crash=${crash}&script=${encodeURIComponent(JSON.stringify(script))}`));
       await rust.waitForFunction(() => document.querySelector('#trace') && /fps/.test(document.querySelector('#status').textContent)
         || /fail|error|stopped/i.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
       await rust.waitForTimeout(1000);
@@ -265,7 +273,7 @@ async function rideMode() {
       if (process.env.FURY_BIN) {
         const nativeFile = path.join(out, `${venue}-${name}-rust-native.png`);
         const content = process.env.FURY_CONTENT ? ['--content', process.env.FURY_CONTENT] : [];
-        execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--quad', String(quad), '--graphics', graphics, '--crash', crash, '--script', scriptFile, '--capture', nativeFile, `${viewport.width}x${viewport.height}`], { stdio: 'inherit' });
+        execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--quad', String(quad), ...dressNative, '--graphics', graphics, '--crash', crash, '--script', scriptFile, '--capture', nativeFile, `${viewport.width}x${viewport.height}`], { stdio: 'inherit' });
         report[`difference-${name}-native`] = await difference(browser, jsFile, nativeFile, crop, box);
       }
     }
