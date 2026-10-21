@@ -22,7 +22,7 @@ impl CrashMode {
             _ => None,
         }
     }
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::Original => "original",
             Self::Crazy => "crazy",

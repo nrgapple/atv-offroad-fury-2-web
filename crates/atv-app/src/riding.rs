@@ -373,6 +373,18 @@ impl Riding {
         self.interpolation || self.ride.is_motorcycle()
     }
 
+    /// Settings → Speed rush intensity (`speedRushAmount`'s peak).
+    pub fn set_speed_rush(&mut self, intensity: &str) {
+        self.rush.peak = atv_game::ride::view::speed_rush_peak(intensity);
+        if self.rush.peak == 0. {
+            self.rush.reset();
+        }
+    }
+
+    pub fn speed_rush_peak(&self) -> f64 {
+        self.rush.peak
+    }
+
     /// The speed-rush amount after this frame's update (screen pass).
     pub fn rush_amount(&self) -> f32 {
         self.rush.amount()
