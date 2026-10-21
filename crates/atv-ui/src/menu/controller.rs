@@ -8,6 +8,9 @@ use crate::{
     settings::Settings,
     touch::TouchControls,
 };
+use atv_game::ride::bindings::{
+    self as binds, ACTIONS, Action, Atom, Binding, Bindings, CONTROLLER_STORAGE_KEY, STORAGE_KEY,
+};
 use serde_json::json;
 
 /// What the ride must do after a menu input.
@@ -29,11 +32,24 @@ pub struct Context<'a> {
     pub prefs: &'a mut Preferences,
     pub minimap: &'a mut MinimapSettings,
     pub touch: &'a mut TouchControls,
+    /// The ride's gameplay bindings and controller tuning.
+    pub bindings: Option<&'a mut Bindings>,
+    /// Name of the controller in use, if any (Controller Settings row).
+    pub pad_name: Option<String>,
     pub view: Viewport,
 }
 
 /// Rows the Rust engine cannot perform yet are left out of its menu.
-const UNSUPPORTED: [&str; 5] = ["jukebox", "copyride", "keyboard", "controller", "alpha"];
+const UNSUPPORTED: [&str; 3] = ["jukebox", "copyride", "alpha"];
+
+/// A binding being captured (frontend.js `beginCapture`).
+struct Capture {
+    action: Action,
+    label: String,
+    atoms: Vec<Atom>,
+    held: Vec<String>,
+    armed: bool,
+}
 
 pub struct PauseMenu {
     pub page: String,
@@ -47,6 +63,11 @@ pub struct PauseMenu {
     key: String,
     /// After Back: select the row that opened the page just left.
     pending_select: Option<String>,
+    /// Bindings page: keyboard (true) or controller rows, page and row.
+    keyboard: bool,
+    binding_page: usize,
+    binding_row: usize,
+    capture: Option<Capture>,
 }
 
 struct Pressed {
@@ -82,6 +103,10 @@ impl PauseMenu {
             pad: u32::MAX,
             key: String::new(),
             pending_select: None,
+            keyboard: true,
+            binding_page: 0,
+            binding_row: 0,
+            capture: None,
         }
     }
 
@@ -94,6 +119,14 @@ impl PauseMenu {
             pressed: self.pressed.as_ref().map(|p| p.index),
             scroll: self.scroll,
             one_handed: ctx.touch.one_handed(),
+            capture: self.capture.as_ref().map(|c| c.label.clone()),
+            page_count: (self.page == "bindings").then(|| {
+                format!(
+                    "Page {} of {}",
+                    self.binding_page + 1,
+                    ACTIONS.len().div_ceil(4)
+                )
+            }),
         }
     }
 
@@ -133,6 +166,43 @@ impl PauseMenu {
             "one_handed_mobile": ctx.touch.one_handed(),
             "fullscreen": true,
         });
+        let mut request = request;
+        if let Some(b) = ctx.bindings.as_deref() {
+            let t = &b.tuning;
+            request["controller_label"] = match &ctx.pad_name {
+                Some(name) => format!("Auto ({name})"),
+                None => "Auto (press a button)".into(),
+            }
+            .into();
+            request["controller_preset"] = b.controller_preset_label().into();
+            request["controller_steering"] = t.steering.into();
+            request["controller_lean"] = t.lean.into();
+            request["controller_triggers"] = t.triggers.into();
+            request["controller_camera"] = t.camera.into();
+            request["controller_deadzone"] = t.deadzone.into();
+            request["binding_device"] = if self.keyboard {
+                "keyboard"
+            } else {
+                "controller"
+            }
+            .into();
+            request["binding_page"] = self.binding_page.into();
+            if self.page == "bindings" {
+                request["control_rows"] = ACTIONS
+                    .iter()
+                    .map(|(action, id, label)| {
+                        json!({
+                            "id": id,
+                            "label": if self.keyboard { binds::keyboard_label(*action) } else { label },
+                            "value": binds::binding_text(b.row(self.keyboard, *action), true),
+                        })
+                    })
+                    .collect();
+            }
+        }
+        if let Some(c) = &self.capture {
+            request["capture_label"] = c.label.clone().into();
+        }
         let key = request.to_string();
         if key == self.key {
             return;
@@ -160,6 +230,7 @@ impl PauseMenu {
     }
 
     fn show(&mut self, page: &str) {
+        self.capture = None;
         self.page = page.into();
         self.selection = 0;
         self.scroll = 0.;
@@ -171,10 +242,19 @@ impl PauseMenu {
         if self.page == "pause" {
             return Some(Event::Resume);
         }
-        let to = parent(&self.page);
-        let from = std::mem::take(&mut self.page);
-        self.show(to);
+        let to = if self.page == "bindings" && !self.keyboard {
+            "controller-settings"
+        } else {
+            parent(&self.page)
+        };
         // Return to the row that opened the page.
+        let from = match self.page.as_str() {
+            "bindings" if self.keyboard => "keyboard".to_string(),
+            "bindings" => "padbindings".to_string(),
+            "controller-settings" => "controller".to_string(),
+            page => page.to_string(),
+        };
+        self.show(to);
         self.pending_select = Some(from);
         None
     }
@@ -198,6 +278,66 @@ impl PauseMenu {
             | "controls" | "music" => {
                 self.show(action);
                 return None;
+            }
+            "keyboard" | "padbindings" => {
+                self.keyboard = action == "keyboard";
+                self.binding_page = 0;
+                self.binding_row = 0;
+                self.show("bindings");
+                return None;
+            }
+            "controller" => {
+                self.show("controller-settings");
+                return None;
+            }
+            "bindprev" | "bindnext" => {
+                let pages = ACTIONS.len().div_ceil(4);
+                let step = if action == "bindprev" { pages - 1 } else { 1 };
+                self.binding_page = (self.binding_page + step) % pages;
+                self.binding_row = self.binding_page * 4;
+                self.selection = 0;
+                Event::Changed
+            }
+            "bindcancel" => {
+                self.capture = None;
+                Event::Changed
+            }
+            "bindclear" | "bindreset" | "padpreset" | "paddefaults" => {
+                let bindings = ctx.bindings.as_deref_mut()?;
+                match action {
+                    "bindclear" => {
+                        let row = ACTIONS.get(self.binding_row)?.0;
+                        bindings.set_binding(self.keyboard, row, Vec::new());
+                    }
+                    "bindreset" => bindings.reset_device(self.keyboard),
+                    "padpreset" => bindings.cycle_controller_preset(direction),
+                    _ => bindings.tuning.reset(),
+                }
+                save_bindings(bindings, ctx.settings);
+                Event::Changed
+            }
+            "padselect" => Event::Changed,
+            _ if action.starts_with("bind:") => {
+                let id = &action[5..];
+                let (index, (row, _, label)) =
+                    ACTIONS.iter().enumerate().find(|(_, (_, i, _))| *i == id)?;
+                self.binding_row = index;
+                self.capture = Some(Capture {
+                    action: *row,
+                    label: if self.keyboard {
+                        binds::keyboard_label(*row).into()
+                    } else {
+                        (*label).into()
+                    },
+                    atoms: Vec::new(),
+                    held: Vec::new(),
+                    armed: false,
+                });
+                if let Some(b) = ctx.bindings.as_deref_mut() {
+                    b.cancel();
+                }
+                self.selection = 0;
+                Event::Changed
             }
             "minimap-toggle" => {
                 ctx.minimap.enabled = !ctx.minimap.enabled;
@@ -228,7 +368,14 @@ impl PauseMenu {
                     .set_one_handed(!ctx.touch.one_handed(), ctx.settings);
                 Event::Changed
             }
-            "minimap-size" | "minimap-zoom" | "steering-sensitivity" => {
+            "minimap-size"
+            | "minimap-zoom"
+            | "steering-sensitivity"
+            | "pad-steering"
+            | "pad-lean"
+            | "pad-triggers"
+            | "pad-camera"
+            | "pad-deadzone" => {
                 if let Some(s) = self.rows.slider(action).cloned() {
                     self.set_slider(action, s.value + s.step * direction as f32, ctx);
                 }
@@ -249,6 +396,13 @@ impl PauseMenu {
         match action {
             "minimap-size" => ctx.minimap.size = crate::hud::minimap::clamp_size(value),
             "minimap-zoom" => ctx.minimap.zoom = crate::hud::minimap::clamp_zoom(value),
+            _ if action.starts_with("pad-") => {
+                if let Some(b) = ctx.bindings.as_deref_mut() {
+                    b.tuning.set(&action[4..], value);
+                    ctx.settings
+                        .set(CONTROLLER_STORAGE_KEY, &b.tuning.to_json());
+                }
+            }
             _ => ctx.touch.set_steering_sensitivity(value, ctx.settings),
         }
         if action.starts_with("minimap") {
@@ -271,6 +425,26 @@ impl PauseMenu {
 
     /// Keyboard input while the menu is open (winit key code names).
     pub fn key(&mut self, code: &str, ctx: &mut Context) -> Option<Event> {
+        if let Some(c) = &mut self.capture {
+            if code == "Escape" {
+                self.capture = None;
+                self.key.clear();
+                return Some(Event::Changed);
+            }
+            let valid = code.len() <= 40
+                && code.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+                && code.chars().all(|c| c.is_ascii_alphanumeric());
+            if self.keyboard && valid {
+                if !c.held.iter().any(|h| h == code) {
+                    c.held.push(code.into());
+                }
+                let atom = Atom::Key(code.into());
+                if !c.atoms.contains(&atom) && c.atoms.len() < 4 {
+                    c.atoms.push(atom);
+                }
+            }
+            return None;
+        }
         match code {
             "ArrowUp" | "KeyW" => self.step(-1),
             "ArrowDown" | "KeyS" | "Tab" => self.step(1),
@@ -302,9 +476,95 @@ impl PauseMenu {
         None
     }
 
+    /// Key release: a keyboard capture saves once every key is up.
+    pub fn key_up(&mut self, code: &str, ctx: &mut Context) -> Option<Event> {
+        let c = self.capture.as_mut()?;
+        if !self.keyboard {
+            return None;
+        }
+        c.held.retain(|h| h != code);
+        if c.held.is_empty() && !c.atoms.is_empty() {
+            return self.finish_capture(ctx);
+        }
+        None
+    }
+
+    fn finish_capture(&mut self, ctx: &mut Context) -> Option<Event> {
+        let c = self.capture.take()?;
+        let binding = if c.atoms.len() == 1 {
+            Binding::One(c.atoms[0].clone())
+        } else {
+            Binding::Chord(c.atoms)
+        };
+        let bindings = ctx.bindings.as_deref_mut()?;
+        bindings.set_binding(self.keyboard, c.action, vec![binding]);
+        save_bindings(bindings, ctx.settings);
+        self.key.clear();
+        Some(Event::Changed)
+    }
+
+    /// frontend.js `pollCapture`: buttons and axes held together become one
+    /// binding when all are released.
+    fn capture_pad(
+        &mut self,
+        buttons: &[f32; 17],
+        axes: &[f32; 4],
+        connected: bool,
+        ctx: &mut Context,
+    ) -> Option<Event> {
+        if self.keyboard {
+            return None;
+        }
+        let c = self.capture.as_mut()?;
+        if !connected {
+            c.armed = false;
+            c.atoms.clear();
+            return None;
+        }
+        let mut atoms = Vec::new();
+        for (i, v) in buttons.iter().enumerate() {
+            if *v > 0.5 {
+                atoms.push(Atom::Button(i as u8));
+            }
+        }
+        for (i, v) in axes.iter().enumerate() {
+            if v.abs() > 0.65 {
+                atoms.push(Atom::Axis(i as u8, if *v < 0. { -1 } else { 1 }));
+            }
+        }
+        if !c.armed {
+            c.armed = atoms.is_empty();
+            return None;
+        }
+        for atom in &atoms {
+            let same_axis =
+                |a: &Atom| matches!((a, atom), (Atom::Axis(x, _), Atom::Axis(y, _)) if x == y);
+            if !c.atoms.iter().any(|a| a == atom || same_axis(a)) && c.atoms.len() < 4 {
+                c.atoms.push(atom.clone());
+            }
+        }
+        if atoms.is_empty() && !c.atoms.is_empty() {
+            return self.finish_capture(ctx);
+        }
+        None
+    }
+
     /// Standard-mapping controller buttons (edges): D-pad/stick move, A
     /// accepts, B/Y go back, Start resumes.
-    pub fn pad(&mut self, buttons: [f32; 17], axes: [f32; 4], ctx: &mut Context) -> Option<Event> {
+    pub fn pad(
+        &mut self,
+        buttons: [f32; 17],
+        axes: [f32; 4],
+        connected: bool,
+        ctx: &mut Context,
+    ) -> Option<Event> {
+        if self.capture.is_some() {
+            if self.keyboard {
+                // A pad press does not navigate under a keyboard capture.
+                return None;
+            }
+            return self.capture_pad(&buttons, &axes, connected, ctx);
+        }
         let mut held = 0u32;
         let mut set = |bit: u32, on: bool| {
             if on {
@@ -467,4 +727,20 @@ impl Default for PauseMenu {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn save_bindings(bindings: &Bindings, settings: &mut Settings) {
+    settings.set(STORAGE_KEY, &bindings.to_json());
+}
+
+/// The ride's saved bindings and controller tuning (play.html's keys).
+pub fn load_bindings(settings: &mut Settings) -> Bindings {
+    let (bindings, migrated) = Bindings::load(
+        settings.get(STORAGE_KEY).as_deref(),
+        settings.get(CONTROLLER_STORAGE_KEY).as_deref(),
+    );
+    if migrated {
+        save_bindings(&bindings, settings);
+    }
+    bindings
 }

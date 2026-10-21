@@ -196,6 +196,7 @@ dependencies = [
  "atv-content",
  "atv-core",
  "miniz_oxide 0.8.9",
+ "serde_json",
  "web-time",
 ]
 

@@ -206,8 +206,8 @@ Back with its glyph, controls tips, overflow scrolling) is laid out with taffy.
   `atv-speed-rush`, `atv-crash-*`, `atv-flips`, `atv-train-riding`,
   `atv.diagnostics.v1`, `atv-audio-v1`, `atv-soundtrack-v1` updated in place,
   `atv-race-*`), so the two games share them.
-- Not yet in the Rust menu: Jukebox, Copy ride link, Keyboard/Controller binding
-  remapping and the Alpha experiments (rows hidden); Graphics, Speed rush, crash,
+- Not yet in the Rust menu: Jukebox, Copy ride link and the Alpha experiments
+  (rows hidden); Graphics, Speed rush, crash,
   flip, train and stats choices persist but the Rust ride does not apply them
   yet; music volume/toggle persist without driving the Rust soundtrack. Desktop
   hides Dev log and Quit to Main Menu (no browser pages to open).
@@ -222,3 +222,31 @@ paused ride (`test_engine_sleep` still sees no frames while idle). Tests:
 `tools/test_engine_pause.mjs`; `test_engine_touch.mjs` resumes through the menu.
 A Pause/Esc tap shorter than one frame is still missed by the Rust bindings
 (the browser queues key edges); held taps work.
+
+## Bindings, capture and controller settings (2026-10-21)
+
+`atv_game::ride::bindings` now follows web/bindings.js and gamepads.js instead of
+fixed defaults: per-action keyboard/controller rows with chords, the Fury
+Remastered / ATV Offroad Fury 2 / MX vs. ATV Unleashed presets with a kept
+Custom set, the version-1 keyboard migration, controller response tuning
+(steering, lean, gas/brake, camera, dead zone) and the browser's saved formats
+(`atv2-gameplay-bindings-v1`, `atv2-controller-v1`), so remaps carry over between
+play.html and the Rust engine. Camera/Reset/Pause key edges are queued on
+keydown like `observeKeys`, so a tap shorter than one frame now pauses.
+
+The pause menu gains Controls → Keyboard bindings (four rows per page with the
+pager, Clear, Defaults; capture by key or chord, released to save, Escape
+cancels) and Controller settings (controller in use, preset cycling, tuning
+sliders, Controller bindings captured from buttons/axes as frontend.js
+`pollCapture` does, Defaults). The keyboard card follows the live bindings and H
+stays a gameplay key if bound. Controller rows use the standard-layout names of
+pad-glyphs.js as text; the glyph icons are not drawn yet, and pinning a specific
+controller (`padselect`) is Auto-only in the Rust engine.
+
+Flat-backdrop comparison (mean absolute RGB, whole viewport): Keyboard bindings
+1.07 (1280x720) / 2.15 (390x844); Controller settings 5.03 / 10.78 (the portrait
+difference is one value badge that wraps in the browser and not in the engine,
+shifting the rows below by a line). Tests: `test_engine_pause.mjs` captures a new
+Gas key, restores Defaults, cycles the controller preset, sets a tuning slider
+and checks a sub-frame Pause tap; atv-game unit tests cover saved-profile
+round trips, presets/custom, migration, tuning curves and queued taps.
