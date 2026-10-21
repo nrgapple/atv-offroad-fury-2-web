@@ -16,6 +16,7 @@ use atv_game::{
 };
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::{
+    cell::{Cell, RefCell},
     rc::Rc,
     sync::{Arc, Mutex},
 };
@@ -27,7 +28,7 @@ pub struct Output {
     pub mixer: Arc<Mutex<Mixer>>,
     stream: cpal::Stream,
     pub rate: u32,
-    pub started: bool,
+    pub started: Cell<bool>,
 }
 
 impl Output {
@@ -61,7 +62,12 @@ impl Output {
                 cpal::BufferSize::Default
             },
         };
-        let mixer = Arc::new(Mutex::new(Mixer::new(rate)));
+        let mut mixer = Mixer::new(rate);
+        // Gesture-time output can run before the bank is ready. Installation
+        // applies the ride's current lifecycle before either bus becomes live.
+        mixer.active = false;
+        mixer.music_active = false;
+        let mixer = Arc::new(Mutex::new(mixer));
         let shared = mixer.clone();
         let mut stereo = Vec::new();
         // Mix in stereo, then fan out to the device's channel layout.
@@ -113,16 +119,71 @@ impl Output {
             mixer,
             stream,
             rate,
-            started: false,
+            started: Cell::new(false),
         })
     }
 
     /// Called from a key or pointer press (Web Audio autoplay policy).
-    pub fn start(&mut self) {
+    pub fn start(&self) {
         // A later gesture must also resume a context suspended by the browser.
         if self.stream.play().is_ok() {
-            self.started = true;
+            self.started.set(true);
         }
+    }
+}
+
+/// Output survives the asynchronous bank load so the actual activating event
+/// can resume the context and prime the same music element the ride will use.
+#[derive(Clone)]
+pub struct Activation(Rc<RefCell<ActivationState>>);
+
+struct ActivationState {
+    output: Option<Rc<Output>>,
+    #[cfg(target_arch = "wasm32")]
+    music: bool,
+    #[cfg(target_arch = "wasm32")]
+    web: Option<Rc<RefCell<WebMusic>>>,
+}
+
+impl Activation {
+    pub fn new(music: bool) -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = music;
+        Self(Rc::new(RefCell::new(ActivationState {
+            output: None,
+            #[cfg(target_arch = "wasm32")]
+            music,
+            #[cfg(target_arch = "wasm32")]
+            web: None,
+        })))
+    }
+
+    fn output(&self) -> Result<Rc<Output>, String> {
+        let mut state = self.0.borrow_mut();
+        if state.output.is_none() {
+            state.output = Some(Rc::new(Output::open()?));
+        }
+        Ok(state.output.as_ref().unwrap().clone())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn web(&self) -> Option<Rc<RefCell<WebMusic>>> {
+        let mut state = self.0.borrow_mut();
+        if state.music && state.web.is_none() {
+            state.web = WebMusic::new().map(|web| Rc::new(RefCell::new(web)));
+        }
+        state.web.clone()
+    }
+
+    /// Call synchronously from a key/pointer/touch event, including while the
+    /// venue or bank is still loading. A saved boolean cannot unlock playback.
+    pub fn activate(&self) -> Result<(), String> {
+        self.output()?.start();
+        #[cfg(target_arch = "wasm32")]
+        if let Some(web) = self.web() {
+            web.borrow_mut().prime();
+        }
+        Ok(())
     }
 }
 
@@ -132,10 +193,56 @@ struct WebMusic {
     playing: bool,
     pending: Rc<std::cell::Cell<bool>>,
     retry: web_time::Instant,
+    primed: Rc<Cell<bool>>,
+    silent: Option<String>,
 }
 
 #[cfg(target_arch = "wasm32")]
 impl WebMusic {
+    fn new() -> Option<Self> {
+        let element = web_sys::HtmlAudioElement::new().ok()?;
+        element.set_volume(f64::from(
+            atv_game::audio::mixer::MUSIC_VOLUME * atv_game::audio::mixer::MASTER,
+        ));
+        Some(Self {
+            element,
+            playing: false,
+            pending: Rc::new(Cell::new(false)),
+            retry: web_time::Instant::now(),
+            primed: Rc::new(Cell::new(false)),
+            silent: None,
+        })
+    }
+
+    /// The original web/music.js primes one element with a tiny silent WAV in
+    /// the gesture, then reuses it when the soundtrack catalog becomes ready.
+    fn prime(&mut self) {
+        if self.primed.get() || self.pending.get() {
+            return;
+        }
+        if self.element.src().is_empty() {
+            let Some(url) = silent_url() else { return };
+            self.element.set_src(&url);
+            self.silent = Some(url);
+        }
+        let Ok(promise) = self.element.play() else {
+            return;
+        };
+        self.primed.set(true);
+        self.pending.set(true);
+        let (pending, primed) = (self.pending.clone(), self.primed.clone());
+        let (element, silent) = (self.element.clone(), self.silent.clone());
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = wasm_bindgen_futures::JsFuture::from(promise).await;
+            pending.set(false);
+            if result.is_err() {
+                primed.set(false);
+            } else if silent.as_deref() == Some(element.src().as_str()) {
+                let _ = element.pause();
+            }
+        });
+    }
+
     fn resume(&mut self, gesture: bool) {
         if self.pending.get() || (!gesture && self.retry.elapsed().as_millis() < 250) {
             return;
@@ -154,9 +261,42 @@ impl WebMusic {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+impl Drop for WebMusic {
+    fn drop(&mut self) {
+        let _ = self.element.pause();
+        self.element.remove_attribute("src").ok();
+        self.element.load();
+        if let Some(url) = &self.silent {
+            web_sys::Url::revoke_object_url(url).ok();
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn silent_url() -> Option<String> {
+    // 50 ms, mono signed 16-bit PCM at 8 kHz; authored silence, no game data.
+    let mut bytes = [0_u8; 844];
+    for (offset, value) in [(0, *b"RIFF"), (8, *b"WAVE"), (12, *b"fmt "), (36, *b"data")] {
+        bytes[offset..offset + 4].copy_from_slice(&value);
+    }
+    for (offset, value) in [(4, 836_u32), (16, 16), (24, 8000), (28, 16000), (40, 800)] {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    for (offset, value) in [(20, 1_u16), (22, 1), (32, 2), (34, 16)] {
+        bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+    }
+    let parts = js_sys::Array::new();
+    parts.push(&js_sys::Uint8Array::from(bytes.as_slice()));
+    let options = web_sys::BlobPropertyBag::new();
+    options.set_type("audio/wav");
+    let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &options).ok()?;
+    web_sys::Url::create_object_url_with_blob(&blob).ok()
+}
+
 /// The ride's sound: decisions, output and soundtrack.
 pub struct Sound {
-    pub output: Output,
+    pub output: Rc<Output>,
     pub ride: RideAudio,
     content: Rc<Content>,
     catalog: Option<Catalog>,
@@ -165,7 +305,7 @@ pub struct Sound {
     #[cfg(not(target_arch = "wasm32"))]
     song: Option<atv_game::audio::music::VagMusic>,
     #[cfg(target_arch = "wasm32")]
-    web: Option<WebMusic>,
+    web: Option<Rc<RefCell<WebMusic>>>,
     #[cfg(target_arch = "wasm32")]
     diagnostics: bool,
     pub title: Option<String>,
@@ -186,8 +326,9 @@ impl Sound {
         content: Rc<Content>,
         environment: &str,
         settings: Settings,
+        activation: Activation,
     ) -> Result<Self, String> {
-        let output = Output::open()?;
+        let output = activation.output()?;
         let course = atv_game::launch::course_resource(environment, false)?;
         let bank = bank::load(
             &content,
@@ -226,7 +367,11 @@ impl Sound {
             #[cfg(not(target_arch = "wasm32"))]
             song: None,
             #[cfg(target_arch = "wasm32")]
-            web: None,
+            web: if settings.music {
+                activation.web()
+            } else {
+                None
+            },
             #[cfg(target_arch = "wasm32")]
             diagnostics: web_sys::window()
                 .and_then(|w| w.location().search().ok())
@@ -266,7 +411,8 @@ impl Sound {
             mixer.music_active = focused;
         }
         #[cfg(target_arch = "wasm32")]
-        if let Some(web) = &mut self.web {
+        if let Some(web) = &self.web {
+            let mut web = web.borrow_mut();
             if focused && web.playing {
                 web.resume(true);
             } else if !focused {
@@ -306,7 +452,7 @@ impl Sound {
 
     /// Keep the soundtrack fed independently of paused simulation steps.
     pub fn maintain(&mut self) {
-        if self.focused && self.output.started && self.music_enabled {
+        if self.focused && self.output.started.get() && self.music_enabled {
             #[cfg(not(target_arch = "wasm32"))]
             self.native_music();
             #[cfg(target_arch = "wasm32")]
@@ -323,13 +469,13 @@ impl Sound {
             && let Ok(mixer) = self.output.mixer.lock()
         {
             let state = serde_json::json!({
-                "steps": steps, "started": self.output.started,
+                "steps": steps, "started": self.output.started.get(),
                 "active": mixer.active, "musicActive": mixer.music_active,
                 "clock": mixer.seconds(), "voices": mixer.voices(),
                 "engineCommands": self.ride.stats.engine_commands,
                 "musicTitle": self.title,
-                "musicTime": self.web.as_ref().map(|w| w.element.current_time()),
-                "musicPaused": self.web.as_ref().map(|w| w.element.paused()),
+                "musicTime": self.web.as_ref().map(|w| w.borrow().element.current_time()),
+                "musicPaused": self.web.as_ref().map(|w| w.borrow().element.paused()),
             });
             if let Some(root) = web_sys::window()
                 .and_then(|w| w.document())
@@ -377,28 +523,19 @@ impl Sound {
     /// pick starts when a song ends.
     #[cfg(target_arch = "wasm32")]
     fn web_music(&mut self, gesture: bool) {
-        if !self.focused || !self.music_enabled || !self.output.started {
+        if !self.focused || !self.music_enabled || !self.output.started.get() {
             return;
         }
         let Some(catalog) = &mut self.catalog else {
             return;
         };
-        if self.web.is_none() {
-            let Ok(element) = web_sys::HtmlAudioElement::new() else {
-                self.music_enabled = false;
-                return;
-            };
-            element.set_volume(f64::from(
-                atv_game::audio::mixer::MUSIC_VOLUME * atv_game::audio::mixer::MASTER,
-            ));
-            self.web = Some(WebMusic {
-                element,
-                playing: false,
-                pending: Rc::new(std::cell::Cell::new(false)),
-                retry: web_time::Instant::now(),
-            });
+        let Some(web) = &self.web else { return };
+        let mut web = web.borrow_mut();
+        // Let gesture-time priming settle before replacing its source: changing
+        // src during play() would abort the unlock on stricter mobile browsers.
+        if !web.playing && web.pending.get() {
+            return;
         }
-        let web = self.web.as_mut().unwrap();
         if web.playing && !web.element.ended() {
             if web.element.paused() {
                 web.resume(gesture);

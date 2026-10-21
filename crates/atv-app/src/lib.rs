@@ -90,6 +90,7 @@ struct App {
     drag: f32,
     started: Instant,
     sound_unlocked: bool,
+    activation: Option<sound::Activation>,
     bench: Bench,
     #[cfg(not(target_arch = "wasm32"))]
     bench_out: Option<std::path::PathBuf>,
@@ -419,7 +420,7 @@ impl App {
         let ride = &riding.ride;
         let frame = ride.frame();
         let sound = match &riding.sound {
-            Some(sound) if sound.output.started => format!(
+            Some(sound) if sound.output.started.get() => format!(
                 " · {:.2}+{:.2} ms audio{}",
                 sound.cpu,
                 sound.mix,
@@ -481,6 +482,10 @@ impl App {
             .and_then(|r| r.sound.as_mut())
         {
             sound.start();
+        } else if let Some(activation) = &self.activation
+            && let Err(error) = activation.activate()
+        {
+            status(&format!("Sound unavailable: {error}"));
         }
     }
 
@@ -499,9 +504,17 @@ impl App {
             return;
         };
         let proxy = self.proxy.clone();
+        let Some(activation) = self.activation.clone() else {
+            return;
+        };
         let future = async move {
-            let result =
-                sound::Sound::load(pending.content, &pending.environment, pending.settings).await;
+            let result = sound::Sound::load(
+                pending.content,
+                &pending.environment,
+                pending.settings,
+                activation,
+            )
+            .await;
             let _ = proxy.send_event(match result {
                 Ok(sound) => Message::SoundReady(Box::new(sound)),
                 Err(error) => Message::SoundFailed(error),
@@ -787,6 +800,10 @@ pub(crate) fn status(text: &str) {
 }
 
 pub fn run(options: Options) {
+    let activation = options
+        .sound
+        .filter(|_| options.ride && options.script.is_none())
+        .map(|(_, music)| sound::Activation::new(music));
     #[cfg(not(target_arch = "wasm32"))]
     let bench_out = options.bench.clone();
     let event_loop = EventLoop::<Message>::with_user_event()
@@ -807,6 +824,7 @@ pub fn run(options: Options) {
         drag: 0.,
         started: Instant::now(),
         sound_unlocked: false,
+        activation,
         bench: Bench::default(),
         #[cfg(not(target_arch = "wasm32"))]
         bench_out,
