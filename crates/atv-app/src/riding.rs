@@ -28,6 +28,17 @@ pub struct Riding {
     pub cycle_requested: bool,
     /// The host must cancel touch ownership after keyboard pause/reset.
     pub input_cleared: bool,
+    pub sound: Option<crate::sound::Sound>,
+    focused: bool,
+    /// Scripted controls driving the live loop (`--autodrive`), one per step.
+    pub autodrive: Option<(Vec<Controls>, usize)>,
+    /// Set once the autodrive script has played out.
+    pub autodrive_done: bool,
+    /// Simulation and sound time of the latest frame (ms).
+    pub sim_ms: f64,
+    /// Each of those steps' follow camera (position, target), for the world
+    /// effects that track the simulation camera (Snow).
+    pub step_cameras: Vec<([f32; 3], [f32; 3])>,
 }
 
 /// What a frame sampled from the keyboard/controller.
@@ -58,6 +69,12 @@ impl Riding {
             steps_last_frame: 0,
             cycle_requested: false,
             input_cleared: false,
+            sound: None,
+            focused: true,
+            autodrive: None,
+            autodrive_done: false,
+            sim_ms: 0.,
+            step_cameras: Vec::new(),
         }
     }
 
@@ -76,8 +93,51 @@ impl Riding {
 
     /// Advances one rendered frame of `dt` seconds (already capped at 50 ms).
     pub fn frame(&mut self, input: &Sample, touch: TouchSampler, dt: f32) -> Result<(), String> {
+        let started = web_time::Instant::now();
+        let result = self.frame_inner(input, touch, dt);
+        if let Some(sound) = &mut self.sound {
+            sound.maintain();
+            sound.report(self.ride.steps());
+        }
+        self.sim_ms = started.elapsed().as_secs_f64() * 1000.;
+        result
+    }
+
+    fn frame_inner(&mut self, input: &Sample, touch: TouchSampler, dt: f32) -> Result<(), String> {
         self.steps_last_frame = 0;
         self.input_cleared = false;
+        self.step_cameras.clear();
+        if !self.focused {
+            return Ok(());
+        }
+        if let Some((controls, cursor)) = &mut self.autodrive {
+            // The browser's accumulator, with the script supplying each step.
+            self.accumulator = (self.accumulator + dt).min(0.1);
+            let count = ((self.accumulator * 60.).floor() as u32).min(4);
+            for _ in 0..count {
+                self.accumulator -= 1. / 60.;
+                let Some(control) = controls.get(*cursor).copied() else {
+                    self.autodrive = None;
+                    self.autodrive_done = true;
+                    self.held = true;
+                    return Ok(());
+                };
+                *cursor += 1;
+                self.ride.step(&control, self.orbit)?;
+                let camera = self.ride.camera().0;
+                self.step_cameras.push((camera.position, camera.target));
+                if let Some(sound) = &mut self.sound {
+                    sound.step(self.ride.sound());
+                }
+                self.steps_last_frame += 1;
+            }
+            if count > 0
+                && let Some(sound) = &mut self.sound
+            {
+                sound.frame(self.ride.sound());
+            }
+            return Ok(());
+        }
         if self.held {
             return Ok(());
         }
@@ -86,6 +146,7 @@ impl Riding {
             if read.pause {
                 self.paused = false;
                 self.clear_input();
+                self.sync_sound();
             }
             return Ok(());
         }
@@ -107,6 +168,7 @@ impl Riding {
         if read.pause {
             self.paused = true;
             self.clear_input();
+            self.sync_sound();
             return Ok(());
         }
         if read.reset {
@@ -129,9 +191,30 @@ impl Riding {
     pub fn run(&mut self, controls: &Controls, count: u32) -> Result<(), String> {
         for _ in 0..count {
             self.ride.step(controls, self.orbit)?;
+            if let Some(sound) = &mut self.sound {
+                sound.step(self.ride.sound());
+            }
+            let camera = self.ride.camera().0;
+            self.step_cameras.push((camera.position, camera.target));
         }
         self.steps_last_frame += count;
+        // GameAudio.update runs once per delivered batch.
+        if let Some(sound) = &mut self.sound {
+            sound.frame(self.ride.sound());
+        }
         Ok(())
+    }
+
+    /// Window focus, like the browser's blur/focus: sound pauses while away.
+    pub fn set_focused(&mut self, focused: bool) {
+        self.focused = focused;
+        self.sync_sound();
+    }
+
+    pub(crate) fn sync_sound(&mut self) {
+        if let Some(sound) = &mut self.sound {
+            sound.set_lifecycle(self.focused, self.paused);
+        }
     }
 
     /// The scene camera for this frame and the pose upload.

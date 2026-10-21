@@ -1,9 +1,16 @@
 // Parity captures for the shared Rust engine. Renders one venue from the same
 // camera in (1) the current JavaScript game, (2) the Rust engine in the browser
-// (WebGL2) and (3) the native Rust build, and writes the three PNGs.
+// (WebGL2) and (3) the native Rust build, writes the PNGs and reports the mean
+// absolute difference per screen region.
 //
-//   node tools/compare_engine.mjs [venue] [out-dir]
+//   node tools/compare_engine.mjs [venue] [out-dir] [--view x,y,z,yaw,pitch,focal]...
+//        [--graphics original|enhanced|high] [--actors] [--race]
 //   node tools/compare_engine.mjs ride [venue] [script.json] [out-dir]
+// Static mode: without --view the JavaScript start camera is used. The
+// JavaScript game runs with the requested preset (Original by default), its
+// actors hidden (unless --actors; the Rust builds then ride too) and its scene
+// clocks held while capturing (window.atvParityView); the Rust builds receive
+// the same camera, Weather outcome and clock steps.
 // Ride mode replays one scripted control sequence through the JavaScript
 // game's own loop (its op 50 batches carry the script's input), the native
 // headless replay (`fury --trace`) and the Rust browser build, then compares
@@ -31,9 +38,15 @@ const PORTRAIT = { width: 390, height: 844 };
 // Rewrites the game's own op 50 batches so each step carries the script's
 // input; once the script is exhausted the next batch is never sent, holding
 // the final state on screen.
-async function scriptedGame(browser, venue, steps, viewport, errors) {
+async function scriptedGame(browser, venue, steps, viewport, errors, { measure = false } = {}) {
   const page = await newPage(browser, { viewport }, errors);
-  await page.addInitScript(({ steps }) => {
+  await page.addInitScript(({ steps, measure }) => {
+    // CPU baseline: animation frames and worker operation time (worker.js
+    // reports each operation's Wasm time).
+    const cpu = window.rideCpu = { frames: 0, workerMs: 0 };
+    const raf = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = callback => raf(time => { cpu.frames++; callback(time); });
+    if (measure) localStorage.setItem('atv-audio-v1', JSON.stringify({ sfx: 1, mode: 'original', silent: 'play' }));
     // The Original graphics preset, without the first-ride keyboard panel.
     localStorage.setItem('atv-graphics', 'original');
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
@@ -43,6 +56,7 @@ async function scriptedGame(browser, venue, steps, viewport, errors) {
       if (message?.op !== 50 || !message.bytes) return post.call(this, message, ...rest);
       if (!this.rideListener) {
         this.rideListener = true;
+        this.addEventListener('message', ({ data }) => { if (Number.isFinite(data.operationMs)) cpu.workerMs += data.operationMs; });
         this.addEventListener('message', ({ data }) => {
           if (!pending.delete(data.id) || data.error || !data.bytes) return;
           for (const { frame, camera } of JSON.parse(new TextDecoder().decode(data.bytes))) {
@@ -62,14 +76,80 @@ async function scriptedGame(browser, venue, steps, viewport, errors) {
       trace.cursor += count; pending.add(message.id);
       return post.call(this, { ...message, bytes: new TextEncoder().encode(JSON.stringify(request)) }, ...rest);
     };
-  }, { steps });
+  }, { steps, measure });
+  const session = measure ? await page.context().newCDPSession(page) : null;
+  if (session) await session.send('Performance.enable');
   await page.goto(url(`/play.html?drive=1&environment=${venue}`));
   await waitForGame(page);
+  let start;
+  if (session) {
+    // A click unlocks audio as a player's first input does.
+    await page.mouse.click(viewport.width / 2, viewport.height / 2);
+    await page.waitForFunction(() => window.rideTrace.cursor > 0, null, { timeout: 60000 });
+    start = await sample(page, session);
+  }
   await page.waitForFunction(() => window.rideTrace.held || /stopped/.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
   const stopped = await page.locator('#status').textContent();
   if (!await page.evaluate(() => window.rideTrace.held)) throw new Error(`JavaScript game: ${stopped}`);
+  if (session) page.cpu = cost(start, await sample(page, session));
   await page.waitForTimeout(500);
   return page;
+}
+
+// Main-thread task time (Chrome's TaskDuration) and frames for a page.
+async function sample(page, session) {
+  const { metrics } = await session.send('Performance.getMetrics');
+  const value = name => metrics.find(m => m.name === name)?.value ?? 0;
+  const page_ = await page.evaluate(() => ({ ...(window.rideCpu ?? {}), now: performance.now() }));
+  return { task: value('TaskDuration') * 1000, script: value('ScriptDuration') * 1000, frames: page_.frames ?? 0, workerMs: page_.workerMs ?? 0, now: page_.now };
+}
+function cost(a, b) {
+  const frames = Math.max(1, b.frames - a.frames), seconds = (b.now - a.now) / 1000;
+  return { frames, seconds, fps: frames / seconds, mainThreadMsPerFrame: (b.task - a.task) / frames, scriptMsPerFrame: (b.script - a.script) / frames,
+    workerMsPerFrame: (b.workerMs - a.workerMs) / frames, totalMsPerFrame: (b.task - a.task + b.workerMs - a.workerMs) / frames,
+    // Headless frames are not vsync-capped: CPU per second of riding,
+    // expressed per 60 Hz frame, compares builds at different frame rates.
+    totalMsPer60HzFrame: (b.task - a.task + b.workerMs - a.workerMs) / seconds / 60 };
+}
+
+// The same script in real time: the JavaScript game (main thread plus its
+// simulation worker), the Rust engine in the browser (one thread) and the
+// native build. GPU process time is excluded everywhere.
+async function cpuBaseline(venue, script, steps, scriptFile) {
+  const browser = await launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
+  const viewport = { width: 1280, height: 720 };
+  try {
+    const errors = [];
+    const page = await scriptedGame(browser, venue, steps, viewport, errors, { measure: true });
+    const javascript = page.cpu;
+    await page.close();
+    const rust = await newPage(browser, { viewport }, []);
+    await rust.addInitScript(() => {
+      const cpu = window.rideCpu = { frames: 0 };
+      const raf = window.requestAnimationFrame.bind(window);
+      window.requestAnimationFrame = callback => raf(time => { cpu.frames++; callback(time); });
+    });
+    const session = await rust.context().newCDPSession(rust);
+    await session.send('Performance.enable');
+    await rust.goto(url(`/engine.html?venue=${venue}&autodrive=${encodeURIComponent(JSON.stringify(script))}`));
+    await rust.waitForFunction(() => /fps/.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
+    await rust.mouse.click(viewport.width / 2, viewport.height / 2);
+    const start = await sample(rust, session);
+    await rust.waitForFunction(() => document.querySelector('#trace'), null, { timeout: 120000 });
+    const web = { ...cost(start, await sample(rust, session)), engine: JSON.parse(await rust.locator('#trace').textContent()) };
+    await rust.close();
+    let native = null;
+    if (process.env.FURY_BIN) {
+      const bench = scriptFile.replace(/\.json$/, '-bench.json');
+      const content = process.env.FURY_CONTENT ? ['--content', process.env.FURY_CONTENT] : [];
+      execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--autodrive', scriptFile, '--bench', bench], { stdio: 'inherit' });
+      native = JSON.parse(await readFile(bench, 'utf8'));
+    }
+    assertNoErrors(errors);
+    return { javascript, rustWeb: web, rustNative: native };
+  } finally {
+    await browser.close();
+  }
 }
 
 // Mean absolute RGB difference (0-255) over the frame and a centre crop.
@@ -170,6 +250,7 @@ async function rideMode() {
       const final = native.at(-1), web = report.rustWebFinal;
       report.webVersusNative = { origin: Math.hypot(...web.origin.map((v, i) => v - final.origin[i])), step: [web.step, final.step] };
     }
+    report.cpu = await cpuBaseline(venue, script, steps, scriptFile);
     await writeFile(path.join(out, 'report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
     console.log(`PASS: wrote ${venue} ride parity to ${out}`);
@@ -183,40 +264,125 @@ if (process.argv[2] === 'ride') {
   process.exit(0);
 }
 
-const venue = process.argv[2] ?? 'env01';
-const out = path.resolve(process.argv[3] ?? 'private/reports/engine-parity');
+const positional = [], views = [];
+let graphics = 'original', actors = false, race = false;
+for (let i = 2; i < process.argv.length; i++) {
+  const arg = process.argv[i];
+  if (arg === '--view') views.push(process.argv[++i]);
+  else if (arg === '--graphics') graphics = process.argv[++i];
+  else if (arg === '--actors') actors = true;
+  else if (arg === '--race') race = true;
+  else positional.push(arg);
+}
+const venue = positional[0] ?? 'env01';
+const out = path.resolve(positional[1] ?? 'private/reports/engine-parity');
 const viewport = { width: 1280, height: 720 };
 await mkdir(out, { recursive: true });
+
+// Hide every overlay (HUD, toolbar, help) so only the game canvas remains.
+const canvasOnly = () => {
+  const keep = new Set();
+  for (let el = document.querySelector('#game'); el; el = el.parentElement) keep.add(el);
+  for (const el of document.querySelectorAll('body *')) if (!keep.has(el)) el.style.visibility = 'hidden';
+};
+const frames = (page, count = 4) => page.evaluate(n => new Promise(resolve => { const step = () => (n-- <= 0 ? resolve() : requestAnimationFrame(step)); step(); }), count);
+
 const browser = await launch();
+const report = { venue, graphics, views: [] };
 try {
   const errors = [];
   const page = await newPage(browser, { viewport }, errors);
-  await page.goto(url(`/play.html?drive=1&environment=${venue}`));
+  await page.addInitScript(([preset, world]) => {
+    localStorage.setItem('atv-graphics', preset);
+    window.atvParityView = { world };
+  }, [graphics, !actors]);
+  // --race: the National/Supercross course without CPU riders (race weather, Snow).
+  await page.goto(url(race ? `/play.html?play=1&map=${venue}&activity=race&cpu=0` : `/play.html?drive=1&environment=${venue}`));
   await waitForGame(page);
-  // Let the start camera settle before sampling it.
+  // Let the start camera settle, then hold the scene clocks.
   await page.waitForTimeout(2500);
-  const camera = await page.evaluate(() => atvTerrainStatus.renderCamera);
-  await page.locator('#game').screenshot({ path: path.join(out, `${venue}-javascript.png`) });
-  assertNoErrors(errors);
-  const view = [camera.x, camera.y, camera.z, camera.yaw, camera.pitch, camera.focalLength].map(v => Number(v.toFixed(6))).join(',');
-  console.log(`camera ${view}`);
-
-  const rustErrors = [];
-  const rust = await newPage(browser, { viewport }, rustErrors);
-  await rust.goto(url(`/engine.html?venue=${venue}&camera=${view}`));
-  await rust.waitForFunction(() => /fps/.test(document.querySelector('#status').textContent) || /fail|error/i.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
-  await rust.waitForTimeout(2000);
-  const status = await rust.locator('#status').textContent();
-  console.log(`rust web: ${status}`);
-  await rust.evaluate(() => { document.querySelector('#status').hidden = true; });
-  await rust.locator('canvas').screenshot({ path: path.join(out, `${venue}-rust-web.png`) });
-  assertNoErrors(rustErrors);
-
-  if (process.env.FURY_BIN) {
-    const target = path.join(out, `${venue}-rust-native.png`);
-    execFileSync(process.env.FURY_BIN, ['--venue', venue, '--camera', view, '--capture', target, `${viewport.width}x${viewport.height}`], { stdio: 'inherit' });
+  await page.evaluate(() => { window.atvParityView.freeze = true; });
+  await frames(page);
+  const state = await page.evaluate(() => ({ camera: atvTerrainStatus.renderCamera, steps: atvTerrainStatus.simulationSteps, weather: atvTerrainStatus.weather?.active ?? false }));
+  await page.evaluate(canvasOnly);
+  const format = c => [c.x, c.y, c.z, c.yaw, c.pitch, c.focalLength].map(v => Number(v.toFixed(6))).join(',');
+  const list = views.length ? views : [format(state.camera)];
+  console.log(`steps ${state.steps} weather ${state.weather ? 'on' : 'off'}`);
+  for (const [index, view] of list.entries()) {
+    const [x, y, z, yaw, pitch, focalLength] = view.split(',').map(Number);
+    await page.evaluate(camera => { window.atvParityView.camera = camera; }, { x, y, z, yaw, pitch, focalLength });
+    await frames(page);
+    const stem = path.join(out, `${venue}-${index}`);
+    await page.locator('#game').screenshot({ path: `${stem}-javascript.png` });
+    console.log(`view ${index}: ${view}`);
+    const rustErrors = [];
+    const rust = await newPage(browser, { viewport }, rustErrors);
+    await rust.goto(url(`/engine.html?venue=${venue}&camera=${view}&weather=${state.weather ? 'on' : 'off'}&steps=${state.steps}&graphics=${graphics}${actors ? '' : '&free=1'}${race ? '&race=1' : ''}`));
+    await rust.waitForFunction(() => /fps/.test(document.querySelector('#status').textContent) || /fail|error/i.test(document.querySelector('#status').textContent), null, { timeout: 180000 });
+    await rust.waitForTimeout(2500);
+    const status = await rust.locator('#status').textContent();
+    console.log(`rust web: ${status}`);
+    await rust.evaluate(() => { document.querySelector('#status').hidden = true; });
+    await rust.locator('canvas').screenshot({ path: `${stem}-rust-web.png` });
+    assertNoErrors(rustErrors);
+    await rust.close();
+    const entry = { view, status };
+    if (process.env.FURY_BIN) {
+      const args = ['--venue', venue, '--camera', view, '--weather', state.weather ? 'on' : 'off', '--steps', String(state.steps), '--graphics', graphics, '--capture', `${stem}-rust-native.png`, `${viewport.width}x${viewport.height}`];
+      if (process.env.FURY_CONTENT) args.unshift('--content', process.env.FURY_CONTENT);
+      if (!actors) args.unshift('--free');
+      if (race) args.unshift('--race');
+      execFileSync(process.env.FURY_BIN, args, { stdio: 'inherit' });
+    }
+    entry.diff = await compare(browser, stem, Boolean(process.env.FURY_BIN));
+    report.views.push(entry);
   }
+  assertNoErrors(errors);
+  await writeFile(path.join(out, `${venue}-report.json`), JSON.stringify(report, null, 2));
+  console.log(JSON.stringify(report.views.map(v => v.diff), null, 1));
   console.log(`PASS: wrote ${venue} parity captures to ${out}`);
 } finally {
   await browser.close();
+}
+
+// Mean absolute RGB difference (0-255) overall and on a 4x3 grid, plus the
+// share of pixels differing by more than 24 in any channel; writes a heatmap.
+async function compare(browser, stem, native) {
+  const page = await browser.newPage();
+  const data = async name => `data:image/png;base64,${(await readFile(`${stem}-${name}.png`)).toString('base64')}`;
+  const sources = { javascript: await data('javascript'), web: await data('rust-web'), ...(native ? { native: await data('rust-native') } : {}) };
+  const result = await page.evaluate(async sources => {
+    const pixels = async src => {
+      const image = new Image(); image.src = src; await image.decode();
+      const canvas = new OffscreenCanvas(image.width, image.height), context = canvas.getContext('2d');
+      context.drawImage(image, 0, 0);
+      return context.getImageData(0, 0, image.width, image.height);
+    };
+    const decoded = Object.fromEntries(await Promise.all(Object.entries(sources).map(async ([k, v]) => [k, await pixels(v)])));
+    const pair = (a, b, heat) => {
+      const { width, height } = a, cells = Array.from({ length: 12 }, () => [0, 0]);
+      let sum = 0, large = 0;
+      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        const i = (y * width + x) * 4;
+        const d = [0, 1, 2].map(c => Math.abs(a.data[i + c] - b.data[i + c])), m = (d[0] + d[1] + d[2]) / 3;
+        sum += m; if (Math.max(...d) > 24) large++;
+        const cell = cells[Math.min(2, Math.floor(y * 3 / height)) * 4 + Math.min(3, Math.floor(x * 4 / width))];
+        cell[0] += m; cell[1]++;
+        if (heat) { heat.data[i] = Math.min(255, m * 8); heat.data[i + 1] = Math.min(255, m * 2); heat.data[i + 2] = 0; heat.data[i + 3] = 255; }
+      }
+      const round = v => Number(v.toFixed(2));
+      return { mean: round(sum / (width * height)), over24: round(100 * large / (width * height)), grid: [0, 1, 2].map(r => cells.slice(r * 4, r * 4 + 4).map(([s, n]) => round(s / n))) };
+    };
+    const { width, height } = decoded.javascript, heat = new ImageData(width, height);
+    const result = { jsWeb: pair(decoded.javascript, decoded.web, heat) };
+    if (decoded.native) result.webNative = pair(decoded.web, decoded.native), result.jsNative = pair(decoded.javascript, decoded.native);
+    const canvas = new OffscreenCanvas(width, height); canvas.getContext('2d').putImageData(heat, 0, 0);
+    const blob = await canvas.convertToBlob({ type: 'image/png' }), reader = new FileReader();
+    result.heat = await new Promise(resolve => { reader.onload = () => resolve(reader.result); reader.readAsDataURL(blob); });
+    return result;
+  }, sources);
+  await writeFile(`${stem}-diff.png`, Buffer.from(result.heat.split(',')[1], 'base64'));
+  delete result.heat;
+  await page.close();
+  return result;
 }

@@ -5,6 +5,8 @@ version.workspace = true
 publish.workspace = true
 
 [dependencies]
+atv-core = { path = "../atv-core" }
 atv-game = { path = "../atv-game" }
 bytemuck = { version = "1", features = ["derive"] }
 wgpu = { version = "30", default-features = false, features = ["std", "wgsl", "metal", "dx12", "vulkan", "gles", "webgl"] }
+web-time = "1"

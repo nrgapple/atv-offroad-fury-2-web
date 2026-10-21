@@ -11,12 +11,17 @@ crate-type = ["cdylib", "rlib"]
 name = "fury"
 path = "src/main.rs"
 
+[features]
+# Desktop release builds: embed the content pack named by FURY_PACK.
+embedded-content = ["atv-content/embedded"]
+
 [dependencies]
 atv-content = { path = "../atv-content" }
 atv-game = { path = "../atv-game" }
 atv-render = { path = "../atv-render" }
 atv-ui = { path = "../atv-ui" }
 wgpu = { version = "30", default-features = false, features = ["std", "wgsl", "metal", "dx12", "vulkan", "gles", "webgl"] }
+cpal = { version = "0.18", features = ["wasm-bindgen"] }
 gilrs = "0.11"
 serde_json.workspace = true
 web-time = "1"
@@ -31,4 +36,4 @@ console_error_panic_hook = "0.1"
 js-sys = "0.3"
 wasm-bindgen = "0.2.129"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlCanvasElement", "HtmlElement", "Location", "console", "MediaQueryList", "CssStyleDeclaration"] }
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlAudioElement", "HtmlCanvasElement", "HtmlElement", "HtmlMediaElement", "Location", "console", "MediaQueryList", "CssStyleDeclaration"] }

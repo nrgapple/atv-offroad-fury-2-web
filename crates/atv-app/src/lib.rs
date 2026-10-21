@@ -4,10 +4,11 @@ mod gamepad;
 mod overlay;
 pub mod replay;
 mod riding;
+mod sound;
 
 use atv_content::{Content, Store};
 use atv_game::venue::{self, Venue};
-use atv_render::{Camera, Gpu, SceneRenderer, View, camera::default_focal_length};
+use atv_render::{Camera, Gpu, Graphics, SceneRenderer, View, camera::default_focal_length};
 use std::{collections::HashSet, sync::Arc};
 use web_time::Instant;
 use winit::{
@@ -23,16 +24,32 @@ pub struct Options {
     pub venue: String,
     /// Fixed `x,y,z,yaw,pitch,focal` view, e.g. copied from the browser build.
     pub camera: Option<[f32; 6]>,
+    /// Forced Weather outcome (parity captures); random per load otherwise.
+    pub weather: Option<bool>,
+    /// World clock steps to run before the first frame, then hold the clocks
+    /// (parity captures against a paused JavaScript frame).
+    pub steps: Option<u64>,
+    pub graphics: Graphics,
     /// Native parity capture: render once at this size, write PNG and exit.
     #[cfg(not(target_arch = "wasm32"))]
     pub capture: Option<(std::path::PathBuf, u32, u32)>,
     /// Ride the player's quad (default); false keeps the free camera.
     pub ride: bool,
+    /// Load the venue's National/Supercross race course resources (static
+    /// world only for now: race weather, gate and grid are not ridden).
+    pub race: bool,
     /// Steps replayed at load, then the ride holds (parity captures).
     pub script: Option<replay::Script>,
     /// Test hook: paint this flat colour under the UI instead of the scene's
     /// pixels, for overlay parity captures against the JavaScript DOM.
     pub ui_backdrop: Option<[u8; 3]>,
+    /// Sound: None plays nothing (captures); otherwise the mode and music.
+    pub sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
+    /// A script driving the live loop in real time (CPU baselines).
+    pub autodrive: Option<replay::Script>,
+    /// Native: write the autodrive CPU report here and exit when it ends.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub bench: Option<std::path::PathBuf>,
 }
 
 struct Ready {
@@ -41,13 +58,24 @@ struct Ready {
     scene: SceneRenderer,
     camera: Camera,
     focal_length: f32,
+    /// World clocks held at the requested steps (parity captures).
+    hold: bool,
     /// A fixed `--camera` view overrides the chase camera.
     fixed: bool,
     riding: Option<riding::Riding>,
+    pending_sound: Option<PendingSound>,
+}
+
+struct PendingSound {
+    content: std::rc::Rc<Content>,
+    environment: String,
+    settings: sound::Settings,
 }
 
 enum Message {
     Ready(Box<Ready>),
+    SoundReady(Box<sound::Sound>),
+    SoundFailed(String),
     Failed(String),
 }
 
@@ -67,11 +95,29 @@ struct App {
     started: Instant,
     /// The UI layer (touch controls, toolbar), once the GPU is ready.
     overlay: Option<overlay::Overlay>,
+    /// Keep independent lifecycle causes: becoming visible must not undo a blur.
     focused: bool,
+    visible: bool,
+    suspended: bool,
     /// The left mouse press belongs to the UI, not the camera drag.
     mouse_ui: bool,
     ui_backdrop: Option<[u8; 3]>,
     ui_diagnostics: bool,
+    sound_unlocked: bool,
+    bench: Bench,
+    #[cfg(not(target_arch = "wasm32"))]
+    bench_out: Option<std::path::PathBuf>,
+}
+
+/// Per-frame CPU while an autodrive script plays (vsync wait excluded).
+#[derive(Default)]
+struct Bench {
+    frames: u32,
+    cpu: f64,
+    sim: f64,
+    render: f64,
+    audio: f64,
+    reported: bool,
 }
 
 #[derive(Default)]
@@ -82,6 +128,19 @@ struct Meter {
     ui: f64,
     since: Option<Instant>,
     triangles: u32,
+    draws: u32,
+}
+
+/// Load-time choices for the venue presentation and the ride.
+struct World {
+    race: bool,
+    weather: Option<bool>,
+    steps: Option<u64>,
+    graphics: Graphics,
+    ride: bool,
+    script: Option<replay::Script>,
+    sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
+    autodrive: Option<replay::Script>,
 }
 
 async fn prepare(
@@ -90,9 +149,18 @@ async fn prepare(
     store: Store,
     environment: String,
     fixed: Option<[f32; 6]>,
-    ride: bool,
-    script: Option<replay::Script>,
+    world: World,
 ) -> Result<Ready, String> {
+    let World {
+        race,
+        weather,
+        steps,
+        graphics,
+        ride,
+        script,
+        sound,
+        autodrive,
+    } = world;
     let size = window.inner_size();
     let mut descriptor = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(display));
     // Browsers get WebGL2 so the port runs on every phone the site supports.
@@ -107,8 +175,27 @@ async fn prepare(
         .map_err(|e| format!("surface: {e}"))?;
     let gpu = Gpu::new(&instance, surface, size.width, size.height).await?;
     status(&format!("Reading original {}…", environment.to_uppercase()));
-    let content = Content::open(store).await?;
-    let venue = venue::load(&content, &environment, false).await?;
+    let content = std::rc::Rc::new(Content::open(store).await?);
+    let weather = match weather {
+        Some(active) => venue::WeatherChoice::Active(active),
+        // Per-load sample, like the browser's Math.random() * 2^31.
+        None => venue::WeatherChoice::Random(
+            web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
+                .map_or(0, |d| d.subsec_nanos() ^ d.as_secs() as u32),
+        ),
+    };
+    let ride = ride && !race;
+    let venue = venue::load_with(
+        &content,
+        &environment,
+        race,
+        venue::LoadOptions {
+            weather,
+            sky_smooth: graphics.sky_smooth,
+        },
+    )
+    .await?;
     let start = venue.scene.start_position;
     let direction = venue.scene.start_direction;
     let yaw = direction[0].atan2(direction[2]);
@@ -134,7 +221,13 @@ async fn prepare(
         focal_length = focal;
     }
     // The browser centres the fine terrain patch on the rider at the start.
-    let mut scene = SceneRenderer::new(&gpu, &venue, Some([start[0], start[2]]));
+    let mut scene =
+        SceneRenderer::with_graphics(&gpu, &venue, Some([start[0], start[2]]), graphics);
+    if let Some(steps) = steps {
+        scene.set_weather_camera(camera);
+        scene.advance_steps(steps);
+    }
+    let mut pending_sound = None;
     let riding = if ride {
         // Default Garage selection: quad 1, male rider.
         let ride = atv_game::ride::load(&content, &venue, 1, 0, status).await?;
@@ -147,6 +240,14 @@ async fn prepare(
             riding.held = true;
             publish_trace(&replay::record(&riding.ride, riding.ride.steps()).to_string());
         }
+        if let (Some((mode, music)), None) = (sound, &script) {
+            pending_sound = Some(PendingSound {
+                content: content.clone(),
+                environment: environment.clone(),
+                settings: sound::Settings { mode, music },
+            });
+        }
+        riding.autodrive = autodrive.map(|script| (script.controls(), 0));
         Some(riding)
     } else {
         None
@@ -157,8 +258,10 @@ async fn prepare(
         scene,
         camera,
         focal_length,
+        hold: steps.is_some(),
         fixed: fixed.is_some(),
         riding,
+        pending_sound,
     })
 }
 
@@ -205,6 +308,17 @@ impl App {
         c.z += (axes.forward[2] * forward - axes.right[2] * strafe) * speed;
         c.y = c.y.max(ground(&ready.venue, c.x, c.z) + 1.5);
         let started = Instant::now();
+        let mut acquire = 0.;
+        if !ready.hold {
+            ready.scene.advance(dt);
+        }
+        // A race-course load plays its pre-race shots unless a view is fixed.
+        if !ready.fixed
+            && let Some((camera, focal)) = ready.scene.intro_view(ready.gpu.aspect())
+        {
+            ready.camera = camera;
+            ready.focal_length = focal;
+        }
         match ready.scene.render(
             &ready.gpu,
             &View {
@@ -212,15 +326,20 @@ impl App {
                 focal_length: ready.focal_length,
             },
         ) {
-            Ok(stats) => self.meter.triangles = stats.terrain_triangles,
+            Ok(stats) => {
+                self.meter.triangles = stats.triangles();
+                self.meter.draws = stats.draws();
+                acquire = stats.acquire_ms;
+            }
             Err(error) => status(&error),
         }
-        self.meter.cpu += started.elapsed().as_secs_f64() * 1000.;
+        self.meter.cpu += started.elapsed().as_secs_f64() * 1000. - acquire;
         self.meter_frame(now, "");
     }
 
     /// One rendered frame of the ride: input, fixed steps, chase view.
     fn ride_frame(&mut self, dt: f32) {
+        let focused = self.effective_focused();
         let now = Instant::now();
         let Some(ready) = &mut self.ready else { return };
         let Some(riding) = &mut ready.riding else {
@@ -228,7 +347,7 @@ impl App {
         };
         let started = Instant::now();
         let ms = (now - self.started).as_secs_f64() * 1000.;
-        let active = !riding.paused && !riding.held && self.focused;
+        let active = !riding.paused && !riding.held && focused;
         let pad = self.gamepad.sample();
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
         let keys = |code: &str| names.contains(code);
@@ -247,6 +366,14 @@ impl App {
             ready.riding = None;
             return;
         }
+        // World clocks (scenery animation, water, train) follow the
+        // simulation's fixed steps, as the browser's op 50 batch does.
+        if !ready.hold {
+            for &(position, target) in &riding.step_cameras {
+                ready.scene.set_weather_view(position, target);
+                ready.scene.advance_steps(1);
+            }
+        }
         match riding.present(
             &ready.gpu,
             &mut ready.scene,
@@ -261,7 +388,7 @@ impl App {
             Ok(_) => {}
             Err(error) => status(&error),
         }
-        let active = !riding.paused && !riding.held && self.focused;
+        let active = !riding.paused && !riding.held && focused;
         let ui_started = Instant::now();
         if let Some(overlay) = &mut self.overlay {
             if riding.input_cleared {
@@ -314,6 +441,8 @@ impl App {
             publish_ui_state(&state.to_string());
         }
         let overlay = &self.overlay;
+        let render_started = Instant::now();
+        let mut acquire = 0.;
         match ready.scene.render_with(
             &ready.gpu,
             &View {
@@ -326,14 +455,63 @@ impl App {
                 }
             },
         ) {
-            Ok(stats) => self.meter.triangles = stats.terrain_triangles + stats.vehicle_triangles,
+            Ok(stats) => {
+                self.meter.triangles = stats.triangles();
+                self.meter.draws = stats.draws();
+                acquire = stats.acquire_ms;
+            }
             Err(error) => status(&error),
         }
-        self.meter.cpu += started.elapsed().as_secs_f64() * 1000.;
+        let cpu = started.elapsed().as_secs_f64() * 1000. - acquire;
+        self.meter.cpu += cpu;
+        if riding.autodrive.is_some() {
+            let render = render_started.elapsed().as_secs_f64() * 1000. - acquire;
+            let audio = riding.sound.as_ref().map_or(0., |s| s.mix);
+            let bench = &mut self.bench;
+            bench.frames += 1;
+            bench.cpu += cpu;
+            bench.sim += riding.sim_ms;
+            bench.render += render;
+            bench.audio += audio;
+        } else if riding.autodrive_done && !self.bench.reported {
+            self.bench.reported = true;
+            let b = &self.bench;
+            let n = f64::from(b.frames.max(1));
+            let report = format!(
+                r#"{{"frames":{},"cpu_ms_per_frame":{:.4},"cpu_ms_per_60hz_step":{:.4},"sim_and_sound_ms":{:.4},"render_ms":{:.4},"mixer_ms":{:.4},"steps":{}}}"#,
+                b.frames,
+                b.cpu / n,
+                b.cpu / riding.ride.steps().max(1) as f64,
+                b.sim / n,
+                b.render / n,
+                b.audio / n,
+                riding.ride.steps()
+            );
+            publish_trace(&report);
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(path) = &self.bench_out {
+                std::fs::write(path, &report).expect("write bench report");
+                status(&format!("wrote {}", path.display()));
+                std::process::exit(0);
+            }
+        }
         let ride = &riding.ride;
         let frame = ride.frame();
+        let sound = match &riding.sound {
+            Some(sound) if sound.output.started => format!(
+                " · {:.2}+{:.2} ms audio{}",
+                sound.cpu,
+                sound.mix,
+                sound
+                    .title
+                    .as_ref()
+                    .map_or(String::new(), |t| format!(" · {t}"))
+            ),
+            Some(_) => " · press a key for sound".into(),
+            None => String::new(),
+        };
         let extra = format!(
-            " · {:.0} MPH{}",
+            " · {:.0} MPH{sound}{}",
             frame.speed_magnitude * 3600. / 5280.,
             if riding.paused {
                 " · paused (Esc)"
@@ -352,18 +530,20 @@ impl App {
         if elapsed >= 1. {
             let info = &ready.gpu.adapter_info;
             status(&format!(
-                "{} · {:.0} fps · {:.1} ms frame · {:.2} ms CPU ({:.2} UI) · {} tris · {:?} {}{extra}",
+                "{} · {:.0} fps · {:.1} ms frame · {:.2} ms CPU ({:.2} UI) · {} draws · {} tris · {:?} {}{extra}",
                 ready.venue.environment.to_uppercase(),
                 self.meter.frames as f64 / elapsed,
                 elapsed * 1000. / self.meter.frames as f64,
                 self.meter.cpu / self.meter.frames as f64,
                 self.meter.ui / self.meter.frames as f64,
+                self.meter.draws,
                 self.meter.triangles,
                 info.backend,
                 info.name
             ));
             self.meter = Meter {
                 triangles: self.meter.triangles,
+                draws: self.meter.draws,
                 ..Default::default()
             };
         }
@@ -375,6 +555,23 @@ impl App {
     fn css(&self, (x, y): (f64, f64)) -> (f32, f32) {
         let scale = self.window.as_ref().map_or(1., |w| w.scale_factor());
         ((x / scale) as f32, (y / scale) as f32)
+    }
+
+    fn effective_focused(&self) -> bool {
+        self.focused && self.visible && !self.suspended
+    }
+
+    /// Apply lifecycle state even when content is still loading. Winit reports
+    /// web document visibility as Occluded, separately from canvas focus.
+    fn sync_activity(&mut self) {
+        let focused = self.effective_focused();
+        if !focused {
+            self.blur();
+        }
+        if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
+            riding.set_focused(focused);
+        }
+        self.last = Instant::now();
     }
 
     fn blur(&mut self) {
@@ -399,6 +596,7 @@ impl App {
                 if !riding.held {
                     riding.paused = !riding.paused;
                     riding.clear_input();
+                    riding.sync_sound();
                     if let Some(overlay) = &mut self.overlay {
                         overlay.clear_input();
                     }
@@ -412,6 +610,9 @@ impl App {
     /// then the riding gestures.
     fn touch(&mut self, touch: winit::event::Touch) {
         use winit::event::TouchPhase;
+        if touch.phase == TouchPhase::Started {
+            self.gesture();
+        }
         let (x, y) = self.css((touch.location.x, touch.location.y));
         let now = (Instant::now() - self.started).as_secs_f64() * 1000.;
         let active = self
@@ -419,7 +620,7 @@ impl App {
             .as_ref()
             .and_then(|r| r.riding.as_ref())
             .is_some_and(|r| !r.paused && !r.held)
-            && self.focused;
+            && self.effective_focused();
         let Some(overlay) = &mut self.overlay else {
             return;
         };
@@ -448,6 +649,19 @@ impl App {
         }
     }
 
+    /// The first key, click or touch starts audio (browser autoplay rules).
+    fn gesture(&mut self) {
+        self.sound_unlocked = true;
+        if let Some(sound) = self
+            .ready
+            .as_mut()
+            .and_then(|r| r.riding.as_mut())
+            .and_then(|r| r.sound.as_mut())
+        {
+            sound.start();
+        }
+    }
+
     fn key_pressed(&mut self, code: KeyCode) {
         let now = (Instant::now() - self.started).as_secs_f64();
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
@@ -455,10 +669,33 @@ impl App {
             riding.key_pressed(&format!("{code:?}"), now, &|c: &str| names.contains(c));
         }
     }
+
+    /// Start sound loading after the first presented frame. Network/decode
+    /// readiness must not gate the ride, as in the optimized browser host.
+    fn load_sound(&mut self) {
+        let Some(pending) = self.ready.as_mut().and_then(|r| r.pending_sound.take()) else {
+            return;
+        };
+        let proxy = self.proxy.clone();
+        let future = async move {
+            let result =
+                sound::Sound::load(pending.content, &pending.environment, pending.settings).await;
+            let _ = proxy.send_event(match result {
+                Ok(sound) => Message::SoundReady(Box::new(sound)),
+                Err(error) => Message::SoundFailed(error),
+            });
+        };
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(future);
+        #[cfg(not(target_arch = "wasm32"))]
+        pollster::block_on(future);
+    }
 }
 
 impl ApplicationHandler<Message> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.suspended = false;
+        self.sync_activity();
         let Some(options) = self.options.take() else {
             return;
         };
@@ -479,8 +716,16 @@ impl ApplicationHandler<Message> for App {
             options.store,
             options.venue,
             options.camera,
-            options.ride,
-            options.script,
+            World {
+                race: options.race,
+                weather: options.weather,
+                steps: options.steps,
+                graphics: options.graphics,
+                ride: options.ride,
+                script: options.script,
+                sound: options.sound,
+                autodrive: options.autodrive,
+            },
         );
         let proxy = self.proxy.clone();
         let send = move |result: Result<Ready, String>| {
@@ -513,10 +758,38 @@ impl ApplicationHandler<Message> for App {
         }
     }
 
+    fn suspended(&mut self, _: &ActiveEventLoop) {
+        self.suspended = true;
+        self.sync_activity();
+    }
+
     fn user_event(&mut self, event_loop: &ActiveEventLoop, message: Message) {
         match message {
+            Message::SoundReady(mut sound) => {
+                if let Some(ready) = &mut self.ready
+                    && let Some(riding) = &mut ready.riding
+                {
+                    if let Err(error) = sound.configure(&ready.venue, &riding.ride) {
+                        status(&format!("Sound unavailable: {error}"));
+                        return;
+                    }
+                    riding.sound = Some(*sound);
+                    // A delayed bank can finish after blur/hide. Apply the
+                    // live lifecycle before starting the already-unlocked sink.
+                    riding.sync_sound();
+                    if self.sound_unlocked {
+                        riding.sound.as_mut().unwrap().start();
+                    }
+                }
+            }
+            Message::SoundFailed(error) => status(&format!("Sound unavailable: {error}")),
             Message::Ready(ready) => {
                 self.ready = Some(*ready);
+                self.sync_activity();
+                // Desktop has no autoplay rule: sound starts with the ride.
+                if !cfg!(target_arch = "wasm32") {
+                    self.gesture();
+                }
                 self.last = Instant::now();
                 if let Some(window) = &self.window {
                     let size = window.inner_size();
@@ -563,6 +836,7 @@ impl ApplicationHandler<Message> for App {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     match event.state {
                         ElementState::Pressed => {
+                            self.gesture();
                             if !event.repeat && self.keys.insert(code) {
                                 self.key_pressed(code);
                             }
@@ -575,11 +849,12 @@ impl ApplicationHandler<Message> for App {
             }
             WindowEvent::Focused(focused) => {
                 self.focused = focused;
-                if !focused {
-                    self.blur();
-                }
+                self.sync_activity();
             }
-            WindowEvent::Occluded(true) => self.blur(),
+            WindowEvent::Occluded(occluded) => {
+                self.visible = !occluded;
+                self.sync_activity();
+            }
             WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Left,
@@ -587,6 +862,7 @@ impl ApplicationHandler<Message> for App {
             } => {
                 let (x, y) = self.css(self.cursor.unwrap_or_default());
                 if state == ElementState::Pressed {
+                    self.gesture();
                     self.mouse_ui = self
                         .overlay
                         .as_mut()
@@ -626,6 +902,7 @@ impl ApplicationHandler<Message> for App {
             }
             WindowEvent::RedrawRequested => {
                 self.step();
+                self.load_sound();
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
@@ -670,6 +947,32 @@ pub fn parse_camera(text: &str) -> Option<[f32; 6]> {
     values.try_into().ok()
 }
 
+/// `on`/`off` (also 1/0, true/false).
+pub fn parse_switch(text: &str) -> Option<bool> {
+    match text {
+        "on" | "1" | "true" => Some(true),
+        "off" | "0" | "false" => Some(false),
+        _ => None,
+    }
+}
+
+/// Display -> Graphics preset features (presetFeatures in web/graphics.js).
+pub fn graphics_preset(name: &str) -> Graphics {
+    match name {
+        "high" => Graphics {
+            sky_smooth: true,
+            anisotropy: 16,
+            fresnel: true,
+        },
+        "enhanced" => Graphics {
+            sky_smooth: true,
+            anisotropy: 4,
+            fresnel: true,
+        },
+        _ => Graphics::default(),
+    }
+}
+
 /// The replayed state, for the browser parity tool (`#trace`).
 fn publish_trace(text: &str) {
     #[cfg(target_arch = "wasm32")]
@@ -686,7 +989,7 @@ fn publish_trace(text: &str) {
     let _ = text;
 }
 
-fn status(text: &str) {
+pub(crate) fn status(text: &str) {
     #[cfg(target_arch = "wasm32")]
     {
         web_sys::console::log_1(&text.into());
@@ -702,6 +1005,8 @@ fn status(text: &str) {
 }
 
 pub fn run(options: Options) {
+    #[cfg(not(target_arch = "wasm32"))]
+    let bench_out = options.bench.clone();
     let event_loop = EventLoop::<Message>::with_user_event()
         .build()
         .expect("event loop");
@@ -721,9 +1026,15 @@ pub fn run(options: Options) {
         started: Instant::now(),
         overlay: None,
         focused: true,
+        visible: true,
+        suspended: false,
         mouse_ui: false,
         ui_backdrop: None,
         ui_diagnostics: ui_diagnostics_enabled(),
+        sound_unlocked: false,
+        bench: Bench::default(),
+        #[cfg(not(target_arch = "wasm32"))]
+        bench_out,
     };
     #[cfg(target_arch = "wasm32")]
     {
@@ -758,11 +1069,26 @@ pub fn start() {
         store: Store::Http("/content/".into()),
         venue,
         camera: param("camera").and_then(|text| parse_camera(&text)),
+        weather: param("weather").and_then(|v| parse_switch(&v)),
+        steps: param("steps").and_then(|v| v.parse().ok()),
+        graphics: param("graphics").map_or_else(Graphics::default, |v| graphics_preset(&v)),
         ride: param("free").is_none(),
         ui_backdrop: param("uibackdrop").and_then(|hex| {
             let v = u32::from_str_radix(&hex, 16).ok()?;
             (hex.len() == 6).then(|| [(v >> 16) as u8, (v >> 8) as u8, v as u8])
         }),
+        sound: Some((
+            if param("sound").as_deref() == Some("enhanced") {
+                atv_game::audio::ride::SoundMode::Enhanced
+            } else {
+                atv_game::audio::ride::SoundMode::Original
+            },
+            param("music").as_deref() != Some("off"),
+        )),
+        autodrive: param("autodrive")
+            .and_then(|text| js_sys_decode(&text))
+            .and_then(|text| replay::Script::parse(&text).ok()),
+        race: param("race").is_some_and(|v| v == "1"),
         script: param("script")
             .and_then(|text| js_sys_decode(&text))
             .and_then(|text| replay::Script::parse(&text).ok()),

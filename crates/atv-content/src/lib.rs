@@ -3,7 +3,12 @@
 //! Every build reads the same hosted package format: `manifest.json` lists the
 //! authorized `.RES`/`.VAG`/`.LSI` files as SHA-256 addressed chunks. The web
 //! build fetches chunks over HTTP; desktop builds read a local package
-//! directory. No content is compiled into this crate or stored in Git.
+//! directory or a single content pack (see [`pack`]). Release builds may
+//! embed a pack through the opt-in `embedded` feature; no content is
+//! compiled into this crate by default or stored in Git.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod pack;
+
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -30,6 +35,16 @@ pub struct FileRecord {
     pub lazy: bool,
     sha256: Option<String>,
     chunks: Option<Vec<Chunk>>,
+    /// Soundtrack songs: a hosted AAC re-encode a media element can stream.
+    #[serde(default)]
+    pub stream: Option<MediaStream>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MediaStream {
+    pub url: String,
+    pub bytes: usize,
+    pub seconds: f64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -107,6 +122,9 @@ pub enum Store {
     /// A hosted package laid out as `<dir>/manifest.json` and `<dir>/<sha256>.bin`.
     #[cfg(not(target_arch = "wasm32"))]
     Directory(std::path::PathBuf),
+    /// The same package flattened into one pack file or embedded blob.
+    #[cfg(not(target_arch = "wasm32"))]
+    Pack(pack::Pack),
     /// The same layout served over HTTP, e.g. `/content/`.
     #[cfg(target_arch = "wasm32")]
     Http(String),
@@ -118,6 +136,8 @@ impl Store {
             #[cfg(not(target_arch = "wasm32"))]
             Store::Directory(dir) => std::fs::read(dir.join(name))
                 .map_err(|e| format!("{}: {e}", dir.join(name).display())),
+            #[cfg(not(target_arch = "wasm32"))]
+            Store::Pack(pack) => pack.read(name),
             #[cfg(target_arch = "wasm32")]
             Store::Http(base) => web::fetch(&format!("{base}{name}")).await,
         }
@@ -127,27 +147,91 @@ impl Store {
 pub struct Content {
     pub manifest: Manifest,
     store: Store,
+    /// Verified chunks recently read, newest last, bounded by `CACHE_BYTES`.
+    /// Venue, ride and audio loading read the same course archive; the
+    /// second and third reads are served from here.
+    cache: std::cell::RefCell<Vec<(String, std::rc::Rc<Vec<u8>>)>>,
 }
+
+const CACHE_BYTES: usize = 40 * 1024 * 1024;
 
 impl Content {
     pub async fn open(store: Store) -> Result<Self> {
         let manifest = Manifest::parse(&store.read("manifest.json").await?)?;
-        Ok(Self { manifest, store })
+        Ok(Self {
+            manifest,
+            store,
+            cache: Default::default(),
+        })
+    }
+
+    fn record_for(&self, path: &str) -> Result<&FileRecord> {
+        self.manifest
+            .record(path)
+            .ok_or_else(|| format!("content package lacks {path}"))
+    }
+
+    async fn chunk(&self, path: &str, chunk: &Chunk) -> Result<std::rc::Rc<Vec<u8>>> {
+        let cached = self
+            .cache
+            .borrow()
+            .iter()
+            .position(|(sha, _)| *sha == chunk.sha256);
+        if let Some(index) = cached {
+            let mut cache = self.cache.borrow_mut();
+            let entry = cache.remove(index);
+            let bytes = entry.1.clone();
+            cache.push(entry);
+            return Ok(bytes);
+        }
+        let bytes = self.store.read(&format!("{}.bin", chunk.sha256)).await?;
+        if bytes.len() != chunk.bytes || hex(&Sha256::digest(&bytes)) != chunk.sha256 {
+            return Err(format!("content integrity check failed for {path}"));
+        }
+        let bytes = std::rc::Rc::new(bytes);
+        let mut cache = self.cache.borrow_mut();
+        cache.push((chunk.sha256.clone(), bytes.clone()));
+        let mut total: usize = cache.iter().map(|(_, b)| b.len()).sum();
+        while total > CACHE_BYTES && cache.len() > 1 {
+            total -= cache.remove(0).1.len();
+        }
+        Ok(bytes)
     }
 
     /// One whole original file, integrity checked chunk by chunk.
     pub async fn file(&self, path: &str) -> Result<Vec<u8>> {
-        let record = self
-            .manifest
-            .record(path)
-            .ok_or_else(|| format!("content package lacks {path}"))?;
+        let record = self.record_for(path)?;
         let mut out = Vec::with_capacity(record.bytes);
         for chunk in record.chunks() {
-            let bytes = self.store.read(&format!("{}.bin", chunk.sha256)).await?;
-            if bytes.len() != chunk.bytes || hex(&Sha256::digest(&bytes)) != chunk.sha256 {
-                return Err(format!("content integrity check failed for {path}"));
+            out.extend_from_slice(&self.chunk(path, &chunk).await?);
+        }
+        Ok(out)
+    }
+
+    /// Size of an original file in the package.
+    pub fn size(&self, path: &str) -> Result<usize> {
+        Ok(self.record_for(path)?.bytes)
+    }
+
+    /// `count` bytes at `offset` of an original file, fetching only the
+    /// chunks that cover them (archives read member by member).
+    pub async fn read(&self, path: &str, offset: usize, count: usize) -> Result<Vec<u8>> {
+        let record = self.record_for(path)?;
+        let end = offset
+            .checked_add(count)
+            .filter(|end| *end <= record.bytes)
+            .ok_or_else(|| format!("read outside {path}"))?;
+        let mut out = Vec::with_capacity(count);
+        for chunk in record.chunks() {
+            let (low, high) = (
+                offset.max(chunk.offset),
+                end.min(chunk.offset + chunk.bytes),
+            );
+            if low >= high {
+                continue;
             }
-            out.extend_from_slice(&bytes);
+            let bytes = self.chunk(path, &chunk).await?;
+            out.extend_from_slice(&bytes[low - chunk.offset..high - chunk.offset]);
         }
         Ok(out)
     }
