@@ -3,6 +3,7 @@
 mod gamepad;
 pub mod replay;
 mod riding;
+mod sound;
 
 use atv_content::{Content, Store};
 use atv_game::venue::{self, Venue};
@@ -29,6 +30,13 @@ pub struct Options {
     pub ride: bool,
     /// Steps replayed at load, then the ride holds (parity captures).
     pub script: Option<replay::Script>,
+    /// Sound: None plays nothing (captures); otherwise the mode and music.
+    pub sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
+    /// A script driving the live loop in real time (CPU baselines).
+    pub autodrive: Option<replay::Script>,
+    /// Native: write the autodrive CPU report here and exit when it ends.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub bench: Option<std::path::PathBuf>,
 }
 
 struct Ready {
@@ -61,6 +69,20 @@ struct App {
     gamepad: gamepad::Gamepads,
     drag: f32,
     started: Instant,
+    bench: Bench,
+    #[cfg(not(target_arch = "wasm32"))]
+    bench_out: Option<std::path::PathBuf>,
+}
+
+/// Per-frame CPU while an autodrive script plays (vsync wait excluded).
+#[derive(Default)]
+struct Bench {
+    frames: u32,
+    cpu: f64,
+    sim: f64,
+    render: f64,
+    audio: f64,
+    reported: bool,
 }
 
 #[derive(Default)]
@@ -79,6 +101,8 @@ async fn prepare(
     fixed: Option<[f32; 6]>,
     ride: bool,
     script: Option<replay::Script>,
+    sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
+    autodrive: Option<replay::Script>,
 ) -> Result<Ready, String> {
     let size = window.inner_size();
     let mut descriptor = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(display));
@@ -94,7 +118,7 @@ async fn prepare(
         .map_err(|e| format!("surface: {e}"))?;
     let gpu = Gpu::new(&instance, surface, size.width, size.height).await?;
     status(&format!("Reading original {}…", environment.to_uppercase()));
-    let content = Content::open(store).await?;
+    let content = std::rc::Rc::new(Content::open(store).await?);
     let venue = venue::load(&content, &environment, false).await?;
     let start = venue.scene.start_position;
     let direction = venue.scene.start_direction;
@@ -134,6 +158,22 @@ async fn prepare(
             riding.held = true;
             publish_trace(&replay::record(&riding.ride, riding.ride.steps()).to_string());
         }
+        if let (Some((mode, music)), None) = (sound, &script) {
+            status("Reading original sounds…");
+            match sound::Sound::load(
+                content.clone(),
+                &venue,
+                &riding.ride,
+                sound::Settings { mode, music },
+            )
+            .await
+            {
+                Ok(sound) => riding.sound = Some(sound),
+                // A missing device or bank leaves the ride silent, not stopped.
+                Err(error) => status(&format!("Sound unavailable: {error}")),
+            }
+        }
+        riding.autodrive = autodrive.map(|script| (script.controls(), 0));
         Some(riding)
     } else {
         None
@@ -192,6 +232,7 @@ impl App {
         c.z += (axes.forward[2] * forward - axes.right[2] * strafe) * speed;
         c.y = c.y.max(ground(&ready.venue, c.x, c.z) + 1.5);
         let started = Instant::now();
+        let mut acquire = 0.;
         match ready.scene.render(
             &ready.gpu,
             &View {
@@ -199,10 +240,13 @@ impl App {
                 focal_length: ready.focal_length,
             },
         ) {
-            Ok(stats) => self.meter.triangles = stats.terrain_triangles,
+            Ok(stats) => {
+                self.meter.triangles = stats.terrain_triangles;
+                acquire = stats.acquire_ms;
+            }
             Err(error) => status(&error),
         }
-        self.meter.cpu += started.elapsed().as_secs_f64() * 1000.;
+        self.meter.cpu += started.elapsed().as_secs_f64() * 1000. - acquire;
         self.meter_frame(now, "");
     }
 
@@ -244,6 +288,8 @@ impl App {
             Ok(_) => {}
             Err(error) => status(&error),
         }
+        let render_started = Instant::now();
+        let mut acquire = 0.;
         match ready.scene.render(
             &ready.gpu,
             &View {
@@ -251,14 +297,62 @@ impl App {
                 focal_length: ready.focal_length,
             },
         ) {
-            Ok(stats) => self.meter.triangles = stats.terrain_triangles + stats.vehicle_triangles,
+            Ok(stats) => {
+                self.meter.triangles = stats.terrain_triangles + stats.vehicle_triangles;
+                acquire = stats.acquire_ms;
+            }
             Err(error) => status(&error),
         }
-        self.meter.cpu += started.elapsed().as_secs_f64() * 1000.;
+        let cpu = started.elapsed().as_secs_f64() * 1000. - acquire;
+        self.meter.cpu += cpu;
+        if riding.autodrive.is_some() {
+            let render = render_started.elapsed().as_secs_f64() * 1000. - acquire;
+            let audio = riding.sound.as_ref().map_or(0., |s| s.mix);
+            let bench = &mut self.bench;
+            bench.frames += 1;
+            bench.cpu += cpu;
+            bench.sim += riding.sim_ms;
+            bench.render += render;
+            bench.audio += audio;
+        } else if riding.autodrive_done && !self.bench.reported {
+            self.bench.reported = true;
+            let b = &self.bench;
+            let n = f64::from(b.frames.max(1));
+            let report = format!(
+                r#"{{"frames":{},"cpu_ms_per_frame":{:.4},"cpu_ms_per_60hz_step":{:.4},"sim_and_sound_ms":{:.4},"render_ms":{:.4},"mixer_ms":{:.4},"steps":{}}}"#,
+                b.frames,
+                b.cpu / n,
+                b.cpu / riding.ride.steps().max(1) as f64,
+                b.sim / n,
+                b.render / n,
+                b.audio / n,
+                riding.ride.steps()
+            );
+            publish_trace(&report);
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(path) = &self.bench_out {
+                std::fs::write(path, &report).expect("write bench report");
+                status(&format!("wrote {}", path.display()));
+                std::process::exit(0);
+            }
+        }
         let ride = &riding.ride;
         let frame = ride.frame();
+        let sound = match &riding.sound {
+            Some(sound) if sound.output.started => format!(
+                " · {:.2}+{:.2} ms audio{}",
+                sound.cpu,
+                sound.mix,
+                sound
+                    .title
+                    .as_ref()
+                    .map_or(String::new(), |t| format!(" · {t}"))
+            ),
+            Some(_) => " · press a key for sound".into(),
+            None => String::new(),
+        };
         let extra = format!(
-            " · {:.0} MPH{}",
+            " · {:.0} MPH{sound}{}",
             frame.speed_magnitude * 3600. / 5280.,
             if riding.paused {
                 " · paused (Esc)"
@@ -295,6 +389,18 @@ impl App {
 }
 
 impl App {
+    /// The first key, click or touch starts audio (browser autoplay rules).
+    fn gesture(&mut self) {
+        if let Some(sound) = self
+            .ready
+            .as_mut()
+            .and_then(|r| r.riding.as_mut())
+            .and_then(|r| r.sound.as_mut())
+        {
+            sound.start();
+        }
+    }
+
     fn key_pressed(&mut self, code: KeyCode) {
         let now = (Instant::now() - self.started).as_secs_f64();
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
@@ -327,6 +433,8 @@ impl ApplicationHandler<Message> for App {
             options.camera,
             options.ride,
             options.script,
+            options.sound,
+            options.autodrive,
         );
         let proxy = self.proxy.clone();
         let send = move |result: Result<Ready, String>| {
@@ -363,6 +471,10 @@ impl ApplicationHandler<Message> for App {
         match message {
             Message::Ready(ready) => {
                 self.ready = Some(*ready);
+                // Desktop has no autoplay rule: sound starts with the ride.
+                if !cfg!(target_arch = "wasm32") {
+                    self.gesture();
+                }
                 self.last = Instant::now();
                 if let Some(window) = &self.window {
                     let size = window.inner_size();
@@ -395,6 +507,7 @@ impl ApplicationHandler<Message> for App {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     match event.state {
                         ElementState::Pressed => {
+                            self.gesture();
                             if !event.repeat && self.keys.insert(code) {
                                 self.key_pressed(code);
                             }
@@ -405,10 +518,15 @@ impl ApplicationHandler<Message> for App {
                     };
                 }
             }
-            WindowEvent::Focused(false) => {
-                self.keys.clear();
+            WindowEvent::Focused(focused) => {
+                if !focused {
+                    self.keys.clear();
+                }
                 if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
-                    riding.clear_input();
+                    if !focused {
+                        riding.clear_input();
+                    }
+                    riding.set_focused(focused);
                 }
             }
             WindowEvent::MouseInput {
@@ -417,7 +535,11 @@ impl ApplicationHandler<Message> for App {
                 ..
             } => {
                 self.dragging = state == ElementState::Pressed;
+                if self.dragging {
+                    self.gesture();
+                }
             }
+            WindowEvent::Touch(_) => self.gesture(),
             WindowEvent::CursorMoved { position, .. } => {
                 if let (true, Some((x, _)), Some(Some(_))) = (
                     self.dragging,
@@ -496,7 +618,7 @@ fn publish_trace(text: &str) {
     let _ = text;
 }
 
-fn status(text: &str) {
+pub(crate) fn status(text: &str) {
     #[cfg(target_arch = "wasm32")]
     {
         web_sys::console::log_1(&text.into());
@@ -512,6 +634,8 @@ fn status(text: &str) {
 }
 
 pub fn run(options: Options) {
+    #[cfg(not(target_arch = "wasm32"))]
+    let bench_out = options.bench.clone();
     let event_loop = EventLoop::<Message>::with_user_event()
         .build()
         .expect("event loop");
@@ -529,6 +653,9 @@ pub fn run(options: Options) {
         gamepad: gamepad::Gamepads::new(),
         drag: 0.,
         started: Instant::now(),
+        bench: Bench::default(),
+        #[cfg(not(target_arch = "wasm32"))]
+        bench_out,
     };
     #[cfg(target_arch = "wasm32")]
     {
@@ -564,6 +691,17 @@ pub fn start() {
         venue,
         camera: param("camera").and_then(|text| parse_camera(&text)),
         ride: param("free").is_none(),
+        sound: Some((
+            if param("sound").as_deref() == Some("enhanced") {
+                atv_game::audio::ride::SoundMode::Enhanced
+            } else {
+                atv_game::audio::ride::SoundMode::Original
+            },
+            param("music").as_deref() != Some("off"),
+        )),
+        autodrive: param("autodrive")
+            .and_then(|text| js_sys_decode(&text))
+            .and_then(|text| replay::Script::parse(&text).ok()),
         script: param("script")
             .and_then(|text| js_sys_decode(&text))
             .and_then(|text| replay::Script::parse(&text).ok()),

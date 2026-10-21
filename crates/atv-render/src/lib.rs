@@ -144,6 +144,8 @@ pub struct FrameStats {
     pub terrain_draws: u32,
     pub terrain_triangles: u32,
     pub vehicle_triangles: u32,
+    /// Time spent waiting for the swapchain image (vsync), not CPU work.
+    pub acquire_ms: f64,
 }
 
 pub struct SceneRenderer {
@@ -201,6 +203,7 @@ impl SceneRenderer {
     }
 
     pub fn render(&mut self, gpu: &Gpu, view: &View) -> Result<FrameStats, String> {
+        let acquire = web_time::Instant::now();
         let frame = match gpu.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -213,8 +216,9 @@ impl SceneRenderer {
             }
             other => return Err(format!("surface: {other:?}")),
         };
+        let acquire_ms = acquire.elapsed().as_secs_f64() * 1000.;
         let target = frame.texture.create_view(&Default::default());
-        let (encoder, stats) = self.encode(
+        let (encoder, mut stats) = self.encode(
             gpu,
             view,
             gpu.aspect(),
@@ -224,6 +228,7 @@ impl SceneRenderer {
         );
         gpu.queue.submit([encoder.finish()]);
         gpu.queue.present(frame);
+        stats.acquire_ms = acquire_ms;
         Ok(stats)
     }
 

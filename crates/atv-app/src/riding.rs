@@ -24,6 +24,14 @@ pub struct Riding {
     /// Fine terrain patch centre, in terrain cells.
     center: [f32; 2],
     pub steps_last_frame: u32,
+    pub sound: Option<crate::sound::Sound>,
+    focused: bool,
+    /// Scripted controls driving the live loop (`--autodrive`), one per step.
+    pub autodrive: Option<(Vec<Controls>, usize)>,
+    /// Set once the autodrive script has played out.
+    pub autodrive_done: bool,
+    /// Simulation and sound time of the latest frame (ms).
+    pub sim_ms: f64,
 }
 
 /// What a frame sampled from the keyboard/controller.
@@ -49,6 +57,11 @@ impl Riding {
             held: false,
             center: cells(venue, origin),
             steps_last_frame: 0,
+            sound: None,
+            focused: true,
+            autodrive: None,
+            autodrive_done: false,
+            sim_ms: 0.,
         }
     }
 
@@ -65,7 +78,40 @@ impl Riding {
 
     /// Advances one rendered frame of `dt` seconds (already capped at 50 ms).
     pub fn frame(&mut self, input: &Sample, dt: f32) -> Result<(), String> {
+        let started = web_time::Instant::now();
+        let result = self.frame_inner(input, dt);
+        self.sim_ms = started.elapsed().as_secs_f64() * 1000.;
+        result
+    }
+
+    fn frame_inner(&mut self, input: &Sample, dt: f32) -> Result<(), String> {
         self.steps_last_frame = 0;
+        if let Some((controls, cursor)) = &mut self.autodrive {
+            // The browser's accumulator, with the script supplying each step.
+            self.accumulator = (self.accumulator + dt).min(0.1);
+            let count = ((self.accumulator * 60.).floor() as u32).min(4);
+            for _ in 0..count {
+                self.accumulator -= 1. / 60.;
+                let Some(control) = controls.get(*cursor).copied() else {
+                    self.autodrive = None;
+                    self.autodrive_done = true;
+                    self.held = true;
+                    return Ok(());
+                };
+                *cursor += 1;
+                self.ride.step(&control, self.orbit)?;
+                if let Some(sound) = &mut self.sound {
+                    sound.step(self.ride.sound());
+                }
+                self.steps_last_frame += 1;
+            }
+            if count > 0
+                && let Some(sound) = &mut self.sound
+            {
+                sound.frame(self.ride.sound());
+            }
+            return Ok(());
+        }
         if self.held {
             return Ok(());
         }
@@ -74,6 +120,7 @@ impl Riding {
             if read.pause {
                 self.paused = false;
                 self.clear_input();
+                self.sync_sound();
             }
             return Ok(());
         }
@@ -92,6 +139,7 @@ impl Riding {
         if read.pause {
             self.paused = true;
             self.clear_input();
+            self.sync_sound();
             return Ok(());
         }
         if read.reset {
@@ -114,9 +162,29 @@ impl Riding {
     pub fn run(&mut self, controls: &Controls, count: u32) -> Result<(), String> {
         for _ in 0..count {
             self.ride.step(controls, self.orbit)?;
+            if let Some(sound) = &mut self.sound {
+                sound.step(self.ride.sound());
+            }
         }
         self.steps_last_frame += count;
+        // GameAudio.update runs once per delivered batch.
+        if let Some(sound) = &mut self.sound {
+            sound.frame(self.ride.sound());
+        }
         Ok(())
+    }
+
+    /// Window focus, like the browser's blur/focus: sound pauses while away.
+    pub fn set_focused(&mut self, focused: bool) {
+        self.focused = focused;
+        self.sync_sound();
+    }
+
+    fn sync_sound(&mut self) {
+        let active = self.focused && !self.paused;
+        if let Some(sound) = &mut self.sound {
+            sound.set_active(active);
+        }
     }
 
     /// The scene camera for this frame and the pose upload.

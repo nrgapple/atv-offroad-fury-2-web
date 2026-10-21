@@ -8,3 +8,4 @@ publish.workspace = true
 atv-game = { path = "../atv-game" }
 bytemuck = { version = "1", features = ["derive"] }
 wgpu = { version = "30", default-features = false, features = ["std", "wgsl", "metal", "dx12", "vulkan", "gles", "webgl"] }
+web-time = "1"

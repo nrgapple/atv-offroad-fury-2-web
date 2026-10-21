@@ -13,6 +13,12 @@ fn main() {
     let mut ride = true;
     let mut script = None;
     let mut trace = None;
+    let mut audio = None;
+    let mut sound = atv_game::audio::ride::SoundMode::Original;
+    let mut music = true;
+    let mut no_audio = false;
+    let mut autodrive = None;
+    let mut bench = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--content" => content = args.next().map(PathBuf::from),
@@ -36,9 +42,30 @@ fn main() {
                 // Accept the browser tool's script file unchanged.
                 script = Some(atv_app::replay::Script::parse(&text).expect("parse script"));
             }
+            "--audio" => {
+                audio = Some(PathBuf::from(
+                    args.next().expect("--audio needs a WAV path"),
+                ))
+            }
+            "--sound" => {
+                sound = match args.next().as_deref() {
+                    Some("enhanced") => atv_game::audio::ride::SoundMode::Enhanced,
+                    Some("original") => atv_game::audio::ride::SoundMode::Original,
+                    _ => panic!("--sound needs original or enhanced"),
+                }
+            }
+            "--no-music" => music = false,
+            "--autodrive" => {
+                let text =
+                    std::fs::read_to_string(args.next().expect("--autodrive needs a JSON file"))
+                        .expect("read autodrive script");
+                autodrive = Some(atv_app::replay::Script::parse(&text).expect("parse autodrive"));
+            }
+            "--bench" => bench = Some(PathBuf::from(args.next().expect("--bench needs a path"))),
+            "--mute" => no_audio = true,
             "--trace" => trace = Some(PathBuf::from(args.next().expect("--trace needs a path"))),
             other => panic!(
-                "unknown argument {other}; use --content DIR --venue ID [--free] [--camera x,y,z,yaw,pitch,focal] [--script IN.json] [--trace OUT.json] [--capture OUT.png WxH]"
+                "unknown argument {other}; use --content DIR --venue ID [--free] [--mute] [--no-music] [--sound original|enhanced] [--audio OUT.wav] [--autodrive IN.json [--bench OUT.json]] [--camera x,y,z,yaw,pitch,focal] [--script IN.json] [--trace OUT.json] [--capture OUT.png WxH]"
             ),
         }
     }
@@ -46,6 +73,15 @@ fn main() {
         panic!("unknown venue {venue}");
     }
     let content = content.unwrap_or_else(|| PathBuf::from("content"));
+    // Captures render a held frame; they open no audio device.
+    no_audio |= capture.is_some();
+    if let Some(out) = audio {
+        // Offline mix of a scripted ride: no window or audio device.
+        let script = script.unwrap_or_else(|| atv_app::replay::Script::parse("[]").unwrap());
+        atv_app::replay::render_audio(&content, &venue, &script, &out, sound)
+            .expect("render audio");
+        return;
+    }
     if let Some(out) = trace {
         // Headless replay for parity traces: no window or GPU.
         let script = script.unwrap_or_else(|| atv_app::replay::Script::parse("[]").unwrap());
@@ -59,5 +95,8 @@ fn main() {
         capture,
         ride,
         script,
+        sound: (!no_audio).then_some((sound, music)),
+        autodrive,
+        bench,
     });
 }
