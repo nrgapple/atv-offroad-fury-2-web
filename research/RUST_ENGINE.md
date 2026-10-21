@@ -177,9 +177,13 @@ Snow and camera flashes (fourth checkpoint): `atv-game/snow.rs` + `atv-render/sn
 port `weather.js` (source SnowEmitter births from `atv_core::weather::Snow` into a
 10,800-slot GPU ring aged in WGSL, unfogged). Only ENV01 races select Snow, so the
 engine gained a static-world race-course load (`--race`, `?race=1`; ride disabled) and
-`compare_engine.mjs --race`. The browser steps Snow around its follow camera; the engine
-uses the last rendered view until the ride shares its camera (`set_weather_camera`), so
-the ENV01 race intro differs by flake placement only (5.5/255, 0.02 browser vs native).
+`compare_engine.mjs --race`. Snow now steps around each simulation step's camera, as the
+browser's op 50 batch does: the ride's follow camera (`Riding::step_cameras` ->
+`SceneRenderer::set_weather_view`) or, for a race-course load, the pre-race shot camera
+(`atv-game/intro.rs`, `atv_core::race_intro`), which also drives the free view and is
+stepped once at load like startSimulation's first op 46 request. ENV01 race intro: 3.1/255
+(was 5.5); the flakes now match and the residue is near plants whose orientation the
+browser captured along the moving intro camera (the capture pins the view).
 Stadium camera flashes now run on the browser's seeded `race_crowd::Flashes` clock
 (0020ee10, about one of SX01's 187 lit at a time); `flash_burst` takes race events.
 

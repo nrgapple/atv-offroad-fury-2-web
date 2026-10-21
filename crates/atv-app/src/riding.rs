@@ -24,6 +24,9 @@ pub struct Riding {
     /// Fine terrain patch centre, in terrain cells.
     center: [f32; 2],
     pub steps_last_frame: u32,
+    /// Each of those steps' follow camera (position, target), for the world
+    /// effects that track the simulation camera (Snow).
+    pub step_cameras: Vec<([f32; 3], [f32; 3])>,
 }
 
 /// What a frame sampled from the keyboard/controller.
@@ -49,6 +52,7 @@ impl Riding {
             held: false,
             center: cells(venue, origin),
             steps_last_frame: 0,
+            step_cameras: Vec::new(),
         }
     }
 
@@ -66,6 +70,7 @@ impl Riding {
     /// Advances one rendered frame of `dt` seconds (already capped at 50 ms).
     pub fn frame(&mut self, input: &Sample, dt: f32) -> Result<(), String> {
         self.steps_last_frame = 0;
+        self.step_cameras.clear();
         if self.held {
             return Ok(());
         }
@@ -114,6 +119,8 @@ impl Riding {
     pub fn run(&mut self, controls: &Controls, count: u32) -> Result<(), String> {
         for _ in 0..count {
             self.ride.step(controls, self.orbit)?;
+            let camera = self.ride.camera().0;
+            self.step_cameras.push((camera.position, camera.target));
         }
         self.steps_last_frame += count;
         Ok(())
