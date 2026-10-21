@@ -119,6 +119,9 @@ pub struct State {
     pub capture: Option<String>,
     /// Pager text, e.g. "Page 1 of 5".
     pub page_count: Option<String>,
+    /// Opened from the frontend's main menu: the panel fills the screen over
+    /// the frontend backdrop (`#frontend[data-context=menu]`).
+    pub from_menu: bool,
 }
 
 const FOOTER: [&str; 9] = [
@@ -166,14 +169,19 @@ pub fn element(view: &Viewport, state: &State) -> El {
         700f32.min(w - 48.)
     };
     let padding = if narrow || short { 20. } else { 30. };
-    let title_size = if narrow {
+    let gutter = (w * 0.032).clamp(16., 44.);
+    let title_size = if state.from_menu {
+        (w * 0.036).clamp(26., 44.)
+    } else if narrow {
         30.
     } else if short {
         28.
     } else {
         (w * 0.044).clamp(30., 42.)
     };
-    let (title_margin, title_pad) = if narrow || short {
+    let (title_margin, title_pad) = if state.from_menu {
+        (gutter, [6., 8.])
+    } else if narrow || short {
         (20., if short { [2., 4.] } else { [4., 6.] })
     } else {
         (30., [4., 6.])
@@ -182,17 +190,30 @@ pub fn element(view: &Viewport, state: &State) -> El {
     let row_height = if short { 46. } else { 50. };
 
     let heading = El::new(Style {
-        margin: margins(0., -title_margin, 0., -title_margin),
+        margin: margins(
+            0.,
+            -title_margin,
+            if state.from_menu { 18. } else { 0. },
+            -title_margin,
+        ),
         padding: sides(title_pad[0], title_margin, title_pad[1], title_margin),
         ..Default::default()
     })
     .paint(Paint::fill(Gradient::new(
         90.,
-        &[
-            (0., Color::hex("#ffffff38")),
-            (0.55, Color::hex("#ffffff14")),
-            (1., Color::hex("#fff0")),
-        ],
+        &if state.from_menu {
+            [
+                (0., Color::hex("#ffffff52")),
+                (0.55, Color::hex("#ffffff26")),
+                (1., Color::hex("#fff0")),
+            ]
+        } else {
+            [
+                (0., Color::hex("#ffffff38")),
+                (0.55, Color::hex("#ffffff14")),
+                (1., Color::hex("#fff0")),
+            ]
+        },
     )))
     .content(Content::Text {
         text: title(&state.page).into(),
@@ -202,8 +223,12 @@ pub fn element(view: &Viewport, state: &State) -> El {
         line_height: title_size * 1.1,
         wrap: false,
     });
+    // The heading's bottom margin collapses into the header's (CSS blocks).
     let header = El::new(Style {
-        margin: margins(0., 0., 14., 0.),
+        // A block: the heading strip spans the panel.
+        display: Display::Flex,
+        flex_direction: FlexDirection::Column,
+        margin: margins(0., 0., if state.from_menu { 0. } else { 14. }, 0.),
         ..Default::default()
     })
     .child(heading);
@@ -422,6 +447,8 @@ pub fn element(view: &Viewport, state: &State) -> El {
             border: [1.; 4],
             border_color: Color::hex("#b9b9b98c"),
             shadows: vec![BoxShadow::inset(0., 1., 2., Color::BLACK)],
+            skew_x: 0.,
+            radii_y: [0.; 4],
         });
         let thumb = El::new(Style {
             position: Position::Absolute,
@@ -447,6 +474,8 @@ pub fn element(view: &Viewport, state: &State) -> El {
             border: [1.; 4],
             border_color: Color::hex("#e5d360"),
             shadows: vec![BoxShadow::outer(0., 2., 5., Color::hex("#0008"))],
+            skew_x: 0.,
+            radii_y: [0.; 4],
         });
         // position: relative — the containing block of the track and thumb.
         let input = El::new(Style {
@@ -613,7 +642,40 @@ pub fn element(view: &Viewport, state: &State) -> El {
             body = body.child(footer);
         }
     }
-    let content = column(0.).id(CONTENT).child(header).child(body);
+    if state.from_menu {
+        // `.pause-panel > :not(header) { max-width: 620px }`.
+        body.style.max_size.width = length(620.);
+    }
+    let mut content = column(0.).id(CONTENT).child(header).child(body);
+    if state.from_menu {
+        content.style.size.width = percent(1.);
+        let panel = El::new(Style {
+            size: Size {
+                width: length(w),
+                height: length(h),
+            },
+            padding: sides((h * 0.03).clamp(12., 28.), gutter, 20., gutter),
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            overflow: taffy::Point {
+                x: taffy::Overflow::Visible,
+                y: taffy::Overflow::Scroll,
+            },
+            scrollbar_width: 0.,
+            ..Default::default()
+        })
+        .id(PANEL)
+        .scroll(state.scroll)
+        .child(content);
+        return El::new(Style {
+            size: Size {
+                width: length(w),
+                height: length(h),
+            },
+            ..Default::default()
+        })
+        .child(panel);
+    }
     let panel = El::new(Style {
         size: Size {
             width: length(width),

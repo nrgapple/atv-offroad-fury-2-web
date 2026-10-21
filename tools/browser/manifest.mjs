@@ -37,6 +37,7 @@ export const TESTS = {
   'test_engine_touch.mjs': { group: 'content' },
   'test_engine_hud.mjs': { group: 'content' },
   'test_engine_pause.mjs': { group: 'content' },
+  'test_engine_front.mjs': { group: 'content' },
   'test_engine_preview.mjs': { group: 'content-free' },
   'test_engine_race.mjs': { group: 'content' },
   'test_engine_sleep.mjs': { group: 'content' },

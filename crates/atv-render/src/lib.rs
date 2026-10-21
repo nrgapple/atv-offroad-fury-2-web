@@ -40,6 +40,77 @@ pub struct Gpu {
 }
 
 impl Gpu {
+    /// Presents a frame drawn only by `draw` over black (menus without a
+    /// scene, e.g. the frontend).
+    pub fn present_with(
+        &self,
+        draw: &mut dyn FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView),
+    ) -> Result<(), String> {
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface.configure(&self.device, &self.config);
+                return Ok(());
+            }
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(());
+            }
+            other => return Err(format!("surface: {other:?}")),
+        };
+        let target = frame.texture.create_view(&Default::default());
+        let mut encoder = self.clear(&target);
+        draw(&mut encoder, &target);
+        self.queue.submit([encoder.finish()]);
+        self.queue.present(frame);
+        Ok(())
+    }
+
+    /// Offscreen `present_with` (native parity captures): RGBA pixels.
+    pub fn capture_ui(
+        &self,
+        width: u32,
+        height: u32,
+        draw: &mut dyn FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView),
+    ) -> Result<Vec<u8>, String> {
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("ui capture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let target = texture.create_view(&Default::default());
+        let mut encoder = self.clear(&target);
+        draw(&mut encoder, &target);
+        read_texture(self, encoder, &texture, width, height)
+    }
+
+    fn clear(&self, target: &wgpu::TextureView) -> wgpu::CommandEncoder {
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("clear"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
+        encoder
+    }
+
     pub async fn new(
         instance: &wgpu::Instance,
         surface: wgpu::Surface<'static>,
@@ -1143,55 +1214,67 @@ impl SceneRenderer {
         let (mut encoder, _) =
             self.encode(gpu, view, (width, height), &target, msaa.as_ref(), &depth);
         overlay(&mut encoder, &target);
-        let row = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
-            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("capture readback"),
-            size: (row * height) as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        encoder.copy_texture_to_buffer(
-            texture.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &buffer,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(row),
-                    rows_per_image: Some(height),
-                },
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-        gpu.queue.submit([encoder.finish()]);
-        buffer.map_async(wgpu::MapMode::Read, .., |result| {
-            result.expect("map capture")
-        });
-        gpu.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(|e| e.to_string())?;
-        let mapped = buffer.get_mapped_range(..).map_err(|e| format!("{e:?}"))?;
-        let bgra = matches!(
-            config.format,
-            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
-        );
-        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
-        for y in 0..height {
-            for pixel in mapped[(y * row) as usize..][..(width * 4) as usize]
-                .as_chunks::<4>()
-                .0
-            {
-                rgba.extend_from_slice(&if bgra {
-                    [pixel[2], pixel[1], pixel[0], 255]
-                } else {
-                    [pixel[0], pixel[1], pixel[2], 255]
-                });
-            }
-        }
-        Ok(rgba)
+        read_texture(gpu, encoder, &texture, width, height)
     }
+}
+
+/// Submits `encoder` with a copy of `texture` and returns its RGBA pixels.
+fn read_texture(
+    gpu: &Gpu,
+    mut encoder: wgpu::CommandEncoder,
+    texture: &wgpu::Texture,
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, String> {
+    let config = &gpu.config;
+    let row = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+        * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("capture readback"),
+        size: (row * height) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(row),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    gpu.queue.submit([encoder.finish()]);
+    buffer.map_async(wgpu::MapMode::Read, .., |result| {
+        result.expect("map capture")
+    });
+    gpu.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .map_err(|e| e.to_string())?;
+    let mapped = buffer.get_mapped_range(..).map_err(|e| format!("{e:?}"))?;
+    let bgra = matches!(
+        config.format,
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+    );
+    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        for pixel in mapped[(y * row) as usize..][..(width * 4) as usize]
+            .as_chunks::<4>()
+            .0
+        {
+            rgba.extend_from_slice(&if bgra {
+                [pixel[2], pixel[1], pixel[0], 255]
+            } else {
+                [pixel[0], pixel[1], pixel[2], 255]
+            });
+        }
+    }
+    Ok(rgba)
 }

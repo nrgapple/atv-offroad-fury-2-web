@@ -1,5 +1,6 @@
 //! One game application for every build. The same event loop, loader and
 //! renderer run natively (Metal/DX12/Vulkan) and in browsers (WebGL2).
+mod front;
 mod gamepad;
 mod overlay;
 pub mod replay;
@@ -11,7 +12,7 @@ use replay::RunScript;
 use atv_content::{Content, Store};
 use atv_game::venue::{self, Venue};
 use atv_render::{Camera, Gpu, Graphics, SceneRenderer, View, camera::default_focal_length};
-use std::{collections::HashSet, sync::Arc};
+use std::{cell::RefCell, collections::HashSet, rc::Rc, sync::Arc};
 use web_time::Instant;
 use winit::{
     application::ApplicationHandler,
@@ -60,6 +61,18 @@ pub struct Options {
     /// Native: write the autodrive CPU report here and exit when it ends.
     #[cfg(not(target_arch = "wasm32"))]
     pub bench: Option<std::path::PathBuf>,
+    /// Open the engine's frontend (title and menus) instead of riding at
+    /// once; the frontend then reads this launch link (launch.js contract).
+    pub front: Option<FrontStart>,
+}
+
+/// How the frontend opens.
+#[derive(Clone, Debug, Default)]
+pub struct FrontStart {
+    /// The page URL query (ride links, `?menu=` shortcuts).
+    pub search: String,
+    /// Open this page directly (tests and parity captures).
+    pub page: Option<String>,
 }
 
 struct Ready {
@@ -89,6 +102,35 @@ enum Message {
     SoundReady(Box<sound::Sound>),
     SoundFailed(String),
     Failed(String),
+    /// The frontend's GPU, content and venue list are ready.
+    FrontReady(Box<Booted>),
+    /// Frontend artwork finished loading.
+    FrontArt(Box<ArtPiece>),
+    /// A new GPU after a failed load from the frontend.
+    FrontGpu(Box<Gpu>),
+}
+
+struct Booted {
+    gpu: Gpu,
+    content: Rc<Content>,
+    boot: atv_ui::front::assets::Boot,
+}
+
+enum ArtPiece {
+    Photos(Vec<(String, atv_ui::front::pixels::Rgba)>),
+    Tips(Vec<Vec<String>>),
+    Quads(atv_ui::front::assets::QuadCatalog),
+    TopSpeed(u16, f32),
+    Shots(String, Vec<atv_ui::front::pixels::Rgba>),
+}
+
+/// Load-time choices kept for rides started from the frontend.
+struct Defaults {
+    graphics: Graphics,
+    weather: Option<bool>,
+    crash: atv_game::crash::CrashMode,
+    sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
+    start: FrontStart,
 }
 
 struct App {
@@ -124,6 +166,14 @@ struct App {
     bench: Bench,
     #[cfg(not(target_arch = "wasm32"))]
     bench_out: Option<std::path::PathBuf>,
+    /// The frontend (title and menus), its GPU while no ride runs, and the
+    /// content they share with rides.
+    front: Option<Rc<RefCell<front::Front>>>,
+    gpu: Option<Gpu>,
+    content: Option<Rc<Content>>,
+    defaults: Option<Defaults>,
+    /// Frontend loads already started (top speeds, loader shots).
+    requested: HashSet<String>,
 }
 
 /// Per-frame CPU while an autodrive script plays (vsync wait excluded).
@@ -162,13 +212,33 @@ struct World {
     autodrive: Option<replay::Script>,
 }
 
+/// A loading progress line (status bar, and the frontend's loader).
+type Progress = Box<dyn FnMut(&Gpu, &str)>;
+
+/// The window's GPU device and surface.
+async fn open_gpu(window: Arc<Window>, display: OwnedDisplayHandle) -> Result<Gpu, String> {
+    let size = window.inner_size();
+    let mut descriptor = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(display));
+    // Browsers get WebGL2 so the port runs on every phone the site supports.
+    descriptor.backends = if cfg!(target_arch = "wasm32") {
+        wgpu::Backends::GL
+    } else {
+        wgpu::Backends::PRIMARY
+    };
+    let instance = wgpu::Instance::new(descriptor);
+    let surface = instance
+        .create_surface(window.clone())
+        .map_err(|e| format!("surface: {e}"))?;
+    Gpu::new(&instance, surface, size.width, size.height).await
+}
+
 async fn prepare(
-    window: Arc<Window>,
-    display: OwnedDisplayHandle,
-    store: Store,
+    gpu: Gpu,
+    content: std::rc::Rc<Content>,
     environment: String,
     fixed: Option<[f32; 6]>,
     world: World,
+    mut progress: Progress,
 ) -> Result<Ready, String> {
     let World {
         selection,
@@ -182,21 +252,10 @@ async fn prepare(
         sound,
         autodrive,
     } = world;
-    let size = window.inner_size();
-    let mut descriptor = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(display));
-    // Browsers get WebGL2 so the port runs on every phone the site supports.
-    descriptor.backends = if cfg!(target_arch = "wasm32") {
-        wgpu::Backends::GL
-    } else {
-        wgpu::Backends::PRIMARY
-    };
-    let instance = wgpu::Instance::new(descriptor);
-    let surface = instance
-        .create_surface(window.clone())
-        .map_err(|e| format!("surface: {e}"))?;
-    let gpu = Gpu::new(&instance, surface, size.width, size.height).await?;
-    status(&format!("Reading original {}…", environment.to_uppercase()));
-    let content = std::rc::Rc::new(Content::open(store).await?);
+    progress(
+        &gpu,
+        &format!("Reading original {}…", environment.to_uppercase()),
+    );
     let weather = match weather {
         Some(active) => venue::WeatherChoice::Active(active),
         // Per-load sample, like the browser's Math.random() * 2^31.
@@ -216,6 +275,7 @@ async fn prepare(
         },
     )
     .await?;
+    progress(&gpu, "Building the scenery textures…");
     let start = venue.scene.start_position;
     let direction = venue.scene.start_direction;
     let yaw = direction[0].atan2_d(direction[2]);
@@ -262,7 +322,7 @@ async fn prepare(
             selection.quad,
             selection.rider,
             race,
-            status,
+            |text| progress(&gpu, text),
         )
         .await?;
         let mut ride = ride;
@@ -347,6 +407,7 @@ async fn prepare(
     } else {
         None
     };
+    progress(&gpu, "Static terrain ready");
     Ok(Ready {
         gpu,
         venue,
@@ -379,7 +440,10 @@ impl App {
         let now = Instant::now();
         let dt = (now - self.last).as_secs_f32().min(0.1);
         self.last = now;
-        let Some(ready) = &mut self.ready else { return };
+        let Some(ready) = &mut self.ready else {
+            self.front_frame();
+            return;
+        };
         if ready.riding.is_some() {
             self.ride_frame(dt);
             return;
@@ -744,7 +808,14 @@ impl App {
     /// Rust engine yet; a shared ride must keep its clocks live when it does.)
     fn awake(&self) -> bool {
         let Some(ready) = &self.ready else {
-            return true;
+            // The frontend draws on input, and continuously only while its
+            // page animates; a ride loading from it presents its own frames.
+            return match &self.front {
+                Some(front) => {
+                    self.gpu.is_some() && self.effective_focused() && front.borrow().animating()
+                }
+                None => true,
+            };
         };
         if let Some(riding) = &ready.riding
             && (riding.held || riding.autodrive.is_some())
@@ -845,6 +916,10 @@ impl App {
                 }
             }
             Event::Leave(page) => {
+                // Quit to Main Menu returns to the engine's own frontend.
+                if page == "play.html" && self.quit_to_menu() {
+                    return;
+                }
                 #[cfg(target_arch = "wasm32")]
                 if let Some(window) = web_sys::window() {
                     window.location().set_href(page).ok();
@@ -915,6 +990,9 @@ impl App {
             self.gesture();
         }
         let (x, y) = self.css((touch.location.x, touch.location.y));
+        if self.front_pointer(touch.id, touch.phase, x, y) {
+            return;
+        }
         let now = (Instant::now() - self.started).as_secs_f64() * 1000.;
         let active = self
             .ready
@@ -992,6 +1070,13 @@ impl App {
     /// Key releases: a binding capture saves when all keys are up; the
     /// bindings track held edge keys (bindings.js `observeKeys`).
     fn key_released(&mut self, code: KeyCode) {
+        if let Some(front) = self.front_input() {
+            let event = front.borrow_mut().key_up(&format!("{code:?}"));
+            if let Some(event) = event {
+                self.front_event(event);
+            }
+            return;
+        }
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
         let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) else {
             return;
@@ -1008,6 +1093,13 @@ impl App {
     }
 
     fn key_pressed(&mut self, code: KeyCode) {
+        if let Some(front) = self.front_input() {
+            let event = front.borrow_mut().key(&format!("{code:?}"));
+            if let Some(event) = event {
+                self.front_event(event);
+            }
+            return;
+        }
         let bindings = self
             .ready
             .as_mut()
@@ -1093,25 +1185,69 @@ impl ApplicationHandler<Message> for App {
         let attributes = attributes.with_inner_size(winit::dpi::LogicalSize::new(1280, 720));
         let window = Arc::new(event_loop.create_window(attributes).expect("create window"));
         self.window = Some(window.clone());
-        let future = prepare(
-            window,
-            self.display.clone(),
-            options.store,
-            options.venue,
-            options.camera,
-            World {
-                selection: options.selection,
-                race: options.race,
-                weather: options.weather,
-                steps: options.steps,
+        if let Some(start) = options.front.clone() {
+            self.defaults = Some(Defaults {
                 graphics: options.graphics,
+                weather: options.weather,
                 crash: options.crash,
-                ride: options.ride,
-                script: options.script,
                 sound: options.sound,
-                autodrive: options.autodrive,
-            },
-        );
+                start,
+            });
+            let display = self.display.clone();
+            let store = options.store;
+            let future = async move {
+                let gpu = open_gpu(window, display).await?;
+                let content = Rc::new(Content::open(store).await?);
+                let boot = atv_ui::front::assets::boot(&content).await?;
+                Ok::<_, String>(Booted { gpu, content, boot })
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some((path, width, height)) = options.capture {
+                let page = options
+                    .front
+                    .and_then(|f| f.page)
+                    .unwrap_or_else(|| "title".into());
+                match pollster::block_on(future) {
+                    Ok(booted) => capture_front(booted, &page, &path, width, height),
+                    Err(error) => status(&error),
+                }
+                event_loop.exit();
+                return;
+            }
+            self.spawn(future, |result| match result {
+                Ok(booted) => Message::FrontReady(Box::new(booted)),
+                Err(error) => Message::Failed(error),
+            });
+            return;
+        }
+        let display = self.display.clone();
+        let store = options.store;
+        let (environment, fixed) = (options.venue, options.camera);
+        let world = World {
+            selection: options.selection,
+            race: options.race,
+            weather: options.weather,
+            steps: options.steps,
+            graphics: options.graphics,
+            crash: options.crash,
+            ride: options.ride,
+            script: options.script,
+            sound: options.sound,
+            autodrive: options.autodrive,
+        };
+        let future = async move {
+            let gpu = open_gpu(window, display).await?;
+            let content = Rc::new(Content::open(store).await?);
+            prepare(
+                gpu,
+                content,
+                environment,
+                fixed,
+                world,
+                Box::new(|_, text| status(text)),
+            )
+            .await
+        };
         let proxy = self.proxy.clone();
         let send = move |result: Result<Ready, String>| {
             let _ = proxy.send_event(match result {
@@ -1186,6 +1322,9 @@ impl ApplicationHandler<Message> for App {
             }
             Message::SoundFailed(error) => status(&format!("Sound unavailable: {error}")),
             Message::Ready(ready) => {
+                if let Some(front) = &self.front {
+                    front.borrow_mut().release_gpu();
+                }
                 self.ready = Some(*ready);
                 self.sync_activity();
                 // Desktop has no autoplay rule: sound starts with the ride.
@@ -1204,6 +1343,7 @@ impl ApplicationHandler<Message> for App {
                             overlay::viewport(size.width, size.height, window.scale_factor()),
                         );
                         overlay.backdrop = self.ui_backdrop;
+                        overlay.frontend = self.front.is_some();
                         overlay.set_course(&ready.venue);
                         if let Some(assets) = ready.hud_assets.take() {
                             overlay.set_meter(&ready.gpu.device, &ready.gpu.queue, assets);
@@ -1224,9 +1364,51 @@ impl ApplicationHandler<Message> for App {
             }
             Message::Failed(error) => {
                 status(&error);
+                if self.front.is_some() && self.gpu.is_none() && self.ready.is_none() {
+                    // The ride did not load: back to the course select on a
+                    // new surface (the failed load held the old one).
+                    if let Some(window) = self.window.clone() {
+                        let display = self.display.clone();
+                        self.spawn(open_gpu(window, display), |result| match result {
+                            Ok(gpu) => Message::FrontGpu(Box::new(gpu)),
+                            Err(error) => Message::Failed(error),
+                        });
+                    }
+                    return;
+                }
                 if !cfg!(target_arch = "wasm32") {
                     event_loop.exit();
                 }
+            }
+            Message::FrontReady(booted) => self.front_ready(*booted),
+            Message::FrontArt(piece) => {
+                if let Some(front) = &self.front {
+                    let mut front = front.borrow_mut();
+                    match *piece {
+                        ArtPiece::Photos(photos) => front.art.photos.extend(photos),
+                        ArtPiece::Tips(tips) => front.set_tips(tips),
+                        ArtPiece::Quads(quads) => front.art.quads = Some(quads),
+                        ArtPiece::TopSpeed(quad, speed) => {
+                            front.art.top_speed.insert(quad, speed);
+                        }
+                        ArtPiece::Shots(environment, shots) => {
+                            front.art.shots = Some((environment, shots))
+                        }
+                    }
+                }
+                self.wake();
+            }
+            Message::FrontGpu(gpu) => {
+                let mut gpu = *gpu;
+                if let Some(window) = &self.window {
+                    let size = window.inner_size();
+                    gpu.resize(size.width, size.height);
+                }
+                self.gpu = Some(gpu);
+                if let Some(front) = &self.front {
+                    front.borrow_mut().resume("tracks");
+                }
+                self.wake();
             }
         }
     }
@@ -1251,6 +1433,16 @@ impl ApplicationHandler<Message> for App {
                 if let Some(ready) = &mut self.ready {
                     ready.gpu.resize(size.width, size.height);
                 }
+                if let Some(gpu) = &mut self.gpu {
+                    gpu.resize(size.width, size.height);
+                }
+                if let (Some(front), Some(window)) = (&self.front, &self.window) {
+                    front.borrow_mut().set_view(overlay::viewport(
+                        size.width,
+                        size.height,
+                        window.scale_factor(),
+                    ));
+                }
                 if let (Some(overlay), Some(window)) = (&mut self.overlay, &self.window) {
                     overlay.set_view(overlay::viewport(
                         size.width,
@@ -1261,13 +1453,15 @@ impl ApplicationHandler<Message> for App {
             }
             WindowEvent::Touch(touch) => self.touch(touch),
             WindowEvent::MouseWheel { delta, .. } => {
-                if let Some(overlay) = &mut self.overlay {
-                    let dy = match delta {
-                        winit::event::MouseScrollDelta::LineDelta(_, y) => -y * 40.,
-                        winit::event::MouseScrollDelta::PixelDelta(p) => {
-                            -(p.y / self.window.as_ref().map_or(1., |w| w.scale_factor())) as f32
-                        }
-                    };
+                let dy = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => -y * 40.,
+                    winit::event::MouseScrollDelta::PixelDelta(p) => {
+                        -(p.y / self.window.as_ref().map_or(1., |w| w.scale_factor())) as f32
+                    }
+                };
+                if let Some(front) = self.front_input() {
+                    front.borrow_mut().wheel(dy);
+                } else if let Some(overlay) = &mut self.overlay {
                     overlay.menu_wheel(dy);
                 }
             }
@@ -1301,6 +1495,14 @@ impl ApplicationHandler<Message> for App {
                 ..
             } => {
                 let (x, y) = self.css(self.cursor.unwrap_or_default());
+                let phase = if state == ElementState::Pressed {
+                    winit::event::TouchPhase::Started
+                } else {
+                    winit::event::TouchPhase::Ended
+                };
+                if self.front_pointer(MOUSE, phase, x, y) {
+                    return;
+                }
                 if let Some(overlay) = self.overlay.as_mut().filter(|o| o.menu.is_some()) {
                     self.dragging = false;
                     let bindings = self
@@ -1336,6 +1538,12 @@ impl ApplicationHandler<Message> for App {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
+                if self.front_input().is_some() {
+                    self.cursor = Some((position.x, position.y));
+                    let (x, y) = self.css((position.x, position.y));
+                    self.front_pointer(MOUSE, winit::event::TouchPhase::Moved, x, y);
+                    return;
+                }
                 if let (true, Some((x, _)), Some(Some(_))) = (
                     self.dragging,
                     self.cursor,
@@ -1393,6 +1601,418 @@ impl ApplicationHandler<Message> for App {
         } else {
             ControlFlow::Wait
         });
+    }
+}
+
+/// The frontend's mouse pointer id (touches use their own ids).
+const MOUSE: u64 = overlay::MOUSE;
+
+impl App {
+    /// Runs `future` (web: on the event loop; desktop: now) and posts its
+    /// outcome as a message.
+    fn spawn<T: 'static>(
+        &self,
+        future: impl std::future::Future<Output = T> + 'static,
+        message: impl FnOnce(T) -> Message + 'static,
+    ) {
+        let proxy = self.proxy.clone();
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = proxy.send_event(message(future.await));
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = proxy.send_event(message(pollster::block_on(future)));
+        }
+    }
+
+    /// The frontend while it owns the screen (no ride, not loading).
+    fn front_input(&self) -> Option<Rc<RefCell<front::Front>>> {
+        self.front
+            .clone()
+            .filter(|_| self.ready.is_none() && self.gpu.is_some())
+    }
+
+    fn front_ready(&mut self, booted: Booted) {
+        let Booted {
+            mut gpu,
+            content,
+            boot,
+        } = booted;
+        let Some(window) = self.window.clone() else {
+            return;
+        };
+        let size = window.inner_size();
+        gpu.resize(size.width, size.height);
+        let view = overlay::viewport(size.width, size.height, window.scale_factor());
+        let tracks = boot.tracks.clone();
+        let front = front::Front::new(
+            &gpu.device,
+            gpu.config.format,
+            view,
+            boot.tracks,
+            boot.backdrop,
+        );
+        self.front = Some(Rc::new(RefCell::new(front)));
+        self.gpu = Some(gpu);
+        self.content = Some(content.clone());
+        // Course photos, loader tips and ATV stats load behind the title.
+        let c = content.clone();
+        self.spawn(
+            async move { atv_ui::front::assets::photos(&c, &tracks).await },
+            |result| Message::FrontArt(Box::new(ArtPiece::Photos(result.unwrap_or_default()))),
+        );
+        let c = content.clone();
+        self.spawn(
+            async move { atv_ui::front::assets::tips(&c).await },
+            |result| Message::FrontArt(Box::new(ArtPiece::Tips(result.unwrap_or_default()))),
+        );
+        if content
+            .manifest
+            .record("/UI/RESOURCE/QUADINFO.RES")
+            .is_some()
+        {
+            let c = content.clone();
+            self.spawn(
+                async move { atv_ui::front::assets::quad_catalog(&c).await },
+                |result| match result {
+                    Ok(quads) => Message::FrontArt(Box::new(ArtPiece::Quads(quads))),
+                    Err(error) => Message::SoundFailed(format!("ATV stats: {error}")),
+                },
+            );
+        }
+        self.open_launch();
+        window.request_redraw();
+    }
+
+    /// launch.js `openLaunch`: ride links start their ride, `?menu=`
+    /// shortcuts and setup-only links open a menu, anything else the title.
+    fn open_launch(&mut self) {
+        let Some(front) = self.front.clone() else {
+            return;
+        };
+        let start = self
+            .defaults
+            .as_ref()
+            .map(|d| d.start.clone())
+            .unwrap_or_default();
+        let mut f = front.borrow_mut();
+        let view = f.view;
+        if let Some(page) = &start.page {
+            let page = page.clone();
+            f.state.show(&page, &view);
+            return;
+        }
+        if let Some(page) = atv_game::launch::menu_shortcut(&start.search) {
+            // The Rust engine has no race setup page yet: Single Player.
+            f.state
+                .show(if page == "race" { "single" } else { page }, &view);
+            return;
+        }
+        let tracks: Vec<(String, String)> = f
+            .state
+            .tracks
+            .iter()
+            .map(|t| (t.id.clone(), t.name.clone()))
+            .collect();
+        let setup = atv_game::launch::parse_launch(&start.search, &tracks);
+        if !setup.requested {
+            return;
+        }
+        let mut errors = setup.errors.clone();
+        if setup.mode == "multiplayer" {
+            errors.push("Multiplayer is not available in the Rust engine yet.".into());
+        }
+        if setup.activity == "race" && setup.quad_id >= 27 {
+            errors.push("Races on a motorcycle are not ported to the Rust engine yet.".into());
+        }
+        if !errors.is_empty() {
+            f.state.show("main", &view);
+            status(&format!("Cannot open ride link. {}", errors.join(" ")));
+            return;
+        }
+        f.state.quad_id = setup.quad_id;
+        f.state.rider_id = setup.rider_id;
+        if let Some(index) = f.state.tracks.iter().position(|t| t.id == setup.map) {
+            f.state.track = index;
+        }
+        let race = setup.activity == "race";
+        f.state.show(if race { "single" } else { "tracks" }, &view);
+        if !setup.play {
+            return;
+        }
+        // A launched link becomes the saved selection, as in the browser game.
+        {
+            let f = &mut *f;
+            f.state.save(&mut f.settings);
+        }
+        let settings = race.then(|| {
+            let defaults = atv_game::ride::race::Settings::default();
+            atv_game::ride::race::Settings {
+                laps: setup.race.laps,
+                cpu: setup.race.cpu as usize,
+                difficulty: setup.race.difficulty,
+                ..defaults
+            }
+        });
+        drop(f);
+        self.start_ride(setup.map, setup.quad_id, setup.rider_id, settings);
+    }
+
+    fn front_event(&mut self, event: atv_ui::front::controller::Event) {
+        use atv_ui::front::controller::Event;
+        match event {
+            Event::Ride {
+                environment,
+                quad,
+                rider,
+            } => self.start_ride(environment, quad, rider, None),
+            Event::DevLog =>
+            {
+                #[cfg(target_arch = "wasm32")]
+                if let Some(window) = web_sys::window() {
+                    window.location().set_href("devlog.html").ok();
+                }
+            }
+            Event::Fullscreen => {
+                if let Some(window) = &self.window {
+                    let on = window.fullscreen().is_none();
+                    window
+                        .set_fullscreen(on.then_some(winit::window::Fullscreen::Borderless(None)));
+                }
+            }
+            Event::Settings => {}
+        }
+    }
+
+    /// Shows the course loader and loads the ride on the frontend's GPU.
+    fn start_ride(
+        &mut self,
+        environment: String,
+        quad: u16,
+        rider: u16,
+        race: Option<atv_game::ride::race::Settings>,
+    ) {
+        let (Some(front), Some(content)) = (self.front.clone(), self.content.clone()) else {
+            return;
+        };
+        let Some(gpu) = self.gpu.take() else {
+            return;
+        };
+        let (graphics, weather, sound, default_crash) = self
+            .defaults
+            .as_ref()
+            .map_or((Graphics::default(), None, None, Default::default()), |d| {
+                (d.graphics, d.weather, d.sound, d.crash)
+            });
+        // Crash mode follows the saved setting (Settings may have changed it).
+        let crash = front
+            .borrow()
+            .settings
+            .get("atv-crash-mode")
+            .and_then(|v| atv_game::crash::CrashMode::parse(&v))
+            .unwrap_or(default_crash);
+        {
+            let mut f = front.borrow_mut();
+            f.begin_loading(&environment);
+            paint_front(&gpu, &mut f);
+        }
+        // The original loader's action shots for this course.
+        let key = format!("shots:{environment}");
+        if self.requested.insert(key) {
+            let (c, env, shot_env) = (content.clone(), environment.clone(), environment.clone());
+            self.spawn(
+                async move { atv_ui::front::assets::shots(&c, &env).await },
+                move |result| {
+                    Message::FrontArt(Box::new(ArtPiece::Shots(
+                        shot_env,
+                        result.unwrap_or_default(),
+                    )))
+                },
+            );
+        }
+        let painter = front.clone();
+        let progress: Progress = Box::new(move |gpu, text| {
+            status(text);
+            if let Ok(mut f) = painter.try_borrow_mut() {
+                f.state.loading_stage(text);
+                paint_front(gpu, &mut f);
+            }
+        });
+        let world = World {
+            race,
+            weather,
+            steps: None,
+            graphics,
+            crash,
+            ride: true,
+            script: None,
+            sound,
+            autodrive: None,
+            selection: atv_game::ride::Selection { quad, rider },
+        };
+        let future = prepare(gpu, content, environment, None, world, progress);
+        self.spawn(future, |result| match result {
+            Ok(ready) => Message::Ready(Box::new(ready)),
+            Err(error) => Message::Failed(error),
+        });
+    }
+
+    /// Pause → Quit to Main Menu: the ride ends and the frontend returns.
+    fn quit_to_menu(&mut self) -> bool {
+        let Some(front) = self.front.clone() else {
+            return false;
+        };
+        let Some(ready) = self.ready.take() else {
+            return false;
+        };
+        let Ready { gpu, .. } = ready;
+        self.overlay = None;
+        self.gpu = Some(gpu);
+        front.borrow_mut().resume("main");
+        self.last = Instant::now();
+        self.wake();
+        true
+    }
+
+    /// One frontend frame: controller input, layout and present.
+    fn front_frame(&mut self) {
+        let (Some(front), Some(gpu)) = (self.front.clone(), self.gpu.as_ref()) else {
+            return;
+        };
+        let started = Instant::now();
+        let pad = self.gamepad.sample();
+        let mut f = front.borrow_mut();
+        f.pad_name = self.gamepad.name();
+        let event = f.pad(pad.as_ref());
+        paint_front(gpu, &mut f);
+        if self.ui_diagnostics {
+            publish_ui_state(&serde_json::json!({ "front": f.diagnostics() }).to_string());
+        }
+        // The garage shows the authored top speed of the current ATV.
+        let wanted = (f.state.page == "garage"
+            && f.state.quad_id < 27
+            && !f.art.top_speed.contains_key(&f.state.quad_id))
+        .then_some(f.state.quad_id);
+        drop(f);
+        if let (Some(quad), Some(content)) = (wanted, self.content.clone())
+            && self.requested.insert(format!("speed:{quad}"))
+        {
+            self.spawn(
+                async move { atv_ui::front::assets::top_speed(&content, quad).await },
+                move |result| match result {
+                    Ok(speed) => Message::FrontArt(Box::new(ArtPiece::TopSpeed(quad, speed))),
+                    Err(error) => Message::SoundFailed(format!("ATV figures: {error}")),
+                },
+            );
+        }
+        self.meter.cpu += started.elapsed().as_secs_f64() * 1000.;
+        if let Some(event) = event {
+            self.front_event(event);
+        }
+    }
+
+    /// Frontend pointer input; true when the frontend took it.
+    fn front_pointer(
+        &mut self,
+        pointer: u64,
+        phase: winit::event::TouchPhase,
+        x: f32,
+        y: f32,
+    ) -> bool {
+        use winit::event::TouchPhase;
+        let Some(front) = self.front_input() else {
+            return false;
+        };
+        let event = {
+            let mut f = front.borrow_mut();
+            match phase {
+                TouchPhase::Started => {
+                    f.press(pointer, x, y);
+                    None
+                }
+                TouchPhase::Moved => {
+                    f.moved(pointer, x, y, pointer == MOUSE);
+                    None
+                }
+                TouchPhase::Ended => f.release(pointer, x, y),
+                TouchPhase::Cancelled => {
+                    f.cancel_pointer();
+                    None
+                }
+            }
+        };
+        if let Some(event) = event {
+            self.front_event(event);
+        }
+        true
+    }
+}
+
+/// Lays out and presents one frontend frame.
+fn paint_front(gpu: &Gpu, front: &mut front::Front) {
+    front.prepare(&gpu.device, &gpu.queue, gpu.config.width, gpu.config.height);
+    if let Err(error) = gpu.present_with(&mut |encoder, target| front.draw(encoder, target)) {
+        status(&error);
+    }
+}
+
+/// Native parity capture of one frontend page with all its artwork.
+#[cfg(not(target_arch = "wasm32"))]
+fn capture_front(booted: Booted, page: &str, path: &std::path::Path, width: u32, height: u32) {
+    let Booted { gpu, content, boot } = booted;
+    let view = atv_ui::hud::Viewport {
+        width: width as f32,
+        height: height as f32,
+        scale: 1.,
+        hover: true,
+        ..Default::default()
+    };
+    let tracks = boot.tracks.clone();
+    let mut front = front::Front::with_settings(
+        &gpu.device,
+        gpu.config.format,
+        view,
+        boot.tracks,
+        boot.backdrop,
+        atv_ui::settings::Settings::memory(),
+    );
+    pollster::block_on(async {
+        front.art.photos.extend(
+            atv_ui::front::assets::photos(&content, &tracks)
+                .await
+                .unwrap_or_default(),
+        );
+        if let Ok(quads) = atv_ui::front::assets::quad_catalog(&content).await {
+            front.art.quads = Some(quads);
+        }
+        if let Ok(speed) = atv_ui::front::assets::top_speed(&content, 1).await {
+            front.art.top_speed.insert(1, speed);
+        }
+    });
+    if page == "loading" {
+        let environment = tracks.first().map_or("env01".to_string(), |t| t.id.clone());
+        if let Ok(shots) = pollster::block_on(atv_ui::front::assets::shots(&content, &environment))
+        {
+            front.art.shots = Some((environment.clone(), shots));
+        }
+        if let Ok(tips) = pollster::block_on(atv_ui::front::assets::tips(&content)) {
+            front.art.tips = tips.into_iter().take(1).collect();
+        }
+        front.begin_loading(&environment);
+        front.state.loading_stage("Reading original ATV…");
+    } else {
+        front.state.show(page, &view);
+    }
+    // Two passes: the first lays out lists and scrolls the current card in.
+    for _ in 0..2 {
+        front.prepare(&gpu.device, &gpu.queue, width, height);
+    }
+    match gpu.capture_ui(width, height, &mut |encoder, target| {
+        front.draw(encoder, target)
+    }) {
+        Ok(rgba) => image_png(path, width, height, &rgba),
+        Err(error) => status(&error),
     }
 }
 
@@ -1591,6 +2211,11 @@ pub fn run(options: Options) {
         bench: Bench::default(),
         #[cfg(not(target_arch = "wasm32"))]
         bench_out,
+        front: None,
+        gpu: None,
+        content: None,
+        defaults: None,
+        requested: HashSet::new(),
     };
     #[cfg(target_arch = "wasm32")]
     {
@@ -1618,10 +2243,18 @@ pub fn start() {
             .find_map(|pair| pair.strip_prefix(name)?.strip_prefix('='))
             .map(String::from)
     };
-    let venue = param("venue")
+    // `?venue=` rides at once (engine tests and parity tools); otherwise the
+    // frontend opens and reads the page's ride link.
+    let direct = param("venue");
+    let venue = direct
+        .clone()
         .filter(|id| atv_game::launch::environments().contains(id))
         .unwrap_or_else(|| "env01".into());
     run(Options {
+        front: direct.is_none().then(|| FrontStart {
+            search: search.clone(),
+            page: param("front"),
+        }),
         store: Store::Http("/content/".into()),
         venue,
         camera: param("camera").and_then(|text| parse_camera(&text)),
