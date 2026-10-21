@@ -114,17 +114,21 @@ requires a clean tree (the commit is the version) and uses `git archive HEAD` fo
 Cargo target directories: native builds use `$CARGO_TARGET_DIR` or
 `~/LargeFiles/fury-desktop/target`.
 
-### Verification done on 2026-10-20 (Apple M4, macOS)
+### Verification done on 2026-10-20 (Apple M4, macOS 27, Colima 2 CPU / 4 GiB)
 
-`--capture OUT.png 1280x720` renders
-the ENV01 start view and exits; it was used on every platform that can run here.
+`--capture OUT.png 1280x720` renders the ride's first frame and exits; it was used on every
+platform that can run here. Content check: `fury --verify-content` reads and hashes all 219
+files (454 MB).
 
 | Platform | Result |
 | --- | --- |
-| macOS universal | Ran from the unzipped app (arm64 slice, Metal); identical PNG to a capture from the package directory. The x86_64 slice was built and signed but not run (no Rosetta on this Mac). |
-| Linux aarch64 | Launched in Docker (Debian 12, Xvfb, Mesa lavapipe software Vulkan); rendered ENV01. |
-| Linux x86_64 | See below. |
-| Windows x86_64 | See below. |
+| macOS universal | Ran from the unzipped app (arm64 slice, Metal): capture in 0.65 s warm (4 s on the very first launch of a fresh download while macOS assesses it); the PNG is byte-identical to a capture from the package directory. `open -n` launches and keeps running. The x86_64 slice was built and signed but not run (no Rosetta on this Mac). `spctl` rejects the app, as expected for an ad hoc signature. |
+| Linux aarch64 | Launched natively in Docker (Debian 12, Xvfb, Mesa lavapipe software Vulkan): content check 2.0 s, capture 1.1 s including software rendering; the quad and rider are drawn. |
+| Linux x86_64 | Launched in Docker under qemu emulation on the arm64 VM (same image recipe, `linux/amd64`): content check 6.9 s, capture 8.3 s; same frame content. |
+| Windows x86_64 | Built and structurally verified only. Wine 8 (Debian 12) under qemu-user on this arm64 VM cannot start even a hello-world Rust `x86_64-pc-windows-gnu` executable ("failed to start"), so no runtime result either way. Needs a run on a real Windows machine. |
+
+Sizes: macOS app 8.7 MB executable plus the 454 MB pack; archives are about 415 MB each
+(DEFLATE/gzip saves about 9%).
 
 ## Publish
 
@@ -180,6 +184,6 @@ Try `python3 tools/desktop_release_watcher.py --dry-run` first. The job needs th
 
 - Archives are about 415 MB each (about 1.7 GB per release). GitHub allows 2 GiB per asset.
 - The desktop app inherits the engine's gaps: no audio, HUD, menus, sky or scenery yet.
-- Windows and Linux x86_64 runtime coverage is limited to what Docker can emulate here
-  (see the checkpoint report); Windows GPU backends (DX12/Vulkan) are untested on real hardware.
+- Windows has not been run at all and Linux was only run on software Vulkan under Docker;
+  real GPU backends (DX12/Vulkan on PC, Metal on Intel Macs) are untested.
 - No Windows icon resource, no Developer ID or Authenticode signing, no notarization.
