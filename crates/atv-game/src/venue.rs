@@ -60,6 +60,8 @@ pub struct Venue {
     pub train: Option<std::rc::Rc<std::cell::RefCell<crate::train::Train>>>,
     /// Placed TOY particle effects (smoke, fountains, fog), stepped at 60 Hz.
     pub ambient: Option<std::rc::Rc<std::cell::RefCell<crate::ambient::Ambient>>>,
+    /// Active Snow weather (ring emitters around the camera).
+    pub snow: Option<std::rc::Rc<std::cell::RefCell<crate::snow::Weather>>>,
     /// Source Weather selection for this load (00208cc0).
     pub weather: Option<atv_core::weather::Selection>,
 }
@@ -224,7 +226,7 @@ pub async fn load_with(
         &archive.extract(sky_index)?,
         options.sky_smooth,
     )?);
-    let scenery = crate::scenery::load(&archive, &scene)?;
+    let scenery = crate::scenery::load(&archive, &scene, toy.as_deref())?;
     let vegetation = crate::vegetation::load(&archive, environment, &scene, &ground)?;
     let water = crate::water::load(&archive, &scene)?
         .map(|water| std::rc::Rc::new(std::cell::RefCell::new(water)));
@@ -243,6 +245,8 @@ pub async fn load_with(
         None
     })
     .map(|ambient| std::rc::Rc::new(std::cell::RefCell::new(ambient)));
+    let snow = crate::snow::load(&archive, weather.as_ref())?
+        .map(|snow| std::rc::Rc::new(std::cell::RefCell::new(snow)));
     let train = if environment == "env08" {
         crate::train::load(&archive, mode_index)?
             .map(|train| std::rc::Rc::new(std::cell::RefCell::new(train)))
@@ -257,6 +261,7 @@ pub async fn load_with(
         water,
         train,
         ambient,
+        snow,
         weather,
         scene,
         terrain: Terrain {

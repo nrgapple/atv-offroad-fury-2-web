@@ -8,6 +8,7 @@ pub mod materials;
 pub mod ride;
 pub mod scenery;
 pub mod sky;
+pub mod snow;
 pub mod terrain_mesh;
 pub mod train;
 pub mod vegetation;

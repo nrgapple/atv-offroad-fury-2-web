@@ -173,12 +173,20 @@ locomotive 0.06 (was 2.19), ENV05 fountain 0.13, ENV02 campfire 0.03, FREE06 gri
 0.03. A second ENV08 view differs by 0.74 in near plants whose orientation the browser
 captured during the previous view (camera history).
 
-Limitations: snow drawing (`weather.js`; only ENV01 races select snow) is not ported;
-the browser draws
-vehicles between vegetation and water, so the ride pass must slot in before water;
-camera flashes stay hidden until the stadium crowd simulation drives them; reverse-
-looping crowd ATMs keep their first frame (as in the browser); anisotropy is applied at
-load only.
+Snow and camera flashes (fourth checkpoint): `atv-game/snow.rs` + `atv-render/snow.rs`
+port `weather.js` (source SnowEmitter births from `atv_core::weather::Snow` into a
+10,800-slot GPU ring aged in WGSL, unfogged). Only ENV01 races select Snow, so the
+engine gained a static-world race-course load (`--race`, `?race=1`; ride disabled) and
+`compare_engine.mjs --race`. The browser steps Snow around its follow camera; the engine
+uses the last rendered view until the ride shares its camera (`set_weather_camera`), so
+the ENV01 race intro differs by flake placement only (5.5/255, 0.02 browser vs native).
+Stadium camera flashes now run on the browser's seeded `race_crowd::Flashes` clock
+(0020ee10, about one of SX01's 187 lit at a time); `flash_burst` takes race events.
+
+Limitations: reverse-looping crowd ATMs keep their first frame (as in the browser);
+anisotropy is applied at load only; the train is stepped without collision heights; race
+gates, grids and race-event flash bursts belong to the race port. The vehicle pass draws
+between vegetation and water, as `game.js` does.
 
 ## Commands
 
@@ -195,6 +203,7 @@ FURY_BIN=target/release/fury FURY_CONTENT=private/reports/hosted-content ATV_TES
   node tools/compare_engine.mjs ride env01 [script.json]   # private/reports/engine-parity/ride/
 cargo run --release -p atv-app --bin fury -- --content DIR --script s.json --trace out.json
 cargo run --release -p atv-app --bin fury -- --free ...   # terrain free camera, no ride
+cargo run --release -p atv-app --bin fury -- --race --venue env01 ...   # race course world (Snow), free camera
 ```
 
 Cross-building from macOS: Colima only shares the home directory, so the source is

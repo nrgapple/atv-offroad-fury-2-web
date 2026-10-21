@@ -62,9 +62,12 @@ pub struct Scenery {
     pub draws: Vec<Draw>,
     pub unsupported: Vec<(String, String)>,
     pub skipped_groups: usize,
+    /// Stadium `[CameraFlash]` settings and the cameraflash pool size.
+    pub flashes: Option<(atv_core::race_crowd::FlashConfig, usize)>,
 }
 
-pub fn load(archive: &Resource, scene: &Scene) -> Result<Scenery> {
+/// `common` is the venue TOY, read for `[CameraFlash]`.
+pub fn load(archive: &Resource, scene: &Scene, common: Option<&[u8]>) -> Result<Scenery> {
     let mut scenery = Scenery::default();
     let mut materials = Materials::default();
     let mut geometry: Vec<(String, Vec<usize>)> = Vec::new();
@@ -85,7 +88,7 @@ pub fn load(archive: &Resource, scene: &Scene) -> Result<Scenery> {
     }
     // Stadium cameraflash.slt models are hidden and lit in random batches
     // (0020f2c0); each keeps its pool index in scene order.
-    let mut flashes = 0;
+    let mut flashes = 0usize;
     for model in &scene.models {
         let flash =
             (scene.crowd_present && model.name.eq_ignore_ascii_case("cameraflash")).then(|| {
@@ -108,6 +111,12 @@ pub fn load(archive: &Resource, scene: &Scene) -> Result<Scenery> {
                 max,
             });
         }
+    }
+    if flashes > 0 {
+        let config = common
+            .and_then(|toy| atv_core::race_crowd::parse_flash_config(&String::from_utf8_lossy(toy)))
+            .unwrap_or_default();
+        scenery.flashes = Some((config, flashes));
     }
     Ok(scenery)
 }

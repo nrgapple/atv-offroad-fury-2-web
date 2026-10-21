@@ -14,6 +14,7 @@ fn main() {
     let mut steps = None;
     let mut graphics = atv_render::Graphics::default();
     let mut ride = true;
+    let mut race = false;
     let mut script = None;
     let mut trace = None;
     while let Some(arg) = args.next() {
@@ -47,6 +48,7 @@ fn main() {
                 capture = Some((PathBuf::from(path), w.parse().unwrap(), h.parse().unwrap()));
             }
             "--free" => ride = false,
+            "--race" => race = true,
             "--script" => {
                 let path = args.next().expect("--script needs a JSON file");
                 let text = std::fs::read_to_string(&path).expect("read script");
@@ -55,7 +57,7 @@ fn main() {
             }
             "--trace" => trace = Some(PathBuf::from(args.next().expect("--trace needs a path"))),
             other => panic!(
-                "unknown argument {other}; use --content DIR --venue ID [--free] [--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high] [--script IN.json] [--trace OUT.json] [--capture OUT.png WxH]"
+                "unknown argument {other}; use --content DIR --venue ID [--free] [--race] [--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high] [--script IN.json] [--trace OUT.json] [--capture OUT.png WxH]"
             ),
         }
     }
@@ -78,6 +80,7 @@ fn main() {
         graphics,
         capture,
         ride,
+        race,
         script,
     });
 }
