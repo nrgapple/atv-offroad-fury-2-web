@@ -599,7 +599,7 @@ impl Front {
         let now = self.now();
         // ms-pulse: brightness 1 → 1.18 → 1 over 1.8 s, ease-in-out.
         let phase = (now / 1800.).fract() as f32;
-        let wave = 0.5 - 0.5 * (phase * std::f32::consts::TAU).cos();
+        let wave = 0.5 - 0.5 * atv_core::math::Det::cos_d(phase * std::f32::consts::TAU);
         let pulse = 1. + 0.18 * wave;
         let photos = &art.photos;
         let photo = |id: &str| photos.get(id).map(|(thumb, _)| *thumb);

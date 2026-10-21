@@ -5,7 +5,8 @@
 //
 //   node tools/compare_engine.mjs [venue] [out-dir] [--view x,y,z,yaw,pitch,focal]...
 //        [--graphics original|enhanced|high] [--actors] [--race]
-//   node tools/compare_engine.mjs ride [venue] [script.json] [out-dir]
+//   node tools/compare_engine.mjs ride [venue] [script.json] [out-dir] [--graphics ...] [--crash original|crazy|gorn]
+//        [--region x0,y0,x1,y1]
 // Static mode: without --view the JavaScript start camera is used. The
 // JavaScript game runs with the requested preset (Original by default), its
 // actors hidden (unless --actors; the Rust builds then ride too) and its scene
@@ -38,9 +39,9 @@ const PORTRAIT = { width: 390, height: 844 };
 // Rewrites the game's own op 50 batches so each step carries the script's
 // input; once the script is exhausted the next batch is never sent, holding
 // the final state on screen.
-async function scriptedGame(browser, venue, steps, viewport, errors, { measure = false, graphics = 'original', race = null } = {}) {
+async function scriptedGame(browser, venue, steps, viewport, errors, { measure = false, graphics = 'original', crash = 'original', race = null } = {}) {
   const page = await newPage(browser, { viewport }, errors);
-  await page.addInitScript(({ steps, measure, graphics, race }) => {
+  await page.addInitScript(({ steps, measure, graphics, crash, race }) => {
     // CPU baseline: animation frames and worker operation time (worker.js
     // reports each operation's Wasm time).
     const cpu = window.rideCpu = { frames: 0, workerMs: 0 };
@@ -50,6 +51,9 @@ async function scriptedGame(browser, venue, steps, viewport, errors, { measure =
     // The requested graphics preset (Original by default), without the
     // first-ride keyboard panel.
     localStorage.setItem('atv-graphics', graphics);
+    localStorage.setItem('atv-crash-mode', crash);
+    // The original crash camera (the Rust engine has not ported the authored tight one).
+    localStorage.setItem('atv-crash-camera', 'original');
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
     const trace = window.rideTrace = { frames: [], cursor: 0, held: false };
     const post = Worker.prototype.postMessage, pending = new Set();
@@ -69,6 +73,7 @@ async function scriptedGame(browser, venue, steps, viewport, errors, { measure =
           for (const { frame, camera, race: state } of JSON.parse(new TextDecoder().decode(data.bytes))) {
             trace.frames.push({ step: trace.frames.length + 1, origin: frame.origin, orientation: frame.orientation, speed: frame.speed,
               wheel_compression: frame.wheel_compression, grounded: frame.grounded, phase: frame.wreck.phase, reset_count: frame.reset_count, camera,
+              gore: frame.funny_crash && [frame.funny_crash.severed_nodes.length, (frame.funny_crash.blood?.drops?.length ?? 0) / 7, (frame.funny_crash.blood?.splats?.length ?? 0) / 10, frame.funny_crash.rider_impact],
               race: state && { phase: state.phase, elapsed: state.elapsed, lap: state.lap, position: state.position, countdown: state.countdown,
                 contacts: state.contacts, off_track: state.off_track, opponents: state.opponents.map(o => ({ origin: o.origin, distance: o.distance, finished: o.finished })),
                 standings: state.standings.map(s => ({ name: s.name, time: s.time, position: s.position })) } });
@@ -86,7 +91,7 @@ async function scriptedGame(browser, venue, steps, viewport, errors, { measure =
       trace.cursor += count; pending.add(message.id);
       return post.call(this, { ...message, bytes: new TextEncoder().encode(JSON.stringify(request)) }, ...rest);
     };
-  }, { steps, measure, graphics, race });
+  }, { steps, measure, graphics, crash, race });
   const session = measure ? await page.context().newCDPSession(page) : null;
   if (session) await session.send('Performance.enable');
   await page.goto(url(race ? `/play.html?activity=race&map=${venue}&laps=${race.laps}&cpu=${race.cpu}&play=1` : `/play.html?drive=1&environment=${venue}`));
@@ -163,10 +168,10 @@ async function cpuBaseline(venue, script, steps, scriptFile) {
 }
 
 // Mean absolute RGB difference (0-255) over the frame and a centre crop.
-async function difference(browser, a, b, crop = [0.35, 0.35, 0.65, 0.85]) {
+async function difference(browser, a, b, crop = [0.35, 0.35, 0.65, 0.85], region = null) {
   const page = await browser.newPage();
   const data = async file => `data:image/png;base64,${(await readFile(file)).toString('base64')}`;
-  const result = await page.evaluate(async ([a, b, crop]) => {
+  const result = await page.evaluate(async ([a, b, crop, region]) => {
     const pixels = async src => { const image = new Image(); image.src = src; await image.decode();
       const canvas = new OffscreenCanvas(image.width, image.height), context = canvas.getContext('2d');
       context.drawImage(image, 0, 0); return context.getImageData(0, 0, image.width, image.height); };
@@ -176,8 +181,8 @@ async function difference(browser, a, b, crop = [0.35, 0.35, 0.65, 0.85]) {
       for (let row = Math.floor(y0 * x.height); row < y1 * x.height; row++) for (let col = Math.floor(x0 * x.width); col < x1 * x.width; col++) {
         const i = (row * x.width + col) * 4; for (let c = 0; c < 3; c++) sum += Math.abs(x.data[i + c] - y.data[i + c]); n += 3; }
       return sum / n; };
-    return { frame: mean(0, 0, 1, 1), vehicle: mean(...crop) };
-  }, [await data(a), await data(b), crop]);
+    return { frame: mean(0, 0, 1, 1), vehicle: mean(...crop), ...(region && { region: mean(...region) }) };
+  }, [await data(a), await data(b), crop, region]);
   await page.close();
   return result;
 }
@@ -198,9 +203,14 @@ function compareTraces(js, rust) {
 }
 
 async function rideMode() {
-  // ride [venue] [script.json] [out-dir] [--graphics original|enhanced|high]
+  // ride [venue] [script.json] [out-dir] [--graphics original|enhanced|high] [--crash original|crazy|gorn] [--region x0,y0,x1,y1]
   const args = process.argv.slice(3), at = args.indexOf('--graphics');
   const graphics = at >= 0 ? args.splice(at, 2)[1] : 'original';
+  const crashAt = args.indexOf('--crash');
+  const crash = crashAt >= 0 ? args.splice(crashAt, 2)[1] : 'original';
+  // --region x0,y0,x1,y1: an extra landscape box (fractions), e.g. around crash blood.
+  const regionAt = args.indexOf('--region');
+  const region = regionAt >= 0 ? args.splice(regionAt, 2)[1].split(',').map(Number) : null;
   const venue = args[0] || 'env01';
   const script = args[1] ? JSON.parse(await readFile(args[1], 'utf8')) : DEFAULT_SCRIPT;
   const out = path.resolve(args[2] ?? 'private/reports/engine-parity/ride');
@@ -211,16 +221,16 @@ async function rideMode() {
   const normalized = input => input?.keyboard_drive ? { ...input, keyboard_drive: { generation: 0, ...input.keyboard_drive } } : input ?? {};
   const steps = script.flatMap(({ frames, input }) => Array.from({ length: frames }, () => normalized(input)));
   const browser = await launch();
-  const report = { venue, graphics, steps: steps.length };
+  const report = { venue, graphics, crash, steps: steps.length };
   try {
     // Screen boxes around the held quad and rider of the default script.
     for (const [name, viewport, crop] of [['landscape', { width: 1280, height: 720 }, [0.43, 0.37, 0.59, 0.69]], ['portrait', PORTRAIT, [0.33, 0.49, 0.7, 0.7]]]) {
       const errors = [];
-      const page = await scriptedGame(browser, venue, steps, viewport, errors, { graphics });
+      const page = await scriptedGame(browser, venue, steps, viewport, errors, { graphics, crash });
       const jsFile = path.join(out, `${venue}-${name}-javascript.png`);
       report[`javascriptGraphics-${name}`] = await page.evaluate(() => atvTerrainStatus.graphics?.setting);
       report[`javascriptSpeedRush-${name}`] = await page.evaluate(() => atvTerrainStatus.speedRush);
-      report[`javascriptEffects-${name}`] = await page.evaluate(() => ({ wheel: atvTerrainStatus.wheelEffects && { particles: atvTerrainStatus.wheelEffects.particles, draws: atvTerrainStatus.wheelEffects.draws, wetLive: atvTerrainStatus.wheelEffects.wetLive }, lingeringDust: atvTerrainStatus.lingeringDust }));
+      report[`javascriptEffects-${name}`] = await page.evaluate(() => ({ crash: { mode: atvTerrainStatus.crashMode, severed: atvTerrainStatus.frame?.funny_crash?.severed_nodes, parts: atvTerrainStatus.frame?.funny_crash?.detached_parts, impact: atvTerrainStatus.frame?.funny_crash?.rider_impact }, blood: atvTerrainStatus.blood, wheel: atvTerrainStatus.wheelEffects && { particles: atvTerrainStatus.wheelEffects.particles, draws: atvTerrainStatus.wheelEffects.draws, wetLive: atvTerrainStatus.wheelEffects.wetLive }, lingeringDust: atvTerrainStatus.lingeringDust }));
       // The canvas only: toolbar, HUD and minimap are DOM overlays.
       await page.evaluate(() => { document.body.style.visibility = 'hidden'; document.querySelector('#game').style.visibility = 'visible'; });
       await page.locator('#game').screenshot({ path: jsFile });
@@ -235,7 +245,7 @@ async function rideMode() {
 
       const rustErrors = [];
       const rust = await newPage(browser, { viewport }, rustErrors);
-      await rust.goto(url(`/engine.html?venue=${venue}&graphics=${graphics}&script=${encodeURIComponent(JSON.stringify(script))}`));
+      await rust.goto(url(`/engine.html?venue=${venue}&graphics=${graphics}&crash=${crash}&script=${encodeURIComponent(JSON.stringify(script))}`));
       await rust.waitForFunction(() => document.querySelector('#trace') && /fps/.test(document.querySelector('#status').textContent)
         || /fail|error|stopped/i.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
       await rust.waitForTimeout(1000);
@@ -246,13 +256,14 @@ async function rideMode() {
       await rust.locator('canvas').screenshot({ path: webFile });
       assertNoErrors(rustErrors);
       await rust.close();
-      report[`difference-${name}-web`] = await difference(browser, jsFile, webFile, crop);
+      const box = name === 'landscape' ? region : null;
+      report[`difference-${name}-web`] = await difference(browser, jsFile, webFile, crop, box);
 
       if (process.env.FURY_BIN) {
         const nativeFile = path.join(out, `${venue}-${name}-rust-native.png`);
         const content = process.env.FURY_CONTENT ? ['--content', process.env.FURY_CONTENT] : [];
-        execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--graphics', graphics, '--script', scriptFile, '--capture', nativeFile, `${viewport.width}x${viewport.height}`], { stdio: 'inherit' });
-        report[`difference-${name}-native`] = await difference(browser, jsFile, nativeFile, crop);
+        execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--graphics', graphics, '--crash', crash, '--script', scriptFile, '--capture', nativeFile, `${viewport.width}x${viewport.height}`], { stdio: 'inherit' });
+        report[`difference-${name}-native`] = await difference(browser, jsFile, nativeFile, crop, box);
       }
     }
     if (process.env.FURY_BIN) {

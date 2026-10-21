@@ -310,6 +310,7 @@ impl SuspensionState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::math::Det;
     fn wheel() -> WheelConfig {
         WheelConfig::from_dimensions(1.0, 0.5, 2.0, 20.0).unwrap()
     }
@@ -409,7 +410,7 @@ mod tests {
             body_forward: [0., -0.75_f32.sqrt(), 0.5],
             point_velocity: [0.; 3],
             stiffness_scale: 1.0,
-            tilt_angle: 0.5_f32.acos(),
+            tilt_angle: 0.5_f32.acos_d(),
         };
         // A sixty-degree pitch retains the full spring; the same up-vector
         // angle caused by roll is attenuated when forward is horizontal.

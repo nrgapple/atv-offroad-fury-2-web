@@ -3,6 +3,7 @@
 //! torques 004a1ec0; tire forces 004a25b0/004a2040; stiffness blend 004d8b20).
 //! Units are ft, s, slug, lbf. Host trigonometry/powf and the authored terrain
 //! adapter mean this is component recovery, not native whole-step parity.
+use crate::math::Det;
 use crate::{Result, physics_data::PhysicsData};
 
 pub const SURFACES: usize = 16;
@@ -215,7 +216,8 @@ impl Tire {
                 SideState::Rolling => (&self.normal, self.normal.speed_scale[zone]),
             };
             let x = v * curve.round_off[zone] * speed_scale;
-            -v * speed_scale * curve.scale[zone] * load / (1. + x.abs().powf(curve.drop_off[zone]))
+            -v * speed_scale * curve.scale[zone] * load
+                / (1. + x.abs().powf_d(curve.drop_off[zone]))
         } else {
             let (gain, max, skid) = match state {
                 SideState::Rolling => (self.side, self.max_side, self.skid_side),
@@ -279,7 +281,7 @@ mod tests {
     fn side_curve_is_a_saturating_damper() {
         let t = tire();
         let f = t.lateral(0, 1., 60., 100., SideState::Rolling);
-        assert!((f + 0.246 * 100. / (1. + 0.024f32.powf(1.5))).abs() < 0.01);
+        assert!((f + 0.246 * 100. / (1. + 0.024f32.powf_d(1.5))).abs() < 0.01);
         assert!(t.lateral(0, -1., 60., 100., SideState::Rolling) > 0.);
         // Standstill amplifies lateral speed five times.
         let slow = t.lateral(0, 1., 0., 100., SideState::Rolling);

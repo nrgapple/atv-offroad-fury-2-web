@@ -1,4 +1,5 @@
 //!Native packed-eight-byte rotation keys used by Arlington's locomotive MOT.
+use crate::math::Det;
 use crate::{
     Result,
     animation::{Channels, Track, TranslationKey},
@@ -16,9 +17,9 @@ impl RotationKey {
         //normalization. Host sin/cos is the same documented backend limitation
         //as the existing ShortAxis MOT reader.
         let angle = f32::from(self.angle) * f32::from_bits(0x3c490fdb);
-        let scale = angle.sin() * f32::from_bits(0x3c010204);
+        let scale = angle.sin_d() * f32::from_bits(0x3c010204);
         [
-            angle.cos(),
+            angle.cos_d(),
             f32::from(self.axis[0]) * scale,
             f32::from(self.axis[1]) * scale,
             f32::from(self.axis[2]) * scale,

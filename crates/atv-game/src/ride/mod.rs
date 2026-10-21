@@ -10,6 +10,7 @@ pub mod bindings;
 pub mod cpu;
 mod load;
 pub mod race;
+pub mod script;
 pub mod sound;
 pub mod textures;
 pub mod view;
@@ -709,6 +710,58 @@ impl Ride {
         self.vehicle.wheel_effect_state()
     }
 
+    /// Crazy/Gorn crash presentation for the latest step (atv-web's
+    /// simulation_frame `funny_crash`): ragdoll and broken-part poses,
+    /// severed rider nodes and Gorn blood. `tick`/`dt` are the effects clock.
+    pub fn step_crash_effects(
+        &self,
+        effects: &mut atv_core::crash_effects::Effects,
+        tick: u64,
+        dt: f32,
+    ) -> Result<Option<atv_core::crash_effects::Frame>> {
+        if !effects.enabled() {
+            return Ok(None);
+        }
+        let frame = &self.frame;
+        let pose = self.pose()?;
+        let wreck = self.sim.wreck.frame();
+        let rider_world = wreck
+            .as_ref()
+            .map_or(vehicle_world(frame), |w| w.world_matrix);
+        let detached = wreck
+            .as_ref()
+            .is_some_and(|w| w.phase != wreck_animation::Phase::Attached);
+        effects.set_rider_velocity(
+            wreck
+                .as_ref()
+                .map_or(frame.linear_velocity, |w| w.linear_velocity),
+        );
+        let terrain = &self.sim.terrain;
+        Ok(effects.update(
+            tick,
+            frame.reset_count,
+            dt,
+            frame.wreck.phase != Phase::Riding,
+            detached,
+            frame.linear_velocity,
+            frame.crash_impact_speed,
+            (frame.crash_impact_speed > 0.).then_some(frame.crash_impact_point),
+            vehicle_world(frame),
+            &pose.quad_nodes,
+            &self.quad.mesh.nodes,
+            rider_world,
+            &pose.rider_nodes,
+            &self.rider.mesh.nodes,
+            |p| {
+                terrain
+                    .contact(p[0], p[2])
+                    .ok()
+                    .flatten()
+                    .map(|h| (h.height, h.normal))
+            },
+        ))
+    }
+
     /// Wheel radii (presentation effects place dust at the contact patch).
     pub fn wheel_radii(&self) -> [f32; 4] {
         self.vehicle.wheel_effect_state().radii
@@ -804,7 +857,8 @@ fn update_wheelie(
         dt,
         stunt_score::WheelieInput {
             grounded: frame.grounded,
-            pitch: atv_core::rider_control::body_angles(frame.orientation, f32::atan2)[0],
+            pitch: atv_core::rider_control::body_angles(frame.orientation, atv_core::math::atan2f)
+                [0],
             // 0020f370 initializes manager+13c to zero; the active Freestyle
             // route retains that gate.
             context_allows: true,

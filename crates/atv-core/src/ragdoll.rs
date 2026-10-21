@@ -11,6 +11,7 @@
 //! lands receives the impulse and torque. Joint stress is measured from solver
 //! impulses so optional dismemberment can happen where an impact actually
 //! loads the body. Units are feet, seconds and pounds.
+use crate::math::Det;
 use crate::mesh::Node;
 pub type V = [f32; 3];
 type Q = [f32; 4];
@@ -1100,7 +1101,7 @@ impl Ragdoll {
                 let ap = qrot(self.bodies[p].q, axis);
                 let bp = qrot(self.bodies[p].q, bone);
                 let bc = qrot(self.bodies[c].q, bone);
-                let angle = dot(cross(bp, bc), ap).atan2(dot(bp, bc));
+                let angle = dot(cross(bp, bc), ap).atan2_d(dot(bp, bc));
                 let target = angle.clamp(range[0], range[1]);
                 if target != angle {
                     self.rotate(c, p, scale(ap, target - angle));
@@ -1120,20 +1121,20 @@ impl Ragdoll {
             } => {
                 let relative = qmul(qconj(self.bodies[p].q), self.bodies[c].q);
                 let v = qrot(relative, bone);
-                let theta = dot(v, center).clamp(-1., 1.).acos();
+                let theta = dot(v, center).clamp(-1., 1.).acos_d();
                 let (x, y) = (dot(v, e1), dot(v, e2));
                 let psi = if x.abs() + y.abs() < 1e-6 {
                     0.
                 } else {
-                    y.atan2(x)
+                    y.atan2_d(x)
                 };
-                let (cos, sin) = (psi.cos(), psi.sin());
+                let (cos, sin) = (psi.cos_d(), psi.sin_d());
                 let a1 = if cos >= 0. { swing[0] } else { swing[1] };
                 let a2 = if sin >= 0. { swing[2] } else { swing[3] };
                 let max = 1. / ((cos / a1).powi(2) + (sin / a2).powi(2)).sqrt();
                 if theta > max {
                     let radial = add(scale(e1, cos), scale(e2, sin));
-                    let target = add(scale(center, max.cos()), scale(radial, max.sin()));
+                    let target = add(scale(center, max.cos_d()), scale(radial, max.sin_d()));
                     let axis = unit_or(cross(v, target), radial);
                     let world = qrot(self.bodies[p].q, scale(axis, theta - max));
                     self.rotate(c, p, world);
@@ -1141,7 +1142,7 @@ impl Ragdoll {
                 let relative = qmul(qconj(self.bodies[p].q), self.bodies[c].q);
                 // Swing-twist decomposition about the child's rest bone axis.
                 let angle = wrap(
-                    2. * dot([relative[0], relative[1], relative[2]], bone).atan2(relative[3]),
+                    2. * dot([relative[0], relative[1], relative[2]], bone).atan2_d(relative[3]),
                 );
                 let target = angle.clamp(twist[0], twist[1]);
                 if target != angle {
@@ -1337,7 +1338,7 @@ pub(crate) mod tests {
     }
     pub(crate) fn axis_angle(axis: V, angle: f32) -> Q {
         let a = unit_or(axis, UP);
-        let (s, c) = (angle * 0.5).sin_cos();
+        let (s, c) = (angle * 0.5).sin_cos_d();
         [a[0] * s, a[1] * s, a[2] * s, c]
     }
     fn flat(_: V) -> Option<(f32, V)> {
@@ -1354,8 +1355,8 @@ pub(crate) mod tests {
                     let bp = qrot(p.q, bone);
                     let bc = qrot(c.q, bone);
                     Some((
-                        dot(cross(bp, bc), ap).atan2(dot(bp, bc)),
-                        dot(ap, ac).clamp(-1., 1.).acos(),
+                        dot(cross(bp, bc), ap).atan2_d(dot(bp, bc)),
+                        dot(ap, ac).clamp(-1., 1.).acos_d(),
                     ))
                 }
                 _ => None,
@@ -1453,11 +1454,19 @@ pub(crate) mod tests {
                 {
                     let rel = qmul(qconj(r.bodies[j.parent].q), r.bodies[j.child].q);
                     let v = qrot(rel, bone);
-                    let theta = dot(v, center).clamp(-1., 1.).acos();
-                    let psi = dot(v, e2).atan2(dot(v, e1));
-                    let a1 = if psi.cos() >= 0. { swing[0] } else { swing[1] };
-                    let a2 = if psi.sin() >= 0. { swing[2] } else { swing[3] };
-                    let max = 1. / ((psi.cos() / a1).powi(2) + (psi.sin() / a2).powi(2)).sqrt();
+                    let theta = dot(v, center).clamp(-1., 1.).acos_d();
+                    let psi = dot(v, e2).atan2_d(dot(v, e1));
+                    let a1 = if psi.cos_d() >= 0. {
+                        swing[0]
+                    } else {
+                        swing[1]
+                    };
+                    let a2 = if psi.sin_d() >= 0. {
+                        swing[2]
+                    } else {
+                        swing[3]
+                    };
+                    let max = 1. / ((psi.cos_d() / a1).powi(2) + (psi.sin_d() / a2).powi(2)).sqrt();
                     worst = worst.max(theta - max);
                 }
             }

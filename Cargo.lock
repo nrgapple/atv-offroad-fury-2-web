@@ -184,6 +184,7 @@ dependencies = [
 name = "atv-core"
 version = "0.1.0"
 dependencies = [
+ "libm",
  "miniz_oxide 0.8.9",
  "serde",
  "serde_json",

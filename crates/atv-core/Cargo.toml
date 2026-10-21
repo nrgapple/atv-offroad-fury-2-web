@@ -7,6 +7,7 @@ publish.workspace = true
 [dependencies]
 serde.workspace = true
 miniz_oxide.workspace = true
+libm = "0.2.16"
 
 [dev-dependencies]
 serde_json = { workspace = true }

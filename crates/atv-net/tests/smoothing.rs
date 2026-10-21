@@ -1,3 +1,5 @@
+// Presentation only: not part of the deterministic simulation (clippy.toml).
+#![allow(clippy::disallowed_methods)]
 use atv_net::*;
 
 const FRAME_MS: u64 = 16;

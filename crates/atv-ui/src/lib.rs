@@ -2,6 +2,8 @@
 //! taffy and cached text in the site's display face, following the authored
 //! browser controls (web/design-system.css, hud.css, touch.css). Original HUD
 //! artwork and menus are later migration checkpoints.
+// Presentation only: not part of the deterministic simulation (clippy.toml).
+#![allow(clippy::disallowed_methods)]
 pub mod color;
 pub mod front;
 pub mod hud;

@@ -1,3 +1,5 @@
+// Offline analysis tools: not part of the deterministic simulation (clippy.toml).
+#![allow(clippy::disallowed_methods)]
 mod bike_probe;
 use atv_core::{Result, audio, collision, elf, iso, mesh, resource::Resource, terrain, texture};
 use serde_json::{Value, json};

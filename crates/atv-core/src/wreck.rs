@@ -1,5 +1,6 @@
 //! USA v2.00 crash decisions (001e8690) and recovery clock (001e5260).
 //! Impact input is the original local collision velocity delta, not body speed.
+use crate::math::Det;
 use crate::{Result, physics_data::PhysicsData};
 use serde::Serialize;
 
@@ -14,7 +15,7 @@ pub fn checkpoint_clearance_rays() -> crate::collision::CollisionRayTree {
             let angle = i as f32 * std::f32::consts::TAU / 8.0;
             CollisionRay {
                 start: [0., 3., 0.],
-                end: [angle.sin() * 20., 3., angle.cos() * 20.],
+                end: [angle.sin_d() * 20., 3., angle.cos_d() * 20.],
             }
         })
         .collect();
@@ -51,7 +52,7 @@ pub fn checkpoint_static_support(
         end: [0., -5., 0.],
     }];
     rays.extend(checkpoint_clearance_rays().rays);
-    let (sin, cos) = yaw.sin_cos();
+    let (sin, cos) = yaw.sin_cos_d();
     let world = [
         cos, 0., -sin, 0., 0., 1., 0., 0., sin, 0., cos, 0., origin[0], origin[1], origin[2], 1.,
     ];

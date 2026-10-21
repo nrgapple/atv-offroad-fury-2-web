@@ -41,3 +41,25 @@ jobs:
         run: |
           python3 tools/pack_content.py fixture "$RUNNER_TEMP/mini.pack"
           FURY_PACK="$RUNNER_TEMP/mini.pack" cargo test --locked -p atv-content --features embedded
+
+  # Content-free determinism: the simulation's maths (atv_core::math) and a
+  # scripted synthetic ride must reproduce the browser build's bit patterns on
+  # every desktop OS and CPU architecture. See research/RUST_ENGINE.md.
+  determinism:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-15-intel, windows-latest, windows-11-arm, ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    concurrency:
+      group: determinism-${{ matrix.os }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal
+      - name: Bit-identical simulation (no content)
+        run: cargo test --locked --release -p atv-core -- --exact math::tests::results_are_the_same_on_every_target vehicle::tests::synthetic_ride_is_the_same_on_every_target

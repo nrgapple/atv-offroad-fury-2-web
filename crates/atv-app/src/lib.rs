@@ -6,6 +6,8 @@ mod overlay;
 pub mod replay;
 mod riding;
 mod sound;
+use atv_core::math::Det;
+use replay::RunScript;
 
 use atv_content::{Content, Store};
 use atv_game::venue::{self, Venue};
@@ -31,6 +33,8 @@ pub struct Options {
     /// (parity captures against a paused JavaScript frame).
     pub steps: Option<u64>,
     pub graphics: Graphics,
+    /// Ride Effects -> Crashes (Original by default; Crazy/Gorn are authored).
+    pub crash: atv_game::crash::CrashMode,
     /// Native parity capture: render once at this size, write PNG and exit.
     #[cfg(not(target_arch = "wasm32"))]
     pub capture: Option<(std::path::PathBuf, u32, u32)>,
@@ -125,6 +129,7 @@ enum ArtPiece {
 struct Defaults {
     graphics: Graphics,
     weather: Option<bool>,
+    crash: atv_game::crash::CrashMode,
     sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
     start: FrontStart,
 }
@@ -200,6 +205,7 @@ struct World {
     weather: Option<bool>,
     steps: Option<u64>,
     graphics: Graphics,
+    crash: atv_game::crash::CrashMode,
     ride: bool,
     script: Option<replay::Script>,
     sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
@@ -241,6 +247,7 @@ async fn prepare(
         weather,
         steps,
         graphics,
+        crash,
         ride,
         script,
         sound,
@@ -274,7 +281,7 @@ async fn prepare(
     progress(&gpu, "Building the scenery textures…");
     let start = venue.scene.start_position;
     let direction = venue.scene.start_direction;
-    let yaw = direction[0].atan2(direction[2]);
+    let yaw = direction[0].atan2_d(direction[2]);
     let mut camera = Camera {
         x: start[0],
         y: start[1],
@@ -282,8 +289,8 @@ async fn prepare(
         yaw,
         pitch: -0.25,
     };
-    camera.x -= yaw.sin() * 14.;
-    camera.z -= yaw.cos() * 14.;
+    camera.x -= yaw.sin_d() * 14.;
+    camera.z -= yaw.cos_d() * 14.;
     camera.y = ground(&venue, camera.x, camera.z).max(start[1]) + 6.;
     let mut focal_length = default_focal_length();
     if let Some([x, y, z, yaw, pitch, focal]) = fixed {
@@ -340,6 +347,11 @@ async fn prepare(
             effects.reset(&riding.ride)?;
             scene.set_wheel_effects(&gpu, &effects);
             riding.effects = Some(effects);
+        }
+        if crash != atv_game::crash::CrashMode::Original {
+            let mut crashes = atv_game::crash::Crashes::new(crash);
+            crashes.reset(&riding.ride)?;
+            riding.crashes = Some(crashes);
         }
         if let Some(script) = &script {
             // `?traceAll=1`: every step, for browser-vs-native parity.
@@ -1165,6 +1177,7 @@ impl ApplicationHandler<Message> for App {
             self.defaults = Some(Defaults {
                 graphics: options.graphics,
                 weather: options.weather,
+                crash: options.crash,
                 sound: options.sound,
                 start,
             });
@@ -1203,6 +1216,7 @@ impl ApplicationHandler<Message> for App {
             weather: options.weather,
             steps: options.steps,
             graphics: options.graphics,
+            crash: options.crash,
             ride: options.ride,
             script: options.script,
             sound: options.sound,
@@ -1774,12 +1788,19 @@ impl App {
         let Some(gpu) = self.gpu.take() else {
             return;
         };
-        let (graphics, weather, sound) = self
+        let (graphics, weather, sound, default_crash) = self
             .defaults
             .as_ref()
-            .map_or((Graphics::default(), None, None), |d| {
-                (d.graphics, d.weather, d.sound)
+            .map_or((Graphics::default(), None, None, Default::default()), |d| {
+                (d.graphics, d.weather, d.sound, d.crash)
             });
+        // Crash mode follows the saved setting (Settings may have changed it).
+        let crash = front
+            .borrow()
+            .settings
+            .get("atv-crash-mode")
+            .and_then(|v| atv_game::crash::CrashMode::parse(&v))
+            .unwrap_or(default_crash);
         {
             let mut f = front.borrow_mut();
             f.begin_loading(&environment);
@@ -1812,6 +1833,7 @@ impl App {
             weather,
             steps: None,
             graphics,
+            crash,
             ride: true,
             script: None,
             sound,
@@ -2230,6 +2252,17 @@ pub fn start() {
         weather: param("weather").and_then(|v| parse_switch(&v)),
         steps: param("steps").and_then(|v| v.parse().ok()),
         graphics: param("graphics").map_or_else(Graphics::default, |v| graphics_preset(&v)),
+        // ?crash= for captures, else the JavaScript build's saved setting.
+        crash: param("crash")
+            .or_else(|| {
+                web_sys::window()?
+                    .local_storage()
+                    .ok()??
+                    .get_item("atv-crash-mode")
+                    .ok()?
+            })
+            .and_then(|v| atv_game::crash::CrashMode::parse(&v))
+            .unwrap_or_default(),
         ride: param("free").is_none(),
         ui_backdrop: param("uibackdrop").and_then(|hex| {
             let v = u32::from_str_radix(&hex, 16).ok()?;

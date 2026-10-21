@@ -1,5 +1,6 @@
 //! Exact-build Weather metadata and selection (00208cc0,00209dd0,00214d20).
 //! SCN's legacy [Rain] is a different declaration. Common/mode TOYs supply Weather.
+use crate::math::Det;
 use crate::{Result, physics_data::PhysicsData};
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -297,9 +298,9 @@ impl SnowConfig {
                 let angle = index as f32 * delta;
                 //Native00369120 is cosine;003693c0 is sine. Host trig remains provisional.
                 offsets.push([
-                    radius * angle.cos(),
+                    radius * angle.cos_d(),
                     definition.ring_height,
-                    radius * angle.sin(),
+                    radius * angle.sin_d(),
                 ]);
             }
             divisions *= 2;

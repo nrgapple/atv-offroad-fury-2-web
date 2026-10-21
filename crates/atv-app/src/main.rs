@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 const USAGE: &str = "usage: fury [--content DIR | --pack FILE] [--front PAGE] [--venue ID [--quad N] [--rider 0|1]] [--free] [--race [--laps N] [--cpu 0|3|4] [--difficulty 1|2] [--seed N]] \
 [--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high] \
+[--crash original|crazy|gorn] \
 [--script IN.json] [--trace OUT.json] [--capture OUT.png WxH [--ui]] [--verify-content] [--version] \
 [--mute] [--no-music] [--sound original|enhanced] [--audio OUT.wav] \
 [--autodrive IN.json [--bench OUT.json]]";
@@ -63,6 +64,7 @@ fn main() {
     let mut weather = None;
     let mut steps = None;
     let mut graphics = atv_render::Graphics::default();
+    let mut crash = atv_game::crash::CrashMode::Original;
     let mut ride = true;
     let mut race: Option<atv_game::ride::race::Settings> = None;
     let mut script = None;
@@ -126,6 +128,12 @@ fn main() {
                 )
             }
             "--graphics" => graphics = atv_app::graphics_preset(&args.next().unwrap_or_default()),
+            "--crash" => {
+                crash = args
+                    .next()
+                    .and_then(|v| atv_game::crash::CrashMode::parse(&v))
+                    .expect("--crash needs original, crazy or gorn")
+            }
             "--ui" => capture_ui = true,
             "--capture" => {
                 let path = args.next().expect("--capture needs a PNG path");
@@ -235,6 +243,7 @@ fn main() {
         weather,
         steps,
         graphics,
+        crash,
         capture,
         capture_ui,
         ride,

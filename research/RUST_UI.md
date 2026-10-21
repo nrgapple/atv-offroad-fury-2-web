@@ -317,7 +317,7 @@ CPU (host Chromium, prepare = artwork + layout + upload; the page sleeps when
 idle): title 0.2 ms/frame while Press Start pulses; garage 0.9 ms per input;
 Select Track 4.3-6.5 ms when the course changes (the new course's blurred
 backdrop and graded hero are filtered on the CPU, then kept for the last six
-courses), 0.3 ms otherwise. Wasm grows from 5.11 to 5.40 MB.
+courses), 0.3 ms otherwise. Wasm grows from 5.21 to 5.50 MB (current main).
 Tests: `tools/test_engine_front.mjs` (title → main → Settings → Single → garage
 persistence → tabs and card click → loader → ride → Quit to Main Menu, and a ride
 link on a phone viewport); atv-ui controller, layout, logo and pixel unit tests;

@@ -1,5 +1,6 @@
 //! Authored shared train presentation, peer contacts and safe nearby spawning.
 use super::*;
+use atv_core::math::Det;
 use atv_core::obstacle::{relative_transform, transform_point};
 const IDENTITY: [f32; 16] = [
     1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
@@ -290,7 +291,7 @@ pub fn spawn(sim: &Simulation, id: u8, now: u64) -> Result<Value> {
                 .as_ref()
                 .and_then(|p| sim.train.as_ref()?.motion_state(p.car as usize))
                 .map_or([0.; 3], |m| m.point_velocity(origin));
-            return Ok(json!({"origin":origin,"yaw":m[8].atan2(m[10]),"velocity":velocity}));
+            return Ok(json!({"origin":origin,"yaw":m[8].atan2_d(m[10]),"velocity":velocity}));
         }
         Err("No clear nearby spawn found. Ask the rider to move into an open area.".into())
     })

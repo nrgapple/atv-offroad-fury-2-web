@@ -4,6 +4,8 @@
 //! bounded messages. World coordinates retain the game's feet convention, time
 //! is milliseconds, and all quaternions use the core's W,X,Y,Z component order.
 //! This is a new networking baseline, not recovered PS2 network code.
+// Presentation only: not part of the deterministic simulation (clippy.toml).
+#![allow(clippy::disallowed_methods)]
 
 use serde::{Deserialize, Serialize};
 

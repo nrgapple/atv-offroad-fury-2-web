@@ -3,6 +3,7 @@
 //! the default settings: Chase camera Original (no uphill assist), crash
 //! camera without the optional crash layer, and the speed-rush FOV kick.
 use atv_core::camera::CameraFrame;
+use atv_core::math::Det;
 
 /// Eye, heading and focal length for the scene camera.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -22,12 +23,12 @@ pub fn chase(frame: &CameraFrame, aspect: f32) -> View {
     let position = frame.position.map(f64::from);
     let target = frame.target.map(f64::from);
     let offset: [f64; 3] = std::array::from_fn(|i| target[i] - position[i]);
-    let yaw = offset[0].atan2(offset[2]);
+    let yaw = offset[0].atan2_d(offset[2]);
     let position: [f64; 3] =
         std::array::from_fn(|i| position[i] - offset[i] * (distance_scale - 1.));
     let view: [f64; 3] = std::array::from_fn(|i| target[i] - position[i]);
-    let pitch = view[1].atan2(view[0].hypot(view[2])) + 0.12 * portrait;
-    let focal_length = (4. / 3.) / (f64::from(frame.fov) * std::f64::consts::PI / 360.).tan()
+    let pitch = view[1].atan2_d(view[0].hypot_d(view[2])) + 0.12 * portrait;
+    let focal_length = (4. / 3.) / (f64::from(frame.fov) * std::f64::consts::PI / 360.).tan_d()
         * (1. - 0.12 * portrait);
     View {
         position: position.map(|v| v as f32),
@@ -43,12 +44,12 @@ pub fn chase(frame: &CameraFrame, aspect: f32) -> View {
 pub fn cinematic(frame: &CameraFrame, aspect: f32) -> View {
     let portrait = ((1. - f64::from(aspect)) / 0.5).clamp(0., 1.);
     let view: [f64; 3] = std::array::from_fn(|i| f64::from(frame.target[i] - frame.position[i]));
-    let focal_length = (4. / 3.) / (f64::from(frame.fov) * std::f64::consts::PI / 360.).tan()
+    let focal_length = (4. / 3.) / (f64::from(frame.fov) * std::f64::consts::PI / 360.).tan_d()
         * (1. - 0.12 * portrait);
     View {
         position: frame.position,
-        yaw: view[0].atan2(view[2]) as f32,
-        pitch: view[1].atan2(view[0].hypot(view[2])) as f32,
+        yaw: view[0].atan2_d(view[2]) as f32,
+        pitch: view[1].atan2_d(view[0].hypot_d(view[2])) as f32,
         focal_length: focal_length as f32,
     }
 }
@@ -78,7 +79,7 @@ impl SpeedRush {
             return;
         }
         let step = f64::from(dt).max(0.);
-        self.amount += (desired - self.amount) * (1. - (-step / 0.25).exp());
+        self.amount += (desired - self.amount) * (1. - (-step / 0.25).exp_d());
     }
 
     /// The smoothed amount (0..0.75 at Normal) the screen pass shares.
@@ -106,8 +107,8 @@ mod tests {
         let view = chase(&frame, 16. / 9.);
         assert_eq!(view.position, [10., 5., 0.]);
         assert!(view.yaw.abs() < 1e-6);
-        assert!((view.pitch - (-0.1f64).atan() as f32).abs() < 1e-6);
-        let focal = (4. / 3.) / (std::f64::consts::PI / 6.).tan();
+        assert!((view.pitch - (-0.1f64).atan_d() as f32).abs() < 1e-6);
+        let focal = (4. / 3.) / (std::f64::consts::PI / 6.).tan_d();
         assert!((view.focal_length - focal as f32).abs() < 1e-6);
     }
 

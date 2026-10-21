@@ -446,10 +446,38 @@ native 1.77 (its wind-line clock and focus smoothing run on fewer frames). Slow 
 rides are unchanged (0.05 native). Host CPU per frame with the rush active: Chromium
 0.70-0.80 ms, WebKit 1.67-2.43 ms, WebKit at 60 Hz (host viewports, not phones).
 
+## Crazy/Gorn crashes and Gorn blood (2026-10-21)
+
+Ride Effects -> Crashes (authored, off under Original): `--crash original|crazy|gorn`
+natively, `?crash=` or the JavaScript build's saved `atv-crash-mode` in the browser.
+
+- `atv-game/crash.rs` steps `atv_core::crash_effects` after every ride step with the
+  effects clock (tick, 1/60 s; a Reset re-reads with dt 0), through the additive
+  `Ride::step_crash_effects` accessor (the inputs of atv-web's `simulation_frame`
+  `funny_crash`). The frame's ragdoll and broken-part matrices replace the presented
+  pose, as game.js does.
+- `atv-render/vehicle.rs` `set_severed` ports `severedIndices`: rider triangles that
+  span a severed joint are dropped from cut index buffers, rebuilt only when the
+  severed set changes.
+- `atv-render/blood.rs` + `.wgsl` port `BloodRenderer`/`packBlood`: splats, stump
+  caps and droplet streaks, up to 216 instances in one draw (alpha blend, no depth
+  write, depth bias -2/-2), drawn after snow and before the wheel effects.
+
+Parity (ENV03, steer -0.5 throttle, held at step 733 with one severed limb, 42 blood
+items and 2 stumps; JS crash camera set to Original, as the Rust engine has no tight
+crash camera yet): Rust browser blood box 0.10 (Original) / 0.31 (High), frame
+1.85 / 1.98, driven by the Rust paused toolbar and plant sway; the wreck at step 412
+matches at 1.46. Native diverges once the ragdoll flies for about a second: Apple
+libm and wasm math differ in the last bit, and the chaotic ragdoll amplifies that
+(the shared-math change will make native match). Host CPU per frame at the held
+crash, Original vs Gorn: Chromium 1.02/0.86 ms (landscape), 0.62/0.63 (portrait);
+WebKit 2.39/1.56, 1.87/1.92, all at 60 Hz (noise; the blood is one draw). Wasm
+5.21 MB with current main (4.90 MB, 1.28 MB brotli on the branch before merging).
+
 ## Browser stand-ins in the ported presentation
 
 Labelled for follow-up replacement with recovered behaviour (separate PRs, each with a
-measured comparison). None is replaced yet; parity above is with the JavaScript build.
+measured comparison). Parity above is with the JavaScript build.
 
 | Where | Stand-in | Original / evidence | Replaced |
 | --- | --- | --- | --- |
@@ -468,7 +496,8 @@ measured comparison). None is replaced yet; parity above is with the JavaScript 
 | `atv-game/src/audio/mixer.rs` | windowed-sinc resampling at load and linear-interpolated pitch (Web Audio semantics), 0.65 master and 0.45 music gains | SPU2 voice pitch/ADSR, mixer and reverb not recovered | No |
 | `atv-game/src/ride/race.rs` | CPU recovery after 5 s off the track polygon or 4 s below 3 ft/s; the player handed to the path driver after the finish; equal-mass rider contact proxy | RaceStatus +0xf0 consumer, finish takeover routine and quad-to-quad response not identified | No |
 | `atv-game/src/ride/race.rs` | Restart Race keeps the loaded roster | the original reloads the event (new roster draw) | No |
-| desktop `f32` math (`atv-core` via std) | system libm for sin/cos/atan2/…; the browser build uses Rust's libm, so native races drift from the JavaScript/browser result | one deterministic implementation on every target (PS2 VU/libm equivalence is a separate question) | No |
+| desktop `f32` math (`atv-core` via std) | system libm for sin/cos/atan2/…; the browser build uses Rust's libm, so native races drift from the JavaScript/browser result | one deterministic implementation on every target (PS2 VU/libm equivalence is a separate question) | Yes: `atv_core::math` (Deterministic simulation maths) |
+| `atv-render/blood.rs`, `atv-game/crash.rs` | Crazy/Gorn crash breakup, ragdoll and blood | authored browser feature with no original counterpart (the original crash is the wreck animation, kept under Original) | Keep (option) |
 
 ## UI stand-ins to move toward original rendering
 
@@ -526,9 +555,10 @@ all three CPUs — 1,800 steps of straight gas, and 9,000 steps where the script
 race path driver's own recorded controls (`RACE_AUTOPILOT=9000`, recorded in the Rust
 browser build): intro 1-435, countdown 436-675, GO at 676, the player finishing first
 at step 7,213 in 108.96 s, then the after-finish autopilot and director. The native
-build follows the same phases but drifts from step 240 (1.5e-5 ft, growing to
-hundreds of feet over a full lap): desktop `f32` transcendental functions come from
-the system libm, the browser's from Rust's own libm. The same cause explains the
+build followed the same phases but drifted from step 240 (1.5e-5 ft, growing to
+hundreds of feet over a full lap): desktop `f32` transcendental functions came from
+the system libm, the browser's from Rust's own libm (fixed: Deterministic simulation
+maths below). The same cause explains the
 small native drift in the Freeride comparisons above.
 
 Not connected yet: the race overlays (place, lap, times, results menu) beyond the
@@ -537,24 +567,74 @@ Supercross fireworks, the National drop gate, Restart Race/Quit menus and the CP
 grid's rest pose before the first step. Restart reuses the loaded roster; the browser
 reloads the event and draws a new one.
 
+## Deterministic simulation maths (2026-10-21)
+
+Every transcendental the simulation calls (`sin`, `cos`, `tan`, `asin`, `acos`,
+`atan`, `atan2`, `exp`, `ln`, `powf`, `hypot`; `f32` and `f64`) goes through
+`atv_core::math::Det` (`x.sin_d()`, ...), backed by the `libm` crate on every target.
+The browser build's `std` maths already is that implementation (`wasm32-unknown-unknown`
+has no system libm; `compiler-builtins` carries Rust's libm port), so browser results
+are unchanged; macOS, Linux and Windows now reproduce them. Measured on 1M random
+inputs before the change: Wasm `std` == `libm` exactly; macOS `std` differed in the
+last bit for 1-20% of inputs per function. `sqrt`, `abs`, `floor`, `powi` and basic
+arithmetic are exactly specified and stay on `std` (no fused multiply-add: Rust never
+contracts). `wasm32-wasip1` `std` (wasi-libc) also differs, another reason not to
+rely on any platform's maths. clippy.toml disallows the `std` methods; presentation
+crates (`atv-render`, `atv-ui`, `atv-net`, `atv-tools`) opt out crate-wide;
+`atv-core`, `atv-game`, `atv-web` and `atv-app` are checked.
+
+Evidence (`private/reports/engine-parity/{race,ride,ride-wreck}-libm/`):
+
+| Script | JavaScript vs Rust browser | JavaScript vs native macOS | Old vs new JavaScript |
+| --- | --- | --- | --- |
+| Race, ENV01, 9,000 steps (1 lap, 3 CPUs, seed 12345, player finishes first) | 0 every step, player and CPUs | 0 every step (was: drift from step 240) | 0 |
+| Freeride, 600 steps | 0 (final state) | 0 every step | 0 |
+| Freeride with wreck, 930 steps | 0 (final state) | 0 every step | 0 |
+
+Native fingerprints from `cargo run --release -p atv-game --example determinism`
+(headless replay; FNV-1a over the trace's binary32 bits), identical on macOS aarch64,
+Linux aarch64 and Linux x86_64 (Docker, `rust:1-bookworm`, x86_64 under QEMU):
+race `53fda056a945608e`, ride `ec381279129db4de`, wreck `cabb5cac130294a9`
+(macOS with the old `std` maths: race `255eba1e782f169f`, wreck `2cb9e003d9c63e0f`).
+The example needs only 59 files (17.7 MB: ENV01, QUAD, RIDER, ANIMSRDR.RES) of the
+hosted package.
+
+Content-free CI check (`desktop-check.yml` job `determinism`: macOS arm64 and x86_64,
+Windows x86_64 and arm64, Linux x86_64 and aarch64; also part of `make check`):
+`math::tests::results_are_the_same_on_every_target` hashes a 20,000-input sweep of
+every function, and `vehicle::tests::synthetic_ride_is_the_same_on_every_target`
+fingerprints 2,400 steps of a scripted ride (throttle, brake, steering, lean,
+reverse, an inverted drop) over bumpy synthetic terrain. Both expected values were
+checked against `std` maths in a `wasm32-unknown-unknown` build run in Node (the
+sweep) and pass under `wasm32-wasip1`; with macOS `std` maths both fail.
+
+Cost: none measurable. Native race replay 0.260 ms/step with `libm` against 0.272
+with the system libm (median of 8 interleaved runs incl. load, Apple M4; the `std`
+run follows a different trajectory), wreck script 0.615 against 0.610. The browser
+runs the same algorithm as before (simulation and sound 0.126 ms/frame against 0.14
+in the CPU-per-frame baseline).
+
 ## Commands
 
 ```sh
 python3 tools/build_engine.py          # browser build into web/dist (part of make web)
 cargo run --release -p atv-app --bin fury -- --content private/reports/hosted-content --venue env01
 cargo run --release -p atv-app --bin fury -- --content DIR --venue env01 \
-  --camera x,y,z,yaw,pitch,focal [--weather on|off] [--steps N] [--graphics original] \
+  --camera x,y,z,yaw,pitch,focal [--weather on|off] [--steps N] [--graphics original] [--crash gorn] \
   --capture out.png 1280x720
 FURY_BIN=target/release/fury FURY_CONTENT=private/reports/hosted-content \
   ATV_TEST_URL=http://127.0.0.1:4173 node tools/compare_engine.mjs env01 \
   [out-dir] [--view x,y,z,yaw,pitch,focal]...   # PNGs, heatmaps and a JSON report
 FURY_BIN=target/release/fury FURY_CONTENT=private/reports/hosted-content ATV_TEST_URL=... \
   node tools/compare_engine.mjs ride env01 [script.json]   # private/reports/engine-parity/ride/
+  #   ride options: --graphics original|enhanced|high --crash original|crazy|gorn --region x0,y0,x1,y1
 cargo run --release -p atv-app --bin fury -- --content DIR --script s.json --trace out.json
 cargo run --release -p atv-app --bin fury -- --free ...   # terrain free camera, no ride
 cargo run --release -p atv-app --bin fury -- --race --venue env01 ...   # race (with --free: race course world, free camera)
 FURY_BIN=... FURY_CONTENT=... ATV_TEST_URL=... [RACE_AUTOPILOT=9000] \
   node tools/compare_engine.mjs race env01 [script.json] [out] [laps] [cpu] [seed]
+cargo run --release -p atv-game --example determinism -- CONTENT_DIR env01 script.json \
+  [--race LAPS CPU SEED] [--out trace.json]   # headless fingerprint, any target
 ```
 
 Cross-building from macOS: Colima only shares the home directory, so the source is
