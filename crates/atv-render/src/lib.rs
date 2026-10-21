@@ -1,5 +1,6 @@
 //! wgpu renderer shared by every build: Metal on macOS, DX12/Vulkan on
 //! Windows, Vulkan on Linux and WebGL2 in browsers.
+mod ambient;
 pub mod camera;
 mod cull;
 mod scenery;
@@ -161,6 +162,8 @@ pub struct FrameStats {
     pub water_draws: u32,
     pub train_draws: u32,
     pub train_triangles: u32,
+    pub ambient_draws: u32,
+    pub ambient_triangles: u32,
     pub vehicle_triangles: u32,
 }
 
@@ -172,6 +175,7 @@ impl FrameStats {
             + self.vegetation_draws
             + self.water_draws
             + self.train_draws
+            + self.ambient_draws
     }
     pub fn triangles(&self) -> u32 {
         self.terrain_triangles
@@ -179,6 +183,7 @@ impl FrameStats {
             + self.scenery_triangles
             + self.vegetation_triangles
             + self.train_triangles
+            + self.ambient_triangles
             + self.vehicle_triangles
     }
 }
@@ -203,6 +208,10 @@ pub struct SceneRenderer {
     train: Option<(
         train::TrainPass,
         std::rc::Rc<std::cell::RefCell<atv_game::train::Train>>,
+    )>,
+    ambient: Option<(
+        ambient::AmbientPass,
+        std::rc::Rc<std::cell::RefCell<atv_game::ambient::Ambient>>,
     )>,
     water: Option<(
         water::WaterPass,
@@ -266,6 +275,12 @@ impl SceneRenderer {
                 }
             }
         });
+        let ambient = venue.ambient.as_ref().map(|shared| {
+            (
+                ambient::AmbientPass::new(gpu, &world, &shared.borrow()),
+                shared.clone(),
+            )
+        });
         let depth_far = far + scenery.reach.max(terrain.reach()) + 1.;
         Self {
             terrain,
@@ -274,6 +289,7 @@ impl SceneRenderer {
             scenery,
             vegetation,
             train,
+            ambient,
             water,
             fog_color,
             far,
@@ -307,6 +323,28 @@ impl SceneRenderer {
                 .is_err()
             {
                 self.train = None;
+            }
+        }
+        if let Some((pass, shared)) = &mut self.ambient {
+            // Moving actors (the locomotive's Smoke.slt) publish this step's pose.
+            let actors: Vec<(String, [f32; 16])> = self
+                .train
+                .as_ref()
+                .and_then(|(_, train)| train.borrow().runtime.frame().ok())
+                .map(|frame| {
+                    frame
+                        .cars
+                        .into_iter()
+                        .map(|c| (c.model, c.matrix))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut ambient = shared.borrow_mut();
+            if ambient.step(&actors).is_ok() {
+                pass.accept(&ambient);
+            } else {
+                drop(ambient);
+                self.ambient = None;
             }
         }
         if let Some((pass, shared)) = &mut self.water {
@@ -452,6 +490,10 @@ impl SceneRenderer {
             );
             stats.water_draws = 1;
         }
+        if let Some((pass, shared)) = &mut self.ambient {
+            (stats.ambient_draws, stats.ambient_triangles) =
+                pass.prepare(gpu, &shared.borrow(), &view.camera, self.far);
+        }
         if let Some(vehicle) = &mut self.vehicle {
             vehicle.prepare(gpu, &view_projection, view.camera.eye());
             stats.vehicle_triangles = vehicle.triangles;
@@ -501,6 +543,9 @@ impl SceneRenderer {
             }
             if let Some((water, _)) = &self.water {
                 water.draw(&mut pass);
+            }
+            if let Some((ambient, _)) = &self.ambient {
+                ambient.draw(&mut pass, &self.world);
             }
         }
         (encoder, stats)
