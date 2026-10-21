@@ -68,6 +68,14 @@ pub struct Riding {
     pub hype: atv_game::ride::hype::HypeDirector,
     pub alpha_slowmo: bool,
     pub alpha_big_air_camera: bool,
+    /// Enhanced/High: draw sunk wheels on the visible ground
+    /// (graphics.js `wheelReprojection`).
+    pub wheel_reprojection: bool,
+    /// The rendered terrain heights the reprojection reads.
+    ground: std::rc::Rc<atv_core::terrain::Heightfield>,
+    /// The largest compression the last reprojection added (game.js
+    /// `wheelLift`, diagnostics only).
+    pub wheel_lift: std::cell::Cell<f32>,
     /// In a multiplayer room: pause and blur keep neutral-input simulation
     /// running so other riders see this one (web/game.js online pause).
     pub online: bool,
@@ -144,6 +152,9 @@ impl Riding {
             hype: Default::default(),
             alpha_slowmo: false,
             alpha_big_air_camera: false,
+            wheel_reprojection: false,
+            ground: venue.visible.clone(),
+            wheel_lift: std::cell::Cell::new(0.),
             online: false,
             peers: Vec::new(),
             contacts: 0,
@@ -171,7 +182,7 @@ impl Riding {
         // The reset frame (op 23) is the next segment's start.
         self.delivered = None;
         if self.presents() {
-            let current = deliver(&self.ride, &self.crashes)?;
+            let current = self.deliver()?;
             if let Some(log) = &mut self.present_log {
                 log.push(serde_json::json!({"deliver": current.browser_frame()}));
             }
@@ -358,7 +369,7 @@ impl Riding {
             return Ok(());
         }
         let previous = self.delivered.take();
-        let current = deliver(&self.ride, &self.crashes)?;
+        let current = self.deliver()?;
         match &previous {
             Some(previous) => self.presentation.accept(
                 previous,
@@ -390,7 +401,7 @@ impl Riding {
             return Ok(None);
         }
         if self.delivered.is_none() {
-            let current = deliver(&self.ride, &self.crashes)?;
+            let current = self.deliver()?;
             if let Some(log) = &mut self.present_log {
                 log.push(serde_json::json!({"deliver": current.browser_frame()}));
             }
@@ -544,7 +555,23 @@ impl Riding {
         }
         let (mut pose, cpu_poses) = match shown {
             Some(shown) => (shown.pose(), shown.cpu_poses()),
-            None => (self.ride.pose()?, self.ride.cpu_poses()),
+            None => {
+                let mut pose = self.ride.pose()?;
+                // drawnQuadPose: the reprojected wheels on the latest state.
+                if self.wheel_reprojection
+                    && self.crashes.as_ref().is_none_or(|c| c.frame().is_none())
+                {
+                    let ground = &self.ground;
+                    let height = |x: f32, z: f32| ground.height(f64::from(x), f64::from(z)) as f32;
+                    if let Some((quad, lift)) = self.ride.reprojected_quad(&height) {
+                        pose.quad_nodes = quad;
+                        self.wheel_lift.set(lift);
+                    } else {
+                        self.wheel_lift.set(0.);
+                    }
+                }
+                (pose, self.ride.cpu_poses())
+            }
         };
         // Crazy/Gorn: the ragdoll and broken parts replace the drawn pose
         // (drawnQuadPose and acceptFrame in game.js); the rider's ragdoll
@@ -598,8 +625,33 @@ impl Riding {
 }
 
 /// The state just delivered, as the presentation reads it.
-fn deliver(ride: &Ride, crashes: &Option<atv_game::crash::Crashes>) -> Result<Snapshot, String> {
-    Snapshot::capture(ride, crashes.as_ref().and_then(|c| c.frame()))
+impl Riding {
+    /// The state just delivered, as the presentation reads it.
+    fn deliver(&self) -> Result<Snapshot, String> {
+        let ground = &self.ground;
+        let height = |x: f32, z: f32| ground.height(f64::from(x), f64::from(z)) as f32;
+        let (snapshot, lift) = Snapshot::capture(
+            &self.ride,
+            self.crashes.as_ref().and_then(|c| c.frame()),
+            self.wheel_reprojection
+                .then_some(&height as &dyn Fn(f32, f32) -> f32),
+        )?;
+        self.wheel_lift.set(lift);
+        Ok(snapshot)
+    }
+
+    /// The lift the latest state's reprojection draws (parity traces).
+    pub fn reprojected_lift(&self) -> f32 {
+        let height = |x: f32, z: f32| self.visible_ground(x, z);
+        self.ride
+            .reprojected_quad(&height)
+            .map_or(0., |(_, lift)| lift)
+    }
+
+    /// The visible terrain height (renderCore.terrainHeight).
+    pub fn visible_ground(&self, x: f32, z: f32) -> f32 {
+        self.ground.height(f64::from(x), f64::from(z)) as f32
+    }
 }
 
 fn cells(venue: &Venue, origin: [f32; 3]) -> [f32; 2] {

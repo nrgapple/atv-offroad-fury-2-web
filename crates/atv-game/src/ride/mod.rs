@@ -1334,6 +1334,83 @@ impl Ride {
         })
     }
 
+    /// graphics.js `wheelReprojection` + game.js `reprojectWheels`
+    /// (Enhanced/High): wheels sunk into the visible ground (`height`) after
+    /// integration are redrawn on it, the compression clamped to
+    /// MAX_WHEEL_LIFT; only when the drawn linkage is the rig's own pose.
+    /// Presentation only; None keeps the simulated pose. Also returns the
+    /// largest added compression (game.js `wheelLift`).
+    pub fn reprojected_quad(
+        &self,
+        height: &dyn Fn(f32, f32) -> f32,
+    ) -> Option<(Vec<[f32; 16]>, f32)> {
+        const MAX_WHEEL_LIFT: f32 = 0.5;
+        let Mount::Quad { rig, vehicle } = &self.mount else {
+            return None;
+        };
+        let frame = &self.frame;
+        if frame.wreck.phase != Phase::Riding {
+            return None;
+        }
+        let matrices = match vehicle.linkage_matrices() {
+            Some(m) => m.to_vec(),
+            None => rig
+                .quad_pose
+                .sample(
+                    frame.visual_steering_angle,
+                    frame.wheel_angles,
+                    frame.wheel_compression,
+                )
+                .ok()?,
+        };
+        let world = vehicle_world(frame);
+        let centers = rig
+            .quad_pose
+            .wheel_positions(&matrices)
+            .ok()?
+            .map(|p| atv_core::obstacle::transform_point(&world, p));
+        let radii = vehicle.wheel_effect_state().radii;
+        let [_, x, _, z] = frame.orientation;
+        let up = (1. - 2. * (x * x + z * z)).max(0.5);
+        let mut changed = false;
+        let mut compression = frame.wheel_compression;
+        for (i, c) in compression.iter_mut().enumerate() {
+            let depth = height(centers[i][0], centers[i][2]) - (centers[i][1] - radii[i]);
+            if depth > 0.01 {
+                changed = true;
+                *c += (depth / up).min(MAX_WHEEL_LIFT);
+            }
+        }
+        if !changed {
+            return None;
+        }
+        let base = rig
+            .quad_pose
+            .sample(
+                frame.visual_steering_angle,
+                frame.wheel_angles,
+                frame.wheel_compression,
+            )
+            .ok()?;
+        let same = base.len() == matrices.len()
+            && base
+                .iter()
+                .zip(&matrices)
+                .all(|(a, b)| a.iter().zip(b).all(|(p, q)| (p - q).abs() <= 1e-3));
+        if !same {
+            return None;
+        }
+        let lift = compression
+            .iter()
+            .zip(frame.wheel_compression)
+            .fold(0f32, |m, (c, b)| m.max(c - b));
+        let quad = rig
+            .quad_pose
+            .sample(frame.visual_steering_angle, frame.wheel_angles, compression)
+            .ok()?;
+        Some((quad, lift))
+    }
+
     /// Vehicle linkage and rider skeleton for the latest frame
     /// (simulation_frame's quad_node_matrices and rider_node_matrices).
     pub fn pose(&self) -> Result<Pose> {

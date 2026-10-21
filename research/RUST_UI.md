@@ -309,8 +309,8 @@ The main, single and garage differences were the missing 3D previews, added in
 the next checkpoint. Hidden because the Rust engine cannot run them yet: Multiplayer, Arlington
 Free Ride, Jukebox, Race setup, Rider gear and Alpha. Race links on a motorcycle
 open the main menu with the reason, as motorcycle races are not ported. Not yet drawn: the Free Ride rider count,
-backdrop-filter blur on the photo arrows, the menu notice line and the training
-venue's photo (a devlog image in the browser). The loader shows one frame per
+backdrop-filter blur on the photo arrows and the menu notice line (later: Copy ride
+link; the training venue's photo: "Training course photo"). The loader shows one frame per
 load stage (the ride load owns the GPU meanwhile), so the shot crossfade only
 advances between stages.
 
@@ -442,7 +442,7 @@ the Rust ride, which until now only persisted them:
 
 | Setting (key) | play.html | Rust engine now |
 | --- | --- | --- |
-| Display → Graphics (`atv-graphics`, Auto = `detectGraphicsTier`) | preset at load; on change: interpolation, anisotropy, contact shadows, dust/tire pools, shadow map, smoothed sky, Fresnel, wheel re-projection, dirt | saved preset for rides from the frontend (Auto ports `detectGraphicsTier`; URL/CLI `graphics=` wins; direct `?venue=` parity rides keep Original); on change: interpolation, smoothed sky (when decoded at load), Fresnel, contact shadows, dust and tire-track pools. Anisotropy and shadow-map size apply from the next load; wheel re-projection and ATV dirt are not ported |
+| Display → Graphics (`atv-graphics`, Auto = `detectGraphicsTier`) | preset at load; on change: interpolation, anisotropy, contact shadows, dust/tire pools, shadow map, smoothed sky, Fresnel, wheel re-projection, dirt | saved preset for rides from the frontend (Auto ports `detectGraphicsTier`; URL/CLI `graphics=` wins; direct `?venue=` parity rides keep Original); on change: interpolation, smoothed sky (when decoded at load), Fresnel, contact shadows, dust and tire-track pools. wheel re-projection follows the preset (Enhanced/High). Anisotropy and shadow-map size apply from the next load; ATV dirt is not ported |
 | Speed rush (`atv-speed-rush`) | FOV kick and screen pass intensity Off/Low/Normal/High; Off by default with reduced motion | applied at load and on change, same peaks and reduced-motion default |
 | Crashes (`atv-crash-mode`) | Original/Crazy/Gorn switch mid-ride | applied at load and on change (crash layer created or dropped) |
 | Flips (`atv-flips`) | `input.flips` each batch | `RideOptions::flips` each step |
@@ -570,4 +570,17 @@ a controller-only desktop session can still dim. Test:
 `tools/test_engine_wake_lock.mjs` (a recording `navigator.wakeLock` stand-in:
 request while riding, release in Pause, request on resume). Host Chromium only;
 real-device lock behaviour is not tested.
+
+## Training course photo (2026-10-21)
+
+Training ships no TP photo pair; play.html shows the approved capture of the venue
+from the site's dev log images (frontend.js `trainingMapPreview`,
+`/devlog-images/training-map-preview.png`). The Rust web build loads the same image
+once at boot (decoded by the browser into RGBA) and uses it wherever a course photo
+appears: the Select Track card and hero, the greyed backdrop and the course loader
+(Training has no action shots). Measured against play.html (Select Track on
+Training, host Chromium, mean absolute RGB): 1280x720 hero 0.71, card 2.04, frame
+1.19; 390x844 frame 2.64 (images `private/reports/rust-ui/training/`). Desktop
+builds keep the photo-less card: the image is a site asset, not part of the game
+content package. Arlington Free Ride is the multiplayer frontend's.
 

@@ -57,7 +57,12 @@ async function scriptedGame(browser, venue, steps, viewport, errors, { measure =
     // The original crash camera (the Rust engine has not ported the authored tight one).
     localStorage.setItem('atv-crash-camera', 'original');
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
-    const trace = window.rideTrace = { frames: [], cursor: 0, held: false };
+    const trace = window.rideTrace = { frames: [], cursor: 0, held: false, lifts: [] };
+    // Enhanced/High wheel re-projection: the lift drawn after each delivered step.
+    if (graphics !== 'original') {
+      const lift = () => { const g = window.atvTerrainStatus?.graphics, step = trace.frames.length; if (g && step && !trace.held && trace.lifts.at(-1)?.[0] !== step) trace.lifts.push([step, g.wheelLift]); requestAnimationFrame(lift); };
+      requestAnimationFrame(lift);
+    }
     const post = Worker.prototype.postMessage, pending = new Set();
     Worker.prototype.postMessage = function (message, ...rest) {
       // Race parity: a fixed roster seed and no weather (both drawn per load).
@@ -206,6 +211,20 @@ function compareTraces(js, rust) {
   return { steps, firstDivergence: first, ...worst, phases: [js.at(-1)?.phase, rust.at(-1)?.phase] };
 }
 
+// JavaScript wheel lifts sampled per animation frame ([step, lift], possibly
+// one step stale) against the Rust browser trace's per-step `wheelLift`.
+function compareLifts(lifts, rust) {
+  const at = new Map(rust.map(r => [r.step, r.wheelLift ?? 0]));
+  let matched = 0, lifted = 0, worst = 0;
+  for (const [step, lift] of lifts) {
+    if (lift > 0) lifted++;
+    const error = Math.min(...[step, step - 1].filter(s => at.has(s)).map(s => Math.abs(at.get(s) - lift)));
+    if (error < 1e-3) matched++; else worst = Math.max(worst, error);
+  }
+  const rustLifted = rust.filter(r => r.wheelLift > 0).length;
+  return { samples: lifts.length, matched, javascriptLifted: lifted, rustLiftedSteps: rustLifted, worstUnmatched: worst };
+}
+
 async function rideMode() {
   // ride [venue] [script.json] [out-dir] [--graphics original|enhanced|high] [--crash original|crazy|gorn] [--region x0,y0,x1,y1] [--quad 1-46]
   const args = process.argv.slice(3), at = args.indexOf('--graphics');
@@ -235,6 +254,7 @@ async function rideMode() {
   const steps = script.flatMap(({ frames, input }) => Array.from({ length: frames }, () => normalized(input)));
   const browser = await launch();
   const report = { venue, quad, appearance, graphics, crash, steps: steps.length };
+  let lifts = [];
   try {
     // Screen boxes around the held quad and rider of the default script.
     for (const [name, viewport, crop] of [['landscape', { width: 1280, height: 720 }, [0.43, 0.37, 0.59, 0.69]], ['portrait', PORTRAIT, [0.33, 0.49, 0.7, 0.7]]]) {
@@ -251,6 +271,7 @@ async function rideMode() {
         const trace = await page.evaluate(() => window.rideTrace.frames);
         await writeFile(path.join(out, 'javascript-trace.json'), JSON.stringify(trace));
         report.javascriptSteps = trace.length;
+        lifts = await page.evaluate(() => window.rideTrace.lifts);
         report.javascriptCamera = await page.evaluate(() => window.atvTerrainStatus.renderCamera);
       }
       assertNoErrors(errors);
@@ -285,12 +306,13 @@ async function rideMode() {
       const rustErrors = [];
       const rust = await newPage(browser, { viewport: { width: 640, height: 360 } }, rustErrors);
       await rust.addInitScript(text => localStorage.setItem('furyScript', text), JSON.stringify(script));
-      await rust.goto(url(`/engine.html?venue=${venue}&quad=${quad}&weather=off&traceAll=1&script=storage`));
+      await rust.goto(url(`/engine.html?venue=${venue}&quad=${quad}&graphics=${graphics}&weather=off&traceAll=1&script=storage`));
       await rust.waitForFunction(() => document.querySelector('#trace') || /fail|error|stopped/i.test(document.querySelector('#status').textContent), null, { timeout: 180000 });
       const webTrace = JSON.parse(await rust.locator('#trace').textContent());
       await writeFile(path.join(out, 'rust-web-trace.json'), JSON.stringify(webTrace));
       // traceAll records start at step 1; compareTraces expects step 0 first.
       report.web = compareTraces(js, webTrace[0]?.step === 0 ? webTrace : [null, ...webTrace]);
+      if (lifts.length) report.wheelLift = compareLifts(lifts, webTrace);
       assertNoErrors(rustErrors);
       await rust.close();
     }

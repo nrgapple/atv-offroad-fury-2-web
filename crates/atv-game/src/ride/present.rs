@@ -47,12 +47,23 @@ pub struct Snapshot {
 
 impl Snapshot {
     /// The ride's latest state, with the optional crash presentation pose.
+    /// Also returns the wheel lift it drew (game.js `wheelLift`).
     pub fn capture(
         ride: &Ride,
         crash: Option<&atv_core::crash_effects::Frame>,
-    ) -> crate::Result<Self> {
+        reproject: Option<&dyn Fn(f32, f32) -> f32>,
+    ) -> crate::Result<(Self, f32)> {
+        let mut lift = 0.;
         let frame = ride.frame();
-        let pose = ride.pose()?;
+        let mut pose = ride.pose()?;
+        // atvPresentation.quadPose: Enhanced/High wheels on the visible
+        // ground (not during a Crazy/Gorn crash).
+        if let Some(height) = reproject.filter(|_| crash.is_none())
+            && let Some((quad, lifted)) = ride.reprojected_quad(height)
+        {
+            pose.quad_nodes = quad;
+            lift = lifted;
+        }
         let (camera, camera_mode) = ride.camera();
         let bike = ride.motorcycle().map(|b| {
             (
@@ -74,7 +85,7 @@ impl Snapshot {
                 })
                 .collect()
         });
-        Ok(Self {
+        let snapshot = Self {
             origin: frame.origin,
             orientation: frame.orientation,
             reset_count: frame.reset_count,
@@ -86,7 +97,8 @@ impl Snapshot {
             camera: *camera,
             camera_mode,
             opponents,
-        })
+        };
+        Ok((snapshot, lift))
     }
 
     /// This state in the browser's simulation-frame shape, the fields

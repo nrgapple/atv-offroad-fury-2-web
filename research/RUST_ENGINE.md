@@ -898,9 +898,30 @@ The browser build passes the same check at a simulated 120 Hz display
 (`tools/test_engine_interpolation.mjs`: virtual-clock requestAnimationFrame and
 performance.now, `?presentTrace=1`): Enhanced quad and Original bike interpolate on
 alternate frames, Original quad snaps. Alpha slow motion (`hype.timeScale`) stretches
-each segment by its scale (RUST_UI.md "Alpha experiments"). Not ported: the Enhanced
-wheel re-projection (`atvPresentation.quadPose`); the quad draws its simulation
-linkage.
+each segment by its scale (RUST_UI.md "Alpha experiments").
+
+### Enhanced wheel re-projection (2026-10-21)
+
+Enhanced and High redraw wheels that sink into the visible terrain after integration
+(graphics.js `wheelReprojection`, game.js `reprojectWheels`,
+`atvPresentation.quadPose`). `Ride::reprojected_quad` reads the posed wheel centres
+(simulation_frame's `wheel_effects.centers`), the wheel radii and the dense render grid
+(`Venue::visible`, renderCore.terrainHeight); a wheel deeper than 0.01 ft gains
+compression `min(depth / up, MAX_WHEEL_LIFT 0.5)` and the linkage is resampled, but only
+when the drawn linkage equals the rig's own sample within 1e-3, the quad is Riding and
+no Crazy/Gorn crash pose is drawn. Every delivered state is reprojected before
+interpolation; without interpolation the latest state is. Simulation is unchanged
+(presentation only); Original keeps the simulated linkage.
+
+Evidence (host browser, ENV01 default ride script, `tools/compare_engine.mjs ride
+env01 "" <out> --graphics enhanced`): trajectories identical over 600 steps; the
+JavaScript game's sampled `wheelLift` matched the Rust trace's per-step lift within
+1e-3 for 548 of 559 frames (the rest are samples more than one step stale, worst
+0.017 ft), 191 JavaScript samples and 207 Rust steps lifted; held-frame vehicle box
+mean absolute RGB difference 0.57 (1280x720) and 1.17 (390x844).
+`tools/test_engine_wheel_reprojection.mjs` autodrives Enhanced (463-579 of 901 sampled frames
+lifted, max 0.5 ft) and Original (none). Phone performance is not measured; the work
+is four terrain samples and at most one extra linkage sample per delivered state.
 
 ## Rider gear and quad paint (2026-10-21)
 
@@ -1282,6 +1303,37 @@ Observed (host-only, local relay):
   - Select Track → next course → Ride moved the room to env02. The Rust host reloaded
     there and drew the guest again.
 
+### Full Free Ride room in the Rust engine (measurement)
+
+`tools/test_engine_freeride_full.mjs` (manual group; local relay only, never
+production): one Rust browser rides Free Ride from its main menu, and 19
+synthetic riders join FREERD01 at the near/fast 20 Hz cadence. These are
+test_freeride.mjs's bots, using the Rust codec over Node WebSockets, circling the
+Rust rider at 30-90 ft. Over 12 one-second samples (one Mac, headless
+Chromium/Metal, 1280x720; host-only, not a phone or Internet result):
+
+- The room held 20 riders, and all 19 others were drawn in every sample, with
+  6 engine voices (the nearest-six limit). Up to 6 name tags were shown: tags are
+  limited to the nearest eight, of which at most three may sit at the screen edge.
+- Frame rate: median 79 fps, 13.4 ms frames, 6.9 ms main-thread CPU. The Rust
+  figure covers simulation, rendering and UI; the browser game's 1.1-1.7 ms render
+  CPU excludes its worker.
+- Received about 52.5 KB/s of relay traffic and sent about 128 B/s (the rider stood
+  still).
+- Hitches:
+  - A 192 ms frame came in the first second, while the six nearest riders' engine
+    banks decoded on the main thread.
+  - Two late samples ran at 28 fps (36 ms frames, up to 13.7 ms CPU); the cause was
+    not identified.
+  - The only relay round trip measured in the window (830 ms) was a ping answered
+    during the first hitch. Pings run every 15 s, so this run gives no steady
+    round-trip figure.
+- Inspected: `private/reports/engine-multiplayer/freeride-full.png`, with the raw
+  samples in `freeride-full.json`.
+- Follow-up: decode remote engine banks and parse remote rider models off the
+  frame, or spread them over frames (the browser decodes in Web Audio and loads
+  models asynchronously). Find the late 28 fps samples. Measure on a phone.
+
 Gaps, in planned slice order:
 
 1. The joining "Free Ride Lobby" page and Copy invite link from the frontend are
@@ -1289,9 +1341,8 @@ Gaps, in planned slice order:
    garage, as noted in slice 10.
 2. Train on a motorcycle ride, the Realistic train-riding setting, and an arrival's
    spawn velocity on a moving car (the browser adds the car's point velocity).
-3. Twenty-rider rooms are untested in the Rust engine; the JavaScript game's
-   receive batching, name-tag limits and model cache bounds have no Rust measurement
-   yet.
+3. Remote model and engine-bank loading runs on the main thread; with many
+   arrivals it hitches (see the full-room measurement).
 
 ## Commands
 
