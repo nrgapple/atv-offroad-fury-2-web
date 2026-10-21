@@ -77,7 +77,16 @@ pub struct Overlay {
 
 impl Overlay {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, view: Viewport) -> Self {
-        let settings = Settings::load();
+        Self::with_settings(device, format, view, Settings::load())
+    }
+
+    /// An overlay with the given saved settings (in-memory for captures).
+    pub fn with_settings(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        view: Viewport,
+        settings: Settings,
+    ) -> Self {
         let mut touch = TouchControls::new(&settings, view.coarse);
         touch.set_viewport(view.width, view.height);
         let minimap = Minimap::new(MinimapSettings::load(&settings));
@@ -462,6 +471,13 @@ impl Overlay {
                 },
             },
         })
+    }
+
+    /// Finishes any pending GPS map build at once (parity captures).
+    pub fn finish_course(&mut self, terrain: &atv_game::venue::Terrain) {
+        while self.minimap.building() {
+            self.minimap.build_slice(terrain, f64::INFINITY);
+        }
     }
 
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {

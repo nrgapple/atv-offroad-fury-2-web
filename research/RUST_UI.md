@@ -148,3 +148,40 @@ Known gaps: the keyboard card's `backdrop-filter: blur(12px)` is drawn as its
 settings screens are later checkpoints. `tools/test_engine_hud.mjs` covers the
 targets, compact rule, card first-ride/H/Keys, map orientation persistence and
 the meter fallback.
+
+## Desktop display face (2026-10-21)
+
+Browsers keep the stylesheet stack (`--atv-font-display`), unchanged. Native
+builds previously resolved the stack through cosmic-text, which only accepts a
+face of the exact requested weight: on macOS the 800 weight fell through to the
+system UI face (San Francisco), and Windows/Linux would use whatever the stack
+happened to find. The native backend now:
+
+- selects faces by CSS font matching (nearest weight, closest stretch) and treats
+  faces named `…Italic` as italic (macOS Avenir Next Condensed Heavy Italic
+  declares a normal style), so macOS draws Avenir Next Condensed Heavy Italic for
+  `italic 800` exactly as Safari/Chrome do;
+- uses the stack's first family when it is installed (macOS), otherwise the
+  bundled **Fira Sans Condensed** (SIL OFL 1.1, `crates/atv-ui/fonts/`, unmodified
+  Regular/SemiBold/Bold/ExtraBold/ExtraBold Italic, licence in `OFL.txt`, hashes
+  pinned in `tools/verify_repository.py`). `FURY_BUNDLED_FONT=1` previews it on
+  macOS.
+
+Candidates were measured against Avenir Next Condensed with the native rasterizer
+on the UI's strings and styles (ink width ratio; mean coverage difference after
+scaling to the same box, `text::native::font_choice`, ignored test):
+
+| Face | Width ratio (6 samples) | Shape difference |
+| --- | --- | --- |
+| Fira Sans Condensed | 0.94-1.11 | 0.12-0.28 |
+| Asap Condensed | 0.85-0.95 | 0.13-0.28 |
+| Barlow Condensed | 0.78-0.95 | 0.16-0.34 |
+| Arial Narrow (macOS) | 0.87-1.06 | 0.13-0.35 |
+| Encode Sans Condensed | 0.99-1.16 | 0.19-0.33 |
+
+Fira Sans Condensed is closest in width (layout) and shape. On macOS keeping
+Avenir Next Condensed keeps desktop closest to the web look: native-vs-browser
+region differences of the same frame were 5.4 (toolbar) / 5.9 (keyboard card)
+with Avenir and 11.5 / 22.1 with the bundled face (scene pixels included; native
+capture `fury --capture … --ui`). The fonts add about 2.5 MB to native binaries
+and nothing to the WebAssembly build.
