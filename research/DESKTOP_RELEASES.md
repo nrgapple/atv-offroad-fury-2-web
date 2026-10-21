@@ -96,7 +96,7 @@ requires a clean tree (the commit is the version) and uses `git archive HEAD` fo
 - macOS builds natively for both architectures (`MACOSX_DEPLOYMENT_TARGET=11.0`), runs
   `lipo`, assembles the bundle (icon from the authored `web/fury-app-icons.json` 512 px art via
   `iconutil`), signs ad hoc and zips with `ditto` (bundle structure and symlinks preserved).
-- Linux and Windows run in the local image `fury-desktop-builder:bullseye-3` (built from
+- Linux and Windows run in the local image `fury-desktop-builder:bullseye-4` (built from
   `rust:1-bullseye` plus `gcc-x86-64-linux-gnu`, `gcc-aarch64-linux-gnu`, `gcc-mingw-w64-x86-64`,
   `libudev-dev` for both Linux architectures (gilrs reads controllers through libudev) and the
   three Rust targets). Colima only shares `$HOME` and the repo is on the SSD, so the

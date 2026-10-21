@@ -37,9 +37,12 @@ WINDOWS_TRIPLE = 'x86_64-pc-windows-gnu'
 BUNDLE_ID = 'com.furyremastered.desktop'
 MACOS_MINIMUM = '11.0'
 # Debian 11 keeps the Linux builds loadable on glibc 2.31 (Ubuntu 20.04+, Debian 11+).
-BUILDER_IMAGE = 'fury-desktop-builder:bullseye-3'
+BUILDER_IMAGE = 'fury-desktop-builder:bullseye-4'
 # libudev-dev for both Linux architectures: gilrs (controllers) links libudev on Linux.
+# Debian 11 is end of life, so its packages come from archive.debian.org.
 BUILDER_DOCKERFILE = '''FROM rust:1-bullseye
+RUN sed -i -e '/bullseye-updates/d' -e 's|deb.debian.org|archive.debian.org|' /etc/apt/sources.list && \\
+    echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99archive
 RUN set -e; native=$(dpkg --print-architecture); \\
     if [ "$native" = arm64 ]; then foreign=amd64; cross="gcc-x86-64-linux-gnu:$native libc6-dev-amd64-cross"; \\
     else foreign=arm64; cross="gcc-aarch64-linux-gnu:$native libc6-dev-arm64-cross"; fi; \\
