@@ -20,6 +20,14 @@ use std::collections::BTreeMap;
 /// The wire protocol version (atv-net), shared with the JavaScript game.
 pub const PROTOCOL: u8 = atv_net::VERSION;
 
+/// The reserved Arlington Free Ride rooms `FREERD01`-`FREERD25`.
+pub fn is_shared_room(code: &str) -> bool {
+    atv_net::parse_room_code(code).is_ok_and(|c| atv_net::is_public_room_code(&c))
+}
+
+/// Free Ride's course (Arlington Stream).
+pub const FREERIDE_ENVIRONMENT: &str = "env08";
+
 /// Private room codes: exactly eight letters or digits.
 pub fn room_code(text: &str) -> Result<atv_net::RoomCode> {
     atv_net::parse_room_code(text)

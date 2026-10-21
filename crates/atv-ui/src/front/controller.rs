@@ -24,6 +24,9 @@ pub enum Event {
     Settings,
     /// Display → Fullscreen in Settings.
     Fullscreen,
+    /// Arlington Free Ride: join a shared room at once (no setup) with the
+    /// remembered rider name and the garage ATV (motorcycles ride ATV01).
+    FreeRide { quad: u16, rider: u16, name: String },
 }
 
 /// localStorage key shared with the browser game.
@@ -32,7 +35,7 @@ pub const SELECTION_KEY: &str = "atv-player-selection";
 pub const VEHICLES: u16 = 46;
 
 /// Rows the Rust engine cannot perform yet are left out of its menus.
-const UNSUPPORTED: [&str; 5] = ["multiplayer", "freeride", "jukebox", "race", "gear"];
+const UNSUPPORTED: [&str; 4] = ["multiplayer", "jukebox", "race", "gear"];
 
 /// Loader phases (frontend.js `loadingStage`) and their bar positions.
 pub fn loading_stage(text: &str) -> (&'static str, f32) {
@@ -110,6 +113,8 @@ pub struct Frontend {
     pub web: bool,
     /// Saved selection fields other than the ones this port changes.
     saved: Value,
+    /// Riders in Arlington Free Ride (the main menu's live count).
+    pub freeride_riders: Option<u32>,
 }
 
 impl Frontend {
@@ -146,6 +151,7 @@ impl Frontend {
             loading: None,
             web,
             saved,
+            freeride_riders: None,
         };
         front.refresh(&Viewport {
             width: 1280.,
@@ -370,6 +376,20 @@ impl Frontend {
             }
             "back" => self.back(view),
             "devlog" => return Some(Event::DevLog),
+            "freeride" => {
+                // frontend.js: no setup; motorcycles fall back to ATV01.
+                let name = self.saved["playerName"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|n| !n.is_empty() && n.len() <= 24)
+                    .unwrap_or("Rider")
+                    .to_string();
+                return Some(Event::FreeRide {
+                    quad: if self.quad_id >= 27 { 1 } else { self.quad_id },
+                    rider: self.rider_id,
+                    name,
+                });
+            }
             "settings" => return Some(Event::Settings),
             "quadprev" | "quadnext" => {
                 self.step_quad(if action == "quadnext" { 1 } else { -1 });
@@ -697,6 +717,7 @@ impl Frontend {
             choices: self.choices.clone(),
             selection: self.selection,
             hovered: self.hovered,
+            freeride_riders: self.freeride_riders,
             backdrop,
             backdrop_track,
             logo: logo.map(|l| l.0),
@@ -768,6 +789,28 @@ mod tests {
             height,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn free_ride_needs_no_setup_and_rides_an_atv() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        settings.set(
+            SELECTION_KEY,
+            r#"{"quadId":29,"riderId":1,"playerName":"Ann"}"#,
+        );
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.choices()[1].0, "freeride");
+        front.key("ArrowDown", &view, &mut settings);
+        assert_eq!(
+            front.key("Enter", &view, &mut settings),
+            Some(Event::FreeRide {
+                quad: 1,
+                rider: 1,
+                name: "Ann".into()
+            })
+        );
     }
 
     #[test]

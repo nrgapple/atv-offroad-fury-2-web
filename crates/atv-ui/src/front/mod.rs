@@ -127,6 +127,8 @@ pub struct Screen {
     pub choices: Vec<(String, String)>,
     pub selection: usize,
     pub hovered: Option<u32>,
+    /// Riders in Arlington Free Ride (`N riding` on its main-menu row).
+    pub freeride_riders: Option<u32>,
     pub backdrop: Option<Img>,
     /// The backdrop is a course photo (greyed and tinted already).
     pub backdrop_track: bool,
@@ -1042,7 +1044,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 if action == "back" {
                     continue;
                 }
-                rows = rows.child(menu_row(m, s, index, label));
+                rows = rows.child(menu_row(m, s, index, action, label));
             }
             left = left.child(rows);
         }
@@ -1092,7 +1094,7 @@ fn row_pill(m: &Metrics, right: f32) -> El {
     .paint(pill_shadows(Paint::fill(gold_pill()).radius(5.)))
 }
 
-fn menu_row(m: &Metrics, s: &Screen, index: usize, label: &str) -> El {
+fn menu_row(m: &Metrics, s: &Screen, index: usize, action: &str, label: &str) -> El {
     let selected = s.selection == index;
     let mut style = row(14.);
     style.position = Position::Relative;
@@ -1126,8 +1128,85 @@ fn menu_row(m: &Metrics, s: &Screen, index: usize, label: &str) -> El {
     } else {
         bullet()
     };
-    el.child(bullet)
-        .child(text(label, text_style, m.row_font * 1.1))
+    let mut el = el
+        .child(bullet)
+        .child(text(label, text_style, m.row_font * 1.1));
+    if action == "freeride" {
+        el = freeride_badges(m, el, selected, s.freeride_riders);
+    }
+    el
+}
+
+/// `.ms-new` and `.ms-live`: the NEW tag and the live rider count on the
+/// Arlington Free Ride row (static; the browser's glow/pulse animations are
+/// not drawn).
+fn freeride_badges(m: &Metrics, el: El, selected: bool, riders: Option<u32>) -> El {
+    let tag_font = m.row_font * 0.5;
+    let mut tag = El::new(Style {
+        flex_shrink: 0.,
+        padding: sides(
+            tag_font * 0.22,
+            tag_font * 0.5,
+            tag_font * 0.18,
+            tag_font * 0.5,
+        ),
+        ..Default::default()
+    })
+    .paint(
+        Paint::fill(Fill::Linear(Gradient::new(
+            180.,
+            &[(0., Color::hex("#ff4a3a")), (1., Color::hex("#c4140c"))],
+        )))
+        .radius(999.)
+        .shadow(BoxShadow::inset(0., 0., 0., Color::hex("#ffd0c0aa")))
+        .shadow(BoxShadow::outer(0., 0., 12., Color::hex("#ff3a2a88"))),
+    );
+    tag = tag.child(text(
+        "NEW",
+        TextStyle::new(display(tag_font, 700, false), Color::WHITE)
+            .spacing(tag_font * 0.12)
+            .shadow(0., 1., 0., Color::hex("#6008")),
+        tag_font * 1.1,
+    ));
+    let mut el = el.child(tag);
+    if let Some(riders) = riders {
+        let live_font = m.row_font * 0.62;
+        let empty = riders == 0;
+        let (dot, color) = match (selected, empty) {
+            (true, _) => ("#1f8a0a", "#123d05"),
+            (false, true) => ("#9a9a9a", "#d8d8d8"),
+            (false, false) => ("#5df03a", "#9ff07a"),
+        };
+        let mut style = row(live_font * 0.4);
+        style.flex_shrink = 0.;
+        style.margin.left = taffy::LengthPercentageAuto::auto();
+        style.padding = sides(0., 0., 0., 10.);
+        let mut dot_el = El::new(Style {
+            size: Size {
+                width: length(live_font * 0.62),
+                height: length(live_font * 0.62),
+            },
+            flex_shrink: 0.,
+            ..Default::default()
+        })
+        .paint(Paint::fill(Fill::Solid(Color::hex(dot))).radius(live_font));
+        if !selected && !empty {
+            dot_el = dot_el.paint(
+                Paint::fill(Fill::Solid(Color::hex(dot)))
+                    .radius(live_font)
+                    .shadow(BoxShadow::outer(0., 0., 8., Color::hex(dot))),
+            );
+        }
+        el = el.child(
+            El::new(style).child(dot_el).child(text(
+                format!("{riders} riding"),
+                TextStyle::new(display(live_font, 700, false), Color::hex(color))
+                    .spacing(live_font * 0.04),
+                live_font * 1.1,
+            )),
+        );
+    }
+    el
 }
 
 fn tabs(m: &Metrics, s: &Screen) -> El {
