@@ -521,7 +521,7 @@ fn settle_room(ready: &mut Ready) {
             &ready.gpu,
             &mut ready.scene,
             &ready.venue,
-            riding.ride.frame().origin,
+            &riding.ride,
             eye,
         );
         if net.drawn as f32 >= peers {
@@ -733,13 +733,19 @@ impl App {
             {
                 status(&format!("Unable to join beside that rider: {error}"));
             }
-            riding.peers = net.contact_bodies();
+            if tick.train_place
+                && let Err(error) = riding.place_on_train("flatbeda")
+            {
+                status(&format!("Train placement: {error}"));
+            }
+            riding.peers = net.contact_bodies(&riding.ride);
+            riding.server_clock = net.server_clock();
             let eye = ready.camera.eye();
             net.present(
                 &ready.gpu,
                 &mut ready.scene,
                 &ready.venue,
-                riding.ride.frame().origin,
+                &riding.ride,
                 eye,
             );
             if was_open && let Some(closed) = &net.closed {
@@ -748,7 +754,7 @@ impl App {
             let content = net.content();
             loads.extend(tick.loads.into_iter().map(|key| (content.clone(), key)));
             course = tick.course;
-            publish_multiplayer(net, riding.contacts, riding.ride.frame().origin);
+            publish_multiplayer(net, riding.contacts, &riding.ride);
         }
         for (content, key) in loads {
             self.spawn(multiplayer::load_model(content, key), |model| {
@@ -2192,6 +2198,7 @@ impl App {
                     freeride: true,
                     name,
                     drop_after: None,
+                    train_place: None,
                 };
                 self.start_ride(
                     atv_game::multiplayer::FREERIDE_ENVIRONMENT.into(),
@@ -2744,12 +2751,29 @@ fn default_relay() -> String {
 }
 
 /// Multiplayer status for tests (`window.furyMultiplayer`, JSON).
-fn publish_multiplayer(net: &multiplayer::Net, contacts: u64, origin: [f32; 3]) {
+fn publish_multiplayer(net: &multiplayer::Net, contacts: u64, ride: &atv_game::ride::Ride) {
     #[cfg(target_arch = "wasm32")]
     if let Some(window) = web_sys::window() {
         let mut report = net.report();
         report["contacts"] = contacts.into();
-        report["origin"] = serde_json::json!(origin);
+        report["origin"] = serde_json::json!(ride.frame().origin);
+        report["trainTime"] = serde_json::json!(ride.train_time());
+        report["ownPlatform"] = serde_json::json!(
+            ride.train_platform()
+                .map(|(car, matrix)| serde_json::json!({"car": car, "matrix": matrix}))
+        );
+        // This client's matrices of the cars other riders stand on.
+        let cars: serde_json::Map<String, serde_json::Value> = report["remote"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| r["platform"].as_u64())
+            .filter_map(|car| {
+                let m = ride.train_car(car as usize)?;
+                Some((car.to_string(), serde_json::json!(m)))
+            })
+            .collect();
+        report["trainCars"] = cars.into();
         let _ = js_sys::Reflect::set(
             &window,
             &"furyMultiplayer".into(),
@@ -2757,7 +2781,7 @@ fn publish_multiplayer(net: &multiplayer::Net, contacts: u64, origin: [f32; 3]) 
         );
     }
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = (net, contacts, origin);
+    let _ = (net, contacts, ride);
 }
 
 impl App {
@@ -2998,6 +3022,7 @@ pub fn start() {
                     .and_then(|v| js_sys_decode(&v))
                     .unwrap_or_else(|| "Rider".into()),
                 drop_after: param("dropAfter").and_then(|v| v.parse().ok()),
+                train_place: param("trainPlace").and_then(|v| v.parse().ok()),
                 freeride: false,
             }
         }),
