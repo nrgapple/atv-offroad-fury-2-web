@@ -37,4 +37,4 @@ console_error_panic_hook = "0.1"
 js-sys = "0.3"
 wasm-bindgen = "0.2.129"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Window", "Document", "VisibilityState", "Element", "HtmlAudioElement", "HtmlCanvasElement", "HtmlElement", "HtmlMediaElement", "Blob", "BlobPropertyBag", "Url", "Location", "console", "MediaQueryList", "CssStyleDeclaration"] }
+web-sys = { version = "0.3", features = ["Window", "Document", "VisibilityState", "Element", "HtmlAudioElement", "HtmlCanvasElement", "HtmlElement", "HtmlMediaElement", "Blob", "BlobPropertyBag", "Url", "Location", "console", "MediaQueryList", "CssStyleDeclaration", "Storage"] }

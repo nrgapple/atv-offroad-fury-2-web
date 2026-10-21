@@ -46,6 +46,8 @@ pub struct Riding {
     pub step_rest: Vec<Option<[f32; 3]>>,
     /// Wheel dust, chunks, spray and wet births, stepped after each ride step.
     pub effects: Option<atv_game::wheel_effects::WheelEffects>,
+    /// Optional Crazy/Gorn crashes (off under Original).
+    pub crashes: Option<atv_game::crash::Crashes>,
 }
 
 /// What a frame sampled from the keyboard/controller.
@@ -85,6 +87,7 @@ impl Riding {
             step_cameras: Vec::new(),
             step_rest: Vec::new(),
             effects: None,
+            crashes: None,
         }
     }
 
@@ -221,6 +224,9 @@ impl Riding {
             if let Some(effects) = &mut self.effects {
                 effects.step(&self.ride)?;
             }
+            if let Some(crashes) = &mut self.crashes {
+                crashes.step(&self.ride)?;
+            }
             if let Some(sound) = &mut self.sound {
                 sound.step(self.ride.sound());
             }
@@ -281,7 +287,34 @@ impl Riding {
             self.center = at;
             scene.recenter_terrain(gpu, venue, [frame.origin[0], frame.origin[2]]);
         }
-        scene.pose_ride(gpu, &self.ride.pose()?);
+        let mut pose = self.ride.pose()?;
+        // Crazy/Gorn: the ragdoll and broken parts replace the drawn pose
+        // (drawnQuadPose and acceptFrame in game.js); the rider's ragdoll
+        // matrices are world space.
+        if let Some(crash) = self.crashes.as_ref().and_then(|c| c.frame()) {
+            if crash.quad_node_matrices.len() == pose.quad_nodes.len() {
+                pose.quad_nodes.clone_from(&crash.quad_node_matrices);
+            }
+            if !crash.rider_node_matrices.is_empty() {
+                pose.rider_nodes.clone_from(&crash.rider_node_matrices);
+                pose.rider_world = [
+                    1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+                ];
+            }
+        }
+        let crash = self.crashes.as_ref().and_then(|c| c.frame());
+        scene.set_crash(
+            gpu,
+            crash.map_or(&[][..], |c| &c.severed_nodes[..]),
+            crash
+                .filter(|_| {
+                    self.crashes
+                        .as_ref()
+                        .is_some_and(|c| c.mode == atv_game::crash::CrashMode::Gorn)
+                })
+                .map(|c| &c.blood),
+        );
+        scene.pose_ride(gpu, &pose);
         Ok((
             Camera {
                 x: position[0],

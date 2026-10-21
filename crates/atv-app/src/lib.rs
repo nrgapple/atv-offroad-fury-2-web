@@ -30,6 +30,8 @@ pub struct Options {
     /// (parity captures against a paused JavaScript frame).
     pub steps: Option<u64>,
     pub graphics: Graphics,
+    /// Ride Effects -> Crashes (Original by default; Crazy/Gorn are authored).
+    pub crash: atv_game::crash::CrashMode,
     /// Native parity capture: render once at this size, write PNG and exit.
     #[cfg(not(target_arch = "wasm32"))]
     pub capture: Option<(std::path::PathBuf, u32, u32)>,
@@ -148,6 +150,7 @@ struct World {
     weather: Option<bool>,
     steps: Option<u64>,
     graphics: Graphics,
+    crash: atv_game::crash::CrashMode,
     ride: bool,
     script: Option<replay::Script>,
     sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
@@ -167,6 +170,7 @@ async fn prepare(
         weather,
         steps,
         graphics,
+        crash,
         ride,
         script,
         sound,
@@ -262,6 +266,11 @@ async fn prepare(
             effects.reset(&riding.ride)?;
             scene.set_wheel_effects(&gpu, &effects);
             riding.effects = Some(effects);
+        }
+        if crash != atv_game::crash::CrashMode::Original {
+            let mut crashes = atv_game::crash::Crashes::new(crash);
+            crashes.reset(&riding.ride)?;
+            riding.crashes = Some(crashes);
         }
         if let Some(script) = &script {
             script.run(&mut riding)?;
@@ -992,6 +1001,7 @@ impl ApplicationHandler<Message> for App {
                 weather: options.weather,
                 steps: options.steps,
                 graphics: options.graphics,
+                crash: options.crash,
                 ride: options.ride,
                 script: options.script,
                 sound: options.sound,
@@ -1473,6 +1483,17 @@ pub fn start() {
         weather: param("weather").and_then(|v| parse_switch(&v)),
         steps: param("steps").and_then(|v| v.parse().ok()),
         graphics: param("graphics").map_or_else(Graphics::default, |v| graphics_preset(&v)),
+        // ?crash= for captures, else the JavaScript build's saved setting.
+        crash: param("crash")
+            .or_else(|| {
+                web_sys::window()?
+                    .local_storage()
+                    .ok()??
+                    .get_item("atv-crash-mode")
+                    .ok()?
+            })
+            .and_then(|v| atv_game::crash::CrashMode::parse(&v))
+            .unwrap_or_default(),
         ride: param("free").is_none(),
         ui_backdrop: param("uibackdrop").and_then(|hex| {
             let v = u32::from_str_radix(&hex, 16).ok()?;
