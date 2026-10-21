@@ -1183,13 +1183,32 @@ Observed (host-only, local relay):
   a hidden tab in headless Chromium; real background-tab throttling and mobile
   page freezing were not measured.
 
+### Slice 7: name tags and map markers
+
+- `atv-ui/src/hud/peers.rs` ports `PlayerIndicators`.
+  - Overhead name tags for the nearest eight fresh riders, at most three pinned to
+    the screen edge.
+  - Each tag sits 7 ft above the ATV, projected with the scene's view-projection.
+  - The label is the display face at 18 px italic 800, white with a black stroke,
+    over a slot-coloured arrow. The arrow points down over an on-screen rider and
+    toward an edge-pinned one, at 85% opacity.
+- The GPS map draws each fresh rider as a slot-coloured dot with an ink ring,
+  clamped to 40% of the map and rotating with a heading-up map (`mapPeerMarker`).
+- Slot colours are the original CompassArrow tints for slots 0-3 (red, blue,
+  green, yellow; 0x002e68e0); slots 4-19 are authored. Tag placement and artwork
+  are authored browser presentation.
+- Observed (`tools/test_engine_multiplayer_tags.mjs`, local relay, host-only): a
+  JavaScript host riding ahead of the Rust browser guest got its name tag
+  (`tags` 1) and a map dot. Inspected: `private/reports/engine-multiplayer/tags.png`.
+  Its marker was in the top 14% of the screen, so it is an edge tag pointing up
+  toward the rider, as the browser draws it.
+
 Gaps, in planned slice order:
 
 1. No Multiplayer menu in `atv-ui`: no Host/Join forms (text entry), room code entry,
    Players page and its spawn-beside action, invite copy, Select Track for a Rust
    host, Change ATV and Rider, or Leave Game wording. Private rooms start from the
-   command line or URL only. No name tags, minimap peer markers or compass colours
-   either.
+   command line or URL only.
 2. Train on a motorcycle ride, the Realistic train-riding setting, and an arrival's
    spawn velocity on a moving car (the browser adds the car's point velocity).
 3. Twenty-rider rooms are untested in the Rust engine; the JavaScript game's

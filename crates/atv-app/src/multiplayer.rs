@@ -646,6 +646,26 @@ impl Net {
         self.drawn = scene.pose_peers(gpu, &poses, eye);
     }
 
+    /// Other riders for the HUD: roster names at their presented positions.
+    pub fn hud_peers(&self) -> Vec<atv_ui::hud::peers::Peer> {
+        let names: BTreeMap<u8, &str> = self
+            .session
+            .others()
+            .map(|p| (p.id, p.name.as_str()))
+            .collect();
+        self.presented
+            .iter()
+            .filter_map(|(peer, position, stale, _)| {
+                Some(atv_ui::hud::peers::Peer {
+                    slot: *peer,
+                    name: (*names.get(peer)?).to_string(),
+                    position: *position,
+                    stale: *stale,
+                })
+            })
+            .collect()
+    }
+
     /// Status for tests and the diagnostics line (window.furyMultiplayer).
     pub fn report(&self) -> serde_json::Value {
         let c = self.session.counters;

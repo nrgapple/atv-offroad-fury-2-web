@@ -46,6 +46,9 @@ pub struct HudInput<'a> {
     /// A race's latest frame, the committed stunt points and the drawn
     /// player origin (the race overlays and 321 lamps).
     pub race: Option<(&'a atv_core::race::Frame, f32, [f32; 3])>,
+    /// Other riders in a multiplayer room, the player's origin and the
+    /// scene's view-projection (name tags and map markers).
+    pub peers: Option<(&'a [atv_ui::hud::peers::Peer], [f32; 3], [f32; 16])>,
 }
 
 /// A press on a toolbar button or the minimap (utility pointers in touch.js).
@@ -66,6 +69,8 @@ type ResultsCache = (Viewport, Results, String, DisplayList, Vec<(Rect, u32)>);
 type ToolbarCache = (Viewport, toolbar::State, DisplayList, Vec<(Rect, u32)>);
 
 pub struct Overlay {
+    /// Name tags drawn on the latest frame (tests).
+    pub tags: usize,
     pub fonts: Fonts,
     renderer: Renderer,
     pub settings: Settings,
@@ -152,6 +157,7 @@ impl Overlay {
             results: Results::default(),
             results_cache: None,
             help_open: false,
+            tags: 0,
             help_until: None,
             ride_started: false,
             toolbar_cache: None,
@@ -513,6 +519,17 @@ impl Overlay {
             preload_fill: h.hud.preload_fill,
             preload_blue_alpha: h.hud.preload_blue_alpha as f32,
         });
+        self.minimap.peers = hud
+            .as_ref()
+            .and_then(|h| h.peers)
+            .map(|(peers, ..)| {
+                peers
+                    .iter()
+                    .filter(|p| !p.stale)
+                    .map(|p| (p.slot, p.position))
+                    .collect()
+            })
+            .unwrap_or_default();
         // Races hide the GPS map (minimap.draw's !raceSettings).
         self.minimap.update(
             now,
@@ -658,6 +675,19 @@ impl Overlay {
             .filter(|_| active)
             .map(|start| ((now - start) / 500.) as f32)
             .filter(|t| *t < 1.);
+        // Name tags over other riders, under the map and menus.
+        if let Some((peers, origin, vp)) = shown.and_then(|h| h.peers) {
+            self.tags = atv_ui::hud::peers::paint_tags(
+                &mut self.fonts,
+                &mut self.list,
+                &view,
+                peers,
+                origin,
+                &vp,
+            );
+        } else {
+            self.tags = 0;
+        }
         if map_visible {
             self.minimap.paint(&view, &mut self.fonts, &mut self.list);
             self.hits.push((map, MINIMAP));

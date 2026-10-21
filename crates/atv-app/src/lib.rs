@@ -772,7 +772,8 @@ impl App {
                 .sound
                 .as_ref()
                 .map(|s| (s.remote.voices(), s.remote.starts, s.remote.impact_starts));
-            publish_multiplayer(net, riding.contacts, &riding.ride, remote);
+            let tags = self.overlay.as_ref().map_or(0, |o| o.tags);
+            publish_multiplayer(net, riding.contacts, &riding.ride, remote, tags);
         }
         for (quad, future) in engine_loads {
             self.spawn(future, move |engine| {
@@ -815,6 +816,12 @@ impl App {
                 ms,
             );
             let gpu = &ready.gpu;
+            // Other riders' tags and map markers project with the scene camera.
+            let hud_peers = ready.net.as_ref().map(|net| net.hud_peers());
+            let view_projection =
+                ready
+                    .camera
+                    .view_projection(gpu.aspect(), ready.focal_length, 1., 10_000.);
             overlay.prepare(
                 &gpu.device,
                 &gpu.queue,
@@ -833,6 +840,9 @@ impl App {
                         .race()
                         .and_then(|r| r.frame.as_ref())
                         .map(|f| (f, ride.committed_points(), frame.origin)),
+                    peers: hud_peers
+                        .as_deref()
+                        .map(|peers| (peers, frame.origin, view_projection)),
                 }),
                 Some(&mut riding.bindings),
             );
@@ -2494,7 +2504,7 @@ impl App {
             .sound
             .as_ref()
             .map(|s| (s.remote.voices(), s.remote.starts, s.remote.impact_starts));
-        publish_multiplayer(net, riding.contacts, &riding.ride, remote);
+        publish_multiplayer(net, riding.contacts, &riding.ride, remote, 0);
         let content = net.content();
         let course = tick.course;
         for key in tick.loads {
@@ -2791,6 +2801,7 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
                         .race()
                         .and_then(|r| r.frame.as_ref())
                         .map(|f| (f, ride.committed_points(), ride.frame().origin)),
+                    peers: None,
                 }),
                 None,
             );
@@ -2922,6 +2933,7 @@ fn publish_multiplayer(
     contacts: u64,
     ride: &atv_game::ride::Ride,
     remote_sound: Option<(usize, u64, u64)>,
+    tags: usize,
 ) {
     #[cfg(target_arch = "wasm32")]
     if let Some(window) = web_sys::window() {
@@ -2945,6 +2957,7 @@ fn publish_multiplayer(
             })
             .collect();
         report["trainCars"] = cars.into();
+        report["tags"] = tags.into();
         report["remoteSound"] = serde_json::json!(remote_sound.map(|(voices, starts, impacts)| {
             serde_json::json!({"voices": voices, "starts": starts, "impacts": impacts})
         }));
@@ -2955,7 +2968,7 @@ fn publish_multiplayer(
         );
     }
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = (net, contacts, ride, remote_sound);
+    let _ = (net, contacts, ride, remote_sound, tags);
 }
 
 impl App {
