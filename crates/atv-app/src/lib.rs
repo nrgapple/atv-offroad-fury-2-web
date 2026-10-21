@@ -223,6 +223,9 @@ struct App {
     mouse_ui: bool,
     ui_backdrop: Option<[u8; 3]>,
     ui_diagnostics: bool,
+    /// `?ui=0` (parity captures): draw the scene only, as the JavaScript
+    /// canvas captures leave out the DOM toolbar, HUD and keyboard card.
+    hide_ui: bool,
     sound_unlocked: bool,
     activation: Option<sound::Activation>,
     bench: Bench,
@@ -933,7 +936,7 @@ impl App {
             });
             publish_ui_state(&state.to_string());
         }
-        let overlay = &self.overlay;
+        let overlay = self.overlay.as_ref().filter(|_| !self.hide_ui);
         let render_started = Instant::now();
         let mut acquire = 0.;
         match ready.scene.render_with(
@@ -3655,6 +3658,7 @@ pub fn run(options: Options) {
         mouse_ui: false,
         ui_backdrop: None,
         ui_diagnostics: ui_diagnostics_enabled(),
+        hide_ui: url_flag("ui=0"),
         sound_unlocked: false,
         activation,
         bench: Bench {
