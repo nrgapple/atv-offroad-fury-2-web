@@ -1078,42 +1078,39 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
         camera: ready.camera,
         focal_length: ready.focal_length,
     };
-    let mut overlay = ui
-        .then(|| ready.riding.as_ref())
-        .flatten()
-        .map(|riding| {
-            let gpu = &ready.gpu;
-            let mut overlay = overlay::Overlay::with_settings(
+    let mut overlay = ready.riding.as_ref().filter(|_| ui).map(|riding| {
+        let gpu = &ready.gpu;
+        let mut overlay = overlay::Overlay::with_settings(
+            &gpu.device,
+            gpu.config.format,
+            overlay::viewport(width, height, 1.),
+            atv_ui::settings::Settings::memory(),
+        );
+        overlay.set_course(&ready.venue);
+        overlay.finish_course(&ready.venue.terrain);
+        if let Some(assets) = ready.hud_assets.take() {
+            overlay.set_meter(&gpu.device, &gpu.queue, assets);
+        }
+        let ride = &riding.ride;
+        for _ in 0..2 {
+            overlay.prepare(
                 &gpu.device,
-                gpu.config.format,
-                overlay::viewport(width, height, 1.),
-                atv_ui::settings::Settings::memory(),
+                &gpu.queue,
+                width,
+                height,
+                0.,
+                true,
+                true,
+                false,
+                Some(overlay::HudInput {
+                    hud: ride.hud(),
+                    rider_world: ride.rider_world(),
+                    terrain: &ready.venue.terrain,
+                }),
             );
-            overlay.set_course(&ready.venue);
-            overlay.finish_course(&ready.venue.terrain);
-            if let Some(assets) = ready.hud_assets.take() {
-                overlay.set_meter(&gpu.device, &gpu.queue, assets);
-            }
-            let ride = &riding.ride;
-            for _ in 0..2 {
-                overlay.prepare(
-                    &gpu.device,
-                    &gpu.queue,
-                    width,
-                    height,
-                    0.,
-                    true,
-                    true,
-                    false,
-                    Some(overlay::HudInput {
-                        hud: ride.hud(),
-                        rider_world: ride.rider_world(),
-                        terrain: &ready.venue.terrain,
-                    }),
-                );
-            }
-            overlay
-        });
+        }
+        overlay
+    });
     let rgba = ready
         .scene
         .capture_with(&ready.gpu, &view, width, height, &mut |encoder, target| {

@@ -135,11 +135,19 @@ impl Backend {
     }
 
     /// Weight, stretch and style of the face CSS matching selects.
-    fn matched(&mut self, font: &Font, family: Option<&str>) -> (Weight, cosmic_text::Stretch, Style) {
+    fn matched(
+        &mut self,
+        font: &Font,
+        family: Option<&str>,
+    ) -> (Weight, cosmic_text::Stretch, Style) {
         let wanted = (
             Weight(font.weight),
             cosmic_text::Stretch::Normal,
-            if font.italic { Style::Italic } else { Style::Normal },
+            if font.italic {
+                Style::Italic
+            } else {
+                Style::Normal
+            },
         );
         let families = [match family {
             Some(name) => fontdb::Family::Name(name),
@@ -584,7 +592,9 @@ mod bundled {
     fn missing_first_choice_uses_the_bundled_face() {
         let mut backend = Backend::new();
         assert_eq!(
-            backend.family("'No Such Display Face', Arial, sans-serif").as_deref(),
+            backend
+                .family("'No Such Display Face', Arial, sans-serif")
+                .as_deref(),
             Some(BUNDLED_FAMILY)
         );
         let font = Font {
@@ -684,9 +694,21 @@ mod font_choice {
             }
             let resolved = backend.family(family);
             let faces = |backend: &mut Backend, family: &'static str, weight, italic| {
-                let (placed, _) = backend.layout("PAUSE", &Font { family, size: 14., weight, italic }, 0.);
+                let (placed, _) = backend.layout(
+                    "PAUSE",
+                    &Font {
+                        family,
+                        size: 14.,
+                        weight,
+                        italic,
+                    },
+                    0.,
+                );
                 let db = backend.system().db();
-                placed.first().and_then(|g| db.face(g.font)).map(|f| f.post_script_name.clone())
+                placed
+                    .first()
+                    .and_then(|g| db.face(g.font))
+                    .map(|f| f.post_script_name.clone())
             };
             println!(
                 "{family} -> {resolved:?} faces {:?} {:?} ref {:?}\n  {}",
