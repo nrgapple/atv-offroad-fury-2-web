@@ -309,8 +309,8 @@ The main, single and garage differences were the missing 3D previews, added in
 the next checkpoint. Hidden because the Rust engine cannot run them yet: Multiplayer, Arlington
 Free Ride, Jukebox, Race setup, Rider gear and Alpha. Race links on a motorcycle
 open the main menu with the reason, as motorcycle races are not ported. Not yet drawn: the Free Ride rider count,
-backdrop-filter blur on the photo arrows, the menu notice line and the training
-venue's photo (a devlog image in the browser). The loader shows one frame per
+backdrop-filter blur on the photo arrows and the menu notice line (later: Copy ride
+link; the training venue's photo: "Training course photo"). The loader shows one frame per
 load stage (the ride load owns the GPU meanwhile), so the shot crossfade only
 advances between stages.
 
