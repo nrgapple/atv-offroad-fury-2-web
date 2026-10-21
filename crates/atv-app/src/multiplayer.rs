@@ -29,6 +29,9 @@ pub struct RoomStart {
     /// Test hook (`?dropAfter=S`): close the socket once after S seconds of
     /// riding, exercising the slot-key reconnect.
     pub drop_after: Option<f64>,
+    /// Test hook (`?trainPlace=S`): after S seconds of riding, stand on the
+    /// train's flatbed.
+    pub train_place: Option<f64>,
 }
 
 enum Loaded {
@@ -56,7 +59,7 @@ pub struct Net {
     /// Remote riders drawn on the latest frame.
     pub drawn: usize,
     /// Each presented rider's slot, ATV position and staleness (tests).
-    presented: Vec<(u8, [f32; 3], bool)>,
+    presented: Vec<(u8, [f32; 3], bool, Option<u8>)>,
     /// This frame's remote riders for their engine and impact sounds.
     pub riders: Vec<atv_game::audio::remote::Rider>,
     /// The course this client has loaded (the room may move on).
@@ -70,6 +73,7 @@ pub struct Net {
     reconnect: Option<(f64, f64, u32)>,
     pub reconnects: u32,
     drop_at: Option<f64>,
+    train_place_at: Option<f64>,
     /// The slot key last kept for this tab.
     saved_key: String,
     /// The latest arrival beside another rider (tests): slot and distance.
@@ -85,6 +89,8 @@ pub struct Tick {
     pub place: Option<([f32; 3], f32)>,
     /// The room moved to this course: reload the ride there.
     pub course: Option<String>,
+    /// Test hook: stand on the train's flatbed now.
+    pub train_place: bool,
 }
 
 /// The player's ride choices, kept to reload on a course change.
@@ -259,6 +265,7 @@ impl Net {
             reconnect: None,
             reconnects: 0,
             drop_at: start.drop_after.map(|s| s * 1000.),
+            train_place_at: start.train_place.map(|s| s * 1000.),
             saved_key: String::new(),
             met: None,
         };
@@ -332,6 +339,10 @@ impl Net {
         }
         let now = now_ms(self.clock);
         let now_f = now as f64;
+        if self.ready_sent && self.train_place_at.is_some_and(|at| now_f >= at) {
+            self.train_place_at = None;
+            tick.train_place = true;
+        }
         if self.drop_at.is_some_and(|at| now_f >= at) {
             self.drop_at = None;
             self.drop_socket();
@@ -432,8 +443,9 @@ impl Net {
             && now_f >= at
         {
             self.meet = (tries > 1).then_some((now_f + 250., tries - 1));
-            let others = self.session.positions(now);
-            for target in self.session.meet_candidates(now, now) {
+            let cars = |car| ride.train_car(car);
+            let others = self.session.positions(now, &cars);
+            for target in self.session.meet_candidates(now, now, &cars) {
                 if let Ok(spot) = atv_game::multiplayer::spawn::beside(ride, &target, &others) {
                     let d = spot
                         .0
@@ -488,8 +500,17 @@ impl Net {
     }
 
     /// Other riders' bodies for this frame's contact steps.
-    pub fn contact_bodies(&self) -> Vec<atv_game::multiplayer::PeerBody> {
-        self.session.contact_bodies(now_ms(self.clock))
+    pub fn contact_bodies(&self, ride: &Ride) -> Vec<atv_game::multiplayer::PeerBody> {
+        self.session
+            .contact_bodies(now_ms(self.clock), &|car| ride.train_car(car))
+    }
+
+    /// The relay clock as (local clock origin, offset ms) once synced, so the
+    /// ride can derive each step's shared train phase.
+    pub fn server_clock(&self) -> Option<(Instant, f64)> {
+        let started = self.session.lobby.as_ref().is_some_and(|l| l.started);
+        let offset = self.session.server_now(0)?;
+        started.then_some((self.clock, offset))
     }
 
     /// After a course reload: report Ready again.
@@ -532,9 +553,10 @@ impl Net {
         gpu: &Gpu,
         scene: &mut SceneRenderer,
         venue: &atv_game::venue::Venue,
-        own: [f32; 3],
+        ride: &Ride,
         eye: [f32; 3],
     ) {
+        let own = ride.frame().origin;
         let now = now_ms(self.clock);
         let dt = self
             .last_frame
@@ -568,9 +590,14 @@ impl Net {
         let mut poses: Vec<(u8, Pose)> = Vec::new();
         self.presented.clear();
         self.riders.clear();
-        for (peer, sampled) in self.session.present(now, Some(own)) {
-            self.presented
-                .push((peer, sampled.snapshot.atv.position, sampled.stale));
+        let cars = |car| ride.train_car(car);
+        for (peer, sampled) in self.session.present(now, Some(own), &cars) {
+            self.presented.push((
+                peer,
+                sampled.snapshot.atv.position,
+                sampled.stale,
+                sampled.snapshot.platform.as_ref().map(|p| p.car),
+            ));
             let s = &sampled.snapshot;
             self.riders.push(atv_game::audio::remote::Rider {
                 peer,
@@ -633,8 +660,8 @@ impl Net {
             "reconnects": self.reconnects,
             "reconnecting": self.reconnect.is_some(),
             "met": self.met.map(|(peer, d)| serde_json::json!({"peer": peer, "distanceFt": d})),
-            "remote": self.presented.iter().map(|(peer, position, stale)| {
-                serde_json::json!({"peer": peer, "position": position, "stale": stale})
+            "remote": self.presented.iter().map(|(peer, position, stale, platform)| {
+                serde_json::json!({"peer": peer, "position": position, "stale": stale, "platform": platform})
             }).collect::<Vec<_>>(),
             "network": {
                 "messages": c.messages, "full": c.full, "delta": c.delta,

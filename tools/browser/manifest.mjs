@@ -37,6 +37,7 @@ export const TESTS = {
   'test_engine_touch.mjs': { group: 'content' },
   'test_engine_hud.mjs': { group: 'content' },
   'test_engine_pause.mjs': { group: 'content' },
+  'test_engine_ride_link.mjs': { group: 'content' },
   'test_engine_freeride.mjs': {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (shared Free Ride rooms, room WebSocket); run with --url'
@@ -49,6 +50,10 @@ export const TESTS = {
   'test_engine_multiplayer_audio.mjs': {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (Host Game, room WebSocket); run with --url'
+  },
+  'test_engine_multiplayer_train.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (room WebSocket, ENV08 train); run with --url'
   },
   'test_engine_multiplayer.mjs': {
     group: 'relay',
