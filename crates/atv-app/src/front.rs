@@ -2,11 +2,12 @@
 //! garage and course loader (atv_ui::front), drawn without a 3D scene. It
 //! owns its UI renderer and the original menu artwork; textures are released
 //! while riding and uploaded again on return.
+use atv_render::preview::{ModelPreview, PreviewTexture};
 use atv_ui::{
     DisplayList, Fonts, Rect, Renderer,
     front::{
-        self, Img,
-        assets::{QuadCatalog, Track},
+        self, Img, MODEL_QUAD, MODEL_RIDER,
+        assets::{MenuRider, PreviewModel, QuadCatalog, Track},
         controller::{Event, Frontend},
         logo,
         pixels::{Filter, Rgba},
@@ -33,6 +34,29 @@ pub struct Art {
     pub top_speed: HashMap<u16, f32>,
     /// The loader's action shots for one course.
     pub shots: Option<(String, Vec<Rgba>)>,
+    /// Garage preview models: recent vehicles (with a motorcycle's MX rider)
+    /// and the PAGE07 menu riders (male, female).
+    pub vehicles: Vec<(u16, PreviewModel, Option<MenuRider>)>,
+    pub menu_riders: HashMap<u16, MenuRider>,
+}
+
+/// Something the frontend needs loaded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Want {
+    Vehicle(u16),
+    MenuRider(u16),
+}
+
+/// One 3D preview: its model, the UI image it renders into, and whether
+/// the image needs drawing.
+struct Preview {
+    key: String,
+    model: ModelPreview,
+    target: Option<(atv_ui::ImageId, u32, u32)>,
+    dirty: bool,
+    /// The menu rider's idle playlist (animated) and when it last posed.
+    animated: bool,
+    posed: f64,
 }
 
 pub struct Front {
@@ -56,6 +80,12 @@ pub struct Front {
     pub prepare_ms: f64,
     /// `prepare_ms` split into artwork, layout and upload.
     split_ms: [f64; 3],
+    /// Vehicle (0) and garage rider (1) previews.
+    previews: [Option<Preview>; 2],
+    /// A pointer turning a preview: (pointer, slot, last x).
+    turning: Option<(u64, usize, f32)>,
+    /// When the garage opened (the rider's idle clock).
+    garage_since: f64,
     /// Settings opened from the main menu.
     pub menu: Option<PauseMenu>,
     menu_hits: Vec<(Rect, u32)>,
@@ -127,6 +157,9 @@ impl Front {
             started: web_time::Instant::now(),
             prepare_ms: 0.,
             split_ms: [0.; 3],
+            previews: [None, None],
+            turning: None,
+            garage_since: 0.,
             menu: None,
             menu_hits: Vec::new(),
             menu_scroll_max: 0.,
@@ -159,6 +192,7 @@ impl Front {
 
     /// Frees the GPU textures and renderer while a ride runs.
     pub fn release_gpu(&mut self) {
+        self.previews = [None, None];
         self.renderer = None;
         self.images.clear();
         self.recent.clear();
@@ -199,7 +233,36 @@ impl Front {
 
     /// Whether the page animates (Press Start pulse, loader crossfade).
     pub fn animating(&self) -> bool {
-        self.menu.is_none() && matches!(self.state.page.as_str(), "title" | "loading")
+        self.menu.is_none()
+            && (matches!(self.state.page.as_str(), "title" | "loading")
+                || (self.state.page == "garage"
+                    && self.previews[1].as_ref().is_some_and(|p| p.animated)))
+    }
+
+    /// Models the current page needs that are not loaded yet.
+    pub fn wants(&self) -> Vec<Want> {
+        let page = self.state.page.as_str();
+        let mut wants = Vec::new();
+        if self.menu.is_none() && matches!(page, "main" | "single" | "garage") {
+            let quad = self.state.quad_id;
+            if !self.art.vehicles.iter().any(|(q, ..)| *q == quad) {
+                wants.push(Want::Vehicle(quad));
+            }
+            let rider = self.state.rider_id;
+            if page == "garage" && quad < 27 && !self.art.menu_riders.contains_key(&rider) {
+                wants.push(Want::MenuRider(rider));
+            }
+        }
+        wants
+    }
+
+    pub fn add_vehicle(&mut self, quad: u16, model: PreviewModel, rider: Option<MenuRider>) {
+        self.art.vehicles.retain(|(q, ..)| *q != quad);
+        self.art.vehicles.push((quad, model, rider));
+        // Keep the current and the previous vehicle (selectionAssets keeps two).
+        while self.art.vehicles.len() > 2 {
+            self.art.vehicles.remove(0);
+        }
     }
 
     // ---- input -------------------------------------------------------
@@ -282,6 +345,14 @@ impl Front {
             return;
         }
         self.state.press(&self.hits, pointer, x, y);
+        // Drag a preview to turn it (ModelView pointer handlers).
+        let slot = self
+            .hits
+            .iter()
+            .rev()
+            .find(|(r, id)| (*id == MODEL_QUAD || *id == MODEL_RIDER) && r.contains(x, y))
+            .map(|(_, id)| usize::from(*id == MODEL_RIDER));
+        self.turning = slot.map(|slot| (pointer, slot, x));
     }
 
     pub fn moved(&mut self, pointer: u64, x: f32, y: f32, mouse: bool) {
@@ -296,9 +367,21 @@ impl Front {
             self.state.hover(&self.hits, x, y);
         }
         self.state.drag(pointer, x, y);
+        if let Some((p, slot, last)) = self.turning
+            && p == pointer
+        {
+            if let Some(preview) = &mut self.previews[slot] {
+                preview.model.yaw -= (x - last) * 0.015;
+                preview.dirty = true;
+            }
+            self.turning = Some((p, slot, x));
+        }
     }
 
     pub fn release(&mut self, pointer: u64, x: f32, y: f32) -> Option<Event> {
+        if self.turning.is_some_and(|(p, ..)| p == pointer) {
+            self.turning = None;
+        }
         if self.menu.is_some() {
             let event = self
                 .with_menu(|m, ctx, hits, _| m.release(hits, pointer, x, y, ctx))
@@ -313,6 +396,7 @@ impl Front {
     }
 
     pub fn cancel_pointer(&mut self) {
+        self.turning = None;
         self.state.cancel_pointer();
         if let Some(menu) = &mut self.menu {
             menu.cancel_pointer();
@@ -604,6 +688,7 @@ impl Front {
         let pulse = 1. + 0.18 * wave;
         let photos = &art.photos;
         let photo = |id: &str| photos.get(id).map(|(thumb, _)| *thumb);
+        self.update_previews(device, queue, now);
         let mut screen = self.state.screen(
             art.backdrop,
             art.backdrop_track,
@@ -620,6 +705,15 @@ impl Front {
         if self.menu.is_some() {
             screen.page = "backdrop".into();
         }
+        let image = |p: &Option<Preview>| {
+            p.as_ref().and_then(|p| p.target).map(|(id, w, h)| Img {
+                id,
+                width: w as f32,
+                height: h as f32,
+            })
+        };
+        screen.quad_model = image(&self.previews[0]);
+        screen.rider_model = image(&self.previews[1]);
         self.list.clear();
         self.hits.clear();
         layout::render(
@@ -643,6 +737,26 @@ impl Front {
                 &mut self.list,
                 &mut self.hits,
             );
+        }
+        // Preview targets follow their slots (canvas size x min(DPR, 2)).
+        if self.fit_previews(device) {
+            screen.quad_model = image(&self.previews[0]);
+            screen.rider_model = image(&self.previews[1]);
+            self.list.clear();
+            self.hits.clear();
+            layout::render(
+                &front::element(&view, &screen),
+                &mut self.fonts,
+                view.width,
+                view.height,
+                &mut self.list,
+                &mut self.hits,
+            );
+        }
+        for preview in self.previews.iter_mut().flatten() {
+            if let (true, Some((_, w, h))) = (preview.dirty, preview.target) {
+                preview.model.prepare(device, queue, w, h);
+            }
         }
         if self.menu.is_some() {
             self.prepare_menu();
@@ -707,10 +821,145 @@ impl Front {
         self.menu_hits = hits;
     }
 
-    pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
-        if let Some(renderer) = &self.renderer {
-            renderer.draw(encoder, target);
+    pub fn draw(&mut self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
+        let Some(renderer) = &self.renderer else {
+            return;
+        };
+        for preview in self.previews.iter_mut().flatten() {
+            if let (true, Some((id, ..))) = (preview.dirty, preview.target)
+                && let Some(view) = renderer.target_view(id)
+            {
+                preview.model.draw(encoder, &view);
+                preview.dirty = false;
+            }
         }
+        renderer.draw(encoder, target);
+    }
+
+    /// Builds the previews the page shows and poses the menu rider.
+    fn update_previews(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, now: f64) {
+        let page = self.state.page.clone();
+        let shown = self.menu.is_none() && matches!(page.as_str(), "main" | "single" | "garage");
+        let quad = self.state.quad_id;
+        let texture = |textures: &HashMap<String, front::assets::ModelTexture>| {
+            let textures = textures.clone();
+            move |name: &str| {
+                textures
+                    .get(name)
+                    .or_else(|| textures.get(&name.to_lowercase()))
+                    .map(|t| PreviewTexture {
+                        width: t.width,
+                        height: t.height,
+                        rgba: t.rgba.clone(),
+                        cutout: t.cutout,
+                    })
+            }
+        };
+        // Slot 0: the vehicle in its bind (or MX resting) pose.
+        let key = format!("vehicle:{quad}");
+        if !shown {
+            self.previews = [None, None];
+        } else if self.previews[0].as_ref().is_none_or(|p| p.key != key)
+            && let Some((_, model, _)) = self.art.vehicles.iter().find(|(q, ..)| *q == quad)
+        {
+            let lookup = texture(&model.textures);
+            match ModelPreview::new(device, queue, &model.mesh, &lookup, model.pose.as_deref()) {
+                Ok(preview) => self.set_preview(0, key, preview, false),
+                Err(error) => crate::status(&format!("Model preview: {error}")),
+            }
+        }
+        // Slot 1: the garage rider's idle playlist (PAGE07, or the MX rider).
+        if page != "garage" || !shown {
+            if let Some(old) = self.previews[1].take()
+                && let (Some(renderer), Some((id, ..))) = (&mut self.renderer, old.target)
+            {
+                renderer.remove_image(id);
+            }
+            self.garage_since = now;
+            return;
+        }
+        let rider = if quad >= 27 {
+            self.art
+                .vehicles
+                .iter()
+                .find(|(q, ..)| *q == quad)
+                .and_then(|(_, _, r)| r.as_ref())
+        } else {
+            self.art.menu_riders.get(&self.state.rider_id)
+        };
+        let key = if quad >= 27 {
+            format!("mx:{quad}")
+        } else {
+            format!("rider:{}", self.state.rider_id)
+        };
+        let time = ((now - self.garage_since) / 1000.).max(0.) as f32;
+        if let Some(rider) = rider {
+            if self.previews[1].as_ref().is_none_or(|p| p.key != key) {
+                let lookup = texture(&rider.textures);
+                let pose = rider.rider.pose(time).ok().map(|(_, p)| p.world_matrices);
+                match ModelPreview::new(device, queue, &rider.rider.mesh, &lookup, pose.as_deref())
+                {
+                    Ok(mut preview) => {
+                        preview.yaw = rider.yaw;
+                        self.set_preview(1, key, preview, true);
+                    }
+                    Err(error) => crate::status(&format!("Rider preview: {error}")),
+                }
+            } else if let Some(preview) = &mut self.previews[1]
+                && now - preview.posed >= 33.
+                && let Ok((_, pose)) = rider.rider.pose(time)
+            {
+                // The browser steps the idle clips at ~30 Hz.
+                preview.model.set_pose(&pose.world_matrices);
+                preview.posed = now;
+                preview.dirty = true;
+            }
+        }
+    }
+
+    fn set_preview(&mut self, slot: usize, key: String, model: ModelPreview, animated: bool) {
+        // Keep the old image until the new one is sized and drawn.
+        let target = self.previews[slot].take().and_then(|p| p.target);
+        self.previews[slot] = Some(Preview {
+            key,
+            model,
+            target,
+            dirty: true,
+            animated,
+            posed: 0.,
+        });
+    }
+
+    /// Re-creates preview targets whose slot size changed; true when the
+    /// page must be laid out again with the new images.
+    fn fit_previews(&mut self, device: &wgpu::Device) -> bool {
+        let Some(renderer) = &mut self.renderer else {
+            return false;
+        };
+        let scale = self.view.scale.min(2.);
+        let mut changed = false;
+        for (slot, id) in [(0, MODEL_QUAD), (1, MODEL_RIDER)] {
+            let Some(preview) = &mut self.previews[slot] else {
+                continue;
+            };
+            let Some(rect) = self.hits.iter().find(|(_, i)| *i == id).map(|(r, _)| *r) else {
+                continue;
+            };
+            let (w, h) = (
+                ((rect.w * scale).round() as u32).clamp(1, 2048),
+                ((rect.h * scale).round() as u32).clamp(1, 2048),
+            );
+            if preview.target.is_some_and(|(_, tw, th)| (tw, th) == (w, h)) {
+                continue;
+            }
+            if let Some((old, ..)) = preview.target {
+                renderer.remove_image(old);
+            }
+            preview.target = Some((renderer.add_target(device, w, h), w, h));
+            preview.dirty = true;
+            changed = true;
+        }
+        changed
     }
 
     pub fn diagnostics(&self) -> serde_json::Value {
@@ -727,6 +976,7 @@ impl Front {
             "scroll": self.state.list_scroll,
             "prepareMs": self.prepare_ms,
             "splitMs": self.split_ms,
+            "models": self.previews.iter().map(|p| p.as_ref().filter(|p| p.target.is_some()).map(|p| p.key.clone())).collect::<Vec<_>>(),
             "loading": self.state.loading.as_ref().map(|l| serde_json::json!({
                 "environment": l.environment, "status": l.status, "progress": l.progress,
             })),

@@ -113,6 +113,8 @@ pub enum Content {
         image: ImageId,
         size: [f32; 2],
         fit: Fit,
+        /// CSS `filter: drop-shadow(dx dy blur color)`.
+        shadow: Option<crate::text::Shadow>,
     },
 }
 
@@ -447,7 +449,12 @@ fn paint(
             y: content.y,
             rotation: 0.,
         }),
-        Content::Image { image, size, fit } => {
+        Content::Image {
+            image,
+            size,
+            fit,
+            shadow,
+        } => {
             let [iw, ih] = *size;
             if iw > 0. && ih > 0. && content.w > 0. && content.h > 0. {
                 let (src, dst) = match fit {
@@ -471,6 +478,17 @@ fn paint(
                         )
                     }
                 };
+                if let Some(sh) = shadow {
+                    list.push(crate::paint::Item::ImageShadow {
+                        image: *image,
+                        src,
+                        dst,
+                        dx: sh.dx,
+                        dy: sh.dy,
+                        blur: sh.blur,
+                        color: sh.color,
+                    });
+                }
                 list.push(crate::paint::Item::Image {
                     image: *image,
                     src,
