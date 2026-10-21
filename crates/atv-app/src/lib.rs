@@ -44,6 +44,10 @@ pub struct Options {
     pub graphics_set: bool,
     /// Ride Effects -> Crashes (Original by default; Crazy/Gorn are authored).
     pub crash: atv_game::crash::CrashMode,
+    /// Crash camera Tight (default) and Chase camera Assisted for rides the
+    /// saved settings do not reach (held parity replays): `crashcam=` /
+    /// `chase=` or storage on the web, `--crash-camera` / `--chase-camera`.
+    pub camera_choice: (bool, bool),
     /// Native parity capture: render once at this size, write PNG and exit.
     #[cfg(not(target_arch = "wasm32"))]
     pub capture: Option<(std::path::PathBuf, u32, u32)>,
@@ -192,6 +196,8 @@ struct Defaults {
 }
 
 struct App {
+    /// Crash camera Tight, Chase camera Assisted (Options::camera_choice).
+    camera_choice: (bool, bool),
     /// Screen Wake Lock while riding (web/wake-lock.js).
     wake_lock: wake::ScreenWake,
     /// The Display → Graphics choice the running ride applied.
@@ -932,6 +938,8 @@ impl App {
                 "contactShadows": graphics.contact_shadows, "anisotropy": graphics.anisotropy,
                 "dust": graphics.dust, "tireTracks": graphics.tire_tracks.0,
                 "wheelReprojection": riding.wheel_reprojection,
+                "hillOrbit": riding.hill_orbit(), "chaseAssist": riding.chase_assist,
+                "crashCameraTight": riding.crash_camera_tight,
                 "wheelLift": riding.wheel_lift.get(),
                 "dirtLevel": riding.dirt.level(),
                 "dirtApplied": if riding.dirt_enabled { riding.dirt.amount() } else { 0. },
@@ -1530,6 +1538,8 @@ impl App {
         }
         let prefs = &overlay.prefs;
         riding.set_speed_rush(&prefs.speed_rush);
+        riding.crash_camera_tight = !prefs.crash_camera_original;
+        riding.chase_assist = prefs.chase_assist;
         riding.ride.options = atv_game::ride::RideOptions {
             flips: prefs.flips,
             realistic_train: prefs.realistic_train,
@@ -2001,6 +2011,7 @@ impl ApplicationHandler<Message> for App {
                 // A room capture first exchanges poses until other riders show.
                 settle_room(ready);
                 if let Some(riding) = &mut ready.riding {
+                    (riding.crash_camera_tight, riding.chase_assist) = options.camera_choice;
                     let aspect = width as f32 / height as f32;
                     // About a second of held presentation, as the browser
                     // renders before its capture: the speed rush settles.
@@ -2128,6 +2139,9 @@ impl ApplicationHandler<Message> for App {
                     front.borrow_mut().release_gpu();
                 }
                 self.ready = Some(*ready);
+                if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
+                    (riding.crash_camera_tight, riding.chase_assist) = self.camera_choice;
+                }
                 self.sync_activity();
                 // Desktop has no autoplay rule: sound starts with the ride.
                 if !cfg!(target_arch = "wasm32") {
@@ -3640,6 +3654,7 @@ pub fn run(options: Options) {
         .build()
         .expect("event loop");
     let app = App {
+        camera_choice: options.camera_choice,
         wake_lock: Default::default(),
         graphics_pref: None,
         proxy: event_loop.create_proxy(),
@@ -3760,6 +3775,21 @@ pub fn start() {
             })
             .and_then(|v| atv_game::crash::CrashMode::parse(&v))
             .unwrap_or_default(),
+        camera_choice: {
+            let choice = |key: &str, storage: &str| {
+                param(key).or_else(|| {
+                    web_sys::window()?
+                        .local_storage()
+                        .ok()??
+                        .get_item(storage)
+                        .ok()?
+                })
+            };
+            (
+                choice("crashcam", "atv-crash-camera").as_deref() != Some("original"),
+                choice("chase", "atv-chase-camera").as_deref() == Some("assisted"),
+            )
+        },
         ride: param("free").is_none(),
         // `gear=1.0.2.0.0.0.0&paint=3` (captures and tests).
         appearance: atv_game::ride::gear::saved_appearance(&serde_json::json!({"appearance": {

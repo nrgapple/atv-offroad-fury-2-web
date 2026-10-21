@@ -128,7 +128,18 @@ Ported:
   drag), Pause (Esc/P). Controllers use gilrs natively and in the browser.
 - Camera presentation (`ride/view.rs`): `chasePresentation` with the 4:3 vertical
   framing on wide screens and the portrait pull-back/widening, plus the speed-rush
-  FOV kick. The fine terrain patch follows the rider (48-cell rule).
+  FOV kick. The fine terrain patch follows the rider (48-cell rule). Chase camera
+  Assisted (`UphillSightline`: up to 0.52 rad orbit about rider height and 24%
+  pull-back on uphill grades sampled 8/20/36 ft ahead on the visible ground) and the
+  default Tight crash camera (`crashSubjects`/`crashPresentation`: Crazy/Gorn crashes
+  framed on the torso/pelvis and chassis centres, 16-32 ft, pitch -0.55..-0.22) follow
+  render-support.js; the unit test checks both against its values. Evidence (host
+  Chromium, `compare_engine.mjs ride env03 gorn-script OUT --crash gorn`): Tight held
+  crash frame 0.47 (1280x720) / 0.07 (390x844) whole-frame difference, Original 1.70 /
+  1.01; `tools/test_engine_cameras.mjs` (ENV05 climb: 305 of 901 frames orbited, max
+  0.376 rad; Original none). Held replays start the sightline at rest, so an
+  Assisted held frame differs from the browser's, whose sightline eased while the
+  script played in real time (ENV05 at 460 steps: 0.013 rad there, 0 here).
 - Drawing (`atv-render/src/vehicle.rs`, `vehicle.wgsl`): rigid-node quad linkage
   and rider skeleton (32 node uniforms), original textures, the browser's
   provisional ambient/sun vehicle lighting and per-pass GS fog.

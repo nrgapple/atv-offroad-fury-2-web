@@ -6,6 +6,7 @@
 //   node tools/compare_engine.mjs [venue] [out-dir] [--view x,y,z,yaw,pitch,focal]...
 //        [--graphics original|enhanced|high] [--actors] [--race]
 //   node tools/compare_engine.mjs ride [venue] [script.json] [out-dir] [--graphics ...] [--crash original|crazy|gorn]
+//        [--crash-camera tight|original] [--chase original|assisted]
 //        [--region x0,y0,x1,y1]
 // Static mode: without --view the JavaScript start camera is used. The
 // JavaScript game runs with the requested preset (Original by default), its
@@ -42,9 +43,9 @@ const PORTRAIT = { width: 390, height: 844 };
 // Rewrites the game's own op 50 batches so each step carries the script's
 // input; once the script is exhausted the next batch is never sent, holding
 // the final state on screen.
-async function scriptedGame(browser, venue, steps, viewport, errors, { measure = false, graphics = 'original', crash = 'original', race = null, quad = 1, appearance = null } = {}) {
+async function scriptedGame(browser, venue, steps, viewport, errors, { measure = false, graphics = 'original', crash = 'original', race = null, quad = 1, appearance = null, cameras = { crash: 'tight', chase: 'original' } } = {}) {
   const page = await newPage(browser, { viewport }, errors);
-  await page.addInitScript(({ steps, measure, graphics, crash, race, appearance }) => {
+  await page.addInitScript(({ steps, measure, graphics, crash, race, appearance, cameras }) => {
     // The Garage appearance (rider gear and quad paint) the ride is dressed in.
     if (appearance) localStorage.setItem('atv-player-selection', JSON.stringify({ appearance }));
     // CPU baseline: animation frames and worker operation time (worker.js
@@ -57,8 +58,9 @@ async function scriptedGame(browser, venue, steps, viewport, errors, { measure =
     // first-ride keyboard panel.
     localStorage.setItem('atv-graphics', graphics);
     localStorage.setItem('atv-crash-mode', crash);
-    // The original crash camera (the Rust engine has not ported the authored tight one).
-    localStorage.setItem('atv-crash-camera', 'original');
+    // Crash camera (Tight by default) and Chase camera (Original by default).
+    localStorage.setItem('atv-crash-camera', cameras.crash);
+    localStorage.setItem('atv-chase-camera', cameras.chase);
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
     const trace = window.rideTrace = { frames: [], cursor: 0, held: false, lifts: [] };
     // Enhanced/High wheel re-projection: the lift drawn after each delivered step.
@@ -103,7 +105,7 @@ async function scriptedGame(browser, venue, steps, viewport, errors, { measure =
       trace.cursor += count; pending.add(message.id);
       return post.call(this, { ...message, bytes: new TextEncoder().encode(JSON.stringify(request)) }, ...rest);
     };
-  }, { steps, measure, graphics, crash, race, appearance });
+  }, { steps, measure, graphics, crash, race, appearance, cameras });
   const session = measure ? await page.context().newCDPSession(page) : null;
   if (session) await session.send('Performance.enable');
   await page.goto(url(race ? `/play.html?activity=race&map=${venue}&laps=${race.laps}&cpu=${race.cpu}&quad=${quad}&play=1` : `/play.html?drive=1&environment=${venue}&quad=${quad}`));
@@ -246,6 +248,10 @@ async function rideMode() {
   const graphics = at >= 0 ? args.splice(at, 2)[1] : 'original';
   const crashAt = args.indexOf('--crash');
   const crash = crashAt >= 0 ? args.splice(crashAt, 2)[1] : 'original';
+  // --crash-camera tight|original (Tight is the game default), --chase original|assisted.
+  const crashCameraAt = args.indexOf('--crash-camera');
+  const cameras = { crash: crashCameraAt >= 0 ? args.splice(crashCameraAt, 2)[1] : 'tight', chase: 'original' };
+  if (args.indexOf('--chase') >= 0) cameras.chase = args.splice(args.indexOf('--chase'), 2)[1];
   // --region x0,y0,x1,y1: an extra landscape box (fractions), e.g. around crash blood.
   const regionAt = args.indexOf('--region');
   const region = regionAt >= 0 ? args.splice(regionAt, 2)[1].split(',').map(Number) : null;
@@ -268,13 +274,13 @@ async function rideMode() {
   const normalized = input => input?.keyboard_drive ? { ...input, keyboard_drive: { generation: 0, ...input.keyboard_drive } } : input ?? {};
   const steps = script.flatMap(({ frames, input }) => Array.from({ length: frames }, () => normalized(input)));
   const browser = await launch();
-  const report = { venue, quad, appearance, graphics, crash, steps: steps.length };
+  const report = { venue, quad, appearance, graphics, crash, cameras, steps: steps.length };
   let lifts = [];
   try {
     // Screen boxes around the held quad and rider of the default script.
     for (const [name, viewport, crop] of [['landscape', { width: 1280, height: 720 }, [0.43, 0.37, 0.59, 0.69]], ['portrait', PORTRAIT, [0.33, 0.49, 0.7, 0.7]]]) {
       const errors = [];
-      const page = await scriptedGame(browser, venue, steps, viewport, errors, { graphics, crash, quad, appearance });
+      const page = await scriptedGame(browser, venue, steps, viewport, errors, { graphics, crash, quad, appearance, cameras });
       const jsFile = path.join(out, `${venue}-${name}-javascript.png`);
       report[`javascriptGraphics-${name}`] = await page.evaluate(() => atvTerrainStatus.graphics?.setting);
       report[`javascriptSpeedRush-${name}`] = await page.evaluate(() => atvTerrainStatus.speedRush);
@@ -288,13 +294,14 @@ async function rideMode() {
         report.javascriptSteps = trace.length;
         lifts = await page.evaluate(() => window.rideTrace.lifts);
         report.javascriptCamera = await page.evaluate(() => window.atvTerrainStatus.renderCamera);
+        report.javascriptCameraPresentation = await page.evaluate(() => window.atvTerrainStatus.cameraPresentation);
       }
       assertNoErrors(errors);
       await page.close();
 
       const rustErrors = [];
       const rust = await newPage(browser, { viewport }, rustErrors);
-      await rust.goto(url(`/engine.html?venue=${venue}&quad=${quad}${dressWeb}&graphics=${graphics}&crash=${crash}&ui=0&script=${encodeURIComponent(JSON.stringify(script))}`));
+      await rust.goto(url(`/engine.html?venue=${venue}&quad=${quad}${dressWeb}&graphics=${graphics}&crash=${crash}&crashcam=${cameras.crash}&chase=${cameras.chase}&ui=0&script=${encodeURIComponent(JSON.stringify(script))}`));
       await rust.waitForFunction(() => document.querySelector('#trace') && /fps/.test(document.querySelector('#status').textContent)
         || /fail|error|stopped/i.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
       await rust.waitForTimeout(1000);
@@ -311,7 +318,7 @@ async function rideMode() {
       if (process.env.FURY_BIN) {
         const nativeFile = path.join(out, `${venue}-${name}-rust-native.png`);
         const content = process.env.FURY_CONTENT ? ['--content', process.env.FURY_CONTENT] : [];
-        execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--quad', String(quad), ...dressNative, '--graphics', graphics, '--crash', crash, '--script', scriptFile, '--capture', nativeFile, `${viewport.width}x${viewport.height}`], { stdio: 'inherit' });
+        execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--quad', String(quad), ...dressNative, '--graphics', graphics, '--crash', crash, '--crash-camera', cameras.crash, '--chase-camera', cameras.chase, '--script', scriptFile, '--capture', nativeFile, `${viewport.width}x${viewport.height}`], { stdio: 'inherit' });
         report[`difference-${name}-native`] = await difference(browser, jsFile, nativeFile, crop, box);
       }
     }

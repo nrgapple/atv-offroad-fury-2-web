@@ -450,8 +450,8 @@ the Rust ride, which until now only persisted them:
 | Audio → Effects volume, Sound mode (`atv-audio-v1`) | live | live (mode was already live) |
 | Audio → Music on/off and volume (`atv-soundtrack-v1`) | live | live; default volume fixed to the browser's 0.45 (was 0.7 in the Rust menu) |
 | Minimap, Race overlays, touch steering/one-handed, bindings | live | already live |
-| Crash camera (`atv-crash-camera`, authored Tight by default) | crash framing | not ported: the Rust ride always uses the original crash camera |
-| Chase camera (`atv-chase-camera`, uphill assist) | assisted sightline | not ported |
+| Crash camera (`atv-crash-camera`, authored Tight by default) | crash framing | on change: Tight frames Crazy/Gorn crashes with `crashPresentation` (`ride/view.rs` `crash`); held parity rides read `crashcam=`/storage (`--crash-camera` natively) |
+| Chase camera (`atv-chase-camera`, uphill assist) | assisted sightline | on change: `UphillSightline` and the assisted `chasePresentation` orbit/pull-back (`chase=`/storage, `--chase-camera` natively) |
 | Vibration (`atv-vibration`) | gamepad/touch rumble | not ported (no rumble output in the Rust engine yet) |
 | Diagnostics (`atv.diagnostics.v1`) | performance/debug overlay | not ported (the status line carries frame and CPU numbers) |
 | Silent switch (`silent`, iOS) | mute on the ringer switch | persisted only |
