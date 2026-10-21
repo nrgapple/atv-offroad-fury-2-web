@@ -5,6 +5,7 @@
 pub mod color;
 pub mod hud;
 pub mod layout;
+pub mod menu;
 pub mod paint;
 pub mod render;
 pub mod settings;

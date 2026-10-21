@@ -121,6 +121,22 @@ impl TouchControls {
         }
     }
 
+    /// Controls → One-handed mobile (saved like `toggleOneHanded`).
+    pub fn set_one_handed(&mut self, enabled: bool, settings: &mut Settings) {
+        self.input.set_one_handed(enabled);
+        settings.set("atv-mobile-one-handed", &enabled.to_string());
+        self.clear();
+    }
+
+    /// Controls → Mobile steering sensitivity (`setSteeringSensitivity`).
+    pub fn set_steering_sensitivity(&mut self, value: f32, settings: &mut Settings) {
+        self.input.steering_sensitivity = input::normalize_sensitivity(value);
+        settings.set(
+            "atv-mobile-steering-sensitivity",
+            &self.input.steering_sensitivity.to_string(),
+        );
+    }
+
     pub fn one_handed(&self) -> bool {
         self.input.one_handed
     }

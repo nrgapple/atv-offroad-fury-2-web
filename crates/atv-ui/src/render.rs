@@ -666,7 +666,11 @@ impl Renderer {
                     instance.color = [alpha; 4];
                 }
             }
-            Some(Fill::Radial { center, gradient }) => {
+            Some(Fill::Radial {
+                center,
+                gradient,
+                ellipse,
+            }) => {
                 let key = format!("G{gradient:?}");
                 let ramp = gradient.ramp();
                 if let Some((uv, ..)) = self.cached(queue, key, &mut || Bitmap {
@@ -680,7 +684,7 @@ impl Renderer {
                     let texel = 0.5 / ATLAS as f32;
                     instance.uv = [uv[0] + texel, uv[1], uv[2] - texel, uv[3]];
                     instance.params = [0., 0., paint.rotation, 2.];
-                    instance.cut = [0., center[0], center[1], 0.];
+                    instance.cut = [0., center[0], center[1], *ellipse as u8 as f32];
                     instance.color = [alpha; 4];
                 }
             }

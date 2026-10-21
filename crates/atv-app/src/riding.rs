@@ -26,6 +26,8 @@ pub struct Riding {
     pub steps_last_frame: u32,
     /// The toolbar Camera button (game.js `cameraCycle`).
     pub cycle_requested: bool,
+    /// The pause menu is open: it, not the Pause binding, resumes the ride.
+    pub menu_open: bool,
     /// The host must cancel touch ownership after keyboard pause/reset.
     pub input_cleared: bool,
     pub sound: Option<crate::sound::Sound>,
@@ -73,6 +75,7 @@ impl Riding {
             center: cells(venue, origin),
             steps_last_frame: 0,
             cycle_requested: false,
+            menu_open: false,
             input_cleared: false,
             sound: None,
             focused: true,
@@ -87,6 +90,17 @@ impl Riding {
 
     pub fn key_pressed(&mut self, code: &str, now: f64, keys: &dyn Fn(&str) -> bool) {
         self.bindings.key_pressed(code, now, keys);
+    }
+
+    /// Reset ATV (Backspace/R, or Pause → Reset ATV).
+    pub fn reset(&mut self) -> Result<(), String> {
+        self.clear_input();
+        self.ride.reset()?;
+        if let Some(effects) = &mut self.effects {
+            effects.reset(&self.ride)?;
+        }
+        self.orbit = 0.;
+        Ok(())
     }
 
     /// Blur, pause or reset: drop held controls and the step accumulator.
@@ -154,6 +168,9 @@ impl Riding {
         if self.held {
             return Ok(());
         }
+        if self.paused && self.menu_open {
+            return Ok(());
+        }
         if self.paused {
             let read = self.bindings.read(input.keys, input.pad, input.now);
             if read.pause {
@@ -185,13 +202,7 @@ impl Riding {
             return Ok(());
         }
         if read.reset {
-            self.clear_input();
-            self.ride.reset()?;
-            if let Some(effects) = &mut self.effects {
-                effects.reset(&self.ride)?;
-            }
-            self.orbit = 0.;
-            return Ok(());
+            return self.reset();
         }
         for _ in 0..count {
             self.accumulator -= 1. / 60.;

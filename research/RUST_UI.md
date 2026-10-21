@@ -185,3 +185,40 @@ region differences of the same frame were 5.4 (toolbar) / 5.9 (keyboard card)
 with Avenir and 11.5 / 22.1 with the bundled face (scene pixels included; native
 capture `fury --capture … --ui`). The fonts add about 2.5 MB to native binaries
 and nothing to the WebAssembly build.
+
+## Pause menu and settings checkpoint (2026-10-21)
+
+`atv-ui::menu` ports the ride's pause panel (frontend.js `rebuildPausePanel`,
+`run`; game.css + menu-screens.css `.pause-panel`). Rows, labels, values and
+choice order come from `atv_core::ui_menu::layout` with the same request fields
+the browser sends; the panel (ellipse dim backdrop, centred 520/700 px panel,
+title strip, gold-pill selection, value badges, `.atv-range` sliders, footer
+Back with its glyph, controls tips, overflow scrolling) is laid out with taffy.
+
+- Opens when the ride pauses (Esc/P, toolbar Pause, controller Start) and
+  replaces the HUD, map, toolbar and touch layer like `body.menu-open`. Keyboard
+  arrows/Enter/Escape, controller D-pad/A/B/Start, mouse/touch taps, slider drags
+  and wheel/drag scrolling; Back returns to the row that opened the page.
+- Pages: Pause, Settings, Display, Minimap, Race Overlays, Controls, Audio,
+  Extras. Minimap rows/sliders, mobile steering sensitivity and one-handed mode
+  apply at once; Audio → Sound switches the running mixer. All choices persist
+  under play.html's keys (`atv-minimap-*`, `atv-mobile-*`, `atv-graphics`,
+  `atv-speed-rush`, `atv-crash-*`, `atv-flips`, `atv-train-riding`,
+  `atv.diagnostics.v1`, `atv-audio-v1`, `atv-soundtrack-v1` updated in place,
+  `atv-race-*`), so the two games share them.
+- Not yet in the Rust menu: Jukebox, Copy ride link, Keyboard/Controller binding
+  remapping and the Alpha experiments (rows hidden); Graphics, Speed rush, crash,
+  flip, train and stats choices persist but the Rust ride does not apply them
+  yet; music volume/toggle persist without driving the Rust soundtrack. Desktop
+  hides Dev log and Quit to Main Menu (no browser pages to open).
+
+Measured over a flat backdrop (JS `play.html` vs Rust `engine.html`, mean
+absolute RGB difference of the whole viewport, rows identical): Minimap 3.05
+(1280x720) / 4.94 (390x844), Extras 1.34 / 2.38. Pages whose row sets differ
+(hidden rows above) are compared visually. The JS panel's
+`backdrop-filter: blur(12px) saturate(1.1)` is not reproduced (86%-opaque fill
+only). Opening and navigating the menu wakes single frames under the sleeping
+paused ride (`test_engine_sleep` still sees no frames while idle). Tests:
+`tools/test_engine_pause.mjs`; `test_engine_touch.mjs` resumes through the menu.
+A Pause/Esc tap shorter than one frame is still missed by the Rust bindings
+(the browser queues key edges); held taps work.

@@ -164,6 +164,8 @@ pub enum Fill {
     Radial {
         center: [f32; 2],
         gradient: Gradient,
+        /// `ellipse` instead of `circle` (farthest-corner either way).
+        ellipse: bool,
     },
 }
 
@@ -176,6 +178,15 @@ impl Fill {
         Fill::Radial {
             center,
             gradient: Gradient::new(0., stops),
+            ellipse: false,
+        }
+    }
+    /// `radial-gradient(ellipse at x% y%, stops…)`.
+    pub fn ellipse_at(center: [f32; 2], stops: &[(f32, Color)]) -> Self {
+        Fill::Radial {
+            center,
+            gradient: Gradient::new(0., stops),
+            ellipse: true,
         }
     }
 }
