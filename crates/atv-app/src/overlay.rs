@@ -1,5 +1,6 @@
 //! The UI layer over the ride: touch controls and the toolbar, drawn by the
 //! engine's UI pass (crates/atv-ui).
+use atv_core::math::Det;
 use atv_ui::{
     DisplayList, Fonts, Rect, Renderer,
     hud::{
@@ -268,7 +269,7 @@ impl Overlay {
         self.hovered = self.hit(x, y);
         if let Some(p) = &mut self.press
             && p.pointer == MOUSE
-            && (x - p.x).hypot(y - p.y) > 16.
+            && (x - p.x).hypot_d(y - p.y) > 16.
         {
             p.moved = true;
         }
@@ -278,7 +279,7 @@ impl Overlay {
     pub fn drag(&mut self, pointer: u64, x: f32, y: f32) -> bool {
         match &mut self.press {
             Some(p) if p.pointer == pointer => {
-                if (x - p.x).hypot(y - p.y) > 16. {
+                if (x - p.x).hypot_d(y - p.y) > 16. {
                     p.moved = true;
                 }
                 true
@@ -297,7 +298,7 @@ impl Overlay {
         cancelled: bool,
     ) -> Option<Option<Action>> {
         let p = self.press.take_if(|p| p.pointer == pointer)?;
-        let nearby = (x - p.x).hypot(y - p.y) <= 16.;
+        let nearby = (x - p.x).hypot_d(y - p.y) <= 16.;
         let hit = self.hit(x, y);
         Some(
             if cancelled || p.moved || !nearby || hit != Some(p.button) {

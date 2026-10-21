@@ -13,6 +13,7 @@
 //! ground, impact and stunt-landing gates run, so bad landings still wreck;
 //! there is no landing assistance.
 use crate::flip_tricks::{Event, POINTS, Trick};
+use crate::math::Det;
 use serde::Serialize;
 use std::f32::consts::{FRAC_PI_3, TAU};
 
@@ -104,7 +105,7 @@ fn shape(u: f32) -> f32 {
     if a <= DEAD_ZONE {
         return 0.;
     }
-    u.signum() * ((a - DEAD_ZONE) / (1. - DEAD_ZONE)).min(1.).powf(1.5)
+    u.signum() * ((a - DEAD_ZONE) / (1. - DEAD_ZONE)).min(1.).powf_d(1.5)
 }
 
 /// Lip pop quality from the preload age at takeoff.
@@ -247,7 +248,7 @@ impl ArcadeFlips {
         }
         self.angle[0] += -w[0] * h;
         self.angle[1] += w[1] * h;
-        self.total += w[0].hypot(w[1]) * h;
+        self.total += w[0].hypot_d(w[1]) * h;
         let [x, y] = if input.modifiers {
             [0.; 2]
         } else {
@@ -260,7 +261,7 @@ impl ArcadeFlips {
         for (rate, (u, max)) in self.rate.iter_mut().zip([(y, PITCH_RATE), (x, YAW_RATE)]) {
             let target = shape(u) * max * authority;
             if target == 0. {
-                *rate *= (-h / RELEASE_TAU).exp();
+                *rate *= (-h / RELEASE_TAU).exp_d();
             } else {
                 let toward = |r: f32, step: f32| r + (target - r).clamp(-step, step);
                 let opposing = *rate != 0. && rate.signum() != target.signum();
@@ -445,8 +446,9 @@ mod tests {
     #[test]
     fn combos_name_corks_spins_and_multiples() {
         // Components in turns; the total is their combined-axis rotation.
-        let name =
-            |p: f32, y: f32| trick_name(p * TAU, y * TAU, p.hypot(y) * TAU).map(|(_, n, r)| (n, r));
+        let name = |p: f32, y: f32| {
+            trick_name(p * TAU, y * TAU, p.hypot_d(y) * TAU).map(|(_, n, r)| (n, r))
+        };
         assert_eq!(name(0.9, 0.), Some(("Backflip".into(), 1)));
         assert_eq!(name(-1., 0.), Some(("Front Flip".into(), 1)));
         assert_eq!(name(2.1, 0.), Some(("Double Backflip".into(), 2)));
@@ -467,7 +469,7 @@ mod tests {
             "{:?}",
             a.angle
         );
-        let total = a.angle[0].hypot(a.angle[1]);
+        let total = a.angle[0].hypot_d(a.angle[1]);
         assert!(
             (a.total - total).abs() < 0.05 * total,
             "{} {total}",

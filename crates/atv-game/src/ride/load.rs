@@ -6,6 +6,7 @@
 use super::{Model, Ride, Simulation, textures};
 use crate::{Result, launch::course_resource, venue::Venue};
 use atv_content::Content;
+use atv_core::math::Det;
 use atv_core::{
     animation, camera, collision, ecosystem, materials, mesh, motion_catalog::MotionCatalog,
     obstacle::StaticObstacle, physics_data::PhysicsData, player_models, quad_pose::QuadPose,
@@ -301,7 +302,7 @@ pub async fn load_with(
             let direction = scene.start_direction;
             (
                 scene.start_position.map(js),
-                js(direction[0]).atan2(js(direction[2])),
+                js(direction[0]).atan2_d(js(direction[2])),
             )
         }
     };

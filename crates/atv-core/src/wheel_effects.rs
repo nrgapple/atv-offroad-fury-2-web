@@ -1,5 +1,6 @@
 //! Original rear tire dust/dirt selector, CPU particle updates and atlas input.
 //! Rendered billboards adapt GS packets; no original assets are embedded.
+use crate::math::Det;
 use crate::{
     Result,
     engine_audio::OriginalRandom,
@@ -856,7 +857,7 @@ impl Effects {
                 let velocity = scale(input.linear_velocity, 1. + (speed / 200.).min(1.));
                 let direction_speed = dot(velocity, velocity).sqrt();
                 let heading = if direction_speed > 0. {
-                    let angle = (velocity[2] / direction_speed).clamp(-1., 1.).acos();
+                    let angle = (velocity[2] / direction_speed).clamp(-1., 1.).acos_d();
                     if velocity[0] < 0. {
                         std::f32::consts::TAU - angle
                     } else {

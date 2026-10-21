@@ -1,6 +1,7 @@
 //! Original quad linkage update (001d5290 initialization,001d65c0 pose).
 //! Coordinates are relative to the loaded body root; host sin/cos/sqrt replace
 //! original scalar/VU helpers and have not been established bit-exact.
+use crate::math::Det;
 use crate::{Result, mesh::Mesh};
 pub type Matrix = [f32; 16];
 type V = [f32; 3];
@@ -69,8 +70,8 @@ fn mul(a: &Matrix, b: &Matrix) -> Matrix {
     })
 }
 fn rotation(axis: V, angle: f32) -> Matrix {
-    let c = angle.cos();
-    let s = angle.sin();
+    let c = angle.cos_d();
+    let s = angle.sin_d();
     let t = 1. - c;
     let [x, y, z] = axis;
     [
@@ -297,7 +298,10 @@ impl QuadPose {
         for (i, &wheel) in self.wheels.iter().enumerate() {
             pose.local[wheel][13] += compression[i];
         }
-        let look = direction(&self.bar_reference, [steering.sin(), 0., steering.cos()]);
+        let look = direction(
+            &self.bar_reference,
+            [steering.sin_d(), 0., steering.cos_d()],
+        );
         pose.set_orientation(self.handlebars, basis(look, self.bar_up));
         for (side, f) in self.front.iter().enumerate() {
             let mut v = if side == 0 {

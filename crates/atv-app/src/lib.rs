@@ -5,6 +5,8 @@ mod overlay;
 pub mod replay;
 mod riding;
 mod sound;
+use atv_core::math::Det;
+use replay::RunScript;
 
 use atv_content::{Content, Store};
 use atv_game::venue::{self, Venue};
@@ -208,7 +210,7 @@ async fn prepare(
     .await?;
     let start = venue.scene.start_position;
     let direction = venue.scene.start_direction;
-    let yaw = direction[0].atan2(direction[2]);
+    let yaw = direction[0].atan2_d(direction[2]);
     let mut camera = Camera {
         x: start[0],
         y: start[1],
@@ -216,8 +218,8 @@ async fn prepare(
         yaw,
         pitch: -0.25,
     };
-    camera.x -= yaw.sin() * 14.;
-    camera.z -= yaw.cos() * 14.;
+    camera.x -= yaw.sin_d() * 14.;
+    camera.z -= yaw.cos_d() * 14.;
     camera.y = ground(&venue, camera.x, camera.z).max(start[1]) + 6.;
     let mut focal_length = default_focal_length();
     if let Some([x, y, z, yaw, pitch, focal]) = fixed {

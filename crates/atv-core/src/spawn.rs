@@ -4,6 +4,7 @@
 //! `Vehicle::ground_pose`; motorcycles drop and settle during the countdown),
 //! and online riders start 8 ft apart by slot along the start's right-hand
 //! axis. Scene starts otherwise keep their authored height.
+use crate::math::Det;
 use crate::{Result, terrain::Terrain};
 
 pub const COURSE_CLEARANCE: f64 = 2.5;
@@ -28,8 +29,8 @@ pub fn start_origin(
     }
     if let Some(slot) = slot {
         let offset = f64::from(slot) * SLOT_SPACING;
-        origin[0] += yaw.cos() * offset;
-        origin[2] -= yaw.sin() * offset;
+        origin[0] += yaw.cos_d() * offset;
+        origin[2] -= yaw.sin_d() * offset;
     }
     Ok(origin)
 }

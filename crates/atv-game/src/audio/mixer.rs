@@ -5,6 +5,7 @@
 //! seconds), per-voice stereo gains, the Enhanced engine crossfade and the
 //! optional shared echo send (web/audio-enhance.js). Platform output (cpal)
 //! pulls `render`; everything here is shared Rust.
+use atv_core::math::Det;
 use std::sync::Arc;
 
 /// GameAudio's master gain (web/audio.js) and the music player's default.
@@ -61,12 +62,12 @@ impl Resampler {
                 let sinc = if u == 0. {
                     cutoff
                 } else {
-                    cutoff * u.sin() / u
+                    cutoff * u.sin_d() / u
                 };
                 let n = (x / HALF as f64 + 1.) * 0.5;
                 let window = if (0. ..=1.).contains(&n) {
-                    0.42 - 0.5 * (2. * std::f64::consts::PI * n).cos()
-                        + 0.08 * (4. * std::f64::consts::PI * n).cos()
+                    0.42 - 0.5 * (2. * std::f64::consts::PI * n).cos_d()
+                        + 0.08 * (4. * std::f64::consts::PI * n).cos_d()
                 } else {
                     0.
                 };
@@ -221,8 +222,8 @@ struct Lowpass {
 impl Lowpass {
     fn new(frequency: f32, q_db: f32, rate: u32) -> Self {
         let w0 = 2. * std::f32::consts::PI * frequency / rate as f32;
-        let alpha = w0.sin() / (2. * 10f32.powf(q_db / 20.));
-        let cos = w0.cos();
+        let alpha = w0.sin_d() / (2. * 10f32.powf_d(q_db / 20.));
+        let cos = w0.cos_d();
         let a0 = 1. + alpha;
         let b1 = (1. - cos) / a0;
         Self {
@@ -613,7 +614,7 @@ mod tests {
         Arc::new(Pcm {
             channels: 1,
             frames,
-            data: (0..frames).map(|i| (i as f32 * 0.1).sin()).collect(),
+            data: (0..frames).map(|i| (i as f32 * 0.1).sin_d()).collect(),
             loop_markers: None,
             rate: 48000,
         })
@@ -687,7 +688,7 @@ mod tests {
 
     #[test]
     fn streaming_resampling_matches_one_read_across_chunk_boundaries() {
-        let input: Vec<f32> = (0..2000).map(|i| (i as f32 * 0.17).sin()).collect();
+        let input: Vec<f32> = (0..2000).map(|i| (i as f32 * 0.17).sin_d()).collect();
         let mut complete = Resampler::new(22050, 48000, 2);
         let expected = complete.process(&input, true);
         let mut streaming = Resampler::new(22050, 48000, 2);
@@ -707,7 +708,9 @@ mod tests {
     #[test]
     fn resampling_keeps_level_and_length() {
         let samples: Vec<i16> = (0..2205)
-            .map(|i| ((i as f32 * 2. * std::f32::consts::PI * 441. / 22050.).sin() * 16000.) as i16)
+            .map(|i| {
+                ((i as f32 * 2. * std::f32::consts::PI * 441. / 22050.).sin_d() * 16000.) as i16
+            })
             .collect();
         let out = resample(&samples, 1, 22050, 48000);
         assert_eq!(out.len(), (2205f64 * 48000. / 22050.).ceil() as usize);

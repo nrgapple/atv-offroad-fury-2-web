@@ -10,6 +10,7 @@ pub mod bindings;
 pub mod cpu;
 mod load;
 pub mod race;
+pub mod script;
 pub mod sound;
 pub mod textures;
 pub mod view;
@@ -804,7 +805,8 @@ fn update_wheelie(
         dt,
         stunt_score::WheelieInput {
             grounded: frame.grounded,
-            pitch: atv_core::rider_control::body_angles(frame.orientation, f32::atan2)[0],
+            pitch: atv_core::rider_control::body_angles(frame.orientation, atv_core::math::atan2f)
+                [0],
             // 0020f370 initializes manager+13c to zero; the active Freestyle
             // route retains that gate.
             context_allows: true,

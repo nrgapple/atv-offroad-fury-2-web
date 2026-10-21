@@ -1,5 +1,7 @@
 //! wgpu renderer shared by every build: Metal on macOS, DX12/Vulkan on
 //! Windows, Vulkan on Linux and WebGL2 in browsers.
+// Presentation only: not part of the deterministic simulation (clippy.toml).
+#![allow(clippy::disallowed_methods)]
 mod ambient;
 pub mod camera;
 mod cull;

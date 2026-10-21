@@ -1,5 +1,6 @@
 //! Follow-camera presets and motion recovered from the exact USA v2.00 build.
 //! Loader003029a0 preserves constructor defaults unless the preset count changes.
+use crate::math::Det;
 use crate::{Result, physics_data::PhysicsData};
 use serde::Serialize;
 
@@ -217,7 +218,7 @@ fn wrapped(angle: f32) -> f32 {
 fn rotate(axis: [f32; 3], value: [f32; 3], angle: f32) -> [f32; 3] {
     let projection = (axis[0] * value[0] + axis[1] * value[1]) + axis[2] * value[2];
     let perpendicular = std::array::from_fn::<_, 3, _>(|i| value[i] - projection * axis[i]);
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.sin_cos_d();
     std::array::from_fn(|i| {
         let j = (i + 1) % 3;
         let k = (i + 2) % 3;
@@ -434,7 +435,7 @@ impl WreckCamera {
         if change <= 1. {
             let angle =
                 (self.base_fov + self.fov_offset - 20.).max(25.) * 0.5 * f32::from_bits(0x3c8efa34);
-            let correction = span / (angle.tan() * 2.) - (30. + self.distance_offset);
+            let correction = span / (angle.tan_d() * 2.) - (30. + self.distance_offset);
             if correction > 0. || -correction < self.distance_offset {
                 distance_change += correction * 0.05;
             }

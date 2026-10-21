@@ -9,6 +9,7 @@
 //! used without shots or in split screen are not reproduced. Host `sin`/`cos`
 //! replace the PS2 tables.
 use crate::Result;
+use crate::math::Det;
 
 type V = [f32; 3];
 fn add(a: V, b: V) -> V {
@@ -275,7 +276,7 @@ impl Intro {
     /// `0030df00` case 5: start 18ft out at −45° from the rider's forward,
     /// 2ft over the ground (+2), and arc about the midpoint to the follow pose.
     fn begin_swoop(&mut self, scene: &Scene<'_>) {
-        let (s, c) = (-std::f32::consts::FRAC_PI_4).sin_cos();
+        let (s, c) = (-std::f32::consts::FRAC_PI_4).sin_cos_d();
         let f = scene.forward;
         let direction = normalize([f[0] * c + f[2] * s, 0., -f[0] * s + f[2] * c]);
         let mut start = add(scene.rider, scale(direction, 18.));
@@ -303,7 +304,7 @@ impl Intro {
 }
 /// Rodrigues rotation about an axis used as given (not normalized).
 fn rotate(k: V, angle: f32, v: V) -> V {
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.sin_cos_d();
     add(
         add(scale(v, c), scale(cross(k, v), s)),
         scale(k, dot(k, v) * (1. - c)),

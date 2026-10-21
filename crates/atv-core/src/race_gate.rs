@@ -8,6 +8,7 @@
 //! linearly over `RotationRateInSeconds`, about its origin (the bottom edge),
 //! and plays `gate.vag`. Restart stands it up again. It has no collision.
 use crate::Result;
+use crate::math::Det;
 use serde::Serialize;
 
 type V = [f32; 3];
@@ -112,7 +113,7 @@ impl DropGate {
         let [k0, k1, k2] = self.axis;
         // 00165fc0 with axis −X gives Y' = cos·Y − sin·Z, Z' = sin·Y + cos·Z:
         // the transposed (inverse-sense) Rodrigues matrix of the axis.
-        let (s, c) = (-angle).sin_cos();
+        let (s, c) = (-angle).sin_cos_d();
         let t = 1. - c;
         let r = [
             [t * k0 * k0 + c, t * k0 * k1 - s * k2, t * k0 * k2 + s * k1],

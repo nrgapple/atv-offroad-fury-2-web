@@ -2,6 +2,7 @@
 //! Exact-build 0024f9d0 / 001f9690 / 002536b0 with 00252080 direction
 //! avoidance, the racer jump hooks 0024ebb0 / 001ebb10 and 001e9650 clip
 //! eligibility. Physics belongs to Vehicle.
+use crate::math::Det;
 use crate::{
     Result,
     race::Course,
@@ -482,10 +483,10 @@ impl Driver {
         let up = rotate(frame.orientation, [0., 1., 0.]);
         let horizontal = normalize([forward[0], 0., forward[2]]);
         let right = [horizontal[2], 0., -horizontal[0]];
-        let angle = dot(direction, right).atan2(dot(direction, horizontal));
+        let angle = dot(direction, right).atan2_d(dot(direction, horizontal));
         let mut steer = (5. * angle)
             .clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2)
-            .sin();
+            .sin_d();
         let mut desired_speed = if on_track {
             course.target_speed(aim)
         } else {
@@ -507,12 +508,12 @@ impl Driver {
                 corrected[2] * 0.9816,
             ];
             let diff = sub(desired, forward);
-            let desired_pitch = -0.5 * dot(diff, up).atan2(dot(diff, forward));
+            let desired_pitch = -0.5 * dot(diff, up).atan2_d(dot(diff, forward));
             let [w, x, y, z] = frame.orientation;
-            let pitch = (2. * (w * x + y * z)).atan2(1. - 2. * (x * x + y * y));
+            let pitch = (2. * (w * x + y * z)).atan2_d(1. - 2. * (x * x + y * y));
             (1.5 * (pitch - desired_pitch))
                 .clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2)
-                .sin()
+                .sin_d()
         } else if airborne {
             low_clearance_lean(self.lean, context.terrain_normal, forward)
         } else if course.flags.get(node).copied().unwrap_or(0) & 8 != 0 {

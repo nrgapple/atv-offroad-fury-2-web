@@ -1,5 +1,6 @@
 //! Authored "Enhanced" sound option: one shared echo send per venue type.
 //! Not original behavior; the original SPU2 reverb setup is unrecovered.
+use crate::math::Det;
 use crate::{Result, wheel::Vec3};
 use serde::Serialize;
 
@@ -20,7 +21,7 @@ pub fn enclosure(height: impl Fn(f32, f32) -> Result<Option<f32>>, origin: Vec3)
     let mut walls = 0;
     for i in 0..16 {
         let angle = i as f32 * std::f32::consts::TAU / 16.;
-        let (s, c) = angle.sin_cos();
+        let (s, c) = angle.sin_cos_d();
         let mut rise = f32::MIN;
         for radius in [150., 300.] {
             if let Some(h) = height(origin[0] + s * radius, origin[2] + c * radius)? {

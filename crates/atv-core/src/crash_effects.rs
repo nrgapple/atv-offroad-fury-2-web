@@ -2,6 +2,7 @@
 //! breakaway pieces and opt-in Gorn dismemberment/blood. Never feeds impulses,
 //! RNG or contacts back into original vehicle/rider/recovery simulation.
 //! Units are feet/seconds.
+use crate::math::Det;
 use crate::{
     gore::{BloodFrame, Gore},
     mesh::Node,
@@ -38,7 +39,7 @@ fn mul(a: &M, b: &M) -> M {
 }
 fn rotation(axis: V, angle: f32) -> M {
     let [x, y, z] = unit(axis);
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.sin_cos_d();
     let t = 1. - c;
     [
         c + x * x * t,

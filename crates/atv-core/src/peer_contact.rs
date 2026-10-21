@@ -5,6 +5,7 @@
 //! heading) extruded along world Y. The recovered quad data does not expose a
 //! cheap rider-inclusive hull, so the extents below are authored constants.
 use crate::dynamics::basis;
+use crate::math::Det;
 use crate::wheel::{Vec3, add, dot, scale, sub};
 
 /// Half track width, lateral (body X) feet. A quad is about 4 ft wide.
@@ -66,8 +67,8 @@ impl Footprint {
         }
         let b = basis(rotation.map(|v| v / length));
         let (f, r) = (b[2], b[0]);
-        let f_len = f[0].hypot(f[2]);
-        let r_len = r[0].hypot(r[2]);
+        let f_len = f[0].hypot_d(f[2]);
+        let r_len = r[0].hypot_d(r[2]);
         // A pitched-vertical quad still has a horizontal right axis.
         let forward = if f_len >= r_len {
             [f[0] / f_len, 0., f[2] / f_len]
@@ -222,7 +223,7 @@ mod tests {
     const DT: f32 = 1. / 60.;
     const IDENTITY: [f32; 4] = [1., 0., 0., 0.];
     fn yawed(yaw: f32) -> [f32; 4] {
-        [(yaw * 0.5).cos(), 0., (yaw * 0.5).sin(), 0.]
+        [(yaw * 0.5).cos_d(), 0., (yaw * 0.5).sin_d(), 0.]
     }
     fn body(origin: Vec3, velocity: Vec3, rotation: [f32; 4]) -> Body {
         Body {

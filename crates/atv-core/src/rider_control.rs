@@ -398,6 +398,7 @@ pub fn step(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::math::Det;
     #[test]
     fn original_reverse_chord_uses_strict_cached_rear_speed_gate() {
         // Captured001e7940 full control routine at threshold10: Wheel brake
@@ -618,12 +619,12 @@ mod tests {
     }
     #[test]
     fn original_euler_axis_signs() {
-        let s = (0.25f32).sin();
-        let c = (0.25f32).cos();
+        let s = (0.25f32).sin_d();
+        let c = (0.25f32).cos_d();
         for i in 0..3 {
             let mut q = [c, 0., 0., 0.];
             q[i + 1] = s;
-            let angles = body_angles(q, f32::atan2);
+            let angles = body_angles(q, crate::math::atan2f);
             assert!((angles[i] + 0.5).abs() < 0.00001);
         }
     }

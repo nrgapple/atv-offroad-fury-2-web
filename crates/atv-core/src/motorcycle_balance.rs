@@ -4,6 +4,7 @@
 //! orientation write lives in `motorcycle_drive.rs`. Host trigonometry does not
 //! establish native whole-step parity.
 use super::*;
+use crate::math::Det;
 use crate::wheel::cross;
 fn unit(v: V) -> V {
     scale(v, 1. / dot(v, v).sqrt().max(1e-6))
@@ -12,10 +13,10 @@ pub(super) fn angle(b: dynamics::Basis, normal: V) -> f32 {
     let forward = b[2];
     let up = unit(sub(normal, scale(forward, dot(normal, forward))));
     let right = cross(up, forward);
-    (-dot(b[1], right)).atan2(dot(b[1], up))
+    (-dot(b[1], right)).atan2_d(dot(b[1], up))
 }
 pub(super) fn rotate(q: [f32; 4], change: f32) -> [f32; 4] {
-    let (s, c) = (change * 0.5).sin_cos();
+    let (s, c) = (change * 0.5).sin_cos_d();
     let [w, x, y, z] = q;
     let result = [w * c - z * s, x * c + y * s, y * c - x * s, z * c + w * s];
     let norm = result.iter().map(|v| v * v).sum::<f32>().sqrt();
