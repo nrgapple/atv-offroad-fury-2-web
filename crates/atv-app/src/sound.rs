@@ -315,6 +315,9 @@ pub struct Sound {
     hold_fade: Option<(web_time::Instant, f32)>,
     /// The soundtrack volume (Settings → Audio → Music volume).
     music_volume: f32,
+    /// The Jukebox's view of the soundtrack (MusicStream's selection,
+    /// history and transient pause).
+    pub player: Player,
     /// CPU spent on sound decisions per rendered frame (ms), for the meter.
     pub cpu: f64,
     /// Other riders' engines and impacts in a multiplayer room.
@@ -323,6 +326,34 @@ pub struct Sound {
     pub mix: f64,
     mix_mark: (f64, u32, web_time::Instant),
 }
+
+/// What the next song is (MusicStream `request`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Pick {
+    Next,
+    Select(usize),
+    History(usize, usize),
+}
+
+/// The soundtrack player state the Jukebox drives (web/music.js
+/// MusicStream: `select`, `next`, `previous`, `setPaused`, `seek`, history).
+#[derive(Clone, Debug, Default)]
+pub struct Player {
+    /// The playing (or selected) catalog index.
+    pub selected: Option<usize>,
+    /// Jukebox Pause: a transient pause, unlike the saved Music on/off.
+    pub paused: bool,
+    /// Played filenames (persisted, at most 64) and the playing position.
+    pub history: Vec<String>,
+    pub history_index: i32,
+    pending: Option<Pick>,
+    /// A fresh session has not started a song yet.
+    started: bool,
+    /// The history changed since the host last saved it.
+    pub dirty: bool,
+}
+
+pub use atv_ui::menu::jukebox::{JukeboxAction, MusicView};
 
 pub struct Settings {
     pub mode: SoundMode,
@@ -398,6 +429,7 @@ impl Sound {
             held: false,
             hold_fade: None,
             music_volume: atv_game::audio::mixer::MUSIC_VOLUME,
+            player: Player::default(),
             cpu: 0.,
             remote: Default::default(),
             mix: 0.,
@@ -719,7 +751,7 @@ impl Sound {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn native_music(&mut self) {
-        if self.held {
+        if self.held || self.player.paused {
             return;
         }
         let Some(catalog) = &mut self.catalog else {
@@ -734,9 +766,10 @@ impl Sound {
                 if self.song.is_some() && mixer.lock().map_err(|_| "lock")?.music_queued() > 0.05 {
                     return Ok(());
                 }
-                let Some(song) = catalog.next_song()? else {
+                let Some(index) = self.player.pick(catalog)? else {
                     return Ok(());
                 };
+                let song = &catalog.library.songs[index];
                 self.title = Some(format!("{} – {}", song.title, song.artist));
                 self.song =
                     Some(atv_game::audio::music::VagMusic::open(&content, song, rate).await?);
@@ -757,8 +790,13 @@ impl Sound {
     /// pick starts when a song ends.
     #[cfg(target_arch = "wasm32")]
     fn web_music(&mut self, gesture: bool) {
-        // A race holds the soundtrack until GO.
-        if self.held || !self.focused || !self.music_enabled || !self.output.started.get() {
+        // A race holds the soundtrack until GO; the Jukebox may pause it.
+        if self.held
+            || self.player.paused
+            || !self.focused
+            || !self.music_enabled
+            || !self.output.started.get()
+        {
             return;
         }
         let Some(catalog) = &mut self.catalog else {
@@ -777,9 +815,10 @@ impl Sound {
             }
             return;
         }
-        let Ok(Some(song)) = catalog.next_song() else {
+        let Ok(Some(index)) = self.player.pick(catalog) else {
             return;
         };
+        let song = &catalog.library.songs[index];
         let path = atv_game::audio::music::path(song);
         let Some(url) = self
             .content
@@ -798,6 +837,242 @@ impl Sound {
     }
 }
 
+impl Player {
+    /// MusicStream `beginSong`: the pending choice or the next shuffle pick,
+    /// recorded in the history.
+    fn pick(&mut self, catalog: &mut Catalog) -> Result<Option<usize>, String> {
+        let pick = self.pending.take().unwrap_or(Pick::Next);
+        let index = match pick {
+            Pick::Select(i) | Pick::History(_, i) => {
+                catalog.select(i)?;
+                Some(i)
+            }
+            Pick::Next => {
+                let mut next = catalog.next_index()?;
+                // A fresh session avoids repeating the persisted last track.
+                let last = usize::try_from(self.history_index)
+                    .ok()
+                    .and_then(|i| self.history.get(i));
+                if !self.started
+                    && catalog.library.songs.len() > 1
+                    && next.is_some_and(|n| Some(&catalog.library.songs[n].filename) == last)
+                {
+                    next = catalog.next_index()?;
+                }
+                next
+            }
+        };
+        let Some(index) = index else {
+            return Ok(None);
+        };
+        self.started = true;
+        self.selected = Some(index);
+        let filename = catalog.library.songs[index].filename.clone();
+        if let Pick::History(cursor, _) = pick {
+            self.history_index = cursor as i32;
+        } else {
+            self.history
+                .truncate((self.history_index + 1).max(0) as usize);
+            self.history.push(filename);
+            let excess = self.history.len().saturating_sub(64);
+            self.history.drain(..excess);
+            self.history_index = self.history.len() as i32 - 1;
+        }
+        self.dirty = true;
+        Ok(Some(index))
+    }
+
+    /// `playingHistoryIndex`.
+    fn playing_history_index(&self, catalog: &Catalog) -> i32 {
+        match self.selected {
+            Some(i) => {
+                let name = &catalog.library.songs[i].filename;
+                let upto = ((self.history_index + 1).max(0) as usize).min(self.history.len());
+                self.history[..upto]
+                    .iter()
+                    .rposition(|f| f == name)
+                    .map_or(-1, |p| p as i32)
+            }
+            None => self.history_index,
+        }
+    }
+
+    /// The saved history (`atv-soundtrack-v1` v3 `history`, `historyIndex`),
+    /// restricted to the catalog's songs.
+    pub fn restore(&mut self, history: Vec<String>, index: i32, catalog: Option<&Catalog>) {
+        self.history = history;
+        if let Some(c) = catalog {
+            self.history
+                .retain(|f| c.library.songs.iter().any(|s| &s.filename == f));
+        }
+        let excess = self.history.len().saturating_sub(64);
+        self.history.drain(..excess);
+        self.history_index = index.clamp(-1, self.history.len() as i32 - 1);
+    }
+}
+
+impl Sound {
+    /// The content package the sounds came from.
+    pub fn content(&self) -> Rc<Content> {
+        self.content.clone()
+    }
+
+    /// The saved soundtrack history (call once after load).
+    pub fn restore_history(&mut self, history: Vec<String>, index: i32) {
+        let catalog = self.catalog.as_ref();
+        self.player.restore(history, index, catalog);
+    }
+
+    /// The Jukebox's live view.
+    pub fn music_view(&self) -> MusicView {
+        let songs = self.catalog.as_ref().map_or_else(Vec::new, |c| {
+            c.library
+                .songs
+                .iter()
+                .map(|s| (s.title.clone(), s.artist.clone(), s.genre.clone()))
+                .collect()
+        });
+        let mut view = MusicView {
+            ready: self.catalog.is_some(),
+            enabled: self.music_enabled,
+            paused: self.player.paused,
+            volume: self.music_volume,
+            songs,
+            playing_index: self.player.selected,
+            ..Default::default()
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            view.mode = "decoder";
+            if let Some(song) = &self.song {
+                let (decoded, duration) = song.decoded_seconds();
+                let queued = self.output.mixer.lock().map_or(0., |m| m.music_queued());
+                // Quarter seconds: the Jukebox lays out at most at 4 Hz for it.
+                view.position = ((decoded - queued).clamp(0., duration) * 4.).floor() / 4.;
+                view.duration = duration;
+                view.playing = !self.player.paused && !self.held && queued > 0.;
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            view.mode = "stream";
+            if let Some(web) = &self.web {
+                let web = web.borrow();
+                if web.playing && self.player.selected.is_some() {
+                    // Quarter seconds: the Jukebox lays out at most at 4 Hz for it.
+                    view.position = (web.element.current_time() as f32 * 4.).floor() / 4.;
+                    let d = web.element.duration();
+                    view.duration = if d.is_finite() { d as f32 } else { 0. };
+                    view.seekable = true;
+                    view.playing = !web.element.paused();
+                }
+            }
+        }
+        view
+    }
+
+    /// A Jukebox control (frontend.js `run` for song:/jukeplay/jukeprev/
+    /// jukenext, the seek slider, and `stopJukebox`).
+    pub fn jukebox(&mut self, action: JukeboxAction) {
+        let Some(catalog) = &self.catalog else {
+            return;
+        };
+        let request = |sound: &mut Self, pick: Pick| {
+            sound.player.pending = Some(pick);
+            if let Pick::Select(i) | Pick::History(_, i) = pick {
+                sound.player.selected = Some(i);
+            }
+            sound.stop_song();
+        };
+        match action {
+            JukeboxAction::Select(i) if i < catalog.library.songs.len() => {
+                self.music_enabled = true;
+                self.set_paused(false);
+                request(self, Pick::Select(i));
+            }
+            JukeboxAction::Select(_) => {}
+            JukeboxAction::Toggle => {
+                let playing = self.music_enabled && !self.player.paused;
+                if !playing {
+                    self.music_enabled = true;
+                }
+                self.set_paused(playing);
+            }
+            JukeboxAction::Next => {
+                let cursor = (self.player.playing_history_index(catalog) + 1) as usize;
+                let pick = match self.player.history.get(cursor) {
+                    Some(name) => catalog
+                        .library
+                        .songs
+                        .iter()
+                        .position(|s| &s.filename == name)
+                        .map_or(Pick::Next, |i| Pick::History(cursor, i)),
+                    None => Pick::Next,
+                };
+                request(self, pick);
+            }
+            JukeboxAction::Previous => {
+                if self.player.history.is_empty() {
+                    request(self, Pick::Select(0));
+                } else {
+                    let cursor = (self.player.playing_history_index(catalog) - 1).max(0) as usize;
+                    let name = &self.player.history[cursor];
+                    if let Some(i) = catalog
+                        .library
+                        .songs
+                        .iter()
+                        .position(|s| &s.filename == name)
+                    {
+                        request(self, Pick::History(cursor, i));
+                    }
+                }
+            }
+            JukeboxAction::Seek(seconds) => {
+                #[cfg(target_arch = "wasm32")]
+                if let Some(web) = &self.web {
+                    let web = web.borrow();
+                    let d = web.element.duration();
+                    if web.playing && seconds.is_finite() && d.is_finite() {
+                        web.element
+                            .set_current_time(f64::from(seconds).clamp(0., (d - 0.25).max(0.)));
+                    }
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                let _ = seconds;
+            }
+            JukeboxAction::Leave => {
+                if self.player.paused {
+                    self.player.paused = false;
+                    self.apply_pause();
+                }
+            }
+        }
+    }
+
+    fn set_paused(&mut self, paused: bool) {
+        if self.player.paused != paused {
+            self.player.paused = paused;
+            self.apply_pause();
+        }
+    }
+
+    fn apply_pause(&mut self) {
+        let paused = self.player.paused;
+        if let Ok(mut mixer) = self.output.mixer.lock() {
+            mixer.stream_paused = paused;
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(web) = &self.web {
+            let mut web = web.borrow_mut();
+            if paused {
+                let _ = web.element.pause();
+            } else if web.playing {
+                web.resume(true);
+            }
+        }
+    }
+}
+
 impl Drop for Sound {
     /// Leaving the ride (GameAudio.raceMusic('leave')): the stingers, crowd
     /// and soundtrack hold end with it.
@@ -806,6 +1081,7 @@ impl Drop for Sound {
             self.ride.race.stop(&mut mixer);
             self.remote.stop_all(&mut mixer);
             mixer.stream_gain = 1.;
+            mixer.stream_paused = false;
         }
         #[cfg(target_arch = "wasm32")]
         if self.held {

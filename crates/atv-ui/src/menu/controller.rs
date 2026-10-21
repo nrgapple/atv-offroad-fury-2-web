@@ -26,6 +26,8 @@ pub enum Event {
     Fullscreen,
     /// Pause → Copy ride link (web).
     CopyRide,
+    /// A Jukebox control for the host's soundtrack player.
+    Jukebox(super::jukebox::JukeboxAction),
 }
 
 /// The settings a pause action may change.
@@ -39,10 +41,12 @@ pub struct Context<'a> {
     /// Name of the controller in use, if any (Controller Settings row).
     pub pad_name: Option<String>,
     pub view: Viewport,
+    /// The ride's soundtrack player (the Jukebox needs it).
+    pub music: Option<&'a super::jukebox::MusicView>,
 }
 
 /// Rows the Rust engine cannot perform yet are left out of its menu.
-const UNSUPPORTED: [&str; 2] = ["jukebox", "alpha"];
+const UNSUPPORTED: [&str; 1] = ["alpha"];
 
 /// A binding being captured (frontend.js `beginCapture`).
 struct Capture {
@@ -76,6 +80,8 @@ pub struct PauseMenu {
     pub frontend: bool,
     /// The menu notice line (`#menu-notice`), e.g. "Ride link copied.".
     pub notice: Option<String>,
+    /// A Jukebox seek being dragged (fraction of the song).
+    pub seek_to: Option<f32>,
 }
 
 struct Pressed {
@@ -94,7 +100,7 @@ fn parent(page: &str) -> &'static str {
         "settings" => "pause",
         "minimap-config" | "race-overlays" => "hud-settings",
         "controller-settings" | "bindings" => "controls",
-        "pause" => "pause",
+        "pause" | "jukebox" => "pause",
         _ => "settings",
     }
 }
@@ -118,6 +124,7 @@ impl PauseMenu {
             from_menu: false,
             frontend: false,
             notice: None,
+            seek_to: None,
         }
     }
 
@@ -142,6 +149,9 @@ impl PauseMenu {
             capture: self.capture.as_ref().map(|c| c.label.clone()),
             from_menu: self.from_menu,
             notice: self.notice.clone(),
+            music: ctx.music.filter(|_| self.page == "jukebox").cloned(),
+            jukebox_art: None,
+            frame: 0,
             // Controller bindings show glyphs (standard-mapping pads).
             pad: (self.page == "bindings" && !self.keyboard)
                 .then_some(ctx.bindings.as_deref())
@@ -181,8 +191,15 @@ impl PauseMenu {
             "diagnostics_mode": p.diagnostics,
             "sound_mode": p.sound_mode,
             "sfx_volume": (p.sfx_volume * 100.).round() as usize,
-            "music_enabled": p.music_enabled,
+            "music_enabled": p.music_enabled && !(self.page == "jukebox" && ctx.music.is_some_and(|m| m.paused)),
             "music_volume": (p.music_volume * 100.).round() as usize,
+            "music_rows": if self.page == "jukebox" {
+                ctx.music.map_or_else(Vec::new, |m| m.songs.iter().enumerate().map(|(i, (title, artist, _))| {
+                    json!({"id": i.to_string(), "label": title, "value": artist})
+                }).collect())
+            } else {
+                Vec::new()
+            },
             "minimap_enabled": m.enabled,
             "minimap_size": m.size,
             "minimap_zoom": m.zoom,
@@ -240,6 +257,10 @@ impl PauseMenu {
             .map(|frame| Rows::from_frame(&frame));
         if let Ok(mut rows) = rows {
             rows.choices.retain(|c| !UNSUPPORTED.contains(&c.as_str()));
+            // The Jukebox plays the ride's soundtrack: rides with music only.
+            if !ctx.music.is_some_and(|m| m.ready) || self.from_menu {
+                rows.choices.retain(|c| c != "jukebox");
+            }
             if !cfg!(target_arch = "wasm32") {
                 // Desktop has no dev log page to open, and no web page to
                 // link a ride to.
@@ -274,6 +295,11 @@ impl PauseMenu {
         if self.page == "pause" || (self.from_menu && self.page == "settings") {
             return Some(Event::Resume);
         }
+        if self.page == "jukebox" {
+            self.show("pause");
+            self.pending_select = Some("jukebox".into());
+            return Some(Event::Jukebox(super::jukebox::JukeboxAction::Leave));
+        }
         let to = if self.page == "bindings" && !self.keyboard {
             "controller-settings"
         } else {
@@ -306,6 +332,50 @@ impl PauseMenu {
             "devlog" => return Some(Event::Leave("devlog.html")),
             "fullscreen" => return Some(Event::Fullscreen),
             "copyride" => return Some(Event::CopyRide),
+            "jukebox" => {
+                self.show("jukebox");
+                return None;
+            }
+            "jukeplay" | "jukeprev" | "jukenext" => {
+                use super::jukebox::JukeboxAction as J;
+                let playing = ctx.music.is_some_and(|m| m.enabled && !m.paused);
+                if action == "jukeplay" && !playing && !ctx.prefs.music_enabled {
+                    let volume = ctx.prefs.music_volume;
+                    ctx.prefs.set_music(volume, true, ctx.settings);
+                }
+                return Some(Event::Jukebox(match action {
+                    "jukeplay" => J::Toggle,
+                    "jukeprev" => J::Previous,
+                    _ => J::Next,
+                }));
+            }
+            "jukeseek" => {
+                let m = ctx.music?;
+                if !stepped || !m.seekable {
+                    return None;
+                }
+                return Some(Event::Jukebox(super::jukebox::JukeboxAction::Seek(
+                    m.position + direction as f32 * super::jukebox::SEEK_STEP,
+                )));
+            }
+            "jukevolume" => {
+                if stepped {
+                    let (volume, enabled) = (ctx.prefs.music_volume, ctx.prefs.music_enabled);
+                    ctx.prefs
+                        .set_music(volume + direction as f32 * 0.05, enabled, ctx.settings);
+                    Event::Changed
+                } else {
+                    return None;
+                }
+            }
+            _ if action.starts_with("song:") => {
+                let index = action[5..].parse::<usize>().ok()?;
+                if !ctx.prefs.music_enabled {
+                    let volume = ctx.prefs.music_volume;
+                    ctx.prefs.set_music(volume, true, ctx.settings);
+                }
+                return Some(Event::Jukebox(super::jukebox::JukeboxAction::Select(index)));
+            }
             "main" => return Some(Event::Leave("play.html")),
             "settings" | "extras" | "hud-settings" | "minimap-config" | "race-overlays"
             | "controls" | "music" => {
@@ -490,7 +560,7 @@ impl PauseMenu {
                 let action = self.selected()?.to_string();
                 // Left/Right step sliders and cycle valued rows; never navigate.
                 let valued = self.rows.label(&action).is_some_and(|l| l.contains(": "));
-                if self.rows.slider(&action).is_some() || valued {
+                if self.rows.slider(&action).is_some() || valued || action == "jukeseek" {
                     return self.run(&action, direction, true, ctx);
                 }
             }
@@ -651,7 +721,9 @@ impl PauseMenu {
         let target = Self::hit(hits, x, y);
         let slider = target.and_then(|(i, r)| {
             let action = self.rows.choices.get(i)?;
-            self.rows.slider(action).map(|_| r)
+            let juke = action == "jukevolume"
+                || (action == "jukeseek" && ctx.music.is_some_and(|m| m.seekable));
+            (self.rows.slider(action).is_some() || juke).then_some(r)
         });
         if let Some((index, _)) = target {
             self.selection = index;
@@ -676,10 +748,19 @@ impl PauseMenu {
         let (Some(r), Some(action)) = (p.slider, self.rows.choices.get(p.index).cloned()) else {
             return;
         };
+        let t = ((x - r.x - 11.) / (r.w - 22.)).clamp(0., 1.);
+        if action == "jukevolume" {
+            let enabled = ctx.prefs.music_enabled;
+            ctx.prefs.set_music(t, enabled, ctx.settings);
+            return;
+        }
+        if action == "jukeseek" {
+            self.seek_to = Some(t);
+            return;
+        }
         let Some(s) = self.rows.slider(&action).cloned() else {
             return;
         };
-        let t = ((x - r.x - 11.) / (r.w - 22.)).clamp(0., 1.);
         self.set_slider(&action, s.min + t * (s.max - s.min), ctx);
     }
 
@@ -718,7 +799,21 @@ impl PauseMenu {
         ctx: &mut Context,
     ) -> Option<Event> {
         let p = self.pressed.take_if(|p| p.pointer == pointer)?;
-        if p.slider.is_some() || p.moved {
+        // The Jukebox ranges apply on release (`onchange`).
+        if p.slider.is_some() {
+            return match self.rows.choices.get(p.index).map(String::as_str) {
+                Some("jukevolume") => Some(Event::Changed),
+                Some("jukeseek") => {
+                    let t = self.seek_to.take()?;
+                    let duration = ctx.music.map_or(0., |m| m.duration);
+                    Some(Event::Jukebox(super::jukebox::JukeboxAction::Seek(
+                        t * duration,
+                    )))
+                }
+                _ => None,
+            };
+        }
+        if p.moved {
             return None;
         }
         let (index, _) = Self::hit(hits, x, y)?;
