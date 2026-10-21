@@ -140,6 +140,8 @@ pub struct LineMetrics {
     pub width: f32,
     pub ascent: f32,
     pub descent: f32,
+    /// Cache slot for `Fonts::ink`.
+    ink_descent: f32,
 }
 
 /// Premultiplied RGBA. `left`/`top` place the bitmap relative to the pen
@@ -226,6 +228,42 @@ impl Fonts {
         }
         self.measured.insert(key, m);
         m
+    }
+
+    /// Actual ink bounds (left, right, ascent, descent) of one line.
+    pub fn ink(&mut self, text: &str, font: &Font) -> [f32; 4] {
+        let key = (format!("ink:{text}"), font.key(), 0);
+        if let Some(m) = self.measured.get(&key) {
+            return [m.width, m.ascent, m.descent, m.ink_descent];
+        }
+        let ink = self.backend.ink(text, font);
+        self.measured.insert(
+            key,
+            LineMetrics {
+                width: ink[0],
+                ascent: ink[1],
+                descent: ink[2],
+                ink_descent: ink[3],
+            },
+        );
+        ink
+    }
+
+    /// Canvas `textBaseline = 'top'` offset to the alphabetic baseline.
+    pub fn top_offset(&mut self, font: &Font) -> f32 {
+        let key = ("top".to_string(), font.key(), 1);
+        if let Some(m) = self.measured.get(&key) {
+            return m.ascent;
+        }
+        let offset = self.backend.top_offset(font);
+        self.measured.insert(
+            key,
+            LineMetrics {
+                ascent: offset,
+                ..Default::default()
+            },
+        );
+        offset
     }
 
     /// Greedy CSS-style wrapping at spaces.

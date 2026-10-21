@@ -304,6 +304,21 @@ Windows/Linux output devices, inactive render sleep, and broader runtime feature
 coverage. The JavaScript game remains available until the shared engine passes
 those relevant subsystem gates.
 
+## UI stand-ins to move toward original rendering
+
+The Rust UI first matches the current JavaScript look (`RUST_UI.md`). These are
+browser-era stand-ins, each to be replaced in its own labelled follow-up only
+with original-game evidence:
+
+- HUD text (speed, units, stunt names/points) keeps the original CEL metrics and
+  placement but is drawn in the system display face instead of the original
+  `tradegothic_*` glyph atlases (hud.js choice for HD sharpness).
+- The GPS minimap, keyboard card, toolbar and touch compass are authored
+  browser additions. The original radar belongs to the race overlay set
+  (`drawRace` in hud.js), which is not ported yet.
+- Menu/pause screens in the JS game are HD re-layouts of original documents
+  (`ui_menu.rs`); their Rust port will list each approximation as it lands.
+
 ## Commands
 
 ```sh

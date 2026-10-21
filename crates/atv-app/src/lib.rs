@@ -64,6 +64,8 @@ struct Ready {
     fixed: bool,
     riding: Option<riding::Riding>,
     pending_sound: Option<PendingSound>,
+    /// Original speed meter and stunt text resources (web/hud.js `init`).
+    hud_assets: Option<atv_ui::hud::assets::OverlayAssets>,
 }
 
 struct PendingSound {
@@ -253,6 +255,17 @@ async fn prepare(
     } else {
         None
     };
+    let hud_assets = if riding.is_some() {
+        match atv_ui::hud::assets::load(&content, &environment).await {
+            Ok(assets) => Some(assets),
+            Err(error) => {
+                status(&format!("HUD resources unavailable: {error}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
     Ok(Ready {
         gpu,
         venue,
@@ -263,6 +276,7 @@ async fn prepare(
         fixed: fixed.is_some(),
         riding,
         pending_sound,
+        hud_assets,
     })
 }
 
@@ -421,6 +435,11 @@ impl App {
                 active,
                 !riding.paused,
                 riding.paused,
+                Some(overlay::HudInput {
+                    hud: ride.hud(),
+                    rider_world: ride.rider_world(),
+                    terrain: &ready.venue.terrain,
+                }),
             );
         }
         self.meter.ui += ui_started.elapsed().as_secs_f64() * 1000.;
@@ -674,6 +693,10 @@ impl App {
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
         if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
             riding.key_pressed(&format!("{code:?}"), now, &|c: &str| names.contains(c));
+            let riding = !riding.paused && !riding.held;
+            if let Some(overlay) = &mut self.overlay {
+                overlay.key(&format!("{code:?}"), riding);
+            }
         }
     }
 
@@ -823,6 +846,10 @@ impl ApplicationHandler<Message> for App {
                             overlay::viewport(size.width, size.height, window.scale_factor()),
                         );
                         overlay.backdrop = self.ui_backdrop;
+                        overlay.set_course(&ready.venue);
+                        if let Some(assets) = ready.hud_assets.take() {
+                            overlay.set_meter(&ready.gpu.device, &ready.gpu.queue, assets);
+                        }
                         self.overlay = Some(overlay);
                     }
                     window.request_redraw();
@@ -1101,7 +1128,7 @@ pub fn start() {
         ride: param("free").is_none(),
         ui_backdrop: param("uibackdrop").and_then(|hex| {
             let v = u32::from_str_radix(&hex, 16).ok()?;
-            (hex.len() == 6).then(|| [(v >> 16) as u8, (v >> 8) as u8, v as u8])
+            (hex.len() == 6).then_some([(v >> 16) as u8, (v >> 8) as u8, v as u8])
         }),
         sound: Some((
             if param("sound").as_deref() == Some("enhanced") {

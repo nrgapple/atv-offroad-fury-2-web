@@ -139,6 +139,37 @@ impl Backend {
         (m.ascent * unit, m.descent * unit)
     }
 
+    /// Actual ink bounds of `text` from its rasterized coverage.
+    pub fn ink(&mut self, text: &str, font: &Font) -> [f32; 4] {
+        let style = TextStyle::new(*font, crate::color::Color::WHITE);
+        let b = self.text(text, &style, 4., [0., 0.]);
+        let (mut x0, mut x1, mut y0, mut y1) = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
+        for y in 0..b.height as i32 {
+            for x in 0..b.width as i32 {
+                if b.rgba[((y * b.width as i32 + x) * 4 + 3) as usize] > 8 {
+                    x0 = x0.min(x);
+                    x1 = x1.max(x + 1);
+                    y0 = y0.min(y);
+                    y1 = y1.max(y + 1);
+                }
+            }
+        }
+        if x0 > x1 {
+            return [0.; 4];
+        }
+        [
+            -(b.left + x0) as f32 / 4.,
+            (b.left + x1) as f32 / 4.,
+            -(b.top + y0) as f32 / 4.,
+            (b.top + y1) as f32 / 4.,
+        ]
+    }
+
+    /// Canvas `textBaseline = 'top'` to alphabetic baseline: the face ascent.
+    pub fn top_offset(&mut self, font: &Font) -> f32 {
+        self.vertical(font).0
+    }
+
     pub fn measure(&mut self, text: &str, font: &Font, letter_spacing: f32) -> LineMetrics {
         let (_, width) = self.layout(text, font, letter_spacing);
         let (ascent, descent) = self.vertical(font);
@@ -146,6 +177,7 @@ impl Backend {
             width,
             ascent,
             descent,
+            ..Default::default()
         }
     }
 

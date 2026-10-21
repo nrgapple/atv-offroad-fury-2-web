@@ -5,9 +5,12 @@ version.workspace = true
 publish.workspace = true
 
 [dependencies]
+atv-content = { path = "../atv-content" }
+atv-core = { path = "../atv-core" }
 atv-game = { path = "../atv-game" }
 bytemuck = { version = "1", features = ["derive"] }
 serde_json.workspace = true
+web-time = "1"
 taffy = { version = "0.15", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "block_layout", "content_size"] }
 wgpu = { version = "30", default-features = false, features = ["std", "wgsl"] }
 
@@ -19,3 +22,6 @@ swash = "0.2"
 js-sys = "0.3"
 wasm-bindgen = "0.2.129"
 web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlCanvasElement", "CanvasRenderingContext2d", "TextMetrics", "ImageData", "Path2d", "Storage", "CssStyleDeclaration", "MediaQueryList", "HtmlElement"] }
+
+[dev-dependencies]
+pollster = "0.4"
