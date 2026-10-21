@@ -31,6 +31,9 @@ impl RunScript for Script {
             if riding.wheel_reprojection {
                 entry["wheelLift"] = riding.reprojected_lift().into();
             }
+            if riding.dirt_enabled {
+                entry["dirtLevel"] = riding.dirt.level().into();
+            }
             records.push(entry);
         }
         Ok(records)

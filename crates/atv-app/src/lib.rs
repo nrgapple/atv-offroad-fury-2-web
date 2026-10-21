@@ -414,6 +414,7 @@ async fn prepare(
         let mut riding = riding::Riding::new(ride, &venue);
         riding.interpolation = graphics.interpolation;
         riding.wheel_reprojection = graphics.wheel_reprojection;
+        riding.dirt_enabled = graphics.dirt;
         // `?autopilot=1` (parity tooling): the race path driver rides the
         // player before the finish too; traces record its controls.
         if url_flag("autopilot=1")
@@ -929,6 +930,8 @@ impl App {
                 "dust": graphics.dust, "tireTracks": graphics.tire_tracks.0,
                 "wheelReprojection": riding.wheel_reprojection,
                 "wheelLift": riding.wheel_lift.get(),
+                "dirtLevel": riding.dirt.level(),
+                "dirtApplied": if riding.dirt_enabled { riding.dirt.amount() } else { 0. },
                 "sfx": mixer.map(|m| m.0), "music": mixer.map(|m| m.1),
             });
             publish_ui_state(&state.to_string());
@@ -1561,6 +1564,7 @@ impl App {
             let graphics = graphics_preset(prefs.graphics_resolved());
             riding.interpolation = graphics.interpolation;
             riding.wheel_reprojection = graphics.wheel_reprojection;
+            riding.dirt_enabled = graphics.dirt;
             if let Some(effects) = &mut riding.effects
                 && !riding.ride.is_motorcycle()
             {
@@ -3436,6 +3440,7 @@ pub fn graphics_preset(name: &str) -> Graphics {
             shadow_map: 2048,
             tire_tracks: (3600, 75),
             wheel_reprojection: true,
+            dirt: true,
         },
         "enhanced" => Graphics {
             interpolation: true,
@@ -3447,6 +3452,7 @@ pub fn graphics_preset(name: &str) -> Graphics {
             shadow_map: 0,
             tire_tracks: (600, 15),
             wheel_reprojection: true,
+            dirt: true,
         },
         _ => Graphics::default(),
     }

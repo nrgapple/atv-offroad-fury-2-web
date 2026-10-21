@@ -76,6 +76,10 @@ pub struct Riding {
     /// The largest compression the last reprojection added (game.js
     /// `wheelLift`, diagnostics only).
     pub wheel_lift: std::cell::Cell<f32>,
+    /// ATV dirt buildup (graphics.js DirtBuildup), drawn when `dirt_enabled`
+    /// (Enhanced/High) or Alpha Heavy mud.
+    pub dirt: atv_game::dirt::DirtBuildup,
+    pub dirt_enabled: bool,
     /// In a multiplayer room: pause and blur keep neutral-input simulation
     /// running so other riders see this one (web/game.js online pause).
     pub online: bool,
@@ -155,6 +159,8 @@ impl Riding {
             wheel_reprojection: false,
             ground: venue.visible.clone(),
             wheel_lift: std::cell::Cell::new(0.),
+            dirt: atv_game::dirt::DirtBuildup::new(venue.terrain_zones),
+            dirt_enabled: false,
             online: false,
             peers: Vec::new(),
             contacts: 0,
@@ -178,6 +184,9 @@ impl Riding {
         if let Some(effects) = &mut self.effects {
             effects.reset(&self.ride)?;
         }
+        // A player Reset cleans the quad; the reset frame is accepted.
+        self.dirt.reset();
+        self.step_dirt()?;
         self.orbit = 0.;
         // The reset frame (op 23) is the next segment's start.
         self.delivered = None;
@@ -445,6 +454,7 @@ impl Riding {
             if let Some(effects) = &mut self.effects {
                 effects.step(&self.ride)?;
             }
+            self.step_dirt()?;
             if let Some(crashes) = &mut self.crashes {
                 crashes.step(&self.ride)?;
             }
@@ -608,7 +618,14 @@ impl Riding {
                 })
                 .map(|c| &c.blood),
         );
-        scene.set_ride_mud(self.ride.mud_amount(), !self.ride.is_motorcycle());
+        let mud = if self.ride.is_motorcycle() {
+            self.ride.mud_amount()
+        } else if self.dirt_enabled || self.dirt.heavy() {
+            self.dirt.amount()
+        } else {
+            0.
+        };
+        scene.set_ride_mud(mud, !self.ride.is_motorcycle());
         scene.pose_ride(gpu, &pose);
         scene.pose_race_cpus(gpu, &cpu_poses, position);
         Ok((
@@ -646,6 +663,17 @@ impl Riding {
         self.ride
             .reprojected_quad(&height)
             .map_or(0., |(_, lift)| lift)
+    }
+
+    /// One accepted frame of ATV dirt, only while it is drawn (the browser
+    /// steps it on every preset; Original skips the four wheel samples).
+    fn step_dirt(&mut self) -> Result<(), String> {
+        if (self.dirt_enabled || self.dirt.heavy())
+            && let Some(sample) = self.ride.dirt_sample()?
+        {
+            self.dirt.step(&sample, atv_game::dirt::STEP);
+        }
+        Ok(())
     }
 
     /// The visible terrain height (renderCore.terrainHeight).
