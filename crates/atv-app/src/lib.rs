@@ -386,13 +386,11 @@ impl App {
         let active = !riding.paused && !riding.held && focused;
         let pad = self.gamepad.sample();
         if let Some(overlay) = &mut self.overlay {
+            overlay.pad_name = self.gamepad.name();
             overlay.sync_menu(riding.paused && !riding.held);
             riding.menu_open = overlay.menu.is_some();
             if riding.menu_open
-                && let Some(event) = overlay.menu_pad(
-                    pad.as_ref().map_or([0.; 17], |p| p.buttons),
-                    pad.as_ref().map_or([0.; 4], |p| p.axes),
-                )
+                && let Some(event) = overlay.menu_pad(pad.as_ref(), Some(&mut riding.bindings))
             {
                 self.menu_event(event);
                 return;
@@ -500,6 +498,7 @@ impl App {
                     rider_world: ride.rider_world(),
                     terrain: &ready.venue.terrain,
                 }),
+                Some(&mut riding.bindings),
             );
         }
         self.meter.ui += ui_started.elapsed().as_secs_f64() * 1000.;
@@ -762,6 +761,9 @@ impl App {
                 }
             }
             Event::Changed => {
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.set_help_keys(&riding.bindings);
+                }
                 // Audio → Sound applies to the running mixer at once.
                 let enhanced = self
                     .overlay
@@ -826,11 +828,16 @@ impl App {
         };
         let id = touch.id;
         if overlay.menu.is_some() {
+            let bindings = self
+                .ready
+                .as_mut()
+                .and_then(|r| r.riding.as_mut())
+                .map(|r| &mut r.bindings);
             match touch.phase {
-                TouchPhase::Started => overlay.menu_press(id, x, y),
-                TouchPhase::Moved => overlay.menu_drag(id, x, y),
+                TouchPhase::Started => overlay.menu_press(id, x, y, bindings),
+                TouchPhase::Moved => overlay.menu_drag(id, x, y, bindings),
                 TouchPhase::Ended => {
-                    if let Some(event) = overlay.menu_release(id, x, y) {
+                    if let Some(event) = overlay.menu_release(id, x, y, bindings) {
                         self.menu_event(event);
                     }
                 }
@@ -883,12 +890,35 @@ impl App {
         }
     }
 
+    /// Key releases: a binding capture saves when all keys are up; the
+    /// bindings track held edge keys (bindings.js `observeKeys`).
+    fn key_released(&mut self, code: KeyCode) {
+        let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
+        let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) else {
+            return;
+        };
+        if let Some(overlay) = self.overlay.as_mut().filter(|o| o.menu.is_some()) {
+            if let Some(event) =
+                overlay.menu_key_up(&format!("{code:?}"), Some(&mut riding.bindings))
+            {
+                self.menu_event(event);
+            }
+            return;
+        }
+        riding.key_released(&|c: &str| names.contains(c));
+    }
+
     fn key_pressed(&mut self, code: KeyCode) {
+        let bindings = self
+            .ready
+            .as_mut()
+            .and_then(|r| r.riding.as_mut())
+            .map(|r| &mut r.bindings);
         if let Some(event) = self
             .overlay
             .as_mut()
             .filter(|o| o.menu.is_some())
-            .map(|o| o.menu_key(&format!("{code:?}")))
+            .map(|o| o.menu_key(&format!("{code:?}"), bindings))
         {
             if let Some(event) = event {
                 self.menu_event(event);
@@ -899,7 +929,9 @@ impl App {
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
         if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
             riding.key_pressed(&format!("{code:?}"), now, &|c: &str| names.contains(c));
-            let riding = !riding.paused && !riding.held;
+            // H stays a gameplay key when the player bound it (usesKey).
+            let free = !riding.bindings.uses_key("KeyH");
+            let riding = !riding.paused && !riding.held && free;
             if let Some(overlay) = &mut self.overlay {
                 overlay.key(&format!("{code:?}"), riding);
             }
@@ -1058,6 +1090,15 @@ impl ApplicationHandler<Message> for App {
                         if let Some(assets) = ready.hud_assets.take() {
                             overlay.set_meter(&ready.gpu.device, &ready.gpu.queue, assets);
                         }
+                        // Saved bindings and controller tuning (play.html's keys).
+                        if let Some(riding) = &mut ready.riding
+                            && !riding.held
+                            && riding.autodrive.is_none()
+                        {
+                            riding.bindings =
+                                atv_ui::menu::controller::load_bindings(&mut overlay.settings);
+                            overlay.set_help_keys(&riding.bindings);
+                        }
                         self.overlay = Some(overlay);
                     }
                     window.request_redraw();
@@ -1123,6 +1164,7 @@ impl ApplicationHandler<Message> for App {
                         }
                         ElementState::Released => {
                             self.keys.remove(&code);
+                            self.key_released(code);
                         }
                     };
                 }
@@ -1143,9 +1185,15 @@ impl ApplicationHandler<Message> for App {
                 let (x, y) = self.css(self.cursor.unwrap_or_default());
                 if let Some(overlay) = self.overlay.as_mut().filter(|o| o.menu.is_some()) {
                     self.dragging = false;
+                    let bindings = self
+                        .ready
+                        .as_mut()
+                        .and_then(|r| r.riding.as_mut())
+                        .map(|r| &mut r.bindings);
                     if state == ElementState::Pressed {
-                        overlay.menu_press(overlay::MOUSE, x, y);
-                    } else if let Some(event) = overlay.menu_release(overlay::MOUSE, x, y) {
+                        overlay.menu_press(overlay::MOUSE, x, y, bindings);
+                    } else if let Some(event) = overlay.menu_release(overlay::MOUSE, x, y, bindings)
+                    {
                         self.menu_event(event);
                     }
                     return;
@@ -1187,7 +1235,12 @@ impl ApplicationHandler<Message> for App {
                 let (x, y) = self.css((position.x, position.y));
                 if let Some(overlay) = &mut self.overlay {
                     if overlay.menu.is_some() {
-                        overlay.menu_drag(overlay::MOUSE, x, y);
+                        let bindings = self
+                            .ready
+                            .as_mut()
+                            .and_then(|r| r.riding.as_mut())
+                            .map(|r| &mut r.bindings);
+                        overlay.menu_drag(overlay::MOUSE, x, y, bindings);
                     } else {
                         overlay.hover(x, y);
                     }
@@ -1260,6 +1313,7 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
                     rider_world: ride.rider_world(),
                     terrain: &ready.venue.terrain,
                 }),
+                None,
             );
         }
         overlay

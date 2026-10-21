@@ -13,7 +13,7 @@ use atv_render::{Camera, Gpu, SceneRenderer};
 
 pub struct Riding {
     pub ride: Ride,
-    bindings: Bindings,
+    pub bindings: Bindings,
     /// Follow-camera orbit offset (Z/X keys, right stick, mouse drag).
     pub orbit: f32,
     accumulator: f32,
@@ -86,6 +86,10 @@ impl Riding {
             step_rest: Vec::new(),
             effects: None,
         }
+    }
+
+    pub fn key_released(&mut self, keys: &dyn Fn(&str) -> bool) {
+        self.bindings.key_released(keys);
     }
 
     pub fn key_pressed(&mut self, code: &str, now: f64, keys: &dyn Fn(&str) -> bool) {
@@ -182,8 +186,11 @@ impl Riding {
         }
         // updateCamera -> followCamera: orbit follows render time.
         let orbit_axis =
-            ride::bindings::value(ride::bindings::Action::CameraRight, input.keys, input.pad)
-                - ride::bindings::value(ride::bindings::Action::CameraLeft, input.keys, input.pad);
+            self.bindings
+                .value(ride::bindings::Action::CameraRight, input.keys, input.pad)
+                - self
+                    .bindings
+                    .value(ride::bindings::Action::CameraLeft, input.keys, input.pad);
         self.orbit -= orbit_axis * dt * 1.7;
         self.orbit -= input.drag * 0.004;
         self.accumulator = (self.accumulator + dt).min(0.1);
