@@ -15,6 +15,7 @@ path = "src/main.rs"
 atv-content = { path = "../atv-content" }
 atv-game = { path = "../atv-game" }
 atv-render = { path = "../atv-render" }
+atv-ui = { path = "../atv-ui" }
 wgpu = { version = "30", default-features = false, features = ["std", "wgsl", "metal", "dx12", "vulkan", "gles", "webgl"] }
 gilrs = "0.11"
 serde_json.workspace = true
@@ -30,4 +31,4 @@ console_error_panic_hook = "0.1"
 js-sys = "0.3"
 wasm-bindgen = "0.2.129"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlCanvasElement", "HtmlElement", "Location", "console"] }
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlCanvasElement", "HtmlElement", "Location", "console", "MediaQueryList", "CssStyleDeclaration"] }

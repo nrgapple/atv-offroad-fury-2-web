@@ -63,6 +63,18 @@ fn controls(input: &Value) -> Controls {
             forward_only: false,
             reverse_held: false,
         }),
+        // The JavaScript game's op 50 `touch_drive` (web/touch.js sample).
+        touch_drive: input.get("touch_drive").map(|k| {
+            let flag = |name: &str| k.get(name).and_then(Value::as_bool).unwrap_or(false);
+            TouchIntent {
+                generation: k.get("generation").and_then(Value::as_u64).unwrap_or(0),
+                held: flag("held"),
+                axis: number(k, "axis"),
+                grounded_only: flag("grounded_only"),
+                forward_only: flag("forward_only"),
+                reverse_held: flag("reverse_held"),
+            }
+        }),
         stunt_modifiers: input
             .get("stunt_modifiers")
             .and_then(Value::as_u64)

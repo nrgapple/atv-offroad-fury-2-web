@@ -201,6 +201,17 @@ impl SceneRenderer {
     }
 
     pub fn render(&mut self, gpu: &Gpu, view: &View) -> Result<FrameStats, String> {
+        self.render_with(gpu, view, &mut |_, _| {})
+    }
+
+    /// Renders the scene, then `overlay` (e.g. the UI pass) into the same
+    /// resolved frame before presenting it.
+    pub fn render_with(
+        &mut self,
+        gpu: &Gpu,
+        view: &View,
+        overlay: &mut dyn FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView),
+    ) -> Result<FrameStats, String> {
         let frame = match gpu.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -214,7 +225,7 @@ impl SceneRenderer {
             other => return Err(format!("surface: {other:?}")),
         };
         let target = frame.texture.create_view(&Default::default());
-        let (encoder, stats) = self.encode(
+        let (mut encoder, stats) = self.encode(
             gpu,
             view,
             gpu.aspect(),
@@ -222,6 +233,7 @@ impl SceneRenderer {
             gpu.msaa.as_ref(),
             &gpu.depth,
         );
+        overlay(&mut encoder, &target);
         gpu.queue.submit([encoder.finish()]);
         gpu.queue.present(frame);
         Ok(stats)
@@ -293,6 +305,19 @@ impl SceneRenderer {
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>, String> {
+        self.capture_with(gpu, view, width, height, &mut |_, _| {})
+    }
+
+    /// `capture` with an overlay pass drawn over the scene.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn capture_with(
+        &mut self,
+        gpu: &Gpu,
+        view: &View,
+        width: u32,
+        height: u32,
+        overlay: &mut dyn FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView),
+    ) -> Result<Vec<u8>, String> {
         let config = wgpu::SurfaceConfiguration {
             width,
             height,
@@ -322,6 +347,7 @@ impl SceneRenderer {
             msaa.as_ref(),
             &depth,
         );
+        overlay(&mut encoder, &target);
         let row = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {

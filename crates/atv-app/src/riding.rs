@@ -24,6 +24,10 @@ pub struct Riding {
     /// Fine terrain patch centre, in terrain cells.
     center: [f32; 2],
     pub steps_last_frame: u32,
+    /// The toolbar Camera button (game.js `cameraCycle`).
+    pub cycle_requested: bool,
+    /// The host must cancel touch ownership after keyboard pause/reset.
+    pub input_cleared: bool,
 }
 
 /// What a frame sampled from the keyboard/controller.
@@ -35,6 +39,9 @@ pub struct Sample<'a> {
     /// Mouse drag this frame, in pixels.
     pub drag: f32,
 }
+
+/// Samples touch controls once per batch (game.js `drivingInput`).
+pub type TouchSampler<'a> = &'a mut dyn FnMut() -> Option<atv_ui::touch::Controls>;
 
 impl Riding {
     pub fn new(ride: Ride, venue: &Venue) -> Self {
@@ -49,6 +56,8 @@ impl Riding {
             held: false,
             center: cells(venue, origin),
             steps_last_frame: 0,
+            cycle_requested: false,
+            input_cleared: false,
         }
     }
 
@@ -58,14 +67,17 @@ impl Riding {
 
     /// Blur, pause or reset: drop held controls and the step accumulator.
     pub fn clear_input(&mut self) {
+        self.input_cleared = true;
+        self.cycle_requested = false;
         self.bindings.cancel();
         self.accumulator = 0.;
         self.rush.reset();
     }
 
     /// Advances one rendered frame of `dt` seconds (already capped at 50 ms).
-    pub fn frame(&mut self, input: &Sample, dt: f32) -> Result<(), String> {
+    pub fn frame(&mut self, input: &Sample, touch: TouchSampler, dt: f32) -> Result<(), String> {
         self.steps_last_frame = 0;
+        self.input_cleared = false;
         if self.held {
             return Ok(());
         }
@@ -88,7 +100,10 @@ impl Riding {
         if count < 1 {
             return Ok(());
         }
-        let read = self.bindings.read(input.keys, input.pad, input.now);
+        let mut read = self.bindings.read(input.keys, input.pad, input.now);
+        if let Some(t) = touch() {
+            merge_touch(&mut read.controls, &t);
+        }
         if read.pause {
             self.paused = true;
             self.clear_input();
@@ -103,7 +118,7 @@ impl Riding {
         for _ in 0..count {
             self.accumulator -= 1. / 60.;
         }
-        if read.camera {
+        if read.camera || std::mem::take(&mut self.cycle_requested) {
             self.orbit = 0.;
             self.ride.cycle_camera();
         }
@@ -164,4 +179,21 @@ fn cells(venue: &Venue, origin: [f32; 3]) -> [f32; 2] {
         (origin[0] / t.spacing).clamp(0., (t.width - 1) as f32),
         (origin[2] / t.spacing).clamp(0., (t.depth - 1) as f32),
     ]
+}
+
+/// game.js `drivingInput`: touch adds steer/lean, supplies its drive intent,
+/// overrides preload and stunts, and joins the cancellation generation.
+pub fn merge_touch(controls: &mut atv_game::ride::Controls, t: &atv_ui::touch::Controls) {
+    controls.steer = (controls.steer + t.steer).clamp(-1., 1.);
+    controls.lean += t.lean;
+    controls.touch_drive = Some(t.sample.drive);
+    controls.generation += t.generation;
+    if t.sample.stunt_modifiers != 0 {
+        controls.stunt_modifiers = t.sample.stunt_modifiers;
+        controls.stunt_x = t.sample.stunt_x;
+        controls.stunt_y = t.sample.stunt_y;
+    }
+    if let Some(axis) = t.sample.preload_axis {
+        controls.preload_axis = Some(axis);
+    }
 }

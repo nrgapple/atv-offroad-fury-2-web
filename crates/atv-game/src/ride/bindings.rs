@@ -296,6 +296,7 @@ impl Bindings {
                 forward_only: false,
                 reverse_held: false,
             }),
+            touch_drive: None,
             stunt_modifiers: mask,
             stunt_x,
             stunt_y,

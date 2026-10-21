@@ -1,6 +1,7 @@
 //! One game application for every build. The same event loop, loader and
 //! renderer run natively (Metal/DX12/Vulkan) and in browsers (WebGL2).
 mod gamepad;
+mod overlay;
 pub mod replay;
 mod riding;
 
@@ -29,6 +30,9 @@ pub struct Options {
     pub ride: bool,
     /// Steps replayed at load, then the ride holds (parity captures).
     pub script: Option<replay::Script>,
+    /// Test hook: paint this flat colour under the UI instead of the scene's
+    /// pixels, for overlay parity captures against the JavaScript DOM.
+    pub ui_backdrop: Option<[u8; 3]>,
 }
 
 struct Ready {
@@ -61,12 +65,21 @@ struct App {
     gamepad: gamepad::Gamepads,
     drag: f32,
     started: Instant,
+    /// The UI layer (touch controls, toolbar), once the GPU is ready.
+    overlay: Option<overlay::Overlay>,
+    focused: bool,
+    /// The left mouse press belongs to the UI, not the camera drag.
+    mouse_ui: bool,
+    ui_backdrop: Option<[u8; 3]>,
+    ui_diagnostics: bool,
 }
 
 #[derive(Default)]
 struct Meter {
     frames: u32,
     cpu: f64,
+    /// UI build/upload CPU time (included in `cpu`).
+    ui: f64,
     since: Option<Instant>,
     triangles: u32,
 }
@@ -214,6 +227,8 @@ impl App {
             return;
         };
         let started = Instant::now();
+        let ms = (now - self.started).as_secs_f64() * 1000.;
+        let active = !riding.paused && !riding.held && self.focused;
         let pad = self.gamepad.sample();
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
         let keys = |code: &str| names.contains(code);
@@ -225,7 +240,9 @@ impl App {
         };
         // render(): dt = min(.05, frame time).
         let dt = dt.min(0.05);
-        if let Err(error) = riding.frame(&sample, dt) {
+        let overlay = &mut self.overlay;
+        let mut touch = || overlay.as_mut().map(|o| o.sample(ms, active));
+        if let Err(error) = riding.frame(&sample, &mut touch, dt) {
             status(&format!("Simulation stopped: {error}"));
             ready.riding = None;
             return;
@@ -244,11 +261,69 @@ impl App {
             Ok(_) => {}
             Err(error) => status(&error),
         }
-        match ready.scene.render(
+        let active = !riding.paused && !riding.held && self.focused;
+        let ui_started = Instant::now();
+        if let Some(overlay) = &mut self.overlay {
+            if riding.input_cleared {
+                overlay.clear_input();
+            }
+            let ride = &riding.ride;
+            let frame = ride.frame();
+            let applied = ride.applied();
+            overlay.feedback(
+                atv_ui::touch::Feedback {
+                    grounded: frame.grounded,
+                    preload_available: frame.preload_available,
+                    preload_armed: frame.preload_armed,
+                    preload_active: frame.preload_active,
+                    applied_touch: applied.touch_drive.map(|d| (d.generation, d.held)),
+                    applied_brake: applied.brake,
+                    flip_launch_window: false,
+                    stunt_name: None,
+                },
+                ms,
+            );
+            let gpu = &ready.gpu;
+            overlay.prepare(
+                &gpu.device,
+                &gpu.queue,
+                gpu.config.width,
+                gpu.config.height,
+                ms,
+                active,
+                !riding.paused,
+                riding.paused,
+            );
+        }
+        self.meter.ui += ui_started.elapsed().as_secs_f64() * 1000.;
+        if self.ui_diagnostics {
+            let mut state = replay::record(&riding.ride, riding.ride.steps());
+            state["camera"]["preset"] = riding.ride.camera().0.preset.into();
+            state["paused"] = riding.paused.into();
+            state["active"] = active.into();
+            let applied = riding.ride.applied();
+            state["controls"] = serde_json::json!({
+                "steer": applied.steer, "lean": applied.lean,
+                "throttle": applied.throttle, "brake": applied.brake,
+                "touchHeld": applied.touch_drive.is_some_and(|t| t.held),
+                "preload": applied.preload_axis,
+            });
+            if let Some(overlay) = &self.overlay {
+                state["toolbar"] = overlay.diagnostics();
+            }
+            publish_ui_state(&state.to_string());
+        }
+        let overlay = &self.overlay;
+        match ready.scene.render_with(
             &ready.gpu,
             &View {
                 camera: ready.camera,
                 focal_length: ready.focal_length,
+            },
+            &mut |encoder, target| {
+                if let Some(overlay) = overlay {
+                    overlay.draw(encoder, target);
+                }
             },
         ) {
             Ok(stats) => self.meter.triangles = stats.terrain_triangles + stats.vehicle_triangles,
@@ -277,11 +352,12 @@ impl App {
         if elapsed >= 1. {
             let info = &ready.gpu.adapter_info;
             status(&format!(
-                "{} · {:.0} fps · {:.1} ms frame · {:.2} ms CPU · {} tris · {:?} {}{extra}",
+                "{} · {:.0} fps · {:.1} ms frame · {:.2} ms CPU ({:.2} UI) · {} tris · {:?} {}{extra}",
                 ready.venue.environment.to_uppercase(),
                 self.meter.frames as f64 / elapsed,
                 elapsed * 1000. / self.meter.frames as f64,
                 self.meter.cpu / self.meter.frames as f64,
+                self.meter.ui / self.meter.frames as f64,
                 self.meter.triangles,
                 info.backend,
                 info.name
@@ -295,6 +371,83 @@ impl App {
 }
 
 impl App {
+    /// Physical window pixels to CSS pixels.
+    fn css(&self, (x, y): (f64, f64)) -> (f32, f32) {
+        let scale = self.window.as_ref().map_or(1., |w| w.scale_factor());
+        ((x / scale) as f32, (y / scale) as f32)
+    }
+
+    fn blur(&mut self) {
+        self.dragging = false;
+        self.mouse_ui = false;
+        self.drag = 0.;
+        self.keys.clear();
+        if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
+            riding.clear_input();
+        }
+        if let Some(overlay) = &mut self.overlay {
+            overlay.clear_input();
+        }
+    }
+
+    fn act(&mut self, action: overlay::Action) {
+        let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) else {
+            return;
+        };
+        match action {
+            overlay::Action::Pause => {
+                if !riding.held {
+                    riding.paused = !riding.paused;
+                    riding.clear_input();
+                    if let Some(overlay) = &mut self.overlay {
+                        overlay.clear_input();
+                    }
+                }
+            }
+            overlay::Action::Camera => riding.cycle_requested = true,
+        }
+    }
+
+    /// winit touch events (pointer events on the web): toolbar buttons first,
+    /// then the riding gestures.
+    fn touch(&mut self, touch: winit::event::Touch) {
+        use winit::event::TouchPhase;
+        let (x, y) = self.css((touch.location.x, touch.location.y));
+        let now = (Instant::now() - self.started).as_secs_f64() * 1000.;
+        let active = self
+            .ready
+            .as_ref()
+            .and_then(|r| r.riding.as_ref())
+            .is_some_and(|r| !r.paused && !r.held)
+            && self.focused;
+        let Some(overlay) = &mut self.overlay else {
+            return;
+        };
+        let id = touch.id;
+        match touch.phase {
+            TouchPhase::Started => {
+                if !overlay.press(id, x, y) {
+                    overlay.touch_down(id, x, y, now, active);
+                }
+            }
+            TouchPhase::Moved => {
+                if !overlay.drag(id, x, y) {
+                    overlay.touch.moved(id, x, y, now);
+                }
+            }
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                let cancelled = touch.phase == TouchPhase::Cancelled;
+                match overlay.release(id, x, y, cancelled) {
+                    Some(Some(action)) => self.act(action),
+                    Some(None) => {}
+                    None => {
+                        overlay.touch.up(id, x, y, cancelled, now);
+                    }
+                }
+            }
+        }
+    }
+
     fn key_pressed(&mut self, code: KeyCode) {
         let now = (Instant::now() - self.started).as_secs_f64();
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
@@ -309,6 +462,7 @@ impl ApplicationHandler<Message> for App {
         let Some(options) = self.options.take() else {
             return;
         };
+        self.ui_backdrop = options.ui_backdrop;
         let attributes = Window::default_attributes().with_title("Fury Remastered");
         #[cfg(target_arch = "wasm32")]
         let attributes = {
@@ -366,11 +520,17 @@ impl ApplicationHandler<Message> for App {
                 self.last = Instant::now();
                 if let Some(window) = &self.window {
                     let size = window.inner_size();
-                    self.ready
-                        .as_mut()
-                        .unwrap()
-                        .gpu
-                        .resize(size.width, size.height);
+                    let ready = self.ready.as_mut().unwrap();
+                    ready.gpu.resize(size.width, size.height);
+                    if ready.riding.is_some() {
+                        let mut overlay = overlay::Overlay::new(
+                            &ready.gpu.device,
+                            ready.gpu.config.format,
+                            overlay::viewport(size.width, size.height, window.scale_factor()),
+                        );
+                        overlay.backdrop = self.ui_backdrop;
+                        self.overlay = Some(overlay);
+                    }
                     window.request_redraw();
                 }
             }
@@ -390,7 +550,15 @@ impl ApplicationHandler<Message> for App {
                 if let Some(ready) = &mut self.ready {
                     ready.gpu.resize(size.width, size.height);
                 }
+                if let (Some(overlay), Some(window)) = (&mut self.overlay, &self.window) {
+                    overlay.set_view(overlay::viewport(
+                        size.width,
+                        size.height,
+                        window.scale_factor(),
+                    ));
+                }
             }
+            WindowEvent::Touch(touch) => self.touch(touch),
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     match event.state {
@@ -405,18 +573,36 @@ impl ApplicationHandler<Message> for App {
                     };
                 }
             }
-            WindowEvent::Focused(false) => {
-                self.keys.clear();
-                if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
-                    riding.clear_input();
+            WindowEvent::Focused(focused) => {
+                self.focused = focused;
+                if !focused {
+                    self.blur();
                 }
             }
+            WindowEvent::Occluded(true) => self.blur(),
             WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Left,
                 ..
             } => {
-                self.dragging = state == ElementState::Pressed;
+                let (x, y) = self.css(self.cursor.unwrap_or_default());
+                if state == ElementState::Pressed {
+                    self.mouse_ui = self
+                        .overlay
+                        .as_mut()
+                        .is_some_and(|o| o.press(overlay::MOUSE, x, y));
+                    self.dragging = !self.mouse_ui;
+                } else {
+                    self.dragging = false;
+                    if std::mem::take(&mut self.mouse_ui)
+                        && let Some(Some(action)) = self
+                            .overlay
+                            .as_mut()
+                            .and_then(|o| o.release(overlay::MOUSE, x, y, false))
+                    {
+                        self.act(action);
+                    }
+                }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 if let (true, Some((x, _)), Some(Some(_))) = (
@@ -433,6 +619,10 @@ impl ApplicationHandler<Message> for App {
                         (ready.camera.pitch - ((position.y - y) * 0.005) as f32).clamp(-1.5, 1.5);
                 }
                 self.cursor = Some((position.x, position.y));
+                let (x, y) = self.css((position.x, position.y));
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.hover(x, y);
+                }
             }
             WindowEvent::RedrawRequested => {
                 self.step();
@@ -529,6 +719,11 @@ pub fn run(options: Options) {
         gamepad: gamepad::Gamepads::new(),
         drag: 0.,
         started: Instant::now(),
+        overlay: None,
+        focused: true,
+        mouse_ui: false,
+        ui_backdrop: None,
+        ui_diagnostics: ui_diagnostics_enabled(),
     };
     #[cfg(target_arch = "wasm32")]
     {
@@ -564,6 +759,10 @@ pub fn start() {
         venue,
         camera: param("camera").and_then(|text| parse_camera(&text)),
         ride: param("free").is_none(),
+        ui_backdrop: param("uibackdrop").and_then(|hex| {
+            let v = u32::from_str_radix(&hex, 16).ok()?;
+            (hex.len() == 6).then(|| [(v >> 16) as u8, (v >> 8) as u8, v as u8])
+        }),
         script: param("script")
             .and_then(|text| js_sys_decode(&text))
             .and_then(|text| replay::Script::parse(&text).ok()),
@@ -575,4 +774,36 @@ fn js_sys_decode(text: &str) -> Option<String> {
     js_sys::decode_uri_component(text)
         .ok()
         .and_then(|s| s.as_string())
+}
+
+// Opt-in browser integration diagnostics. Normal play never serializes a frame.
+fn ui_diagnostics_enabled() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    return web_sys::window()
+        .and_then(|w| w.location().search().ok())
+        .is_some_and(|s| {
+            s.trim_start_matches('?')
+                .split('&')
+                .any(|p| p == "uiDiagnostics=1")
+        });
+    #[cfg(not(target_arch = "wasm32"))]
+    false
+}
+
+fn publish_ui_state(text: &str) {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(document) = web_sys::window().and_then(|w| w.document()) {
+        let element = document.get_element_by_id("ui-state").or_else(|| {
+            let element = document.create_element("pre").ok()?;
+            element.set_id("ui-state");
+            element.set_attribute("hidden", "").ok()?;
+            document.body()?.append_child(&element).ok()?;
+            Some(element)
+        });
+        if let Some(element) = element {
+            element.set_text_content(Some(text));
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = text;
 }

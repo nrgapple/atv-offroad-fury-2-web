@@ -54,6 +54,8 @@ pub struct Controls {
     pub preload_axis: Option<f32>,
     /// Keyboard gas/brake for the authored brake-then-reverse adapter.
     pub keyboard_drive: Option<TouchIntent>,
+    /// Touch drive intent (web/touch.js `sample().drive`).
+    pub touch_drive: Option<TouchIntent>,
     /// Circle=1, Triangle=2, L1=4 with their direction axes.
     pub stunt_modifiers: u8,
     pub stunt_x: f32,
@@ -260,7 +262,7 @@ impl Ride {
         let input = self.browser_drive.resolve(
             input,
             controls.keyboard_drive,
-            None,
+            controls.touch_drive,
             current.grounded.iter().any(|c| *c),
             current.speed,
         )?;

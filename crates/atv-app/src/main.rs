@@ -59,5 +59,6 @@ fn main() {
         capture,
         ride,
         script,
+        ui_backdrop: None,
     });
 }
