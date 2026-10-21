@@ -275,12 +275,17 @@ pause/focus behavior and streaming resampler continuity; vocal-cache tests cover
 lazy decoding, capacity and eviction.
 
 The Original ENV01 600-step JavaScript/native audio comparison matches all 12
-engine sample choices, all 10 drive and three chassis voices; median level
+engine sample-length signatures, all 10 drive and three chassis voices; median level
 difference is 0.21 dB and p90 1.05 dB. Command timing still differs by 1–7 simulation
 steps because the JavaScript reference schedules per delivered batch. Native mixer
 cost is 0.0065 ms per 60 Hz frame in this host replay. These measurements compare
 the authored implementations; they do not establish original PS2 SPU equivalence.
-Reports and captures remain under ignored `private/reports/engine-parity/audio-recovery/`.
+Enhanced was measured separately: 12/12 engine signatures, 3/3 chassis and 9/10
+drive matches within the 2.5-step voice-start tolerance, median 0.17 dB and p90
+0.93 dB. The final Rust drive restart at step 599 has no corresponding JavaScript
+start in that capture; it remains an explicit timing/endpoint difference. Matching
+uses sample duration signatures and timing, not byte-identical output. Reports and
+captures remain under ignored `private/reports/engine-parity/audio-recovery/`.
 
 Remaining acceptance work includes physical mobile audio latency/stalls, actual
 Windows/Linux output devices, inactive render sleep, and broader runtime feature
