@@ -43,8 +43,9 @@ and reader: `crates/atv-content/src/pack.rs` (`Store::Pack`). Properties:
 - The pack is uncompressed. Measured on this package: DEFLATE saves 9% overall (`.RES` 2%,
   `.LSI` 0.1%, `.VAG` 17%), so the pack costs nothing to open and the archives are only
   slightly smaller than the pack. Not worth startup time or code.
-- The 21 browser jukebox `.m4a` streams are not packed by default (the desktop engine has no
-  audio yet; the `.VAG` originals are in the pack). `--include-streams` adds them.
+- The 21 browser jukebox `.m4a` streams are not packed by default; the `.VAG` originals
+  required by the native Rust audio work are already in the pack. `--include-streams` adds
+  the browser streams.
 - 454 MB, 489 blobs, 219 files.
 
 ```sh
@@ -96,10 +97,11 @@ requires a clean tree (the commit is the version) and uses `git archive HEAD` fo
 - macOS builds natively for both architectures (`MACOSX_DEPLOYMENT_TARGET=11.0`), runs
   `lipo`, assembles the bundle (icon from the authored `web/fury-app-icons.json` 512 px art via
   `iconutil`), signs ad hoc and zips with `ditto` (bundle structure and symlinks preserved).
-- Linux and Windows run in the local image `fury-desktop-builder:bullseye-4` (built from
+- Linux and Windows run in the local image `fury-desktop-builder:bullseye-5` (built from
   `rust:1-bullseye` plus `gcc-x86-64-linux-gnu`, `gcc-aarch64-linux-gnu`, `gcc-mingw-w64-x86-64`,
-  `libudev-dev` for both Linux architectures (gilrs reads controllers through libudev) and the
-  three Rust targets). Colima only shares `$HOME` and the repo is on the SSD, so the
+  `libudev-dev` and `libasound2-dev` for both Linux architectures (gilrs reads controllers
+  through libudev; cpal sound output links ALSA) and the three Rust targets). Colima only
+  shares `$HOME` and the repo is on the SSD, so the
   source is piped into the container as a tar on stdin, each target uses its own named Docker
   volume for `target/` (`fury-desktop-target-<triple>`; the older `fury-desktop-target` volume
   from earlier experiments can be removed), `$HOME/.cargo/registry` is mounted so crates are not
@@ -177,13 +179,16 @@ Try `python3 tools/desktop_release_watcher.py --dry-run` first. The job needs th
   anyway. Unsigned executables with embedded data can also draw antivirus false positives.
   The exe is a console-subsystem program, so a console window appears (useful while the app
   prints its diagnostics); it has no embedded icon yet.
-- **Linux:** needs a Vulkan driver, an X11 or Wayland session, `libudev.so.1` (present on desktop
-  distributions; gilrs links it dynamically) and glibc 2.31 or newer.
+- **Linux:** needs a Vulkan driver, an X11 or Wayland session, `libudev.so.1` (controllers),
+  `libasound.so.2` (sound) and glibc 2.31 or newer. The local smoke image
+  `fury-desktop-smoke:bookworm-3-<arch>` includes both libraries. A successful headless
+  content or capture check does not establish working sound on a desktop audio device.
 
 ## Known gaps
 
 - Archives are about 415 MB each (about 1.7 GB per release). GitHub allows 2 GiB per asset.
-- The desktop app inherits the engine's gaps: no audio, HUD, menus, sky or scenery yet.
+- The desktop app inherits the shared engine's current gaps; `RUST_ENGINE.md` tracks
+  subsystem progress. The archive measurements above predate the in-progress audio and UI work.
 - Windows has not been run at all and Linux was only run on software Vulkan under Docker;
   real GPU backends (DX12/Vulkan on PC, Metal on Intel Macs) are untested.
 - No Windows icon resource, no Developer ID or Authenticode signing, no notarization.

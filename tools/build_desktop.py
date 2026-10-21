@@ -37,8 +37,8 @@ WINDOWS_TRIPLE = 'x86_64-pc-windows-gnu'
 BUNDLE_ID = 'com.furyremastered.desktop'
 MACOS_MINIMUM = '11.0'
 # Debian 11 keeps the Linux builds loadable on glibc 2.31 (Ubuntu 20.04+, Debian 11+).
-BUILDER_IMAGE = 'fury-desktop-builder:bullseye-4'
-# libudev-dev for both Linux architectures: gilrs (controllers) links libudev on Linux.
+BUILDER_IMAGE = 'fury-desktop-builder:bullseye-5'
+# Both Linux architectures need libudev for gilrs and ALSA for cpal sound output.
 # Debian 11 is end of life, so its packages come from archive.debian.org.
 BUILDER_DOCKERFILE = '''FROM rust:1-bullseye
 RUN sed -i -e '/bullseye-updates/d' -e 's|deb.debian.org|archive.debian.org|' /etc/apt/sources.list && \\
@@ -48,16 +48,16 @@ RUN set -e; native=$(dpkg --print-architecture); \\
     else foreign=arm64; cross="gcc-aarch64-linux-gnu:$native libc6-dev-arm64-cross"; fi; \\
     dpkg --add-architecture $foreign; apt-get update; \\
     apt-get install -y --no-install-recommends pkg-config $cross gcc-mingw-w64-x86-64 \\
-      libudev-dev:$native libudev-dev:$foreign; \\
+      libudev-dev:$native libudev-dev:$foreign libasound2-dev:$native libasound2-dev:$foreign; \\
     rm -rf /var/lib/apt/lists/*
 RUN rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-gnu
 '''
 # Debian 12 userland with a software Vulkan driver (lavapipe) and a virtual X server.
-SMOKE_IMAGE = 'fury-desktop-smoke:bookworm-2'
+SMOKE_IMAGE = 'fury-desktop-smoke:bookworm-3'
 SMOKE_DOCKERFILE = '''FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \\
       xvfb xauth mesa-vulkan-drivers libvulkan1 libgl1 libegl1 libx11-6 libx11-xcb1 libxcb1 \\
-      libxkbcommon0 libxkbcommon-x11-0 libxcursor1 libxi6 libxrandr2 libwayland-client0 libudev1 ca-certificates \\
+      libxkbcommon0 libxkbcommon-x11-0 libxcursor1 libxi6 libxrandr2 libwayland-client0 libudev1 libasound2 ca-certificates \\
     && rm -rf /var/lib/apt/lists/*
 '''
 
@@ -108,9 +108,11 @@ class Context:
                 '  xattr -dr com.apple.quarantine "Fury Remastered.app"\n'
                 'Runs natively on Apple silicon and Intel Macs (macOS 11 or later, Metal).'),
             'linux-x86_64': 'Extract the archive and run ./fury from a graphical session (X11 or Wayland).\n'
-                            'Needs a Vulkan driver (Mesa or the vendor driver), libudev (libudev.so.1) and glibc 2.31 or newer.',
+                            'Needs a Vulkan driver (Mesa or the vendor driver), libudev (libudev.so.1),\n'
+                            'ALSA (libasound.so.2) and glibc 2.31 or newer.',
             'linux-aarch64': 'Extract the archive and run ./fury from a graphical session (X11 or Wayland).\n'
-                             'Needs a Vulkan driver (Mesa or the vendor driver), libudev (libudev.so.1) and glibc 2.31 or newer.',
+                             'Needs a Vulkan driver (Mesa or the vendor driver), libudev (libudev.so.1),\n'
+                             'ALSA (libasound.so.2) and glibc 2.31 or newer.',
             'windows-x86_64': 'Unzip and run fury.exe. Windows SmartScreen may warn about an unrecognized\n'
                               'app (the build is not code signed): choose More info, then Run anyway.\n'
                               'Needs a DirectX 12 or Vulkan capable graphics driver. A console window opens\n'
@@ -241,7 +243,7 @@ case "$TRIPLE" in
 esac
 U=$(echo "$TRIPLE" | tr 'a-z-' 'A-Z_')
 export "CARGO_TARGET_${U}_LINKER=$L" "CC_$(echo "$TRIPLE" | tr - _)=$L"
-if [ -n "$LIBDIR" ]; then  # the target's libudev (multiarch) for cross builds
+if [ -n "$LIBDIR" ]; then  # the target's libudev and ALSA (multiarch) for cross builds
   export PKG_CONFIG_ALLOW_CROSS=1 "PKG_CONFIG_PATH=$LIBDIR/pkgconfig" "CARGO_TARGET_${U}_RUSTFLAGS=-L $LIBDIR"
 fi
 cargo build --release --locked -p atv-app --bin fury --target "$TRIPLE" -j 2 >&2
