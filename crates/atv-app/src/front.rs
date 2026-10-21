@@ -92,6 +92,8 @@ pub struct Front {
     menu_scroll_max: f32,
     menu_reveal: bool,
     prefs: Preferences,
+    /// Controller glyph rasters for the bindings pages.
+    glyphs: atv_ui::menu::glyphs::GlyphImages,
     minimap: MinimapSettings,
     touch: TouchControls,
     bindings: atv_game::ride::bindings::Bindings,
@@ -165,6 +167,7 @@ impl Front {
             menu_scroll_max: 0.,
             menu_reveal: false,
             prefs,
+            glyphs: Default::default(),
             minimap,
             touch,
             bindings,
@@ -675,6 +678,7 @@ impl Front {
         if self.renderer.is_none() {
             self.renderer = Some(Renderer::new(device, self.format));
             self.images.clear();
+            self.glyphs.clear();
             self.recent.clear();
             self.uploaded = DisplayList::default();
         }
@@ -759,7 +763,7 @@ impl Front {
             }
         }
         if self.menu.is_some() {
-            self.prepare_menu();
+            self.prepare_menu(device, queue);
         }
         let layout_ms = started.elapsed().as_secs_f64() * 1000. - art_ms;
         let upload_size = (width, height, view.scale);
@@ -782,7 +786,7 @@ impl Front {
         self.split_ms = [art_ms, layout_ms, self.prepare_ms - art_ms - layout_ms];
     }
 
-    fn prepare_menu(&mut self) {
+    fn prepare_menu(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let view = self.view;
         let start = self.list.items.len();
         let Some(state) = self.with_menu(|m, ctx, _, _| {
@@ -791,9 +795,13 @@ impl Front {
         }) else {
             return;
         };
+        if let Some(renderer) = &mut self.renderer {
+            self.glyphs
+                .prepare(renderer, device, queue, state.pad.as_ref(), view.scale);
+        }
         let mut hits = Vec::new();
         layout::render(
-            &pause::element(&view, &state),
+            &pause::element(&view, &state, &self.glyphs),
             &mut self.fonts,
             view.width,
             view.height,
@@ -815,7 +823,7 @@ impl Front {
             if menu.scroll != before {
                 self.list.items.truncate(start);
                 self.menu_hits = hits;
-                return self.prepare_menu();
+                return self.prepare_menu(device, queue);
             }
         }
         self.menu_hits = hits;
